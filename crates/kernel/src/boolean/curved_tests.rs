@@ -243,6 +243,32 @@ fn crossed_by(big: f64, c: f64, r: f64, y0: f64) -> f64 {
     sum * h / 3.0
 }
 
+/// The volume two perpendicular cylinders running past each other
+/// share, of radii `r1` and `r2` with their axes at heights `c1` and `c2`:
+/// `∫ 2√(r1² − (z − c1)²) · 2√(r2² − (z − c2)²) dz` over the heights
+/// both span, with `z = m + h·sin φ` on that span (both its ends may be
+/// square-root ends), by Simpson's rule.
+pub(super) fn crossing_volume(r1: f64, c1: f64, r2: f64, c2: f64) -> f64 {
+    let (lo, hi) = ((c1 - r1).max(c2 - r2), (c1 + r1).min(c2 + r2));
+    if hi <= lo {
+        return 0.0;
+    }
+    let (m, h) = ((lo + hi) / 2.0, (hi - lo) / 2.0);
+    let width = |r: f64, d: f64| 2.0 * (r * r - d * d).max(0.0).sqrt();
+    let f = |phi: f64| {
+        let z = m + h * phi.sin();
+        width(r1, z - c1) * width(r2, z - c2) * h * phi.cos()
+    };
+    let n = 20_000;
+    let (a, b) = (-PI / 2.0, PI / 2.0);
+    let step = (b - a) / n as f64;
+    let mut sum = f(a) + f(b);
+    for k in 1..n {
+        sum += f(a + k as f64 * step) * if k % 2 == 1 { 4.0 } else { 2.0 };
+    }
+    sum * step / 3.0
+}
+
 #[test]
 fn crossing_cylinders_are_traced_within_the_tolerance() {
     let upright = cylinder([0.0, 0.0, -2.0], 1.0, 4.0);
@@ -333,6 +359,124 @@ fn corner_of_round(r: f64, cx: f64, cz: f64, x0: f64, z1: f64) -> f64 {
     f(u1) - f(u0) - dz * (u1 - u0)
 }
 
+/// A round of radius `big` round `(z, x) = round` along `y` over `ys`,
+/// and a bar of radius `r` round `(y, z) = bar` along `x` over `xs`, both
+/// circles drawn from their frames' axis points (so each wall has seam
+/// rulings at its top, bottom and sides), the bar crossing the round's
+/// wall: the two meet in a quartic, traced and fitted.
+struct RoundAndBar {
+    round: DVec2,
+    big: f64,
+    ys: [f64; 2],
+    bar: DVec2,
+    r: f64,
+    xs: [f64; 2],
+}
+
+impl RoundAndBar {
+    /// The round and the bar.
+    fn solids(&self) -> (Solid, Solid) {
+        let frame = Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::Z,
+            y: DVec3::X,
+        };
+        let round = extruded_on(
+            vec![circle(self.round, self.big, 0, false)],
+            frame,
+            self.ys[0],
+            self.ys[1],
+            2,
+        );
+        let bar = cylinder_x(self.bar.x, self.bar.y, self.r, self.xs[0], self.xs[1]);
+        (round, bar)
+    }
+
+    /// The four results, each checked against its true volume (`both` is
+    /// the crossing's) within its bands' bound ([`within_bands`]) and the
+    /// fit times the operands' area over 5 (what the seeded suite allows
+    /// a fitted cut), the identities within both, the bands within the
+    /// fit of their cylinders, the rest exact, and every vertex within
+    /// the fit of a cylinder or an end.
+    fn check(&self, name: &str, both: f64) -> [Solid; 4] {
+        let (round, bar) = self.solids();
+        let va = PI * self.big * self.big * (self.ys[1] - self.ys[0]);
+        let vb = PI * self.r * self.r * (self.xs[1] - self.xs[0]);
+        assert!((round.volume() - va).abs() <= 1e-12);
+        assert!((bar.volume() - vb).abs() <= 1e-12);
+        let results = all_four(&round, &bar, TOL.fit() * 1e-2);
+        let want = [va + vb - both, both, va - both, vb - both];
+        let bounds = within_bands(name, &results, &want);
+        let v = results.each_ref().map(Solid::volume);
+        let allowed = TOL.fit() * (round.area() + bar.area()) / 5.0;
+        for (k, (got, want)) in v.iter().zip(want).enumerate() {
+            assert!(
+                (got - want).abs() <= allowed,
+                "{name}, result {k}: {got}, not {want}"
+            );
+        }
+        // The identities, within the sum of the bounds of the results in
+        // them.
+        let identities = [
+            (v[0] + v[1] - va - vb, bounds[0] + bounds[1]),
+            (v[2] + v[1] - va, bounds[2] + bounds[1]),
+            (v[3] + v[1] - vb, bounds[3] + bounds[1]),
+        ];
+        for (k, (off, bound)) in identities.into_iter().enumerate() {
+            assert!(
+                off.abs() <= bound.min(allowed),
+                "{name}, identity {k}: {off:e}"
+            );
+        }
+        let of: Vec<_> = walls(&round).into_iter().chain(walls(&bar)).collect();
+        let on = |p: DVec3| {
+            let a = DVec2::new(p.z - self.round.x, p.x - self.round.y).length() - self.big;
+            let b = DVec2::new(p.y - self.bar.x, p.z - self.bar.y).length() - self.r;
+            let ends = [
+                p.y - self.ys[0],
+                p.y - self.ys[1],
+                p.x - self.xs[0],
+                p.x - self.xs[1],
+            ];
+            ends.into_iter()
+                .chain([a, b])
+                .map(f64::abs)
+                .fold(f64::INFINITY, f64::min)
+        };
+        for (k, solid) in results.iter().enumerate() {
+            // The bands within the fit tolerance of their cylinders (the
+            // rounds halve a band's cut while it strays past half the fit,
+            // but keep a last round anywhere within it; measured 0.18 of
+            // it), the rest exact, and every vertex within the fit of a
+            // cylinder or plane: the cut's are on both, but a vertex a
+            // round adds on a band is only on the band.
+            let off = free_off(solid, &of);
+            assert!(off <= TOL.fit(), "{name}, result {k}: a band {off:e} off");
+            let (worst, free) = off_surface(solid);
+            assert!(free > 0);
+            assert!(worst <= 1e-12 * 4.0, "{name}, result {k}: {worst:e}");
+            for &p in solid.mesh().verts() {
+                assert!(on(p) <= TOL.fit(), "{name}, result {k}: {p}");
+            }
+        }
+        results
+    }
+}
+
+/// The round of #131's family: radius 0.75 round `(z, x) = (1.75, 1.5)`
+/// along `y` over `2..3`, crossed by a bar of 0.25 along `x` over `0..3`
+/// at `y` 2.5 and height `z`.
+fn thin_bar_at(z: f64) -> RoundAndBar {
+    RoundAndBar {
+        round: DVec2::new(1.75, 1.5),
+        big: 0.75,
+        ys: [2.0, 3.0],
+        bar: DVec2::new(2.5, z),
+        r: 0.25,
+        xs: [0.0, 3.0],
+    }
+}
+
 #[test]
 fn a_thin_bar_across_a_round_is_within_its_bands() {
     // A bar of radius 0.25 across a round of 0.75, crossing its wall: the
@@ -343,63 +487,53 @@ fn a_thin_bar_across_a_round_is_within_its_bands() {
     // and `|a ∪ b| + |a ∩ b| = |a| + |b|` misses by the sum of their
     // errors: 4.7e-5 here, twice `1e-5·(|a| + |b|)`. That is the fit's
     // error, not a wrong result: a fitted cut keeps volumes within the
-    // fit tolerance times its bands' area, not to rounding. (With the
-    // bar's axis at z = 2.0 the intersection is refused.)
-    let frame = Frame {
-        origin: DVec3::ZERO,
-        x: DVec3::Z,
-        y: DVec3::X,
-    };
-    let round = extruded_on(
-        vec![circle(DVec2::new(1.75, 1.5), 0.75, 0, false)],
-        frame,
-        2.0,
-        3.0,
-        2,
-    );
-    let bar = cylinder_x(2.5, 2.05, 0.25, 0.0, 3.0);
-    let (va, vb) = (PI * 0.75 * 0.75, PI * 0.25 * 0.25 * 3.0);
-    assert!((round.volume() - va).abs() <= 1e-12);
-    assert!((bar.volume() - vb).abs() <= 1e-12);
+    // fit tolerance times its bands' area, not to rounding. With the
+    // bar's axis at z = 2.0 its seams meet the round's on the cut:
+    // `crossing_cylinders_with_seams_meeting_on_the_cut`, the same checks.
     let both = crossed_by(0.75, 1.75, 0.25, 2.05);
     assert!((both - 0.264_432_415_23).abs() <= 1e-10, "{both}");
-    let results = all_four(&round, &bar, TOL.fit() * 1e-2);
-    let bounds = within_bands(
-        "thin bar",
-        &results,
-        &[va + vb - both, both, va - both, vb - both],
-    );
-    // The identities, within the sum of the bounds of the results in them.
-    let v = results.each_ref().map(Solid::volume);
-    assert!((v[0] + v[1] - va - vb).abs() <= bounds[0] + bounds[1]);
-    assert!((v[2] + v[1] - va).abs() <= bounds[2] + bounds[1]);
-    assert!((v[3] + v[1] - vb).abs() <= bounds[3] + bounds[1]);
-    let of: Vec<_> = walls(&round).into_iter().chain(walls(&bar)).collect();
-    let on = |p: DVec3| {
-        let a = DVec2::new(p.x - 1.5, p.z - 1.75).length() - 0.75;
-        let b = DVec2::new(p.y - 2.5, p.z - 2.05).length() - 0.25;
-        let ends = [p.y - 2.0, p.y - 3.0, p.x, p.x - 3.0];
-        ends.into_iter()
-            .chain([a, b])
-            .map(f64::abs)
-            .fold(f64::INFINITY, f64::min)
+    thin_bar_at(2.05).check("thin bar", both);
+}
+
+#[test]
+fn crossing_cylinders_with_seams_meeting_on_the_cut() {
+    // The thin bar across the round with its axis at z = 2.0: at (0.75,
+    // 2.5, 1.75) and (2.25, 2.5, 1.75) the round's side seams (its arcs'
+    // joins, normal ∓x) meet the bar's bottom seam (normal −z) on the
+    // cut. The walls cross square there, the round's seam ruling (along
+    // y) touches the bar's bottom, and the bar's bottom ruling crosses
+    // the round's wall; refinement splits both seams there. Every first
+    // order of a tie at those points is zero exactly, but the computed
+    // directions and gradients carry rounding in their zero components,
+    // and taking that as a first order built a zero-size handle in the
+    // intersection, refused as `NotManifold`. Now the second order
+    // decides them: all four work, within the fit (measured 0.018–0.020
+    // of the fit times the bands' area off).
+    let both = crossed_by(0.75, 1.75, 0.25, 2.0);
+    assert!((both - 0.272_664_837_106_370_9).abs() <= 1e-10, "{both}");
+    thin_bar_at(2.0).check("seams on the cut", both);
+}
+
+#[test]
+fn a_cut_tangent_to_a_seam_at_a_refined_corner() {
+    // A round of 0.625 round (z, x) = (0.75, 1) along y, and a bar of
+    // 0.125 round (y, z) = (2.75, 0.625) along x: at (0.375, 2.75, 0.75)
+    // the round's side seam meets the bar's top seam on the cut, the cut
+    // tangent to the round's seam there, and refinement puts a corner of
+    // the round's patch on the point. The trace from it took the side the
+    // end lies on as its smallest barycentric coordinate, the seam's,
+    // across which the step is rounding, so it started out of the patch
+    // and every operation was refused as `Inconsistent`. It starts the
+    // way that leaves none of the sides the end lies on, in both patches.
+    let shapes = RoundAndBar {
+        round: DVec2::new(0.75, 1.0),
+        big: 0.625,
+        ys: [1.875, 3.625],
+        bar: DVec2::new(2.75, 0.625),
+        r: 0.125,
+        xs: [-0.125, 2.125],
     };
-    for (k, solid) in results.iter().enumerate() {
-        // The bands within the fit tolerance of their cylinders (the
-        // rounds halve a band's cut while it strays past half the fit,
-        // but keep a last round anywhere within it; measured 0.18 of
-        // it), the rest exact, and every vertex within the fit of a
-        // cylinder or plane: the cut's are on both, but a vertex a
-        // round adds on a band is only on the band.
-        let off = free_off(solid, &of);
-        assert!(off <= TOL.fit(), "result {k}: a band {off:e} off");
-        let (worst, free) = off_surface(solid);
-        assert!(free > 0);
-        assert!(worst <= 1e-12 * 4.0, "result {k}: {worst:e}");
-        for &p in solid.mesh().verts() {
-            assert!(on(p) <= TOL.fit(), "result {k}: {p}");
-        }
-    }
+    shapes.check("corner", crossed_by(0.625, 0.75, 0.125, 0.625));
 }
 
 #[test]

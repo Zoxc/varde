@@ -723,9 +723,38 @@ fn first_orders_that_are_only_rounding_are_skipped() {
         assert_eq!(first_sign(delta, |d| n.dot(d)), want, "draw {draw}");
     }
     assert!(noisy > 1000, "{noisy}");
+    // Rounding in the zero components of a computed direction or
+    // gradient, times the other's large component, is rounding too,
+    // though the sum of the products `Σ |δ_i·g_i|` has no cancellation to
+    // see: measured where two crossing cylinders' seams meet on the cut (a
+    // vertex direction, a normal at a refined corner, against `g′ × e′`
+    // or a patch normal), and a gradient's own rounding. Each first order
+    // is zero exactly; `T2` decides, not the rounding's sign.
+    for (delta, g) in [
+        (
+            DVec3::new(1.0, 0.0, -7.093_142_705_686_246e-18),
+            DVec3::new(0.0, 8.131_516_293_641_283e-20, -0.018_378_213_811_792_853),
+        ),
+        (
+            DVec3::new(
+                -0.999_999_999_999_999_8,
+                2.133_459_107_055_383_7e-15,
+                9.689_372_084_813_58e-16,
+            ),
+            DVec3::new(0.0, -0.013_800_283_404_586_423, 0.001_905_421_516_924_217_4),
+        ),
+        (DVec3::X, DVec3::new(1e-17, 0.0, -0.05)),
+    ] {
+        assert_ne!(delta.dot(g), 0.0);
+        let want = sign(exact::T2.dot(g));
+        assert_ne!(want, 0);
+        assert_eq!(first_sign(delta, |d| g.dot(d)), want, "{delta} {g}");
+    }
     // A first order that is small but real still decides.
     let n = DVec3::Z;
     let delta = DVec3::new(1.0, 1.0, 1e-6).normalize();
+    assert_eq!(first_sign(delta, |d| -n.dot(d)), -1);
+    let delta = DVec3::new(1.0, 1.0, 7e-7).normalize();
     assert_eq!(first_sign(delta, |d| -n.dot(d)), -1);
 }
 

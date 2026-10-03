@@ -495,16 +495,78 @@ fn end(pair: &Pair, job: &Job, k: usize) -> Option<Point> {
     let t = pair.tangent(u, v)?;
     // At the `+` end the arc leaves its patch's side inwards; at the `−`
     // end it arrives from inside.
-    let (patch, at) = if job.on_p[k] { (job.p, u) } else { (job.q, v) };
-    let step = trace::domain_step(patch, at, t);
-    // The coordinate that is 0 on the side the end is on: the smallest.
-    let side = (0..3)
-        .min_by(|&i, &j| at[i].abs().total_cmp(&at[j].abs()))
-        .expect("three coordinates");
-    let inwards = step[side] > 0.0;
+    let inwards = match inward_sign(job, k, t) {
+        Some(s) => s > 0.0,
+        None => {
+            // The coordinate that is 0 on the side the end is on: the
+            // smallest, in the patch the end was found on.
+            let (patch, at) = if job.on_p[k] { (job.p, u) } else { (job.q, v) };
+            let step = trace::domain_step(patch, at, t);
+            let side = (0..3)
+                .min_by(|&i, &j| at[i].abs().total_cmp(&at[j].abs()))
+                .expect("three coordinates");
+            step[side] > 0.0
+        }
+    };
     let forward = if k == 0 { inwards } else { !inwards };
     let tan = if forward { t } else { -t };
     Some(Point { x, u, v, tan })
+}
+
+/// How far across a side, as a share of the step's largest component, a
+/// step must go to leave or enter it rather than run along it: a
+/// tangency's double root is placed some `1e-8` of the size off the
+/// touching point, where the step across the side it touches reads as
+/// `7e-9` of its length.
+const ALONG_SIDE: f64 = 1e-6;
+
+/// Which way along `t` (`±1`) the arc goes into both patches from end
+/// `k`: the way that leaves none of the sides the end lies on, in either
+/// patch (coordinates within `1e-9` of 0: two at a corner, more where the
+/// end is on both patches' boundaries), and so enters one of them; where
+/// it runs along all of them (within [`ALONG_SIDE`] of the step: the cut
+/// tangent to every side), the way towards the arc's other end. `None`
+/// where both ways leave one (or the end is on no side, or the chord is
+/// square to `t`): the smallest coordinate of the end's own patch decides.
+///
+/// The smallest coordinate of one patch alone is not enough where seam
+/// rulings of two crossing cylinders meet on the cut, and refinement puts
+/// a patch's corner there: the cut is tangent to the seam, and the first
+/// zero coordinate may be the seam's, across which the step is rounding
+/// (`6e-16` against `−1.1` across the corner's other side), so the trace
+/// started out of the patch. Or the end lies inside a side of one patch,
+/// the cut tangent to it (a straight ruling touching the other wall),
+/// while it also lies on a side of the other patch. An arc between two
+/// ends leaves a tangent end towards the other unless it turns back by
+/// more than a right angle (fitting halves arcs turning past 45°, and the
+/// rounds split long ones); if it does, the trace fails, an error.
+fn inward_sign(job: &Job, k: usize, t: DVec3) -> Option<f64> {
+    let [u, v] = job.dom[k];
+    let mut across: Vec<(f64, f64)> = Vec::new();
+    for (patch, at) in [(job.p, u), (job.q, v)] {
+        let step = trace::domain_step(patch, at, t);
+        let size = ALONG_SIDE * step.abs().max_element();
+        across.extend(
+            (0..3)
+                .filter(|&i| at[i].abs() <= 1e-9)
+                .map(|i| (step[i], size)),
+        );
+    }
+    if across.is_empty() {
+        return None;
+    }
+    // Entering a side one way is leaving it the other: where one way
+    // leaves none and the other leaves one, the first enters it.
+    let leaves = |s: f64| across.iter().any(|&(c, size)| s * c < -size);
+    match (leaves(1.0), leaves(-1.0)) {
+        (false, true) => Some(1.0),
+        (true, false) => Some(-1.0),
+        (false, false) => {
+            let d = t.dot(job.ends[1 - k] - job.ends[k]);
+            (d != 0.0).then(|| d.signum())
+        }
+        (true, true) => None,
+    }
 }
 
 /// The arc traced and fitted.

@@ -3884,12 +3884,12 @@ elsewhere (see "Cutting curved faces").
 | `boolean/cleanup/fold.rs` | sheets folded onto a flush face, their two sides triangulated differently: the folded vertex moved within its star's planes; its tests on a box whose top is folded |
 | `boolean/cleanup/quality.rs` | refining the plane faces the boolean cut for their triangles' shapes |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
-| `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
+| `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders (also with their seams meeting on the cut), a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
 | `boolean/curved_tests/cones.rs` | cones and coaxial walls, exact: a countersink upright and turned, half of one (rulings), slabs tilted through a cone, a box's face square to a frustum's axis with its diagonal across the circle, a cylinder and a cone crossing on one axis, cones through a cylinder's cap, a turned shaft joined end to end and cut by a cone, a V groove and a centre drill, random coaxial frustums against closed forms, ring tops sloping down to nearly flat, nearly flat cones cut through their axis, coaxial shortcuts tried again |
 | `boolean/curved_tests/one_face.rs` | faces on one surface after booleans: tops at a crease either side of the bar, flush stacks on turned frames far from the origin, chains of joins and cuts with every operand's names resolving, faces meeting only at a corner |
 | `boolean/curved_tests/tangent.rs` | tangent contacts: cylinders against a plate's side from outside and inside, standing on it or through its top, slots ending in, beside and across a hole, a cylinder on a cylinder (in millimetres at the default tolerance, and at unit size at the finest), unions touching along a line refused at once (a pin plugging a hole it touches inside never named so), and solids tangent to a rounded edge or the faces it runs into; volumes against analytic ones relative to the operands' where cuts are exact, within a tenth of the fit times the claim-free area where a cut is fitted |
-| `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates |
+| `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates, seams meeting on the cut |
 
 ### The primitives
 
@@ -4565,12 +4565,28 @@ by `(T × δ)·(T × UP)`, `T` the tangent (the crossing slides along both);
 a point of a patch with normal `n` there rises over a vertex of `A` by
 `−n·δ / n·UP`, and over a vertex of `B` by `n·δ / n·UP` with `δ` the
 patch's corners' interpolated. Each of these is linear in the motion,
-and an order whose value is only rounding (within `RHO = 2⁻³²` of its
-terms, `Σ |d_i·f(e_i)|`, the motion square to the gradient but for
-that) is taken as zero, as the exact predicates' later orders are (see
-"At every order"): a vertex moving along a turned plane against a patch
-on it gave `δ·n` some `1e-17`, its sign noise (the seeded suite's
-tallies are the same with and without it). Where every order is 0, by
+and an order whose value is only rounding (within `RHO = 2⁻³²` of
+`|d|·|∇f|`: the motion within an angle `RHO` of square to the
+gradient) is taken as zero, as the exact predicates' later orders are
+(see "At every order"): a vertex moving along a turned plane against a
+patch on it gave `δ·n` some `1e-17`, its sign noise (the seeded suite's
+tallies are the same with and without it). The measure is the sizes'
+product, not the sum of the terms `Σ |d_i·f(e_i)|`, which sees only
+cancellation between terms: computed directions (normals at refined
+corners) and gradients (a patch's normal, `g′ × e′`) carry rounding in
+their zero components, and its product with the other vector's large
+component is a first order of rounding alone. Where seam rulings of two
+crossing cylinders meet on the cut (below), every first order there is
+zero exactly, yet `δ = (−1, 2.1e-15, 3.7e-15)` against a gradient
+`(0, …, 0.009)`, and `δ = (1, 0, 0)` against `(−4.2e-17, 0, 0.077)`,
+passed the sum as real: 12 decisions at two points of one round's
+intersection with a bar taken from rounding, six of them against `T2`,
+no single motion's, and the counting built a zero-size handle (see
+"Results that aren't manifolds"). By the sizes every one goes to `T2`
+and the intersection works (0.018 of the fit times its bands' area
+off). A real first order down to `2.3e-10` of the vectors' sizes still
+decides. Snapping the directions' tiny components to 0 instead wasn't
+enough: the gradients' rounding still decided. Where every order is 0, by
 `δ·UP`, as for horizontal surfaces. So flush planar faces between a curved and a flat
 operand behave as between flat ones. Vertex directions of curved
 patches are their normals at the corner. Beyond heights:
@@ -5211,8 +5227,37 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   `P(u) = Q(v)` and lies on a given plane: four equations in `u0, u1, v0,
   v1`, Newton's method with Gaussian elimination (partial pivoting), at
   most 40 steps, accepted within `1e-11` of the patches' size. Marching
-  starts at the `+` end along `n_P × n_Q` turned to leave the patch whose
-  side the end is on inwards, steps `h` along the tangent and corrects on
+  starts at the `+` end along `n_P × n_Q` turned into both patches
+  (`inward_sign`): of the sides the end lies on (barycentric coordinates
+  within `1e-9` of 0, in either patch: two at a patch's corner, more
+  where the end is on both patches' boundaries), the way that leaves none
+  of them, which enters one; where neither way leaves one, the step along
+  all of them within `ALONG_SIDE = 1e-6` of its largest component (the
+  cut tangent to every side), the way towards the arc's other end; where
+  both leave one, or the end is on no side, the old rule, the smallest
+  coordinate of the patch the end was found on. That rule failed where
+  seam rulings of two crossing cylinders meet on the cut: refinement puts
+  a corner of a patch on the point, the cut is tangent to the seam
+  there, and the first zero coordinate may be the seam's, across which
+  the step is rounding (`6.3e-16` against `−1.14` across the corner's
+  other side); or the end lies inside a side of one patch tangent to the
+  cut (a straight ruling touching the other wall), and on a side of the
+  other patch the rule never looked at; or the end is a tangency's double
+  root placed some `1e-8` of the size off the touching point, the step
+  across the side `7.2e-9` of its length (a sign, but noise: at a share
+  of `1e-9` this one still failed). The trace started out of the patch
+  and the arc was `Inconsistent`. The chord's way is the arc's at its
+  start unless the arc turns back by more than a right angle there
+  (fitting halves arcs turning past 45°, and the rounds split long
+  ones); if it did, the trace would fail, an error. With this rule and
+  the first-order measure in "Ties", perpendicular cylinders drawn from
+  circles on their frames' axis points with seams meeting on the cut (a
+  fuzz of 320 operations a group, release) went 115 → 294 on the world
+  frame, 137 → 276 turned and 118 → 286 turned a hair, the control
+  (seams elsewhere) 283 either way; cross holes through a box 103 → 140,
+  104 → 134 and 107 → 134 of 150; random perpendicular pairs 829 →
+  1 002 of 1 200; 755 operations won, 2 lost (thin triangles on hair
+  frames, `Invalid`), no wrong `Ok`. Marching then steps `h` along the tangent and corrects on
   the plane square to it through the predicted point; a step is taken
   when the tangent turns by under about 20°, the point moved on and lies
   within half a step of the prediction, and within half a barycentric
@@ -6282,6 +6327,16 @@ vertex keeps one fan, which the neck can't, so it stays and fails
 repair or `check` (fold, hull or neighbour rules). The same operands
 intersected, or subtracted the other way, work.
 
+Two vertices at one place can also come from a zero-size handle that
+the decisions of no single configuration build: a cluster of vertices at
+one point whose star has one boundary loop (one fan, a manifold) but
+Euler characteristic `−1`. A round's intersection with a bar whose seams
+meet on the cut had 13 vertices at one point so, from first orders taken
+from rounding (see "Ties" under the curved primitives); the clean-up
+couldn't collapse them (`fan`) and the check failed on a fold. It is
+named `NotManifold` too, wording only: a neck has two or more fans, a
+handle one fan with `χ < 1`, which the star's link would tell apart.
+
 Such a failure is named `BooleanError::NotManifold` rather than left as
 `Invalid`, where repair or the check (not `facing`) fails with
 `Invalid` and either
@@ -6713,7 +6768,9 @@ the origin (a vertex's direction into a face, an edge `1e-3` above a
 parallel one) still deciding, edges whose shadows lie along each other
 under the one above wherever they are decided to cross, the curved primitives'
 `first_sign` skipping a motion's first order that is only rounding (a
-motion in a turned plane against its normal), `orient2d` near a line
+motion in a turned plane against its normal; directions and gradients
+with rounding in their zero components, measured where seams meet on a
+cut), `orient2d` near a line
 and far out,
 triangulating a square with a hole, a concave loop, a zero-width loop and
 a vertex landing on the domain's side (no diagonal along a side); with
@@ -6969,7 +7026,13 @@ exactly between where the circles meet), a result over 20 times its
 operands' patches counted as failed (the first 40 cases, which hold
 every failure of the 150, 148 of 160, at least 92%; all 150 in the
 ignored `many_bosses_sunk_through_drilled_plates`, about 25 s alone in
-release, 588 of 600, at least 97%); the same bits at 1 and 8 threads.
+release, 588 of 600, at least 97%); perpendicular cylinders, and a box
+less a hole along `y` against a hole along `x`, drawn from circles on
+their frames' axis points and placed so seam rulings of the two meet on
+the cut, on the world frame and turned and moved, against the crossing's
+volume by quadrature and every patch sampled within the fit of the
+solids' surfaces (147 of 160, at least 90%; 94 before the first-order
+measure and the trace start were mended); the same bits at 1 and 8 threads.
 Each test prints its tally (`TALLY name: ok of total`) and each refusal
 (`REFUSED`), seen with `--nocapture`. In release it runs in about 25 s
 (37 s one test after another, 83 s on one thread) and the 40 drilled
@@ -7034,7 +7097,7 @@ patches, one wall each), then a cone overlapping all three, a V groove
 and a centre drill (its fitted tip within the fit), against closed forms
 from the radii (`turned_volume`, exact for walls linear in height); 40
 random pairs of coaxial stacks (a frustum and a cylinder each, upright
-and on random frames, 159 of 160 operations, every volume within `1e-9`
+and on random frames, 160 of 160 operations, every volume within `1e-9`
 relative, the upright ones exact); ring tops sloping from `3e-6` to 1
 cut by a cylinder on their axis (the nearly flat ones may be refused);
 the same bits at 1 and 8 threads; frustums opening at 80° to 89.5°
@@ -7049,6 +7112,20 @@ slope not certified.
 
 ### Known gaps
 
+- **Seams meeting on the cut, what is left.** Of crossing cylinders and
+  cross holes whose seam rulings meet on the cut (see the tracing in
+  "Chains"), about one in ten operations is still refused: on the world
+  frame the same refusals as with the seams elsewhere (`Hull`, `Fold`,
+  `EdgeNeighbours`, a few `NotManifold`); on turned frames, cross holes
+  where a hole's straight seam ruling touches the other's wall, whose
+  tangency is solved as two crossings `1.1e-8` apart: the triangulation
+  fans between them and the clean-up can't collapse the fan (`fan`),
+  `NotManifold` or `VertexNeighbours` (the near-tangent class;
+  `tangent_edges` collapses such pairs only along straight edges on
+  plane faces). And at fit `1e-5` crossing cylinders' differences are
+  refused `Inconsistent` about a quarter of the time wherever the seams
+  are (43 of 60 work with the seams elsewhere): the trace arrives with
+  three points and fitting fails, so the fallbacks aren't verified.
 - **Coaxial unions on turned frames.** After per-crossing decisions for
   edges lying on each other, what the coaxial sweep above still refuses:
   34 `Inconsistent`, all square prisms flush on an XY frame moved off

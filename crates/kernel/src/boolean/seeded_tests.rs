@@ -658,6 +658,215 @@ fn turned_and_moved_solids_are_right_or_refused() {
     tally.at_least(0.75, "turned");
 }
 
+/// A rigid placement of the seams suite's solids: `p` to `q·p + shift`.
+#[derive(Clone, Copy)]
+struct Placement {
+    q: DQuat,
+    shift: DVec3,
+}
+
+impl Placement {
+    /// The frame whose normal is axis `k`: its `x` along axis `k + 1`,
+    /// its `y` along `k + 2`.
+    fn frame(&self, k: usize) -> Frame {
+        let axes = [DVec3::X, DVec3::Y, DVec3::Z];
+        Frame {
+            origin: self.shift,
+            x: (self.q * axes[(k + 1) % 3]).normalize(),
+            y: (self.q * axes[(k + 2) % 3]).normalize(),
+        }
+    }
+
+    /// Where `p` is in the placement's own frame.
+    fn local(&self, p: DVec3) -> DVec3 {
+        self.q.inverse() * (p - self.shift)
+    }
+}
+
+/// A surface of the seams suite's solids, in their own frame: the plane
+/// where coordinate `k` is the value, or the cylinder along axis `k` of
+/// the radius round the point in axes `k + 1` and `k + 2`.
+#[derive(Clone, Copy)]
+enum Wall {
+    Plane(usize, f64),
+    Cylinder(usize, DVec2, f64),
+}
+
+impl Wall {
+    fn distance(self, p: DVec3) -> f64 {
+        match self {
+            Wall::Plane(k, v) => (p[k] - v).abs(),
+            Wall::Cylinder(k, c, r) => {
+                { (DVec2::new(p[(k + 1) % 3], p[(k + 2) % 3]) - c).length() - r }.abs()
+            }
+        }
+    }
+}
+
+/// A value on the grid of `step` from `lo` to `hi`.
+fn on_grid(rng: &mut Rng, lo: f64, hi: f64, step: f64) -> f64 {
+    let n = ((hi - lo) / step).floor();
+    lo + step * (rng.unit() * (n + 1.0)).floor().min(n)
+}
+
+/// The height of the second cylinder's axis (radius `r`) where seams of
+/// the two meet on the cut, the first's axis (radius `big`) at `z`, by
+/// `kind`: the second's bottom or top seam on the first's side seam, the
+/// side seams level, the second's side seams on the first's top or
+/// bottom seam.
+fn meeting(kind: usize, z: f64, big: f64, r: f64) -> f64 {
+    match kind % 5 {
+        0 => z + r,
+        1 => z - r,
+        2 => z,
+        3 => z + big,
+        _ => z - big,
+    }
+}
+
+/// A perpendicular pair whose seams meet on the cut, `place`d: crossing
+/// cylinders, or (`holes`) a box less a hole along `y` and a hole along
+/// `x`. Their surfaces in the placement's frame and `|a ∩ b|`, if the
+/// operands can be built.
+fn seams_meeting(
+    rng: &mut Rng,
+    kind: usize,
+    holes: bool,
+    place: &Placement,
+    tol: &Tolerance,
+) -> Option<(Solid, Solid, Vec<Wall>, f64)> {
+    let cylinder = |c: DVec2, r: f64, k: usize, from: f64, to: f64, feature: u64| {
+        extruded(
+            vec![circle(c, r, 0, false)],
+            &place.frame(k),
+            from,
+            to,
+            feature,
+            tol,
+        )
+    };
+    if !holes {
+        let big = on_grid(rng, 0.5, 1.25, 0.125);
+        let r = on_grid(rng, 0.125, big * 0.9, 0.0625);
+        let x0 = on_grid(rng, -1.0, 2.0, 0.25);
+        let z0 = on_grid(rng, -1.0, 2.0, 0.25);
+        let y0 = on_grid(rng, -1.0, 3.0, 0.25);
+        let zb = meeting(kind, z0, big, r);
+        let ly = r + on_grid(rng, 0.25, 1.0, 0.25);
+        let lx = big + on_grid(rng, 0.25, 1.0, 0.25);
+        let (ac, bc) = (DVec2::new(z0, x0), DVec2::new(y0, zb));
+        let a = cylinder(ac, big, 1, y0 - ly, y0 + ly, 1)?;
+        let b = cylinder(bc, r, 0, x0 - lx, x0 + lx, 2)?;
+        let walls = vec![
+            Wall::Cylinder(1, ac, big),
+            Wall::Plane(1, y0 - ly),
+            Wall::Plane(1, y0 + ly),
+            Wall::Cylinder(0, bc, r),
+            Wall::Plane(0, x0 - lx),
+            Wall::Plane(0, x0 + lx),
+        ];
+        let both = super::curved_tests::crossing_volume(big, z0, r, zb);
+        return Some((a, b, walls, both));
+    }
+    // Both holes inside the box's height, with room.
+    let (r1, r2, x1, y2, z1, z2) = loop {
+        let r1 = on_grid(rng, 0.375, 0.75, 0.0625);
+        let r2 = on_grid(rng, 0.125, (r1 * 0.95).min(0.6), 0.0625);
+        let x1 = on_grid(rng, -0.125, 0.125, 0.0625);
+        let y2 = on_grid(rng, -0.125, 0.125, 0.0625);
+        let z1 = on_grid(rng, 0.875, 1.125, 0.0625);
+        let z2 = meeting(kind, z1, r1, r2);
+        if z2 + r2 <= 1.875 && z2 - r2 >= 0.125 && z1 + r1 <= 1.875 && z1 - r1 >= 0.125 {
+            break (r1, r2, x1, y2, z1, z2);
+        }
+    };
+    let block = extruded(
+        vec![rect(DVec2::splat(-1.0), DVec2::splat(1.0), 0)],
+        &place.frame(2),
+        0.0,
+        2.0,
+        1,
+        tol,
+    )?;
+    let (c1, c2) = (DVec2::new(z1, x1), DVec2::new(y2, z2));
+    let first = cylinder(c1, r1, 1, -1.5, 1.5, 2)?;
+    let a = boolean(&block, &first, Op::Difference, tol, &Budget::DEFAULT).ok()?;
+    let b = cylinder(c2, r2, 0, -1.5, 1.5, 3)?;
+    let mut walls: Vec<Wall> = (0..3)
+        .flat_map(|k| {
+            [
+                Wall::Plane(k, if k == 2 { 0.0 } else { -1.0 }),
+                Wall::Plane(k, if k == 2 { 2.0 } else { 1.0 }),
+            ]
+        })
+        .collect();
+    walls.extend([
+        Wall::Cylinder(1, c1, r1),
+        Wall::Cylinder(0, c2, r2),
+        Wall::Plane(0, -1.5),
+        Wall::Plane(0, 1.5),
+    ]);
+    // The second hole within the box, less where it crosses the first.
+    let both = 2.0 * PI * r2 * r2 - super::curved_tests::crossing_volume(r1, z1, r2, z2);
+    Some((a, b, walls, both))
+}
+
+#[test]
+fn seams_on_the_cut() {
+    // Perpendicular cylinders, and cross holes through a box, drawn from
+    // circles on their frames' axis points as a sketch draws them, so
+    // each wall has seam rulings at its arcs' joins, placed so that seams
+    // of the two meet on the cut (see `meeting`), on the world frame and
+    // turned and moved: on round numbers refinement puts a vertex of
+    // both operands there. Every first order of a tie there is zero
+    // exactly, and every side of the patches the cut starts from is
+    // tangent to it. Every result is right (by `four`, against its
+    // analytic volume within the fit times the operands' area over 5),
+    // every patch sampled within the fit of the solids' surfaces; most
+    // work.
+    let tol = Tolerance::DEFAULT;
+    let mut tally = Tally::default();
+    let mut rng = Rng::new(39);
+    let mut samples = Rng::new(40);
+    for case in 0..cases(40, 2) {
+        let holes = case % 4 >= 2;
+        let place = if case % 2 == 0 {
+            Placement {
+                q: DQuat::IDENTITY,
+                shift: DVec3::ZERO,
+            }
+        } else {
+            Placement {
+                q: DQuat::from_axis_angle(rng.direction(), rng.range(0.3, 6.0)),
+                shift: rng.point(10.0),
+            }
+        };
+        let kind = case / 4;
+        let Some((a, b, walls, both)) = seams_meeting(&mut rng, kind, holes, &place, &tol) else {
+            println!("SKIPPED case {case}: the operands");
+            continue;
+        };
+        let name = format!("case {case}");
+        let results = four(&a, &b, Some(both), &tol, &mut samples, &mut tally, &name);
+        for (k, solid) in results.iter().enumerate() {
+            let Some(solid) = solid else { continue };
+            let mesh = solid.mesh();
+            for t in 0..mesh.tris().len() {
+                let patch = mesh.patch(t);
+                for u in crate::mesh::samples() {
+                    let p = place.local(patch.eval(u));
+                    let off = walls
+                        .iter()
+                        .map(|w| w.distance(p))
+                        .fold(f64::INFINITY, f64::min);
+                    assert!(off <= tol.fit(), "{name}, result {k}: {p} {off:e} off");
+                }
+            }
+        }
+    }
+    tally.at_least(0.9, "seams on the cut");
+}
+
 /// Whether the tangent test lets operation `k` of [`four`] (union,
 /// intersection, `a − b`, `b − a`) fail at a `gap` between the cylinders,
 /// at resolution `res`. Everything else must work.
@@ -1808,54 +2017,59 @@ fn tangent_cylinders_that_dont_fit_together_show_where() {
 
 #[test]
 fn a_cut_face_whose_boundary_doesnt_close_shows_it() {
-    // The first step of the chains of parts: a cylinder of radius 0.25
-    // along `y` whose axis lies in the plane of the cap of one of radius
-    // 1 along `x`, its foot tangent to that one's wall. Intersected, and
-    // less it, a face of the first is left with pieces of boundary that
-    // don't close into loops: refused, with those pieces as curves, the
-    // vertices where they stop as points, and the face by its name; the
-    // same at 1 and 8 threads.
+    // The first two parts of seed 361: a disc of radius 0.5 round (x, y)
+    // = (−1, −0.25) over z 1..1.25, and a slab with rounded corners on the
+    // YZ plane extruded over x −1..−0.75, its start cap through the
+    // disc's axis and its side y = 0.25 touching the disc's wall at the
+    // seam there. The slab less the disc leaves a face of the slab with
+    // pieces of boundary that don't close into loops: refused, with those
+    // pieces as curves, the vertices where they stop as points, and the
+    // face by its name; the same at 1 and 8 threads.
     let tol = Tolerance::DEFAULT;
-    let mut rng = Rng::new(21);
-    let a = part(&mut rng, 0.25, 1, &tol).unwrap();
-    let b = part(&mut rng, 0.25, 10, &tol).unwrap();
-    for op in [Op::Intersection, Op::Difference] {
-        let failure =
-            assert_deterministic(|| boolean(&a, &b, op, &tol, &Budget::DEFAULT).unwrap_err());
-        super::evidence::tests::on_operands(&a, &b, &failure, &tol);
-        let e = &failure.evidence;
-        let [(crate::Operand::A, key)] = e.faces[..] else {
-            panic!("{:?}", e.faces);
-        };
-        let face = (a.mesh().faces().iter())
-            .find(|f| f.name.key() == key)
-            .unwrap();
-        assert!(!e.curves.is_empty() && e.patches.is_empty() && !e.truncated);
-        for curve in &e.curves {
-            for t in [0.0, 0.5, 1.0] {
-                let p = curve.eval(t);
-                assert!(face.surface.distance(p) <= tol.resolution(), "{p}");
-            }
+    let mut rng = Rng::new(361);
+    let disc = part(&mut rng, 0.25, 1, &tol).unwrap();
+    let slab = part(&mut rng, 0.25, 10, &tol).unwrap();
+    assert!((disc.volume() - PI / 16.0).abs() <= 1e-12);
+    let (a, b) = (slab, disc);
+    let op = Op::Difference;
+    let failure = assert_deterministic(|| boolean(&a, &b, op, &tol, &Budget::DEFAULT).unwrap_err());
+    assert_eq!(
+        failure.error,
+        KernelError::Boolean(BooleanError::Inconsistent)
+    );
+    super::evidence::tests::on_operands(&a, &b, &failure, &tol);
+    let e = &failure.evidence;
+    let [(crate::Operand::A, key)] = e.faces[..] else {
+        panic!("{:?}", e.faces);
+    };
+    let face = (a.mesh().faces().iter())
+        .find(|f| f.name.key() == key)
+        .unwrap();
+    assert!(!e.curves.is_empty() && e.patches.is_empty() && !e.truncated);
+    for curve in &e.curves {
+        for t in [0.0, 0.5, 1.0] {
+            let p = curve.eval(t);
+            assert!(face.surface.distance(p) <= tol.resolution(), "{p}");
         }
-        // Each point is where a piece stops: an end of one curve and of
-        // no other's other end.
-        assert_eq!(e.points.len(), 2);
-        let starts = |p: DVec3| e.curves.iter().filter(|c| c.p0 == p).count();
-        let ends = |p: DVec3| e.curves.iter().filter(|c| c.p1 == p).count();
-        for &p in &e.points {
-            assert_ne!((starts(p), ends(p)), (1, 1), "{p}");
-            assert!(starts(p) + ends(p) > 0, "{p}");
-        }
-        // Working the boundary out again is charged too: an allowance
-        // that covers the face and the items but not that gives the face
-        // alone, the error as it was.
-        let items = 1 + e.curves.len() + e.points.len();
-        let short = super::evidence::tests::with_allowance(items as u64, || {
-            boolean(&a, &b, op, &tol, &Budget::DEFAULT).unwrap_err()
-        });
-        assert_eq!(short.error, failure.error);
-        assert_eq!(short.evidence.faces, e.faces);
-        assert!(short.evidence.curves.is_empty() && short.evidence.points.is_empty());
-        assert!(short.evidence.truncated);
     }
+    // Each point is where a piece stops: an end of one curve and of
+    // no other's other end.
+    assert_eq!(e.points.len(), 2);
+    let starts = |p: DVec3| e.curves.iter().filter(|c| c.p0 == p).count();
+    let ends = |p: DVec3| e.curves.iter().filter(|c| c.p1 == p).count();
+    for &p in &e.points {
+        assert_ne!((starts(p), ends(p)), (1, 1), "{p}");
+        assert!(starts(p) + ends(p) > 0, "{p}");
+    }
+    // Working the boundary out again is charged too: an allowance
+    // that covers the face and the items but not that gives the face
+    // alone, the error as it was.
+    let items = 1 + e.curves.len() + e.points.len();
+    let short = super::evidence::tests::with_allowance(items as u64, || {
+        boolean(&a, &b, op, &tol, &Budget::DEFAULT).unwrap_err()
+    });
+    assert_eq!(short.error, failure.error);
+    assert_eq!(short.evidence.faces, e.faces);
+    assert!(short.evidence.curves.is_empty() && short.evidence.points.is_empty());
+    assert!(short.evidence.truncated);
 }

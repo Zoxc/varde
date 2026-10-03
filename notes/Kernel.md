@@ -364,7 +364,8 @@ come out `Inconsistent` are decided again without near ties: flat ones with
 exact signs, curved ones as the numbers have them, within each try
 with fewer shortcuts (above) and its cap. Curved
 primitives decide their ties by the same perturbation to first order in each
-power. Curved shadow crossings are derived from shared ray tests rather than
+power; an order within rounding of the motion and the gradient (`|δ|·|∇f|`)
+counts as zero. Curved shadow crossings are derived from shared ray tests rather than
 solved pair by pair, so the counting's balance holds by construction.
 
 **`touches`** runs the broad phase and one counting; with curved patches,

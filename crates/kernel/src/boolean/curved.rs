@@ -713,17 +713,29 @@ fn square(dh: f64, m: DVec3) -> f64 {
 /// predicates take them; 0 if all three are.
 ///
 /// `f` is linear (a motion's effect at a tie), and an order whose value
-/// is only rounding, within [`exact::RHO`] of its terms `Σ |d_i·f(e_i)|`
-/// (the motion `d` square to `f`'s gradient but for that), is taken as
-/// zero, as [`exact::sign_tied`] takes the exact predicates' later
-/// orders: at the exact tie it stands for, it is zero.
+/// is only rounding, within [`exact::RHO`] of `|d|·|∇f|` (the motion `d`
+/// within an angle `RHO` of square to `f`'s gradient), is taken as zero,
+/// as [`exact::sign_tied`] takes the exact predicates' later orders: at
+/// the exact tie it stands for, it is zero, and the next order decides.
+///
+/// The measure is the vectors' sizes, not the sum of the products
+/// `Σ |d_i·∇f_i|`, which only sees cancellation between terms: computed
+/// directions (normals at refined corners) and gradients (a patch's
+/// normal, `g′ × e′`) carry rounding in their zero components, and its
+/// product with the other vector's large component is a first order made
+/// of rounding alone. Where two crossing cylinders' seams meet on the cut,
+/// every first order there is zero exactly, yet `δ = (−1, 2.1e-15,
+/// 3.7e-15)` against `∇f = (0, …, 0.009)`, or `δ = (1, 0, 0)` against
+/// `∇f = (−4.2e-17, 0, 0.077)`, passed the sum as real: a dozen decisions
+/// at one point taken from rounding, half of them against the second
+/// order, no single motion's, built a zero-size handle in the result.
 pub(super) fn first_sign(delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
-    let gradient = DVec3::AXES.map(&f);
+    let gradient = DVec3::from_array(DVec3::AXES.map(&f));
     [delta, exact::T2, exact::T3]
         .into_iter()
         .map(|d| {
             let value = f(d);
-            let size: f64 = (0..3).map(|i| (d[i] * gradient[i]).abs()).sum();
+            let size = d.length() * gradient.length();
             if size.is_finite() && value.abs() <= exact::RHO * size {
                 0
             } else {

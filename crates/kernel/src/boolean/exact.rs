@@ -515,7 +515,7 @@ fn past_tie(pred: &impl Pred, poly: &[Exp], tie: f64) -> i8 {
 /// through a few operations (turned, moved, crossings placed). `2⁻⁴⁶`
 /// decided the same on turned flush boxes; their rounding is some
 /// `1e-16`. The curved primitives' `first_sign` takes it as the share of
-/// its terms.
+/// `|δ|·|∇f|`: the motion within an angle `RHO` of square to the gradient.
 pub(super) const RHO: f64 = 1.0 / (1u64 << 32) as f64;
 
 /// What a value moves by, to first order, when every number it is worked

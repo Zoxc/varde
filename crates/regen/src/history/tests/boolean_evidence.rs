@@ -123,32 +123,64 @@ fn a_join_touching_along_a_line_shows_the_faces_that_touch() {
     assert!(bounds.max.x < 15.01 && bounds.min.x > -5.01, "{bounds:?}");
 }
 
+/// Draws the rectangle from `min` to `max` with its corners rounded to
+/// radius `r`: lines and quarter arcs sharing their end points.
+fn rounded_rectangle(min: (f64, f64), max: (f64, f64), r: f64) -> impl FnOnce(&mut Sketch) {
+    move |sketch| {
+        let (x0, y0, x1, y1) = (min.0, min.1, max.0, max.1);
+        let mut point = |x: f64, y: f64| sketch.add_point(DVec2::new(x, y)).unwrap();
+        // Each corner's arc: its centre, start and end, counter-clockwise.
+        let arcs = [
+            [(x1 - r, y0 + r), (x1 - r, y0), (x1, y0 + r)],
+            [(x1 - r, y1 - r), (x1, y1 - r), (x1 - r, y1)],
+            [(x0 + r, y1 - r), (x0 + r, y1), (x0, y1 - r)],
+            [(x0 + r, y0 + r), (x0, y0 + r), (x0 + r, y0)],
+        ]
+        .map(|corner| corner.map(|(x, y)| point(x, y)));
+        for (k, &[center, start, end]) in arcs.iter().enumerate() {
+            sketch
+                .add_curve(Curve::Arc { center, start, end }, false)
+                .unwrap();
+            let next = arcs[(k + 1) % arcs.len()][1];
+            sketch
+                .add_curve(
+                    Curve::Line {
+                        start: end,
+                        end: next,
+                    },
+                    false,
+                )
+                .unwrap();
+        }
+    }
+}
+
 #[test]
 fn an_intersect_that_cant_be_worked_out_shows_where() {
-    // A rod of radius 0.25 along y, its axis at x 1.75 in the plane of
-    // the end of a cylinder of radius 1 along x, its foot tangent to that
-    // one's wall, intersected with it: a face of the rod is left with
-    // pieces of boundary that don't close into loops, refused as
-    // decisions that don't fit together. The failure shows those pieces
-    // as lines, the two vertices where they stop as points, and the
-    // rod's face, resolved to the body's faces in the model and drawn
-    // with the rest.
+    // A slab 0.25 thick on the YZ plane with rounded corners, its side at
+    // y 0.25, and a disc of radius 0.5 round the origin's (0, −0.25) on
+    // XY, 0.25 thick, intersected with it: the slab's start cap runs
+    // through the disc's axis and its side touches the disc's wall at the
+    // seam there. A face of the slab, that side, is left with pieces of
+    // boundary that don't close into loops, refused as decisions that
+    // don't fit together. The failure shows those pieces as lines, the
+    // two vertices where they stop as points, and the slab's face,
+    // resolved to the body's faces in the model and drawn with the rest.
     let mut editor = Editor::new(Document::default());
-    let rod = two_sides(editor.document(), "1.75", "0.5");
+    let thin = Extent::OneSide(length(editor.document(), "0.25"));
     add_extrude_on(
         &mut editor,
-        OriginPlane::XZ,
-        disc((1.75, 0.0), 0.25),
-        rod,
+        OriginPlane::YZ,
+        rounded_rectangle((-3.25, -1.0), (0.25, 1.5), 0.25),
+        thin.clone(),
         Operation::NewBody(BodyId::NEW),
     );
     let body = editor.document().bodies()[0].id;
-    let extent = Extent::OneSide(length(editor.document(), "1.75"));
     let intersect = add_extrude_on(
         &mut editor,
-        OriginPlane::YZ,
-        disc((-0.5, 0.75), 1.0),
-        extent,
+        OriginPlane::XY,
+        disc((0.0, -0.25), 0.5),
+        thin,
         Operation::Intersect(Targets::default()),
     );
     let Response::Regenerated { failed, .. } = handle(regenerate_with(&editor, None)) else {
@@ -164,15 +196,18 @@ fn an_intersect_that_cant_be_worked_out_shows_where() {
         failure.message
     );
     let geometry = failure.geometry.clone().expect("geometry");
-    // Where the pieces stop, on the rod's wall at the cylinder's end.
+    // Where the pieces stop, on the slab's side at the disc's top.
     let points = geometry.points();
     assert_eq!(points.len(), 2, "{points:?}");
     for &[x, y, z] in points {
-        assert!((x - 1.75).abs() < 1e-3, "{x}");
-        assert!(((x - 1.75).hypot(z) - 0.25).abs() < 1e-3, "{y} {z}");
+        assert!((-1e-3..=0.25).contains(&x), "{x}");
+        assert!(
+            (y - 0.25).abs() < 1e-3 && (z - 0.25).abs() < 1e-3,
+            "{y} {z}"
+        );
     }
     assert!(!geometry.lines().points().is_empty());
-    // The rod's face, every one of its faces of that name in the model.
+    // The slab's face, every one of its faces of that name in the model.
     let faces = geometry.faces();
     assert!(!faces.is_empty());
     assert!(faces.iter().all(|&(b, _)| b == body), "{faces:?}");

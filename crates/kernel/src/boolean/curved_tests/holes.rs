@@ -573,3 +573,71 @@ fn a_cross_hole_near_another_holes_mouth() {
         assert!((d - (va - i)).abs() <= within, "{d} vs {va} − {i}");
     }
 }
+
+#[test]
+fn cross_holes_whose_seams_meet_where_one_touches() {
+    // A box less a hole of radius 0.4375 along `y` round (x, z) = (0.0625,
+    // 1), then less, with and joined to a hole of 0.25 along `x` round
+    // (y, z) = (0.0625, 0.5625), whose side seams (its arcs' joins) lie at
+    // the height of the first's bottom seam: there the second's straight
+    // seam ruling touches the first's wall, the cut tangent to the side
+    // of the patch it starts on, while it also lies on a side of the
+    // other's patch. A tangency's double root puts the arc's end some
+    // `1e-8` off the touching point, the step across the side `7e-9` of
+    // its length: the trace from there started out of the patches, and
+    // `−` and `∩` were refused as `Inconsistent`. It starts the way that
+    // leaves neither patch, or along the sides (within a millionth of the
+    // step) towards the arc's other end.
+    let xz = Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::Z,
+        y: DVec3::X,
+    };
+    let yz = Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::Y,
+        y: DVec3::Z,
+    };
+    let block = extruded(
+        vec![rect(DVec2::splat(-1.0), DVec2::splat(1.0), 0)],
+        0.0,
+        2.0,
+        1,
+    );
+    let (r1, r2) = (0.4375, 0.25);
+    let first = extruded_on(
+        vec![circle(DVec2::new(1.0, 0.0625), r1, 0, false)],
+        xz,
+        -1.5,
+        1.5,
+        2,
+    );
+    let second = extruded_on(
+        vec![circle(DVec2::new(0.0625, 0.5625), r2, 0, false)],
+        yz,
+        -1.5,
+        1.5,
+        3,
+    );
+    let drilled = run(&block, &first, Op::Difference);
+    let va = 8.0 - 2.0 * PI * r1 * r1;
+    assert!((drilled.volume() - va).abs() <= 1e-12);
+    // The second hole within the block, less where it crosses the first.
+    let both = 2.0 * PI * r2 * r2 - crossing_volume(r1, 1.0, r2, 0.5625);
+    let vb = 3.0 * PI * r2 * r2;
+    let allowed = TOL.fit() * (drilled.area() + second.area()) / 5.0;
+    let mut got = Vec::new();
+    for (op, want) in [
+        (Op::Difference, va - both),
+        (Op::Intersection, both),
+        (Op::Union, va + vb - both),
+    ] {
+        let result = run(&drilled, &second, op);
+        let v = result.volume();
+        assert!((v - want).abs() <= allowed, "{op:?}: {v}, not {want}");
+        got.push(v);
+    }
+    // The identities.
+    assert!((got[0] + got[1] - va).abs() <= allowed);
+    assert!((got[2] + got[1] - va - vb).abs() <= allowed);
+}
