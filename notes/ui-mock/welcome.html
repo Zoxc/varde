@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varde UI Mock: Welcome</title>
+<!--
+  The varde UI mock's welcome screen. Open directly in a browser; the links
+  over the window switch to the model and the sketch pages.
+
+  Try: open a recent design (the model page), N for a new one, ? for
+  shortcuts.
+  Append /still to disable animations, /dark or /light to force the theme,
+  /persp for a perspective view, /projmenu to open the status bar's menu,
+  /nomouse to hide the mouse hints.
+-->
+<link rel="stylesheet" href="mock.css">
+<style>
+/* ---- welcome ---- */
+.welcome { position: absolute; top: var(--title-h); left: 0; right: 0; bottom: var(--status-h); overflow: auto; background: var(--vp-top); }
+.wel-inner { max-width: 920px; margin: 0 auto; padding: 48px 40px; }
+.section-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin: 0 0 12px; }
+.section-label + * { margin-bottom: 36px; }
+.cta { display: flex; gap: 10px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px 0 12px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-weight: 600;
+}
+.btn:hover { background: var(--hl); border-color: var(--hl-line); }
+.btn kbd { margin-left: 4px; }
+.btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.primary kbd { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.25); color: #fff; }
+.recent { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.rc { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; text-align: left; padding: 0; background: var(--panel); }
+.rc:hover { border-color: var(--hl-line); }
+.rc:hover .meta { background: var(--hl); }
+.rc .th { aspect-ratio: 4 / 3; display: grid; place-items: center; padding: 16px; background: var(--tabstrip); }
+.rc .th svg { width: 100%; height: 100%; }
+.rc .meta { padding: 10px 12px 11px; border-top: 1px solid var(--line); }
+.rc .meta b { font-weight: 600; }
+.rc .meta b span { color: var(--faint); font-weight: 400; }
+.rc .meta div { color: var(--muted); font-size: 11.5px; margin-top: 2px; display: flex; justify-content: space-between; }
+@media (max-width: 860px) {
+  .wel-inner { padding: 32px 16px; }
+  .recent { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div id="win">
+  <div id="app"></div>
+  <div class="toast" id="toast"></div>
+  <div class="tip" id="tip" hidden></div>
+</div>
+<script src="mock.js"></script>
+<script>
+const RECENT = [
+  { name: 'bracket', path: '~/parts', when: '2 h ago', thumb: 'bracket' },
+  { name: 'enclosure-lid', path: '~/proj/sensor', when: 'Yesterday', thumb: 'lid' },
+  { name: 'spacer-m6', path: '~/parts', when: '3 days ago', thumb: 'spacer' },
+  { name: 'gearbox-mount', path: '~/proj/rover', when: 'Sep 12', thumb: 'mount' },
+];
+
+// ---------------------------------------------------------------- welcome
+function thumbGroups(kind) {
+  const box = (x0, x1, y0, y1, z0, z1, holes = []) => [
+    { n: [0, 0, 1], p: [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], holes: holes.map(h => ({ near: h(z1), far: h(z0) })) },
+    { n: [0, 0, -1], p: [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]] },
+    { n: [0, -1, 0], p: [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]] },
+    { n: [0, 1, 0], p: [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]] },
+    { n: [1, 0, 0], p: [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]] },
+    { n: [-1, 0, 0], p: [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]] },
+  ];
+  const hc = (x, y, r) => z => circ(zc(z), x, y, r, 28);
+  const slot = (x0, x1, y0, y1) => z => [[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]];
+  if (kind === 'bracket') return [BRACKET];
+  if (kind === 'lid') {
+    const holes = [[6, 6], [84, 6], [6, 54], [84, 54]].map(([x, y]) => hc(x, y, 2.5));
+    for (let i = 0; i < 6; i++) holes.push(slot(30, 62, 18 + i * 5, 20 + i * 5));
+    return [box(0, 90, 0, 60, 0, 7, holes)];
+  }
+  if (kind === 'spacer') {
+    const r = 16, h = 34, n = 32, faces = [];
+    for (let i = 0; i < n; i++) {
+      const a0 = i / n * Math.PI * 2, a1 = (i + 1) / n * Math.PI * 2, am = (a0 + a1) / 2;
+      const P0 = [r * Math.cos(a0), r * Math.sin(a0)], P1 = [r * Math.cos(a1), r * Math.sin(a1)];
+      faces.push({ n: [Math.cos(am), Math.sin(am), 0], smooth: true, p: [[...P0, 0], [...P1, 0], [...P1, h], [...P0, h]] });
+    }
+    faces.push({ n: [0, 0, 1], p: circ(zc(h), 0, 0, r, n), holes: [{ near: circ(zc(h), 0, 0, 6.5, 28), far: circ(zc(0), 0, 0, 6.5, 28) }] });
+    faces.push({ n: [0, 0, -1], p: circ(zc(0), 0, 0, r, n) });
+    return [faces];
+  }
+  if (kind === 'mount') {
+    return [
+      box(0, 100, 0, 60, 0, 8, [[7, 7], [93, 7], [7, 53], [93, 53]].map(([x, y]) => hc(x, y, 3))),
+      box(15, 35, 20, 40, 8, 30, [hc(25, 30, 5)]),
+      box(65, 85, 20, 40, 8, 30, [hc(75, 30, 5)]),
+    ];
+  }
+  return [];
+}
+
+function thumb(kind) {
+  const groups = thumbGroups(kind);
+  const all = groups.flat().flatMap(f => f.p);
+  const pr = makeProj(-58, 26, bounds(all).map(([a, b]) => (a + b) / 2));
+  // The first group is the base; the rest sit on it and are painted far-to-near.
+  const cen = g => depthOf(g.flatMap(f => f.p), pr);
+  const [base, ...rest] = groups;
+  const svg = [base, ...rest.sort((a, b) => cen(a) - cen(b))].map(g => solidSvg(g, pr)).join('');
+  const [[x0, x1], [y0, y1]] = bounds(all.map(p => pr.P(...p)));
+  const pad = 4;
+  return `<svg viewBox="${x0 - pad} ${y0 - pad} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2}">${svg}</svg>`;
+}
+
+function welcome() {
+  return `
+    <div class="welcome">
+      <div class="wel-inner">
+        <div class="section-label">Start</div>
+        <div class="cta">
+          <button class="btn primary" data-act="new">${icon('plus')}New design<kbd>N</kbd></button>
+          <button class="btn" data-act="open:bracket">${icon('folder')}Open…<kbd>O</kbd></button>
+        </div>
+        <div class="section-label">Recent</div>
+        <div class="recent">
+          ${RECENT.map(r => `
+            <button class="rc" data-act="open:${r.name}">
+              <div class="th">${thumb(r.thumb)}</div>
+              <div class="meta"><b>${r.name}<span>.vrdp</span></b><div><span>${r.path}</span><span>${r.when}</span></div></div>
+            </button>`).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+page.welcome = welcome;
+start('welcome');
+</script>
+</body>
+</html>

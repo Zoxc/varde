@@ -2,7 +2,7 @@
 //!
 //! The tools' icons are the default set of `notes/ui-mock-icons.html`, its
 //! "outline with accents, line only" drawings, and the others the `I` table
-//! of `notes/ui-mock.html`. Icons are 24×24 stroke drawings. A tool's icon
+//! of `notes/ui-mock/mock.js`. Icons are 24×24 stroke drawings. A tool's icon
 //! has up to three layers, its own geometry, its accent marks and the
 //! reference geometry it works from, each tinted through [`svg::Style`] in
 //! its [`IconCategory`]'s [`IconTone`]; the others are drawn in one colour.

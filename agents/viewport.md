@@ -1290,7 +1290,8 @@ Bodies list, which reads like a fault and isn't one.
 Reading shots: a finding names the shot, what's wrong and the code
 behind it. First drop what the harness made (an unanswered request, a
 scenario that left nothing to see, shading that differs by adapter);
-then compare with `notes/ui-mock.html`, the design the screen follows.
+then compare with `notes/ui-mock/` (its welcome, model and sketch
+pages), the design the screen follows.
 What's wrong or misleading, or differs from the mock where the mock is
 the design, and is cheap to change, is fixed, in stages of related
 changes, each with its failing headless test first; what needs a

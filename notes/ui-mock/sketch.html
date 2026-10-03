@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varde UI Mock: Sketch</title>
+<!--
+  The varde UI mock's sketch screen: a sketch of the bracket being edited,
+  the model rolled back to it and ghosted. Open directly in a browser; the
+  links over the window switch to the welcome and the model pages.
+
+  Try: pick a tool from the toolbar (L, B, C, ...) or the rail, hold Alt for
+  the tool bar, Esc to stop the tool, then again to finish the sketch (the
+  model page), ? for shortcuts.
+
+  Deep links: #s1, #s2, #s3 (the bracket's sketches), #new/<plane> (a new
+  sketch on an origin plane, plane-xy, or a face, base-top); append /tools
+  to pin the tool bar open.
+  Append /still to disable animations, /dark or /light to force the theme,
+  /persp for a perspective view, /projmenu to open the status bar's menu,
+  /nomouse to hide the mouse hints.
+-->
+<link rel="stylesheet" href="mock.css">
+</head>
+<body>
+<div id="win">
+  <div id="app"></div>
+  <div class="toast" id="toast"></div>
+  <div class="tip" id="tip" hidden></div>
+</div>
+<script src="mock.js"></script>
+<script>
+// Camera that looks straight at a sketch plane, centred on it.
+function sketchCam(planeKey) {
+  const { f, b, view } = PLANES[planeKey];
+  const [px, py] = makeProj(view.yaw, view.pitch, st.doc.T).P(...f((b[0] + b[1]) / 2, (b[2] + b[3]) / 2));
+  return { ...view, px, py, zoom: 0.8 };
+}
+
+
+// The sketch from the hash: one of the bracket's, or a new one on a plane
+// or a face.
+{
+  const d = makeDoc('bracket', 'bracket');
+  let id = HASH[0] || 's1', plane = SKETCHES[id]?.plane;
+  if (id === 'new') {
+    plane = PLANES[HASH[1]] ? HASH[1] : 'plane-xy';
+    const n = d.timeline.filter(t => t.type === 'sketch').length + 1;
+    d.timeline.push({ id, type: 'sketch', name: 'Sketch ' + n, meta: FACE_INFO[plane][0] === 'Origin plane' ? FACE_INFO[plane][1] : 'Face' });
+  } else if (!plane) {
+    id = 's1';
+    plane = SKETCHES.s1.plane;
+  }
+  Object.assign(st, { doc: d, mode: 'sketch', sketch: { id, plane } });
+  Object.assign(cam, sketchCam(plane));
+}
+
+const finish = () => go('model.html', 'bracket');
+Object.assign(page, {
+  doOp(id) {
+    if (id.startsWith('tool:')) { const t = id.slice(5); st.tool = st.tool === t ? null : t; return; }
+    if (id === 'finish') { finish(); return; }
+    notWired(id);
+  },
+  escape: finish,
+});
+start('sketch');
+</script>
+</body>
+</html>

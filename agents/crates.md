@@ -45,7 +45,8 @@ unnoticed by the page, so the worker's requests would never be answered.
 
 ## Look and assets
 
-The look follows `notes/ui-mock.html`. The logo is `assets/logo.svg`; the
+The look follows `notes/ui-mock/` (`welcome.html`, `model.html`,
+`sketch.html`). The logo is `assets/logo.svg`; the
 checked-in `assets/logo.ico` is embedded as the Windows executable icon by
 `crates/binary/build.rs`, which has the command to regenerate it.
 
@@ -67,7 +68,7 @@ accent and reference colours for both palettes as the mock does. `icons::icon`
 stacks the three layers, each an SVG tinted through `svg::Style`;
 `icons::tinted` and `icons::button_icon` draw all of an icon in one
 colour, as the constraint glyphs in the viewport and the panel tabs do.
-Other icons (file, undo, eye, ...) are from `notes/ui-mock.html` and drawn
+Other icons (file, undo, eye, ...) are from `notes/ui-mock/mock.js` and drawn
 in the text colour. The tools the icon mock lacks (the offset constraint,
 Convert, Handles, Comb) keep their own one-layer drawings, in their
 category's line colour; so does the Body icon.
