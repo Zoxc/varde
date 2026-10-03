@@ -9,7 +9,7 @@ use iced::theme::palette::Extended;
 use iced::widget::slider::{self as slide, HandleShape};
 use iced::widget::{button, checkbox, container, rule, scrollable, text};
 use iced::{Background, Border, Color, Font, Shadow, Theme, Vector, border, color, font};
-use varde_render::{Colors, Srgb};
+use varde_render::{Colors, Srgb, Srgba};
 
 /// Whether the UI is light or dark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -153,6 +153,11 @@ const ORIGIN_OUTLINE: Srgb = Srgb([0.2, 0.22, 0.25]);
 const FADED_ALPHA: f32 = 0.3;
 /// The edges the model hides, dashed over it.
 const HIDDEN_EDGE_ALPHA: f32 = 0.45;
+/// Error geometry, solid: the app's red, as a sketch's conflict and the
+/// danger button are.
+const ERROR: Color = color!(0xe0564b);
+/// The halo around error geometry: the same red, translucent.
+const ERROR_HALO: Srgba = Srgba([ERROR.r, ERROR.g, ERROR.b, 0.3]);
 
 /// `color` for the renderer, which takes no alpha.
 const fn srgb(color: Color) -> Srgb {
@@ -360,6 +365,8 @@ const LIGHT: Palette = Palette {
         // The construction colour: the measure tool's B, apart from A in
         // the accent.
         second: srgb(LIGHT_CONSTRUCTION),
+        error: srgb(ERROR),
+        error_halo: ERROR_HALO,
     },
     icons: LIGHT_ICONS,
     // hsl(258 10% 80%) to hsl(258 10% 96%).
@@ -428,6 +435,8 @@ const DARK: Palette = Palette {
         // Lighter than a selected face's tint, to show on it.
         selected_edge_shade: 0.85,
         second: srgb(DARK_CONSTRUCTION),
+        error: srgb(ERROR),
+        error_halo: ERROR_HALO,
     },
     icons: DARK_ICONS,
     // hsl(258 8% 30%) to hsl(258 8% 50%).

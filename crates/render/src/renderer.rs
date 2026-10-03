@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::ops::Range;
 use std::sync::{Arc, Weak};
 
@@ -9,7 +10,7 @@ use wgpu::util::DeviceExt;
 use crate::Camera;
 use crate::highlight::{Highlights, VertexInstance};
 use crate::scene::{self, GRID_FADE_HEIGHTS, GridPlane};
-use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene};
+use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene, Srgba};
 
 /// The depth buffer's format on `device`, with a stencil: 32 bit float
 /// depth if it has that, else 24 bits. The stencil marks which part less
@@ -79,6 +80,25 @@ pub const SELECTED_EDGE_WIDTH: f32 = 2.5;
 /// The radius of a hovered or selected vertex's disc, in logical pixels,
 /// within its rim: see [`Highlights::vertices`].
 pub const VERTEX_RADIUS: f32 = 3.5;
+
+/// How wide error geometry's curves are drawn, in logical pixels: see
+/// [`Frame::errors`].
+pub const ERROR_EDGE_WIDTH: f32 = 3.0;
+
+/// How far the halo around error geometry reaches beyond it on every side,
+/// in logical pixels: see [`Frame::errors`].
+pub const ERROR_HALO: f32 = 12.0;
+
+/// The radius of an error point's disc, in logical pixels: see
+/// [`Frame::errors`].
+pub const ERROR_POINT_RADIUS: f32 = 4.0;
+
+/// How strongly error geometry is drawn where the model hides it, of its
+/// full strength, core and halo alike.
+const ERROR_HIDDEN: f32 = 0.4;
+
+/// The format of the target the errors' halo is drawn into as coverage.
+const HALO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 /// A rectangle on the render target, in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -156,6 +176,13 @@ pub struct Frame<'a> {
     /// drawn over everything else, or hidden by the model in front of it
     /// ([`SketchScene::depth_tested`]).
     pub sketch: Option<SketchScene<'a>>,
+    /// The geometry of the failures shown, drawn after everything else,
+    /// faded or not: solid red ([`Colors::error`]) within a halo of
+    /// [`Colors::error_halo`] reaching [`ERROR_HALO`] beyond it, depth
+    /// tested, and at about 40 % where the model hides it. Uploaded again
+    /// only when its sources ([`ErrorParts::source`]) differ from the last
+    /// frame prepared's.
+    pub errors: &'a [ErrorParts<'a>],
     /// The point the camera orbits, if one was picked: marked over
     /// everything but the sketch being edited, unless it shows where the
     /// origin does.
@@ -169,6 +196,23 @@ pub struct Frame<'a> {
     pub scale_factor: f32,
     /// Colours from the UI theme.
     pub colors: Colors,
+}
+
+/// The drawable parts of a failure's geometry, for [`Frame::errors`].
+#[derive(Debug, Clone)]
+pub struct ErrorParts<'a> {
+    /// Patches, filled red and lit as faces are: only its triangles are
+    /// drawn.
+    pub mesh: &'a RenderMesh,
+    /// Curves, [`ERROR_EDGE_WIDTH`] wide.
+    pub lines: &'a RenderLines,
+    /// Points, discs of radius [`ERROR_POINT_RADIUS`]. One not finite or
+    /// past [`RenderLines::MAX_POSITION`] isn't drawn.
+    pub points: &'a [[f32; 3]],
+    /// What these are the parts of, kept unchanged while they are (the
+    /// failure's `Arc`): the renderer uploads the errors again only when
+    /// one of them is another allocation than the last frame's.
+    pub source: Weak<dyn Any + Send + Sync>,
 }
 
 /// The marker of the point the camera orbits: a ring facing the screen
@@ -237,6 +281,13 @@ pub struct Colors {
     /// unshaded. See
     /// [`Frame::second_faces`] and [`Highlights::second_edges`].
     pub second: Srgb,
+    /// Error geometry ([`Frame::errors`]): its patches (lit), curves and
+    /// points.
+    pub error: Srgb,
+    /// The halo around error geometry, translucent: drawn once over the
+    /// frame wherever any of it reaches, so overlaps don't darken. Alpha
+    /// out of range or NaN is 0.3.
+    pub error_halo: Srgba,
 }
 
 /// The scene shader's uniforms. `Uniforms` in `scene.wgsl` mirrors this
@@ -268,7 +319,10 @@ struct Uniforms {
     viewport_origin: [f32; 4],
     /// [`Colors`], converted to linear with w = 1, except `model`, whose
     /// w is how opaque the model is, and `edge`, whose w is
-    /// [`Colors::hidden_edge_alpha`].
+    /// [`Colors::hidden_edge_alpha`]. The axes' w's are
+    /// [`Colors::error`]'s red, green and blue; `origin_outline`'s,
+    /// `sketch`'s and `pivot_color`'s [`Colors::error_halo`]'s, and
+    /// `hover_outline`'s its alpha.
     background_top: [f32; 4],
     background_bottom: [f32; 4],
     model: [f32; 4],
@@ -293,8 +347,8 @@ struct Uniforms {
     sketch_x: [f32; 4],
     sketch_y: [f32; 4],
     /// [`Colors::hover_face`], with w [`Colors::selected_tint`],
-    /// [`Colors::hover_outline`], with w = 1, and [`Colors::selected`],
-    /// with w [`Colors::selected_edge_shade`].
+    /// [`Colors::hover_outline`], with w [`Colors::error_halo`]'s alpha,
+    /// and [`Colors::selected`], with w [`Colors::selected_edge_shade`].
     hover_face: [f32; 4],
     hover_outline: [f32; 4],
     selected: [f32; 4],
@@ -585,6 +639,21 @@ const NO_STENCIL: wgpu::StencilState = wgpu::StencilState {
     write_mask: 0,
 };
 
+/// The errors' halo's blending: each pixel keeps the most coverage drawn
+/// there, so overlapping halos don't add up.
+const MAX_BLENDING: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+};
+
 /// What differs between the renderer's pipelines. They all share the scene
 /// shader, the uniform layout and the depth buffer.
 #[derive(Clone)]
@@ -604,6 +673,11 @@ struct Pass<'a> {
     /// Sets the shader's `SKETCH_DEPTH`: the sketch's layers are given
     /// their depth, pulled towards the camera, rather than drawn on top.
     sketch_depth: bool,
+    /// The target's format if not the frame's: the errors' halo's.
+    format: Option<wgpu::TextureFormat>,
+    /// The layout if not the scene's: the halo's composite's, which reads
+    /// the halo's coverage.
+    layout: Option<&'a wgpu::PipelineLayout>,
 }
 
 impl<'a> Pass<'a> {
@@ -623,6 +697,8 @@ impl<'a> Pass<'a> {
             cull_mode: None,
             stencil: NO_STENCIL,
             sketch_depth: false,
+            format: None,
+            layout: None,
         }
     }
 
@@ -669,6 +745,8 @@ pub enum PrepareError {
     SketchTooLarge { bytes: u64, limit: u64 },
     /// The same for the hovered and selected edges and vertices.
     HighlightsTooLarge { bytes: u64, limit: u64 },
+    /// The same for the errors' geometry ([`Frame::errors`]).
+    ErrorsTooLarge { bytes: u64, limit: u64 },
 }
 
 impl std::fmt::Display for PrepareError {
@@ -692,6 +770,11 @@ impl std::fmt::Display for PrepareError {
                 f,
                 "what's hovered and selected needs a {bytes}-byte buffer, but the device allows \
                  at most {limit} bytes"
+            ),
+            PrepareError::ErrorsTooLarge { bytes, limit } => write!(
+                f,
+                "the errors' geometry needs a {bytes}-byte buffer, but the device allows at most \
+                 {limit} bytes"
             ),
         }
     }
@@ -743,6 +826,8 @@ pub struct Renderer {
     /// ([`SketchScene::depth_tested`]).
     sketch_on_top: SketchPipelines,
     sketch_depth_tested: SketchPipelines,
+    /// The errors' geometry: its halo, its composite and its core.
+    errors: ErrorPipelines,
     bind_group_layout: wgpu::BindGroupLayout,
     alphas: Alphas,
     depth_format: wgpu::TextureFormat,
@@ -790,6 +875,12 @@ pub struct Slot {
     /// [`Frame::highlights`] as uploaded, and its `Arc` like `source`.
     highlights: HighlightBuffers,
     highlights_source: Weak<Highlights>,
+    /// [`Frame::errors`] as uploaded, and their sources like `source`.
+    errors: ErrorBuffers,
+    error_sources: Vec<Weak<dyn Any + Send + Sync>>,
+    /// The target the errors' halo is drawn into, made the first time
+    /// there are errors, at the target's size.
+    halo: Option<HaloTarget>,
 }
 
 impl Renderer {
@@ -838,6 +929,26 @@ impl Renderer {
             bind_group_layouts: &[&bind_group_layout, &part_layout],
             push_constant_ranges: &[],
         });
+        // The errors' halo's coverage, read texel by texel (`textureLoad`,
+        // no sampler) by its composite, as group 2.
+        let halo_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("varde error halo"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let composite_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("varde error halo composite"),
+            bind_group_layouts: &[&bind_group_layout, &part_layout, &halo_layout],
+            push_constant_ranges: &[],
+        });
 
         // Overrides in the scene shader. `ENCODE_SRGB` is set if the target
         // stores what the shader writes as is, so the shader must sRGB-encode
@@ -858,6 +969,9 @@ impl Renderer {
                 ("SELECTED_RIM", f64::from(SELECTED_RIM)),
                 ("SELECTED_EDGE_WIDTH", f64::from(SELECTED_EDGE_WIDTH)),
                 ("VERTEX_RADIUS", f64::from(VERTEX_RADIUS)),
+                ("ERROR_EDGE_WIDTH", f64::from(ERROR_EDGE_WIDTH)),
+                ("ERROR_HALO", f64::from(ERROR_HALO)),
+                ("ERROR_POINT_RADIUS", f64::from(ERROR_POINT_RADIUS)),
                 ("ENCODE_SRGB", if format.is_srgb() { 0.0 } else { 1.0 }),
                 ("SKETCH_DEPTH", if sketch_depth { 1.0 } else { 0.0 }),
             ]
@@ -876,7 +990,7 @@ impl Renderer {
             };
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(pass.label),
-                layout: Some(&layout),
+                layout: Some(pass.layout.unwrap_or(&layout)),
                 vertex: wgpu::VertexState {
                     module: shader,
                     entry_point: Some(pass.vs),
@@ -887,7 +1001,7 @@ impl Renderer {
                     module: shader,
                     entry_point: Some(pass.fs),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format,
+                        format: pass.format.unwrap_or(format),
                         blend: Some(pass.blend),
                         write_mask: pass.write_mask,
                     })],
@@ -1000,11 +1114,12 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
         };
+        let faces = [positions, normals];
         let mesh = Pass {
             label: "varde mesh",
             vs: "vs_mesh",
             fs: "fs_mesh",
-            buffers: &[positions, normals],
+            buffers: &faces,
             depth_write: true,
             depth_compare: wgpu::CompareFunction::LessEqual,
             blend: wgpu::BlendState::REPLACE,
@@ -1013,6 +1128,8 @@ impl Renderer {
             cull_mode: Some(wgpu::Face::Back),
             stencil: NO_STENCIL,
             sketch_depth: false,
+            format: None,
+            layout: None,
         };
         // Tested against the stencil reference by `compare`, and on a pass
         // of both tests, `pass` done to it.
@@ -1053,6 +1170,13 @@ impl Renderer {
                 ..mesh.clone()
             })
         };
+
+        // The errors' geometry where it shows and where the model hides
+        // it: the same programs, so the two split the pixels between them.
+        let (seen, hidden) = (
+            wgpu::CompareFunction::LessEqual,
+            wgpu::CompareFunction::Greater,
+        );
 
         Self {
             background: pipeline(Pass {
@@ -1175,6 +1299,80 @@ impl Renderer {
                     &[sketch_points],
                 )),
             },
+            errors: ErrorPipelines {
+                halo: [seen, hidden].map(|depth_compare| {
+                    let halo = |label, vs, fs, buffers| {
+                        pipeline(Pass {
+                            label,
+                            buffers,
+                            depth_compare,
+                            blend: MAX_BLENDING,
+                            format: Some(HALO_FORMAT),
+                            ..Pass::overlay(label, vs, fs)
+                        })
+                    };
+                    ErrorLayer {
+                        faces: halo(
+                            "varde error halo, faces",
+                            "vs_error_face",
+                            "fs_halo_face",
+                            &faces,
+                        ),
+                        lines: halo(
+                            "varde error halo, lines",
+                            "vs_error_halo_line",
+                            "fs_halo_line",
+                            &edge_points,
+                        ),
+                        points: halo(
+                            "varde error halo, points",
+                            "vs_error_halo_point",
+                            "fs_halo_point",
+                            std::slice::from_ref(&vertices),
+                        ),
+                    }
+                }),
+                composite: pipeline(Pass {
+                    depth_compare: wgpu::CompareFunction::Always,
+                    layout: Some(&composite_layout),
+                    ..Pass::overlay(
+                        "varde error halo composite",
+                        "vs_fullscreen",
+                        "fs_error_halo",
+                    )
+                }),
+                core: [seen, hidden].map(|depth_compare| {
+                    let core = |label, vs, fs, buffers| {
+                        pipeline(Pass {
+                            label,
+                            buffers,
+                            depth_compare,
+                            ..Pass::overlay(label, vs, fs)
+                        })
+                    };
+                    ErrorLayer {
+                        faces: core(
+                            "varde error faces",
+                            "vs_error_face",
+                            "fs_error_face",
+                            &faces,
+                        ),
+                        lines: core(
+                            "varde error lines",
+                            "vs_error_line",
+                            "fs_highlight_line",
+                            &edge_points,
+                        ),
+                        points: core(
+                            "varde error points",
+                            "vs_error_point",
+                            "fs_highlight_point",
+                            std::slice::from_ref(&vertices),
+                        ),
+                    }
+                }),
+                halo_layout,
+            },
             bind_group_layout,
             alphas,
             depth_format,
@@ -1223,6 +1421,9 @@ impl Renderer {
             faces: Vec::new(),
             highlights: HighlightBuffers::default(),
             highlights_source: Weak::new(),
+            errors: ErrorBuffers::default(),
+            error_sources: Vec::new(),
+            halo: None,
         }
     }
 
@@ -1236,7 +1437,9 @@ impl Renderer {
     /// for the frame's sketches with [`PrepareError::LinesTooLarge`], and
     /// the layers of the sketch being edited with
     /// [`PrepareError::SketchTooLarge`], its live layer reported each frame
-    /// it's too large; should several fail at once, the mesh's error is
+    /// it's too large, and the errors' geometry with
+    /// [`PrepareError::ErrorsTooLarge`], tried again only once their
+    /// sources change; should several fail at once, the mesh's error is
     /// the one returned, then the sketches'.
     pub fn prepare(
         &self,
@@ -1291,6 +1494,17 @@ impl Renderer {
                 .write(device, queue, frame.mesh, frame.highlights);
             result = result.and(written);
         }
+        // The failures shown keep their `Arc`s while they're unchanged.
+        let same_errors = slot.error_sources.len() == frame.errors.len()
+            && (slot.error_sources.iter())
+                .zip(frame.errors)
+                .all(|(kept, error)| Weak::ptr_eq(kept, &error.source));
+        if !same_errors {
+            slot.error_sources = frame.errors.iter().map(|e| e.source.clone()).collect();
+            let written = slot.errors.write(device, queue, frame.errors);
+            result = result.and(written);
+        }
+
         slot.faces.clear();
         if !frame.faded
             && let Some(gpu) = &slot.mesh
@@ -1343,6 +1557,7 @@ impl Renderer {
         let bounds = [
             slot.mesh.as_ref().and_then(|m| m.bounds),
             slot.lines.as_ref().and_then(|l| l.bounds),
+            slot.errors.bounds,
         ]
         .into_iter()
         .chain(sketch_bounds.into_iter().flatten());
@@ -1378,6 +1593,13 @@ impl Renderer {
             0.0
         };
         let second = linear(colors.second);
+        let error = linear(colors.error);
+        let error_halo = colors.error_halo.linear();
+        let halo_alpha = if (0.0..=1.0).contains(&error_halo[3]) {
+            error_halo[3]
+        } else {
+            0.3
+        };
         let uniforms = Uniforms {
             view_proj: scene::view_projection(camera, aspect, grid, bounds.flatten())
                 .to_cols_array_2d(),
@@ -1398,14 +1620,14 @@ impl Renderer {
             model: faded(colors.model),
             edge: with_alpha(colors.edge, hidden_alpha),
             grid: linear(colors.grid),
-            axes: colors.axes.map(linear),
-            origin_outline: linear(colors.origin_outline),
-            sketch: linear(colors.sketch),
+            axes: [0, 1, 2].map(|i| with_alpha(colors.axes[i], error[i])),
+            origin_outline: with_alpha(colors.origin_outline, error_halo[0]),
+            sketch: with_alpha(colors.sketch, error_halo[1]),
             pivot: frame
                 .pivot
                 .filter(|pivot| pivot.at.is_finite() && (0.0..=1.0).contains(&pivot.opacity))
                 .map_or([0.0; 4], |pivot| pivot.at.extend(pivot.opacity).to_array()),
-            pivot_color: linear(colors.pivot),
+            pivot_color: with_alpha(colors.pivot, error_halo[2]),
             grid_origin: grid.origin().extend(0.0).to_array(),
             grid_x: grid.x().extend(axis_index(grid.x())).to_array(),
             grid_y: grid.y().extend(axis_index(grid.y())).to_array(),
@@ -1413,7 +1635,7 @@ impl Renderer {
             sketch_x: sketch_plane.x().extend(second[1]).to_array(),
             sketch_y: sketch_plane.y().extend(second[2]).to_array(),
             hover_face: with_alpha(colors.hover_face, selected_tint),
-            hover_outline: linear(colors.hover_outline),
+            hover_outline: with_alpha(colors.hover_outline, halo_alpha),
             selected: with_alpha(colors.selected, selected_edge_shade),
         };
         queue.write_buffer(&slot.uniforms, 0, bytemuck::bytes_of(&uniforms));
@@ -1421,6 +1643,9 @@ impl Renderer {
         let size = frame.target_size.map(|s| s.max(1));
         if slot.depth.as_ref().map(|d| d.size) != Some(size) {
             slot.depth = Some(create_depth(device, self.depth_format, size));
+        }
+        if slot.errors.any() && slot.halo.as_ref().map(|h| h.size) != Some(size) {
+            slot.halo = Some(create_halo(device, &self.errors.halo_layout, size));
         }
         result
     }
@@ -1454,26 +1679,66 @@ impl Renderer {
         if clip.width == 0 || clip.height == 0 {
             return;
         }
+        // The errors are drawn in passes of their own after the scene's,
+        // depth tested against the model, so its depth is kept for them.
+        let halo = slot.halo.as_ref().filter(|_| slot.errors.any());
+        let depth_store = if halo.is_some() {
+            wgpu::StoreOp::Store
+        } else {
+            wgpu::StoreOp::Discard
+        };
+        let mut pass = self.begin(
+            slot,
+            encoder,
+            ("varde scene", target, wgpu::LoadOp::Load),
+            depth,
+            (wgpu::LoadOp::Clear(1.0), depth_store),
+            clip,
+        );
+        self.draw_scene(&mut pass, slot, backdrop);
+        drop(pass);
+        if let Some(halo) = halo {
+            self.draw_errors(slot, encoder, target, depth, halo, clip);
+        }
+    }
 
+    /// Begins a pass of `slot`'s frame drawing into the colour target
+    /// `target` (its label, view and load) and `depth`, its depth loaded
+    /// and stored as `depth_ops` say (the stencil cleared or loaded with it,
+    /// never kept), within `clip`, with the uniforms bound and parts drawn
+    /// opaque.
+    fn begin<'p>(
+        &self,
+        slot: &Slot,
+        encoder: &'p mut wgpu::CommandEncoder,
+        (label, target, load): (&str, &wgpu::TextureView, wgpu::LoadOp<wgpu::Color>),
+        depth: &DepthTarget,
+        (depth_load, depth_store): (wgpu::LoadOp<f32>, wgpu::StoreOp),
+        clip: ClipRect,
+    ) -> wgpu::RenderPass<'p> {
+        let stencil_load = match depth_load {
+            wgpu::LoadOp::Clear(_) => wgpu::LoadOp::Clear(0),
+            _ => wgpu::LoadOp::Load,
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("varde scene"),
+            label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
+                    load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth.view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Discard,
+                    load: depth_load,
+                    store: depth_store,
                 }),
                 stencil_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
+                    load: stencil_load,
                     store: wgpu::StoreOp::Discard,
                 }),
             }),
@@ -1486,7 +1751,94 @@ impl Renderer {
         pass.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
         pass.set_bind_group(0, &slot.bind_group, &[]);
         self.alphas.set(&mut pass, self.alphas.opaque);
+        pass
+    }
 
+    /// Records drawing `slot`'s errors over what's in `target`, with
+    /// `depth` holding the model's depth: their halo's coverage into
+    /// `halo`, seen and hidden, then composited over the target once, then
+    /// the errors themselves, a kind at a time, hidden then seen.
+    fn draw_errors(
+        &self,
+        slot: &Slot,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        depth: &DepthTarget,
+        halo: &HaloTarget,
+        clip: ClipRect,
+    ) {
+        let steps = [self.alphas.opaque, self.alphas.step(Some(ERROR_HIDDEN))];
+        let errors = &slot.errors;
+        let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Store);
+        let mut pass = self.begin(
+            slot,
+            encoder,
+            (
+                "varde error halo",
+                &halo.view,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            ),
+            depth,
+            load,
+            clip,
+        );
+        self.draw_error_layers(&mut pass, &self.errors.halo, steps, errors);
+        drop(pass);
+
+        let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Discard);
+        let target = ("varde errors", target, wgpu::LoadOp::Load);
+        let mut pass = self.begin(slot, encoder, target, depth, load, clip);
+        pass.set_pipeline(&self.errors.composite);
+        pass.set_bind_group(2, &halo.group, &[]);
+        pass.draw(0..3, 0..1);
+        // Hidden first, so what shows of each kind goes over it.
+        let [seen, hidden] = &self.errors.core;
+        let [opaque, dimmed] = steps;
+        let layers = [hidden, seen];
+        self.draw_error_layers(&mut pass, layers, [dimmed, opaque], errors);
+    }
+
+    /// Records drawing `errors` with `layers` at the alphas' steps `steps`,
+    /// their faces with each, then their lines, then their points.
+    fn draw_error_layers<'l>(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        layers: impl IntoIterator<Item = &'l ErrorLayer> + Clone,
+        steps: [u32; 2],
+        errors: &ErrorBuffers,
+    ) {
+        let with_steps = || layers.clone().into_iter().zip(steps);
+        if let (Some(positions), Some(normals)) = (errors.positions.drawn(), errors.normals.drawn())
+        {
+            pass.set_vertex_buffer(0, positions);
+            pass.set_vertex_buffer(1, normals);
+            for (layer, step) in with_steps() {
+                self.alphas.set(pass, step);
+                pass.set_pipeline(&layer.faces);
+                pass.draw(0..errors.positions.count, 0..1);
+            }
+        }
+        if let Some(edges) = errors.edges.held() {
+            // Between the stream's two ends.
+            let points = 1..errors.edges.count.saturating_sub(1);
+            for (layer, step) in with_steps() {
+                self.alphas.set(pass, step);
+                draw_stream(pass, &layer.lines, edges, points.clone());
+            }
+        }
+        if let Some(points) = errors.points.drawn() {
+            pass.set_vertex_buffer(0, points);
+            for (layer, step) in with_steps() {
+                self.alphas.set(pass, step);
+                pass.set_pipeline(&layer.points);
+                pass.draw(0..POINT_VERTICES, 0..errors.points.count);
+            }
+        }
+    }
+
+    /// Records drawing `slot`'s scene into `pass`: everything but the
+    /// errors, the backdrop only if `backdrop` (see [`Self::record`]).
+    fn draw_scene(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot, backdrop: bool) {
         if backdrop {
             pass.set_pipeline(&self.background);
             pass.draw(0..3, 0..1);
@@ -1495,23 +1847,23 @@ impl Renderer {
         let mesh = slot.mesh.as_ref();
         let draws = &slot.draws;
         if let Some(mesh) = mesh {
-            bind_faces(&mut pass, mesh);
+            bind_faces(pass, mesh);
             if slot.faded {
                 let all = 0..mesh.parts.len();
                 pass.set_pipeline(&self.mesh_depth);
-                draw_faces(&mut pass, mesh, all.clone());
+                draw_faces(pass, mesh, all.clone());
                 pass.set_pipeline(&self.mesh_faded);
-                draw_faces(&mut pass, mesh, all.clone());
-                draw_edges(&mut pass, &self.edges, mesh, all);
+                draw_faces(pass, mesh, all.clone());
+                draw_edges(pass, &self.edges, mesh, all);
             } else {
                 pass.set_pipeline(&self.mesh);
                 for run in &draws.opaque {
-                    draw_faces(&mut pass, mesh, run.clone());
+                    draw_faces(pass, mesh, run.clone());
                 }
                 // Before anything else writes depth where they are.
-                self.draw_picked_faces(&mut pass, &slot.faces, false);
+                self.draw_picked_faces(pass, &slot.faces, false);
                 for run in &draws.opaque {
-                    draw_edges(&mut pass, &self.edges, mesh, run.clone());
+                    draw_edges(pass, &self.edges, mesh, run.clone());
                 }
             }
         }
@@ -1538,11 +1890,11 @@ impl Renderer {
         {
             if slot.hidden_edges {
                 for run in &draws.opaque {
-                    draw_edges(&mut pass, &self.hidden_edges, mesh, run.clone());
+                    draw_edges(pass, &self.hidden_edges, mesh, run.clone());
                 }
-                self.draw_glass_edges(&mut pass, &self.hidden_edges, mesh, draws);
+                self.draw_glass_edges(pass, &self.hidden_edges, mesh, draws);
             }
-            self.draw_glass_edges(&mut pass, &self.edges, mesh, draws);
+            self.draw_glass_edges(pass, &self.edges, mesh, draws);
         }
 
         // The extrude's layers under the glass in front of them, if there
@@ -1551,7 +1903,7 @@ impl Renderer {
         let layers = [&slot.sketch_base, &slot.sketch_live];
         if slot.sketching && slot.sketch_depth && glass {
             for layer in layers {
-                self.sketch_depth_tested.draw(&mut pass, layer);
+                self.sketch_depth_tested.draw(pass, layer);
             }
         }
 
@@ -1561,35 +1913,35 @@ impl Renderer {
         // its edges again, undimmed on the glass they lie on.
         if let Some(mesh) = mesh.filter(|_| glass) {
             if !slot.faded {
-                self.draw_highlights(&mut pass, slot);
+                self.draw_highlights(pass, slot);
             }
-            bind_faces(&mut pass, mesh);
+            bind_faces(pass, mesh);
             for &(part, step) in &draws.transparent {
-                self.alphas.set(&mut pass, step);
+                self.alphas.set(pass, step);
                 for pipeline in [&self.glass_back, &self.glass_front] {
                     pass.set_pipeline(pipeline);
-                    draw_faces(&mut pass, mesh, part..part + 1);
+                    draw_faces(pass, mesh, part..part + 1);
                 }
             }
             for (i, &(part, step)) in draws.transparent.iter().enumerate() {
                 // Never 0, what the stencil is cleared to; repeating only
                 // past 255 parts less than opaque.
                 pass.set_stencil_reference(i as u32 % 255 + 1);
-                bind_faces(&mut pass, mesh);
+                bind_faces(pass, mesh);
                 pass.set_pipeline(&self.glass_depth);
-                draw_faces(&mut pass, mesh, part..part + 1);
+                draw_faces(pass, mesh, part..part + 1);
                 if slot.hidden_edges {
-                    self.draw_hidden_by_glass(&mut pass, mesh, draws, step);
+                    self.draw_hidden_by_glass(pass, mesh, draws, step);
                 }
             }
-            bind_faces(&mut pass, mesh);
-            self.draw_picked_faces(&mut pass, &slot.faces, true);
-            self.draw_glass_edges(&mut pass, &self.edges, mesh, draws);
+            bind_faces(pass, mesh);
+            self.draw_picked_faces(pass, &slot.faces, true);
+            self.draw_glass_edges(pass, &self.edges, mesh, draws);
         }
 
         // The hover and the selection over everything of the model.
         if !slot.faded && mesh.is_some() {
-            self.draw_highlights(&mut pass, slot);
+            self.draw_highlights(pass, slot);
         }
 
         if backdrop {
@@ -1606,7 +1958,7 @@ impl Renderer {
                 &self.sketch_on_top
             };
             for layer in layers {
-                pipelines.draw(&mut pass, layer);
+                pipelines.draw(pass, layer);
             }
         }
     }
@@ -1774,6 +2126,29 @@ fn draw_stream(
         pass.set_vertex_buffer(slot, edges.slice((from + u64::from(slot)) * stride..));
     }
     pass.draw(0..LINE_VERTICES, 0..points.end - points.start - 1);
+}
+
+/// The pipelines drawing the errors' geometry ([`Frame::errors`]), each
+/// kind where it shows (`[0]`, depth `LessEqual`) and where the model hides
+/// it (`[1]`, `Greater`, drawn at [`ERROR_HIDDEN`]).
+struct ErrorPipelines {
+    /// The halo, as coverage into a [`HALO_FORMAT`] target of its own,
+    /// blended by [`MAX_BLENDING`].
+    halo: [ErrorLayer; 2],
+    /// The halo's coverage, once over the frame in
+    /// [`Colors::error_halo`].
+    composite: wgpu::RenderPipeline,
+    /// The geometry itself, over that.
+    core: [ErrorLayer; 2],
+    /// Group 2 of the composite: the halo's coverage.
+    halo_layout: wgpu::BindGroupLayout,
+}
+
+/// The pipelines drawing one way the errors' patches, curves and points.
+struct ErrorLayer {
+    faces: wgpu::RenderPipeline,
+    lines: wgpu::RenderPipeline,
+    points: wgpu::RenderPipeline,
 }
 
 /// The pipelines drawing the sketch's layers, one way or the other: see
@@ -1988,10 +2363,17 @@ impl EdgeStream {
     /// Appends the polyline through `polyline`'s vertices of `positions`
     /// as edge `edge`, below [`NEIGHBOUR_ONLY`].
     pub(crate) fn push(&mut self, edge: u32, positions: &[[f32; 3]], polyline: &[u32]) {
+        self.push_points(
+            edge,
+            polyline.iter().map(|&vertex| positions[vertex as usize]),
+        );
+    }
+
+    /// Appends the polyline through `polyline` as edge `edge`, likewise.
+    pub(crate) fn push_points(&mut self, edge: u32, polyline: impl IntoIterator<Item = [f32; 3]>) {
         let (points, kept) = (&mut self.points, &mut self.kept);
         kept.clear();
-        for &vertex in polyline {
-            let position = positions[vertex as usize];
+        for position in polyline {
             if kept.last() != Some(&position) {
                 kept.push(position);
             }
@@ -2229,6 +2611,154 @@ impl HighlightBuffers {
         };
         written
     }
+}
+
+/// [`Frame::errors`] on the GPU, all of them together: the patches'
+/// triangles a corner at a time (positions and normals), the curves as an
+/// [`EdgePoint`] stream, a polyline each, and the points.
+#[derive(Default)]
+struct ErrorBuffers {
+    positions: Instances,
+    normals: Instances,
+    edges: Instances,
+    points: Instances,
+    /// To fit the depth range to.
+    bounds: Option<Aabb>,
+}
+
+impl ErrorBuffers {
+    /// Replaces what the buffers hold with `errors`. On failing, holds
+    /// nothing.
+    fn write(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        errors: &[ErrorParts<'_>],
+    ) -> Result<(), PrepareError> {
+        let built = BuiltErrors::new(errors);
+        let too_large = |bytes, limit| PrepareError::ErrorsTooLarge { bytes, limit };
+        let (d, q) = (device, queue);
+        let written = (self.positions)
+            .write(d, q, "varde error faces", &built.positions, too_large)
+            .and_then(|()| {
+                (self.normals).write(d, q, "varde error normals", &built.normals, too_large)
+            })
+            .and_then(|()| (self.edges).write(d, q, "varde error lines", &built.edges, too_large))
+            .and_then(|()| {
+                (self.points).write(d, q, "varde error points", &built.points, too_large)
+            });
+        *self = match written {
+            Ok(()) => ErrorBuffers {
+                bounds: built.bounds,
+                ..std::mem::take(self)
+            },
+            Err(_) => ErrorBuffers::default(),
+        };
+        written
+    }
+
+    /// Whether there's anything to draw.
+    fn any(&self) -> bool {
+        [&self.positions, &self.edges, &self.points]
+            .iter()
+            .any(|buffer| buffer.held().is_some())
+    }
+}
+
+/// [`Frame::errors`] as the renderer draws them, see [`ErrorBuffers`].
+struct BuiltErrors {
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    edges: Vec<EdgePoint>,
+    points: Vec<VertexInstance>,
+    bounds: Option<Aabb>,
+}
+
+impl BuiltErrors {
+    fn new(errors: &[ErrorParts<'_>]) -> BuiltErrors {
+        let mut built = BuiltErrors {
+            positions: Vec::new(),
+            normals: Vec::new(),
+            edges: Vec::new(),
+            points: Vec::new(),
+            bounds: None,
+        };
+        let mut stream = EdgeStream::with_capacity(0);
+        // Each polyline a number of its own, so none joins the next; past
+        // `CREASE` they start again, which only the next must differ from.
+        let mut polyline = 0u32;
+        for error in errors {
+            let mesh = error.mesh;
+            let (positions, normals) = (mesh.positions(), mesh.normals());
+            // A corner at a time: the kernel's meshes index their own
+            // positions and normals, in whole triangles.
+            for &i in mesh.indices() {
+                built.positions.push(positions[i as usize]);
+                built.normals.push(normals[i as usize]);
+            }
+            for line in error.lines.polylines() {
+                stream.push_points(polyline, line.iter().copied());
+                polyline = (polyline + 1) % CREASE;
+            }
+            let mut boxes: Vec<Aabb> = [mesh.bounds(), error.lines.bounds()]
+                .into_iter()
+                .flatten()
+                .collect();
+            let shown =
+                |point: &&[f32; 3]| (point.iter()).all(|x| x.abs() <= RenderLines::MAX_POSITION);
+            for &position in error.points.iter().filter(shown) {
+                built.points.push(VertexInstance { position, flags: 0 });
+                let at = Vec3::from(position);
+                boxes.push(Aabb { min: at, max: at });
+            }
+            built.bounds = (boxes.into_iter().chain(built.bounds)).reduce(|a, b| Aabb {
+                min: a.min.min(b.min),
+                max: a.max.max(b.max),
+            });
+        }
+        built.edges = stream.finish();
+        built
+    }
+}
+
+/// The target the errors' halo is drawn into, see [`HALO_FORMAT`].
+struct HaloTarget {
+    view: wgpu::TextureView,
+    /// Group 2 of the composite, reading it.
+    group: wgpu::BindGroup,
+    size: [u32; 2],
+}
+
+fn create_halo(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    size: [u32; 2],
+) -> HaloTarget {
+    let [width, height] = size;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("varde error halo"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: HALO_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&Default::default());
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("varde error halo"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&view),
+        }],
+    });
+    HaloTarget { view, group, size }
 }
 
 fn create_depth(

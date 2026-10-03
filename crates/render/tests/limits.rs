@@ -9,8 +9,8 @@ use std::sync::Arc;
 use glam::{DVec3, Vec3};
 use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, Colors, Frame, GridPlane, Highlights, LineStyle, PrepareError, Renderer, SketchLayer,
-    SketchScene, Space, Srgb, Srgba, Viewport, wgpu,
+    Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, LineStyle, PrepareError,
+    Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, Viewport, wgpu,
 };
 
 /// Nothing hovered or selected.
@@ -41,6 +41,8 @@ const COLORS: Colors = Colors {
     selected_tint: 0.6,
     selected_edge_shade: 0.0,
     second: Srgb([1.0, 0.5, 0.0]),
+    error: Srgb([0.9, 0.1, 0.1]),
+    error_halo: Srgba([0.9, 0.1, 0.1, 0.3]),
 };
 
 /// The device the tests share, whose buffers hold at most 512 bytes, if
@@ -86,6 +88,7 @@ fn frame<'a>(
         selected_faces: &[],
         second_faces: &[],
         highlights: &NO_HIGHLIGHTS,
+        errors: &[],
         sketch: None,
         pivot: None,
         viewport: Viewport {
@@ -324,4 +327,82 @@ fn sketch_layers_past_the_buffer_limit_are_skipped() {
         assert_eq!(prepare(frame(&fits, &too_large)), Err(error.clone()));
     }
     assert_eq!(prepare(frame(&fits, &fits)), Ok(()));
+}
+
+#[test]
+fn errors_past_the_buffer_limit_are_skipped() {
+    // A polyline of 30 points is a stream of 32 points of 20 bytes, 640
+    // bytes.
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let mut lines = RenderLines::default();
+    lines.push((0..30).map(|i| Vec3::X * i as f32)).unwrap();
+    let mesh = RenderMesh::default();
+    let source: Arc<dyn std::any::Any + Send + Sync> = Arc::new(());
+    let parts = |source: &Arc<dyn std::any::Any + Send + Sync>| ErrorParts {
+        mesh: &mesh,
+        lines: &lines,
+        points: &[],
+        source: Arc::downgrade(source),
+    };
+    let errors = [parts(&source)];
+    let too_large = PrepareError::ErrorsTooLarge {
+        bytes: 640,
+        limit: 512,
+    };
+
+    let renderer = Renderer::new(&device, FORMAT);
+    let mut slot = renderer.slot(&device);
+    let (camera, model, sketches) = (Camera::default(), Arc::default(), Arc::default());
+    let frame = Frame {
+        errors: &errors,
+        ..frame(&camera, &model, &sketches)
+    };
+    assert_eq!(
+        renderer.prepare(&mut slot, &device, &queue, &frame),
+        Err(too_large.clone())
+    );
+    // Reported once, not on every frame, and the frame is drawn without.
+    assert_eq!(renderer.prepare(&mut slot, &device, &queue, &frame), Ok(()));
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let target = device.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = target.create_view(&Default::default());
+    let clip = ClipRect {
+        x: 0,
+        y: 0,
+        width: 64,
+        height: 64,
+    };
+    renderer.render(&slot, &mut encoder, &view, clip);
+    queue.submit([encoder.finish()]);
+    // Another source is tried, even with the same parts.
+    let other: Arc<dyn std::any::Any + Send + Sync> = Arc::new(());
+    let errors = [parts(&other)];
+    assert_eq!(
+        renderer.prepare(
+            &mut slot,
+            &device,
+            &queue,
+            &Frame {
+                errors: &errors,
+                ..frame
+            }
+        ),
+        Err(too_large)
+    );
 }

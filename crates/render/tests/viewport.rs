@@ -40,6 +40,8 @@ const COLORS: Colors = Colors {
     selected_tint: 0.6,
     selected_edge_shade: 0.0,
     second: Srgb([1.0, 0.5, 0.0]),
+    error: Srgb([0.9, 0.1, 0.1]),
+    error_halo: Srgba([0.9, 0.1, 0.1, 0.3]),
 };
 const SIZE: [u32; 2] = [512, 256];
 const SENTINEL: [u8; 4] = [255, 0, 255, 255];
@@ -98,6 +100,7 @@ fn render_to(
             selected_faces: &[],
             second_faces: &[],
             highlights: &Arc::default(),
+            errors: &[],
             sketch: None,
             pivot: None,
             viewport,
@@ -181,6 +184,7 @@ fn render_scaled(
             selected_faces: &extras.selected_faces,
             second_faces: &extras.second_faces,
             highlights: &Arc::new(extras.highlights),
+            errors: &[],
             sketch,
             pivot: extras.pivot,
             viewport,

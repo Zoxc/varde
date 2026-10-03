@@ -35,3 +35,38 @@ fn a_part_less_than_opaque_is_never_drawn_invisible_on_a_short_table() {
     // A finer table rounds the faintest up to its first step.
     assert_eq!(alpha_step(Some(0.01), 3), 1);
 }
+
+#[test]
+fn errors_are_built_together_without_points_past_the_bound() {
+    let mut lines = RenderLines::default();
+    lines
+        .push([Vec3::ZERO, Vec3::X, Vec3::new(1.0, 1.0, 0.0)])
+        .unwrap();
+    lines.push([Vec3::Z, Vec3::new(0.0, 2.0, 1.0)]).unwrap();
+    let far = RenderLines::MAX_POSITION * 2.0;
+    let points = [
+        [5.0, -1.0, 0.0],
+        [f32::NAN, 0.0, 0.0],
+        [f32::INFINITY, 0.0, 0.0],
+        [0.0, far, 0.0],
+    ];
+    let (mesh, source) = (RenderMesh::default(), Arc::new(()));
+    let parts = |points| ErrorParts {
+        mesh: &mesh,
+        lines: &lines,
+        points,
+        source: Arc::downgrade(&source) as Weak<dyn Any + Send + Sync>,
+    };
+    let built = BuiltErrors::new(&[parts(&points), parts(&[])]);
+    // Only the first point is drawn, and bounded.
+    assert_eq!(built.points.len(), 1);
+    let bounds = built.bounds.unwrap();
+    assert_eq!(bounds.min, Vec3::new(0.0, -1.0, 0.0));
+    assert_eq!(bounds.max, Vec3::new(5.0, 2.0, 1.0));
+    // Four polylines, each its own edge, between the stream's two ends.
+    let edges: Vec<u32> = built.edges.iter().map(|point| point.edge).collect();
+    assert_eq!(
+        edges,
+        [NO_EDGE, 0, 0, 0, 1, 1, 2, 2, 2, 3, 3, NO_EDGE].to_vec()
+    );
+}

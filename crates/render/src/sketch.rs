@@ -41,7 +41,7 @@ pub struct Srgba(pub [f32; 4]);
 
 impl Srgba {
     /// In linear colour, which the shader works in, alpha as it is.
-    fn linear(self) -> [f32; 4] {
+    pub(crate) fn linear(self) -> [f32; 4] {
         let [r, g, b, a] = self.0;
         [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b), a]
     }

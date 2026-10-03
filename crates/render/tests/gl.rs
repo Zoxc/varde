@@ -7,8 +7,8 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3, Vec3};
 use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, ClipRect, Colors, Frame, GridPlane, Highlights, Projection, Renderer, SketchLayer,
-    SketchScene, Space, Srgb, Srgba, Vertex, View, Viewport, wgpu,
+    Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, Projection, Renderer,
+    SketchLayer, SketchScene, Space, Srgb, Srgba, Vertex, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -39,6 +39,8 @@ const COLORS: Colors = Colors {
     selected_tint: 0.6,
     selected_edge_shade: 0.0,
     second: Srgb([1.0, 0.5, 0.0]),
+    error: Srgb([0.9, 0.1, 0.1]),
+    error_halo: Srgba([0.9, 0.1, 0.1, 0.3]),
 };
 
 /// [`COLORS`] with yellow edges.
@@ -100,6 +102,7 @@ fn frame<'a>(
         selected_faces: &[],
         second_faces: &[],
         highlights: &NO_HIGHLIGHTS,
+        errors: &[],
         sketch: None,
         pivot: None,
         viewport: Viewport {
@@ -363,6 +366,7 @@ fn hover_and_selection_are_drawn_on_gl() {
             hovered_faces,
             selected_faces,
             highlights: &highlights,
+            errors: &[],
             grid: hidden_grid(),
             ..frame(&camera, &mesh, &sketches)
         };
@@ -405,4 +409,69 @@ fn hover_and_selection_are_drawn_on_gl() {
         .filter(|[r, g, b, _]| *g > 200 && *g > r.saturating_add(20) && *g > b.saturating_add(40))
         .count();
     assert!(green > 200, "{green} pixels of outline");
+}
+
+#[test]
+fn errors_and_their_halo_are_drawn_on_gl() {
+    // The halo's coverage is drawn into an R8Unorm target with Max
+    // blending and read back texel by texel (`textureLoad`) over the
+    // frame, all of which WebGL2 has.
+    let Some((device, queue)) = gl_device() else {
+        eprintln!("no GL adapter, skipping");
+        return;
+    };
+    let (camera, mesh) = cube_from_top();
+    // 128 / 12 pixels a unit: a line at y = 4.5 is on the boundary of rows
+    // 15 and 16, off the cube; one at y = 0 is under the cube.
+    let mut lines = RenderLines::default();
+    lines
+        .push([Vec3::new(-4.0, 4.5, 0.0), Vec3::new(4.0, 4.5, 0.0)])
+        .unwrap();
+    let mut under = RenderLines::default();
+    under
+        .push([Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 0.0, -1.0)])
+        .unwrap();
+    let source: Arc<dyn std::any::Any + Send + Sync> = Arc::new(());
+    let empty = RenderMesh::default();
+    let parts = |lines| ErrorParts {
+        mesh: &empty,
+        lines,
+        points: &[],
+        source: Arc::downgrade(&source),
+    };
+    let errors = [parts(&lines), parts(&under)];
+    let renderer = Renderer::new(&device, FORMAT);
+    let sketches = Arc::default();
+    let pixels = draw(
+        &device,
+        &queue,
+        &renderer,
+        &Frame {
+            grid: hidden_grid(),
+            errors: &errors,
+            ..frame(&camera, &mesh, &sketches)
+        },
+    );
+    let at = |x: u32, y: u32| pixels[(y * SIZE[0] + x) as usize];
+    // The core, then the halo alone both sides at the error's colour (0.9
+    // red) at 0.3, then nothing; and nothing where a halo read upside
+    // down would be.
+    for row in [15, 16] {
+        let [r, g, _, _] = at(64, row);
+        assert!(r > 200 && g < 40, "row {row}: {:?}", at(64, row));
+    }
+    for row in [7, 24] {
+        let [r, g, _, _] = at(64, row);
+        assert!(
+            (60..=80).contains(&r) && g < 15,
+            "row {row}: {:?}",
+            at(64, row)
+        );
+    }
+    for row in [36, 112] {
+        assert_eq!(at(64, row), [0, 0, 0, 255], "row {row}");
+    }
+    // Under the cube, dimmed: red, with the cube showing through.
+    let [r, g, _, _] = at(64, 64);
+    assert!(r > g + 30 && g > 60, "{:?}", at(64, 64));
 }

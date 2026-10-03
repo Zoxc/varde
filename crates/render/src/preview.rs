@@ -166,6 +166,7 @@ pub fn render_preview(
         selected_faces: &[],
         second_faces: &[],
         highlights: &Arc::new(Highlights::default()),
+        errors: &[],
         sketch: None,
         pivot: None,
         viewport: Viewport {

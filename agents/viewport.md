@@ -237,9 +237,11 @@ logical pixels wide, cut at the near plane, depth tested and pulled
 towards the camera like the edges, so bodies in front hide them but a face
 they lie on doesn't; the edges again where the model hides them, if
 `Frame::hidden_edges` and not faded (below); the parts less than opaque
-(below); the origin marker; and on top of it all the sketch
+(below); the origin marker; on top of it all the sketch
 being edited (`Frame::sketch`, a `SketchScene`), not depth tested, so the
-faded model never hides it. Setting up an extrude, the same layers are
+faded model never hides it; and last, in passes of their own, the
+geometry of the failures shown (`Frame::errors`, see "Error geometry"
+below), faded or not. Setting up an extrude, the same layers are
 depth tested instead (`SketchScene::depth_tested`, the shader's
 `SKETCH_DEPTH` override on a second set of pipelines, made from a shader
 module of their own, since wgpu's GL backend caches programs by module
@@ -942,14 +944,73 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   edges' colour, within the selected edges' faint white rim, or the
   hover's if it's hovered too.
 
+**Error geometry** (`Frame::errors`, a slice of `ErrorParts`: a failure's
+patches as a `RenderMesh` of triangles only, its curves as `RenderLines`,
+its points, and the `Weak` of what they're parts of, the failure's `Arc`,
+since the renderer can't name regen's `ErrorGeometry`) is drawn after
+everything else, in two passes of its own, faded or not: solid red
+(`Colors::error`) within a halo of the same red at 0.3
+(`Colors::error_halo`) reaching `ERROR_HALO` (12 logical pixels) beyond it
+on every side; curves `ERROR_EDGE_WIDTH` (3) wide, points discs of radius
+`ERROR_POINT_RADIUS` (4), patches filled red and lit as faces are
+(`fs_error_face`), their boundary among the curves. Both themes take the
+app's red, `#e0564b`, as a sketch's conflict and the danger button do.
+The slot keeps the sources and uploads the errors again (all together:
+the patches' triangles a corner at a time, unindexed, the curves as an
+`EdgePoint` stream, a polyline each, the points as `VertexInstance`s)
+only when one differs, as `highlights` is; their box joins the depth
+range's bounds. A point not finite or past `RenderLines::MAX_POSITION`
+isn't drawn. Past the device's buffer size they're skipped and reported
+once (`PrepareError::ErrorsTooLarge`). The app hands it none yet.
+
+- The halo is coverage, not colour: halos overlap everywhere (a
+  polyline's joints, two segments that touch, a point on a curve), and
+  blending each over the frame would darken the overlaps unevenly. So
+  the scene's pass keeps its depth (stored, where it's discarded without
+  errors), and a pass into an `R8Unorm` target of the target's size
+  (`HaloTarget`, made the first time there are errors, again on a
+  resize), cleared to 0, with the scene's depth loaded, draws each kind's
+  coverage with `BlendOperation::Max`: the curves through the edges'
+  quads and `fs_line`'s coverage (`vs_error_halo_line`, `fs_halo_line`,
+  writing the alpha `line_color` gives, which `output` leaves as it is)
+  `ERROR_HALO` wider either side, the points' discs as wider
+  (`vs_error_halo_point`, `fs_halo_point`), the patches filled
+  (`fs_halo_face`).
+- A pass over the frame (the scene's depth loaded again) then composites
+  it once (`fs_error_halo`, a full-screen triangle reading its own texel
+  with `textureLoad`, no sampler, group 2) as `error_halo` at the
+  coverage, and draws the core over it, a kind at a time: patches,
+  curves (`vs_error_line` into `fs_highlight_line`) and points
+  (`vs_error_point` into `fs_highlight_point`).
+- Each is drawn twice, by the same programs with another depth test, so
+  the two split the pixels: `LessEqual`, at full strength, and `Greater`,
+  where the model hides it, at 0.4 (`ERROR_HIDDEN`), core and halo
+  alike, as hidden edges are dimmed. The strength is the part's alpha
+  (the `Alphas` step), which the core's colours and the halo's coverage
+  multiply by. In the core the hidden draw goes first, so what shows of a
+  kind goes over it; in the halo order doesn't matter. Curves and points
+  are pulled in by their distance from their middle as the highlight's
+  are (`highlight_slope`), patches as the edges are (`pulled`), so the
+  faces they lie on don't hide them. Geometry inside glass is hidden
+  by its depth, so drawn at 0.4 there.
+
+On WebGL2 all of it holds: `R8` is colour-renderable and blendable in
+OpenGL ES 3.0, `MIN`/`MAX` are core blend equations there, `textureLoad`
+is `texelFetch`, and the composite's layout is three bind groups of the
+four WebGL2 allows. The GL tests draw it on wgpu's GL backend
+(`errors_and_their_halo_are_drawn_on_gl`), the halo off the middle of
+the target, so one read upside down would show.
+
 Pipelines that differ only by what they draw each have their own entry
 point, since wgpu's GL backend keys programs by module and entry point. The uniforms stay within 512 bytes (the limits
 tests' device's largest buffer): the grid's axis lines' colours are
 picked in the shader by which world axis each lies along (the `w` of
 `grid_x` and `grid_y`), the hidden edges' alpha is `edge`'s `w`, the
 selected edges' shade `selected`'s, the selected faces' tint
-`hover_face`'s, and the model's faded alpha
-`model`'s.
+`hover_face`'s, the model's faded alpha
+`model`'s, the errors' colour the axes' `w`s (`error_color`), and the
+halo's colour `origin_outline`'s, `sketch`'s and `pivot_color`'s, its
+alpha `hover_outline`'s (`error_halo`).
 
 Natively each open document has a regeneration thread (`regen::lane`),
 started by an iced subscription keyed by the document's id. The

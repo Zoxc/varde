@@ -66,6 +66,11 @@ override HOVER_RIM: f32;
 override SELECTED_EDGE_WIDTH: f32;
 override SELECTED_RIM: f32;
 override VERTEX_RADIUS: f32;
+// How wide error geometry's curves are, how far its halo reaches beyond it,
+// and the radius of its points' discs, in logical pixels.
+override ERROR_EDGE_WIDTH: f32;
+override ERROR_HALO: f32;
+override ERROR_POINT_RADIUS: f32;
 // Set for the pipelines drawing the sketch's layers depth tested: they're
 // given their depth, pulled towards the camera, rather than drawn on top.
 override SKETCH_DEPTH: bool = false;
@@ -750,6 +755,10 @@ struct HighlightOut {
 
 @fragment
 fn fs_highlight_line(in: LineOut) -> HighlightOut {
+    return highlight_line(in);
+}
+
+fn highlight_line(in: LineOut) -> HighlightOut {
     let own = segment_distance(fragment_pixels(in.position), in.ends.xy, in.ends.zw);
     var out: HighlightOut;
     out.color = line_color(in, own);
@@ -759,6 +768,10 @@ fn fs_highlight_line(in: LineOut) -> HighlightOut {
 
 @fragment
 fn fs_highlight_point(in: PointOut) -> HighlightOut {
+    return highlight_point(in);
+}
+
+fn highlight_point(in: PointOut) -> HighlightOut {
     var out: HighlightOut;
     out.color = point_color(in);
     let r = distance(fragment_pixels(in.position), in.center);
@@ -1283,4 +1296,138 @@ fn vs_fill(
 @fragment
 fn fs_fill(in: FillOut) -> @location(0) vec4<f32> {
     return output(in.color);
+}
+
+// --- Error geometry ---
+//
+// What a failure is about, red within a wide translucent red halo, drawn
+// after everything else. The halo is coverage first, into a target of its
+// own whose blending keeps the most drawn at a pixel, so halos overlapping
+// (a polyline's joints, a patch and its boundary) don't darken: the
+// boundary curves and points at the halo's width, the patches filled
+// (`fs_halo_*`, writing the coverage as it is). It's composited over the
+// frame once (`fs_error_halo`), then the geometry itself is drawn over it.
+// Both are depth tested against the model, where it shows at full strength
+// and where it's hidden (another pipeline, `Greater`) at about 40 %: the
+// part's alpha (`part.alpha.x`) carries the strength. Curves and points
+// are pulled in by their distance from their middle as the highlight's are
+// (`highlight_slope`), patches as the edges are (`pulled`).
+
+// The errors' colour, kept in the axes' unused w's: the uniforms have no
+// room for another vector.
+fn error_color() -> vec3<f32> {
+    return vec3<f32>(u.axes[0].w, u.axes[1].w, u.axes[2].w);
+}
+
+// The halo's colour and alpha, likewise in unused w's.
+fn error_halo() -> vec4<f32> {
+    return vec4<f32>(u.origin_outline.w, u.sketch.w, u.pivot_color.w, u.hover_outline.w);
+}
+
+// A corner of a patch's triangle, pulled towards the camera like the edges,
+// so a face of the model it lies on doesn't hide it.
+@vertex
+fn vs_error_face(in: MeshIn) -> MeshOut {
+    var out: MeshOut;
+    out.position = pulled(in.position);
+    out.world = in.position;
+    out.normal = in.normal;
+    return out;
+}
+
+// A patch, red and lit as faces are, at the strength drawn.
+@fragment
+fn fs_error_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return output(vec4<f32>(shaded(in, front, error_color()), part.alpha.x));
+}
+
+// A patch's halo: all of it covered, at the strength drawn.
+@fragment
+fn fs_halo_face(in: MeshOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(part.alpha.x);
+}
+
+// A curve, ERROR_EDGE_WIDTH wide in the errors' colour.
+@vertex
+fn vs_error_line(in: EdgeIn) -> LineOut {
+    let half = ERROR_EDGE_WIDTH * 0.5 * u.viewport.z;
+    return highlight_segment(in, half, vec4<f32>(error_color(), part.alpha.x));
+}
+
+// A curve's halo, ERROR_HALO wider either side.
+@vertex
+fn vs_error_halo_line(in: EdgeIn) -> LineOut {
+    let half = (ERROR_EDGE_WIDTH * 0.5 + ERROR_HALO) * u.viewport.z;
+    return highlight_segment(in, half, vec4<f32>(0.0, 0.0, 0.0, part.alpha.x));
+}
+
+// The coverage of a line or disc drawn as the highlight's are: the alpha
+// they'd blend at, which `output` leaves as it is.
+@fragment
+fn fs_halo_line(in: LineOut) -> HighlightOut {
+    var out = highlight_line(in);
+    out.color = vec4<f32>(out.color.a);
+    return out;
+}
+
+@fragment
+fn fs_halo_point(in: PointOut) -> HighlightOut {
+    var out = highlight_point(in);
+    out.color = vec4<f32>(out.color.a);
+    return out;
+}
+
+// A disc of radius `radius` physical pixels at the world point `at` in
+// `color`, depth tested at its centre's pulled depth, as a vertex is.
+fn error_point(index: u32, at: vec3<f32>, radius: f32, color: vec4<f32>) -> PointOut {
+    var out: PointOut;
+    let clip = pulled(at);
+    let center = to_pixels(clip);
+    let reach = radius + 1.0;
+    if clip.w <= 0.0 || disc_hidden(clip, center, reach) {
+        out.position = vec4<f32>(0.0, 0.0, -1.0, 1.0);
+        return out;
+    }
+    out.position = disc_corner(index, center, reach, clip.z / clip.w);
+    out.center = center;
+    out.size = vec2<f32>(radius, 0.0);
+    out.rim = color;
+    out.fill = color;
+    out.slope = highlight_slope(at);
+    return out;
+}
+
+// A point, a disc of radius ERROR_POINT_RADIUS in the errors' colour.
+@vertex
+fn vs_error_point(
+    @builtin(vertex_index) index: u32,
+    @location(0) at: vec3<f32>,
+    @location(1) flags: u32,
+) -> PointOut {
+    let radius = ERROR_POINT_RADIUS * u.viewport.z;
+    return error_point(index, at, radius, vec4<f32>(error_color(), part.alpha.x));
+}
+
+// A point's halo, ERROR_HALO wider.
+@vertex
+fn vs_error_halo_point(
+    @builtin(vertex_index) index: u32,
+    @location(0) at: vec3<f32>,
+    @location(1) flags: u32,
+) -> PointOut {
+    let radius = (ERROR_POINT_RADIUS + ERROR_HALO) * u.viewport.z;
+    return error_point(index, at, radius, vec4<f32>(0.0, 0.0, 0.0, part.alpha.x));
+}
+
+// The halo's coverage, as large as the target and read at the pixel's own
+// texel.
+@group(2) @binding(0) var halo: texture_2d<f32>;
+
+// The halo over the frame, once: its colour at its alpha times the
+// coverage.
+@fragment
+fn fs_error_halo(in: FullscreenOut) -> @location(0) vec4<f32> {
+    let coverage = textureLoad(halo, vec2<i32>(in.position.xy), 0).r;
+    let color = error_halo();
+    return output(vec4<f32>(color.rgb, color.a * coverage));
 }

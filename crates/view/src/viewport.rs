@@ -798,6 +798,8 @@ impl shader::Primitive for Primitive {
                 selected_faces: &self.highlight.selected_faces,
                 second_faces: &self.highlight.second_faces,
                 highlights: &self.highlight.highlights,
+                // None yet: the app doesn't pick the failures to show.
+                errors: &[],
                 sketch: self.sketch.as_ref().map(|sketch| SketchScene {
                     plane: sketch.plane,
                     depth_tested: sketch.depth_tested,
