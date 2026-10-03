@@ -1605,6 +1605,7 @@ fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
     assert_near(evaluation.bodies[1].solid.volume(), 24.0 + PI - inside);
 }
 
+mod boolean_evidence;
 mod check_evidence;
 mod combine;
 mod faces;

@@ -39,10 +39,11 @@ use super::count::{self, Counts};
 use super::curved::Curved;
 use super::input::Input;
 use crate::budget::Work;
+use crate::failure::evidence_work;
 use crate::mesh::{MIN_SPLIT, Mesh, Node, Refiner, Surface, apart, samples};
 use crate::par::par_map;
 use crate::patch::NormalCone;
-use crate::{KernelError, MAX_PATCHES, MAX_REFINE_DEPTH, Tolerance};
+use crate::{Evidence, Failure, KernelError, MAX_PATCHES, MAX_REFINE_DEPTH, Operand, Tolerance};
 
 /// A cut arc of a pair of faces (triangle `tris[0]` of `A`, `tris[1]` of
 /// `B`) between two of its ends, by vertex id: `plus`, the end whose
@@ -126,7 +127,8 @@ pub(super) struct Refined {
     pub(super) joined: bool,
 }
 
-/// [`refined_with`], joining ends along walls' common direction.
+/// [`refined_with`], joining ends along walls' common direction, failing
+/// with the error alone.
 #[cfg(test)]
 pub(super) fn refined(
     a: &Mesh,
@@ -135,14 +137,16 @@ pub(super) fn refined(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Refined, KernelError> {
-    refined_with(a, b, grow, true, tol, work)
+    refined_with(a, b, grow, true, tol, work).map_err(|f| f.error)
 }
 
 /// Counts `a` against `b` (whose meshes pass `check`, one of them with
 /// curved patches) and decides every pair of faces, refining both until
 /// it can: see the [module](self) docs. `grow` is whether `A` grows (a
 /// union) or shrinks, for ties; ends along walls' common direction are
-/// joined only if `join` (else such pairs are split as any other).
+/// joined only if `join` (else such pairs are split as any other). A
+/// union failing as [`BooleanError::NotManifold`] from the decisions
+/// comes with the pairs showing it (see [`decide`]).
 pub(super) fn refined_with(
     a: &Mesh,
     b: &Mesh,
@@ -150,7 +154,7 @@ pub(super) fn refined_with(
     join: bool,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Refined, KernelError> {
+) -> Result<Refined, Failure> {
     let floor = MIN_SPLIT * tol.resolution();
     // The refiners split leaves down to an eighth of the floor, for the
     // neighbours red–green splits along with a piece at the floor.
@@ -201,14 +205,14 @@ pub(super) fn refined_with(
             refiners[k].split(&wanted, work)?;
             let pieces = refiners[k].pieces()?;
             if pieces.len() > MAX_PATCHES {
-                return Err(KernelError::TooComplex);
+                return Err(KernelError::TooComplex.into());
             }
             work.spend(pieces.len())?;
             leaves[k] = pieces.iter().map(|p| p.leaf).collect();
             meshes[k] = refiners[k].mesh(&pieces);
         }
     }
-    Err(KernelError::TooComplex)
+    Err(KernelError::TooComplex.into())
 }
 
 /// One round's counting of operands with curved patches: [`refined_with`]
@@ -254,7 +258,8 @@ struct End {
 /// walls' common direction are joined only if `join`. `grow` is whether
 /// `A` grows (a union): then walls touching along a line from either
 /// side fail the operation as [`BooleanError::NotManifold`] (see
-/// [`pinched_line`]).
+/// [`pinched_line`]), with the pairs that show it ([`pinch_evidence`]).
+/// The error is the first pair's, in order, that fails.
 #[allow(clippy::too_many_arguments)]
 fn decide(
     a: &Input,
@@ -265,7 +270,7 @@ fn decide(
     join: bool,
     grow: bool,
     work: &mut Work,
-) -> Result<Decision, KernelError> {
+) -> Result<Decision, Failure> {
     // Where each crossing is.
     let at12: Vec<DVec3> = counts
         .x12
@@ -339,6 +344,16 @@ fn decide(
             grow,
         )
     });
+    if let Some(&Err(error)) = decided.iter().find(|d| d.is_err()) {
+        let mut failure = Failure::from(KernelError::Boolean(error));
+        if error == BooleanError::NotManifold {
+            let pinched = (jobs.iter().zip(&decided))
+                .filter(|(_, d)| matches!(d, Err(BooleanError::NotManifold)))
+                .map(|(job, _)| job.0);
+            *failure.evidence = pinch_evidence(a, b, pinched);
+        }
+        return Err(failure);
+    }
     let mut arcs = Vec::new();
     let mut joined = false;
     let mut split = [Vec::new(), Vec::new()];
@@ -367,6 +382,30 @@ fn decide(
         return Ok(Decision::Split(split));
     }
     Ok(Decision::Arcs(arcs, joined))
+}
+
+/// What walls touching along a line show ([`pinched_line`]): each pair
+/// of faces named so, in order, as its two patches (`A`'s, then `B`'s:
+/// pieces of the operands' triangles, as refined), and the names of the
+/// operands' faces they lie on, each once. From a fresh allowance, a
+/// unit a pair, and up to the caps.
+fn pinch_evidence(a: &Input, b: &Input, pairs: impl Iterator<Item = [u32; 2]>) -> Evidence {
+    let mut evidence = Evidence::default();
+    let mut work = evidence_work();
+    let name = |input: &Input, t: u32| input.mesh.faces()[input.face(t) as usize].name.key();
+    let mut named = std::collections::BTreeSet::new();
+    for [p, q] in pairs {
+        if !evidence.afford(&mut work, 1) {
+            break;
+        }
+        evidence.add_patches([a.patches[p as usize], b.patches[q as usize]]);
+        for face in [(Operand::A, name(a, p)), (Operand::B, name(b, q))] {
+            if named.insert(face) {
+                evidence.add_faces([face]);
+            }
+        }
+    }
+    evidence
 }
 
 /// Decides the pair of triangle `p` of `A` and `q` of `B` with `ends`.

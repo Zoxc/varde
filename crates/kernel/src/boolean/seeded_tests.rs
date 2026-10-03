@@ -1635,3 +1635,48 @@ fn a_boss_through_a_drilled_plate_across_a_hole() {
     println!("worked {} of 4", tally.ok);
     assert_eq!(tally.failed, 0);
 }
+
+#[test]
+fn a_cut_face_that_cant_be_triangulated_shows_its_loops() {
+    // Case 11 of the flush unions' pairs (in millimetres), the second
+    // less the first: a wall of the first is left with loops of two
+    // vertices, along one curve there and back, which no triangle takes
+    // and which aren't asked to be split (on a curved patch only a cut's
+    // are), so it can't be triangulated. The failure gives the face, by
+    // its name on the operand, and its loops as curves: closed, on the
+    // wall. The same at 1 and 8 threads.
+    let tol = Tolerance::DEFAULT;
+    let mut rng = Rng::new(93);
+    let mut pair = None;
+    for _ in 0..=11 {
+        pair = flush_pair(&mut rng, &tol);
+    }
+    let (a, b, what) = pair.expect("case 11");
+    assert_eq!(what, "plate mm 5..10");
+    let failure = assert_deterministic(|| {
+        boolean(&b, &a, Op::Difference, &tol, &Budget::DEFAULT).unwrap_err()
+    });
+    assert_eq!(
+        failure.error,
+        KernelError::Boolean(BooleanError::Degenerate)
+    );
+    let evidence = &failure.evidence;
+    let [(crate::Operand::A, key)] = evidence.faces[..] else {
+        panic!("{:?}", evidence.faces);
+    };
+    let face = (b.mesh().faces().iter())
+        .find(|f| f.name.key() == key)
+        .expect("a face of the first operand");
+    assert!(!evidence.curves.is_empty() && !evidence.truncated);
+    let bits = |p: DVec3| p.to_array().map(f64::to_bits);
+    let mut starts: Vec<_> = evidence.curves.iter().map(|c| bits(c.p0)).collect();
+    let mut ends: Vec<_> = evidence.curves.iter().map(|c| bits(c.p1)).collect();
+    starts.sort_unstable();
+    ends.sort_unstable();
+    assert_eq!(starts, ends);
+    for curve in &evidence.curves {
+        for p in [curve.p0, curve.p1] {
+            assert!(face.surface.distance(p) <= tol.resolution(), "{p}");
+        }
+    }
+}

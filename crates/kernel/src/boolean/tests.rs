@@ -303,21 +303,25 @@ fn pinched_finds_two_vertices_within_the_distance() {
     let d = 1e-4;
     let mut work = Work::new(&Budget::DEFAULT);
     let far = [DVec3::ZERO, DVec3::X, DVec3::new(2.0 * d, 0.0, 0.0)];
-    assert_eq!(pinched(&far, d, &mut work), Ok(false));
-    // Across a cell's side, and diagonally across a corner of cells.
+    assert_eq!(pinched(&far, d, &mut work), Ok(None));
+    // Across a cell's side, and diagonally across a corner of cells: the
+    // pair, the earlier first.
     let near = [DVec3::ZERO, DVec3::X, DVec3::new(0.0, 0.0, -0.9 * d)];
-    assert_eq!(pinched(&near, d, &mut work), Ok(true));
+    assert_eq!(pinched(&near, d, &mut work), Ok(Some([near[0], near[2]])));
     let corner = [DVec3::splat(-0.3 * d), DVec3::X, DVec3::splat(0.2 * d)];
-    assert_eq!(pinched(&corner, d, &mut work), Ok(true));
+    assert_eq!(
+        pinched(&corner, d, &mut work),
+        Ok(Some([corner[0], corner[2]]))
+    );
     // Far out, where keys are large, and non-finite positions.
     let out = [DVec3::splat(1e6), DVec3::splat(1e6) + DVec3::Y * (0.5 * d)];
-    assert_eq!(pinched(&out, d, &mut work), Ok(true));
+    assert_eq!(pinched(&out, d, &mut work), Ok(Some(out)));
     let nan = [DVec3::NAN, DVec3::NAN, DVec3::INFINITY, DVec3::INFINITY];
-    assert_eq!(pinched(&nan, d, &mut work), Ok(false));
+    assert_eq!(pinched(&nan, d, &mut work), Ok(None));
     // A pile of vertices on one point stops at the first pair.
     let pile = vec![DVec3::ONE; 100_000];
     let mut work = Work::new(&Budget::new(10));
-    assert_eq!(pinched(&pile, d, &mut work), Ok(true));
+    assert_eq!(pinched(&pile, d, &mut work), Ok(Some([DVec3::ONE; 2])));
     // A grid of vertices just over the distance apart costs about 27
     // units a vertex, and stops on the budget.
     let grid: Vec<DVec3> = (0..64_000)
@@ -325,7 +329,7 @@ fn pinched_finds_two_vertices_within_the_distance() {
         .collect();
     assert_eq!(
         pinched(&grid, d, &mut Work::new(&Budget::DEFAULT)),
-        Ok(false)
+        Ok(None)
     );
     let mut work = Work::new(&Budget::new(100_000));
     assert_eq!(pinched(&grid, d, &mut work), Err(KernelError::TooComplex));
@@ -1741,7 +1745,10 @@ fn near_ties_that_dont_fit_together_are_decided_again_exactly() {
             } else {
                 flat_decided(op, &ia, &ib, tie, &TOL, &mut work)
             };
-            (soup.map(|_| ()), Budget::DEFAULT.work() - work.left())
+            (
+                soup.map(|_| ()).stripped(),
+                Budget::DEFAULT.work() - work.left(),
+            )
         };
         let (tied, first) = spent(t, false);
         assert_eq!(
@@ -2274,7 +2281,17 @@ fn named_patches(mesh: &Mesh, why: CheckError) -> Vec<crate::patch::Patch> {
 /// the pieces repair names where repair failed, the triangles of the
 /// repaired mesh where the check did. Each patch lies within the
 /// operands' boxes.
-fn fails_with_its_triangles(a: &Solid, b: &Solid, op: Op, tol: &Tolerance, want: KernelError) {
+/// Checks `a op b` fails with `want` (a `NotManifold` from repair or the
+/// check), deterministically, with the triangles the check's error names
+/// (or repair's pieces), within the operands' box; and returns it, for
+/// its points (a pinch's) to be checked.
+fn fails_with_its_triangles(
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    tol: &Tolerance,
+    want: KernelError,
+) -> Failure {
     let failure = assert_deterministic(|| boolean(a, b, op, tol, &Budget::DEFAULT).unwrap_err());
     assert_eq!(failure.error, want);
     let mut work = Work::new(&Budget::DEFAULT);
@@ -2299,7 +2316,8 @@ fn fails_with_its_triangles(a: &Solid, b: &Solid, op: Op, tol: &Tolerance, want:
     assert_eq!(failure.evidence.patches, named, "{why:?}");
     let evidence = crate::Evidence {
         patches: Vec::new(),
-        ..*failure.evidence
+        points: Vec::new(),
+        ..(*failure.evidence).clone()
     };
     assert!(evidence.is_empty());
     let (ba, bb) = (a.bounds3().unwrap(), b.bounds3().unwrap());
@@ -2310,6 +2328,95 @@ fn fails_with_its_triangles(a: &Solid, b: &Solid, op: Op, tol: &Tolerance, want:
             assert!(p.cmpge(lo).all() && p.cmple(hi).all(), "{p}");
         }
     }
+    failure
+}
+
+#[test]
+fn a_pinch_comes_with_its_two_vertices() {
+    // Boxes sharing an edge, or a corner, united: the neck the
+    // perturbation leaves has two vertices within the clean-up's short
+    // length of each other, given as points (one where they are at one
+    // place) beside the triangles that failed, on the edge or at the
+    // corner. Either way round, and the same at 1 and 8 threads.
+    let a = cube([0.0; 3], [2.0; 3]);
+    let not_manifold = KernelError::Boolean(BooleanError::NotManifold);
+    let r = TOL.resolution();
+    let on_edge = |p: DVec3| {
+        (p.x - 2.0).abs() <= r && (p.y - 2.0).abs() <= r && (-r..=2.0 + r).contains(&p.z)
+    };
+    let at_corner = |p: DVec3| p.distance(DVec3::splat(2.0)) <= r;
+    let cases: [(Solid, &dyn Fn(DVec3) -> bool); 2] = [
+        (cube([2.0, 2.0, 0.0], [2.0; 3]), &on_edge),
+        (cube([2.0; 3], [2.0; 3]), &at_corner),
+    ];
+    for (b, near) in &cases {
+        for (x, y) in [(&a, b), (b, &a)] {
+            let failure = fails_with_its_triangles(x, y, Op::Union, &TOL, not_manifold);
+            let points = &failure.evidence.points;
+            assert!(matches!(points.len(), 1 | 2), "{points:?}");
+            assert!(points.iter().all(|&p| near(p)), "{points:?}");
+            if let [p, q] = points[..] {
+                assert!(p != q && p.distance(q) <= short(&TOL), "{points:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_mesh_that_doesnt_pair_up_names_what_the_builder_found() {
+    // The soup's triangles go to the mesh's builder as they are: a lone
+    // triangle has halfedges with none running back, and the builder's
+    // `Open` comes back as `Degenerate` with that halfedge (its curve,
+    // where it has one) and its ends.
+    let pos = vec![DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::new(5.0, 5.0, 5.0)];
+    let face = cube([0.0; 3], [1.0; 3]).mesh().faces()[0];
+    let ctrl = DVec3::new(0.5, -0.5, 0.0);
+    let soup = cleanup::Soup {
+        pos: pos.clone(),
+        tris: vec![[0, 1, 2]],
+        faces: vec![0],
+        curves: [((0, 1), crate::mesh::Edge { ctrl, weight: 0.5 })]
+            .into_iter()
+            .collect(),
+        sources: vec![0],
+        absorbed: Vec::new(),
+        made: vec![true],
+    };
+    let failure = build(soup, vec![face], &[Vec::new()]).unwrap_err();
+    assert_eq!(
+        failure.error,
+        KernelError::Boolean(BooleanError::Degenerate)
+    );
+    let [curve] = failure.evidence.curves[..] else {
+        panic!("{failure:?}");
+    };
+    let ends = [curve.p0, curve.p1];
+    assert!(
+        ends == [pos[0], pos[1]] || ends == [pos[1], pos[0]],
+        "{curve:?}"
+    );
+    assert_eq!((curve.c, curve.w), (ctrl, 0.5));
+    assert_eq!(failure.evidence.points.len(), 2);
+    assert!(failure.evidence.points.iter().all(|p| ends.contains(p)));
+
+    // A triangle naming one vertex twice: its sides and its corners, each
+    // place once.
+    let soup = cleanup::Soup {
+        pos,
+        tris: vec![[0, 1, 1]],
+        faces: vec![0],
+        curves: BTreeMap::new(),
+        sources: vec![0],
+        absorbed: Vec::new(),
+        made: vec![true],
+    };
+    let failure = build(soup, vec![face], &[Vec::new()]).unwrap_err();
+    assert_eq!(
+        failure.error,
+        KernelError::Boolean(BooleanError::Degenerate)
+    );
+    assert_eq!(failure.evidence.curves.len(), 3);
+    assert_eq!(failure.evidence.points, [DVec3::ZERO, DVec3::X]);
 }
 
 #[test]
@@ -2322,11 +2429,12 @@ fn failures_of_the_result_carry_the_triangles_they_name() {
         fails_with_its_triangles(&a, &b, Op::Union, &TOL, not_manifold);
     }
     // A void whose wall is half a resolution thick: repair's `Hull`
-    // between two shells, named a pinch too.
+    // between two shells, named a pinch too, with no near vertices.
     let half = 0.5 * TOL.resolution();
     let tube = Solid::cylinder(DVec3::ZERO, 1.0, 10.0, 1, &TOL).unwrap();
     let hole = Solid::cylinder(DVec3::Z * 2.0, 1.0 - half, 6.0, 2, &TOL).unwrap();
-    fails_with_its_triangles(&tube, &hole, Op::Difference, &TOL, not_manifold);
+    let hull = fails_with_its_triangles(&tube, &hole, Op::Difference, &TOL, not_manifold);
+    assert!(hull.evidence.points.is_empty());
     // A boss tangent to a plate's side from inside: a cusp no patch
     // holds, `Invalid` as it was.
     let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
@@ -2347,7 +2455,8 @@ fn a_pinch_is_told_from_the_mesh_repair_was_given() {
     // a vertex and one a vertex measured against, then for a `Hull` a
     // unit a triangle listed of the check's mesh (the cleaned mesh's go
     // uncharged) and one a triangle `apart` looks at. The evidence the
-    // error came with stays, renamed or not.
+    // error came with stays, renamed or not, and a near pair adds its
+    // two vertices.
     let d = short(&TOL);
     let shells = |second: [f64; 3]| {
         crate::mesh::tests::joined(&[
@@ -2424,6 +2533,14 @@ fn a_pinch_is_told_from_the_mesh_repair_was_given() {
             error: invalid,
             evidence: Box::new(evidence.clone()),
         };
+        let pinch = pinched(
+            unfinished.given().verts(),
+            d,
+            &mut Work::new(&Budget::DEFAULT),
+        );
+        if let Ok(Some(pair)) = pinch {
+            evidence.add_points(pair);
+        }
         let failed = Some(Failed { unfinished, hull });
         let mut work = Work::new(&Budget::DEFAULT);
         let got = pinched_named(Err(failure), &failed, &TOL, &mut work).unwrap_err();

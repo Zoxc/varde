@@ -480,8 +480,10 @@ counts, refinement depth (`MAX_REFINE_DEPTH` 24), trace steps
 - `Patch`: a bad parameter;
 - `Profile`: a profile that can't be extruded (touching, crossing, nesting
   wrongly, cusped, or detail too fine for the tolerance: `TooFine`);
-- `Boolean`: `Inconsistent` (decisions that don't fit together) or
-  `Degenerate` (a face that can't be triangulated).
+- `Boolean`: `Inconsistent` (decisions that don't fit together),
+  `Degenerate` (a face that can't be triangulated) or `NotManifold` (the
+  result would touch itself, or come closer to itself than the
+  resolution).
 
 Inside the kernel steps pass that small `Copy` error. The public
 operations making or combining solids (`extrude`, `revolve`, `boolean`,
@@ -504,7 +506,13 @@ the error names, and smaller where repair split them first), the
 triangles of the repaired mesh where the check did, one or two or an
 inside-out shell up to the cap. Where an operation
 retries and returns the first try's error, it returns that try's
-evidence; a boolean's `Invalid` named `NotManifold` keeps it. The other
+evidence; a boolean's `Invalid` named `NotManifold` keeps it, and adds
+the pinch: the two vertices within the clean-up's short length that
+named it. A boolean's `NotManifold` from the decisions (walls touching
+along a line, united) carries the pairs of patches touching there and
+the operands' faces they lie on, by name; a `Degenerate` the cut face's
+loops that wouldn't triangulate, as curves, and the face by name, or
+what the mesh's builder named (a triangle or a halfedge). The other
 errors carry none yet.
 
 ## In the app

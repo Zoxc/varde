@@ -99,7 +99,12 @@ message is worded from the kernel's `failure.error` as before
   (`Regenerator::draw`): each operand's `FaceKey` is looked for, by key
   or alias, among the faces of the scene's parts of the body holding the
   operand's body (`Evaluation::holder`), giving `(BodyId, face id)` of
-  the answer's mesh; the box then takes in those faces' triangles. A
+  the answer's mesh. Those faces' triangles join the geometry's mesh,
+  their vertices and normals copied from the model's
+  (`ErrorGeometry::add_model_faces`, face by face while within
+  `MAX_VERTICES` and `MAX_INDICES`, else `truncated`), so a named face is
+  drawn red with the rest (as a patch is, without a boundary of its own:
+  its halo is the face's area); the box then takes them in. A
   draft's failure is resolved on the committed model answered with it.
   `ErrorGeometry::resolve_shared` takes a copy of its own only when
   faces are pending, so geometry with none stays the very `Arc` the

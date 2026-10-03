@@ -21,16 +21,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use glam::{DVec2, DVec3};
 
-use super::super::BooleanError;
 use super::super::chain::trace::{domain_step, invert};
 use super::super::exact::orient2d;
 use super::super::input::Input;
 use super::super::surface::{Guide, Shape, second_point, section};
 use super::super::triangulate::{Bends, Meter, NO_CUT, Vert, triangulate};
+use super::super::{BooleanError, segment};
 use super::{Along, Curves, key};
-use crate::Tolerance;
+use crate::failure::evidence_work;
 use crate::mesh::{Edge, MIN_CURVED_SPLIT, Quadric, Surface, off_surface, samples, straight};
 use crate::patch::{Conic3, Patch};
+use crate::{Evidence, Tolerance};
 
 /// How a face is laid out for triangulating: see the [module](self) docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,57 +184,11 @@ pub(super) fn cut_face(
 ) -> Result<Cutout, BooleanError> {
     let t = job.tri;
     let layout = Layout::of(input, t);
-    let corners = input.tris[t as usize];
-    let corner_ids = corners.map(|v| v + offset);
-    let corner_pos = corners.map(|v| input.pos(v));
-    // The domain position and sides of every vertex on the boundary.
-    let mut known: Vec<Vert> = (0..3)
-        .map(|i| Vert {
-            id: corner_ids[i],
-            at: DOMAIN[i],
-            sides: (1 << i) | (1 << ((i + 2) % 3)),
-            cuts: [NO_CUT; 2],
-        })
-        .collect();
-    let mut halfedges: Vec<[u32; 2]> = job.cuts.clone();
-    for (i, &(e, forward)) in input.tri_edges[t as usize].iter().enumerate() {
-        let (verts, kept) = along.of(e);
-        // The edge's own direction, from its start corner.
-        let (s, en) = if forward {
-            (i, (i + 1) % 3)
-        } else {
-            ((i + 1) % 3, i)
-        };
-        // A planar patch's curved side isn't a side of the plane's
-        // triangle: its vertices go where they are.
-        let bulges = layout == Layout::Planar && !input.straight[e as usize];
-        let mut chain = vec![corner_ids[s]];
-        for &(id, param) in verts {
-            chain.push(id);
-            known.push(Vert {
-                id,
-                at: if bulges {
-                    project(corner_pos, pos[id as usize])
-                } else {
-                    on_side(DOMAIN[s], DOMAIN[en], param)
-                },
-                sides: 1 << i,
-                cuts: [NO_CUT; 2],
-            });
-        }
-        chain.push(corner_ids[en]);
-        for (k, &keep) in kept.iter().enumerate() {
-            if keep {
-                let (u, v) = (chain[k], chain[k + 1]);
-                halfedges.push(if forward { [u, v] } else { [v, u] });
-            }
-        }
-    }
-    halfedges.sort_unstable();
+    let corner_pos = input.tris[t as usize].map(|v| input.pos(v));
+    let (halfedges, known) = boundary(input, job, along, offset, pos);
     if halfedges.windows(2).any(|w| w[0][0] == w[1][0]) {
         return Err(BooleanError::Inconsistent);
     }
-    known.sort_by_key(|v| v.id);
     let vert = |id: u32| -> Vert {
         if let Ok(i) = known.binary_search_by_key(&id, |v| v.id) {
             return known[i];
@@ -553,6 +508,108 @@ pub(super) fn cut_face(
         split: split.into_iter().collect(),
         stray,
     })
+}
+
+/// What a face that couldn't be triangulated shows (see [`cut_face`],
+/// whose arguments these are): its kept halfedges in order, the loops
+/// that wouldn't triangulate, each as its curve where it has one, else
+/// straight, between its vertices' positions (where the face's layout
+/// puts them back, but for the rounding and snapping onto the domain's
+/// sides it takes them through), and the operand's face it is. From a
+/// fresh allowance, a unit a halfedge.
+pub(super) fn loops_evidence(
+    input: &Input,
+    job: &Cut,
+    along: &Along,
+    offset: u32,
+    pos: &[DVec3],
+    curves: &Curves,
+) -> Evidence {
+    let mut evidence = Evidence::default();
+    let face = input.mesh.faces()[input.face(job.tri) as usize].name.key();
+    evidence.add_faces([(job.side.into(), face)]);
+    let mut work = evidence_work();
+    let (halfedges, _) = boundary(input, job, along, offset, pos);
+    for [u, v] in halfedges {
+        if !evidence.afford(&mut work, 1) {
+            break;
+        }
+        let (p, q) = (pos[u as usize], pos[v as usize]);
+        evidence.add_curves([curves.get(&key(u, v)).map_or_else(
+            || segment(p, q),
+            |edge| Conic3 {
+                p0: p,
+                c: edge.ctrl,
+                w: edge.weight,
+                p1: q,
+            },
+        )]);
+    }
+    evidence
+}
+
+/// A face's boundary (see [`cut_face`], whose arguments these are): its
+/// kept halfedges (pieces of its edges, and its cuts, as it runs them),
+/// sorted, and its corners and the vertices on its edges laid out, by
+/// id.
+fn boundary(
+    input: &Input,
+    job: &Cut,
+    along: &Along,
+    offset: u32,
+    pos: &[DVec3],
+) -> (Vec<[u32; 2]>, Vec<Vert>) {
+    let t = job.tri;
+    let layout = Layout::of(input, t);
+    let corners = input.tris[t as usize];
+    let corner_ids = corners.map(|v| v + offset);
+    let corner_pos = corners.map(|v| input.pos(v));
+    // The domain position and sides of every vertex on the boundary.
+    let mut known: Vec<Vert> = (0..3)
+        .map(|i| Vert {
+            id: corner_ids[i],
+            at: DOMAIN[i],
+            sides: (1 << i) | (1 << ((i + 2) % 3)),
+            cuts: [NO_CUT; 2],
+        })
+        .collect();
+    let mut halfedges: Vec<[u32; 2]> = job.cuts.clone();
+    for (i, &(e, forward)) in input.tri_edges[t as usize].iter().enumerate() {
+        let (verts, kept) = along.of(e);
+        // The edge's own direction, from its start corner.
+        let (s, en) = if forward {
+            (i, (i + 1) % 3)
+        } else {
+            ((i + 1) % 3, i)
+        };
+        // A planar patch's curved side isn't a side of the plane's
+        // triangle: its vertices go where they are.
+        let bulges = layout == Layout::Planar && !input.straight[e as usize];
+        let mut chain = vec![corner_ids[s]];
+        for &(id, param) in verts {
+            chain.push(id);
+            known.push(Vert {
+                id,
+                at: if bulges {
+                    project(corner_pos, pos[id as usize])
+                } else {
+                    on_side(DOMAIN[s], DOMAIN[en], param)
+                },
+                sides: 1 << i,
+                cuts: [NO_CUT; 2],
+            });
+        }
+        chain.push(corner_ids[en]);
+        for (k, &keep) in kept.iter().enumerate() {
+            if keep {
+                let (u, v) = (chain[k], chain[k + 1]);
+                halfedges.push(if forward { [u, v] } else { [v, u] });
+            }
+        }
+    }
+    halfedges.sort_unstable();
+    known.sort_by_key(|v| v.id);
+    (halfedges, known)
 }
 
 /// Where vertex `id` of `placed` (sorted by id) is laid out.

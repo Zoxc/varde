@@ -172,9 +172,17 @@ fn operand_faces_are_resolved_through_the_tables() {
     assert_eq!(geometry.faces(), [(BodyId::NEW, face)]);
     let bounds = geometry.bounds().unwrap();
     let range = mesh.face_indices(face as usize).unwrap();
-    for &v in &mesh.indices()[range] {
+    for &v in &mesh.indices()[range.clone()] {
         let p = Vec3::from(mesh.positions()[v as usize]);
         assert!(bounds.min.cmple(p).all() && p.cmple(bounds.max).all());
+    }
+    // Its triangles are drawn as the evidence's patches are: the model's,
+    // corner for corner.
+    let drawn = geometry.mesh();
+    assert_eq!(drawn.indices().len(), range.len());
+    for (&v, &w) in drawn.indices().iter().zip(&mesh.indices()[range]) {
+        assert_eq!(drawn.positions()[v as usize], mesh.positions()[w as usize]);
+        assert_eq!(drawn.normals()[v as usize], mesh.normals()[w as usize]);
     }
 
     // Its body isn't drawn: nothing is left.

@@ -33,12 +33,12 @@ use super::input::{Input, Side};
 use super::pairs::{Arc, first_ids};
 use super::surface::{Crossed, Shape, lerp, on_curve, point, polish, straight};
 use super::triangulate::Meter;
-use super::{Op, Primitives, segment};
+use super::{BooleanError, Op, Primitives, segment};
 use crate::budget::Work;
 use crate::mesh::{Edge, Face, MIN_SPLIT, Node, Quadric, Surface};
 use crate::par::par_map;
 use crate::patch::{Conic3, Point};
-use crate::{KernelError, Tolerance};
+use crate::{Failure, KernelError, Tolerance};
 
 mod face;
 mod merge;
@@ -338,7 +338,7 @@ pub(super) fn assemble(
     tol: &Tolerance,
     refinement: Option<&Refinement>,
     work: &mut Work,
-) -> Result<(Soup, Vec<Face>), KernelError> {
+) -> Result<(Soup, Vec<Face>), Failure> {
     let keep = Keep::of(op);
     let [first12, first21] = first_ids(a, b, counts);
 
@@ -440,7 +440,7 @@ pub(super) fn assemble(
             // no side to halve): past it, the result would be wrong by
             // the tolerance's own measure.
             if cut.stray > tol.fit() {
-                return Err(KernelError::TooComplex);
+                return Err(KernelError::TooComplex.into());
             }
             break cut;
         }
@@ -486,7 +486,7 @@ pub(super) fn assemble(
             &mut extras,
         );
     };
-    cutting.finish(last, refinement, work)
+    Ok(cutting.finish(last, refinement, work)?)
 }
 
 /// A side of a quadric triangle that a cut by a plane runs beside, from
@@ -904,13 +904,15 @@ impl Cutting<'_> {
     }
 
     /// Every face cut once, with the vertices `extras` added on the
-    /// operands' edges and the cuts along `chains`.
+    /// operands' edges and the cuts along `chains`. The error is the
+    /// first face's, in order, that fails; one that couldn't be
+    /// triangulated comes with its loops ([`face::loops_evidence`]).
     fn round(
         &self,
         extras: &[BTreeMap<u32, Vec<f64>>; 2],
         chains: &[Chain],
         work: &mut Work,
-    ) -> Result<Round, KernelError> {
+    ) -> Result<Round, Failure> {
         let mut pos = self.base.clone();
         let mut curves = Curves::new();
         let stops = self.stops(extras, &mut pos)?;
@@ -936,13 +938,27 @@ impl Cutting<'_> {
             )
         });
         if meter.over() {
-            return Err(KernelError::TooComplex);
+            return Err(KernelError::TooComplex.into());
         }
         work.spend(usize::try_from(meter.used() / STEPS_PER_UNIT).unwrap_or(usize::MAX))?;
-        let cut: Vec<face::Cutout> = cut
-            .into_iter()
-            .collect::<Result<_, _>>()
-            .map_err(KernelError::Boolean)?;
+        let failed = (cut.iter().enumerate()).find_map(|(k, c)| c.as_ref().err().map(|&e| (k, e)));
+        if let Some((k, error)) = failed {
+            let mut failure = Failure::from(KernelError::Boolean(error));
+            if error == BooleanError::Degenerate {
+                let job = &jobs[k];
+                let (input, offset) = self.operand(job.side);
+                *failure.evidence = face::loops_evidence(
+                    input,
+                    job,
+                    &stops[job.side as usize],
+                    offset,
+                    &pos,
+                    &curves,
+                );
+            }
+            return Err(failure);
+        }
+        let cut: Vec<face::Cutout> = cut.into_iter().filter_map(Result::ok).collect();
         let stray = cut.iter().map(|c| c.stray).fold(0.0, f64::max);
         // The chain edges to halve, by arc, and the operands' edges to add
         // vertices on.

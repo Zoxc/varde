@@ -293,6 +293,52 @@ fn unions_touching_along_a_line_fail_at_once() {
 }
 
 #[test]
+fn a_union_touching_along_a_line_names_the_faces_that_touch() {
+    // Cylinders side by side, united: refused from the decisions, before
+    // any mesh is built, with the pairs of patches touching along the
+    // line (every one's box reaching it) and the operands' walls they
+    // lie on, each once. Either way round, and the same at 1 and 8
+    // threads.
+    let budget = Budget::new(100_000);
+    let a = cylinder([0.0, 0.0, 0.0], 1.0, 2.0);
+    let b = Solid::cylinder(DVec3::new(2.0, 0.0, 0.5), 1.0, 1.0, 3, &TOL).unwrap();
+    let r = TOL.resolution();
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        let failure = assert_deterministic(|| boolean(x, y, Op::Union, &TOL, &budget).unwrap_err());
+        assert_eq!(
+            failure.error,
+            KernelError::Boolean(BooleanError::NotManifold)
+        );
+        let evidence = &failure.evidence;
+        assert!(!evidence.truncated && evidence.curves.is_empty() && evidence.points.is_empty());
+        assert!(!evidence.patches.is_empty() && evidence.patches.len().is_multiple_of(2));
+        for patch in &evidence.patches {
+            let bounds = patch.bounds();
+            assert!(
+                bounds.min.x <= 1.0 + r && bounds.max.x >= 1.0 - r,
+                "{bounds:?}"
+            );
+            assert!(bounds.min.y <= r && bounds.max.y >= -r, "{bounds:?}");
+        }
+        // Each operand's wall, as named on it (its four quarters share
+        // the name).
+        let wall = |solid: &Solid| {
+            let mut keys: Vec<_> = (solid.mesh().faces().iter())
+                .filter(|f| matches!(f.surface, Surface::Quadric(_)))
+                .map(|f| f.name.key())
+                .collect();
+            keys.dedup();
+            assert_eq!(keys.len(), 1);
+            keys[0]
+        };
+        assert_eq!(
+            evidence.faces,
+            [(crate::Operand::A, wall(x)), (crate::Operand::B, wall(y))]
+        );
+    }
+}
+
+#[test]
 fn a_pin_plugging_a_hole_it_touches_inside_is_no_pinch() {
     // A pin of radius 1.1 through a hole of radius 1, tangent to its wall
     // from inside the pin: the walls face opposite ways, but bend into

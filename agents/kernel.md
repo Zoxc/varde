@@ -3619,14 +3619,14 @@ elsewhere (see "Cutting curved faces").
 
 | file | holds |
 |---|---|
-| `boolean.rs` | `Op`, `BooleanError`, `UP`, `Cross11`, the `Primitives` trait, `boolean`, `touches`, building the mesh, naming failed results that touch themselves (`pinched_named`, `pinched`, `apart`), `parts` (connected parts, for the rays and the clean-up) |
+| `boolean.rs` | `Op`, `BooleanError`, `UP`, `Cross11`, the `Primitives` trait, `boolean`, `touches`, building the mesh (and what its builder refused, `built_evidence`), naming failed results that touch themselves (`pinched_named`, `pinched`, `apart`), `parts` (connected parts, for the rays and the clean-up) |
 | `boolean/input.rs` | `Input`: an operand's tables (corners, edges' ends and triangles, boxes, patches, which edges are straight and which patches flat or planar), vertex normals, flat volume |
 | `boolean/curved.rs` | `Curved`, the primitives with curved patches: ray-derived shadow crossings, layers above a vertex, crossings of an edge through a patch, ties |
 | `boolean/curved/ray.rs` | the ray tests `ρ` (exact for straight edges and at every edge's ends) |
 | `boolean/curved/arcs.rs` | where two edges' shadows cross: one conic written implicitly, the other put in, a quartic |
 | `boolean/curved/solve.rs` | points of a patch above a vertex, an edge's crossings through a patch, and a certified distance to a patch: subdivision and Newton |
 | `boolean/curved/bernstein.rs` | Bernstein polynomials: products, evaluation, root isolation |
-| `boolean/pairs.rs` | each pair of faces' ends and arcs; for curved operands the certificates, the refinement loop (`refined`) and the fixed rules |
+| `boolean/pairs.rs` | each pair of faces' ends and arcs; for curved operands the certificates, the refinement loop (`refined`) and the fixed rules; the pairs touching along a line a union is refused for (`pinch_evidence`) |
 | `boolean/near.rs` | `touches`' search for surfaces within the resolution: pairs of patch pieces split depth first until their hulls are apart or both are flat (`search`, `settled`, `near`) |
 | `boolean/exact.rs` | exact signs: `Approx` (float with an error bound), `Exp` (expansions), `Poly` in `ε`, `Pred`, `sign`, `orient2d` |
 | `boolean/flat.rs` | `Flat`, the primitives of flat operands, with the symbolic perturbation |
@@ -3635,7 +3635,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/chain.rs` | each arc's chain of shared edges: straight, exact, or traced and fitted; halving its curves |
 | `boolean/chain/trace.rs` | the point where two patches meet (Newton on four unknowns), marching along the cut, fitting conics, inverting a point into a patch |
 | `boolean/assemble.rs` | new vertices, kept pieces of edges, cut edges, the rounds of cutting the faces, the faces' copies |
-| `boolean/assemble/face.rs` | one face cut: its layout, loops, curved sides, triangles, their inner edges' curves (exact bands on quadrics) |
+| `boolean/assemble/face.rs` | one face cut: its layout, loops, curved sides, triangles, their inner edges' curves (exact bands on quadrics); the loops of one that can't be triangulated (`loops_evidence`) |
 | `boolean/assemble/merge.rs` | merging refinement's pieces that came through whole |
 | `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners, Steiner points |
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
@@ -5235,6 +5235,20 @@ points at corners (both in "Cutting curved faces"), in no triangle of zero width
 no point or split mends; asking for splits there doubled the curves
 every round).
 
+Loops that can't be triangulated fail the face, and the round, as
+`Degenerate` (the first face in order that fails; a meter past its
+limit, which also stops a triangulation with `Degenerate`, is
+`TooComplex` first). Its evidence is the face's kept halfedges in
+order, each as its curve record where it has one, else straight,
+between its vertices' positions, and the operand's face by name
+(`face::loops_evidence`, run on the failing face again after the
+round: the halfedges are worked out as `cut_face` did, so they are its
+loops; positions rather than the layout put back, which differs only by
+the rounding and snapping onto the domain's sides). Reached in the
+seeded flush pairs: a wall left with loops of two vertices, along one
+curve there and back, which no triangle takes and which aren't asked
+to be split (on a curved patch only a cut's are).
+
 The faces of a round are triangulated in parallel and count their
 steps together (`triangulate::Meter`: a vertex tested against an ear, a
 triangle looked at by the flips and mending, a triangle queued, walked
@@ -5671,11 +5685,13 @@ budget is gone, or no mesh was built). `pinched` is a hash grid of cells
 `MAX_COORD` at the finest tolerance keys stay under about `1e15`; `as`
 and the neighbour offsets saturate, which only puts more in a cell),
 each vertex measured against those before it in its 27 cells, stopping
-at the first pair: a unit of work a vertex and one a vertex measured
+at the first pair, which it hands back (the earlier vertex first): a
+unit of work a vertex and one a vertex measured
 against (points `d` apart fit about a hundred to 27 cells, so that's
 bounded); `apart` is a union-find over the triangles' sides, a unit a
-triangle. If either runs out of the budget, the error stays `Invalid`. The
-answer depends only on the positions. It isn't an early exit before
+triangle. If either runs out of the budget, the error stays `Invalid`.
+Whether there is a pair depends only on the positions; which pair, and
+the work, on their order too. It isn't an early exit before
 repair: short curved edges are never collapsed and can pass `check`, so
 a near pair alone proves nothing. It names parts closer than the
 resolution (curved operands overlapping by less) too, which is the same
@@ -5728,6 +5744,20 @@ lines) are looked at, and only unions: differences and intersections
 whose walls touch from inside (a cylinder less one inside it touching
 its wall, which isn't a manifold either) still refine as before.
 
+**Where it touches** (the evidence, see "Boolean evidence" under
+"Limits, budgets and errors"). Named from a near pair, the failure keeps
+what repair or the check named and adds the pair's two vertices as
+points (one where they are at one place): on the shared edge or at the
+shared corner for boxes. Named from separate shells, the two triangles
+(or repair's pieces of them) are what it has. From the decisions, every
+pair of the round that `pinched_line` refused, in order, gives its two
+patches (`A`'s then `B`'s, pieces of the operands as refined that
+round) and the names of the operands' faces they lie on, each once
+(`pinch_evidence`): the walls along the line, which regen resolves to
+the bodies' faces. The error is the first refused pair's, as before:
+the decisions of every pair are made anyway (in parallel), so naming
+the others costs the operation nothing.
+
 Measured: on the default-tolerance probe
 (`near_tangent_cylinders_at_the_default_tolerance`) the 13 unions at
 gaps `0`, `±1e-12`, `±1e-9` and `−1e-7` (both placements) fail as
@@ -5778,7 +5808,9 @@ crossing the search only placed isn't on the other operand; or a
 cut neither exact nor traced whose fallback curve isn't on the true
 cut, see "Chains"),
 `Degenerate` (a face's loops
-couldn't be triangulated, or the triangles don't pair up), `NotManifold`
+couldn't be triangulated, or the triangles don't pair up; each with
+what it is about, see "Boolean evidence" under "Limits, budgets and
+errors"), `NotManifold`
 (the result would touch itself along an edge or at a point, or come
 closer to itself than the resolution: see "Results that aren't
 manifolds"). `TooComplex`
@@ -7852,6 +7884,29 @@ check's evidence. Extrude and revolve keep each try's `Failure` whole,
 so the evidence returned is that of the first try, whose error they
 return. `TooComplex` past the check, and `assemble`'s and the
 transforms' own checks, carry none.
+
+**Boolean evidence.** Besides the check's, a boolean's own errors carry
+where they are. The internal steps on those paths fail with a `Failure`
+rather than a `KernelError` (`pairs::refined_with` and `decide`,
+`assemble::assemble` and `Cutting::round`, `boolean::assembled`,
+`flat_soup`, `flat_decided`, `cleaned` and `build`), the rest as
+before, converted by `?`; the flat retry after `Inconsistent` returns
+the second try's failure whole, and the boolean's tries keep theirs as
+for the check's. By error:
+
+| error | evidence |
+|---|---|
+| `NotManifold` named from a near pair (`pinched_named`) | what repair or the check named, and the pair's two vertices as points, one where they are at one place |
+| `NotManifold` named from separate shells | what repair or the check named: the two triangles, or repair's pieces of them |
+| `NotManifold` from the decisions (`pinched_line`) | each pair refused, in order: its two patches as refined, and the operands' faces they lie on, each once (`pinch_evidence`, a unit a pair) |
+| `Degenerate` from a face's triangulation | the face's kept halfedges as curves, and the operand's face (`face::loops_evidence`, a unit a halfedge) |
+| `Degenerate` from the mesh's builder | the triangle it names (its sides and corners) or the halfedge (its curve and ends), by the soup's positions and curve records (`built_evidence`) |
+
+Each from a fresh `EVIDENCE_WORK` allowance where it can grow; none
+changes what the operation does or spends: `pinched` hands back the
+pair it stopped at (the same work), the decisions' and the round's
+failures are the first in order as before, and the face's halfedges
+are worked out again only after the round has failed.
 
 Its rules: evidence never changes an outcome (no `Ok` becomes an error
 or the reverse, and the error is the one returned without it; tests

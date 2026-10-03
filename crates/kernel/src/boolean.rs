@@ -63,7 +63,7 @@ use crate::mesh::{BuildError, Bvh, CheckError, Face, FaceKey, Mesh, MeshBuilder,
 use crate::patch::Bounds3;
 use crate::solid::{CHECK_WORK, Unfinished};
 use crate::topology::distance::{Allowance, to_patches};
-use crate::{Failure, KernelError, Solid, Tolerance};
+use crate::{Evidence, Failure, KernelError, Solid, Tolerance};
 
 mod assemble;
 mod chain;
@@ -237,7 +237,10 @@ type Found = (Vec<(i8, f64, bool)>, usize);
 /// into an error. An `Invalid` from repair or the check, and a
 /// `NotManifold` named from one, come with the triangles of the result
 /// the check's error names (or the pieces of them repair couldn't mend)
-/// as [`Failure::evidence`].
+/// as [`Failure::evidence`], and a pinch with its two vertices; a
+/// `NotManifold` from the decisions with the patches touching along a
+/// line and the operands' faces they lie on; a `Degenerate` with the cut
+/// face's loops and the face, or what the mesh's builder named.
 pub fn boolean(
     a: &Solid,
     b: &Solid,
@@ -334,7 +337,9 @@ struct Failed {
 /// Only an error is renamed, never `Ok` made one or one made `Ok`, and
 /// not where telling runs out of what is left of the budget: then the
 /// error stays as it was, the budget spent. A renamed error keeps the
-/// evidence it came with, what the check or repair named.
+/// evidence it came with, what the check or repair named, and where
+/// named for two near vertices gets those as points too (one where they
+/// are at one place): the pinch itself.
 fn pinched_named(
     result: Result<Solid, Failure>,
     failed: &Option<Failed>,
@@ -349,26 +354,41 @@ fn pinched_named(
             }),
             Some(failed),
         ) => {
-            let mut touches = || -> Result<bool, KernelError> {
+            // Whether it touches itself, and where two vertices come
+            // within the short length if that is how.
+            let mut touches = || -> Result<Option<Option<[DVec3; 2]>>, KernelError> {
                 let given = failed.unfinished.given();
-                Ok(pinched(given.verts(), short(tol), work)?
-                    || match (failed.hull, &failed.unfinished) {
-                        (Some((t, u)), Unfinished::Repair { given, .. }) => {
-                            apart(given, t, u, work)?
-                        }
-                        (Some((t, u)), Unfinished::Check { checked, .. }) => {
-                            // A unit a triangle for listing its corners;
-                            // the cleaned mesh's go uncharged, as the
-                            // operation's work was set with them listed
-                            // for free.
-                            work.spend(checked.tris().len())?;
-                            apart(checked, t, u, work)?
-                        }
-                        (None, _) => false,
-                    })
+                if let Some(pinch) = pinched(given.verts(), short(tol), work)? {
+                    return Ok(Some(Some(pinch)));
+                }
+                let apart = match (failed.hull, &failed.unfinished) {
+                    (Some((t, u)), Unfinished::Repair { given, .. }) => apart(given, t, u, work)?,
+                    (Some((t, u)), Unfinished::Check { checked, .. }) => {
+                        // A unit a triangle for listing its corners;
+                        // the cleaned mesh's go uncharged, as the
+                        // operation's work was set with them listed
+                        // for free.
+                        work.spend(checked.tris().len())?;
+                        apart(checked, t, u, work)?
+                    }
+                    (None, _) => false,
+                };
+                Ok(apart.then_some(None))
             };
+            let mut evidence = evidence;
             let error = match touches() {
-                Ok(true) => KernelError::Boolean(BooleanError::NotManifold),
+                Ok(Some(pinch)) => {
+                    // The pinch itself: both vertices, or one where they
+                    // are at one place.
+                    if let Some([p, q]) = pinch {
+                        if p == q {
+                            evidence.add_points([p]);
+                        } else {
+                            evidence.add_points([p, q]);
+                        }
+                    }
+                    KernelError::Boolean(BooleanError::NotManifold)
+                }
                 _ => KernelError::Invalid(e),
             };
             Err(Failure { error, evidence })
@@ -397,7 +417,7 @@ fn apart(mesh: &Mesh, t: u32, u: u32, work: &mut Work) -> Result<bool, KernelErr
     Ok(part[tris[t as usize][0] as usize] != part[tris[u as usize][0] as usize])
 }
 
-/// Whether two of `verts` lie within `d` of each other, by a grid of
+/// Two of `verts` within `d` of each other, the first found, by a grid of
 /// cells `d` wide: each vertex is measured against those before it in
 /// the 27 cells round its own. Cells are keyed by `floor(p / d)` as
 /// `i64`: coordinates within [`MAX_COORD`](crate::MAX_COORD) and `d` at
@@ -406,11 +426,12 @@ fn apart(mesh: &Mesh, t: u32, u: u32, work: &mut Work) -> Result<bool, KernelErr
 /// neighbours' offsets saturate too, which can only put more vertices in
 /// a cell, never miss a near pair. A unit of work a vertex and one a
 /// vertex it is measured against; points at least `d` apart fit about a
-/// hundred to the 27 cells, so that is bounded too. The answer depends
-/// only on the positions, and the work on their order.
-fn pinched(verts: &[DVec3], d: f64, work: &mut Work) -> Result<bool, KernelError> {
+/// hundred to the 27 cells, so that is bounded too. Whether there is a
+/// pair depends only on the positions, and the work and the pair found
+/// (the earlier vertex first) on their order.
+fn pinched(verts: &[DVec3], d: f64, work: &mut Work) -> Result<Option<[DVec3; 2]>, KernelError> {
     if !(d > 0.0 && d.is_finite()) {
-        return Ok(false);
+        return Ok(None);
     }
     let key = |p: DVec3| {
         let c = (p / d).floor();
@@ -434,18 +455,18 @@ fn pinched(verts: &[DVec3], d: f64, work: &mut Work) -> Result<bool, KernelError
                         continue;
                     };
                     work.spend(list.len())?;
-                    if list
+                    if let Some(&j) = list
                         .iter()
-                        .any(|&j| verts[j as usize].distance_squared(p) <= near)
+                        .find(|&&j| verts[j as usize].distance_squared(p) <= near)
                     {
-                        return Ok(true);
+                        return Ok(Some([verts[j as usize], p]));
                     }
                 }
             }
         }
         cells.entry(k).or_default().push(i as u32);
     }
-    Ok(false)
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -466,8 +487,8 @@ fn unchecked(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Mesh, KernelError> {
-    let (soup, faces) = assembled(a, b, op, true, &mut false, tol, work)?;
-    cleaned(a, b, op, soup, faces, true, &mut false, tol, work)
+    let (soup, faces) = assembled(a, b, op, true, &mut false, tol, work).map_err(|f| f.error)?;
+    cleaned(a, b, op, soup, faces, true, &mut false, tol, work).map_err(|f| f.error)
 }
 
 /// The result, joining ends along walls' common direction only if `join`
@@ -577,7 +598,9 @@ fn checked(
 
 /// The result's triangles and faces, before the clean-up, joining ends
 /// along walls' common direction only if `join` (see
-/// [`pairs::refined_with`]), and setting `joined` if some were.
+/// [`pairs::refined_with`]), and setting `joined` if some were. A union
+/// of walls touching along a line comes with the pairs of faces showing
+/// it, a cut face that can't be triangulated with its loops.
 fn assembled(
     a: &Solid,
     b: &Solid,
@@ -586,7 +609,7 @@ fn assembled(
     joined: &mut bool,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<(cleanup::Soup, Vec<Face>), KernelError> {
+) -> Result<(cleanup::Soup, Vec<Face>), Failure> {
     #[cfg(test)]
     THIN_ACROSS.set((0, 0));
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
@@ -621,7 +644,8 @@ fn assembled(
 
 /// The mesh of the assembled `soup` and `faces`, cleaned (unfolding
 /// folded sheets if `unfold`, and setting `unfolded` if it did), before
-/// repair and the check.
+/// repair and the check. Triangles that don't pair up come with what the
+/// mesh's builder named (see [`build`]).
 #[allow(clippy::too_many_arguments)]
 fn cleaned(
     a: &Solid,
@@ -633,7 +657,7 @@ fn cleaned(
     unfolded: &mut bool,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Mesh, KernelError> {
+) -> Result<Mesh, Failure> {
     *unfolded = cleanup::clean(
         &mut soup,
         &mut faces,
@@ -655,7 +679,7 @@ fn cleaned(
     if op == Op::Difference {
         return Ok(mesh);
     }
-    covered(mesh, [a.mesh(), b.mesh()], short(tol), work)
+    Ok(covered(mesh, [a.mesh(), b.mesh()], short(tol), work)?)
 }
 
 /// `mesh` with an alias for each operand's plane face whose key or
@@ -861,7 +885,7 @@ fn aliases(
 /// together; at worst the result fails `check`. The second try spends
 /// from the same `work`, and only on that failure. Only flat operands:
 /// the `Flat` inside the curved primitives keeps their ties, which the
-/// numerical primitives share.
+/// numerical primitives share. The failure is the last try's.
 fn flat_soup(
     op: Op,
     ia: &Input,
@@ -869,9 +893,9 @@ fn flat_soup(
     tie: f64,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<(cleanup::Soup, Vec<Face>), KernelError> {
+) -> Result<(cleanup::Soup, Vec<Face>), Failure> {
     match flat_decided(op, ia, ib, tie, tol, work) {
-        Err(KernelError::Boolean(BooleanError::Inconsistent)) if tie > 0.0 => {
+        Err(f) if f.error == KernelError::Boolean(BooleanError::Inconsistent) && tie > 0.0 => {
             flat_decided(op, ia, ib, 0.0, tol, work)
         }
         soup => soup,
@@ -887,7 +911,7 @@ fn flat_decided(
     tie: f64,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<(cleanup::Soup, Vec<Face>), KernelError> {
+) -> Result<(cleanup::Soup, Vec<Face>), Failure> {
     let prims = flat::Flat::tied(ia, ib, op == Op::Union, tie);
     let counts = count::count(ia, ib, &prims, tol, work)?;
     let arcs = pairs::flat(ia, ib, &counts)?;
@@ -950,11 +974,12 @@ fn touches_within(
 /// uses dropped (so chained booleans don't pile up faces long gone), the
 /// rest numbered in order, each with the `aliases` of its source,
 /// halfedges paired by vertex id. No triangles give the empty mesh.
-fn build(
-    soup: cleanup::Soup,
-    faces: Vec<Face>,
-    aliases: &[Vec<FaceKey>],
-) -> Result<Mesh, KernelError> {
+///
+/// Triangles that don't make a mesh fail as
+/// [`BooleanError::Degenerate`] (too many, as
+/// [`KernelError::TooComplex`]), with what the builder named
+/// ([`built_evidence`]).
+fn build(soup: cleanup::Soup, faces: Vec<Face>, aliases: &[Vec<FaceKey>]) -> Result<Mesh, Failure> {
     if soup.tris.is_empty() {
         return Ok(Mesh::default());
     }
@@ -967,10 +992,16 @@ fn build(
         used_faces[face as usize] = true;
     }
     let mut builder = MeshBuilder::new();
-    let id: Vec<u32> = used
-        .iter()
-        .zip(&soup.pos)
-        .map(|(&used, &p)| if used { builder.vert(p) } else { u32::MAX })
+    // Each vertex's id in the mesh, and each id's vertex of the soup.
+    let mut soup_of = Vec::new();
+    let id: Vec<u32> = (used.iter().zip(&soup.pos).enumerate())
+        .map(|(i, (&used, &p))| {
+            if !used {
+                return u32::MAX;
+            }
+            soup_of.push(i as u32);
+            builder.vert(p)
+        })
         .collect();
     let face_id: Vec<u32> = used_faces
         .iter()
@@ -987,7 +1018,7 @@ fn build(
             id
         })
         .collect();
-    for (tri, face) in soup.tris.iter().zip(soup.faces) {
+    for (tri, &face) in soup.tris.iter().zip(&soup.faces) {
         builder.tri(tri.map(|v| id[v as usize]), face_id[face as usize]);
         // The curves of its sides that have one.
         for i in 0..3 {
@@ -998,9 +1029,60 @@ fn build(
         }
     }
     builder.build().map_err(|e| match e {
-        BuildError::TooManyPatches(_) => KernelError::TooComplex,
-        _ => KernelError::Boolean(BooleanError::Degenerate),
+        BuildError::TooManyPatches(_) => KernelError::TooComplex.into(),
+        e => Failure {
+            error: KernelError::Boolean(BooleanError::Degenerate),
+            evidence: Box::new(built_evidence(&soup, &soup_of, e)),
+        },
     })
+}
+
+/// What the mesh's builder named refusing `soup`'s triangles (`soup_of`:
+/// each of its vertex ids' vertex of the soup): a triangle's sides and
+/// corners, or a halfedge (two running one way, one running neither way
+/// back, or a curve no triangle has as a side) and its ends. Sides as
+/// their curves, where they have one, else straight; corners at one
+/// place given once. Nothing for an index out of range.
+fn built_evidence(soup: &cleanup::Soup, soup_of: &[u32], error: BuildError) -> Evidence {
+    let mut evidence = Evidence::default();
+    let side = |u: u32, v: u32| {
+        let (p, q) = (soup.pos[u as usize], soup.pos[v as usize]);
+        match soup.curves.get(&(u.min(v), u.max(v))) {
+            Some(edge) => crate::patch::Conic3 {
+                p0: p,
+                c: edge.ctrl,
+                w: edge.weight,
+                p1: q,
+            },
+            None => segment(p, q),
+        }
+    };
+    let in_soup = |v: u32| soup_of.get(v as usize).copied();
+    let corners: Vec<u32> = match error {
+        BuildError::Tri(t) => soup.tris.get(t).map(|t| t.to_vec()).unwrap_or_default(),
+        BuildError::Duplicate(a, b) | BuildError::Open(a, b) | BuildError::UnusedEdge(a, b) => {
+            match (in_soup(a), in_soup(b)) {
+                (Some(u), Some(v)) => vec![u, v],
+                _ => Vec::new(),
+            }
+        }
+        BuildError::TooManyPatches(_) => Vec::new(),
+    };
+    if corners.iter().any(|&v| v as usize >= soup.pos.len()) {
+        return evidence;
+    }
+    let n = corners.len();
+    // A halfedge is one side; a triangle's three close.
+    let sides = if n == 3 { 3 } else { n.saturating_sub(1) };
+    evidence.add_curves((0..sides).map(|i| side(corners[i], corners[(i + 1) % n])));
+    let mut points: Vec<DVec3> = Vec::with_capacity(n);
+    for p in corners.iter().map(|&v| soup.pos[v as usize]) {
+        if !points.contains(&p) {
+            points.push(p);
+        }
+    }
+    evidence.add_points(points);
+    evidence
 }
 
 /// The straight segment from `p0` to `p1` as a curve: the control point

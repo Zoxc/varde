@@ -14,11 +14,11 @@ fn failed_geometry(evaluation: &Evaluation, feature: FeatureId) -> Arc<ErrorGeom
     failure.geometry.clone().expect("geometry")
 }
 
-/// Checks `geometry` is triangles alone, within `min..=max` (and a
-/// little).
+/// Checks `geometry` is triangles (and a pinch's points, if any), within
+/// `min..=max` (and a little).
 fn triangles_within(geometry: &ErrorGeometry, min: [f32; 3], max: [f32; 3]) {
     assert!(geometry.mesh().triangle_count() > 0);
-    assert!(geometry.points().is_empty() && geometry.sketch_curves().is_empty());
+    assert!(geometry.sketch_curves().is_empty());
     assert!(!geometry.truncated());
     let bounds = geometry.bounds().expect("a box");
     for i in 0..3 {
@@ -62,13 +62,15 @@ fn an_extrude_too_thin_fails_where_it_is_thin() {
     let evaluation = evaluated(editor.document());
     let geometry = failed_geometry(&evaluation, extrude);
     triangles_within(&geometry, [0.0; 3], [10.0; 3]);
+    assert!(geometry.points().is_empty());
 }
 
 #[test]
 fn a_join_touching_along_an_edge_fails_where_it_touches() {
     // Two 10 mm cubes along an edge, the second joined to the first:
     // the union would touch itself there, and the triangles that failed
-    // come with the error, by the edge.
+    // come with the error, by the edge (the pinch's points too, see
+    // `boolean_evidence.rs`).
     let mut editor = Editor::new(Document::default());
     let extent = Extent::OneSide(length(editor.document(), "10"));
     add_extrude_on(

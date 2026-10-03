@@ -264,7 +264,9 @@ impl ErrorGeometry {
     /// `picking` (`mesh`'s tables): the face's name is a face's key or
     /// one of its aliases, on the body `holder` gives for the operand's
     /// (the body holding it now, `None` for one with no solid). Faces of
-    /// bodies not shown name none. The box then holds those faces too.
+    /// bodies not shown name none. Those faces' triangles, as the model
+    /// draws them, join its mesh, so they are drawn as its patches are,
+    /// and the box holds them too.
     pub(crate) fn resolve(
         &mut self,
         mesh: &RenderMesh,
@@ -281,6 +283,7 @@ impl ErrorGeometry {
             return;
         }
         let names = |body: BodyId, key: &FaceKey| wanted.binary_search(&(body, *key)).is_ok();
+        let first = self.faces.len();
         'parts: for (part, &body) in mesh.parts().zip(picking.bodies()) {
             if !(wanted.iter()).any(|&(wanted, _)| wanted == body) {
                 continue;
@@ -298,7 +301,54 @@ impl ErrorGeometry {
                 self.faces.push((body, f as u32));
             }
         }
+        self.add_model_faces(mesh, first);
         self.bounds = self.bounds_in(Some(mesh));
+    }
+
+    /// Adds the triangles of the faces it names in `model` (the answer's
+    /// mesh), from the `first`, to its mesh, their vertices and normals as
+    /// the model has them, face by face until one doesn't fit.
+    fn add_model_faces(&mut self, model: &RenderMesh, first: usize) {
+        let Some(faces) = self.faces.get(first..).filter(|f| !f.is_empty()) else {
+            return;
+        };
+        let mut positions = self.mesh.positions().to_vec();
+        let mut normals = self.mesh.normals().to_vec();
+        let mut indices = self.mesh.indices().to_vec();
+        for &(_, face) in faces {
+            let Some(range) = model.face_indices(face as usize) else {
+                continue;
+            };
+            let corners = &model.indices()[range];
+            // Its vertices, numbered after those there.
+            let mut ids: std::collections::BTreeMap<u32, u32> = Default::default();
+            let mut added = Vec::new();
+            for &v in corners {
+                let next = positions.len().saturating_add(added.len());
+                if let std::collections::btree_map::Entry::Vacant(e) = ids.entry(v) {
+                    // Within `MAX_VERTICES` once checked below, so it fits.
+                    e.insert(u32::try_from(next).unwrap_or(u32::MAX));
+                    added.push(v);
+                }
+            }
+            let fits = positions.len().saturating_add(added.len()) <= Self::MAX_VERTICES
+                && indices.len().saturating_add(corners.len()) <= Self::MAX_INDICES;
+            if !fits {
+                self.truncated = true;
+                break;
+            }
+            for v in added {
+                positions.push(model.positions()[v as usize]);
+                normals.push(model.normals()[v as usize]);
+            }
+            indices.extend(corners.iter().map(|v| ids[v]));
+        }
+        match mesh_of(positions, normals, indices) {
+            Ok(mesh) => self.mesh = mesh,
+            // The model's triangles are whole and within bounds, as are
+            // its own, so this isn't reached; its mesh stays as it was.
+            Err(_) => self.truncated = true,
+        }
     }
 
     /// [`ErrorGeometry::resolve`] on a shared `geometry`, taking a copy of
