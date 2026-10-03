@@ -86,7 +86,64 @@ pub(super) struct Cutout {
     /// counted as infinite. The others lie on the patch (its own curves)
     /// or within half the resolution of the quadric.
     pub(super) stray: f64,
+    /// The triangles that strayed more than an eighth of the fit
+    /// tolerance, for [`Cutout::finer`].
+    near: Near,
 }
+
+/// The triangles of a [`Cutout`] that came near the fit tolerance, to be
+/// measured again on a finer grid if the round is the one kept: those
+/// along a cut with their corners' positions in the face's patch, and
+/// those off the face's quadric.
+#[derive(Default)]
+struct Near {
+    patch: Option<Patch>,
+    surface: Option<Surface>,
+    along: Vec<(Patch, [DVec3; 3])>,
+    off: Vec<Patch>,
+}
+
+impl Cutout {
+    /// How far the triangles that strayed more than an eighth of the fit
+    /// tolerance at [`measured`]'s points stray at a grid of at least 16
+    /// steps a side ([`grid`]), at most; NaN counted as infinite. The
+    /// round kept is held to the fit tolerance by this: its triangles
+    /// straying less than half the tolerance at the 15 samples were seen
+    /// up to 1.7 times that between them (a band's ridge beside its cut,
+    /// near a ball's wall), so a last round's band anywhere under the
+    /// tolerance at the samples could be past it.
+    pub(super) fn finer(&self) -> f64 {
+        let far = |d: f64| if d.is_nan() { f64::INFINITY } else { d };
+        let along = self.near.patch.map_or(0.0, |patch| {
+            self.near
+                .along
+                .iter()
+                .flat_map(|(piece, d)| {
+                    grid(piece, FINER).into_iter().map(move |u| {
+                        let x = piece.eval(u);
+                        let guess = d[0] * u.x + d[1] * u.y + d[2] * u.z;
+                        far(patch.eval(invert(&patch, x, guess)).distance(x))
+                    })
+                })
+                .fold(0.0, f64::max)
+        });
+        let off = self.near.surface.map_or(0.0, |surface| {
+            self.near
+                .off
+                .iter()
+                .flat_map(|piece| {
+                    grid(piece, FINER)
+                        .into_iter()
+                        .map(move |u| far(surface.distance(piece.eval(u))))
+                })
+                .fold(0.0, f64::max)
+        });
+        along.max(off)
+    }
+}
+
+/// The fewest steps a side [`Cutout::finer`] measures at.
+const FINER: usize = 16;
 
 /// Where a face's own added points are numbered from until they are
 /// given ids in the mesh: past any id a mesh has (three per patch at
@@ -430,6 +487,7 @@ pub(super) fn cut_face(
             steiner,
             split: wanted,
             stray: 0.0,
+            near: Near::default(),
         });
     }
 
@@ -476,6 +534,11 @@ pub(super) fn cut_face(
     let cuts: BTreeSet<(u32, u32)> = job.cuts.iter().map(|h| key(h[0], h[1])).collect();
     let mut split: BTreeSet<(u32, u32)> = wanted.into_iter().collect();
     let mut stray = 0.0f64;
+    let mut near = Near {
+        patch: Some(*patch),
+        surface: Some(surface),
+        ..Near::default()
+    };
     // A distance, NaN as infinite (so it strays, and the maximum sees it).
     let far = |d: f64| if d.is_nan() { f64::INFINITY } else { d };
     let off = tris
@@ -491,7 +554,8 @@ pub(super) fn cut_face(
             let sides: Vec<(u32, u32)> = keys.into_iter().filter(|k| cuts.contains(k)).collect();
             if !sides.is_empty() {
                 let d = tri.map(at);
-                let from_patch = samples()
+                let from_patch = measured(&piece)
+                    .into_iter()
                     .map(|u| {
                         let x = piece.eval(u);
                         let guess = d[0] * u.x + d[1] * u.y + d[2] * u.z;
@@ -499,6 +563,9 @@ pub(super) fn cut_face(
                     })
                     .fold(0.0, f64::max);
                 stray = stray.max(from_patch);
+                if from_patch > tol.fit() / 8.0 {
+                    near.along.push((piece, d));
+                }
                 if from_patch > tol.fit() / 2.0 {
                     split.extend(sides);
                 }
@@ -514,7 +581,14 @@ pub(super) fn cut_face(
             // the fit tolerance all the same (a band tree's root that no
             // ruling frees, which nothing along a cut bounds), its sides
             // on the face's boundary halved while it strays.
+            let from_surface = measured(&piece)
+                .into_iter()
+                .map(|u| far(surface.distance(piece.eval(u))))
+                .fold(from_surface, f64::max);
             stray = stray.max(from_surface);
+            if from_surface > tol.fit() / 8.0 {
+                near.off.push(piece);
+            }
             if from_surface > tol.fit() / 2.0 {
                 split.extend(keys.into_iter().filter(|k| boundary.contains(k)));
             }
@@ -528,7 +602,41 @@ pub(super) fn cut_face(
         steiner,
         split: split.into_iter().collect(),
         stray,
+        near,
     })
+}
+
+/// Barycentric points where a triangle held to the fit tolerance is
+/// measured ([`Cutout::stray`]): the 15 [`samples`] where none of its
+/// sides weighs more than 2, else a grid of `4·⌈√w⌉` steps a side for its
+/// heaviest side's weight `w`. A side of weight `w` pulls the patch
+/// towards its control point over a strip about `1/√(2w)` of the domain
+/// wide, which the 15 miss: a band beside a fitted conic of weight 30
+/// (its points at `¼`, `½` and `¾` all near the control point) strayed
+/// 1.007 of the fit off its cylinder where they found half that.
+fn measured(piece: &Patch) -> Vec<DVec3> {
+    if piece.w.into_iter().all(|w| w <= 2.0) {
+        return samples().collect();
+    }
+    grid(piece, 4)
+}
+
+/// A grid of barycentric points, `n` steps a side: at least `fewest`, and
+/// `4·⌈√w⌉` for the heaviest side's weight `w` past 2 (see [`measured`]),
+/// at most 32 (weights are at most `W_MAX`, 64).
+fn grid(piece: &Patch, fewest: usize) -> Vec<DVec3> {
+    let w = piece.w.into_iter().fold(0.0, f64::max);
+    let heavy = if w > 2.0 {
+        (4.0 * w.sqrt().ceil()).min(32.0) as usize
+    } else {
+        0
+    };
+    let n = fewest.max(heavy);
+    (0..=n)
+        .flat_map(|i| {
+            (0..=n - i).map(move |j| DVec3::new(i as f64, j as f64, (n - i - j) as f64) / n as f64)
+        })
+        .collect()
 }
 
 /// A face that couldn't be cut (see [`cut_face`], whose arguments these

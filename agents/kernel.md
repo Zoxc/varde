@@ -5028,7 +5028,8 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   claim-free faces), not to rounding: the rounds halve a band's cut
   while the band strays more than half the fit tolerance from its
   face's surface, and the round kept has every band within the fit
-  tolerance at the samples (see "Rounds" below). Each conic is fitted
+  tolerance at the samples, a finer grid where it came near (see
+  "Rounds" below). Each conic is fitted
   only until it is within a quarter of the fit tolerance at its three
   samples, and lies in the crease's bisecting plane, so the conics bow
   to one side of the true curve, and the bands beside them with them.
@@ -5190,7 +5191,29 @@ more than half the fit tolerance at the samples asks for its sides on
 the face's boundary (cut or edge pieces) to be halved the same way. Each face reports the largest of these two distances over its
 triangles (`Cutout::stray`, NaN as infinite), and the round the largest
 of all; **the round kept must be within the fit tolerance**, else the
-operation fails as `TooComplex`. Halving can't bring every band within
+operation fails as `TooComplex`. Two refinements of the samples
+(`face::measured`, `Cutout::finer`):
+- A triangle with a side of weight `w` over 2 is measured on a grid of
+  `4·⌈√w⌉` steps a side (at most 32) instead of the 15. Such a side pulls
+  the patch towards its control point over a strip about `1/√(2w)` of
+  the domain wide, and its own points at `¼`, `½`, `¾` all crowd round
+  the control point. Fitted conics reach weights of 20–32 where a cut
+  turns sharply (a thin bar grazing a round, a cone crossing a
+  cylinder's wall near a vertex); the bands beside them strayed up to
+  1.03 of the fit off their cylinders between samples that found half
+  that, a wrong `Ok`
+  (`a_thin_bar_grazing_a_round_keeps_its_bands_within_the_fit`). On the
+  finer grid they halve as any band: the fuzzing cases came out within
+  0.3–0.5 of the fit, none refused that went through before.
+- The round kept is measured again where a triangle strayed more than
+  an eighth of the fit tolerance: on a grid of at least 16 steps a side.
+  Bands of light weights strayed up to 1.7 times their 15 samples' worst
+  (a ridge beside the cut, a ball's band), so a round that ran out of
+  halvings with a band just under the fit at the samples could be past
+  it; such a round fails as `TooComplex`. A round that stopped because
+  nothing strayed past half the fit has its bands within about 0.85 of
+  it, and this changes nothing there. The grid is still samples: the
+  promise is the fit at them, not a certified bound. Halving can't bring every band within
 it: a vertex off the surface keeps the triangles at it that far however
 small they get (bars through boxes at the finest tolerance: 5.6e-4 off
 in every round, their union and `bar − box` kept at 56 times the
@@ -6350,7 +6373,11 @@ fitted); a thin bar across a thicker round, on the world frame and on
 a fuzzing case's hair frames after a chain of joins (each result's
 volume within a tenth of the fit times its claim-free area, measured
 at 0.016–0.020; the bands within the fit of their cylinders, measured
-at 0.18 of it; see "Volumes with fitted cuts"); a pin through a
+at 0.18 of it; see "Volumes with fitted cuts"); a bar of radius 0.032
+grazing a unit round's wall, whose cut has conics of weight 30 (every
+patch within the fit of the true surfaces on a grid of 32 steps a side,
+1.007 of it before bands with heavy sides were measured on a finer
+grid; see "Rounds"); a pin through a
 plate's hole wall (upright cylinders meeting in
 lines, exact); a boss joined flush on a plate; a block through the
 plate's hole, and one whose side runs exactly through a vertex of the

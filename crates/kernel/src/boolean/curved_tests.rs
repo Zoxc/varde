@@ -540,6 +540,99 @@ fn a_thin_bar_across_a_chained_round_on_hair_frames() {
 }
 
 #[test]
+fn a_thin_bar_grazing_a_round_keeps_its_bands_within_the_fit() {
+    // A fuzzing case: a bar of radius 0.032 crossing a unit round's wall
+    // almost square to its axis, near where it would graze it. Some of
+    // the cut's fitted conics have weights near 30, so their points at
+    // a quarter, half and three quarters, and the bands' points at the
+    // 15 samples, all crowd round the conic's control point; between
+    // them a band beside such a conic was pulled 1.007 of the fit off
+    // the bar's wall, with its samples at half that.
+    let round = extruded_on(
+        vec![circle(DVec2::ZERO, 1.0, 9, false)],
+        Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::Z,
+            y: DVec3::X,
+        },
+        -3.0,
+        3.0,
+        1,
+    );
+    let (c, d, r) = (
+        DVec3::new(
+            0.972_248_833_506_803_8,
+            -1.129_074_338_626_140_8,
+            -0.051_824_946_172_020_436,
+        ),
+        DVec3::new(
+            -0.027_284_672_348_322_09,
+            0.101_637_726_981_505_11,
+            -0.994_447_242_999_284_6,
+        ),
+        0.032_333_920_013_983_955,
+    );
+    let x = (DVec3::X - d * d.x).normalize();
+    let bar = extruded_on(
+        vec![circle(DVec2::ZERO, r, 9, false)],
+        Frame {
+            origin: c,
+            x,
+            y: d.cross(x),
+        },
+        -3.0,
+        3.0,
+        2,
+    );
+    // The nearest of the true surfaces: the round's wall and ends, the
+    // bar's.
+    let off = |p: DVec3| {
+        let rel = p - c;
+        let along = rel.dot(d);
+        [
+            DVec2::new(p.x, p.z).length() - 1.0,
+            p.y.abs() - 3.0,
+            (rel - d * along).length() - r,
+            along.abs() - 3.0,
+        ]
+        .into_iter()
+        .map(f64::abs)
+        .fold(f64::INFINITY, f64::min)
+    };
+    let n = 32;
+    let mut v = Vec::new();
+    for (x, y, op) in [
+        (&round, &bar, Op::Union),
+        (&round, &bar, Op::Intersection),
+        (&round, &bar, Op::Difference),
+        (&bar, &round, Op::Difference),
+    ] {
+        // `round − bar` is refused (as before); the rest go through.
+        let Ok(solid) = boolean(x, y, op, &TOL, &Budget::DEFAULT) else {
+            assert!(std::ptr::eq(x, &round) && op == Op::Difference);
+            continue;
+        };
+        let mesh = solid.mesh();
+        for t in 0..mesh.tris().len() {
+            let patch = mesh.patch(t);
+            for i in 0..=n {
+                for j in 0..=n - i {
+                    let u = DVec3::new(i as f64, j as f64, (n - i - j) as f64) / n as f64;
+                    let p = patch.eval(u);
+                    assert!(off(p) <= TOL.fit(), "{op:?}: {p} {:e} off", off(p));
+                }
+            }
+        }
+        v.push(solid.volume());
+    }
+    // The identities, within the suite's allowance for fitted cuts.
+    let (va, vb) = (round.volume(), bar.volume());
+    let allow = TOL.fit() * (round.area() + bar.area()) / 5.0;
+    assert!((v[0] + v[1] - va - vb).abs() <= allow);
+    assert!((v[2] + v[1] - vb).abs() <= allow);
+}
+
+#[test]
 fn a_pin_through_a_holes_wall() {
     // Two upright cylinders crossing in straight lines, and the plate's
     // faces: all exact.

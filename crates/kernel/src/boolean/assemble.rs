@@ -474,8 +474,11 @@ pub(super) fn assemble(
             // tolerance (a crossing off the surface keeps the bands at
             // it that far however small, and a band tree's root may have
             // no side to halve): past it, the result would be wrong by
-            // the tolerance's own measure.
-            if cut.stray > tol.fit() {
+            // the tolerance's own measure. The round kept is measured
+            // again on a finer grid where it came near (see
+            // `Cutout::finer`).
+            let finer = par_map(&cut.cut, face::Cutout::finer);
+            if finer.into_iter().fold(cut.stray, f64::max) > tol.fit() {
                 return Err(KernelError::TooComplex.into());
             }
             break cut;
