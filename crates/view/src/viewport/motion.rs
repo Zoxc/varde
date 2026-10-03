@@ -8,10 +8,10 @@
 //! Both in the selected colour, or the hovered one while the panel's
 //! row of it is hovered.
 //!
-//! A move has handles at its bodies' box centre, a fixed size on the
-//! screen: an arrow along each world axis, a shaft in the axis's colour
-//! with a knob at its end as the extrude's handle has, and a ring about
-//! each. They take the mouse ahead of picking the model. Dragging an
+//! A move has handles at its bodies' pivot ([`MotionState::centre`],
+//! else their box's centre), a fixed size on the screen: an arrow along
+//! each world axis, a shaft in the axis's colour with a knob at its end
+//! as the extrude's handle has, and a ring about each. They take the mouse ahead of picking the model. Dragging an
 //! arrow sets that axis's offset, where the cursor's ray passes nearest
 //! the arrow's line, snapped as the extrude's handle ([`snap_step`] of a
 //! pixel's size at the camera's target);
@@ -362,8 +362,9 @@ impl<'a> Moving<'a> {
     /// The handles seen by `camera` over `bounds`, if there are any: a
     /// move's whose bodies the model shows, picking bodies, in a document
     /// that can be changed, their centre in front of the eye. At the
-    /// bodies' box centre, kept while a handle is dragged (moved along
-    /// with the offsets while an arrow is).
+    /// bodies' pivot as the app has it, else their box's centre; kept
+    /// while a handle is dragged (moved along with the offsets while an
+    /// arrow is).
     fn handles(&self, input: &Input, camera: &Camera, bounds: Rectangle) -> Option<Handles> {
         let state = &self.state;
         if state.kind != MotionKind::Move || state.picking != MotionPick::Bodies || !state.editable
@@ -379,7 +380,7 @@ impl<'a> Moving<'a> {
                 },
             ) => drag.centre + (self.offset() - drag.offset),
             Some(drag) => drag.centre,
-            None => (low + high) / 2.0,
+            None => state.centre.unwrap_or((low + high) / 2.0),
         };
         if !centre.is_finite() {
             return None;

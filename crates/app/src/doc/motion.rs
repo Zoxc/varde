@@ -17,12 +17,15 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use std::f64::consts::PI;
+
 use glam::DVec3;
 use varde_document::{
-    Axis3, AxisRef, BodyId, Design, Document, FeatureId, FeatureKind, MAX_FEATURE_BODIES, Mirror,
-    Move, PlaneRef,
+    Axis3, AxisRef, BodyId, Design, Document, FeatureId, FeatureKind, Generation,
+    MAX_FEATURE_BODIES, Mirror, Move, PlaneRef,
 };
 use varde_expr::{AngleUnit, Unit, Value};
+use varde_kernel::Motion;
 use varde_regen::Summary;
 use varde_view::{
     CombineBody, ModelHighlight, MotionField, MotionKind, MotionLook, MotionPick, MotionState,
@@ -52,6 +55,15 @@ pub(crate) struct MotionSession {
     pub(crate) axis: Option<AxisRef>,
     /// A mirror's plane, once picked.
     pub(crate) plane: Option<PlaneRef>,
+    /// The bodies picked that the document no longer holds, or that
+    /// aren't made before the feature edited any more (an undo took them
+    /// away), as of the last change to it: kept, said to be gone, until
+    /// taken out or back.
+    gone_bodies: Vec<BodyId>,
+    /// The axis or plane, as picked, the document can't name any more
+    /// (its body or the faces' maker taken away): kept, said to be gone,
+    /// until another is picked or it's back.
+    gone_reference: Option<Reference>,
     /// A mirror's Create copy: on to begin with, as the UI mock's.
     pub(crate) keep_original: bool,
     /// The panel's row the cursor is over, if any.
@@ -67,6 +79,23 @@ pub(crate) struct MotionSession {
     highlight: Arc<ModelHighlight>,
     /// What `highlight` was built of.
     built: Option<Built>,
+    /// Where a move's handles stand, as a point of its bodies before the
+    /// move, once the model shown has told: [`Pivot`].
+    pivot: Option<Pivot>,
+}
+
+/// Where a move's handles stand: `at`, a point of `bodies` as they are
+/// before the move, which the move takes where the handles show
+/// ([`MotionSession::centre`]). Found once from the centre of their box
+/// in the model shown, taken back through the move it shows, and kept
+/// while the bodies and the document stay as they were: the box of
+/// turned bodies has another centre, so the handles would jump as a
+/// ring is let go of, and a second turn would be about another point.
+#[derive(Debug, Clone, PartialEq)]
+struct Pivot {
+    bodies: Vec<BodyId>,
+    generation: Generation,
+    at: DVec3,
 }
 
 /// What a move's or mirror's highlight is built of: the model, what's
@@ -114,12 +143,15 @@ impl MotionSession {
             ],
             axis: (kind == MotionKind::Move).then_some(AxisRef::Origin(Axis3::Z)),
             plane: None,
+            gone_bodies: Vec::new(),
+            gone_reference: None,
             keep_original: true,
             hover: None,
             edited_bodies: Vec::new(),
             design,
             highlight: Arc::default(),
             built: None,
+            pivot: None,
         }
     }
 
@@ -225,6 +257,41 @@ impl MotionSession {
         }
     }
 
+    /// Where its handles stand, `pivot` taken by the move as set up, if
+    /// it's a whole move whose turn's line is known (`line`, regenerating's
+    /// for an edge or face axis).
+    fn centre(&self, pivot: DVec3, line: Option<[DVec3; 2]>) -> Option<DVec3> {
+        let Some(FeatureKind::Move(moved)) = self.kind() else {
+            return None;
+        };
+        let at = motion_of(&moved, line)?.point(pivot);
+        at.is_finite().then_some(at)
+    }
+
+    /// What's gone that it names, the UI mock's words, if anything: a
+    /// body picked, or the axis a move turns about or a mirror's plane,
+    /// which another is to be picked for. A move's axis is only gone
+    /// while it turns.
+    fn gone(&self) -> Option<&'static str> {
+        if self.bodies.is_empty() {
+            return None;
+        }
+        if (self.bodies.iter()).any(|body| self.gone_bodies.contains(body)) {
+            return Some("A picked body is gone");
+        }
+        match (self.kind, self.gone_reference) {
+            (MotionKind::Move, Some(Reference::Axis(axis)))
+                if self.axis == Some(axis) && self.angle().is_some_and(|angle| angle != 0.0) =>
+            {
+                Some("The axis is gone: pick another")
+            }
+            (MotionKind::Mirror, Some(Reference::Plane(plane))) if self.plane == Some(plane) => {
+                Some("The plane is gone: pick another")
+            }
+            _ => None,
+        }
+    }
+
     /// Why it can't be committed to a document of `design` as set up, if
     /// its own check refuses it. None while it isn't whole.
     fn refused(&self, design: &Design) -> Option<String> {
@@ -245,7 +312,11 @@ impl MotionSession {
             MotionKind::Move => self.fields.iter().all(|field| field.error.is_none()),
             MotionKind::Mirror => true,
         };
-        typed && self.need().is_none() && self.kind().is_some() && self.refused(design).is_none()
+        typed
+            && self.need().is_none()
+            && self.gone().is_none()
+            && self.kind().is_some()
+            && self.refused(design).is_none()
     }
 
     /// Picks `body`, or takes it out if it's picked. None are added past
@@ -260,17 +331,19 @@ impl MotionSession {
         }
     }
 
-    /// Lets go of the bodies `document` no longer holds or that aren't
-    /// made before the feature edited any more, and of an axis or plane
-    /// on a body or of a face's maker the document no longer takes there
-    /// (an undo took them away), so what's set up never names what the
-    /// document can't hold: a move's axis goes back to the Z axis, a
-    /// mirror's plane is picked again. An edited feature's own reference,
-    /// whose body or maker is gone with ids below the next, the document
-    /// holds, failing, and it stays.
+    /// Notes the bodies `document` no longer holds or that aren't made
+    /// before the feature edited any more, and an axis or plane on a body
+    /// or of a face's maker the document no longer takes there, or on a
+    /// body it no longer holds (an undo took them away): kept, so what
+    /// was picked comes back with a redo, but said to be gone
+    /// ([`MotionSession::gone`]), and neither previewed nor committed
+    /// while it is, as the UI mock has it. The bodies of the feature
+    /// edited, previewed while the axis or plane is picked, are let go of.
     fn prune(&mut self, document: &Document) {
         let edited = self.feature;
-        self.bodies.retain(|&body| pickable(document, body, edited));
+        self.gone_bodies = (self.bodies.iter().copied())
+            .filter(|&body| !pickable(document, body, edited))
+            .collect();
         self.edited_bodies
             .retain(|&body| pickable(document, body, edited));
         let features = document.features();
@@ -280,17 +353,22 @@ impl MotionSession {
         }) else {
             return;
         };
-        if let Some(axis) = &self.axis
-            && document.check_axis_ref(index, axis).is_err()
-        {
-            self.axis = Some(AxisRef::Origin(Axis3::Z));
-        }
-        if let Some(plane) = &self.plane
-            && document.check_plane_ref(index, plane).is_err()
-        {
-            self.plane = None;
-            self.picking = MotionPick::Reference;
-        }
+        let held = |body: BodyId| document.body(body).is_some();
+        self.gone_reference = match (self.axis, self.plane) {
+            (Some(axis), _)
+                if document.check_axis_ref(index, &axis).is_err()
+                    || axis_body(&axis).is_some_and(|body| !held(body)) =>
+            {
+                Some(Reference::Axis(axis))
+            }
+            (_, Some(plane))
+                if document.check_plane_ref(index, &plane).is_err()
+                    || plane_body(&plane).is_some_and(|body| !held(body)) =>
+            {
+                Some(Reference::Plane(plane))
+            }
+            _ => None,
+        };
     }
 
     /// Moves the bodies `merges` (the merges before the feature) have
@@ -334,6 +412,9 @@ impl MotionSession {
     /// new one not at all: the model shown is the history as of the
     /// feature, which the edges and faces clicked are named as.
     fn draft(&self, design: &Design) -> Option<(Option<FeatureId>, FeatureKind)> {
+        if self.gone().is_some() {
+            return None;
+        }
         if self.picking == MotionPick::Bodies {
             // A new one that does nothing yet shows as the document does.
             if self.feature.is_none() && self.need().is_some() {
@@ -378,8 +459,9 @@ impl Doc {
     /// Starts setting up a new move or mirror (`kind`), in a document
     /// that can be changed and outside a sketch, or cancels the one being
     /// set up (one of the other kind is replaced). What's selected in the
-    /// model gives it its bodies. Another operation being set up is
-    /// dropped. A move's first offset field takes the focus.
+    /// model gives it its bodies; with nothing selected, a model of one
+    /// body gives that one, as the UI mock's. Another operation being set
+    /// up is dropped. A move's first offset field takes the focus.
     pub(crate) fn start_motion(&mut self, kind: MotionKind) {
         if (self.motion.take()).is_some_and(|session| session.kind == kind)
             || !self.editable()
@@ -391,11 +473,26 @@ impl Doc {
         self.extrude = None;
         self.revolve = None;
         self.combine = None;
-        let bodies = self.selected_bodies();
+        let mut bodies = self.selected_bodies();
+        if bodies.is_empty() {
+            bodies.extend(self.only_body());
+        }
         self.motion = Some(MotionSession::new(kind, self.editor.document(), bodies));
         if kind == MotionKind::Move {
             self.focus = Some(Focus::All);
         }
+    }
+
+    /// The model's only body, if it has just one: of the bodies a new
+    /// feature can name, those not merged into another.
+    fn only_body(&self) -> Option<BodyId> {
+        let document = self.editor.document();
+        let merged = self.feed.merged_before(document, None);
+        let mut bodies = (document.bodies().iter())
+            .map(|body| body.id)
+            .filter(|&body| merged.holder(body).is_none() && pickable(document, body, None));
+        let only = bodies.next()?;
+        bodies.next().is_none().then_some(only)
     }
 
     /// Edits the move or mirror feature `id`, if the document holds it,
@@ -683,6 +780,65 @@ impl Doc {
         (self.motion.as_mut()).is_some_and(|session| session.follow(&merges))
     }
 
+    /// Finds where the handles of the move being set up stand
+    /// ([`Pivot`]) if it isn't known for its bodies and the document as
+    /// they are: once the model shown answers what was asked last, from
+    /// its bodies' box centre, through the move it was asked with (none
+    /// for a new one not previewed yet); not while that preview failed,
+    /// when the model shows the bodies where the document has them.
+    pub(crate) fn follow_motion_pivot(&mut self) {
+        let generation = self.editor.generation();
+        let Some(session) = &self.motion else {
+            return;
+        };
+        let current =
+            |pivot: &Pivot| pivot.bodies == session.bodies && pivot.generation == generation;
+        if session.kind != MotionKind::Move
+            || session.picking != MotionPick::Bodies
+            || session.bodies.is_empty()
+            || session.pivot.as_ref().is_some_and(current)
+            || !self.feed.answers_request()
+            || self.feed.predates_replacement()
+        {
+            return;
+        }
+        let shown = self.shown_bodies(&session.bodies);
+        let Some([low, high]) = self.feed.pick_index().bodies_bounds(&shown) else {
+            return;
+        };
+        let centre = (low + high) / 2.0;
+        let at = match self.motion_draft() {
+            None if session.feature.is_none() => Some(centre),
+            Some((_, FeatureKind::Move(moved))) if self.feed.draft_error().is_none() => {
+                undo_motion(&moved, self.feed.draft_reference(), centre)
+            }
+            _ => None,
+        };
+        let Some(at) = at.filter(|at| at.is_finite()) else {
+            return;
+        };
+        if let Some(session) = &mut self.motion {
+            session.pivot = Some(Pivot {
+                bodies: session.bodies.clone(),
+                generation,
+                at,
+            });
+        }
+    }
+
+    /// `bodies` where the model shown has them: a merged one as the body
+    /// holding it.
+    fn shown_bodies(&self, bodies: &[BodyId]) -> Vec<BodyId> {
+        let merged = self.feed.merged_bodies();
+        (bodies.iter())
+            .map(|&body| {
+                (merged.iter())
+                    .find(|(consumed, _)| *consumed == body)
+                    .map_or(body, |&(_, holder)| holder)
+            })
+            .collect()
+    }
+
     /// The move or mirror being set up as the regeneration lane previews
     /// it, see [`MotionSession::draft`].
     pub(crate) fn motion_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
@@ -773,11 +929,10 @@ impl Doc {
         let session = self.motion.as_ref()?;
         let document = self.editor.document();
         let design = document.design();
-        let named = |body: BodyId| {
-            Some(CombineBody {
-                body,
-                name: document.body(body)?.name.as_str(),
-            })
+        // A body gone from the document stays listed, as the UI mock's.
+        let named = |body: BodyId| CombineBody {
+            body,
+            name: (document.body(body)).map_or("Missing body", |body| body.name.as_str()),
         };
         let editing = session
             .feature
@@ -811,29 +966,29 @@ impl Doc {
             .filter(|_| turning && reference.is_some());
         // The bodies where the model shown has them: a merged one in its
         // holder.
-        let merged = self.feed.merged_bodies();
-        let shown: Vec<BodyId> = (session.bodies.iter())
-            .map(|&body| {
-                (merged.iter())
-                    .find(|(consumed, _)| *consumed == body)
-                    .map_or(body, |&(_, holder)| holder)
-            })
-            .collect();
+        let shown = self.shown_bodies(&session.bodies);
         let bounds = self.feed.pick_index().bodies_bounds(&shown);
+        let generation = self.editor.generation();
+        let centre = (session.pivot.as_ref())
+            .filter(|pivot| pivot.bodies == session.bodies && pivot.generation == generation)
+            .and_then(|pivot| {
+                let line = match session.axis {
+                    Some(AxisRef::Origin(_)) | None => None,
+                    Some(_) => self.feed.draft_reference(),
+                };
+                session.centre(pivot.at, line)
+            });
         let fields = MotionField::ALL.map(|field| session.field(field).field());
         Some(MotionState {
             kind: session.kind,
             editing,
-            bodies: session
-                .bodies
-                .iter()
-                .filter_map(|&body| named(body))
-                .collect(),
+            bodies: session.bodies.iter().map(|&body| named(body)).collect(),
             picking: session.picking,
             fields,
             reference,
             line,
             bounds,
+            centre,
             origin_axis: match session.axis {
                 Some(AxisRef::Origin(axis)) => Some(axis),
                 _ => None,
@@ -841,7 +996,7 @@ impl Doc {
             units: document.units(),
             keep_original: session.keep_original,
             need: session.need(),
-            refused: session.refused(&design),
+            refused: (session.gone().map(str::to_owned)).or_else(|| session.refused(&design)),
             error: self.feed.draft_error(),
             show_error: self.draft_framed(),
             checking: self.proposals.slow(),
@@ -851,6 +1006,44 @@ impl Doc {
             hover: self.panel_hover(),
         })
     }
+}
+
+/// The motion of `moved`: its turn, about an origin axis or the line
+/// `line` regenerating found for another axis, then its shift, as
+/// regenerating works it out; `None` where the line isn't known.
+fn motion_of(moved: &Move, line: Option<[DVec3; 2]>) -> Option<Motion> {
+    let turn = match &moved.turn {
+        Some((axis, angle)) => {
+            let [point, along] = match axis {
+                AxisRef::Origin(axis) => [DVec3::ZERO, axis.direction()],
+                _ => line?,
+            };
+            Some((point, along, angle.value / (PI / 180.0)))
+        }
+        None => None,
+    };
+    let shift = Motion::translation(moved.offset_vector())?;
+    match turn {
+        Some((point, along, degrees)) => Some(Motion::turn(point, along, degrees)?.then(&shift)),
+        None => Some(shift),
+    }
+}
+
+/// The point `moved` takes to `p`, see [`motion_of`].
+fn undo_motion(moved: &Move, line: Option<[DVec3; 2]>, p: DVec3) -> Option<DVec3> {
+    let back = Motion::translation(-moved.offset_vector())?;
+    let back = match &moved.turn {
+        Some((axis, angle)) => {
+            let [point, along] = match axis {
+                AxisRef::Origin(axis) => [DVec3::ZERO, axis.direction()],
+                _ => line?,
+            };
+            back.then(&Motion::turn(point, along, -(angle.value / (PI / 180.0)))?)
+        }
+        None => back,
+    };
+    let at = back.point(p);
+    at.is_finite().then_some(at)
 }
 
 /// Whether `edge` of `index`'s model is round as the mesh draws it: a
@@ -883,7 +1076,25 @@ fn round_edge(index: &varde_view::PickIndex, edge: u32) -> bool {
     points.len() >= 2 && low > slack && high - low <= slack
 }
 
+/// The body `axis`'s edge or face is on, if it names one.
+fn axis_body(axis: &AxisRef) -> Option<BodyId> {
+    match axis {
+        AxisRef::Origin(_) => None,
+        AxisRef::Edge(edge) => Some(edge.body),
+        AxisRef::Face(face) => Some(face.body),
+    }
+}
+
+/// The body `plane`'s face is on, if it names one.
+fn plane_body(plane: &PlaneRef) -> Option<BodyId> {
+    match plane {
+        PlaneRef::Origin(_) => None,
+        PlaneRef::Face(face) => Some(face.body),
+    }
+}
+
 /// An edge or face taken as a move's axis or a mirror's plane.
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Reference {
     Axis(AxisRef),
     Plane(PlaneRef),

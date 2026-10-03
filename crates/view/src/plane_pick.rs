@@ -8,7 +8,7 @@ use glam::DVec3;
 use varde_document::{
     BodyId, Document, EdgeRef, FaceRef, FeatureId, FeatureKind, Operation, Plane,
 };
-use varde_kernel::mesh::PartKey;
+use varde_kernel::mesh::{FaceKey, PartKey};
 
 use crate::document::CURVED_FACE;
 use crate::pick::PickIndex;
@@ -48,11 +48,54 @@ pub struct Naming {
     merged_before: Vec<(BodyId, BodyId)>,
     /// The body each feature made, by the feature's number, ascending.
     made: Vec<(u64, BodyId)>,
+    /// The copies faces can be named as, ascending ([`FaceKey`]'s
+    /// `instance`): none (0), and those the mirrors keeping their
+    /// originals before the feature make, of each other's too; `None` if
+    /// they're past [`MAX_INSTANCES`], when any is taken. A later
+    /// mirror's image is shown when the feature isn't the last, but isn't
+    /// there at the feature.
+    instances: Option<Vec<u64>>,
     /// The bodies a face each join, cut or intersect made may be on, as
     /// the model shown found, by the feature's number, ascending: those
     /// it touched, as they were then, or for a join only the first, which
     /// it merges the others into.
     touched: Vec<(u64, Vec<BodyId>)>,
+}
+
+/// How many copies [`Naming`] tells apart at most: past it, faces of
+/// any copy are taken (the mirrors' images, each doubling them, are
+/// bounded by the document's features, not by this).
+const MAX_INSTANCES: usize = 4096;
+
+/// The copies (see `Naming::instances`) faces of `document`'s model can
+/// be in with the history stopped at feature `before`: none's, and each
+/// image a mirror keeping its original makes of those before it. `None`
+/// past [`MAX_INSTANCES`].
+fn instances_before(document: &Document, before: usize) -> Option<Vec<u64>> {
+    let mut instances = vec![0];
+    for feature in &document.features()[..before] {
+        if let FeatureKind::Mirror(mirror) = &feature.kind
+            && mirror.keep_original
+        {
+            let images: Vec<u64> = (instances.iter())
+                .map(|&instance| {
+                    let key = FaceKey {
+                        feature: 0,
+                        part: PartKey::StartCap,
+                        instance,
+                    };
+                    key.copy(feature.id.get(), 1).instance
+                })
+                .collect();
+            instances.extend(images);
+            if instances.len() > MAX_INSTANCES {
+                return None;
+            }
+        }
+    }
+    instances.sort_unstable();
+    instances.dedup();
+    Some(instances)
 }
 
 /// Why a face or an edge of the model shown can't be named
@@ -131,8 +174,8 @@ impl PlanePick {
             return Some(CURVED_FACE.into());
         }
         let naming = &self.naming;
-        let after = (index.face_ref(face, DVec3::ZERO))
-            .is_some_and(|raw| !naming.takes_maker(raw.key.feature));
+        let after =
+            (index.face_ref(face, DVec3::ZERO)).is_some_and(|raw| !naming.takes_key(&raw.key));
         let taken = (!after)
             .then(|| naming.face_ref(index, face, DVec3::ZERO))
             .flatten()
@@ -236,7 +279,17 @@ impl Naming {
             merged_before,
             made,
             touched,
+            instances: instances_before(document, before),
         }
+    }
+
+    /// Whether faces keyed `key` can be named: made by a feature before
+    /// the feature ([`Naming::takes_maker`]), and none's copy or the copy
+    /// of a mirror before it.
+    pub(crate) fn takes_key(&self, key: &FaceKey) -> bool {
+        self.takes_maker(key.feature)
+            && (self.instances.as_ref())
+                .is_none_or(|instances| instances.binary_search(&key.instance).is_ok())
     }
 
     /// Whether faces of `body` can be named: it's made before the
@@ -278,7 +331,7 @@ impl Naming {
         near: DVec3,
     ) -> Result<FaceRef, Unnamed> {
         let raw = index.face_ref(face, near).ok_or(Unnamed::Missing)?;
-        if !self.takes_maker(raw.key.feature) {
+        if !self.takes_key(&raw.key) {
             return Err(Unnamed::Later);
         }
         let found = self.face_ref(index, face, near).ok_or(Unnamed::Unclear)?;
@@ -331,7 +384,7 @@ impl Naming {
         let faces = index.edge_faces(edge).ok_or(Unnamed::Missing)?;
         let shown = index.face_body(faces[0]).ok_or(Unnamed::Missing)?;
         let keys = index.chain_keys(edge).ok_or(Unnamed::Missing)?;
-        if !keys.iter().all(|key| self.takes_maker(key.feature)) {
+        if !keys.iter().all(|key| self.takes_key(key)) {
             return Err(Unnamed::Later);
         }
         let [a, b] = keys.map(|key| self.body_of(shown, key.feature));
@@ -396,5 +449,53 @@ pub(crate) fn on_plane(document: &Document, plane: &Plane) -> String {
     match plane {
         Plane::Origin(plane) => format!("on {}", plane.name()),
         Plane::Face(_) => plane_note(document, plane),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use varde_document::{Editor, Mirror, OriginPlane, PlaneRef};
+
+    use super::*;
+
+    /// The image of a mirror keeping its original is named only with the
+    /// history stopped after the mirror: before it, the model shown
+    /// shows a face that isn't there yet. Images of images too.
+    #[test]
+    fn a_later_mirror_s_image_is_not_named_before_it() {
+        let mut editor = Editor::new(Document::example());
+        let plate = editor.document().bodies()[0].id;
+        let mirror = Mirror {
+            bodies: vec![plate],
+            plane: PlaneRef::Origin(OriginPlane::XY),
+            keep_original: true,
+        };
+        for _ in 0..2 {
+            let add = editor.document().add_feature(mirror.clone().into());
+            editor.apply(add).unwrap();
+        }
+        let document = editor.document();
+        let [_, extrude, first, second] = [0, 1, 2, 3].map(|k| document.features()[k].id.get());
+        let shown = Shown {
+            merged: &[],
+            touched: &[],
+            failed: &[],
+        };
+        let top = FaceKey {
+            feature: extrude,
+            part: PartKey::EndCap,
+            instance: 0,
+        };
+        let image = top.copy(first, 1);
+        let twice = image.copy(second, 1);
+        let naming = |before: usize| Naming::before(document, before, shown);
+        assert!(naming(2).takes_key(&top));
+        assert!(!naming(2).takes_key(&image));
+        assert!(naming(3).takes_key(&image));
+        assert!(!naming(3).takes_key(&twice));
+        assert!(naming(4).takes_key(&twice));
+        assert!(naming(4).takes_key(&top.copy(second, 1)));
+        // A copy no mirror makes.
+        assert!(!naming(4).takes_key(&top.copy(second, 2)));
     }
 }

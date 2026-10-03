@@ -692,3 +692,407 @@ fn a_ring_s_turn_is_taken_only_as_the_handles_offer_it() {
     plates.motion(turn(Axis3::Y, "-30°", "4 mm"));
     assert_eq!(state(&plates).2, 3.0);
 }
+
+/// [`plates`] with a fourth body, a disc of radius 5 about (20, 30), 2
+/// mm up from XY: the right disc and it together aren't symmetric about
+/// their box's centre, which a turn other than a quarter moves.
+fn lopsided() -> (Plates, [BodyId; 2]) {
+    let mut editor = Editor::new(Document::example());
+    let new = || Operation::NewBody(BodyId::NEW);
+    for center in [(20.0, 0.0), (-20.0, 0.0)] {
+        let extent = two_sides(editor.document(), "15", "5");
+        add_disc(&mut editor, center, extent, new());
+    }
+    let extent = varde_document::Extent::OneSide(crate::tests::length(editor.document(), "2"));
+    add_disc(&mut editor, (20.0, 30.0), extent, new());
+    let all = editor.document().bodies();
+    let bodies = [all[0].id, all[1].id, all[2].id];
+    let low = all[3].id;
+    let (doc, requests) = holding(editor.document().clone());
+    let plates = Plates {
+        doc,
+        requests,
+        bodies,
+    };
+    let right = plates.bodies[1];
+    (plates, [right, low])
+}
+
+/// Where the viewport stands the move's handles while none is dragged.
+fn handles_at(doc: &Doc) -> DVec3 {
+    let state = doc.motion_state().expect("a move");
+    let [low, high] = state.bounds.expect("bodies shown");
+    state.centre.unwrap_or((low + high) / 2.0)
+}
+
+/// What a ring of the handles at `centre` sends turning about `axis`
+/// to `angle` degrees from `from` degrees, the offsets `offset`.
+fn ring(axis: Axis3, centre: DVec3, offset: DVec3, from: f64, angle: f64) -> MotionLook {
+    let shift = varde_kernel::Motion::turn(centre, axis.direction(), angle - from)
+        .unwrap()
+        .point(offset);
+    let units = Some(varde_expr::Unit::Length(varde_expr::LengthUnit::Mm));
+    MotionLook::Turn {
+        axis,
+        angle: format!("{angle}°"),
+        offset: [shift.x, shift.y, shift.z].map(|v| varde_expr::format(v, units)),
+    }
+}
+
+/// The offsets of the move being set up, as they read.
+fn offsets(doc: &Doc) -> DVec3 {
+    let session = doc.motion.as_ref().expect("a session");
+    let [x, y, z] = Axis3::ALL.map(|axis| {
+        (session.fields[MotionField::Offset(axis).index()].value)
+            .as_ref()
+            .unwrap()
+            .value
+    });
+    DVec3::new(x, y, z)
+}
+
+/// The handles stay where a ring turned the bodies about once it's let
+/// go and the preview comes, though the bodies' box centre moves; a
+/// second ring turned about them back to no turn brings the offsets back
+/// to nothing, and an arrow then shifts the handles with the bodies.
+#[test]
+fn the_handles_stay_where_a_ring_turned_them_and_turning_back_undoes_it() {
+    let (mut plates, [right, low]) = lopsided();
+    plates.doc.look(Look::StartMove);
+    plates.click(right);
+    plates.click(low);
+    plates.answer();
+    let start = handles_at(&plates.doc);
+    let [a, b] = plates
+        .doc
+        .feed
+        .pick_index()
+        .bodies_bounds(&[right, low])
+        .unwrap();
+    assert!(near(start, (a + b) / 2.0), "{start}");
+
+    plates.motion(ring(Axis3::X, start, DVec3::ZERO, 0.0, 30.0));
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    let [a, b] = plates
+        .doc
+        .feed
+        .pick_index()
+        .bodies_bounds(&[right, low])
+        .unwrap();
+    assert!(!near((a + b) / 2.0, start), "the box's centre moved");
+    let after = handles_at(&plates.doc);
+    assert!(near(after, start), "the handles jumped: {start} to {after}");
+
+    // Back to no turn about where they stand: no offset left.
+    let offset = offsets(&plates.doc);
+    plates.motion(ring(Axis3::X, after, offset, 30.0, 0.0));
+    assert_eq!(offsets(&plates.doc), DVec3::ZERO);
+    plates.answer();
+    let [c, d] = plates
+        .doc
+        .feed
+        .pick_index()
+        .bodies_bounds(&[right, low])
+        .unwrap();
+    assert!(near((c + d) / 2.0, start));
+    assert!(near(handles_at(&plates.doc), start));
+
+    // Turned again, then an arrow: the handles move with the offset at
+    // once, before the preview comes.
+    plates.motion(ring(Axis3::X, start, DVec3::ZERO, 0.0, 45.0));
+    plates.answer();
+    let turned = handles_at(&plates.doc);
+    assert!(near(turned, start));
+    let y = offsets(&plates.doc).y;
+    plates.input(MotionField::Offset(Axis3::Y), &format!("{} mm", y + 10.0));
+    let shifted = handles_at(&plates.doc);
+    assert!(
+        near(shifted, start + DVec3::new(0.0, 10.0, 0.0)),
+        "{shifted}"
+    );
+    plates.answer();
+    assert!(near(handles_at(&plates.doc), shifted));
+}
+
+/// A move turned about a model edge, its angle typed back to 0, then a
+/// ring dragged: the ring's world axis takes over from the edge, the
+/// bodies turn about the handles, which stay where they were.
+#[test]
+fn a_ring_after_a_turn_about_an_edge_typed_back_to_nothing() {
+    let (mut plates, [right, low]) = lopsided();
+    plates.doc.look(Look::StartMove);
+    plates.click(right);
+    plates.click(low);
+    plates.answer();
+    let start = handles_at(&plates.doc);
+    // About the right disc's rim, a third of a turn.
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    plates.answer();
+    let index = plates.doc.feed.pick_index();
+    let rim = (0..index.mesh().edge_count() as u32)
+        .filter(|&edge| index.body(Picked::Edge(edge)) == Some(right))
+        .find(|&edge| super::round_edge(index, edge))
+        .expect("a rim");
+    plates.click_at(right, Picked::Edge(rim), DVec3::new(25.0, 0.0, 15.0));
+    assert!(matches!(
+        plates.doc.motion.as_ref().unwrap().axis,
+        Some(AxisRef::Edge(_))
+    ));
+    plates.input(MotionField::Angle, "120");
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    let [point, along] = plates
+        .doc
+        .motion_state()
+        .unwrap()
+        .line
+        .expect("the rim's axis");
+    let about = varde_kernel::Motion::turn(point, along, 120.0).unwrap();
+    assert!(near(handles_at(&plates.doc), about.point(start)));
+
+    // Typed back to nothing, the bodies are back, and the handles.
+    plates.input(MotionField::Angle, "0");
+    assert!(near(handles_at(&plates.doc), start));
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    assert!(near(handles_at(&plates.doc), start));
+    let state = plates.doc.motion_state().unwrap();
+    assert_eq!(state.line, None, "turning by nothing, no axis drawn");
+
+    // A ring: about its world axis now, turning about the handles.
+    plates.motion(ring(Axis3::X, start, DVec3::ZERO, 0.0, 30.0));
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert_eq!(session.axis, Some(AxisRef::Origin(Axis3::X)));
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    assert!(near(handles_at(&plates.doc), start));
+    assert!(plates.doc.motion_ready());
+}
+
+/// With nothing selected, a new move or mirror of a model of one body
+/// picks that body, as the UI mock's: a mirror goes on to its plane. Of
+/// several, none.
+#[test]
+fn the_only_body_is_picked_for_a_new_move_or_mirror() {
+    let (mut doc, _requests) = holding(Document::example());
+    let plate = doc.editor.document().bodies()[0].id;
+    doc.start_motion(MotionKind::Move);
+    let session = doc.motion.as_ref().expect("a move");
+    assert_eq!(session.bodies, [plate]);
+    assert_eq!(session.picking, MotionPick::Bodies);
+    doc.start_motion(MotionKind::Mirror);
+    let session = doc.motion.as_ref().expect("a mirror");
+    assert_eq!(session.bodies, [plate]);
+    assert_eq!(session.picking, MotionPick::Reference);
+
+    let mut plates = plates();
+    plates.doc.start_motion(MotionKind::Move);
+    assert!(plates.doc.motion.as_ref().unwrap().bodies.is_empty());
+}
+
+/// Adds a disc of radius 5 about (0, 30), 5 mm up and 1 down, as a new
+/// body, as its own undo step: the body.
+fn later_disc(plates: &mut Plates) -> BodyId {
+    let extent = two_sides(plates.doc.editor.document(), "5", "1");
+    add_disc(
+        &mut plates.doc.editor,
+        (0.0, 30.0),
+        extent,
+        Operation::NewBody(BodyId::NEW),
+    );
+    plates.doc.sync();
+    plates.answer();
+    plates.doc.editor.document().bodies().last().unwrap().id
+}
+
+/// A picked body an undo takes away stays listed, as the mock's
+/// "Missing body", the panel saying it's gone, nothing previewed or
+/// committed; the redo brings it back. Taken out, the move goes on.
+#[test]
+fn a_picked_body_an_undo_takes_away_is_said_to_be_gone() {
+    let mut plates = plates();
+    let [_, right, _] = plates.bodies;
+    let later = later_disc(&mut plates);
+    plates.doc.look(Look::StartMove);
+    plates.click(right);
+    plates.click(later);
+    plates.input(MotionField::Offset(Axis3::X), "5");
+    plates.answer();
+    assert!(plates.doc.motion_ready());
+
+    plates.doc.update(Edit::Undo);
+    assert!(plates.last_draft().is_none(), "nothing previewed");
+    plates.answer();
+    let session = plates.doc.motion.as_ref().expect("still set up");
+    assert_eq!(session.bodies, [right, later]);
+    assert!(!plates.doc.motion_ready());
+    let shown = screen_texts(&plates.doc);
+    assert!(shown.contains(&"Missing body".to_owned()), "{shown:?}");
+    assert!(
+        shown
+            .iter()
+            .any(|text| text.contains("A picked body is gone")),
+        "{shown:?}"
+    );
+    plates.doc.update(Edit::CommitMotion);
+    assert!(plates.doc.motion.is_some(), "not committed");
+
+    // Back with a redo.
+    plates.doc.update(Edit::Redo);
+    assert!(plates.last_draft().is_some());
+    plates.answer();
+    assert!(plates.doc.motion_ready());
+    // Gone again, and taken out: the rest moves.
+    plates.doc.update(Edit::Undo);
+    plates.motion(MotionLook::Drop(later));
+    assert!(plates.doc.motion_ready());
+    plates.doc.update(Edit::CommitMotion);
+    let (_, kind) = plates.last_feature();
+    let FeatureKind::Move(moved) = kind else {
+        panic!("a move");
+    };
+    assert_eq!(moved.bodies, [right]);
+}
+
+/// A move's axis on a body an undo takes away is said to be gone while
+/// the move turns, as the mock's "The axis is gone: pick another", and
+/// another axis picked clears it; a mirror's plane likewise.
+#[test]
+fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
+    let mut plates = plates();
+    let [plate, right, _] = plates.bodies;
+    let later = later_disc(&mut plates);
+    plates.doc.look(Look::StartMove);
+    plates.click(right);
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    plates.answer();
+    let wall = plates.face(later, |summary| matches!(summary, Summary::Cylinder { .. }));
+    plates.click_at(later, Picked::Face(wall), DVec3::new(5.0, 30.0, 2.0));
+    let axis = plates.doc.motion.as_ref().unwrap().axis;
+    assert!(matches!(axis, Some(AxisRef::Face(face)) if face.body == later));
+    plates.input(MotionField::Angle, "30");
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    assert!(plates.doc.motion_ready());
+
+    plates.doc.update(Edit::Undo);
+    assert!(plates.last_draft().is_none(), "nothing previewed");
+    plates.answer();
+    let session = plates.doc.motion.as_ref().expect("still set up");
+    assert_eq!(session.axis, axis, "kept, for a redo");
+    assert!(!plates.doc.motion_ready());
+    let shown = screen_texts(&plates.doc);
+    assert!(
+        shown
+            .iter()
+            .any(|text| text.contains("The axis is gone: pick another")),
+        "{shown:?}"
+    );
+    // Turning by nothing, the axis isn't needed.
+    plates.input(MotionField::Angle, "0");
+    plates.input(MotionField::Offset(Axis3::X), "5");
+    assert!(plates.doc.motion_ready());
+    plates.input(MotionField::Angle, "30");
+    assert!(!plates.doc.motion_ready());
+    // Another axis picked: it goes on.
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    plates.motion(MotionLook::OriginAxis(Axis3::Y));
+    assert!(plates.doc.motion_ready());
+    assert!(plates.last_draft().is_some());
+    plates.motion(MotionLook::Cancel);
+
+    // A mirror's plane, a face of the disc, likewise.
+    plates.doc.update(Edit::Redo);
+    plates.answer();
+    plates.click(plate);
+    plates.doc.start_motion(MotionKind::Mirror);
+    plates.answer();
+    let top = plates.face(
+        later,
+        |summary| matches!(summary, Summary::Plane { n, .. } if n[2] > 0.5),
+    );
+    plates.click_at(later, Picked::Face(top), DVec3::new(0.0, 30.0, 5.0));
+    assert!(matches!(
+        plates.doc.motion.as_ref().unwrap().plane,
+        Some(PlaneRef::Face(_))
+    ));
+    assert!(plates.doc.motion_ready());
+    plates.doc.update(Edit::Undo);
+    plates.answer();
+    assert!(!plates.doc.motion_ready());
+    let shown = screen_texts(&plates.doc);
+    assert!(
+        shown
+            .iter()
+            .any(|text| text.contains("The plane is gone: pick another")),
+        "{shown:?}"
+    );
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    plates.motion(MotionLook::OriginPlane(varde_document::OriginPlane::XY));
+    assert!(plates.doc.motion_ready());
+}
+
+/// A move set up with two bodies that a combine, brought back by a redo,
+/// merges one into the other: the move follows on to the body holding
+/// it, as a click on it would pick, its handles at that body's centre,
+/// and moves it whole.
+#[test]
+fn a_move_follows_a_body_a_redone_combine_merges() {
+    let mut plates = plates();
+    let [plate, right, _] = plates.bodies;
+    let combine = varde_document::Combine {
+        target: plate,
+        tools: vec![right],
+        op: varde_document::BodyOp::Union,
+        keep_tools: false,
+    };
+    let add = plates.doc.editor.document().add_feature(combine.into());
+    plates.doc.apply(add);
+    plates.doc.sync();
+    plates.answer();
+    let [low, high] = plates.bounds(plate);
+    plates.doc.update(Edit::Undo);
+    plates.answer();
+
+    plates.doc.look(Look::StartMove);
+    plates.click(plate);
+    plates.click(right);
+    plates.input(MotionField::Offset(Axis3::Z), "20");
+    plates.answer();
+    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [plate, right]);
+
+    plates.doc.update(Edit::Redo);
+    plates.answer();
+    let session = plates.doc.motion.as_ref().expect("still set up");
+    assert_eq!(
+        session.bodies,
+        [plate],
+        "the tool followed on to the target"
+    );
+    // A click on what was the tool picks the target, which it's in.
+    plates.click(plate);
+    assert!(plates.doc.motion.as_ref().unwrap().bodies.is_empty());
+    plates.click_at(
+        plate,
+        Picked::Face(plates.face(plate, |summary| matches!(summary, Summary::Cylinder { .. }))),
+        DVec3::new(25.0, 0.0, 12.0),
+    );
+    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [plate]);
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    let [moved_low, moved_high] = plates.bounds(plate);
+    let up = DVec3::new(0.0, 0.0, 20.0);
+    assert!(near(moved_low, low + up) && near(moved_high, high + up));
+    assert!(near(
+        handles_at(&plates.doc),
+        (moved_low + moved_high) / 2.0
+    ));
+    assert!(plates.doc.motion_ready());
+    plates.doc.update(Edit::CommitMotion);
+    let (_, kind) = plates.last_feature();
+    let FeatureKind::Move(moved) = kind else {
+        panic!("a move");
+    };
+    assert_eq!(moved.bodies, [plate]);
+}

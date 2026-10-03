@@ -674,4 +674,308 @@ fn an_axis_is_found_beside_its_face() {
     assert_eq!(at, DVec3::new(0.0, 0.0, 5.0));
     let along = super::super::motion::beside(far, DVec3::ZERO, DVec3::new(8.0, 0.0, 5.0));
     assert_eq!(along, far);
+    // A face at the coordinate limit whose axis is just past it: the
+    // point beside it, not the far apex, which the wire would refuse.
+    let apex = DVec3::new(1.0e6 + 5.0, 0.0, -3.0e7);
+    let at = super::super::motion::beside(apex, DVec3::Z, DVec3::new(1.0e6, 0.0, 5.0));
+    assert_eq!(at, DVec3::new(1.0e6 + 5.0, 0.0, 5.0));
+    assert!(crate::reference_fits(&[at.to_array(), [0.0, 0.0, 1.0]]));
 }
+
+/// Draws the closed polygon through `points`.
+fn polygon(points: &'static [(f64, f64)]) -> impl FnOnce(&mut Sketch) {
+    move |sketch| {
+        let ids: Vec<_> = (points.iter())
+            .map(|&(x, y)| sketch.add_point(glam::DVec2::new(x, y)).unwrap())
+            .collect();
+        for (k, &start) in ids.iter().enumerate() {
+            let end = ids[(k + 1) % ids.len()];
+            sketch
+                .add_curve(varde_sketch::Curve::Line { start, end }, false)
+                .unwrap();
+        }
+    }
+}
+
+/// Adds a sketch on XY drawn by `draw` and a whole turn of its regions
+/// about the sketch's Y axis, a new body: the body.
+fn revolved(editor: &mut Editor, draw: impl FnOnce(&mut Sketch)) -> BodyId {
+    use varde_document::{AxisLine, Revolve, Turn};
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
+        .unwrap();
+    let sketch = editor.document().features().last().unwrap().id;
+    let mut drawn = Sketch::default();
+    draw(&mut drawn);
+    let profiles = drawn.profiles().unwrap();
+    let regions = (0..profiles.regions.len())
+        .map(|index| profiles.reference(index).unwrap())
+        .collect();
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let revolve = Revolve {
+        sketch,
+        regions,
+        axis: AxisLine::SketchY,
+        extent: Turn::Full,
+        flip: false,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    add(editor, revolve);
+    *editor.document().bodies().last().map(|b| &b.id).unwrap()
+}
+
+/// A block and a revolved body whose inner wall is a cone so nearly a
+/// cylinder that its apex is 2e7 mm out (leaning 1e-5 over 20): the
+/// document, the block and the revolved body.
+fn block_by_a_near_cylinder() -> (Editor, BodyId, BodyId) {
+    let mut editor = Editor::new(Document::default());
+    let lean: &'static [(f64, f64)] = &[(10.0, 0.0), (15.0, 0.0), (15.0, 20.0), (10.00001, 20.0)];
+    let turned = revolved(&mut editor, polygon(lean));
+    let block = block(&mut editor, 30.0, 0.0, 40.0, 10.0, "10");
+    (editor, block, turned)
+}
+
+/// A turn about a cone so nearly a cylinder that its apex is far out:
+/// its axis is found beside the face, the block lands where a quarter
+/// turn about the Y axis takes it, and the draft's reply, its axis with
+/// it, crosses the workers' wire.
+#[test]
+fn a_near_cylinder_cone_is_an_axis_end_to_end() {
+    let (mut editor, block, turned) = block_by_a_near_cylinder();
+    let solid = solid_of(&evaluated(editor.document()), turned).clone();
+    let cone = key_where(&solid, |form| matches!(form, Form::Cone { .. }));
+    let face = FaceRef {
+        body: turned,
+        key: cone,
+        near: DVec3::new(10.000005, 10.0, 0.0),
+    };
+    let id = add_move(
+        &mut editor,
+        &[block],
+        ["0", "0", "0"],
+        Some((AxisRef::Face(face), "90")),
+    );
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let (_, [point, along]) = evaluation.references[0];
+    assert!(point.distance(DVec3::new(0.0, 10.0, 0.0)) < 1e-6, "{point}");
+    assert!(along.normalize().abs_diff_eq(DVec3::Y, 1e-12), "{along}");
+    // (x, y, z) about +Y a quarter: (z, y, -x).
+    let moved = solid_of(&evaluation, block);
+    assert!(
+        near_box(moved, [0.0, 0.0, -40.0], [10.0, 10.0, -30.0]),
+        "{:?}",
+        moved.bounds3()
+    );
+    assert_near(moved.volume(), 1000.0);
+
+    // Drafted, its reply crosses the wire with the axis.
+    let draft = crate::Draft {
+        revision: 1,
+        feature: Some(id),
+        kind: shift(
+            editor.document(),
+            &[block],
+            ["0", "0", "1"],
+            Some((AxisRef::Face(face), "0")),
+        )
+        .into(),
+    };
+    let response = crate::handle(crate::tests::regenerate_with(&editor, Some(draft)));
+    let (head, parts) = crate::wire::encode_reply(&response);
+    let parts: Vec<&[u8]> = parts.iter().map(|part| &**part).collect();
+    let Ok(crate::Response::Regenerated { draft, .. }) =
+        crate::wire::decode_reply(&head[..], &parts)
+    else {
+        panic!("the reply didn't cross");
+    };
+    let draft = draft.expect("a draft");
+    assert_eq!(draft.error, None);
+    let [point, _] = *draft.reference.expect("its axis");
+    assert!(DVec3::from(point).distance(DVec3::new(0.0, 10.0, 0.0)) < 1e-6);
+}
+
+/// A block mirrored in its own end keeping the original, the image
+/// united with it: later features name the image's faces (named as the
+/// mirror's copy) and the faces the two share once united, and find
+/// them, as the history leaves them; and again after the mirror is
+/// edited back and forth.
+#[test]
+fn later_features_name_the_faces_of_a_mirror_s_image() {
+    let mut editor = Editor::new(Document::default());
+    let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
+    let solid = Arc::clone(&evaluated(editor.document()).bodies[0].solid);
+    let end = FaceRef {
+        body: a,
+        key: key_on(&solid, DVec3::X, 10.0),
+        near: DVec3::new(10.0, 5.0, 5.0),
+    };
+    let doubled = Mirror {
+        bodies: vec![a],
+        plane: PlaneRef::Face(end),
+        keep_original: true,
+    };
+    let first = add(&mut editor, doubled.clone());
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let solid = solid_of(&evaluation, a).clone();
+    assert!(boxed(&solid, [0.0, 0.0, 0.0], [20.0, 10.0, 10.0]));
+    // The image's far end, a copy of the block's end at 10.
+    let far = key_on(&solid, DVec3::X, 20.0);
+    assert_ne!(far.instance, 0, "named as the copy: {far:?}");
+    let far = FaceRef {
+        body: a,
+        key: far,
+        near: DVec3::new(20.0, 5.0, 5.0),
+    };
+    // Mirrored again in the image's far end: four blocks long.
+    let second = add(
+        &mut editor,
+        Mirror {
+            bodies: vec![a],
+            plane: PlaneRef::Face(far),
+            keep_original: true,
+        },
+    );
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let solid = solid_of(&evaluation, a).clone();
+    assert_near(solid.volume(), 4000.0);
+    assert!(boxed(&solid, [0.0, 0.0, 0.0], [40.0, 10.0, 10.0]));
+    // The top, which the block and the images share once united.
+    let top_near = DVec3::new(15.0, 5.0, 10.0);
+    let tops: Vec<FaceKey> = (solid.topology().regions().iter())
+        .filter(|region| {
+            matches!(*region_form(&solid, region), Form::Plane { n, d }
+                if n.abs_diff_eq(DVec3::Z, 1e-12) && (d - 10.0).abs() < 1e-9)
+        })
+        .map(|region| region.key)
+        .collect();
+    assert!(!tops.is_empty());
+    // A mirror in the top, named near the first image: on top of it.
+    let top = FaceRef {
+        body: a,
+        key: solid
+            .topology()
+            .face(&solid, &tops[0], top_near)
+            .map(|region| solid.topology().regions()[region as usize].key)
+            .unwrap_or(tops[0]),
+        near: top_near,
+    };
+    let third = add(
+        &mut editor,
+        Mirror {
+            bodies: vec![a],
+            plane: PlaneRef::Face(top),
+            keep_original: false,
+        },
+    );
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let solid = solid_of(&evaluation, a);
+    assert_near(solid.volume(), 4000.0);
+    assert!(boxed(solid, [0.0, 0.0, 10.0], [40.0, 10.0, 20.0]));
+
+    // The first mirror without the original: no image, so its far end
+    // isn't there and the second fails, saying so; the third still
+    // finds the top.
+    set(
+        &mut editor,
+        first,
+        Mirror {
+            keep_original: false,
+            ..doubled.clone()
+        },
+    );
+    let evaluation = evaluated(editor.document());
+    let failed = failure(&evaluation, second).expect("the second fails");
+    assert_eq!(failed.message, "its mirror face wasn't found");
+    assert!(
+        failure(&evaluation, third).is_none(),
+        "{:?}",
+        evaluation.failed
+    );
+    // And back: as it was.
+    set(&mut editor, first, doubled);
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert!(boxed(
+        solid_of(&evaluation, a),
+        [0.0, 0.0, 10.0],
+        [40.0, 10.0, 20.0]
+    ));
+}
+
+/// The bounds a move's values are checked to, each at its end: whole
+/// turns either way leave a body where it was, to the bit; offsets at
+/// the coordinate limit are refused for the body they'd take past it,
+/// and taken where they don't; the tiniest turn turns.
+#[test]
+fn values_at_their_bounds_move_or_are_refused() {
+    let mut editor = Editor::new(Document::default());
+    let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
+    let z = Some((AxisRef::Origin(Axis3::Z), "360"));
+    let id = add_move(&mut editor, &[a], ["0", "0", "0"], z);
+    for angle in ["360", "-360", "2 * 180", "0"] {
+        set_move(
+            &mut editor,
+            id,
+            &[a],
+            ["0", "0", "0"],
+            Some((AxisRef::Origin(Axis3::X), angle)),
+        );
+        let evaluation = evaluated(editor.document());
+        assert!(
+            evaluation.failed.is_empty(),
+            "{angle}: {:?}",
+            evaluation.failed
+        );
+        let solid = solid_of(&evaluation, a);
+        assert!(
+            boxed(solid, [0.0; 3], [10.0; 3]),
+            "{angle}: {:?}",
+            solid.bounds3()
+        );
+    }
+    for (offsets, works) in [
+        (["1e6", "0", "0"], false),
+        (["-1e6", "0", "0"], true),
+        (["-1e6", "-1e6", "-1e6"], true),
+        (["0", "-1e6", "1e6"], false),
+    ] {
+        set_move(&mut editor, id, &[a], offsets, None);
+        let evaluation = evaluated(editor.document());
+        let failed = failure(&evaluation, id);
+        assert_eq!(failed.is_none(), works, "{offsets:?}: {failed:?}");
+        let solid = solid_of(&evaluation, a);
+        assert_near(solid.volume(), 1000.0);
+        if works {
+            let shift = DVec3::new(
+                offsets[0].parse().unwrap(),
+                offsets[1].parse().unwrap(),
+                offsets[2].parse().unwrap(),
+            );
+            assert!(boxed(solid, shift.to_array(), (shift + 10.0).to_array()));
+        } else {
+            assert!(boxed(solid, [0.0; 3], [10.0; 3]));
+        }
+    }
+    set_move(
+        &mut editor,
+        id,
+        &[a],
+        ["0", "0", "0"],
+        Some((AxisRef::Origin(Axis3::Z), "1e-9")),
+    );
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let bounds = solid_of(&evaluation, a).bounds3().unwrap();
+    assert!(bounds.min.x < 0.0 && bounds.min.x > -1e-9, "{:?}", bounds);
+}
+
+mod fuzz;

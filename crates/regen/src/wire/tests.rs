@@ -477,7 +477,7 @@ fn regenerated_round_trips() {
 
 #[test]
 fn draft_references_must_be_lines_within_bounds() {
-    let far = MAX_REFERENCE * 2.0;
+    let far = crate::MAX_REFERENCE * 2.0;
     for bad in [
         [[f64::NAN, 0.0, 0.0], [0.0, 0.0, 1.0]],
         [[0.0; 3], [0.0; 3]],

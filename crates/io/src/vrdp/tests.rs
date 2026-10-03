@@ -2201,3 +2201,76 @@ fn a_search_stops_at_its_budget() {
 mod power_loss;
 mod previews;
 mod saving;
+
+/// A record whose move or mirror was changed on disk to what the
+/// document refuses (an offset or angle not what its text gives, past
+/// its bounds or not a number, a mirror face's point out of bounds) is
+/// refused as it's read, never a panic; as written, it reads.
+#[test]
+fn a_tampered_move_or_mirror_is_refused() {
+    use glam::DVec3;
+    use varde_document::{Axis3, AxisRef, FaceKey, FaceRef, Mirror, Move, PartKey, PlaneRef};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let length = |text: &str| Value::new(text, &Move::offset_ask(&design)).unwrap();
+    let moved = Move {
+        bodies: vec![plate],
+        offset: [length("12.5"), length("0"), length("0")],
+        turn: Some((
+            AxisRef::Origin(Axis3::Z),
+            Value::new("30", &Move::angle_ask(&design)).unwrap(),
+        )),
+    };
+    let mirror = Mirror {
+        bodies: vec![plate],
+        plane: PlaneRef::Face(FaceRef {
+            body: plate,
+            key: FaceKey {
+                feature: editor.document().features()[1].id.get(),
+                part: PartKey::EndCap,
+                instance: 0,
+            },
+            near: DVec3::new(0.0, 17.25, 10.0),
+        }),
+        keep_original: true,
+    };
+    editor
+        .apply(editor.document().add_feature(moved.into()))
+        .unwrap();
+    editor
+        .apply(editor.document().add_feature(mirror.into()))
+        .unwrap();
+    let raw = record_msgpack(editor.document());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    // Each number as MessagePack writes a float: 0xcb and its bits.
+    let float = |x: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&x.to_bits().to_be_bytes());
+        bytes
+    };
+    let swap = |was: f64, now: f64| {
+        let (was, now) = (float(was), float(now));
+        let at = (raw.windows(was.len()))
+            .position(|window| window == was)
+            .unwrap_or_else(|| panic!("{was:?} isn't in the record"));
+        let mut changed = raw.clone();
+        changed[at..at + now.len()].copy_from_slice(&now);
+        changed
+    };
+    let thirty = 30.0 * (std::f64::consts::PI / 180.0);
+    for (was, now) in [
+        (12.5, f64::NAN),
+        (12.5, 12.25),
+        (12.5, 2e6),
+        (12.5, f64::INFINITY),
+        (thirty, 7.0),
+        (thirty, -f64::INFINITY),
+        (17.25, f64::NAN),
+        (17.25, 1e300),
+    ] {
+        let decoded = from_msgpack::<Document>(&swap(was, now));
+        assert!(decoded.is_err(), "{was} as {now} was taken");
+    }
+}

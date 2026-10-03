@@ -1176,7 +1176,9 @@ other operations as they drop it, and the measure tool; the combine's
 `B` is off while one is set up, as it is during an extrude or revolve.
 Both bindings want a body in the document (`DocumentKeys::bodies`). A
 new one takes its bodies from what's selected in the model (each item's
-body, a merged one as its holder), as the mock's init does. A new move
+body, a merged one as its holder), or with nothing selected the model's
+only body if it has one (of those a new feature can name, not merged
+into another: `Doc::only_body`), as the mock's init does. A new move
 starts with "0 mm" offsets, "0°" and the Z axis (the mock's), clicks
 picking bodies; a new mirror keeps the original (the mock's Create copy
 on), its plane to pick, clicks picking the plane if it has bodies.
@@ -1190,8 +1192,13 @@ on), its plane to pick, clicks picking the plane if it has bodies.
   it (`combine::pickable`), at most `MAX_FEATURE_BODIES`, kept sorted.
   Bodies picked on a model that didn't show a merge yet follow it once
   it does (`MotionSession::follow`, `Doc::follow_motion_merges`, after
-  each edit and answer, as the combine's `follow`), and bodies the
-  document no longer has are let go (`MotionSession::prune`).
+  each edit and answer, as the combine's `follow`). A body picked that
+  the document no longer has, or that isn't made before the feature any
+  more (an undo took it away), is kept, listed as the mock's "Missing
+  body", and the panel's foot says "A picked body is gone"
+  (`MotionSession::prune` notes them, `MotionSession::gone`): nothing is
+  previewed or committed until it's taken out (its row's cross) or a
+  redo brings it back.
 - **The axis or plane** is picked once its panel field is clicked
   (`MotionPick::Reference`): the toolbar then offers the origin axes
   ("X axis", "Y axis", "Z axis") or planes after Measure, as picking a
@@ -1203,7 +1210,14 @@ on), its plane to pick, clicks picking the plane if it has bodies.
   cylinder, cone, torus or revolved surface); a mirror a flat face. Each
   is named as a sketch's face or a revolve's edge is (`Naming`, the
   history stopped at the feature: `Naming::edge_ref` and the new
-  `Naming::checked_face_ref`, which refuses as `edge_ref` does). Refused
+  `Naming::checked_face_ref`, which refuses as `edge_ref` does). A face
+  of a mirror's image is named as the mirror's copy (its key's
+  `instance`), so `Naming` also refuses a face (or an edge of one) whose
+  copy no mirror keeping its original before the stop makes
+  (`Naming::takes_key`, the copies replayed from those mirrors, images
+  of images too, up to 4096 then any): a later mirror's image, shown
+  when a sketch's plane or a revolve's edge is picked again with later
+  features in the model, isn't there at the feature. Refused
   with a notice in the status bar, the app's stand-in for the mock's
   toast: "Only a straight or round edge, or a round face, can be the
   axis", "Only a flat face can be the mirror plane", "Only a face made
@@ -1218,8 +1232,11 @@ on), its plane to pick, clicks picking the plane if it has bodies.
   them by nothing about a move's axis, so regeneration still finds it).
   An axis or plane the document no longer takes at the feature's place
   (`Document::check_axis_ref`, `check_plane_ref`: an undo took its body
-  or a face's maker away) is dropped as the document changes, a move's
-  back to the Z axis, a mirror's to be picked again.
+  or a face's maker away), or whose body the document no longer has, is
+  kept, and said to be gone as the mock does: "The axis is gone: pick
+  another" (only while the move turns: an angle of zero needs no axis),
+  "The plane is gone: pick another"; nothing is previewed or committed
+  until another is picked or a redo brings it back.
 - **Typed fields** (a move's): the offsets read by `Move::offset_ask`,
   the angle by `Move::angle_ask` (`TypedText`, kept where the units
   change, as an extrude's). An angle of zero stores no turn
@@ -1228,8 +1245,8 @@ on), its plane to pick, clicks picking the plane if it has bodies.
 - **Whole and ready**: bodies, and a move's values as they last read
   with an axis while the angle isn't zero, or a mirror's plane
   (`MotionSession::kind`); ready (`Doc::motion_ready`) when editable, no
-  sketch edits wait on the solver, no field is refused, nothing is still
-  to do (`MotionSession::need`, the mock's words for the status bar: "pick
+  sketch edits wait on the solver, no field is refused, nothing it names
+  is gone, nothing is still to do (`MotionSession::need`, the mock's words for the status bar: "pick
   the bodies to move", "enter a distance or an angle", "pick an axis to
   rotate about", "pick a plane: an origin plane or a planar face") and its
   own check passes (else its words in the panel's foot, "Move fails",
@@ -1278,8 +1295,18 @@ knobs' layer is an empty placeholder: the handles are drawn by the
 renderer with the rest.
 
 **A move's handles** (`viewport/motion.rs`, question 13's decision: typed
-fields and handles): at the centre of the bodies' box in the model shown
-(`MotionState::bounds`, merged bodies as their holders), a fixed size on
+fields and handles): at a pivot of the bodies (`MotionState::centre`):
+the centre of their box in the model shown (`MotionState::bounds`,
+merged bodies as their holders) found once, taken back through the move
+that model shows to a point of the bodies before the move
+(`Doc::follow_motion_pivot`, `Pivot`, once the model answers what was
+asked last and its preview didn't fail; kept while the bodies and the
+document stay), and shown where the move as set up takes that point. A
+box's centre isn't where a turn takes it, so handles at the box centre
+would jump as a ring is let go of and the next turn would be about
+another point; these stay where a ring turned the bodies about, move
+with typed or dragged offsets at once, and a ring turned back undoes its
+turn. Before the pivot is known, the box's centre. A fixed size on
 the screen, an arrow along each world axis (100 px, the extrude handle's
 2 px shaft in the axis's scene colour, `Colors::axes`, with its knob at
 the end, a 7 px accent disc in a 2 px rim of the points' fill) and a ring
@@ -1346,9 +1373,11 @@ form's own point: a nearly flat cone's apex can be far past the limit
 the wire takes),
 and a draft's `Drafted::reference` is its feature's, as
 `[[f64; 3]; 2]`, on the wire too (checked on receipt: finite, within
-`wire::MAX_REFERENCE`, four times the coordinate limit, the direction
-not zero; else the generation fails, `wire::Error::Reference`). Not in
-`.vrdp`.
+`MAX_REFERENCE`, four times the coordinate limit, the direction not
+zero; else the generation fails, `wire::Error::Reference`). Regenerating
+notes only references that pass that check (`reference_fits`): one
+that doesn't (an axis of no length) isn't drawn, natively as on the web,
+rather than failing the whole reply there. Not in `.vrdp`.
 
 Tests: `app/src/doc/motion/tests.rs` (`M` with the selection, typed
 offsets moving the preview, `Enter` one undo step, the Timeline note and
@@ -1364,8 +1393,22 @@ offset, a ring a quarter turn about the centre, only the turn's ring
 while turning, clicks off the handles picking the model and on them not,
 none while the axis is picked); the app's tests also apply what the
 handles send (an arrow's offset, a ring's turn keeping the box centre,
-OK one undo step; a mirror ignoring a turn);
-`regen/src/wire/tests.rs` (the reference on the wire, bad ones refused).
+OK one undo step; a mirror ignoring a turn; the handles staying where a
+lopsided pair of bodies turned about and turning back to no offset; a
+ring after a turn about an edge typed back to zero), the only body
+picked, picked bodies and an axis or plane an undo takes away said to be
+gone, a body a redone combine merges followed;
+`regen/src/wire/tests.rs` (the reference on the wire, bad ones refused);
+`regen/src/history/tests/motion.rs` (a near-cylinder cone's axis end to
+end through the wire; later features naming a mirror's image's faces;
+values at their bounds) and `motion/fuzz.rs`: random histories of
+bodies, joins, combines, moves (origin axes, straight edges, round
+faces) and mirrors (origin planes, flat faces, with and without the
+original), edits, removals, undo and redo, each move and mirror held to
+the volume and centre of mass the motion worked out with `glam` gives
+(a mirror with its original to the boolean identities with the image),
+plus the combine fuzz's warm/cold, flipped-bytes, later-edits and wire
+checks (`VARDE_MOTION_SEEDS`, `VARDE_MOTION_FROM`).
 
 Known gaps: the moved bodies' old place isn't shown faded (the mock's
 `fade`), as the preview replaces the model; a move with an angle of zero
@@ -1375,9 +1418,7 @@ A ring's turn shifts the offsets to turn about the centre, so their
 texts come out unround (rounded to the units' decimals) after a ring is
 dragged by an angle other than a quarter turn; the handles have no look
 in the UI mock, which shows none, so they take the extrude handle's.
-Other departures from the mock: a new move or mirror starts with the
-bodies selected only (the mock's also takes the only body of a model
-with one); a body or reference the document no longer takes is let go
-of (an axis back to Z) where the mock keeps it and says "A picked body
-is gone" or "The axis is gone: pick another"; a move's axis may also be
-a round edge or face (the mock's: an origin axis or a straight edge).
+Other departures from the mock: a move's axis may also be a round edge
+or face (the mock's: an origin axis or a straight edge). A ring's
+offsets are typed rounded to the units' decimals, so the pivot drifts by
+that rounding (under a micrometre in millimetres) with each ring turn.

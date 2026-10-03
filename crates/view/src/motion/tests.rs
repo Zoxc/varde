@@ -23,6 +23,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         reference: Some("Z axis".to_owned()),
         line: None,
         bounds: None,
+        centre: None,
         origin_axis: Some(Axis3::Z),
         units: LengthUnit::Mm,
         keep_original: true,

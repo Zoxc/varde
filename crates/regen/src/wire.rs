@@ -94,12 +94,6 @@ use crate::{
 /// 8 bytes there and as few as 1 here).
 pub const MAX_HEAD_BYTES: usize = 1 << 26;
 
-/// How far from zero a coordinate of a draft's axis or plane
-/// ([`Drafted::reference`]) may be: its point is on a body within the
-/// coordinate limit, its direction at most the difference of two such
-/// points.
-pub const MAX_REFERENCE: f64 = 4.0 * varde_document::MAX_COORD as f64;
-
 /// The most faces a reply's picking tables may have: past any real
 /// model's, and few enough that decoding them can't take the page's
 /// memory (a face is about 120 bytes there and as few as 5 in the head).
@@ -569,14 +563,16 @@ fn check_merged(merged: &[(BodyId, BodyId)]) -> Result<(), Error> {
 }
 
 /// Checks the axis or plane of a draft, if it has one: finite, every
-/// coordinate within [`MAX_REFERENCE`] of zero, its direction not zero.
+/// coordinate within [`MAX_REFERENCE`](crate::MAX_REFERENCE) of zero, its direction not zero.
 fn check_reference(draft: Option<&Drafted>) -> Result<(), Error> {
-    let Some([point, along]) = draft.and_then(|draft| draft.reference.as_deref()) else {
+    let Some(reference) = draft.and_then(|draft| draft.reference.as_deref()) else {
         return Ok(());
     };
-    let within = |x: &f64| x.is_finite() && x.abs() <= MAX_REFERENCE;
-    let fine = point.iter().chain(along).all(within) && along.iter().any(|&x| x != 0.0);
-    if fine { Ok(()) } else { Err(Error::Reference) }
+    if crate::reference_fits(reference) {
+        Ok(())
+    } else {
+        Err(Error::Reference)
+    }
 }
 
 /// The placements of a [`Head::Regenerated`], each checked to be
@@ -772,7 +768,7 @@ pub enum Error {
     Picking(PickingError),
     /// A failure's geometry isn't one, see [`ErrorGeometry::from_parts`].
     Geometry(GeometryError),
-    /// A draft's axis or plane isn't one, see [`MAX_REFERENCE`].
+    /// A draft's axis or plane isn't one, see [`MAX_REFERENCE`](crate::MAX_REFERENCE).
     Reference,
     /// An export's bodies came in this many parts instead of one.
     ExportParts(usize),

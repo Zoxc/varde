@@ -31,6 +31,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         reference: Some("Z axis".to_owned()),
         line,
         bounds: Some([DVec3::new(-30.0, -20.0, 0.0), DVec3::new(30.0, 20.0, 10.0)]),
+        centre: None,
         origin_axis: Some(Axis3::Z),
         units: LengthUnit::Mm,
         keep_original: true,

@@ -43,7 +43,7 @@ pub(super) fn evaluate_move(
     let turn = match &moved.turn {
         Some((axis, angle)) => {
             let [point, direction] = resolve_axis(axis, evaluation, tolerance, cache)?;
-            evaluation.references.push((feature, [point, direction]));
+            note_reference(evaluation, feature, [point, direction]);
             let degrees = angle.value / (PI / 180.0);
             Motion::turn(point, direction, degrees).ok_or(message::AXIS_NO_DIRECTION)?
         }
@@ -88,7 +88,7 @@ pub(super) fn evaluate_mirror(
 ) -> Result<(), Failed> {
     own_solids(document, mirror.bodies.iter().copied(), evaluation)?;
     let [point, normal] = resolve_plane(&mirror.plane, evaluation, tolerance, cache)?;
-    evaluation.references.push((feature, [point, normal]));
+    note_reference(evaluation, feature, [point, normal]);
     let motion = Motion::mirror(point, normal).ok_or(message::MIRROR_FACE_NOT_FLAT)?;
     let how = How {
         moving: Moving::Mirror,
@@ -106,6 +106,17 @@ pub(super) fn evaluate_mirror(
         evaluation,
         cache,
     )
+}
+
+/// Notes `reference`, the axis or plane `feature` found, in
+/// `evaluation` for its draft's reply, if the workers' wire takes it
+/// ([`crate::reference_fits`]): one that's out of bounds there (a round
+/// edge's centre far out, an axis of no length) isn't drawn, natively
+/// as on the web.
+fn note_reference(evaluation: &mut Evaluation, feature: FeatureId, reference: [DVec3; 2]) {
+    if crate::reference_fits(&reference.map(|v| v.to_array())) {
+        evaluation.references.push((feature, reference));
+    }
 }
 
 /// How [`place`] moves a body.
@@ -349,20 +360,16 @@ fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DV
 }
 
 /// The point of the line through `point` along `axis` nearest `near`, or
-/// `point` where that isn't a finite point within [`MAX_COORD`] (an axis
-/// of no length). A form's own point can be far out: a cone that's
-/// nearly a cylinder has its apex far along its axis, past where the
-/// workers' bytes take a draft's axis, and the axis is drawn from its
-/// point. The face's point is on the face, within the limit, so the
-/// point found is beside the face.
+/// `point` where that isn't a finite point (an axis of no length). A
+/// form's own point can be far out: a cone that's nearly a cylinder has
+/// its apex far along its axis, past where the workers' bytes take a
+/// draft's axis, and the axis is drawn from its point. The face's point
+/// is on the face, within [`MAX_COORD`], and the point found is no
+/// further from it than the face's radius there, so it's beside the
+/// face, within the wire's bounds even where the face is at the limit.
 pub(super) fn beside(point: DVec3, axis: DVec3, near: DVec3) -> DVec3 {
     let foot = point + axis * ((near - point).dot(axis) / axis.length_squared());
-    let max = f64::from(MAX_COORD);
-    if foot.is_finite() && foot.abs().max_element() <= max {
-        foot
-    } else {
-        point
-    }
+    if foot.is_finite() { foot } else { point }
 }
 
 /// The plane of the flat face `face` names on `solid`, see

@@ -171,6 +171,12 @@ pub struct MotionState<'a> {
     /// if it shows them: the axis and plane are drawn across it, and a
     /// move's handles at its centre.
     pub bounds: Option<[DVec3; 2]>,
+    /// Where a move's handles stand, if the app knows: a point of the
+    /// bodies found once, taken where the move as set up takes it, so
+    /// they stay put as a ring turns the bodies about them and move with
+    /// the offsets at once. Without it, the centre of
+    /// [`MotionState::bounds`].
+    pub centre: Option<DVec3>,
     /// A move's axis, if it's a world axis: while the move turns, only
     /// that axis's ring of the handles turns it further.
     pub origin_axis: Option<Axis3>,

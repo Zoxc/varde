@@ -596,6 +596,7 @@ impl Doc {
         self.refresh_profiles();
         // The extrude being set up is previewed as it changes.
         self.request_model();
+        self.follow_motion_pivot();
         self.prune_picks();
         self.refresh_errors();
         self.prune_preview();
@@ -923,6 +924,7 @@ impl Doc {
         if combine || motion {
             self.request_model();
         }
+        self.follow_motion_pivot();
         self.follow_edge_axis();
         self.refresh_errors();
         self.follow_placement();

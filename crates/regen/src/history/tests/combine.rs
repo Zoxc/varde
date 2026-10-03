@@ -482,7 +482,7 @@ fn a_combine_draft_is_previewed() {
     assert_eq!(answer.parts, [a, b], "the committed model");
 }
 
-mod fuzz;
+pub(super) mod fuzz;
 
 /// A union step that fails shows where, the faces it names found on the
 /// bodies they are of: the target's running solid holds the tools united

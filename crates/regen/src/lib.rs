@@ -180,6 +180,22 @@ pub struct Drafted {
     pub reference: Option<Box<[[f64; 3]; 2]>>,
 }
 
+/// How far from zero a coordinate of a draft's axis or plane
+/// ([`Drafted::reference`]) may be: its point is on a body within the
+/// coordinate limit, its direction at most the difference of two such
+/// points.
+pub const MAX_REFERENCE: f64 = 4.0 * varde_document::MAX_COORD as f64;
+
+/// Whether `[point, along]` is an axis or plane a draft's reply can
+/// carry ([`Drafted::reference`]): finite, every coordinate within
+/// [`MAX_REFERENCE`] of zero, `along` not zero. Regenerating keeps only
+/// those (one far out, a big arc's centre, isn't drawn), so a reply it
+/// sends is never refused on the wire for its reference.
+pub(crate) fn reference_fits([point, along]: &[[f64; 3]; 2]) -> bool {
+    let within = |x: &f64| x.is_finite() && x.abs() <= MAX_REFERENCE;
+    point.iter().chain(along).all(within) && along.iter().any(|&x| x != 0.0)
+}
+
 impl Response {
     /// The editor generation the response is of: `None` for an export's.
     pub fn generation(&self) -> Option<Generation> {

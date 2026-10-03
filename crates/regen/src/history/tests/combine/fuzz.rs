@@ -16,17 +16,17 @@ use crate::wire::{decode_reply, decode_request, encode_reply, encode_request};
 use crate::{Regenerator, Request, Response};
 
 /// A small deterministic generator: xorshift64*.
-struct Rng(u64);
+pub(in crate::history::tests) struct Rng(pub(in crate::history::tests) u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(in crate::history::tests) fn next(&mut self) -> u64 {
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
         self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
     }
 
-    fn below(&mut self, n: usize) -> usize {
+    pub(in crate::history::tests) fn below(&mut self, n: usize) -> usize {
         (self.next() % n.max(1) as u64) as usize
     }
 }
@@ -34,7 +34,7 @@ impl Rng {
 const OPS: [BodyOp; 3] = [BodyOp::Union, BodyOp::Subtract, BodyOp::Intersect];
 
 /// A block or a disc on a 5 mm grid, so neighbours overlap or are flush.
-fn random_shape(rng: &mut Rng) -> Box<dyn FnOnce(&mut Sketch)> {
+pub(in crate::history::tests) fn random_shape(rng: &mut Rng) -> Box<dyn FnOnce(&mut Sketch)> {
     let x = 5.0 * rng.below(7) as f64;
     let y = 5.0 * rng.below(4) as f64;
     if rng.below(4) == 0 {
@@ -48,7 +48,11 @@ fn random_shape(rng: &mut Rng) -> Box<dyn FnOnce(&mut Sketch)> {
 
 /// A combine of `document`'s bodies made before feature `before` (all
 /// without), consumed or not, with a random operation and keep.
-fn random_combine(document: &Document, rng: &mut Rng, before: Option<usize>) -> Option<Combine> {
+pub(in crate::history::tests) fn random_combine(
+    document: &Document,
+    rng: &mut Rng,
+    before: Option<usize>,
+) -> Option<Combine> {
     let index = |id: FeatureId| document.features().iter().position(|f| f.id == id);
     let bodies: Vec<BodyId> = (document.bodies().iter())
         .filter(|body| before.is_none_or(|before| index(body.created_by) < Some(before)))
@@ -74,7 +78,7 @@ fn random_combine(document: &Document, rng: &mut Rng, before: Option<usize>) -> 
 }
 
 /// `document` with the features from `index` on removed.
-fn truncated(document: &Document, index: usize) -> Document {
+pub(in crate::history::tests) fn truncated(document: &Document, index: usize) -> Document {
     let mut editor = Editor::new(document.clone());
     for feature in document.features()[index..].iter().rev() {
         if editor.document().feature(feature.id).is_some() {
@@ -84,7 +88,10 @@ fn truncated(document: &Document, index: usize) -> Document {
     editor.document().clone()
 }
 
-fn solid(evaluation: &Evaluation, body: BodyId) -> Option<&Arc<Solid>> {
+pub(in crate::history::tests) fn solid(
+    evaluation: &Evaluation,
+    body: BodyId,
+) -> Option<&Arc<Solid>> {
     (evaluation.bodies.iter())
         .find(|made| made.body == body)
         .map(|made| &made.solid)
@@ -92,7 +99,7 @@ fn solid(evaluation: &Evaluation, body: BodyId) -> Option<&Arc<Solid>> {
 
 /// Whether two evaluations hold the same bodies, to the bit, merged the
 /// same way.
-fn same_bodies(a: &Evaluation, b: &Evaluation) -> bool {
+pub(in crate::history::tests) fn same_bodies(a: &Evaluation, b: &Evaluation) -> bool {
     let ids = |e: &Evaluation| e.bodies.iter().map(|m| m.body).collect::<Vec<_>>();
     ids(a) == ids(b)
         && a.merged == b.merged
@@ -191,7 +198,7 @@ fn check_combines(document: &Document, evaluation: &Evaluation, cache: &mut Cach
 /// Every later edit can be made to `document`: each feature and body
 /// removed, each feature set as it is, each combine's operation and keep
 /// changed, a new body added.
-fn not_stuck(document: &Document, what: &str) {
+pub(in crate::history::tests) fn not_stuck(document: &Document, what: &str) {
     let edits = |document: &Document| {
         let mut edits = Vec::new();
         for feature in document.features() {
@@ -235,7 +242,12 @@ fn not_stuck(document: &Document, what: &str) {
 /// The document through postcard and its MessagePack by name, whole and
 /// with bits flipped: never a panic, and what's taken passes its check,
 /// regenerates and can still be edited.
-fn bytes(document: &Document, rng: &mut Rng, cache: &mut Cache, what: &str) {
+pub(in crate::history::tests) fn bytes(
+    document: &Document,
+    rng: &mut Rng,
+    cache: &mut Cache,
+    what: &str,
+) {
     let postcard = document.to_postcard();
     assert_eq!(Document::from_postcard(&postcard).as_ref(), Ok(document));
     let named = rmp_serde::to_vec_named(document).unwrap();
@@ -269,7 +281,12 @@ fn bytes(document: &Document, rng: &mut Rng, cache: &mut Cache, what: &str) {
 
 /// A request for `editor`'s document with `draft`, and its answer, across
 /// the wire both ways.
-fn wire(editor: &Editor, draft: Option<Draft>, regenerator: &mut Regenerator, what: &str) {
+pub(in crate::history::tests) fn wire(
+    editor: &Editor,
+    draft: Option<Draft>,
+    regenerator: &mut Regenerator,
+    what: &str,
+) {
     let request = Request::Regenerate {
         generation: editor.generation(),
         document: editor.snapshot(),
