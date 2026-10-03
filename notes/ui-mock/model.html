@@ -544,6 +544,23 @@ const CHOICE_ICONS = {
   'bo-join': '<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 1 0 12 6.8z"/>',
   'bo-cut': '<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 0 1 12 6.8z"/><circle class="a" cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>',
   'bo-int': '<circle class="r" cx="9" cy="12" r="6"/><circle class="r" cx="15" cy="12" r="6"/><path class="fl" d="M12 6.8A6 6 0 0 1 12 17.2A6 6 0 0 1 12 6.8z"/>',
+  // Patterns: the copies as squares; spacing measures one step, total
+  // the whole run (in the accent). Circular: the copies round the axis
+  // (the dot), a full turn, a step's arc, or the whole arc.
+  'lp-spacing': '<rect x="2.5" y="10" width="5" height="5" rx="1"/><rect x="9.5" y="10" width="5" height="5" rx="1"/><rect class="r" x="16.5" y="10" width="5" height="5" rx="1"/><path class="a" d="M5 6.5h7M5 5v3M12 5v3"/>',
+  'lp-total': '<rect x="2.5" y="10" width="5" height="5" rx="1"/><rect x="9.5" y="10" width="5" height="5" rx="1"/><rect x="16.5" y="10" width="5" height="5" rx="1"/><path class="a" d="M5 6.5h14M5 5v3M19 5v3"/>',
+  'cp-full': `${AXIS_DOT}<circle cx="12" cy="4.5" r="2"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="19.5" r="2"/><circle cx="4.5" cy="12" r="2"/><circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="1.6 1.8"/>`,
+  'cp-spacing': `${AXIS_DOT}<circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle class="r" cx="4.5" cy="12" r="2"/><path class="a" d="M17.3 8.3A7.5 7.5 0 0 0 15.7 6.7"/><path class="a" d="M12 12L19.5 12M12 12L12 4.5" stroke-width="1"/>`,
+  'cp-total': `${AXIS_DOT}<circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle cx="4.5" cy="12" r="2"/><path class="a" d="M19.5 9A7.5 7.5 0 0 0 7.5 7.5"/>`,
+  // Chamfers: the corner (dashed) cut, what sets the cut in the accent:
+  // two equal distances along the faces, two different ones, or one
+  // distance and the cut's angle to the face.
+  'ch-equal': '<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3M3.5 7v8M2 7h3M2 15h3"/>',
+  'ch-two': '<path class="r" d="M7 11V7h12" stroke-dasharray="1.6 1.8"/><path d="M7 22V11l12-4h3"/><path class="a" d="M7 3.5h12M7 2v3M19 2v3M3.5 7v4M2 7h3M2 11h3"/>',
+  'ch-angle': '<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3"/><path class="a" d="M8.5 7A6.5 6.5 0 0 0 10.4 11.6" stroke-width="2"/>',
+  // Shell: a wall left of the body (filled), inward or outward of its face.
+  'sh-in': '<path class="r" d="M4 4h16v16H4z"/><path class="fl" d="M4 4h16v16H4zM8 8v12h8V8z" fill-rule="evenodd"/><path class="a" d="M12 6v6M10 10l2 2 2-2"/>',
+  'sh-out': '<path class="r" d="M8 8h8v12H8z"/><path class="fl" d="M4 4h16v16H4zM8 8v12h8V8z" fill-rule="evenodd"/><path class="a" d="M12 13V3M10 5l2-2 2 2"/>',
 };
 Object.assign(I, CHOICE_ICONS);
 for (const n of Object.keys(CHOICE_ICONS)) CAT[n] = 'solid';
@@ -571,8 +588,10 @@ for (const [n, [cat, svg]] of Object.entries(SELECTION_ICONS)) { I[n] = svg; CAT
 const EXT_EXTENTS = [['one', 'One side', 'ex-one'], ['sym', 'Symmetric', 'ex-sym'], ['two', 'Two sides', 'ex-two'], ['thru', 'Through all', 'ex-thru']];
 const REV_EXTENTS = [['full', 'Full 360°', 'rv-full'], ['one', 'One side', 'rv-one'], ['sym', 'Symmetric', 'rv-sym'], ['two', 'Two sides', 'rv-two']];
 const COMBINES = [['union', 'Union', 'bo-join'], ['sub', 'Subtract', 'bo-cut'], ['int', 'Intersect', 'bo-int']];
-const CIRC_MODES = [['full', 'Full 360°'], ['spacing', 'Spacing'], ['total', 'Total']];
-const CHAMFERS = [['equal', 'Equal distance'], ['two', 'Two distances'], ['angle', 'Distance and angle']];
+const CIRC_MODES = [['full', 'Full 360°', 'cp-full'], ['spacing', 'Spacing', 'cp-spacing'], ['total', 'Total', 'cp-total']];
+const LIN_MODES = [['spacing', 'Spacing', 'lp-spacing'], ['total', 'Total', 'lp-total']];
+const CHAMFERS = [['equal', 'Equal', 'ch-equal'], ['two', 'Two distances', 'ch-two'], ['angle', 'Distance and angle', 'ch-angle']];
+const SHELL_DIRS = [['in', 'Inward', 'sh-in'], ['out', 'Outward', 'sh-out']];
 
 // Each operation: its picks (fields the view fills), init from the selection,
 // the panel body, check (field errors, a blocking error or what's still
@@ -750,7 +769,7 @@ const OPS = {
       <h4>Rotate</h4>
       ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click an axis or edge', 'se-axis')}
       ${numField(o, 'angle', 'Angle', r)}
-      ${tick(o, 'copy', 'Copy', 'Leave the original where it is')}`,
+      ${tick(o, 'copy', 'Create copy', 'Leave the original where it is')}`,
     check(o, m) {
       const r = { errs: {} }, e = r.errs;
       const v = ['dx', 'dy', 'dz'].map(k => readVal(o, k, e, { signed: true }));
@@ -786,7 +805,7 @@ const OPS = {
     body: (o, m, r) => `
       ${pickList(o, 'bodies', 'Bodies', bodyItems(o.bodies, m), 'Click bodies')}
       ${pickOne(o, 'plane', 'Plane', r.plane?.label, 'Click a plane or face', 'se-plane')}
-      ${tick(o, 'copy', 'Copy', 'Keep the original too')}`,
+      ${tick(o, 'copy', 'Create copy', 'Keep the original too')}`,
     check(o, m) {
       const r = { errs: {} };
       r.plane = planeOf(o.plane, m.bodies);
@@ -817,7 +836,7 @@ const OPS = {
       ${tick(o, 'flip', 'Flip direction')}
       <h4>Copies</h4>
       ${numField(o, 'count', 'Count', r)}
-      ${choices(o, 'mode', [['spacing', 'Spacing'], ['total', 'Total']])}
+      ${choices(o, 'mode', LIN_MODES)}
       ${numField(o, 'dist', o.mode === 'spacing' ? 'Spacing' : 'Total', r)}
       ${tick(o, 'join', 'Join to original', 'One body; otherwise each copy is its own')}`,
     check(o, m) {
@@ -947,7 +966,7 @@ const OPS = {
       ${pickList(o, 'faces', 'Remove', o.faces.map(id => ({ id, ic: 'se-face', label: FACE_NAME[id] || 'Missing face', meta: FACE_INFO[id]?.[1] })), 'Click faces')}
       ${numField(o, 'thick', 'Thickness', r)}
       <h4>Direction</h4>
-      ${choices(o, 'dir', [['in', 'Inward'], ['out', 'Outward']])}`,
+      ${choices(o, 'dir', SHELL_DIRS)}`,
     check(o, m) {
       const r = { errs: {} };
       r.t = readVal(o, 'thick', r.errs, { max: 100 });
