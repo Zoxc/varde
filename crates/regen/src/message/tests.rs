@@ -320,3 +320,25 @@ fn moves_and_mirrors_name_the_body() {
         "{text}"
     );
 }
+
+#[test]
+fn patterns_name_the_body() {
+    assert_eq!(
+        moving(Moving::Pattern, "Body 2", KernelError::TooComplex),
+        "patterning Body 2 is too complex to work out"
+    );
+    assert!(
+        out_of_range(Moving::Pattern, "Body 3")
+            .starts_with("patterning Body 3 takes it out of range")
+    );
+    let text = with_copies("Body 1", KernelError::Boolean(BooleanError::NotManifold));
+    assert!(
+        text.starts_with("joining Body 1 to its copies leaves no clean solid"),
+        "{text}"
+    );
+    assert_eq!(
+        too_many_copies("Body 1", 1024, 5000),
+        "1024 copies of Body 1 are too many to work out: it has 5000 patches, and a body may \
+         have 4194304 in all; use fewer copies"
+    );
+}

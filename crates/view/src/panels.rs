@@ -210,6 +210,8 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Combine(_) => Icon::Combine,
         FeatureKind::Move(_) => Icon::Move,
         FeatureKind::Mirror(_) => Icon::BMirror,
+        // The mock's own pattern icons come with the pattern's tool.
+        FeatureKind::Pattern(_) => Icon::Move,
     }
 }
 
@@ -239,6 +241,7 @@ fn feature_row<'a>(
         FeatureKind::Combine(combine) => combine.op.label().into(),
         FeatureKind::Move(moved) => crate::motion::move_note(moved, units).into(),
         FeatureKind::Mirror(mirror) => crate::motion::plane_short(document, &mirror.plane).into(),
+        FeatureKind::Pattern(pattern) => crate::motion::pattern_note(pattern).into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -319,6 +322,7 @@ fn edit_label(feature: &Feature) -> &'static str {
         FeatureKind::Combine(_) => "Edit combine",
         FeatureKind::Move(_) => "Edit move",
         FeatureKind::Mirror(_) => "Edit mirror",
+        FeatureKind::Pattern(_) => "Edit pattern",
     }
 }
 

@@ -50,10 +50,11 @@ pub struct Naming {
     made: Vec<(u64, BodyId)>,
     /// The copies faces can be named as, ascending ([`FaceKey`]'s
     /// `instance`): none (0), and those the mirrors keeping their
-    /// originals before the feature make, of each other's too; `None` if
+    /// originals and the patterns before the feature make, of each
+    /// other's too; `None` if
     /// they're past [`MAX_INSTANCES`], when any is taken. A later
-    /// mirror's image is shown when the feature isn't the last, but isn't
-    /// there at the feature.
+    /// mirror's image or pattern's copy is shown when the feature isn't
+    /// the last, but isn't there at the feature.
     instances: Option<Vec<u64>>,
     /// The bodies a face each join, cut or intersect made may be on, as
     /// the model shown found, by the feature's number, ascending: those
@@ -63,35 +64,41 @@ pub struct Naming {
 }
 
 /// How many copies [`Naming`] tells apart at most: past it, faces of
-/// any copy are taken (the mirrors' images, each doubling them, are
-/// bounded by the document's features, not by this).
+/// any copy are taken (the mirrors' images, each doubling them, and the
+/// patterns' copies, each multiplying them by their count, are bounded
+/// by the document's features, not by this).
 const MAX_INSTANCES: usize = 4096;
 
 /// The copies (see `Naming::instances`) faces of `document`'s model can
-/// be in with the history stopped at feature `before`: none's, and each
-/// image a mirror keeping its original makes of those before it. `None`
-/// past [`MAX_INSTANCES`].
+/// be in with the history stopped at feature `before`: none's, each
+/// image a mirror keeping its original makes of those before it, and
+/// each copy a pattern makes of them. `None` past [`MAX_INSTANCES`].
 fn instances_before(document: &Document, before: usize) -> Option<Vec<u64>> {
     let mut instances = vec![0];
     for feature in &document.features()[..before] {
-        if let FeatureKind::Mirror(mirror) = &feature.kind
-            && mirror.keep_original
-        {
-            let images: Vec<u64> = (instances.iter())
-                .map(|&instance| {
-                    let key = FaceKey {
-                        feature: 0,
-                        part: PartKey::StartCap,
-                        instance,
-                    };
-                    key.copy(feature.id.get(), 1).instance
-                })
-                .collect();
-            instances.extend(images);
-            if instances.len() > MAX_INSTANCES {
+        // The copies it makes of each, by index.
+        let copies = match &feature.kind {
+            FeatureKind::Mirror(mirror) if mirror.keep_original => 1..2,
+            // A checked pattern's count is in range.
+            FeatureKind::Pattern(pattern) => 1..u64::from(pattern.count().unwrap_or(1)),
+            _ => continue,
+        };
+        let copy = |instance: u64, index: u64| {
+            let key = FaceKey {
+                feature: 0,
+                part: PartKey::StartCap,
+                instance,
+            };
+            key.copy(feature.id.get(), index).instance
+        };
+        let mut images = Vec::new();
+        for index in copies {
+            images.extend(instances.iter().map(|&instance| copy(instance, index)));
+            if instances.len().saturating_add(images.len()) > MAX_INSTANCES {
                 return None;
             }
         }
+        instances.extend(images);
     }
     instances.sort_unstable();
     instances.dedup();

@@ -3676,7 +3676,10 @@ The constructors are the only way to make one:
   cos)·k·kᵀ` about the unit axis, offset `point − L·point`;
   `pattern_turn(point, axis, degrees, k, count)` turns by
   `k·degrees/count`, placed directly (copy `k` is never `k` steps
-  composed, so no error piles up). **Angles are in degrees**: `%` on
+  composed, so no error piles up; the pattern feature passes `count` as
+  the steps the span is split into: the count for a whole turn, one less
+  for a part turn, a copy at each end, see `agents/features.md`).
+  **Angles are in degrees**: `%` on
   floats is exact, so the angle is reduced to `[−180°, 180°]` exactly
   and a multiple of 90° takes its sine and cosine as `0` and `±1`; about
   a coordinate axis the matrix then has only those entries and maps

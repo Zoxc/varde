@@ -14,6 +14,7 @@ mod feature;
 mod motion;
 pub mod name;
 mod opacity;
+mod pattern;
 mod plane;
 mod removal;
 mod revolve;
@@ -28,6 +29,7 @@ pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation,
 pub use feature::{Feature, FeatureId, FeatureKind};
 pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
 pub use opacity::Opacity;
+pub use pattern::{MAX_PATTERN_COUNT, Pattern, PatternKind};
 pub use plane::{FaceRef, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
@@ -275,9 +277,10 @@ impl Document {
     /// names a body and faces' makers before it, as a sketch on a face
     /// does; every combine's target and tools are bodies features
     /// before it make, its tools as [`Combine::check_own`] wants them;
-    /// and every move's and mirror's bodies are bodies features before it
-    /// make, as [`Move::check_own`] and [`Mirror::check_own`] want them
-    /// with its values, its axis edge or face, or plane face, named as a
+    /// and every move's, mirror's and pattern's bodies are bodies
+    /// features before it make, as [`Move::check_own`],
+    /// [`Mirror::check_own`] and [`Pattern::check_own`] want them with
+    /// its values, its axis edge or face, or plane face, named as a
     /// revolve's edge is. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
@@ -347,6 +350,13 @@ impl Document {
                         .map_err(|why| CheckError::Mirror(id, why))?;
                     self.check_motion(index, &mirror.bodies, mirror.referred())
                         .map_err(|why| CheckError::Mirror(id, why))?;
+                }
+                FeatureKind::Pattern(pattern) => {
+                    pattern
+                        .check_own(&design)
+                        .map_err(|why| CheckError::Pattern(id, why))?;
+                    self.check_motion(index, &pattern.bodies, pattern.referred())
+                        .map_err(|why| CheckError::Pattern(id, why))?;
                 }
             }
         }
@@ -614,6 +624,8 @@ pub enum CheckError {
     Move(FeatureId, MotionError),
     /// A mirror feature is wrong, see [`MotionError`].
     Mirror(FeatureId, MotionError),
+    /// A pattern feature is wrong, see [`MotionError`].
+    Pattern(FeatureId, MotionError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -658,9 +670,9 @@ impl fmt::Display for CheckError {
             CheckError::Extrude(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Revolve(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Combine(id, why) => write!(f, "feature {}: {why}", id.0),
-            CheckError::Move(id, why) | CheckError::Mirror(id, why) => {
-                write!(f, "feature {}: {why}", id.0)
-            }
+            CheckError::Move(id, why)
+            | CheckError::Mirror(id, why)
+            | CheckError::Pattern(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -685,7 +697,9 @@ impl std::error::Error for CheckError {
             CheckError::Extrude(_, why) => Some(why),
             CheckError::Revolve(_, why) => Some(why),
             CheckError::Combine(_, why) => Some(why),
-            CheckError::Move(_, why) | CheckError::Mirror(_, why) => Some(why),
+            CheckError::Move(_, why) | CheckError::Mirror(_, why) | CheckError::Pattern(_, why) => {
+                Some(why)
+            }
             _ => None,
         }
     }

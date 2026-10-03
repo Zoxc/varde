@@ -1,0 +1,162 @@
+//! Evaluating a pattern: each of its bodies' solids, as the features
+//! before it leave it, with copies of itself placed along a line or about
+//! an axis, put together in the body.
+
+use varde_document::{Document, FeatureId, Pattern, PatternKind};
+use varde_kernel::{Budget, Instance, MAX_PATCHES, Motion, Solid, Tolerance, assemble};
+
+use super::motion::{note_reference, resolve_axis, within};
+use super::{BodySolid, Evaluation, Failed, own_solids};
+use crate::cache::{Cache, Key, Keyer};
+use crate::error_geometry::KernelFailure;
+use crate::message::{self, Moving};
+
+/// Changes the bodies of `evaluation` (those the features before it
+/// made) as the pattern `pattern`, the feature `feature`, says, or says
+/// why it fails, changing nothing.
+///
+/// Its bodies must have solids of their own, as a move's. Its axis is
+/// found as a move's ([`resolve_axis`]); a linear pattern uses only its
+/// direction. Copy `k` (`1 ≤ k < count`) is placed directly
+/// ([`placements`]), never by composing `k` steps, so no rounding piles
+/// up along the pattern. Before anything is copied each body is held to
+/// the count: `count × patches` within [`MAX_PATCHES`] (a checked
+/// product: both come from the user), and every copy's box within the
+/// coordinate limit (the farthest copy isn't always the last: a circular
+/// pattern's swing out and back). Each body is then its solid and its
+/// copies, copy `k`'s faces named as copy `k` of the pattern
+/// ([`Instance`]), put together by [`assemble`]: side by side where
+/// they're apart, united where they meet. Cached by the body's key, the
+/// pattern, every copy's motion's bits and the fit tolerance.
+pub(super) fn evaluate_pattern(
+    document: &Document,
+    feature: FeatureId,
+    pattern: &Pattern,
+    tolerance: &Tolerance,
+    evaluation: &mut Evaluation,
+    cache: &mut Cache,
+) -> Result<(), Failed> {
+    own_solids(document, pattern.bodies.iter().copied(), evaluation)?;
+    let count = pattern.count().ok_or(message::PATTERN_COUNT)?;
+    let [point, direction] = resolve_axis(pattern.kind.axis(), evaluation, tolerance, cache)?;
+    note_reference(evaluation, feature, [point, direction]);
+    let motions =
+        placements(pattern, count, [point, direction]).ok_or(message::AXIS_NO_DIRECTION)?;
+    let mut changed = Vec::with_capacity(pattern.bodies.len());
+    for made in (evaluation.bodies.iter()).filter(|m| pattern.bodies.binary_search(&m.body).is_ok())
+    {
+        let name = document
+            .body(made.body)
+            .map_or("a body", |body| body.name.as_str());
+        let patches = made.solid.mesh().tris().len();
+        if !copies_fit(count, patches) {
+            return Err(message::too_many_copies(name, count, patches).into());
+        }
+        if !motions.iter().all(|motion| within(&made.solid, motion)) {
+            return Err(message::out_of_range(Moving::Pattern, name).into());
+        }
+        let key = pattern_key(made.key, feature, &motions, tolerance);
+        let solid = cache.solid(key, || {
+            copied(&made.solid, feature, &motions, tolerance, name)
+        })?;
+        changed.push(BodySolid {
+            body: made.body,
+            solid,
+            key,
+        });
+    }
+    for change in changed {
+        if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == change.body) {
+            *made = change;
+        }
+    }
+    Ok(())
+}
+
+/// Whether `count` copies of a solid of `patches` patches are at most
+/// [`MAX_PATCHES`] together: the product checked, both coming from the
+/// user.
+pub(crate) fn copies_fit(count: u32, patches: usize) -> bool {
+    usize::try_from(count)
+        .ok()
+        .and_then(|count| count.checked_mul(patches))
+        .is_some_and(|total| total <= MAX_PATCHES)
+}
+
+/// The motions placing copies `1..count` of `pattern` about the axis
+/// `[point, direction]` (as [`resolve_axis`] finds it), or `None` where
+/// the axis gives none (no direction): a linear pattern's copy `k` moved
+/// `k · spacing` along the direction ([`Motion::pattern_step`]), a
+/// circular one's turned `k · span / steps` ([`Pattern::span_steps`],
+/// [`Motion::pattern_turn`]), so a whole turn split into quarters is
+/// exact.
+pub(crate) fn placements(
+    pattern: &Pattern,
+    count: u32,
+    [point, direction]: [glam::DVec3; 2],
+) -> Option<Vec<Motion>> {
+    let span = pattern.span_steps();
+    (1..count)
+        .map(|k| match &pattern.kind {
+            PatternKind::Linear { spacing, .. } => {
+                Motion::pattern_step(direction, spacing.value, k)
+            }
+            PatternKind::Circular { .. } => {
+                let (degrees, steps) = span?;
+                Motion::pattern_turn(point, direction, degrees, k, steps)
+            }
+        })
+        .collect()
+}
+
+/// The key of `feature`'s copies by `motions` of the solid filed under
+/// `body`, put together with it, at `tolerance`.
+fn pattern_key(body: Key, feature: FeatureId, motions: &[Motion], tolerance: &Tolerance) -> Key {
+    let mut keyer = Keyer::new("pattern");
+    keyer
+        .key(body)
+        .number(feature.get())
+        .number(motions.len() as u64);
+    for motion in motions {
+        for bits in motion.bits() {
+            keyer.number(bits);
+        }
+    }
+    keyer.number(tolerance.fit().to_bits()).finish()
+}
+
+/// `solid`, the body named `name`'s, with its copies by `motions` (copy
+/// `k` by the `k`th, named as copy `k` of `feature`), put together; or
+/// why not, with the kernel's evidence (patches and curves by value, as
+/// a move's).
+fn copied(
+    solid: &Solid,
+    feature: FeatureId,
+    motions: &[Motion],
+    tolerance: &Tolerance,
+    name: &str,
+) -> Result<Solid, Failed> {
+    let kernel = |words: String, failure| {
+        let failure = KernelFailure::new(failure, tolerance);
+        Failed::kernel(words, &failure, [&[], &[]])
+    };
+    let mut parts = Vec::with_capacity(motions.len().saturating_add(1));
+    parts.push(solid.clone());
+    for (index, motion) in (1..).zip(motions) {
+        let copy = Instance {
+            feature: feature.get(),
+            index,
+        };
+        let part = solid
+            .transformed(motion, Some(copy), tolerance, &Budget::DEFAULT)
+            .map_err(|failure| {
+                kernel(
+                    message::moving(Moving::Pattern, name, failure.error),
+                    failure,
+                )
+            })?;
+        parts.push(part);
+    }
+    assemble(&parts, tolerance, &Budget::DEFAULT)
+        .map_err(|failure| kernel(message::with_copies(name, failure.error), failure))
+}

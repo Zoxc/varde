@@ -192,7 +192,8 @@ pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sket
         | FeatureKind::Revolve(_)
         | FeatureKind::Combine(_)
         | FeatureKind::Move(_)
-        | FeatureKind::Mirror(_) => None,
+        | FeatureKind::Mirror(_)
+        | FeatureKind::Pattern(_) => None,
     }
 }
 

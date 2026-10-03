@@ -1612,5 +1612,6 @@ mod edges;
 mod faces;
 mod merging;
 mod motion;
+mod pattern;
 mod profile_evidence;
 mod revolve;

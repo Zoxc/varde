@@ -174,6 +174,58 @@ fn a_move_and_a_mirror_round_trip() {
     assert_eq!(&read, document);
 }
 
+/// Patterns, linear and circular, are kept through a file, an axis on a
+/// copy's face too.
+#[test]
+fn patterns_round_trip() {
+    use glam::DVec3;
+    use varde_document::{
+        Axis3, AxisRef, FaceKey, FaceRef, FeatureKind, PartKey, Pattern, PatternKind,
+    };
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let count = |text: &str| Value::new(text, &Pattern::count_ask(&design)).unwrap();
+    let row = Pattern {
+        bodies: vec![plate],
+        kind: PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::Y),
+            count: count("3"),
+            spacing: Value::new("-2 in", &Pattern::spacing_ask(&design)).unwrap(),
+        },
+    };
+    editor
+        .apply(editor.document().add_feature(row.into()))
+        .unwrap();
+    let row = editor.document().features()[2].id;
+    let wall = FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: editor.document().features()[1].id.get(),
+            part: PartKey::EndCap,
+            instance: 0,
+        }
+        .copy(row.get(), 2),
+        near: DVec3::new(0.0, 15.0, 10.0),
+    };
+    let ring = Pattern {
+        bodies: vec![plate],
+        kind: PatternKind::Circular {
+            about: AxisRef::Face(wall),
+            count: count("2 * 3"),
+            angle: Value::new("90", &Pattern::angle_ask(&design)).unwrap(),
+        },
+    };
+    editor
+        .apply(editor.document().add_feature(FeatureKind::from(ring)))
+        .unwrap();
+    let document = editor.document();
+    let (bytes, _) = to_bytes(document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(&read, document);
+}
+
 /// A combine is kept through a file.
 #[test]
 fn a_combine_round_trips() {

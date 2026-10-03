@@ -742,6 +742,8 @@ impl Doc {
                 Some(FeatureKind::Revolve(_)) => self.edit_revolve(id),
                 Some(FeatureKind::Combine(_)) => self.edit_combine(id),
                 Some(FeatureKind::Move(_) | FeatureKind::Mirror(_)) => self.edit_motion(id),
+                // No pattern panel yet.
+                Some(FeatureKind::Pattern(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

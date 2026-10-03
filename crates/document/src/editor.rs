@@ -492,6 +492,11 @@ impl Editor {
                                 value.pin_units(&angle_ask);
                             }
                         }
+                        FeatureKind::Pattern(pattern) => {
+                            for (value, ask) in pattern.values_mut(&before) {
+                                value.pin_units(&ask);
+                            }
+                        }
                         // No values.
                         FeatureKind::Combine(_) | FeatureKind::Mirror(_) => {}
                     }

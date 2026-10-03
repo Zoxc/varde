@@ -566,6 +566,81 @@ fn merged_bodies_round_trip() {
     assert_eq!(bodies[0].0, top);
 }
 
+/// A pattern and its draft cross the wire as they went, the draft's axis
+/// with it, and the copies come back in the body's box.
+#[test]
+fn a_pattern_and_its_draft_round_trip() {
+    use glam::DVec3;
+    use varde_document::{Axis3, AxisRef, Pattern, PatternKind};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let row = |step: &str| Pattern {
+        bodies: vec![plate],
+        kind: PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::X),
+            count: Value::new("2", &Pattern::count_ask(&design)).unwrap(),
+            spacing: Value::new(step, &Pattern::spacing_ask(&design)).unwrap(),
+        },
+    };
+    editor
+        .apply(editor.document().add_feature(row("100").into()))
+        .unwrap();
+    let id = editor.document().features()[2].id;
+    let draft = Draft {
+        revision: 3,
+        feature: Some(id),
+        kind: row("-100").into(),
+    };
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(Box::new(draft.clone())),
+        inspect: None,
+    };
+    let decoded = decode_request(&encode_request(&request)).unwrap();
+    let Request::Regenerate {
+        document,
+        draft: back,
+        ..
+    } = &decoded
+    else {
+        panic!("not a regeneration");
+    };
+    assert_eq!(**document, *editor.document());
+    assert_eq!(back, &Some(Box::new(draft)));
+    let Response::Regenerated {
+        draft,
+        failed,
+        bodies,
+        ..
+    } = round_trip(&handle(decoded))
+    else {
+        panic!("regeneration failed");
+    };
+    let draft = draft.unwrap();
+    assert_eq!(draft.error, None);
+    assert_eq!(
+        draft.reference.as_deref(),
+        Some(&[[0.0; 3], [1.0, 0.0, 0.0]])
+    );
+    assert!(failed.is_empty(), "{failed:?}");
+    // The draft's copy 100 back along X.
+    let [(body, aabb)] = &bodies[..] else {
+        panic!("one body: {bodies:?}");
+    };
+    assert_eq!(*body, plate);
+    assert_eq!(aabb.min.x, -130.0);
+    assert_eq!(aabb.max.x, 30.0);
+    // The committed one's 100 on.
+    let evaluation = crate::evaluate(editor.document(), &mut crate::Cache::default());
+    let bounds = evaluation.bodies[0].solid.bounds3().unwrap();
+    assert_eq!(bounds.min.x, -30.0);
+    assert_eq!(bounds.max, DVec3::new(130.0, 20.0, 10.0));
+}
+
 /// A move and a mirror cross the wire as they went, a move drafted too,
 /// and the bodies come back where they went.
 #[test]

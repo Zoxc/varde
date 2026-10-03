@@ -113,7 +113,11 @@ pub(super) fn evaluate_mirror(
 /// ([`crate::reference_fits`]): one that's out of bounds there (a round
 /// edge's centre far out, an axis of no length) isn't drawn, natively
 /// as on the web.
-fn note_reference(evaluation: &mut Evaluation, feature: FeatureId, reference: [DVec3; 2]) {
+pub(super) fn note_reference(
+    evaluation: &mut Evaluation,
+    feature: FeatureId,
+    reference: [DVec3; 2],
+) {
     if crate::reference_fits(&reference.map(|v| v.to_array())) {
         evaluation.references.push((feature, reference));
     }
@@ -174,7 +178,7 @@ fn place(
 /// its box taken there is (the image of the box holds the solid's).
 /// Every number is finite: the box is within the limit, and so are the
 /// motion's offsets and its matrix's entries (at most 1 each).
-fn within(solid: &Solid, motion: &Motion) -> bool {
+pub(super) fn within(solid: &Solid, motion: &Motion) -> bool {
     let Some(bounds) = solid.bounds3() else {
         return true;
     };

@@ -1,6 +1,6 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines, moves and mirrors), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves, mirrors and patterns), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -43,7 +43,7 @@ they share with the newer kinds is here. The kernel math of each is in
   distances by `Extent::ask` (angles' bare numbers are degrees whatever
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
-  `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5): files store a kind by its variant name, and
+  `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -194,7 +194,8 @@ message is worded from the kernel's `failure.error` as before
     revolve", "region not found", a sketch too complex, a through all
     with no body, a combine's body with no solid of its own or consumed
     before, a boolean that would leave nothing, "it doesn't touch any
-    body", a move's or mirror's body taken out of range, its axis's or
+    body", a move's, mirror's or pattern's body taken out of range (or a
+    pattern's copies too many patches), its axis's or
     plane's body gone or face not found (a mirror face that isn't flat,
     an axis face that isn't round and an axis edge that isn't straight
     or round show themselves, as above; see "Move and mirror").
@@ -1422,3 +1423,115 @@ Other departures from the mock: a move's axis may also be a round edge
 or face (the mock's: an origin axis or a straight edge). A ring's
 offsets are typed rounded to the units' decimals, so the pivot drifts by
 that rounding (under a micrometre in millimetres) with each ring turn.
+
+## Pattern
+
+`crates/document/src/pattern.rs`.
+
+```rust
+pub struct Pattern { pub bodies: Vec<BodyId>, pub kind: PatternKind }   // bodies as a move's
+pub enum PatternKind {
+    Linear { along: AxisRef, count: Value, spacing: Value },   // count 2..=1024 whole; spacing a length, not 0
+    Circular { about: AxisRef, count: Value, angle: Value },   // angle above 0, at most a turn
+}
+```
+
+- **What it is**: a timeline step on bodies already made, as a move is:
+  `FeatureKind::Pattern` (the seventh variant on the workers' postcard;
+  `Linear` 0, `Circular` 1), "Pattern N", no body made, no regions.
+  Body patterns only (decided). Each body becomes itself and `count − 1`
+  copies of itself (the count includes the original), **kept in the
+  body** (decided): side by side where apart, united where they meet.
+  The body keeps its id and its own faces their names; copy `k`
+  (`1 ≤ k < count`) names its faces as `FaceName::copy(pattern id, k)`
+  (instance `mix(parent instance, feature, k)`, so a pattern of a
+  pattern's or a mirror's copies stays unique), and later features name
+  a copy's faces by those keys.
+- **Placement**: linear copy `k` is moved `k · spacing` along the
+  axis's direction (only the direction counts; a negative spacing runs
+  the other way, which is how a panel's Flip is stored). Circular copy
+  `k` is turned right-handed about the axis by `k · span / steps`
+  degrees: **a whole turn shares its ends** (angle 360°, or any that
+  comes to a turn within the rounding of degrees, `Pattern::full_turn`:
+  span 360, steps = count, so 4 copies are 90° apart, exactly), and **a
+  span short of a turn has a copy at each end** (span = angle, steps =
+  count − 1: 3 over 90° are at 0°, 45° and 90°). This was open in the
+  plan (its kernel helper spread the count over the span either way);
+  the mock's Circular pattern has Full 360°, Spacing (one step) and
+  Total (the whole arc, a copy at each end) modes, which this stores
+  as: Full → 360, Total → the angle, Spacing → spacing × (count − 1)
+  (the mock refuses that reaching a turn). `Pattern::span_steps` /
+  `step_degrees` give it. Each copy's motion is made directly
+  (`Motion::pattern_step`, `Motion::pattern_turn(point, axis, span, k,
+  steps)`), never by composing steps.
+- **Axes**: `AxisRef` as a move's turn has it (origin axes, straight or
+  round model edges, round faces, found on the bodies as the features
+  before it leave them).
+- **Checks** (`CheckError::Pattern(id, MotionError)`):
+  `Pattern::check_own(design)`: bodies as a move's (`Bodies`,
+  `BodyOrder`), the count by `Pattern::count_ask` (`Ask::number(…,
+  1024).whole().at_least(2)`: `Count`), a linear spacing by
+  `Pattern::spacing_ask` (a length within `MAX_COORD` of zero) and not
+  zero (`Spacing`), a circular angle by `Pattern::angle_ask` (above zero,
+  at most a turn: `Angle`), the axis's own parts (`Edge`, `Near`).
+  `Document::check` then wants the bodies made before it (`Body`) and
+  the axis's body and makers before it (`RefBody`, `RefMaker`), as a
+  move's. `Pattern::count()` reads a checked count as a `u32`.
+- **Removal and units** as a move's: `FeatureKind::bodies()` lists the
+  bodies; `SetUnits` pins the spacing by its ask (the count and angle
+  have no length unit to pin, so stay as typed).
+
+### Regeneration
+
+`crates/regen/src/history/pattern.rs`, in history order:
+
+- Bodies with no solid of their own fail it (`own_solids`); the axis is
+  resolved as a move's (`resolve_axis`, cached) and noted in
+  `Evaluation::references` for the draft (the point and direction it
+  placed by).
+- **Bounded before anything is copied**, per body: `count × patches`
+  by a checked multiply (`copies_fit`) within `MAX_PATCHES` ("1024
+  copies of Body 1 are too many to work out: it has N patches, and a
+  body may have 4194304 in all; use fewer copies"), and every copy's
+  box within `MAX_COORD` (each copy is checked: a circular pattern's
+  farthest copy isn't its last) ("patterning Body 1 takes it out of
+  range ...").
+- **Copies**: `Solid::transformed(motion_k, Some(Instance { feature:
+  pattern id, index: k }))` each, then `assemble([body, copy 1, ...])`
+  (side by side where boxes and hulls are apart, balanced unions where
+  they meet). The whole is cached under `pattern_key(body key, pattern
+  id, every copy's Motion::bits, fit)`: an edit leaving the motions as
+  they were (a spacing typed another way) finds it again. Kernel
+  failures: "patterning Body 1 ..." (`message::moving`), "joining Body 1
+  to its copies ..." (`message::with_copies`), with the kernel's
+  evidence by value, as a move's. All bodies are worked out before any
+  changes.
+- Nothing merged or touched, as a move.
+
+Tests: `document/src/pattern/tests.rs` (checks, spacing rules, removal,
+units, postcard and hostile values read back), `regen/src/history/tests/
+pattern.rs` (a row of pins against its volume and box, names per copy, a
+negative spacing; copies end to end along the pin's own round face
+united into one; a ring of pins, whole turn exact at quarter turns and
+three over 90° by its centre of mass; three bars through a hub against
+the inclusion–exclusion area; a pin grid cut from a plate in one
+difference, 4 × 4 and 10 × 10, timed; a copy's face as a later axis,
+and a copy that isn't there; out of range; the patch bound with
+overflow; the cache), `regen/src/wire/tests.rs` (a draft and its axis),
+`io/src/vrdp/tests.rs` (through a file), and the motion fuzz
+(`motion/fuzz.rs`, `VARDE_MOTION_SEEDS`): random linear and circular
+patterns of 2 to 4 copies about origin axes, edges and round faces,
+each copy's centre where `glam` places it and the whole as the copies
+united one by one.
+
+Known gaps: the 10 × 10 grid of pins (100 holes) cut from a plate in
+**one** difference runs out of work (`MAX_WORK`) in about 2 s (release);
+the difference's cost grows faster than the pins (a 7 × 7 grid takes 2
+to 3 million of the 4.2 million units, from 8 × 8 on it fails), so hole
+patterns past about 50 holes fail with "too complex" until the boolean's
+work is local to the change. Cutting the 100 pins one at a time works
+but takes about 40 s. No UI yet: `Doc` ignores Edit on a pattern's row,
+its Timeline icon is a placeholder (`Icon::Move`), and its row note
+("×4") and status text ("Body 1 · 4 × 10 mm along X") are minimal.
+`Naming` takes faces of patterns' copies made before the feature
+(`instances_before` replays patterns as it does mirrors).

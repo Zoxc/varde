@@ -88,5 +88,5 @@ roxmltree.workspace = true
 glam.workspace = true
 # Sketches with splines, the deepest a payload nests.
 varde-sketch.workspace = true
-# Typing a move's offsets and angle.
+# Typing a move's offsets and angle, a pattern's count and spacing.
 varde-expr.workspace = true

@@ -304,6 +304,30 @@ pub(crate) fn mirror_info(document: &Document, mirror: &varde_document::Mirror) 
     )
 }
 
+/// What the status bar says of a selected pattern, the mock's row info:
+/// "Body 1 · 4 × 25 mm along X", "Body 1 · 6 × 60° about Z".
+pub(crate) fn pattern_info(document: &Document, pattern: &varde_document::Pattern) -> String {
+    let bodies = body_names(document, &pattern.bodies);
+    let axis = axis_name(document, pattern.kind.axis());
+    let count = pattern.kind.count_value().value;
+    match &pattern.kind {
+        varde_document::PatternKind::Linear { spacing, .. } => {
+            let step = varde_expr::format(spacing.value, Some(document.units().into()));
+            format!("{bodies} · {count} × {step} along {axis}")
+        }
+        varde_document::PatternKind::Circular { .. } => {
+            let step = pattern.step_degrees().unwrap_or(0.0).to_radians();
+            let step = varde_expr::format(step, Some(DEGREES));
+            format!("{bodies} · {count} × {step} about {axis}")
+        }
+    }
+}
+
+/// A pattern's Timeline note, the mock's: its count, "×4".
+pub(crate) fn pattern_note(pattern: &varde_document::Pattern) -> String {
+    format!("×{}", pattern.kind.count_value().value)
+}
+
 /// The names of `bodies` of `document`, joined: "Body 1, Body 2".
 pub(crate) fn body_names(document: &Document, bodies: &[BodyId]) -> String {
     let names: Vec<&str> = (bodies.iter())

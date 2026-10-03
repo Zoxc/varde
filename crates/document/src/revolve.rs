@@ -21,7 +21,7 @@ pub const MAX_REVOLVE_REGIONS: usize = 256;
 /// fall short of one, and still be a whole turn: the rounding of angles
 /// typed in degrees. "0.5" and "359.5" come to a little over `TAU` in
 /// radians, "180.1" and "179.9" a little under; both are a turn.
-const TURN_ROUNDING: f64 = 8.0 * f64::EPSILON * TAU;
+pub(crate) const TURN_ROUNDING: f64 = 8.0 * f64::EPSILON * TAU;
 
 /// A revolve: the regions of sketch `sketch` it takes, the line they turn
 /// about, how far they turn, and what it does with the solid it makes.

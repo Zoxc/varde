@@ -168,7 +168,7 @@ impl Referred<'_> {
 
 /// Checks a feature's body list: `1..=`[`MAX_FEATURE_BODIES`], sorted
 /// without repeats.
-fn check_bodies(bodies: &[BodyId]) -> Result<(), MotionError> {
+pub(crate) fn check_bodies(bodies: &[BodyId]) -> Result<(), MotionError> {
     let count = bodies.len();
     if !(1..=MAX_FEATURE_BODIES).contains(&count) {
         return Err(MotionError::Bodies(count));
@@ -250,9 +250,10 @@ impl Mirror {
     }
 }
 
-/// What's wrong with a move or a mirror, see
-/// [`CheckError::Move`](crate::CheckError::Move) and
-/// [`CheckError::Mirror`](crate::CheckError::Mirror).
+/// What's wrong with a move, a mirror or a pattern, see
+/// [`CheckError::Move`](crate::CheckError::Move),
+/// [`CheckError::Mirror`](crate::CheckError::Mirror) and
+/// [`CheckError::Pattern`](crate::CheckError::Pattern).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MotionError {
     /// It names this many bodies: none, or over [`MAX_FEATURE_BODIES`].
@@ -266,8 +267,18 @@ pub enum MotionError {
     /// a length [`Move::offset_ask`] takes.
     Offset,
     /// Its turn's expression doesn't give its value, or the value isn't
-    /// an angle [`Move::angle_ask`] takes.
+    /// an angle [`Move::angle_ask`] takes; for a circular pattern, one
+    /// [`Pattern::angle_ask`](crate::Pattern::angle_ask) takes.
     Angle,
+    /// A pattern's count's expression doesn't give its value, or the
+    /// value isn't a count [`Pattern::count_ask`](crate::Pattern::count_ask)
+    /// takes.
+    Count,
+    /// A linear pattern's spacing's expression doesn't give its value, or
+    /// the value isn't a length
+    /// [`Pattern::spacing_ask`](crate::Pattern::spacing_ask) takes, or is
+    /// zero.
+    Spacing,
     /// Its axis edge fails its own check ([`EdgeRef::check_own`]).
     Edge(EdgeError),
     /// Its axis's or plane's face's point isn't finite, or is further
@@ -297,6 +308,10 @@ impl fmt::Display for MotionError {
             ),
             MotionError::Offset => f.write_str("an offset's expression doesn't give its value"),
             MotionError::Angle => f.write_str("its angle's expression doesn't give its value"),
+            MotionError::Count => f.write_str("its count isn't a whole number from 2 to 1024"),
+            MotionError::Spacing => {
+                f.write_str("its spacing's expression doesn't give its value, or it's zero")
+            }
             MotionError::Edge(why) => write!(f, "its axis: {why}"),
             MotionError::Near(at) => write!(f, "its face's point {at} is out of bounds"),
             MotionError::RefBody(body) => write!(

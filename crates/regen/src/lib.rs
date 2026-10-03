@@ -171,8 +171,8 @@ pub struct Drafted {
     /// it; `Some` of an empty list where it ran and touched nothing. See
     /// [`Evaluation::touched`].
     pub touched: Option<Vec<BodyId>>,
-    /// For a move turning about an axis or a mirror, where its axis or
-    /// plane is, if it was found: a point on it and its direction (a
+    /// For a move turning about an axis, a mirror or a pattern, where its
+    /// axis or plane is, if it was found: a point on it and its direction (a
     /// mirror's normal), not unit, as [`Evaluation::references`] has it,
     /// whether or not the draft goes on to work. Checked on the wire:
     /// finite, within four times the coordinate limit, the direction not

@@ -1,20 +1,24 @@
 //! Random histories of blocks and discs made as bodies, joins, cuts and
-//! intersects over them, combines, and moves and mirrors among them:
-//! moves by offsets and turns about origin axes, straight model edges and
-//! round faces; mirrors in origin planes and flat faces, keeping their
-//! originals or not; earlier ones edited, removals, undo and redo. After
-//! each step: the cache warm and cold give the same evaluation; every
-//! move and mirror that worked put each of its bodies where the motion
-//! worked out here takes it (the volume kept, the centre of mass moved,
-//! turned or reflected, by `glam`'s own rotations and reflections), a
-//! mirror keeping its original holding the body and its image as the
-//! boolean identities say, every other body left alone, the axis or
+//! intersects over them, combines, and moves, mirrors and patterns among
+//! them: moves by offsets and turns about origin axes, straight model
+//! edges and round faces; mirrors in origin planes and flat faces,
+//! keeping their originals or not; linear and circular patterns of two
+//! to four copies along or about the same axes; earlier ones edited,
+//! removals, undo and redo. After each step: the cache warm and cold give
+//! the same evaluation; every move and mirror that worked put each of its
+//! bodies where the motion worked out here takes it (the volume kept, the
+//! centre of mass moved, turned or reflected, by `glam`'s own rotations
+//! and reflections), a mirror keeping its original holding the body and
+//! its image as the boolean identities say, every pattern each body and
+//! its copies (each copy's centre where `glam` puts it, the whole as the
+//! copies united one by one), every other body left alone, the axis or
 //! plane found on what it names; one that failed changed nothing; every
 //! later edit can still be made; the document survives its bytes,
-//! flipped bits included; and a request with a move's or mirror's draft
-//! and its answer cross the wire as they went.
+//! flipped bits included; and a request with a move's, mirror's or
+//! pattern's draft and its answer cross the wire as they went.
 
 use glam::DQuat;
+use varde_document::{Pattern, PatternKind};
 use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::{Budget, Instance, Motion, Op};
 
@@ -27,6 +31,9 @@ use crate::{Draft, Regenerator};
 const OFFSETS: [&str; 8] = ["0", "0", "5", "-5", "2.5", "12.5", "-7.5", "3.3"];
 const ANGLES: [&str; 8] = ["90", "-90", "180", "30", "45", "-17.5", "270", "360"];
 const PLANES: [OriginPlane; 3] = [OriginPlane::XY, OriginPlane::XZ, OriginPlane::YZ];
+const COUNTS: [&str; 4] = ["2", "3", "4", "1 + 2"];
+const SPACINGS: [&str; 6] = ["10", "-7.5", "25", "3", "12.5", "-40"];
+const SPANS: [&str; 6] = ["360", "90", "180", "45", "270", "120"];
 
 /// The bodies of `evaluation` that have solids of their own, made by
 /// features before feature `before` of `document` (all without).
@@ -114,6 +121,9 @@ fn random_motion(
     }
     let picked = some_of(&bodies, rng);
     let any = bodies[rng.below(bodies.len())];
+    if rng.below(4) == 0 {
+        return Some(random_pattern(document, evaluation, rng, picked, any).into());
+    }
     if rng.below(3) == 0 {
         let plane = match rng.below(3) {
             0 => random_face(evaluation, any, rng, |form| {
@@ -143,6 +153,50 @@ fn random_motion(
     };
     let turn = axis.map(|axis| (axis, ANGLES[rng.below(ANGLES.len())]));
     Some(shift(document, &picked, offsets, turn).into())
+}
+
+/// A random pattern of `bodies`, its axis an origin axis or named on
+/// `any` as `evaluation` has it.
+fn random_pattern(
+    document: &Document,
+    evaluation: &Evaluation,
+    rng: &mut Rng,
+    bodies: Vec<BodyId>,
+    any: BodyId,
+) -> Pattern {
+    let design = document.design();
+    let axis = match rng.below(5) {
+        0 => random_edge(evaluation, any, rng),
+        1 => random_face(evaluation, any, rng, |form| {
+            matches!(form, Form::Cylinder { .. } | Form::Cone { .. })
+        })
+        .map(AxisRef::Face),
+        _ => None,
+    };
+    let axis = axis.unwrap_or(AxisRef::Origin(Axis3::ALL[rng.below(3)]));
+    let count = Value::new(
+        COUNTS[rng.below(COUNTS.len())],
+        &Pattern::count_ask(&design),
+    )
+    .unwrap();
+    let kind = if rng.below(2) == 0 {
+        PatternKind::Linear {
+            along: axis,
+            count,
+            spacing: Value::new(
+                SPACINGS[rng.below(SPACINGS.len())],
+                &Pattern::spacing_ask(&design),
+            )
+            .unwrap(),
+        }
+    } else {
+        PatternKind::Circular {
+            about: axis,
+            count,
+            angle: Value::new(SPANS[rng.below(SPANS.len())], &Pattern::angle_ask(&design)).unwrap(),
+        }
+    };
+    Pattern { bodies, kind }
 }
 
 fn close(a: f64, b: f64, scale: f64) -> bool {
@@ -225,6 +279,11 @@ fn check_motions(document: &Document, evaluation: &Evaluation, cache: &mut Cache
         let (bodies, turn, mirror) = match &feature.kind {
             FeatureKind::Move(moved) => (&moved.bodies, Some(moved), None),
             FeatureKind::Mirror(mirror) => (&mirror.bodies, None, Some(mirror)),
+            FeatureKind::Pattern(pattern) => {
+                let what = format!("{what}: {} {index}", feature.name);
+                check_pattern(document, index, pattern, evaluation, cache, &what);
+                continue;
+            }
             _ => continue,
         };
         let what = format!("{what}: {} {index}", feature.name);
@@ -342,6 +401,108 @@ fn check_motions(document: &Document, evaluation: &Evaluation, cache: &mut Cache
     }
 }
 
+/// Holds the pattern `pattern`, feature `index` of `document` (evaluated
+/// whole as `evaluation`), to the copies worked out here: each copy the
+/// body's volume, its centre where `glam` turns or moves the body's to;
+/// the body and its copies as they come out of uniting them one by one
+/// (where that works; otherwise at least the body and at most all of
+/// them); every other body left alone; one that failed changed nothing.
+fn check_pattern(
+    document: &Document,
+    index: usize,
+    pattern: &Pattern,
+    evaluation: &Evaluation,
+    cache: &mut Cache,
+    what: &str,
+) {
+    let tolerance = document.tolerance();
+    let feature = document.features()[index].id;
+    let fails = |e: &Evaluation| e.failed.iter().any(|f| f.feature == feature);
+    let before = evaluate(&truncated(document, index), cache);
+    let after = evaluate(&truncated(document, index + 1), cache);
+    assert_eq!(fails(evaluation), fails(&after), "{what}");
+    if fails(&after) {
+        assert!(
+            same_bodies(&before, &after),
+            "{what}: failing, it changed bodies"
+        );
+        return;
+    }
+    let [point, along] = (after.references.iter())
+        .find(|(id, _)| *id == feature)
+        .map(|(_, line)| *line)
+        .expect("a pattern's axis is found");
+    assert!(
+        axis_found(pattern.kind.axis(), [point, along], &before),
+        "{what}"
+    );
+    let count = pattern.count().expect("a checked count");
+    let motions = crate::history::pattern::placements(pattern, count, [point, along]).unwrap();
+    let d = along.normalize();
+    // Where copy `k` takes the point `p`, by `glam`.
+    let place = |k: u32, p: DVec3| match &pattern.kind {
+        PatternKind::Linear { spacing, .. } => p + d * (f64::from(k) * spacing.value),
+        PatternKind::Circular { .. } => {
+            let (span, steps) = pattern.span_steps().unwrap();
+            let turn =
+                DQuat::from_axis_angle(d, (f64::from(k) * span / f64::from(steps)).to_radians());
+            turn * (p - point) + point
+        }
+    };
+    for made in &before.bodies {
+        let now = solid(&after, made.body).expect("still a body");
+        if pattern.bodies.binary_search(&made.body).is_err() {
+            assert_eq!(now, &made.solid, "{what}: {:?} changed", made.body);
+            continue;
+        }
+        let (volume, centre) = mass(&made.solid);
+        let (volume_now, centre_now) = mass(now);
+        let mut copies = vec![(*made.solid).clone()];
+        for (k, motion) in (1..).zip(&motions) {
+            let copy = made
+                .solid
+                .transformed(
+                    motion,
+                    Some(Instance {
+                        feature: feature.get(),
+                        index: u64::from(k),
+                    }),
+                    &tolerance,
+                    &Budget::DEFAULT,
+                )
+                .unwrap();
+            let (copy_volume, copy_centre) = mass(&copy);
+            let scale = size(&made.solid).max(size(&copy));
+            assert!(close(copy_volume, volume, volume), "{what}: copy {k}");
+            assert!(
+                close_at(copy_centre, place(k, centre), scale),
+                "{what}: copy {k} at {copy_centre}, not {}",
+                place(k, centre)
+            );
+            copies.push(copy);
+        }
+        let scale = size(&made.solid).max(size(now));
+        let united = (copies[1..].iter()).try_fold(copies[0].clone(), |all, copy| {
+            varde_kernel::boolean(&all, copy, Op::Union, &tolerance, &Budget::DEFAULT)
+        });
+        match united {
+            Ok(united) => {
+                let (whole, whole_centre) = mass(&united);
+                assert!(
+                    close(volume_now, whole, whole),
+                    "{what}: {count} copies of {volume} gave {volume_now}, united {whole}"
+                );
+                assert!(close_at(centre_now, whole_centre, scale), "{what}");
+            }
+            Err(_) => assert!(
+                volume_now <= f64::from(count) * volume * (1.0 + 1e-6)
+                    && volume_now >= volume * (1.0 - 1e-6),
+                "{what}: {count} copies of {volume} gave {volume_now}"
+            ),
+        }
+    }
+}
+
 fn run(seed: u64, steps: usize) {
     let mut rng = Rng(0x2545_f491_4f6c_dd1d ^ (seed + 1).wrapping_mul(0x9e37_79b9));
     let mut editor = Editor::new(Document::default());
@@ -357,12 +518,12 @@ fn run(seed: u64, steps: usize) {
         let mut apply = |command: Command| {
             let _ = editor.apply(command);
         };
-        // The moves and mirrors of the document, by index.
+        // The moves, mirrors and patterns of the document, by index.
         let motions: Vec<usize> = (0..document.features().len())
             .filter(|&i| {
                 matches!(
                     document.features()[i].kind,
-                    FeatureKind::Move(_) | FeatureKind::Mirror(_)
+                    FeatureKind::Move(_) | FeatureKind::Mirror(_) | FeatureKind::Pattern(_)
                 )
             })
             .collect();
@@ -400,8 +561,8 @@ fn run(seed: u64, steps: usize) {
                 }
             }
             8 => {
-                // An earlier move or mirror made again, of what comes
-                // before it.
+                // An earlier move, mirror or pattern made again, of what
+                // comes before it.
                 if !motions.is_empty() {
                     let index = motions[rng.below(motions.len())];
                     let then = evaluate(&truncated(&document, index), &mut warm);
@@ -447,8 +608,8 @@ fn run(seed: u64, steps: usize) {
             11 => editor.undo(),
             12 => editor.redo(),
             _ => {
-                // A move or mirror drafted, new or in place of an earlier
-                // one.
+                // A move, mirror or pattern drafted, new or in place of an
+                // earlier one.
                 let edited = (!motions.is_empty() && rng.below(2) == 0)
                     .then(|| motions[rng.below(motions.len())]);
                 let then = match edited {
@@ -486,7 +647,7 @@ fn run(seed: u64, steps: usize) {
 /// See the module's docs. `VARDE_MOTION_SEEDS` runs more seeds
 /// (`VARDE_MOTION_FROM` the first).
 #[test]
-fn random_histories_with_moves_and_mirrors_hold() {
+fn random_histories_with_moves_mirrors_and_patterns_hold() {
     let number = |name: &str, default: u64| {
         std::env::var(name)
             .ok()

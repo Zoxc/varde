@@ -93,19 +93,25 @@ pub(crate) const MIRROR_FACE_NOT_FOUND: &str = "its mirror face wasn't found";
 /// Why a mirror in a face fails: the face found isn't a plane.
 pub(crate) const MIRROR_FACE_NOT_FLAT: &str = "its mirror face isn't flat";
 
-/// What a move or a mirror does to a body, for its messages.
+/// Why a pattern fails: its count isn't one it takes (never, checked as
+/// it is).
+pub(crate) const PATTERN_COUNT: &str = "its count is out of range";
+
+/// What a move, a mirror or a pattern does to a body, for its messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Moving {
     Move,
     Mirror,
+    Pattern,
 }
 
 impl Moving {
-    /// "moving", "mirroring".
+    /// "moving", "mirroring", "patterning".
     fn doing(self) -> &'static str {
         match self {
             Moving::Move => "moving",
             Moving::Mirror => "mirroring",
+            Moving::Pattern => "patterning",
         }
     }
 }
@@ -139,6 +145,23 @@ pub(crate) fn moving(moving: Moving, body: &str, error: KernelError) -> String {
 /// failed (a mirror keeping the original, the two meeting).
 pub(crate) fn with_image(body: &str, error: KernelError) -> String {
     failed(&format!("joining {body} to its mirror image"), error)
+}
+
+/// Why putting the body named `body` together with its pattern's copies
+/// failed (copies meeting each other or the original).
+pub(crate) fn with_copies(body: &str, error: KernelError) -> String {
+    failed(&format!("joining {body} to its copies"), error)
+}
+
+/// Why a pattern of `count` copies of the body named `body`, of
+/// `patches` patches, isn't tried: together they'd be over the most
+/// patches a solid may have.
+pub(crate) fn too_many_copies(body: &str, count: u32, patches: usize) -> String {
+    format!(
+        "{count} copies of {body} are too many to work out: it has {patches} patches, and a \
+         body may have {} in all; use fewer copies",
+        varde_kernel::MAX_PATCHES
+    )
 }
 
 /// What a feature was doing with a body when the kernel gave up.

@@ -41,7 +41,13 @@
 //! their bodies as the features before leave them), each body moved by
 //! [`Solid::transformed`] keeping its faces' names, a mirror keeping the
 //! original assembled with its image (see `motion`); a body the motion
-//! would take past the coordinate limit fails it.
+//! would take past the coordinate limit fails it. A pattern works on its
+//! bodies the same way, its axis found as a move's: each body becomes
+//! itself and its copies, each placed directly by its own motion and
+//! named as that copy of the pattern, assembled into the body (side by
+//! side where apart, united where they meet; see `pattern`); a count
+//! whose copies would be more patches than a solid may have, or a copy
+//! past the coordinate limit, fails it before anything is copied.
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -87,6 +93,7 @@ use crate::profile::profile;
 
 mod combine;
 mod motion;
+mod pattern;
 
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.
@@ -121,10 +128,11 @@ pub struct Evaluation {
     /// plane's. A sketch on a face that isn't listed failed, and is
     /// drawn nowhere.
     pub placements: Vec<(FeatureId, Placement)>,
-    /// Each move turning about an axis, and each mirror, whose axis or
-    /// plane was found, and where: a point on it and its direction (a
-    /// mirror's normal), not unit, as the feature turned or mirrored by,
-    /// in the document's order. For the app to draw a draft's axis or
+    /// Each move turning about an axis, each mirror and each pattern,
+    /// whose axis or plane was found, and where: a point on it and its
+    /// direction (a mirror's normal), not unit, as the feature turned,
+    /// mirrored or placed its copies by (a linear pattern only along
+    /// the direction), in the document's order. For the app to draw a draft's axis or
     /// plane where regenerating found it.
     pub references: Vec<(FeatureId, [DVec3; 2])>,
 }
@@ -319,7 +327,8 @@ pub(crate) fn evaluate_within(
                     FeatureKind::Sketch { .. }
                     | FeatureKind::Combine(_)
                     | FeatureKind::Move(_)
-                    | FeatureKind::Mirror(_) => unreachable!("matched apart"),
+                    | FeatureKind::Mirror(_)
+                    | FeatureKind::Pattern(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -365,6 +374,18 @@ pub(crate) fn evaluate_within(
                     document,
                     feature.id,
                     mirror,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::Pattern(pattern) => {
+                if let Err(failed) = pattern::evaluate_pattern(
+                    document,
+                    feature.id,
+                    pattern,
                     &tolerance,
                     &mut evaluation,
                     cache,

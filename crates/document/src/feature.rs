@@ -1,10 +1,10 @@
 //! Features: the steps a design is built from, sketches, extrudes,
-//! revolves, combines, moves and mirrors.
+//! revolves, combines, moves, mirrors and patterns.
 
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
-use crate::{BodyId, Combine, Extrude, Mirror, Move, Operation, Plane, Revolve};
+use crate::{BodyId, Combine, Extrude, Mirror, Move, Operation, Pattern, Plane, Revolve};
 
 /// A feature's handle in one document. It's opaque: ids come from the
 /// document's features, not from literals. Features and bodies take their
@@ -42,6 +42,7 @@ pub enum FeatureKind {
     Combine(Combine),
     Move(Move),
     Mirror(Mirror),
+    Pattern(Pattern),
 }
 
 impl FeatureKind {
@@ -55,6 +56,7 @@ impl FeatureKind {
             FeatureKind::Combine(_) => "Combine",
             FeatureKind::Move(_) => "Move",
             FeatureKind::Mirror(_) => "Mirror",
+            FeatureKind::Pattern(_) => "Pattern",
         }
     }
 
@@ -74,18 +76,19 @@ impl FeatureKind {
     }
 
     /// The bodies it names, which features before it make, and which it
-    /// depends on: a combine's target and tools, the bodies a move or a
-    /// mirror moves. Removing one of them, or its maker, removes this too.
+    /// depends on: a combine's target and tools, the bodies a move, a
+    /// mirror or a pattern moves or copies. Removing one of them, or its maker, removes this too.
     /// Not the bodies an extrude or revolve takes out of its targets,
     /// which are dropped from its list instead, nor the body under a
-    /// sketch's face plane, a revolve's axis edge or a move's axis or a
-    /// mirror's plane (the feature stays, and fails until it's given
+    /// sketch's face plane, a revolve's axis edge or a move's or pattern's
+    /// axis or a mirror's plane (the feature stays, and fails until it's given
     /// another).
     pub fn bodies(&self) -> Vec<BodyId> {
         match self {
             FeatureKind::Combine(combine) => combine.bodies().collect(),
             FeatureKind::Move(moved) => moved.bodies.clone(),
             FeatureKind::Mirror(mirror) => mirror.bodies.clone(),
+            FeatureKind::Pattern(pattern) => pattern.bodies.clone(),
             FeatureKind::Sketch { .. } | FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
                 Vec::new()
             }
@@ -99,7 +102,8 @@ impl FeatureKind {
             FeatureKind::Sketch { .. }
             | FeatureKind::Combine(_)
             | FeatureKind::Move(_)
-            | FeatureKind::Mirror(_) => None,
+            | FeatureKind::Mirror(_)
+            | FeatureKind::Pattern(_) => None,
             FeatureKind::Extrude(extrude) => Some(extrude.sketch),
             FeatureKind::Revolve(revolve) => Some(revolve.sketch),
         }
@@ -112,7 +116,8 @@ impl FeatureKind {
             FeatureKind::Sketch { .. }
             | FeatureKind::Combine(_)
             | FeatureKind::Move(_)
-            | FeatureKind::Mirror(_) => None,
+            | FeatureKind::Mirror(_)
+            | FeatureKind::Pattern(_) => None,
             FeatureKind::Extrude(extrude) => Some(&extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&revolve.operation),
         }
@@ -124,7 +129,8 @@ impl FeatureKind {
             FeatureKind::Sketch { .. }
             | FeatureKind::Combine(_)
             | FeatureKind::Move(_)
-            | FeatureKind::Mirror(_) => None,
+            | FeatureKind::Mirror(_)
+            | FeatureKind::Pattern(_) => None,
             FeatureKind::Extrude(extrude) => Some(&mut extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&mut revolve.operation),
         }
@@ -157,6 +163,12 @@ impl From<Move> for FeatureKind {
 impl From<Mirror> for FeatureKind {
     fn from(mirror: Mirror) -> Self {
         FeatureKind::Mirror(mirror)
+    }
+}
+
+impl From<Pattern> for FeatureKind {
+    fn from(pattern: Pattern) -> Self {
+        FeatureKind::Pattern(pattern)
     }
 }
 
