@@ -3771,7 +3771,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
-| `boolean/curved_tests/cones.rs` | cones and coaxial walls, exact: a countersink upright and turned, half of one (rulings), slabs tilted through a cone, a box's face square to a frustum's axis with its diagonal across the circle, a cylinder and a cone crossing on one axis, cones through a cylinder's cap, a turned shaft joined end to end and cut by a cone, a V groove and a centre drill, random coaxial frustums against closed forms, ring tops sloping down to nearly flat |
+| `boolean/curved_tests/cones.rs` | cones and coaxial walls, exact: a countersink upright and turned, half of one (rulings), slabs tilted through a cone, a box's face square to a frustum's axis with its diagonal across the circle, a cylinder and a cone crossing on one axis, cones through a cylinder's cap, a turned shaft joined end to end and cut by a cone, a V groove and a centre drill, random coaxial frustums against closed forms, ring tops sloping down to nearly flat, nearly flat cones cut through their axis, coaxial shortcuts tried again |
 | `boolean/curved_tests/one_face.rs` | faces on one surface after booleans: tops at a crease either side of the bar, flush stacks on turned frames far from the origin, chains of joins and cuts with every operand's names resolving, faces meeting only at a corner |
 | `boolean/curved_tests/tangent.rs` | tangent contacts: cylinders against a plate's side from outside and inside, standing on it or through its top, slots ending in, beside and across a hole, a cylinder on a cylinder (in millimetres at the default tolerance, and at unit size at the finest), unions touching along a line refused at once (a pin plugging a hole it touches inside never named so), and solids tangent to a rounded edge or the faces it runs into |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates |
@@ -4531,6 +4531,23 @@ apart, so a cap's ring between a cylinder's rim and a coaxial cone's
 section comes whole to the triangulation, which is why curved sides are
 split for their bulges (see "Curved sides when triangulating").
 
+The certificate, with the cuts in parallels (`chain::parallel`), is a
+**shortcut** (`pairs::Shortcuts::coaxial`), as joining lines along
+walls is: pieces certified rather than refined stay as large as they
+were, and some results that refinement and tracing got right failed
+from them: a stack a ten-millionth off a cone's axis, its pieces
+`1e-7` from the cone's seam vertex (`EdgeNeighbours`); a ring's corner a
+hundredth outside a cone's wall, the cuts a fiftieth apart about it
+(`Hull`); a ball through a ring's inner cones, the bands between the
+parallel and the ball's polar cap fanned from the cap's corners with
+nothing left to halve (`TooComplex` with budget to spare: a sphere has
+no ruling to free a band tree's root). So an operation that took it and
+fails is tried again without it (see "Tried again without the joins").
+Of 1 200 random pairs of turned solids on one axis (upright, turned and
+moved, some a hair apart), 14 results the build before this step got
+were lost to it; tried again so, none are, and 45 more work than
+before (of 1 200 boxes through turned solids, 26 more).
+
 **Ends along one direction** (`along_generators`): a pair on such walls
 that has ends and no certificate is joined line by line before it is
 split. Each line's stretch inside both patches runs between two ends
@@ -4599,18 +4616,25 @@ results the join got right, so ends aren't checked. Leaving steep
 crossings to refinement (`sin θ` over 1/8 to 3/4) won back as many
 results as it lost, so every clear line is joined.
 
-**Tried again without the joins** (`boolean_within`): a pair's lines
+**Tried again without the joins** (`boolean_within`; the shortcuts
+are `pairs::Shortcuts`, the joins and the coaxial certificate): a pair's lines
 joined in an early round leave the pieces beside them as large as they
 were, and some results that refinement got right failed the hull,
 neighbour or fold rules from them (16 of the 864 ellipse operations
 above, against 189 won; 17 of the 1 080 spans, against 323). So when an
 operation that joined some lines fails, except by running out of the
 budget, it is tried again without joining any
-(`checked_with(.., join: false, ..)`, the pairs split as before),
+(`checked_with(.., Shortcuts::NONE, ..)`, the pairs split as before),
 within as much work again as the first try took, but at least `AGAIN`
 = 150 000 units (and what is left of the budget). The second try's
 result if it passes, else the first try's error, with its evidence (or
-`TooComplex` where the budget, not the bound, stopped it). Unbounded, the second try ran
+`TooComplex` where the budget, not the bound, stopped it). A first try
+that took the coaxial shortcut (see "Coaxial walls") and fails, also
+by `TooComplex` with budget left (bands that can't be halved within
+the fit), is tried again first without it but joining lines, as
+operations were before it, with what is left of the budget (refined
+so, a ring against a cone took up to 400 000 units, more than `AGAIN`);
+if that joined lines and fails, without either, as above. Unbounded, the second try ran
 most of the refusals on to the budget for one result in fifteen
 (ellipses 114 M → 322 M units, for 15); bounded by the first try's
 work alone it lost the spans' fast folds (a sliver under the resolution,
@@ -4841,7 +4865,12 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   conic's point on that line (at most 6 times); a plane along a
   cylinder's rulings (both tangents along the chord within `1e-9`)
   gives a straight edge. The arcs are kept only if their middles invert
-  into the quadric patch. If the guided arc gives none (halving ran
+  into the quadric patch (Newton's method from between the arc's ends'
+  places in the patch, else from its middle: from the middle alone it
+  strayed on the long thin patches of a nearly flat cone, half-angle
+  89.5° from radius ½ to 20½, and a ruling through its axis was traced
+  as a chord paced as a cylinder's, the triangles beside it `3e-7` off
+  the cone, volumes `2e-6` off at 88°). If the guided arc gives none (halving ran
   out) or isn't kept, the arc on the other side of the chord is tried
   (`Guide::Away` of the same point), and kept on the same test; at most
   one of the two lies on the patch, and the guided one goes first. The
@@ -6539,7 +6568,12 @@ random pairs of coaxial stacks (a frustum and a cylinder each, upright
 and on random frames, 159 of 160 operations, every volume within `1e-9`
 relative, the upright ones exact); ring tops sloping from `3e-6` to 1
 cut by a cylinder on their axis (the nearly flat ones may be refused);
-the same bits at 1 and 8 threads. Unit tests: parallels' arcs on their
+the same bits at 1 and 8 threads; frustums opening at 80° to 89.5°
+from their axis (nearly flat) cut by half and a quarter of a plate
+through the axis along their seams, upright and a thousand from the
+origin, exact; coaxial shortcuts that fail tried again (a stack a hair
+off a cone's axis, against the closed form; a ring a hundredth outside a
+cone's wall; a ball through a ring's cones). Unit tests: parallels' arcs on their
 circles to `1e-14`, cone rulings from sections at the geometric mean,
 bulging curves split, walls leaning further than a quarter of their
 slope not certified.
@@ -6645,19 +6679,29 @@ slope not certified.
   affine image of a parabola arc), which isn't used yet. Of 800 random
   bars through boxes, two (seed 7, case 189; seed 1, case 97) fail their
   intersection and difference as `Degenerate`, as before.
-- **Nearly flat cones cut on their axis are refused.** A cone too nearly
-  flat to claim its quadric (`Free`, its form the cone) cut by a
+- **Nearly flat cones cut on their axis are often refused.** A cone too
+  nearly flat to claim its quadric (`Free`, its form the cone) cut by a
   cylinder on its axis takes the coaxial path by the forms, but its
-  crossings aren't solved again on any surface and the operation fails
-  (a ring's top rising `3e-6` over 100 at a fit of `1e-4`:
+  crossings aren't solved again on any surface and the operation often
+  fails (a ring's top rising `3e-6` over 100 at a fit of `1e-4`:
   `Invalid(VertexNeighbours)`; rising `1e-4`: `TooComplex`, as both did
-  before). Sloping a hundredth, the cone claims its quadric and the cut
-  is exact.
+  before). Of 360 operations on such rings (rises `1e-6` to `5e-3` over
+  100, fits `1e-4` and `1e-3`, pins and a cone on the axis), 167 work
+  (8 before this step), none wrong. Sloping a hundredth, the cone claims
+  its quadric and the cut is exact.
 - **Thin coaxial wedges cost patches.** Where a cone's wall meets a
   cylinder's at a small angle in the result (a cylinder less a cone
   crossing it at 18°, a cone inside a cylinder's wall within a hundredth
   of it), the hull rules between the two walls' bands are kept by repair
-  splitting them: 476 to 1 068 patches where the cut faces have some 100.
+  splitting them: 476 to 1 068 patches where the cut faces have some 100,
+  13 912 for a cone from radius 0.9999 to 0.9 (6.5 s), about as many as
+  traced before this step (13 220). A cone starting within a thousandth
+  of the cylinder's wall and crossing it at a slope of a few thousandths
+  is refused (`Hull`), as it ran out of budget before.
+- **Coaxial solids a hair off one axis are mostly refused**: two turned
+  stacks, one moved by `1e-7` to `3e-6` or turned by up to `4e-7`, work
+  in about a quarter of the operations, as before this step (none wrong;
+  their traced cuts keep the identities to the fit).
 - **Plane sections nearly along a cylinder's rulings trace near the
   tip, or are refused**: a plane `α` off the rulings cuts a cylinder of
   radius `r` and height `h` in the tip of an ellipse whose curvature
@@ -9213,3 +9257,6 @@ see `agents/features.md`, "Failures and where they are").
   equator). Certified with no ends however far apart, these walls leave
   a cap's ring between them whole, so curved sides bulging over the
   loops are split (planar layouts), which the plan didn't have either.
+  Both the certificate and the parallels are a shortcut a failed
+  operation is tried again without, so they lose no result the
+  traced cuts got ("Tried again without the joins").

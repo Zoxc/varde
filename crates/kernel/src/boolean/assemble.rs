@@ -339,7 +339,9 @@ pub(super) struct Refinement<'a> {
 /// and each pair of faces' cut `arcs`: vertices are the operands' (`A`'s,
 /// then `B`'s), then the new ones on edges (`x12`'s, then `x21`'s), then
 /// those along the cuts, arc by arc. With `refinement`, pieces of an
-/// operand's triangle kept whole are merged back into it.
+/// operand's triangle kept whole are merged back into it. Quadrics of
+/// revolution on one axis are cut in their parallels only if `coaxial`
+/// (else traced), and `took` says whether some were.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn assemble(
     op: Op,
@@ -350,6 +352,8 @@ pub(super) fn assemble(
     prims: &impl Primitives,
     tol: &Tolerance,
     refinement: Option<&Refinement>,
+    coaxial: bool,
+    took: &mut bool,
     work: &mut Work,
 ) -> Result<(Soup, Vec<Face>), Failure> {
     let keep = Keep::of(op);
@@ -406,7 +410,15 @@ pub(super) fn assemble(
     cutting.certify(work)?;
 
     // Each arc's chain.
-    let chain_jobs: Vec<chain::Job> = arcs.iter().map(|arc| cutting.chain_job(arc)).collect();
+    // Coaxial quadrics cut in their parallels only if `coaxial`, else
+    // traced as before: `took` says whether some were.
+    let chain_jobs: Vec<chain::Job> = arcs
+        .iter()
+        .map(|arc| chain::Job {
+            coaxial,
+            ..cutting.chain_job(arc)
+        })
+        .collect();
     work.spend(
         chain_jobs
             .iter()
@@ -430,6 +442,7 @@ pub(super) fn assemble(
         gather.pair(a, b, arcs[i].tris);
         gather.failure(BooleanError::Inconsistent)
     })?;
+    *took = chains.iter().any(|c| c.coaxial);
     work.spend(chains.iter().map(|c| c.curves.len()).sum())?;
     // A cut running beside a side of its quadric triangle from end to end
     // in one curve is halved, so the side has a vertex across from it.
@@ -775,6 +788,7 @@ impl Cutting<'_> {
             q: &b.patches[q as usize],
             shapes: [Shape::of(a, p), Shape::of(b, q)],
             forms: [a.form(p), b.form(q)],
+            coaxial: true,
             planar: [a.planar[p as usize], b.planar[q as usize]],
             ends: ends.map(|id| self.base[id as usize]),
             dom,

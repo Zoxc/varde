@@ -294,7 +294,10 @@ a balanced tree.
    the walls cross clearly, at an angle that leaves no sliver under a
    quarter of the resolution thick; an operation that then fails is tried
    once more without those joins, within as much work again as the first
-   try took (at least 150 000 units). Any other pair is **refined**: both operands
+   try took (at least 150 000 units). The coaxial certificate (with the
+   cuts in parallels below) is such a shortcut too: an operation that
+   took it and fails is tried again without it, as before it, with the
+   rest of the budget. Any other pair is **refined**: both operands
    are split red–green where the pair is, and everything is counted again;
    pairs at the size floor are decided by fixed rules (no certificate means
    no loop; ends joined in order round their middle).

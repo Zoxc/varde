@@ -475,3 +475,173 @@ fn cones_cut_square_to_their_axis_across_a_faces_diagonal() {
         }
     }
 }
+
+#[test]
+fn nearly_flat_cones_cut_through_their_axis_are_exact() {
+    // A frustum of a cone opening at 80° to 89.5° from its axis (radius
+    // ½ to 20½), its middle half cut out by half and a quarter of a plate
+    // whose sides run through the axis along the cone's own seams. The
+    // rulings there were checked against the long thin cone patch by
+    // Newton's method from its middle, which strayed: some came out as
+    // chords paced as a cylinder's, the triangles beside them `3e-7` off
+    // the cone (`2e-6` in volume), or traced on copies claiming no
+    // surface. Upright and far from the origin.
+    for half in [80.0f64, 88.0, 89.5] {
+        let tan = half.to_radians().tan();
+        let (r0, r1) = (0.5, 20.5);
+        let h1 = 20.0 / tan;
+        for far in [0.0, 1e3] {
+            let origin = DVec3::new(far, -0.7 * far, 0.3 * far);
+            let frame = Frame {
+                origin,
+                x: DVec3::X,
+                y: DVec3::Z,
+            };
+            let tool = revolve(
+                &Profile {
+                    loops: vec![polygon(
+                        &[v(0.0, 0.0), v(r0, 0.0), v(r1, h1), v(0.0, h1)],
+                        1,
+                    )],
+                },
+                &frame,
+                Sweep::Full,
+                2,
+                &TOL,
+                &Budget::DEFAULT,
+            )
+            .unwrap();
+            let (z0, z1) = (0.25 * h1, 0.75 * h1);
+            let (a, b) = (r0 + 5.0, r0 + 15.0);
+            let frustum = PI * (z1 - z0) / 3.0 * (a * a + a * b + b * b);
+            for (share, min, size) in [
+                (0.5, [0.0, -22.0, z0], [22.0, 44.0, z1 - z0]),
+                (0.25, [0.0, 0.0, z0], [22.0, 22.0, z1 - z0]),
+            ] {
+                let plate =
+                    Solid::cuboid(origin + DVec3::from(min), DVec3::from(size), 1, &TOL).unwrap();
+                let name = format!("{half}° at {far}, {share}");
+                let within = 1e-12 * (plate.volume() + tool.volume()) * (1.0 + far);
+                let results = all_four(&plate, &tool, within);
+                volumes(&name, &plate, &tool, &results, share * frustum, within);
+                for (k, solid) in results.iter().enumerate() {
+                    exact(&format!("{name} {k}"), solid, 22.0 + far);
+                }
+            }
+        }
+    }
+}
+
+/// A ball of radius `r` centred on `z` at height `h`.
+fn ball(r: f64, h: f64) -> Solid {
+    let c = v(0.0, h);
+    let half = Loop {
+        segments: vec![
+            arc(c, v(0.0, h - r), v(r, h), 0),
+            arc(c, v(r, h), v(0.0, h + r), 0),
+            Segment::line(v(0.0, h + r), v(0.0, h - r), 1).unwrap(),
+        ],
+    };
+    revolve(
+        &Profile { loops: vec![half] },
+        &Z,
+        Sweep::Full,
+        2,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap()
+}
+
+/// `a`'s four results with `b`, each passing, their volumes keeping the
+/// identities within the fit tolerance over the operands' areas (some
+/// cuts traced).
+fn four_kept(name: &str, a: &Solid, b: &Solid) -> [Solid; 4] {
+    let within = TOL.fit() * (a.area() + b.area()) / 5.0;
+    let results = all_four(a, b, within);
+    let both = results[1].volume();
+    volumes(name, a, b, &results, both, within);
+    results
+}
+
+#[test]
+fn coaxial_shortcuts_that_fail_are_tried_again_as_before() {
+    // Walls on one axis certified rather than refined keep their pieces
+    // large, and cuts of quadrics on one axis in their parallels leave
+    // bands fanned from a far corner: some results refinement and
+    // tracing got right failed from them. Those are tried again as
+    // before (and still exact where the cuts are).
+    //
+    // A cone and a stack a ten-millionth off its axis, meeting where the
+    // stack's top cuts the cone: its pieces 1e-7 from the cone's seam
+    // vertex left a sliver (`EdgeNeighbours`).
+    let a = turned(
+        &[v(0.0, 0.125), v(1.125, 0.125), v(1.5, 2.125), v(0.0, 2.125)],
+        1,
+    );
+    let b = moved(
+        &turned(
+            &[
+                v(0.0, -1.5),
+                v(2.0, -1.5),
+                v(1.625, -0.5),
+                v(1.375, 0.25),
+                v(0.0, 0.25),
+            ],
+            2,
+        ),
+        |p| p + DVec3::X * 1e-7,
+    );
+    let (r0, r1) = (1.125, 1.125 + 0.1875 * 0.125);
+    let slab = PI * 0.125 / 3.0 * (r0 * r0 + r0 * r1 + r1 * r1);
+    // Refined as before, every cut is still a plane's on the cone, but
+    // the triangles at the two vertices a ten-millionth apart are `1e-8`
+    // off it.
+    let both = run(&a, &b, Op::Intersection);
+    exact_to("slab", &both, 3.0, 1e-8);
+    assert!(
+        (both.volume() - slab).abs() <= 1e-8 * slab,
+        "{}",
+        both.volume()
+    );
+    four_kept("hair apart", &a, &b);
+    // A ring whose corner is a hundredth outside a cone's wall, the cuts
+    // a fiftieth apart about it (`Hull`).
+    let a = turned(
+        &[
+            v(0.0, -1.375),
+            v(1.375, -1.375),
+            v(0.875, -1.0),
+            v(2.0, 0.75),
+            v(1.25, 2.0),
+            v(0.0, 2.0),
+        ],
+        1,
+    );
+    let ring = turned(
+        &[
+            v(1.625, 0.625),
+            v(0.5, 0.875),
+            v(0.125, 0.125),
+            v(1.125, -0.625),
+            v(1.25, 0.0),
+        ],
+        2,
+    );
+    four_kept("ring", &a, &ring);
+    // A ball through a ring's inner cones: the bands between the cut
+    // and the ball's polar cap fanned from the cap's corners, with
+    // nothing to halve (`TooComplex`).
+    let ring = turned(
+        &[
+            v(1.75, -0.5),
+            v(0.625, -0.25),
+            v(0.75, -0.625),
+            v(1.25, -1.25),
+            v(1.875, -1.375),
+        ],
+        2,
+    );
+    four_kept("ball", &ball(1.125, -0.625), &ring);
+    assert_deterministic(|| run(&ball(1.125, -0.625), &ring, Op::Union).into_mesh());
+}

@@ -84,6 +84,7 @@ mod triangulate;
 
 use count::Crossing;
 use input::{Input, Side};
+use pairs::Shortcuts;
 
 /// A boolean operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -259,10 +260,10 @@ pub fn boolean(
     boolean_within(a, b, op, tol, &mut Work::new(budget))
 }
 
-/// The least work [`boolean`] gives its second try, without joining ends
-/// along walls' common direction, after the first failed with them: a
-/// first try that failed fast (folding on a sliver under the resolution
-/// in a few thousand units) took up to 150 000 to refine as before.
+/// The least work [`boolean`] gives its last try, without joining ends
+/// along walls' common direction, after one failed with them: a first
+/// try that failed fast (folding on a sliver under the resolution in a
+/// few thousand units) took up to 150 000 to refine as before.
 const AGAIN: u64 = 150_000;
 
 /// [`boolean`], charging `work`. The failure returned is a try's error
@@ -281,35 +282,59 @@ fn boolean_within(
         _ => {}
     }
     let start = work.left();
-    let mut joined = false;
+    let mut used = Shortcuts::NONE;
     // What the mesh that failed to repair or pass `check` leaves, to
     // tell a result touching itself from others at the end.
     let mut failed = None;
-    let first = checked_with(a, b, op, true, &mut joined, &mut failed, tol, work);
+    let first = checked_with(a, b, op, Shortcuts::ALL, &mut used, &mut failed, tol, work);
+    // A coaxial cut's bands may stray past the fit with nothing left to
+    // halve (`TooComplex` with budget to spare): tried again too.
+    let retried = |e: &Failure, work: &Work| {
+        used.any() && (e.error != KernelError::TooComplex || used.coaxial && work.left() > 0)
+    };
     let e = match first {
-        Err(e) if joined && e.error != KernelError::TooComplex => e,
+        Err(e) if retried(&e, work) => e,
         result => return pinched_named(result, &failed, tol, work),
     };
-    // Lines along walls' common direction joined in an early round leave
-    // the pieces beside them as large as they were, and some results that
-    // refinement gets right fail the hull, neighbour or fold rules from
-    // them: then the result is the one refined as before, if that passes
-    // within as much work again as the first try took, or `AGAIN` if
-    // more (and what is left of the budget), else the first try's error.
-    // Unbounded, the second try ran most refusals on to the budget, for a
-    // result in one of fifteen.
-    let spent = start.saturating_sub(work.left());
-    let cap = spent.max(AGAIN).min(work.left());
-    let mut again = Work::new(&Budget::new(cap));
-    let second = checked_with(a, b, op, false, &mut joined, &mut None, tol, &mut again);
-    // What the second try took, charged to the operation's budget.
-    work.spend(usize::try_from(cap - again.left()).unwrap_or(usize::MAX))?;
-    match second {
-        Err(f) if f.error == KernelError::TooComplex && work.left() == 0 => {
-            Err(KernelError::TooComplex.into())
+    // Shortcuts taken in an early round (lines joined along walls' common
+    // direction, coaxial walls certified) leave the pieces beside them as
+    // large as they were, and some results that refinement gets right
+    // fail the hull, neighbour or fold rules from them: then the result
+    // is the one without them, else the first try's error. Without the
+    // coaxial certificate, the joins along walls are tried first, as
+    // they were before it, with what is left of the budget; then without
+    // either, within as much work again as the tries so far took, or
+    // `AGAIN` if more (and what is left). Unbounded, that last try ran
+    // most refusals on to the budget, for a result in one of fifteen.
+    let mut shortcuts = Shortcuts {
+        along: used.coaxial,
+        coaxial: false,
+    };
+    loop {
+        let spent = start.saturating_sub(work.left());
+        // Joining lines but not certifying coaxial walls, the decisions
+        // are as they were before the certificate, which had the whole
+        // budget.
+        let cap = if shortcuts.along {
+            work.left()
+        } else {
+            spent.max(AGAIN).min(work.left())
+        };
+        let mut again = Work::new(&Budget::new(cap));
+        let mut taken = Shortcuts::NONE;
+        let next = checked_with(a, b, op, shortcuts, &mut taken, &mut None, tol, &mut again);
+        // What this try took, charged to the operation's budget.
+        work.spend(usize::try_from(cap - again.left()).unwrap_or(usize::MAX))?;
+        match next {
+            Err(f) if f.error == KernelError::TooComplex && work.left() == 0 => {
+                return Err(KernelError::TooComplex.into());
+            }
+            Err(f) if taken.any() && f.error != KernelError::TooComplex => {
+                shortcuts = Shortcuts::NONE;
+            }
+            Err(_) => return pinched_named(Err(e), &failed, tol, work),
+            result => return result,
         }
-        Err(_) => pinched_named(Err(e), &failed, tol, work),
-        result => result,
     }
 }
 
@@ -495,12 +520,14 @@ fn unchecked(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Mesh, KernelError> {
-    let (soup, faces) = assembled(a, b, op, true, &mut false, tol, work).map_err(|f| f.error)?;
+    let mut used = Shortcuts::NONE;
+    let (soup, faces) =
+        assembled(a, b, op, Shortcuts::ALL, &mut used, tol, work).map_err(|f| f.error)?;
     cleaned(a, b, op, soup, faces, true, &mut false, tol, work).map_err(|f| f.error)
 }
 
-/// The result, joining ends along walls' common direction only if `join`
-/// (see [`pairs::refined_with`]), and setting `joined` if some were:
+/// The result, taking only the `shortcuts` given (see
+/// [`pairs::refined_with`]), and setting `used` to those some pair took:
 /// assembled, cleaned, repaired and checked. Where it fails as
 /// [`KernelError::Invalid`] from repair or the check, `failed` is left
 /// with what the mesh that failed shows (see [`checked`]), for
@@ -510,13 +537,13 @@ fn checked_with(
     a: &Solid,
     b: &Solid,
     op: Op,
-    join: bool,
-    joined: &mut bool,
+    shortcuts: Shortcuts,
+    used: &mut Shortcuts,
     failed: &mut Option<Failed>,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Solid, Failure> {
-    let (soup, faces) = assembled(a, b, op, join, joined, tol, work)?;
+    let (soup, faces) = assembled(a, b, op, shortcuts, used, tol, work)?;
     // The clean-up's last resort, unfolding sheets folded onto a flush
     // face, can leave a soup that fails where the clean-up without it
     // would have mended it by other means (Delaunay flips on a face a
@@ -604,17 +631,17 @@ fn checked(
     }
 }
 
-/// The result's triangles and faces, before the clean-up, joining ends
-/// along walls' common direction only if `join` (see
-/// [`pairs::refined_with`]), and setting `joined` if some were. A union
+/// The result's triangles and faces, before the clean-up, taking only the
+/// `shortcuts` given (see [`pairs::refined_with`]), and setting `used` to
+/// those some pair took. A union
 /// of walls touching along a line comes with the pairs of faces showing
 /// it, a cut face that can't be triangulated with its loops.
 fn assembled(
     a: &Solid,
     b: &Solid,
     op: Op,
-    join: bool,
-    joined: &mut bool,
+    shortcuts: Shortcuts,
+    used: &mut Shortcuts,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<(cleanup::Soup, Vec<Face>), Failure> {
@@ -625,15 +652,16 @@ fn assembled(
     let (soup, faces) = if ia.curved || ib.curved {
         // Counted and decided pair by pair, the operands refined where a
         // pair needs it.
-        let refined = pairs::refined_with(a.mesh(), b.mesh(), grow, join, tol, work)?;
-        *joined = refined.joined;
+        let refined = pairs::refined_with(a.mesh(), b.mesh(), grow, shortcuts, tol, work)?;
+        *used = refined.used;
         let (ra, rb) = (Input::new(&refined.a, tol), Input::new(&refined.b, tol));
         let prims = curved::Curved::new(&ra, &rb, grow, tol);
         let refinement = assemble::Refinement {
             tree: [&refined.tree[0], &refined.tree[1]],
             leaf: [&refined.leaf[0], &refined.leaf[1]],
         };
-        assemble::assemble(
+        let mut took = false;
+        let assembled = assemble::assemble(
             op,
             &ra,
             &rb,
@@ -642,8 +670,13 @@ fn assembled(
             &prims,
             tol,
             Some(&refinement),
+            shortcuts.coaxial,
+            &mut took,
             work,
-        )?
+        );
+        // Taken even where the cut faces then fail.
+        used.coaxial |= took;
+        assembled?
     } else {
         flat_soup(op, &ia, &ib, tie(tol), tol, work)?
     };
@@ -937,7 +970,9 @@ fn flat_decided(
     let prims = flat::Flat::tied(ia, ib, op == Op::Union, tie);
     let counts = count::count(ia, ib, &prims, tol, work)?;
     let arcs = pairs::flat(ia, ib, &counts)?;
-    assemble::assemble(op, ia, ib, &counts, &arcs, &prims, tol, None, work)
+    assemble::assemble(
+        op, ia, ib, &counts, &arcs, &prims, tol, None, false, &mut false, work,
+    )
 }
 
 /// Whether `a` and `b` touch or overlap: whether an edge of one crosses a

@@ -451,7 +451,7 @@ fn parallel_walls_with_no_ends_are_certified() {
         &counts,
         floor,
         TOL.resolution(),
-        true,
+        Shortcuts::ALL,
         false,
         &mut work,
     )

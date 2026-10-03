@@ -51,6 +51,9 @@ pub(super) struct Job<'a> {
     pub(super) shapes: [Shape; 2],
     /// What each patch's face was built to be.
     pub(super) forms: [Form; 2],
+    /// Whether two quadrics of revolution on one axis may be cut in their
+    /// parallel ([`parallel`]); else they are traced.
+    pub(super) coaxial: bool,
     /// Whether each patch is planar.
     pub(super) planar: [bool; 2],
     /// The `+` end, then the `−` end.
@@ -92,6 +95,10 @@ pub(super) struct Chain {
     /// Whether the curves are exact (the surfaces' true cut), rather than
     /// fitted or a fallback.
     pub(super) exact: bool,
+    /// Whether they are a parallel of two quadrics of revolution on one
+    /// axis ([`parallel`]), a shortcut a failed operation is tried again
+    /// without.
+    pub(super) coaxial: bool,
 }
 
 impl Chain {
@@ -214,6 +221,7 @@ pub(super) fn chain(job: &Job, tol: &Tolerance) -> Result<Chain, Conic3> {
         ],
         curves: vec![segment(x, y)],
         exact,
+        coaxial: false,
     };
     if job.planar[0] && job.planar[1] || x.distance(y) <= tie(tol) {
         return Ok(straight(true));
@@ -221,8 +229,13 @@ pub(super) fn chain(job: &Job, tol: &Tolerance) -> Result<Chain, Conic3> {
     if let Some(chain) = exact(job, tol.resolution()) {
         return Ok(chain);
     }
-    if let Some(chain) = parallel(job, tol.resolution()) {
-        return Ok(chain);
+    if job.coaxial
+        && let Some(chain) = parallel(job, tol.resolution())
+    {
+        return Ok(Chain {
+            coaxial: true,
+            ..chain
+        });
     }
     if let Some(chain) = traced(job, tol.fit()) {
         return Ok(chain);
@@ -299,6 +312,7 @@ fn exact(job: &Job, resolution: f64) -> Option<Chain> {
             ],
             curves: vec![edge],
             exact: true,
+            coaxial: false,
         });
     }
     // A circle round an axis square to the plane (a cone's, a sphere's):
@@ -319,6 +333,7 @@ fn exact(job: &Job, resolution: f64) -> Option<Chain> {
                 dom,
                 curves,
                 exact: true,
+                coaxial: false,
             });
         }
     }
@@ -342,17 +357,24 @@ fn exact_with(job: &Job, plane: DVec3, quadric: &Quadric, k: usize, guide: Guide
     let curves = section(quadric, plane, x, y, guide)?;
     let points: Vec<DVec3> = curves[1..].iter().map(|c| c.p0).collect();
     let dom = domains(job, &points);
-    // The arcs must lie on the quadric's patch, not the conic's other side.
-    let on_patch = curves.iter().all(|c| {
+    // The arcs must lie on the quadric's patch, not the conic's other side:
+    // each one's middle inverted from between its ends' places in the
+    // patch, or from the patch's middle (Newton's method from either may
+    // stray on a long thin patch, a nearly flat cone's).
+    let on_patch = curves.iter().enumerate().all(|(i, c)| {
         let m = c.eval(0.5);
-        let u = invert(patch, m, DVec3::splat(1.0 / 3.0));
-        u.min_element() >= -0.25 && patch.eval(u).distance(m) <= 1e-9 * (1.0 + m.length())
+        let near = (dom[k][i] + dom[k][i + 1]) * 0.5;
+        [near, DVec3::splat(1.0 / 3.0)].into_iter().any(|guess| {
+            let u = invert(patch, m, guess);
+            u.min_element() >= -0.25 && patch.eval(u).distance(m) <= 1e-9 * (1.0 + m.length())
+        })
     });
     on_patch.then_some(Chain {
         points,
         dom,
         curves,
         exact: true,
+        coaxial: false,
     })
 }
 
@@ -399,6 +421,7 @@ fn parallel(job: &Job, resolution: f64) -> Option<Chain> {
             ],
             curves: vec![edge],
             exact: true,
+            coaxial: false,
         });
     }
     let curves = coaxial::parallel(&axis, x, y, resolution)?;
@@ -414,6 +437,7 @@ fn parallel(job: &Job, resolution: f64) -> Option<Chain> {
         dom,
         curves,
         exact: true,
+        coaxial: false,
     })
 }
 
@@ -511,6 +535,7 @@ fn traced(job: &Job, fit: f64) -> Option<Chain> {
         dom,
         curves,
         exact: false,
+        coaxial: false,
     })
 }
 
@@ -529,5 +554,6 @@ fn fallback(job: &Job) -> Option<Chain> {
         dom: [vec![a.u, b.u], vec![a.v, b.v]],
         curves: vec![conic],
         exact: false,
+        coaxial: false,
     })
 }

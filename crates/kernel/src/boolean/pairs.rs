@@ -162,6 +162,39 @@ pub(super) fn flat(a: &Input, b: &Input, counts: &Counts) -> Result<Vec<Arc>, Fa
 /// operand's red splits and each refined triangle's leaf in it, their
 /// counts, and every pair of faces' arcs, sorted. What the tracing,
 /// fitting and assembly of the curved cuts start from.
+/// The shortcuts a try at the decisions may take, each certifying pairs
+/// that refinement would split, so the pieces beside their cuts stay as
+/// large as they were: some results refinement gets right fail the hull,
+/// neighbour or fold rules from them, and the operation is tried again
+/// without (see `boolean_within`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Shortcuts {
+    /// Ends joined along walls' common direction (`along_generators`).
+    pub(super) along: bool,
+    /// Cylinders and cones on one axis certified (`coaxial::walls`), and
+    /// quadrics of revolution on one axis cut in their parallels (see
+    /// `chain::parallel`) rather than traced.
+    pub(super) coaxial: bool,
+}
+
+impl Shortcuts {
+    /// Every shortcut.
+    pub(super) const ALL: Shortcuts = Shortcuts {
+        along: true,
+        coaxial: true,
+    };
+    /// None: refinement as it always was.
+    pub(super) const NONE: Shortcuts = Shortcuts {
+        along: false,
+        coaxial: false,
+    };
+
+    /// Whether any is taken.
+    pub(super) fn any(self) -> bool {
+        self.along || self.coaxial
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct Refined {
     pub(super) a: Mesh,
@@ -170,13 +203,11 @@ pub(super) struct Refined {
     pub(super) leaf: [Vec<u32>; 2],
     pub(super) counts: Counts,
     pub(super) arcs: Vec<Arc>,
-    /// Whether some pair's ends were joined along walls' common direction
-    /// (`along_generators`).
-    pub(super) joined: bool,
+    /// The shortcuts some pair's decision took.
+    pub(super) used: Shortcuts,
 }
 
-/// [`refined_with`], joining ends along walls' common direction, failing
-/// with the error alone.
+/// [`refined_with`], taking every shortcut, failing with the error alone.
 #[cfg(test)]
 pub(super) fn refined(
     a: &Mesh,
@@ -185,14 +216,14 @@ pub(super) fn refined(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Refined, KernelError> {
-    refined_with(a, b, grow, true, tol, work).map_err(|f| f.error)
+    refined_with(a, b, grow, Shortcuts::ALL, tol, work).map_err(|f| f.error)
 }
 
 /// Counts `a` against `b` (whose meshes pass `check`, one of them with
 /// curved patches) and decides every pair of faces, refining both until
 /// it can: see the [module](self) docs. `grow` is whether `A` grows (a
-/// union) or shrinks, for ties; ends along walls' common direction are
-/// joined only if `join` (else such pairs are split as any other). A
+/// union) or shrinks, for ties; only the `shortcuts` given are taken
+/// (else such pairs are split as any other). A
 /// union failing as [`BooleanError::NotManifold`] from the decisions
 /// comes with the pairs showing it, an `Inconsistent` with what doesn't
 /// fit (see [`decide`] and the counting's [`count::count`]).
@@ -200,7 +231,7 @@ pub(super) fn refined_with(
     a: &Mesh,
     b: &Mesh,
     grow: bool,
-    join: bool,
+    shortcuts: Shortcuts,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Refined, Failure> {
@@ -225,14 +256,23 @@ pub(super) fn refined_with(
             let ia = Input::new(&meshes[0], tol);
             let ib = Input::new(&meshes[1], tol);
             let counts = counted(&ia, &ib, grow, tol, work)?;
-            match decide(&ia, &ib, &counts, floor, tol.resolution(), join, grow, work)? {
-                Decision::Arcs(arcs, joined) => Err((counts, arcs, joined)),
+            match decide(
+                &ia,
+                &ib,
+                &counts,
+                floor,
+                tol.resolution(),
+                shortcuts,
+                grow,
+                work,
+            )? {
+                Decision::Arcs(arcs, used) => Err((counts, arcs, used)),
                 Decision::Split(split) => Ok(split),
             }
         };
         let split = match split {
             Ok(split) => split,
-            Err((counts, arcs, joined)) => {
+            Err((counts, arcs, used)) => {
                 let [a, b] = meshes;
                 let [ra, rb] = &refiners;
                 return Ok(Refined {
@@ -242,7 +282,7 @@ pub(super) fn refined_with(
                     leaf: leaves,
                     counts,
                     arcs,
-                    joined,
+                    used,
                 });
             }
         };
@@ -277,19 +317,19 @@ pub(super) fn counted(
     count::count(a, b, &Curved::new(a, b, grow, tol), tol, work)
 }
 
-/// What a round of decisions comes to: every pair's arcs (and whether
-/// some were joined along walls' common direction), or the triangles of
-/// each operand to split first.
+/// What a round of decisions comes to: every pair's arcs (and the
+/// shortcuts some took), or the triangles of each operand to split first.
 enum Decision {
-    Arcs(Vec<Arc>, bool),
+    Arcs(Vec<Arc>, Shortcuts),
     Split([Vec<u32>; 2]),
 }
 
-/// What one pair comes to: its arcs, those joined along walls' common
-/// direction, or a split.
+/// What one pair comes to: its arcs (with the shortcut that decided
+/// them, if one did), or a split.
 enum PairDecision {
     Arcs(Vec<Arc>),
     Joined(Vec<Arc>),
+    Coaxial(Vec<Arc>),
     Split { a: bool, b: bool },
 }
 
@@ -303,8 +343,8 @@ struct End {
 }
 
 /// Decides every pair of faces that may meet: see the [module](self)
-/// docs. Pieces no larger than `floor` across aren't split; ends along
-/// walls' common direction are joined only if `join`. `grow` is whether
+/// docs. Pieces no larger than `floor` across aren't split; only the
+/// `shortcuts` given are taken. `grow` is whether
 /// `A` grows (a union): then walls touching along a line from either
 /// side fail the operation as [`BooleanError::NotManifold`] (see
 /// [`pinched_line`]), with the pairs that show it ([`pinch_failure`]).
@@ -317,7 +357,7 @@ fn decide(
     counts: &Counts,
     floor: f64,
     resolution: f64,
-    join: bool,
+    shortcuts: Shortcuts,
     grow: bool,
     work: &mut Work,
 ) -> Result<Decision, Failure> {
@@ -387,7 +427,7 @@ fn decide(
             [&cones_a, &cones_b],
             floor,
             resolution,
-            join,
+            shortcuts,
             grow,
         )
     });
@@ -405,13 +445,17 @@ fn decide(
         });
     }
     let mut arcs = Vec::new();
-    let mut joined = false;
+    let mut used = Shortcuts::NONE;
     let mut split = [Vec::new(), Vec::new()];
     for (&(pair, _), d) in jobs.iter().zip(decided) {
         match d.map_err(KernelError::Boolean)? {
             PairDecision::Arcs(mut here) => arcs.append(&mut here),
             PairDecision::Joined(mut here) => {
-                joined = true;
+                used.along = true;
+                arcs.append(&mut here);
+            }
+            PairDecision::Coaxial(mut here) => {
+                used.coaxial = true;
                 arcs.append(&mut here);
             }
             PairDecision::Split { a, b } => {
@@ -431,7 +475,7 @@ fn decide(
         }
         return Ok(Decision::Split(split));
     }
-    Ok(Decision::Arcs(arcs, joined))
+    Ok(Decision::Arcs(arcs, used))
 }
 
 /// Walls touching along a line ([`pinched_line`]), united, as
@@ -461,7 +505,7 @@ fn pair_decision(
     cones: [&[NormalCone]; 2],
     floor: f64,
     resolution: f64,
-    join: bool,
+    shortcuts: Shortcuts,
     grow: bool,
 ) -> Result<PairDecision, BooleanError> {
     let (pa, pb) = (&a.patches[p as usize], &b.patches[q as usize]);
@@ -489,21 +533,38 @@ fn pair_decision(
             Err(BooleanError::Inconsistent)
         };
     }
-    let coaxial = coaxial::walls([&a.form(p), &b.form(q)], [pa, pb], resolution);
-    let certified = planar
-        || coaxial.is_some()
+    let others = planar
         || cones[0][p as usize].apart(&cones[1][q as usize])
         || plane_and_cylinder(a, p, b, q, cones)
         || (ends.is_empty() && apart(&pa.hull(), &pb.hull(), 0.0))
         || (ends.is_empty() && parallel_walls(a, p, b, q, resolution));
+    // Cylinders and cones on one axis, a shortcut: certified rather than
+    // refined, their pieces stay as large as they were (a cut circle a
+    // hair from another, a ring's corner a hundredth off a cone's wall
+    // fail the hull rules then). A pair it alone decides says so, and a
+    // failed result is tried again without it.
+    let coaxial = shortcuts
+        .coaxial
+        .then(|| coaxial::walls([&a.form(p), &b.form(q)], [pa, pb], resolution))
+        .flatten();
+    let certified = others || coaxial.is_some();
+    // What the pair's arcs come to, marked where only the coaxial
+    // certificate decided them.
+    let decided = |arcs: Vec<Arc>| {
+        if coaxial.is_some() && !others {
+            PairDecision::Coaxial(arcs)
+        } else {
+            PairDecision::Arcs(arcs)
+        }
+    };
     if certified {
         match ends {
-            [] => return Ok(PairDecision::Arcs(Vec::new())),
+            [] => return Ok(decided(Vec::new())),
             [x, y] => {
                 if x.sign + y.sign != 0 {
                     return Err(BooleanError::Inconsistent);
                 }
-                return Ok(arcs(vec![(*x, *y)]));
+                return Ok(decided(joined(vec![(*x, *y)])));
             }
             _ if planar => {
                 if let Some(joined) = along_line(a, b, p, q, ends) {
@@ -512,18 +573,16 @@ fn pair_decision(
             }
             _ => {
                 let at: Vec<(DVec3, i8)> = ends.iter().map(|e| (e.at, e.sign)).collect();
-                if let Some(joined) = coaxial.and_then(|walls| coaxial::along(&walls, &at)) {
-                    return Ok(arcs(
-                        joined
-                            .into_iter()
-                            .map(|(x, y)| (ends[x], ends[y]))
-                            .collect(),
-                    ));
+                // Joined round the axis: by the coaxial certificate alone.
+                if let Some(pairs) = coaxial.and_then(|walls| coaxial::along(&walls, &at)) {
+                    return Ok(PairDecision::Coaxial(joined(
+                        pairs.into_iter().map(|(x, y)| (ends[x], ends[y])).collect(),
+                    )));
                 }
             }
         }
     }
-    if join
+    if shortcuts.along
         && !ends.is_empty()
         && let Some(d) = parallel_generators(a, p, b, q, resolution)
     {
