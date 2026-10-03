@@ -1980,7 +1980,8 @@ tessellation too).
   patches beside it use those vertices, so neighbours share their boundary
   points to the bit: no cracks.
 - **The inside of a patch.** A patch whose edges are all one step is one
-  triangle. Otherwise, with `m = max(counts, 3)`, it is sampled at the
+  triangle. A ruled strip (below) has no inner points. Otherwise, with
+  `m = max(counts, 3)`, it is sampled at the
   points of the regular barycentric grid of `m` steps at least one step in
   from its boundary: `(i + 1, j + 1, k + 1) / m` with `i + j + k = l = m −
   3`, triangulated regularly (`l²` triangles). The ring between that inner
@@ -2001,19 +2002,72 @@ tessellation too).
   that diagonal keeps closer to the patch by the same rule, both strips
   end there in an edge segment and the quad is convex in parameters: on
   a cylinder wall triangle the inner grid's corner is two steps round
-  the arc from the patch's corner. With `l = 0` the ring is a fan round
-  the single inner point.
-- **Patches curved both ways** (faces whose form is a sphere, torus,
-  revolved conic, ellipsoid or unknown: not a plane, cylinder or cone,
-  circular or not, which are straight along their rulings; a quadric
-  form is a scaled sphere or cone, and the cone is the one written about
-  its apex, with no linear or constant term) get a finer grid where `m`
-  leaves a triangle more than the chord off the patch. `Plan::refine`
+  the arc from the patch's corner. Convex is strictly, by more than
+  `1e-10` of twice each new triangle's area in parameters (they are
+  fractions of at most 256, so three samples not in line make at least
+  `256⁻³ ≈ 6e-8`, and rounding is about `1e-16`): on a grid of twice the
+  corner's sides' steps the inner grid's corner lies on the line between
+  the edges' samples either side, and at exactly 0 the rounding let a
+  flip make a triangle of three samples in line (a coarse part torus).
+  With `l = 0` the ring is a fan round the single inner point.
+- **Ruled strips.** A patch on a cylinder or cone (circular or not; not a
+  plane, not curved both ways) with exactly one edge of one segment, its
+  **straight side**, is drawn without inner points when the lines across
+  it parallel to that side are straight (`ruled`: the side itself is a
+  line, its middle within a billionth of its length of the line through
+  its ends, and the lines a quarter, half and three quarters of the way
+  to the opposite corner each have the patch at their middle within a
+  sixteenth of the chord of the line through their ends; only `+ − × ÷
+  √`). The side is held to a line, not to the chord: a cut piece of a
+  wall whose one-segment side was a short arc (an eighteenth of a chord
+  off its line) passed at a sixteenth, and its strip fanned round the arc
+  to 1.14 chords. A cylinder's strip patches (`cylinder_strip`, the
+  revolve's cylinder strips) are straight along their rulings to the
+  bit; a cone's are only nearly straight along them (the planes through
+  the patch's projection point that hold its lines across don't hold the
+  apex), a few hundredths of a chord on small ones, so most keep their
+  grids; on a cylinder or cone the only straight lines are rulings, so a
+  patch of any other shape (a cut piece) fails. The strip (`Level::strip`)
+  joins the two other sides, which start together at the corner
+  opposite the straight side, merged by their parameters (sample `s + 1`
+  of `n_a` before sample `t + 1` of `n_b` when `(s + 1)·n_b < (t + 1)·n_a`,
+  in integers; on a tie by the shorter diagonal), after the triangle at
+  that corner: `n_a + n_b − 1` triangles, worked out from the counts
+  before anything is made. Every triangle runs between points on the
+  same or neighbouring lines across, within one step of one side's arc,
+  so within that side's chord (at most 1.0 chord densely sampled on
+  circles, an ellipse and parabola and hyperbola arcs, walls a thousandth
+  to a thousand times their arcs high). On an extruded wall the two
+  curved sides have one count (along rulings, above), so the strip pairs
+  their samples ruling by ruling, and its quads between neighbouring
+  rulings are flat (two rulings of a cylinder are parallel, of a cone
+  meet at its apex): the same prism as the grid's, creased only along
+  the rulings, with no points inside and 4 to 7 times fewer wall
+  triangles (a cylinder of radius 3 and 5 high 1 696 triangles to 976, a
+  5 × 100 one 1 384 to 808, a plate of 400 holes 200 624 to 150 304). The
+  normals inside come from the edges alone, exact on cylinders (constant
+  along a ruling). Planes are left out: their grids stay exactly as they
+  were, and none of the test solids' plane patches passed the test
+  anyway.
+- **Grids that bend**: patches curved both ways (faces whose form is a
+  sphere, torus, revolved conic, ellipsoid or unknown: not a plane,
+  cylinder or cone, circular or not, which are straight along their
+  rulings; a quadric form is a scaled sphere or cone, and the cone is the
+  one written about its apex, with no linear or constant term), and the
+  grids of cylinders and cones (patches that aren't ruled strips), get a
+  finer grid where `m` leaves a triangle more than the chord off the
+  patch; planes and ruled strips are never measured. `Plan::refine`
   measures in rounds: each patch still open is triangulated in `f64` at
   its level and measured (`level_error`: the patch at each triangle's
   middle, in parameters, and at the middle of each side that isn't an
   edge's own segment, each from the triangle's point at the same mix of
-  its corners along the patch's normal there. The full distance would
+  its corners along the patch's normal there. The triangles measured are
+  those drawn and welded (`Sampled`): each sample numbered once, the
+  corners too, so the corner flips, which compare the two strips' end
+  triangles by their samples' numbers, are made as in drawing (with each
+  corner numbered once per side, as before, they were never made in the
+  measuring, and round patches were refined for corners the drawing had
+  flipped). The full distance would
   also count the patch drifting along the surface where its parameters
   run unevenly, which refined a scaled ball that was already within; the
   distance from the triangle's plane misses a triangle steep to the
@@ -2037,27 +2091,28 @@ tessellation too).
   agree. A NaN error counts as within. The four samples per triangle read
   a few percent under a dense sampling (a turned ellipse's worst is 1.03
   chords, next to an edge segment; random revolves, cuts and stretched
-  copies up to about 1.06). On today's solids the inner grid
-  alone is within the chord: the refinement is driven by the ring's
-  corners, where the diagonal from a patch corner to the inner grid's
-  corner spans a step along both edges (about 2.5 chords at `m =
-  max(counts)`); a finer grid brings that corner in. At the default
-  tolerance: a ball of radius 2 goes from 4 304 to 6 720 triangles (worst
-  2.55 to 0.99 chords, densely sampled along the patches' normals), a
-  hollow ball 8 656 to 12 736, a part torus 5 628 to 6 396, a spindle
-  torus's outside 3 200 to 6 016, a turned ellipse 7 382 to 12 566, the
-  round octahedron 800 to 2 144; a full torus (major 10, minor 2) is
-  within at 0.78 and keeps its 10 496. Over random revolves, their cuts
-  and stretched copies the refinement adds about a tenth to the
-  triangles, at most 3.7 times (a long thin lemon, whose quarter patches
-  have few steps round it), and no inner grid came near 256 steps nor
-  any edge past its 64 segments' chord: the chord is at least a
-  thousandth of the solid's diagonal, which a conic within it meets in
-  about two dozen segments, so only the turn rule reaches 64, where the
-  chord error is far below the chord. Planes, cylinders, cones and
-  extruded walls keep exactly their levels. The measuring about doubles
-  the time to draw a round solid (tens of
-milliseconds for these, release); a 400-hole plate is unchanged.
+  copies up to about 1.06). With the ring's diagonals chosen against
+  the patch and its corners flipped, and measured so, the refinement is
+  left to the patches that need it. At the default tolerance a ball of
+  radius 2 has 4 304 triangles unrefined (worst 1.20 chords, densely
+  sampled along the patches' normals) and 5 168 refined (0.99; 6 720 when
+  the measuring missed the flips and saw its ring corners at 2.55), a
+  hollow ball 8 656 (was 12 736), a part torus 5 628 (6 396), a spindle
+  torus's outside 3 072 (6 016), a turned ellipse 7 382 (12 566), the
+  round octahedron 800 to 1 280 (2 144); a full torus (major 10, minor 2)
+  is within at 0.53 and keeps its 10 496. Over random revolves, their
+  cuts and stretched copies no inner grid came near 256 steps nor any
+  edge past its 64 segments' chord: the chord is at least a thousandth
+  of the solid's diagonal, which a conic within it meets in about two
+  dozen segments, so only the turn rule reaches 64, where the chord
+  error is far below the chord. None of the test solids' grids on
+  cylinders and cones is refined (the ring keeps them within), and
+  planes and ruled strips keep exactly their levels. The measuring and
+  the ring's choices take a few milliseconds on a round solid (release,
+  one thread: a ball 3.5 ms, 4.4 when the measuring missed the flips; a
+  hollow ball 5.3 against 9.7; a turned ellipse 3.3 against 9.2; a torus
+  about 7.5 either way), and strips make walls faster (64 extruded
+  cylinders 8.6 ms against 14.6).
 - **Normals** are the patches' own (`Patch::normal`, normalized; the fold
   direction stands in should it vanish). Along an edge, the two sides'
   normals are compared at every sample: if they agree within 1° everywhere
@@ -2126,14 +2181,13 @@ milliseconds for these, release); a 400-hole plate is unchanged.
 The chord target holds on the edges, and inside patches curved both
 ways (within about 1.05 chords densely sampled, as the edges are). On
 planes, cylinders and cones the grid spacing follows the largest count,
-and those patches are not refined; the ring's choice of diagonals keeps
+and their grids are rarely refined; the ring's choice of diagonals keeps
 them near the chord: on the test cylinder the worst triangle's middle
 is 0.77 chords off the surface (1.85 when the strips chose by length
 and the corners weren't flipped), densely sampled 0.86 (about 3 before);
 on 5 × 50 to 5 × 200 cylinders within the chord densely sampled (4
-before), their faces within 8° of their vertex normals. The flips
-don't reach the round patches' refinement, which is still driven by
-the ring's corners: their levels and counts are as before. Shading uses the vertex normals, so slivers whose face normals are far
+before), their faces within 8° of their vertex normals. Their wall
+patches are ruled strips now, with the same welded prism. Shading uses the vertex normals, so slivers whose face normals are far
 from them don't show; a wall a fortieth of its arc high (20 × 0.5) no
 longer makes them (its faces within 4° of their vertex normals, 84°
 before). Choosing the diagonals against the patch takes two patch
@@ -2168,9 +2222,21 @@ chords of their patches along the normals on a 12-step grid of every
 triangle, their triangles tile each patch's parameter triangle
 (positively oriented, areas summing to the domain's), and they are
 watertight and weld into a `ManifoldMesh`, the same at 1 and 8 threads;
-a cylinder, a drilled plate, a thin disc and a revolved tube keep exactly the levels
-their counts give, and so do a cone and a tube scaled into quadric and
-conic forms, while the scaled ball's patches are measured; a refined level counts what it makes; a part torus meets
+no patch curved both ways is a ruled strip; a cylinder, a drilled plate,
+a thin disc and a revolved tube keep the levels their counts give, grids
+or ruled strips (every wall patch of the cylinder, disc and tube, some of
+the drilled hole's cut wall, never a plane), and so do a cone and a tube
+scaled into quadric and conic forms, while the scaled ball's patches are
+measured; walls extruded from a circle, an ellipse and parabola and
+hyperbola arcs, a thousandth to a thousand times their arcs high, in a
+tilted frame, are ruled strips wherever a patch has one side of one
+segment, a triangle per segment less one, within 1.05 chords densely
+sampled, tiling their patches, watertight and welded; only rulings make
+strips (not a short arc of one segment, not a ball's patch); a cylinder
+less a cylinder, less a slot and a spindle's cones, and cylinders 0.05
+to 500 high drawn on grids as if they had no ruling side, are within
+1.05 chords by the ring's diagonals alone, the same at 1 and 8 threads;
+a thin half cylinder's quadric walls tile; a refined level counts what it makes; a part torus meets
 its exact limits and fails one under each. Faces and edges: a box's 6 faces of 2 triangles are its 6
 regions and its 12 edges its 12 chains; a cylinder's quarter walls are
 one region and its rims two closed chains, closing on their first
@@ -8113,12 +8179,23 @@ see `agents/features.md`, "Failures and where they are").
 - **`Solid::bounds` is an `Option`** (`None` for the empty solid), and
   `Solid::bounds3` gives the `f64` box. `Display` holds only the fit
   tolerance; the other targets are its constants.
-- **The chord target is kept on edges, and inside patches curved both
-  ways only**; inside planes, cylinders and cones it can be about three
-  times off at the corners of skewed patches (see "Solids and
-  tessellation"). The plan counted every part from the segment counts
-  alone; patches curved both ways are now measured first, still before
-  any vertex is made, in rounds bounded by the limits.
+- **The chord target is kept inside patches too**, by the ring's choice
+  of diagonals, its corner flips and ruled strips, and by measuring and
+  refining the grids of every patch but a plane's or a strip's (see
+  "Solids and tessellation"). The plan counted every part from the
+  segment counts alone; grids that bend are now measured first, still
+  before any vertex is made, in rounds bounded by the limits, and a
+  ruled strip's test reads the patch, also before.
+- **Ruled strips on cylinders and cones only.** Wall patches with a
+  ruling side are drawn as strips between their curved sides, without
+  inner points: a wall's triangles fall 4 to 7 times. They leave out
+  planes, which the plan didn't: a plane's triangles stay exactly as they
+  were, and no plane patch of the test solids passed the test. The test
+  holds the straight side to a line and the lines across to a sixteenth
+  of the chord, not all of them to the plan's eighth: a short arc of one
+  segment passed as a straight side and fanned a cut wall's strip round
+  it, and a nearly ruled cone patch adds at most a sixteenth to its
+  strip's error.
 - **`Shape` is gone**, not kept as a test helper: `Solid::cuboid` and
   `Solid::cylinder` are the test solids, so `Shape`, `ShapeError` and
   `position_in_range` were removed from the kernel.

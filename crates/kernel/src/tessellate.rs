@@ -9,10 +9,13 @@
 //! cracks. Each patch is sampled on a regular grid inside, one step in
 //! from its boundary, and strips of triangles join that grid to the
 //! points of its three edges. The grid has as many steps as the patch's
-//! finest edge, more on patches curved both ways (spheres, ellipsoids,
-//! tori, revolved conics) where that leaves a triangle farther than the
-//! chord from the patch: measured and refined in rounds before anything
-//! is made, so the counts are still known up front. Normals are the
+//! finest edge, more where that leaves a triangle farther than the chord
+//! from a patch that isn't flat (mostly those curved both ways: spheres,
+//! ellipsoids, tori, revolved conics): measured and refined in rounds
+//! before anything is made, so the counts are still known up front. A
+//! patch on a cylinder or cone with one straight side, across which the
+//! patch is straight (a wall's, along its rulings), has no grid: its two
+//! other sides are joined to each other as one strip. Normals are the
 //! patches' own, shared across an edge where the two sides agree within
 //! [`Display::SMOOTH_DEGREES`] and split where they don't; splits and the
 //! boundaries between faces of different keys
@@ -91,30 +94,32 @@ impl Display {
 
     /// `patch`, on its own, sampled as a patch of a solid `diagonal`
     /// across is drawn: each edge cut as [`Display::flatten`] cuts it
-    /// (corners twice, once for each edge), the inside on the grid those
-    /// counts give, refined as a face of no known form is (in rounds,
-    /// until within the chord or at the finest grid). Nothing is shared
-    /// with another patch.
+    /// (each corner once, the boundary first), the inside on the grid
+    /// those counts give, refined as a face of no known form is (in
+    /// rounds, until within the chord or at the finest grid). Nothing is
+    /// shared with another patch.
     pub fn sample_patch(&self, patch: &Patch, diagonal: f64) -> PatchSamples {
         let chord = self.chord(diagonal);
         let counts = [0, 1, 2].map(|i| segments(&patch.edge(i), chord));
         let mut level = Level::new(counts);
         let mut round = 0;
-        while let Some(steps) = finer(level.steps(), level_error(patch, &level), chord, round) {
+        while let Some(steps) = finer(
+            level.steps(),
+            level_error(patch, &level, |i, r| patch.eval(level.outer_param(i, r))),
+            chord,
+            round,
+        ) {
             level = Level::with_steps(counts, steps);
             round += 1;
         }
-        let (params, first, base) = level.params();
-        let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
-        let indices = level.triangulate(patch, base, &points[base as usize..], |i, r| {
-            let v = first[i as usize] + r;
-            (v, points[v as usize])
-        });
-        let normals = params.iter().map(|&u| unit_normal(patch, u)).collect();
+        let sampled = Sampled::new(patch, &level, |i, r| patch.eval(level.outer_param(i, r)));
+        let normals = (sampled.params.iter())
+            .map(|&u| unit_normal(patch, u))
+            .collect();
         PatchSamples {
-            points,
+            points: sampled.points,
             normals,
-            indices,
+            indices: sampled.indices,
         }
     }
 }
@@ -175,8 +180,9 @@ pub(crate) fn tessellate_with(
 }
 
 /// What a tessellation of a mesh is made of, worked out from the edges'
-/// segment counts and, for patches curved both ways, by measuring their
-/// grids ([`Plan::refine`]), before any vertex is made: the drawn
+/// segment counts, whether patches are ruled strips ([`ruled`]) and, for
+/// grids that aren't flat, by measuring them ([`Plan::refine`]), before
+/// any vertex is made: the drawn
 /// ([`tessellate`]) and the welded ([`weld`]) tessellations share it, so
 /// they have the same samples and triangles.
 struct Plan<'a> {
@@ -191,6 +197,8 @@ struct Plan<'a> {
     counts: Vec<u32>,
     tri_ids: Vec<u32>,
     edge_ids: Vec<u32>,
+    /// The chord the triangles keep to.
+    chord: f64,
     levels: Vec<Level>,
     /// Where each patch's inner points start among all of them.
     inner: Vec<u64>,
@@ -230,10 +238,23 @@ impl<'a> Plan<'a> {
         let n_of = |h: u32| counts[mesh.halfedge(h).edge as usize];
 
         let tri_ids: Vec<u32> = (0..halfedges / 3).collect();
-        let levels: Vec<Level> = tri_ids
-            .iter()
-            .map(|&t| Level::new([0, 1, 2].map(|i| n_of(3 * t + i))))
-            .collect();
+        // Ruled strips on cylinders and cones only: a plane keeps its grid
+        // as it was, and a patch curved both ways has no straight lines.
+        let form = |t: u32| &mesh.faces()[mesh.tris()[t as usize].face as usize].form;
+        let levels: Vec<Level> = par_map(&tri_ids, |&t| {
+            let counts = [0, 1, 2].map(|i| n_of(3 * t + i));
+            let form = form(t);
+            match Level::straight_side(counts) {
+                Some(side)
+                    if !matches!(form, Form::Plane { .. })
+                        && !curved_both_ways(form)
+                        && ruled(&mesh.patch(t as usize), side, chord) =>
+                {
+                    Level::ruled(counts, side)
+                }
+                _ => Level::new(counts),
+            }
+        });
         let edge_ids = (0..mesh.edges().len() as u32).collect();
         let mut plan = Plan {
             mesh,
@@ -243,13 +264,14 @@ impl<'a> Plan<'a> {
             counts,
             tri_ids,
             edge_ids,
+            chord,
             levels,
             inner: Vec::new(),
             inner_total: 0,
             triangles: 0,
         };
         plan.count();
-        plan.refine(chord, limits);
+        plan.refine(limits);
         Ok(Some(plan))
     }
 
@@ -265,9 +287,12 @@ impl<'a> Plan<'a> {
         }
     }
 
-    /// Makes the inner grids of the patches curved both ways (see
-    /// [`curved_both_ways`]) finer, in rounds, until each one's triangles
-    /// are within `chord` of it ([`level_error`]) or its grid has
+    /// Makes the inner grids of the patches that bend (all but planes' and
+    /// ruled strips': patches curved both ways, see [`curved_both_ways`],
+    /// and the grids of cylinders and cones, which the ring's choice of
+    /// diagonals alone doesn't always bring within) finer, in rounds,
+    /// until each one's triangles are within the plan's chord of it
+    /// ([`level_error`]) or its grid has
     /// [`MAX_INNER_STEPS`] (a single triangle too far gets a grid of 3
     /// steps, one inner point, first): each round measures the patches
     /// still open at their levels and moves those too far to a grid of
@@ -277,18 +302,23 @@ impl<'a> Plan<'a> {
     /// stay as they are. Stops as soon as the plan
     /// no longer fits `limits`, so a round's work is bounded by them (the
     /// caller then refuses the plan); the levels depend only on the mesh
-    /// and `chord`, whatever the limits, when it fits.
-    fn refine(&mut self, chord: f64, limits: &Limits) {
+    /// and the chord, whatever the limits, when it fits.
+    fn refine(&mut self, limits: &Limits) {
+        let chord = self.chord;
         let mesh = self.mesh;
         let form = |t: u32| &mesh.faces()[mesh.tris()[t as usize].face as usize].form;
+        let levels = &self.levels;
         let mut open: Vec<u32> = (self.tri_ids.iter().copied())
-            .filter(|&t| curved_both_ways(form(t)))
+            .filter(|&t| {
+                !matches!(form(t), Form::Plane { .. }) && levels[t as usize].straight.is_none()
+            })
             .collect();
         let mut round = 0;
         while !open.is_empty() && self.fits(limits) {
             let levels = &self.levels;
             let errors = par_map(&open, |&t| {
-                level_error(&mesh.patch(t as usize), &levels[t as usize])
+                let (patch, level) = (mesh.patch(t as usize), &levels[t as usize]);
+                level_error(&patch, level, |i, r| patch.eval(level.outer_param(i, r)))
             });
             let mut next = Vec::new();
             for (&t, &error) in open.iter().zip(&errors) {
@@ -1125,14 +1155,12 @@ fn finer(m: u32, error: f64, chord: f64, round: u32) -> Option<u32> {
 }
 
 /// Whether the patches of a face of `form` may be curved both ways, so
-/// that their inner grids are measured and refined ([`Plan::refine`]):
-/// spheres, tori, revolved conics, ellipsoids and faces of no known form.
-/// A plane, cylinder or cone, circular or not, is straight along its
-/// rulings, and its grid is within the chord where the edges are (but at
-/// the corners of skewed patches; see `agents/kernel.md`). A quadric form
-/// is a scaled cone or sphere: the cone written about its apex, with no
-/// linear or constant term (a scale keeps both at 0), the ellipsoid with
-/// its constant below 0.
+/// that none is a ruled strip ([`ruled`]): spheres, tori, revolved conics,
+/// ellipsoids and faces of no known form. A plane, cylinder or cone,
+/// circular or not, is straight along its rulings. A quadric form is a
+/// scaled cone or sphere: the cone written about its apex, with no linear
+/// or constant term (a scale keeps both at 0), the ellipsoid with its
+/// constant below 0.
 fn curved_both_ways(form: &Form) -> bool {
     match form {
         Form::Plane { .. }
@@ -1144,26 +1172,73 @@ fn curved_both_ways(form: &Form) -> bool {
     }
 }
 
+/// The triangles a [`Level`] makes of a patch, as drawing and welding
+/// make them, with each sample's parameters and point: the boundary's
+/// samples first, round the patch from corner 0 along side 0, each corner
+/// once, then the inner points, from `base` on.
+struct Sampled {
+    params: Vec<DVec3>,
+    points: Vec<DVec3>,
+    base: u32,
+    indices: Vec<u32>,
+}
+
+impl Sampled {
+    /// `level`'s triangles of `patch`, side `i`'s sample `r` at
+    /// `outer(i, r)` and the inner points the patch's.
+    fn new(patch: &Patch, level: &Level, outer: impl Fn(u32, u32) -> DVec3) -> Sampled {
+        let (mut params, mut points) = (Vec::new(), Vec::new());
+        let mut first = [0u32; 3];
+        for i in 0..3 {
+            first[i as usize] = params.len() as u32;
+            // The side's last sample is the next one's first.
+            for r in 0..level.counts[i as usize] {
+                params.push(level.outer_param(i, r));
+                points.push(outer(i, r));
+            }
+        }
+        let base = params.len() as u32;
+        let inner = level.inner_params();
+        points.extend(inner.iter().map(|&u| patch.eval(u)));
+        params.extend(inner);
+        let id = |i: u32, r: u32| {
+            if r == level.counts[i as usize] {
+                first[(i as usize + 1) % 3]
+            } else {
+                first[i as usize] + r
+            }
+        };
+        let indices = level.triangulate(patch, base, &points[base as usize..], |i, r| {
+            let v = id(i, r);
+            (v, points[v as usize])
+        });
+        Sampled {
+            params,
+            points,
+            base,
+            indices,
+        }
+    }
+}
+
 /// The farthest the triangles `level` makes of `patch` get from it inside,
 /// in `f64`, by the patch at the middle of each triangle (in parameters)
 /// and at the middle of each side that isn't a segment of an edge (the
 /// edges' own segments are [`segments`]'), each from the triangle's point
 /// at the same mix of its corners, along the patch's normal there: the
-/// triangles drawn and welded, as their strips choose from the same `f64`
-/// points. A single triangle is measured too.
-fn level_error(patch: &Patch, level: &Level) -> f64 {
-    let (params, first, base) = level.params();
-    let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
-    let indices = level.triangulate(patch, base, &points[base as usize..], |i, r| {
-        let v = first[i as usize] + r;
-        (v, points[v as usize])
-    });
-    // Consecutive samples of one edge.
+/// triangles drawn and welded ([`Sampled`]; side `i`'s sample `r` at
+/// `outer(i, r)`). A single triangle is measured too.
+fn level_error(patch: &Patch, level: &Level, outer: impl Fn(u32, u32) -> DVec3) -> f64 {
+    let Sampled {
+        params,
+        points,
+        base,
+        indices,
+    } = Sampled::new(patch, level, outer);
+    // Consecutive samples of the boundary, round it: a segment of an edge.
     let along_edge = |a: u32, b: u32| {
-        a < base && b < base && a.abs_diff(b) == 1 && {
-            let side = |v: u32| first.iter().rposition(|&f| f <= v);
-            side(a) == side(b)
-        }
+        let gap = a.abs_diff(b);
+        a < base && b < base && (gap == 1 || gap == base - 1)
     };
     // Along the normal: the patch also drifts along itself where its
     // parameters run unevenly, which is no error, and against the
@@ -1187,17 +1262,58 @@ fn level_error(patch: &Patch, level: &Level) -> f64 {
     error
 }
 
+/// Whether the lines across `patch` parallel to its `side` (from corner
+/// `side` to the next) are straight, so that it can be drawn as a ruled
+/// strip ([`Level::ruled`]): the side itself a straight line, its middle
+/// within a billionth of its length of the line through its ends (a
+/// ruling, not an arc short enough for one segment), and the lines a
+/// quarter, half and three quarters of the way to the opposite corner
+/// each with the patch at their middle within a sixteenth of `chord` of
+/// the line through their ends. A cylinder's or cone's strip patch is
+/// straight along its rulings, which a patch of any other shape on those
+/// surfaces isn't. Only `+ − × ÷ √`, so every platform decides the same.
+fn ruled(patch: &Patch, side: usize, chord: f64) -> bool {
+    let opposite = (side + 2) % 3;
+    // How far the patch at the middle of the line across at `across` is
+    // from the line through its ends, and that line's length.
+    let off = |across: f64| {
+        let at = |a: f64, b: f64| {
+            let mut u = DVec3::ZERO;
+            u[opposite] = across;
+            u[side] = a;
+            u[(side + 1) % 3] = b;
+            patch.eval(u)
+        };
+        let rest = 1.0 - across;
+        let (a, b) = (at(rest, 0.0), at(0.0, rest));
+        (
+            distance_to_line(at(rest * 0.5, rest * 0.5), a, b),
+            a.distance(b),
+        )
+    };
+    // NaN counts as bent.
+    let (straight, length) = off(0.0);
+    straight <= 1e-9 * length
+        && [0.25, 0.5, 0.75]
+            .into_iter()
+            .all(|across| off(across).0 <= chord / 16.0)
+}
+
 /// How a patch is sampled, from its three edges' segment counts: as one
-/// triangle when every edge is one segment, and otherwise on the regular
-/// grid of `m` steps, `max(counts, 3)` or more ([`Plan::refine`]), keeping
-/// only the points at least a step in from the boundary. Those are the
-/// inner grid of `l = m − 3` steps, at barycentric `(i + 1, j + 1, k + 1)
-/// / m` with `i + j + k = l`.
+/// triangle when every edge is one segment; as a ruled strip when exactly
+/// one edge is one segment and the lines across the patch parallel to it
+/// are straight ([`Level::ruled`]); and otherwise on the regular grid of
+/// `m` steps, `max(counts, 3)` or more ([`Plan::refine`]), keeping only the
+/// points at least a step in from the boundary. Those are the inner grid
+/// of `l = m − 3` steps, at barycentric `(i + 1, j + 1, k + 1) / m` with
+/// `i + j + k = l`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Level {
     counts: [u32; 3],
-    /// `l`, or `None` for a single triangle.
+    /// `l`, or `None` for a single triangle or a ruled strip.
     inner: Option<u32>,
+    /// A ruled strip's straight side.
+    straight: Option<usize>,
 }
 
 impl Level {
@@ -1206,6 +1322,30 @@ impl Level {
         Level {
             counts,
             inner: (most > 1).then(|| most.max(3) - 3),
+            straight: None,
+        }
+    }
+
+    /// The side a patch of `counts` could be a ruled strip across: the
+    /// only one of one segment.
+    fn straight_side(counts: [u32; 3]) -> Option<usize> {
+        let mut ones = (0..3).filter(|&i| counts[i] == 1);
+        match (ones.next(), ones.next()) {
+            (Some(side), None) => Some(side),
+            _ => None,
+        }
+    }
+
+    /// The ruled strip of `counts` across `side`, which must be
+    /// [`Level::straight_side`]'s: no inner points, and the two other
+    /// sides, which meet at the corner opposite, joined to each other
+    /// ([`Level::strip`]).
+    fn ruled(counts: [u32; 3], side: usize) -> Level {
+        debug_assert_eq!(Level::straight_side(counts), Some(side));
+        Level {
+            counts,
+            inner: None,
+            straight: Some(side),
         }
     }
 
@@ -1216,40 +1356,30 @@ impl Level {
         let level = Level::new(counts);
         let wanted = (steps > 1).then(|| steps.max(3) - 3);
         Level {
-            counts,
             inner: level.inner.max(wanted),
+            ..level
         }
     }
 
-    /// The grid's steps `m` (1 for a single triangle).
+    /// The grid's steps `m` (1 for a single triangle or a ruled strip).
     fn steps(&self) -> u32 {
         self.inner.map_or(1, |l| l + 3)
     }
 
-    /// The barycentric parameters of all the samples: each side's, from
-    /// corner `i` to corner `i + 1` (so the corners twice), then the inner
-    /// points ([`Level::inner_params`]); with where each side's start and
-    /// where the inner points start.
-    fn params(&self) -> (Vec<DVec3>, [u32; 3], u32) {
-        let mut params = Vec::new();
-        let mut first = [0u32; 3];
-        for (i, &n) in self.counts.iter().enumerate() {
-            first[i] = params.len() as u32;
-            for r in 0..=n {
-                let s = f64::from(r) / f64::from(n);
-                let mut u = DVec3::ZERO;
-                u[i] = 1.0 - s;
-                u[(i + 1) % 3] = s;
-                params.push(u);
-            }
-        }
-        let base = params.len() as u32;
-        params.extend(self.inner_params());
-        (params, first, base)
+    /// The barycentric parameters of side `i`'s sample `r`, from corner
+    /// `i` towards corner `i + 1`.
+    fn outer_param(&self, i: u32, r: u32) -> DVec3 {
+        let i = i as usize;
+        let s = f64::from(r) / f64::from(self.counts[i]);
+        let mut u = DVec3::ZERO;
+        u[i] = 1.0 - s;
+        u[(i + 1) % 3] = s;
+        u
     }
 
     /// The barycentric parameters of the inner points, in the order
-    /// [`Level::index`] numbers them, or none for a single triangle.
+    /// [`Level::index`] numbers them, or none for a single triangle or a
+    /// ruled strip.
     fn inner_params(&self) -> Vec<DVec3> {
         let Some(l) = self.inner else {
             return Vec::new();
@@ -1269,7 +1399,8 @@ impl Level {
     /// `inner` (as [`Level::inner_params`] orders them), and `outer(i, r)`
     /// is the id and position of side `i`'s sample `r` (from corner `i`
     /// towards corner `i + 1`, `0..=counts[i]`). The ring's diagonals are
-    /// chosen against `patch`, the patch they sample.
+    /// chosen against `patch`, the patch they sample; a ruled strip is
+    /// [`Level::strip`].
     fn triangulate(
         &self,
         patch: &Patch,
@@ -1277,6 +1408,9 @@ impl Level {
         inner: &[DVec3],
         outer: impl Fn(u32, u32) -> (u32, DVec3),
     ) -> Vec<u32> {
+        if let Some(side) = self.straight {
+            return self.strip(side, outer);
+        }
         let Some(l) = self.inner else {
             return [0, 1, 2].map(|i| outer(i, 0).0).to_vec();
         };
@@ -1326,19 +1460,23 @@ impl Level {
         // the inner grid's corner is two steps round from the patch's.
         // Only where both strips end in an edge segment there, and the
         // quad is convex in parameters, so the new triangles keep the
-        // patch's orientation.
+        // patch's orientation. Twice their areas in parameters, which are
+        // fractions of at most 256, are at least 256⁻³ (about 6e-8) or
+        // nothing, and rounding is far below 1e-10: three samples in line
+        // (the inner grid's corner on the line between the edges' samples
+        // either side, as on a grid of twice their steps) are no turn.
         let orient = |p: &Sample, q: &Sample, r: &Sample| p.2.dot(q.2.cross(r.2));
         for i in 0..3 {
             let before = (i + 2) % 3;
             let (a, b) = (strips[before].1, strips[i].0);
             let prev = edge_at(before, self.counts[before] - 1);
             let (corner, next, g) = (edge_at(i, 0), edge_at(i, 1), sides[i][0]);
-            let turn = orient(&prev, &corner, &g);
+            let turn = orient(&prev, &corner, &g).signum();
             if indices[a..a + 3] == [prev.0, corner.0, g.0]
                 && indices[b..b + 3] == [corner.0, next.0, g.0]
                 && prefer(diagonal(&prev, &next, off), diagonal(&corner, &g, off))
-                && orient(&prev, &corner, &next) * turn > 0.0
-                && orient(&prev, &next, &g) * turn > 0.0
+                && orient(&prev, &corner, &next) * turn > 1e-10
+                && orient(&prev, &next, &g) * turn > 1e-10
             {
                 indices[a..a + 3].copy_from_slice(&[prev.0, corner.0, next.0]);
                 indices[b..b + 3].copy_from_slice(&[prev.0, next.0, g.0]);
@@ -1355,13 +1493,61 @@ impl Level {
         })
     }
 
-    /// Triangles: the inner grid's `l²`, and a strip between each edge's
-    /// `n` segments and the inner grid's side of `l`.
+    /// A ruled strip's triangles across its straight `side`: its two
+    /// other sides, which start together at the corner opposite it,
+    /// merged by their parameters (cross-multiplied in integers; on a tie,
+    /// by the shorter diagonal) after the triangle at that corner: along
+    /// the lines across the patch, which are straight, so every triangle
+    /// runs between points on the same or neighbouring lines and is within
+    /// a step of each side. `outer` is as [`Level::triangulate`]'s.
+    fn strip(&self, side: usize, outer: impl Fn(u32, u32) -> (u32, DVec3)) -> Vec<u32> {
+        let (opposite, next) = ((side + 2) % 3, (side + 1) % 3);
+        let a: Vec<(u32, DVec3)> = (0..=self.counts[opposite])
+            .map(|r| outer(opposite as u32, r))
+            .collect();
+        let b: Vec<(u32, DVec3)> = (0..=self.counts[next])
+            .rev()
+            .map(|r| outer(next as u32, r))
+            .collect();
+        // Both at least 2: the straight side is the only one of 1.
+        let (na, nb) = (a.len() - 1, b.len() - 1);
+        let mut indices = vec![a[0].0, a[1].0, b[1].0];
+        let (mut s, mut t) = (1, 1);
+        while s < na || t < nb {
+            // Line `s` of `na` across against line `t` of `nb`, both at
+            // most 64.
+            let advance_a = t == nb
+                || (s < na && {
+                    let (x, y) = ((s + 1) * nb, (t + 1) * na);
+                    x < y
+                        || (x == y
+                            && a[s + 1].1.distance_squared(b[t].1)
+                                <= a[s].1.distance_squared(b[t + 1].1))
+                });
+            if advance_a {
+                indices.extend([a[s].0, a[s + 1].0, b[t].0]);
+                s += 1;
+            } else {
+                indices.extend([a[s].0, b[t + 1].0, b[t].0]);
+                t += 1;
+            }
+        }
+        indices
+    }
+
+    /// Triangles: a ruled strip's one per segment of its two curved sides
+    /// less one; a grid's `l²` inside, and a strip between each edge's `n`
+    /// segments and the inner grid's side of `l`.
     fn triangles(&self) -> u64 {
-        self.inner.map_or(1, |l| {
-            let l = u64::from(l);
-            l * l + 3 * l + self.counts.iter().map(|&n| u64::from(n)).sum::<u64>()
-        })
+        let n = |i: usize| u64::from(self.counts[i % 3]);
+        match (self.straight, self.inner) {
+            (Some(side), _) => n(side + 1) + n(side + 2) - 1,
+            (None, None) => 1,
+            (None, Some(l)) => {
+                let l = u64::from(l);
+                l * l + 3 * l + n(0) + n(1) + n(2)
+            }
+        }
     }
 
     /// The index of inner point `(j, k)` (`i = l − j − k`), row by row

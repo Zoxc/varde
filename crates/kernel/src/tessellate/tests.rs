@@ -281,6 +281,8 @@ fn a_cylinder_is_drawn_within_the_chord() {
         }
     }
     assert!(worst <= 1.0, "{worst}");
+    // Densely sampled along the patches' normals too.
+    assert!(worst_off(solid.mesh(), &display) <= 1.05);
 
     // The two rims are the feature edges, and the walls' seams aren't:
     // each rim one edge round, closing on one corner, between the wall
@@ -331,6 +333,8 @@ fn curved_solids_are_watertight() {
         torus(24, 12, 3.0, 1.0),
         Mesh::cuboid(DVec3::splat(-1.0), DVec3::new(2.0, 3.0, 4.0), 1, &TOL).unwrap(),
     ] {
+        // A thin half cylinder's walls are quadrics, so grids.
+        assert_tiled(&mesh, &Display::default());
         let mesh = draw(mesh);
         assert_watertight(&mesh);
         assert_normals_and_volume(&mesh);
@@ -730,19 +734,19 @@ struct InPatch {
     points: [DVec3; 3],
 }
 
-/// The triangles `plan` makes of each patch, as the drawing does, with
+/// The triangles `plan` makes of each patch, as measuring does, with
 /// their parameters and points.
 fn in_patches(plan: &Plan) -> Vec<InPatch> {
     let mut out = Vec::new();
     for &t in &plan.tri_ids {
         let patch = plan.mesh.patch(t as usize);
         let level = &plan.levels[t as usize];
-        let (params, first, base) = level.params();
-        let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
-        let indices = level.triangulate(&patch, base, &points[base as usize..], |i, r| {
-            let v = first[i as usize] + r;
-            (v, points[v as usize])
-        });
+        let Sampled {
+            params,
+            points,
+            indices,
+            ..
+        } = Sampled::new(&patch, level, |i, r| patch.eval(level.outer_param(i, r)));
         for tri in indices.as_chunks::<3>().0 {
             out.push(InPatch {
                 t: t as usize,
@@ -789,6 +793,10 @@ fn drawn(mesh: &Mesh, display: &Display) -> Drawn {
     let bounds = Bounds3::around(mesh.verts()).unwrap();
     let chord = display.chord((bounds.max - bounds.min).length());
     let form = |t: usize| &mesh.faces()[mesh.tris()[t].face as usize].form;
+    // No straight lines across a patch curved both ways.
+    for (t, level) in plan.levels.iter().enumerate() {
+        assert!(level.straight.is_none() || !curved_both_ways(form(t)));
+    }
     let worst = |plan: &Plan| {
         (in_patches(plan).iter())
             .filter(|tri| curved_both_ways(form(tri.t)))
@@ -797,7 +805,10 @@ fn drawn(mesh: &Mesh, display: &Display) -> Drawn {
     };
     let mut before = Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap();
     before.levels = (before.levels.iter())
-        .map(|level| Level::new(level.counts))
+        .map(|level| match level.straight {
+            Some(_) => *level,
+            None => Level::new(level.counts),
+        })
         .collect();
     before.count();
     Drawn {
@@ -814,8 +825,10 @@ fn assert_tiled(mesh: &Mesh, display: &Display) {
     let mut area = vec![0.0f64; plan.tri_ids.len()];
     for tri in in_patches(&plan) {
         let [a, b, c] = tri.params.map(|u| glam::DVec2::new(u.y, u.z));
+        // Fractions of at most 256: anything less is rounding, three
+        // samples in line.
         let twice = (b - a).perp_dot(c - a);
-        assert!(twice > 0.0, "patch {}: {:?}", tri.t, tri.params);
+        assert!(twice > 1e-10, "patch {}: {:?}", tri.t, tri.params);
         area[tri.t] += 0.5 * twice;
     }
     for (t, a) in area.iter().enumerate() {
@@ -926,7 +939,7 @@ fn doubly_curved_patches_are_drawn_within_the_chord() {
 }
 
 #[test]
-fn planes_and_cylinders_keep_their_grids() {
+fn planes_cylinders_and_cones_are_not_refined() {
     use crate::profile::tests::circle;
     let plate = Solid::cuboid(DVec3::ZERO, DVec3::new(10.0, 4.0, 2.0), 1, &TOL).unwrap();
     let hole = Solid::cylinder(DVec3::new(5.0, 2.0, -1.0), 1.0, 4.0, 2, &TOL).unwrap();
@@ -974,14 +987,210 @@ fn planes_and_cylinders_keep_their_grids() {
         ("drilled plate", drilled),
         ("thin disc", disc),
     ] {
-        let plan = Plan::new(solid.mesh(), &Display::default(), &Limits::RENDER)
+        let (ruled, walls) = assert_not_refined(name, &solid);
+        // The hole's wall is cut by the plate's faces, and only its
+        // pieces with a ruling side are strips.
+        if name == "drilled plate" {
+            assert!(ruled > 0 && ruled < walls, "{name}: {ruled} of {walls}");
+        } else {
+            assert_eq!(ruled, walls, "{name}");
+        }
+    }
+}
+
+/// Checks that each level of `solid`'s plan is the one its counts give
+/// unrefined: a grid as [`Level::new`] makes, or a ruled strip on a
+/// cylinder or cone, never on a plane. Returns how many patches on
+/// cylinders and cones are ruled strips, and how many there are.
+fn assert_not_refined(name: &str, solid: &Solid) -> (usize, usize) {
+    let mesh = solid.mesh();
+    let plan = Plan::new(mesh, &Display::default(), &Limits::RENDER)
+        .unwrap()
+        .unwrap();
+    let mut walls = (0, 0);
+    for (t, level) in plan.levels.iter().enumerate() {
+        let form = &mesh.faces()[mesh.tris()[t].face as usize].form;
+        assert!(!curved_both_ways(form), "{name}");
+        let plane = matches!(form, Form::Plane { .. });
+        match level.straight {
+            Some(side) => {
+                assert!(!plane, "{name}");
+                assert_eq!(*level, Level::ruled(level.counts, side), "{name}");
+            }
+            None => assert_eq!(*level, Level::new(level.counts), "{name}"),
+        }
+        if !plane {
+            walls.0 += usize::from(level.straight.is_some());
+            walls.1 += 1;
+        }
+    }
+    walls
+}
+
+/// The farthest a triangle of `plan` gets from its patch, densely sampled
+/// along the patch's normals ([`off_patch`]), over the chord.
+fn worst_of(plan: &Plan) -> f64 {
+    (in_patches(plan).iter())
+        .map(|tri| off_patch(plan.mesh, tri) / plan.chord)
+        .fold(0.0, f64::max)
+}
+
+/// [`worst_of`] `mesh`'s plan within `display`.
+fn worst_off(mesh: &Mesh, display: &Display) -> f64 {
+    worst_of(&Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap())
+}
+
+/// Walls of every height, from a thousandth of their arcs to a thousand
+/// times, extruded from circles, an ellipse and parabola and hyperbola
+/// arcs: each wall patch with a side of one segment is a ruled strip of a
+/// triangle per segment of its other two sides less one, the lines across
+/// it straight to the bit, within the chord densely sampled (the grid was
+/// 2.7 to 3.9, at the ring's corners and, on tall walls, along strips
+/// whose shorter diagonals ran round the arc), tiling the patch.
+#[test]
+fn walls_are_ruled_strips_within_the_chord() {
+    use crate::patch::Conic2;
+    use crate::profile::tests::circle;
+    use crate::{Loop, Profile, Segment};
+    let v = glam::DVec2::new;
+    let frame = crate::Frame {
+        origin: DVec3::new(1.0, -2.0, 0.5),
+        x: DVec3::new(0.0, 0.6, 0.8),
+        y: DVec3::X,
+    };
+    let conic = |a, c, w, b, curve| Segment {
+        conic: Conic2::new(a, c, w, b).unwrap(),
+        curve,
+    };
+    let line = |a, b, curve| Segment::line(a, b, curve).unwrap();
+    let ellipse = Loop {
+        segments: vec![
+            conic(v(3.0, 0.0), v(3.0, 2.0), FRAC_1_SQRT_2, v(0.0, 2.0), 1),
+            conic(v(0.0, 2.0), v(-3.0, 2.0), FRAC_1_SQRT_2, v(-3.0, 0.0), 2),
+            conic(v(-3.0, 0.0), v(-3.0, -2.0), FRAC_1_SQRT_2, v(0.0, -2.0), 3),
+            conic(v(0.0, -2.0), v(3.0, -2.0), FRAC_1_SQRT_2, v(3.0, 0.0), 4),
+        ],
+    };
+    let conics = Loop {
+        segments: vec![
+            line(v(0.0, 0.0), v(4.0, 0.0), 1),
+            conic(v(4.0, 0.0), v(5.0, 2.0), 1.0, v(3.0, 3.0), 2),
+            conic(v(3.0, 3.0), v(1.0, 4.0), 2.0, v(0.0, 2.0), 3),
+            line(v(0.0, 2.0), v(0.0, 0.0), 4),
+        ],
+    };
+    let display = Display::default();
+    for (name, profile, arc) in [
+        ("circle", circle(v(0.5, 0.0), 50.0, 1, false), 78.5),
+        ("ellipse", ellipse, 4.0),
+        ("conics", conics, 3.0),
+    ] {
+        let profile = Profile {
+            loops: vec![profile],
+        };
+        for height in [1e-3, 1e-2, 0.1, 1.0, 10.0, 1e3].map(|k| k * arc) {
+            let solid =
+                crate::extrude(&profile, &frame, 0.0, height, 3, &TOL, &Budget::DEFAULT).unwrap();
+            let mesh = solid.mesh();
+            let plan = Plan::new(mesh, &display, &Limits::RENDER).unwrap().unwrap();
+            let (mut strips, mut grids) = (0, 0);
+            for (t, level) in plan.levels.iter().enumerate() {
+                let form = &mesh.faces()[mesh.tris()[t].face as usize].form;
+                if matches!(form, Form::Plane { .. }) {
+                    continue;
+                }
+                let side = Level::straight_side(level.counts);
+                assert_eq!(level.straight, side, "{name} {height}: {level:?}");
+                if side.is_some() {
+                    let [a, b, c] = level.counts.map(u64::from);
+                    assert_eq!(level.triangles(), a + b + c - 2);
+                    strips += level.triangles();
+                    grids += Level::new(level.counts).triangles();
+                }
+            }
+            let worst = worst_of(&plan);
+            eprintln!("{name} {height}: {grids} wall triangles to {strips}, worst {worst:.3}");
+            // A wall a thousand times its arc has a chord past its
+            // radius, and the diagonals are one segment.
+            assert!(strips > 0 || height > 100.0 * arc, "{name} {height}");
+            assert!(strips * 3 <= grids, "{name} {height}");
+            assert!(worst <= 1.05, "{name} {height}: {worst}");
+            assert_tiled(mesh, &display);
+            assert_watertight(&solid.tessellate(&display).unwrap());
+            solid.manifold_mesh(&display).unwrap();
+        }
+    }
+}
+
+/// A wall patch is ruled across its ruling, and not across an arc short
+/// enough for one segment (a cut piece of a wall once was, and its strip
+/// fanned round the arc, 1.14 chords off), nor across a ruling of a
+/// patch whose lines across bend.
+#[test]
+fn only_rulings_make_ruled_strips() {
+    let chord = 0.1;
+    // A tenth of a radian of a circle of radius 1: its sagitta is an
+    // eighth of a chord of 0.1.
+    let (a, b) = (DVec3::X, DVec3::new(0.1f64.cos(), 0.1f64.sin(), 0.0));
+    let w = 0.05f64.cos();
+    let arc = Conic3::new(a, (a + b) * 0.5 / (w * w), w, b).unwrap();
+    let [first, second] = crate::patch::cylinder_strip(&arc, DVec3::Z * 3.0).unwrap();
+    // `(a0, a1, b1)`: side 0 the arc, side 1 the ruling; `(a0, b1, b0)`:
+    // side 2 the ruling.
+    assert!(ruled(&first, 1, chord) && ruled(&second, 2, chord));
+    assert!(!ruled(&first, 0, chord) && !ruled(&second, 1, chord));
+    assert!(!ruled(&first, 0, 1e3));
+    // A ball's patch: no lines across are straight, whatever its sides.
+    let (_, ball) = round_solids().swap_remove(0);
+    let patch = ball.mesh().patch(0);
+    assert!((0..3).all(|side| !ruled(&patch, side, chord)));
+}
+
+/// Cut walls, whose pieces have no ruling side, and walls drawn on the
+/// grid as if they had none: the ring's diagonals chosen by how far the
+/// patch strays from them and its corners flipped keep them within the
+/// chord (they were 2.7 to 3.9), with the same triangles as the grid.
+#[test]
+fn skewed_grids_choose_their_diagonals_by_the_patch() {
+    let display = Display::default();
+    let big = Solid::cylinder(DVec3::ZERO, 10.0, 5.0, 1, &TOL).unwrap();
+    let small = Solid::cylinder(DVec3::new(2.0, 1.0, -1.0), 5.0, 7.0, 2, &TOL).unwrap();
+    let slot = Solid::cuboid(
+        DVec3::new(-3.0, -20.0, 2.0),
+        DVec3::new(6.0, 40.0, 10.0),
+        2,
+        &TOL,
+    )
+    .unwrap();
+    let cut = |b: &Solid| crate::boolean(&big, b, crate::Op::Difference, &TOL, &Budget::DEFAULT);
+    let (_, spindle) = round_solids().swap_remove(4);
+    for (name, solid) in [
+        ("less a cylinder", cut(&small).unwrap()),
+        ("less a slot", cut(&slot).unwrap()),
+        ("spindle", spindle),
+    ] {
+        let worst = worst_off(solid.mesh(), &display);
+        eprintln!("{name}: {worst:.3}");
+        assert!(worst <= 1.05, "{name}: {worst}");
+        assert_tiled(solid.mesh(), &display);
+        assert_watertight(&assert_deterministic(|| {
+            solid.tessellate(&display).unwrap()
+        }));
+        assert_deterministic(|| solid.manifold_mesh(&display).unwrap());
+    }
+    for height in [0.05, 5.0, 50.0, 500.0] {
+        let solid = Solid::cylinder(DVec3::ZERO, 10.0, height, 1, &TOL).unwrap();
+        let mut plan = Plan::new(solid.mesh(), &display, &Limits::RENDER)
             .unwrap()
             .unwrap();
-        assert!(
-            (plan.levels.iter()).all(|level| *level == Level::new(level.counts)),
-            "{name}"
-        );
-        eprintln!("{name}: {} triangles", plan.triangles);
+        let ruled = plan.levels.clone();
+        plan.levels = (ruled.iter())
+            .map(|level| Level::new(level.counts))
+            .collect();
+        plan.count();
+        let worst = worst_of(&plan);
+        eprintln!("cylinder {height} on grids: {worst:.3}");
+        assert!(worst <= 1.05, "{height}: {worst}");
     }
 }
 
@@ -1073,13 +1282,7 @@ fn scaled_balls_are_measured_and_scaled_cones_keep_their_grids() {
     assert!((cones.iter()).all(|&q| q.c == 0.0 && !curved_both_ways(&Form::Quadric(q))));
     let tube = scaled(&turn(vec![rect(v(2.0, 0.0), v(3.0, 6.0), 1)]));
     for (name, solid) in [("cone", cone), ("tube", tube)] {
-        let plan = Plan::new(solid.mesh(), &Display::default(), &Limits::RENDER)
-            .unwrap()
-            .unwrap();
-        assert!(
-            (plan.levels.iter()).all(|level| *level == Level::new(level.counts)),
-            "{name}"
-        );
+        assert_not_refined(name, &solid);
     }
 }
 /// Ring corners steep to their patches: on fat tori and next to a ball's
