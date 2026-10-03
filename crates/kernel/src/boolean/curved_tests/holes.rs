@@ -435,3 +435,138 @@ fn fitted_grooves_across_drilled_plates() {
         );
     }
 }
+
+/// The volume two round holes through the 2 × 2 × 2 box `[−1, 1]² × [0,
+/// 2]` have in common: one along `y` about `(x, z) = (0, z1)` of radius
+/// `r1`, one along `x` about `(y, z) = (0, z2)` of radius `r2`. It is
+/// `∫ 2a(z)·2b(z) dz`, `a` and `b` their half-widths at height `z`, by
+/// Simpson's rule after `z = lo + (hi − lo)(1 − cos t)/2`, which makes the
+/// square roots at the ends smooth.
+fn holes_in_common(r1: f64, z1: f64, r2: f64, z2: f64) -> f64 {
+    let (lo, hi) = ((z1 - r1).max(z2 - r2), (z1 + r1).min(z2 + r2));
+    let f = |t: f64| {
+        let z = lo + (hi - lo) * (1.0 - t.cos()) / 2.0;
+        let a = (r1 * r1 - (z - z1).powi(2)).max(0.0).sqrt();
+        let b = (r2 * r2 - (z - z2).powi(2)).max(0.0).sqrt();
+        4.0 * a * b * (hi - lo) / 2.0 * t.sin()
+    };
+    let n = 20_000;
+    let h = PI / f64::from(n);
+    let inner: f64 = (1..n)
+        .map(|k| f(f64::from(k) * h) * if k % 2 == 1 { 4.0 } else { 2.0 })
+        .sum();
+    (f(0.0) + f(PI) + inner) * h / 3.0
+}
+
+/// The area of the patches of `solid` that claim no surface, by their
+/// corners' triangles.
+fn claim_free_area(solid: &Solid) -> f64 {
+    let mesh = solid.mesh();
+    (0..mesh.tris().len())
+        .filter(|&t| {
+            matches!(
+                mesh.faces()[mesh.tris()[t].face as usize].surface,
+                Surface::Free
+            )
+        })
+        .map(|t| {
+            let p = mesh.patch(t).p;
+            0.5 * (p[1] - p[0]).cross(p[2] - p[0]).length()
+        })
+        .sum()
+}
+
+#[test]
+fn a_cross_hole_near_another_holes_mouth() {
+    // A user's design: a 2 × 2 × 2 box drilled through along `y` from its
+    // front face, then cut along `x` from its side by a slightly smaller
+    // hole, their axes 0.04 apart in height. The cut was refused
+    // (`Invalid(VertexNeighbours)`): refining the drilled box where the
+    // holes cross reached the front cap beside the first rim, and a cap
+    // triangle there was bisected by a straight edge from the rim's seam
+    // vertex that left it, a piece inside out. Such a triangle is split
+    // red now. Each result is held to the analytic volume within the fit
+    // over the area claiming no surface (the cut's fitted bands), and
+    // every vertex to the true surfaces.
+    let (r1, z1) = (0.8110238395601597, 1.0155982131481562);
+    let (r2, z2) = (0.7809107911587168, 0.9763186052515123);
+    let cube = extruded(
+        vec![rect(DVec2::splat(-1.0), DVec2::splat(1.0), 4)],
+        0.0,
+        2.0,
+        1,
+    );
+    let front = Frame {
+        origin: DVec3::new(0.0, -1.0, 0.0),
+        x: DVec3::X,
+        y: DVec3::Z,
+    };
+    let first = circle(DVec2::new(0.0, z1), r1, 1, false);
+    let drilled = run(
+        &cube,
+        &extruded_on(vec![first], front, -3.6, 0.0, 6),
+        Op::Difference,
+    );
+    let side = Frame {
+        origin: DVec3::new(1.0, 0.0, 0.0),
+        x: DVec3::Y,
+        y: DVec3::Z,
+    };
+    let second = circle(DVec2::new(0.0, z2), r2, 1, false);
+    let tool = extruded_on(vec![second], side, -4.8, 0.0, 7);
+    let (va, vb) = (8.0 - 2.0 * PI * r1 * r1, 4.8 * PI * r2 * r2);
+    assert!((drilled.volume() - va).abs() < 1e-9);
+    // The tool's part inside the drilled box.
+    let inside = 2.0 * PI * r2 * r2 - holes_in_common(r1, z1, r2, z2);
+    let on = |p: DVec3| {
+        let one = (DVec2::new(p.x, p.z - z1).length() - r1).abs();
+        let two = (DVec2::new(p.y, p.z - z2).length() - r2).abs();
+        let planes = [
+            p.x - 1.0,
+            p.x + 1.0,
+            p.x + 3.8,
+            p.y - 1.0,
+            p.y + 1.0,
+            p.z,
+            p.z - 2.0,
+        ];
+        planes.into_iter().fold(one.min(two), |m, d| m.min(d.abs()))
+    };
+    let results = [
+        (Op::Difference, va - inside),
+        (Op::Intersection, inside),
+        (Op::Union, va + vb - inside),
+    ]
+    .map(|(op, want)| {
+        let result = boolean(&drilled, &tool, op, &TOL, &Budget::DEFAULT).map_err(|f| f.error);
+        let Ok(solid) = result else {
+            assert!(op != Op::Difference, "the cut: {result:?}");
+            return None;
+        };
+        let got = solid.volume();
+        let within = TOL.fit() * claim_free_area(&solid) + 1e-9;
+        println!(
+            "{op:?}: {got} vs {want}: {:+e}, within {within:e}",
+            got - want
+        );
+        assert!(
+            (got - want).abs() <= within,
+            "{op:?}: {got} vs {want}, within {within:e}"
+        );
+        for &p in solid.mesh().verts() {
+            assert!(
+                on(p) <= TOL.fit() / 4.0,
+                "{op:?}: the vertex {p} is off the surfaces"
+            );
+        }
+        Some(got)
+    });
+    if let [Some(d), Some(i), Some(u)] = results {
+        let within = TOL.fit() * (drilled.area() + tool.area()) / 5.0;
+        assert!(
+            (u + i - va - vb).abs() <= within,
+            "{u} + {i} vs {va} + {vb}"
+        );
+        assert!((d - (va - i)).abs() <= within, "{d} vs {va} − {i}");
+    }
+}

@@ -1458,12 +1458,14 @@ them, each with its level (red splits from the input). The leaves need not
 be conforming: a leaf may have a neighbour one level finer across an edge,
 whose split left a **hanging** midpoint on it. The mesh they make, the
 **pieces**, is conforming: a leaf with no hanging vertex is one piece, and
-one with a hanging vertex is two green pieces, `bisect_with` at it. Two
+one with a hanging vertex is two green pieces, `bisect_with` at it. These
 rules keep that so:
 
 - Before a leaf is split, every coarser neighbour is (levels across an edge
   differ by at most one, so a hanging vertex is one split deep).
 - A leaf left with two or three hanging vertices is split too.
+- A leaf on a plane face left with one, whose straight bisection would
+  fold, is split too where it can be ("Flat faces" below).
 
 Splitting a green piece splits its leaf, so green pieces are never bisected
 again: every piece is a red descendant of an input patch, or half of one,
@@ -1507,8 +1509,42 @@ curved sides 39 of 8 330 did for good with weights in `0.25..4` (1 of
 10 227 with weights up to 1, none when every curved side was concave),
 each already at the first split. See "Repair of a cap patch along a
 concave curve" under Profiles. The boundary halves are the exact ones,
-shared with the neighbours on other faces. A patch that is flat but tagged `Free` gets the
-exact split and may then not pass.
+shared with the neighbours on other faces. A patch that is flat but
+tagged `Free` gets the exact split and may then not pass.
+
+That covered red children and a green bisector **from** a curved side's
+midpoint. A green bisector from a curved side's **end**, to the middle
+of the side opposite it, is a different case: where the curve bulges
+into the leaf (a cap triangle beside a hole's rim) and that midpoint is
+beyond the curve's tangent at the end, the straight edge leaves the
+leaf, and the piece between it and the curve is inside out at the end
+(repair then splits it to flat pieces that still overlap there and
+refuses: `VertexNeighbours`). Measured on random cap triangles with one
+circular arc side bulging in and passing the fold check (57 209): the
+bisector from the arc's start folds in 12.2%, from its end in 11.4%,
+from its middle never; by the arc's angle from 0.2% (under 10°) to
+43.9% (80–90°). It needs the refinement to reach the cap triangle from
+the far side, which is rare in the seeded suites (3 times in the whole
+`boolean::` suite) and nearly certain for a cross hole near another
+hole's mouth (a user's box drilled twice: three cap triangles in every
+operation, the cut refused). So `split`, when a same-level neighbour
+gets its first hanging vertex, also splits it red if it is a plane leaf
+that passes the fold check, can be split (below `MAX_REFINE_DEPTH`, not
+under the minimum size, with room for three more leaves), and has a
+straight green piece that fails the fold check or can't be built
+(`bisector_folds`, a unit of work per leaf that gets as far as the fold
+checks; a wrong plane tag isn't split for, `pieces` names it). Red
+inner edges join midpoints, the case measured safe above: the straight
+red split of every one of the 13 476 folding triangles of that sweep
+has no piece failing the fold check, and the children are tested the same way when they get
+a hanging vertex. A leaf that can't be split keeps the straight
+bisector and fails in repair as before. The exact bisection
+(`bisect_with`, its curved inner edge in the plane) was the other
+option: it moves nothing elsewhere, but its halves meet across a curved
+edge in one plane, which the edge-neighbour rules often can't part (216
+of the 13 476 failed `EdgeNeighbours` at once), so repair had to split
+them again. The seeded booleans' tallies didn't move; for the cross
+holes see Known gaps under Booleans ("Cross holes through a box").
 
 The `Plane` tag isn't trusted for this. Before an input leaf (level 0) is
 split or bisected as planar, its six control points are tested against the
@@ -7263,6 +7299,31 @@ slope not certified.
     at 1 and 8 threads: none wrong. Against main the app's way failed 23
     of 180 → 11, chains 20 and 28 of 48 → 14 and 15, scaled by 100 43 of
     90 → 18; tangent drills 61 → 59 of 180.
+- **Cross holes through a box**: two round holes through a box square
+  to each other (a user's 2 × 2 × 2 box drilled from its front, then
+  from its side by a hole crossing the first near its mouth;
+  `a_cross_hole_near_another_holes_mouth`, in the kernel and through the
+  history). Refining the drilled box where the holes cross reached its
+  caps beside the first rim and bisected cap triangles there by straight
+  edges leaving them (see "Refinement", Flat faces): every cut near the
+  user's case was refused. With those split red, sweeps round the case
+  (release, fit `1e-3` unless said; each result held to the analytic
+  volume within its patches' integrated distance from the true surfaces,
+  and every sampled point within the fit of one): radii and heights
+  `± 0.02` 108 of 180 operations work (30 before; differences 52 of 60,
+  none before), centres off the lines by up to 0.05 72 of 120 (25),
+  radii 0.4–0.9 and heights `1 ± 0.08` 154 of 180 (142), fits `1e-2`,
+  `1e-3`, `1e-4` round the case 46 of 90 (13); none wrong. Six
+  intersections that worked before are refused now (176 won): the extra
+  split moves the refinement near the rims, and these sit in the class
+  left over. What is left: `Hull` between a small piece at the cut and a
+  long band triangle from the cut to a far rim (as in "Long cap
+  triangles and cuts passing close to their sides"), `VertexNeighbours`
+  between slivers along the traced cut, `TooComplex`, and at fits
+  `1e-4` and `1e-5` `Inconsistent` for the user's intersection and
+  union. They grow where the holes' bottoms or tops are nearly level
+  (their seam rulings nearly meet on the cut): with the nearer gap under
+  0.08, 17–58% of operations are refused; over it, 6%.
 - **Flush bosses on drilled plates**: of 150 random plates 1 thick with
   two holes and a boss standing on it, sunk from its bottom up 2 or through
   it flush with both caps (the seeded `bosses_sunk_through_drilled_plates`),
@@ -8548,7 +8609,8 @@ see `agents/features.md`, "Failures and where they are").
 - **Flat faces are split with straight inner edges** (red and green), not
   by the exact blossom: see "Refinement". The region is the same; the
   exact split's curved inner edges would lie in the face's plane with both
-  pieces, where no plane through the edge separates them.
+  pieces, where no plane through the edge separates them. A flat leaf
+  whose straight green bisector would leave it is split red instead.
   The `Plane` tag is tested first on every input patch split or bisected
   this way (six control points against the resolution), and a wrong one
   fails with `Invalid(Face(t))` rather than be reshaped.

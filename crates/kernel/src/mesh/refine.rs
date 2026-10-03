@@ -12,6 +12,8 @@
 //! - Before a leaf is split, every coarser neighbour is (so levels across
 //!   an edge differ by at most one).
 //! - A leaf left with two or three hanging vertices is split too.
+//! - So is a leaf on a plane face left with one whose straight bisection
+//!   (below) would turn a piece inside out, where it can be split.
 //!
 //! Splitting a green piece splits its leaf, so green pieces are never
 //! bisected again: every piece is a red descendant of an input patch, or
@@ -28,10 +30,16 @@
 //! side; where one does (a triangle with two or three curved sides, one
 //! concave), a child's corner at a curve's midpoint turns inside out, the
 //! pieces cover it only up to sign, and splitting further keeps the fold
-//! (repair then refuses the mesh). Neighbours inside a flat face stay
-//! separable by a plane through their shared edge, which an exact split's
-//! curved inner edges, lying in the face's plane with both pieces, would
-//! not be.
+//! (repair then refuses the mesh). A green piece's straight inner edge
+//! can leave its leaf too: from the end of a side bulging into the leaf
+//! (a hole's rim on a cap) to the middle of the side opposite, where that
+//! midpoint lies beyond the curve's tangent at the end. Such a leaf, if
+//! it passes the fold check itself, is split red instead (its children
+//! tested the same way when they get a hanging vertex): red inner edges
+//! join midpoints, which with one curved side keeps every piece passing
+//! it. Neighbours inside a flat face stay separable by a plane through
+//! their shared edge, which an exact split's curved inner edges, lying in
+//! the face's plane with both pieces, would not be.
 //! That is only right for a patch that is on its plane, so the tag isn't
 //! trusted: an input patch whose control points aren't all within the
 //! resolution of it ([`on_surface`], the test [`Mesh::check_faces`]
@@ -175,7 +183,8 @@ impl<'a> Refiner<'a> {
 
     /// Splits the leaves `requested` (ids of leaves, which must exist, in
     /// the order given) and whatever the rules above take with them.
-    /// Each split takes a unit of `work`. Fails with
+    /// Each split takes a unit of `work`, and so does each plane leaf
+    /// tested for a bisection that would fold. Fails with
     /// [`KernelError::TooComplex`] rather than split a leaf that is
     /// [`MAX_REFINE_DEPTH`] levels deep or too small, or make more than
     /// [`MAX_PATCHES`] leaves: the pieces would be more still, so the
@@ -206,7 +215,8 @@ impl<'a> Refiner<'a> {
                     if let Some(&n) = self.owner.get(&(b, a)) {
                         let leaf = self.leaves[n as usize].as_mut().expect("owners are leaves");
                         leaf.changed = true;
-                        if self.hanging(self.leaf(n).corners).count() >= 2 {
+                        let hanging = self.hanging(self.leaf(n).corners).count();
+                        if hanging >= 2 || (hanging == 1 && self.bisector_folds(n, work)?) {
                             stack.push(n);
                         }
                     }
@@ -214,6 +224,40 @@ impl<'a> Refiner<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Whether leaf `t`, with one hanging vertex, is a plane leaf whose
+    /// straight bisection ([`Self::pieces`]) would have a piece fail the
+    /// fold check where the leaf passes it, and which can be split
+    /// instead (not [`MAX_REFINE_DEPTH`] levels deep, not too small, and
+    /// with room for three more leaves). A piece that can't be built
+    /// counts as folding. Takes a unit of `work` for a leaf that gets as
+    /// far as the fold checks. A leaf whose plane tag is wrong isn't split
+    /// for it: that is left to [`Self::pieces`] to name.
+    fn bisector_folds(&self, t: u32, work: &mut Work) -> Result<bool, KernelError> {
+        let leaf = self.leaf(t);
+        let mut hanging = self.hanging(leaf.corners);
+        let Some((i, m)) = hanging.next() else {
+            return Ok(false);
+        };
+        if hanging.next().is_some() || !matches!(self.planar(leaf), Ok(true)) {
+            return Ok(false);
+        }
+        let bounds = leaf.patch.bounds();
+        let small = (bounds.max - bounds.min).max_element() < self.min_size;
+        if leaf.level >= MAX_REFINE_DEPTH || small || self.live + 3 > self.max_leaves {
+            return Ok(false);
+        }
+        work.spend(1)?;
+        if leaf.patch.fold_direction().is_none() {
+            return Ok(false);
+        }
+        let [a, b, o] = [0, 1, 2].map(|k| leaf.corners[(i + k) % 3]);
+        let folds = |corners| {
+            self.patch_at(corners, Some((m, o)))
+                .map_or(true, |piece| piece.fold_direction().is_none())
+        };
+        Ok(folds([a, m, o]) || folds([m, b, o]))
     }
 
     fn leaf(&self, t: u32) -> &Leaf {

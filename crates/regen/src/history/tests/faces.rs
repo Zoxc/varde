@@ -1311,3 +1311,103 @@ fn an_axis_line_of_no_length_on_a_face_shows_where_the_face_puts_it() {
     assert_eq!(geometry.points(), [at.as_vec3().to_array()]);
     assert_eq!(geometry.sketch_curves(), [u64::from(line.get())]);
 }
+
+/// The volume two round holes through the box `[−1, 1]² × [0, 2]` have
+/// in common: one along `y` about `(x, z) = (0, z1)` of radius `r1`, one
+/// along `x` about `(y, z) = (0, z2)` of radius `r2`: `∫ 2a·2b dz`, `a`
+/// and `b` their half-widths at height `z`, by Simpson's rule after `z =
+/// lo + (hi − lo)(1 − cos t)/2`.
+fn holes_in_common(r1: f64, z1: f64, r2: f64, z2: f64) -> f64 {
+    let (lo, hi) = ((z1 - r1).max(z2 - r2), (z1 + r1).min(z2 + r2));
+    let f = |t: f64| {
+        let z = lo + (hi - lo) * (1.0 - t.cos()) / 2.0;
+        let a = (r1 * r1 - (z - z1).powi(2)).max(0.0).sqrt();
+        let b = (r2 * r2 - (z - z2).powi(2)).max(0.0).sqrt();
+        4.0 * a * b * (hi - lo) / 2.0 * t.sin()
+    };
+    let n = 20_000;
+    let h = PI / f64::from(n);
+    let inner: f64 = (1..n)
+        .map(|k| f(f64::from(k) * h) * if k % 2 == 1 { 4.0 } else { 2.0 })
+        .sum();
+    (f(0.0) + f(PI) + inner) * h / 3.0
+}
+
+/// A user's design: a 2 mm cube drilled through from its front face,
+/// then cut from its right-hand face by a slightly smaller hole crossing
+/// the first near its mouth, both sketched on the cube's faces and cut
+/// into it. The second cut was refused ("leaves no clean solid"): the
+/// drilled cube's refinement for it bisected a front-cap triangle beside
+/// the first rim with an edge that left it.
+#[test]
+fn a_cross_hole_near_another_holes_mouth_is_cut() {
+    let (r1, z1) = (0.8110238395601597, 1.0155982131481562);
+    let (r2, z2) = (0.7809107911587168, 0.9763186052515123);
+    let mut editor = Editor::new(Document::default());
+    let cube = add_extrude(
+        &mut editor,
+        rectangle((-1.0, -1.0), (1.0, 1.0)),
+        one_side("2"),
+        Operation::NewBody(BodyId::NEW),
+    );
+    let body = editor.document().bodies()[0].id;
+    // The rectangle's sides are curves 4 to 7, from the one along y = −1.
+    let face = |curve: u64, near: DVec3| {
+        Plane::Face(FaceRef {
+            body,
+            key: FaceKey {
+                feature: cube.get(),
+                part: PartKey::Side { curve },
+                instance: 0,
+            },
+            near,
+        })
+    };
+    let front = add_sketch(&mut editor, face(4, DVec3::new(0.2, -1.0, 1.2)), |_| {});
+    let right = add_sketch(&mut editor, face(5, DVec3::new(1.0, 0.2, 1.2)), |_| {});
+    let evaluation = evaluated(editor.document());
+    for (sketch, center, radius) in [
+        (front, DVec3::new(0.0, -1.0, z1), r1),
+        (right, DVec3::new(1.0, 0.0, z2), r2),
+    ] {
+        let at = local(&placed(&evaluation, sketch), center);
+        edit_sketch_of(&mut editor, sketch, disc(at, radius));
+    }
+    for (sketch, depth) in [(front, "3.6"), (right, "4.8")] {
+        let extrude = add_extrude_of(&mut editor, sketch, one_side(depth), cut());
+        set_extrude(&mut editor, extrude, |extrude| extrude.flip = true);
+    }
+    let evaluation = evaluated(editor.document());
+    let solid = only_body(&evaluation);
+    let want = 8.0 - 2.0 * PI * (r1 * r1 + r2 * r2) + holes_in_common(r1, z1, r2, z2);
+    // Within the fit over the area of the cut's fitted bands.
+    let mesh = solid.mesh();
+    let free: f64 = (0..mesh.tris().len())
+        .filter(|&t| {
+            let face = mesh.faces()[mesh.tris()[t].face as usize];
+            matches!(face.surface, varde_kernel::mesh::Surface::Free)
+        })
+        .map(|t| {
+            let p = mesh.patch(t).p;
+            0.5 * (p[1] - p[0]).cross(p[2] - p[0]).length()
+        })
+        .sum();
+    let within = 1e-3 * free + 1e-9;
+    let got = solid.volume();
+    assert!(
+        (got - want).abs() <= within,
+        "{got} vs {want}, within {within:e}"
+    );
+}
+
+/// Replaces the drawing of the sketch `feature` with `draw`'s.
+fn edit_sketch_of(editor: &mut Editor, feature: FeatureId, draw: impl FnOnce(&mut Sketch)) {
+    let mut sketch = Sketch::default();
+    draw(&mut sketch);
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+}

@@ -168,3 +168,173 @@ fn leaves_past_the_patch_limit_are_not_made() {
     assert_eq!(refiner.split(&all, &mut work), Err(KernelError::TooComplex));
     assert_eq!(refiner.leaves.iter().flatten().count(), 20);
 }
+
+/// The cut of a 2 × 2 × 2 box (`[−1, 1]² × [0, 2]`) and a round hole
+/// along `y` of radius `r` about `(x, z) = (0, z)`, all through.
+fn drilled_box(r: f64, z: f64) -> crate::Solid {
+    use crate::patch::Conic2;
+    use crate::{Frame, Loop, Op, Profile, Segment, boolean, extrude};
+    use glam::DVec2;
+    let budget = Budget::DEFAULT;
+    let q = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(x, y)| DVec2::new(x, y));
+    let square = Loop {
+        segments: (0..4)
+            .map(|i| Segment::line(q[i], q[(i + 1) % 4], 4 + i as u64).unwrap())
+            .collect(),
+    };
+    let profile = Profile {
+        loops: vec![square],
+    };
+    let cube = extrude(&profile, &Frame::XY, 0.0, 2.0, 1, &TOL, &budget).unwrap();
+    let c = DVec2::new(0.0, z);
+    let p = [DVec2::X, DVec2::Y, DVec2::NEG_X, DVec2::NEG_Y].map(|d| c + d * r);
+    let circle = Loop {
+        segments: (0..4)
+            .map(|i| Segment {
+                conic: Conic2::arc_between(c, r, p[i], p[(i + 1) % 4]).unwrap(),
+                curve: 1,
+            })
+            .collect(),
+    };
+    let frame = Frame {
+        origin: DVec3::new(0.0, -1.0, 0.0),
+        x: DVec3::X,
+        y: DVec3::Z,
+    };
+    let profile = Profile {
+        loops: vec![circle],
+    };
+    let hole = extrude(&profile, &frame, -3.6, 0.0, 6, &TOL, &budget).unwrap();
+    boolean(&cube, &hole, Op::Difference, &TOL, &budget).unwrap()
+}
+
+#[test]
+fn a_cap_triangle_whose_bisector_would_leave_it_is_split_red() {
+    // A box drilled through along `y` (a user's design): its front cap
+    // (`y = −1`) has the triangle from `(1, −1, 2)` to the rim at 44° and
+    // the rim's seam vertex at 0°, whose arc side bulges into it, leaving
+    // it a corner of 11° at the seam vertex. Its neighbour across the
+    // straight side opposite that vertex split, it was bisected by a
+    // straight edge from the seam vertex to that side's middle, 1.5°
+    // outside the corner: a piece inside out, which repair refused. Now
+    // it is split red.
+    let (r, z) = (0.8110238395601597, 1.0155982131481562);
+    let drilled = drilled_box(r, z);
+    let mesh = drilled.mesh();
+    let seam = DVec3::new(r, -1.0, z);
+    let corner = DVec3::new(1.0, -1.0, 2.0);
+    let at = |t: usize, q: DVec3| mesh.patch(t).p.iter().position(|&v| v.distance(q) < 1e-9);
+    let t = (0..mesh.tris().len())
+        .find(|&t| {
+            let patch = mesh.patch(t);
+            patch.p.iter().all(|v| v.y == -1.0)
+                && at(t, seam).is_some()
+                && at(t, corner).is_some()
+                && patch.w.iter().any(|&w| w < 1.0)
+        })
+        .expect("the cap triangle");
+    // Its neighbour across the side opposite the seam vertex.
+    let corners = mesh.corners(t as u32);
+    let o = at(t, seam).unwrap();
+    let (x, y) = (corners[(o + 1) % 3], corners[(o + 2) % 3]);
+    let n = (0..mesh.tris().len() as u32)
+        .find(|&u| {
+            let k = mesh.corners(u);
+            (0..3).any(|i| k[i] == y && k[(i + 1) % 3] == x)
+        })
+        .expect("the neighbour");
+    let mut refiner = Refiner::new(mesh, TOL.resolution(), 0.0);
+    split(&mut refiner, &[n]);
+    assert!(refiner.leaves[t].is_none(), "the cap triangle is split");
+    let pieces = refiner.pieces().unwrap();
+    let folded: Vec<u32> = (pieces.iter())
+        .filter(|p| p.patch.fold_direction().is_none())
+        .map(|p| p.leaf)
+        .collect();
+    assert!(folded.is_empty(), "folded pieces of leaves {folded:?}");
+    assert_eq!(refiner.mesh(&pieces).check(&TOL), Ok(()));
+}
+
+/// The tetrahedron on the triangle `base` in `z = 0`, clockwise from
+/// above (its first side the arc `arc`, the others straight), and the
+/// apex above its centroid, the base on the plane face. The base is
+/// triangle 0 and the triangle across its side `i` is `i + 1`.
+fn on_a_cap(base: [DVec3; 3], arc: crate::patch::Conic3) -> Mesh {
+    let mut builder = MeshBuilder::new();
+    let cap = builder.face(super::super::tests::face(
+        1,
+        Surface::Plane {
+            n: DVec3::NEG_Z,
+            d: 0.0,
+        },
+    ));
+    let wall = super::super::tests::free(&mut builder);
+    let v = base.map(|p| builder.vert(p));
+    let apex = builder.vert((base[0] + base[1] + base[2]) / 3.0 + DVec3::Z);
+    builder.edge(v[0], v[1], arc.c, arc.w);
+    builder.tri(v, cap);
+    for i in 0..3 {
+        builder.tri([v[(i + 1) % 3], v[i], apex], wall);
+    }
+    builder.build().unwrap()
+}
+
+#[test]
+#[allow(clippy::disallowed_methods, reason = "std maths to build inputs")]
+fn cap_triangles_are_split_red_where_a_bisector_would_fold() {
+    // Seeded triangles on a plane with one side an arc of the unit circle
+    // bulging into them (a cap beside a hole's rim), passing the fold
+    // check: a hanging vertex on a side opposite an end of the arc. A
+    // straight bisector from that end leaves the triangle where the
+    // side's middle is past the arc's tangent there (about one in nine);
+    // the triangle is then split red, and no piece of it is inside out.
+    use crate::patch::Conic3;
+    use crate::test_rng::Rng;
+    let mut rng = Rng::new(7);
+    let (mut tried, mut red) = (0, 0);
+    while tried < 3000 {
+        let angle = rng.range(0.02, std::f64::consts::FRAC_PI_2);
+        let o = DVec3::X;
+        let a = DVec3::new(angle.cos(), angle.sin(), 0.0);
+        let b = DVec3::new(rng.range(-2.0, 3.0), rng.range(-2.0, 3.0), 0.0);
+        let arc = Conic3::arc_between(DVec3::ZERO, 1.0, o, a).unwrap();
+        // The arc bulges out of the circle, to the right of `o → a`:
+        // towards `b`, outside the circle, so `o, a, b` is clockwise.
+        let right = |q: DVec3| (a - o).cross(q - o).z < 0.0;
+        if b.length() <= 1.05 || !right(b) {
+            continue;
+        }
+        let mesh = on_a_cap([o, a, b], arc);
+        let base = mesh.patch(0);
+        if base.fold_direction().is_none() {
+            continue;
+        }
+        // Hanging on `a → b` (side 1, triangle 2), bisected from `o`; or
+        // on `b → o` (side 2, triangle 3), from `a`.
+        for (side, from) in [(1, o), (2, a)] {
+            tried += 1;
+            let middle = base.edge(side).split_half().unwrap()[0].p1;
+            let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
+            split(&mut refiner, &[side as u32 + 1]);
+            let pieces = refiner.pieces().unwrap();
+            let mine: Vec<&Piece> = pieces.iter().filter(|p| p.face == 0).collect();
+            for piece in &mine {
+                assert!(
+                    piece.patch.fold_direction().is_some(),
+                    "angle {angle}, b {b}, from {from}: piece {:?} folds",
+                    piece.patch.p
+                );
+            }
+            if refiner.leaves[0].is_some() {
+                // Bisected straight, from `from` to `middle`.
+                assert_eq!(mine.len(), 2);
+                assert!(mine.iter().all(|p| p.patch.p.contains(&middle)));
+                assert!(mine.iter().all(|p| p.patch.p.contains(&from)));
+            } else {
+                red += 1;
+            }
+        }
+    }
+    println!("{red} of {tried} split red");
+    assert!((200..=600).contains(&red), "{red} of {tried} split red");
+}
