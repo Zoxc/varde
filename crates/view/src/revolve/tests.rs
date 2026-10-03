@@ -4,7 +4,6 @@ use varde_document::{OriginPlane, Plane};
 use varde_sketch::Profiles;
 
 use super::*;
-use crate::operation_panel::FIELD_INDENT;
 use crate::testing;
 
 /// A sketch of a rectangle from (2, -4) to (6, 4) and a construction line
@@ -66,6 +65,7 @@ fn state_of<'a>(
         ready: false,
         accept: false,
         editable: true,
+        hover: None,
     }
 }
 
@@ -109,8 +109,14 @@ fn the_panel_names_the_profile_and_the_axis() {
     state.picked = &picked;
     state.axis = Some(AxisLine::Curve(construction));
     let shown = texts_of(&state);
-    found(&shown, "1 region");
+    found(&shown, "Region 1");
     found(&shown, "Line 5");
+    // Picking regions, the profile asks for more; the axis, picked, doesn't.
+    found(&shown, "Click regions");
+    assert!(!has(&shown, "Click a line or axis"));
+    state.picking = RevolvePick::Axis;
+    assert!(!has(&texts_of(&state), "Click regions"));
+    state.picking = RevolvePick::Regions;
     state.axis = Some(AxisLine::SketchY);
     found(&texts_of(&state), "Y axis");
     state.axis = Some(AxisLine::SketchX);
@@ -152,7 +158,10 @@ fn the_panel_s_errors_read_as_sentences() {
     let shown = texts_of(&state);
     let label = found(&shown, "Angle");
     let refused = found(&shown, "Enter a value");
-    assert_eq!(refused.bounds.x - label.bounds.x, FIELD_INDENT);
+    // Under its field, which is under its label.
+    assert_eq!(refused.bounds.x, label.bounds.x);
+    assert!(refused.bounds.y > label.bounds.y + 28.0, "{refused:?}");
+    found(&shown, "Revolve fails");
     found(&shown, "Its outline crosses the axis");
     // The revolve's own check refusing it shows in place of the
     // preview's error.

@@ -620,6 +620,8 @@ impl Doc {
                 | Look::HoverItem(_)
                 | Look::HoverFeature(_)
                 | Look::LeaveFeature(_)
+                | Look::HoverPanel(_)
+                | Look::LeavePanel(_)
                 | Look::HoverCube(_)
                 | Look::Snap(_)
                 | Look::Aim(_)
@@ -643,6 +645,8 @@ impl Doc {
                 | Look::HoverItem(_)
                 | Look::HoverFeature(_)
                 | Look::LeaveFeature(_)
+                | Look::HoverPanel(_)
+                | Look::LeavePanel(_)
                 | Look::Hover(_)
                 | Look::HoverCube(_)
                 | Look::Snap(_)
@@ -728,6 +732,8 @@ impl Doc {
                 (self.hovered_feature).take_if(|&mut hovered| hovered == feature);
             }
             Look::ShowFailure(feature) => self.show_failure(feature),
+            Look::HoverPanel(hover) => self.hover_panel(hover),
+            Look::LeavePanel(left) => self.leave_panel(left),
             Look::Hover(pick) => self.hover(pick),
             Look::ClickModel { pick, .. } if self.combine.is_some() => self.combine_click(pick),
             Look::ClickModel { pick, add, double } if self.measure.is_some() => {

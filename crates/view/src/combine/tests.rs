@@ -17,6 +17,7 @@ fn state_of<'a>(target: Option<CombineBody<'a>>, tools: Vec<CombineBody<'a>>) ->
         ready: false,
         accept: false,
         editable: true,
+        hover: None,
     }
 }
 
@@ -47,7 +48,7 @@ fn has(shown: &[Shown], text: &str) -> bool {
 }
 
 #[test]
-fn the_panel_shows_the_bodies_as_chips_and_what_to_click() {
+fn the_panel_shows_the_bodies_as_rows_and_what_to_click() {
     let mut state = state_of(None, Vec::new());
     state.picking = CombinePick::Target;
     let shown = texts_of(&state);
@@ -62,30 +63,28 @@ fn the_panel_shows_the_bodies_as_chips_and_what_to_click() {
         "Subtract",
         "Intersect",
         "Keep tool bodies",
-        "Otherwise the tools are used up",
     ] {
         found(&shown, text);
     }
 
-    // Picked: the chips in their fields, the tools one under another and
-    // "+ Click bodies" after them while they're picked.
+    // Picked: the rows in their fields, the tools one under another and
+    // "Click bodies" after them while they're picked.
     let state = state_of(Some(body("Body 1")), vec![body("Body 2"), body("Body 3")]);
     let shown = texts_of(&state);
     let target = found(&shown, "Body 1");
     let (two, three) = (found(&shown, "Body 2"), found(&shown, "Body 3"));
-    let more = found(&shown, "+ Click bodies");
+    let more = found(&shown, "Click bodies");
     assert!(target.bounds.y < two.bounds.y);
     assert!(two.bounds.y < three.bounds.y && three.bounds.y < more.bounds.y);
     assert!((two.bounds.x - three.bounds.x).abs() < 0.5);
     assert!(!has(&shown, "Click a body"));
-    found(&shown, "2 tools");
 
     // Picking the target, the tools' field asks for nothing more.
     let state = CombineState {
         picking: CombinePick::Target,
         ..state
     };
-    assert!(!has(&texts_of(&state), "+ Click bodies"));
+    assert!(!has(&texts_of(&state), "Click bodies"));
 }
 
 #[test]
@@ -99,8 +98,14 @@ fn the_footer_says_why_it_can_t_be_done() {
     state.enough = true;
     state.tools = vec![body("Body 2")];
     state.error = Some("cutting Body 2 from Body 1 would leave nothing of Body 1");
+    let shown = texts_of(&state);
+    found(&shown, "Combine fails");
     found(
-        &texts_of(&state),
+        &shown,
         "Cutting Body 2 from Body 1 would leave nothing of Body 1",
     );
+    // Add anyway only while it can be pressed.
+    assert!(!has(&shown, "Add anyway"));
+    state.accept = true;
+    found(&texts_of(&state), "Add anyway");
 }

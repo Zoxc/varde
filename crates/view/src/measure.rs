@@ -338,12 +338,11 @@ pub(crate) fn panel<'a>(state: &MeasureState<'a>) -> Element<'a, Message> {
         [None, None] => {}
     }
     operation_panel(Parts {
+        icon: Icon::Measure,
         title: "Measure",
-        summary: None,
         body: body.into(),
         message: None,
         ok: None,
-        accept: None,
         cancel: Message::Look(Look::Measure(MeasureLook::Close)),
         close: true,
     })

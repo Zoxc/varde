@@ -203,11 +203,19 @@ message is worded from the kernel's `failure.error` as before
   draft's wins while editing it), and while a sketch is edited the
   points of every failure naming its curves (the sketch marks the
   curves), nothing otherwise (`Doc::shown_errors`, see "Error geometry"
-  in `agents/viewport.md`). A Show button on a
-  failed feature's Timeline row, right of its note, and beside the
-  error in an operation panel's footer frames the camera on the
-  geometry's box (`Look::ShowFailure`); it's there only where the
-  geometry has one. The row's tooltip still tells why it failed.
+  in `agents/viewport.md`). A failed feature's Timeline row has its
+  name in the strong danger colour (`Palette::danger_strong`, the UI
+  mock's `--danger-text`) with an alert (`Icon::Alert`) right after it,
+  its note staying at the right, and its message as the row's tooltip
+  (`chrome::failure_tip`: the alert, "Extrude fails: " in semibold in
+  the strong danger colour, as the operation panel's failure box titles
+  it, then the message in the text's colour; its spans take the colours
+  of the document's `Mode` as they're made); selected, the status bar's
+  selection box shows the alert in the danger colour, its name and the
+  message muted. A Show button on the row, right of its note, and in
+  the title of an operation panel's failure box frames the camera on
+  the geometry's box (`Look::ShowFailure`); it's there only where the
+  geometry has one.
 
 ## Sketch planes on faces
 
@@ -591,23 +599,26 @@ first angle's field and "90°" in the second, a new body.
   order, and screens of several sizes, checking after every step: the
   sessions apart and none read-only, the draft last sent the session's
   and the panel's values, OK never with a refusal or a refused field,
-  nor with the draft's error (Accept error only with it),
+  nor with the draft's error (Add anyway only with it),
   `Esc` leaving the document as it was, a commit one undo step, and the
   draft's error the newest answer's. The viewport's
   (`viewport/revolve/tests.rs`) clicks random sketches and cameras.
 
 **The panel** (`view/src/revolve.rs`) is the extrude's floating panel
-(`operation_panel`), built of the same parts (choices, ticks, typed
-fields, the Bodies list, the footer's message, now in
-`operation_panel.rs`): title "New revolve" or the revolve's name; a
-Profile row (the region count, or "Click regions") and an Axis row
-("Line 3", "X axis", or "Click a line or axis"), each a field outlined
-while it's the one picking, a click on it making it so; what an edited
-revolve lost; Extent (Full 360°, One side, Symmetric, Two sides), the
-angle fields ("Angle", or "Side 1" and "Side 2"; the first is
-`VALUE_FIELD`, focused as the session opens), Flip for one side and two
-sides; Operation and Bodies as an extrude's; the refusal, the draft's
-error or "Checking the sketch…". No handle in this plan.
+(`operation_panel`), built of the same parts (tiles, icon toggles,
+fields picked into, typed fields, the Bodies list, the foot's message,
+in `operation_panel.rs`; their look is in `agents/viewport.md`): title
+"New revolve" or the revolve's name; a Profile field (the regions
+picked as rows, "Region 1" with a cross taking it out, then "Click
+regions" while it's the one picking or empty) and an Axis field ("Line
+3", "X axis" as a row, or "Click a line or axis"), each outlined while
+it's the one picking, a click on it making it so; what an edited
+revolve lost; Extent tiles (Full 360°, One side, Symmetric, Two sides,
+seen down the axis), the angle fields ("Angle", or "Side 1" and "Side
+2"; the first is `VALUE_FIELD`, focused as the session opens), Flip
+for one side and two sides; Operation and Bodies as an extrude's; the
+refusal, the draft failing ("Revolve fails", Add anyway) or "Checking
+the sketch…". No handle in this plan.
 
 **The viewport** (`view/src/viewport/revolve.rs`, `Revolving`, one of
 `viewport::Operating`): the regions as an extrude's
@@ -634,8 +645,11 @@ at other angles than its rings', so its outline steps by up to a pixel.
 
 The status bar says "New revolve · 1 region picked · about Line 3"
 (or "pick the regions to revolve", "pick the axis"), with the hints
-"Pick regions" or "Pick the axis", `Enter` OK and `Esc` Cancel; the
-toolbar's tag "Revolve" or "Editing Revolve 1". While a revolve is set
+"Pick regions" or "Pick the axis", `Enter` OK and `Esc` Cancel. The
+toolbar shows it as it shows a sketch being edited: a pill on the soft
+accent with its icon and name ("New revolve" or "Revolve 1") and OK
+joined to it (disabled while OK waits), then Cancel (`Esc`) leading the
+operations; the extrude and the combine alike. While a revolve is set
 up `B` and the selected feature's `Enter` and `Delete` don't act, `S`
 and `X` drop it for a new sketch or an extrude, and the cursor doesn't
 pick the model.
@@ -665,7 +679,9 @@ says its turn, operation and axis (`feature_info`: "Full 360° · New
 body · about Y axis", "One side 90° · Cut · about Line 3", "Symmetric
 90° ...", "Two sides 100° + 20° ..."; the axis last, as the selection's
 box clips what doesn't fit at 1280 px and the axis says least, and left
-out while its sketch doesn't have it). Double-click, `Enter` or Edit revolve reopen it.
+out while its sketch doesn't have it). Double-click, `Enter` or Edit revolve reopen it
+(a double-click on a sketch's row, in the Timeline or Objects, enters
+the sketch).
 
 Not yet: a handle dragging the angle.
 
@@ -825,7 +841,9 @@ with.
 - **The highlight** is its own while it's set up, as the measure
   tool's: the target's faces in the selection's colour, the tools' in
   the second colour (a tool the preview uses up has no faces of its
-  own), the body under the cursor hovered (`PickIndex::highlight_with`);
+  own), the body under the cursor hovered (`PickIndex::highlight_with`),
+  and the body whose row in the panel is hovered lit hovered even if it's
+  the target or a tool;
   the selection is kept, and not looked for in the preview's model.
 - **Whole and ready**: a target and a tool (`CombineSession::combine`);
   ready (`Doc::combine_ready`) when editable, no sketch edits wait on
@@ -855,24 +873,25 @@ with.
   shown the newest's.
 
 **The panel** (`view/src/combine.rs`, in `operation_panel`): title "New
-combine" or the combine's name, the tool count as its summary; Target
-and Tools rows, each a field (`theme::pick_field`, outlined in the
-accent while it's the one picking, a click on it making it so) holding
-the bodies as chips (`theme::chip`: the name and a button taking it
-out, `CombineLook::Drop`; dropping the target hands the clicks to it),
-the tools one under another, and "Click a body" / "Click bodies" while
-empty, "+ Click bodies" after the tools while they're picked; Operation
-(Union, Subtract, Intersect: `BodyOp::label`); "Keep tool bodies" with
-"Otherwise the tools are used up" under it; the footer's draft error,
-"Checking the sketch…", or with fewer than two bodies "There’s only one
-body: make another to combine with". The mock's warnings for a tool
+combine" or the combine's name; Target and Tools fields
+(`operation_panel::pick_field`, outlined in the accent while it's the
+one picking, a click on it making it so) holding the bodies as rows
+(`picked_row`: the Body icon, the name and a cross taking it out,
+`CombineLook::Drop`; dropping the target hands the clicks to it), the
+tools one under another, and "Click a body" / "Click bodies" while
+empty, "Click bodies" after the tools while they're picked; Operation
+tiles (Union, Subtract, Intersect: `BodyOp::label`, the booleans'
+circles); "Keep tool bodies" an icon toggle with "Otherwise the tools
+are used up" as its tooltip; the foot's draft failing ("Combine fails",
+Add anyway), "Checking the sketch…", or with fewer than two bodies
+"There’s only one body: make another to combine with". The mock's warnings for a tool
 clear of the target are left out: regen answers that case (a subtract
 takes nothing, a union is in pieces, an intersect fails as emptying).
 
 The status bar says "New combine · Body 1 with 2 tools · Union" (or
 "pick the target body", "Body 1 · pick the tool bodies"), with the hints
 "Pick the target" or "Pick tools", `Enter` OK and `Esc` Cancel; the
-toolbar's tag "Combine" or "Editing Combine 1". `B` (`Shortcut::COMBINE`,
+toolbar's pill "New combine" or "Combine 1" with OK. `B` (`Shortcut::COMBINE`,
 `shortcut::combine_binding`, the UI mock's key; the Rectangle tool's in a
 sketch) is enabled outside a sketch and the other operations, with two
 bodies or more (`Doc::combinable`, `DocumentKeys::combinable`) or a
@@ -907,7 +926,7 @@ body: take Body 2 out of Combine 1 or delete it first", in the footer
 in place of the preview's error, and OK waits.
 
 Tests: `app/src/doc/combine/tests.rs` (keys, viewport and Objects
-picks, the chips' buttons through the panel, the draft, Objects' faint
+picks, the rows' crosses through the panel, the draft, Objects' faint
 rows, one undo step, `Esc` without a trace, editing, merged bodies
 picked as their holder, the highlight, read-only, the other tools, a
 body going, the held extrude, the Timeline row, the delete prompt);

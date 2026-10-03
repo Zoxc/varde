@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use varde_document::{BodyId, BodyOp, Combine, Document, FeatureId, FeatureKind};
 use varde_view::{
-    CombineBody, CombineLook, CombinePick, CombineState, ModelHighlight, Pick, Picked,
+    CombineBody, CombineLook, CombinePick, CombineState, ModelHighlight, PanelHover, Pick, Picked,
 };
 
 use super::Doc;
@@ -42,11 +42,13 @@ pub(crate) struct CombineSession {
     highlight: Arc<ModelHighlight>,
     /// What `highlight` was built of.
     built: Option<Built>,
+    /// The panel's row the cursor is over, if any.
+    pub(crate) hover: Option<PanelHover>,
 }
 
-/// What a combine's highlight is built of: the model, the body hovered,
-/// the target and the tools.
-type Built = (u64, Option<BodyId>, Option<BodyId>, Vec<BodyId>);
+/// What a combine's highlight is built of: the model, the body hovered and
+/// whether its row in the panel is, the target and the tools.
+type Built = (u64, Option<(BodyId, bool)>, Option<BodyId>, Vec<BodyId>);
 
 impl CombineSession {
     /// A session setting up a new combine of `target` with `tools`, if
@@ -70,6 +72,7 @@ impl CombineSession {
             keep_tools: false,
             highlight: Arc::default(),
             built: None,
+            hover: None,
         }
     }
 
@@ -357,12 +360,18 @@ impl Doc {
     /// Rebuilds the combine's highlight if the model, the body hovered,
     /// the target or the tools changed since it was built: the target's
     /// faces as selected, the tools' in the second colour (a tool the
-    /// preview uses up has none), the hovered body's hovered.
+    /// preview uses up has none), the hovered body's hovered. A body whose
+    /// row in the panel is hovered is lit so even if it's the target or a
+    /// tool, which in the view keep their colour under the cursor.
     pub(crate) fn refresh_combine_highlight(&mut self) {
         if !self.picks() {
             return;
         }
-        let hovered = self.pick.hover().map(|pick| pick.body);
+        let panel = self.panel_hover().and_then(PanelHover::body);
+        let hovered = match panel {
+            Some(body) => Some((body, true)),
+            None => self.pick.hover().map(|pick| (pick.body, false)),
+        };
         let Some(session) = &mut self.combine else {
             return;
         };
@@ -380,13 +389,18 @@ impl Doc {
             body.map(|body| index.body_faces(body).map(Picked::Face).collect())
                 .unwrap_or_default()
         };
-        let target = faces(session.target);
+        let lit = hovered.filter(|&(_, panel)| panel).map(|(body, _)| body);
+        let target = faces(session.target.filter(|&target| Some(target) != lit));
         let tools: Vec<Picked> = (session.tools.iter())
+            .filter(|&&tool| Some(tool) != lit)
             .flat_map(|&tool| faces(Some(tool)))
             .collect();
-        // What's picked keeps its colour under the cursor.
+        // What's picked keeps its colour under the cursor in the view.
         let hover = match hovered {
-            Some(body) if Some(body) != session.target && !session.tools.contains(&body) => {
+            Some((body, true)) => faces(Some(body)),
+            Some((body, false))
+                if Some(body) != session.target && !session.tools.contains(&body) =>
+            {
                 faces(Some(body))
             }
             _ => Vec::new(),
@@ -435,6 +449,7 @@ impl Doc {
             ready: self.commit_by(self.combine_ready(), false),
             accept: self.commit_by(self.combine_ready(), true),
             editable: self.editable(),
+            hover: self.panel_hover(),
         })
     }
 }

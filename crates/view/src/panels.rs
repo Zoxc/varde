@@ -17,7 +17,9 @@ use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
 use crate::mouse_only::MouseOnly;
 use crate::shortcut::{Held, Shortcut};
-use crate::theme::{self, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TAB_LINE, TabLook, Tone};
+use crate::theme::{
+    self, Palette, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TAB_LINE, TabLook, Tone,
+};
 use crate::toolbar::{menu_item, menu_separator};
 use crate::{
     ConstraintKind, DocumentState, Edit, Look, Message, Panel, RowMenu, SketchState, VALUE_FIELD,
@@ -118,6 +120,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             editable,
             state.unsolved,
             state.failed,
+            state.mode.palette(),
         )),
     };
 
@@ -157,6 +160,7 @@ fn timeline<'a>(
     editable: bool,
     unsolved: &[FeatureId],
     failed: &'a [varde_regen::FeatureFailure],
+    palette: &'static Palette,
 ) -> Element<'a, Message> {
     if document.features().is_empty() {
         return empty_note(format!(
@@ -169,7 +173,9 @@ fn timeline<'a>(
         let unsolved = unsolved.contains(&feature.id);
         let failed = (failed.iter()).find(|failed| failed.feature == feature.id);
         let selected = selected == Some(feature.id);
-        let row = feature_row(document, feature, units, selected, unsolved, failed);
+        let row = feature_row(
+            document, feature, units, selected, unsolved, failed, palette,
+        );
         let on = RowMenu::Feature(feature.id);
         let menu = (selected && menu == Some(on)).then(|| feature_menu(feature, editable));
         ContextMenu::new(
@@ -196,10 +202,11 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
 /// A feature of `document` in the Timeline, with its note: a sketch's
 /// plane ([`plane_note`](crate::plane_note)), an extrude's distances in
 /// `units`, how far a revolve turns in all. Marked failed if it's
-/// `unsolved`, or `failed` and why, which hovering it tells; a failure
-/// whose geometry has a box gets a Show button that frames the camera on
-/// it (a tooltip can't be clicked, so it's in the row). Hovering it
-/// shows the failure's geometry in the viewport. Clicking selects it,
+/// `unsolved`, or `failed` and why, which hovering it tells ("Extrude
+/// fails: ...", as its panel says it); a failure whose geometry has a box
+/// gets a Show button that frames the camera on it (a tooltip can't be
+/// clicked, so it's in the row). Hovering it shows the failure's geometry
+/// in the viewport. Clicking selects it,
 /// double-clicking edits it.
 fn feature_row<'a>(
     document: &Document,
@@ -208,6 +215,7 @@ fn feature_row<'a>(
     selected: bool,
     unsolved: bool,
     failed: Option<&'a varde_regen::FeatureFailure>,
+    palette: &'static Palette,
 ) -> Element<'a, Message> {
     let note = match &feature.kind {
         FeatureKind::Sketch { .. } if unsolved => "Doesn't solve".into(),
@@ -220,7 +228,8 @@ fn feature_row<'a>(
         icon: feature_icon(feature),
         name: feature.name.as_str().into(),
         faint: !feature.visible,
-        danger: unsolved || failed.is_some(),
+        danger: false,
+        failed: unsolved || failed.is_some(),
         note: Some(note),
         indent: 8.0,
         selected,
@@ -235,9 +244,11 @@ fn feature_row<'a>(
         .on_enter(Message::Look(Look::HoverFeature(Some(feature.id))))
         .on_exit(Message::Look(Look::LeaveFeature(feature.id)));
     match failed {
-        Some(failed) => crate::chrome::tip(
+        Some(failed) => crate::chrome::failure_tip(
             row,
-            text(crate::chrome::sentence(&failed.message)).style(theme::danger_text),
+            format!("{} fails: ", feature.kind.noun()),
+            crate::chrome::sentence(&failed.message),
+            palette,
         ),
         None => row.into(),
     }
@@ -367,9 +378,13 @@ struct SelectableRow<'a> {
     /// Whether the name is faint, as a hidden feature's is, or an item
     /// waiting on the solver.
     faint: bool,
-    /// Whether the name is in the danger colour, as a sketch that doesn't
-    /// solve or a constraint in conflict is.
+    /// Whether the name is in the danger colour, as a constraint in
+    /// conflict is.
     danger: bool,
+    /// Whether it failed, as a feature that failed to regenerate or a
+    /// sketch that doesn't solve: its name in the strong danger colour
+    /// with an alert after it, its note staying at the right.
+    failed: bool,
     note: Option<text::Fragment<'a>>,
     /// Room left of the icon, in pixels.
     indent: f32,
@@ -389,11 +404,15 @@ impl<'a> SelectableRow<'a> {
             container(
                 row![
                     icons::icon(self.icon, icons::INLINE),
-                    if self.danger {
+                    if self.failed {
+                        text(self.name.clone()).style(theme::failed_text)
+                    } else if self.danger {
                         text(self.name.clone()).style(theme::danger_text)
                     } else {
                         name(self.name.clone(), !self.faint)
                     },
+                    self.failed
+                        .then(|| { icons::tinted(Icon::Alert, 14.0, |p| p.danger_strong) }),
                     space::horizontal(),
                     self.note
                         .clone()
@@ -472,6 +491,7 @@ fn objects<'a>(
                 body: body.id,
                 add: false,
             })),
+            on_double_click: None,
             menu: ObjectMenu {
                 on: RowMenu::Body(body.id),
                 open: menu == Some(RowMenu::Body(body.id)),
@@ -494,6 +514,7 @@ fn objects<'a>(
             note: None,
             selected: false,
             on_press: None,
+            on_double_click: Some(Message::Look(Look::EditFeature(feature.id))),
             menu: ObjectMenu {
                 on: RowMenu::Sketch(feature.id),
                 open: menu == Some(RowMenu::Sketch(feature.id)),
@@ -552,6 +573,9 @@ struct Object<'a> {
     selected: bool,
     /// What clicking the row sends, if anything.
     on_press: Option<Message>,
+    /// What double-clicking the row sends, if anything: a sketch's opens
+    /// it, as its Timeline row's does.
+    on_double_click: Option<Message>,
     menu: ObjectMenu,
 }
 
@@ -667,6 +691,7 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
         note,
         selected,
         on_press,
+        on_double_click,
         menu,
     } = object;
     let (on, open) = (menu.on, menu.open);
@@ -718,7 +743,13 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
         ))
         .on_press(message)
         .into(),
-        None => hover(content(false), content(true).style(theme::hovered_row)),
+        None => {
+            let row = hover(content(false), content(true).style(theme::hovered_row));
+            match on_double_click {
+                Some(message) => mouse_area(row).on_double_click(message).into(),
+                None => row,
+            }
+        }
     };
     ContextMenu::new(
         row,
@@ -882,6 +913,7 @@ fn item_row<'a>(
         name: name.into(),
         faint: sketch.pending.contains(&id),
         danger,
+        failed: false,
         note: note.map(Into::into),
         indent: 24.0,
         selected: sketch.selection.contains(&id),

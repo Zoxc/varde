@@ -1482,7 +1482,8 @@ fn combine_info(combine: &crate::CombineState<'_>) -> String {
 }
 
 /// The feature selected in the Timeline, for the status bar's box of the
-/// selection: its icon, its name and [`feature_info`]. Nothing in a sketch,
+/// selection: its icon, its name and [`feature_info`], or for one that
+/// failed an alert, its name and why. Nothing in a sketch,
 /// setting up an extrude or a revolve or picking a plane, which the bar
 /// tells of instead.
 fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
@@ -1499,6 +1500,26 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
     let Some(feature) = state.selected_feature.and_then(|id| document.feature(id)) else {
         return model_selection(state);
     };
+    // A feature that failed says why, after an alert in place of its icon.
+    let failed = (state.failed.iter()).find(|failed| failed.feature == feature.id);
+    if let Some(failed) = failed {
+        return Some(
+            row![
+                icons::tinted(Icon::Alert, 14.0, |p| p.danger),
+                text(feature.name.as_str())
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .font(theme::SEMIBOLD),
+                text(crate::chrome::sentence(&failed.message))
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .style(theme::muted_text),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
+        );
+    }
     Some(
         row![
             icons::icon(panels::feature_icon(feature), icons::INLINE),

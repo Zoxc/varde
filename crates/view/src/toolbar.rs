@@ -29,16 +29,33 @@ const SAVE_CELL_WIDTH: f32 = 34.0;
 const BAR_SPACING: f32 = 2.0;
 
 pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
-    let (context, tag): (Element<'a, Message>, _) = match &state.sketch {
-        Some(sketch) => (
-            sketch_pill(sketch.name),
+    let operation = operation(state);
+    let (context, tag): (Element<'a, Message>, _) = match (&state.sketch, &operation) {
+        (Some(sketch), _) => (
+            pill(
+                Icon::Sketch,
+                sketch.name,
+                Some(Message::Look(Look::FinishSketch)),
+                "Finish sketch (Esc)",
+            ),
             match sketch.tool {
                 Some(tool) => Some(tool_tag(&tool)),
                 None if sketch.constraining => Some("Constrain".to_owned()),
                 None => None,
             },
         ),
-        None => (
+        // An operation being set up shows as a sketch being edited does:
+        // its name, with OK joined to it.
+        (None, Some(operation)) => (
+            pill(
+                operation.icon,
+                operation.name,
+                operation.ok.clone(),
+                "OK (Enter)",
+            ),
+            None,
+        ),
+        (None, None) => (
             text("Model").font(SEMIBOLD).into(),
             if let Some(pick) = state.picking_plane {
                 Some(match &pick.sketch {
@@ -46,20 +63,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                     Some((_, name)) => format!("{name}'s plane"),
                 })
             } else {
-                let editing = |editing: Option<&str>, noun: &str| {
-                    editing.map_or_else(|| noun.to_owned(), |name| format!("Editing {name}"))
-                };
-                (state.extrude.as_ref())
-                    .map(|extrude| editing(extrude.editing, "Extrude"))
-                    .or_else(|| {
-                        let revolve = state.revolve.as_ref()?;
-                        Some(editing(revolve.editing, "Revolve"))
-                    })
-                    .or_else(|| {
-                        let combine = state.combine.as_ref()?;
-                        Some(editing(combine.editing, "Combine"))
-                    })
-                    .or_else(|| state.measure.as_ref().map(|_| "Measure".to_owned()))
+                state.measure.as_ref().map(|_| "Measure".to_owned())
             },
         ),
     };
@@ -80,11 +84,17 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         save_cell(state.editable(), state.edited),
         vrule(),
         container(row![context, tag].spacing(6).align_y(Alignment::Center))
-            // The sketch's pill starts left of where the text would, so its
-            // name lines up with "Model".
-            .padding(Padding::from([0, 12]).left(if state.sketch.is_some() { 4 } else { 12 })),
+            // A pill starts left of where the text would, so its name
+            // lines up with "Model".
+            .padding(Padding::from([0, 12]).left(
+                if state.sketch.is_some() || operation.is_some() {
+                    4
+                } else {
+                    12
+                },
+            )),
         vrule(),
-        row(ops(state))
+        row(ops(state, operation.as_ref()))
             .spacing(2)
             .padding([0, 6])
             .align_y(Alignment::Center),
@@ -108,9 +118,54 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     )
 }
 
-/// The sketch being edited, named with its icon on the soft accent, joined
-/// at its right end by the button finishing it.
-fn sketch_pill<'a>(name: &'a str) -> Element<'a, Message> {
+/// The extrude, revolve or combine being set up, as the toolbar shows it.
+struct Operation<'a> {
+    icon: Icon,
+    /// "New revolve", or the feature edited.
+    name: &'a str,
+    /// What OK sends, or nothing while it can't be pressed.
+    ok: Option<Message>,
+    /// What Cancel sends.
+    cancel: Message,
+}
+
+/// The extrude, revolve or combine being set up, if one is.
+fn operation<'a>(state: &DocumentState<'a>) -> Option<Operation<'a>> {
+    if let Some(extrude) = &state.extrude {
+        return Some(Operation {
+            icon: Icon::Extrude,
+            name: extrude.editing.unwrap_or("New extrude"),
+            ok: extrude.ready.then_some(Message::Edit(Edit::CommitExtrude)),
+            cancel: Message::Look(Look::Extrude(crate::ExtrudeLook::Cancel)),
+        });
+    }
+    if let Some(revolve) = &state.revolve {
+        return Some(Operation {
+            icon: Icon::Revolve,
+            name: revolve.editing.unwrap_or("New revolve"),
+            ok: revolve.ready.then_some(Message::Edit(Edit::CommitRevolve)),
+            cancel: Message::Look(Look::Revolve(crate::RevolveLook::Cancel)),
+        });
+    }
+    let combine = state.combine.as_ref()?;
+    Some(Operation {
+        icon: Icon::Combine,
+        name: combine.editing.unwrap_or("New combine"),
+        ok: combine.ready.then_some(Message::Edit(Edit::CommitCombine)),
+        cancel: Message::Look(Look::Combine(crate::CombineLook::Cancel)),
+    })
+}
+
+/// The sketch being edited or the operation being set up, named with
+/// `icon` on the soft accent, joined at its right end by the button
+/// finishing it, sending `finish` (disabled without), which hovering
+/// tells `tip`.
+fn pill<'a>(
+    icon: Icon,
+    name: &'a str,
+    finish: Option<Message>,
+    tip: &'static str,
+) -> Element<'a, Message> {
     let finish = button(
         container(icons::tinted(Icon::Check, icons::INLINE, |p| {
             Emphasis::Primary.content(p)
@@ -121,19 +176,16 @@ fn sketch_pill<'a>(name: &'a str) -> Element<'a, Message> {
     .height(Length::Fill)
     .padding(0)
     .style(theme::pill_end_button)
-    .on_press(Message::Look(Look::FinishSketch));
+    .on_press_maybe(finish);
     container(
         row![
             container(
-                row![
-                    icons::icon(Icon::Sketch, icons::INLINE),
-                    text(name).font(SEMIBOLD)
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center)
+                row![icons::icon(icon, icons::INLINE), text(name).font(SEMIBOLD)]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
             )
             .padding([0, 8]),
-            crate::chrome::tip(finish, text("Finish sketch (Esc)")),
+            crate::chrome::tip(finish, text(tip)),
         ]
         .height(Length::Fill)
         .align_y(Alignment::Center),
@@ -233,8 +285,12 @@ pub(crate) fn tool_icon(tool: Tool) -> Icon {
 }
 
 /// The operations for what's going on: modelling, picking the plane for a
-/// new sketch, or editing a sketch.
-fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
+/// new sketch, or editing a sketch. While an `operation` is set up,
+/// Cancel leads them, its OK being in the pill.
+fn ops<'a>(
+    state: &DocumentState<'a>,
+    operation: Option<&Operation<'a>>,
+) -> Vec<Element<'a, Message>> {
     let editable = state.editable();
     let keys = state.keys();
     if let Some(sketch) = &state.sketch {
@@ -342,7 +398,21 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
         measure_binding(keys),
         state.measure.is_some(),
     );
-    vec![sketch, extrude, revolve, combine, separator(), measure]
+    let cancel = operation.map(|operation| {
+        [
+            op_button(
+                Icon::Close,
+                "Cancel",
+                Some(Shortcut::ESCAPE),
+                false,
+                Some(operation.cancel.clone()),
+            ),
+            separator(),
+        ]
+    });
+    (cancel.into_iter().flatten())
+        .chain([sketch, extrude, revolve, combine, separator(), measure])
+        .collect()
 }
 
 /// The label of the button making a sketch on `plane`.

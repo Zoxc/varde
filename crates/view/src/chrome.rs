@@ -8,10 +8,10 @@ use std::borrow::Cow;
 
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
-    Button, Column, Container, Rule, Scrollable, Text, button, column, container, opaque, row,
-    rule, scrollable, stack, text, tooltip,
+    Button, Column, Container, Rule, Scrollable, Text, button, column, container, opaque,
+    rich_text, row, rule, scrollable, span, stack, text, tooltip,
 };
-use iced::{Alignment, Element, Font, Length};
+use iced::{Alignment, Element, Font, Length, Padding};
 
 use crate::Message;
 use crate::icons::{self, Icon, MouseButton};
@@ -27,6 +27,42 @@ pub(crate) fn tip<'a>(
     tooltip(
         content,
         container(tip.size(12))
+            .padding([3, 6])
+            .max_width(theme::SIDE_PANEL_WIDTH * 1.5)
+            .style(theme::menu),
+        tooltip::Position::Bottom,
+    )
+    .into()
+}
+
+/// `content` telling, below it while hovered in a box as [`tip`]'s, why it
+/// failed: the alert, then `lead` ("Extrude fails: ", as the operation
+/// panel's failure box titles it) in semibold in the failed name's dark
+/// red, and `why` after it in the text's colour, both of `palette` (spans
+/// take their colours as they're made).
+pub(crate) fn failure_tip<'a>(
+    content: impl Into<Element<'a, Message>>,
+    lead: String,
+    why: Cow<'a, str>,
+    palette: &'static theme::Palette,
+) -> Element<'a, Message> {
+    let words: text::Rich<'a, (), Message> = rich_text![
+        span(lead)
+            .font(theme::SEMIBOLD)
+            .color(palette.danger_strong),
+        span(why).color(palette.text),
+    ]
+    .size(12)
+    .wrapping(text::Wrapping::WordOrGlyph);
+    let tip = row![
+        container(icons::tinted(Icon::Alert, 13.0, |p| p.danger_strong))
+            .padding(Padding::ZERO.top(1.0)),
+        words,
+    ]
+    .spacing(5);
+    tooltip(
+        content,
+        container(tip)
             .padding([3, 6])
             .max_width(theme::SIDE_PANEL_WIDTH * 1.5)
             .style(theme::menu),

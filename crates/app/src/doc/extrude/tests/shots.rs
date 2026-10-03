@@ -320,6 +320,16 @@ fn shots_02_picked() {
         camera.take(&doc, "02-picked-scale2", Shot::new().scale(2.0));
         camera.take(&doc, "02-picked-dark", Shot::new().dark());
         camera.take(&doc, "02-picked-dark-scale2", Shot::new().dark().scale(2.0));
+        // The cursor over the region's row, which fills the region as
+        // hovered.
+        doc.look(Look::HoverPanel(Some(PanelHover::Region {
+            sketch,
+            region,
+        })));
+        let row = Shot::new().pointer(Pointer::Over("Region 1"));
+        camera.take(&doc, "02-picked-row-hovered", row);
+        camera.take(&doc, "02-picked-row-hovered-scale2", row.scale(2.0));
+        doc.look(Look::HoverPanel(None));
         type_in(&mut doc, Distance::First, "30");
         answer(&mut doc, &requests);
         camera.take(&doc, "02-picked-30", Shot::new());
@@ -385,9 +395,12 @@ fn shots_04_cut() {
         camera.take(&doc, "04-cut-through-all-dark", Shot::new().dark());
         let dark2 = Shot::new().dark().scale(2.0);
         camera.take(&doc, "04-cut-through-all-dark-scale2", dark2);
-        // #34 3.3: the cursor over the body's row.
+        // #34 3.3: the cursor over the body's row, which lights the body
+        // in the preview (the shot doesn't send what the cursor does).
+        doc.look(Look::HoverPanel(Some(PanelHover::Body(body))));
         let row = Shot::new().pointer(Pointer::OverLast("Body 1"));
         camera.take(&doc, "04-cut-row-hovered", row);
+        doc.look(Look::HoverPanel(None));
         extrude(&mut doc, ExtrudeLook::Target(body));
         camera.take(&doc, "04-cut-untick-waiting", Shot::new());
         answer(&mut doc, &requests);
@@ -421,6 +434,14 @@ fn shots_05_join_intersect() {
         framed(&mut doc);
         camera.take(&doc, "05-intersect", Shot::new());
         camera.take(&doc, "05-intersect-dark", Shot::new().dark());
+        // Flipped, it leaves nothing: the draft fails, with Add anyway.
+        extrude(&mut doc, ExtrudeLook::Flip);
+        answer(&mut doc, &requests);
+        camera.take(&doc, "05-intersect-fails", Shot::new());
+        camera.take(&doc, "05-intersect-fails-scale2", Shot::new().scale(2.0));
+        camera.take(&doc, "05-intersect-fails-dark", Shot::new().dark());
+        extrude(&mut doc, ExtrudeLook::Flip);
+        answer(&mut doc, &requests);
         extrude(&mut doc, ExtrudeLook::Target(body));
         answer(&mut doc, &requests);
         camera.take(&doc, "05-intersect-untick", Shot::new());

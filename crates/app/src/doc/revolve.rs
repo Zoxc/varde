@@ -13,7 +13,9 @@ use varde_document::{
     Turn,
 };
 use varde_expr::{AngleUnit, Unit};
-use varde_view::{Angle, OperationKind, RevolveLook, RevolvePick, RevolveState, TurnKind};
+use varde_view::{
+    Angle, OperationKind, PanelHover, RevolveLook, RevolvePick, RevolveState, TurnKind,
+};
 
 use super::extrude::is_sketch;
 use super::regions::{BodyTargets, RegionPick, TypedText};
@@ -45,6 +47,8 @@ pub(crate) struct RevolveSession {
     pub(crate) targets: BodyTargets,
     /// The design as the fields' texts were last read, whose units bare
     /// lengths in them are in: see [`RevolveSession::follow_units`].
+    /// The panel's row the cursor is over, if any.
+    pub(crate) hover: Option<PanelHover>,
     design: Design,
 }
 
@@ -67,6 +71,7 @@ impl RevolveSession {
         Self {
             feature: None,
             regions: RegionPick::new(source, MAX_REVOLVE_REGIONS),
+            hover: None,
             axis: None,
             axis_missing: false,
             picking: RevolvePick::Regions,
@@ -402,6 +407,7 @@ impl Doc {
             ready: self.commit_by(self.revolve_ready(), false),
             accept: self.commit_by(self.revolve_ready(), true),
             editable: self.editable(),
+            hover: self.panel_hover(),
         })
     }
 }

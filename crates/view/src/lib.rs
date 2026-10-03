@@ -69,7 +69,9 @@ pub use measure::{
     MeasureLook, MeasureSlot, MeasureState, Outcome, Picked as MeasuredPick, Value as MeasureValue,
     between_values, face_kind, values as measure_values,
 };
-pub use operation_panel::{BodyTarget, Candidate, OperationKind, PANEL_BODY, TypedField};
+pub use operation_panel::{
+    BodyTarget, Candidate, OperationKind, PANEL_BODY, PanelHover, TypedField,
+};
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
@@ -394,6 +396,14 @@ pub enum Look {
     /// Show button: the failed feature's, or with `None` the preview's
     /// (the draft of the operation being set up).
     ShowFailure(Option<FeatureId>),
+    /// A row of an operation's panel hovered (a region or a body picked,
+    /// a body a join, cut or intersect touches), or none: the viewport
+    /// lights it up too.
+    HoverPanel(Option<PanelHover>),
+    /// The cursor left that row: nothing's hovered, unless another row
+    /// already is. Moving from a row to the one above, the one entered
+    /// tells it first.
+    LeavePanel(PanelHover),
     /// What the cursor is over in the model shown, outside sketches and
     /// sessions, or nothing: sent as it changes, and as the camera or the
     /// model does under a cursor that stays, see [`PickIndex::pick`]. The

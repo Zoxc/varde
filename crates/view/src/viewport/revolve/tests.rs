@@ -83,6 +83,7 @@ fn state<'a>(
         ready: axis.is_some() && !picked.is_empty(),
         accept: false,
         editable: true,
+        hover: None,
     }
 }
 

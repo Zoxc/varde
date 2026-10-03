@@ -84,6 +84,7 @@ fn state<'a>(
         accept: false,
         editable: true,
         units: LengthUnit::Mm,
+        hover: None,
     }
 }
 

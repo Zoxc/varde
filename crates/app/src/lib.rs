@@ -787,11 +787,12 @@ fn unfocused((_, event): (window::Id, window::Event)) -> Option<Message> {
 
 /// Has the value field take the focus, and select its text as `focus`
 /// says: all of it to overtype, or the part a refusal is about. An
-/// operation panel's body, where the field near its top may be, scrolls
-/// back to its top, so the field shows: an extrude edited while another's
-/// panel was scrolled keeps that panel, and so its scroll.
+/// operation panel's body, where the field may be, scrolls back to its
+/// top if the field shows from there, else down to the field
+/// ([`RevealField`]): an extrude edited while another's panel was
+/// scrolled keeps that panel, and so its scroll.
 fn focus_field(focus: Focus) -> Task<Message> {
-    use iced::widget::operation::{self, RelativeOffset};
+    use iced::widget::operation;
 
     let select = match focus {
         Focus::All => operation::select_all(varde_view::VALUE_FIELD),
@@ -799,10 +800,80 @@ fn focus_field(focus: Focus) -> Task<Message> {
     };
     operation::focus(varde_view::VALUE_FIELD)
         .chain(select)
-        .chain(operation::snap_to(
+        .chain(iced::advanced::widget::operate(RevealField::default()))
+}
+
+/// Scrolls an operation panel's body so the value field in it shows with
+/// its label over it: to the body's top where the field shows from
+/// there, else with the label at the top. A field outside the body (a
+/// dimension's, in a sketch) leaves it be.
+#[derive(Default)]
+struct RevealField {
+    /// The body's bounds and its content's.
+    body: Option<(iced::Rectangle, iced::Rectangle)>,
+    field: Option<iced::Rectangle>,
+}
+
+impl RevealField {
+    /// How far above the field its label starts, with a little room.
+    const LABEL: f32 = 24.0;
+}
+
+impl<T: Send + 'static> iced::advanced::widget::Operation<T> for RevealField {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation<T>)) {
+        operate(self);
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        bounds: iced::Rectangle,
+        content_bounds: iced::Rectangle,
+        _translation: iced::Vector,
+        _state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if id == Some(&varde_view::PANEL_BODY) {
+            self.body = Some((bounds, content_bounds));
+        }
+    }
+
+    fn focusable(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        bounds: iced::Rectangle,
+        _state: &mut dyn iced::advanced::widget::operation::Focusable,
+    ) {
+        if id == Some(&varde_view::VALUE_FIELD) {
+            self.field = Some(bounds);
+        }
+    }
+
+    fn finish(&self) -> iced::advanced::widget::operation::Outcome<T> {
+        use iced::advanced::widget::operation::{Outcome, scrollable};
+
+        let (Some((body, content)), Some(field)) = (self.body, self.field) else {
+            return Outcome::None;
+        };
+        // Where the field is in the content, which isn't moved by the
+        // scroll in layout.
+        let (top, bottom) = (field.y - content.y, field.y + field.height - content.y);
+        if top < 0.0 || bottom > content.height {
+            return Outcome::None;
+        }
+        let y = if bottom <= body.height {
+            0.0
+        } else {
+            (top - Self::LABEL).max(0.0)
+        };
+        let offset = scrollable::AbsoluteOffset {
+            x: None,
+            y: Some(y),
+        };
+        Outcome::Chain(Box::new(scrollable::scroll_to(
             varde_view::PANEL_BODY,
-            RelativeOffset::START,
-        ))
+            offset,
+        )))
+    }
 }
 
 /// Scrolls the rail's open list to `share` of the way to its end.

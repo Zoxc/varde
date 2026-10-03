@@ -465,9 +465,10 @@ impl shader::Program<Message> for Program<'_> {
         let operation = self.operating.as_ref().map(|operating| {
             let colors = self.sketch_colors;
             let (plane, (base, live)) = match operating {
-                Operating::Extrude(extruding) => {
-                    (extruding.plane(), extruding.layers(&state.extrude, colors))
-                }
+                Operating::Extrude(extruding) => (
+                    extruding.plane(),
+                    extruding.layers(&state.extrude, colors, &self.scene.camera, bounds),
+                ),
                 Operating::Revolve(revolving) => (
                     revolving.plane(),
                     revolving.layers(&state.revolve, colors, &self.scene.camera, bounds),

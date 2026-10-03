@@ -1,39 +1,48 @@
 //! The floating panel an operation is set up in, over the right of the
-//! viewport: a header with its title and a summary, a body with its
-//! options, and a footer with its message and Cancel and OK (and Accept
-//! error while the preview failed). The header
-//! and footer always show; the body scrolls when the panel would run past
-//! the room it has, so OK and Cancel stay on screen however many options
-//! there are or however short the window is.
+//! viewport, as the tool rail's cards are (the UI mock's `.opp`): an
+//! accent line along its top, a head with the operation's icon and title
+//! and its Cancel and OK as small square buttons, and a recessed well
+//! under it holding the body with the options and, at its foot, the
+//! message (why OK waits, or the draft failing, with Add anyway). The
+//! head and the foot always show; the body scrolls when the panel would
+//! run past the room it has, so OK and Cancel stay on screen however many
+//! options there are or however short the window is.
 //!
-//! The extrude (`extrude::panel`) and the revolve (`revolve::panel`) are
-//! set up in it, and the measure tool shows its values in it
-//! (`measure::panel`, with only Close), from the parts here they share: what a session hands the
-//! view of the sketches whose regions it picks, the choices, ticks and
-//! typed fields, the Bodies list of a join, cut or intersect, and the
-//! footer's message. The other operations are to set themselves up in it
-//! too.
+//! The extrude (`extrude::panel`), the revolve (`revolve::panel`) and the
+//! combine (`combine::panel`) are set up in it, and the measure tool
+//! shows its values in it (`measure::panel`, with only Close), from the
+//! parts here they share: what a session hands the view of the sketches
+//! whose regions it picks, the labels, choices as tiles, options as icon
+//! toggles, fields picked into by clicks in the viewport, typed fields,
+//! the Bodies list of a join, cut or intersect, and the foot's message.
+//! Its controls are the Timeline's rows' size: 28 px tall, 12.5 px words,
+//! 8 px in.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
-use iced::widget::text::Wrapping;
-use iced::widget::{button, checkbox, column, container, opaque, row, space, text, text_input};
-use iced::{Alignment, Element, Event, Length, Rectangle, Size, Vector};
+use iced::widget::text::{LineHeight, Wrapping};
+use iced::widget::{
+    Space, Text, button, checkbox, column, container, hover, mouse_area, opaque, row, space, text,
+    text_input,
+};
+use iced::{Alignment, Border, Color, Element, Event, Length, Padding, Rectangle, Size, Vector};
 use varde_document::{BodyId, FeatureId, Placement};
 use varde_sketch::{Profiles, Sketch};
 
-use crate::chrome::{SHOW_FAILURE, heading, hrule, scrolled, sentence, small_button};
+use crate::chrome::{SHOW_FAILURE, hrule, scrolled, sentence, small_button, tip};
 use crate::controls::CONTROLS_HEIGHT;
 use crate::escape::OnEscape;
+use crate::icons::{self, Icon};
 use crate::status::STATUS_BAR_ROOM;
-use crate::theme::{self, Emphasis, SEMIBOLD};
+use crate::theme::{self, BOLD, SEMIBOLD};
 use crate::viewport::CONTROLS_TOP;
 use crate::{Look, Message};
 
 /// How wide the panel is, in pixels.
-pub(crate) const PANEL_WIDTH: f32 = 264.0;
+pub(crate) const PANEL_WIDTH: f32 = 288.0;
 
 /// How far below the viewport's top the panel starts, clear of the
 /// camera controls (the view cube and Home), in pixels.
@@ -48,7 +57,7 @@ pub(crate) const PANEL_MARGIN: f32 = 12.0;
 pub(crate) const PANEL_BOTTOM: f32 = STATUS_BAR_ROOM + PANEL_MARGIN;
 
 /// How tall the panel may get below its top before it rises above
-/// [`PANEL_TOP`], in pixels: its header and footer and a few rows of its
+/// [`PANEL_TOP`], in pixels: its head and foot and a few rows of its
 /// body. A shorter viewport lifts the panel over the camera controls
 /// rather than squeeze its body to nothing or its buttons away.
 const PANEL_ROOM: f32 = 200.0;
@@ -56,23 +65,44 @@ const PANEL_ROOM: f32 = 200.0;
 /// The scrollable holding the panel's body.
 pub const PANEL_BODY: iced::widget::Id = iced::widget::Id::new("operation-panel-body");
 
-/// How tall the footer's message gets at most, in pixels: about five
-/// lines. A longer one scrolls, so it can't push OK off the panel and
-/// none of it is lost.
+/// The head's buttons, which have no words of their own: what each is
+/// called, which the tests' probe reports as their text.
+pub(crate) const OK_BUTTON: iced::widget::Id = iced::widget::Id::new("OK");
+pub(crate) const CANCEL_BUTTON: iced::widget::Id = iced::widget::Id::new("Cancel");
+pub(crate) const CLOSE_BUTTON: iced::widget::Id = iced::widget::Id::new("Close");
+
+/// The head's buttons and what each is called, see [`OK_BUTTON`].
+#[cfg(any(test, feature = "probe"))]
+pub(crate) const BUTTON_NAMES: [(iced::widget::Id, &str); 3] = [
+    (OK_BUTTON, "OK"),
+    (CANCEL_BUTTON, "Cancel"),
+    (CLOSE_BUTTON, "Close"),
+];
+
+/// How tall a message at the foot gets at most, in pixels: about five
+/// lines. A longer one scrolls, so it can't push the body away and none
+/// of it is lost.
 const MESSAGE_HEIGHT: f32 = 80.0;
 
-/// The horizontal padding of the panel's sections, in pixels. The
+/// The horizontal padding of the body and the foot, in pixels. The
 /// scrollbars of the body and the message float in its right padding,
 /// clear of the text.
-const SIDE: f32 = 10.0;
+const SIDE: f32 = 9.0;
 
-/// How far in from the panel's side a typed value's field starts: its
-/// label's width and the gap after it. Why its text is refused shows
-/// under it, as far in.
+/// How thick the accent line along the card's top is, in pixels.
+const ACCENT_LINE: f32 = 3.0;
+
+/// The corner radius of the card, and of the well's top corners.
+const CARD_RADIUS: f32 = 8.0;
+const WELL_RADIUS: f32 = 6.0;
+
+/// How tall the panel's controls are, as the Timeline's rows, and the
+/// size of their words.
+pub(crate) const CONTROL_HEIGHT: f32 = 28.0;
+pub(crate) const CONTROL_TEXT: f32 = 12.5;
+
+/// How wide the measure tool's labels are, left of their values.
 pub(crate) const FIELD_INDENT: f32 = 68.0;
-
-/// The gap between a typed value's label and its field.
-const FIELD_GAP: f32 = 6.0;
 
 /// A sketch whose regions can be picked, and where they are.
 #[derive(Debug, Clone, Copy)]
@@ -136,11 +166,57 @@ impl OperationKind {
         }
     }
 
+    /// Its choice's icon: the booleans as circles.
+    pub(crate) fn icon(self) -> Icon {
+        match self {
+            OperationKind::NewBody => Icon::BoNew,
+            OperationKind::Join => Icon::BoJoin,
+            OperationKind::Cut => Icon::BoCut,
+            OperationKind::Intersect => Icon::BoInt,
+        }
+    }
+
     /// Whether it works on bodies already there, which the panel then
     /// lists.
     pub fn has_targets(self) -> bool {
         self != OperationKind::NewBody
     }
+}
+
+/// What the cursor is over in an operation's panel, for the viewport to
+/// light up too: a picked region's row, a revolve's axis's, or a body's (a
+/// combine's target or tool, or one a join, cut or intersect touches).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelHover {
+    Region { sketch: FeatureId, region: usize },
+    Axis,
+    Body(BodyId),
+}
+
+impl PanelHover {
+    /// The region, and its sketch, if it's one.
+    pub fn region(self) -> Option<(FeatureId, usize)> {
+        match self {
+            PanelHover::Region { sketch, region } => Some((sketch, region)),
+            PanelHover::Axis | PanelHover::Body(_) => None,
+        }
+    }
+
+    /// The body, if it's one.
+    pub fn body(self) -> Option<BodyId> {
+        match self {
+            PanelHover::Body(body) => Some(body),
+            PanelHover::Region { .. } | PanelHover::Axis => None,
+        }
+    }
+}
+
+/// The messages telling the app `hover` is entered, and left.
+fn hovering(hover: PanelHover) -> (Message, Message) {
+    (
+        Message::Look(Look::HoverPanel(Some(hover))),
+        Message::Look(Look::LeavePanel(hover)),
+    )
 }
 
 /// A body a join, cut or intersect touches, or one taken out of it.
@@ -158,100 +234,216 @@ pub struct BodyTarget<'a> {
 
 /// What an operation's panel shows.
 pub(crate) struct Parts<'a> {
+    /// The operation's icon, before its title.
+    pub icon: Icon,
     /// The operation's name, or the feature edited: one line, clipped.
     pub title: &'a str,
-    /// A short note right of the title, such as what's picked.
-    pub summary: Option<Element<'a, Message>>,
     /// The options, scrolled when they don't fit.
     pub body: Element<'a, Message>,
-    /// Above the buttons: why OK can't be pressed, say. It scrolls past
-    /// about five lines.
-    pub message: Option<Element<'a, Message>>,
+    /// At the well's foot: why OK can't be pressed, say, or the draft
+    /// failing.
+    pub message: Option<Footer<'a>>,
     /// What OK sends, or nothing while it can't be pressed.
     pub ok: Option<Message>,
-    /// What Accept error sends, left of OK in the danger colour, shown
-    /// only while it can be pressed: the preview failed, and pressing it
-    /// keeps the operation with its error (marked failed in the
-    /// Timeline, to fix later).
-    pub accept: Option<Message>,
     /// What Cancel sends.
     pub cancel: Message,
-    /// Whether the footer has only a Close button, sending `cancel`, in
+    /// Whether the head has only a Close button, sending `cancel`, in
     /// place of Cancel and OK: for a tool that changes nothing, as the
     /// measure tool.
     pub close: bool,
+}
+
+/// The message at the panel's foot.
+pub(crate) enum Footer<'a> {
+    /// Words (see [`message_text`]), scrolled past about five lines.
+    Text(Element<'a, Message>),
+    /// The draft failing: "Extrude fails" (`noun`) over why, with Show
+    /// sending `show`, if its geometry has a box, and Add anyway sending
+    /// `accept`, if it can be pressed, which keeps the operation with its
+    /// error (marked failed in the Timeline, to fix later). OK waits
+    /// meanwhile.
+    Fails {
+        noun: &'a str,
+        error: Cow<'a, str>,
+        show: Option<Message>,
+        accept: Option<Message>,
+    },
 }
 
 /// The panel showing `parts`. It's `opaque`: clicks and the wheel over it
 /// don't reach the scene under it.
 pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
     let Parts {
+        icon,
         title,
-        summary,
         body,
         message,
         ok,
-        accept,
         cancel,
         close,
     } = parts;
     let title = container(text(title).size(13).font(SEMIBOLD).wrapping(Wrapping::None))
         .width(Length::Fill)
         .clip(true);
-    let header = column![
-        container(row![title, summary].spacing(8).align_y(Alignment::Center)).padding([9.0, SIDE]),
-        hrule(),
-    ];
+    let buttons: Element<'_, Message> = if close {
+        head_button(
+            Icon::Cancel,
+            CLOSE_BUTTON,
+            false,
+            Some(cancel),
+            "Close (Esc)",
+        )
+    } else {
+        row![
+            head_button(
+                Icon::Cancel,
+                CANCEL_BUTTON,
+                false,
+                Some(cancel),
+                "Cancel (Esc)"
+            ),
+            head_button(Icon::Confirm, OK_BUTTON, true, ok, "OK (Enter)"),
+        ]
+        .spacing(6)
+        .into()
+    };
+    let header = container(
+        row![icons::icon(icon, icons::INLINE), title, buttons]
+            .spacing(6)
+            .align_y(Alignment::Center),
+    )
+    .padding(Padding::from([7.0, 6.0]).left(8.0));
     // Both scrollbars float in the right padding, clear of the text.
     let margin = (SIDE - theme::SCROLLBAR_WIDTH) / 2.0;
     let body = scrolled(
         container(body)
             .width(Length::Fill)
-            .padding(iced::Padding::from([8.0, SIDE]).bottom(10.0)),
+            .padding(Padding::from([6.0, SIDE]).bottom(10.0)),
         margin,
     )
     .id(PANEL_BODY)
     .width(Length::Fill);
-    let message = message.map(|message| {
-        container(
-            scrolled(
-                container(message).width(Length::Fill).padding([0.0, SIDE]),
-                margin,
+    let footer: Element<'_, Message> = match message {
+        None => Space::new().into(),
+        Some(Footer::Text(message)) => container(
+            container(
+                scrolled(
+                    container(message).width(Length::Fill).padding([0.0, SIDE]),
+                    margin,
+                )
+                .width(Length::Fill),
             )
-            .width(Length::Fill),
+            .max_height(MESSAGE_HEIGHT),
         )
-        .max_height(MESSAGE_HEIGHT)
-    });
-    let buttons = if close {
-        row![
-            space::horizontal(),
-            small_button("Close", Emphasis::Secondary).on_press(cancel),
-        ]
-    } else {
-        let accept = accept.map(|accept| {
-            small_button("Accept error", Emphasis::Primary)
-                .style(theme::danger_button)
-                .on_press(accept)
-        });
-        row![
-            space::horizontal(),
-            small_button("Cancel", Emphasis::Secondary).on_press(cancel),
+        .padding(Padding::ZERO.top(2.0).bottom(8.0))
+        .into(),
+        Some(Footer::Fails {
+            noun,
+            error,
+            show,
             accept,
-            small_button("OK", Emphasis::Primary).on_press_maybe(ok),
-        ]
-    }
-    .spacing(6);
-    let footer = column![
-        hrule(),
-        column![message, container(buttons).padding([0.0, SIDE])]
-            .spacing(6)
-            .padding(iced::Padding::from([8.0, 0.0]).bottom(10.0)),
-    ];
+        }) => container(fail_box(noun, error, show, accept))
+            .padding(Padding::from([0.0, SIDE]).top(2.0).bottom(8.0))
+            .into(),
+    };
     let sections = Sections {
         width: PANEL_WIDTH,
-        parts: [header.into(), body.into(), footer.into()],
+        parts: [header.into(), body.into(), footer],
     };
-    opaque(container(sections).style(theme::operation_panel).clip(true))
+    opaque(sections)
+}
+
+/// A square icon button of the head, `icon` in it, with the id `id`
+/// naming it, sending `message`, or disabled without one; `primary` is
+/// OK's look. Hovering it tells `tip`.
+fn head_button<'a>(
+    icon: Icon,
+    id: iced::widget::Id,
+    primary: bool,
+    message: Option<Message>,
+    tip_text: &'a str,
+) -> Element<'a, Message> {
+    let enabled = message.is_some();
+    // 16 px in the 26 px square sits on whole pixels: at 15 the centring
+    // puts it half a pixel off, which blurs the cross's middle wide.
+    let glyph: Element<'a, Message> = Element::from(icons::tinted(icon, 16.0, move |p| {
+        match (primary, enabled) {
+            (true, _) => theme::Emphasis::Primary.content(p),
+            (false, true) => p.muted,
+            (false, false) => p.faint,
+        }
+    }));
+    let button = button(container(glyph).center(Length::Fill))
+        .width(26)
+        .height(26)
+        .padding(0)
+        .style(theme::head_button(primary))
+        .on_press_maybe(message);
+    container(tip(button, text(tip_text))).id(id).into()
+}
+
+/// The box of a draft that fails, at the foot: a title, "Extrude fails"
+/// (`noun`), with the alert in the danger colour on its wash, `error`
+/// under it in muted words, scrolled past about five lines, Show at the
+/// title's right sending `show`, if there's geometry to frame, and Add
+/// anyway sending `accept`, if it can be pressed.
+fn fail_box<'a>(
+    noun: &'a str,
+    error: Cow<'a, str>,
+    show: Option<Message>,
+    accept: Option<Message>,
+) -> Element<'a, Message> {
+    let title = container(
+        row![
+            icons::tinted(Icon::Alert, 14.0, |p| p.danger),
+            container(
+                text(format!("{noun} fails"))
+                    .size(CONTROL_TEXT)
+                    .font(SEMIBOLD)
+                    .wrapping(Wrapping::WordOrGlyph),
+            )
+            .width(Length::Fill),
+        ]
+        .push(show.map(|show| {
+            small_button(SHOW_FAILURE, theme::Emphasis::Secondary)
+                .padding([0, 6])
+                .on_press(show)
+        }))
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([5, 8])
+    .style(theme::fail_title);
+    let words = container(
+        scrolled(
+            container(
+                text(error)
+                    .size(CONTROL_TEXT)
+                    .wrapping(Wrapping::WordOrGlyph)
+                    .style(theme::muted_text),
+            )
+            .width(Length::Fill)
+            .padding(Padding::from([5.0, 8.0]).bottom(7.0)),
+            2.0,
+        )
+        .width(Length::Fill),
+    )
+    .max_height(MESSAGE_HEIGHT);
+    let add = accept.map(|accept| {
+        container(
+            button(text("Add anyway").size(CONTROL_TEXT).font(SEMIBOLD))
+                .padding([3, 10])
+                .style(theme::add_anyway)
+                .on_press(accept),
+        )
+        .align_right(Length::Fill)
+        .padding(Padding::from([0.0, 8.0]).bottom(8.0))
+    });
+    container(column![title, words, add])
+        .width(Length::Fill)
+        .style(theme::fail_box)
+        .into()
 }
 
 /// `panel` placed over a viewport: at its right, [`PANEL_MARGIN`] in from
@@ -408,44 +600,118 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Placed<'_> {
     }
 }
 
-/// Four choices in two rows of two.
-pub(crate) fn grid<'a>(choices: [Element<'a, Message>; 4]) -> Element<'a, Message> {
-    let [a, b, c, d] = choices;
-    column![row![a, b].spacing(4), row![c, d].spacing(4)]
-        .spacing(4)
-        .into()
+/// A label of the panel's, a field's or a section's alike: 11 px, bold,
+/// faint.
+pub(crate) fn label(label: &str) -> Text<'_> {
+    text(label).size(11).font(BOLD).style(theme::faint_text)
 }
 
-/// A choice of the panel's, highlighted while `on`, sending `message`, or
-/// disabled without one.
-pub(crate) fn choice<'a>(
+/// `content` under its `label`: a field, or a section.
+pub(crate) fn field<'a>(
+    label_text: &'a str,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    column![label(label_text), content.into()].spacing(3).into()
+}
+
+/// Choices among a few, as tiles side by side, sharing the width.
+pub(crate) fn tiles<'a>(
+    tiles: impl IntoIterator<Item = Element<'a, Message>>,
+) -> Element<'a, Message> {
+    row(tiles).spacing(4).into()
+}
+
+/// A choice of the panel's as a tile, `icon` over `label`, picked while
+/// `on`, sending `message`, or disabled without one.
+pub(crate) fn tile<'a>(
+    icon: Icon,
     label: &'a str,
     on: bool,
     message: Option<Message>,
 ) -> Element<'a, Message> {
-    let font = if on { SEMIBOLD } else { iced::Font::DEFAULT };
+    let glyph: Element<'a, Message> = if message.is_some() {
+        icons::icon(icon, 22.0)
+    } else {
+        icons::tinted(icon, 22.0, |p| p.faint).into()
+    };
     button(
-        text(label)
-            .size(12)
-            .font(font)
-            .width(Length::Fill)
-            .align_x(Alignment::Center),
+        column![
+            glyph,
+            text(label)
+                .size(10.5)
+                .line_height(LineHeight::Relative(1.15))
+                .wrapping(Wrapping::WordOrGlyph)
+                .align_x(Alignment::Center)
+                .width(Length::Fill),
+        ]
+        .spacing(3)
+        .align_x(Alignment::Center),
     )
     .width(Length::Fill)
-    .padding([3, 6])
-    .style(theme::choice(on))
+    .padding(Padding::from([6.0, 2.0]).bottom(4.0))
+    .style(theme::tile(on))
     .on_press_maybe(message)
     .into()
 }
 
-/// A checkbox of the panel's, ticked while `on`, sending `message` when
-/// clicked, or disabled without one.
+/// An option of the panel's as an icon toggle: a square button with the
+/// option's `icon` beside its `label`, lit while `on`, the row and the
+/// button tinted on hover, sending `message`, or disabled without one.
+/// Hovering it tells `note`, if there is one.
+pub(crate) fn toggle<'a>(
+    icon: Icon,
+    label: &'a str,
+    on: bool,
+    message: Option<Message>,
+    note: Option<&'a str>,
+) -> Element<'a, Message> {
+    let enabled = message.is_some();
+    let square = move |hovered: bool| -> Element<'a, Message> {
+        let glyph: Element<'a, Message> =
+            Element::from(icons::tinted(icon, 18.0, move |p| {
+                match (enabled, on, hovered) {
+                    (false, ..) => p.faint,
+                    (true, true, _) => p.accent,
+                    (true, false, true) => p.text,
+                    (true, false, false) => p.muted,
+                }
+            }));
+        container(glyph)
+            .center(CONTROL_HEIGHT)
+            .style(theme::toggle_square(on, hovered))
+            .into()
+    };
+    let padding = Padding::from([3.0, 4.0]);
+    let base = button(
+        row![square(false), text(label).size(CONTROL_TEXT)]
+            .spacing(10)
+            .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding(padding)
+    .style(theme::toggle_row)
+    .on_press_maybe(message);
+    // Hovered, the square is drawn again over itself, lit: the label
+    // isn't, so it shows once.
+    let toggle: Element<'a, Message> = if enabled {
+        hover(base, container(square(true)).padding(padding))
+    } else {
+        base.into()
+    };
+    match note {
+        Some(note) => tip(toggle, text(note)),
+        None => toggle,
+    }
+}
+
+/// A checkbox of the panel's, as the Bodies list's, ticked while `on`,
+/// sending `message` when clicked, or disabled without one.
 pub(crate) fn tick<'a>(label: &'a str, on: bool, message: Option<Message>) -> Element<'a, Message> {
     checkbox(on)
         .label(label)
         .size(15)
         .spacing(7)
-        .text_size(12)
+        .text_size(CONTROL_TEXT)
         // A name with no spaces breaks where the panel ends.
         .text_wrapping(Wrapping::WordOrGlyph)
         .style(theme::tick)
@@ -453,17 +719,117 @@ pub(crate) fn tick<'a>(label: &'a str, on: bool, message: Option<Message>) -> El
         .into()
 }
 
-/// A labelled row of the panel: `label` as wide as a typed value's,
-/// then `content`.
-pub(crate) fn labelled<'a>(
-    label: &'a str,
-    content: impl Into<Element<'a, Message>>,
+/// A field picked into by clicks in the viewport: what's picked as
+/// `rows` ([`picked_row`]), then where to click for more, `place`, if
+/// there is one, under a rule (or alone, the field's one row). Outlined
+/// in the accent while it's the one picking (`on`); a click on it makes
+/// it so, sending `message`.
+pub(crate) fn pick_field<'a>(
+    rows: Vec<Element<'a, Message>>,
+    place: Option<String>,
+    on: bool,
+    message: Option<Message>,
 ) -> Element<'a, Message> {
-    let label = text(label).size(12).width(FIELD_INDENT - FIELD_GAP);
-    row![label, content.into()]
-        .spacing(FIELD_GAP)
-        .align_y(Alignment::Center)
-        .into()
+    let alone = rows.is_empty();
+    let place = place.map(|place| {
+        let line = button(
+            row![
+                // In the column of the rows' icons, so its words start
+                // where their names do.
+                container(icons::tinted(Icon::Plus, 13.0, move |p| if on {
+                    p.accent
+                } else {
+                    p.muted
+                }))
+                .center_x(icons::INLINE),
+                text(place)
+                    .size(11.5)
+                    .wrapping(Wrapping::WordOrGlyph)
+                    .style(move |theme: &iced::Theme| text::Style {
+                        color: on.then_some(theme::palette(theme).accent),
+                    }),
+            ]
+            .spacing(8)
+            .height(Length::Fill)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(if alone {
+            CONTROL_HEIGHT - 2.0
+        } else {
+            CONTROL_HEIGHT - 4.0
+        })
+        // The rows' icons sit 2 + 6 in from the box's inside.
+        .padding([0, 8])
+        .style(theme::place_line(alone))
+        .on_press_maybe(message.clone());
+        if alone {
+            Element::from(line)
+        } else {
+            column![hrule(), line].into()
+        }
+    });
+    let rows = (!alone).then(|| container(column(rows)).padding(2));
+    let field = container(column![rows, place])
+        .width(Length::Fill)
+        .padding(1)
+        .style(theme::pick_box(on));
+    match message {
+        Some(message) => mouse_area(field)
+            .on_press(message)
+            .interaction(mouse::Interaction::Pointer)
+            .into(),
+        None => field.into(),
+    }
+}
+
+/// A row of what's picked in a [`pick_field`], as the Timeline's: `icon`,
+/// `name`, `meta` at the right, and a cross taking it out sending
+/// `remove`, if it can be. A click on the row sends `press`. It's
+/// `what` to the viewport, which lights it up while the row is hovered,
+/// and shows hovered while `hovered` is it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn picked_row<'a>(
+    icon: Icon,
+    name: impl text::IntoFragment<'a>,
+    meta: Option<String>,
+    remove: Option<Message>,
+    press: Option<Message>,
+    what: PanelHover,
+    hovered: Option<PanelHover>,
+) -> Element<'a, Message> {
+    let cross = remove.map(|remove| {
+        button(container(icons::tinted(Icon::Remove, 14.0, |p| p.faint)).center(22))
+            .padding(0)
+            .style(theme::remove_button)
+            .on_press(remove)
+    });
+    let meta = meta.map(|meta| {
+        text(meta)
+            .size(11.5)
+            .wrapping(Wrapping::None)
+            .style(theme::faint_text)
+    });
+    let row = button(
+        row![
+            icons::icon(icon, icons::INLINE),
+            container(text(name).size(CONTROL_TEXT).wrapping(Wrapping::None))
+                .width(Length::Fill)
+                .clip(true),
+            meta,
+            cross,
+        ]
+        .spacing(8)
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .height(CONTROL_HEIGHT)
+    .padding(Padding::from([0.0, 3.0]).left(6.0))
+    .style(theme::picked_row(hovered == Some(what)))
+    .on_press_maybe(press);
+    let (enter, exit) = hovering(what);
+    mouse_area(row).on_enter(enter).on_exit(exit).into()
 }
 
 /// A typed value's field, named `label`, with the id `id`, showing why its
@@ -471,34 +837,34 @@ pub(crate) fn labelled<'a>(
 /// document can be changed; `Enter` in it sends `submit` (OK), `Esc`
 /// `cancel`.
 pub(crate) fn value_field<'a>(
-    label: &'a str,
+    label_text: &'a str,
     id: iced::widget::Id,
-    field: TypedField<'a>,
+    field_text: TypedField<'a>,
     input: Option<impl Fn(String) -> Message + 'a>,
     submit: Message,
     cancel: Message,
 ) -> Element<'a, Message> {
-    let field_input = text_input(label, field.text)
+    let field_input = text_input(label_text, field_text.text)
         .id(id)
-        .size(12)
-        .padding([2, 4])
-        .width(Length::Fill);
+        .size(CONTROL_TEXT)
+        // 28 px tall with its border, as the panel's other controls.
+        .line_height(LineHeight::Absolute(16.0.into()))
+        .padding([6, 8])
+        .width(Length::Fill)
+        .style(theme::field_input(field_text.error.is_some()));
     let field_input = match input {
         Some(input) => field_input.on_input(input).on_submit(submit),
         None => field_input,
     };
     let field_input = OnEscape::new(field_input, cancel);
-    let error = field.error.map(|error| {
-        container(
-            text(sentence(&error.to_string()).into_owned())
-                .size(11.5)
-                .wrapping(Wrapping::WordOrGlyph)
-                .style(theme::danger_text),
-        )
-        .padding(iced::Padding::ZERO.left(FIELD_INDENT))
+    let error = field_text.error.map(|error| {
+        text(sentence(&error.to_string()).into_owned())
+            .size(11.5)
+            .wrapping(Wrapping::WordOrGlyph)
+            .style(theme::danger_text)
     });
-    column![labelled(label, field_input), error]
-        .spacing(2)
+    column![label(label_text), field_input, error]
+        .spacing(3)
         .into()
 }
 
@@ -517,13 +883,13 @@ pub(crate) fn bodies<'a>(
     }
     let rows = targets.iter().map(|&target| {
         let tick = tick(target.name, target.included, toggle(target.body));
-        match target.holder {
+        let row: Element<'a, Message> = match target.holder {
             // Faint, as the Objects list notes a merged body.
             Some(holder) => row![
                 tick,
                 space::horizontal(),
                 text(format!("in {holder}"))
-                    .size(12)
+                    .size(11.5)
                     .wrapping(Wrapping::None)
                     .style(theme::faint_text),
             ]
@@ -531,19 +897,24 @@ pub(crate) fn bodies<'a>(
             .align_y(Alignment::Center)
             .into(),
             None => tick,
-        }
+        };
+        let (enter, exit) = hovering(PanelHover::Body(target.body));
+        Element::from(mouse_area(row).on_enter(enter).on_exit(exit))
     });
     let merging = joined_into(operation, targets).map(|holder| {
-        // The mock's panel note: faint, 12 px.
+        // The mock's panel note: faint.
         text(format!("Joined into {holder}"))
             .size(12)
             .wrapping(Wrapping::WordOrGlyph)
             .style(theme::faint_text)
     });
     Some(
-        column![heading("Bodies"), column(rows).spacing(4), merging]
-            .spacing(6)
-            .into(),
+        column![
+            label("Bodies"),
+            column![column(rows).spacing(6), merging].spacing(6)
+        ]
+        .spacing(6)
+        .into(),
     )
 }
 
@@ -562,57 +933,53 @@ pub(crate) fn joined_into<'a>(
     included.next().map(|_| first.name)
 }
 
-/// The footer's message: why OK can't be pressed (`refused`, by the
-/// operation's own check), else why the preview failed (`error`), with a
-/// Show button beside it framing the camera on where if `show` (its
-/// geometry has a box), else, if `checking`, that OK waits on the
-/// solver.
+/// The foot's message: why OK can't be pressed (`refused`, by the
+/// operation's own check), else the draft failing (`error`), as "Extrude
+/// fails" (`noun`) with a Show button framing the camera on where if
+/// `show` (its geometry has a box) and Add anyway sending `accept` if it
+/// can be pressed, else, if `checking`, that OK waits on the solver.
 pub(crate) fn footer_message<'a>(
+    noun: &'a str,
     refused: Option<String>,
     error: Option<&'a str>,
     show: bool,
+    accept: Option<Message>,
     checking: bool,
-) -> Option<Element<'a, Message>> {
+) -> Option<Footer<'a>> {
     match (refused, error) {
-        (Some(refused), _) => Some(message_text(
+        (Some(refused), _) => Some(Footer::Text(message_text(
             sentence(&refused).into_owned(),
             theme::danger_text,
-        )),
-        (None, Some(error)) if show => {
-            let show = small_button(SHOW_FAILURE, Emphasis::Secondary)
-                .padding([0, 6])
-                .on_press(Message::Look(Look::ShowFailure(None)));
-            Some(
-                row![
-                    container(message_text(sentence(error), theme::danger_text))
-                        .width(Length::Fill),
-                    show
-                ]
-                .spacing(6)
-                .into(),
-            )
+        ))),
+        (None, Some(error)) => Some(Footer::Fails {
+            noun,
+            error: sentence(error),
+            show: show.then_some(Message::Look(Look::ShowFailure(None))),
+            accept,
+        }),
+        (None, None) => {
+            checking.then(|| Footer::Text(message_text("Checking the sketch…", theme::muted_text)))
         }
-        (None, Some(error)) => Some(message_text(sentence(error), theme::danger_text)),
-        (None, None) => checking.then(|| message_text("Checking the sketch…", theme::muted_text)),
     }
 }
 
-/// The text of a message in a panel's footer, in `style`, broken within
-/// words where they don't fit, as a message may quote a name.
+/// The text of a message in the panel, in `style`, broken within words
+/// where they don't fit, as a message may quote a name.
 pub(crate) fn message_text<'a>(
     message: impl text::IntoFragment<'a>,
     style: fn(&iced::Theme) -> text::Style,
 ) -> Element<'a, Message> {
     text(message)
-        .size(12)
+        .size(CONTROL_TEXT)
         .wrapping(Wrapping::WordOrGlyph)
         .style(style)
         .into()
 }
 
-/// A header, a body and a footer, one above the other, `width` wide: the
-/// header and footer as tall as they are, the body in what's left of the
-/// height the panel may take, at most as tall as it is.
+/// The card: a header, a body and a footer, one above the other, `width`
+/// wide, under the accent line, the body and the footer in the recessed
+/// well: the header and footer as tall as they are, the body in what's
+/// left of the height the panel may take, at most as tall as it is.
 ///
 /// A column can't do this: it lays its children out in order, so the
 /// footer would get only what the body leaves, and a body filling the
@@ -621,6 +988,10 @@ struct Sections<'a> {
     width: f32,
     parts: [Element<'a, Message>; 3],
 }
+
+/// How far in from the card's sides and bottom its parts are: inside its
+/// 1 px border.
+const BORDER: f32 = 1.0;
 
 impl Widget<Message, iced::Theme, iced::Renderer> for Sections<'_> {
     fn size(&self) -> Size<Length> {
@@ -647,23 +1018,25 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Sections<'_> {
         let [header_tree, body_tree, footer_tree] = &mut tree.children[..] else {
             unreachable!("three parts have three trees");
         };
-        let within = |height: f32| layout::Limits::new(Size::ZERO, Size::new(max.width, height));
-        // The footer first: where even the header and footer don't fit,
-        // the buttons keep their height and the title gives way.
-        let footer = footer
-            .as_widget_mut()
-            .layout(footer_tree, renderer, &within(max.height));
-        let left = (max.height - footer.size().height).max(0.0);
+        let inner = (max.width - 2.0 * BORDER).max(0.0);
+        let within = |height: f32| layout::Limits::new(Size::ZERO, Size::new(inner, height));
+        // The header first: where even the header and footer don't fit,
+        // its buttons keep their height and the message gives way.
+        let room = (max.height - ACCENT_LINE - BORDER).max(0.0);
         let header = header
             .as_widget_mut()
-            .layout(header_tree, renderer, &within(left));
-        let left = (left - header.size().height).max(0.0);
+            .layout(header_tree, renderer, &within(room));
+        let left = (room - header.size().height).max(0.0);
+        let footer = footer
+            .as_widget_mut()
+            .layout(footer_tree, renderer, &within(left));
+        let left = (left - footer.size().height).max(0.0);
         let body = body
             .as_widget_mut()
             .layout(body_tree, renderer, &within(left));
-        let body_top = header.size().height;
+        let body_top = ACCENT_LINE + header.size().height;
         let footer_top = body_top + body.size().height;
-        let height = footer_top + footer.size().height;
+        let height = footer_top + footer.size().height + BORDER;
         let size = limits.resolve(
             Length::Fixed(self.width),
             Length::Shrink,
@@ -672,9 +1045,9 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Sections<'_> {
         layout::Node::with_children(
             size,
             vec![
-                header,
-                body.move_to((0.0, body_top)),
-                footer.move_to((0.0, footer_top)),
+                header.move_to((BORDER, ACCENT_LINE)),
+                body.move_to((BORDER, body_top)),
+                footer.move_to((BORDER, footer_top)),
             ],
         )
     }
@@ -748,14 +1121,77 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Sections<'_> {
         tree: &Tree,
         renderer: &mut iced::Renderer,
         theme: &iced::Theme,
-        style: &renderer::Style,
+        _style: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        use iced::advanced::Renderer as _;
+
+        let p = theme::palette(theme);
+        let card = layout.bounds();
+        let radius = |top: f32, bottom: f32| iced::border::Radius::new(top).bottom(bottom);
+        let quad = |bounds: Rectangle, radius, border: Border| renderer::Quad {
+            bounds,
+            border: Border { radius, ..border },
+            ..renderer::Quad::default()
+        };
+        // Its shadow, then the accent line along its top, round at the
+        // card's corners, the panel's colour over the rest of it.
+        renderer.fill_quad(
+            renderer::Quad {
+                shadow: theme::CARD_SHADOW,
+                ..quad(card, CARD_RADIUS.into(), Border::default())
+            },
+            Color::TRANSPARENT,
+        );
+        let accent = Rectangle {
+            height: (ACCENT_LINE + CARD_RADIUS).min(card.height),
+            ..card
+        };
+        renderer.fill_quad(
+            quad(accent, radius(CARD_RADIUS, 0.0), Border::default()),
+            p.accent,
+        );
+        let below = Rectangle {
+            y: card.y + ACCENT_LINE,
+            height: (card.height - ACCENT_LINE).max(0.0),
+            ..card
+        };
+        renderer.fill_quad(
+            quad(
+                below,
+                radius(CARD_RADIUS - ACCENT_LINE, CARD_RADIUS),
+                Border {
+                    color: p.line,
+                    width: BORDER,
+                    ..Border::default()
+                },
+            ),
+            p.panel,
+        );
+        // The well, from the body's top to the card's border.
+        if let Some(body) = layout.children().nth(1) {
+            let top = body.bounds().y;
+            let well = Rectangle {
+                x: card.x + BORDER,
+                y: top,
+                width: (card.width - 2.0 * BORDER).max(0.0),
+                height: (card.y + card.height - BORDER - top).max(0.0),
+            };
+            renderer.fill_quad(
+                quad(
+                    well,
+                    radius(WELL_RADIUS, CARD_RADIUS - BORDER),
+                    Border::default(),
+                ),
+                theme::well(p),
+            );
+        }
+        let style = renderer::Style { text_color: p.text };
         for ((part, tree), layout) in self.parts.iter().zip(&tree.children).zip(layout.children()) {
             part.as_widget()
-                .draw(tree, renderer, theme, style, layout, cursor, viewport);
+                .draw(tree, renderer, theme, &style, layout, cursor, viewport);
         }
     }
 

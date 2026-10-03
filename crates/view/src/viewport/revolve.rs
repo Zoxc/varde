@@ -19,7 +19,7 @@ use varde_sketch::{Curve, Sketch};
 use super::regions::{self, Regions, grid_plane};
 use super::sketch::{line, srgba};
 use crate::hit;
-use crate::operation_panel::Candidate;
+use crate::operation_panel::{Candidate, PanelHover};
 use crate::projection::Projector;
 use crate::revolve::{RevolveLook, RevolvePick, RevolveState, axis_line, axis_of, axis_reach};
 use crate::theme::SketchColors;
@@ -64,6 +64,7 @@ impl<'a> Revolving<'a> {
             candidates: &self.state.candidates,
             source: self.state.source,
             picked: self.state.picked,
+            panel: self.state.hover.and_then(PanelHover::region),
         }
     }
 
@@ -205,6 +206,7 @@ impl<'a> Revolving<'a> {
         let base = regions.base_layer(&input.regions, colors);
         let mut live = SketchLayer::default();
         regions.live(input.regions.hover, colors, &mut live);
+        regions.panel_region(camera, bounds, colors, &mut live);
         for candidate in self.axis_candidates() {
             let Some(plane) = grid_plane(candidate.placement) else {
                 continue;
@@ -221,7 +223,13 @@ impl<'a> Revolving<'a> {
             && let Some(plane) = grid_plane(source.placement)
         {
             let space = LayerSpace::On(plane);
-            live.polyline(space, &[from, to], line(colors.selected, AXIS_WIDTH, false));
+            // Lit as hovered while its row in the panel is.
+            let color = if self.state.hover == Some(PanelHover::Axis) {
+                colors.hovered
+            } else {
+                colors.selected
+            };
+            live.polyline(space, &[from, to], line(color, AXIS_WIDTH, false));
             let projector = Projector::new(camera, source.placement, bounds.width, bounds.height);
             if let Some((a, b)) = projector.and_then(|projector| projector.segment(from, to)) {
                 arrow(&mut live, a, b, colors);

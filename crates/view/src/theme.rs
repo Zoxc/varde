@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 use iced::theme::palette::Extended;
 use iced::widget::slider::{self as slide, HandleShape};
-use iced::widget::{button, checkbox, container, rule, scrollable, text};
+use iced::widget::{button, checkbox, container, rule, scrollable, text, text_input};
 use iced::{Background, Border, Color, Font, Shadow, Theme, Vector, border, color, font};
 use varde_render::{Colors, Srgb, Srgba};
 
@@ -82,6 +82,10 @@ pub struct Palette {
     pub danger: Color,
     /// The fill of a [`danger_button`], under white text.
     pub danger_fill: Color,
+    /// Darker danger text, for words that must read as failed on the
+    /// panel: a failed feature's name, Add anyway (the mock's
+    /// `--danger-text`).
+    pub danger_strong: Color,
     /// Warning text, for what may go wrong but isn't wrong yet: the
     /// mock's construction colour, as its panels' warnings.
     pub warning: Color,
@@ -330,6 +334,7 @@ const LIGHT: Palette = Palette {
     ok: color!(0x3d9b35),
     danger: color!(0xe0564b),
     danger_fill: color!(0xe0564b),
+    danger_strong: color!(0xad2a19),
     warning: LIGHT_CONSTRUCTION,
     scrim: color!(0x000000, 0.25),
 
@@ -406,6 +411,7 @@ const DARK: Palette = Palette {
     // Lighter than the light palette's, to read on the dark panel.
     danger: color!(0xf07563),
     danger_fill: color!(0xe0564b),
+    danger_strong: color!(0xf58a7a),
     warning: DARK_CONSTRUCTION,
     scrim: color!(0x000000, 0.45),
 
@@ -464,6 +470,12 @@ const DARK: Palette = Palette {
 /// For names and headings.
 pub const SEMIBOLD: Font = Font {
     weight: font::Weight::Semibold,
+    ..Font::DEFAULT
+};
+
+/// For the operation panel's labels and headings.
+pub const BOLD: Font = Font {
+    weight: font::Weight::Bold,
     ..Font::DEFAULT
 };
 
@@ -828,15 +840,55 @@ pub fn secondary_button(theme: &Theme, status: button::Status) -> button::Style 
     }
 }
 
-/// One of a few choices, like an extrude's extent: a thin border, the
-/// hover background on hover, and accent text on the soft accent with no
-/// border while `on`. Faint while disabled.
-pub fn choice(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+/// The colour of the operation panel's recessed well, which its fields
+/// sit in: the text's 6% into the panel's, as the tool rail's strip.
+pub fn well(p: &Palette) -> Color {
+    mix(p.text, p.panel, 0.06)
+}
+
+/// The colour of the operation panel's card behind its head, and of its
+/// controls on the well.
+fn control_fill(p: &Palette, enabled: bool) -> Color {
+    if enabled {
+        p.panel
+    } else {
+        p.panel.scale_alpha(DISABLED_OPACITY)
+    }
+}
+
+/// A square icon button in the operation panel's head, Cancel or (the
+/// `primary`) OK: a thin border, the hover background on hover; OK filled
+/// with the accent, faded while disabled.
+pub fn head_button(primary: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        if primary {
+            return button::Style {
+                border: border::rounded(CONTROL_RADIUS),
+                ..filled_button(p, p.accent, status)
+            };
+        }
+        let hovered = is_hovered(status);
+        button::Style {
+            background: hovered.then_some(Background::Color(p.hl)),
+            text_color: if hovered { p.text } else { p.muted },
+            border: outline(p.line, CONTROL_RADIUS),
+            ..button::Style::default()
+        }
+    }
+}
+
+/// One of a few choices in the operation panel, like an extrude's
+/// extent, as a tile (its icon over its label): a thin border on the
+/// panel's colour, the hover background on hover, and while `on` a 1 px
+/// accent border on the soft accent, its label still the text's. Faint
+/// while disabled.
+pub fn tile(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
         let enabled = status != button::Status::Disabled;
         let base = button::Style {
-            background: None,
+            background: Some(Background::Color(control_fill(p, enabled))),
             text_color: flat_content(p, Tone::Text, enabled, false),
             border: outline(p.line, CONTROL_RADIUS),
             ..button::Style::default()
@@ -845,9 +897,8 @@ pub fn choice(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
             base
         } else if on {
             button::Style {
-                background: Some(Background::Color(p.accent_soft)),
-                text_color: p.accent,
-                border: outline(Color::TRANSPARENT, CONTROL_RADIUS),
+                background: Some(Background::Color(mix(p.accent, p.panel, 0.13))),
+                border: outline(p.accent, CONTROL_RADIUS),
                 ..base
             }
         } else if is_hovered(status) {
@@ -861,29 +912,164 @@ pub fn choice(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     }
 }
 
-/// A field an operation's panel picks into by clicks in the viewport,
-/// holding chips: a thin border, the hover background on hover, and an
-/// accent border while it's the one picking (`on`).
-pub fn pick_field(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+/// An option's toggle in the operation panel, its icon's button beside
+/// its name: the row takes the hover background on hover.
+pub fn toggle_row(theme: &Theme, status: button::Status) -> button::Style {
+    let p = palette(theme);
+    let enabled = status != button::Status::Disabled;
+    button::Style {
+        background: (enabled && is_hovered(status)).then_some(Background::Color(p.hl)),
+        text_color: flat_content(p, Tone::Text, enabled, false),
+        border: border::rounded(CONTROL_RADIUS + 1.0),
+        ..button::Style::default()
+    }
+}
+
+/// The square holding an option's icon in its [`toggle_row`]: a thin
+/// border on the panel's colour, the accent's border while `hovered`, and
+/// while `on` the accent's border on the soft accent.
+pub fn toggle_square(on: bool, hovered: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = palette(theme);
+        let (fill, edge) = match (on, hovered) {
+            (true, false) => (mix(p.accent, p.panel, 0.13), p.accent),
+            (true, true) => (mix(p.accent, p.panel, 0.26), p.accent),
+            (false, true) => (p.panel, p.accent),
+            (false, false) => (p.panel, p.line),
+        };
+        container::Style {
+            border: outline(edge, CONTROL_RADIUS),
+            ..filled(fill, p.text)
+        }
+    }
+}
+
+/// A field of the operation panel picked into by clicks in the viewport:
+/// a thin border on the panel's colour, the accent's while it's the one
+/// picking (`on`).
+pub fn pick_box(on: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = palette(theme);
+        container::Style {
+            border: outline(if on { p.accent } else { p.line }, CONTROL_RADIUS),
+            ..filled(p.panel, p.text)
+        }
+    }
+}
+
+/// A row of what's picked in a [`pick_box`], as a Timeline row: the hover
+/// background on hover, or while `hovered` (the app knows it is, which a
+/// row with nothing to press can't tell from its status).
+pub fn picked_row(hovered: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
-        let enabled = status != button::Status::Disabled;
-        let border = if on && enabled { p.accent } else { p.line };
         button::Style {
-            background: (enabled && is_hovered(status)).then_some(Background::Color(p.hl)),
-            text_color: flat_content(p, Tone::Text, enabled, false),
-            border: outline(border, CONTROL_RADIUS),
+            background: (hovered || is_hovered(status)).then_some(Background::Color(p.hl)),
+            text_color: p.text,
+            border: border::rounded(CONTROL_RADIUS),
             ..button::Style::default()
         }
     }
 }
 
-/// A chip naming something picked, in a [`pick_field`]: the chip colour.
-pub fn chip(theme: &Theme) -> container::Style {
+/// The cross taking something picked out of its field: bare, a grey tile
+/// on hover.
+pub fn remove_button(theme: &Theme, status: button::Status) -> button::Style {
+    let p = palette(theme);
+    button::Style {
+        background: is_hovered(status).then_some(Background::Color(p.text.scale_alpha(0.1))),
+        text_color: p.text,
+        border: border::rounded(CONTROL_RADIUS - 1.0),
+        ..button::Style::default()
+    }
+}
+
+/// Where a [`pick_box`] is clicked for more, its foot under a rule, or
+/// alone its one row (`alone`): the hover background on hover, its
+/// corners the box's inside's.
+pub fn place_line(alone: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        let inner = CONTROL_RADIUS - 1.0;
+        let radius = if alone {
+            border::Radius::new(inner)
+        } else {
+            border::Radius::new(0).bottom(inner)
+        };
+        button::Style {
+            background: is_hovered(status).then_some(Background::Color(p.hl)),
+            text_color: p.muted,
+            border: Border {
+                radius,
+                ..Border::default()
+            },
+            ..button::Style::default()
+        }
+    }
+}
+
+/// A typed value's field in the operation panel: the panel's colour on
+/// the well, a thin border, the accent's while focused or hovered, the
+/// danger colour's while its text is refused (`bad`).
+pub fn field_input(bad: bool) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        let edge = match status {
+            _ if bad => p.danger,
+            text_input::Status::Focused { .. } => p.accent,
+            text_input::Status::Hovered => p.hl_line,
+            text_input::Status::Active | text_input::Status::Disabled => p.line,
+        };
+        let disabled = status == text_input::Status::Disabled;
+        text_input::Style {
+            background: Background::Color(control_fill(p, !disabled)),
+            border: outline(edge, CONTROL_RADIUS),
+            icon: p.muted,
+            placeholder: p.faint,
+            value: if disabled { p.muted } else { p.text },
+            selection: p.accent_soft,
+        }
+    }
+}
+
+/// The box of a draft that fails, at the operation panel's foot: the
+/// panel's colour under muted words.
+pub fn fail_box(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
-        border: border::rounded(4),
-        ..filled(p.chip, p.text)
+        border: border::rounded(CONTROL_RADIUS),
+        ..filled(p.panel, p.muted)
+    }
+}
+
+/// The title of a [`fail_box`]: the danger colour's wash, its words the
+/// text's.
+pub fn fail_title(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: border::rounded(border::Radius::new(0).top(CONTROL_RADIUS)),
+        ..filled(mix(p.danger, p.panel, 0.14), p.text)
+    }
+}
+
+/// Add anyway, in a [`fail_box`]: a thin border on the panel's colour,
+/// its words in the strong danger colour.
+pub fn add_anyway(theme: &Theme, status: button::Status) -> button::Style {
+    let p = palette(theme);
+    let style = button::Style {
+        background: Some(Background::Color(if is_hovered(status) {
+            p.hl
+        } else {
+            p.panel
+        })),
+        text_color: p.danger_strong,
+        border: outline(p.line, CONTROL_RADIUS),
+        ..button::Style::default()
+    };
+    if status == button::Status::Disabled {
+        faded(style)
+    } else {
+        style
     }
 }
 
@@ -1106,14 +1292,17 @@ pub fn float_panel(theme: &Theme) -> container::Style {
     }
 }
 
-/// The panel an operation is set up in, floating over the viewport: a
-/// [`float_panel`] whose text is in the text colour, as the mock's.
-pub fn operation_panel(theme: &Theme) -> container::Style {
-    container::Style {
-        text_color: Some(palette(theme).text),
-        ..float_panel(theme)
-    }
-}
+/// The shadow under the operation panel's card, as the mock's.
+pub const CARD_SHADOW: Shadow = Shadow {
+    color: Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 0.1,
+    },
+    offset: Vector { x: 0.0, y: 6.0 },
+    blur_radius: 18.0,
+};
 
 /// A single button floating over the viewport, styled like a
 /// [`float_panel`].
@@ -1175,7 +1364,7 @@ pub fn rail_strip(theme: &Theme) -> container::Style {
             radius: border::Radius::new(RAIL_CARD_RADIUS - 1.0).top(CONTROL_RADIUS),
             ..Border::default()
         },
-        ..filled(mix(p.text, p.panel, 0.06), p.text)
+        ..filled(well(p), p.text)
     }
 }
 
@@ -1341,6 +1530,13 @@ pub fn danger_text(theme: &Theme) -> text::Style {
     }
 }
 
+/// The strong danger colour, for what failed: a failed feature's name.
+pub fn failed_text(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).danger_strong),
+    }
+}
+
 /// The warning colour, for what may go wrong but isn't wrong yet.
 pub fn warning_text(theme: &Theme) -> text::Style {
     text::Style {
@@ -1498,25 +1694,18 @@ mod tests {
     }
 
     #[test]
-    fn an_operation_panel_s_text_is_not_muted() {
-        for mode in [Mode::Light, Mode::Dark] {
-            let style = operation_panel(&theme(mode));
-            assert_eq!(style.text_color, Some(mode.palette().text));
-        }
-    }
-
-    #[test]
-    fn a_choice_has_a_thin_border_unless_on() {
+    fn a_tile_has_a_thin_border_and_an_accent_one_when_on() {
         for mode in [Mode::Light, Mode::Dark] {
             let (theme, p) = (theme(mode), mode.palette());
-            let off = choice(false)(&theme, button::Status::Active);
+            let off = tile(false)(&theme, button::Status::Active);
             assert_eq!((off.border.width, off.border.color), (1.0, p.line));
-            let hovered = choice(false)(&theme, button::Status::Hovered);
+            assert_eq!(off.background, Some(Background::Color(p.panel)));
+            let hovered = tile(false)(&theme, button::Status::Hovered);
             assert_eq!(hovered.background, Some(Background::Color(p.hl)));
-            let on = choice(true)(&theme, button::Status::Active);
-            assert_eq!(on.border.color, Color::TRANSPARENT);
-            assert_eq!(on.background, Some(Background::Color(p.accent_soft)));
-            assert_eq!(on.text_color, p.accent);
+            let on = tile(true)(&theme, button::Status::Active);
+            assert_eq!((on.border.width, on.border.color), (1.0, p.accent));
+            // Its label stays the text's, as the mock's.
+            assert_eq!(on.text_color, p.text);
         }
     }
 

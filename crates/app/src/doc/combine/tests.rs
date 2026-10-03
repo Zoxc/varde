@@ -5,7 +5,8 @@ use iced::keyboard::{self, key};
 use varde_document::{BodyId, BodyOp, Combine, Document, Editor, Operation};
 use varde_regen::Request;
 use varde_view::{
-    CombineLook, CombinePick, Edit, Look, Message as Ui, Mode, OperationKind, Panel, Picked,
+    CombineLook, CombinePick, Edit, Look, Message as Ui, Mode, OperationKind, Panel, PanelHover,
+    Picked,
 };
 
 use super::*;
@@ -319,8 +320,9 @@ fn editing_reopens_it_with_its_values() {
     assert!(session.keep_tools);
     assert_eq!(session.op, BodyOp::Union);
     let shown = screen_texts(&plates.doc);
-    assert!(shown.contains(&"Combine 1".to_owned()), "{shown:?}");
-    assert!(shown.contains(&"Editing Combine 1".to_owned()), "{shown:?}");
+    // In the toolbar's pill, the Timeline and the panel's head.
+    let named = shown.iter().filter(|text| *text == "Combine 1").count();
+    assert!(named >= 3, "{shown:?}");
     // OK with nothing changed writes nothing.
     plates.doc.update(Edit::CommitCombine);
     assert!(plates.doc.combine.is_none());
@@ -430,6 +432,42 @@ fn the_highlight_shows_the_target_and_the_tools() {
     plates.doc.look(Look::Escape);
     plates.doc.look(Look::Hover(None));
     assert!(plates.doc.highlight().is_none());
+}
+
+#[test]
+fn a_body_hovered_in_the_panel_is_lit_even_if_picked() {
+    let mut plates = plates();
+    let [plate, _, left] = plates.bodies;
+    plates.doc.look(Look::StartCombine);
+    plates.click(plate);
+    plates.click(left);
+    plates.answer();
+    let index = plates.doc.feed.pick_index();
+    let mut plate_faces: Vec<u32> = index.body_faces(plate).collect();
+    plate_faces.sort_unstable();
+    plates
+        .doc
+        .look(Look::HoverPanel(Some(PanelHover::Body(plate))));
+    assert_eq!(
+        plates.doc.combine_state().unwrap().hover,
+        Some(PanelHover::Body(plate))
+    );
+    let highlight = plates.doc.highlight().expect("a highlight");
+    let mut hovered = highlight.hovered_faces.clone();
+    hovered.sort_unstable();
+    assert_eq!(hovered, plate_faces);
+    assert!(highlight.selected_faces.is_empty());
+    // Left, the target is drawn as the target again.
+    plates.doc.look(Look::HoverPanel(None));
+    let highlight = plates.doc.highlight().expect("a highlight");
+    assert!(highlight.hovered_faces.is_empty());
+    assert!(!highlight.selected_faces.is_empty());
+    // A body no longer named isn't hovered, whatever the panel last said.
+    plates
+        .doc
+        .look(Look::HoverPanel(Some(PanelHover::Body(left))));
+    plates.combine(CombineLook::Drop(left));
+    assert_eq!(plates.doc.combine_state().unwrap().hover, None);
 }
 
 #[test]

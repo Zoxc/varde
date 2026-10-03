@@ -21,6 +21,7 @@ use super::regions::{self, Regions, grid_plane};
 use super::sketch::line;
 use crate::anchors::Anchors;
 use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle, snap_step};
+use crate::operation_panel::PanelHover;
 use crate::pick::{aabb, ray_hits, through_box};
 use crate::projection::Projector;
 use crate::theme::{self, SketchColors};
@@ -65,6 +66,7 @@ impl<'a> Extruding<'a> {
             candidates: &self.state.candidates,
             source: self.state.source,
             picked: self.state.picked,
+            panel: self.state.hover.and_then(PanelHover::region),
         }
     }
 
@@ -197,11 +199,14 @@ impl<'a> Extruding<'a> {
         &self,
         input: &Input,
         colors: SketchColors,
+        camera: &Camera,
+        bounds: Rectangle,
     ) -> (Arc<SketchLayer>, SketchLayer) {
         let regions = self.regions();
         let base = regions.base_layer(input, colors);
         let mut live = SketchLayer::default();
         regions.live(input.hover, colors, &mut live);
+        regions.panel_region(camera, bounds, colors, &mut live);
         if let Some(handle) = &self.handle
             && self.state.refused.is_none()
             && let Some(plane) = grid_plane(handle.placement())

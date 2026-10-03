@@ -45,7 +45,9 @@ impl Shown {
 
 /// An operation collecting each text shown: the labels of buttons,
 /// checkboxes and the rest, which report their text and bounds to
-/// operations. Run it, then read `shown`.
+/// operations, and the names of the icon buttons that have one (the
+/// operation panel's OK, Cancel and Close), as a screen reader would read
+/// them. Run it, then read `shown`.
 #[derive(Default)]
 pub struct Texts {
     /// How far the scrollables entered have scrolled their content.
@@ -85,6 +87,14 @@ impl Operation for Texts {
         _state: &mut dyn Scrollable,
     ) {
         self.entering = Some((translation, bounds));
+    }
+
+    fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
+        let names = crate::operation_panel::BUTTON_NAMES;
+        let name = names.iter().find(|(named, _)| Some(named) == id);
+        if let Some(&(_, name)) = name {
+            self.text(None, bounds, name);
+        }
     }
 
     fn text(&mut self, _id: Option<&Id>, bounds: Rectangle, text: &str) {

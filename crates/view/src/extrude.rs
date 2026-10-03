@@ -8,16 +8,16 @@ use std::collections::BTreeSet;
 
 use glam::{DVec2, DVec3};
 use iced::Element;
-use iced::widget::text::Wrapping;
 use iced::widget::{column, text};
 use varde_document::{BodyId, ExtrudeError, FeatureId, Placement};
 use varde_expr::LengthUnit;
 use varde_sketch::{Region, angle};
 
-use crate::chrome::{heading, hrule, tip};
+use crate::chrome::tip;
+use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, OperationKind, Parts, TypedField, bodies, choice, footer_message, grid,
-    operation_panel, tick, value_field,
+    BodyTarget, Candidate, OperationKind, PanelHover, Parts, TypedField, bodies, field,
+    footer_message, operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
 };
 use crate::theme;
 use crate::{Edit, Look, Message, VALUE_FIELD};
@@ -48,6 +48,16 @@ impl ExtentKind {
         ExtentKind::TwoSides,
         ExtentKind::ThroughAll,
     ];
+
+    /// Its choice's icon: the profile as a slab, and where it goes.
+    fn icon(self) -> Icon {
+        match self {
+            ExtentKind::OneSide => Icon::ExOne,
+            ExtentKind::Symmetric => Icon::ExSym,
+            ExtentKind::TwoSides => Icon::ExTwo,
+            ExtentKind::ThroughAll => Icon::ExThru,
+        }
+    }
 
     fn label(self) -> &'static str {
         match self {
@@ -181,6 +191,9 @@ pub struct ExtrudeState<'a> {
     pub editable: bool,
     /// The design's units, which snapped distances are typed in.
     pub units: LengthUnit,
+    /// The row of the panel the cursor is over, if any: the viewport
+    /// lights it up too.
+    pub hover: Option<PanelHover>,
 }
 
 /// The handle: an arrow from the picked regions' centre along the sketch
@@ -329,18 +342,41 @@ pub fn snap_step(pixel: f64, units: LengthUnit) -> Option<f64> {
 
 /// The floating panel of the extrude being set up.
 pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
-    let regions = match state.picked.len() {
-        0 if state
-            .candidates
-            .iter()
-            .all(|candidate| candidate.profiles.regions.is_empty()) =>
-        {
-            "No closed regions to extrude".to_owned()
-        }
-        0 => "Click regions to extrude".to_owned(),
-        1 => "1 region".to_owned(),
-        n => format!("{n} regions"),
+    let editable = state.editable;
+    let send = |look: ExtrudeLook| editable.then_some(Message::Look(Look::Extrude(look)));
+
+    // The regions picked, each with a cross taking it out; clicks always
+    // pick regions, so the field is always the one picking.
+    let rows = (state.source.into_iter())
+        .flat_map(|sketch| {
+            state.picked.iter().map(move |&region| {
+                picked_row(
+                    Icon::SeRegion,
+                    region_name(region),
+                    None,
+                    send(ExtrudeLook::PickRegion { sketch, region }),
+                    None,
+                    PanelHover::Region { sketch, region },
+                    state.hover,
+                )
+            })
+        })
+        .collect();
+    let empty = state
+        .candidates
+        .iter()
+        .all(|candidate| candidate.profiles.regions.is_empty());
+    let place = if state.picked.is_empty() && empty {
+        "No closed regions to extrude"
+    } else if state.picked.is_empty() {
+        "Click regions to extrude"
+    } else {
+        "Click regions"
     };
+    let profile = field(
+        "Profile",
+        pick_field(rows, Some(place.to_owned()), true, None),
+    );
     let missing = (state.missing > 0).then(|| {
         let note = match state.missing {
             1 => "1 region wasn't found".to_owned(),
@@ -348,18 +384,16 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         };
         text(note).size(12).style(theme::danger_text)
     });
-    let editable = state.editable;
-    let send = |look: ExtrudeLook| editable.then_some(Message::Look(Look::Extrude(look)));
 
     let extents = ExtentKind::ALL.map(|kind| {
         // Through all only cuts.
         let through = kind == ExtentKind::ThroughAll && state.operation != OperationKind::Cut;
         let message = send(ExtrudeLook::Extent(kind)).filter(|_| !through);
-        let choice = choice(kind.label(), state.extent == kind, message);
+        let tile = tile(kind.icon(), kind.label(), state.extent == kind, message);
         if through {
-            tip(choice, text("Only a cut goes through all"))
+            tip(tile, text("Only a cut goes through all"))
         } else {
-            choice
+            tile
         }
     });
     let fields = state.extent.distances().iter().map(|&distance| {
@@ -371,55 +405,62 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         distance_field(label, distance, state.fields[distance.index()], editable)
     });
     let flip = state.extent.flips().then(|| {
-        tick(
+        toggle(
+            Icon::TkFlip,
             "Flip",
             state.flip,
-            editable.then_some(Message::Look(Look::Extrude(ExtrudeLook::Flip))),
+            send(ExtrudeLook::Flip),
+            None,
         )
     });
     let operations = OperationKind::ALL.map(|kind| {
-        choice(
+        tile(
+            kind.icon(),
             kind.label(),
             state.operation == kind,
             send(ExtrudeLook::Operation(kind)),
         )
     });
     let targets = bodies(state.operation, &state.targets, |body| {
-        editable.then_some(Message::Look(Look::Extrude(ExtrudeLook::Target(body))))
+        send(ExtrudeLook::Target(body))
     });
     // Why OK can't be pressed, or the preview failed, or that OK waits
     // on the solver.
     let refused = (state.refused.map(|refused| refused.to_string())).or_else(|| state.held.clone());
-    let message = footer_message(refused, state.error, state.show_error, state.checking);
+    let message = footer_message(
+        "Extrude",
+        refused,
+        state.error,
+        state.show_error,
+        state.accept.then_some(Message::Edit(Edit::AcceptError)),
+        state.checking,
+    );
 
     let body = column![
+        profile,
         missing,
-        heading("Extent"),
-        grid(extents),
-        column(fields).spacing(4),
+        field("Extent", tiles(extents)),
+        column(fields).spacing(8),
         flip,
-        hrule(),
-        heading("Operation"),
-        grid(operations),
+        field("Operation", tiles(operations)),
         targets,
     ]
-    .spacing(6);
+    .spacing(10);
     operation_panel(Parts {
+        icon: Icon::Extrude,
         title: state.editing.unwrap_or("New extrude"),
-        summary: Some(
-            text(regions)
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(theme::muted_text)
-                .into(),
-        ),
         body: body.into(),
         message,
         ok: state.ready.then_some(Message::Edit(Edit::CommitExtrude)),
-        accept: state.accept.then_some(Message::Edit(Edit::AcceptError)),
         cancel: Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
         close: false,
     })
+}
+
+/// What a region picked is called in the panel: "Region 1", by its index
+/// in its sketch's profiles.
+pub(crate) fn region_name(region: usize) -> String {
+    format!("Region {}", region.saturating_add(1))
 }
 
 /// The field of `distance`, named `label`, showing why its text is

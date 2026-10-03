@@ -6,7 +6,7 @@ use varde_sketch::{Curve, Sketch};
 
 use super::*;
 use crate::operation_panel::PANEL_WIDTH;
-use crate::operation_panel::{FIELD_INDENT, joined_into};
+use crate::operation_panel::joined_into;
 
 /// A sketch of a 4 × 2 rectangle from the origin with a unit square hole
 /// from (1, 0.5), and its profiles.
@@ -62,6 +62,7 @@ fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> Ext
         accept: false,
         editable: true,
         units: LengthUnit::Mm,
+        hover: None,
     }
 }
 
@@ -223,10 +224,11 @@ fn a_long_name_without_spaces_breaks_inside_the_panel() {
         assert!(text.bounds.height >= 4.0 * line, "{text:?}");
         assert!(text.bounds.x + text.bounds.width <= PANEL_WIDTH, "{text:?}");
     }
-    // Nothing is drawn right of the panel that the short name doesn't
-    // draw there: the title is clipped.
+    // Nothing is drawn right of the panel and its shadow that the short
+    // name doesn't draw there: the title is clipped.
     let pixels = laid.pixels(size);
-    let columns = PANEL_WIDTH as usize + 1..size.width as usize;
+    let shadow = 2.0 * crate::theme::CARD_SHADOW.blur_radius;
+    let columns = (PANEL_WIDTH + shadow) as usize..size.width as usize;
     for y in 0..size.height as usize {
         for x in columns.clone() {
             let at = (y * size.width as usize + x) * 4;
@@ -248,7 +250,7 @@ fn found<'s>(shown: &'s [crate::probe::Shown], text: &str) -> &'s crate::probe::
 }
 
 #[test]
-fn flip_is_a_tick_like_the_bodies() {
+fn flip_is_an_icon_toggle_and_the_bodies_ticks() {
     let profiles = plate();
     let picked = BTreeSet::from([0]);
     let mut state = state_of(&profiles, &picked);
@@ -261,9 +263,9 @@ fn flip_is_a_tick_like_the_bodies() {
     }];
     let shown = texts_of(&state);
     // A checkbox reports its box and label together, from the panel's
-    // side padding; a button's label would start inside the button.
+    // side padding; Flip's label is right of its icon's square button.
     let (flip, body) = (found(&shown, "Flip"), found(&shown, "Body 1"));
-    assert_eq!(flip.bounds.x, body.bounds.x, "{flip:?} {body:?}");
+    assert!(flip.bounds.x >= body.bounds.x + 28.0, "{flip:?} {body:?}");
 }
 
 #[test]
@@ -277,10 +279,13 @@ fn a_field_s_error_lines_up_under_its_input() {
     };
     state.fields[0].error = Some(&error);
     let shown = texts_of(&state);
-    let label = found(&shown, "Distance");
+    // The label over the field, the error under it, all from its left.
+    let label = (shown.iter())
+        .find(|shown| shown.text == "Distance")
+        .unwrap();
     let error = found(&shown, "Enter a value");
-    assert_eq!(error.bounds.x - label.bounds.x, FIELD_INDENT);
-    assert_eq!(FIELD_INDENT, 68.0);
+    assert_eq!(error.bounds.x, label.bounds.x);
+    assert!(error.bounds.y >= label.bounds.y + label.bounds.height + 28.0);
 }
 
 #[test]

@@ -2332,16 +2332,26 @@ fn a_cut_listing(more: usize) -> (Doc, FeatureId) {
     (doc, sketch)
 }
 
-/// The texts of the extrude panel, from its title to its `OK`, in the
-/// order the screen reports them, and the `OK`.
+/// The texts of the extrude panel, from its title, with its Cancel and
+/// `OK` after it in its head, to its last, in the order the screen
+/// reports them, and the `OK`.
 fn panel_texts(
     texts: &[varde_view::probe::Shown],
 ) -> (Vec<varde_view::probe::Shown>, varde_view::probe::Shown) {
-    let title = texts.iter().position(|text| text.text == "New extrude");
+    let title = texts.windows(3).position(|three| {
+        let [title, cancel, ok] = three else {
+            unreachable!("three texts");
+        };
+        title.text == "New extrude" && cancel.text == "Cancel" && ok.text == "OK"
+    });
     let title = title.expect("the panel's title");
-    let ok = texts[title..].iter().position(|text| text.text == "OK");
-    let panel = texts[title..=title + ok.expect("the panel's OK")].to_vec();
-    let ok = panel.last().unwrap().clone();
+    // The status bar after it starts with the extrude's name.
+    let end = texts[title + 1..]
+        .iter()
+        .position(|text| text.text == "New extrude")
+        .map_or(texts.len(), |end| title + 1 + end);
+    let panel = texts[title..end].to_vec();
+    let ok = panel[2].clone();
     (panel, ok)
 }
 
@@ -2380,12 +2390,12 @@ fn many_bodies_keep_ok_and_cancel_on_screen() {
                 );
             }
             // Nothing of the panel shows over the status bar, nor over the
-            // buttons.
+            // head's buttons.
             for text in panel.iter().filter(|text| text.seen().height > 0.0) {
                 let seen = text.seen();
                 assert!(seen.y + seen.height <= status_top, "{at}: {text:?}");
                 if text.text.starts_with("Body ") {
-                    assert!(seen.y + seen.height <= ok.bounds.y, "{at}: {text:?}");
+                    assert!(seen.y >= ok.bounds.y + ok.bounds.height, "{at}: {text:?}");
                 }
             }
             // The last body, whole once scrolled to.
@@ -2422,6 +2432,49 @@ fn many_bodies_keep_ok_and_cancel_on_screen() {
 }
 
 #[test]
+fn a_region_hovered_in_the_panel_is_the_one_shown_hovered_until_unpicked() {
+    let (mut doc, sketch, _) = plate();
+    key_in(&mut doc, key("x"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    let hover = PanelHover::Region { sketch, region };
+    doc.look(Look::HoverPanel(Some(hover)));
+    assert_eq!(doc.extrude_state().unwrap().hover, Some(hover));
+    // Leaving another row, entered before, leaves it hovered: moving up
+    // a row, the row entered tells it before the one left does.
+    let other = PanelHover::Region {
+        sketch,
+        region: region + 1,
+    };
+    doc.look(Look::LeavePanel(other));
+    assert_eq!(doc.extrude_state().unwrap().hover, Some(hover));
+    doc.look(Look::LeavePanel(hover));
+    assert_eq!(doc.extrude_state().unwrap().hover, None);
+    doc.look(Look::HoverPanel(Some(hover)));
+    // Taken out by its cross, it isn't hovered any more.
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    assert_eq!(doc.extrude_state().unwrap().hover, None);
+}
+
+#[test]
+fn a_body_hovered_in_the_panel_is_lit_in_the_preview() {
+    let (mut doc, _) = a_cut_listing(1);
+    let body = doc.editor.document().bodies()[0].id;
+    assert!(doc.highlight().is_none());
+    doc.look(Look::HoverPanel(Some(PanelHover::Body(body))));
+    let index = doc.feed.pick_index();
+    let mut faces: Vec<u32> = index.body_faces(body).collect();
+    faces.sort_unstable();
+    let highlight = doc.highlight().expect("a highlight");
+    let mut hovered = highlight.hovered_faces.clone();
+    hovered.sort_unstable();
+    assert!(!faces.is_empty());
+    assert_eq!(hovered, faces);
+    doc.look(Look::HoverPanel(None));
+    assert!(doc.highlight().is_none_or(|highlight| highlight.is_empty()));
+}
+
+#[test]
 fn a_click_on_a_body_s_label_toggles_it() {
     use crate::tests::{clicked, shown, texts};
     use varde_view::Message as Ui;
@@ -2438,6 +2491,10 @@ fn a_click_on_a_body_s_label_toggles_it() {
     // Right of the box, on the label.
     let at = iced::Point::new(label.bounds.x + 40.0, label.bounds.center_y());
     let sent = clicked(&mut ui, &mut renderer, at);
+    // Coming over the row, the cursor also tells the app it hovers it.
+    let sent: Vec<_> = (sent.into_iter())
+        .filter(|message| !matches!(message, Ui::Look(Look::HoverPanel(_) | Look::LeavePanel(_))))
+        .collect();
     assert!(
         matches!(&sent[..], [Ui::Look(Look::Extrude(ExtrudeLook::Target(b)))] if *b == body),
         "{sent:?}"
@@ -2492,7 +2549,7 @@ fn the_wheel_over_the_panel_scrolls_it_not_the_camera_and_keeps_the_focus() {
     // Over the panel's body, it scrolls the body and nothing else.
     let before = texts(&mut ui, &varde_view::probe::renderer());
     let (panel, _) = panel_texts(&before);
-    let first = panel.iter().find(|text| text.text == "Body 1").unwrap();
+    let first = panel.iter().find(|text| text.text == "Operation").unwrap();
     let at = first.bounds.center();
     let sent: Vec<_> = wheel(at)
         .into_iter()
@@ -2501,7 +2558,7 @@ fn the_wheel_over_the_panel_scrolls_it_not_the_camera_and_keeps_the_focus() {
     assert!(sent.is_empty(), "{sent:?}");
     let after = texts(&mut ui, &varde_view::probe::renderer());
     let (panel, _) = panel_texts(&after);
-    let moved = panel.iter().find(|text| text.text == "Body 1").unwrap();
+    let moved = panel.iter().find(|text| text.text == "Operation").unwrap();
     assert!(
         moved.bounds.y < first.bounds.y - 10.0,
         "{first:?} {moved:?}"
@@ -2555,11 +2612,11 @@ fn two_sides_with_errors_keep_ok_on_a_short_screen() {
         let (panel, ok) = panel_texts(&shown);
         assert!(ok.whole() && ok.bounds.height >= 14.0, "{ok:?}");
         assert!(ok.bounds.y + ok.bounds.height <= status_top, "{ok:?}");
-        // What the body shows stays above the footer.
+        // What the body shows stays below the head.
         for text in panel.iter().filter(|text| text.visible.is_some()) {
             let seen = text.seen();
             assert!(
-                seen.height <= 0.0 || seen.y + seen.height <= ok.bounds.y,
+                seen.height <= 0.0 || seen.y >= ok.bounds.y + ok.bounds.height,
                 "{text:?}"
             );
         }
@@ -2568,13 +2625,14 @@ fn two_sides_with_errors_keep_ok_on_a_short_screen() {
             .filter(|text| text.text.starts_with("Unknown unit"))
             .collect();
         assert_eq!(errors.len(), 2, "{panel:?}");
-        // Unscrolled, both sides' errors show; scrolled to the end, the
-        // last body does.
+        // Unscrolled, the first side's error shows, and some of the
+        // second's; scrolled to the end, the last body does.
         if scrolled {
             let last = panel.iter().find(|text| text.text == "Body 6").unwrap();
             assert!(last.whole(), "{last:?}");
         } else {
-            assert!(errors.iter().all(|error| error.whole()), "{errors:?}");
+            assert!(errors[0].whole(), "{errors:?}");
+            assert!(errors[1].seen().height > 0.0, "{errors:?}");
         }
     }
 }
@@ -2708,12 +2766,13 @@ fn unpicking_the_last_region_keeps_the_panel_s_scroll_and_focus() {
     let (mut doc, sketch) = a_cut_listing(29);
     let size = iced::Size::new(1280.0, 600.0);
     let mut renderer = varde_view::probe::renderer();
+    // The Profile label, at the body's top, moves only with its scroll.
     let body_1 = |ui: &mut crate::tests::Headless<'_>, renderer: &iced::Renderer| {
         let shown = texts(ui, renderer);
         let (panel, _) = panel_texts(&shown);
         panel
             .iter()
-            .find(|text| text.text == "Body 1")
+            .find(|text| text.text == "Profile")
             .unwrap()
             .bounds
     };
@@ -2764,10 +2823,13 @@ fn a_short_window_lifts_the_panel_to_keep_its_buttons() {
                 "{height}: {button:?}"
             );
         }
-        // A few rows of the body still show between them.
+        // A few rows of the body still show under them.
         let body = panel_body(&mut ui, &renderer);
         assert!(body.height >= 40.0, "{height}: {body:?}");
-        assert!(body.y + body.height <= ok.bounds.y, "{height}: {body:?}");
+        assert!(
+            body.y >= ok.bounds.y + ok.bounds.height,
+            "{height}: {body:?}"
+        );
     }
 }
 
@@ -2781,22 +2843,25 @@ fn run_task(
     use iced::futures::StreamExt;
     use iced_runtime::Action;
 
-    let Some(stream) = iced_runtime::task::into_stream(task) else {
+    let Some(mut stream) = iced_runtime::task::into_stream(task) else {
         return;
     };
-    let actions: Vec<_> = iced::futures::executor::block_on(stream.collect());
-    for action in actions {
-        let Action::Widget(mut operation) = action else {
-            continue;
-        };
-        loop {
-            ui.operate(renderer, operation.as_mut());
-            match operation.finish() {
-                Outcome::Chain(next) => operation = next,
-                _ => break,
+    // Each action run as it comes and dropped: an operation answering
+    // through a channel holds it open until then.
+    iced::futures::executor::block_on(async {
+        while let Some(action) = stream.next().await {
+            let Action::Widget(mut operation) = action else {
+                continue;
+            };
+            loop {
+                ui.operate(renderer, operation.as_mut());
+                match operation.finish() {
+                    Outcome::Chain(next) => operation = next,
+                    _ => break,
+                }
             }
         }
-    }
+    });
 }
 
 #[test]
@@ -2829,7 +2894,7 @@ fn editing_an_extrude_from_a_scrolled_panel_shows_its_field() {
     let mut ui = UserInterface::build(doc.view_in(Mode::Light), size, cache, &mut renderer);
     run_task(&mut ui, &renderer, crate::focus_field(focus));
     assert!(value_field_focused(&mut ui, &renderer));
-    // The field's label, beside it, shows whole.
+    // The field's label, over it, shows whole.
     let shown = texts(&mut ui, &renderer);
     let distance = shown
         .iter()

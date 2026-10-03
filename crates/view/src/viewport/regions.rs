@@ -16,7 +16,7 @@ use varde_document::{FeatureId, Placement};
 use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
 use varde_sketch::Profiles;
 
-use super::sketch::{fill_region, fill_region_in, line};
+use super::sketch::{fill_region, fill_region_in, line, srgba};
 use crate::operation_panel::Candidate;
 use crate::projection::Projector;
 use crate::theme::SketchColors;
@@ -25,6 +25,8 @@ use crate::theme::SketchColors;
 const OUTLINE_WIDTH: f32 = 1.8;
 /// How opaque the fill of a picked region is.
 const PICKED_ALPHA: f32 = 0.35;
+/// How wide the outline of the region hovered in the panel is, in pixels.
+const PANEL_OUTLINE_WIDTH: f32 = 2.0;
 
 /// The sketches whose regions an operation picks, and those picked.
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +37,9 @@ pub(crate) struct Regions<'s, 'a> {
     pub(crate) source: Option<FeatureId>,
     /// The regions picked, by their index in the source's profiles.
     pub(crate) picked: &'a BTreeSet<usize>,
+    /// The region whose row in the panel the cursor is over, and its
+    /// sketch: see [`Regions::panel_region`].
+    pub(crate) panel: Option<(FeatureId, usize)>,
 }
 
 /// What the viewport keeps of the regions between events and frames.
@@ -128,6 +133,55 @@ impl<'s, 'a> Regions<'s, 'a> {
             }
             if let Some(region) = hovered {
                 fill_region_in(live, space, region, colors.region_hovered);
+            }
+        }
+    }
+
+    /// Adds to the live layer `live` the region hovered in the panel, if
+    /// one is, filled in the hover colour and outlined, on the screen as
+    /// `camera` shows it in `bounds`: over everything, where the model
+    /// in front (the preview standing on it, say) hides the regions'
+    /// layers.
+    pub(crate) fn panel_region(
+        &self,
+        camera: &Camera,
+        bounds: Rectangle,
+        colors: SketchColors,
+        live: &mut SketchLayer,
+    ) {
+        let Some((feature, index)) = self.panel else {
+            return;
+        };
+        let Some(candidate) = self.candidates.iter().find(|c| c.feature == feature) else {
+            return;
+        };
+        let Some(region) = candidate.profiles.regions.get(index) else {
+            return;
+        };
+        let Some(projector) =
+            Projector::new(camera, candidate.placement, bounds.width, bounds.height)
+        else {
+            return;
+        };
+        // Filled only if every point shows: one behind the near plane of a
+        // perspective view has nowhere on the screen.
+        let loops: Option<Vec<Vec<DVec2>>> = (region.outline.iter())
+            .map(|points| points.iter().map(|&at| projector.project(at)).collect())
+            .collect();
+        if let Some(loops) = loops {
+            live.fill(
+                LayerSpace::Screen,
+                loops.iter().map(Vec::as_slice),
+                srgba(colors.region_hovered),
+            );
+        }
+        let style = line(colors.hovered, PANEL_OUTLINE_WIDTH, false);
+        for points in &region.outline {
+            let ends = points.iter().zip(points.iter().cycle().skip(1));
+            for (&a, &b) in ends {
+                if let Some((a, b)) = projector.segment(a, b) {
+                    live.polyline(LayerSpace::Screen, &[a, b], style);
+                }
             }
         }
     }

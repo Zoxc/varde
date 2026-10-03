@@ -8,7 +8,7 @@ use varde_document::{
     Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind, MAX_EXTRUDE_REGIONS,
 };
 use varde_expr::Unit;
-use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind};
+use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind, PanelHover};
 
 use super::regions::{BodyTargets, RegionPick, TypedText};
 use super::{Doc, Focus};
@@ -30,6 +30,8 @@ pub(crate) struct ExtrudeSession {
     pub(crate) targets: BodyTargets,
     /// The handle's knob being dragged, if one is.
     pub(crate) grabbed: Option<Distance>,
+    /// The panel's row the cursor is over, if any.
+    pub(crate) hover: Option<PanelHover>,
     /// The design as the fields' texts were last read, whose units bare
     /// numbers in them are in: see [`ExtrudeSession::follow_units`].
     design: Design,
@@ -54,6 +56,7 @@ impl ExtrudeSession {
             operation: OperationKind::NewBody,
             targets: BodyTargets::default(),
             grabbed: None,
+            hover: None,
             design: document.design(),
         }
     }
@@ -383,6 +386,7 @@ impl Doc {
             operation: session.operation,
             targets: self.body_targets(session.operation, session.feature, &session.targets),
             grabbed: session.grabbed,
+            hover: self.panel_hover(),
             error: self.feed.draft_error(),
             show_error: self.draft_framed(),
             refused: session.refused(&document.design()),

@@ -1,5 +1,7 @@
 use iced::widget::{Column, text};
 
+use crate::icons::Icon;
+
 use super::*;
 use crate::probe::Shown;
 use crate::testing::Laid;
@@ -14,14 +16,13 @@ fn panel_saying(rows: usize, message: &'static str) -> Element<'static, Message>
     let body = Column::with_children((1..=rows).map(|k| text(format!("Row {k}")).size(12).into()))
         .spacing(4);
     operation_panel(Parts {
+        icon: Icon::Extrude,
         title: "New thing",
-        summary: Some(text("2 picked").size(12).into()),
         body: body.into(),
-        message: Some(message_text(message, theme::muted_text)),
+        message: Some(Footer::Text(message_text(message, theme::muted_text))),
         ok: Some(Message::Look(crate::Look::Extrude(
             crate::ExtrudeLook::Cancel,
         ))),
-        accept: None,
         cancel: Message::Look(crate::Look::Extrude(crate::ExtrudeLook::Cancel)),
         close: false,
     })
@@ -50,7 +51,7 @@ fn a_short_body_takes_only_its_height() {
 }
 
 #[test]
-fn a_long_body_scrolls_between_the_header_and_the_buttons() {
+fn a_long_body_scrolls_between_the_head_and_the_message() {
     let height = 300.0;
     let mut laid = Laid::new(panel_of(60), Size::new(400.0, height));
     let size = laid.node.size();
@@ -58,26 +59,28 @@ fn a_long_body_scrolls_between_the_header_and_the_buttons() {
     let shown = laid.texts();
     let title = find(&shown, "New thing");
     let message = find(&shown, "Why OK waits");
+    // The message at the foot, whole.
+    assert!(message.whole(), "{message:?}");
+    assert!(message.bounds.y + message.bounds.height <= height);
+    let mut head = title.bounds.y + title.bounds.height;
     for button in ["OK", "Cancel"] {
         let button = find(&shown, button);
-        // Whole, at the panel's bottom, under the message.
-        assert!(button.bounds.height >= 12.0, "{button:?}");
-        assert!(
-            button.bounds.y + button.bounds.height <= height,
-            "{button:?}"
-        );
-        assert!(button.bounds.y >= message.bounds.y + message.bounds.height);
+        // Whole, in the head beside the title.
+        assert!(button.bounds.height >= 20.0, "{button:?}");
+        assert!(button.bounds.x > title.bounds.x, "{button:?}");
+        assert!(button.bounds.y < title.bounds.y + title.bounds.height);
+        head = head.max(button.bounds.y + button.bounds.height);
     }
     let rows: Vec<&Shown> = shown
         .iter()
         .filter(|shown| shown.text.starts_with("Row"))
         .collect();
     assert_eq!(rows.len(), 60);
-    // The rows show only between the title and the message, the first
+    // The rows show only between the head and the message, the first
     // ones whole, the last ones not at all.
     for row in &rows {
         if let Some(visible) = row.visible.filter(|visible| visible.height > 0.0) {
-            assert!(visible.y >= title.bounds.y + title.bounds.height, "{row:?}");
+            assert!(visible.y >= head, "{row:?}");
             assert!(visible.y + visible.height <= message.bounds.y, "{row:?}");
         }
     }
@@ -131,8 +134,8 @@ fn scrolled_to_its_end_the_body_shows_its_last_row() {
     let shown = laid.texts();
     let last = find(&shown, "Row 60");
     assert!(last.whole(), "{last:?}");
-    let ok = find(&shown, "OK");
-    assert!(last.bounds.y + last.bounds.height < ok.bounds.y);
+    let message = find(&shown, "Why OK waits");
+    assert!(last.bounds.y + last.bounds.height < message.bounds.y);
 }
 
 #[test]
@@ -164,7 +167,7 @@ fn rows_going_after_a_scroll_leave_no_empty_room() {
 }
 
 #[test]
-fn a_long_message_scrolls_above_the_buttons() {
+fn a_long_message_scrolls_at_the_foot() {
     let long: &'static str = "a word or two of what went wrong ".repeat(20).leak();
     let height = 400.0;
     let mut laid = Laid::new(panel_saying(60, long), Size::new(400.0, height));
@@ -179,11 +182,14 @@ fn a_long_message_scrolls_above_the_buttons() {
     let seen = message.visible.expect("the message scrolls");
     assert!(seen.height <= MESSAGE_HEIGHT, "{message:?}");
     assert!(seen.height >= MESSAGE_HEIGHT / 2.0, "{message:?}");
+    assert!(seen.y + seen.height <= height, "{message:?}");
     for button in ["OK", "Cancel"] {
         let button = find(&shown, button);
-        assert!(button.whole() && button.bounds.height >= 12.0, "{button:?}");
-        assert!(button.bounds.y >= seen.y + seen.height, "{button:?}");
-        assert!(button.bounds.y + button.bounds.height <= height);
+        assert!(button.whole() && button.bounds.height >= 20.0, "{button:?}");
+        assert!(
+            button.bounds.y + button.bounds.height <= seen.y,
+            "{button:?}"
+        );
     }
 }
 
@@ -251,34 +257,54 @@ fn the_body_s_scroller_is_faint() {
     assert!(hits >= 10, "{hits} faint pixels");
 }
 
-/// Accept error shows left of OK while it can be pressed, and not at
-/// all otherwise, OK waiting either way.
+/// A draft that fails shows why at the foot, under "Thing fails", with
+/// Add anyway while it can be pressed and Show beside the title when
+/// there's geometry to frame; OK waits either way.
 #[test]
-fn accept_error_shows_beside_ok_while_it_can_be_pressed() {
+fn a_failing_draft_says_so_with_add_anyway() {
     let cancel = || Message::Look(crate::Look::Extrude(crate::ExtrudeLook::Cancel));
     for accept in [true, false] {
         let panel = operation_panel(Parts {
+            icon: Icon::Extrude,
             title: "New thing",
-            summary: None,
             body: text("Row 1").into(),
-            message: Some(message_text("It failed", theme::danger_text)),
+            message: Some(Footer::Fails {
+                noun: "Thing",
+                error: "It failed".into(),
+                show: accept.then_some(Message::Look(crate::Look::ShowFailure(None))),
+                accept: accept.then(cancel),
+            }),
             ok: None,
-            accept: accept.then(cancel),
             cancel: cancel(),
             close: false,
         });
         let shown = Laid::new(panel, Size::new(400.0, 600.0)).texts();
         let ok = find(&shown, "OK");
-        let found = shown.iter().find(|shown| shown.text == "Accept error");
+        let title = find(&shown, "Thing fails");
+        let why = find(&shown, "It failed");
+        assert!(
+            ok.bounds.y + ok.bounds.height <= title.bounds.y,
+            "{shown:?}"
+        );
+        assert!(
+            title.bounds.y + title.bounds.height <= why.bounds.y,
+            "{shown:?}"
+        );
+        let show = shown.iter().find(|shown| shown.text == "Show");
+        assert_eq!(show.is_some(), accept, "{shown:?}");
+        if let Some(show) = show {
+            assert!(show.whole(), "{show:?}");
+            assert!(
+                show.bounds.x > title.bounds.x + title.bounds.width,
+                "{shown:?}"
+            );
+        }
+        let found = shown.iter().find(|shown| shown.text == "Add anyway");
         assert_eq!(found.is_some(), accept, "{shown:?}");
         if let Some(found) = found {
             assert!(found.whole(), "{found:?}");
             assert!(
-                found.bounds.x + found.bounds.width < ok.bounds.x,
-                "{shown:?}"
-            );
-            assert!(
-                found.bounds.x > find(&shown, "Cancel").bounds.x,
+                found.bounds.y >= why.bounds.y + why.bounds.height,
                 "{shown:?}"
             );
         }

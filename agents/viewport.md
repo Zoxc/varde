@@ -168,7 +168,8 @@ sketches with any, each on its own plane, `Space::On`) are filled in the
 live layer; after, the source's regions are
 the base layer on its plane, those picked filled stronger and outlined,
 kept until the profiles (by pointer), the picked set or the colours
-change. The region hovered is filled over them. Picking casts the
+change. The region hovered is filled over them; the one hovered in the
+panel is drawn on the screen over everything (see the operation panel). Picking casts the
 cursor's ray onto each candidate's plane (`Projector::cursor`), asks
 `Profiles::region_at` there and takes the nearest hit by depth
 (`Projector::depth`); a left press on a region picks it (captured),
@@ -205,13 +206,49 @@ the knobs' layer under it stays, empty, without knobs (and always for
 a revolve, which has none), so the panel's widget state survives the
 handle coming and going.
 
-The panel follows the mock's: its text in the text colour
-(`theme::operation_panel`, headings and the summary muted); extents and
-operations are choices with a 1 px border (`theme::choice`, accent on the
-soft accent and semibold while on); Flip and the Bodies rows are
-checkboxes (`theme::tick`: a faint box turning accent on hover, accent
-filled with a white check while ticked); a distance's label is 62 px with
-a 6 px gap, and why its text is refused shows under the field, 68 px in.
+The panel follows the mock's (`.opp`): a card 288 px wide, 8 px round,
+with a 3 px accent line along its top and the mock's shadow, drawn by
+`operation_panel`'s `Sections` (the head on the panel's colour, the well
+`theme::well`, the text's 6% into the panel's, the rail strip's grey,
+under the body and the foot), 9 px side margins in the well; the head's
+Cancel and OK 26 px square (`theme::head_button`, OK the accent's,
+faded while disabled), their glyphs `Icon::Cancel` and `Icon::Confirm`,
+the mock's cross and check at a stroke of 2. Labels, the fields' and the sections' ("Extent",
+"Operation", "Bodies") alike, are 11 px, bold (`theme::BOLD`), faint,
+over what they label; controls are the Timeline's rows' size, 28 px
+tall, 12.5 px words, 8 px in, on the panel's colour over the well.
+Extents and operations are tiles (`operation_panel::tile`,
+`theme::tile`): the choice's icon (the mock's `CHOICE_ICONS`, in the
+Solid colours: an extrude's slab and where it goes, a revolve's turn
+seen down the axis, the booleans as circles) over a 10.5 px label, a
+1 px border, the picked one a 1 px accent border on the soft accent
+with its label still the text's. Flip and Keep tool bodies are icon
+toggles (`operation_panel::toggle`: a 28 px square with the option's
+icon beside the name, the accent's while on, the row and the square
+tinted on hover; a note, as Keep's "Otherwise the tools are used up",
+is its tooltip); the Bodies rows stay checkboxes (`theme::tick`). A
+field picked into by clicks in the viewport (`pick_field`) holds what's
+picked as rows like the Timeline's (`picked_row`: a 16 px icon, the
+name, a measure at the right, a heavy faint cross, `Icon::Remove`, with
+a grey tile on hover) over "+ Click …" under a rule (its plus in the
+rows' icon column, so its words start where their names do), the place
+line alone the field's one row; outlined in the accent while it's the
+one picking. Hovering a picked row or a Bodies row sends
+`Look::HoverPanel` (a `PanelHover`: a region, the revolve's axis, a body)
+on entering and `Look::LeavePanel` of it on leaving, which clears it only
+if it's still the one hovered (moving up a row, the row entered tells it
+first); each session keeps it, and
+`Doc::panel_hover` gives it while the row is still there (a region still
+picked, a combine's body still named). The row shows hovered from it
+(`theme::picked_row(hovered)`, as a row with nothing to press can't tell
+from its status), and the viewport lights it: a region filled in the
+hover colour and outlined on the screen, over everything
+(`Regions::panel_region`, as the preview standing on it hides the
+regions' depth tested layers), the revolve's picked axis in the hover
+colour, a body's faces hovered (the extrude's and revolve's
+`ModelPick::panel_highlight` on the model shown, preview or not, whose
+bodies keep their ids; the combine's own highlight). A distance's label is over its field, and why its text is
+refused shows under it.
 Editing an extrude shows each distance with the design's unit after its
 bare numbers ("10 mm" for a typed "10", `Value::pin_units`), as a new
 one's does, while the value kept is the stored one, so OK with nothing

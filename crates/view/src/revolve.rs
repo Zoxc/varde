@@ -8,15 +8,15 @@ use std::collections::BTreeSet;
 use glam::DVec2;
 use iced::Element;
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, text};
-use iced::{Alignment, Length};
+use iced::widget::{column, text};
 use varde_document::{AxisLine, BodyId, FeatureId, RevolveError};
 use varde_sketch::{Curve, Id, Sketch};
 
-use crate::chrome::{heading, hrule};
+use crate::extrude::region_name;
+use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, OperationKind, Parts, TypedField, bodies, choice, footer_message, grid,
-    labelled, operation_panel, tick, value_field,
+    BodyTarget, Candidate, OperationKind, PanelHover, Parts, TypedField, bodies, field,
+    footer_message, operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
 };
 use crate::theme;
 use crate::{Edit, Look, Message, VALUE_FIELD};
@@ -46,6 +46,16 @@ impl TurnKind {
         TurnKind::Symmetric,
         TurnKind::TwoSides,
     ];
+
+    /// Its choice's icon, seen down the axis.
+    fn icon(self) -> Icon {
+        match self {
+            TurnKind::Full => Icon::RvFull,
+            TurnKind::OneSide => Icon::RvOne,
+            TurnKind::Symmetric => Icon::RvSym,
+            TurnKind::TwoSides => Icon::RvTwo,
+        }
+    }
 
     fn label(self) -> &'static str {
         match self {
@@ -188,6 +198,9 @@ pub struct RevolveState<'a> {
     pub accept: bool,
     /// Whether the document can be changed.
     pub editable: bool,
+    /// The row of the panel the cursor is over, if any: the viewport
+    /// lights it up too.
+    pub hover: Option<PanelHover>,
 }
 
 impl<'a> RevolveState<'a> {
@@ -266,37 +279,65 @@ pub(crate) fn axis_reach(sketch: &Sketch) -> f64 {
 
 /// The floating panel of the revolve being set up.
 pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
-    let regions = match state.picked.len() {
-        0 if state
-            .candidates
-            .iter()
-            .all(|candidate| candidate.profiles.regions.is_empty()) =>
-        {
-            "No closed regions to revolve".to_owned()
-        }
-        0 => "Click regions".to_owned(),
-        1 => "1 region".to_owned(),
-        n => format!("{n} regions"),
-    };
     let editable = state.editable;
     let send = |look: RevolveLook| editable.then_some(Message::Look(Look::Revolve(look)));
 
-    let profile = labelled(
+    let picking_regions = state.picking == RevolvePick::Regions;
+    let pick_regions = send(RevolveLook::Picking(RevolvePick::Regions));
+    let rows: Vec<_> = (state.source.into_iter())
+        .flat_map(|sketch| {
+            let pick_regions = pick_regions.clone();
+            state.picked.iter().map(move |&region| {
+                picked_row(
+                    Icon::SeRegion,
+                    region_name(region),
+                    None,
+                    send(RevolveLook::PickRegion { sketch, region }),
+                    pick_regions.clone(),
+                    PanelHover::Region { sketch, region },
+                    state.hover,
+                )
+            })
+        })
+        .collect();
+    let empty = state
+        .candidates
+        .iter()
+        .all(|candidate| candidate.profiles.regions.is_empty());
+    let place = (rows.is_empty() || picking_regions).then(|| {
+        if state.picked.is_empty() && empty {
+            "No closed regions to revolve".to_owned()
+        } else {
+            "Click regions".to_owned()
+        }
+    });
+    let profile = field(
         "Profile",
-        pick_field(
-            regions.clone(),
-            state.picking == RevolvePick::Regions,
-            send(RevolveLook::Picking(RevolvePick::Regions)),
-        ),
+        pick_field(rows, place, picking_regions, pick_regions),
     );
-    let axis = labelled(
+    let picking_axis = state.picking == RevolvePick::Axis;
+    let pick_axis = send(RevolveLook::Picking(RevolvePick::Axis));
+    let axis_row = state.axis_name().map(|name| {
+        picked_row(
+            Icon::SeAxis,
+            name,
+            None,
+            None,
+            pick_axis.clone(),
+            PanelHover::Axis,
+            state.hover,
+        )
+    });
+    let axis_place = axis_row
+        .is_none()
+        .then(|| "Click a line or axis".to_owned());
+    let axis = field(
         "Axis",
         pick_field(
-            state
-                .axis_name()
-                .unwrap_or_else(|| "Click a line or axis".to_owned()),
-            state.picking == RevolvePick::Axis,
-            send(RevolveLook::Picking(RevolvePick::Axis)),
+            axis_row.into_iter().collect(),
+            axis_place,
+            picking_axis,
+            pick_axis,
         ),
     );
     let missing = {
@@ -319,7 +360,8 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
     };
 
     let extents = TurnKind::ALL.map(|kind| {
-        choice(
+        tile(
+            kind.icon(),
             kind.label(),
             state.extent == kind,
             send(RevolveLook::Extent(kind)),
@@ -333,12 +375,18 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         };
         angle_field(label, angle, state.fields[angle.index()], editable)
     });
-    let flip = state
-        .extent
-        .flips()
-        .then(|| tick("Flip", state.flip, send(RevolveLook::Flip)));
+    let flip = state.extent.flips().then(|| {
+        toggle(
+            Icon::TkFlip,
+            "Flip",
+            state.flip,
+            send(RevolveLook::Flip),
+            None,
+        )
+    });
     let operations = OperationKind::ALL.map(|kind| {
-        choice(
+        tile(
+            kind.icon(),
             kind.label(),
             state.operation == kind,
             send(RevolveLook::Operation(kind)),
@@ -348,51 +396,35 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         send(RevolveLook::Target(body))
     });
     let refused = (state.refused.map(|refused| refused.to_string())).or_else(|| state.held.clone());
-    let message = footer_message(refused, state.error, state.show_error, state.checking);
+    let message = footer_message(
+        "Revolve",
+        refused,
+        state.error,
+        state.show_error,
+        state.accept.then_some(Message::Edit(Edit::AcceptError)),
+        state.checking,
+    );
 
     let body = column![
         profile,
         axis,
         missing,
-        hrule(),
-        heading("Extent"),
-        grid(extents),
-        column(fields).spacing(4),
+        field("Extent", tiles(extents)),
+        column(fields).spacing(8),
         flip,
-        hrule(),
-        heading("Operation"),
-        grid(operations),
+        field("Operation", tiles(operations)),
         targets,
     ]
-    .spacing(6);
+    .spacing(10);
     operation_panel(Parts {
+        icon: Icon::Revolve,
         title: state.editing.unwrap_or("New revolve"),
-        summary: None,
         body: body.into(),
         message,
         ok: state.ready.then_some(Message::Edit(Edit::CommitRevolve)),
-        accept: state.accept.then_some(Message::Edit(Edit::AcceptError)),
         cancel: Message::Look(Look::Revolve(RevolveLook::Cancel)),
         close: false,
     })
-}
-
-/// A field picked into by clicks in the viewport, showing `shown`: what's
-/// picked, or what to click. Outlined while it's the one picking; a
-/// click on it makes it so.
-fn pick_field<'a>(shown: String, on: bool, message: Option<Message>) -> Element<'a, Message> {
-    button(
-        text(shown)
-            .size(12)
-            .wrapping(Wrapping::WordOrGlyph)
-            .width(Length::Fill)
-            .align_x(Alignment::Start),
-    )
-    .width(Length::Fill)
-    .padding([3, 6])
-    .style(theme::choice(on))
-    .on_press_maybe(message)
-    .into()
 }
 
 /// The field of `angle`, named `label`, showing why its text is refused

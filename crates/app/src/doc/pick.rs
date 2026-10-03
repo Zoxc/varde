@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use varde_document::BodyId;
-use varde_view::{ModelHighlight, ModelPicking, Pick, Picked, Picks, Selection};
+use varde_view::{ModelHighlight, ModelPicking, PanelHover, Pick, Picked, Picks, Selection};
 
 use super::Doc;
 
@@ -25,6 +25,11 @@ pub(crate) struct ModelPick {
     /// What `highlight` was built of: the model, the target hovered and
     /// the selection.
     built: Option<(u64, Option<Picked>, Selection)>,
+    /// While an extrude or revolve is set up, the body whose row in its
+    /// panel is hovered, lit in the model shown (its preview).
+    panel_highlight: Arc<ModelHighlight>,
+    /// What `panel_highlight` was built of: the model and the body.
+    panel_built: Option<(u64, BodyId)>,
 }
 
 impl ModelPick {
@@ -48,6 +53,60 @@ impl Doc {
         self.sketch.is_none()
             && (combining || (!self.operating() && !self.feed.shows_draft()))
             && !self.feed.predates_replacement()
+    }
+
+    /// The row of the operation's panel the cursor is over, if one is set
+    /// up and the row is still there: a region still picked, a combine's
+    /// body still named.
+    pub(crate) fn panel_hover(&self) -> Option<PanelHover> {
+        let region = |regions: &super::regions::RegionPick, hover: PanelHover| match hover {
+            PanelHover::Region { sketch, region } => {
+                regions.source == Some(sketch) && regions.picked.contains(&region)
+            }
+            _ => true,
+        };
+        if let Some(session) = &self.extrude {
+            return session
+                .hover
+                .filter(|&hover| region(&session.regions, hover));
+        }
+        if let Some(session) = &self.revolve {
+            return session
+                .hover
+                .filter(|&hover| region(&session.regions, hover));
+        }
+        let session = self.combine.as_ref()?;
+        session.hover.filter(|&hover| match hover {
+            PanelHover::Body(body) => session.target == Some(body) || session.tools.contains(&body),
+            _ => false,
+        })
+    }
+
+    /// Hovers the row `hover` of the operation's panel, or none: the
+    /// viewport lights it up too.
+    pub(crate) fn hover_panel(&mut self, hover: Option<PanelHover>) {
+        if let Some(session) = &mut self.extrude {
+            session.hover = hover;
+        }
+        if let Some(session) = &mut self.revolve {
+            session.hover = hover;
+        }
+        if let Some(session) = &mut self.combine {
+            session.hover = hover;
+        }
+        self.refresh_highlight();
+    }
+
+    /// Takes the cursor leaving the panel's row `left`: nothing's hovered,
+    /// unless another row already is, entered before this one was left.
+    pub(crate) fn leave_panel(&mut self, left: PanelHover) {
+        let hovered = (self.extrude.as_ref().map(|session| session.hover))
+            .or_else(|| self.revolve.as_ref().map(|session| session.hover))
+            .or_else(|| self.combine.as_ref().map(|session| session.hover))
+            .flatten();
+        if hovered == Some(left) {
+            self.hover_panel(None);
+        }
     }
 
     /// Hovers `pick`, from the viewport as the cursor moves, or nothing:
@@ -140,6 +199,7 @@ impl Doc {
     /// selection changed since it was built. Nothing is drawn while the
     /// cursor doesn't pick, so it isn't built then.
     fn refresh_highlight(&mut self) {
+        self.refresh_panel_highlight();
         if !self.picks() {
             return;
         }
@@ -170,6 +230,30 @@ impl Doc {
         };
         self.pick.highlight = Arc::new(highlight);
         self.pick.built = Some(key);
+    }
+
+    /// Rebuilds the extrude's or revolve's highlight, the body whose row in
+    /// its panel is hovered lit, if the model or the body changed since it
+    /// was built. The preview keeps the bodies' ids, so the body is found
+    /// in the model shown, preview or not.
+    fn refresh_panel_highlight(&mut self) {
+        let operating = self.extrude.is_some() || self.revolve.is_some();
+        let body = (self.panel_hover())
+            .filter(|_| operating)
+            .and_then(PanelHover::body);
+        let key = body.map(|body| (self.feed.model(), body));
+        if self.pick.panel_built == key {
+            return;
+        }
+        self.pick.panel_highlight = Arc::new(match body {
+            Some(body) => {
+                let index = self.feed.pick_index();
+                let faces: Vec<Picked> = index.body_faces(body).map(Picked::Face).collect();
+                index.highlight_with(&faces, &[], &[])
+            }
+            None => ModelHighlight::default(),
+        });
+        self.pick.panel_built = key;
     }
 
     /// What's hovered as it's highlighted: while picking a plane, only a
@@ -215,6 +299,12 @@ impl Doc {
         }
         if self.combine.is_some() {
             return self.combine_highlight().filter(|_| self.picks());
+        }
+        // An extrude's or revolve's: the body hovered in its panel.
+        if self.extrude.is_some() || self.revolve.is_some() {
+            let current =
+                (self.pick.panel_built).is_some_and(|(model, _)| model == self.feed.model());
+            return current.then_some(&self.pick.panel_highlight);
         }
         // Only of the model shown: one built for an earlier model would be
         // drawn over another.

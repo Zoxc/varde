@@ -7603,14 +7603,20 @@ operation's panel, with the parts the extrude and the revolve share:
 `Candidate`, `TypedField`, `OperationKind`, `BodyTarget`, the choices,
 ticks, typed fields, Bodies list and footer message; the app's session
 parts they share are in `app/src/doc/regions.rs`, see "UI" under
-Revolve in `agents/features.md`): a fixed header (the title on one line, clipped, and
-the region count), a body that scrolls (`PANEL_BODY`) when the panel would
-run past the viewport's bottom margin, and a fixed footer (the message and
-Cancel and OK), so OK and Cancel show and take clicks however many bodies
-are listed or however short the window; nothing is drawn past the panel,
-and a body's name, the field errors and the message break inside words
-that don't fit (`Wrapping::WordOrGlyph`), the message scrolling on its
-own past about five lines. Its body holds the extents (Through all only while Cut is
+Revolve in `agents/features.md`): a card as the tool rail's (the UI
+mock's `.opp`), a fixed head (the operation's icon, the title on one
+line, clipped, and Cancel and OK as small square icon buttons), under
+it a recessed well holding a body that scrolls (`PANEL_BODY`) when the
+panel would run past the viewport's bottom margin and a fixed foot (the
+message), so OK and Cancel show and take clicks however many bodies are
+listed or however short the window; nothing is drawn past the panel
+but its shadow, and a body's name, the field errors and the message
+break inside words that don't fit (`Wrapping::WordOrGlyph`), the
+message scrolling on its own past about five lines. Its body holds the
+Profile, a field of the regions picked as rows (`Icon::SeRegion`,
+"Region 1", a cross taking it out, `ExtrudeLook::PickRegion`) over
+"Click regions" (or "Click regions to extrude", "No closed regions to
+extrude"), always the one picking; the extents (Through all only while Cut is
 chosen, else disabled with "Only a cut goes through all"; choosing
 another operation while through all goes back to one side), the distance fields (the first is `VALUE_FIELD`, which
 takes the focus as the session opens, all selected; `Esc` in it cancels),
@@ -7643,13 +7649,14 @@ only taking bodies made before the extrude edited; bodies undone away
 drop out, and aren't taken out again when redone: undo gives the ids
 back, so a new edit may give theirs to other bodies), and under it, for a
 join ticked for two or more (not counting one merged away before),
-"Joined into Body 1", the first ticked (`extrude::joined_into`), which holds them all once it's committed; its footer the
-refusal, the draft's error or "Checking the sketch…", then Cancel and OK.
-While the draft's error shows, OK and `Enter` wait, and an "Accept error"
-button left of OK, in the danger fill, commits anyway (`Edit::AcceptError`,
-`Parts::accept`, `Doc::commit_by`; every operation's panel, never a key):
-the feature is kept with its error, marked failed in the Timeline, to fix
-later. The error is the newest draft's, none while it's unanswered, so OK
+"Joined into Body 1", the first ticked (`extrude::joined_into`), which holds them all once it's committed; its foot the
+refusal, the draft's error or "Checking the sketch…" (`footer_message`).
+While the draft's error shows, OK and `Enter` wait, and the error shows
+in a box (`Footer::Fails`): "Extrude fails" with a red alert on a red
+wash, the error under it in muted words, and an "Add anyway" button in
+the strong danger colour that commits anyway (`Edit::AcceptError`,
+`Doc::commit_by`; every operation's panel, never a key): the feature is
+kept with its error, marked failed in the Timeline, to fix later. The error is the newest draft's, none while it's unanswered, so OK
 doesn't wait on the preview.
 Errors that stand alone, the field errors, the refusal and the draft's
 error here and a failed feature's tooltip, are shown as sentences,
@@ -7663,13 +7670,14 @@ knobs' layer stays, empty, so the panel's keeps its place in the
 viewport's stack and its state), and the wheel over it scrolls it rather
 than the camera. Giving the first field the focus (a session started, or
 another extrude edited while a panel is open) also scrolls the body back
-to its top, where the field is. The panel starts 150 px down
+to its top if the field shows from there, else down to the field and its
+label (`RevealField` in `app/src/lib.rs`). The panel starts 150 px down
 (`PANEL_TOP`, clear of the camera controls) unless the viewport leaves
 it less than 200 px (`PANEL_ROOM`) below that; then it rises, at most to
 12 px from the top, over the controls (`operation_panel::placed`). Where
-even the header and footer don't fit, the footer keeps its height and
-the header gives way. Below about 550 px of window width (the
-side panel's 256, the panel's 264 and its margins) the panel narrows
+even the head and foot don't fit, the head keeps its height and the
+foot gives way. Below about 580 px of window width (the
+side panel's 256, the panel's 288 and its margins) the panel narrows
 with the viewport and its text wraps; in a much narrower window its
 buttons squeeze away, as the window has no minimum size. The handle and region picking are in `agents/viewport.md`.
 Dragging a knob types its distance (one side past the plane flips; a knob

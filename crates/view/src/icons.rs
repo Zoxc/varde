@@ -121,6 +121,41 @@ icons! {
     CatConstrain => r#"<rect transform="rotate(-18 12 12)" x="5" y="6" width="14" height="12" rx=".5"/><path class="a" transform="rotate(-18 12 12)" d="M5 13.5h4.5V18"/><circle class="af" transform="rotate(-18 12 12)" cx="19" cy="6" r="1.5"/>"#,
     CatInspect => r#"<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM4.2 7.5L12 12l7.8-4.5M12 12v9"/><path class="a" d="M15.1 10.2l-2.7 10.4M18 8.5l-2.8 10.5M19.8 11l-1.4 5.3"/>"#,
     CatDimension => r#"<rect x="3.5" y="13" width="17" height="7.5" rx="1"/><path class="r" d="M3.5 4.5v6.5M20.5 4.5v6.5"/><path class="a" d="M4.5 7.5h15M7 5.5l-2.5 2 2.5 2M17 5.5l2.5 2-2.5 2"/>"#,
+    // The model mock's: a warning triangle, for what failed.
+    Alert => r#"<path d="M12 3.5L21.5 20h-19z"/><path d="M12 10v4.5M12 17.2v.1"/>"#,
+    // The operation panel's head: Cancel and OK, at the mock's stroke of 2,
+    // drawn 16 px. The check's arms both at 45°, on lines through pixel
+    // centres at 16 and 32 px (a 16 px pixel is 1.5 units), as the cross's
+    // are, so their edges are even all along.
+    Cancel => r#"<path d="M6 6l12 12M18 6L6 18" stroke-width="2"/>"#,
+    Confirm => r#"<path d="M5.25 12.75l4.5 4.5L19.5 7.5" stroke-width="2"/>"#,
+    // The cross taking a pick out of the operation panel's field: heavy,
+    // drawn small.
+    Remove => r#"<path d="M6 6l12 12M18 6L6 18" stroke-width="2.8"/>"#,
+    // What's picked, on its row in the operation panel: a sketch's
+    // region, an axis.
+    SeRegion => r#"<path class="fl" d="M4 6h10l6 6-6 6H4z"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="12" r="1.5"/><circle class="af" cx="4" cy="18" r="1.5"/>"#,
+    SeAxis => r#"<path d="M4 20L20 4"/><circle class="af" cx="7.5" cy="16.5" r="1.7"/><circle class="af" cx="16.5" cy="7.5" r="1.7"/>"#,
+    // The operation panel's choices, the model mock's `CHOICE_ICONS`:
+    // a revolve's extents seen down its axis (the dot), the profile the
+    // line out to the right; an extrude's, the profile as a slab and where
+    // it goes; the booleans as circles, the body left and the tool right,
+    // what's left filled, a tool taken away dashed.
+    RvFull => r#"<path d="M12 12h8"/><circle class="a" cx="12" cy="12" r="8"/><circle cx="12" cy="12" r=".9"/>"#,
+    RvOne => r#"<path d="M12 12h8"/><path class="a" d="M20 12A8 8 0 1 0 12 20"/><circle cx="12" cy="12" r=".9"/><circle class="af" cx="12" cy="20" r="1.6"/>"#,
+    RvSym => r#"<path d="M12 12h8"/><path class="a" d="M12 4A8 8 0 0 1 12 20"/><circle cx="12" cy="12" r=".9"/><circle class="af" cx="12" cy="4" r="1.6"/><circle class="af" cx="12" cy="20" r="1.6"/>"#,
+    RvTwo => r#"<path d="M12 12h8"/><path class="a" d="M8 5.07A8 8 0 0 1 17.14 18.13"/><circle cx="12" cy="12" r=".9"/><circle class="af" cx="8" cy="5.07" r="1.6"/><circle class="af" cx="17.14" cy="18.13" r="1.6"/>"#,
+    ExOne => r#"<path class="fl" d="M3 19l4-3h14l-4 3z"/><path class="a" d="M12 16.5V5M9.5 7.5L12 5l2.5 2.5"/>"#,
+    ExSym => r#"<path class="fl" d="M3 13.5l4-3h14l-4 3z"/><path class="a" d="M12 11V3.5M9.5 6L12 3.5 14.5 6M12 13.5V21M9.5 18.5L12 21l2.5-2.5"/>"#,
+    ExTwo => r#"<path class="fl" d="M3 15l4-3h14l-4 3z"/><path class="a" d="M12 12.5V3M9.5 5.5L12 3l2.5 2.5M12 15v4.5M10 17.5l2 2 2-2"/>"#,
+    ExThru => r#"<path class="r" d="M4 9h16v6H4z"/><path class="fl" d="M3 6l4-3h14l-4 3z"/><path class="a" d="M12 6v16M9.5 19.5L12 22l2.5-2.5"/>"#,
+    BoNew => r#"<circle class="r" cx="7" cy="12" r="4.8"/><circle class="fl" cx="17" cy="12" r="4.8"/>"#,
+    BoJoin => r#"<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 1 0 12 6.8z"/>"#,
+    BoCut => r#"<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 0 1 12 6.8z"/><circle class="a" cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
+    BoInt => r#"<circle class="r" cx="9" cy="12" r="6"/><circle class="r" cx="15" cy="12" r="6"/><path class="fl" d="M12 6.8A6 6 0 0 1 12 17.2A6 6 0 0 1 12 6.8z"/>"#,
+    // The options' icons, drawn in one colour: flip, keep the tools.
+    TkFlip => r#"<path d="M4 8h15M15.5 4.5L19 8l-3.5 3.5M20 16H5M8.5 12.5L5 16l3.5 3.5"/>"#,
+    TkKeep => r#"<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
     // Nothing: room for an icon, beside items that have one.
     Blank => "",
 }
@@ -143,7 +178,8 @@ impl Icon {
             | Icon::Convert
             | Icon::Handles
             | Icon::Comb
-            | Icon::CatDraw => IconCategory::Sketch,
+            | Icon::CatDraw
+            | Icon::SeRegion => IconCategory::Sketch,
             Icon::Trim
             | Icon::Extend
             | Icon::Mirror
@@ -167,8 +203,23 @@ impl Icon {
             | Icon::OffsetConstraint
             | Icon::CatConstrain => IconCategory::Constraint,
             Icon::Dimension | Icon::CatDimension => IconCategory::Dimension,
-            Icon::Body | Icon::Extrude | Icon::Revolve | Icon::CatCreate => IconCategory::Solid,
-            Icon::Plane => IconCategory::Construction,
+            Icon::Body
+            | Icon::Extrude
+            | Icon::Revolve
+            | Icon::CatCreate
+            | Icon::RvFull
+            | Icon::RvOne
+            | Icon::RvSym
+            | Icon::RvTwo
+            | Icon::ExOne
+            | Icon::ExSym
+            | Icon::ExTwo
+            | Icon::ExThru
+            | Icon::BoNew
+            | Icon::BoJoin
+            | Icon::BoCut
+            | Icon::BoInt => IconCategory::Solid,
+            Icon::Plane | Icon::SeAxis => IconCategory::Construction,
             Icon::Measure | Icon::CatInspect => IconCategory::Inspect,
             Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,
             _ => return None,
@@ -277,6 +328,15 @@ impl Layers {
                 None => ("", element.to_owned()),
             };
             let has = |class| classes.split_whitespace().any(|c| c == class);
+            // A light fill, the mock's `fl`: the layer's colour, faint.
+            let element = if has("fl") {
+                format!(
+                    r##"{} fill="#000" fill-opacity=".18"/>"##,
+                    &element[..element.len() - 2]
+                )
+            } else {
+                element
+            };
             let open = &element[..element.len() - 2];
             if has("af") {
                 layers.dots += &format!(r#"{open} stroke-width="1.5"/>"#);
