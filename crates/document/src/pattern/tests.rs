@@ -244,6 +244,27 @@ fn bodies_and_axes_name_what_comes_before() {
     let id = add(&mut editor, linear(&document, &[b], "2", "5")).unwrap();
     let removal = editor.document().removal(Removable::Body(b));
     assert_eq!(removal.features, vec![second, id]);
+    // Removing the body under its axis doesn't: it stays, naming a body
+    // that isn't there (regenerating fails it until it's given another).
+    editor.apply(Command::RemoveFeature(id)).unwrap();
+    let mut about = circular(&document, &[a], "3", "360");
+    *about.kind.axis_mut() = AxisRef::Face(FaceRef {
+        body: b,
+        key: FaceKey {
+            feature: second.get(),
+            part: PartKey::EndCap,
+            instance: 0,
+        },
+        near: DVec3::ZERO,
+    });
+    let id = add(&mut editor, about).unwrap();
+    assert_eq!(
+        editor.document().removal(Removable::Body(b)).features,
+        vec![second]
+    );
+    editor.apply(Command::RemoveBody(b)).unwrap();
+    assert!(editor.document().feature(id).is_some());
+    assert_eq!(editor.document().check(), Ok(()));
 }
 
 #[test]

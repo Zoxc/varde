@@ -1231,11 +1231,13 @@ on), its plane to pick, clicks picking the plane if it has bodies.
   plane is picked the model shown is the history as of the feature, so
   what's clicked is where the feature finds it: a new one sends no
   draft then, and an edited one a move of its bodies by nothing (turning
-  them by nothing about a move's axis, so regeneration still finds it).
+  them by nothing about a move's or pattern's axis, so regeneration
+  still finds it; the bodies and axis that are gone left out).
   An axis or plane the document no longer takes at the feature's place
   (`Document::check_axis_ref`, `check_plane_ref`: an undo took its body
   or a face's maker away), or whose body the document no longer has, is
-  kept, and said to be gone as the mock does: "The axis is gone: pick
+  kept, and said to be gone as the mock does (from the start when the
+  feature edited already names one, its body removed): "The axis is gone: pick
   another" (only while the move turns: an angle of zero needs no axis),
   "The plane is gone: pick another"; nothing is previewed or committed
   until another is picked or a redo brings it back.
@@ -1509,7 +1511,8 @@ pub enum PatternKind {
   changes.
 - Nothing merged or touched, as a move.
 
-Tests: `document/src/pattern/tests.rs` (checks, spacing rules, removal,
+Tests: `document/src/pattern/tests.rs` (checks, spacing rules, removal (the
+axis's body removed leaves the pattern),
 units, postcard and hostile values read back), `regen/src/history/tests/
 pattern.rs` (a row of pins against its volume and box, names per copy, a
 negative spacing; copies end to end along the pin's own round face
@@ -1517,7 +1520,7 @@ united into one; a ring of pins, whole turn exact at quarter turns and
 three over 90° by its centre of mass; three bars through a hub against
 the inclusion–exclusion area; a pin grid cut from a plate in one
 difference, 4 × 4 and 10 × 10, timed; a copy's face as a later axis,
-and a copy that isn't there; out of range; the patch bound with
+kept by its name as the count changes, and a copy that isn't there; out of range; the patch bound with
 overflow; the cache), `regen/src/wire/tests.rs` (a draft and its axis),
 `io/src/vrdp/tests.rs` (through a file), and the motion fuzz
 (`motion/fuzz.rs`, `VARDE_MOTION_SEEDS`): random linear and circular
@@ -1564,7 +1567,11 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   "Only a straight or round edge, or a round face, can give the
   direction"), and drawn as a move's axis, always (a flipped linear
   one's arrow pointing the way its copies go). Gone: "The direction is
-  gone: pick another" / "The axis is gone: pick another".
+  gone: pick another" / "The axis is gone: pick another" (an undo took
+  its body or maker away, or the body was removed: the pattern stays
+  and fails until another is picked); while another is picked for an
+  edited one, the neutral preview leaves the gone axis (and any gone
+  body) out, so the model shown is still the bodies at the pattern.
 - **Fields and modes** (`MotionField::Count`, `MotionField::Spread`,
   `MotionLook::Mode(PatternMode)`, `MotionLook::Flip`): the count by
   `Pattern::count_ask`; the spread a positive length within the
@@ -1574,7 +1581,10 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   `"(total) / (n − 1)"`, Flip as `"-(...)"` round either (a negative
   spacing); circular Full 360° as `"360°"`, Total as typed, Spacing as
   `"(spacing) * (n − 1)"`. Texts, not rounded numbers, so the values are
-  exact and follow unit changes. The mock's errors under the field
+  exact and follow unit changes; where the text wrapped would be past
+  what an expression holds (`MAX_LEN`, `MAX_DEPTH`: a spread typed near
+  the 256 bytes), the value it comes to is stored instead, written
+  exactly (`varde_expr::exact`), rather than refusing a text that reads. The mock's errors under the field
   (`MotionState::spread_error`, OK off): "The pattern runs past 1000000
   mm" (spacing × (n − 1) past `MAX_COORD`; the mock's limit is its
   10 000 mm), "4 copies 120° apart go past a full turn" (a Spacing
@@ -1589,8 +1599,11 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   them out). Otherwise the rule: a linear pattern opens in Spacing with
   its spacing's size (Flip on for a negative one, its text with the
   sign taken off where that gives the value exactly, else
-  `"-(text)"`); a circular one in Full 360° for a whole turn, else in
-  Total with its angle.
+  `"-(text)"`, else, too long for that, the size written exactly); a
+  circular one in Full 360° for a whole turn, else in Total with its
+  angle. The shape is kept under the feature edited, or the one added.
+  An undo setting another kind of feature in the edited one's place
+  (`MotionKind::of` no longer the session's) ends the session.
 - **Preview, OK, status**: the draft is the pattern as set up (none for
   a new one while its axis is picked); OK one undo step ("Pattern N");
   the status bar says "New linear pattern · Body 2 · 4 × 12 mm along X
@@ -1612,7 +1625,11 @@ Tests: `app/src/doc/motion/tests/pattern.rs` (`P`, typing a count and a
 spacing previews the row, `Enter` one undo step, the note; Total stores
 its spacing, Flip turns it, the mode kept on editing and the rule
 without it; a circular Full 360° against the copies' box; the mock's
-errors past a turn and the limit; editing from the Timeline and undo);
+errors past a turn and the limit; editing from the Timeline and undo;
+spreads too long to wrap stored as their values, and a stored spacing
+whose text turned is too long; an undo swapping the kind; a direction
+gone by an undo and by its body's removal, the neutral preview without
+it);
 `view/src/motion/tests.rs` (both panels' rows and modes, the infos).
 
 Departures from the mock: no "Join to original" (decided: copies stay

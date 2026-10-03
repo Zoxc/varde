@@ -208,12 +208,9 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Extrude(_) => Icon::Extrude,
         FeatureKind::Revolve(_) => Icon::Revolve,
         FeatureKind::Combine(_) => Icon::Combine,
-        FeatureKind::Move(_) => Icon::Move,
-        FeatureKind::Mirror(_) => Icon::BMirror,
-        FeatureKind::Pattern(ref pattern) => match pattern.kind {
-            varde_document::PatternKind::Linear { .. } => Icon::LPattern,
-            varde_document::PatternKind::Circular { .. } => Icon::CPattern,
-        },
+        FeatureKind::Move(_) | FeatureKind::Mirror(_) | FeatureKind::Pattern(_) => {
+            crate::MotionKind::of(&feature.kind).map_or(Icon::Move, crate::MotionKind::icon)
+        }
     }
 }
 

@@ -364,7 +364,8 @@ fn a_pin_grid_is_cut_from_a_plate_in_one_difference() {
     assert!(matches!(ten, None | Some(Ok(()))), "{ten:?}");
 }
 /// A copy's face is named as that copy: a later pattern turns about the
-/// third pin's wall, and one naming a copy the row doesn't have fails.
+/// third pin's wall, still found as the row's count changes (copy `k`
+/// keeps its name), and one naming a copy the row doesn't have fails.
 #[test]
 fn a_copy_s_face_is_found_by_its_name() {
     let mut editor = Editor::new(Document::default());
@@ -398,8 +399,21 @@ fn a_copy_s_face_is_found_by_its_name() {
     assert!(bounds.min.abs_diff_eq(DVec3::new(-2.0, -52.0, 0.0), 1e-9));
     assert!(bounds.max.abs_diff_eq(DVec3::new(42.0, 52.0, 10.0), 1e-9));
 
+    // More copies in the row: copy 2 keeps its name, and the ring finds
+    // it as before; copy 3 is there now.
+    let kind = linear(editor.document(), &[body], X, "5", "10");
+    set(&mut editor, row, kind);
+    let evaluation = evaluated(editor.document());
+    assert_eq!(failure(&evaluation, ring), None);
+    assert!(near(evaluation.bodies[0].solid.volume(), 5.0 * PIN, 1e-9));
+    let again = solid_of(&evaluation, other).bounds3().unwrap();
+    assert_eq!(again, bounds);
     let kind = circular(editor.document(), &[other], about(3, 30.0), "2", "360");
-    set(&mut editor, ring, kind);
+    set(&mut editor, ring, kind.clone());
+    assert_eq!(failure(&evaluated(editor.document()), ring), None);
+    // Fewer: copy 3 is gone.
+    let kind = linear(editor.document(), &[body], X, "3", "10");
+    set(&mut editor, row, kind);
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, ring),

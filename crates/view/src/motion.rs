@@ -13,7 +13,7 @@ use iced::Element;
 use iced::widget::text::Wrapping;
 use iced::widget::{column, text};
 use varde_document::{
-    Axis3, AxisRef, BodyId, Document, OriginPlane, Pattern, PatternKind, PlaneRef,
+    Axis3, AxisRef, BodyId, Document, FeatureKind, OriginPlane, Pattern, PatternKind, PlaneRef,
 };
 use varde_expr::{AngleUnit, LengthUnit, Unit};
 
@@ -84,6 +84,20 @@ impl MotionKind {
     /// plane (a mirror's).
     pub fn takes_axis(self) -> bool {
         self != MotionKind::Mirror
+    }
+
+    /// The session that edits a feature of `kind`, if one does: a move, a
+    /// mirror, or a linear or circular pattern.
+    pub fn of(kind: &FeatureKind) -> Option<MotionKind> {
+        Some(match kind {
+            FeatureKind::Move(_) => MotionKind::Move,
+            FeatureKind::Mirror(_) => MotionKind::Mirror,
+            FeatureKind::Pattern(pattern) => match pattern.kind {
+                PatternKind::Linear { .. } => MotionKind::LinearPattern,
+                PatternKind::Circular { .. } => MotionKind::CircularPattern,
+            },
+            _ => return None,
+        })
     }
 }
 
@@ -284,8 +298,8 @@ pub struct MotionState<'a> {
     /// mock's words under its field: "The pattern runs past 1000000 mm",
     /// "4 copies 120° apart go past a full turn".
     pub spread_error: Option<String>,
-    /// A whole pattern's copies as the status bar says them, "4 × 25 mm",
-    /// "6 × 60°" ([`pattern_copies`]).
+    /// A whole pattern's copies as the status bar says them, "4 × 25 mm
+    /// along X axis", "6 × 60° about Z axis" ([`pattern_copies`]).
     pub copies: Option<String>,
     /// What's still to be done before it can be committed, if anything:
     /// "pick the bodies to move", for the status bar.
@@ -411,33 +425,29 @@ pub(crate) fn mirror_info(document: &Document, mirror: &varde_document::Mirror) 
 /// flipped", "Body 1 · 6 × 60° about Z axis".
 pub(crate) fn pattern_info(document: &Document, pattern: &Pattern) -> String {
     let bodies = body_names(document, &pattern.bodies);
-    let axis = axis_name(document, pattern.kind.axis());
-    let copies = pattern_copies(pattern, document.units());
-    match &pattern.kind {
-        PatternKind::Linear { spacing, .. } => {
-            let flipped = if spacing.value < 0.0 { ", flipped" } else { "" };
-            format!("{bodies} · {copies} along {axis}{flipped}")
-        }
-        PatternKind::Circular { .. } => format!("{bodies} · {copies} about {axis}"),
-    }
+    format!("{bodies} · {}", pattern_copies(document, pattern))
 }
 
-/// A pattern's copies as the mock's row info says them: the count and
-/// the step between neighbours, "4 × 25 mm" (the spacing's size: a
-/// flipped one's sign is said apart), "6 × 60°" (as the copies turn,
+/// A pattern's copies as the mock's row info says them, after its
+/// bodies: the count and the step between neighbours, and the axis,
+/// "4 × 25 mm along X axis" (the spacing's size, ", flipped" for a
+/// negative one), "6 × 60° about Z axis" (as the copies turn,
 /// [`Pattern::step_degrees`]).
-pub fn pattern_copies(pattern: &Pattern, units: LengthUnit) -> String {
+pub fn pattern_copies(document: &Document, pattern: &Pattern) -> String {
     let count = pattern.kind.count_value().value;
-    let step = match &pattern.kind {
+    let axis = axis_name(document, pattern.kind.axis());
+    match &pattern.kind {
         PatternKind::Linear { spacing, .. } => {
-            varde_expr::format(spacing.value.abs(), Some(units.into()))
+            let step = varde_expr::format(spacing.value.abs(), Some(document.units().into()));
+            let flipped = if spacing.value < 0.0 { ", flipped" } else { "" };
+            format!("{count} × {step} along {axis}{flipped}")
         }
         PatternKind::Circular { .. } => {
             let step = pattern.step_degrees().unwrap_or(0.0).to_radians();
-            varde_expr::format(step, Some(DEGREES))
+            let step = varde_expr::format(step, Some(DEGREES));
+            format!("{count} × {step} about {axis}")
         }
-    };
-    format!("{count} × {step}")
+    }
 }
 
 /// A pattern's Timeline note, the mock's: its count, "×4".
@@ -480,15 +490,8 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
                 None => bodies,
             }
         }
-        (MotionKind::LinearPattern, Some(axis)) => match &state.copies {
-            Some(copies) => {
-                let flipped = if state.flip { ", flipped" } else { "" };
-                format!("{bodies} · {copies} along {axis}{flipped}")
-            }
-            None => bodies,
-        },
-        (MotionKind::CircularPattern, Some(axis)) => match &state.copies {
-            Some(copies) => format!("{bodies} · {copies} about {axis}"),
+        (MotionKind::LinearPattern | MotionKind::CircularPattern, Some(_)) => match &state.copies {
+            Some(copies) => format!("{bodies} · {copies}"),
             None => bodies,
         },
         _ => bodies,

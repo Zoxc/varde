@@ -270,7 +270,10 @@ fn a_pattern_s_infos_are_the_mock_s() {
         },
     };
     assert_eq!(pattern_note(&pattern), "×4");
-    assert_eq!(pattern_copies(&pattern, design.units), "4 × 25 mm");
+    assert_eq!(
+        pattern_copies(document, &pattern),
+        "4 × 25 mm along X axis, flipped"
+    );
     assert_eq!(
         pattern_info(document, &pattern),
         "Body 1 · 4 × 25 mm along X axis, flipped"
