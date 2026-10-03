@@ -5,7 +5,7 @@
 use varde_document::{Document, FeatureId, Pattern, PatternKind};
 use varde_kernel::{Budget, Instance, MAX_PATCHES, Motion, Solid, Tolerance, assemble};
 
-use super::motion::{moved_key, note_reference, resolve_axis, within};
+use super::motion::{note_reference, resolve_axis, within};
 use super::{BodySolid, Evaluation, Failed, own_solids};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
@@ -31,8 +31,8 @@ use crate::message::{self, Moving};
 /// ([`Copies::Separate`](varde_document::Copies::Separate)), the body is
 /// left as it is and each copy, named the same way, is the solid of its
 /// own body ([`Pattern::copy_body`]), never united with anything (they
-/// may overlap), cached as a mirror's image is, by the body's key, the
-/// copy's motion and instance and the fit tolerance; the new bodies go
+/// may overlap), cached by the body's key, the copy's motion and
+/// instance and the fit tolerance ([`copy_key`]); the new bodies go
 /// after the others, in the order of their ids.
 pub(super) fn evaluate_pattern(
     document: &Document,
@@ -72,7 +72,7 @@ pub(super) fn evaluate_pattern(
                     feature: feature.get(),
                     index: u64::from(k),
                 };
-                let key = moved_key(made.key, motion, Some(copy), tolerance);
+                let key = copy_key(made.key, motion, copy, tolerance);
                 let solid =
                     cache.solid(key, || copy_of(&made.solid, motion, copy, tolerance, name))?;
                 separate.push(BodySolid { body, solid, key });
@@ -152,6 +152,22 @@ pub(crate) fn placements(
             }
         })
         .collect()
+}
+
+/// The key of copy `copy` alone, by `motion`, of the solid filed under
+/// `body`, at `tolerance`, a body of its own: apart from
+/// `motion.rs`'s `moved_key`, whose copies are the solid with its image.
+fn copy_key(body: Key, motion: &Motion, copy: Instance, tolerance: &Tolerance) -> Key {
+    let mut keyer = Keyer::new("pattern copy");
+    keyer.key(body);
+    for bits in motion.bits() {
+        keyer.number(bits);
+    }
+    keyer
+        .number(copy.feature)
+        .number(copy.index)
+        .number(tolerance.fit().to_bits())
+        .finish()
 }
 
 /// The key of `feature`'s copies by `motions` of the solid filed under

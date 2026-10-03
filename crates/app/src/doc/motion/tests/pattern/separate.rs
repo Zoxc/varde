@@ -141,3 +141,73 @@ fn editing_the_tick_and_a_copy_body_a_later_feature_uses() {
     plates.doc.update(Edit::CommitMotion);
     assert!(plates.doc.motion.is_some(), "not committed");
 }
+
+/// Picking another direction for an unjoined pattern whose copy body a
+/// later feature uses: the preview leaving the bodies where they are (a
+/// move by nothing) would drop the copy bodies, which the document
+/// refuses, so there's no draft, and no failure shown, the model as
+/// committed.
+#[test]
+fn picking_the_direction_of_a_pattern_whose_copy_a_later_feature_uses() {
+    let mut plates = plates();
+    let [plate, right, _] = plates.bodies;
+    plates.click(right);
+    plates.doc.look(Look::StartPattern);
+    plates.input(MotionField::Count, "3");
+    plates.input(MotionField::Spread, "40");
+    plates.motion(MotionLook::Join);
+    plates.doc.update(Edit::CommitMotion);
+    let (id, _) = plates.last_feature();
+    let made = copy_bodies(&last_pattern(&plates));
+    let combine = Combine {
+        target: plate,
+        tools: vec![made[1]],
+        op: BodyOp::Union,
+        keep_tools: true,
+    };
+    let add = plates.doc.editor.document().add_feature(combine.into());
+    plates.doc.editor.apply(add).unwrap();
+    plates.doc.sync();
+    plates.answer();
+    plates.doc.look(Look::EditFeature(id));
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    assert_eq!(plates.doc.motion_draft(), None);
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    assert!(
+        !shows(&plates, "Pattern fails"),
+        "{:?}",
+        screen_texts(&plates.doc)
+    );
+    // The copy bodies are still there to see.
+    let [low, _] = plates.bounds(made[1]);
+    let [right_low, _] = plates.bounds(right);
+    assert!(
+        (low.x - right_low.x - 80.0).abs() < 1e-3,
+        "{low} {right_low}"
+    );
+}
+
+/// Unticked, a pattern making more bodies than a document may have of
+/// one is refused in the panel, OK waiting; ticked, it's fine.
+#[test]
+fn too_many_copy_bodies_are_refused_in_the_panel() {
+    let mut plates = plates();
+    let [_, right, left] = plates.bodies;
+    plates.click(right);
+    plates.doc.look(Look::StartPattern);
+    plates.click(left);
+    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies.len(), 2);
+    plates.input(MotionField::Count, "1024");
+    plates.input(MotionField::Spread, "0.1");
+    assert!(plates.doc.motion_ready());
+    plates.motion(MotionLook::Join);
+    assert!(
+        shows(&plates, "2046 bodies"),
+        "{:?}",
+        screen_texts(&plates.doc)
+    );
+    assert!(!plates.doc.motion_ready());
+}

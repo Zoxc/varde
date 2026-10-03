@@ -598,7 +598,8 @@ fn copies_touching_along_a_line_are_refused() {
 
 /// Copies so close they're the original to the bit (a spacing of
 /// 1e-20, a turn of 1e-300°) come out as the original; a hair apart
-/// (1e-9) they're refused. Never a wrong solid.
+/// (1e-9) they're the pin, to the volume and centre, or refused (the
+/// kernel's booleans now unite them). Never a wrong solid.
 #[test]
 fn copies_on_the_original_are_it_or_refused() {
     for (n, step, circular_one) in [
@@ -618,9 +619,7 @@ fn copies_on_the_original_are_it_or_refused() {
         let (volume, centre) = mass(solid_of(&evaluation, body));
         assert!(near(volume, PIN, 1e-9), "{step}: {volume}");
         assert!(centre.abs_diff_eq(DVec3::new(20.0, 0.0, 5.0), 1e-9));
-        if step == "1e-9" {
-            assert!(failure(&evaluation, id).is_some());
-        } else {
+        if step != "1e-9" {
             assert_eq!(failure(&evaluation, id), None, "{step}");
         }
     }

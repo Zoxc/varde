@@ -197,12 +197,7 @@ pub(super) fn within(solid: &Solid, motion: &Motion) -> bool {
 
 /// The key of `motion` moving the solid filed under `body`, as `copy`
 /// says, at `tolerance`.
-pub(super) fn moved_key(
-    body: Key,
-    motion: &Motion,
-    copy: Option<Instance>,
-    tolerance: &Tolerance,
-) -> Key {
+fn moved_key(body: Key, motion: &Motion, copy: Option<Instance>, tolerance: &Tolerance) -> Key {
     let mut keyer = Keyer::new("moved");
     keyer.key(body);
     for bits in motion.bits() {

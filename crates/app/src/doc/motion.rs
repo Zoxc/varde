@@ -1146,19 +1146,11 @@ impl Doc {
         let edited = session.feature?;
         let kind = session.kind()?;
         let document = self.editor.document();
-        let dropped = document.copies_dropped(edited, &kind);
-        if dropped.is_empty() {
-            return None;
-        }
-        (document.features().iter()).find_map(|feature| {
-            let named = feature.kind.bodies();
-            let body = dropped.iter().find(|body| named.contains(body))?;
-            let body = &document.body(*body)?.name;
-            Some(format!(
-                "{} uses {body}, a copy this pattern would no longer make: take {body} out of {} or delete it first",
-                feature.name, feature.name
-            ))
-        })
+        let (feature, body) = copy_user(document, edited, &kind)?;
+        let (feature, body) = (&feature.name, &body.name);
+        Some(format!(
+            "{feature} uses {body}, a copy this pattern would no longer make: take {body} out of {feature} or delete it first"
+        ))
     }
 
     /// What the panel warns of for the pattern being set up, if anything:
@@ -1323,11 +1315,22 @@ impl Doc {
             .collect()
     }
 
-    /// The move or mirror being set up as the regeneration lane previews
-    /// it, see [`MotionSession::draft`].
+    /// The move, mirror or pattern being set up as the regeneration lane
+    /// previews it, see [`MotionSession::draft`]; none where that would
+    /// drop a copy body a later feature names ([`copy_user`]), which the
+    /// document refuses: the model is then shown as committed, rather
+    /// than as a failure (a pattern previewed as a move by nothing while
+    /// its axis is picked has no copy bodies).
     pub(crate) fn motion_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
         let session = self.motion.as_ref()?;
-        session.draft(&self.editor.document().design())
+        let document = self.editor.document();
+        let (feature, kind) = session.draft(&document.design())?;
+        if let Some(edited) = feature
+            && copy_user(document, edited, &kind).is_some()
+        {
+            return None;
+        }
+        Some((feature, kind))
     }
 
     /// The edge or face hovered, if it's one a click takes as the axis or
@@ -1596,6 +1599,26 @@ fn plane_body(plane: &PlaneRef) -> Option<BodyId> {
 enum Reference {
     Axis(AxisRef),
     Plane(PlaneRef),
+}
+
+/// The first feature naming ([`FeatureKind::bodies`]) a copy body that
+/// setting the pattern `edited` to `kind` would drop
+/// ([`Document::copies_dropped`]), and that body: the document refuses
+/// the edit while there's one.
+fn copy_user<'a>(
+    document: &'a Document,
+    edited: FeatureId,
+    kind: &FeatureKind,
+) -> Option<(&'a varde_document::Feature, &'a varde_document::Body)> {
+    let dropped = document.copies_dropped(edited, kind);
+    if dropped.is_empty() {
+        return None;
+    }
+    (document.features().iter()).find_map(|feature| {
+        let named = feature.kind.bodies();
+        let body = dropped.iter().find(|body| named.contains(body))?;
+        Some((feature, document.body(*body)?))
+    })
 }
 
 #[cfg(test)]

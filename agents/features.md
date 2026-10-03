@@ -1561,9 +1561,10 @@ pub enum Copies { Joined /* default */, Separate(Vec<BodyId>) }  // the copy bod
   bodies are left as they are, and each copy is
   `Solid::transformed(motion_k, Some(Instance { feature, index: k }))`
   alone, the solid of its body (`Pattern::copy_body`), never assembled
-  or united with anything; cached as a mirror's image is
-  (`moved_key(body key, motion_k bits, the instance, fit)`), so a count
-  raised finds the copies made before. The copy bodies go into
+  or united with anything; cached by `copy_key(body key, motion_k
+  bits, the instance, fit)`, so a count raised finds the copies made
+  before (a key of its own: `moved_key` with a copy files the solid
+  assembled with its image, a mirror's). The copy bodies go into
   `Evaluation::bodies` after the others, in id order (the order made:
   a later join touching copies merges them into the first made, the
   original if it touches it too). A failing pattern leaves its copy
@@ -1638,7 +1639,9 @@ but takes about 40 s. Copies that only touch (discs a diameter apart)
 fail to join ("leaves no clean solid"), as any union touching along a
 line does: the kernel's `NotManifold`, right, since the result would
 touch itself along the line. Copies a hair apart (a spacing of 1e-9,
-a turn of 1e-7° about a far axis) are refused as nearly flush, and
+a turn of 1e-7° about a far axis) are refused as nearly flush or, the
+booleans having improved, united into the right solid (a pin 1e-9
+apart from its copy now unites), and
 from about 1e-4 to 1e-3 mm apart a union of them can take seconds to
 run out of work. `Naming` takes faces of patterns' copies made before the
 feature (`instances_before` replays patterns as it does mirrors), up to
@@ -1745,7 +1748,11 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   body taken out, ticked again), the panel refuses it at once
   (`Doc::motion_held`, OK off): "Combine 1 uses Body 5, a copy this
   pattern would no longer make: take Body 5 out of Combine 1 or delete
-  it first". **The overlap warning** (the mock's, linear only, as the
+  it first". No draft is sent while that holds (`Doc::motion_draft`,
+  `copy_user`): neither the refused pattern nor the move by nothing
+  previewing an edited one while its axis is picked (which has no copy
+  bodies), so the model shows as committed rather than as "Pattern
+  fails" over a later feature's missing body. **The overlap warning** (the mock's, linear only, as the
   mock has it, `Doc::motion_warning`): unticked, with a spacing shorter
   than the bodies are long along the direction ("The copies overlap (10
   mm long this way): tick Join to original to merge them"), the length
@@ -1773,15 +1780,24 @@ opened writing nothing however it was typed), `pattern/separate.rs`
 (the tick ticked to begin with, unticked a body per copy committed,
 listed and undone, the overlap warning and when it goes; editing the
 tick, and a later combine's copy body holding back fewer copies or
-joining), `pattern/fuzz.rs`
+joining, and sending no draft while the direction is picked; too many
+copy bodies refused), `pattern/fuzz.rs`
 (`VARDE_PATTERN_SEEDS`: random modes, Flip, counts, long and nested
 spreads, units, undo and redo, kind swaps, commits, edits held to the
 values their fields come to);
 `view/src/motion/tests.rs` (both panels' rows and modes, the infos).
 
 Departures from the mock: "Join to original" starts ticked (the mock's
-starts unticked; the user's decision), and its overlap warning shows
-only without another message; counts up to 1024 (the mock's 100)
+starts unticked). Kept: the user decided the joined copies are the
+default and what older files read as, so a new pattern starts as the
+stored default and as patterns did before the tick, and the mock's
+unticked start (a new body per copy, each an Objects row) would make
+the heavier, rarer choice the one taken by pressing Enter. The overlap
+warning shows only where the panel has no other message (the mock
+shows it under a failure too). Kept: the panel's footer holds one
+message, a failure or refusal is the one to act on, and the warning
+comes back once it's gone (it never blocks OK, and a failing draft is
+added only through Add anyway). Counts up to 1024 (the mock's 100)
 and the run limit the coordinate limit (the mock's 10 000 mm), with the
 fields' own error words for other refusals; the axis may also be a
 round edge or face, as a move's; no faded originals (the preview
