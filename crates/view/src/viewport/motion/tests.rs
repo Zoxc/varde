@@ -352,8 +352,68 @@ fn angle_steps_are_round_degrees_a_few_pixels_apart() {
     assert_eq!(angle_step(1000.0), 1.0);
     assert_eq!(angle_step(1.0), 90.0);
     let turned = turned_about(DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0), Axis3::Z, 90.0);
+    assert_eq!(turned, Some(DVec3::new(10.0, -10.0, 0.0)));
+}
+
+/// A ring's drag turns the moved bodies on about the handles' centre:
+/// the move turned by the angles' sum about the world axis through the
+/// origin, then shifted by the turned offset, takes every point where the
+/// move as it was, then the turn about the centre, takes it; about each
+/// world axis, either way.
+#[test]
+fn a_ring_turns_on_about_the_centre() {
+    use varde_kernel::Motion;
+    let (offset, centre) = (DVec3::new(1.0, 2.0, 3.0), DVec3::new(5.0, -4.0, 7.0));
+    let p = DVec3::new(-2.0, 6.0, 1.5);
+    for axis in Axis3::ALL {
+        for (was, by) in [(20.0, 35.0), (-50.0, -95.0), (0.0, 90.0)] {
+            let before = Motion::turn(DVec3::ZERO, axis.direction(), was).unwrap();
+            let before = before.then(&Motion::translation(offset).unwrap());
+            let about = Motion::turn(centre, axis.direction(), by).unwrap();
+            let expected = about.point(before.point(p));
+            let shift = turned_about(offset, centre, axis, by).unwrap();
+            let after = Motion::turn(DVec3::ZERO, axis.direction(), was + by).unwrap();
+            let after = after.then(&Motion::translation(shift).unwrap());
+            let got = after.point(p);
+            assert!(
+                got.distance(expected) < 1e-12,
+                "{axis:?} {was} {by}: {got} {expected}"
+            );
+        }
+    }
+}
+
+/// A handle hovered that moves away from a cursor that stays put (the
+/// bodies moved, or the camera) is let go of as the next frame is drawn,
+/// and the model under the cursor picked again.
+#[test]
+fn a_handle_that_moves_away_is_let_go_of_as_a_frame_is_drawn() {
+    let index = plate();
+    let camera = front();
+    let here = viewport(
+        state(MotionKind::Move, MotionPick::Bodies, None),
+        &camera,
+        Some(&index),
+    );
+    let mut input = Interaction::default();
+    // The X arrow's shaft, over the plate's front.
+    let grab = at(CENTRE + DVec3::X * 10.0);
+    feed(&here, &mut input, &[moved(grab)]);
+    assert_eq!(input.motion.hover, Some(Grip::Arrow(Axis3::X)));
+    let redraw = Event::Window(iced::window::Event::RedrawRequested(
+        iced::time::Instant::now(),
+    ));
+    // Unmoved: still hovered.
+    feed(&here, &mut input, &[(redraw.clone(), grab)]);
+    assert_eq!(input.motion.hover, Some(Grip::Arrow(Axis3::X)));
+    // The bodies' box 30 mm up: the handles went with it.
+    let mut away = state(MotionKind::Move, MotionPick::Bodies, None);
+    away.bounds = Some([DVec3::new(-30.0, -20.0, 30.0), DVec3::new(30.0, 20.0, 40.0)]);
+    let there = viewport(away, &camera, Some(&index));
+    let (messages, _) = feed(&there, &mut input, &[(redraw, grab)]);
+    assert!(input.motion.hover.is_none());
     assert!(
-        turned.distance(DVec3::new(10.0, -10.0, 0.0)) < 1e-12,
-        "{turned}"
+        matches!(messages[..], [Message::Look(Look::Hover(Some(_)))]),
+        "{messages:?}"
     );
 }

@@ -31,10 +31,6 @@ use crate::{Look, Message};
 const SHAFT_WIDTH: f32 = 2.0;
 /// The side of a knob of the handle, in pixels.
 const KNOB: f32 = 14.0;
-/// How near to along the handle's axis the cursor's ray may run and still
-/// drag it, as a share of the ray's length squared: nearer, where the
-/// cursor is along it says next to nothing.
-const ALONG_AXIS: f64 = 1e-6;
 /// How near in front of a knob, in view heights, the model may be and
 /// not hide it: as far as the renderer pulls the regions and the shaft
 /// towards the camera, so a knob on a face shows like a region on it.
@@ -173,16 +169,7 @@ impl<'a> Extruding<'a> {
     fn drag_to(&self, at: DVec2, camera: &Camera, bounds: Rectangle) -> Option<f64> {
         let handle = self.handle.as_ref()?;
         let projector = Projector::new(camera, handle.placement(), bounds.width, bounds.height)?;
-        let (origin, ray) = projector.ray(at)?;
-        let axis = handle.normal;
-        let w = origin - handle.origin;
-        let (a, b) = (ray.dot(ray), ray.dot(axis));
-        let (d, e) = (ray.dot(w), axis.dot(w));
-        let denominator = a - b * b;
-        if denominator.is_nan() || denominator <= ALONG_AXIS * a {
-            return None;
-        }
-        let t = (a * e - b * d) / denominator;
+        let t = projector.along_line(handle.origin, handle.normal, at)?;
         let step = snap_step(projector.pixel(), self.state.units)?;
         let t = (t / step).round() * step;
         (t.is_finite() && t.abs() <= f64::from(MAX_COORD)).then_some(t)

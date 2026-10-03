@@ -274,6 +274,11 @@ fn a_turn_about_a_round_face_or_rim() {
             );
             let evaluation = evaluated(editor.document());
             assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+            // The face's axis is reported beside the face's point.
+            if let AxisRef::Face(_) = axis {
+                let (_, [point, _]) = evaluation.references[0];
+                assert!(point.distance(DVec3::new(0.0, 0.0, 5.0)) < 1e-9, "{point}");
+            }
             let solid = solid_of(&evaluation, plate);
             assert_near(solid.volume(), the_plate());
             assert!(
@@ -655,4 +660,18 @@ fn a_symmetric_body_mirrored_onto_itself_is_itself_or_fails() {
             failure(&evaluation, id).map(|f| &f.message)
         );
     }
+}
+
+/// A round face's axis is taken through the point of it nearest the
+/// face's point, so a far point of its form (a nearly flat cone's apex)
+/// isn't where it's drawn from; one that can't be found keeps the
+/// form's.
+#[test]
+fn an_axis_is_found_beside_its_face() {
+    let far = DVec3::new(0.0, 0.0, -3.0e7);
+    let at =
+        super::super::motion::beside(far, DVec3::new(0.0, 0.0, 2.0), DVec3::new(8.0, 0.0, 5.0));
+    assert_eq!(at, DVec3::new(0.0, 0.0, 5.0));
+    let along = super::super::motion::beside(far, DVec3::ZERO, DVec3::new(8.0, 0.0, 5.0));
+    assert_eq!(along, far);
 }

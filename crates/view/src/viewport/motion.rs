@@ -13,7 +13,8 @@
 //! with a knob at its end as the extrude's handle has, and a ring about
 //! each. They take the mouse ahead of picking the model. Dragging an
 //! arrow sets that axis's offset, where the cursor's ray passes nearest
-//! the arrow's line, snapped as the extrude's handle ([`snap_step`]);
+//! the arrow's line, snapped as the extrude's handle ([`snap_step`] of a
+//! pixel's size at the camera's target);
 //! dragging a ring turns the bodies about that world axis by the angle
 //! the cursor sweeps about the centre on the ring's plane, snapped to
 //! round degrees ([`angle_step`]), shifting them so they turn about the
@@ -31,6 +32,7 @@ use iced::widget::shader::Action;
 use iced::{Point, Rectangle, mouse};
 use varde_document::{Axis3, MAX_COORD, OriginPlane};
 use varde_expr::Unit;
+use varde_kernel::Motion;
 use varde_render::{Camera, Colors, GridPlane, PointStyle, SketchLayer, Space as LayerSpace};
 use varde_sketch::angle;
 
@@ -76,10 +78,6 @@ const HIT_PIXELS: f64 = 6.0;
 /// runs nearly along the view, where the cursor says next to nothing of
 /// how far along it.
 const MIN_ARROW_PIXELS: f64 = 12.0;
-/// How near to along the arrow's line the cursor's ray may run and still
-/// drag it, as a share of the ray's length squared (the extrude
-/// handle's).
-const ALONG_AXIS: f64 = 1e-6;
 /// How near to edge on a ring's plane the cursor's ray may run and still
 /// turn it, as the cosine between the ray and the ring's axis.
 const EDGE_ON: f64 = 1e-3;
@@ -103,7 +101,10 @@ struct Drag {
     grip: Grip,
     /// The handles' centre, which the drag keeps where it was.
     centre: DVec3,
-    /// A pixel's size at the centre, in millimetres.
+    /// A pixel's size at the camera's target, in millimetres, which an
+    /// arrow's offset snaps by, as the extrude's handle's length does:
+    /// the steps are the same wherever the bodies are (the handles' size
+    /// is a pixel's at their centre).
     pixel: f64,
     /// The offsets, in millimetres, and the angle, in degrees, as the
     /// fields had them (none read as zero).
@@ -197,19 +198,10 @@ impl Handles {
 
     /// How far along the line through `centre` along `axis` the cursor's
     /// ray at the screen position `at` passes nearest it, in
-    /// millimetres from `centre`. `None` looking along the line.
+    /// millimetres from `centre`, as the extrude's handle is dragged
+    /// ([`Projector::along_line`]). `None` looking along the line.
     fn along(&self, centre: DVec3, axis: Axis3, at: DVec2) -> Option<f64> {
-        let (origin, ray) = self.projector.ray(at)?;
-        let axis = axis.direction();
-        let w = origin - centre;
-        let (a, b) = (ray.dot(ray), ray.dot(axis));
-        let (d, e) = (ray.dot(w), axis.dot(w));
-        let denominator = a - b * b;
-        if denominator.is_nan() || denominator <= ALONG_AXIS * a {
-            return None;
-        }
-        let t = (a * e - b * d) / denominator;
-        t.is_finite().then_some(t)
+        self.projector.along_line(centre, axis.direction(), at)
     }
 
     /// The angle about `centre`, in radians, of where the cursor's ray at
@@ -289,15 +281,20 @@ fn wrapped(turn: f64) -> f64 {
 /// `offset` turned by `degrees` about the line through `centre` along
 /// the world axis `axis`, as a point: where a move's shift goes when its
 /// turn about the parallel axis through the origin grows by `degrees`, so
-/// the bodies turn about `centre`.
-fn turned_about(offset: DVec3, centre: DVec3, axis: Axis3, degrees: f64) -> DVec3 {
-    let (u, v) = plane_axes(axis);
-    let normal = axis.direction();
-    let turn = degrees.to_radians();
-    let (sin, cos) = (angle::sin(turn), angle::cos(turn));
-    let w = offset - centre;
-    let (x, y) = (w.dot(u), w.dot(v));
-    centre + normal * w.dot(normal) + u * (x * cos - y * sin) + v * (x * sin + y * cos)
+/// the bodies turn about `centre`. A move maps `p` to `R·p + offset`
+/// (`R` its turn about the origin's axis); turning that about `centre`
+/// by `T` gives `T·R·p + T·(offset − centre) + centre`, and `T·R` is
+/// the turn about the same axis by the angles' sum. The kernel's turn,
+/// so quarter turns are exact.
+fn turned_about(offset: DVec3, centre: DVec3, axis: Axis3, degrees: f64) -> Option<DVec3> {
+    Some(Motion::turn(centre, axis.direction(), degrees)?.point(offset))
+}
+
+/// An angle as a move stores it, in radians, in degrees: divided by the
+/// factor a degree is typed with, as regenerating turns by it, so a
+/// typed whole number of degrees comes back as typed.
+fn degrees(radians: f64) -> f64 {
+    radians / (PI / 180.0)
 }
 
 /// The move or mirror being set up, as the viewport shows it.
@@ -482,13 +479,42 @@ impl<'a> Moving<'a> {
         }
     }
 
+    /// Works out again which handle is under the `cursor` as a frame is
+    /// drawn, as picking the model does: the camera, or the handles with
+    /// the bodies, may have moved under a cursor that didn't, which would
+    /// leave the model unpicked under a handle no longer there. While
+    /// one's under it, what the model held hovered, if `hovered`, is let
+    /// go of. Not while one is dragged.
+    pub(crate) fn redraw(
+        &self,
+        input: &mut Input,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+        hovered: bool,
+    ) -> Option<Action<Message>> {
+        if input.drag.is_some() {
+            return None;
+        }
+        let at = cursor.position_over(bounds);
+        let grip = (self.handles(input, camera, bounds)).and_then(|handles| {
+            let at = at?;
+            handles.grip_at(DVec2::new(
+                (at.x - bounds.x).into(),
+                (at.y - bounds.y).into(),
+            ))
+        });
+        input.hover = grip;
+        (grip.is_some() && hovered).then(|| Action::publish(Message::Look(Look::Hover(None))))
+    }
+
     /// `grip` grabbed with the cursor at `at`, of `handles` as they are:
     /// `None` where the cursor says nothing of where it is along an
     /// arrow, or on a ring's plane.
     fn grab(&self, grip: Grip, handles: &Handles, at: DVec2) -> Option<Drag> {
         let centre = handles.centre;
         let offset = self.offset();
-        let angle = self.field(MotionField::Angle).unwrap_or(0.0).to_degrees();
+        let angle = degrees(self.field(MotionField::Angle).unwrap_or(0.0));
         let (from, sent) = match grip {
             Grip::Arrow(axis) => (handles.along(centre, axis, at)?, offset[axis_index(axis)]),
             Grip::Ring(axis) => (handles.angle_at(centre, axis, at)?, angle),
@@ -496,7 +522,7 @@ impl<'a> Moving<'a> {
         Some(Drag {
             grip,
             centre,
-            pixel: handles.pixel,
+            pixel: handles.projector.pixel(),
             offset,
             angle,
             at: from,
@@ -530,13 +556,13 @@ impl<'a> Moving<'a> {
                 drag.turned += wrapped(now - drag.at);
                 drag.at = now;
                 let step = angle_step(RING_PIXELS);
-                let to = drag.angle + drag.turned.to_degrees();
+                let to = drag.angle + degrees(drag.turned);
                 // Within a turn either way, as a move takes.
                 let to = ((to / step).round() * step % 360.0) + 0.0;
                 if !to.is_finite() || to == drag.sent {
                     return None;
                 }
-                let shift = turned_about(drag.offset, drag.centre, axis, to - drag.angle);
+                let shift = turned_about(drag.offset, drag.centre, axis, to - drag.angle)?;
                 let limit = f64::from(MAX_COORD);
                 if !(shift.is_finite() && shift.abs().max_element() <= limit) {
                     return None;

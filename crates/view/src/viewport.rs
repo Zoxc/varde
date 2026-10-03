@@ -405,6 +405,21 @@ impl shader::Program<Message> for Program<'_> {
                 *modifiers,
             );
         }
+        // A move's handles under a cursor that stayed put as the frame
+        // changed.
+        if let Some(Operating::Motion(moving)) = &self.operating
+            && state.drag.is_none()
+            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
+            && let Some(action) = moving.redraw(
+                &mut state.motion,
+                bounds,
+                cursor,
+                &self.scene.camera,
+                (self.picking).is_some_and(|picking| picking.hovered.is_some()),
+            )
+        {
+            return Some(action);
+        }
         // The operation's picking and handle come first, unless the
         // camera is being dragged; the rest goes on as outside a sketch.
         if let Some(operating) = &self.operating

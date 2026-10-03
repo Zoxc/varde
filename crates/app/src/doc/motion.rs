@@ -20,7 +20,7 @@ use std::sync::Arc;
 use glam::DVec3;
 use varde_document::{
     Axis3, AxisRef, BodyId, Design, Document, FeatureId, FeatureKind, MAX_FEATURE_BODIES, Mirror,
-    Move, OriginPlane, PlaneRef,
+    Move, PlaneRef,
 };
 use varde_expr::{AngleUnit, Unit, Value};
 use varde_regen::Summary;
@@ -391,17 +391,8 @@ impl Doc {
         self.extrude = None;
         self.revolve = None;
         self.combine = None;
-        let document = self.editor.document();
-        let merged = self.feed.merged_before(document, None);
-        let mut bodies: Vec<BodyId> = Vec::new();
-        for item in self.pick.selection.items() {
-            let body = item.body();
-            let body = merged.holder(body).unwrap_or(body);
-            if pickable(document, body, None) && !bodies.contains(&body) {
-                bodies.push(body);
-            }
-        }
-        self.motion = Some(MotionSession::new(kind, document, bodies));
+        let bodies = self.selected_bodies();
+        self.motion = Some(MotionSession::new(kind, self.editor.document(), bodies));
         if kind == MotionKind::Move {
             self.focus = Some(Focus::All);
         }
@@ -450,11 +441,19 @@ impl Doc {
                 };
                 session.fields[field.index()].input(text, &ask);
             }
+            // Only as the handles offer it: a move's, while its bodies
+            // are picked, turning by nothing yet or about that world
+            // axis already (the offsets are worked out as turning on
+            // from there).
             MotionLook::Turn {
                 axis,
                 angle,
                 offset,
-            } if session.kind == MotionKind::Move => {
+            } if session.kind == MotionKind::Move
+                && session.picking == MotionPick::Bodies
+                && (session.angle().is_none_or(|angle| angle == 0.0)
+                    || session.axis == Some(AxisRef::Origin(axis))) =>
+            {
                 let design = document.design();
                 session.axis = Some(AxisRef::Origin(axis));
                 (session.fields[MotionField::Angle.index()])
@@ -796,7 +795,7 @@ impl Doc {
             MotionKind::Mirror => {
                 let plane = session.plane.as_ref();
                 let origin = plane.and_then(|plane| match plane {
-                    PlaneRef::Origin(plane) => Some([DVec3::ZERO, origin_normal(*plane)]),
+                    PlaneRef::Origin(plane) => Some([DVec3::ZERO, plane.placement().normal]),
                     _ => None,
                 });
                 (plane.map(|plane| plane_name(document, plane)), origin)
@@ -882,11 +881,6 @@ fn round_edge(index: &varde_view::PickIndex, edge: u32) -> bool {
         .fold(centre.abs().max_element(), f64::max);
     let slack = 1e-6 * high + 8.0 * f64::from(f32::EPSILON) * scale;
     points.len() >= 2 && low > slack && high - low <= slack
-}
-
-/// The normal of the origin plane `plane`: the world axis square to it.
-fn origin_normal(plane: OriginPlane) -> DVec3 {
-    plane.placement().normal
 }
 
 /// An edge or face taken as a move's axis or a mirror's plane.

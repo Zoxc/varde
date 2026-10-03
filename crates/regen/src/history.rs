@@ -1038,19 +1038,8 @@ pub(crate) fn edge_axis(
     tolerance: Tolerance,
     cache: &mut Cache,
 ) -> Result<Axis, Failed> {
-    let holder = evaluation.holder(edge.body);
-    let made = (evaluation.bodies.iter())
-        .find(|made| Some(made.body) == holder)
-        .ok_or(message::EDGE_BODY_GONE)?;
-    let near = edge.near.to_array().map(f64::to_bits);
-    let key = Keyer::new("edge")
-        .key(made.key)
-        .value(&edge.faces)
-        .number(near[0])
-        .number(near[1])
-        .number(near[2])
-        .number(tolerance.fit().to_bits())
-        .finish();
+    let made = motion::holding(edge.body, evaluation).ok_or(message::EDGE_BODY_GONE)?;
+    let key = motion::reference_key("edge", made.key, &edge.faces, edge.near, &tolerance);
     let [from, to] = cache.edge(key, || edge_ends(&made.solid, edge, &tolerance))?;
     let local = |p: DVec3| {
         let q = p - placement.origin;

@@ -1299,8 +1299,11 @@ nearly along the view, can't be grabbed), then the nearest ring within
 6 px. A drag keeps the centre where it was grabbed (an arrow's moving
 with its offset). Dragging an arrow sets that axis's offset: the offset
 as grabbed plus how far along the arrow's line the cursor's ray has
-passed nearest it, snapped absolute to the extrude handle's steps at the
-centre's pixel (`snap_step`), sent as `MotionLook::Input` with the text
+passed nearest it (`Projector::along_line`, which the extrude handle
+drags by too), snapped absolute to the extrude handle's steps, of a
+pixel's size at the camera's target as the extrude's are (`snap_step`;
+the handles' size is a pixel's at their centre, the steps the same
+wherever the bodies are), sent as `MotionLook::Input` with the text
 formatted in the design's units (`MotionState::units`). Dragging a ring
 measures the angle the cursor sweeps about the centre on the ring's plane
 (right-handed about the axis, unwrapped across half turns), the angle as
@@ -1311,8 +1314,12 @@ the ring: 5° at 70 px) and brought within a turn, and sends
 that world axis (`AxisRef::Origin`), and since a move turns about an axis
 through the origin before it shifts, the offsets become the grabbed
 ones turned about the centre by the angle's growth
-(`R·(offset − centre) + centre`, `angle::sin`/`cos`), so the bodies turn
-in place. A drag past the coordinate limit sends nothing. The texts go
+(`R·(offset − centre) + centre`, the kernel's `Motion::turn` about the
+centre, exact on quarter turns; the angle in degrees as regenerating
+reads it, the radians divided by a degree's factor), so the bodies turn
+in place. The app takes a `Turn` only as the handles offer it
+(`Doc::motion_look`): a move's, picking bodies, turning by nothing yet
+or about that world axis already; any other is dropped. A drag past the coordinate limit sends nothing. The texts go
 to the fields, so the preview, refusals and OK are those of typed values,
 one undo step. A ring dragged from a move about another world axis's
 turn isn't offered (its ring isn't shown); a move about an edge or face
@@ -1333,7 +1340,10 @@ mm, 30° about Z axis" (`move_info`), "Body 1 across XY plane · copy"
 
 **Regen's answer** carries the axis or plane found:
 `Evaluation::references` lists, for each move turning about an axis and
-each mirror, the point and direction (normal) its motion was made from,
+each mirror, the point and direction (normal) its motion was made from
+(a round face's axis through its point nearest the face's point, not its
+form's own point: a nearly flat cone's apex can be far past the limit
+the wire takes),
 and a draft's `Drafted::reference` is its feature's, as
 `[[f64; 3]; 2]`, on the wire too (checked on receipt: finite, within
 `wire::MAX_REFERENCE`, four times the coordinate limit, the direction
@@ -1365,3 +1375,9 @@ A ring's turn shifts the offsets to turn about the centre, so their
 texts come out unround (rounded to the units' decimals) after a ring is
 dragged by an angle other than a quarter turn; the handles have no look
 in the UI mock, which shows none, so they take the extrude handle's.
+Other departures from the mock: a new move or mirror starts with the
+bodies selected only (the mock's also takes the only body of a model
+with one); a body or reference the document no longer takes is let go
+of (an axis back to Z) where the mock keeps it and says "A picked body
+is gone" or "The axis is gone: pick another"; a move's axis may also be
+a round edge or face (the mock's: an origin axis or a straight edge).

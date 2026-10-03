@@ -650,3 +650,45 @@ fn a_ring_s_turn_does_nothing_to_a_mirror() {
             .all(|field| field.value.as_ref().unwrap().value == 0.0)
     );
 }
+
+/// A ring's turn is taken only as the handles offer it: from a move
+/// turning by nothing, or about that world axis already, while its
+/// bodies are picked; the offsets it brings are worked out from such a
+/// turn, and would be wrong from any other.
+#[test]
+fn a_ring_s_turn_is_taken_only_as_the_handles_offer_it() {
+    let mut plates = plates();
+    let [_, right, _] = plates.bodies;
+    plates.click(right);
+    key_in(&mut plates.doc, character("m"));
+    let turn = |axis: Axis3, angle: &str, x: &str| MotionLook::Turn {
+        axis,
+        angle: angle.to_owned(),
+        offset: [x, "0 mm", "0 mm"].map(str::to_owned),
+    };
+    let state = |plates: &Plates| {
+        let session = plates.doc.motion.as_ref().expect("a session");
+        let angle = session.fields[MotionField::Angle.index()].value.clone();
+        let x = session.fields[MotionField::Offset(Axis3::X).index()]
+            .value
+            .clone();
+        (session.axis, angle.unwrap().value, x.unwrap().value)
+    };
+    // From no turn, about Y.
+    plates.motion(turn(Axis3::Y, "-90°", "1 mm"));
+    let (axis, angle, x) = state(&plates);
+    assert_eq!(axis, Some(AxisRef::Origin(Axis3::Y)));
+    assert!((angle + std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+    assert_eq!(x, 1.0);
+    // About another axis while turning about Y: dropped.
+    plates.motion(turn(Axis3::Z, "45°", "2 mm"));
+    assert_eq!(state(&plates).0, Some(AxisRef::Origin(Axis3::Y)));
+    assert_eq!(state(&plates).2, 1.0);
+    // On about Y: taken.
+    plates.motion(turn(Axis3::Y, "-45°", "3 mm"));
+    assert_eq!(state(&plates).2, 3.0);
+    // While the axis is picked, none: the handles aren't there.
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    plates.motion(turn(Axis3::Y, "-30°", "4 mm"));
+    assert_eq!(state(&plates).2, 3.0);
+}

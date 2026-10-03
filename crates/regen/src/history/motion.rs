@@ -231,7 +231,8 @@ fn moved(
 /// line through it, directed as [`EdgeRef`] says) or round (its circle's
 /// axis through its centre, turning the way the edge runs as so
 /// directed); a face must be round, a cylinder, cone, torus or other
-/// surface of revolution (its form's axis, directed as the form has it).
+/// surface of revolution (its form's axis, directed as the form has it,
+/// through the point of it nearest the face's point: [`beside`]).
 /// Cached by the solid's key, the reference and the fit tolerance.
 pub(super) fn resolve_axis(
     axis: &AxisRef,
@@ -275,14 +276,14 @@ pub(super) fn resolve_plane(
 }
 
 /// The body in `evaluation` holding `body`'s solid, if it has one.
-fn holding(body: BodyId, evaluation: &Evaluation) -> Option<&BodySolid> {
+pub(super) fn holding(body: BodyId, evaluation: &Evaluation) -> Option<&BodySolid> {
     let holder = evaluation.holder(body)?;
     evaluation.bodies.iter().find(|made| made.body == holder)
 }
 
 /// The key of a reference of `kind` to the faces named `names` near
 /// `near` on the solid filed under `solid`, at `tolerance`.
-fn reference_key(
+pub(super) fn reference_key(
     kind: &str,
     solid: Key,
     names: &impl serde::Serialize,
@@ -332,15 +333,35 @@ fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DV
     let region =
         (topology.face(solid, &face.key, face.near)).map_err(|_| message::AXIS_FACE_NOT_FOUND)?;
     let region = &topology.regions()[region as usize];
-    match *region_form(solid, region) {
-        Form::Cylinder { point, axis, .. } => Ok([point, axis]),
-        Form::Cone { apex, axis, .. } => Ok([apex, axis]),
-        Form::Torus { centre, axis, .. } => Ok([centre, axis]),
-        Form::Revolved { origin, axis, .. } => Ok([origin, axis]),
-        _ => Err(Failed {
-            message: message::AXIS_FACE_NOT_ROUND.to_owned(),
-            geometry: face_geometry(solid, region, tolerance),
-        }),
+    let [point, axis] = match *region_form(solid, region) {
+        Form::Cylinder { point, axis, .. } => [point, axis],
+        Form::Cone { apex, axis, .. } => [apex, axis],
+        Form::Torus { centre, axis, .. } => [centre, axis],
+        Form::Revolved { origin, axis, .. } => [origin, axis],
+        _ => {
+            return Err(Failed {
+                message: message::AXIS_FACE_NOT_ROUND.to_owned(),
+                geometry: face_geometry(solid, region, tolerance),
+            });
+        }
+    };
+    Ok([beside(point, axis, face.near), axis])
+}
+
+/// The point of the line through `point` along `axis` nearest `near`, or
+/// `point` where that isn't a finite point within [`MAX_COORD`] (an axis
+/// of no length). A form's own point can be far out: a cone that's
+/// nearly a cylinder has its apex far along its axis, past where the
+/// workers' bytes take a draft's axis, and the axis is drawn from its
+/// point. The face's point is on the face, within the limit, so the
+/// point found is beside the face.
+pub(super) fn beside(point: DVec3, axis: DVec3, near: DVec3) -> DVec3 {
+    let foot = point + axis * ((near - point).dot(axis) / axis.length_squared());
+    let max = f64::from(MAX_COORD);
+    if foot.is_finite() && foot.abs().max_element() <= max {
+        foot
+    } else {
+        point
     }
 }
 

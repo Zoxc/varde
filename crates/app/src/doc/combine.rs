@@ -192,6 +192,17 @@ impl Doc {
             return;
         }
         self.picking_plane = None;
+        let bodies = self.selected_bodies();
+        let target = bodies.first().copied();
+        let tools = bodies.get(1..).unwrap_or_default().to_vec();
+        self.combine = Some(CombineSession::new(target, tools));
+    }
+
+    /// The bodies of what's selected in the model, in the order selected,
+    /// each once, that a new combine, move or mirror can name: a body
+    /// merged into another as the one holding it, which the model draws
+    /// it as.
+    pub(crate) fn selected_bodies(&self) -> Vec<BodyId> {
         let document = self.editor.document();
         let merged = self.feed.merged_before(document, None);
         let mut bodies: Vec<BodyId> = Vec::new();
@@ -202,9 +213,7 @@ impl Doc {
                 bodies.push(body);
             }
         }
-        let target = bodies.first().copied();
-        let tools = bodies.get(1..).unwrap_or_default().to_vec();
-        self.combine = Some(CombineSession::new(target, tools));
+        bodies
     }
 
     /// Edits the combine feature `id`, if the document holds it, in a

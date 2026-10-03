@@ -236,7 +236,10 @@ the value last sent). Over a handle every cursor move is captured, the
 first sending `Look::Hover(None)` if the app holds something hovered,
 and `Program::update` skips the picking hover (`Input::holds`) on
 redraws too; leaving it requests a redraw, whose `RedrawRequested`
-works the hover out again. A press on a handle grabs it (captured); a
+works the hover out again. Each `RedrawRequested` (no drag) also works
+out again which handle is under the cursor (`Moving::redraw`), so one
+that moved away from a cursor that stayed put (the camera, or the
+bodies, moved) is let go of and the model under it picked again. A press on a handle grabs it (captured); a
 press anywhere else goes on to picking and the camera. While dragging,
 moves send the snapped value only when it changes, and the release is
 captured. The cursor is a grab hand over one, grabbing while dragging.

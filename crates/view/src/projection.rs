@@ -13,6 +13,11 @@ use varde_render::{Camera, Projection};
 /// camera's axes, in `f32`, aren't exact enough to say where.
 const PARALLEL: f64 = 1e-6;
 
+/// How near to along a line the cursor's ray may run and still drag a
+/// handle along it ([`Projector::along_line`]), as a share of the ray's
+/// length squared.
+const ALONG_LINE: f64 = 1e-6;
+
 /// Maps between a sketch's plane and a viewport of a given size seen by a
 /// camera. Screen positions are in logical pixels from the viewport's top
 /// left, y down.
@@ -206,6 +211,25 @@ impl Projector {
         } else {
             (at_target, -self.backward)
         })
+    }
+
+    /// How far along the line through `origin` along the unit `axis` the
+    /// ray through the screen position `pixel` passes nearest it, from
+    /// `origin`: where a handle dragged along the line goes. `None` with
+    /// the ray running nearer along the line than [`ALONG_LINE`] says,
+    /// where the cursor says next to nothing of how far along it is, or
+    /// a position or a line that isn't finite.
+    pub(crate) fn along_line(&self, origin: DVec3, axis: DVec3, pixel: DVec2) -> Option<f64> {
+        let (from, ray) = self.ray(pixel)?;
+        let w = from - origin;
+        let (a, b) = (ray.dot(ray), ray.dot(axis));
+        let (d, e) = (ray.dot(w), axis.dot(w));
+        let denominator = a - b * b;
+        if denominator.is_nan() || denominator <= ALONG_LINE * a {
+            return None;
+        }
+        let t = (a * e - b * d) / denominator;
+        t.is_finite().then_some(t)
     }
 
     /// How far in front of the eye the sketch point `at` is, or of the
