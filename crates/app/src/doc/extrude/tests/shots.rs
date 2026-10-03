@@ -759,6 +759,30 @@ fn shots_11_file_menu() {
     });
 }
 
+/// Scenario 28: the view options menu with its Shading submenu open, a
+/// choice hovered, and its Edges submenu.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_28_view_menu() {
+    use varde_view::ViewSubmenu;
+
+    shooting(|camera| {
+        let (mut doc, _) = example();
+        framed(&mut doc);
+        doc.look(Look::ToggleViewMenu);
+        doc.look(Look::ViewSubmenu(Some(ViewSubmenu::Shading)));
+        let hovered = Shot::new().pointer(Pointer::Over("Metal"));
+        camera.take(&doc, "28-view-menu-shading", hovered);
+        doc.look(Look::ViewSubmenu(Some(ViewSubmenu::Edges)));
+        let hovered = Shot::new().pointer(Pointer::Over("Tessellation"));
+        camera.take(
+            &doc,
+            "28-view-menu-edges-dark-scale2",
+            hovered.dark().scale(2.0),
+        );
+    });
+}
+
 /// Looks from `view` in `projection`, the turn finished, zoomed by `zoom`.
 fn look_from(doc: &mut Doc, view: View, projection: Projection, zoom: f32) {
     doc.look(Look::SetProjection(projection));

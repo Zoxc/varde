@@ -559,8 +559,9 @@ pub enum Overlay {
     /// Asks what to do about unsaved changes.
     UnsavedPrompt,
     FileMenu,
-    /// The view options menu, from the status bar.
-    ViewMenu,
+    /// The view options menu, from the status bar, and its submenu open
+    /// if one is.
+    ViewMenu(Option<crate::ViewSubmenu>),
 }
 
 /// The document screen: toolbar on top, side panel on the left and the 3D
@@ -655,8 +656,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.picking,
                         state.highlight,
                         state.errors,
-                        state.options.hidden_edges,
-                        state.options.wireframe,
+                        state.options,
                         state.mode.palette(),
                         state
                             .sketch
@@ -693,8 +693,8 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
             );
             Element::from(stack![content, menu])
         }
-        (Some(Overlay::ViewMenu), None) => {
-            let menu = status::view_menu(state.camera.projection(), state.options);
+        (Some(Overlay::ViewMenu(submenu)), None) => {
+            let menu = status::view_menu(state.camera.projection(), state.options, submenu);
             Element::from(stack![content, menu])
         }
         (None, None) => content.into(),
@@ -742,7 +742,7 @@ fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
         info: info(state),
         hints: hints(state),
         mouse_hints: state.options.mouse_hints,
-        view_menu: Some(state.overlay == Some(Overlay::ViewMenu)),
+        view_menu: Some(matches!(state.overlay, Some(Overlay::ViewMenu(_)))),
     }
 }
 

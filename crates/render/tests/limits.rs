@@ -10,7 +10,7 @@ use glam::{DVec3, Vec3};
 use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
     Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, LineStyle, PrepareError,
-    Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, Viewport, wgpu,
+    Renderer, Shading, SketchLayer, SketchScene, Space, Srgb, Srgba, Viewport, wgpu,
 };
 
 /// Nothing hovered or selected.
@@ -84,6 +84,8 @@ fn frame<'a>(
         grid: GridPlane::XY,
         faded: false,
         wireframe: false,
+        tessellation: false,
+        shading: Shading::Regular,
         hidden_edges: true,
         hovered_faces: &[],
         selected_faces: &[],

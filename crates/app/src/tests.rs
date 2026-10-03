@@ -5306,6 +5306,53 @@ fn closing_waits_for_a_delete_behind_sketch_edits_to_be_asked_and_answered() {
 }
 
 #[test]
+fn a_click_on_an_empty_part_of_the_panel_or_toolbar_clears_the_selection() {
+    let mut doc = untitled();
+    doc.look(Look::PickPlane);
+    doc.update(Edit::PlanePicked(OriginPlane::XZ));
+    doc.look(Look::FinishSketch);
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    let feature = doc.editor.document().features()[0].id;
+    assert_eq!(doc.selected_feature, Some(feature));
+
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let view = doc.view(false, Mode::Light, ViewOptions::default());
+    let mut ui = shown(view, size, &mut renderer);
+    let on_screen = texts(&mut ui, &renderer);
+    drop(ui);
+    let row = on_screen
+        .iter()
+        .find(|t| t.text == "Sketch 1")
+        .unwrap()
+        .bounds;
+    let tab = on_screen
+        .iter()
+        .find(|t| t.text == "Objects")
+        .unwrap()
+        .bounds;
+    let mut click = |doc: &Doc, at: iced::Point| {
+        let view = doc.view(false, Mode::Light, ViewOptions::default());
+        let mut ui = shown(view, size, &mut renderer);
+        clicked(&mut ui, &mut renderer, at)
+    };
+    let clears = |sent: &[Ui]| matches!(sent, [Ui::Look(Look::ClearSelection)]);
+
+    // The row takes its own click; below it, the strip right of the tabs
+    // and the toolbar's empty middle clear.
+    assert!(!clears(&click(&doc, row.center())));
+    let below = iced::Point::new(row.center_x(), row.y + 200.0);
+    let beside_tabs = iced::Point::new(varde_view::SIDE_PANEL_WIDTH - 10.0, tab.center_y());
+    let toolbar = iced::Point::new(size.width * 0.75, 20.0);
+    for at in [below, beside_tabs, toolbar] {
+        let sent = click(&doc, at);
+        assert!(clears(&sent), "{at:?}: {sent:?}");
+    }
+    doc.look(Look::ClearSelection);
+    assert_eq!(doc.selected_feature, None);
+}
+
+#[test]
 fn the_view_options_menu_picks_the_projection_and_the_options() {
     fn view(varde: &Varde) -> iced::Element<'_, Ui> {
         document(varde).view(false, Mode::Light, varde.options)
@@ -5318,15 +5365,16 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
     let mut varde = Varde::new();
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
     let shown = |varde: &Varde, renderer: &mut iced::Renderer| {
-        let mut ui = shown(view(varde), size, renderer);
+        let mut ui = crate::tests::shown(view(varde), size, renderer);
         texts(&mut ui, renderer)
     };
     let menu = [
+        "Shading",
+        "Edges",
         "Orthographic",
         "Perspective",
         "Mouse hints",
         "Hidden edges",
-        "Wireframe",
     ];
     let has = |shown: &[varde_view::probe::Shown], text: &str| shown.iter().any(|t| t.text == text);
     assert!(!has(&shown(&varde, &mut renderer), menu[0]));
@@ -5394,25 +5442,93 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
     assert!(!varde.options.hidden_edges && !varde.options.mouse_hints);
     assert!(!document(&varde).view_menu);
 
-    // Wireframe, off by default, clicked, turns on, and closes it too.
-    assert!(!varde.options.wireframe);
-    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
-    let open = shown(&varde, &mut renderer);
-    let wireframe = open.iter().find(|t| t.text == "Wireframe").unwrap();
-    let mut ui = iced_runtime::user_interface::UserInterface::build(
-        view(&varde),
-        size,
-        Default::default(),
-        &mut renderer,
-    );
-    let sent = clicked(&mut ui, &mut renderer, wireframe.bounds.center());
-    drop(ui);
-    let [Ui::ToggleWireframe] = sent[..] else {
-        panic!("{sent:?}");
+    // A submenu's item hovered opens it to its left, its first choice
+    // beside the item; a choice picked closes both.
+    let hover = |varde: &mut Varde, renderer: &mut iced::Renderer, label: &str| {
+        let open = shown(varde, renderer);
+        let at = open
+            .iter()
+            .find(|t| t.text == label)
+            .unwrap()
+            .bounds
+            .center();
+        let mut ui = crate::tests::shown(view(varde), size, renderer);
+        let mut sent = Vec::new();
+        let _ = ui.update(
+            &[iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+                position: at,
+            })],
+            iced::mouse::Cursor::Available(at),
+            renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+        drop(ui);
+        for message in sent {
+            let _ = varde.update(Message::Ui(message));
+        }
     };
-    let _ = varde.update(Message::Ui(Ui::ToggleWireframe));
-    assert!(varde.options.wireframe && !varde.options.hidden_edges);
-    assert!(!document(&varde).view_menu);
+    let pick = |varde: &mut Varde, renderer: &mut iced::Renderer, submenu, label: &str| {
+        let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
+        hover(varde, renderer, submenu);
+        let open = shown(varde, renderer);
+        let opener = open.iter().find(|t| t.text == submenu).unwrap().bounds;
+        let item = open.iter().find(|t| t.text == label).unwrap().bounds;
+        assert!(item.x + item.width < opener.x, "{item:?} {opener:?}");
+        let mut ui = crate::tests::shown(view(varde), size, renderer);
+        let sent = clicked(&mut ui, renderer, item.center());
+        drop(ui);
+        let [message] = &sent[..] else {
+            panic!("{sent:?}");
+        };
+        let _ = varde.update(Message::Ui(message.clone()));
+        assert!(!document(varde).view_menu);
+    };
+    use varde_render::Shading;
+    use varde_view::Edges;
+    assert_eq!(varde.options.edges, Edges::Default);
+    pick(&mut varde, &mut renderer, "Edges", "Wireframe");
+    assert_eq!(varde.options.edges, Edges::Wireframe);
+    pick(&mut varde, &mut renderer, "Edges", "Tessellation");
+    assert_eq!(varde.options.edges, Edges::Tessellation);
+    assert_eq!(varde.options.shading, Shading::Regular);
+    pick(&mut varde, &mut renderer, "Shading", "Metal");
+    assert_eq!(varde.options.shading, Shading::Metal);
+    pick(&mut varde, &mut renderer, "Shading", "Flat metal");
+    assert_eq!(varde.options.shading, Shading::FlatMetal);
+    assert!(!varde.options.hidden_edges);
+
+    // The first choices line up with their items; another item hovered
+    // closes the submenu.
+    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
+    hover(&mut varde, &mut renderer, "Edges");
+    let open = shown(&varde, &mut renderer);
+    let y = |label: &str| {
+        open.iter()
+            .find(|t| t.text == label)
+            .unwrap()
+            .bounds
+            .center_y()
+    };
+    assert!((y("Default") - y("Edges")).abs() < 1.0);
+    assert!(!open.iter().any(|t| t.text == "Shaded"));
+    hover(&mut varde, &mut renderer, "Perspective");
+    assert!(
+        !shown(&varde, &mut renderer)
+            .iter()
+            .any(|t| t.text == "Default")
+    );
+    hover(&mut varde, &mut renderer, "Shading");
+    let open = shown(&varde, &mut renderer);
+    let y = |label: &str| {
+        open.iter()
+            .find(|t| t.text == label)
+            .unwrap()
+            .bounds
+            .center_y()
+    };
+    assert!((y("Shaded") - y("Shading")).abs() < 1.0);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::CloseViewMenu)));
 
     // `Esc` closes it, and a click off it.
     let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));

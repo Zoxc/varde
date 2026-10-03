@@ -103,6 +103,8 @@ pub(crate) struct Doc {
     pub(crate) file_menu: bool,
     /// Whether the view options menu, from the status bar, is open.
     pub(crate) view_menu: bool,
+    /// Its submenu open, if one is: only shown while it is.
+    pub(crate) view_submenu: Option<varde_view::ViewSubmenu>,
     /// The removal the user is asked about, if one is: see [`Doc::remove`].
     pub(crate) deleting: Option<Deleting>,
     /// The plane being picked, if one is: for a new sketch, or for the
@@ -317,6 +319,7 @@ impl Doc {
             panel: Panel::default(),
             file_menu: false,
             view_menu: false,
+            view_submenu: None,
             deleting: None,
             picking_plane: None,
             lineage,
@@ -685,7 +688,11 @@ impl Doc {
         }
         match message {
             Look::CloseFileMenu => self.file_menu = false,
-            Look::ToggleViewMenu => self.view_menu = !self.view_menu,
+            Look::ToggleViewMenu => {
+                self.view_menu = !self.view_menu;
+                self.view_submenu = None;
+            }
+            Look::ViewSubmenu(submenu) => self.view_submenu = submenu,
             Look::CloseViewMenu => self.view_menu = false,
             Look::CancelDelete => self.deleting = None,
             Look::Escape => self.escape(),
@@ -1031,7 +1038,9 @@ impl Doc {
                 .prompt()
                 .map(|_| Overlay::UnsavedPrompt)
                 .or(self.file_menu.then_some(Overlay::FileMenu))
-                .or(self.view_menu.then_some(Overlay::ViewMenu)),
+                .or(self
+                    .view_menu
+                    .then_some(Overlay::ViewMenu(self.view_submenu))),
             panel: self.panel,
             peek,
             mode,

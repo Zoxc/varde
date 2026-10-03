@@ -156,6 +156,20 @@ icons! {
     // The options' icons, drawn in one colour: flip, keep the tools.
     TkFlip => r#"<path d="M4 8h15M15.5 4.5L19 8l-3.5 3.5M20 16H5M8.5 12.5L5 16l3.5 3.5"/>"#,
     TkKeep => r#"<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
+    // Not in the mocks: the view options menu's shading, a ball lit four
+    // ways. Smooth, shaded towards its lower right; flat, in facets;
+    // metal, the horizon and a glint reflected in it; both.
+    ShadeRegular => r#"<circle cx="12" cy="12" r="8"/><path d="M17.6 10.5a6 6 0 0 1-7.1 7.1"/>"#,
+    ShadeFlat => r#"<path d="M12 4l5.66 2.34L20 12l-2.34 5.66L12 20l-5.66-2.34L4 12l2.34-5.66z"/><path d="M4 12h16M6.34 6.34L12 12l5.66-5.66M12 12v8"/>"#,
+    ShadeMetal => r#"<circle cx="12" cy="12" r="8"/><path d="M4.3 13.5c4.5 2 10.9 2 15.4 0"/><path d="M9.5 5.8q.35 2.35 2.7 2.7-2.35.35-2.7 2.7-.35-2.35-2.7-2.7 2.35-.35 2.7-2.7z"/>"#,
+    ShadeFlatMetal => r#"<path d="M12 4l5.66 2.34L20 12l-2.34 5.66L12 20l-5.66-2.34L4 12l2.34-5.66z"/><path d="M4 12l8 3 8-3"/><path d="M9.5 5.8q.35 2.35 2.7 2.7-2.35.35-2.7 2.7-.35-2.35-2.7-2.7 2.35-.35 2.7-2.7z"/>"#,
+    // Its edges: a box with its edges, its patches' and its triangles'
+    // finer.
+    EdgesDefault => r#"<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>"#,
+    EdgesWireframe => r#"<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/><path d="M8 5.25v9M16 5.25v9M4 12l8 4.5 8-4.5" stroke-width="0.9"/>"#,
+    EdgesTessellation => r#"<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/><path d="M4 16.5l8-4.5M20 16.5l-8-4.5M8 5.25l8 4.5" stroke-width="0.9"/>"#,
+    // A menu item opening a submenu to its left.
+    ChevLeft => r#"<path d="M14 7l-5 5 5 5"/>"#,
     // Nothing: room for an icon, beside items that have one.
     Blank => "",
 }

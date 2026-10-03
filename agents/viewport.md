@@ -64,14 +64,32 @@ in a box of its own, with the key clearing it (`Space`);
 then a bar with what's going on (picking a plane, the sketch's or the
 extrude's status, regenerating, a failed edit, saving: nothing with
 nothing selected), the hints, and the button of the view options menu,
-which opens above it: Orthographic or Perspective, then Mouse hints,
-without which the bar leaves out the hints of the mouse, Hidden
-edges, without which the viewport leaves out the edges the model hides
-(`Frame::hidden_edges`), and Wireframe, with which it draws the mesh's
-wires too, every patch's edges that aren't feature edges
-(`Frame::wireframe`). The app keeps those three for every document
-(`Varde::options`, a `ViewOptions`, all but Wireframe on to start with,
-not saved), and any of them closes the menu. The hints and the button show whole:
+which opens above it: the Shading and Edges submenus, then Orthographic
+or Perspective, then Mouse hints, without which the bar leaves out the
+hints of the mouse, and Hidden edges, without which the viewport leaves
+out the edges the model hides (`Frame::hidden_edges`). A submenu's item
+(`submenu_item`, showing the icon of the choice made and a chevron)
+opens it to the menu's left as it's hovered or clicked
+(`Look::ViewSubmenu`, kept in `Doc::view_submenu` and shown as
+`Overlay::ViewMenu`'s), its first choice beside the item (the items are
+`MENU_ITEM_HEIGHT` tall); hovering another item closes it. Its choices
+have icons, the one chosen ticked at its right (`choice_item`). Shading:
+Shaded, Flat shaded, Metal or Flat metal (`Frame::shading`, see
+"Shading" below). Edges (`Edges`): Default, the feature edges only;
+Wireframe, with the mesh's wires too, every patch's edges that aren't
+feature edges (`Frame::wireframe`); or Tessellation, with every
+triangle's edges (`Frame::tessellation`). The app keeps those for every
+document (`Varde::options`, a `ViewOptions`, Mouse hints and Hidden
+edges on and the defaults chosen to start with, not saved), and any
+choice or toggle closes the menu.
+
+A press on what's empty of the side panel (the tab strip right of the
+tabs, below or between a tab's rows) or of the toolbar (its middle,
+between the operations and Undo) clears the selection, as `Space` does
+(`panels::CLEAR_SELECTION`): `mouse_area`s round them that only see
+presses the rows, buttons, fields and the sketch tab's divider didn't
+take. A row that takes no press (an object that can't be picked) is
+`opaque`, so a click on it doesn't clear. The hints and the button show whole:
 the bar's widget (`Bar`, which draws the boxes and the lines between
 their parts itself) lays them out first, then the selection, then the
 status, each in what's left, cut short, so the status gives way first.
@@ -330,8 +348,9 @@ Outside a sketch, the passes round the glass (the parts less than
 opaque) go:
 
 1. The opaque parts' faces, then their hovered and selected faces (see
-   "The highlight" below), then their edges. Their depth is the only
-   depth there is until step 4.
+   "The highlight" below), then their edges, and in a tessellation
+   wireframe their triangles' edges. Their depth is the only depth
+   there is until step 4.
 2. The hidden edges (below) of every part against it, so a transparent
    part's edges an opaque one hides are dashed at its alpha too; then
    the transparent parts' visible edges, the extrude's layers, the
@@ -354,9 +373,34 @@ opaque) go:
    `Depth32FloatStencil8` where the device has it, else
    `Depth24PlusStencil8`.
 5. Their hovered and selected faces, then their edges again, so the
-   edges on the nearest surface show undimmed on the glass they lie on;
-   then the outline, the selected edges and the vertices again, undimmed
-   where they're in front of the glass.
+   edges on the nearest surface show undimmed on the glass they lie on,
+   and their triangles' edges in a tessellation wireframe; then the
+   outline, the selected edges and the vertices again, undimmed where
+   they're in front of the glass.
+
+Shading. `shaded` in the shader lights every face draw (the model, faded
+or not, the glass, the hovered and selected faces) as `Frame::shading`
+says, its `Shading::code` in the uniforms' `viewport_origin.z`, as the
+uniforms have no room for another vector. Regular is bright and low
+contrast, smooth across a face by its interpolated normals. Flat (and
+Flat metal) lights
+each triangle by its own plane's normal, from the derivatives of the
+world position (worked out whatever the shading, as derivatives need
+uniform control flow), turned to the side the interpolated normal is on.
+Metal (`metal`) reflects a studio fixed to the view, as a matcap does,
+so it reads the same from every side: a dark floor, a bright horizon, a
+softer sky and two tall softboxes either side, with the key light's
+glint, the colour washing out towards grazing angles.
+
+Tessellation. The triangles' edges are worked out the first frame a
+mesh is drawn with `Frame::tessellation` (`triangle_edges`): each part's
+indices' edges, each once, as segments, a part's following the one
+before it (`Triangles::Built`), uploaded to a buffer of their own and
+drawn as finished sketches' lines are (`vs_triangle_edge`, depth tested
+and pulled), `CREASE_WIDTH` wide at `CREASE_ALPHA` of the edge colour,
+as wires are. Where they might not fit a buffer (24 bytes an index)
+the frame's `prepare` fails with `MeshTooLarge` once and they're not
+drawn for that mesh.
 
 The grid's axis lines are drawn in the grid's pass (`axis_line`) but not
 faded with distance: they run on at full strength to the horizon, and
@@ -1270,7 +1314,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_27`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_28`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `X` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -1322,8 +1366,9 @@ past the save opened, with a save found and with it failing to open
 save's thumbnail of the example's plate, rendered by the viewport's
 frame and written as `27-thumbnail.png`, then the welcome screen showing
 it in a recent file's card beside one without, light, dark and at scale
-2 (`shots_27`). Shots
-are for looking (pixels differ by GPU and driver), never compared and
+2 (`shots_27`); the view options menu with its Shading submenu open, a
+choice hovered, and its Edges submenu, dark at scale 2 (`shots_28`).
+Shots are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it
 asks for before its shots, unless the shot is of the wait (`-waiting`):

@@ -8,7 +8,7 @@ use glam::{DVec2, DVec3, Vec3};
 use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
     Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, Projection, Renderer,
-    SketchLayer, SketchScene, Space, Srgb, Srgba, Vertex, View, Viewport, wgpu,
+    Shading, SketchLayer, SketchScene, Space, Srgb, Srgba, Vertex, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -105,6 +105,8 @@ fn frame<'a>(
         grid: GridPlane::XY,
         faded: false,
         wireframe: false,
+        tessellation: false,
+        shading: Shading::Regular,
         hidden_edges: true,
         hovered_faces: &[],
         selected_faces: &[],

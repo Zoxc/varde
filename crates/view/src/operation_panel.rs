@@ -909,7 +909,9 @@ pub(crate) fn bodies<'a>(
         let (enter, exit) = hovering(what);
         let row = mouse_area(row).on_enter(enter).on_exit(exit);
         Element::from(match message {
-            Some(message) => row.on_press(message).interaction(mouse::Interaction::Pointer),
+            Some(message) => row
+                .on_press(message)
+                .interaction(mouse::Interaction::Pointer),
             None => row,
         })
     });

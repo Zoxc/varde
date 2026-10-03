@@ -53,7 +53,7 @@ use std::path::PathBuf;
 use glam::DVec2;
 use varde_document::{BodyId, FaceRef, FeatureId, Opacity, OriginPlane, Tolerance};
 use varde_expr::LengthUnit;
-use varde_render::{Projection, View};
+use varde_render::{Projection, Shading, View};
 use varde_sketch::{Id, Sketch};
 
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
@@ -108,26 +108,31 @@ pub enum Message {
     /// Shows the edges the model hides, dashed, or hides them: the view
     /// options menu's Hidden edges.
     ToggleHiddenEdges,
-    /// Draws every patch's edges, or only the feature edges: the view
-    /// options menu's Wireframe.
-    ToggleWireframe,
+    /// Draws the model's edges as `Edges` says, from the view options
+    /// menu's Edges submenu.
+    SetEdges(Edges),
+    /// Lights the model's faces as `Shading` says, from the view options
+    /// menu's Shading submenu.
+    SetShading(Shading),
     /// Puts the text on the clipboard: a measured value with its unit,
     /// from its copy button.
     Copy(String),
 }
 
 /// What the view options menu turns on and off, and the theme button
-/// picks, kept by the app for every document. All on by default but the
-/// wireframe, and the theme the system's.
+/// picks, kept by the app for every document. Both hints and hidden edges
+/// on to start with, the edges and shading the defaults and the theme the
+/// system's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewOptions {
     /// Whether the status bar shows the hints of the mouse.
     pub mouse_hints: bool,
     /// Whether the viewport shows the edges the model hides, dashed.
     pub hidden_edges: bool,
-    /// Whether the viewport draws the edges of every patch of the model,
-    /// faint, besides its feature edges.
-    pub wireframe: bool,
+    /// Which of the model's edges the viewport draws.
+    pub edges: Edges,
+    /// How the viewport lights the model's faces.
+    pub shading: Shading,
     pub theme: ThemeChoice,
 }
 
@@ -136,10 +141,32 @@ impl Default for ViewOptions {
         ViewOptions {
             mouse_hints: true,
             hidden_edges: true,
-            wireframe: false,
+            edges: Edges::Default,
+            shading: Shading::Regular,
             theme: ThemeChoice::default(),
         }
     }
+}
+
+/// Which of the model's edges the viewport draws, besides the feature
+/// edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Edges {
+    /// Only the feature edges.
+    #[default]
+    Default,
+    /// Every patch's edges too, faint: [`varde_render::Frame::wireframe`].
+    Wireframe,
+    /// Every triangle's edges too, faint:
+    /// [`varde_render::Frame::tessellation`].
+    Tessellation,
+}
+
+/// A submenu of the view options menu, open to its left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewSubmenu {
+    Shading,
+    Edges,
 }
 
 /// What the user asks for on the welcome screen.
@@ -303,6 +330,9 @@ pub enum Look {
     /// closes it.
     ToggleViewMenu,
     CloseViewMenu,
+    /// Opens a submenu of the view options menu, its item hovered or
+    /// clicked, or closes the one open, another item hovered.
+    ViewSubmenu(Option<ViewSubmenu>),
     /// Closes the delete prompt, deleting nothing: its Cancel button, or
     /// `Esc`.
     CancelDelete,

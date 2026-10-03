@@ -2,8 +2,8 @@
 //! Sketch tab in place of the Timeline.
 
 use iced::widget::{
-    MouseArea, Space, button, column, container, hover, mouse_area, row, slider, space, stack,
-    text, text_input,
+    MouseArea, Space, button, column, container, hover, mouse_area, opaque, row, slider, space,
+    stack, text, text_input,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
 use varde_document::{BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Opacity};
@@ -30,7 +30,9 @@ pub(crate) const ROW_HEIGHT: f32 = 28.0;
 
 /// The docked panel left of the viewport. Shows the selected tab, or the
 /// other one while peeking with the peek key held. Bodies and features can
-/// only be hidden, shown and removed if the document is editable.
+/// only be hidden, shown and removed if the document is editable. A click
+/// on what's empty of it, the tab strip right of the tabs or below a
+/// list, clears the selection, as `Space` does.
 pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let selected = state.panel;
     let peek = state.peek;
@@ -82,7 +84,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     };
     // The tabs hang 1 px over the strip's bottom border, so the raised tab
     // joins the panel below.
-    let strip = stack![
+    let strip = mouse_area(stack![
         edged(
             container(space::vertical())
                 .width(Length::Fill)
@@ -93,7 +95,8 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         row![features, tab(Panel::Objects, Icon::Body)]
             .spacing(2)
             .padding(Padding::from(8).bottom(0)),
-    ];
+    ])
+    .on_press(CLEAR_SELECTION);
 
     let document = state.editor.document();
     let editable = state.editable();
@@ -124,6 +127,10 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         )),
     };
 
+    // The rows, buttons and fields take their own presses: the rest
+    // reach this.
+    let content = mouse_area(content).on_press(CLEAR_SELECTION);
+
     edged(
         container(column![strip, content])
             .height(Length::Fill)
@@ -132,6 +139,9 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         SIDE_PANEL_WIDTH,
     )
 }
+
+/// What a click on an empty part of the panel or the toolbar sends.
+pub(crate) const CLEAR_SELECTION: Message = Message::Look(Look::ClearSelection);
 
 /// `list` scrolled within the rest of the panel.
 fn scrolled<'a>(list: Element<'a, Message>) -> Element<'a, Message> {
@@ -747,7 +757,8 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
             let row = hover(content(false), content(true).style(theme::hovered_row));
             match on_double_click {
                 Some(message) => mouse_area(row).on_double_click(message).into(),
-                None => row,
+                // Not empty: a click on it doesn't clear the selection.
+                None => opaque(row),
             }
         }
     };

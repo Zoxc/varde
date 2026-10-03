@@ -317,18 +317,62 @@ fn vs_mesh(in: MeshIn) -> MeshOut {
     return out;
 }
 
-// The face at `in` of colour `base` lit: bright, low contrast shading. A
-// back face, drawn only for a part less than opaque, is lit as seen from
-// inside.
+// How the faces are lit, `Shading` in renderer.rs, kept in the viewport
+// origin's unused z.
+const SHADING_FLAT: f32 = 1.0;
+const SHADING_METAL: f32 = 2.0;
+const SHADING_FLAT_METAL: f32 = 3.0;
+
+// The face at `in` of colour `base` lit as `u.viewport_origin.z` says: by
+// default bright, low contrast shading; flat, each triangle lit by its own
+// plane's normal, so the tessellation shows; as polished metal (see
+// `metal`); or as metal lit flat. A back face, drawn only for a part less
+// than opaque, is lit as seen from inside.
 fn shaded(in: MeshOut, front: bool, base: vec3<f32>) -> vec3<f32> {
-    let n = select(-1.0, 1.0, front) * normalize(in.normal);
+    // The triangle's own normal, from how the position changes across the
+    // screen, turned to the side the interpolated normal is on. Worked out
+    // whatever the shading, as derivatives need uniform control flow.
+    let across = cross(dpdx(in.world), dpdy(in.world));
+    let interpolated = normalize(in.normal);
+    var normal = interpolated;
+    let shading = u.viewport_origin.z;
+    let flat = shading == SHADING_FLAT || shading == SHADING_FLAT_METAL;
+    if flat && dot(across, across) > 0.0 {
+        let plane = normalize(across);
+        normal = select(-plane, plane, dot(plane, interpolated) >= 0.0);
+    }
+    let n = select(-1.0, 1.0, front) * normal;
     let view = u.backward.xyz;
     let key = normalize(vec3<f32>(0.4, -0.6, 1.0));
 
+    if shading == SHADING_METAL || shading == SHADING_FLAT_METAL {
+        return metal(n, key, base);
+    }
     let ambient = mix(vec3<f32>(0.42, 0.42, 0.44), vec3<f32>(0.55, 0.57, 0.60), n.z * 0.5 + 0.5);
     let diffuse = max(dot(n, key), 0.0) * 0.30 + max(dot(n, view), 0.0) * 0.25;
     let spec = pow(max(dot(n, normalize(key + view)), 0.0), 32.0) * 0.15;
     return base * (ambient + diffuse) + spec;
+}
+
+// Normal `n` as polished metal of colour `base`, reflecting a studio fixed
+// to the view, as a matcap is, so it reads the same from every side: a
+// floor below, a bright horizon and a softer sky above, two tall softboxes
+// either side and the `key` light's glint. Towards grazing angles it
+// reflects more and its colour less (Schlick's Fresnel).
+fn metal(n: vec3<f32>, key: vec3<f32>, base: vec3<f32>) -> vec3<f32> {
+    // The normal in view space, x right, y up, z towards the eye, and the
+    // ray from the eye reflected off it.
+    let v = vec3<f32>(dot(n, u.right.xyz), dot(n, u.up.xyz), dot(n, u.backward.xyz));
+    let r = vec3<f32>(2.0 * v.z * v.x, 2.0 * v.z * v.y, 2.0 * v.z * v.z - 1.0);
+    var studio = mix(0.25, 1.0, smoothstep(-0.8, -0.35, r.y));
+    studio = mix(studio, 0.6, smoothstep(-0.2, 0.6, r.y));
+    let boxes = 1.0 - smoothstep(0.04, 0.12, abs(r.x + 0.6))
+        + 0.7 * (1.0 - smoothstep(0.03, 0.1, abs(r.x - 0.45)));
+    studio = mix(studio, 1.0, boxes * smoothstep(-0.9, -0.5, r.y));
+    let glint = pow(max(dot(reflect(-u.backward.xyz, n), key), 0.0), 80.0) * 0.6;
+    let fresnel = pow(1.0 - clamp(v.z, 0.0, 1.0), 5.0);
+    let tint = mix(base, vec3<f32>(1.0), fresnel);
+    return tint * (0.1 + 0.9 * studio) + glint;
 }
 
 @fragment
@@ -656,6 +700,21 @@ fn vs_line(
     let own = pulled_segment(start, end, half + 2.0);
     return line_vertex(index, own.shown, none(), none(), 0u, own.depth, half,
         vec4<f32>(u.sketch.rgb, 1.0), vec2<f32>(0.0), vec2<f32>(0.0));
+}
+
+// An edge of the mesh's triangles, in a tessellation wireframe: faint and
+// thin, as creases are, as opaque as the model and its part.
+@vertex
+fn vs_triangle_edge(
+    @builtin(vertex_index) index: u32,
+    @location(0) start: vec3<f32>,
+    @location(1) end: vec3<f32>,
+) -> LineOut {
+    let half = CREASE_WIDTH * 0.5 * u.viewport.z;
+    let own = pulled_segment(start, end, half + 2.0);
+    let color = vec4<f32>(u.edge.rgb, u.model.a * part.alpha.x * CREASE_ALPHA);
+    return line_vertex(index, own.shown, none(), none(), 0u, own.depth, half, color,
+        vec2<f32>(0.0), vec2<f32>(0.0));
 }
 
 // Set in an edge point's edge where it's only a neighbour of its edge's

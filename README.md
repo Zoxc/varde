@@ -33,12 +33,15 @@ sketches and editable features. It runs natively and in the browser.
 - Combining bodies: one body united with, less, or intersected with others.
 - Faces, edges, vertices and bodies selected by clicking them with no tool
   open (a double-click takes the body); `Shift`- or `Ctrl`-click (`Cmd` on
-  macOS) adds or removes one, `Space` clears.
+  macOS) adds or removes one, `Space` or a click on an empty part of the
+  side panel or toolbar clears.
 - A body's opacity, set in its context menu in the side panel, to see
   what's behind it.
 - Edges hidden behind bodies shown dashed; "Hidden edges" in the view
-  options turns them off. "Wireframe" there draws every patch's edges
-  too, faint.
+  options turns them off. Its Edges submenu draws every patch's edges
+  too, faint ("Wireframe"), or every triangle's ("Tessellation").
+- Shaded, flat shaded, metal or flat metal looks for the model, in the
+  view options' Shading submenu.
 - Solids of rational quadratic triangle patches: closed meshes to allow for
   robust booleans, but with conic edges, so planes, arcs, cylinders and
   cones are exact. Other shapes, such as splines, tori and curved-on-curved
@@ -49,7 +52,11 @@ sketches and editable features. It runs natively and in the browser.
 
 ## Getting started
 
-With a Rust toolchain ([rustup](https://rustup.rs)) installed:
+Try it in the browser at
+[zoxc.github.io/varde](https://zoxc.github.io/varde/).
+
+To run it natively, with a Rust toolchain ([rustup](https://rustup.rs))
+installed:
 
 ```sh
 cargo run --release

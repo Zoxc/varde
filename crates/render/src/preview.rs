@@ -9,7 +9,7 @@ use varde_kernel::{RenderLines, RenderMesh};
 
 use crate::{
     Camera, ClipRect, Colors, Frame, GridPlane, Highlights, PrepareError, Projection, Renderer,
-    Viewport,
+    Shading, Viewport,
 };
 
 /// Where a preview looks from and how large it is: see [`frame`].
@@ -161,6 +161,8 @@ pub fn render_preview(
         grid: GridPlane::XY,
         faded: false,
         wireframe: false,
+        tessellation: false,
+        shading: Shading::Regular,
         hidden_edges: false,
         hovered_faces: &[],
         selected_faces: &[],

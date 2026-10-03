@@ -127,6 +127,34 @@ pub struct ClipRect {
     pub height: u32,
 }
 
+/// How the model's faces are lit: see `shaded` in the shader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Shading {
+    /// Bright, low contrast shading, smooth across each face.
+    #[default]
+    Regular,
+    /// Each triangle lit by its own plane's normal, so the tessellation
+    /// shows.
+    Flat,
+    /// Polished metal, reflecting a studio fixed to the view.
+    Metal,
+    /// Metal, each triangle lit by its own plane's normal, as [`Self::Flat`].
+    FlatMetal,
+}
+
+impl Shading {
+    /// Its number in the shader: `SHADING_FLAT`, `SHADING_METAL` and
+    /// `SHADING_FLAT_METAL`.
+    fn code(self) -> f32 {
+        match self {
+            Shading::Regular => 0.0,
+            Shading::Flat => 1.0,
+            Shading::Metal => 2.0,
+            Shading::FlatMetal => 3.0,
+        }
+    }
+}
+
 /// Everything needed to draw one frame.
 #[derive(Debug, Clone, Copy)]
 pub struct Frame<'a> {
@@ -152,6 +180,12 @@ pub struct Frame<'a> {
     /// edges, as creases are: [`CREASE_WIDTH`] wide at [`CREASE_ALPHA`].
     /// Changing it re-uploads nothing.
     pub wireframe: bool,
+    /// Whether the edges of the mesh's triangles are drawn too, as wires
+    /// are. The first frame with it of a mesh works them out and uploads
+    /// them.
+    pub tessellation: bool,
+    /// How the faces are lit.
+    pub shading: Shading,
     /// Whether the feature edges the model hides are drawn too, dashed
     /// ([`HIDDEN_DASH`]), [`HIDDEN_EDGE_WIDTH`] wide, at
     /// [`Colors::hidden_edge_alpha`]. Never while [`Self::faded`].
@@ -323,7 +357,8 @@ struct Uniforms {
     /// pixel.
     viewport: [f32; 4],
     /// xy: the viewport's top left corner on the target, in physical
-    /// pixels, where fragment positions count from; zw unused.
+    /// pixels, where fragment positions count from; z: [`Frame::shading`]
+    /// ([`Shading::code`]); w unused.
     viewport_origin: [f32; 4],
     /// [`Colors`], converted to linear with w = 1, except `model`, whose
     /// w is how opaque the model is, and `edge`, whose w is
@@ -540,6 +575,10 @@ struct GpuMesh {
     edges: Option<wgpu::Buffer>,
     /// Whether the wires are drawn with the edges: [`Frame::wireframe`].
     wireframe: bool,
+    /// The edges of the triangles, once a frame asked for them
+    /// ([`Frame::tessellation`]), and whether it does.
+    triangles: Triangles,
+    tessellation: bool,
     /// The mesh's parts, as [`RenderMesh::parts`] gives them; one for the
     /// whole mesh if it has none.
     parts: Vec<GpuPart>,
@@ -558,6 +597,22 @@ impl GpuMesh {
         let indices = to_u32(indices.start)?..to_u32(indices.end)?;
         (part < self.parts.len()).then_some((indices, part))
     }
+}
+
+/// The edges of a mesh's triangles, for [`Frame::tessellation`].
+enum Triangles {
+    /// Not worked out yet.
+    Unbuilt,
+    /// Not uploaded: they don't fit in a buffer.
+    TooLarge,
+    /// Each part's edges, in the order of [`GpuMesh::parts`]: their
+    /// segments follow one another in `segments`.
+    Built {
+        segments: wgpu::Buffer,
+        parts: Vec<Range<u32>>,
+    },
+    /// The mesh has none.
+    Empty,
 }
 
 /// A face of the mesh drawn again over itself, hovered or selected: see
@@ -838,6 +893,8 @@ pub struct Renderer {
     second_edges: wgpu::RenderPipeline,
     vertices: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
+    /// The edges of the mesh's triangles: [`Frame::tessellation`].
+    triangle_edges: wgpu::RenderPipeline,
     origin: wgpu::RenderPipeline,
     /// The sketch being edited: its fills, lines and points, drawn over
     /// everything, and the same hidden by the model in front of them
@@ -1300,8 +1357,12 @@ impl Renderer {
                 ..edge_pass("varde edges hidden by glass", "vs_hidden_edge")
             }),
             lines: pipeline(Pass {
-                buffers: &[segments],
+                buffers: std::slice::from_ref(&segments),
                 ..Pass::overlay("varde sketch lines", "vs_line", "fs_line")
+            }),
+            triangle_edges: pipeline(Pass {
+                buffers: &[segments],
+                ..Pass::overlay("varde triangle edges", "vs_triangle_edge", "fs_line")
             }),
             origin: pipeline(Pass::overlay("varde origin", "vs_origin", "fs_origin")),
             sketch_on_top: SketchPipelines {
@@ -1535,6 +1596,17 @@ impl Renderer {
         let opacity = if frame.faded { &[] } else { frame.opacity };
         if let Some(mesh) = &mut slot.mesh {
             mesh.wireframe = frame.wireframe;
+            mesh.tessellation = frame.tessellation;
+            if frame.tessellation && matches!(mesh.triangles, Triangles::Unbuilt) {
+                // Like the mesh's, a failure isn't tried again.
+                mesh.triangles = match triangle_edges(device, frame.mesh, &mesh.parts) {
+                    Ok(triangles) => triangles,
+                    Err(error) => {
+                        result = result.and(Err(error));
+                        Triangles::TooLarge
+                    }
+                };
+            }
         }
         let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
         slot.draws = PartDraws::new(parts, opacity, &self.alphas, frame.camera);
@@ -1666,7 +1738,12 @@ impl Renderer {
                 frame.scale_factor,
                 0.0,
             ],
-            viewport_origin: [frame.viewport.x, frame.viewport.y, 0.0, 0.0],
+            viewport_origin: [
+                frame.viewport.x,
+                frame.viewport.y,
+                frame.shading.code(),
+                0.0,
+            ],
             background_top: linear(colors.background_top),
             background_bottom: linear(colors.background_bottom),
             model: faded(colors.model),
@@ -1937,7 +2014,8 @@ impl Renderer {
                 draw_faces(pass, mesh, all.clone());
                 pass.set_pipeline(&self.mesh_faded);
                 draw_faces(pass, mesh, all.clone());
-                draw_edges(pass, &self.edges, mesh, all);
+                draw_edges(pass, &self.edges, mesh, all.clone());
+                self.draw_triangle_edges(pass, mesh, all);
             } else {
                 pass.set_pipeline(&self.mesh);
                 for run in &draws.opaque {
@@ -1947,6 +2025,7 @@ impl Renderer {
                 self.draw_picked_faces(pass, &slot.faces, false);
                 for run in &draws.opaque {
                     draw_edges(pass, &self.edges, mesh, run.clone());
+                    self.draw_triangle_edges(pass, mesh, run.clone());
                 }
             }
         }
@@ -2020,6 +2099,10 @@ impl Renderer {
             bind_faces(pass, mesh);
             self.draw_picked_faces(pass, &slot.faces, true);
             self.draw_glass_edges(pass, &self.edges, mesh, draws);
+            for &(part, step) in &draws.transparent {
+                self.alphas.set(pass, step);
+                self.draw_triangle_edges(pass, mesh, part..part + 1);
+            }
         }
 
         // The hover and the selection over everything of the model.
@@ -2074,6 +2157,33 @@ impl Renderer {
             self.alphas.set(pass, face.step);
             pass.draw_indexed(face.indices.clone(), 0, 0..1);
         }
+    }
+
+    /// Records drawing the edges of the triangles of `mesh`'s `parts`,
+    /// which follow one another, if [`Frame::tessellation`] asked for them.
+    fn draw_triangle_edges(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        mesh: &GpuMesh,
+        parts: Range<usize>,
+    ) {
+        let Triangles::Built {
+            segments,
+            parts: of,
+        } = &mesh.triangles
+        else {
+            return;
+        };
+        let (Some(first), Some(last)) = (of.get(parts.start), of.get(parts.end.wrapping_sub(1)))
+        else {
+            return;
+        };
+        if !mesh.tessellation || first.start >= last.end {
+            return;
+        }
+        pass.set_pipeline(&self.triangle_edges);
+        pass.set_vertex_buffer(0, segments.slice(..));
+        pass.draw(0..LINE_VERTICES, first.start..last.end);
     }
 
     /// Records drawing `slot`'s hovered edges within their outline,
@@ -2378,9 +2488,60 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
         }),
         edges,
         wireframe: false,
+        triangles: Triangles::Unbuilt,
+        tessellation: false,
         parts,
         bounds: mesh.bounds(),
     }))
+}
+
+/// The edges of `mesh`'s triangles, each once in its part of `parts`, as
+/// segments uploaded to a buffer. Fails with [`PrepareError::MeshTooLarge`]
+/// where they might not fit in one.
+fn triangle_edges(
+    device: &wgpu::Device,
+    mesh: &RenderMesh,
+    parts: &[GpuPart],
+) -> Result<Triangles, PrepareError> {
+    // A triangle's three edges, each shared with at most one other in its
+    // part: at most as many as its indices.
+    let bytes = (mesh.indices().len() as u64).saturating_mul(size_of::<Segment>() as u64);
+    let limit = device.limits().max_buffer_size;
+    if bytes > limit {
+        return Err(PrepareError::MeshTooLarge { bytes, limit });
+    }
+    let positions = mesh.positions();
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut ranges = Vec::with_capacity(parts.len());
+    let mut edges: Vec<(u32, u32)> = Vec::new();
+    for part in parts {
+        let indices = &mesh.indices()[part.indices.start as usize..part.indices.end as usize];
+        edges.clear();
+        for &[a, b, c] in indices.as_chunks::<3>().0 {
+            for (a, b) in [(a, b), (b, c), (c, a)] {
+                edges.push((a.min(b), a.max(b)));
+            }
+        }
+        edges.sort_unstable();
+        edges.dedup();
+        // The kernel bounds indices well within `u32`.
+        let start = u32::try_from(segments.len()).expect("kernel bounds indices");
+        segments
+            .extend((edges.iter()).map(|&(a, b)| [positions[a as usize], positions[b as usize]]));
+        let end = u32::try_from(segments.len()).expect("kernel bounds indices");
+        ranges.push(start..end);
+    }
+    if segments.is_empty() {
+        return Ok(Triangles::Empty);
+    }
+    Ok(Triangles::Built {
+        segments: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("varde triangle edges"),
+            contents: bytemuck::cast_slice(&segments),
+            usage: wgpu::BufferUsages::VERTEX,
+        }),
+        parts: ranges,
+    })
 }
 
 /// The bounds of the positions `indices` refer to, or `None` if there are

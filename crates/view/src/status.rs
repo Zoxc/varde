@@ -5,16 +5,18 @@
 
 use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
-use iced::widget::{container, mouse_area, opaque, row};
+use iced::widget::{Button, container, mouse_area, opaque, row};
 use iced::{Alignment, Element, Event, Length, Padding, Rectangle, Size, Vector};
-use varde_render::Projection;
+use varde_render::{Projection, Shading};
 
 use crate::chrome::{Hint, icon_button, key_hint};
 use crate::icons::Icon;
 use crate::shortcut::Shortcut;
 use crate::theme::{self, Tone};
-use crate::toolbar::{menu_item, menu_separator, ticked};
-use crate::{Look, Message, ViewOptions};
+use crate::toolbar::{
+    MENU_ITEM_HEIGHT, choice_item, menu_item, menu_separator, submenu_item, ticked,
+};
+use crate::{Edges, Look, Message, ViewOptions, ViewSubmenu};
 
 /// How tall the status bar is, its border included, in pixels.
 pub const STATUS_BAR_HEIGHT: f32 = 30.0;
@@ -130,39 +132,60 @@ fn clipped<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
 }
 
 /// The view options menu, open above the status bar's button at the
-/// screen's bottom right: the projection, `projection` ticked, and the
-/// `options`. A press anywhere off the menu closes it.
-pub fn view_menu<'a>(projection: Projection, options: ViewOptions) -> Element<'a, Message> {
-    let choice = |label, choice| {
-        menu_item(
+/// screen's bottom right: the Shading and Edges submenus, each item
+/// showing the icon of the choice made and the `submenu` open to its left,
+/// lined up with it; the projection, `projection` ticked; and the toggles
+/// of the `options`. Hovering a submenu's item opens it, and another item
+/// closes it. A press anywhere off the menus closes them.
+pub fn view_menu<'a>(
+    projection: Projection,
+    options: ViewOptions,
+    submenu: Option<ViewSubmenu>,
+) -> Element<'a, Message> {
+    let open = |which: Option<ViewSubmenu>| Message::Look(Look::ViewSubmenu(which));
+    // Hovering an item closes the submenu open, if one is.
+    let closing = |item: Button<'static, Message>| -> Element<'a, Message> {
+        match submenu {
+            Some(_) => mouse_area(item).on_enter(open(None)).into(),
+            None => item.into(),
+        }
+    };
+    let opening = |which, icon, label| -> Element<'a, Message> {
+        let item = submenu_item(icon, label, submenu == Some(which), open(Some(which)));
+        mouse_area(item).on_enter(open(Some(which))).into()
+    };
+    let projection_item = |label, choice| {
+        closing(menu_item(
             ticked(projection == choice),
             label,
             None,
             Some(Message::Look(Look::SetProjection(choice))),
-        )
+        ))
+    };
+    let toggle = |on, label: &'static str, message| {
+        closing(menu_item(ticked(on), label.into(), None, Some(message)))
     };
     let menu = container(
         iced::widget::column![
-            choice("Orthographic".into(), Projection::Orthographic),
-            choice("Perspective".into(), Projection::Perspective),
+            opening(
+                ViewSubmenu::Shading,
+                shading_icon(options.shading),
+                "Shading"
+            ),
+            opening(ViewSubmenu::Edges, edges_icon(options.edges), "Edges"),
             menu_separator(),
-            menu_item(
-                ticked(options.mouse_hints),
-                "Mouse hints".into(),
-                None,
-                Some(Message::ToggleMouseHints)
+            projection_item("Orthographic".into(), Projection::Orthographic),
+            projection_item("Perspective".into(), Projection::Perspective),
+            menu_separator(),
+            toggle(
+                options.mouse_hints,
+                "Mouse hints",
+                Message::ToggleMouseHints
             ),
-            menu_item(
-                ticked(options.hidden_edges),
-                "Hidden edges".into(),
-                None,
-                Some(Message::ToggleHiddenEdges)
-            ),
-            menu_item(
-                ticked(options.wireframe),
-                "Wireframe".into(),
-                None,
-                Some(Message::ToggleWireframe)
+            toggle(
+                options.hidden_edges,
+                "Hidden edges",
+                Message::ToggleHiddenEdges
             ),
         ]
         .width(180),
@@ -170,16 +193,81 @@ pub fn view_menu<'a>(projection: Projection, options: ViewOptions) -> Element<'a
     .padding(4)
     .style(theme::menu);
 
+    // The submenu's first item beside the item opening it: the items are
+    // `MENU_ITEM_HEIGHT` tall, from the top of both menus' padding.
+    let submenu = submenu.map(|which| {
+        let (items, at) = match which {
+            ViewSubmenu::Shading => (shading_choices(options.shading), 0),
+            ViewSubmenu::Edges => (edges_choices(options.edges), 1),
+        };
+        let list = container(iced::widget::column(items).width(180))
+            .padding(4)
+            .style(theme::menu);
+        container(opaque(list)).padding(Padding::ZERO.top(at as f32 * MENU_ITEM_HEIGHT))
+    });
+
     mouse_area(
-        container(opaque(menu))
-            .align_right(Length::Fill)
-            .align_bottom(Length::Fill)
-            .padding(Padding::ZERO.right(RIGHT).bottom(STATUS_BAR_ROOM + 4.0)),
+        container(
+            row![submenu, opaque(menu)]
+                .spacing(2)
+                .align_y(Alignment::Start),
+        )
+        .align_right(Length::Fill)
+        .align_bottom(Length::Fill)
+        .padding(Padding::ZERO.right(RIGHT).bottom(STATUS_BAR_ROOM + 4.0)),
     )
     .interaction(mouse::Interaction::Idle)
     .on_press(Message::Look(Look::CloseViewMenu))
     .on_right_press(Message::Look(Look::CloseViewMenu))
     .into()
+}
+
+/// The shadings, in the Shading submenu, `chosen` ticked.
+fn shading_choices<'a>(chosen: Shading) -> Vec<Element<'a, Message>> {
+    [
+        (Shading::Regular, "Shaded"),
+        (Shading::Flat, "Flat shaded"),
+        (Shading::Metal, "Metal"),
+        (Shading::FlatMetal, "Flat metal"),
+    ]
+    .into_iter()
+    .map(|(shading, label)| {
+        let message = Message::SetShading(shading);
+        choice_item(shading_icon(shading), label, shading == chosen, message).into()
+    })
+    .collect()
+}
+
+/// The edges drawn, in the Edges submenu, `chosen` ticked.
+fn edges_choices<'a>(chosen: Edges) -> Vec<Element<'a, Message>> {
+    [
+        (Edges::Default, "Default"),
+        (Edges::Wireframe, "Wireframe"),
+        (Edges::Tessellation, "Tessellation"),
+    ]
+    .into_iter()
+    .map(|(edges, label)| {
+        let message = Message::SetEdges(edges);
+        choice_item(edges_icon(edges), label, edges == chosen, message).into()
+    })
+    .collect()
+}
+
+fn shading_icon(shading: Shading) -> Icon {
+    match shading {
+        Shading::Regular => Icon::ShadeRegular,
+        Shading::Flat => Icon::ShadeFlat,
+        Shading::Metal => Icon::ShadeMetal,
+        Shading::FlatMetal => Icon::ShadeFlatMetal,
+    }
+}
+
+fn edges_icon(edges: Edges) -> Icon {
+    match edges {
+        Edges::Default => Icon::EdgesDefault,
+        Edges::Wireframe => Icon::EdgesWireframe,
+        Edges::Tessellation => Icon::EdgesTessellation,
+    }
 }
 
 /// A part of one of the bar's boxes.

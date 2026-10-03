@@ -18,7 +18,7 @@ use iced::widget::{container, stack};
 use iced::{Element, Event, Length, Point, Rectangle, keyboard, mouse};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::{
-    Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Pivot, PrepareError, Renderer,
+    Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Pivot, PrepareError, Renderer, Shading,
     SketchLayer, SketchScene, Slot, wgpu,
 };
 
@@ -31,7 +31,7 @@ use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::thumbnail::{THUMBNAIL_SCALE, ThumbnailRequest};
-use crate::{Edit, Look, Message, PlanePick, controls};
+use crate::{Edges, Edit, Look, Message, PlanePick, ViewOptions, controls};
 
 pub(crate) use extrude::Extruding;
 pub(crate) use measure::Measuring;
@@ -116,10 +116,10 @@ impl ModelPicking<'_> {
 /// over the viewport's right under the controls, and the tool `rail`
 /// over its left. `pivot`, the point the camera orbits if one was picked,
 /// is marked, and `highlight` and the failures' `errors` drawn over the
-/// model. With `picking`, the
-/// cursor picks the model. The edges the model hides are drawn dashed if
-/// `hidden_edges`, outside a sketch, and every patch's edges faint if
-/// `wireframe`. Each of the mesh's parts is drawn as
+/// model. With `picking`, the cursor picks the model, drawn as the view
+/// `options` say: the edges the model hides dashed if asked for, outside
+/// a sketch, every patch's edges and every triangle's faint if asked
+/// for, and lit with their shading. Each of the mesh's parts is drawn as
 /// opaque as `opacity` says, see [`Frame::opacity`].
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn viewport<'a>(
@@ -131,8 +131,7 @@ pub(crate) fn viewport<'a>(
     picking: Option<ModelPicking<'a>>,
     highlight: Option<&Arc<ModelHighlight>>,
     errors: &Arc<ShownErrors>,
-    hidden_edges: bool,
-    wireframe: bool,
+    options: ViewOptions,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
     operating: Option<Operating<'a>>,
@@ -178,8 +177,10 @@ pub(crate) fn viewport<'a>(
         highlight: highlight.cloned().unwrap_or_else(|| NO_HIGHLIGHT.clone()),
         ..program(mesh, sketches, camera, pivot, palette, sketching, operating)
     };
-    program.scene.hidden_edges = hidden_edges;
-    program.scene.wireframe = wireframe;
+    program.scene.hidden_edges = options.hidden_edges;
+    program.scene.wireframe = options.edges == Edges::Wireframe;
+    program.scene.tessellation = options.edges == Edges::Tessellation;
+    program.scene.shading = options.shading;
     program.scene.opacity = opacity;
     program.scene.thumbnail = thumbnail.cloned();
     program.scene.errors = errors.clone();
@@ -227,6 +228,8 @@ fn program<'a>(
             sketch_plane: sketching.as_ref().map(Sketching::grid),
             hidden_edges: true,
             wireframe: false,
+            tessellation: false,
+            shading: Shading::Regular,
             thumbnail: None,
             errors: NO_ERRORS.clone(),
         },
@@ -282,6 +285,10 @@ struct Scene {
     hidden_edges: bool,
     /// Whether the mesh's wires are drawn, every patch's edges.
     wireframe: bool,
+    /// Whether the edges of the mesh's triangles are drawn.
+    tessellation: bool,
+    /// How the faces are lit.
+    shading: Shading,
     /// A thumbnail to render offscreen beside the frame, if one is asked
     /// for: once, by the first frame prepared with it.
     thumbnail: Option<Arc<ThumbnailRequest>>,
@@ -830,6 +837,8 @@ impl shader::Primitive for Primitive {
                 faded: scene.sketch_plane.is_some(),
                 hidden_edges: scene.hidden_edges,
                 wireframe: scene.wireframe,
+                tessellation: scene.tessellation,
+                shading: scene.shading,
                 pivot: scene.pivot,
                 hovered_faces: &self.highlight.hovered_faces,
                 selected_faces: &self.highlight.selected_faces,

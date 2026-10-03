@@ -10,8 +10,8 @@ use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
     CREASE_ALPHA, CREASE_WIDTH, Camera, ClipRect, Colors, EDGE_WIDTH, Frame, GridPlane,
     HIDDEN_DASH, HOVER_RIM, HOVERED_EDGE_WIDTH, Highlights, LINE_WIDTH, LineStyle, Pivot,
-    PointStyle, Projection, Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, VERTEX_RADIUS,
-    Vertex, View, Viewport, wgpu,
+    PointStyle, Projection, Renderer, Shading, SketchLayer, SketchScene, Space, Srgb, Srgba,
+    VERTEX_RADIUS, Vertex, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -103,6 +103,8 @@ fn render_to(
             grid: GridPlane::XY,
             faded: false,
             wireframe: false,
+            tessellation: false,
+            shading: Shading::Regular,
             hidden_edges: true,
             hovered_faces: &[],
             selected_faces: &[],
@@ -128,6 +130,9 @@ struct Extras {
     faded: bool,
     /// Whether the mesh's wires are drawn.
     wireframe: bool,
+    /// Whether the edges of the mesh's triangles are drawn.
+    tessellation: bool,
+    shading: Shading,
     /// Whether the edges the model hides are drawn.
     hidden_edges: bool,
     /// The sketch being edited: its plane and a layer of it, drawn as its
@@ -187,6 +192,8 @@ fn render_scaled(
             grid: extras.grid,
             faded: extras.faded,
             wireframe: extras.wireframe,
+            tessellation: extras.tessellation,
+            shading: extras.shading,
             hidden_edges: extras.hidden_edges,
             hovered_faces: &extras.hovered_faces,
             selected_faces: &extras.selected_faces,
@@ -1878,6 +1885,99 @@ fn creases_are_thinner_and_fainter_and_wires_only_in_a_wireframe() {
     assert_eq!(plain[2], 0.0, "{plain:?}");
     assert_eq!(wired[..2], plain[..2]);
     assert!((wired[2] - faint).abs() < 0.1, "{wired:?}");
+}
+
+/// One face of two triangles, seen from the top, sharing an edge along
+/// `y` and reaching far either side of it, with no feature edges; its
+/// vertices' normals as `normals` gives them.
+fn two_triangles(y: f32, normals: [[f32; 3]; 4]) -> RenderMesh {
+    RenderMesh::from_parts(MeshParts {
+        positions: vec![
+            [-100.0, y, 0.0],
+            [100.0, y, 0.0],
+            [0.0, y + 4.35, 0.0],
+            [0.0, y - 4.65, 0.0],
+        ],
+        normals: normals.to_vec(),
+        indices: vec![0, 1, 2, 1, 0, 3],
+        face_ends: vec![6],
+        part_ends: vec![[1, 0, 0, 0]],
+        ..MeshParts::default()
+    })
+    .unwrap()
+}
+
+#[test]
+fn triangle_edges_show_only_in_a_tessellation_wireframe() {
+    // Along the middle of a row; the triangles' other edges are far from
+    // it down the column measured.
+    let y = -1.35;
+    let mesh = two_triangles(y, [[0.0, 0.0, 1.0]; 4]);
+    let render = |tessellation| {
+        let extras = Extras {
+            tessellation,
+            // Black faces, lit grey, under which yellow still shows as
+            // much as it covers.
+            colors: Some(Colors {
+                model: Srgb([0.0; 3]),
+                edge: Srgb([1.0, 1.0, 0.0]),
+                ..COLORS
+            }),
+            ..yellow_edges(false)
+        };
+        let pixels = render_sketch(&top_camera(), &mesh, extras, 1.0)?;
+        let (_, row) = sketch_pixel(0.0, y, 1.0);
+        let row = row as u32;
+        Some(yellow_down(&pixels, 75, row - 4..row + 5))
+    };
+    let (Some(plain), Some(tessellated)) = (render(false), render(true)) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    assert_eq!(plain, 0.0);
+    let faint = CREASE_WIDTH * CREASE_ALPHA;
+    assert!((tessellated - faint).abs() < 0.1, "{tessellated}");
+}
+
+#[test]
+fn flat_shading_lights_a_face_by_its_plane_and_metal_differs_flat_or_not() {
+    // Normals bent apart across a flat face: lit smoothly they shade it
+    // unevenly, flat it's one colour.
+    let y = -1.35;
+    let bent = [
+        [-0.6, 0.0, 0.8],
+        [0.6, 0.0, 0.8],
+        [0.0, 0.6, 0.8],
+        [0.0, -0.6, 0.8],
+    ];
+    let mesh = two_triangles(y, bent);
+    let render = |shading| {
+        let extras = Extras {
+            shading,
+            ..yellow_edges(false)
+        };
+        let pixels = render_sketch(&top_camera(), &mesh, extras, 1.0)?;
+        // Two points of the upper triangle, apart across it.
+        let at = |x: f32, y: f32| {
+            let (x, y) = sketch_pixel(x, y, 1.0);
+            pixel(&pixels, x as u32, y as u32)
+        };
+        Some([at(-6.0, y + 1.0), at(6.0, y + 1.0)])
+    };
+    let (Some(regular), Some(flat), Some(metal), Some(flat_metal)) = (
+        render(Shading::Regular),
+        render(Shading::Flat),
+        render(Shading::Metal),
+        render(Shading::FlatMetal),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    assert_ne!(regular[0], regular[1]);
+    assert_eq!(flat[0], flat[1]);
+    assert_ne!(metal[0], regular[0]);
+    assert_eq!(flat_metal[0], flat_metal[1]);
+    assert_ne!(flat_metal[0], flat[0]);
 }
 
 #[test]
