@@ -1,12 +1,13 @@
 //! The evidence of a mesh failing [`Mesh::check`] or repair: the
-//! triangles its [`CheckError`] names, as patches of that mesh.
+//! triangles its [`CheckError`] names, as patches of that mesh, or the
+//! pieces of them repair names.
 
 use std::collections::HashSet;
 
 use super::{Evidence, Failure, MAX_EVIDENCE, evidence_work};
 use crate::KernelError;
 use crate::budget::Work;
-use crate::mesh::{CheckError, Mesh};
+use crate::mesh::{CheckError, Halfedge, Mesh};
 use crate::patch::Patch;
 
 impl Failure {
@@ -19,6 +20,17 @@ impl Failure {
             KernelError::Invalid(e) => named(mesh, e),
             _ => Evidence::default(),
         };
+        Failure {
+            error,
+            evidence: Box::new(evidence),
+        }
+    }
+
+    /// `error`, with `patches` as its evidence, up to the cap: the pieces
+    /// repair names ([`Refusal`](crate::mesh::Refusal)), one or two.
+    pub(crate) fn of_patches(error: KernelError, patches: &[Patch]) -> Failure {
+        let mut evidence = Evidence::default();
+        evidence.add_patches(patches.iter().copied());
         Failure {
             error,
             evidence: Box::new(evidence),
@@ -89,9 +101,11 @@ fn named(mesh: &Mesh, error: CheckError) -> Evidence {
 /// The triangles of the shell of `mesh` holding triangle `t`, `t` first
 /// and then breadth first through each triangle's halfedges' pairs in
 /// order, at most [`MAX_EVIDENCE`] patches of them: past that, or past
-/// `work`, `evidence` is marked truncated. Indices out of range are
-/// passed over (a mesh failing as inside out passed the topology checks,
-/// but nothing here relies on it).
+/// `work`, `evidence` is marked truncated. Walked from `t` rather than
+/// found among all the shells as the check finds them (`orient.rs`), so
+/// the work stays within the allowance on a mesh of any size. Indices
+/// out of range are passed over (a mesh failing as inside out passed the
+/// topology checks, but nothing here relies on it).
 fn shell(mesh: &Mesh, t: u32, evidence: &mut Evidence, work: &mut Work) -> Vec<u32> {
     let tris = mesh.tris();
     if tris.get(t as usize).is_none() {
@@ -125,18 +139,13 @@ fn shell(mesh: &Mesh, t: u32, evidence: &mut Evidence, work: &mut Work) -> Vec<u
 /// vertices and edges its halfedges name are in range.
 fn patch_of(mesh: &Mesh, t: u32) -> Option<Patch> {
     let tri = mesh.tris().get(t as usize)?;
-    let mut patch = Patch {
-        p: [glam::DVec3::ZERO; 3],
-        c: [glam::DVec3::ZERO; 3],
-        w: [0.0; 3],
+    let named = |h: &Halfedge| {
+        (h.start as usize) < mesh.verts().len() && (h.edge as usize) < mesh.edges().len()
     };
-    for (i, h) in tri.halfedges.iter().enumerate() {
-        patch.p[i] = *mesh.verts().get(h.start as usize)?;
-        let edge = mesh.edges().get(h.edge as usize)?;
-        patch.c[i] = edge.ctrl;
-        patch.w[i] = edge.weight;
-    }
-    Some(patch)
+    tri.halfedges
+        .iter()
+        .all(named)
+        .then(|| mesh.patch(t as usize))
 }
 
 #[cfg(test)]

@@ -621,7 +621,11 @@ fn pieces_too_small_to_split_fail_with_what_asked_for_it() {
         Ok(vec![0, 1])
     );
     let small = pair(32.0 * res, DVec3::ZERO, [0, 1, 2, 3]);
-    let refused = Err(KernelError::Invalid(CheckError::EdgeNeighbours(0, 1)));
+    // Refused, naming the pair's pieces.
+    let refused = Err(Refusal {
+        error: KernelError::Invalid(CheckError::EdgeNeighbours(0, 1)),
+        pieces: vec![small[0].patch, small[1].patch],
+    });
     assert_eq!(run(&small), refused);
     // A failure no split mends, checked first, still names the error: two
     // flat triangles half a resolution apart.
@@ -645,7 +649,10 @@ fn pieces_too_small_to_split_fail_with_what_asked_for_it() {
     }
     assert_eq!(
         run(&pieces),
-        Err(KernelError::Invalid(CheckError::Hull(2, 3)))
+        Err(Refusal {
+            error: KernelError::Invalid(CheckError::Hull(2, 3)),
+            pieces: vec![lower, upper],
+        })
     );
 }
 
@@ -889,7 +896,10 @@ fn only_affine_whole_leaves_failing_the_fold_check_fail_at_once() {
     assert_eq!(affine.degenerate_corner(), None);
     assert_eq!(
         run(&[piece(affine, 0, [0, 1, 2])]),
-        Err(KernelError::Invalid(CheckError::Fold(0)))
+        Err(Refusal {
+            error: KernelError::Invalid(CheckError::Fold(0)),
+            pieces: vec![affine],
+        })
     );
     let far = Patch::flat([
         DVec3::splat(1e3),
@@ -904,14 +914,16 @@ fn only_affine_whole_leaves_failing_the_fold_check_fail_at_once() {
 }
 
 #[test]
-fn a_failing_repair_gives_back_what_it_was_given() {
+fn a_refusal_names_the_pieces_that_fail() {
     // Failures no split mends at once (flat boxes face to face, round
-    // surfaces touching), and those found only after splitting (small
-    // cylinders reaching the smallest piece, a small bulging
-    // tetrahedron): repair gives the mesh back as it was, with the error
-    // and work it gave before, and the error names its triangles, which
-    // a solid finished from it (`Solid::finished`, a revolve's or a
-    // boolean's) carries as its evidence. The same at 1 and 8 threads.
+    // surfaces touching, a bulging tetrahedron too small to split), and
+    // one found only after splitting (small cylinders reaching the
+    // smallest piece): repair by reference gives the error and work
+    // `repair_within` gives, naming one piece or two, each within the
+    // input triangle the error names (a piece's hull lies in its
+    // triangle's), and smaller where it split. A solid finished from the
+    // mesh (`Solid::finished`, a revolve's or a boolean's) carries those
+    // pieces as its evidence. The same at 1 and 8 threads.
     let gap = 0.5 * TOL.resolution();
     let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
     let boxes = both(
@@ -920,14 +932,15 @@ fn a_failing_repair_gives_back_what_it_was_given() {
     );
     let small = 10.0 * coarse.resolution();
     let res = TOL.resolution();
-    for (mesh, tol) in [
-        (boxes, TOL),
-        (two_spheres(1.0, gap), TOL),
+    for (mesh, tol, split) in [
+        (boxes, TOL, false),
+        (two_spheres(1.0, gap), TOL, false),
         (
             cylinders(small, 30.0, 1.5 * coarse.resolution(), &coarse),
             coarse,
+            true,
         ),
-        (scaled(bulging_tetrahedron(1.5), res), TOL),
+        (scaled(bulging_tetrahedron(1.5), res), TOL, false),
     ] {
         let (want, units) = repair_counting(mesh.clone(), &tol);
         let error = want.unwrap_err();
@@ -935,10 +948,28 @@ fn a_failing_repair_gives_back_what_it_was_given() {
             panic!("{error:?}");
         };
         let mut work = Work::new(&Budget::DEFAULT);
-        let (given_error, given) = mesh.clone().repair_or_given(&tol, &mut work).unwrap_err();
-        assert_eq!(given_error, error);
-        assert_eq!(*given, mesh);
+        let refusal = mesh.repaired(&tol, &mut work).unwrap_err();
+        assert_eq!(refusal.error, error);
         assert_eq!(Budget::DEFAULT.work() - work.left(), units);
+        let named = match why {
+            CheckError::Fold(t) => vec![t],
+            CheckError::Hull(t, u)
+            | CheckError::EdgeNeighbours(t, u)
+            | CheckError::VertexNeighbours(t, u) => vec![t, u],
+            why => panic!("{why:?}"),
+        };
+        assert_eq!(refusal.pieces.len(), named.len(), "{why:?}");
+        for (piece, &t) in refusal.pieces.iter().zip(&named) {
+            let (inner, outer) = (piece.bounds(), mesh.patch(t as usize).bounds());
+            let slack = DVec3::splat(1e-12);
+            assert!(
+                (outer.min - slack).cmple(inner.min).all()
+                    && inner.max.cmple(outer.max + slack).all(),
+                "{why:?}"
+            );
+        }
+        let whole: Vec<Patch> = named.iter().map(|&t| mesh.patch(t as usize)).collect();
+        assert_eq!(refusal.pieces != whole, split, "{why:?}");
 
         let failure = assert_deterministic(|| {
             let mut work = Work::new(&Budget::DEFAULT);
@@ -947,16 +978,7 @@ fn a_failing_repair_gives_back_what_it_was_given() {
         });
         assert_eq!(failure.0.error, error);
         assert_eq!(Budget::DEFAULT.work() - failure.1, units);
-        let named: Vec<Patch> = match why {
-            CheckError::Fold(t) => vec![mesh.patch(t as usize)],
-            CheckError::Hull(t, u)
-            | CheckError::EdgeNeighbours(t, u)
-            | CheckError::VertexNeighbours(t, u) => {
-                vec![mesh.patch(t as usize), mesh.patch(u as usize)]
-            }
-            why => panic!("{why:?}"),
-        };
-        assert_eq!(failure.0.evidence.patches, named, "{why:?}");
+        assert_eq!(failure.0.evidence.patches, refusal.pieces, "{why:?}");
         assert!(!failure.0.evidence.truncated);
     }
 }

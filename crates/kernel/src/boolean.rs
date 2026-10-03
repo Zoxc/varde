@@ -61,7 +61,7 @@ use glam::DVec3;
 use crate::budget::{Budget, Work};
 use crate::mesh::{BuildError, Bvh, CheckError, Face, FaceKey, Mesh, MeshBuilder, Surface};
 use crate::patch::Bounds3;
-use crate::solid::Unfinished;
+use crate::solid::{CHECK_WORK, Unfinished};
 use crate::topology::distance::{Allowance, to_patches};
 use crate::{Failure, KernelError, Solid, Tolerance};
 
@@ -236,7 +236,8 @@ type Found = (Vec<(i8, f64, bool)>, usize);
 /// work only once the operation has failed, so it never turns a result
 /// into an error. An `Invalid` from repair or the check, and a
 /// `NotManifold` named from one, come with the triangles of the result
-/// the check's error names as [`Failure::evidence`].
+/// the check's error names (or the pieces of them repair couldn't mend)
+/// as [`Failure::evidence`].
 pub fn boolean(
     a: &Solid,
     b: &Solid,
@@ -272,7 +273,7 @@ fn boolean_within(
     let mut joined = false;
     // What the mesh that failed to repair or pass `check` leaves, to
     // tell a result touching itself from others at the end.
-    let mut failed = Failed::default();
+    let mut failed = None;
     let first = checked_with(a, b, op, true, &mut joined, &mut failed, tol, work);
     let e = match first {
         Err(e) if joined && e.error != KernelError::TooComplex => e,
@@ -289,16 +290,7 @@ fn boolean_within(
     let spent = start.saturating_sub(work.left());
     let cap = spent.max(AGAIN).min(work.left());
     let mut again = Work::new(&Budget::new(cap));
-    let second = checked_with(
-        a,
-        b,
-        op,
-        false,
-        &mut joined,
-        &mut Failed::default(),
-        tol,
-        &mut again,
-    );
+    let second = checked_with(a, b, op, false, &mut joined, &mut None, tol, &mut again);
     // What the second try took, charged to the operation's budget.
     work.spend(usize::try_from(cap - again.left()).unwrap_or(usize::MAX))?;
     match second {
@@ -313,25 +305,15 @@ fn boolean_within(
 /// What a result that failed repair or the check as
 /// [`KernelError::Invalid`] leaves to tell whether it touches itself,
 /// kept until the operation's last word (see [`pinched_named`]).
-#[derive(Default)]
 struct Failed {
-    /// The cleaned mesh's positions, before repair; empty if nothing
-    /// failed so.
-    verts: Vec<DVec3>,
-    /// The cleaned mesh's triangles, as their vertices.
-    tris: Vec<[u32; 3]>,
+    /// The mesh that failed, and the mesh as given to repair, the
+    /// cleaned mesh, whose positions are the ones [`pinched`] measures.
+    unfinished: Unfinished,
     /// The two triangles whose hulls came too close, if that was the
-    /// failure, and the mesh they are of.
-    hull: Option<Hull>,
-}
-
-/// Two triangles whose hulls came too close.
-enum Hull {
-    /// Of the cleaned mesh, as repair names them (by the triangles its
-    /// pieces came from).
-    Cleaned(u32, u32),
-    /// Of the repaired mesh, which the check found failing.
-    Repaired(Box<Mesh>, u32, u32),
+    /// failure: of the cleaned mesh where repair names them (by the
+    /// triangles its pieces came from), else of the mesh the check
+    /// refused.
+    hull: Option<(u32, u32)>,
 }
 
 /// `result`, an operation's last word, with its [`KernelError::Invalid`]
@@ -352,33 +334,37 @@ enum Hull {
 /// Only an error is renamed, never `Ok` made one or one made `Ok`, and
 /// not where telling runs out of what is left of the budget: then the
 /// error stays as it was, the budget spent. A renamed error keeps the
-/// evidence it came with, the triangles the check or repair named.
+/// evidence it came with, what the check or repair named.
 fn pinched_named(
     result: Result<Solid, Failure>,
-    failed: &Failed,
+    failed: &Option<Failed>,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Solid, Failure> {
-    match result {
-        Err(Failure {
-            error: KernelError::Invalid(e),
-            evidence,
-        }) if !failed.verts.is_empty() => {
+    match (result, failed) {
+        (
+            Err(Failure {
+                error: KernelError::Invalid(e),
+                evidence,
+            }),
+            Some(failed),
+        ) => {
             let mut touches = || -> Result<bool, KernelError> {
-                let corners = |mesh: &Mesh| -> Vec<[u32; 3]> {
-                    let tris = mesh.tris().iter();
-                    tris.map(|tri| tri.halfedges.map(|h| h.start)).collect()
-                };
-                Ok(pinched(&failed.verts, short(tol), work)?
-                    || match &failed.hull {
-                        Some(Hull::Cleaned(t, u)) => {
-                            apart(failed.verts.len(), &failed.tris, *t, *u, work)?
+                let given = failed.unfinished.given();
+                Ok(pinched(given.verts(), short(tol), work)?
+                    || match (failed.hull, &failed.unfinished) {
+                        (Some((t, u)), Unfinished::Repair { given, .. }) => {
+                            apart(given, t, u, work)?
                         }
-                        Some(Hull::Repaired(mesh, t, u)) => {
-                            work.spend(mesh.tris().len())?;
-                            apart(mesh.verts().len(), &corners(mesh), *t, *u, work)?
+                        (Some((t, u)), Unfinished::Check { checked, .. }) => {
+                            // A unit a triangle for listing its corners;
+                            // the cleaned mesh's go uncharged, as the
+                            // operation's work was set with them listed
+                            // for free.
+                            work.spend(checked.tris().len())?;
+                            apart(checked, t, u, work)?
                         }
-                        None => false,
+                        (None, _) => false,
                     })
             };
             let error = match touches() {
@@ -387,29 +373,28 @@ fn pinched_named(
             };
             Err(Failure { error, evidence })
         }
-        result => result,
+        (result, _) => result,
     }
 }
 
-/// Whether triangles `t` and `u` of `tris` (each its three vertices, of
-/// `n`) lie on separate shells, not joined through edges. A unit of work
-/// a triangle.
-fn apart(
-    n: usize,
-    tris: &[[u32; 3]],
-    t: u32,
-    u: u32,
-    work: &mut Work,
-) -> Result<bool, KernelError> {
-    work.spend(tris.len())?;
-    let (Some(first), Some(second)) = (tris.get(t as usize), tris.get(u as usize)) else {
-        return Ok(false);
-    };
-    if tris.iter().flatten().any(|&v| v as usize >= n) {
+/// Whether triangles `t` and `u` of `mesh` lie on separate shells, not
+/// joined through edges. A unit of work a triangle.
+fn apart(mesh: &Mesh, t: u32, u: u32, work: &mut Work) -> Result<bool, KernelError> {
+    let n = mesh.tris().len();
+    work.spend(n)?;
+    if t as usize >= n || u as usize >= n {
         return Ok(false);
     }
-    let part = parts(n, tris.iter().flat_map(|v| [[v[0], v[1]], [v[1], v[2]]]));
-    Ok(part[first[0] as usize] != part[second[0] as usize])
+    let tris: Vec<[u32; 3]> = (0..n as u32).map(|t| mesh.corners(t)).collect();
+    let verts = mesh.verts().len();
+    if tris.iter().flatten().any(|&v| v as usize >= verts) {
+        return Ok(false);
+    }
+    let part = parts(
+        verts,
+        tris.iter().flat_map(|v| [[v[0], v[1]], [v[1], v[2]]]),
+    );
+    Ok(part[tris[t as usize][0] as usize] != part[tris[u as usize][0] as usize])
 }
 
 /// Whether two of `verts` lie within `d` of each other, by a grid of
@@ -490,7 +475,7 @@ fn unchecked(
 /// assembled, cleaned, repaired and checked. Where it fails as
 /// [`KernelError::Invalid`] from repair or the check, `failed` is left
 /// with what the mesh that failed shows (see [`checked`]), for
-/// [`pinched_named`], and the failure with the triangles it names.
+/// [`pinched_named`], and the failure with what it names.
 #[allow(clippy::too_many_arguments)]
 fn checked_with(
     a: &Solid,
@@ -498,7 +483,7 @@ fn checked_with(
     op: Op,
     join: bool,
     joined: &mut bool,
-    failed: &mut Failed,
+    failed: &mut Option<Failed>,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Solid, Failure> {
@@ -525,7 +510,7 @@ fn checked_with(
         Err(e) if matches!(e.error, KernelError::Invalid(_)) && unfolded => {
             // The first try's error stands, so its positions and
             // evidence do.
-            let first = std::mem::take(failed);
+            let first = failed.take();
             let (soup, faces) = kept;
             match checked(
                 a,
@@ -552,11 +537,11 @@ fn checked_with(
 
 /// The result of the assembled `soup` and `faces`, cleaned (unfolding
 /// folded sheets if `unfold`, and setting `unfolded` if it did),
-/// repaired and checked. `failed` is left with what the mesh shows where
-/// repair or the check fails as [`KernelError::Invalid`] (but for a
-/// triangle facing against its face's plane, never renamed), and empty
-/// otherwise; such a failure comes with the triangles it names, of the
-/// mesh that failed ([`Failure::of_mesh`]).
+/// repaired and checked. `failed` is left with the mesh that failed
+/// where repair or the check fails as [`KernelError::Invalid`] (but for a
+/// triangle facing against its face's plane, never renamed), and `None`
+/// otherwise; such a failure comes with what it names, of that mesh
+/// ([`Unfinished::failure`]).
 #[allow(clippy::too_many_arguments)]
 fn checked(
     a: &Solid,
@@ -566,39 +551,27 @@ fn checked(
     faces: Vec<Face>,
     unfold: bool,
     unfolded: &mut bool,
-    failed: &mut Failed,
+    failed: &mut Option<Failed>,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Solid, Failure> {
-    *failed = Failed::default();
+    *failed = None;
     let mesh = cleaned(a, b, op, soup, faces, unfold, unfolded, tol, work)?;
-    // Repair takes the mesh; its positions before repair are all telling
-    // a pinch needs.
-    let verts = mesh.verts().to_vec();
-    let tris = mesh.tris().iter();
-    let tris: Vec<[u32; 3]> = tris.map(|tri| tri.halfedges.map(|h| h.start)).collect();
     // Faces of one surface that meet merge, so a flush join leaves no
     // line between the two operands' pieces of a plane or cylinder.
-    match Solid::finished_or_checked(mesh, tol, work) {
+    match Solid::finished_or_unfinished(mesh, CHECK_WORK, tol, work) {
         Ok(solid) => Ok(solid),
-        Err((e @ KernelError::Invalid(why), unfinished)) => {
-            // The triangles it names, of the mesh that failed.
-            let failure = match &unfinished {
-                Some(unfinished) => Failure::of_mesh(e, unfinished.mesh()),
-                None => e.into(),
-            };
-            let hull = match (why, unfinished) {
-                (CheckError::FacesAgainst(_), _) => return Err(failure),
-                (CheckError::Hull(t, u), Some(Unfinished::Checked(mesh))) => {
-                    Some(Hull::Repaired(mesh, t, u))
-                }
-                (CheckError::Hull(t, u), _) => Some(Hull::Cleaned(t, u)),
+        Err((error @ KernelError::Invalid(why), Some(unfinished))) => {
+            let failure = unfinished.failure(error);
+            let hull = match why {
+                CheckError::FacesAgainst(_) => return Err(failure),
+                CheckError::Hull(t, u) => Some((t, u)),
                 _ => None,
             };
-            *failed = Failed { verts, tris, hull };
+            *failed = Some(Failed { unfinished, hull });
             Err(failure)
         }
-        Err((e, _)) => Err(e.into()),
+        Err((error, _)) => Err(error.into()),
     }
 }
 

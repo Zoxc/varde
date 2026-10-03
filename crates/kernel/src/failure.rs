@@ -24,10 +24,10 @@ use glam::DVec3;
 
 use crate::budget::Work;
 use crate::mesh::FaceKey;
-
-mod check;
 use crate::patch::{Conic, Patch};
 use crate::{Budget, KernelError};
+
+mod check;
 
 /// Why a public kernel operation gives no result, and where.
 #[derive(Debug, Clone, PartialEq)]

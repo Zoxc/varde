@@ -1613,6 +1613,22 @@ fn named_patches(mesh: &Mesh, why: CheckError) -> Vec<crate::patch::Patch> {
     tris.into_iter().map(|t| mesh.patch(t as usize)).collect()
 }
 
+/// Checks `patches` are pieces of the triangles of `mesh` that `why`
+/// names, one each, as repair names them: each within its triangle's
+/// box (a piece's hull lies in its triangle's).
+fn pieces_of_named(mesh: &Mesh, why: CheckError, patches: &[crate::patch::Patch]) {
+    let named = named_patches(mesh, why);
+    assert_eq!(patches.len(), named.len(), "{why:?}");
+    let slack = DVec3::splat(1e-12);
+    for (piece, whole) in patches.iter().zip(&named) {
+        let (inner, outer) = (piece.bounds(), whole.bounds());
+        assert!(
+            (outer.min - slack).cmple(inner.min).all() && inner.max.cmple(outer.max + slack).all(),
+            "{why:?}"
+        );
+    }
+}
+
 #[test]
 fn a_solid_too_thin_fails_with_the_triangles_it_names() {
     // A unit square extruded a tenth of the resolution: repair refuses
@@ -1647,9 +1663,9 @@ fn a_solid_too_thin_fails_with_the_triangles_it_names() {
 #[test]
 fn the_first_tries_evidence_goes_with_its_error() {
     // `late_fork` at fit 1e-2 within 18 210 units: the first try fails
-    // the check, the second runs out of work, and the first try's error
-    // stands with the first try's evidence: the triangles its error
-    // names, of its mesh. The same at 1 and 8 threads.
+    // repair, the second runs out of work, and the first try's error
+    // stands with the first try's evidence: the pieces of its mesh's
+    // triangles that repair names. The same at 1 and 8 threads.
     let fine = Tolerance::new(1e-2).unwrap();
     let p = late_fork();
     let failure = assert_deterministic(|| {
@@ -1660,11 +1676,8 @@ fn the_first_tries_evidence_goes_with_its_error() {
     assert_eq!(failure.error, KernelError::Invalid(why));
     let (mesh, first) = first_try(&p, 0.0, 2.0, &fine, 18_210);
     assert_eq!(first.unwrap_err(), failure);
-    assert_eq!(
-        failure.evidence.patches,
-        named_patches(&mesh, why),
-        "{why:?}"
-    );
+    pieces_of_named(&mesh, why, &failure.evidence.patches);
+    assert_ne!(failure.evidence.patches, named_patches(&mesh, why));
 
     // A circle cut unevenly at the coarsest tolerance: every try is
     // refused, the second (flat corners) on caps of its own with another

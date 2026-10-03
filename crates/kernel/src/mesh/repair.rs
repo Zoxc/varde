@@ -102,28 +102,21 @@ impl Mesh {
         tol: &Tolerance,
         work: &mut Work,
     ) -> Result<Mesh, KernelError> {
-        self.repair_or_given(tol, work).map_err(|(e, _)| e)
+        Ok(self
+            .repaired(tol, work)
+            .map_err(|r| r.error)?
+            .unwrap_or(self))
     }
 
-    /// [`Self::repair_within`], giving the mesh back as it was given with
-    /// the error: a [`KernelError::Invalid`] names its triangles (the
-    /// input triangles the failing pieces came from), so the caller can
-    /// tell where. The same result, error and work.
-    pub(crate) fn repair_or_given(
-        self,
+    /// [`Self::repair_within`] on the mesh by reference: the repaired
+    /// mesh, or `None` if it passes as it is, so a caller can keep the
+    /// mesh it gave; where it fails, the error with the pieces it names
+    /// ([`Refusal`]). The same result, error and work.
+    pub(crate) fn repaired(
+        &self,
         tol: &Tolerance,
         work: &mut Work,
-    ) -> Result<Mesh, (KernelError, Box<Mesh>)> {
-        match self.repaired(tol, work) {
-            Ok(Some(mesh)) => Ok(mesh),
-            Ok(None) => Ok(self),
-            Err(e) => Err((e, Box::new(self))),
-        }
-    }
-
-    /// The repaired mesh, or `None` if it passes as it is: see
-    /// [`Self::repair_within`].
-    fn repaired(&self, tol: &Tolerance, work: &mut Work) -> Result<Option<Mesh>, KernelError> {
+    ) -> Result<Option<Mesh>, Refusal> {
         self.check_topology().map_err(KernelError::Invalid)?;
         let patches = self.bounded_patches().map_err(KernelError::Invalid)?;
         work.spend(patches.len())?;
@@ -157,7 +150,7 @@ impl Mesh {
             refiner.split(&failing, work)?;
             let pieces = refiner.pieces()?;
             if pieces.len() > MAX_PATCHES {
-                return Err(KernelError::TooComplex);
+                return Err(KernelError::TooComplex.into());
             }
             work.spend(pieces.len())?;
             refiner.settle();
@@ -171,6 +164,37 @@ impl Mesh {
         // the input's claims, which repair doesn't check.
         debug_assert_eq!(mesh.check_embedding(tol).err(), None);
         Ok(Some(mesh))
+    }
+}
+
+/// Why repair failed: the error, and the pieces it names where a
+/// failure no split mends is why (one, or a pair), as they were when it
+/// failed. They lie within the input triangles the error names (a
+/// piece's hull lies in its triangle's), so they show where a large
+/// triangle fails. None for the errors naming no piece (the input's
+/// topology or bounds, a wrong `Plane` tag, running out of work).
+#[derive(Debug, PartialEq)]
+pub(crate) struct Refusal {
+    pub(crate) error: KernelError,
+    pub(crate) pieces: Vec<Patch>,
+}
+
+impl From<KernelError> for Refusal {
+    fn from(error: KernelError) -> Self {
+        Refusal {
+            error,
+            pieces: Vec::new(),
+        }
+    }
+}
+
+impl Refusal {
+    /// `why`, naming `pieces`.
+    fn naming(why: CheckError, pieces: &[&Piece]) -> Refusal {
+        Refusal {
+            error: KernelError::Invalid(why),
+            pieces: pieces.iter().map(|p| p.patch).collect(),
+        }
     }
 }
 
@@ -190,14 +214,14 @@ impl Mesh {
 /// patch of leaf `t` is `leaf(t)`) fails the repair with the failure that
 /// asked for its split, the fold check's or the pair's, of the first such
 /// leaf by id (and the first failure asking for it, folds then pairs in
-/// order).
+/// order). Each refusal names its pieces ([`Refusal`]).
 fn failures<'p>(
     pieces: &[Piece],
     leaf: impl Fn(u32) -> &'p Patch,
     faces: &[Face],
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Vec<u32>, KernelError> {
+) -> Result<Vec<u32>, Refusal> {
     let margin = tol.resolution();
     let changed: Vec<u32> = (0..pieces.len() as u32)
         .filter(|&p| pieces[p as usize].changed)
@@ -220,8 +244,8 @@ fn failures<'p>(
         let piece = &pieces[p as usize];
         match fold {
             Fold::Passes => {}
-            Fold::Split => leaves.push((piece.leaf, Asked::Fold(piece.origin))),
-            Fold::Never => return Err(KernelError::Invalid(CheckError::Fold(piece.origin))),
+            Fold::Split => leaves.push((piece.leaf, Asked::Fold(p))),
+            Fold::Never => return Err(Refusal::naming(CheckError::Fold(piece.origin), &[piece])),
         }
     }
 
@@ -271,11 +295,12 @@ fn failures<'p>(
     let witnessed = witnessed(pieces, faces, &pairs, &tested, margin, work)?;
 
     for (i, (&[p, q], tested)) in pairs.iter().zip(tested).enumerate() {
+        let [a, b] = [p, q].map(|x| &pieces[x as usize]);
         if Some(i) == witnessed {
-            let [a, b] = [p, q].map(|x| pieces[x as usize].origin);
-            return Err(KernelError::Invalid(CheckError::Hull(a, b)));
+            let why = CheckError::Hull(a.origin, b.origin);
+            return Err(Refusal::naming(why, &[a, b]));
         }
-        let split = tested.map_err(KernelError::Invalid)?;
+        let split = tested.map_err(|why| Refusal::naming(why, &[a, b]))?;
         for (piece, split) in [p, q].into_iter().zip(split.pieces) {
             if split {
                 leaves.push((pieces[piece as usize].leaf, Asked::Pair(i)));
@@ -286,16 +311,19 @@ fn failures<'p>(
     leaves.sort_by_key(|&(t, _)| t);
     leaves.dedup_by_key(|&mut (t, _)| t);
     if let Some(&(_, asked)) = leaves.iter().find(|&&(t, _)| !splittable(leaf(t), margin)) {
-        let error = match asked {
-            Asked::Fold(origin) => CheckError::Fold(origin),
+        return Err(match asked {
+            Asked::Fold(p) => {
+                let piece = &pieces[p as usize];
+                Refusal::naming(CheckError::Fold(piece.origin), &[piece])
+            }
             Asked::Pair(i) => {
                 let [a, b] = pairs[i].map(|x| &pieces[x as usize]);
                 let ids = [a.origin, b.origin];
-                check_pair(ids, [&a.patch, &b.patch], [a.corners, b.corners], margin)
-                    .expect_err("the pair failed")
+                let why = check_pair(ids, [&a.patch, &b.patch], [a.corners, b.corners], margin)
+                    .expect_err("the pair failed");
+                Refusal::naming(why, &[a, b])
             }
-        };
-        return Err(KernelError::Invalid(error));
+        });
     }
     Ok(leaves.into_iter().map(|(t, _)| t).collect())
 }
@@ -338,7 +366,7 @@ fn splittable(patch: &Patch, margin: f64) -> bool {
 /// The failure that asked for a leaf's split.
 #[derive(Debug, Clone, Copy)]
 enum Asked {
-    /// The fold check, on a piece from this input triangle.
+    /// The fold check, on this piece.
     Fold(u32),
     /// The hull rules, on the pair of this index.
     Pair(usize),

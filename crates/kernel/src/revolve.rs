@@ -91,7 +91,8 @@ const NESTING_WORK: usize = 8;
 /// points it is about, placed on `frame`, and their sketch curves, as
 /// [`Failure::evidence`]; the axis's errors with the axis or the turn's
 /// ends too. An `Invalid` comes with the triangles of the solid built
-/// that the check's error names.
+/// that the check's error names (or the pieces of them repair couldn't
+/// mend).
 pub fn revolve(
     profile: &Profile,
     frame: &Frame,
@@ -111,7 +112,7 @@ pub fn revolve(
 /// segment touching it inside with the point nearest it (a vertex on it
 /// as a cusp is given), a turn nearly full with the profile at both its
 /// ends. Any other error as it came, with the evidence of the step that
-/// raised it (the triangles a check names: see [`Solid::finished`]).
+/// raised it (what a check or repair names: see [`Solid::finished`]).
 fn revolve_failure(
     failure: Failure,
     profile: &Profile,
@@ -157,8 +158,8 @@ fn revolve_failure(
 }
 
 /// [`revolve`], failing with the error, and for one of a mesh built
-/// ([`KernelError::Invalid`]) the triangles it names, of the try whose
-/// error it is.
+/// ([`KernelError::Invalid`]) what it names ([`Solid::finished`]), of
+/// the try whose error it is.
 fn revolved(
     profile: &Profile,
     frame: &Frame,
@@ -578,7 +579,7 @@ impl Build<'_> {
     }
 
     /// One try at the solid on `lathe` from `pieces`: a mesh built that
-    /// fails as [`KernelError::Invalid`] fails with the triangles it
+    /// fails as [`KernelError::Invalid`] fails with what it
     /// names ([`Solid::finished`]).
     fn round(
         &self,

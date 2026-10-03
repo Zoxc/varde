@@ -128,7 +128,8 @@ message is worded from the kernel's `failure.error` as before
   `history/tests/profile_evidence.rs`). A tool, join, cut or combine
   whose solid fails the kernel's check or repair (`Invalid`, and a
   boolean's `Invalid` named `NotManifold`) gives the triangles the
-  error names, drawn as a patch mesh (`history/tests/check_evidence.rs`:
+  error names (or the pieces of them repair couldn't mend), drawn as a
+  patch mesh (`history/tests/check_evidence.rs`:
   a slot too thin, two boxes joined along an edge). The kernel's other
   errors and regen's own failures have none yet.
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s

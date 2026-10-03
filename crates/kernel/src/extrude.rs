@@ -113,7 +113,8 @@ impl Frame {
 /// gives an invalid solid. A profile's error comes with the segments and
 /// points it is about, placed on `frame` at height 0, and their sketch
 /// curves, as [`Failure::evidence`]; an `Invalid` with the triangles of
-/// the solid built that the check's error names.
+/// the solid built that the check's error names (or the pieces of them
+/// repair couldn't mend).
 pub fn extrude(
     profile: &Profile,
     frame: &Frame,
@@ -128,7 +129,7 @@ pub fn extrude(
 }
 
 /// [`extrude`], failing with the error, and for one of a mesh built
-/// ([`KernelError::Invalid`]) the triangles it names
+/// ([`KernelError::Invalid`]) what it names
 /// ([`Solid::new_repaired_within`]), of the try whose error it is.
 fn extruded(
     profile: &Profile,

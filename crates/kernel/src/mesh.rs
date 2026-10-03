@@ -69,7 +69,7 @@ pub use form::Form;
 pub(crate) use form::{circle_of, hypot};
 pub(crate) use hull::{apart, edge_neighbours_apart, flat, straight};
 pub(crate) use refine::{Node, Refiner};
-pub(crate) use repair::{MIN_CURVED_SPLIT, MIN_SPLIT};
+pub(crate) use repair::{MIN_CURVED_SPLIT, MIN_SPLIT, Refusal};
 pub(crate) use shape::{SIN_SHAPE, circumcentre_from};
 
 /// A hash map with a fixed hasher, for maps only looked up in, never

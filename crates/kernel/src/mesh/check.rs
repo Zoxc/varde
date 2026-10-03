@@ -412,7 +412,7 @@ impl Mesh {
     }
 
     /// The vertex ids at the corners of triangle `t`.
-    pub(super) fn corners(&self, t: u32) -> [u32; 3] {
+    pub(crate) fn corners(&self, t: u32) -> [u32; 3] {
         self.tris[t as usize].halfedges.map(|h| h.start)
     }
 }

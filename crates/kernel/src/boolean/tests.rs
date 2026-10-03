@@ -337,16 +337,12 @@ fn apart_tells_triangles_of_separate_shells() {
         (cube([0.0; 3], [1.0; 3]).mesh(), false),
         (cube([3.0; 3], [1.0; 3]).mesh(), false),
     ]);
-    let tris: Vec<[u32; 3]> = (shells.tris().iter())
-        .map(|tri| tri.halfedges.map(|h| h.start))
-        .collect();
-    let n = shells.verts().len();
     let mut work = Work::new(&Budget::DEFAULT);
-    let half = tris.len() as u32 / 2;
-    assert_eq!(apart(n, &tris, 0, half - 1, &mut work), Ok(false));
-    assert_eq!(apart(n, &tris, 0, half, &mut work), Ok(true));
+    let half = shells.tris().len() as u32 / 2;
+    assert_eq!(apart(&shells, 0, half - 1, &mut work), Ok(false));
+    assert_eq!(apart(&shells, 0, half, &mut work), Ok(true));
     // Out of range: not told apart.
-    assert_eq!(apart(n, &tris, 0, 2 * half, &mut work), Ok(false));
+    assert_eq!(apart(&shells, 0, 2 * half, &mut work), Ok(false));
 }
 
 #[test]
@@ -2274,9 +2270,9 @@ fn named_patches(mesh: &Mesh, why: CheckError) -> Vec<crate::patch::Patch> {
 
 /// `a op b`'s failure at `tol`, the same at 1 and 8 threads, checked to
 /// be `want` (the error it gave before failures carried evidence) and
-/// to carry the triangles the first try's error names, of
-/// the mesh that failed: the cleaned mesh where repair failed, the
-/// repaired one where the check did. Each patch lies within the
+/// to carry what the first try's error names, of the mesh that failed:
+/// the pieces repair names where repair failed, the triangles of the
+/// repaired mesh where the check did. Each patch lies within the
 /// operands' boxes.
 fn fails_with_its_triangles(a: &Solid, b: &Solid, op: Op, tol: &Tolerance, want: KernelError) {
     let failure = assert_deterministic(|| boolean(a, b, op, tol, &Budget::DEFAULT).unwrap_err());
@@ -2284,7 +2280,7 @@ fn fails_with_its_triangles(a: &Solid, b: &Solid, op: Op, tol: &Tolerance, want:
     let mut work = Work::new(&Budget::DEFAULT);
     let cleaned = unchecked(a, b, op, tol, &mut work).unwrap();
     let Err((error @ KernelError::Invalid(why), Some(unfinished))) =
-        Solid::finished_or_checked(cleaned, tol, &mut work)
+        Solid::finished_or_unfinished(cleaned, CHECK_WORK, tol, &mut work)
     else {
         panic!("the first try passes");
     };
@@ -2293,7 +2289,12 @@ fn fails_with_its_triangles(a: &Solid, b: &Solid, op: Op, tol: &Tolerance, want:
         error == want || want == KernelError::Boolean(BooleanError::NotManifold),
         "{error:?}"
     );
-    let named = named_patches(unfinished.mesh(), why);
+    let named = match &unfinished {
+        Unfinished::Repair { pieces, .. } if !pieces.is_empty() => pieces.clone(),
+        Unfinished::Repair { given: mesh, .. } | Unfinished::Check { checked: mesh, .. } => {
+            named_patches(mesh, why)
+        }
+    };
     assert!(!named.is_empty());
     assert_eq!(failure.evidence.patches, named, "{why:?}");
     let evidence = crate::Evidence {

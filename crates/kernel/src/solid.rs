@@ -1,7 +1,7 @@
 use glam::DVec3;
 
 use crate::budget::Work;
-use crate::mesh::Mesh;
+use crate::mesh::{Mesh, Refusal};
 use crate::par::par_map;
 use crate::patch::{Bounds3, Patch};
 use crate::quadrature::triangle_rule;
@@ -22,22 +22,57 @@ pub(crate) const INTEGRATE_WORK: usize = 32;
 pub(crate) const CHECK_WORK: usize = 5;
 
 /// A mesh that failed on its way to a [`Solid`] as
-/// [`KernelError::Invalid`], whose triangles the error names
-/// ([`Solid::finished_or_checked`]).
+/// [`KernelError::Invalid`] ([`Solid::finished_or_unfinished`]), with
+/// what the error names.
 pub(crate) enum Unfinished {
-    /// As given to repair, which failed (naming the triangles of its
-    /// input).
-    Given(Box<Mesh>),
-    /// Repaired and merged, failing the check.
-    Checked(Box<Mesh>),
+    /// Repair refused the mesh as given; `pieces` are those it names, if
+    /// any ([`Refusal`]), else the error names triangles of `given`.
+    Repair {
+        given: Box<Mesh>,
+        pieces: Vec<Patch>,
+    },
+    /// The check refused the repaired and merged mesh `checked`, whose
+    /// triangles the error names; `given` is the mesh repair was given,
+    /// where repair changed it (else `checked` has its positions and
+    /// triangles: merging changes only names).
+    Check {
+        given: Option<Box<Mesh>>,
+        checked: Box<Mesh>,
+    },
 }
 
 impl Unfinished {
-    /// The mesh the error names triangles of.
-    pub(crate) fn mesh(&self) -> &Mesh {
+    /// The mesh as given to repair, up to face names.
+    pub(crate) fn given(&self) -> &Mesh {
         match self {
-            Unfinished::Given(mesh) | Unfinished::Checked(mesh) => mesh,
+            Unfinished::Repair { given, .. }
+            | Unfinished::Check {
+                given: Some(given), ..
+            } => given,
+            Unfinished::Check { checked, .. } => checked,
         }
+    }
+
+    /// `error`, the one this mesh failed with, with what it names as
+    /// [`Failure::evidence`]: repair's pieces where it names some, else
+    /// the triangles of the mesh that failed ([`Failure::of_mesh`]).
+    pub(crate) fn failure(&self, error: KernelError) -> Failure {
+        match self {
+            Unfinished::Repair { given, pieces } if pieces.is_empty() => {
+                Failure::of_mesh(error, given)
+            }
+            Unfinished::Repair { pieces, .. } => Failure::of_patches(error, pieces),
+            Unfinished::Check { checked, .. } => Failure::of_mesh(error, checked),
+        }
+    }
+}
+
+/// An error of [`Solid::finished_or_unfinished`] as a failure, with the
+/// evidence the mesh left holds ([`Unfinished::failure`]).
+fn failure((error, unfinished): (KernelError, Option<Unfinished>)) -> Failure {
+    match unfinished {
+        Some(unfinished) => unfinished.failure(error),
+        None => error.into(),
     }
 }
 
@@ -104,10 +139,8 @@ impl Solid {
     /// checked again only for what names touch
     /// ([`Mesh::check_topology`]).
     ///
-    /// A [`KernelError::Invalid`] comes with the triangles it names
-    /// ([`Failure::of_mesh`]): of `mesh` where repair failed (repair
-    /// names the triangles of the mesh it was given), of the repaired
-    /// and merged mesh where the check did.
+    /// A [`KernelError::Invalid`] comes with what it names, of the mesh
+    /// that failed ([`Unfinished::failure`]).
     pub(crate) fn new_repaired_within(
         mesh: Mesh,
         tol: &Tolerance,
@@ -122,15 +155,10 @@ impl Solid {
                 work.spend(integrated.saturating_mul(INTEGRATE_WORK))?;
                 Ok(Solid { mesh })
             }
+            // The check already charged (`check_counted_within`), none
+            // before checking the repaired mesh.
             Err(KernelError::Invalid(_)) => {
-                let mesh = mesh
-                    .repair_or_given(tol, work)
-                    .map_err(|(e, given)| Failure::of_mesh(e, &given))?
-                    .merge_faces(tol.resolution(), work)?;
-                Solid::new_or_checked(mesh, tol, work).map_err(|(e, checked)| match checked {
-                    Some(mesh) => Failure::of_mesh(e, &mesh),
-                    None => e.into(),
-                })
+                Solid::finished_or_unfinished(mesh, 0, tol, work).map_err(failure)
             }
             Err(e) => Err(e.into()),
         }
@@ -143,46 +171,44 @@ impl Solid {
     /// [`Self::new_within`] charges them: for booleans' and revolves'
     /// meshes, which often need repair; an extrude's, built to pass,
     /// takes [`Self::new_repaired_within`]. A [`KernelError::Invalid`]
-    /// comes with the triangles it names, of the mesh that failed
-    /// ([`Self::finished_or_checked`], [`Failure::of_mesh`]).
+    /// comes with what it names, of the mesh that failed
+    /// ([`Unfinished::failure`]).
     pub(crate) fn finished(mesh: Mesh, tol: &Tolerance, work: &mut Work) -> Result<Solid, Failure> {
-        Solid::finished_or_checked(mesh, tol, work).map_err(|(e, unfinished)| match unfinished {
-            Some(unfinished) => Failure::of_mesh(e, unfinished.mesh()),
-            None => e.into(),
-        })
+        Solid::finished_or_unfinished(mesh, CHECK_WORK, tol, work).map_err(failure)
     }
 
-    /// [`Self::finished`], giving back with the error the mesh that
-    /// failed where it is [`KernelError::Invalid`], for the caller to
-    /// tell why and where: `mesh` itself where repair failed (repair
-    /// names the triangles of the mesh it was given), or the repaired
-    /// and merged mesh where the check did. The same solid, error and
-    /// work.
-    pub(crate) fn finished_or_checked(
+    /// `mesh` repaired, merged and checked, the check charged
+    /// `check_work` a patch before it and the patches it integrated
+    /// after ([`Self::finished`] with [`CHECK_WORK`]); where that fails as
+    /// [`KernelError::Invalid`], the mesh that failed comes back with the
+    /// error, for the caller to tell why and where ([`Unfinished`]).
+    pub(crate) fn finished_or_unfinished(
         mesh: Mesh,
+        check_work: usize,
         tol: &Tolerance,
         work: &mut Work,
     ) -> Result<Solid, (KernelError, Option<Unfinished>)> {
-        let mesh = match mesh.repair_or_given(tol, work) {
-            Ok(mesh) => mesh.merge_faces(tol.resolution(), work),
-            Err((e @ KernelError::Invalid(_), given)) => {
-                return Err((e, Some(Unfinished::Given(given))));
+        let (given, mesh) = match mesh.repaired(tol, work) {
+            Ok(Some(repaired)) => (Some(Box::new(mesh)), repaired),
+            Ok(None) => (None, mesh),
+            Err(Refusal {
+                error: error @ KernelError::Invalid(_),
+                pieces,
+            }) => {
+                let given = Box::new(mesh);
+                return Err((error, Some(Unfinished::Repair { given, pieces })));
             }
-            Err((e, _)) => Err(e),
-        }
-        .map_err(|e| (e, None))?;
-        work.spend(mesh.tris().len().saturating_mul(CHECK_WORK))
-            .map_err(|e| (e, None))?;
-        let integrated = match mesh.check_counted(tol) {
-            Ok(integrated) => integrated,
-            Err(e) => {
-                let checked = Unfinished::Checked(Box::new(mesh));
-                return Err((KernelError::Invalid(e), Some(checked)));
-            }
+            Err(refusal) => return Err((refusal.error, None)),
         };
-        work.spend(integrated.saturating_mul(INTEGRATE_WORK))
+        let mesh = mesh
+            .merge_faces(tol.resolution(), work)
             .map_err(|e| (e, None))?;
-        Ok(Solid { mesh })
+        work.spend(mesh.tris().len().saturating_mul(check_work))
+            .map_err(|e| (e, None))?;
+        Solid::new_or_checked(mesh, tol, work).map_err(|(error, checked)| {
+            let unfinished = checked.map(|checked| Unfinished::Check { given, checked });
+            (error, unfinished)
+        })
     }
 
     /// The empty solid.
