@@ -111,7 +111,7 @@ fn profile(making: Making, error: ProfileError, finest: bool) -> String {
         ProfileError::Touching(_) => {
             "its outline touches or crosses itself, or comes too close to itself".to_owned()
         }
-        ProfileError::Nesting => "its loops don't nest as outlines and holes".to_owned(),
+        ProfileError::Nesting(_) => "its loops don't nest as outlines and holes".to_owned(),
         ProfileError::Cusp(..) => "its outline turns back on itself in a sharp point".to_owned(),
         ProfileError::Area(_) => "a loop of its outline encloses no area".to_owned(),
         ProfileError::TooManySegments(_) => "its outline has too many curves".to_owned(),

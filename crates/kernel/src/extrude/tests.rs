@@ -356,7 +356,7 @@ fn many_random_outlines() {
                 built += 1;
             }
             Err(KernelError::Profile(
-                ProfileError::Touching(_) | ProfileError::Nesting | ProfileError::Cusp(..),
+                ProfileError::Touching(_) | ProfileError::Nesting(_) | ProfileError::Cusp(..),
             )) => {}
             Err(e) => panic!("{e}: {p:?}"),
         }
@@ -503,10 +503,10 @@ fn bad_input_is_refused() {
         rect(DVec2::ZERO, DVec2::splat(10.0), 0),
         rect(DVec2::splat(4.0), DVec2::splat(6.0), 4),
     ]);
-    for p in [wrong_hole, lone_hole, inside] {
+    for (p, l) in [(wrong_hole, 1), (lone_hole, 0), (inside, 1)] {
         assert_eq!(
             run(&p, &Frame::XY, 0.0, 1.0),
-            Err(KernelError::Profile(ProfileError::Nesting))
+            Err(KernelError::Profile(ProfileError::Nesting(l)))
         );
     }
     // An island in a hole is fine.
@@ -646,7 +646,7 @@ fn random_plates_with_holes() {
                 assert!((solid.volume() - exact).abs() < 1e-12 * 1e4 * h);
                 built += 1;
             }
-            Err(KernelError::Profile(ProfileError::Touching(_) | ProfileError::Nesting)) => {}
+            Err(KernelError::Profile(ProfileError::Touching(_) | ProfileError::Nesting(_))) => {}
             Err(e) => panic!("case {case}: {e}"),
         }
     }

@@ -25,6 +25,7 @@ use glam::{DMat3, DVec2, DVec3};
 use crate::budget::{Budget, Work};
 use crate::mesh::{Face, FaceName, FacePart, Form, Mesh, MeshBuilder, Quadric, Surface, circle_of};
 use crate::patch::{Conic2, Conic3, PatchError};
+use crate::profile::evidence::profile_failure;
 use crate::profile::{Profile, ProfileError};
 use crate::{Failure, KernelError, MAX_COORD, Solid, Tolerance, in_range};
 
@@ -98,7 +99,9 @@ impl Frame {
 /// A solid too thin or too fine for the resolution fails with
 /// [`KernelError::Invalid`] or [`ProfileError::TooFine`], and running out
 /// of `budget` or past a limit with [`KernelError::TooComplex`]; it never
-/// gives an invalid solid.
+/// gives an invalid solid. A profile's error comes with the segments and
+/// points it is about, placed on `frame` at height 0, and their sketch
+/// curves, as [`Failure::evidence`].
 pub fn extrude(
     profile: &Profile,
     frame: &Frame,
@@ -108,7 +111,8 @@ pub fn extrude(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<Solid, Failure> {
-    extruded(profile, frame, from, to, feature, tol, budget).map_err(Failure::from)
+    extruded(profile, frame, from, to, feature, tol, budget)
+        .map_err(|error| profile_failure(error, profile, frame))
 }
 
 /// [`extrude`], failing with the error alone.

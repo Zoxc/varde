@@ -113,7 +113,7 @@ fn extrude_errors() -> Vec<KernelError> {
         ProfileError::Area(0),
         ProfileError::Cusp(0, 1),
         ProfileError::Touching([(0, 1), (1, 0)]),
-        ProfileError::Nesting,
+        ProfileError::Nesting(1),
         ProfileError::Triangulation,
         ProfileError::TooFine(1, 2),
     ];
@@ -184,7 +184,7 @@ fn every_boolean_failure_starts_in_lower_case() {
         KernelError::TooComplex,
         KernelError::Invalid(CheckError::Counts),
         KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
-        KernelError::Profile(ProfileError::Nesting),
+        KernelError::Profile(ProfileError::Nesting(0)),
         KernelError::Profile(ProfileError::TooFine(0, 3)),
         KernelError::Boolean(BooleanError::Inconsistent),
         KernelError::Boolean(BooleanError::Degenerate),

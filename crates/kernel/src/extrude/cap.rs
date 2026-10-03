@@ -775,18 +775,43 @@ impl Live {
                 None => 0,
             }
         };
-        let nesting = || KernelError::Profile(ProfileError::Nesting);
+        let nesting = |l: usize| KernelError::Profile(ProfileError::Nesting(l));
+        // The loop of the chord `a → b`, if it is one.
+        let loop_of = |a: u32, b: u32| {
+            chord(starts, a, b).map(|(s, _)| starts.partition_point(|&x| x <= s) - 1)
+        };
+        let good = |w: i32| w == 0 || w == 1;
         let mut winding: Vec<Option<i32>> = vec![None; nf];
+        // For a face winding other than 0 or 1, the loop to blame: the
+        // one whose chord the walk crossed from a face winding 0 or 1
+        // into the faces winding as this one does.
+        let mut blame: Vec<Option<usize>> = vec![None; nf];
         let mut queue = VecDeque::new();
-        let set = |winding: &mut [Option<i32>], queue: &mut VecDeque<usize>, f: usize, value| {
+        // Gives face `f` the winding `value`, reached across the side
+        // `a → b` from a face of winding `from` and blame `inherited`.
+        let set = |winding: &mut [Option<i32>],
+                   blame: &mut [Option<usize>],
+                   queue: &mut VecDeque<usize>,
+                   f: usize,
+                   value: i32,
+                   (from, inherited): (i32, Option<usize>),
+                   (a, b): (u32, u32)| {
+            let crossed = loop_of(a, b);
             match winding[f] {
                 None => {
                     winding[f] = Some(value);
+                    blame[f] = if good(value) {
+                        None
+                    } else if good(from) {
+                        crossed
+                    } else {
+                        inherited
+                    };
                     queue.push_back(f);
                     Ok(())
                 }
                 Some(w) if w == value => Ok(()),
-                Some(_) => Err(nesting()),
+                Some(_) => Err(nesting(crossed.or(inherited).or(blame[f]).unwrap_or(0))),
             }
         };
         // The outer face, around the hull, winds 0 times.
@@ -794,16 +819,33 @@ impl Live {
             if corners[f].is_some() {
                 for &(g, a, b) in &across[f] {
                     if g == outer {
-                        set(&mut winding, &mut queue, f, step(a, b))?;
+                        set(
+                            &mut winding,
+                            &mut blame,
+                            &mut queue,
+                            f,
+                            step(a, b),
+                            (0, None),
+                            (a, b),
+                        )?;
                     }
                 }
             }
         }
         while let Some(f) = queue.pop_front() {
             let w = winding[f].expect("queued faces have a winding");
+            let from = (w, blame[f]);
             for &(g, a, b) in &across[f] {
                 if g != outer {
-                    set(&mut winding, &mut queue, g, w - step(a, b))?;
+                    set(
+                        &mut winding,
+                        &mut blame,
+                        &mut queue,
+                        g,
+                        w - step(a, b),
+                        from,
+                        (a, b),
+                    )?;
                 }
             }
         }
@@ -816,12 +858,12 @@ impl Live {
                         tris.push(*corners);
                         faces.push(*face);
                     }
-                    _ => return Err(nesting()),
+                    _ => return Err(nesting(blame[f].unwrap_or(0))),
                 }
             }
         }
         if tris.is_empty() {
-            return Err(nesting());
+            return Err(nesting(0));
         }
         Ok((tris, faces))
     }

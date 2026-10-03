@@ -194,11 +194,11 @@ fn bad_regions_are_refused_as_an_extrude_refuses_them() {
     ]);
     assert_eq!(
         run(&outside, part(1.0)),
-        Err(KernelError::Profile(ProfileError::Nesting))
+        Err(KernelError::Profile(ProfileError::Nesting(1)))
     );
     assert_eq!(
         run(&outside, Sweep::Full),
-        Err(KernelError::Profile(ProfileError::Nesting))
+        Err(KernelError::Profile(ProfileError::Nesting(1)))
     );
     assert_eq!(
         run(&Profile::default(), Sweep::Full),

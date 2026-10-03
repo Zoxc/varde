@@ -196,10 +196,6 @@ impl Evidence {
     /// Takes `units` of `work` (an allowance from [`evidence_work`]) for
     /// gathering more, or marks the evidence truncated and says no once
     /// it has run out.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no step gathers evidence from an allowance yet")
-    )]
     pub(crate) fn afford(&mut self, work: &mut Work, units: usize) -> bool {
         let ok = work.spend(units).is_ok();
         if !ok {
@@ -211,10 +207,6 @@ impl Evidence {
 
 /// A fresh allowance of [`EVIDENCE_WORK`] for gathering one failure's
 /// evidence.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no step gathers evidence from an allowance yet")
-)]
 pub(crate) fn evidence_work() -> Work {
     Work::new(&Budget::new(EVIDENCE_WORK))
 }
@@ -250,7 +242,7 @@ mod tests {
     };
 
     /// The error of a failed operation, its evidence checked empty (none
-    /// is gathered yet).
+    /// is gathered for these errors yet).
     fn bare<T: std::fmt::Debug>(result: Result<T, Failure>) -> KernelError {
         let failure = result.unwrap_err();
         assert!(failure.evidence.is_empty(), "{failure:?}");
@@ -258,7 +250,7 @@ mod tests {
     }
 
     /// Each public operation fails with the error it gave before
-    /// failures carried evidence, and none yet.
+    /// failures carried evidence.
     #[test]
     fn operations_fail_with_their_errors() {
         let square = Profile {
@@ -272,10 +264,14 @@ mod tests {
         let across = Profile {
             loops: vec![rect(DVec2::new(-1.0, 0.0), DVec2::new(3.0, 1.0), 1)],
         };
+        // Profile errors come with their segments (see
+        // `profile/evidence/tests.rs`).
+        let crossing = revolve(&across, &Frame::XY, Sweep::Full, 1, &TOL, &budget).unwrap_err();
         assert_eq!(
-            bare(revolve(&across, &Frame::XY, Sweep::Full, 1, &TOL, &budget)),
+            crossing.error,
             KernelError::Profile(ProfileError::CrossesAxis(0, 0))
         );
+        assert!(!crossing.evidence.is_empty());
         let cube =
             |at: f64, feature| Solid::cuboid(DVec3::splat(at), DVec3::ONE, feature, &TOL).unwrap();
         let (a, b) = (cube(0.0, 1), cube(0.5, 2));

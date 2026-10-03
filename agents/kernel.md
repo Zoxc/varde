@@ -2267,7 +2267,11 @@ over another conic, along the normal. The steps:
    number, walked from the outer face across sides: crossing a chord from
    its right to its left adds one. The region is where it is 1; any other
    value than 0 or 1 is `Nesting` (a hole outside everything, an outer
-   loop in material, a loop running the wrong way). Each triangle's patch
+   loop in material, a loop running the wrong way), naming the loop to
+   blame: the walk keeps, for each face winding otherwise, the loop of
+   the chord it crossed from a face winding 0 or 1 into such faces (a
+   face reached across an edge whose two sides disagree names that
+   edge's chord's loop; no face winding once names loop 0). Each triangle's patch
    takes the segments along its sides as curved edges; inner edges are
    straight. Then the corners are checked between the curves' tangents,
    not the chords (a corner is open when the cross product exceeds
@@ -7735,7 +7739,45 @@ error is about, by value and in the operation's world coordinates
 FaceKey)`, `Operand::A` or `B` for a boolean's or `touches`' first or
 second operand; the boolean's own `Side` converts into it), plus
 `truncated`. Only a step holding both the error and its geometry fills
-it; no step does yet, so every failure's evidence is empty for now.
+it.
+
+**Profile evidence** (`profile/evidence.rs`). Every `ProfileError` names
+what it is about by indices into the profile as given (revolve's
+`remap` maps the ends' pieces back; loops alone keep their index, the
+ends' loops being the profile's), so `extrude` and `revolve` gather it
+in their public wrappers from the error they return, after every
+retry, and the profile: the evidence is the returned error's by
+construction and can't change the outcome. A `Gather` holds the
+profile, its frame (only if `Frame::check` passes: a profile is checked
+before its frame, so without one only the sketch curves are given), the
+evidence and its `EVIDENCE_WORK` allowance (a unit a segment placed,
+`NEAREST_WORK` for a nearest pair, `AXIS_WORK` for the axis's nearest
+point, a unit per 16 segments scanned for the axis's extent). Segments
+are placed on the frame at height 0, the sketch's own plane (extrude's
+`from` and `to` don't move them; a revolve's frame is the sketch's
+plane), as `Conic<DVec3>` passing `Conic3::new` with every control
+point in range, else left out; each gives its `Segment::curve` once (a
+`BTreeSet` of those given). By error:
+
+| error | evidence |
+|---|---|
+| `Empty` | none |
+| `TooManySegments`, `Triangulation` | every segment, loop by loop, up to the caps and the allowance |
+| `Short(l)`, `Area(l)`, `Nesting(l)` | loop `l` |
+| `Segment`, `Degenerate`, `TooFine` | the segment |
+| `Open(l, s)` | the gap's two ends (`s`'s end, the next one's start) and both segments |
+| `Cusp(l, s)` | the vertex where `s` starts, and the segments before and at it |
+| `Touching([a, b])` | both segments, and where they come nearest: one point if the two are the same to about a billionth of their distance from the origin, else both |
+| `CrossesAxis(l, s)` | the segment, and the axis as a line from the least to the greatest `y` of the profile's control points |
+| `TouchesAxis(l, s)` | a vertex on the axis (`s`'s start within the resolution of it) as a cusp is given; else the point of `s` nearest the axis, and `s` |
+| `NearlyFullTurn` | the whole profile on the frames at both ends of the turn (`x` turned to `from` and to `to`, as `Turn` turns it) |
+
+Where two segments come nearest (`evidence::nearest`) is a search, not
+exact: a 33 × 33 grid of their parameters, then 48 rounds narrowing a
+5 × 5 window round the best pair, halving it each round; the axis's
+nearest point (`nearest_axis`) the same on one parameter. Both are
+deterministic and lie on the segments; two places nearly as near may be
+told apart wrongly.
 
 Its rules: evidence never changes an outcome (no `Ok` becomes an error
 or the reverse, and the error is the one returned without it; tests
@@ -7964,7 +8006,7 @@ see `agents/features.md`, "Failures and where they are").
   `from < to` along its normal; flipping and sides are the caller's.
 - **`KernelError::Profile(ProfileError)`** carries a profile's own
   errors: `Empty`, `TooManySegments`, `Short`, `Segment`, `Degenerate`,
-  `Open`, `Area`, `Cusp`, `Touching`, `Nesting`, `Triangulation`,
+  `Open`, `Area`, `Cusp`, `Touching`, `Nesting(loop)`, `Triangulation`,
   `TooFine` (a curved segment the caps need halved below `MIN_SPLIT`
   resolutions: detail too small for the tolerance).
 - **Curved walls are tagged with the conic's own cylinder**

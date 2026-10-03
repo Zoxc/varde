@@ -117,6 +117,16 @@ message is worded from the kernel's `failure.error` as before
   it), one that fails answering the
   generation as failed (`wire::Error::Geometry`). A head too large with
   its geometry is sent without it.
+- **What has geometry so far**: an extrude's or revolve's tool failing
+  on its profile (`KernelError::Profile`): the kernel gives the
+  segments the error names, placed by the frame regen passes, which is
+  the sketch's placement (a revolve's turned to its axis, still in the
+  sketch's plane), the points it is about and the sketch curves
+  (`Segment::curve`, the sketch curve's `Id::get`), so a draft's
+  `Drafted::geometry` and a committed feature's `FeatureFailure` show
+  the segments where the sketch has them (tested end to end in
+  `history/tests/profile_evidence.rs`). The kernel's other errors and
+  regen's own failures have none yet.
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s
   and the view reads `feature` and `message`; nothing draws the
   geometry yet.

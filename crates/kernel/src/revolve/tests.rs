@@ -760,7 +760,7 @@ fn a_profile_running_the_wrong_way_is_refused() {
             &Budget::DEFAULT
         )
         .stripped(),
-        Err(KernelError::Profile(ProfileError::Nesting))
+        Err(KernelError::Profile(ProfileError::Nesting(0)))
     );
 }
 

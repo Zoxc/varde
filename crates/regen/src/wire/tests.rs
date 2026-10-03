@@ -144,17 +144,22 @@ fn a_revolve_and_its_draft_round_trip() {
         panic!("regeneration failed");
     };
     let crosses = "its outline crosses the axis".to_owned();
+    let draft = draft.expect("the draft's answer");
+    // Where they cross comes over too, checked on receipt.
+    let geometry = draft.geometry.clone().expect("the draft's geometry");
+    assert!(!geometry.lines().points().is_empty() && !geometry.sketch_curves().is_empty());
     assert_eq!(
         draft,
-        Some(Drafted {
+        Drafted {
             revision: 3,
-            geometry: None,
+            geometry: Some(geometry),
             error: Some(crosses.clone()),
             touched: None,
-        })
+        }
     );
     let revolve = editor.document().features().last().unwrap().id;
     assert_eq!(failed, [(revolve, crosses)]);
+    assert!(failed[0].geometry.is_some());
 }
 
 /// A revolve that works crosses the wire in its reply: a boss turned

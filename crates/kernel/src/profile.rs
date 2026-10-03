@@ -79,8 +79,10 @@ pub enum ProfileError {
     Touching([(usize, usize); 2]),
     /// The loops don't nest as outer loops and holes: a hole outside
     /// every outer loop, an outer loop inside another's material, or a
-    /// loop running the wrong way.
-    Nesting,
+    /// loop running the wrong way. It names the loop: the one whose chord
+    /// the caps' walk crossed into a winding number other than 0 or 1
+    /// (the first loop if no part of the region winds once).
+    Nesting(usize),
     /// The region's caps couldn't be triangulated.
     Triangulation,
     /// A curved segment `(loop, segment)` needs halving for the caps
@@ -124,7 +126,12 @@ impl std::fmt::Display for ProfileError {
                 f,
                 "segment {sa} of loop {la} and segment {sb} of loop {lb} touch or cross"
             ),
-            ProfileError::Nesting => f.write_str("the loops don't nest as outer loops and holes"),
+            ProfileError::Nesting(l) => {
+                write!(
+                    f,
+                    "loop {l} doesn't nest with the others as an outer loop or a hole"
+                )
+            }
             ProfileError::Triangulation => f.write_str("the profile couldn't be triangulated"),
             ProfileError::TooFine(l, s) => write!(
                 f,
@@ -269,6 +276,8 @@ fn pieces(c: &Conic2, depth: u32, f: &mut impl FnMut(&Conic2)) {
     }
     f(c);
 }
+
+pub(crate) mod evidence;
 
 #[cfg(test)]
 pub(crate) mod tests;

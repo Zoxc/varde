@@ -31,6 +31,7 @@ use crate::extrude::cap::{self, Mode, Rounds};
 use crate::extrude::chain::Chain;
 use crate::mesh::{BuildError, Face, FaceName, FacePart, Form, MeshBuilder, Surface};
 use crate::patch::{Conic2, Conic3, Patch, PatchError};
+use crate::profile::evidence::{AXIS_WORK, Gather, nearest_axis};
 use crate::profile::{Loop, Profile, ProfileError, Segment};
 use crate::sweep::{Cap, Lathe, Pole, fitted_band_with, pole_cap_with, revolution_strip};
 use crate::{Failure, KernelError, MAX_PATCHES, Solid, Tolerance, in_range, trig};
@@ -86,7 +87,10 @@ const NESTING_WORK: usize = 8;
 /// A solid too thin or too fine for the resolution fails with
 /// [`KernelError::Invalid`] or [`ProfileError::TooFine`], running out of
 /// `budget` or past a limit with [`KernelError::TooComplex`]; it never
-/// gives an invalid solid.
+/// gives an invalid solid. A profile's error comes with the segments and
+/// points it is about, placed on `frame`, and their sketch curves, as
+/// [`Failure::evidence`]; the axis's errors with the axis or the turn's
+/// ends too.
 pub fn revolve(
     profile: &Profile,
     frame: &Frame,
@@ -95,7 +99,60 @@ pub fn revolve(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<Solid, Failure> {
-    revolved(profile, frame, sweep, feature, tol, budget).map_err(Failure::from)
+    revolved(profile, frame, sweep, feature, tol, budget)
+        .map_err(|error| revolve_failure(error, profile, frame, sweep, tol))
+}
+
+/// `error`, revolving `profile` on `frame` through `sweep`, with its
+/// evidence: a profile's as an extrude's (see
+/// [`Gather`]), placed at the frame's
+/// own angle, and for the axis's errors the axis too: a segment crossing
+/// it with the axis across the profile's extent along it, a segment
+/// touching it inside with the point nearest it (a vertex on it as a
+/// cusp is given), a turn nearly full with the profile at both its
+/// ends.
+fn revolve_failure(
+    error: KernelError,
+    profile: &Profile,
+    frame: &Frame,
+    sweep: Sweep,
+    tol: &Tolerance,
+) -> Failure {
+    let KernelError::Profile(e) = error else {
+        return error.into();
+    };
+    let mut gather = Gather::new(profile, frame);
+    match e {
+        ProfileError::CrossesAxis(l, s) => {
+            gather.segment(l, s);
+            if let Some((lo, hi)) = gather.extent_along_y() {
+                gather.line(DVec2::new(0.0, lo), DVec2::new(0.0, hi));
+            }
+        }
+        // Inside the segment: both its ends are off the axis by more than
+        // the resolution (within it they are put on it).
+        ProfileError::TouchesAxis(l, s) => match gather.get(l, s) {
+            Some(seg) if seg.conic.p0.x.abs() > tol.resolution() => {
+                if gather.afford(AXIS_WORK) {
+                    gather.points([nearest_axis(&seg.conic)]);
+                }
+                gather.segment(l, s);
+            }
+            _ => gather.vertex(l, s),
+        },
+        ProfileError::NearlyFullTurn => {
+            let ends = gather.frame().and_then(|_| Turn::new(frame, sweep).ok());
+            match ends.and_then(|turn| turn.ends()) {
+                Some([start, end]) => {
+                    gather.all_on(Some(&start));
+                    gather.all_on(Some(&end));
+                }
+                None => gather.all(),
+            }
+        }
+        e => gather.error(e),
+    }
+    gather.failure(error)
 }
 
 /// [`revolve`], failing with the error alone.
@@ -199,6 +256,19 @@ impl Turn {
 
     fn is_full(&self) -> bool {
         self.sweep.is_none()
+    }
+
+    /// The frames a part turn's start and end lie on: `x` turned to each,
+    /// `y` the axis. `None` for a full turn.
+    fn ends(&self) -> Option<[Frame; 2]> {
+        let sweep = self.sweep?;
+        let at = |x: DVec3| Frame {
+            origin: self.origin,
+            x,
+            y: self.y,
+        };
+        let turned = unit_turn(sweep);
+        Some([at(self.x), at(self.x * turned.x + self.n * turned.y)])
     }
 
     /// The profile's point `p` (`x` from the axis, `y` along it) at
@@ -1042,7 +1112,9 @@ fn patchwork_tris(tris: &[[u32; 3]], corners: &[Corner], keep: bool) -> Vec<[Cor
         .collect()
 }
 
-/// `error` with the `(loop, segment)` pairs it names mapped by `at`.
+/// `error` with the `(loop, segment)` pairs it names mapped by `at`. A
+/// loop named alone (`Short`, `Area`, `Nesting`) keeps its index: the
+/// ends' loops are the profile's, in order.
 fn remap(error: ProfileError, at: impl Fn(usize, usize) -> (usize, usize)) -> ProfileError {
     match error {
         ProfileError::Segment(l, s, e) => {

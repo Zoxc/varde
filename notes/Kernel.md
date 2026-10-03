@@ -492,8 +492,12 @@ by name), so the app can show where an operation fails, not only why.
 Evidence never changes an outcome, is capped per kind (`MAX_EVIDENCE`,
 then `truncated`), comes from its own small allowance (`EVIDENCE_WORK`)
 rather than the operation's budget, is deterministic, and goes with the
-error actually returned. `TooComplex` carries none; for now no other
-error does either, the type being in place first.
+error actually returned. `TooComplex` carries none. A profile's errors
+carry the segments they name, placed by the operation's frame, with
+their sketch curves, and the points they are about (where two segments
+touch, a cusp, a gap's ends, where a segment touches a revolve's axis),
+the axis a segment crosses, or the profile at both ends of a turn too
+nearly full; the other errors carry none yet.
 
 ## In the app
 
