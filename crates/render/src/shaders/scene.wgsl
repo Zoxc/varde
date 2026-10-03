@@ -1328,11 +1328,14 @@ fn error_color() -> vec3<f32> {
 }
 
 // A corner of a patch's triangle, pulled towards the camera like the edges,
-// so a face of the model it lies on doesn't hide it.
+// so a face of the model it lies on doesn't hide it. Not one before the near
+// plane: `pulled` would keep it at the plane, and the triangle, unclipped,
+// would show what's between it and the eye, across the view.
 @vertex
 fn vs_error_face(in: MeshIn) -> MeshOut {
     var out: MeshOut;
-    out.position = pulled(in.position);
+    let unpulled = u.view_proj * vec4<f32>(in.position, 1.0);
+    out.position = select(pulled(in.position), unpulled, unpulled.z < 0.0);
     out.world = in.position;
     out.normal = in.normal;
     return out;

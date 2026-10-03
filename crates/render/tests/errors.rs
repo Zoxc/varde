@@ -11,8 +11,8 @@ use glam::{DVec2, DVec3, Vec3};
 use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
     Camera, ClipRect, Colors, ERROR_EDGE_WIDTH, ERROR_HALO, ERROR_POINT_RADIUS, ErrorParts, Frame,
-    GridPlane, Highlights, LineStyle, Renderer, SketchLayer, SketchScene, Slot, Space, Srgb, Srgba,
-    View, Viewport, wgpu,
+    GridPlane, Highlights, LineStyle, Projection, Renderer, SketchLayer, SketchScene, Slot, Space,
+    Srgb, Srgba, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -214,11 +214,11 @@ impl Scene {
         })
     }
 
-    /// Prepares and draws `frame` into a target of [`SIZE`], and returns
+    /// Prepares and draws `frame` into a target of its size, and returns
     /// its pixels, row-major.
     fn draw(&mut self, frame: &Frame<'_>) -> Pixels {
         let (device, queue) = (&self.device, &self.queue);
-        let [width, height] = SIZE;
+        let [width, height] = frame.target_size;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
             size: wgpu::Extent3d {
@@ -270,16 +270,17 @@ impl Scene {
             .map_async(wgpu::MapMode::Read, |r| r.unwrap());
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         let data = buffer.slice(..).get_mapped_range();
-        Pixels(data.as_chunks::<4>().0.to_vec())
+        Pixels(data.as_chunks::<4>().0.to_vec(), width)
     }
 }
 
+/// A target's pixels, row-major, and its width.
 #[derive(Debug, PartialEq)]
-struct Pixels(Vec<[u8; 4]>);
+struct Pixels(Vec<[u8; 4]>, u32);
 
 impl Pixels {
     fn at(&self, x: u32, y: u32) -> [u8; 4] {
-        self.0[(y * SIZE[0] + x) as usize]
+        self.0[(y * self.1 + x) as usize]
     }
 }
 
@@ -626,5 +627,216 @@ fn the_sketch_being_edited_is_drawn_over_the_errors() {
     for y in [188, 195] {
         let [r, g, _, _] = pixels.at(188, y);
         assert!(g > 200 && r < 40, "row {y}: {:?}", pixels.at(188, y));
+    }
+}
+
+#[test]
+fn a_patch_before_the_near_plane_is_clipped() {
+    let Some(mut scene) = Scene::new() else {
+        return;
+    };
+    let mut camera = top_camera();
+    camera.set_projection(Projection::Perspective);
+    // Between the eye and the near plane, across the line of sight: the
+    // model's faces there are clipped, and so must the errors' be, rather
+    // than cover the view.
+    let z = camera.distance() - camera.near() * 0.5;
+    let near = patch([-1.0, -1.0], [1.0, 1.0], z);
+    let errors = [near.parts()];
+    let pixels = scene.draw(&frame(&camera, &NO_MESH, &errors, false));
+    let none = scene.draw(&frame(&camera, &NO_MESH, &[], false));
+    assert_eq!(pixels.at(128, 128), none.at(128, 128));
+    assert_eq!(pixels, none);
+    // One crossing the near plane still shows beyond it: standing up
+    // from z = 0 past the eye at y = -0.5, x = 0.5 to 1.5, below and right
+    // of the middle, farther out the nearer the eye.
+    let corners = [
+        Vec3::new(0.5, -0.5, 0.0),
+        Vec3::new(1.5, -0.5, 0.0),
+        Vec3::new(1.5, -0.5, z + 1.0),
+        Vec3::new(0.5, -0.5, z + 1.0),
+    ];
+    let mesh = RenderMesh::from_parts(MeshParts {
+        positions: corners.map(|c| c.to_array()).to_vec(),
+        normals: vec![[0.0, 1.0, 0.0]; 4],
+        indices: vec![0, 1, 2, 0, 2, 3],
+        face_ends: vec![6],
+        part_ends: vec![[1, 0, 0, 0]],
+        ..MeshParts::default()
+    })
+    .unwrap();
+    let crossing = Failure::new(mesh, RenderLines::default(), &[]);
+    let errors = [crossing.parts()];
+    let pixels = scene.draw(&frame(&camera, &NO_MESH, &errors, false));
+    // Half way to the eye, twice as far out: (138 to 158, 138).
+    assert!(
+        redness(pixels.at(148, 138)) > 100,
+        "{:?}",
+        pixels.at(148, 138)
+    );
+    assert_eq!(pixels.at(100, 138), none.at(100, 138));
+}
+
+/// The halo of [`line_across`] at `scale` physical pixels a logical
+/// one: the core `ERROR_EDGE_WIDTH / 2` and the halo `ERROR_HALO` beyond
+/// it, both scaled.
+fn halo_at_scale(scale: f32) {
+    let Some(mut scene) = Scene::new() else {
+        return;
+    };
+    let camera = top_camera();
+    let line = line_across();
+    let errors = [line.parts()];
+    let pixels = scene.draw(&Frame {
+        scale_factor: scale,
+        ..frame(&camera, &NO_MESH, &errors, false)
+    });
+    let core = ERROR_EDGE_WIDTH * 0.5 * scale;
+    let reach = core + ERROR_HALO * scale;
+    // Row `188 + k` is `k + 0.5` from the line.
+    for k in 0..40u32 {
+        let d = k as f32 + 0.5;
+        let below = pixels.at(188, 188 + k);
+        if d + 0.5 <= core {
+            assert_eq!(below, [255, 0, 0, 255], "scale {scale}, {k}");
+        } else if d - 0.5 >= core && d + 0.5 <= reach {
+            assert!(red_of(below, HALO_RED), "scale {scale}, {k}: {below:?}");
+        } else if d - 0.5 >= reach {
+            assert_eq!(below, [0, 0, 0, 255], "scale {scale}, {k}");
+        }
+    }
+}
+
+#[test]
+fn the_halo_reaches_as_far_at_any_scale() {
+    for scale in [1.0, 1.5, 2.0] {
+        halo_at_scale(scale);
+    }
+}
+
+#[test]
+fn the_halo_is_read_where_the_viewport_is_as_the_target_is_resized() {
+    let Some(mut scene) = Scene::new() else {
+        return;
+    };
+    let camera = top_camera();
+    let line = line_across();
+    let errors = [line.parts()];
+    // The viewport within a larger target, not at its origin: the line's
+    // middle at (288, 238) on the boundary of rows 237 and 238.
+    let at = |x, y, target_size| Frame {
+        viewport: Viewport {
+            x,
+            y,
+            width: 256.0,
+            height: 256.0,
+        },
+        target_size,
+        ..frame(&camera, &NO_MESH, &errors, false)
+    };
+    let pixels = scene.draw(&at(100.0, 50.0, [448, 350]));
+    assert_eq!(pixels.at(288, 238), [255, 0, 0, 255]);
+    for (x, y) in [(288, 246), (288, 229), (338, 238)] {
+        assert!(red_of(pixels.at(x, y), HALO_RED), "({x}, {y})");
+    }
+    for (x, y) in [(288, 254), (288, 221), (188, 196), (188, 188)] {
+        assert_eq!(pixels.at(x, y), [0, 0, 0, 255], "({x}, {y})");
+    }
+    // Resized while they show, then while none do, then shown again.
+    let resized = scene.draw(&at(0.0, 0.0, SIZE));
+    assert_eq!(resized.at(188, 188), [255, 0, 0, 255]);
+    assert!(red_of(resized.at(188, 196), HALO_RED));
+    let none = scene.draw(&Frame {
+        errors: &[],
+        ..at(20.0, 30.0, [320, 300])
+    });
+    assert_eq!(none.at(208, 218), [0, 0, 0, 255]);
+    let again = scene.draw(&at(20.0, 30.0, [320, 300]));
+    assert_eq!(again.at(208, 218), [255, 0, 0, 255]);
+    assert!(red_of(again.at(208, 226), HALO_RED));
+    assert_eq!(again.at(208, 234), [0, 0, 0, 255]);
+}
+
+#[test]
+fn errors_far_from_the_model_are_in_the_depth_range() {
+    let Some(mut scene) = Scene::new() else {
+        return;
+    };
+    let block = Arc::new(block());
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let mut camera = top_camera();
+        camera.set_projection(projection);
+        // Far above the block (but below the eye) and far below it; in
+        // perspective the line below shows nearer the middle.
+        let z = camera.distance() * 0.5;
+        let above = Failure::lines(&[[Vec3::new(2.0, -3.0, z), Vec3::new(10.0, -3.0, z)]]);
+        let below = Failure::lines(&[[
+            Vec3::new(-20.0, -9.0, -500.0),
+            Vec3::new(500.0, -9.0, -500.0),
+        ]]);
+        let failures = [above, below];
+        let errors: Vec<_> = failures.iter().map(Failure::parts).collect();
+        let pixels = scene.draw(&frame(&camera, &block, &errors, false));
+        let none = scene.draw(&frame(&camera, &block, &[], false));
+        let changed = (0..SIZE[1])
+            .filter(|&y| redness(pixels.at(200, y)) > redness(none.at(200, y)) + 10)
+            .count();
+        // Both lines and their halos, rows apart.
+        let full = (0..SIZE[1])
+            .filter(|&y| pixels.at(200, y) == [255, 0, 0, 255])
+            .count();
+        assert!(full >= 2, "{projection:?}: {full} rows of core");
+        assert!(changed >= 40, "{projection:?}: {changed} rows changed");
+        // Only errors, a point far off: drawn.
+        let point = Failure::new(
+            RenderMesh::default(),
+            RenderLines::default(),
+            &[Vec3::new(0.0, 0.0, -2000.0)],
+        );
+        let errors = [point.parts()];
+        let pixels = scene.draw(&frame(&camera, &NO_MESH, &errors, false));
+        assert_eq!(pixels.at(128, 128), [255, 0, 0, 255], "{projection:?}");
+    }
+}
+
+#[test]
+fn errors_are_drawn_with_glass_hidden_edges_and_wires() {
+    let Some(mut scene) = Scene::new() else {
+        return;
+    };
+    let camera = top_camera();
+    let block = Arc::new(block());
+    let seen = Failure::lines(&[[Vec3::new(2.0, -3.0, 6.0), Vec3::new(10.0, -3.0, 6.0)]]);
+    let hidden = Failure::lines(&[[Vec3::new(2.0, -9.0, -2.0), Vec3::new(10.0, -9.0, -2.0)]]);
+    let failures = [seen, hidden];
+    let errors: Vec<_> = failures.iter().map(Failure::parts).collect();
+    for (opacity, hidden_edges, wireframe) in [
+        (&[0.5][..], false, false),
+        (&[][..], true, false),
+        (&[][..], false, true),
+        (&[0.5][..], true, true),
+    ] {
+        let base = Frame {
+            opacity,
+            hidden_edges,
+            wireframe,
+            ..frame(&camera, &block, &errors, false)
+        };
+        let pixels = scene.draw(&base);
+        let none = scene.draw(&Frame {
+            errors: &[],
+            ..base
+        });
+        let case = (opacity, hidden_edges, wireframe);
+        assert_eq!(pixels.at(188, 157), [255, 0, 0, 255], "{case:?}");
+        let (dim, face) = (pixels.at(188, 217), none.at(188, 217));
+        assert!(
+            redness(dim) > redness(face) + 40,
+            "{case:?}: {dim:?} {face:?}"
+        );
+        assert!(redness(dim) < 200, "{case:?}: {dim:?}");
+        // The halo over the block.
+        let (halo, face) = (pixels.at(188, 165), none.at(188, 165));
+        assert!(redness(halo) > redness(face) + 20, "{case:?}: {halo:?}");
     }
 }

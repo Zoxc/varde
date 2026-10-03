@@ -964,7 +964,9 @@ the patches' triangles a corner at a time, unindexed, the curves as an
 only when one differs, as `highlights` is; their box joins the depth
 range's bounds. A point not finite or past `RenderLines::MAX_POSITION`
 isn't drawn. Past the device's buffer size they're skipped and reported
-once (`PrepareError::ErrorsTooLarge`). The app hands it none yet.
+once (`PrepareError::ErrorsTooLarge`). Errors with nothing to draw (no
+triangles, curves or points) count as none: no passes, no target. The
+app hands it none yet.
 
 - The halo is coverage, not colour: halos overlap everywhere (a
   polyline's joints, two segments that touch, a point on a curve), and
@@ -1008,8 +1010,17 @@ once (`PrepareError::ErrorsTooLarge`). The app hands it none yet.
   rather than the nearer: both are the same red, lit. Curves and points
   are pulled in by their distance from their middle as the highlight's
   are (`highlight_slope`), patches as the edges are (`pulled`), so the
-  faces they lie on don't hide them. Geometry inside glass is hidden
-  by its depth, so drawn at 0.4 there.
+  faces they lie on don't hide them; but a patch's corner before the
+  near plane isn't pulled, so its triangle is clipped there as the
+  model's are (`pulled` keeps a point at the plane, and the triangle
+  unclipped would show what's between the plane and the eye across the
+  view). The halo's quads are pulled by the same slope, out to their
+  edge (`ERROR_HALO` beyond the core: 40 pixels' worth of the world
+  there), so the halo of a curve on a face seen slanted shows evenly both
+  sides; the cost is that the halo of a curve hidden just under a face
+  (within about that depth) shows at full strength away from it while
+  its core is dimmed. Geometry inside glass is hidden by its depth, so
+  drawn at 0.4 there.
 
 On WebGL2 all of it holds: `R8` is colour-renderable and blendable in
 OpenGL ES 3.0, `MIN`/`MAX` are core blend equations there, `textureLoad`

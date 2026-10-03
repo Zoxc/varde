@@ -70,3 +70,45 @@ fn errors_are_built_together_without_points_past_the_bound() {
         [NO_EDGE, 0, 0, 0, 1, 1, 2, 2, 2, 3, 3, NO_EDGE].to_vec()
     );
 }
+
+#[test]
+fn errors_with_nothing_to_draw_draw_nothing() {
+    // No errors, or errors of no triangles, curves or points: the stream
+    // of curves is empty rather than its two ends, which would keep the
+    // errors' passes (and their target) going while none are shown.
+    let (mesh, lines, source) = (RenderMesh::default(), RenderLines::default(), Arc::new(()));
+    let empty = ErrorParts {
+        mesh: &mesh,
+        lines: &lines,
+        points: &[],
+        source: Arc::downgrade(&source) as Weak<dyn Any + Send + Sync>,
+    };
+    for errors in [&[][..], &[empty.clone(), empty]] {
+        let built = BuiltErrors::new(errors);
+        assert!(built.edges.is_empty(), "{} points", built.edges.len());
+        assert!(built.positions.is_empty() && built.points.is_empty());
+    }
+
+    let instance = wgpu::Instance::default();
+    let options = wgpu::RequestAdapterOptions::default();
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&options)) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (device, queue) =
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+    let mut lines = RenderLines::default();
+    lines.push([Vec3::ZERO, Vec3::X]).unwrap();
+    let shown = ErrorParts {
+        mesh: &mesh,
+        lines: &lines,
+        points: &[],
+        source: Arc::downgrade(&source) as Weak<dyn Any + Send + Sync>,
+    };
+    let mut buffers = ErrorBuffers::default();
+    buffers.write(&device, &queue, &[shown]).unwrap();
+    assert!(buffers.any());
+    // Shown, then hidden again.
+    buffers.write(&device, &queue, &[]).unwrap();
+    assert!(!buffers.any());
+}

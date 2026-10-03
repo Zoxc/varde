@@ -2771,7 +2771,11 @@ impl BuiltErrors {
                 max: a.max.max(b.max),
             });
         }
-        built.edges = stream.finish();
+        // Without a curve, nothing rather than the stream's two ends, so
+        // that errors of none don't count as some to draw.
+        if stream.len() > 1 {
+            built.edges = stream.finish();
+        }
         built
     }
 }

@@ -405,4 +405,20 @@ fn errors_past_the_buffer_limit_are_skipped() {
         ),
         Err(too_large)
     );
+    // Smaller ones after, from another source, are uploaded and drawn.
+    let mut small = RenderLines::default();
+    small.push([Vec3::ZERO, Vec3::X]).unwrap();
+    let smaller: Arc<dyn std::any::Any + Send + Sync> = Arc::new(());
+    let errors = [ErrorParts {
+        lines: &small,
+        ..parts(&smaller)
+    }];
+    let frame = Frame {
+        errors: &errors,
+        ..frame
+    };
+    assert_eq!(renderer.prepare(&mut slot, &device, &queue, &frame), Ok(()));
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.render(&slot, &mut encoder, &view, clip);
+    queue.submit([encoder.finish()]);
 }
