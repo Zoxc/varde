@@ -2497,20 +2497,20 @@ fn damaged_measures_never_panic_and_what_is_taken_holds() {
 fn failure_geometry() -> Arc<ErrorGeometry> {
     use glam::DVec3;
     use varde_kernel::patch::{Conic3, Patch};
-    use varde_kernel::{Display, Evidence, Failure, KernelError, Operand};
+    use varde_kernel::{Evidence, Failure, KernelError, Operand, Tolerance};
 
     let mut evidence = Evidence::default();
-    evidence.patches([Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap()]);
-    evidence.curves([Conic3::line(DVec3::ZERO, DVec3::Z).unwrap()]);
-    evidence.points([DVec3::ONE]);
-    evidence.sketch_curves([4]);
-    evidence.faces([(Operand::A, face().key)]);
+    evidence.add_patches([Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap()]);
+    evidence.add_curves([Conic3::line(DVec3::ZERO, DVec3::Z).unwrap()]);
+    evidence.add_points([DVec3::ONE]);
+    evidence.add_sketch_curves([4]);
+    evidence.add_faces([(Operand::A, face().key)]);
     let failure = Failure {
         error: KernelError::TooComplex,
         evidence: Box::new(evidence),
     };
-    let mut geometry =
-        ErrorGeometry::new(&failure, [Some(BodyId::NEW), None], &Display::default()).unwrap();
+    let failure = crate::error_geometry::KernelFailure::new(failure, &Tolerance::DEFAULT);
+    let mut geometry = Arc::unwrap_or_clone(failure.geometry([Some(BodyId::NEW), None]).unwrap());
     let Response::Regenerated { mesh, picking, .. } = answer(triangle_mesh(), vec![BodyId::NEW])
     else {
         unreachable!("an answer")

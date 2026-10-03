@@ -548,19 +548,19 @@ impl Solid {
         tol: &Tolerance,
         budget: &Budget,
     ) -> Result<Solid, Failure> {
-        self.transformed_within(motion, copy, tol, budget)
+        self.transformed_within(motion, copy, tol, &mut Work::new(budget))
             .map_err(Failure::from)
     }
 
-    /// [`Solid::transformed`], failing with the error alone.
+    /// [`Solid::transformed`] within `work`, failing with the error
+    /// alone.
     fn transformed_within(
         &self,
         motion: &Motion,
         copy: Option<Instance>,
         tol: &Tolerance,
-        budget: &Budget,
+        work: &mut Work,
     ) -> Result<Solid, KernelError> {
-        let mut work = Work::new(budget);
         let mesh = self.mesh();
         work.spend(mesh.tris().len().saturating_mul(TRANSFORM_WORK))?;
         let mapped = |p: DVec3| {
@@ -614,7 +614,7 @@ impl Solid {
             })
             .collect();
         let mesh = Mesh::from_parts(verts, edges, tris, faces).with_aliases(aliases);
-        Solid::new_within(mesh, tol, &mut work)
+        Solid::new_within(mesh, tol, work)
     }
 }
 

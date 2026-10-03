@@ -7720,8 +7720,9 @@ Box<Evidence> }` (boxed so the `Result` stays small: five vectors
 would make every `Err` past clippy's `result_large_err`), with
 `From<KernelError>` (empty evidence) so `?` converts,
 and `Display` the error's. Each is a thin wrapper over a private
-function returning `KernelError` (`extruded`, `revolved`,
-`boolean_within`, `touches_within`, `transformed_within`); `assemble`
+function returning `KernelError` (`extruded`, `revolved`, and
+`boolean_within`, `touches_within`, `transformed_within`, which take the
+`Work`); `assemble`
 returns its unions' failures as they are. Other public functions that
 can fail (`Solid::new`, `cuboid`, `cylinder`, `Mesh::repair`,
 `Solid::moments`) keep `KernelError`. `Evidence` is the geometry the
@@ -7737,8 +7738,8 @@ it; no step does yet, so every failure's evidence is empty for now.
 Its rules: evidence never changes an outcome (no `Ok` becomes an error
 or the reverse, and the error is the one returned without it; tests
 compare errors with the evidence stripped, through the test-only
-`Stripped` trait); it is bounded, the adders (`Evidence::patches`,
-`curves`, `points`, `sketch_curves`, `faces`) keeping the first items in
+`Stripped` trait); it is bounded, the adders (`Evidence::add_patches`,
+`add_curves`, `add_points`, `add_sketch_curves`, `add_faces`) keeping the first items in
 order up to `MAX_EVIDENCE` and setting `truncated` past it (the fields
 are open, so a receiver checks `within_caps`); it is gathered from a
 fresh `EVIDENCE_WORK` allowance (`failure::evidence_work`, spent through
@@ -7747,8 +7748,8 @@ operation's budget, so finding it can't make an error `TooComplex`;
 it is deterministic; and it goes with the error returned, so where an
 operation retries and returns an earlier try's error, that try's
 evidence is kept with it (`(KernelError, Evidence)` together, not a
-side slot on `Work`). `TooComplex` carries none. Regen keeps the
-`Failure` in its cache and makes the evidence drawable
+side slot on `Work`). `TooComplex` carries none. Regen makes the
+evidence drawable once and keeps that in its cache
 (`ErrorGeometry`, with `Display::flatten` and `Display::sample_patch`;
 see `agents/features.md`, "Failures and where they are").
 

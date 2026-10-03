@@ -6,10 +6,12 @@
 //! and the operand faces by name. Regen turns that into what the renderer
 //! uploads as it does the model's ([`ErrorGeometry`]): the patches
 //! tessellated as a solid's faces are ([`Display::sample_patch`]) into a
-//! [`RenderMesh`] of their own, the curves and the patches' boundaries
-//! flattened as a solid's edges are ([`Display::flatten`]) into
-//! [`RenderLines`], the points as they are; and the box around it all,
-//! for framing it. The operand faces are resolved through the answer's
+//! [`RenderMesh`] of their own, the curves and the boundary of the
+//! patches (the sides no two of them share) flattened as a solid's edges
+//! are ([`Display::flatten`]) into [`RenderLines`], the points as they
+//! are; and the box around it all, for framing it. That is done once per
+//! failure, which the cache keeps made ([`KernelFailure`]). The operand
+//! faces are resolved through the answer's
 //! [`Picking`] to the mesh faces of the body each operand is drawn as,
 //! once the model is drawn ([`ErrorGeometry::resolve`]); an operand that
 //! isn't a drawn body (a feature's tool solid) names none.
@@ -29,8 +31,8 @@ use varde_document::{BodyId, FeatureId};
 use varde_kernel::mesh::FaceKey;
 use varde_kernel::patch::{Bounds3, Conic3, Patch};
 use varde_kernel::{
-    Aabb, Display, Evidence, Failure, LinesError, MAX_EVIDENCE, MeshError, MeshParts, Operand,
-    RenderLines, RenderMesh,
+    Aabb, Display, Evidence, Failure, KernelError, LinesError, MAX_EVIDENCE, MeshError, MeshParts,
+    Operand, RenderLines, RenderMesh, Tolerance,
 };
 
 use crate::Picking;
@@ -55,6 +57,60 @@ pub struct FeatureFailure {
 impl PartialEq<(FeatureId, String)> for FeatureFailure {
     fn eq(&self, (feature, message): &(FeatureId, String)) -> bool {
         self.feature == *feature && self.message == *message
+    }
+}
+
+/// A kernel failure as the cache keeps it: its error, its evidence made
+/// drawable once ([`ErrorGeometry`]), and the operand faces the evidence
+/// names, which are placed on bodies only where it is used
+/// ([`KernelFailure::geometry`]): the same boolean may be of different
+/// bodies.
+#[derive(Debug)]
+pub(crate) struct KernelFailure {
+    pub(crate) error: KernelError,
+    geometry: Option<Arc<ErrorGeometry>>,
+    faces: Vec<(Operand, FaceKey)>,
+}
+
+impl KernelFailure {
+    /// `failure`, its evidence made drawable at the [`Display`] of
+    /// `tolerance`, as the model is.
+    pub(crate) fn new(failure: Failure, tolerance: &Tolerance) -> KernelFailure {
+        let display = Display::new(tolerance);
+        KernelFailure {
+            error: failure.error,
+            geometry: ErrorGeometry::new(&failure.evidence, &display).map(Arc::new),
+            faces: failure.evidence.faces,
+        }
+    }
+
+    /// Its geometry, the operand faces pending on the bodies `operands`
+    /// are (`[a, b]`, `None` for an operand that isn't a body, such as a
+    /// feature's tool) until [`ErrorGeometry::resolve`]; the very
+    /// geometry kept where no face is pending.
+    pub(crate) fn geometry(&self, operands: [Option<BodyId>; 2]) -> Option<Arc<ErrorGeometry>> {
+        let pending: Vec<(BodyId, FaceKey)> = (self.faces.iter())
+            .filter_map(|&(operand, key)| {
+                let body = match operand {
+                    Operand::A => operands[0],
+                    Operand::B => operands[1],
+                };
+                Some((body?, key))
+            })
+            .collect();
+        if pending.is_empty() {
+            return self.geometry.clone();
+        }
+        let mut geometry = self.geometry.as_deref().cloned().unwrap_or_default();
+        geometry.pending = pending;
+        Some(Arc::new(geometry))
+    }
+
+    /// About how many bytes it holds, for the cache.
+    pub(crate) fn bytes(&self) -> usize {
+        (size_of::<KernelFailure>())
+            .saturating_add(size_of_val(&self.faces[..]))
+            .saturating_add(self.geometry.as_deref().map_or(0, ErrorGeometry::bytes))
     }
 }
 
@@ -99,16 +155,11 @@ impl ErrorGeometry {
     /// mesh reaches.
     pub const MAX_POSITION: f32 = RenderMesh::MAX_POSITION;
 
-    /// `failure`'s evidence made drawable at `display`, its operand faces
-    /// pending on the bodies `operands` are (`[a, b]`, `None` for an
-    /// operand that isn't a body, such as a feature's tool), or `None` if
-    /// there's nothing to draw or name.
-    pub(crate) fn new(
-        failure: &Failure,
-        operands: [Option<BodyId>; 2],
-        display: &Display,
-    ) -> Option<ErrorGeometry> {
-        let evidence = &*failure.evidence;
+    /// `evidence` made drawable at `display`, or `None` if there's nothing
+    /// to draw or name. Its operand faces are left to
+    /// [`KernelFailure::geometry`], which knows the bodies the operands
+    /// are.
+    fn new(evidence: &Evidence, display: &Display) -> Option<ErrorGeometry> {
         if evidence.is_empty() {
             return None;
         }
@@ -118,12 +169,8 @@ impl ErrorGeometry {
         };
         let diagonal = diagonal(evidence);
         geometry.add_patches(&evidence.patches, display, diagonal);
-        let boundaries = (evidence.patches.iter())
-            .filter(|patch| patch.check().is_ok())
-            .flat_map(|patch| [0, 1, 2].map(|i| patch.edge(i)));
-        let curves: Vec<Conic3> = (evidence.curves.iter().copied())
-            .chain(boundaries)
-            .collect();
+        let mut curves = evidence.curves.clone();
+        curves.extend(boundary(&evidence.patches));
         geometry.add_curves(&curves, display, diagonal);
         for &point in &evidence.points {
             match placed(point) {
@@ -137,15 +184,6 @@ impl ErrorGeometry {
             .take(Self::MAX_SKETCH_CURVES)
             .collect();
         geometry.truncated |= evidence.sketch_curves.len() > Self::MAX_SKETCH_CURVES;
-        for &(operand, key) in &evidence.faces {
-            let body = match operand {
-                Operand::A => operands[0],
-                Operand::B => operands[1],
-            };
-            if let Some(body) = body {
-                geometry.pending.push((body, key));
-            }
-        }
         geometry.bounds = geometry.bounds_in(None);
         (!geometry.is_empty()).then_some(geometry)
     }
@@ -266,6 +304,21 @@ impl ErrorGeometry {
             && self.pending.is_empty()
     }
 
+    /// About how many bytes it holds, for the cache.
+    pub(crate) fn bytes(&self) -> usize {
+        let mesh = &self.mesh;
+        (size_of::<ErrorGeometry>())
+            .saturating_add(size_of_val(mesh.positions()))
+            .saturating_add(size_of_val(mesh.normals()))
+            .saturating_add(size_of_val(mesh.indices()))
+            .saturating_add(size_of_val(self.lines.points()))
+            .saturating_add(size_of_val(self.lines.ends()))
+            .saturating_add(size_of_val(&self.points[..]))
+            .saturating_add(size_of_val(&self.sketch_curves[..]))
+            .saturating_add(size_of_val(&self.faces[..]))
+            .saturating_add(size_of_val(&self.pending[..]))
+    }
+
     /// The box around its mesh, lines and points, and its faces in
     /// `model` (the answer's mesh) if given.
     fn bounds_in(&self, model: Option<&RenderMesh>) -> Option<Aabb> {
@@ -277,8 +330,8 @@ impl ErrorGeometry {
                 max: b.max.max(p),
             }));
         };
-        let positions = self.mesh.positions();
-        (self.mesh.indices().iter()).for_each(|&v| take(positions[v as usize]));
+        // Every position is a triangle's corner.
+        self.mesh.positions().iter().copied().for_each(&mut take);
         self.lines.points().iter().copied().for_each(&mut take);
         self.points.iter().copied().for_each(&mut take);
         if let Some(model) = model {
@@ -301,7 +354,7 @@ impl ErrorGeometry {
         &self.mesh
     }
 
-    /// The curves, then each patch's three sides, flattened.
+    /// The curves, then the patches' boundary, flattened.
     pub fn lines(&self) -> &RenderLines {
         &self.lines
     }
@@ -537,6 +590,33 @@ fn mesh_of(
 fn placed(p: DVec3) -> Option<[f32; 3]> {
     let p = p.as_vec3();
     (p.is_finite() && p.abs().max_element() <= ErrorGeometry::MAX_POSITION).then(|| p.to_array())
+}
+
+/// The sides of `patches` that aren't shared with another of them, in
+/// order: the boundary of the region they make, so a shell's or a
+/// neighbourhood's inside isn't drawn as lines. Two patches share a side
+/// where one's runs back along the other's (a mesh's neighbours hold
+/// the same corners, control point and weight); patches failing their
+/// check are left out, as they aren't drawn.
+fn boundary(patches: &[Patch]) -> Vec<Conic3> {
+    // A side's bits, `-0.0` taken as `0.0`.
+    let bits = |p: DVec3| (p + DVec3::ZERO).to_array().map(f64::to_bits);
+    let key = |c: &Conic3| (bits(c.p0), bits(c.p1), bits(c.c), (c.w + 0.0).to_bits());
+    let sides: Vec<Conic3> = (patches.iter())
+        .filter(|patch| patch.check().is_ok())
+        .flat_map(|patch| [0, 1, 2].map(|i| patch.edge(i)))
+        .collect();
+    let mut keys: Vec<_> = sides.iter().map(key).collect();
+    keys.sort_unstable();
+    let back = |c: &Conic3| Conic3 {
+        p0: c.p1,
+        p1: c.p0,
+        ..*c
+    };
+    (sides.iter())
+        .filter(|side| keys.binary_search(&key(&back(side))).is_err())
+        .copied()
+        .collect()
 }
 
 /// The diagonal of the box around `evidence`'s patches, curves and points

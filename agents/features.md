@@ -56,24 +56,33 @@ draft's `Drafted` carries the same `geometry` beside its `error`. The
 message is worded from the kernel's `failure.error` as before
 (`src/message.rs`).
 
-- **Carried**: inside the history a failure is `Failed { message,
-  kernel: Option<(Arc<Failure>, [Option<BodyId>; 2])> }`: the kernel's
-  `Failure` (with its `Evidence`) and the bodies its operands `a` and `b`
-  are (a join's, cut's or intersect's boolean: the body, then the tool,
-  which is none; a merge step: the first body, then the body merged or
-  none for the tool; a combine step: the target, then the tool body;
-  `touches`: the body, then none; extrude and revolve: none). Failures
-  that aren't the kernel's convert from their words (`From<String>`).
-  The cache keeps the `Arc<Failure>` (`Entry::Touches`, `Entry::Boolean`;
-  a tool's `Entry::Solid` keeps the whole `Failed`), so a failure found
-  again keeps its evidence; `Entry::bytes` counts the evidence.
-- **Made drawable** (`ErrorGeometry::new`, at the document's `Display`):
-  patches tessellated each on its own as a face of no known form is
-  (`Display::sample_patch`) into one `RenderMesh` of one part and one
-  face with triangles only; the curves, then each patch's three sides,
-  flattened as a solid's edges are (`Display::flatten`) into
-  `RenderLines`; points as `[f32; 3]`; the sketch curves as ids; all
-  relative to the diagonal of the evidence's own box. Bounded
+- **Carried**: the cache keeps a kernel failure as a `KernelFailure`
+  (`Entry::Touches`, `Entry::Boolean`): its `error`, its evidence made
+  drawable once (`ErrorGeometry::new`, below) and the operand faces the
+  evidence names, so a failure found again is neither made nor drawn
+  again. Inside the history a failure is `Failed { message, geometry }`
+  (a `FeatureFailure` without its feature; a tool's `Entry::Solid` keeps
+  it whole). `Failed::kernel` takes the geometry from
+  `KernelFailure::geometry(operands)`, the bodies the operands `a` and
+  `b` are (a join's, cut's or intersect's boolean: the body, then the
+  tool, which is none; a merge step: the first body, then the body
+  merged or none for the tool; a combine step: the target, then the tool
+  body; `touches`: the body, then none; extrude and revolve: none). With
+  no operand face on a body that is the very `Arc` kept, so an unchanged
+  failure is the same `Arc` from one answer to the next; with some, a
+  copy with those faces pending. Failures that aren't the kernel's
+  convert from their words (`From<String>`). `Entry::bytes` counts the
+  geometry.
+- **Made drawable** (`ErrorGeometry::new`, at the `Display` of the
+  document's tolerance): patches tessellated each on its own as a face of
+  no known form is (`Display::sample_patch`) into one `RenderMesh` of one
+  part and one face with triangles only; the curves, then the patches'
+  boundary (their sides no two of them share: a side matches another
+  running back along it with the same control point and weight, as a
+  mesh's neighbours' do), flattened as a solid's edges are
+  (`Display::flatten`) into `RenderLines`; points as `[f32; 3]`; the
+  sketch curves as ids; all relative to the diagonal of the evidence's
+  own box. Bounded
   (`MAX_VERTICES` 2^18, `MAX_INDICES` 3·2^19, `MAX_LINE_POINTS` 2^18,
   points and sketch curves as `MAX_EVIDENCE`, `MAX_FACES` 4 ×
   `MAX_EVIDENCE.faces`), stopping at the first patch or curve that

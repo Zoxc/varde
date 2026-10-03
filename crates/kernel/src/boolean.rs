@@ -919,15 +919,15 @@ fn flat_decided(
 /// difference is below anything a user can place. It only picks what an
 /// operation works on: every [`boolean`] decides for itself.
 pub fn touches(a: &Solid, b: &Solid, tol: &Tolerance, budget: &Budget) -> Result<bool, Failure> {
-    touches_within(a, b, tol, budget).map_err(Failure::from)
+    touches_within(a, b, tol, &mut Work::new(budget)).map_err(Failure::from)
 }
 
-/// [`touches`], failing with the error alone.
+/// [`touches`] within `work`, failing with the error alone.
 fn touches_within(
     a: &Solid,
     b: &Solid,
     tol: &Tolerance,
-    budget: &Budget,
+    work: &mut Work,
 ) -> Result<bool, KernelError> {
     let (Some(ba), Some(bb)) = (a.bounds3(), b.bounds3()) else {
         return Ok(false);
@@ -936,10 +936,9 @@ fn touches_within(
     if (ba.min - bb.max).max_element() > gap || (bb.min - ba.max).max_element() > gap {
         return Ok(false);
     }
-    let mut work = Work::new(budget);
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
     if ia.curved || ib.curved {
-        return near::touching(&ia, &ib, tol, &mut work);
+        return near::touching(&ia, &ib, tol, work);
     }
     // Counted again exactly where the near ties don't fit together, as
     // the operation does ([`flat_soup`]).
@@ -947,8 +946,8 @@ fn touches_within(
         let prims = flat::Flat::tied(&ia, &ib, true, tie);
         count::count(&ia, &ib, &prims, tol, work)
     };
-    let counts = match counted(tie(tol), &mut work) {
-        Err(KernelError::Boolean(BooleanError::Inconsistent)) => counted(0.0, &mut work)?,
+    let counts = match counted(tie(tol), work) {
+        Err(KernelError::Boolean(BooleanError::Inconsistent)) => counted(0.0, work)?,
         counts => counts?,
     };
     Ok(counts.meet())

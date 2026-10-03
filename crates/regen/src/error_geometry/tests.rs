@@ -13,20 +13,22 @@ fn failure(evidence: Evidence) -> Failure {
     }
 }
 
-fn display() -> Display {
-    Display::default()
+/// `failure`'s geometry as the cache makes it, on the bodies `operands`.
+fn made(failure: &Failure, operands: [Option<BodyId>; 2]) -> Option<ErrorGeometry> {
+    let failure = KernelFailure::new(failure.clone(), &Tolerance::DEFAULT);
+    failure.geometry(operands).map(Arc::unwrap_or_clone)
 }
 
 /// Evidence of every kind: a flat patch, a quarter arc, two points, two
 /// sketch curves and a face of each operand.
 fn evidence() -> Evidence {
     let mut evidence = Evidence::default();
-    evidence.patches([Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap()]);
+    evidence.add_patches([Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap()]);
     let arc = Conic3::arc(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 0.0, 1.0).unwrap();
-    evidence.curves([arc]);
-    evidence.points([DVec3::new(0.0, 0.0, 3.0), DVec3::new(-1.0, 0.0, 0.0)]);
-    evidence.sketch_curves([7, 9]);
-    evidence.faces([(Operand::A, cap(1)), (Operand::B, cap(2))]);
+    evidence.add_curves([arc]);
+    evidence.add_points([DVec3::new(0.0, 0.0, 3.0), DVec3::new(-1.0, 0.0, 0.0)]);
+    evidence.add_sketch_curves([7, 9]);
+    evidence.add_faces([(Operand::A, cap(1)), (Operand::B, cap(2))]);
     evidence
 }
 
@@ -42,12 +44,12 @@ fn cap(feature: u64) -> FaceKey {
 #[test]
 fn no_evidence_is_no_geometry() {
     let empty = failure(Evidence::default());
-    assert_eq!(ErrorGeometry::new(&empty, [None, None], &display()), None);
+    assert_eq!(made(&empty, [None, None]), None);
     // Faces of operands that aren't bodies name nothing either.
     let mut faces = Evidence::default();
-    faces.faces([(Operand::B, cap(2))]);
+    faces.add_faces([(Operand::B, cap(2))]);
     let faces = failure(faces);
-    assert_eq!(ErrorGeometry::new(&faces, [None, None], &display()), None);
+    assert_eq!(made(&faces, [None, None]), None);
 }
 
 /// Each kind is made drawable: the patch tessellated, the arc and the
@@ -55,8 +57,7 @@ fn no_evidence_is_no_geometry() {
 /// named, the faces pending until resolved; the box holds them all.
 #[test]
 fn evidence_is_made_drawable() {
-    let geometry =
-        ErrorGeometry::new(&failure(evidence()), [None, None], &display()).expect("geometry");
+    let geometry = made(&failure(evidence()), [None, None]).expect("geometry");
     assert_eq!(geometry.mesh().triangle_count(), 1);
     assert_eq!(geometry.mesh().face_count(), 1);
     assert_eq!(geometry.mesh().part_ends().len(), 1);
@@ -84,8 +85,8 @@ fn evidence_is_made_drawable() {
 fn what_cannot_be_drawn_is_left_out() {
     let far = f64::from(ErrorGeometry::MAX_POSITION) * 2.0;
     let mut evidence = Evidence::default();
-    evidence.points([DVec3::ZERO, DVec3::splat(far), DVec3::NAN]);
-    let geometry = ErrorGeometry::new(&failure(evidence), [None, None], &display()).unwrap();
+    evidence.add_points([DVec3::ZERO, DVec3::splat(far), DVec3::NAN]);
+    let geometry = made(&failure(evidence), [None, None]).unwrap();
     assert_eq!(geometry.points(), [[0.0; 3]]);
     assert!(geometry.truncated());
 
@@ -95,21 +96,21 @@ fn what_cannot_be_drawn_is_left_out() {
         c: [DVec3::ZERO; 3],
         w: [-1.0; 3],
     };
-    evidence.patches([bad]);
-    evidence.curves([Conic3 {
+    evidence.add_patches([bad]);
+    evidence.add_curves([Conic3 {
         p0: DVec3::ZERO,
         c: DVec3::X,
         w: f64::NAN,
         p1: DVec3::Y,
     }]);
-    let geometry = ErrorGeometry::new(&failure(evidence), [None, None], &display());
+    let geometry = made(&failure(evidence), [None, None]);
     // Nothing drawable, but the mark says some was left out.
     assert_eq!(geometry, None);
 
     let mut evidence = Evidence::default();
-    evidence.sketch_curves([1]);
+    evidence.add_sketch_curves([1]);
     evidence.truncated = true;
-    let geometry = ErrorGeometry::new(&failure(evidence), [None, None], &display()).unwrap();
+    let geometry = made(&failure(evidence), [None, None]).unwrap();
     assert!(geometry.truncated());
     assert_eq!(geometry.bounds(), None);
 }
@@ -132,8 +133,8 @@ fn patches_past_the_bound_are_left_out() {
     )
     .unwrap();
     let patch = |_| bulge;
-    evidence.patches((0..MAX_EVIDENCE.patches).map(patch));
-    let geometry = ErrorGeometry::new(&failure(evidence), [None, None], &display()).unwrap();
+    evidence.add_patches((0..MAX_EVIDENCE.patches).map(patch));
+    let geometry = made(&failure(evidence), [None, None]).unwrap();
     let mesh = geometry.mesh();
     assert!(mesh.positions().len() <= ErrorGeometry::MAX_VERTICES);
     assert!(mesh.indices().len() <= ErrorGeometry::MAX_INDICES);
@@ -161,10 +162,10 @@ fn operand_faces_are_resolved_through_the_tables() {
         .position(|face| face.key == cap(1))
         .expect("the cube has a start cap") as u32;
     let mut evidence = Evidence::default();
-    evidence.faces([(Operand::A, cap(1)), (Operand::B, cap(1))]);
+    evidence.add_faces([(Operand::A, cap(1)), (Operand::B, cap(1))]);
     let failure = failure(evidence);
 
-    let mut geometry = ErrorGeometry::new(&failure, [Some(BodyId::NEW), None], &display()).unwrap();
+    let mut geometry = made(&failure, [Some(BodyId::NEW), None]).unwrap();
     assert!(!geometry.is_empty());
     assert_eq!(geometry.bounds(), None);
     geometry.resolve(&mesh, &picking, Some);
@@ -177,7 +178,7 @@ fn operand_faces_are_resolved_through_the_tables() {
     }
 
     // Its body isn't drawn: nothing is left.
-    let mut gone = ErrorGeometry::new(&failure, [Some(BodyId::NEW), None], &display()).unwrap();
+    let mut gone = made(&failure, [Some(BodyId::NEW), None]).unwrap();
     gone.resolve(&mesh, &picking, |_| None);
     assert!(gone.is_empty());
 }
@@ -186,8 +187,7 @@ fn operand_faces_are_resolved_through_the_tables() {
 #[test]
 fn parts_round_trip() {
     let (mesh, picking) = cube();
-    let mut geometry =
-        ErrorGeometry::new(&failure(evidence()), [Some(BodyId::NEW), None], &display()).unwrap();
+    let mut geometry = made(&failure(evidence()), [Some(BodyId::NEW), None]).unwrap();
     geometry.resolve(&mesh, &picking, Some);
     assert_eq!(geometry.faces().len(), 1);
     let parts = geometry.to_parts();
@@ -204,8 +204,7 @@ fn parts_round_trip() {
 #[test]
 fn bad_parts_are_refused() {
     let (mesh, picking) = cube();
-    let mut geometry =
-        ErrorGeometry::new(&failure(evidence()), [Some(BodyId::NEW), None], &display()).unwrap();
+    let mut geometry = made(&failure(evidence()), [Some(BodyId::NEW), None]).unwrap();
     geometry.resolve(&mesh, &picking, Some);
     let good = geometry.to_parts();
     let refused = |change: &dyn Fn(&mut GeometryParts)| {
@@ -288,21 +287,50 @@ fn oversized_parts_are_refused_as_decoded() {
     assert!(postcard::from_bytes::<GeometryParts>(&bytes).is_err());
 }
 
-/// A failure the cache keeps keeps its evidence: found again, it's the
-/// very failure made.
+/// A failure the cache keeps keeps its geometry, made once: found
+/// again, it's the very failure made, and with no operand faces pending
+/// its geometry is the very one kept, so nothing is made again.
 #[test]
-fn a_cached_failure_keeps_its_evidence() {
+fn a_cached_failure_keeps_its_geometry() {
     use crate::cache::{Cache, Keyer};
 
+    let kept = || KernelFailure::new(failure(evidence()), &Tolerance::DEFAULT);
     let mut cache = Cache::default();
     let key = Keyer::new("boolean").finish();
-    let made = cache.boolean(key, || Err(failure(evidence()))).unwrap_err();
+    let made = cache.boolean(key, || Err(kept())).unwrap_err();
     let found = (cache.boolean(key, || unreachable!("found"))).unwrap_err();
     assert!(Arc::ptr_eq(&made, &found));
-    assert_eq!(*found.evidence, evidence());
+    assert_eq!(found.error, failure(evidence()).error);
+    let tool = found.geometry([None, None]).unwrap();
+    assert!(Arc::ptr_eq(&tool, &found.geometry([None, None]).unwrap()));
+    assert_eq!(tool.sketch_curves(), [7, 9]);
+    // On a body, its face is pending on it: geometry of its own.
+    let on = found.geometry([Some(BodyId::NEW), None]).unwrap();
+    assert!(!Arc::ptr_eq(&tool, &on));
+    assert_eq!(on.pending, [(BodyId::NEW, cap(1))]);
 
     let key = Keyer::new("touches").finish();
-    let made = cache.touches(key, || Err(failure(evidence()))).unwrap_err();
+    let made = cache.touches(key, || Err(kept())).unwrap_err();
     let found = (cache.touches(key, || unreachable!("found"))).unwrap_err();
     assert!(Arc::ptr_eq(&made, &found));
+}
+
+/// Of patches sharing sides, only the sides no two share are drawn: two
+/// triangles making a square draw its four sides, not its diagonal.
+#[test]
+fn only_the_patches_boundary_is_drawn() {
+    let (o, x, y, xy) = (DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::new(1.0, 1.0, 0.0));
+    let mut evidence = Evidence::default();
+    let flat = |p| Patch::flat(p).unwrap();
+    evidence.add_patches([flat([o, x, xy]), flat([o, xy, y])]);
+    let geometry = made(&failure(evidence), [None, None]).unwrap();
+    assert_eq!(geometry.mesh().triangle_count(), 2);
+    let sides: Vec<[[f32; 3]; 2]> = (geometry.lines().polylines())
+        .map(|line| [line[0], line[line.len() - 1]])
+        .collect();
+    let f = |p: DVec3| p.as_vec3().to_array();
+    assert_eq!(
+        sides,
+        [[f(o), f(x)], [f(x), f(xy)], [f(xy), f(y)], [f(y), f(o)]]
+    );
 }

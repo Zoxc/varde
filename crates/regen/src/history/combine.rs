@@ -8,6 +8,7 @@ use varde_kernel::{Budget, Op, Solid, Tolerance};
 
 use super::{BodySolid, Evaluation, Failed, boolean_key, note_merge};
 use crate::cache::{Cache, Key};
+use crate::error_geometry::KernelFailure;
 use crate::message::{self, Doing};
 
 /// Changes the bodies of `evaluation` (those the features before the
@@ -78,6 +79,7 @@ pub(super) fn evaluate(
         let next = boolean_key(doing, *key, tool.key);
         let result = cache.boolean(next, || {
             varde_kernel::boolean(solid, &tool.solid, op, tolerance, &Budget::DEFAULT)
+                .map_err(|failure| KernelFailure::new(failure, tolerance))
         });
         let words = match doing {
             // The messages say "joining" for a union.
@@ -87,7 +89,7 @@ pub(super) fn evaluate(
         let tool_name = name(tool.body);
         let solid = result.map_err(|failure| {
             let message = message::combining(words, target_name, tool_name, failure.error);
-            Failed::kernel(message, failure, [Some(target.body), Some(tool.body)])
+            Failed::kernel(message, &failure, [Some(target.body), Some(tool.body)])
         })?;
         if solid.is_empty() {
             return Err(message::combine_emptied(words, target_name, tool_name).into());

@@ -100,9 +100,10 @@ pub const EVIDENCE_WORK: u64 = 1 << 16;
 /// operand faces. Coordinates are the operation's world coordinates
 /// (extrude and revolve place the profile by their frame).
 ///
-/// The fields are open; the methods adding items ([`Evidence::points`]
-/// and the others) keep to
-/// [`MAX_EVIDENCE`], and whoever receives one from elsewhere checks it.
+/// The fields are open; the methods adding items
+/// ([`Evidence::add_points`] and the others) keep to [`MAX_EVIDENCE`],
+/// and whoever receives one from elsewhere checks it
+/// ([`Evidence::within_caps`]).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Evidence {
     /// Triangles of a failed result, or of an operand.
@@ -143,7 +144,7 @@ impl Evidence {
     }
 
     /// Adds `patches` in order, up to the cap.
-    pub fn patches(&mut self, patches: impl IntoIterator<Item = Patch>) {
+    pub fn add_patches(&mut self, patches: impl IntoIterator<Item = Patch>) {
         capped(
             &mut self.patches,
             MAX_EVIDENCE.patches,
@@ -153,7 +154,7 @@ impl Evidence {
     }
 
     /// Adds `curves` in order, up to the cap.
-    pub fn curves(&mut self, curves: impl IntoIterator<Item = Conic<DVec3>>) {
+    pub fn add_curves(&mut self, curves: impl IntoIterator<Item = Conic<DVec3>>) {
         capped(
             &mut self.curves,
             MAX_EVIDENCE.curves,
@@ -163,7 +164,7 @@ impl Evidence {
     }
 
     /// Adds `points` in order, up to the cap.
-    pub fn points(&mut self, points: impl IntoIterator<Item = DVec3>) {
+    pub fn add_points(&mut self, points: impl IntoIterator<Item = DVec3>) {
         capped(
             &mut self.points,
             MAX_EVIDENCE.points,
@@ -173,7 +174,7 @@ impl Evidence {
     }
 
     /// Adds sketch curve ids in order, up to the cap.
-    pub fn sketch_curves(&mut self, curves: impl IntoIterator<Item = u64>) {
+    pub fn add_sketch_curves(&mut self, curves: impl IntoIterator<Item = u64>) {
         capped(
             &mut self.sketch_curves,
             MAX_EVIDENCE.sketch_curves,
@@ -183,7 +184,7 @@ impl Evidence {
     }
 
     /// Adds operand faces in order, up to the cap.
-    pub fn faces(&mut self, faces: impl IntoIterator<Item = (Operand, FaceKey)>) {
+    pub fn add_faces(&mut self, faces: impl IntoIterator<Item = (Operand, FaceKey)>) {
         capped(
             &mut self.faces,
             MAX_EVIDENCE.faces,
@@ -323,23 +324,23 @@ mod tests {
     #[test]
     fn caps_truncate() {
         let mut e = Evidence::default();
-        e.points((0..MAX_EVIDENCE.points).map(|i| DVec3::splat(i as f64)));
+        e.add_points((0..MAX_EVIDENCE.points).map(|i| DVec3::splat(i as f64)));
         assert!(!e.truncated);
         assert!(e.within_caps());
-        e.points([DVec3::ZERO]);
+        e.add_points([DVec3::ZERO]);
         assert!(e.truncated);
         assert_eq!(e.points.len(), MAX_EVIDENCE.points);
         assert_eq!(e.points[1], DVec3::ONE);
 
         let mut e = Evidence::default();
-        e.sketch_curves(0..u64::MAX);
+        e.add_sketch_curves(0..u64::MAX);
         assert_eq!(e.sketch_curves.len(), MAX_EVIDENCE.sketch_curves);
         assert!(e.truncated && e.within_caps());
 
         let mut e = Evidence::default();
-        e.faces(std::iter::empty());
-        e.curves(std::iter::empty());
-        e.patches(std::iter::empty());
+        e.add_faces(std::iter::empty());
+        e.add_curves(std::iter::empty());
+        e.add_patches(std::iter::empty());
         assert!(e.is_empty());
     }
 

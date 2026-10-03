@@ -57,13 +57,11 @@ use varde_document::{
 };
 use varde_kernel::mesh::Form;
 use varde_kernel::patch::Conic2;
-use varde_kernel::{
-    Budget, Display, Failure, Frame, Loop, Op, Profile, Segment, Solid, Sweep, Tolerance,
-};
+use varde_kernel::{Budget, Failure, Frame, Loop, Op, Profile, Segment, Solid, Sweep, Tolerance};
 use varde_sketch::{Curve, Id, Profiles, RegionRef, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
-use crate::error_geometry::{ErrorGeometry, FeatureFailure};
+use crate::error_geometry::{ErrorGeometry, FeatureFailure, KernelFailure};
 use crate::message::{self, Doing, Making};
 use crate::picking::region_form;
 use crate::profile::profile;
@@ -140,38 +138,35 @@ pub fn note_merge(merged: &mut Vec<(BodyId, BodyId)>, bodies: &[BodyId]) {
     merged.extend(consumed.iter().map(|&body| (body, holder)));
 }
 
-/// Why a feature fails, as the history carries it: in words, and the
-/// kernel's failure behind them, if it's the kernel's, with the bodies
-/// its operands are (`[a, b]`, `None` for an operand that isn't a body,
-/// such as the feature's tool).
+/// Why a feature fails, as the history carries it: in words, and what
+/// to draw of where, made from the kernel's failure where it's the
+/// kernel's ([`FeatureFailure`] without the feature).
 #[derive(Debug, Clone)]
 pub(crate) struct Failed {
     pub(crate) message: String,
-    pub(crate) kernel: Option<(Arc<Failure>, [Option<BodyId>; 2])>,
+    pub(crate) geometry: Option<Arc<ErrorGeometry>>,
 }
 
 impl Failed {
-    /// The kernel's `failure`, worded as `message`, of the bodies
-    /// `operands`.
+    /// The kernel's `failure`, worded as `message`, of the bodies its
+    /// operands are (`[a, b]`, see [`KernelFailure::geometry`]).
     pub(crate) fn kernel(
         message: String,
-        failure: Arc<Failure>,
+        failure: &KernelFailure,
         operands: [Option<BodyId>; 2],
     ) -> Failed {
         Failed {
             message,
-            kernel: Some((failure, operands)),
+            geometry: failure.geometry(operands),
         }
     }
 
-    /// The failure of `feature`, its geometry made at `display`.
-    pub(crate) fn of(self, feature: FeatureId, display: &Display) -> FeatureFailure {
-        let geometry = (self.kernel.as_ref())
-            .and_then(|(failure, operands)| ErrorGeometry::new(failure, *operands, display));
+    /// The failure of `feature`.
+    pub(crate) fn of(self, feature: FeatureId) -> FeatureFailure {
         FeatureFailure {
             feature,
             message: self.message,
-            geometry: geometry.map(Arc::new),
+            geometry: self.geometry,
         }
     }
 }
@@ -180,7 +175,7 @@ impl From<String> for Failed {
     fn from(message: String) -> Failed {
         Failed {
             message,
-            kernel: None,
+            geometry: None,
         }
     }
 }
@@ -229,7 +224,6 @@ pub(crate) fn evaluate_within(
     touching: Budget,
 ) -> Evaluation {
     let tolerance = document.tolerance();
-    let display = Display::new(&tolerance);
     let mut sketches: Vec<SketchOutput> = Vec::new();
     let mut evaluation = Evaluation::default();
     for feature in document.features() {
@@ -246,7 +240,7 @@ pub(crate) fn evaluate_within(
                             Some(placement)
                         }
                         Err(error) => {
-                            (evaluation.failed).push(Failed::from(error).of(feature.id, &display));
+                            (evaluation.failed).push(Failed::from(error).of(feature.id));
                             None
                         }
                     },
@@ -275,7 +269,7 @@ pub(crate) fn evaluate_within(
                 // before it.
                 let Some(sketch) = sketches.iter().find(|s| s.id == sketch) else {
                     let failed = Failed::from("its sketch isn't there");
-                    evaluation.failed.push(failed.of(feature.id, &display));
+                    evaluation.failed.push(failed.of(feature.id));
                     continue;
                 };
                 let run = Run {
@@ -288,14 +282,14 @@ pub(crate) fn evaluate_within(
                     touching,
                 };
                 if let Err(failed) = run.evaluate(&mut evaluation, cache) {
-                    evaluation.failed.push(failed.of(feature.id, &display));
+                    evaluation.failed.push(failed.of(feature.id));
                 }
             }
             FeatureKind::Combine(combine) => {
                 if let Err(failed) =
                     combine::evaluate(document, combine, &tolerance, &mut evaluation, cache)
                 {
-                    evaluation.failed.push(failed.of(feature.id, &display));
+                    evaluation.failed.push(failed.of(feature.id));
                 }
             }
         }
@@ -429,10 +423,11 @@ impl Run<'_> {
             let solid = cache
                 .boolean(key, || {
                     varde_kernel::boolean(&made.solid, &tool, op, &self.tolerance, &Budget::DEFAULT)
+                        .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
                 })
                 .map_err(|failure| {
                     let words = fails(message::boolean(doing, name, failure.error));
-                    Failed::kernel(words, failure, [Some(made.body), None])
+                    Failed::kernel(words, &failure, [Some(made.body), None])
                 })?;
             // The cached empty result stays: its key is right, and the
             // check is cheap to make again. A cut's message says to
@@ -519,6 +514,7 @@ impl Run<'_> {
         let mut unite = |key: Key, a: &Solid, b: &Solid| {
             let solid = cache.boolean(key, || {
                 varde_kernel::boolean(a, b, Op::Union, &self.tolerance, &Budget::DEFAULT)
+                    .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
             });
             solid.map(|solid| (solid, key))
         };
@@ -549,7 +545,7 @@ impl Run<'_> {
             let name = self.body_name(first.body);
             let words =
                 message::leave_out(message::boolean(Doing::Joining, name, failure.error), name);
-            Failed::kernel(words, failure, [Some(first.body), None])
+            Failed::kernel(words, &failure, [Some(first.body), None])
         })?;
         for made in rest {
             merged = unite(
@@ -560,7 +556,7 @@ impl Run<'_> {
             .map_err(|failure| {
                 let (into, other) = (self.body_name(first.body), self.body_name(made.body));
                 let words = message::merging(into, other, failure.error);
-                Failed::kernel(words, failure, [Some(first.body), Some(made.body)])
+                Failed::kernel(words, &failure, [Some(first.body), Some(made.body)])
             })?;
         }
         Ok(merged)
@@ -583,6 +579,7 @@ impl Run<'_> {
         for made in bodies.iter().filter(|made| !excluded.contains(&made.body)) {
             let touches = cache.touches(touches_key(made.key, tool_key), || {
                 varde_kernel::touches(&made.solid, tool, &self.tolerance, &self.touching)
+                    .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
             });
             match touches {
                 Ok(true) => touched.push(made.body),
@@ -594,7 +591,7 @@ impl Run<'_> {
                     touched.push(made.body);
                     return Err((
                         touched,
-                        Failed::kernel(words, failure, [Some(made.body), None]),
+                        Failed::kernel(words, &failure, [Some(made.body), None]),
                     ));
                 }
             }
@@ -727,7 +724,8 @@ impl Run<'_> {
             failure.error,
             self.tolerance.fit() <= Tolerance::MIN_FIT,
         );
-        Failed::kernel(words, Arc::new(failure), [None, None])
+        let failure = KernelFailure::new(failure, &self.tolerance);
+        Failed::kernel(words, &failure, [None, None])
     }
 }
 
