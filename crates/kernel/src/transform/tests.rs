@@ -622,3 +622,33 @@ fn side_names_survive_a_turn() {
 }
 
 mod scale;
+
+/// A union's failure inside [`assemble`] names faces of that union's
+/// operands, not of `assemble`'s (it has none), so they're left out and
+/// marked; the rest of the evidence and the error stay.
+#[test]
+fn assemble_drops_its_unions_operand_faces() {
+    use crate::mesh::{FaceKey, PartKey};
+    use crate::{Evidence, KernelError, Operand};
+
+    let key = FaceKey {
+        feature: 1,
+        part: PartKey::StartCap,
+        instance: 0,
+    };
+    let mut evidence = Evidence::default();
+    evidence.add_points([DVec3::ONE]);
+    evidence.add_faces([(Operand::A, key), (Operand::B, key)]);
+    let failure = Failure {
+        error: KernelError::TooComplex,
+        evidence: Box::new(evidence),
+    };
+    let kept = of_parts(failure);
+    assert_eq!(kept.error, KernelError::TooComplex);
+    assert!(kept.evidence.faces.is_empty());
+    assert_eq!(kept.evidence.points, [DVec3::ONE]);
+    assert!(kept.evidence.truncated);
+    // Without faces it's as it was.
+    let bare = Failure::from(KernelError::TooComplex);
+    assert_eq!(of_parts(bare.clone()), bare);
+}

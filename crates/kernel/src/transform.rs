@@ -694,7 +694,7 @@ pub fn assemble(parts: &[Solid], tol: &Tolerance, budget: &Budget) -> Result<Sol
             let mut next = Vec::with_capacity(level.len().div_ceil(2));
             let (pairs, rest) = level.as_chunks::<2>();
             for [a, b] in pairs {
-                next.push(boolean(a, b, Op::Union, tol, budget)?);
+                next.push(boolean(a, b, Op::Union, tol, budget).map_err(of_parts)?);
             }
             next.extend(rest.iter().cloned());
             level = next;
@@ -710,6 +710,18 @@ pub fn assemble(parts: &[Solid], tol: &Tolerance, budget: &Budget) -> Result<Sol
             Ok(Solid::new_within(mesh, tol, &mut work)?)
         }
     }
+}
+
+/// `failure`, of a union of two of [`assemble`]'s parts (or of what
+/// they made), as `assemble`'s own: its operand faces are those of that
+/// union, not of operands of `assemble`, so they're left out (marked
+/// truncated).
+fn of_parts(mut failure: Failure) -> Failure {
+    if !failure.evidence.faces.is_empty() {
+        failure.evidence.faces.clear();
+        failure.evidence.truncated = true;
+    }
+    failure
 }
 
 /// Whether `a` and `b`, with boxes `ba` and `bb` within `margin` of each

@@ -2603,3 +2603,43 @@ fn bad_failure_geometry_fails_its_generation() {
     }
     assert!(refused(&head, &parts).contains("geometry"));
 }
+
+/// A head too large with the failures' geometry is sent without it: the
+/// model and the failures' words still cross, the geometry left out.
+#[test]
+fn a_head_too_large_with_failure_geometry_is_sent_without_it() {
+    let n = ErrorGeometry::MAX_VERTICES;
+    // A geometry of the most vertices, each [`MAX_HEAD_BYTES`]'s share
+    // costing 24 bytes of floats: enough copies of it pass the bound.
+    let parts = GeometryParts {
+        positions: (0..n).map(|i| [i as f32, 1.5, 2.5]).collect(),
+        normals: vec![[0.0, 0.0, 1.0]; n],
+        indices: (0..n as u32 / 3 * 3).collect(),
+        ..GeometryParts::default()
+    };
+    let Response::Regenerated { mesh, picking, .. } = answer(triangle_mesh(), vec![BodyId::NEW])
+    else {
+        unreachable!("an answer")
+    };
+    let big = Arc::new(ErrorGeometry::from_parts(parts, &mesh, &picking).unwrap());
+    let copies = MAX_HEAD_BYTES / (24 * n) + 1;
+    let mut response = answer_with_failures();
+    if let Response::Regenerated { failed, draft, .. } = &mut response {
+        let feature = failed[0].feature;
+        failed.extend((0..copies).map(|_| FeatureFailure {
+            feature,
+            message: "big".to_owned(),
+            geometry: Some(big.clone()),
+        }));
+        draft.as_mut().unwrap().geometry = Some(big.clone());
+    }
+    let Response::Regenerated { draft, failed, .. } = round_trip(&response) else {
+        panic!("refused");
+    };
+    assert_eq!(failed.len(), copies + 2);
+    assert!(failed.iter().all(|failed| failed.geometry.is_none()));
+    assert_eq!(failed[0].message, "it failed");
+    let draft = draft.unwrap();
+    assert_eq!(draft.error.as_deref(), Some("it failed too"));
+    assert_eq!(draft.geometry, None);
+}

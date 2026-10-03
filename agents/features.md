@@ -70,7 +70,8 @@ message is worded from the kernel's `failure.error` as before
   body; `touches`: the body, then none; extrude and revolve: none). With
   no operand face on a body that is the very `Arc` kept, so an unchanged
   failure is the same `Arc` from one answer to the next; with some, a
-  copy with those faces pending. Failures that aren't the kernel's
+  copy with those faces pending (keeping the evidence's `truncated`
+  even when its faces are all there is). Failures that aren't the kernel's
   convert from their words (`From<String>`). `Entry::bytes` counts the
   geometry.
 - **Made drawable** (`ErrorGeometry::new`, at the `Display` of the
@@ -79,10 +80,13 @@ message is worded from the kernel's `failure.error` as before
   part and one face with triangles only; the curves, then the patches'
   boundary (their sides no two of them share: a side matches another
   running back along it with the same control point and weight, as a
-  mesh's neighbours' do), flattened as a solid's edges are
+  mesh's neighbours' do; a side held the same way round by several
+  patches, as a patch given twice, is drawn once, and two patches back
+  to back close on each other and draw none), flattened as a solid's edges are
   (`Display::flatten`) into `RenderLines`; points as `[f32; 3]`; the
-  sketch curves as ids; all relative to the diagonal of the evidence's
-  own box. Bounded
+  sketch curves as ids; all relative to the diagonal of the box of the
+  evidence that may be drawn (a patch or curve its check refuses, or a
+  point past `MAX_POSITION`, doesn't coarsen the rest). Bounded
   (`MAX_VERTICES` 2^18, `MAX_INDICES` 3·2^19, `MAX_LINE_POINTS` 2^18,
   points and sketch curves as `MAX_EVIDENCE`, `MAX_FACES` 4 ×
   `MAX_EVIDENCE.faces`), stopping at the first patch or curve that
@@ -97,7 +101,10 @@ message is worded from the kernel's `failure.error` as before
   operand's body (`Evaluation::holder`), giving `(BodyId, face id)` of
   the answer's mesh; the box then takes in those faces' triangles. A
   draft's failure is resolved on the committed model answered with it.
-  Geometry left empty is dropped. In an `Evaluation` on its own
+  `ErrorGeometry::resolve_shared` takes a copy of its own only when
+  faces are pending, so geometry with none stays the very `Arc` the
+  cache keeps across answers. Geometry left empty is dropped. In an
+  `Evaluation` on its own
   (export, tests) the faces stay unresolved.
 - **On the wire** a `Head::Regenerated` carries each failure as
   `(FeatureId, String, Option<GeometryParts>)` and the draft's as
@@ -105,7 +112,9 @@ message is worded from the kernel's `failure.error` as before
   decoded within their bounds and checked by `ErrorGeometry::from_parts`
   against the model (coordinates finite within `MAX_POSITION`, the
   triangles and lines whole, each face one of the mesh's of the body
-  named; the box worked out again), one that fails answering the
+  named; the box worked out again from the triangles' corners, the
+  lines and the points, so a position no triangle uses doesn't stretch
+  it), one that fails answering the
   generation as failed (`wire::Error::Geometry`). A head too large with
   its geometry is sent without it.
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s

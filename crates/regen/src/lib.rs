@@ -487,7 +487,7 @@ impl Regenerator {
         let holder = |body| evaluation.holder(body);
         let drafted = draft.as_mut().map(|draft| &mut draft.geometry);
         for geometry in (failed.iter_mut().map(|f| &mut f.geometry)).chain(drafted) {
-            resolve(geometry, &scene, &holder);
+            ErrorGeometry::resolve_shared(geometry, &scene.mesh, &scene.picking, holder);
         }
         evaluation.failed = failed;
         let bodies = evaluation
@@ -537,22 +537,6 @@ struct Model {
     placements: Vec<(FeatureId, Placement)>,
     bodies: Vec<(BodyId, Aabb)>,
     inspected: Option<Inspected>,
-}
-
-/// Resolves `geometry`'s operand faces on `scene`, the bodies holding the
-/// operands by `holder` (see [`ErrorGeometry::resolve`]); geometry that
-/// then draws and names nothing is dropped.
-fn resolve(
-    geometry: &mut Option<Arc<ErrorGeometry>>,
-    scene: &Scene,
-    holder: &impl Fn(BodyId) -> Option<BodyId>,
-) {
-    if let Some(shared) = geometry {
-        Arc::make_mut(shared).resolve(&scene.mesh, &scene.picking, holder);
-    }
-    if geometry.as_deref().is_some_and(ErrorGeometry::is_empty) {
-        *geometry = None;
-    }
 }
 
 /// `document` with `draft` applied, and the draft's feature, or why it

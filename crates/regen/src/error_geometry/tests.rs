@@ -334,3 +334,102 @@ fn only_the_patches_boundary_is_drawn() {
         [[f(o), f(x)], [f(x), f(xy)], [f(xy), f(y)], [f(y), f(o)]]
     );
 }
+
+/// Geometry with no operand face pending, shared with the cache, is the
+/// very one kept after it is resolved on the model drawn, so an unchanged
+/// failure is the same `Arc` from one answer to the next (the renderer
+/// uploads it again only when its `Arc` changes).
+#[test]
+fn resolving_geometry_with_nothing_pending_keeps_it() {
+    let (mesh, picking) = cube();
+    let kept = KernelFailure::new(failure(evidence()), &Tolerance::DEFAULT);
+    let tool = kept.geometry([None, None]).unwrap();
+    let mut answered = Some(tool.clone());
+    ErrorGeometry::resolve_shared(&mut answered, &mesh, &picking, Some);
+    assert!(Arc::ptr_eq(&tool, answered.as_ref().unwrap()));
+
+    // With a face pending it's resolved on a copy of its own.
+    let mut answered = kept.geometry([Some(BodyId::NEW), None]);
+    ErrorGeometry::resolve_shared(&mut answered, &mesh, &picking, Some);
+    assert_eq!(answered.as_ref().unwrap().faces().len(), 1);
+    assert!(tool.faces().is_empty());
+
+    // Faces of a body not drawn leave nothing: dropped.
+    let mut faces = Evidence::default();
+    faces.add_faces([(Operand::A, cap(1))]);
+    let kept = KernelFailure::new(failure(faces), &Tolerance::DEFAULT);
+    let mut answered = kept.geometry([Some(BodyId::NEW), None]);
+    ErrorGeometry::resolve_shared(&mut answered, &mesh, &picking, |_| None);
+    assert_eq!(answered, None);
+}
+
+/// Evidence of operand faces alone, some left out, keeps its mark once
+/// the faces are placed on bodies.
+#[test]
+fn faces_alone_keep_the_evidence_mark() {
+    let (mesh, picking) = cube();
+    let mut evidence = Evidence::default();
+    evidence.add_faces([(Operand::A, cap(1))]);
+    evidence.truncated = true;
+    let mut geometry = made(&failure(evidence), [Some(BodyId::NEW), None]).unwrap();
+    geometry.resolve(&mesh, &picking, Some);
+    assert_eq!(geometry.faces().len(), 1);
+    assert!(geometry.truncated());
+}
+
+/// Evidence that isn't drawn (a point past the bound, a patch its check
+/// refuses) doesn't coarsen how the rest is drawn: the box the curves are
+/// flattened relative to is that of what is drawn.
+#[test]
+fn what_is_left_out_does_not_coarsen_the_rest() {
+    let arc = Conic3::arc(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 0.0, 1.0).unwrap();
+    let mut alone = Evidence::default();
+    alone.add_curves([arc]);
+    let alone = made(&failure(alone), [None, None]).unwrap();
+
+    let far = f64::from(ErrorGeometry::MAX_POSITION) * 1e20;
+    let mut with = Evidence::default();
+    with.add_curves([arc]);
+    with.add_points([DVec3::splat(far)]);
+    with.add_patches([Patch {
+        p: [DVec3::ZERO, DVec3::X * far, DVec3::Y * far],
+        c: [DVec3::ZERO; 3],
+        w: [-1.0; 3],
+    }]);
+    let with = made(&failure(with), [None, None]).unwrap();
+    assert!(with.truncated());
+    assert_eq!(with.lines(), alone.lines());
+}
+
+/// A patch given twice draws its boundary once; two patches back to
+/// back (the same triangle both ways round) close on each other and draw
+/// none, as a closed shell does.
+#[test]
+fn a_patch_given_twice_draws_its_boundary_once() {
+    let (o, x, y) = (DVec3::ZERO, DVec3::X, DVec3::Y);
+    let flat = |p| Patch::flat(p).unwrap();
+    let mut twice = Evidence::default();
+    twice.add_patches([flat([o, x, y]), flat([o, x, y])]);
+    let twice = made(&failure(twice), [None, None]).unwrap();
+    assert_eq!(twice.mesh().triangle_count(), 2);
+    assert_eq!(twice.lines().ends().len(), 3);
+
+    let mut back = Evidence::default();
+    back.add_patches([flat([o, x, y]), flat([o, y, x])]);
+    let back = made(&failure(back), [None, None]).unwrap();
+    assert_eq!(back.mesh().triangle_count(), 2);
+    assert!(back.lines().points().is_empty());
+}
+
+/// The box from the other side is that of what is drawn: a position no
+/// triangle uses doesn't stretch it.
+#[test]
+fn unused_positions_do_not_stretch_the_box() {
+    let (mesh, picking) = cube();
+    let geometry = made(&failure(evidence()), [None, None]).unwrap();
+    let mut parts = geometry.to_parts();
+    parts.positions.push([1000.0; 3]);
+    parts.normals.push([0.0, 0.0, 1.0]);
+    let back = ErrorGeometry::from_parts(parts, &mesh, &picking).unwrap();
+    assert_eq!(back.bounds(), geometry.bounds());
+}

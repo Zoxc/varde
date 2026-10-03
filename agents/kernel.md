@@ -7723,7 +7723,9 @@ and `Display` the error's. Each is a thin wrapper over a private
 function returning `KernelError` (`extruded`, `revolved`, and
 `boolean_within`, `touches_within`, `transformed_within`, which take the
 `Work`); `assemble`
-returns its unions' failures as they are. Other public functions that
+returns its unions' failures less their operand faces (`of_parts` in
+`transform.rs`: those name the union's operands, not any of
+`assemble`'s, so they're dropped and `truncated` set). Other public functions that
 can fail (`Solid::new`, `cuboid`, `cylinder`, `Mesh::repair`,
 `Solid::moments`) keep `KernelError`. `Evidence` is the geometry the
 error is about, by value and in the operation's world coordinates

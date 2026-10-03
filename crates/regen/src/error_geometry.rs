@@ -70,6 +70,9 @@ pub(crate) struct KernelFailure {
     pub(crate) error: KernelError,
     geometry: Option<Arc<ErrorGeometry>>,
     faces: Vec<(Operand, FaceKey)>,
+    /// Whether the evidence left some out, kept apart for a failure
+    /// whose only evidence is operand faces (no geometry made).
+    truncated: bool,
 }
 
 impl KernelFailure {
@@ -80,6 +83,7 @@ impl KernelFailure {
         KernelFailure {
             error: failure.error,
             geometry: ErrorGeometry::new(&failure.evidence, &display).map(Arc::new),
+            truncated: failure.evidence.truncated,
             faces: failure.evidence.faces,
         }
     }
@@ -101,7 +105,10 @@ impl KernelFailure {
         if pending.is_empty() {
             return self.geometry.clone();
         }
-        let mut geometry = self.geometry.as_deref().cloned().unwrap_or_default();
+        let mut geometry = (self.geometry.as_deref().cloned()).unwrap_or_else(|| ErrorGeometry {
+            truncated: self.truncated,
+            ..ErrorGeometry::default()
+        });
         geometry.pending = pending;
         Some(Arc::new(geometry))
     }
@@ -294,6 +301,27 @@ impl ErrorGeometry {
         self.bounds = self.bounds_in(Some(mesh));
     }
 
+    /// [`ErrorGeometry::resolve`] on a shared `geometry`, taking a copy of
+    /// its own only if it has operand faces pending, so geometry with
+    /// none (a feature's tool's, or a failure the cache keeps without
+    /// faces) stays the very one kept from answer to answer; geometry
+    /// that then draws and names nothing is dropped.
+    pub(crate) fn resolve_shared(
+        geometry: &mut Option<Arc<ErrorGeometry>>,
+        mesh: &RenderMesh,
+        picking: &Picking,
+        holder: impl Fn(BodyId) -> Option<BodyId>,
+    ) {
+        if let Some(shared) = geometry
+            && !shared.pending.is_empty()
+        {
+            Arc::make_mut(shared).resolve(mesh, picking, holder);
+        }
+        if geometry.as_deref().is_some_and(ErrorGeometry::is_empty) {
+            *geometry = None;
+        }
+    }
+
     /// Whether it draws and names nothing.
     pub(crate) fn is_empty(&self) -> bool {
         self.mesh.triangle_count() == 0
@@ -330,8 +358,10 @@ impl ErrorGeometry {
                 max: b.max.max(p),
             }));
         };
-        // Every position is a triangle's corner.
-        self.mesh.positions().iter().copied().for_each(&mut take);
+        // The triangles' corners: positions no triangle uses (which
+        // parts from the other side may hold) aren't drawn.
+        let positions = self.mesh.positions();
+        (self.mesh.indices().iter()).for_each(|&v| take(positions[v as usize]));
         self.lines.points().iter().copied().for_each(&mut take);
         self.points.iter().copied().for_each(&mut take);
         if let Some(model) = model {
@@ -613,8 +643,19 @@ fn boundary(patches: &[Patch]) -> Vec<Conic3> {
         p1: c.p0,
         ..*c
     };
+    // A side drawn once, however many patches hold it the same way
+    // round (a patch given twice).
+    let mut drawn = Vec::new();
     (sides.iter())
         .filter(|side| keys.binary_search(&key(&back(side))).is_err())
+        .filter(|side| {
+            let at = drawn.partition_point(|k| *k < key(side));
+            let new = drawn.get(at) != Some(&key(side));
+            if new {
+                drawn.insert(at, key(side));
+            }
+            new
+        })
         .copied()
         .collect()
 }
@@ -622,11 +663,16 @@ fn boundary(patches: &[Patch]) -> Vec<Conic3> {
 /// The diagonal of the box around `evidence`'s patches, curves and points
 /// (their control points'), what they are flattened relative to, as a
 /// solid's edges are to its box; 0 if there's none or it isn't finite
-/// (the chord is then the fit tolerance).
+/// (the chord is then the fit tolerance). Only what may be drawn counts:
+/// a patch or curve its check refuses, or a point past
+/// [`ErrorGeometry::MAX_POSITION`], would coarsen the rest.
 fn diagonal(evidence: &Evidence) -> f64 {
-    let boxes = (evidence.patches.iter().map(Patch::bounds))
-        .chain(evidence.curves.iter().map(Conic3::bounds))
-        .chain(evidence.points.iter().map(|&p| Bounds3::point(p)));
+    let patches = (evidence.patches.iter()).filter(|patch| patch.check().is_ok());
+    let curves = (evidence.curves.iter()).filter(|curve| curve.check().is_ok());
+    let points = (evidence.points.iter()).filter(|&&p| placed(p).is_some());
+    let boxes = (patches.map(Patch::bounds))
+        .chain(curves.map(Conic3::bounds))
+        .chain(points.map(|&p| Bounds3::point(p)));
     let Some(bounds) = boxes.reduce(Bounds3::union) else {
         return 0.0;
     };
