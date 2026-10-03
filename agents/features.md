@@ -625,7 +625,12 @@ first angle's field and "90°" in the second, a new body.
   (`varde_view::Naming`, `PlanePick`'s naming with the history stopped
   at the revolve: the edited one's place, or the end): the two faces'
   keys sorted, the point clicked, and the body its first face is on as
-  of the revolve, the merges before it replayed. Refused, with a notice
+  of the revolve, the merges before it replayed (`Naming::before`, in
+  the document's order: the joins the model shown found working and the
+  combines using their tools up that it didn't find failing, as
+  `MeshFeed::merged_before` does; an edge between a target's face and a
+  used-up tool's is on the target). Refused, with a notice (the status
+  bar's, the app's stand-in for the mock's toast on a refused pick)
   saying why: before there's a source ("Pick the profile first, then
   its axis"), a round edge ("Only a straight edge can be the axis"), one
   off the plane ("That edge isn't in the sketch's plane"), one a feature
@@ -636,7 +641,16 @@ first angle's field and "90°" in the second, a new body.
   The session keeps the edge's ends where the model shown had it when
   picked (`RevolveSession::edge_ends`), or, editing, where it shows it
   then (`Doc::shown_edge`, on the body holding the reference's), for the
-  arrow only; a model edge is always the source's axis
+  arrow only, moved to where each model answered shows it
+  (`Doc::follow_edge_axis`: an undo may move it; kept where it was if
+  the model doesn't show it). An edge the document no longer takes at
+  the revolve's place (`Document::check_edge`: an undo took its body or
+  a face's maker away) is dropped as the document changes
+  (`RevolveSession::prune_edge`) and the axis is picked again, so
+  what's set up never names what the document can't hold; an edited
+  revolve's stored edge, whose body or maker is gone with ids below
+  `next_id`, the document holds (failing), and it stays. A model edge
+  is always the source's axis
   (`axis_holds`), and an edited revolve's isn't "missing": regeneration
   says when it's gone.
 - **The axis** is stored as the document wants it: a line as

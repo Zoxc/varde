@@ -407,13 +407,7 @@ impl Document {
         }
         revolve.check_own(&self.design())?;
         if let AxisLine::Edge(edge) = &revolve.axis {
-            edge.check_own().map_err(RevolveError::Edge)?;
-            if !self.body_before(index, edge.body) {
-                return Err(RevolveError::EdgeBody(edge.body));
-            }
-            if let Some(&maker) = (edge.makers().iter()).find(|&&m| !self.maker_before(index, m)) {
-                return Err(RevolveError::EdgeMaker(maker));
-            }
+            self.check_edge(index, edge)?;
         }
         self.check_uses(index, revolve.sketch, &revolve.operation)
             .map_err(|why| match why {
@@ -422,6 +416,23 @@ impl Document {
                 Uses::Excluded(body) => RevolveError::Excluded(body),
                 Uses::ExcludedOrder => RevolveError::ExcludedOrder,
             })
+    }
+
+    /// Checks `edge`, the axis of a revolve at feature `index` (the
+    /// feature count for one added after the last): its own parts, and its
+    /// body and its faces' makers made before it, or not there with ids
+    /// no later body or feature can take, as a sketch's face's (as
+    /// [`Document::check`] has them). What a revolve being set up checks
+    /// its edge by as the document changes under it.
+    pub fn check_edge(&self, index: usize, edge: &EdgeRef) -> Result<(), RevolveError> {
+        edge.check_own().map_err(RevolveError::Edge)?;
+        if !self.body_before(index, edge.body) {
+            return Err(RevolveError::EdgeBody(edge.body));
+        }
+        if let Some(&maker) = (edge.makers().iter()).find(|&&m| !self.maker_before(index, m)) {
+            return Err(RevolveError::EdgeMaker(maker));
+        }
+        Ok(())
     }
 
     /// Checks `combine`, feature `index`, see [`Document::check`]: its own

@@ -300,3 +300,271 @@ fn editing_a_revolve_about_an_edge_keeps_it() {
     doc.update(Edit::Undo);
     assert_eq!(revolves(&doc)[0].1, committed);
 }
+
+/// Adds a sketch on `plane` holding the rectangle from `a` to `b` (world
+/// points on the plane): its id.
+fn add_rectangle(
+    editor: &mut varde_document::Editor,
+    plane: varde_document::OriginPlane,
+    a: DVec3,
+    b: DVec3,
+) -> FeatureId {
+    let placement = plane.placement();
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(plane)))
+        .unwrap();
+    let feature = editor.document().features().last().unwrap().id;
+    let local = |p: DVec3| {
+        let offset = p - placement.origin;
+        DVec2::new(offset.dot(placement.x), offset.dot(placement.y))
+    };
+    let (a, b) = (local(a), local(b));
+    let mut drawn = Sketch::default();
+    let corners = [(a.x, a.y), (b.x, a.y), (b.x, b.y), (a.x, b.y)]
+        .map(|(x, y)| drawn.add_point(DVec2::new(x, y)).unwrap());
+    for k in 0..4 {
+        let line = varde_sketch::Curve::Line {
+            start: corners[k],
+            end: corners[(k + 1) % 4],
+        };
+        drawn.add_curve(line, false).unwrap();
+    }
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    feature
+}
+
+/// Extrudes all of sketch `sketch`'s regions `distance` up as a new body:
+/// the extrude's id.
+fn add_box(editor: &mut varde_document::Editor, sketch: FeatureId, distance: &str) -> FeatureId {
+    let FeatureKind::Sketch { sketch: drawn, .. } =
+        &editor.document().feature(sketch).unwrap().kind
+    else {
+        panic!("a sketch");
+    };
+    let profiles = drawn.profiles().unwrap();
+    let regions = (0..profiles.regions.len())
+        .map(|index| profiles.reference(index).unwrap())
+        .collect();
+    let extrude = varde_document::Extrude {
+        sketch,
+        regions,
+        extent: varde_document::Extent::OneSide(crate::tests::length(editor.document(), distance)),
+        flip: false,
+        operation: varde_document::Operation::NewBody(varde_document::BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(extrude.into()))
+        .unwrap();
+    editor.document().features().last().unwrap().id
+}
+
+/// The example plate and a box from (20, 0, 0) to (40, 10, 20), "Body 2",
+/// combined into it as a union before a sketch on XZ holding a rectangle
+/// from x = 22 to 28 and z = 12 to 15: the box's face on y = 0 meets the
+/// plate's top along x = 20 to 30 at z = 10, in XZ. The document, the
+/// requests waiting, the sketch and the box's extrude.
+fn combined() -> (Doc, Requests, FeatureId, FeatureId) {
+    use varde_document::OriginPlane;
+    let mut editor = varde_document::Editor::new(varde_document::Document::example());
+    let base = add_rectangle(
+        &mut editor,
+        OriginPlane::XY,
+        DVec3::new(20.0, 0.0, 0.0),
+        DVec3::new(40.0, 10.0, 0.0),
+    );
+    let maker = add_box(&mut editor, base, "20");
+    let bodies = editor.document().bodies();
+    let combine = varde_document::Combine {
+        target: bodies[0].id,
+        tools: vec![bodies[1].id],
+        op: varde_document::BodyOp::Union,
+        keep_tools: false,
+    };
+    editor
+        .apply(editor.document().add_feature(combine.into()))
+        .unwrap();
+    let sketch = add_rectangle(
+        &mut editor,
+        OriginPlane::XZ,
+        DVec3::new(22.0, 0.0, 12.0),
+        DVec3::new(28.0, 0.0, 15.0),
+    );
+    let (doc, requests) = crate::tests::holding(editor.document().clone());
+    assert!(
+        doc.feed.failed_features().is_empty(),
+        "{:?}",
+        doc.feed.failed_features()
+    );
+    (doc, requests, sketch, maker)
+}
+
+/// An edge between a face of the target and one of a tool a combine
+/// before the revolve used up is on the target there: picked, it's the
+/// axis, named by the target, and the revolve regenerates.
+#[test]
+fn an_edge_between_bodies_a_combine_merged_before_is_the_axis() {
+    let (mut doc, requests, sketch, maker) = combined();
+    start(&mut doc, sketch);
+    let document = doc.editor.document();
+    let plate = document.bodies()[0].id;
+    let top = FaceKey {
+        feature: document.features()[1].id.get(),
+        part: PartKey::EndCap,
+        instance: 0,
+    };
+    let index = doc.feed.pick_index();
+    let wall = (index.picking().faces().iter())
+        .find(|face| {
+            face.key.feature == maker.get()
+                && matches!(face.summary, Summary::Plane { n, d }
+                    if DVec3::from(n).abs_diff_eq(-DVec3::Y, 1e-12) && d.abs() < 1e-9)
+        })
+        .expect("the box's face on y = 0")
+        .key;
+    let near = DVec3::new(25.0, 0.0, 10.0);
+    let edge = index
+        .find_edge(plate, [top.min(wall), top.max(wall)], near)
+        .expect("the edge");
+    pick_edge(&mut doc, edge, near);
+    assert_eq!(doc.notice, None);
+    let expected = EdgeRef {
+        body: plate,
+        faces: [top.min(wall), top.max(wall)],
+        near,
+    };
+    assert_eq!(
+        doc.revolve.as_ref().unwrap().axis,
+        Some(AxisLine::Edge(expected))
+    );
+    doc.update(Edit::CommitRevolve);
+    answer(&mut doc, &requests);
+    assert!(
+        doc.feed.failed_features().is_empty(),
+        "{:?}",
+        doc.feed.failed_features()
+    );
+}
+
+/// An undo taking away the body of the edge picked as the axis of a new
+/// revolve drops the axis, which is picked again: what's set up never
+/// names a body the document doesn't have.
+#[test]
+fn an_undo_taking_the_edge_s_body_away_drops_the_axis() {
+    let (mut doc, requests, sketch) = on_the_front();
+    // A box from (35, -20, 0) to (45, -10, 10), "Body 2", its front on
+    // the sketch's plane.
+    let mut editor = doc.editor.clone();
+    let base = add_rectangle(
+        &mut editor,
+        varde_document::OriginPlane::XY,
+        DVec3::new(35.0, -20.0, 0.0),
+        DVec3::new(45.0, -10.0, 0.0),
+    );
+    let maker = add_box(&mut editor, base, "10");
+    let box_feature = editor.document().feature(maker).unwrap().clone();
+    doc.apply(
+        editor
+            .document()
+            .add_sketch(Plane::Origin(varde_document::OriginPlane::XY)),
+    );
+    let FeatureKind::Sketch { sketch: drawn, .. } = &editor.document().feature(base).unwrap().kind
+    else {
+        panic!("a sketch");
+    };
+    let base_id = doc.editor.document().features().last().unwrap().id;
+    doc.apply(Command::SetSketch {
+        feature: base_id,
+        sketch: Box::new(drawn.clone()),
+    });
+    let FeatureKind::Extrude(extrude) = box_feature.kind else {
+        panic!("an extrude");
+    };
+    let extrude = varde_document::Extrude {
+        sketch: base_id,
+        ..extrude
+    };
+    doc.apply(doc.editor.document().add_feature(extrude.into()));
+    doc.sync();
+    answer(&mut doc, &requests);
+    let body = doc.editor.document().bodies()[1].id;
+    let maker = doc.editor.document().features().last().unwrap().id;
+
+    start(&mut doc, sketch);
+    let index = doc.feed.pick_index();
+    let keys: Vec<FaceKey> = (index.picking().faces().iter())
+        .filter(|face| face.key.feature == maker.get())
+        .filter(|face| match face.summary {
+            Summary::Plane { n, d } => {
+                let n = DVec3::from(n);
+                (n.abs_diff_eq(-DVec3::Y, 1e-12) && (d - 20.0).abs() < 1e-9)
+                    || (n.abs_diff_eq(DVec3::Z, 1e-12) && (d - 10.0).abs() < 1e-9)
+            }
+            _ => false,
+        })
+        .map(|face| face.key)
+        .collect();
+    let [a, b] = keys[..] else {
+        panic!("the box's front and top: {keys:?}");
+    };
+    let near = DVec3::new(40.0, -20.0, 10.0);
+    let edge = index
+        .find_edge(body, [a.min(b), a.max(b)], near)
+        .expect("the box's top front edge");
+    pick_edge(&mut doc, edge, near);
+    assert_eq!(doc.notice, None);
+    assert!(matches!(
+        doc.revolve.as_ref().unwrap().axis,
+        Some(AxisLine::Edge(edge)) if edge.body == body
+    ));
+    doc.update(Edit::Undo);
+    answer(&mut doc, &requests);
+    assert!(doc.editor.document().body(body).is_none());
+    let session = doc.revolve.as_ref().expect("still setting up");
+    assert_eq!(session.axis, None);
+    assert_eq!(session.edge_ends, None);
+    assert_eq!(session.picking, RevolvePick::Axis);
+    assert!(doc.revolve_draft().is_none());
+    // Redone, the body is back, but the axis is picked again.
+    doc.update(Edit::Redo);
+    answer(&mut doc, &requests);
+    assert_eq!(doc.revolve.as_ref().unwrap().axis, None);
+}
+
+/// The arrow on an edge picked as the axis follows the edge when an undo
+/// moves it: drawn where the model shown has it.
+#[test]
+fn the_arrow_follows_its_edge_through_an_undo() {
+    let (mut doc, requests, sketch) = on_the_front();
+    // The plate made 11 thick, its top front edge at z = 11.
+    let document = doc.editor.document();
+    let maker = document.features()[1].id;
+    let FeatureKind::Extrude(plate) = &document.features()[1].kind else {
+        panic!("the plate's extrude");
+    };
+    let thicker = varde_document::Extrude {
+        extent: varde_document::Extent::OneSide(crate::tests::length(document, "11")),
+        ..plate.clone()
+    };
+    doc.apply(Command::SetFeature {
+        feature: maker,
+        kind: Box::new(thicker.into()),
+    });
+    doc.sync();
+    answer(&mut doc, &requests);
+    start(&mut doc, sketch);
+    let edge = edge_of(&doc, -DVec3::Y, 20.0, DVec3::new(0.0, -20.0, 11.0));
+    pick_edge(&mut doc, edge, DVec3::new(0.0, -20.0, 11.0));
+    let [a, b] = doc.revolve.as_ref().unwrap().edge_ends.unwrap();
+    assert_eq!((a.z, b.z), (11.0, 11.0));
+    doc.update(Edit::Undo);
+    answer(&mut doc, &requests);
+    let session = doc.revolve.as_ref().expect("still setting up");
+    assert!(matches!(session.axis, Some(AxisLine::Edge(_))));
+    let [a, b] = session.edge_ends.expect("the edge shown");
+    assert_eq!((a.z, b.z), (10.0, 10.0));
+}

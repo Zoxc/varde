@@ -156,6 +156,29 @@ impl RevolveSession {
         self.regions.refresh(document);
     }
 
+    /// Drops the axis if it's a model edge `document` no longer takes
+    /// there (an undo took its body or a face's maker away, or the
+    /// revolve edited moved after them), so what's set up never names
+    /// what the document can't hold; it's picked again. An edited
+    /// revolve's own edge, whose body or maker is gone, the document
+    /// holds, failing, and it stays.
+    fn prune_edge(&mut self, document: &Document) {
+        let Some(AxisLine::Edge(edge)) = &self.axis else {
+            return;
+        };
+        let features = document.features();
+        let index = match self.feature {
+            Some(id) => features.iter().position(|feature| feature.id == id),
+            None => Some(features.len()),
+        };
+        if index.is_some_and(|index| document.check_edge(index, edge).is_ok()) {
+            return;
+        }
+        self.axis = None;
+        self.edge_ends = None;
+        self.picking = RevolvePick::Axis;
+    }
+
     /// Keeps each angle where the design's units changed since its field
     /// was read, as the document does its own: only lengths inside an
     /// angle's expression take the units.
@@ -293,6 +316,27 @@ impl Doc {
         }
         self.revolve = Some(session);
         self.focus = Some(Focus::All);
+    }
+
+    /// Moves the arrow of the revolve being set up, if its axis is a model
+    /// edge, to where the model just shown has the edge: an undo or an
+    /// edit upstream may have moved it. Kept where it was if the model
+    /// doesn't show it (the revolve's own join swallowing it, say):
+    /// regenerating says if it's gone.
+    pub(crate) fn follow_edge_axis(&mut self) {
+        let Some(RevolveSession {
+            axis: Some(AxisLine::Edge(edge)),
+            ..
+        }) = &self.revolve
+        else {
+            return;
+        };
+        let Some(ends) = self.shown_edge(edge) else {
+            return;
+        };
+        if let Some(session) = &mut self.revolve {
+            session.edge_ends = Some(ends);
+        }
     }
 
     /// Where the model shown has the edge `edge` names, if it has it and
@@ -463,6 +507,7 @@ impl Doc {
         }
         session.follow_units(document);
         session.targets.prune(document);
+        session.prune_edge(document);
     }
 
     /// The revolve being set up as the regeneration lane previews it, and

@@ -5,7 +5,9 @@
 use std::borrow::Cow;
 
 use glam::DVec3;
-use varde_document::{BodyId, Document, EdgeRef, FaceRef, FeatureId, Operation, Plane};
+use varde_document::{
+    BodyId, Document, EdgeRef, FaceRef, FeatureId, FeatureKind, Operation, Plane,
+};
 use varde_kernel::mesh::PartKey;
 
 use crate::document::CURVED_FACE;
@@ -40,8 +42,9 @@ pub struct Naming {
     /// Each body a join merged into another and the body holding it, as
     /// the model shown has it, whose faces it shows as the holder's.
     merged: Vec<(BodyId, BodyId)>,
-    /// The same with the history stopped at the sketch: replayed from
-    /// the joins before it that worked, as regenerating merges.
+    /// The same with the history stopped at the feature: replayed from
+    /// the joins and the combines using their tools up before it that
+    /// worked, as regenerating merges.
     merged_before: Vec<(BodyId, BodyId)>,
     /// The body each feature made, by the feature's number, ascending.
     made: Vec<(u64, BodyId)>,
@@ -185,20 +188,42 @@ impl Naming {
                 .feature(feature)
                 .is_some_and(|feature| matches!(feature.kind.operation(), Some(Operation::Join(_))))
         };
+        let worked = |feature: FeatureId| !(shown.failed.iter()).any(|f| f.feature == feature);
+        // Replayed in the document's order, as regenerating merges: a
+        // working join merges the bodies the model shown found it touch,
+        // a working combine using its tools up merges them into its
+        // target.
         let mut merged_before = Vec::new();
-        let mut touched = Vec::new();
-        for (feature, bodies) in shown.touched {
-            let at = document.features().iter().position(|f| f.id == *feature);
-            let worked = !(shown.failed.iter()).any(|failed| failed.feature == *feature);
-            if join(*feature) {
-                if worked && at.is_some_and(|at| at < before) {
-                    varde_regen::note_merge(&mut merged_before, bodies);
+        for feature in &document.features()[..before] {
+            if !worked(feature.id) {
+                continue;
+            }
+            match &feature.kind {
+                FeatureKind::Combine(combine) if !combine.keep_tools => {
+                    // The tools in the order they were made, as regen
+                    // has them: only the target, first, holds.
+                    let bodies: Vec<BodyId> = combine.bodies().collect();
+                    varde_regen::note_merge(&mut merged_before, &bodies);
                 }
-                touched.push((feature.get(), bodies.iter().copied().take(1).collect()));
-            } else {
-                touched.push((feature.get(), bodies.clone()));
+                _ if join(feature.id) => {
+                    let touched = (shown.touched.iter()).find(|(id, _)| *id == feature.id);
+                    if let Some((_, bodies)) = touched {
+                        varde_regen::note_merge(&mut merged_before, bodies);
+                    }
+                }
+                _ => {}
             }
         }
+        let mut touched: Vec<(u64, Vec<BodyId>)> = (shown.touched.iter())
+            .map(|(feature, bodies)| {
+                let on = if join(*feature) {
+                    bodies.iter().copied().take(1).collect()
+                } else {
+                    bodies.clone()
+                };
+                (feature.get(), on)
+            })
+            .collect();
         touched.sort_unstable();
         let mut made: Vec<(u64, BodyId)> = (document.bodies().iter())
             .map(|body| (body.created_by.get(), body.id))

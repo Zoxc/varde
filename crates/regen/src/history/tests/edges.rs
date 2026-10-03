@@ -662,3 +662,170 @@ fn edges_run_with_their_first_face_on_their_left_mirrored_too() {
         assert_eq!(checked, 12);
     }
 }
+
+/// The edge of `body` on `solid` between its faces on `n·x = d` and
+/// `m·x = e`, at `near`.
+fn edge_between(
+    body: BodyId,
+    solid: &Solid,
+    [(n, d), (m, e)]: [(DVec3, f64); 2],
+    near: DVec3,
+) -> EdgeRef {
+    edge(body, key_on(solid, n, d), key_on(solid, m, e), near)
+}
+
+/// A sketch on XZ holding the rectangle from `x = 12` to `18` and `z =
+/// low` to `high`, revolved a whole turn about `edge`: the revolve's
+/// volume, which must regenerate.
+fn revolved_on_xz(editor: &mut Editor, edge: EdgeRef, low: f64, high: f64) -> f64 {
+    let xz = add_sketch(editor, Plane::Origin(OriginPlane::XZ));
+    draw_rectangle(
+        editor,
+        xz,
+        &OriginPlane::XZ.placement(),
+        DVec3::new(12.0, 0.0, low),
+        DVec3::new(18.0, 0.0, high),
+    );
+    add_about(editor, xz, AxisLine::Edge(edge));
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    last_body(editor, &evaluation).volume()
+}
+
+/// A window cut through the plate from (10, 0) to (20, 10): the edge
+/// between the plate's top and the cut's wall on `y = 0` is an axis.
+#[test]
+fn an_edge_a_cut_made_is_an_axis() {
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let extent = two_sides(editor.document(), "11", "1");
+    add_extrude(
+        &mut editor,
+        rectangle((10.0, 0.0), (20.0, 10.0)),
+        extent,
+        Operation::Cut(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let solid = solid_of(&evaluation, plate);
+    let wall = [(DVec3::Z, 10.0), (DVec3::Y, 0.0)];
+    let edge = edge_between(plate, solid, wall, DVec3::new(15.0, 0.0, 10.0));
+    assert_close(
+        revolved_on_xz(&mut editor, edge, 12.0, 15.0),
+        ring(2.0, 5.0, 6.0),
+    );
+}
+
+/// A block from (10, 0, 0) to (20, 10, 14) joined to the plate: the edge
+/// where its wall on `y = 0` meets the plate's top is an axis.
+#[test]
+fn an_edge_a_join_made_is_an_axis() {
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let extent = Extent::OneSide(length(editor.document(), "14"));
+    add_extrude(
+        &mut editor,
+        rectangle((10.0, 0.0), (20.0, 10.0)),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let solid = solid_of(&evaluation, plate);
+    let wall = [(DVec3::Z, 10.0), (-DVec3::Y, 0.0)];
+    let edge = edge_between(plate, solid, wall, DVec3::new(15.0, 0.0, 10.0));
+    assert_close(
+        revolved_on_xz(&mut editor, edge, 16.0, 19.0),
+        ring(6.0, 9.0, 6.0),
+    );
+}
+
+/// A wedge whose top slopes from (0, 20) down to (20, 10) in XZ, 30
+/// deep: a sketch on its sloping top revolves about the edge where the
+/// top meets the wedge's side on XZ, its volume by Pappus.
+#[test]
+fn a_sketch_on_a_tilted_face_revolves_about_its_edge() {
+    let mut editor = Editor::new(Document::default());
+    let wedge_extent = Extent::OneSide(length(editor.document(), "30"));
+    let xz = OriginPlane::XZ.placement();
+    let local = |at: DVec3| {
+        let offset = at - xz.origin;
+        DVec2::new(offset.dot(xz.x), offset.dot(xz.y))
+    };
+    let corners = [(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 20.0)]
+        .map(|(x, z)| local(DVec3::new(x, 0.0, z)));
+    add_extrude_on(
+        &mut editor,
+        OriginPlane::XZ,
+        move |sketch| {
+            let points = corners.map(|at| sketch.add_point(at).unwrap());
+            for k in 0..4 {
+                let line = Curve::Line {
+                    start: points[k],
+                    end: points[(k + 1) % 4],
+                };
+                sketch.add_curve(line, false).unwrap();
+            }
+        },
+        wedge_extent,
+        Operation::NewBody(BodyId::NEW),
+    );
+    let wedge = editor.document().bodies()[0].id;
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let solid = solid_of(&evaluation, wedge);
+    let n = DVec3::new(1.0, 0.0, 2.0) / 5f64.sqrt();
+    let d = 40.0 / 5f64.sqrt();
+    // The side on XZ, and which way the wedge goes from it.
+    let bounds = solid.bounds3().unwrap();
+    let into = if bounds.max.y > 1.0 {
+        DVec3::Y
+    } else {
+        -DVec3::Y
+    };
+    let slope = key_on(solid, n, d);
+    let side = key_on(solid, -into, 0.0);
+    let face = varde_document::FaceRef {
+        body: wedge,
+        key: slope,
+        near: DVec3::new(10.0, 15.0 * into.y, 15.0),
+    };
+    let sketch = add_sketch(&mut editor, Plane::Face(face));
+    let placement = placed(&evaluated(editor.document()), sketch);
+    // A rectangle on the slope from 5 to 15 along the edge from (20, 0,
+    // 10), and 2 to 5 into the face from it.
+    let start = DVec3::new(20.0, 0.0, 10.0);
+    let along = DVec3::new(-2.0, 0.0, 1.0) / 5f64.sqrt();
+    let at = |s: f64, t: f64| {
+        let p = start + along * s + into * t;
+        let offset = p - placement.origin;
+        assert!(offset.dot(placement.normal).abs() < 1e-9);
+        DVec2::new(offset.dot(placement.x), offset.dot(placement.y))
+    };
+    let corners = [at(5.0, 2.0), at(15.0, 2.0), at(15.0, 5.0), at(5.0, 5.0)];
+    let mut drawn = Sketch::default();
+    let points = corners.map(|p| drawn.add_point(p).unwrap());
+    for k in 0..4 {
+        let line = Curve::Line {
+            start: points[k],
+            end: points[(k + 1) % 4],
+        };
+        drawn.add_curve(line, false).unwrap();
+    }
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let axis = edge(wedge, slope, side, start + along * 10.0);
+    add_about(&mut editor, sketch, AxisLine::Edge(axis));
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let volume = last_body(&editor, &evaluation).volume();
+    let expected = ring(2.0, 5.0, 10.0);
+    assert!(
+        (volume - expected).abs() <= 1e-6 * expected,
+        "{volume} vs {expected}"
+    );
+}

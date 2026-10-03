@@ -898,6 +898,7 @@ impl Doc {
         if self.follow_merges() {
             self.request_model();
         }
+        self.follow_edge_axis();
         self.refresh_errors();
         self.follow_placement();
     }
