@@ -1630,6 +1630,18 @@ fn surface_name(summary: &varde_regen::Summary) -> &'static str {
     }
 }
 
+/// The names of `bodies` of `document`, joined: "Body 1, Body 2".
+fn body_names(document: &Document, bodies: &[varde_document::BodyId]) -> String {
+    let names: Vec<&str> = (bodies.iter())
+        .map(|&body| {
+            document
+                .body(body)
+                .map_or("a body", |body| body.name.as_str())
+        })
+        .collect();
+    names.join(", ")
+}
+
 /// The status bar's info on the selected `feature` of `document`, after
 /// its name: a sketch's curves and plane, "4 lines · 1 circle · 5 points
 /// · on XY", an extrude's extent in the document's units and operation,
@@ -1691,6 +1703,19 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
                 tools.join(", "),
                 combine.op.label()
             )
+        }
+        FeatureKind::Move(moved) => {
+            let bodies = body_names(document, &moved.bodies);
+            format!("{bodies} · {}", panels::move_note(moved, units))
+        }
+        FeatureKind::Mirror(mirror) => {
+            let bodies = body_names(document, &mirror.bodies);
+            let kept = if mirror.keep_original {
+                " · original kept"
+            } else {
+                ""
+            };
+            format!("{bodies} · in {}{kept}", mirror.plane.name())
         }
     }
 }

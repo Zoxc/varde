@@ -132,6 +132,48 @@ fn opacity_round_trips() {
     assert_eq!(&read, document);
 }
 
+/// A move about a model face and a mirror in one are kept through a
+/// file.
+#[test]
+fn a_move_and_a_mirror_round_trip() {
+    use glam::DVec3;
+    use varde_document::{AxisRef, FaceKey, FaceRef, FeatureKind, Mirror, Move, PartKey, PlaneRef};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let length = |text: &str| Value::new(text, &Move::offset_ask(&design)).unwrap();
+    let top = FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: editor.document().features()[1].id.get(),
+            part: PartKey::EndCap,
+            instance: 0,
+        },
+        near: DVec3::new(0.0, 15.0, 10.0),
+    };
+    let moved = Move {
+        bodies: vec![plate],
+        offset: [length("1 in"), length("-2"), length("0")],
+        turn: Some((
+            AxisRef::Face(top),
+            Value::new("-30", &Move::angle_ask(&design)).unwrap(),
+        )),
+    };
+    let mirror = Mirror {
+        bodies: vec![plate],
+        plane: PlaneRef::Face(top),
+        keep_original: true,
+    };
+    for kind in [FeatureKind::from(moved), mirror.into()] {
+        editor.apply(editor.document().add_feature(kind)).unwrap();
+    }
+    let document = editor.document();
+    let (bytes, _) = to_bytes(document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(&read, document);
+}
+
 /// A combine is kept through a file.
 #[test]
 fn a_combine_round_trips() {

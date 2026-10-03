@@ -206,6 +206,9 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Extrude(_) => Icon::Extrude,
         FeatureKind::Revolve(_) => Icon::Revolve,
         FeatureKind::Combine(_) => Icon::Combine,
+        // The mock's own move icon comes with the move's tool.
+        FeatureKind::Move(_) => Icon::Body,
+        FeatureKind::Mirror(_) => Icon::Mirror,
     }
 }
 
@@ -233,6 +236,8 @@ fn feature_row<'a>(
         FeatureKind::Extrude(extrude) => extent_note(&extrude.extent, units).into(),
         FeatureKind::Revolve(revolve) => turn_note(&revolve.extent).into(),
         FeatureKind::Combine(combine) => combine.op.label().into(),
+        FeatureKind::Move(moved) => move_note(moved, units).into(),
+        FeatureKind::Mirror(mirror) => mirror.plane.name().into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -311,6 +316,8 @@ fn edit_label(feature: &Feature) -> &'static str {
         FeatureKind::Extrude(_) => "Edit extrude",
         FeatureKind::Revolve(_) => "Edit revolve",
         FeatureKind::Combine(_) => "Edit combine",
+        FeatureKind::Move(_) => "Edit move",
+        FeatureKind::Mirror(_) => "Edit mirror",
     }
 }
 
@@ -331,6 +338,19 @@ pub(crate) fn extent_note(extent: &Extent, units: LengthUnit) -> String {
         Extent::Symmetric(d) => format!("{} symmetric", length(d)),
         Extent::TwoSides(a, b) => format!("{} + {}", length(a), length(b)),
         Extent::ThroughAll => "Through all".to_owned(),
+    }
+}
+
+/// How far a move shifts, for its Timeline row: its offsets, "10 mm, 0
+/// mm, −5 mm", and its turn's angle after them.
+pub(crate) fn move_note(moved: &varde_document::Move, units: LengthUnit) -> String {
+    let offsets: Vec<String> = (moved.offset.iter())
+        .map(|value| length_note(value, units))
+        .collect();
+    let offsets = offsets.join(", ");
+    match &moved.turn {
+        Some((_, angle)) => format!("{offsets} · {}", angle_note(angle.value)),
+        None => offsets,
     }
 }
 

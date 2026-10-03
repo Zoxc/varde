@@ -284,7 +284,13 @@ either side, sorted, and a picked point) and the turn (full, one side,
 symmetric or two sides, each angle a typed expression and its value in
 radians); or a combine, `crates/document/src/combine.rs`: the target
 body's id, the tool bodies' ids (sorted), the operation (union, subtract
-or intersect) and whether the tools are kept. A
+or intersect) and whether the tools are kept; or a move or a mirror,
+`crates/document/src/motion.rs`: the bodies' ids (sorted); a move's
+three offsets along X, Y and Z (typed expressions and their values in
+millimetres) and its turn, if any (an axis: a world axis X, Y or Z, an
+edge as a revolve's, or a face as a sketch's, and an angle as a
+revolve's); a mirror's plane (an origin plane, or a face as a sketch's)
+and whether the original is kept. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -317,7 +323,12 @@ it), excluded bodies sorted and made by earlier features, a sketch's face
 point finite and within the coordinate limit, its body (if there) made
 and its key's feature (if there) placed before the sketch, and either
 id, if nothing has it, below the next id; the same of a revolve's axis
-edge (both keys' features), its keys sorted and different,
+edge (both keys' features), its keys sorted and different; a combine's,
+move's or mirror's bodies there, made by earlier features and (but a
+combine's target) sorted without repeats, 1 to 256; a move's offsets
+their expressions give within the coordinate limit of zero and its
+angle within a turn either way; a move's axis edge or face and a
+mirror's face as a revolve's edge and a sketch's face;
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

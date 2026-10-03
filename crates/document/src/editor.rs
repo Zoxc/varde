@@ -6,7 +6,7 @@ use varde_kernel::Tolerance;
 use varde_sketch::Sketch;
 
 use crate::{
-    Body, BodyId, CheckError, Document, EditError, Extent, FeatureId, FeatureKind, Opacity,
+    Body, BodyId, CheckError, Document, EditError, Extent, FeatureId, FeatureKind, Move, Opacity,
     Operation, Plane, Removable, Snapshot, Turn,
 };
 
@@ -468,6 +468,8 @@ impl Editor {
                 let before = document.design();
                 let length = Extent::ask(&before);
                 let angle = Turn::ask(&before);
+                let offset = Move::offset_ask(&before);
+                let angle_ask = Move::angle_ask(&before);
                 for feature in &mut next.features {
                     match &mut feature.kind {
                         FeatureKind::Sketch { sketch, .. } => sketch.pin_units(&before),
@@ -481,8 +483,17 @@ impl Editor {
                                 value.pin_units(&angle);
                             }
                         }
+                        FeatureKind::Move(moved) => {
+                            let (offsets, angle) = moved.values_mut();
+                            for value in offsets {
+                                value.pin_units(&offset);
+                            }
+                            if let Some(value) = angle {
+                                value.pin_units(&angle_ask);
+                            }
+                        }
                         // No values.
-                        FeatureKind::Combine(_) => {}
+                        FeatureKind::Combine(_) | FeatureKind::Mirror(_) => {}
                     }
                 }
                 next.units = units;

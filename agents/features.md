@@ -1,6 +1,6 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves and mirrors), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -43,7 +43,7 @@ they share with the newer kinds is here. The kernel math of each is in
   distances by `Extent::ask` (angles' bare numbers are degrees whatever
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
-  `Revolve` 2, `Combine` 3): files store a kind by its variant name, and
+  `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -194,7 +194,10 @@ message is worded from the kernel's `failure.error` as before
     revolve", "region not found", a sketch too complex, a through all
     with no body, a combine's body with no solid of its own or consumed
     before, a boolean that would leave nothing, "it doesn't touch any
-    body".
+    body", a move's or mirror's body taken out of range, its axis's or
+    plane's body gone or face not found (a mirror face that isn't flat,
+    an axis face that isn't round and an axis edge that isn't straight
+    or round show themselves, as above; see "Move and mirror").
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s
   and the draft's `Drafted` (`MeshFeed::draft_geometry`, beside
   `draft_error`). The viewport draws the geometry of the draft's
@@ -1037,3 +1040,125 @@ scenario 23.
 Known gaps: a kept tool overlapping the target's union shows both
 bodies' faces in the same place, which z-fight (as two overlapping
 bodies always do); the panel doesn't warn before the preview answers.
+
+## Move and mirror
+
+`crates/document/src/motion.rs`.
+
+```rust
+pub struct Move {
+    pub bodies: Vec<BodyId>,              // 1..=MAX_FEATURE_BODIES, sorted, made before it
+    pub offset: [Value; 3],               // world X, Y, Z: lengths within MAX_COORD of 0 (Move::offset_ask)
+    pub turn: Option<(AxisRef, Value)>,   // the axis and an angle within a turn either way (Move::angle_ask)
+}
+pub struct Mirror { pub bodies: Vec<BodyId>, pub plane: PlaneRef, pub keep_original: bool }
+pub enum AxisRef { Origin(Axis3), Edge(EdgeRef), Face(FaceRef) }   // Axis3: X, Y, Z
+pub enum PlaneRef { Origin(OriginPlane), Face(FaceRef) }
+```
+
+- **What they are**: timeline steps on bodies already made, as a
+  combine is: `FeatureKind::Move` and `FeatureKind::Mirror` (the
+  workers' postcard has them as the fifth and sixth variants). They
+  make no body and take no regions; "Move N", "Mirror N". A move turns
+  each body about its axis by its angle (right-handed about the axis's
+  direction), **then** shifts it by its offsets. A mirror reflects each
+  body in its plane; without `keep_original` the body becomes its
+  image, with it the body is itself and its image together (decided:
+  copies stay in the source body). Bodies keep their ids; a move's
+  bodies, and a mirror's without the original, keep their faces' names,
+  so later references (a sketch on a face, an axis edge) follow them to
+  where they went.
+- **References**: an origin axis is the world axis through the origin,
+  along its positive side. An edge (`EdgeRef`, as a revolve's axis
+  edge) must be straight, the line through it directed as `EdgeRef`
+  says (first key's face on its left from outside), or round (a circle
+  or an arc of one: its axis through its centre, turning the way the
+  edge runs as so directed). A face must be round: a cylinder's,
+  cone's, torus's or revolved surface's axis, **directed as the face's
+  form has it** (an extruded wall's along the extrude): the sign of the
+  angle is the user's to flip. A mirror's face must be flat: its form's
+  plane `n·x = d` gives the point `n·d` and normal `n` (exact for faces
+  square to a world axis). Edges and faces are found on their body as
+  the features before the move or mirror leave it, through
+  `Evaluation::holder` (a body a join consumed is looked for in its
+  holder); the reference's body may be one of the bodies moved (a body
+  mirrored in its own face).
+- **Checks** (`CheckError::Move` / `Mirror(id, MotionError)`):
+  `Move::check_own(design)` / `Mirror::check_own()` (cheap, for a
+  panel): 1 to 256 bodies (`Bodies(n)`), sorted without repeats
+  (`BodyOrder`), each offset a length `Move::offset_ask` takes (within
+  `MAX_COORD` of zero; zero and negative allowed: `Offset`), the angle
+  one `Move::angle_ask` takes (within a turn either way: `Angle`), an
+  axis edge's own check (`Edge`) and a face's point finite and within
+  `MAX_COORD` (`Near`). `Document::check` then wants every body moved
+  there and made by a feature before it (`Body(id)`, as a combine's: an
+  edit making its maker stop making it is refused), and the axis's or
+  plane's body and faces' makers before it, or not there with ids no
+  later body or feature can take (`RefBody`, `RefMaker`), as a sketch's
+  face and a revolve's edge are.
+- **Removal**: `FeatureKind::bodies()` lists the bodies moved, so
+  removing one or its maker removes the move or mirror. The axis's or
+  plane's body isn't listed: removing it leaves the feature, which then
+  fails to regenerate until given another (as a revolve's axis edge).
+- `SetUnits` pins the offsets by `Move::offset_ask` and the angle by
+  `Move::angle_ask`. Mirrors have no values.
+
+### Regeneration
+
+`crates/regen/src/history/motion.rs`, in history order:
+
+- **Bodies with no solid of their own fail it**, worded as a combine's
+  (`history::own_solids`, which the combine shares).
+- **The motion**: one `varde_kernel::Motion` per feature. A move's is
+  `Motion::turn(point, direction, degrees)` then
+  `Motion::translation(offsets)`. The angle is stored in radians and
+  turned back into degrees by `value / (π/180)`: a value typed in
+  degrees comes back to the number typed for every multiple of 90°
+  within a turn (checked), so quarter turns about world axes move
+  coordinates to the bit. A mirror's is `Motion::mirror(point, normal)`.
+  The axis or plane is resolved (`resolve_axis`, `resolve_plane`) and
+  cached (`Entry::Reference`, keyed by the solid's key, the reference's
+  names and point, and the fit tolerance).
+- **Each body** (in the order made): first refused if the motion takes
+  a corner of its box past `MAX_COORD` ("moving Body 1 takes it out of
+  range: every part must stay within 1000000 mm of the origin"; the
+  box's image holds the solid's, so a body passing is in range; a turn
+  near the limit may be refused for its box's corners), then
+  `Solid::transformed(motion, copy, tol, budget)`, cached under
+  `moved_key(body key, Motion::bits, copy, fit)`: an edit leaving the
+  motion's bits as they were (an offset typed another way, the axis's
+  body edited elsewhere) finds every body again. Without the original
+  the copy is `None` (names kept); with it the image is `Instance {
+  feature: mirror id, index: 1 }` and `assemble([body, image])` puts
+  the two together (side by side when apart, a union when they meet).
+  All bodies are worked out before any changes: one failing fails the
+  feature, changing none. Kernel failures: "moving Body 2 leaves no
+  clean solid: rounding brings parts of it too close together; try a
+  finer tolerance" (`message::moving`), "joining Body 1 to its mirror
+  image ..." (`message::with_image`), with the kernel's evidence by
+  value (no operand faces: the body is drawn where the history leaves
+  it).
+- **Reference failures**: "its axis edge's body is gone", "its axis
+  edge wasn't found", "its axis edge isn't straight or round" (its
+  curves), "its axis edge's direction can't be told" (its curves); "its
+  axis face's body is gone", "its axis face wasn't found", "its axis
+  face isn't round" (the face); "its mirror face's body is gone", "its
+  mirror face wasn't found", "its mirror face isn't flat" (the face).
+- Nothing is merged and nothing touched: `Evaluation::merged` and
+  `touched` are as the features before left them, so the app's
+  `merged_before` and the naming replay need nothing new. Drafts need
+  nothing new either.
+
+Tests: `document/src/motion/tests.rs` (checks, removal, units, postcard
+and hostile bytes), `regen/src/history/tests/motion.rs` (a move then a
+join at the new place, quarter turns exact, turns about a model edge, a
+round face and a rim, mirrors with and without the original apart,
+flush and overlapping, a body mirrored in its own face and a block in a
+wedge's slanted face, wrong-shaped and missing references with their
+geometry, out of range, a consumed body, a sketch following a moved
+face, the cache), `regen/src/wire/tests.rs` (a move draft through the
+wire), `io/src/vrdp/tests.rs` (through a file).
+
+Not yet: the UI (the move's typed fields and `M`, the mirror's panel)
+and the move's handles (an arrow per world axis and a ring per axis at
+the moved bodies' box centre, dragging the offsets and the turn).

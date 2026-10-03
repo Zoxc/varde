@@ -249,6 +249,24 @@ impl Motion {
         self.stretch
     }
 
+    /// Its numbers' bits, for keying what it makes: `linear`'s, the map of
+    /// normals' and the offset's (columns in order), then whether it
+    /// mirrors, its stretch and whether it's uniform. Motions with the
+    /// same bits move every solid alike, to the bit.
+    pub fn bits(&self) -> [u64; 24] {
+        let mut bits = [0; 24];
+        let numbers = (self.linear.to_cols_array().into_iter())
+            .chain(self.normal.to_cols_array())
+            .chain(self.offset.to_array())
+            .chain([self.stretch]);
+        for (slot, number) in bits.iter_mut().zip(numbers) {
+            *slot = number.to_bits();
+        }
+        bits[22] = u64::from(self.mirrors);
+        bits[23] = u64::from(self.uniform);
+        bits
+    }
+
     /// The plane `n·x = d` mapped: `(n', d')` with `n'·x = d'` on the
     /// image, `n'` pointing to the image of the side `n` points to.
     fn plane(&self, n: DVec3, d: f64) -> (DVec3, f64) {

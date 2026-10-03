@@ -6,7 +6,7 @@ use std::sync::Arc;
 use varde_document::{BodyId, BodyOp, Combine, Document};
 use varde_kernel::{Budget, Op, Solid, Tolerance};
 
-use super::{BodySolid, Evaluation, Failed, boolean_key, note_merge};
+use super::{BodySolid, Evaluation, Failed, boolean_key, note_merge, own_solids};
 use crate::cache::{Cache, Key};
 use crate::error_geometry::KernelFailure;
 use crate::message::{self, Doing};
@@ -15,10 +15,9 @@ use crate::message::{self, Doing};
 /// combine made) as `combine` says, or says why it fails, changing
 /// nothing.
 ///
-/// Every body it names must have a solid of its own: one a join or an
-/// earlier combine consumed fails it, naming the body holding it (the
-/// user meant that body as it was, not the one it went into), and so
-/// does one whose maker failed. The target's solid is then united with,
+/// Every body it names must have a solid of its own ([`own_solids`]):
+/// one a join or an earlier combine consumed fails it, naming the body
+/// holding it, and so does one whose maker failed. The target's solid is then united with,
 /// less, or intersected with each tool's, in the order the tools were
 /// made, the running solid first, each step a [`varde_kernel::boolean`]
 /// cached by the operation, the running solid's key and the tool's (as
@@ -47,20 +46,7 @@ pub(super) fn evaluate(
             .body(body)
             .map_or("a body", |body| body.name.as_str())
     };
-    for body in combine.bodies() {
-        if evaluation.bodies.iter().any(|made| made.body == body) {
-            continue;
-        }
-        return Err(match evaluation
-            .merged
-            .iter()
-            .find(|(consumed, _)| *consumed == body)
-        {
-            Some(&(_, holder)) => message::consumed(name(body), name(holder)),
-            None => message::no_solid(name(body)),
-        }
-        .into());
-    }
+    own_solids(document, combine.bodies(), evaluation)?;
     let find = |body: BodyId| {
         (evaluation.bodies.iter())
             .find(|made| made.body == body)

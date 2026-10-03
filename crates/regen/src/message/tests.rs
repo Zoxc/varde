@@ -297,3 +297,26 @@ fn revolve_failures_say_revolve() {
         assert!(!text.contains("extrude"), "{text}");
     }
 }
+
+#[test]
+fn moves_and_mirrors_name_the_body() {
+    let invalid = KernelError::Invalid(CheckError::Counts);
+    assert_eq!(
+        moving(Moving::Move, "Body 2", invalid),
+        "moving Body 2 leaves no clean solid: rounding brings parts of it too close together; \
+         try a finer tolerance"
+    );
+    assert_eq!(
+        moving(Moving::Mirror, "Body 1", KernelError::TooComplex),
+        "mirroring Body 1 is too complex to work out"
+    );
+    assert!(
+        out_of_range(Moving::Mirror, "Body 3")
+            .starts_with("mirroring Body 3 takes it out of range")
+    );
+    let text = with_image("Body 1", KernelError::Boolean(BooleanError::NotManifold));
+    assert!(
+        text.starts_with("joining Body 1 to its mirror image leaves no clean solid"),
+        "{text}"
+    );
+}

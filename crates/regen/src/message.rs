@@ -58,6 +58,89 @@ pub(crate) const EDGE_UNDIRECTED: &str = "its axis edge's direction can't be tol
 /// than the resolution from its sketch's plane.
 pub(crate) const EDGE_OFF_PLANE: &str = "its axis edge isn't in the sketch's plane";
 
+/// Why a move fails: the round edge or face its axis names is found but
+/// gives no direction a turn can be made about.
+pub(crate) const AXIS_NO_DIRECTION: &str = "its axis has no direction";
+
+/// Why a move fails: its offsets don't make a shift (never, checked as
+/// they are).
+pub(crate) const OFFSET_NOT_FINITE: &str = "its offsets are out of range";
+
+/// Why a move about a model edge fails: the edge found is neither a line
+/// nor a circle (or an arc of one).
+pub(crate) const EDGE_NOT_AN_AXIS: &str = "its axis edge isn't straight or round";
+
+/// Why a move about a round face fails: the face's body has no solid
+/// when the history reaches the move.
+pub(crate) const AXIS_FACE_BODY_GONE: &str = "its axis face's body is gone";
+
+/// Why a move about a round face fails: no face of its body as the
+/// features before it leave it has the face's name.
+pub(crate) const AXIS_FACE_NOT_FOUND: &str = "its axis face wasn't found";
+
+/// Why a move about a round face fails: the face found isn't a cylinder,
+/// cone, torus or other surface of revolution.
+pub(crate) const AXIS_FACE_NOT_ROUND: &str = "its axis face isn't round";
+
+/// Why a mirror in a face fails: the face's body has no solid when the
+/// history reaches the mirror.
+pub(crate) const MIRROR_FACE_BODY_GONE: &str = "its mirror face's body is gone";
+
+/// Why a mirror in a face fails: no face of its body as the features
+/// before it leave it has the face's name.
+pub(crate) const MIRROR_FACE_NOT_FOUND: &str = "its mirror face wasn't found";
+
+/// Why a mirror in a face fails: the face found isn't a plane.
+pub(crate) const MIRROR_FACE_NOT_FLAT: &str = "its mirror face isn't flat";
+
+/// What a move or a mirror does to a body, for its messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Moving {
+    Move,
+    Mirror,
+}
+
+impl Moving {
+    /// "moving", "mirroring".
+    fn doing(self) -> &'static str {
+        match self {
+            Moving::Move => "moving",
+            Moving::Mirror => "mirroring",
+        }
+    }
+}
+
+/// Why `moving` the body named `body` fails before it's tried: it would
+/// take the body past the coordinate limit.
+pub(crate) fn out_of_range(moving: Moving, body: &str) -> String {
+    let limit = varde_kernel::MAX_COORD;
+    format!(
+        "{} {body} takes it out of range: every part must stay within {limit} mm of the origin",
+        moving.doing()
+    )
+}
+
+/// Why the kernel couldn't move the body named `body` as `moving` does.
+pub(crate) fn moving(moving: Moving, body: &str, error: KernelError) -> String {
+    let doing = moving.doing();
+    match error {
+        KernelError::TooComplex => format!("{doing} {body} is too complex to work out"),
+        // Rounding brought patches a hair closer, within the resolution.
+        KernelError::Invalid(_) => format!(
+            "{doing} {body} leaves no clean solid: rounding brings parts of it too close \
+             together; try a finer tolerance"
+        ),
+        KernelError::Patch(_) => format!("{doing} {body} takes it out of range"),
+        error => failed(&format!("{doing} {body}"), error),
+    }
+}
+
+/// Why putting the body named `body` together with its mirror image
+/// failed (a mirror keeping the original, the two meeting).
+pub(crate) fn with_image(body: &str, error: KernelError) -> String {
+    failed(&format!("joining {body} to its mirror image"), error)
+}
+
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {

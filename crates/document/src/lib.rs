@@ -11,6 +11,7 @@ mod editor;
 mod example;
 mod extrude;
 mod feature;
+mod motion;
 pub mod name;
 mod opacity;
 mod plane;
@@ -25,6 +26,7 @@ pub use edge::{EdgeError, EdgeRef};
 pub use editor::{Command, Editor, Generation, Revision};
 pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
 pub use feature::{Feature, FeatureId, FeatureKind};
+pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
 pub use opacity::Opacity;
 pub use plane::{FaceRef, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
@@ -271,8 +273,12 @@ impl Document {
     /// operation as [`Extrude`] and [`Revolve`] describe, and excludes
     /// only bodies features before it make; a revolve about a model edge
     /// names a body and faces' makers before it, as a sketch on a face
-    /// does; and every combine's target and tools are bodies features
-    /// before it make, its tools as [`Combine::check_own`] wants them. A
+    /// does; every combine's target and tools are bodies features
+    /// before it make, its tools as [`Combine::check_own`] wants them;
+    /// and every move's and mirror's bodies are bodies features before it
+    /// make, as [`Move::check_own`] and [`Mirror::check_own`] want them
+    /// with its values, its axis edge or face, or plane face, named as a
+    /// revolve's edge is. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
@@ -328,6 +334,20 @@ impl Document {
                 FeatureKind::Combine(combine) => self
                     .check_combine(index, combine)
                     .map_err(|why| CheckError::Combine(id, why))?,
+                FeatureKind::Move(moved) => {
+                    moved
+                        .check_own(&design)
+                        .map_err(|why| CheckError::Move(id, why))?;
+                    self.check_motion(index, &moved.bodies, moved.referred())
+                        .map_err(|why| CheckError::Move(id, why))?;
+                }
+                FeatureKind::Mirror(mirror) => {
+                    mirror
+                        .check_own()
+                        .map_err(|why| CheckError::Mirror(id, why))?;
+                    self.check_motion(index, &mirror.bodies, mirror.referred())
+                        .map_err(|why| CheckError::Mirror(id, why))?;
+                }
             }
         }
         if let Some(last) = self.bodies.last()
@@ -452,6 +472,34 @@ impl Document {
         Ok(())
     }
 
+    /// Checks what a move or mirror, feature `index`, names: every body
+    /// in `bodies` there and made by a feature before it, as a combine's
+    /// ([`Document::check_combine`]), and the edge or face its axis or
+    /// plane names (`referred`) on a body and of makers before it, or not
+    /// there with ids no later body or feature can take, as a sketch's
+    /// face's ([`Document::check_plane`]).
+    fn check_motion(
+        &self,
+        index: usize,
+        bodies: &[BodyId],
+        referred: Option<motion::Referred<'_>>,
+    ) -> Result<(), MotionError> {
+        if let Some(&body) = bodies.iter().find(|&&body| !self.made_before(index, body)) {
+            return Err(MotionError::Body(body));
+        }
+        if let Some(referred) = referred {
+            if !self.body_before(index, referred.body()) {
+                return Err(MotionError::RefBody(referred.body()));
+            }
+            if let Some(&maker) =
+                (referred.makers().iter()).find(|&&m| !self.maker_before(index, m))
+            {
+                return Err(MotionError::RefMaker(maker));
+            }
+        }
+        Ok(())
+    }
+
     /// Whether `body` is there and made by a feature before feature
     /// `index`.
     fn made_before(&self, index: usize, body: BodyId) -> bool {
@@ -541,6 +589,10 @@ pub enum CheckError {
     Revolve(FeatureId, RevolveError),
     /// A combine feature is wrong, see [`CombineError`].
     Combine(FeatureId, CombineError),
+    /// A move feature is wrong, see [`MotionError`].
+    Move(FeatureId, MotionError),
+    /// A mirror feature is wrong, see [`MotionError`].
+    Mirror(FeatureId, MotionError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -585,6 +637,9 @@ impl fmt::Display for CheckError {
             CheckError::Extrude(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Revolve(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Combine(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Move(id, why) | CheckError::Mirror(id, why) => {
+                write!(f, "feature {}: {why}", id.0)
+            }
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -609,6 +664,7 @@ impl std::error::Error for CheckError {
             CheckError::Extrude(_, why) => Some(why),
             CheckError::Revolve(_, why) => Some(why),
             CheckError::Combine(_, why) => Some(why),
+            CheckError::Move(_, why) | CheckError::Mirror(_, why) => Some(why),
             _ => None,
         }
     }

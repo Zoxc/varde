@@ -35,6 +35,13 @@
 //! tools then consumed into the target as a join's merged bodies are,
 //! unless it keeps them (see `combine::evaluate`); one naming a body with
 //! no solid of its own (consumed before, or its maker failed) fails.
+//! A move or a mirror works on the bodies the same way: one
+//! [`varde_kernel::Motion`] each, a move's turn about its axis then its
+//! shift, a mirror's reflection in its plane (axes and planes found on
+//! their bodies as the features before leave them), each body moved by
+//! [`Solid::transformed`] keeping its faces' names, a mirror keeping the
+//! original assembled with its image (see `motion`); a body the motion
+//! would take past the coordinate limit fails it.
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -45,10 +52,12 @@
 //! is drawn, each operand on the bodies it holds: a merge's or a
 //! combine's running solid is the first body or target and those united
 //! with it so far, a feature's tool none), and changes no body; the later
-//! ones still run. Of regen's own failures, a face that isn't flat shows
-//! the face and an axis line of no length its point; the others (a face
-//! or body gone, a face too far out, a sketch not placed or not there,
-//! an axis not found, a combine's body with no solid) have nothing to
+//! ones still run. Of regen's own failures, a face that isn't flat (a
+//! sketch's or a mirror's) or isn't round (a move's axis) shows the face,
+//! an axis line of no length its point, and an axis edge of the wrong
+//! shape its curves; the others (a face or body gone, a face too far out,
+//! a sketch not placed or not there, an axis not found, a combine's or a
+//! move's body with no solid, a body moved out of range) have nothing to
 //! show.
 //!
 //! Every result goes through the [`Cache`], keyed by what it depends on,
@@ -77,6 +86,7 @@ use crate::picking::region_form;
 use crate::profile::profile;
 
 mod combine;
+mod motion;
 
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.
@@ -146,6 +156,33 @@ pub fn note_merge(merged: &mut Vec<(BodyId, BodyId)>, bodies: &[BodyId]) {
         }
     }
     merged.extend(consumed.iter().map(|&body| (body, holder)));
+}
+
+/// Whether each of `bodies` has a solid of its own in `evaluation` (the
+/// bodies the features before a combine, move or mirror made), or why
+/// the feature naming them fails: one a join or a combine consumed
+/// fails it, naming the body holding it (the user meant that body as it
+/// was, not the one it went into), and so does one whose maker failed.
+pub(crate) fn own_solids(
+    document: &Document,
+    mut bodies: impl Iterator<Item = BodyId>,
+    evaluation: &Evaluation,
+) -> Result<(), Failed> {
+    let name = |body: BodyId| {
+        document
+            .body(body)
+            .map_or("a body", |body| body.name.as_str())
+    };
+    let Some(body) = bodies.find(|&body| !evaluation.bodies.iter().any(|made| made.body == body))
+    else {
+        return Ok(());
+    };
+    let consumed = (evaluation.merged.iter()).find(|(consumed, _)| *consumed == body);
+    Err(match consumed {
+        Some(&(_, holder)) => message::consumed(name(body), name(holder)),
+        None => message::no_solid(name(body)),
+    }
+    .into())
 }
 
 /// Why a feature fails, as the history carries it: in words, and what
@@ -273,9 +310,10 @@ pub(crate) fn evaluate_within(
                     FeatureKind::Revolve(revolve) => {
                         (revolve.sketch, Shape::Revolve(revolve), &revolve.operation)
                     }
-                    FeatureKind::Sketch { .. } | FeatureKind::Combine(_) => {
-                        unreachable!("matched apart")
-                    }
+                    FeatureKind::Sketch { .. }
+                    | FeatureKind::Combine(_)
+                    | FeatureKind::Move(_)
+                    | FeatureKind::Mirror(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -301,6 +339,26 @@ pub(crate) fn evaluate_within(
                 if let Err(failed) =
                     combine::evaluate(document, combine, &tolerance, &mut evaluation, cache)
                 {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::Move(moved) => {
+                if let Err(failed) =
+                    motion::evaluate_move(document, moved, &tolerance, &mut evaluation, cache)
+                {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::Mirror(mirror) => {
+                let id = feature.id.get();
+                if let Err(failed) = motion::evaluate_mirror(
+                    document,
+                    id,
+                    mirror,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
                     evaluation.failed.push(failed.of(feature.id));
                 }
             }
@@ -869,7 +927,7 @@ pub(crate) fn place_on_face(
 /// failure's patches costs, within the same caps
 /// ([`ErrorGeometry::MAX_VERTICES`] and the others), once per placement
 /// worked out (the cache keeps it).
-fn face_geometry(
+pub(crate) fn face_geometry(
     solid: &Solid,
     region: &varde_kernel::topology::Region,
     tolerance: &Tolerance,
@@ -1044,24 +1102,12 @@ pub(crate) fn edge_ends(
         (topology.edge(solid, edge.faces, edge.near)).map_err(|_| message::EDGE_NOT_FOUND)?;
     let chain = &topology.chains()[chain as usize];
     let EdgeShape::Line { from, to } = edge_shape(solid, chain) else {
-        let mesh = solid.mesh();
-        let tris = mesh.tris().len();
-        let mut evidence = varde_kernel::Evidence::default();
-        evidence.add_curves(
-            (chain.halfedges.iter())
-                .filter(|&&h| (h as usize) / 3 < tris)
-                .map(|&h| mesh.curve(h)),
-        );
         return Err(Failed {
             message: message::EDGE_NOT_STRAIGHT.to_owned(),
-            geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
+            geometry: chain_curves(solid, chain, tolerance),
         });
     };
-    let [left, right] = chain.regions.map(|r| {
-        let region = &topology.regions()[r as usize];
-        (&region.key, &region.aliases[..])
-    });
-    match EdgeRef::runs_with(&edge.faces, left, right) {
+    match chain_runs_with(&topology, chain, edge) {
         Some(true) => Ok([from, to]),
         Some(false) => Ok([to, from]),
         None => {
@@ -1073,6 +1119,46 @@ pub(crate) fn edge_ends(
             })
         }
     }
+}
+
+/// Whether `chain` of `topology` runs the way `edge`, a reference to it,
+/// directs it ([`EdgeRef::runs_with`]): its halfedges run on its first
+/// region's side, along that region's own boundary (its triangles run
+/// round anticlockwise seen from outside, a mirrored copy's too, as a
+/// mirror reverses them), so they run the right way where that region is
+/// the first key's. `None` where aliases name both its faces by both
+/// keys and that can't be told.
+pub(crate) fn chain_runs_with(
+    topology: &varde_kernel::Topology,
+    chain: &varde_kernel::topology::Chain,
+    edge: &EdgeRef,
+) -> Option<bool> {
+    let [left, right] = chain.regions.map(|r| {
+        let region = &topology.regions()[r as usize];
+        (&region.key, &region.aliases[..])
+    });
+    EdgeRef::runs_with(&edge.faces, left, right)
+}
+
+/// What an edge that isn't the shape a feature needs shows: `chain`'s
+/// curves on `solid`, drawn at the [`Display`](varde_kernel::Display) of
+/// `tolerance` (the first
+/// [`MAX_EVIDENCE`](varde_kernel::MAX_EVIDENCE)`.curves`), by value as a
+/// face that isn't flat is ([`face_geometry`]).
+pub(crate) fn chain_curves(
+    solid: &Solid,
+    chain: &varde_kernel::topology::Chain,
+    tolerance: &Tolerance,
+) -> Option<Arc<ErrorGeometry>> {
+    let mesh = solid.mesh();
+    let tris = mesh.tris().len();
+    let mut evidence = varde_kernel::Evidence::default();
+    evidence.add_curves(
+        (chain.halfedges.iter())
+            .filter(|&&h| (h as usize) / 3 < tris)
+            .map(|&h| mesh.curve(h)),
+    );
+    ErrorGeometry::of_evidence(&evidence, tolerance)
 }
 
 /// `profile`, in its sketch's coordinates, moved into the frame the

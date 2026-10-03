@@ -1611,5 +1611,6 @@ mod combine;
 mod edges;
 mod faces;
 mod merging;
+mod motion;
 mod profile_evidence;
 mod revolve;

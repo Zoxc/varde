@@ -3608,6 +3608,9 @@ The constructors are the only way to make one:
   scale exactly.
 - `then(next)` composes (`self` first); `point`, `vector`, `normal` apply
   it.
+- `bits()`: its numbers' bits (`L`, `N`, the offset, the stretch, then
+  the mirror and uniform flags as 0 or 1), what regen keys a moved body
+  by: motions with the same bits move every solid alike.
 
 Constructors give `None` for input that isn't finite, a zero axis or
 normal, a factor out of range, or an offset that overflows (`k·spacing`,

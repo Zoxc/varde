@@ -516,6 +516,90 @@ fn merged_bodies_round_trip() {
     assert_eq!(bodies[0].0, top);
 }
 
+/// A move and a mirror cross the wire as they went, a move drafted too,
+/// and the bodies come back where they went.
+#[test]
+fn a_move_a_mirror_and_a_draft_round_trip() {
+    use glam::DVec3;
+    use varde_document::{Axis3, AxisRef, Mirror, Move, OriginPlane, PlaneRef};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let length = |text: &str| Value::new(text, &Move::offset_ask(&design)).unwrap();
+    let moved = Move {
+        bodies: vec![plate],
+        offset: [length("0"), length("0"), length("5")],
+        turn: Some((
+            AxisRef::Origin(Axis3::Z),
+            Value::new("90", &Move::angle_ask(&design)).unwrap(),
+        )),
+    };
+    editor
+        .apply(editor.document().add_feature(moved.clone().into()))
+        .unwrap();
+    let mirror = Mirror {
+        bodies: vec![plate],
+        plane: PlaneRef::Origin(OriginPlane::XY),
+        keep_original: false,
+    };
+    editor
+        .apply(editor.document().add_feature(mirror.into()))
+        .unwrap();
+    let id = editor.document().features()[2].id;
+    let draft = Draft {
+        revision: 2,
+        feature: Some(id),
+        kind: Move {
+            offset: [length("1"), length("0"), length("5")],
+            ..moved
+        }
+        .into(),
+    };
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(Box::new(draft.clone())),
+        inspect: None,
+    };
+    let decoded = decode_request(&encode_request(&request)).unwrap();
+    let Request::Regenerate {
+        document,
+        draft: back,
+        ..
+    } = &decoded
+    else {
+        panic!("not a regeneration");
+    };
+    assert_eq!(**document, *editor.document());
+    assert_eq!(back, &Some(Box::new(draft)));
+    let Response::Regenerated {
+        draft,
+        failed,
+        bodies,
+        ..
+    } = round_trip(&handle(decoded))
+    else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(draft.unwrap().error, None);
+    assert!(failed.is_empty(), "{failed:?}");
+    // The draft's plate turned a quarter, shifted 1 along x and 5 up,
+    // and mirrored in XY.
+    let [(body, aabb)] = &bodies[..] else {
+        panic!("one body: {bodies:?}");
+    };
+    assert_eq!(*body, plate);
+    assert_eq!(aabb.min.to_array(), [-19.0, -30.0, -15.0]);
+    assert_eq!(aabb.max.to_array(), [21.0, 30.0, -5.0]);
+    // The committed one, from z = -15 to -5, 40 wide along x.
+    let evaluation = crate::evaluate(editor.document(), &mut crate::Cache::default());
+    let bounds = evaluation.bodies[0].solid.bounds3().unwrap();
+    assert_eq!(bounds.min, DVec3::new(-20.0, -30.0, -15.0));
+    assert_eq!(bounds.max, DVec3::new(20.0, 30.0, -5.0));
+}
+
 /// A combine and a combine drafted cross the wire as they went, and the
 /// tools it consumes come back merged into its target.
 #[test]

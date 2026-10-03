@@ -652,3 +652,20 @@ fn assemble_drops_its_unions_operand_faces() {
     let bare = Failure::from(KernelError::TooComplex);
     assert_eq!(of_parts(bare.clone()), bare);
 }
+
+/// Equal motions have equal bits, however they're built; any change of
+/// a number or of whether it mirrors changes them.
+#[test]
+fn bits_tell_motions_apart() {
+    let shift = |x: f64| Motion::translation(DVec3::new(x, 0.0, 0.0)).unwrap();
+    assert_eq!(shift(1.0).bits(), shift(1.0).bits());
+    assert_eq!(Motion::IDENTITY.then(&shift(2.0)).bits(), shift(2.0).bits());
+    assert_ne!(shift(1.0).bits(), shift(1.0 + f64::EPSILON).bits());
+    let turn = Motion::turn(DVec3::ZERO, DVec3::Z, 90.0).unwrap();
+    let mirror = Motion::mirror(DVec3::ZERO, DVec3::X).unwrap();
+    assert_ne!(turn.bits(), Motion::IDENTITY.bits());
+    assert_ne!(turn.bits(), mirror.bits());
+    assert_eq!(mirror.bits()[22], 1);
+    assert_eq!(turn.bits()[22], 0);
+    assert_eq!(turn.then(&mirror).bits()[22], 1);
+}

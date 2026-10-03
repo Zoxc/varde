@@ -4209,6 +4209,7 @@ dependencies = [
  "snap",
  "toml",
  "varde-document",
+ "varde-expr",
  "varde-kernel",
  "varde-lane",
  "varde-sketch",

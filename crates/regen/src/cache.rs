@@ -149,6 +149,9 @@ enum Entry {
     /// it's no line there (with what to draw of it: an edge that isn't
     /// straight).
     Edge(Result<[DVec3; 2], Failed>),
+    /// Where a move's axis or a mirror's plane is, as a point and a
+    /// direction, or why it isn't anywhere (with what to draw of where).
+    Reference(Result<[DVec3; 2], Failed>),
     /// Whether a sketch solves.
     Solves(bool),
     /// A feature's tool solid, or why it has none (with what to draw of
@@ -187,7 +190,8 @@ impl Entry {
             Entry::Solid(Ok(solid)) | Entry::Boolean(Ok(solid)) => solid_bytes(solid),
             Entry::Solid(Err(failed))
             | Entry::Placement(Err(failed))
-            | Entry::Edge(Err(failed)) => (failed.message.len())
+            | Entry::Edge(Err(failed))
+            | Entry::Reference(Err(failed)) => (failed.message.len())
                 .saturating_add(failed.geometry.as_deref().map_or(0, ErrorGeometry::bytes)),
             Entry::Touches(Err(failure)) | Entry::Boolean(Err(failure)) => failure.bytes(),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
@@ -198,6 +202,7 @@ impl Entry {
             Entry::Solves(_)
             | Entry::Placement(Ok(_))
             | Entry::Edge(Ok(_))
+            | Entry::Reference(Ok(_))
             | Entry::Touches(Ok(_)) => 0,
         };
         data.saturating_add(OVERHEAD)
@@ -452,6 +457,17 @@ impl Cache {
     ) -> Result<[DVec3; 2], Failed> {
         match self.entry(key, || Entry::Edge(make())) {
             Entry::Edge(ends) => ends,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn reference(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<[DVec3; 2], Failed>,
+    ) -> Result<[DVec3; 2], Failed> {
+        match self.entry(key, || Entry::Reference(make())) {
+            Entry::Reference(found) => found,
             _ => unreachable!("keys of different kinds differ"),
         }
     }
