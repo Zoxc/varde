@@ -2335,3 +2335,100 @@ fn failures_of_the_result_carry_the_triangles_they_name() {
     let fold = KernelError::Invalid(CheckError::Fold(35));
     fails_with_its_triangles(&plate, &boss, Op::Union, &coarse, fold);
 }
+
+#[test]
+fn a_pinch_is_told_from_the_mesh_repair_was_given() {
+    // `pinched_named` on each kind of mesh a failure leaves, built by
+    // hand, as the boolean's failures rarely reach some (the check
+    // refusing what repair passed): the near vertices are those of the
+    // mesh repair was given, the cleaned mesh (the checked one where
+    // repair kept it as it was), never the repaired one's; a `Hull` is
+    // told apart on the mesh whose triangles it names. The work: a unit
+    // a vertex and one a vertex measured against, then for a `Hull` a
+    // unit a triangle listed of the check's mesh (the cleaned mesh's go
+    // uncharged) and one a triangle `apart` looks at. The evidence the
+    // error came with stays, renamed or not.
+    let d = short(&TOL);
+    let shells = |second: [f64; 3]| {
+        crate::mesh::tests::joined(&[
+            (cube([0.0; 3], [1.0; 3]).mesh(), false),
+            (cube(second, [1.0; 3]).mesh(), false),
+        ])
+    };
+    // Shells apart, and shells with vertices within the short length.
+    let far = shells([3.0; 3]);
+    let near = shells([1.0 + 0.5 * d, 0.0, 0.0]);
+    let half = far.tris().len() as u32 / 2;
+    let not_manifold = KernelError::Boolean(BooleanError::NotManifold);
+    let invalid = KernelError::Invalid(CheckError::Hull(0, half));
+    let boxed = |mesh: &Mesh| Box::new(mesh.clone());
+    let check = |given: Option<&Mesh>, checked: &Mesh| Unfinished::Check {
+        given: given.map(boxed),
+        checked: boxed(checked),
+    };
+    let repair = |given: &Mesh| Unfinished::Repair {
+        given: boxed(given),
+        pieces: Vec::new(),
+    };
+    let measured = |mesh: &Mesh| {
+        let mut work = Work::new(&Budget::DEFAULT);
+        pinched(mesh.verts(), d, &mut work).unwrap();
+        Budget::DEFAULT.work() - work.left()
+    };
+    let n = u64::from(2 * half);
+    for (unfinished, hull, want, spent) in [
+        // Near vertices: the checked mesh's where repair kept the mesh.
+        (check(None, &near), None, not_manifold, measured(&near)),
+        // The mesh given, not the one the check refused.
+        (check(Some(&far), &near), None, invalid, measured(&far)),
+        (
+            check(Some(&near), &far),
+            None,
+            not_manifold,
+            measured(&near),
+        ),
+        (repair(&near), None, not_manifold, measured(&near)),
+        // A `Hull` across shells: the check's, listed and charged.
+        (
+            check(None, &far),
+            Some((0, half)),
+            not_manifold,
+            measured(&far) + 2 * n,
+        ),
+        (
+            check(Some(&far), &far),
+            Some((0, half)),
+            not_manifold,
+            measured(&far) + 2 * n,
+        ),
+        // Repair's, of the cleaned mesh: not listed.
+        (
+            repair(&far),
+            Some((0, half)),
+            not_manifold,
+            measured(&far) + n,
+        ),
+        // Within one shell: as it was.
+        (repair(&far), Some((0, 1)), invalid, measured(&far) + n),
+        // Near vertices first: the `Hull` isn't looked at.
+        (
+            check(None, &near),
+            Some((0, half)),
+            not_manifold,
+            measured(&near),
+        ),
+    ] {
+        let mut evidence = crate::Evidence::default();
+        evidence.add_patches([far.patch(0)]);
+        let failure = Failure {
+            error: invalid,
+            evidence: Box::new(evidence.clone()),
+        };
+        let failed = Some(Failed { unfinished, hull });
+        let mut work = Work::new(&Budget::DEFAULT);
+        let got = pinched_named(Err(failure), &failed, &TOL, &mut work).unwrap_err();
+        assert_eq!(got.error, want, "{hull:?}");
+        assert_eq!(*got.evidence, evidence);
+        assert_eq!(Budget::DEFAULT.work() - work.left(), spent, "{hull:?}");
+    }
+}
