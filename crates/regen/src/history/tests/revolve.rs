@@ -663,6 +663,46 @@ fn a_deleted_axis_line_is_not_found() {
     let evaluation = evaluated(editor.document());
     assert_eq!(evaluation.failed, [(revolve, "axis not found".to_owned())]);
     assert!(evaluation.bodies.is_empty());
+    // A line that's gone is nowhere to show.
+    assert!(evaluation.failed[0].geometry.is_none());
+}
+
+/// An axis line whose ends are at one place fails, showing that place
+/// and marking the line in its sketch.
+#[test]
+fn an_axis_line_of_no_length_shows_where_it_is() {
+    let mut editor = Editor::new(Document::default());
+    let revolve = add_revolve(
+        &mut editor,
+        OriginPlane::XZ,
+        rectangle_and_line((5.0, 0.0), (10.0, 4.0), (0.0, 2.0), (0.0, 2.0)),
+        Turn::Full,
+        false,
+        Operation::NewBody(BodyId::NEW),
+    );
+    let FeatureKind::Revolve(made) = &editor.document().feature(revolve).unwrap().kind else {
+        panic!("a revolve");
+    };
+    let AxisLine::Curve(line) = made.axis else {
+        panic!("about a line");
+    };
+    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    else {
+        panic!("regeneration failed");
+    };
+    let [failure] = &failed[..] else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(
+        (failure.feature, failure.message.as_str()),
+        (revolve, "its axis line has no length")
+    );
+    let geometry = failure.geometry.as_ref().expect("the line's place");
+    let at = OriginPlane::XZ.placement().to_world(DVec2::new(0.0, 2.0));
+    assert_eq!(geometry.points(), [at.as_vec3().to_array()]);
+    assert_eq!(geometry.sketch_curves(), [u64::from(line.get())]);
+    assert_eq!(geometry.mesh().triangle_count(), 0);
+    assert!(geometry.lines().points().is_empty() && geometry.faces().is_empty());
 }
 
 #[test]

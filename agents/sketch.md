@@ -1314,7 +1314,8 @@ failures of the features using it name (their `ErrorGeometry`'s
 and handed over as `SketchState::failing`. Every failed feature's,
 always while its sketch is edited, not only on hover or selection as in
 the model: the sketch is where it's mended, and a failure names few
-curves. No draft fails meanwhile, as editing a sketch ends the operation
+curves. They are a profile's segments, or a revolve's axis line of no
+length (regen's own failure, with the line's point). No draft fails meanwhile, as editing a sketch ends the operation
 set up. Only curves the sketch as shown holds count: one deleted since
 isn't found (the numbers are `Id::get`s, matched against its curves),
 and the view keeps only ids it holds as curves. They're drawn in the
@@ -1326,8 +1327,8 @@ alone (`ErrorParts::halo_only`), under the sketch's curve drawn red at
 its own width after it; no error core under it, which would thicken it
 and show around a selected one's blue. The model's copy of such a
 failure, in the sketch's plane, is drawn without its curves meanwhile,
-its points (where the profile touches itself, an open gap's ends) still
-shown, for every failure marked (see `agents/viewport.md`, "Which
+its points (where the profile touches itself, an open gap's ends, an
+axis line of no length's place) still shown, for every failure marked (see `agents/viewport.md`, "Which
 failures show").
 
 - The **base** layer, the sketch and its selection (under it the regions

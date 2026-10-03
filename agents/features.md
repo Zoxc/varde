@@ -63,17 +63,26 @@ message is worded from the kernel's `failure.error` as before
   again. Inside the history a failure is `Failed { message, geometry }`
   (a `FeatureFailure` without its feature; a tool's `Entry::Solid` keeps
   it whole). `Failed::kernel` takes the geometry from
-  `KernelFailure::geometry(operands)`, the bodies the operands `a` and
-  `b` are (a join's, cut's or intersect's boolean: the body, then the
-  tool, which is none; a merge step: the first body, then the body
-  merged or none for the tool; a combine step: the target, then the tool
-  body; `touches`: the body, then none; extrude and revolve: none). With
-  no operand face on a body that is the very `Arc` kept, so an unchanged
-  failure is the same `Arc` from one answer to the next; with some, a
-  copy with those faces pending (keeping the evidence's `truncated`
-  even when its faces are all there is). Failures that aren't the kernel's
-  convert from their words (`From<String>`). `Entry::bytes` counts the
-  geometry.
+  `KernelFailure::geometry(operands)`, the bodies each of the operands
+  `a` and `b` holds (`[&[BodyId]; 2]`; a face an operand names is looked
+  for on each of its bodies): a join's, cut's or intersect's boolean:
+  the body, then the tool, which is none (a feature's tool is drawn as no
+  body); a merge step (`Run::merge`): the first body and the bodies
+  merged into it so far (the tool joined to it is none), then the body
+  being merged, or for the tool's own step the first body, then none; a
+  combine step: the target and the tools united with it so far (the
+  running solid holds their faces, and while the combine fails each is
+  still its own body), then the tool's body; `touches`: the body, then
+  none; extrude and revolve: none. With no operand face on a body that
+  is the very `Arc` kept, so an unchanged failure is the same `Arc` from
+  one answer to the next; with some, a copy with those faces pending
+  (keeping the evidence's `truncated` even when its faces are all there
+  is). Failures that aren't the kernel's convert from their words
+  (`From<String>`), with no geometry, except the two of regen's own that
+  have some (below), made by `ErrorGeometry::of_evidence` from evidence
+  regen fills itself. A face sketch's placement keeps its `Failed`
+  (`Entry::Placement`), keyed by the fit tolerance too since the face is
+  drawn at it. `Entry::bytes` counts the geometry.
 - **Made drawable** (`ErrorGeometry::new`, at the `Display` of the
   document's tolerance): patches tessellated each on its own as a face of
   no known form is (`Display::sample_patch`) into one `RenderMesh` of one
@@ -148,8 +157,34 @@ message is worded from the kernel's `failure.error` as before
   arc they are about, or a cut face's boundary that doesn't close (a
   rod intersected with a cylinder whose end plane holds the rod's axis:
   the boundary's pieces as lines, the two vertices where they stop as
-  points, the rod's face resolved to the body's faces). The kernel's
-  other errors and regen's own failures have none yet.
+  points, the rod's face resolved to the body's faces). A join's merge
+  step and a combine's step carry their boolean's evidence the same way,
+  the faces on the bodies their operands hold (`history/tests/merging.rs`:
+  the pinch where a second body meets the first along an edge the tool
+  doesn't cover; `history/tests/combine.rs`: two discs' walls touching
+  along a line, the first united with the target before, each wall
+  found on its own disc's body). The kernel's errors with none are
+  `TooComplex`, `Patch`, an empty profile and `assemble`'s and the
+  transforms' own checks.
+  Regen's own failures, where cheap:
+  - "its face isn't flat" (`place_on_face`, `face_geometry`): the face
+    found, the region's triangles as patches of the solid as the
+    features before the sketch leave it (by value, so later features
+    don't move it; the first `MAX_EVIDENCE.patches`, then `truncated`),
+    drawn with their outline (`history/tests/faces.rs`, the example
+    plate's hole wall);
+  - "its axis line has no length" (`Run::axis_failed`): the line's point
+    placed by the sketch, and the line as a sketch curve, so the sketch
+    editor marks it (`history/tests/revolve.rs`);
+  - none for the rest, which have nothing to show: "its face's body is
+    gone", "its face wasn't found", "its face is too far out to sketch
+    on" (the face is flat, its plane just out of reach), "its sketch
+    isn't placed" (the sketch's own failure says why), "its sketch isn't
+    there", "axis not found", "its regions are too far from the axis to
+    revolve", "region not found", a sketch too complex, a through all
+    with no body, a combine's body with no solid of its own or consumed
+    before, a boolean that would leave nothing, "it doesn't touch any
+    body".
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s
   and the draft's `Drafted` (`MeshFeed::draft_geometry`, beside
   `draft_error`). The viewport draws the geometry of the draft's
@@ -237,7 +272,8 @@ as the features before the sketch left it. The sketch is placed:
   fails, "its face wasn't found";
 - the region's form (its first triangle's face's, `picking::region_form`,
   the same the picking tables summarize, so the app's pick gives the
-  same bits) must be `Form::Plane { n, d }`, else "its face isn't flat";
+  same bits) must be `Form::Plane { n, d }`, else "its face isn't flat",
+  which shows the face (see "What has geometry so far" above);
 - `Placement::on_plane(n, d)`, refused unless `Placement::valid` (every
   number finite, axes unit and square within `Placement::SLACK` = 1e-9,
   `normal = x × y` within it, origin within `MAX_COORD` on each axis):
@@ -420,8 +456,9 @@ into a kernel profile in the sketch's coordinates, then:
   and `+x` / `+y`; `Curve(id)` the line's start and `end − start`. A
   curve that's gone or isn't a line fails the revolve with "axis not
   found" (a sketch edit may delete it: `Document::check` doesn't require
-  it); a line with both ends at one point, "its axis line has no
-  length".
+  it), showing nothing; a line with both ends at one point, "its axis
+  line has no length", showing that point and marking the line
+  (`Run::axis_failed`).
 - **The frame** (`axis_frame`): origin the axis's point, `y` along the
   axis (unit), `x` square to it in the sketch's plane toward the
   profile: the side of the profile point (segment ends and middles)
@@ -686,7 +723,10 @@ is, so it sees the bodies as the features before it leave them:
   (otherwise they'd be the cached failures again). That covers a tool
   meeting the target only along an edge or at a point (no clean solid
   alone) once a later tool has bridged them. A subtract or intersect
-  step that fails fails the combine.
+  step that fails fails the combine. A failing step shows its boolean's
+  evidence, the running solid's faces looked for on the target and the
+  tools united with it so far, the tool's on the tool's body (see
+  "Failures and where they are").
 - **Messages** are worded as an extrude's booleans, the tool named in
   place of "it": "joining Body 2 to Body 1 leaves no clean solid: ...",
   "cutting Body 2 from Body 1 ...", "intersecting Body 1 with Body 3

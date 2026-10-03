@@ -14,7 +14,7 @@ fn failure(evidence: Evidence) -> Failure {
 }
 
 /// `failure`'s geometry as the cache makes it, on the bodies `operands`.
-fn made(failure: &Failure, operands: [Option<BodyId>; 2]) -> Option<ErrorGeometry> {
+fn made(failure: &Failure, operands: [&[BodyId]; 2]) -> Option<ErrorGeometry> {
     let failure = KernelFailure::new(failure.clone(), &Tolerance::DEFAULT);
     failure.geometry(operands).map(Arc::unwrap_or_clone)
 }
@@ -44,12 +44,12 @@ fn cap(feature: u64) -> FaceKey {
 #[test]
 fn no_evidence_is_no_geometry() {
     let empty = failure(Evidence::default());
-    assert_eq!(made(&empty, [None, None]), None);
+    assert_eq!(made(&empty, [&[], &[]]), None);
     // Faces of operands that aren't bodies name nothing either.
     let mut faces = Evidence::default();
     faces.add_faces([(Operand::B, cap(2))]);
     let faces = failure(faces);
-    assert_eq!(made(&faces, [None, None]), None);
+    assert_eq!(made(&faces, [&[], &[]]), None);
 }
 
 /// Each kind is made drawable: the patch tessellated, the arc and the
@@ -57,7 +57,7 @@ fn no_evidence_is_no_geometry() {
 /// named, the faces pending until resolved; the box holds them all.
 #[test]
 fn evidence_is_made_drawable() {
-    let geometry = made(&failure(evidence()), [None, None]).expect("geometry");
+    let geometry = made(&failure(evidence()), [&[], &[]]).expect("geometry");
     assert_eq!(geometry.mesh().triangle_count(), 1);
     assert_eq!(geometry.mesh().face_count(), 1);
     assert_eq!(geometry.mesh().part_ends().len(), 1);
@@ -86,7 +86,7 @@ fn what_cannot_be_drawn_is_left_out() {
     let far = f64::from(ErrorGeometry::MAX_POSITION) * 2.0;
     let mut evidence = Evidence::default();
     evidence.add_points([DVec3::ZERO, DVec3::splat(far), DVec3::NAN]);
-    let geometry = made(&failure(evidence), [None, None]).unwrap();
+    let geometry = made(&failure(evidence), [&[], &[]]).unwrap();
     assert_eq!(geometry.points(), [[0.0; 3]]);
     assert!(geometry.truncated());
 
@@ -103,14 +103,14 @@ fn what_cannot_be_drawn_is_left_out() {
         w: f64::NAN,
         p1: DVec3::Y,
     }]);
-    let geometry = made(&failure(evidence), [None, None]);
+    let geometry = made(&failure(evidence), [&[], &[]]);
     // Nothing drawable, but the mark says some was left out.
     assert_eq!(geometry, None);
 
     let mut evidence = Evidence::default();
     evidence.add_sketch_curves([1]);
     evidence.truncated = true;
-    let geometry = made(&failure(evidence), [None, None]).unwrap();
+    let geometry = made(&failure(evidence), [&[], &[]]).unwrap();
     assert!(geometry.truncated());
     assert_eq!(geometry.bounds(), None);
 }
@@ -134,7 +134,7 @@ fn patches_past_the_bound_are_left_out() {
     .unwrap();
     let patch = |_| bulge;
     evidence.add_patches((0..MAX_EVIDENCE.patches).map(patch));
-    let geometry = made(&failure(evidence), [None, None]).unwrap();
+    let geometry = made(&failure(evidence), [&[], &[]]).unwrap();
     let mesh = geometry.mesh();
     assert!(mesh.positions().len() <= ErrorGeometry::MAX_VERTICES);
     assert!(mesh.indices().len() <= ErrorGeometry::MAX_INDICES);
@@ -165,7 +165,7 @@ fn operand_faces_are_resolved_through_the_tables() {
     evidence.add_faces([(Operand::A, cap(1)), (Operand::B, cap(1))]);
     let failure = failure(evidence);
 
-    let mut geometry = made(&failure, [Some(BodyId::NEW), None]).unwrap();
+    let mut geometry = made(&failure, [&[BodyId::NEW], &[]]).unwrap();
     assert!(!geometry.is_empty());
     assert_eq!(geometry.bounds(), None);
     geometry.resolve(&mesh, &picking, Some);
@@ -201,7 +201,7 @@ fn operand_faces_are_resolved_through_the_tables() {
     assert_eq!(round.len(), 4, "{line:?}");
 
     // Its body isn't drawn: nothing is left.
-    let mut gone = made(&failure, [Some(BodyId::NEW), None]).unwrap();
+    let mut gone = made(&failure, [&[BodyId::NEW], &[]]).unwrap();
     gone.resolve(&mesh, &picking, |_| None);
     assert!(gone.is_empty());
 }
@@ -210,7 +210,7 @@ fn operand_faces_are_resolved_through_the_tables() {
 #[test]
 fn parts_round_trip() {
     let (mesh, picking) = cube();
-    let mut geometry = made(&failure(evidence()), [Some(BodyId::NEW), None]).unwrap();
+    let mut geometry = made(&failure(evidence()), [&[BodyId::NEW], &[]]).unwrap();
     geometry.resolve(&mesh, &picking, Some);
     assert_eq!(geometry.faces().len(), 1);
     let parts = geometry.to_parts();
@@ -227,7 +227,7 @@ fn parts_round_trip() {
 #[test]
 fn bad_parts_are_refused() {
     let (mesh, picking) = cube();
-    let mut geometry = made(&failure(evidence()), [Some(BodyId::NEW), None]).unwrap();
+    let mut geometry = made(&failure(evidence()), [&[BodyId::NEW], &[]]).unwrap();
     geometry.resolve(&mesh, &picking, Some);
     let good = geometry.to_parts();
     let refused = |change: &dyn Fn(&mut GeometryParts)| {
@@ -324,11 +324,11 @@ fn a_cached_failure_keeps_its_geometry() {
     let found = (cache.boolean(key, || unreachable!("found"))).unwrap_err();
     assert!(Arc::ptr_eq(&made, &found));
     assert_eq!(found.error, failure(evidence()).error);
-    let tool = found.geometry([None, None]).unwrap();
-    assert!(Arc::ptr_eq(&tool, &found.geometry([None, None]).unwrap()));
+    let tool = found.geometry([&[], &[]]).unwrap();
+    assert!(Arc::ptr_eq(&tool, &found.geometry([&[], &[]]).unwrap()));
     assert_eq!(tool.sketch_curves(), [7, 9]);
     // On a body, its face is pending on it: geometry of its own.
-    let on = found.geometry([Some(BodyId::NEW), None]).unwrap();
+    let on = found.geometry([&[BodyId::NEW], &[]]).unwrap();
     assert!(!Arc::ptr_eq(&tool, &on));
     assert_eq!(on.pending, [(BodyId::NEW, cap(1))]);
 
@@ -346,7 +346,7 @@ fn only_the_patches_boundary_is_drawn() {
     let mut evidence = Evidence::default();
     let flat = |p| Patch::flat(p).unwrap();
     evidence.add_patches([flat([o, x, xy]), flat([o, xy, y])]);
-    let geometry = made(&failure(evidence), [None, None]).unwrap();
+    let geometry = made(&failure(evidence), [&[], &[]]).unwrap();
     assert_eq!(geometry.mesh().triangle_count(), 2);
     let sides: Vec<[[f32; 3]; 2]> = (geometry.lines().polylines())
         .map(|line| [line[0], line[line.len() - 1]])
@@ -366,13 +366,13 @@ fn only_the_patches_boundary_is_drawn() {
 fn resolving_geometry_with_nothing_pending_keeps_it() {
     let (mesh, picking) = cube();
     let kept = KernelFailure::new(failure(evidence()), &Tolerance::DEFAULT);
-    let tool = kept.geometry([None, None]).unwrap();
+    let tool = kept.geometry([&[], &[]]).unwrap();
     let mut answered = Some(tool.clone());
     ErrorGeometry::resolve_shared(&mut answered, &mesh, &picking, Some);
     assert!(Arc::ptr_eq(&tool, answered.as_ref().unwrap()));
 
     // With a face pending it's resolved on a copy of its own.
-    let mut answered = kept.geometry([Some(BodyId::NEW), None]);
+    let mut answered = kept.geometry([&[BodyId::NEW], &[]]);
     ErrorGeometry::resolve_shared(&mut answered, &mesh, &picking, Some);
     assert_eq!(answered.as_ref().unwrap().faces().len(), 1);
     assert!(tool.faces().is_empty());
@@ -381,7 +381,7 @@ fn resolving_geometry_with_nothing_pending_keeps_it() {
     let mut faces = Evidence::default();
     faces.add_faces([(Operand::A, cap(1))]);
     let kept = KernelFailure::new(failure(faces), &Tolerance::DEFAULT);
-    let mut answered = kept.geometry([Some(BodyId::NEW), None]);
+    let mut answered = kept.geometry([&[BodyId::NEW], &[]]);
     ErrorGeometry::resolve_shared(&mut answered, &mesh, &picking, |_| None);
     assert_eq!(answered, None);
 }
@@ -394,7 +394,7 @@ fn faces_alone_keep_the_evidence_mark() {
     let mut evidence = Evidence::default();
     evidence.add_faces([(Operand::A, cap(1))]);
     evidence.truncated = true;
-    let mut geometry = made(&failure(evidence), [Some(BodyId::NEW), None]).unwrap();
+    let mut geometry = made(&failure(evidence), [&[BodyId::NEW], &[]]).unwrap();
     geometry.resolve(&mesh, &picking, Some);
     assert_eq!(geometry.faces().len(), 1);
     assert!(geometry.truncated());
@@ -408,7 +408,7 @@ fn what_is_left_out_does_not_coarsen_the_rest() {
     let arc = Conic3::arc(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 0.0, 1.0).unwrap();
     let mut alone = Evidence::default();
     alone.add_curves([arc]);
-    let alone = made(&failure(alone), [None, None]).unwrap();
+    let alone = made(&failure(alone), [&[], &[]]).unwrap();
 
     let far = f64::from(ErrorGeometry::MAX_POSITION) * 1e20;
     let mut with = Evidence::default();
@@ -419,7 +419,7 @@ fn what_is_left_out_does_not_coarsen_the_rest() {
         c: [DVec3::ZERO; 3],
         w: [-1.0; 3],
     }]);
-    let with = made(&failure(with), [None, None]).unwrap();
+    let with = made(&failure(with), [&[], &[]]).unwrap();
     assert!(with.truncated());
     assert_eq!(with.lines(), alone.lines());
 }
@@ -433,13 +433,13 @@ fn a_patch_given_twice_draws_its_boundary_once() {
     let flat = |p| Patch::flat(p).unwrap();
     let mut twice = Evidence::default();
     twice.add_patches([flat([o, x, y]), flat([o, x, y])]);
-    let twice = made(&failure(twice), [None, None]).unwrap();
+    let twice = made(&failure(twice), [&[], &[]]).unwrap();
     assert_eq!(twice.mesh().triangle_count(), 2);
     assert_eq!(twice.lines().ends().len(), 3);
 
     let mut back = Evidence::default();
     back.add_patches([flat([o, x, y]), flat([o, y, x])]);
-    let back = made(&failure(back), [None, None]).unwrap();
+    let back = made(&failure(back), [&[], &[]]).unwrap();
     assert_eq!(back.mesh().triangle_count(), 2);
     assert!(back.lines().points().is_empty());
 }
@@ -449,7 +449,7 @@ fn a_patch_given_twice_draws_its_boundary_once() {
 #[test]
 fn unused_positions_do_not_stretch_the_box() {
     let (mesh, picking) = cube();
-    let geometry = made(&failure(evidence()), [None, None]).unwrap();
+    let geometry = made(&failure(evidence()), [&[], &[]]).unwrap();
     let mut parts = geometry.to_parts();
     parts.positions.push([1000.0; 3]);
     parts.normals.push([0.0, 0.0, 1.0]);
@@ -488,7 +488,7 @@ fn operand_faces_go_in_whole() {
     let (mesh, picking) = cube();
     let mut evidence = Evidence::default();
     evidence.add_faces([(Operand::A, cap(1))]);
-    let mut geometry = made(&failure(evidence), [Some(BodyId::NEW), None]).unwrap();
+    let mut geometry = made(&failure(evidence), [&[BodyId::NEW], &[]]).unwrap();
     // Room for a line of three points: the cap's outline takes five.
     let full = ErrorGeometry::MAX_LINE_POINTS - 3;
     geometry.lines = RenderLines::from_parts(vec![[0.0; 3]; full], vec![full as u32]).unwrap();

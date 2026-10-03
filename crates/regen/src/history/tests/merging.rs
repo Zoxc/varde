@@ -1,6 +1,6 @@
 //! Joins merging bodies: a seeded fuzz of blocks bridged by a bar against
-//! their exact union, and merges followed through edits, deletes, undo and
-//! drafts.
+//! their exact union, merges followed through edits, deletes, undo and
+//! drafts, and where a merge that fails shows.
 
 use super::*;
 
@@ -474,5 +474,62 @@ fn taking_a_merged_body_out_of_a_later_cut_takes_nothing_out() {
     assert_near(
         only_body(&evaluation).volume(),
         A + B + BAR * 12.0 - 10.0 * 2.0 * 10.0,
+    );
+}
+
+/// A join whose tool joins the first body it touches but leaves the
+/// second meeting that one along an edge it doesn't cover fails merging
+/// them, showing where: the pinch, along the uncovered stretch of the
+/// edge, and the faces named of either body, on that body.
+#[test]
+fn a_merge_that_fails_shows_where() {
+    let mut editor = Editor::new(Document::default());
+    add_block(
+        &mut editor,
+        [0.0, 0.0, 0.0, 10.0, 10.0, 10.0],
+        Operation::NewBody(BodyId::NEW),
+    );
+    add_block(
+        &mut editor,
+        [10.0, 10.0, 0.0, 20.0, 20.0, 10.0],
+        Operation::NewBody(BodyId::NEW),
+    );
+    let [a, b] = [0, 1].map(|i| editor.document().bodies()[i].id);
+    // Inside the first, flush with the second's side up to z = 8.
+    let join = add_block(
+        &mut editor,
+        [5.0, 5.0, 0.0, 10.0, 15.0, 8.0],
+        Operation::Join(Targets::default()),
+    );
+    let crate::Response::Regenerated { failed, .. } =
+        crate::handle(crate::tests::regenerate_with(&editor, None))
+    else {
+        panic!("regeneration failed");
+    };
+    let [failure] = &failed[..] else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(failure.feature, join);
+    assert!(
+        failure.message.starts_with("merging Body 2 into Body 1"),
+        "{}",
+        failure.message
+    );
+    let geometry = failure.geometry.as_ref().expect("geometry");
+    let points = geometry.points();
+    assert!(!points.is_empty());
+    for &[x, y, z] in points {
+        assert!(
+            (x - 10.0).abs() < 1e-3 && (y - 10.0).abs() < 1e-3,
+            "{x} {y}"
+        );
+        assert!((7.999..=10.001).contains(&z), "{z}");
+    }
+    assert!(geometry.mesh().triangle_count() > 0);
+    assert!(
+        geometry
+            .faces()
+            .iter()
+            .all(|&(body, _)| body == a || body == b)
     );
 }

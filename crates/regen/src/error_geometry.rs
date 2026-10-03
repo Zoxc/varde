@@ -16,6 +16,11 @@
 //! once the model is drawn ([`ErrorGeometry::resolve`]); an operand that
 //! isn't a drawn body (a feature's tool solid) names none.
 //!
+//! Regen's own failures make theirs the same way from evidence of their
+//! own ([`ErrorGeometry::of_evidence`]): a face that can't be sketched on
+//! for not being flat, its triangles as patches; an axis line of no
+//! length, its point and the line.
+//!
 //! It is bounded ([`ErrorGeometry::MAX_VERTICES`] and the others): past a
 //! bound the rest is left out and [`ErrorGeometry::truncated`] says so,
 //! as it does when the evidence was. What doesn't make drawable geometry
@@ -46,8 +51,10 @@ pub struct FeatureFailure {
     /// Why, worded from the kernel's error where it's the kernel's.
     pub message: String,
     /// What to draw, ready for the renderer; `None` where the failure has
-    /// no evidence (every failure but the kernel's, for now) or none of
-    /// it can be drawn.
+    /// no evidence or none of it can be drawn. The kernel's failures
+    /// carry their evidence; of regen's own, only a face that isn't flat
+    /// (the face) and an axis line of no length (its point and the line)
+    /// show anything.
     pub geometry: Option<Arc<ErrorGeometry>>,
 }
 
@@ -89,17 +96,19 @@ impl KernelFailure {
     }
 
     /// Its geometry, the operand faces pending on the bodies `operands`
-    /// are (`[a, b]`, `None` for an operand that isn't a body, such as a
-    /// feature's tool) until [`ErrorGeometry::resolve`]; the very
-    /// geometry kept where no face is pending.
-    pub(crate) fn geometry(&self, operands: [Option<BodyId>; 2]) -> Option<Arc<ErrorGeometry>> {
+    /// are made of (`[a, b]`) until [`ErrorGeometry::resolve`]; the very
+    /// geometry kept where no face is pending. An operand may hold
+    /// several bodies (a combine's or a merge's running solid: the target
+    /// and the tools already united with it), each face looked for on
+    /// each of them, or none (a feature's tool, drawn as no body).
+    pub(crate) fn geometry(&self, operands: [&[BodyId]; 2]) -> Option<Arc<ErrorGeometry>> {
         let pending: Vec<(BodyId, FaceKey)> = (self.faces.iter())
-            .filter_map(|&(operand, key)| {
-                let body = match operand {
+            .flat_map(|&(operand, key)| {
+                let bodies = match operand {
                     Operand::A => operands[0],
                     Operand::B => operands[1],
                 };
-                Some((body?, key))
+                bodies.iter().map(move |&body| (body, key))
             })
             .collect();
         if pending.is_empty() {
@@ -161,6 +170,18 @@ impl ErrorGeometry {
     /// The largest coordinate any of it may have: as far as a model's
     /// mesh reaches.
     pub const MAX_POSITION: f32 = RenderMesh::MAX_POSITION;
+
+    /// Regen's own `evidence` (of a failure that isn't the kernel's, such
+    /// as a face that isn't flat) made drawable at the [`Display`] of
+    /// `tolerance`, as the model is; `None` if there's nothing to draw or
+    /// name. It names no operand faces.
+    pub(crate) fn of_evidence(evidence: &Evidence, tolerance: &Tolerance) -> Option<Arc<Self>> {
+        debug_assert!(
+            evidence.faces.is_empty(),
+            "regen's evidence names no operand"
+        );
+        ErrorGeometry::new(evidence, &Display::new(tolerance)).map(Arc::new)
+    }
 
     /// `evidence` made drawable at `display`, or `None` if there's nothing
     /// to draw or name. Its operand faces are left to

@@ -27,6 +27,14 @@ pub(crate) const FACE_TOO_FAR: &str = "its face is too far out to sketch on";
 /// Why a feature made from a sketch that isn't placed fails.
 pub(crate) const SKETCH_NOT_PLACED: &str = "its sketch isn't placed";
 
+/// Why a revolve fails: the line its axis names is gone or isn't a line
+/// any more.
+pub(crate) const AXIS_NOT_FOUND: &str = "axis not found";
+
+/// Why a revolve fails: the line its axis names has no length (its ends
+/// at one place).
+pub(crate) const AXIS_NO_LENGTH: &str = "its axis line has no length";
+
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {

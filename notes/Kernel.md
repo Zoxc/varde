@@ -522,8 +522,9 @@ both patches and the ends; a crossing off the face it crosses; an arc
 with no curve near the true cut, with its ends and the curve refused;
 or a cut face whose boundary doesn't close, with that boundary. Faces
 are given as patches and by the operand's face name. After the flat
-retry the evidence is the second try's. The other errors carry none
-yet.
+retry the evidence is the second try's. The rest carry none:
+`TooComplex`, a bad parameter (`Patch`), an empty profile, and what
+`assemble`'s and the transforms' own checks refuse.
 
 ## In the app
 
@@ -532,7 +533,13 @@ each extrude's tool solid. A new body takes the tool; a join, cut or
 intersect asks `touches` of every earlier body not excluded and runs the
 boolean against each one touched, the body first so its face names win
 (a join touching several bodies merges them into the first). A failing
-feature changes no body, and later features still run. Every result
+feature changes no body, and later features still run. Its failure keeps
+the words for the user and the evidence made drawable (tessellated
+patches, flattened curves, points, the sketch curves, the operand faces
+found on the bodies drawn), which the viewport draws in red within a wide
+red halo while the feature is looked at; of regen's own failures, a
+sketch's face that isn't flat shows the face and a revolve's axis line of
+no length its point. Every result
 (profiles, tool solids, touch answers, booleans, meshes, the drawn scene) is
 cached under a 128-bit key of its inputs, bounded by size (256 MiB natively,
 64 MiB on the web), so an edit reruns only what depends on it. Drafts (an

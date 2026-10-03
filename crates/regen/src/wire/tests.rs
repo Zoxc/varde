@@ -2515,7 +2515,7 @@ fn failure_geometry() -> Arc<ErrorGeometry> {
         evidence: Box::new(evidence),
     };
     let failure = crate::error_geometry::KernelFailure::new(failure, &Tolerance::DEFAULT);
-    let mut geometry = Arc::unwrap_or_clone(failure.geometry([Some(BodyId::NEW), None]).unwrap());
+    let mut geometry = Arc::unwrap_or_clone(failure.geometry([&[BodyId::NEW], &[]]).unwrap());
     let Response::Regenerated { mesh, picking, .. } = answer(triangle_mesh(), vec![BodyId::NEW])
     else {
         unreachable!("an answer")

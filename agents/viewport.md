@@ -991,13 +991,16 @@ while its draft has none, and not at all once a draft of the current
 run is shown (`MeshFeed::draft_shown`: the model shown's failure for it
 is then a draft's, the one before while a changed draft is on its way,
 whose error the panel doesn't show either); nothing otherwise, so a model
-with an old failure isn't covered in red. While a sketch is edited, a
+with an old failure isn't covered in red. A sketch's own failure is a
+failed feature's as any other (its row shows the face it couldn't be put
+on, for not being flat). While a sketch is edited, a
 failure of a feature using it that names its curves is drawn without
 its curves (`ShownError::lines` false), selected or not, as long as it
 has points or patches: the sketch marks those curves itself, red within
 the same halo (`agents/sketch.md`, "Failing curves"), and the copy in
 its plane would draw them twice, and late while a drag moves them; but
-its points (where a profile touches itself, an open gap's ends) are the
+its points (where a profile touches itself, an open gap's ends, an axis
+line of no length's place) are the
 most precise part of it, and the sketch has nothing to mark them with.
 So, like the curves marked, every such failure's show while its sketch
 is edited, not only one selected. A revolve's axis crossing the

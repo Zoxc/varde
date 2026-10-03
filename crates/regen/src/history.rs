@@ -40,7 +40,14 @@
 //! (`src/message.rs`), and, where the kernel failed, what its failure's
 //! evidence shows of where ([`FeatureFailure::geometry`], see
 //! `src/error_geometry.rs`; the operand faces are resolved once the model
-//! is drawn), and changes no body; the later ones still run.
+//! is drawn, each operand on the bodies it holds: a merge's or a
+//! combine's running solid is the first body or target and those united
+//! with it so far, a feature's tool none), and changes no body; the later
+//! ones still run. Of regen's own failures, a face that isn't flat shows
+//! the face and an axis line of no length its point; the others (a face
+//! or body gone, a face too far out, a sketch not placed or not there,
+//! an axis not found, a combine's body with no solid) have nothing to
+//! show.
 //!
 //! Every result goes through the [`Cache`], keyed by what it depends on,
 //! so only what an edit changes runs again.
@@ -149,11 +156,11 @@ pub(crate) struct Failed {
 
 impl Failed {
     /// The kernel's `failure`, worded as `message`, of the bodies its
-    /// operands are (`[a, b]`, see [`KernelFailure::geometry`]).
+    /// operands are made of (`[a, b]`, see [`KernelFailure::geometry`]).
     pub(crate) fn kernel(
         message: String,
         failure: &KernelFailure,
-        operands: [Option<BodyId>; 2],
+        operands: [&[BodyId]; 2],
     ) -> Failed {
         Failed {
             message,
@@ -234,16 +241,18 @@ pub(crate) fn evaluate_within(
                 let profiles = cache.profiles(key, || sketch.profiles());
                 let placement = match plane {
                     Plane::Origin(origin) => Some(origin.placement()),
-                    Plane::Face(face) => match place_on_face(face, &evaluation, cache) {
-                        Ok(placement) => {
-                            evaluation.placements.push((feature.id, placement));
-                            Some(placement)
+                    Plane::Face(face) => {
+                        match place_on_face(face, &evaluation, &tolerance, cache) {
+                            Ok(placement) => {
+                                evaluation.placements.push((feature.id, placement));
+                                Some(placement)
+                            }
+                            Err(error) => {
+                                (evaluation.failed).push(error.of(feature.id));
+                                None
+                            }
                         }
-                        Err(error) => {
-                            (evaluation.failed).push(Failed::from(error).of(feature.id));
-                            None
-                        }
-                    },
+                    }
                 };
                 sketches.push(SketchOutput {
                     id: feature.id,
@@ -427,7 +436,7 @@ impl Run<'_> {
                 })
                 .map_err(|failure| {
                     let words = fails(message::boolean(doing, name, failure.error));
-                    Failed::kernel(words, &failure, [Some(made.body), None])
+                    Failed::kernel(words, &failure, [&[made.body], &[]])
                 })?;
             // The cached empty result stays: its key is right, and the
             // check is cheap to make again. A cut's message says to
@@ -503,7 +512,10 @@ impl Run<'_> {
     /// solid on their own, though the tool bridges them, so if any step
     /// fails the tool is joined to the first body instead, as it would
     /// be alone, and the others are joined to that in turn; if that
-    /// fails too, its error is given.
+    /// fails too, its error is given, with its evidence: the faces it
+    /// names of the running solid on the first body and those merged into
+    /// it so far (the tool is drawn as no body), and of the body being
+    /// merged on that body.
     fn merge(
         &self,
         bodies: &[&BodySolid],
@@ -545,8 +557,11 @@ impl Run<'_> {
             let name = self.body_name(first.body);
             let words =
                 message::leave_out(message::boolean(Doing::Joining, name, failure.error), name);
-            Failed::kernel(words, &failure, [Some(first.body), None])
+            Failed::kernel(words, &failure, [&[first.body], &[]])
         })?;
+        // The bodies the running solid holds (the tool is none), whose
+        // faces a failure names on it.
+        let mut held = vec![first.body];
         for made in rest {
             merged = unite(
                 boolean_key(Doing::Merging, merged.1, made.key),
@@ -556,8 +571,9 @@ impl Run<'_> {
             .map_err(|failure| {
                 let (into, other) = (self.body_name(first.body), self.body_name(made.body));
                 let words = message::merging(into, other, failure.error);
-                Failed::kernel(words, &failure, [Some(first.body), Some(made.body)])
+                Failed::kernel(words, &failure, [&held, &[made.body]])
             })?;
+            held.push(made.body);
         }
         Ok(merged)
     }
@@ -591,7 +607,7 @@ impl Run<'_> {
                     touched.push(made.body);
                     return Err((
                         touched,
-                        Failed::kernel(words, &failure, [Some(made.body), None]),
+                        Failed::kernel(words, &failure, [&[made.body], &[]]),
                     ));
                 }
             }
@@ -669,8 +685,10 @@ impl Run<'_> {
             .finish();
         let solid = cache.solid(key, || {
             let profile = self.profile()?;
-            let axis = axis_line(self.sketch.sketch, revolve.axis)?;
-            let (profile, frame, same_way) = axis_frame(&profile, &axis, &placement)?;
+            let axis = axis_line(self.sketch.sketch, revolve.axis)
+                .map_err(|why| self.axis_failed(why, revolve.axis, &placement))?;
+            let (profile, frame, same_way) = axis_frame(&profile, &axis, &placement)
+                .map_err(|why| self.axis_failed(why, revolve.axis, &placement))?;
             let sweep = match span {
                 None => Sweep::Full,
                 Some((from, to)) if same_way => Sweep::Part { from, to },
@@ -690,6 +708,35 @@ impl Run<'_> {
             .map_err(|failure| self.kernel_error(failure))
         })?;
         Ok((solid, key))
+    }
+
+    /// Why its revolve's `axis` failed, `why`, on its sketch placed at
+    /// `placement`: where the axis is a line of no length, with that
+    /// line's point and the line itself to show (nothing else of the
+    /// axis's failures has anything to show: a line that's gone isn't
+    /// anywhere).
+    fn axis_failed(&self, why: String, axis: AxisLine, placement: &Placement) -> Failed {
+        let sketch = self.sketch.sketch;
+        let start = match axis {
+            AxisLine::Curve(id) if why == message::AXIS_NO_LENGTH => match sketch.curve(id) {
+                Some(entry) => match entry.curve {
+                    Curve::Line { start, .. } => sketch.point(start).map(|point| (id, point.at)),
+                    _ => None,
+                },
+                None => None,
+            },
+            _ => None,
+        };
+        let Some((id, at)) = start else {
+            return why.into();
+        };
+        let mut evidence = varde_kernel::Evidence::default();
+        evidence.add_points([placement.to_world(at)]);
+        evidence.add_sketch_curves([u64::from(id.get())]);
+        Failed {
+            message: why,
+            geometry: ErrorGeometry::of_evidence(&evidence, &self.tolerance),
+        }
     }
 
     /// Where its sketch is, or why it isn't anywhere.
@@ -725,7 +772,7 @@ impl Run<'_> {
             self.tolerance.fit() <= Tolerance::MIN_FIT,
         );
         let failure = KernelFailure::new(failure, &self.tolerance);
-        Failed::kernel(words, &failure, [None, None])
+        Failed::kernel(words, &failure, [&[], &[]])
     }
 }
 
@@ -736,18 +783,21 @@ impl Run<'_> {
 /// face is found on its solid's [`Topology`](varde_kernel::Topology) by
 /// name or alias, the nearest to its point among several
 /// ([`Topology::face`](varde_kernel::Topology::face); none is "wasn't
-/// found"); its form must be a plane ("isn't flat"), whose `n` and `d`
+/// found"); its form must be a plane ("isn't flat", which shows the face
+/// found, see [`face_geometry`]), whose `n` and `d`
 /// give the placement by [`Placement::on_plane`], the same rule and the
 /// same bits as the app's from the picking tables' summary of the face
 /// (both take the region's form by [`region_form`]). A placement that
 /// isn't [`Placement::valid`] (its origin past the coordinate limit) is
-/// refused. Cached by the solid's key and the face's name and point,
-/// so the topology is worked out again only when the solid changes.
+/// refused. Cached by the solid's key, the face's name and point and the
+/// fit tolerance (which the face is drawn at), so the topology is worked
+/// out again only when the solid changes.
 pub(crate) fn place_on_face(
     face: &FaceRef,
     evaluation: &Evaluation,
+    tolerance: &Tolerance,
     cache: &mut Cache,
-) -> Result<Placement, &'static str> {
+) -> Result<Placement, Failed> {
     let holder = evaluation.holder(face.body);
     let made = (evaluation.bodies.iter())
         .find(|made| Some(made.body) == holder)
@@ -759,22 +809,45 @@ pub(crate) fn place_on_face(
         .number(near[0])
         .number(near[1])
         .number(near[2])
+        .number(tolerance.fit().to_bits())
         .finish();
     cache.placement(key, || {
         let solid = &made.solid;
         let topology = solid.topology();
         let region =
             (topology.face(solid, &face.key, face.near)).map_err(|_| message::FACE_NOT_FOUND)?;
-        let Form::Plane { n, d } = *region_form(solid, &topology.regions()[region as usize]) else {
-            return Err(message::FACE_NOT_FLAT);
+        let region = &topology.regions()[region as usize];
+        let not_flat = || Failed {
+            message: message::FACE_NOT_FLAT.to_owned(),
+            geometry: face_geometry(solid, region, tolerance),
         };
-        let placement = Placement::on_plane(n, d).ok_or(message::FACE_NOT_FLAT)?;
+        let Form::Plane { n, d } = *region_form(solid, region) else {
+            return Err(not_flat());
+        };
+        let placement = Placement::on_plane(n, d).ok_or_else(not_flat)?;
         if placement.valid() {
             Ok(placement)
         } else {
-            Err(message::FACE_TOO_FAR)
+            Err(message::FACE_TOO_FAR.into())
         }
     })
+}
+
+/// What a face that can't be sketched on shows: `region` of `solid` (the
+/// face found), its triangles as patches, the first
+/// [`MAX_EVIDENCE`](varde_kernel::MAX_EVIDENCE)`.patches` of them,
+/// drawn at the [`Display`](varde_kernel::Display) of `tolerance`.
+/// By value: the solid is the body as the features before the sketch
+/// leave it, which later ones may change.
+fn face_geometry(
+    solid: &Solid,
+    region: &varde_kernel::topology::Region,
+    tolerance: &Tolerance,
+) -> Option<Arc<ErrorGeometry>> {
+    let mut evidence = varde_kernel::Evidence::default();
+    let mesh = solid.mesh();
+    evidence.add_patches((region.tris.iter()).map(|&tri| mesh.patch(tri as usize)));
+    ErrorGeometry::of_evidence(&evidence, tolerance)
 }
 
 /// A revolve's axis in its sketch's coordinates.
@@ -796,7 +869,7 @@ pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, String>
         AxisLine::SketchX => (DVec2::ZERO, DVec2::X, None),
         AxisLine::SketchY => (DVec2::ZERO, DVec2::Y, None),
         AxisLine::Curve(id) => {
-            let not_found = || "axis not found".to_owned();
+            let not_found = || message::AXIS_NOT_FOUND.to_owned();
             let entry = sketch.curve(id).ok_or_else(not_found)?;
             let Curve::Line { start, end } = entry.curve else {
                 return Err(not_found());
@@ -809,7 +882,7 @@ pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, String>
         }
     };
     if along == DVec2::ZERO {
-        return Err("its axis line has no length".to_owned());
+        return Err(message::AXIS_NO_LENGTH.to_owned());
     }
     Ok(Axis { at, along, curve })
 }
@@ -839,7 +912,7 @@ pub(crate) fn axis_frame(
     axis: &Axis,
     placement: &Placement,
 ) -> Result<(Profile, Frame, bool), String> {
-    let along = (axis.along.try_normalize()).ok_or("its axis line has no length")?;
+    let along = (axis.along.try_normalize()).ok_or(message::AXIS_NO_LENGTH)?;
     let left = along.perp();
     let segments = || profile.loops.iter().flat_map(|lp| lp.segments.iter());
     // The side of the farthest point; the first of equals.

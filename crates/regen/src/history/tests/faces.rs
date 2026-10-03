@@ -1,7 +1,8 @@
 //! Sketches on faces in the history: placed on the face as the features
 //! before them leave it, following it when those change, through a join
-//! that consumes its body; failing when the face is gone, isn't flat or
-//! its body is gone; tilted faces end to end; and what's cached.
+//! that consumes its body; failing when the face is gone, isn't flat
+//! (showing the face) or its body is gone; tilted faces end to end; and
+//! what's cached.
 
 use glam::DVec3;
 use varde_document::{AxisLine, FaceRef, Placement, Revolve, Turn};
@@ -539,7 +540,8 @@ fn a_sketch_on_a_consumed_body_s_face_follows_it_into_its_holder() {
 
 /// A sketch whose face a cut took away fails, "its face wasn't found",
 /// and so does its extrude; it isn't drawn. Removing the face's body's
-/// maker leaves it failing too, its body gone.
+/// maker leaves it failing too, its body gone. Neither shows anything:
+/// there's no face to show.
 #[test]
 fn a_sketch_whose_face_is_gone_fails() {
     let mut editor = Editor::new(Document::example());
@@ -568,6 +570,7 @@ fn a_sketch_whose_face_is_gone_fails() {
     );
     assert_eq!(evaluation.placements.len(), 1);
     assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 8.0));
+    assert!(evaluation.failed.iter().all(|f| f.geometry.is_none()));
     let lines = crate::flatten_sketches(editor.document(), &evaluation.placements, None).unwrap();
     assert_eq!(lines, varde_kernel::RenderLines::default());
 
@@ -588,10 +591,13 @@ fn a_sketch_whose_face_is_gone_fails() {
             (boss, "its sketch isn't placed".to_owned()),
         ]
     );
+    assert!(evaluation.failed.iter().all(|f| f.geometry.is_none()));
 }
 
 /// A sketch on the hole's wall, a cylinder, fails: "its face isn't
-/// flat". Its profiles are still worked out.
+/// flat", showing the wall (the face found, as the plate is before the
+/// sketch), drawn at the fit tolerance as the model is. Its profiles are
+/// still worked out, and the failure with its geometry is kept.
 #[test]
 fn a_sketch_on_a_curved_face_fails() {
     let mut editor = Editor::new(Document::example());
@@ -614,6 +620,31 @@ fn a_sketch_on_a_curved_face_fails() {
     assert!(evaluation.placements.is_empty());
     // Both sketches' profiles, the plate, and the placement tried.
     assert_eq!(cache.counts(), (0, 4));
+    // The wall: the hole of radius 8 through the plate, 10 thick, drawn
+    // as triangles within its outline, nothing else.
+    let geometry = evaluation.failed[0].geometry.clone().expect("the wall");
+    assert!(geometry.mesh().triangle_count() > 0);
+    assert!(!geometry.lines().points().is_empty());
+    assert!(geometry.points().is_empty() && geometry.sketch_curves().is_empty());
+    assert!(geometry.faces().is_empty() && !geometry.truncated());
+    let positions = geometry.mesh().positions().iter();
+    for &[x, y, z] in positions.chain(geometry.lines().points().iter()) {
+        assert!((x.hypot(y) - 8.0).abs() < 1e-3, "{x} {y}");
+        assert!((-1e-3..=10.001).contains(&z), "{z}");
+    }
+    let bounds = geometry.bounds().expect("a box");
+    assert!((bounds.max.x - 8.0).abs() < 1e-3 && (bounds.min.y + 8.0).abs() < 1e-3);
+    // Kept with the placement: found again, the very geometry.
+    let again = evaluate(editor.document(), &mut cache);
+    assert_eq!(cache.counts(), (4, 4));
+    let kept = again.failed[0].geometry.as_ref().expect("the wall");
+    assert!(Arc::ptr_eq(kept, &geometry));
+    // And answered with the model, as it is.
+    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(failed[0].geometry.as_deref(), Some(&*geometry));
 }
 
 /// A placement is found again while the face's solid and the reference
@@ -884,6 +915,8 @@ fn a_sketch_on_a_face_whose_plane_passes_the_limit_fails() {
         ]
     );
     assert!(evaluation.placements.is_empty());
+    // Neither shows anything: the face is flat, just out of reach.
+    assert!(evaluation.failed.iter().all(|f| f.geometry.is_none()));
     // The rule's origin, n̂ (n̂·p), is past the limit along x.
     let origin = n * n.dot(at);
     assert!(origin.x > f64::from(varde_kernel::MAX_COORD), "{origin}");

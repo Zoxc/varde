@@ -2,7 +2,8 @@
 //! several bodies against their exact volumes, tools consumed or kept, a
 //! union's tools tried again once another bridged them, results that
 //! would leave nothing, bodies with no solid of their own, later features
-//! on consumed bodies following the target, and what's cached.
+//! on consumed bodies following the target, what's cached, and where a
+//! failing step shows its faces.
 
 use glam::DVec3;
 use varde_document::{BodyOp, Combine, FaceRef};
@@ -275,8 +276,8 @@ fn a_combine_naming_a_consumed_body_fails() {
     assert_near(solid_of(&evaluation, a).volume(), 500.0);
 }
 
-/// A tool whose maker failed upstream has no solid: the combine fails
-/// and the target stays as it was. Removing the tool's maker removes the
+/// A tool whose maker failed upstream has no solid: the combine fails,
+/// showing nothing, and the target stays as it was. Removing the tool's maker removes the
 /// combine with it.
 #[test]
 fn a_tool_without_a_solid_fails_and_a_removed_one_takes_the_combine() {
@@ -301,6 +302,8 @@ fn a_tool_without_a_solid_fails_and_a_removed_one_takes_the_combine() {
         failure(&evaluation, united),
         Some("Body 2 has no solid: the feature making it failed")
     );
+    // Neither shows anything: the region and the solid are nowhere.
+    assert!(evaluation.failed.iter().all(|f| f.geometry.is_none()));
     assert_eq!(made(&evaluation), [a]);
     assert_near(solid_of(&evaluation, a).volume(), 1000.0);
     editor.undo();
@@ -480,3 +483,57 @@ fn a_combine_draft_is_previewed() {
 }
 
 mod fuzz;
+
+/// A union step that fails shows where, the faces it names found on the
+/// bodies they are of: the target's running solid holds the tools united
+/// with it before, so a face of one of those is on that tool's body. A
+/// block, a disc overlapping it, and a disc beside that one touching it
+/// along a line: the last fails, the walls touching on the two discs.
+#[test]
+fn a_failing_step_shows_the_faces_on_their_bodies() {
+    let mut editor = Editor::new(Document::default());
+    let target = block(&mut editor, -10.0, -2.0, -3.0, 2.0, "10");
+    let first = add_body(&mut editor, disc((0.0, 0.0), 5.0), "10");
+    let beside = add_body(&mut editor, disc((10.0, 0.0), 5.0), "10");
+    let united = add_combine(
+        &mut editor,
+        combine(target, &[first, beside], BodyOp::Union),
+    );
+    let crate::Response::Regenerated {
+        mesh,
+        picking,
+        failed,
+        ..
+    } = crate::handle(regenerate_with(&editor, None))
+    else {
+        panic!("regeneration failed");
+    };
+    let [failure] = &failed[..] else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(failure.feature, united);
+    assert!(
+        failure.message.starts_with("joining Body 3 to Body 1"),
+        "{}",
+        failure.message
+    );
+    let geometry = failure.geometry.as_ref().expect("geometry");
+    let faces = geometry.faces();
+    // The walls of both discs, every face of each in the model, and
+    // nothing of the target.
+    for body in [first, beside] {
+        let named: Vec<u32> = (faces.iter())
+            .filter(|&&(b, _)| b == body)
+            .map(|&(_, f)| f)
+            .collect();
+        assert!(!named.is_empty(), "{body:?}: {faces:?}");
+        let wall = picking.faces()[named[0] as usize].key;
+        let walls: Vec<u32> = (0..mesh.face_count() as u32)
+            .filter(|&f| {
+                picking.face_body(&mesh, f) == Some(body) && picking.faces()[f as usize].key == wall
+            })
+            .collect();
+        assert_eq!(named, walls, "{body:?}");
+    }
+    assert!(faces.iter().all(|&(body, _)| body != target), "{faces:?}");
+}

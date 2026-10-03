@@ -141,8 +141,9 @@ impl Keyer {
 enum Entry {
     /// A sketch's profiles.
     Profiles(Arc<Result<Profiles, TooComplex>>),
-    /// Where a sketch on a face is, or why it isn't anywhere.
-    Placement(Result<Placement, &'static str>),
+    /// Where a sketch on a face is, or why it isn't anywhere (with what
+    /// to draw of where: a face that isn't flat).
+    Placement(Result<Placement, Failed>),
     /// Whether a sketch solves.
     Solves(bool),
     /// A feature's tool solid, or why it has none (with what to draw of
@@ -179,7 +180,7 @@ impl Entry {
                 Err(TooComplex) => 0,
             },
             Entry::Solid(Ok(solid)) | Entry::Boolean(Ok(solid)) => solid_bytes(solid),
-            Entry::Solid(Err(failed)) => (failed.message.len())
+            Entry::Solid(Err(failed)) | Entry::Placement(Err(failed)) => (failed.message.len())
                 .saturating_add(failed.geometry.as_deref().map_or(0, ErrorGeometry::bytes)),
             Entry::Touches(Err(failure)) | Entry::Boolean(Err(failure)) => failure.bytes(),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
@@ -187,7 +188,7 @@ impl Entry {
             Entry::Topology(topology) => topology_bytes(topology),
             Entry::Measure(kept) => kept.as_ref().as_ref().err().map_or(0, String::len),
             Entry::Distance(gap) => gap.as_ref().err().map_or(0, String::len),
-            Entry::Solves(_) | Entry::Placement(_) | Entry::Touches(Ok(_)) => 0,
+            Entry::Solves(_) | Entry::Placement(Ok(_)) | Entry::Touches(Ok(_)) => 0,
         };
         data.saturating_add(OVERHEAD)
     }
@@ -426,8 +427,8 @@ impl Cache {
     pub(crate) fn placement(
         &mut self,
         key: Key,
-        make: impl FnOnce() -> Result<Placement, &'static str>,
-    ) -> Result<Placement, &'static str> {
+        make: impl FnOnce() -> Result<Placement, Failed>,
+    ) -> Result<Placement, Failed> {
         match self.entry(key, || Entry::Placement(make())) {
             Entry::Placement(placement) => placement,
             _ => unreachable!("keys of different kinds differ"),

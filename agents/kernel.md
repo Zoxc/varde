@@ -5816,7 +5816,8 @@ what it is about, see "Boolean evidence" under "Limits, budgets and
 errors"), `NotManifold`
 (the result would touch itself along an edge or at a point, or come
 closer to itself than the resolution: see "Results that aren't
-manifolds"). `TooComplex`
+manifolds"; with the pinch or the faces touching, see "Boolean
+evidence"). `TooComplex` (no evidence)
 past the budget or `MAX_PATCHES`, or with triangles still off their face
 by more than the fit tolerance after the rounds of cutting or the
 clean-up; `Invalid` when the result fails
@@ -7002,9 +7003,10 @@ still start from `Document::default()`, empty: the example is for tests.
 `varde_regen::evaluate(document, cache)` (`src/history.rs`) runs the
 features in order and gives an `Evaluation`: each body's solid
 (`BodySolid`, in the order they were made), the bodies joins merged into
-others (`merged`, below) and the features that failed, with why
-(`failed`, in the document's order). A failing feature changes no body,
-and the later ones still run.
+others (`merged`, below) and the features that failed, with why and
+what to draw of where (`failed`, `FeatureFailure`s in the document's
+order; see "Failures and where they are" in `agents/features.md`). A
+failing feature changes no body, and the later ones still run.
 
 - A **sketch** gives its `Profiles` (`Sketch::profiles`; too complex fails
   the extrudes using it).
@@ -7302,12 +7304,14 @@ bit:
 **Cache** (`src/cache.rs`). Every result is filed under a 128-bit key (two
 SipHash runs, one salted, over the length-prefixed parts): a sketch's
 profiles by the sketch alone (postcard-encoded; not its plane), whether
-it solves by the sketch, a face sketch's placement by the face's solid's
-key and the face reference, an extrude's solid (or error) by its feature
+it solves by the sketch, a face sketch's placement (or why it has none,
+with a face that isn't flat drawn) by the face's solid's key, the face
+reference and the fit tolerance, an extrude's solid (or error) by its feature
 id, the regions, the tolerance's bits, its span's bits, its sketch's key
 and its placement's bits (not the operation, the extent or the excluded bodies, so toggling those
 finds the tool; the span stands for the extent and flip), whether a body touches a tool by the two solids' keys, a
-boolean's result (or `KernelError`) by the operation and the two solids'
+boolean's result (or the kernel's failure, its evidence made drawable,
+`KernelFailure`) by the operation and the two solids'
 keys, which then keys the body's solid (a merge step's likewise, by the
 running solid's key and the next operand's), and a body's mesh by its solid's
 key and the tolerance. Editing an earlier extrude changes its body's key
@@ -7346,9 +7350,10 @@ feature, kind }>`: a feature of any kind (an extrude, a revolve) being set
 up (`feature: None`, applied as `AddFeature`, the body `BodyId::NEW`) or
 edited (`SetFeature`, which may change its kind), applied to
 a copy of the document through an `Editor`, so its checks apply. The
-answer carries `Drafted { revision, error, touched }`; a draft the
-document refuses, or whose feature fails, is answered with the committed
-model and its error. `touched` is the draft's touched bodies less the
+answer carries `Drafted { revision, error, geometry, touched }`; a draft
+the document refuses, or whose feature fails, is answered with the
+committed model and its error (and where its feature fails, what to
+draw of where). `touched` is the draft's touched bodies less the
 excluded ones, `None` where the touch test didn't run (a new body, a draft
 failing before its tool exists, one the document refuses) and `Some` of
 an empty list where it touched nothing; there even when it fails after
@@ -7385,7 +7390,9 @@ renderer doesn't try an upload of the same `Arc` again after it failed;
 the only failure is a part past the device's buffer limit, which the same
 mesh would hit again, so it is logged once. On the web the mesh still crosses the wire whole each time.
 On the web the reply's head
-carries `draft`, `failed`, `touched`, `merged` and the boxes as corner
+carries `draft`, `failed` (each failure's geometry as `GeometryParts`,
+checked by `ErrorGeometry::from_parts` against the model,
+`wire::Error::Geometry`), `touched`, `merged` and the boxes as corner
 arrays, checked finite and in order on receipt (`wire::Error::Bounds`);
 `MAX_HEAD_BYTES` is 64 MiB (the head carries the picking tables too:
 the parts' bodies, at most `RenderMesh::MAX_PARTS`, the faces, at most
