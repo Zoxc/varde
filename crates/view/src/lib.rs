@@ -16,6 +16,7 @@ mod context_menu;
 mod controls;
 pub mod dimension;
 mod document;
+mod errors;
 mod escape;
 mod extrude;
 mod hit;
@@ -61,6 +62,7 @@ pub use document::{
     ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, MeshStatus, Overlay,
     RecoveredChanges, RefusedEdit, SketchState, ValueField, ValueTarget, document,
 };
+pub use errors::ShownErrors;
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
 pub use icons::LOGO_SVG;
 pub use measure::{
@@ -380,6 +382,13 @@ pub enum Look {
     /// glyph, or none: the viewport highlights it, or what a constraint
     /// ties together.
     HoverItem(Option<Id>),
+    /// A feature's row in the Timeline hovered, or none: a failed
+    /// feature's error geometry shows in the viewport while it is.
+    HoverFeature(Option<FeatureId>),
+    /// Frames the camera on the box of a failure's geometry, from its
+    /// Show button: the failed feature's, or with `None` the preview's
+    /// (the draft of the operation being set up).
+    ShowFailure(Option<FeatureId>),
     /// What the cursor is over in the model shown, outside sketches and
     /// sessions, or nothing: sent as it changes, and as the camera or the
     /// model does under a cursor that stays, see [`PickIndex::pick`]. The

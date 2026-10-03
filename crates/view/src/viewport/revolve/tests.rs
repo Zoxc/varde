@@ -76,6 +76,7 @@ fn state<'a>(
         operation: OperationKind::NewBody,
         targets: Vec::new(),
         error: None,
+        show_error: false,
         refused: None,
         held: None,
         checking: false,

@@ -395,6 +395,7 @@ impl Doc {
             operation: session.operation,
             targets: self.body_targets(session.operation, session.feature, &session.targets),
             error: self.feed.draft_error(),
+            show_error: self.draft_framed(),
             refused: session.refused(document),
             held: self.held(session.feature, session.operation),
             checking: self.proposals.slow(),

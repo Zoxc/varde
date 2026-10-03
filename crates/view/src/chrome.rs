@@ -153,6 +153,9 @@ pub fn icon_button(icon: Icon, tone: Tone, message: Option<Message>) -> Button<'
     .on_press_maybe(message)
 }
 
+/// What the button framing the camera on a failure's geometry says.
+pub(crate) const SHOW_FAILURE: &str = "Show";
+
 /// A small button, for a banner or beside a card.
 pub fn small_button(label: &str, emphasis: Emphasis) -> Button<'_, Message> {
     button(text(label).size(12))

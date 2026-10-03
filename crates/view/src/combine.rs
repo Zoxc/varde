@@ -67,6 +67,9 @@ pub struct CombineState<'a> {
     pub enough: bool,
     /// Why the preview failed, if it did.
     pub error: Option<&'a str>,
+    /// Whether the geometry of why the preview failed has a box: a Show
+    /// button beside [`CombineState::error`] frames the camera on it.
+    pub show_error: bool,
     /// Whether sketch edits have waited on the solver long enough to say
     /// so: OK waits for them, and the panel says why.
     pub checking: bool,
@@ -142,7 +145,7 @@ pub(crate) fn panel<'a>(state: &CombineState<'a>) -> Element<'a, Message> {
     ]
     .spacing(1);
     let message = if state.enough {
-        footer_message(None, state.error, state.checking)
+        footer_message(None, state.error, state.show_error, state.checking)
     } else {
         Some(message_text(
             "There’s only one body: make another to combine with",

@@ -11,8 +11,8 @@ use varde_document::{
 };
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{
-    Draft, Drafted, FeatureFailure, Inspect, InspectPick, Inspected, Picking, Request, Response,
-    Transport,
+    Draft, Drafted, ErrorGeometry, FeatureFailure, Inspect, InspectPick, Inspected, Picking,
+    Request, Response, Transport,
 };
 use varde_view::{MeshStatus, PickIndex};
 
@@ -396,6 +396,16 @@ impl MeshFeed {
         let drafted = self.drafted.as_ref()?;
         (drafted.revision == revision)
             .then_some(drafted.error.as_deref())
+            .flatten()
+    }
+
+    /// What to draw of where the draft asked for last fails, when
+    /// [`MeshFeed::draft_error`] gives why and the failure has geometry.
+    pub(crate) fn draft_geometry(&self) -> Option<&Arc<ErrorGeometry>> {
+        let revision = self.draft.as_ref()?.revision;
+        let drafted = self.drafted.as_ref()?;
+        (drafted.revision == revision && drafted.error.is_some())
+            .then_some(drafted.geometry.as_ref())
             .flatten()
     }
 

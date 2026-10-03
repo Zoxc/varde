@@ -23,6 +23,7 @@ use varde_render::{
 
 use crate::anchors::Anchors;
 use crate::chrome::{Hint, chord_hint, mouse_hint};
+use crate::errors::ShownErrors;
 use crate::icons::MouseButton;
 use crate::operation_panel::placed;
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
@@ -113,7 +114,8 @@ impl ModelPicking<'_> {
 /// revolve's regions and axis, and `panel`, floating
 /// over the viewport's right under the controls, and the tool `rail`
 /// over its left. `pivot`, the point the camera orbits if one was picked,
-/// is marked, and `highlight` drawn over the model. With `picking`, the
+/// is marked, and `highlight` and the failures' `errors` drawn over the
+/// model. With `picking`, the
 /// cursor picks the model. The edges the model hides are drawn dashed if
 /// `hidden_edges`, outside a sketch, and every patch's edges faint if
 /// `wireframe`. Each of the mesh's parts is drawn as
@@ -127,6 +129,7 @@ pub(crate) fn viewport<'a>(
     pivot: Option<Pivot>,
     picking: Option<ModelPicking<'a>>,
     highlight: Option<&Arc<ModelHighlight>>,
+    errors: &Arc<ShownErrors>,
     hidden_edges: bool,
     wireframe: bool,
     palette: &Palette,
@@ -178,6 +181,7 @@ pub(crate) fn viewport<'a>(
     program.scene.wireframe = wireframe;
     program.scene.opacity = opacity;
     program.scene.thumbnail = thumbnail.cloned();
+    program.scene.errors = errors.clone();
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -223,6 +227,7 @@ fn program<'a>(
             hidden_edges: true,
             wireframe: false,
             thumbnail: None,
+            errors: NO_ERRORS.clone(),
         },
         sketching,
         operating,
@@ -236,6 +241,9 @@ fn program<'a>(
 /// the renderer uploads nothing again for it.
 static NO_HIGHLIGHT: std::sync::LazyLock<Arc<ModelHighlight>> =
     std::sync::LazyLock::new(Arc::default);
+
+/// What's drawn of failures while none show: one for all frames.
+static NO_ERRORS: std::sync::LazyLock<Arc<ShownErrors>> = std::sync::LazyLock::new(Arc::default);
 
 /// The viewport's shader program: handles input and hands iced the scene it
 /// was built with to draw.
@@ -273,6 +281,8 @@ struct Scene {
     /// A thumbnail to render offscreen beside the frame, if one is asked
     /// for: once, by the first frame prepared with it.
     thumbnail: Option<Arc<ThumbnailRequest>>,
+    /// The failures' geometry drawn over the model.
+    errors: Arc<ShownErrors>,
 }
 
 /// What dragging in the viewport does.
@@ -778,6 +788,9 @@ impl shader::Primitive for Primitive {
         let target = viewport.physical_size();
 
         let scene = &self.scene;
+        // Borrowed from the geometry, so made each frame; the renderer
+        // uploads them again only when their sources change.
+        let errors = scene.errors.parts();
         let prepared = pipeline.prepare(
             &self.slot,
             device,
@@ -798,8 +811,7 @@ impl shader::Primitive for Primitive {
                 selected_faces: &self.highlight.selected_faces,
                 second_faces: &self.highlight.second_faces,
                 highlights: &self.highlight.highlights,
-                // None yet: the app doesn't pick the failures to show.
-                errors: &[],
+                errors: &errors,
                 sketch: self.sketch.as_ref().map(|sketch| SketchScene {
                     plane: sketch.plane,
                     depth_tested: sketch.depth_tested,

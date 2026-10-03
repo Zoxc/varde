@@ -4555,7 +4555,12 @@ fn a_right_click_on_a_timeline_row_opens_its_menu_there() {
         );
     }
     let cache = ui.into_cache();
-    let [Ui::Look(Look::OpenMenu(menu))] = sent[..] else {
+    // Moving onto the row hovers it first.
+    let [
+        Ui::Look(Look::HoverFeature(Some(_))),
+        Ui::Look(Look::OpenMenu(menu)),
+    ] = sent[..]
+    else {
         panic!("{sent:?}");
     };
     assert_eq!(menu, RowMenu::Feature(feature));
@@ -4576,7 +4581,12 @@ fn a_right_click_on_a_timeline_row_opens_its_menu_there() {
         .unwrap();
     let sent = clicked(&mut ui, &mut renderer, delete.bounds.center());
     drop(ui);
-    let [Ui::Edit(Edit::RemoveFeature(id))] = sent[..] else {
+    // Moving onto the menu leaves the row.
+    let [
+        Ui::Look(Look::HoverFeature(None)),
+        Ui::Edit(Edit::RemoveFeature(id)),
+    ] = sent[..]
+    else {
         panic!("{sent:?}");
     };
     doc.update(Edit::RemoveFeature(id));

@@ -54,6 +54,7 @@ fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> Ext
         targets: Vec::new(),
         grabbed: None,
         error: None,
+        show_error: false,
         refused: None,
         held: None,
         checking: false,

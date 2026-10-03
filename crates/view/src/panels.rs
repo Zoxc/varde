@@ -167,9 +167,7 @@ fn timeline<'a>(
     let units = document.units();
     column(document.features().iter().map(|feature| {
         let unsolved = unsolved.contains(&feature.id);
-        let failed = (failed.iter())
-            .find(|failed| failed.feature == feature.id)
-            .map(|failed| failed.message.as_str());
+        let failed = (failed.iter()).find(|failed| failed.feature == feature.id);
         let selected = selected == Some(feature.id);
         let row = feature_row(document, feature, units, selected, unsolved, failed);
         let on = RowMenu::Feature(feature.id);
@@ -198,15 +196,18 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
 /// A feature of `document` in the Timeline, with its note: a sketch's
 /// plane ([`plane_note`](crate::plane_note)), an extrude's distances in
 /// `units`, how far a revolve turns in all. Marked failed if it's
-/// `unsolved`, or `failed` and why, which hovering it tells. Clicking
-/// selects it, double-clicking edits it.
+/// `unsolved`, or `failed` and why, which hovering it tells; a failure
+/// whose geometry has a box gets a Show button that frames the camera on
+/// it (a tooltip can't be clicked, so it's in the row). Hovering it
+/// shows the failure's geometry in the viewport. Clicking selects it,
+/// double-clicking edits it.
 fn feature_row<'a>(
     document: &Document,
     feature: &'a Feature,
     units: LengthUnit,
     selected: bool,
     unsolved: bool,
-    failed: Option<&'a str>,
+    failed: Option<&'a varde_regen::FeatureFailure>,
 ) -> Element<'a, Message> {
     let note = match &feature.kind {
         FeatureKind::Sketch { .. } if unsolved => "Doesn't solve".into(),
@@ -224,13 +225,19 @@ fn feature_row<'a>(
         indent: 8.0,
         selected,
     };
+    let framed = failed.is_some_and(|failed| {
+        (failed.geometry.as_ref()).is_some_and(|geometry| geometry.bounds().is_some())
+    });
+    let show = framed.then_some(Message::Look(Look::ShowFailure(Some(feature.id))));
     let row = row
-        .view(Message::Look(Look::SelectFeature(feature.id)))
-        .on_double_click(Message::Look(Look::EditFeature(feature.id)));
+        .view_with(Message::Look(Look::SelectFeature(feature.id)), show)
+        .on_double_click(Message::Look(Look::EditFeature(feature.id)))
+        .on_enter(Message::Look(Look::HoverFeature(Some(feature.id))))
+        .on_exit(Message::Look(Look::HoverFeature(None)));
     match failed {
-        Some(why) => crate::chrome::tip(
+        Some(failed) => crate::chrome::tip(
             row,
-            text(crate::chrome::sentence(why)).style(theme::danger_text),
+            text(crate::chrome::sentence(&failed.message)).style(theme::danger_text),
         ),
         None => row.into(),
     }
@@ -372,6 +379,12 @@ struct SelectableRow<'a> {
 impl<'a> SelectableRow<'a> {
     /// The row, sending `on_press` when it's clicked.
     fn view(self, on_press: Message) -> iced::widget::MouseArea<'a, Message> {
+        self.view_with(on_press, None)
+    }
+
+    /// The row, sending `on_press` when it's clicked, with a Show button
+    /// sending `show` at its right end, after the note, if there's one.
+    fn view_with(self, on_press: Message, show: Option<Message>) -> MouseArea<'a, Message> {
         let content = |hovered: bool| {
             container(
                 row![
@@ -385,6 +398,11 @@ impl<'a> SelectableRow<'a> {
                     self.note
                         .clone()
                         .map(|note| text(note).size(11.5).style(theme::faint_text)),
+                    show.clone().map(|show| {
+                        chrome::small_button(chrome::SHOW_FAILURE, theme::Emphasis::Secondary)
+                            .padding([0, 6])
+                            .on_press(show)
+                    }),
                 ]
                 .spacing(8)
                 .height(ROW_HEIGHT)

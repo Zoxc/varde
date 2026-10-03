@@ -157,6 +157,9 @@ pub struct ExtrudeState<'a> {
     pub grabbed: Option<Distance>,
     /// Why the preview failed, if it did.
     pub error: Option<&'a str>,
+    /// Whether the geometry of why the preview failed has a box: a Show
+    /// button beside [`ExtrudeState::error`] frames the camera on it.
+    pub show_error: bool,
     /// Why the extrude as set up can't be committed, if its own check
     /// refuses it (two sides over the limit together, say): shown in
     /// place of [`ExtrudeState::error`].
@@ -387,7 +390,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     // Why OK can't be pressed, or the preview failed, or that OK waits
     // on the solver.
     let refused = (state.refused.map(|refused| refused.to_string())).or_else(|| state.held.clone());
-    let message = footer_message(refused, state.error, state.checking);
+    let message = footer_message(refused, state.error, state.show_error, state.checking);
 
     let body = column![
         missing,

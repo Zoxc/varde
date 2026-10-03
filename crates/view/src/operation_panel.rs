@@ -24,13 +24,13 @@ use iced::{Alignment, Element, Event, Length, Rectangle, Size, Vector};
 use varde_document::{BodyId, FeatureId, Placement};
 use varde_sketch::{Profiles, Sketch};
 
-use crate::Message;
-use crate::chrome::{heading, hrule, scrolled, sentence, small_button};
+use crate::chrome::{SHOW_FAILURE, heading, hrule, scrolled, sentence, small_button};
 use crate::controls::CONTROLS_HEIGHT;
 use crate::escape::OnEscape;
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, Emphasis, SEMIBOLD};
 use crate::viewport::CONTROLS_TOP;
+use crate::{Look, Message};
 
 /// How wide the panel is, in pixels.
 pub(crate) const PANEL_WIDTH: f32 = 264.0;
@@ -563,11 +563,14 @@ pub(crate) fn joined_into<'a>(
 }
 
 /// The footer's message: why OK can't be pressed (`refused`, by the
-/// operation's own check), else why the preview failed (`error`), else,
-/// if `checking`, that OK waits on the solver.
+/// operation's own check), else why the preview failed (`error`), with a
+/// Show button beside it framing the camera on where if `show` (its
+/// geometry has a box), else, if `checking`, that OK waits on the
+/// solver.
 pub(crate) fn footer_message<'a>(
     refused: Option<String>,
     error: Option<&'a str>,
+    show: bool,
     checking: bool,
 ) -> Option<Element<'a, Message>> {
     match (refused, error) {
@@ -575,6 +578,20 @@ pub(crate) fn footer_message<'a>(
             sentence(&refused).into_owned(),
             theme::danger_text,
         )),
+        (None, Some(error)) if show => {
+            let show = small_button(SHOW_FAILURE, Emphasis::Secondary)
+                .padding([0, 6])
+                .on_press(Message::Look(Look::ShowFailure(None)));
+            Some(
+                row![
+                    container(message_text(sentence(error), theme::danger_text))
+                        .width(Length::Fill),
+                    show
+                ]
+                .spacing(6)
+                .into(),
+            )
+        }
         (None, Some(error)) => Some(message_text(sentence(error), theme::danger_text)),
         (None, None) => checking.then(|| message_text("Checking the sketch…", theme::muted_text)),
     }

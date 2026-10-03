@@ -965,8 +965,39 @@ only when one differs, as `highlights` is; their box joins the depth
 range's bounds. A point not finite or past `RenderLines::MAX_POSITION`
 isn't drawn. Past the device's buffer size they're skipped and reported
 once (`PrepareError::ErrorsTooLarge`). Errors with nothing to draw (no
-triangles, curves or points) count as none: no passes, no target. The
-app hands it none yet.
+triangles, curves or points) count as none: no passes, no target.
+
+**Which failures show** is the app's (`app/src/doc/errors.rs`,
+`Doc::shown_errors`, a `varde_view::ShownErrors`): the draft's geometry
+while an operation is set up and the newest answer for its draft as it
+is fails with some (`MeshFeed::draft_geometry`, as the panel's error
+is); each failed feature's whose Timeline row is hovered
+(`Look::HoverFeature`, the row's mouse area's enter and exit; outside a
+sketch, and let go of when the side panel's tab changes, since the rows
+go without an exit) or selected, or whose panel is open, the edited
+feature's only while its draft has none; nothing otherwise, so a model
+with an old failure isn't covered in red. All of it is the model
+shown's (its answer brought it), and each `Arc` is shown once.
+`Doc::refresh_errors` (after `sync`, `look` and an answer) picks them
+again and makes a new `ShownErrors` only when they're other `Arc`s, in
+order, than it shows: an unchanged failure, the same `Arc` from the
+regeneration side's cache, keeps what's drawn. `ShownErrors` holds each
+geometry with its `Weak`, downgraded from the live `Arc` once as it's
+made (never `Weak::new()`, which would compare equal to any dangling
+one); a frame borrows them into `ErrorParts` (`ShownErrors::parts`, a
+small vector a frame, since the parts borrow), so the renderer uploads
+only when they change. The operand faces an `ErrorGeometry` names
+(`faces`) aren't drawn yet.
+
+**Show** frames the camera on a failure's box (`Look::ShowFailure`, a
+feature's or with `None` the draft's; `ErrorGeometry::bounds`): the
+camera turns as Home does, keeping its direction, its target to the
+box's middle and its view `FRAME_MARGIN` (1.5) times the box's diagonal
+tall, at least `MIN_FRAME_HEIGHT` (1 mm), and the pivot picked is let
+go of. A Show button sits at the right of a failed feature's Timeline
+row (not in its tooltip: iced's tooltips can't be clicked) and beside
+the error in an operation panel's footer (`footer_message`'s `show`,
+the states' `show_error`), only where the geometry has a box.
 
 - The halo is coverage, not colour: halos overlap everywhere (a
   polyline's joints, two segments that touch, a point on a curve), and

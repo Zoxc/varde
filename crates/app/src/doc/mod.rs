@@ -4,6 +4,7 @@
 mod camera;
 mod combine;
 mod delete;
+mod errors;
 mod export;
 mod extrude;
 mod feed;
@@ -17,6 +18,7 @@ mod sketch;
 mod thumbnail;
 
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use glam::Vec3;
@@ -113,6 +115,11 @@ pub(crate) struct Doc {
     lineage: Revision,
     /// The feature selected in the Timeline, if any.
     pub(crate) selected_feature: Option<FeatureId>,
+    /// The feature whose row in the Timeline the cursor is over, if any.
+    hovered_feature: Option<FeatureId>,
+    /// The failures' geometry the viewport draws, see
+    /// [`Doc::shown_errors`].
+    errors: Arc<varde_view::ShownErrors>,
     /// The row of the side panel whose context menu is open, if one is:
     /// a feature of the Timeline's only while it's selected.
     pub(crate) row_menu: Option<RowMenu>,
@@ -314,6 +321,8 @@ impl Doc {
             picking_plane: None,
             lineage,
             selected_feature: None,
+            hovered_feature: None,
+            errors: Arc::default(),
             row_menu: None,
             opacity_preview: None,
             sketch: None,
@@ -365,6 +374,7 @@ impl Doc {
         self.request_model();
         self.refresh_profiles();
         self.prune_picks();
+        self.refresh_errors();
         self.prune_preview();
         self.follow_placement();
     }
@@ -566,6 +576,7 @@ impl Doc {
         // The extrude being set up is previewed as it changes.
         self.request_model();
         self.prune_picks();
+        self.refresh_errors();
         self.prune_preview();
     }
 
@@ -607,6 +618,7 @@ impl Doc {
             message,
             Look::Hover(_)
                 | Look::HoverItem(_)
+                | Look::HoverFeature(_)
                 | Look::HoverCube(_)
                 | Look::Snap(_)
                 | Look::Aim(_)
@@ -628,6 +640,7 @@ impl Doc {
                 | Look::PreviewOpacity(..)
                 | Look::Escape
                 | Look::HoverItem(_)
+                | Look::HoverFeature(_)
                 | Look::Hover(_)
                 | Look::HoverCube(_)
                 | Look::Snap(_)
@@ -672,7 +685,11 @@ impl Doc {
             Look::Escape => self.escape(),
             // Only the tabs showing can be picked, but a message sent before
             // entering or leaving a sketch may come after.
-            Look::SelectPanel(panel) => self.panel = panel.for_sketching(self.sketch.is_some()),
+            // The Timeline's rows go with it, sending no exit.
+            Look::SelectPanel(panel) => {
+                self.panel = panel.for_sketching(self.sketch.is_some());
+                self.hovered_feature = None;
+            }
             Look::PickPlane => self.pick_plane(),
             Look::ChangePlane(id) => self.change_plane(id),
             Look::EditFeature(id) => match self.editor.document().feature(id).map(|f| &f.kind) {
@@ -704,6 +721,8 @@ impl Doc {
             // held; alone, it selects.
             Look::ClickRow(id) => self.click_geometry(Some(id), false),
             Look::HoverItem(id) => self.hover_item(id),
+            Look::HoverFeature(feature) => self.hover_feature(feature),
+            Look::ShowFailure(feature) => self.show_failure(feature),
             Look::Hover(pick) => self.hover(pick),
             Look::ClickModel { pick, .. } if self.combine.is_some() => self.combine_click(pick),
             Look::ClickModel { pick, add, double } if self.measure.is_some() => {
@@ -855,6 +874,7 @@ impl Doc {
         if self.follow_merges() {
             self.request_model();
         }
+        self.refresh_errors();
         self.follow_placement();
     }
 
@@ -980,6 +1000,7 @@ impl Doc {
             mesh_status: self.feed.status(&self.editor),
             picking: self.model_picking(),
             highlight: self.highlight(),
+            errors: self.shown_errors(),
             model_selection: &self.pick.selection,
             name: &self.name,
             edited: self.edited(),

@@ -60,6 +60,8 @@ pub struct DocumentState<'a> {
     pub picking: Option<crate::ModelPicking<'a>>,
     /// What's hovered and selected in `mesh`, drawn over it, if anything.
     pub highlight: Option<&'a Arc<crate::ModelHighlight>>,
+    /// The failures' geometry drawn over the model, in red.
+    pub errors: &'a Arc<crate::ShownErrors>,
     /// What's selected in the model: Objects marks the bodies selected,
     /// and the status bar tells of it.
     pub model_selection: &'a crate::Selection,
@@ -646,6 +648,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.pivot,
                         state.picking,
                         state.highlight,
+                        state.errors,
                         state.options.hidden_edges,
                         state.options.wireframe,
                         state.mode.palette(),

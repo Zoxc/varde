@@ -430,6 +430,7 @@ impl Doc {
             keep_tools: session.keep_tools,
             enough: self.combinable(),
             error: self.feed.draft_error(),
+            show_error: self.draft_framed(),
             checking: self.proposals.slow(),
             ready: self.commit_by(self.combine_ready(), false),
             accept: self.commit_by(self.combine_ready(), true),

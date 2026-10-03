@@ -166,6 +166,9 @@ pub struct RevolveState<'a> {
     pub targets: Vec<BodyTarget<'a>>,
     /// Why the preview failed, if it did.
     pub error: Option<&'a str>,
+    /// Whether the geometry of why the preview failed has a box: a Show
+    /// button beside [`RevolveState::error`] frames the camera on it.
+    pub show_error: bool,
     /// Why the revolve as set up can't be committed, if its own check
     /// refuses it (two sides over a turn together, say): shown in place
     /// of [`RevolveState::error`].
@@ -345,7 +348,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         send(RevolveLook::Target(body))
     });
     let refused = (state.refused.map(|refused| refused.to_string())).or_else(|| state.held.clone());
-    let message = footer_message(refused, state.error, state.checking);
+    let message = footer_message(refused, state.error, state.show_error, state.checking);
 
     let body = column![
         profile,
