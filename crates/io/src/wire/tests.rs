@@ -5,10 +5,11 @@ use varde_document::{Command, Document, Editor, Revision};
 
 use super::*;
 use crate::{
-    Access, Chosen, Closing, Damage, DamageKind, FileId, FoundSave, Offer, OpenId, Opened, Picked,
-    PickedFrom, ReadOnly, RecentFile, Recovered, RecoveryError, SaveError, SaveTo, SavedAs,
-    Settings, StoredDamage, UnixSeconds, settings::Theme,
+    Access, Chosen, Closing, Damage, DamageKind, FileId, FoundSave, ListedDamage, Offer, OpenId,
+    Opened, Picked, PickedFrom, ReadOnly, RecentFile, Recovered, RecoveryError, SaveError, SaveTo,
+    SavedAs, Settings, UnixSeconds, settings::Theme,
 };
+use crate::{BrowserDesign, DownloadStatus, LastDownload};
 
 /// The tail of a design file, to name a save by.
 fn tail() -> crate::vrdp::Tail {
@@ -88,10 +89,34 @@ fn requests() -> Vec<Request> {
             revision: 7.into(),
             document: Arc::clone(&document),
         },
-        Request::KeepDownload {
-            file: FileId(6),
+        Request::SaveAs {
+            file: Some(FileId(6)),
+            to: SaveTo::Browser {
+                name: "ünïcode (2).vrdp".to_owned(),
+                overwrite: true,
+            },
             revision: 8.into(),
             document,
+            thumbnail: None,
+        },
+        Request::Open {
+            id: OpenId(30),
+            from: Chosen::Browser("bracket.vrdp".to_owned()),
+        },
+        Request::ListBrowser,
+        Request::Rename {
+            file: FileId(31),
+            name: "bracket (2).vrdp".to_owned(),
+        },
+        Request::DeleteFromBrowser {
+            name: "bracket.vrdp".to_owned(),
+        },
+        Request::RecordDownload {
+            file: FileId(32),
+            edited: true,
+        },
+        Request::DownloadFromBrowser {
+            name: "bracket.vrdp".to_owned(),
         },
         Request::DiscardRecovery { file: FileId(8) },
         Request::Close {
@@ -193,7 +218,12 @@ fn responses() -> Vec<Response> {
                     }),
                     newer_base: true,
                 })),
-                downloaded: false,
+                browser: Some("bracket.vrdp".to_owned()),
+                not_copied: None,
+                download: Some(LastDownload {
+                    time: UnixSeconds(1_700_000_000),
+                    latest: true,
+                }),
                 damage: Some(Damage {
                     kind: DamageKind::Damaged {
                         found: Some(FoundSave {
@@ -217,7 +247,9 @@ fn responses() -> Vec<Response> {
                     message: "damaged".to_owned(),
                     kept: true,
                 }),
-                downloaded: true,
+                browser: None,
+                not_copied: Some("the site's data is blocked".to_owned()),
+                download: None,
                 damage: None,
             }),
         },
@@ -244,6 +276,12 @@ fn responses() -> Vec<Response> {
             file: FileId(7),
             revision: 8.into(),
             result: Err(SaveError::Damaged),
+        },
+        Response::SavedAs {
+            file: Some(FileId(7)),
+            to: Chosen::Browser("bracket.vrdp".to_owned()),
+            revision: 8.into(),
+            result: Err(SaveError::Taken),
         },
         Response::SavedAs {
             file: None,
@@ -324,21 +362,18 @@ fn responses() -> Vec<Response> {
                     path: PathBuf::from("designs/a.vrdp"),
                     modified: Some(crate::UnixSeconds(1_700_000_000)),
                     name: Some("bracket.vrdp".to_owned()),
-                    downloaded: true,
-                    damage: Some(StoredDamage::Opens),
+                    damage: Some(ListedDamage::Opens),
                 },
                 Recovered {
                     path: PathBuf::from("designs/b.vrdp"),
                     modified: None,
                     name: None,
-                    downloaded: false,
-                    damage: Some(StoredDamage::Unreadable),
+                    damage: Some(ListedDamage::Unreadable),
                 },
                 Recovered {
                     path: PathBuf::from("designs/c.vrdp"),
                     modified: None,
                     name: None,
-                    downloaded: false,
                     damage: None,
                 },
             ],
@@ -346,6 +381,61 @@ fn responses() -> Vec<Response> {
         Response::RecoveredDiscarded {
             path: PathBuf::from("designs/a.vrdp"),
             result: Err("in use".to_owned()),
+        },
+        Response::BrowserListed {
+            designs: vec![
+                BrowserDesign {
+                    name: "bracket.vrdp".to_owned(),
+                    saved: Some(UnixSeconds(1_700_000_000)),
+                    sum: Some(u128::MAX),
+                    thumbnail: Some(thumbnail()),
+                    download: DownloadStatus::Latest(UnixSeconds(1_700_000_001)),
+                    unsaved: false,
+                    in_use: true,
+                    damage: None,
+                },
+                BrowserDesign {
+                    name: "ünïcode.vrdp".to_owned(),
+                    saved: None,
+                    sum: None,
+                    thumbnail: None,
+                    download: DownloadStatus::Changed(UnixSeconds(-1)),
+                    unsaved: true,
+                    in_use: false,
+                    damage: Some(ListedDamage::Unreadable),
+                },
+                BrowserDesign {
+                    name: "c.vrdp".to_owned(),
+                    saved: None,
+                    sum: None,
+                    thumbnail: None,
+                    download: DownloadStatus::Never,
+                    unsaved: false,
+                    in_use: false,
+                    damage: Some(ListedDamage::Opens),
+                },
+            ],
+        },
+        Response::Renamed {
+            file: FileId(1),
+            name: "bracket (2).vrdp".to_owned(),
+            result: Err("bracket (2).vrdp is in browser storage already".to_owned()),
+        },
+        Response::DeletedFromBrowser {
+            name: "bracket.vrdp".to_owned(),
+            result: Ok(()),
+        },
+        Response::DownloadRecorded {
+            file: FileId(2),
+            result: Ok(Some(LastDownload {
+                time: UnixSeconds(5),
+                latest: false,
+            })),
+        },
+        Response::DownloadedFromBrowser {
+            name: "bracket.vrdp".to_owned(),
+            result: Ok(vec![1, 2, 3]),
+            not_recorded: Some("busy".to_owned()),
         },
         Response::Exported {
             to: Chosen::File(Picked {
@@ -441,18 +531,18 @@ fn documents_arrive_whole() {
     let document = hidden();
     let message = ToWorker {
         seq: 0,
-        request: Request::KeepDownload {
+        request: Request::AutoSave {
             file: FileId(0),
             revision: 1.into(),
             document: Arc::new(document.clone()),
         },
     };
     let ToWorker {
-        request: Request::KeepDownload { document: got, .. },
+        request: Request::AutoSave { document: got, .. },
         ..
     } = round_trip(&message)
     else {
-        panic!("not a download kept");
+        panic!("not an auto-save");
     };
     assert_eq!(*got, document);
 }
@@ -519,7 +609,9 @@ fn a_document_that_fails_its_checks_is_refused() {
                         damage: None,
                         newer_base: false,
                     })),
-                    downloaded: false,
+                    browser: None,
+                    not_copied: None,
+                    download: None,
                     damage: None,
                 }),
             },

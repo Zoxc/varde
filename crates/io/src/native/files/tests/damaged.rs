@@ -13,8 +13,8 @@ use crate::open::{KEPT, NOT_FOUND};
 use crate::tests::{TempDir, auto_saved_at, with_sketch_named};
 use crate::vrdp::Tail;
 use crate::{
-    Damage, DamageKind, FileId, OpenId, Opened, RecoveryError, Request, Response, SaveError,
-    StoredDamage, Stores, UnixSeconds,
+    Damage, DamageKind, FileId, ListedDamage, OpenId, Opened, RecoveryError, Request, Response,
+    SaveError, Stores, UnixSeconds,
 };
 
 /// Where `prev` is in a block.
@@ -399,7 +399,7 @@ fn damaged_store_entries_are_listed_and_open() {
     let mut files = with_store(&dir);
     let designs = listed(&mut files);
     assert_eq!(designs.len(), 1);
-    assert_eq!(designs[0].damage, Some(StoredDamage::Opens));
+    assert_eq!(designs[0].damage, Some(ListedDamage::Opens));
     let Response::Opened {
         result: Ok(opened), ..
     } = files.handle(Request::OpenRecovered {
@@ -417,7 +417,7 @@ fn damaged_store_entries_are_listed_and_open() {
     flip(&path, crate::vrdp::FILE_HEADER_LEN as u64 + BODY_AT);
     let designs = listed(&mut files);
     assert_eq!(designs.len(), 1);
-    assert_eq!(designs[0].damage, Some(StoredDamage::Unreadable));
+    assert_eq!(designs[0].damage, Some(ListedDamage::Unreadable));
     assert_eq!(designs[0].name, None);
     assert!(matches!(
         files.handle(Request::OpenRecovered {

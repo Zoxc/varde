@@ -4,16 +4,18 @@
 //!
 //! Natively the platform's file dialogs pick them, see `src/native/pick.rs`,
 //! handing over a path, which saves write to: nothing is downloaded, and
-//! [`writable`] has nothing to ask. The rest of this is about the web.
+//! [`writable`] has nothing to ask. The rest of this is about the web,
+//! where designs are kept in browser storage by name (see `src/browser.rs`),
+//! and the user's own files are what the browser hands over.
 //!
 //! A browser only hands the page files the user picked. Where the File
 //! System Access API is there (Chromium: `showOpenFilePicker` in
-//! `window`), Open and Save As show its pickers, which hand over a
+//! `window`, see [`file_system_access`]), Open, and Save As to "A file on
+//! your computer…", show its pickers, which hand over a
 //! `FileSystemFileHandle`: the design goes on from that file like natively,
 //! Save writing it back. Elsewhere (Firefox, Safari) Open is a file input,
-//! whose file can only be read, so the design opens as a copy, a new design
-//! with the file's name; Save and Save As download the design as a `.vrdp`
-//! instead, after which it counts as saved, since the browser has it now.
+//! whose file can only be read: the lane copies it into browser storage
+//! under its name, made unique, and the design opens from there.
 //!
 //! Pickers need the user's activation, so the page shows them, from the
 //! app's `update` right after the click or key press: within the browser's
@@ -43,9 +45,19 @@
 //! say with the site's data blocked, the file still opens and saves, only
 //! without auto-saves.
 //!
-//! Exporting a 3MF file goes the same way, through [`pick_export`]: a
-//! save picker suggesting `name.3mf`, natively or with the File System
-//! Access API, and otherwise a download of `name.3mf`.
+//! A file dropped on the page (the app's welcome screen takes them, see
+//! `dropped`) is kept like one the Open picker handed over: where the File
+//! System Access API is, its handle (`getAsFileSystemHandle`), else the
+//! `File`, copied into browser storage as one from the file input is. It's
+//! kept as it's dropped, before the app decides whether to open it: one it
+//! doesn't is let go of with [`forget`].
+//!
+//! Downloading a design is a command of its own, never a save: the page
+//! hands the design over through the [`downloader`], which a design in
+//! browser storage records (see `src/downloads.rs`). Exporting a 3MF file
+//! goes through [`pick_export`]: a save picker suggesting `name.3mf`,
+//! natively or with the File System Access API, and otherwise a download
+//! of `name.3mf`.
 //!
 //! On the web the pickers and downloads are the page's, see
 //! `src/web/page/pick.rs`, and reading and writing what they handed over
@@ -55,12 +67,16 @@
 use varde_document::APP_NAME;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::native::pick::{downloader, pick_export, pick_open, pick_save, writable};
+pub use crate::native::pick::{
+    downloader, file_system_access, forget, pick_export, pick_open, pick_save, writable,
+};
 #[cfg(target_arch = "wasm32")]
-pub use crate::web::page::pick::{downloader, pick_export, pick_open, pick_save, writable};
+pub use crate::web::page::pick::{
+    Dropped, downloader, dropped, file_system_access, forget, pick_export, pick_open, pick_save,
+    writable,
+};
 
-/// Hands a design over as a download, by its file name and bytes: how
-/// saving goes where the design can't be written back to a file, see
+/// Hands a design over as a download, by its file name and bytes, see
 /// [`downloader`].
 pub type Download = fn(&str, &[u8]) -> Result<(), String>;
 

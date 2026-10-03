@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use iced::widget::{
     Button, Container, Space, button, column, container, mouse_area, opaque, row, space, text,
+    tooltip,
 };
 use iced::{Alignment, Element, Length, Padding, mouse};
 use varde_document::{Axis3, EXTENSION, OriginPlane, Tolerance};
@@ -18,8 +19,8 @@ use crate::shortcut::{
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
-    ActiveTool, ConstraintKind, DocumentState, Edit, File, Look, Message, MotionKind, MotionLook,
-    MotionPick, Overlay, Tool,
+    ActiveTool, ConstraintKind, DocumentState, Downloads, Edit, File, Location, Look, Message,
+    MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, Tool,
 };
 
 /// Includes the 1 px border.
@@ -78,12 +79,8 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
 
     let [undo, redo, _] = history_bindings(state.keys());
     let bar = row![
-        file_cell(
-            state.name,
-            state.edited,
-            state.overlay == Some(Overlay::FileMenu),
-        ),
-        vrule(),
+        // The rule right after the file cell, its wash meeting it.
+        row![file_cell(state), vrule()],
         save_cell(state.editable(), state.edited),
         vrule(),
         container(row![context, tag].spacing(6).align_y(Alignment::Center))
@@ -107,9 +104,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         history_button(Icon::Undo, "Undo", undo),
         history_button(Icon::Redo, "Redo", redo),
         container(vrule()).height(18).padding([0, 4]),
-        // TODO: open the command palette.
-        icon_button(Icon::Search, Tone::Muted, None),
-        crate::chrome::app_buttons(state.options.theme),
+        crate::chrome::theme_button(state.options.theme),
         Space::new().width(8),
     ]
     .spacing(BAR_SPACING)
@@ -237,7 +232,7 @@ fn save_cell<'a>(editable: bool, edited: bool) -> Element<'a, Message> {
     let button = crate::chrome::tip(
         button(content)
             .padding(0)
-            .style(theme::flat_button(false))
+            .style(theme::flat_button(false, theme::Tone::Text))
             .on_press_maybe(message),
         text(format!("Save ({})", save.shortcut.label())),
     );
@@ -248,15 +243,29 @@ fn save_cell<'a>(editable: bool, edited: bool) -> Element<'a, Message> {
         .into()
 }
 
-/// The document name with a dirty dot and a chevron, opening the file menu.
-fn file_cell<'a>(name: &'a str, edited: bool, open: bool) -> Element<'a, Message> {
-    let dirty = edited.then(|| container(Space::new().width(6).height(6)).style(theme::dirty_dot));
+/// The document name with a dirty dot and a chevron, opening the file
+/// menu; [`NOT_SAVED`] on a grey pill in place of a name the design hasn't.
+/// Pointing at it says where the design is kept, on the web, or natively
+/// its path, and whether it has changes not saved.
+fn file_cell<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
+    let open = state.overlay == Some(Overlay::FileMenu);
+    let dirty =
+        (state.edited).then(|| container(Space::new().width(6).height(6)).style(theme::dirty_dot));
+    let name: Element<'a, Message> = if state.unnamed {
+        container(text(NOT_SAVED).size(11.5).font(SEMIBOLD))
+            .padding([1, 8])
+            .style(theme::name_pill)
+            .into()
+    } else {
+        row![
+            text(state.name).font(SEMIBOLD),
+            text(format!(".{EXTENSION}")).style(theme::faint_text)
+        ]
+        .into()
+    };
 
     let content = row![
-        row![
-            text(name).font(SEMIBOLD),
-            text(format!(".{EXTENSION}")).style(theme::faint_text)
-        ],
+        name,
         dirty,
         space::horizontal(),
         icons::tinted(Icon::Chev, icons::INLINE, |p| p.muted),
@@ -268,13 +277,101 @@ fn file_cell<'a>(name: &'a str, edited: bool, open: bool) -> Element<'a, Message
     // With the rule after it and the Save cell, as wide as the side panel
     // under them, so the rule after the Save cell is in line with the
     // panel's edge.
-    button(content)
-        .width(SIDE_PANEL_INNER_WIDTH - SAVE_CELL_WIDTH - 1.0 - 2.0 * BAR_SPACING)
+    let cell = button(content)
+        .width(SIDE_PANEL_INNER_WIDTH - SAVE_CELL_WIDTH - 1.0 - BAR_SPACING)
         .height(Length::Fill)
         .padding(Padding::from([0, 10]).left(12))
         .style(theme::file_cell(open))
-        .on_press(Message::Edit(Edit::ToggleFileMenu))
-        .into()
+        .on_press(Message::Edit(Edit::ToggleFileMenu));
+
+    // Not while the menu it opens shows under it.
+    let mut lines: Vec<Element<'a, Message>> = Vec::new();
+    match (state.location, state.path) {
+        (Some(location), _) if !open => {
+            let (said, kept, why) = location_told(location);
+            lines.push(text(said).size(12).font(SEMIBOLD).into());
+            lines.push(
+                text(format!("{}.{EXTENSION}, {kept}", state.name))
+                    .size(12)
+                    .into(),
+            );
+            lines.push(text(why).size(12).into());
+        }
+        (None, Some(path)) if !open => lines.push(text(path).size(12).into()),
+        _ => {}
+    }
+    if state.edited && !open {
+        lines.push(text("Changes not saved").size(12).into());
+    }
+    if lines.is_empty() {
+        return cell.into();
+    }
+    tooltip(
+        cell,
+        container(column(lines).spacing(1))
+            .padding([4, 7])
+            .max_width(theme::SIDE_PANEL_WIDTH * 1.5)
+            .style(theme::menu),
+        tooltip::Position::Bottom,
+    )
+    .gap(4)
+    .snap_within_viewport(true)
+    .into()
+}
+
+/// Where a design is kept, on the web, under the file cell: its icon and
+/// the words, in the location's colour on the panel's.
+pub(crate) fn location_bar<'a>(location: Location) -> Element<'a, Message> {
+    let (icon, said) = match location {
+        Location::Browser => (Icon::Browser, "In browser storage"),
+        Location::Computer => (Icon::Computer, "On your computer"),
+    };
+    let color = move |p: &theme::Palette| theme::location_ink(p, location == Location::Computer);
+    edged(
+        container(
+            row![
+                icons::tinted(icon, 13.0, color),
+                text(said)
+                    .size(11.5)
+                    .font(SEMIBOLD)
+                    .style(move |theme: &iced::Theme| {
+                        iced::widget::text::Style {
+                            color: Some(color(theme::palette(theme))),
+                        }
+                    }),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding([0, 12])
+        .align_y(Alignment::Center)
+        .style(theme::toolbar),
+        Edge::Bottom,
+        LOCATION_BAR_HEIGHT,
+    )
+}
+
+/// The location bar's height, with its 1 px border.
+const LOCATION_BAR_HEIGHT: f32 = 26.0;
+
+/// What pointing at the file cell says of where a design is kept, on the
+/// web: where, how it's kept and what that means (a file picked on the
+/// computer gives no folder).
+fn location_told(location: Location) -> (&'static str, &'static str, &'static str) {
+    match location {
+        Location::Browser => (
+            "In browser storage",
+            "kept by this browser",
+            "Cleared with the site's data: download a copy to keep it",
+        ),
+        Location::Computer => (
+            "On your computer",
+            "picked from your files",
+            "Save writes back to that file; the browser doesn't say which folder",
+        ),
+    }
 }
 
 /// The icon of the drawing tool `tool`.
@@ -545,7 +642,7 @@ fn op_button(
     )
     .height(28)
     .padding([0, 8])
-    .style(theme::flat_button(on))
+    .style(theme::flat_button(on, theme::Tone::Text))
     .on_press_maybe(message)
     .into()
 }
@@ -629,7 +726,8 @@ pub(crate) fn submenu_item(
         theme::flat_content(p, Tone::Muted, true, false)
     })
     .into();
-    menu_row(icon, label.into(), Some(chevron), Some(message)).style(theme::flat_button(open))
+    menu_row(icon, label.into(), Some(chevron), Some(message))
+        .style(theme::flat_button(open, theme::Tone::Text))
 }
 
 /// A menu's item: `icon`, `label` and what's at its `right` if anything,
@@ -657,19 +755,22 @@ fn menu_row(
             text(label),
             key,
         ]
-        .spacing(10)
+        .spacing(MENU_ITEM_SPACING)
         .height(Length::Fill)
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
     .height(MENU_ITEM_HEIGHT)
     .padding([0, 8])
-    .style(theme::flat_button(false))
+    .style(theme::flat_button(false, theme::Tone::Text))
     .on_press_maybe(message)
 }
 
 /// How tall a menu's item is, in pixels.
 pub(crate) const MENU_ITEM_HEIGHT: f32 = 28.0;
+
+/// The space between a menu item's icon and its label.
+const MENU_ITEM_SPACING: f32 = 10.0;
 
 /// A line between a menu's groups of items.
 pub(crate) fn menu_separator<'a>() -> Container<'a, Message> {
@@ -689,18 +790,41 @@ fn history_button<'a>(icon: Icon, label: &str, binding: Binding) -> Element<'a, 
     )
 }
 
+/// What the file menu shows, see [`file_menu`].
+pub struct FileMenu {
+    pub editable: bool,
+    pub edited: bool,
+    pub exportable: bool,
+    pub units: LengthUnit,
+    pub tolerance: Tolerance,
+    /// Where it stands against its downloads, for a design in browser
+    /// storage: the menu starts with it.
+    pub downloads: Option<Downloads>,
+    /// Whether it offers Download: on the web.
+    pub downloadable: bool,
+    /// For a design in browser storage, it offers Rename…: whether the
+    /// design may be renamed now.
+    pub rename: Option<bool>,
+}
+
 /// The file menu, as a layer over the whole screen. Clicking outside the
 /// menu closes it. Save, and changing the design's `units` or its
 /// `tolerance`, are disabled unless the document is `editable`, and Save
 /// unless it's `edited` too. Export 3MF is disabled unless `exportable`.
-/// A tolerance the menu doesn't offer, from a file, shows unticked.
-pub fn file_menu(
-    editable: bool,
-    edited: bool,
-    exportable: bool,
-    units: LengthUnit,
-    tolerance: Tolerance,
-) -> Element<'static, Message> {
+/// A tolerance the menu doesn't offer, from a file, shows unticked. On
+/// the web it offers Download, and for a design in browser storage
+/// Rename…, starting with where it stands against its downloads.
+pub fn file_menu(state: FileMenu) -> Element<'static, Message> {
+    let FileMenu {
+        editable,
+        edited,
+        exportable,
+        units,
+        tolerance,
+        downloads,
+        downloadable,
+        rename,
+    } = state;
     let item = menu_item;
     let separator = menu_separator;
 
@@ -712,9 +836,46 @@ pub fn file_menu(
     let [save, save_as] = file_bindings(editable, edited);
     // No key: exporting is rare, and the tool rail has no tool for it.
     let export = exportable.then_some(Message::File(File::Export));
+    let rename = rename.map(|enabled| {
+        item(
+            Icon::Rename,
+            "Rename…".into(),
+            None,
+            enabled.then_some(Message::File(File::Rename)),
+        )
+    });
+    let download = downloadable.then(|| {
+        item(
+            Icon::Download,
+            "Download".into(),
+            None,
+            Some(Message::File(File::Download)),
+        )
+    });
+    // Its dot in line with the items' icons.
+    let downloads = downloads.as_ref().map(|downloads| {
+        let (said, color) = crate::welcome::downloads_said(downloads);
+        column![
+            container(
+                row![
+                    container(container(Space::new().width(7).height(7)).style(theme::dot(color)))
+                        .center_x(icons::INLINE),
+                    text(said).size(11.5).style(theme::muted_text),
+                ]
+                .spacing(MENU_ITEM_SPACING)
+                .align_y(Alignment::Center),
+            )
+            .padding([6, 8]),
+            separator(),
+        ]
+    });
     let saving = column![
+        downloads,
         bound(Icon::Save, "Save", save),
         bound(Icon::Save, "Save As…", save_as),
+        rename,
+        download,
+        separator(),
         item(Icon::Export, "Export 3MF…".into(), None, export),
         separator(),
     ];
@@ -782,11 +943,30 @@ mod tests {
     use super::*;
     use crate::testing::Laid;
 
+    /// The file menu as natively, `exportable` or not.
+    fn native_menu(exportable: bool) -> FileMenu {
+        FileMenu {
+            editable: true,
+            edited: true,
+            exportable,
+            units: LengthUnit::Mm,
+            tolerance: Tolerance::DEFAULT,
+            downloads: None,
+            downloadable: false,
+            rename: None,
+        }
+    }
+
     /// What clicking the file menu's item `label` sends, the menu laid out
     /// over a 800 × 600 window, `exportable` or not.
     fn click_file_menu(label: &str, exportable: bool) -> Vec<Message> {
+        click_in_menu(native_menu(exportable), label)
+    }
+
+    /// What clicking the item `label` of the file menu `menu` sends.
+    fn click_in_menu(menu: FileMenu, label: &str) -> Vec<Message> {
         let window = Size::new(800.0, 600.0);
-        let menu = file_menu(true, true, exportable, LengthUnit::Mm, Tolerance::DEFAULT);
+        let menu = file_menu(menu);
         let mut laid = Laid::new(menu, window);
         let shown = laid.texts();
         let item = shown
@@ -809,6 +989,70 @@ mod tests {
             );
         }
         messages
+    }
+
+    /// On the web the menu offers Download and, for a design in browser
+    /// storage, starts with where it stands against its downloads and
+    /// offers Rename…; natively none of that. Where the design is kept is
+    /// the bar under the file cell's to say, not the menu's.
+    #[test]
+    fn on_the_web_the_file_menu_says_where_the_design_stands_against_its_downloads() {
+        let web = || FileMenu {
+            downloads: Some(Downloads::Latest(Some("just now".to_owned()))),
+            downloadable: true,
+            rename: Some(true),
+            ..native_menu(false)
+        };
+        let shown = crate::testing::Laid::new(file_menu(web()), Size::new(800.0, 600.0)).texts();
+        let first = shown
+            .iter()
+            .min_by(|a, b| a.bounds.y.total_cmp(&b.bounds.y));
+        assert_eq!(
+            first.map(|shown| shown.text.as_str()),
+            Some("Latest downloaded just now"),
+            "{shown:?}"
+        );
+        assert!(!shown.iter().any(|shown| shown.text == "In browser storage"));
+        let sent = click_in_menu(web(), "Download");
+        assert!(
+            matches!(sent[..], [Message::File(File::Download)]),
+            "{sent:?}"
+        );
+        let sent = click_in_menu(web(), "Rename…");
+        assert!(
+            matches!(sent[..], [Message::File(File::Rename)]),
+            "{sent:?}"
+        );
+        // Not while it may not be renamed, say as it's saved.
+        let saving = FileMenu {
+            rename: Some(false),
+            ..web()
+        };
+        assert!(click_in_menu(saving, "Rename…").is_empty());
+        let computer = FileMenu {
+            downloads: None,
+            rename: None,
+            ..web()
+        };
+        let shown = crate::testing::Laid::new(file_menu(computer), Size::new(800.0, 600.0)).texts();
+        let first = shown
+            .iter()
+            .min_by(|a, b| a.bounds.y.total_cmp(&b.bounds.y));
+        assert_eq!(
+            first.map(|shown| shown.text.as_str()),
+            Some("Save"),
+            "{shown:?}"
+        );
+        assert!(!shown.iter().any(|shown| shown.text == "Rename…"));
+        let shown =
+            crate::testing::Laid::new(file_menu(native_menu(true)), Size::new(800.0, 600.0))
+                .texts();
+        for text in ["Download", "Rename…"] {
+            assert!(
+                !shown.iter().any(|shown| shown.text == text),
+                "{text:?} natively"
+            );
+        }
     }
 
     #[test]

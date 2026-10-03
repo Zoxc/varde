@@ -4166,6 +4166,7 @@ dependencies = [
  "varde-solve",
  "varde-view",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
@@ -4201,6 +4202,7 @@ dependencies = [
  "log",
  "miniz_oxide 0.8.9",
  "png",
+ "pollster",
  "postcard",
  "rfd",
  "rmp-serde",

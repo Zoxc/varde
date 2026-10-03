@@ -65,9 +65,14 @@ const I = {
   new: '<path d="M12 5v14M5 12h14"/>',
   folder: '<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   export: '<path class="a" d="M12 15V3M8 7l4-4 4 4"/><path d="M4 16v4h16v-4"/>',
+  download: '<path class="a" d="M12 3v12M8 11l4 4 4-4"/><path d="M4 16v4h16v-4"/>',
+  // Where a design is kept, on the web: browser storage, a file on the computer.
+  stored: '<ellipse cx="12" cy="6" rx="7" ry="2.8"/><path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8"/>',
+  computer: '<path d="M4 5h16v11H4zM2 19h20"/>',
   chev: '<path d="M7 10l5 5 5-5"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  contrast: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>',
   body: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
   origin: '<path d="M5 19V5M5 19h14M5 19l8-8"/>',
   skoffset: '<path class="r" d="M4 20c2-7 7-12 16-13"/><path d="M3 13c2-4 6-7 11-7.8"/><path class="a" d="M10.5 14.5L8 11M7.5 13.3L8 11l2.4.2"/>',
@@ -358,7 +363,7 @@ const BRACKET_TIMELINE = [
 // `extra` holds bodies beyond the bracket's; one with `feat` is there once that feature is.
 function makeDoc(kind, name) {
   return kind === 'bracket'
-    ? { kind, name, dirty: true, T: [40, 25, 32], timeline: BRACKET_TIMELINE.map(t => ({ ...t })), extra: [], hidden: new Set(['origin', 's1', 's2', 's3', 's4']) }
+    ? { kind, name, path: '~/parts', dirty: true, T: [40, 25, 32], timeline: BRACKET_TIMELINE.map(t => ({ ...t })), extra: [], hidden: new Set(['origin', 's1', 's2', 's3', 's4']) }
     : { kind, name, dirty: false, T: [0, 0, 0], timeline: [], extra: [], hidden: new Set() };
 }
 
@@ -377,6 +382,8 @@ const st = {
   projMenu: false, // the status bar's menu open: the projection, mouse hints
   mouseHints: true, // the status bar shows the mouse's actions
   op: null,        // solid operation being set up: { kind, pick, editing?, ...its parameters }
+  web: false,      // the web build: no title bar, a bar under the file cell saying where the design is kept
+  where: 'stored', // where it's kept: 'unsaved' | 'stored' | 'local' (on desktop, saved or not)
 };
 const root = document.documentElement;
 const $ = s => document.querySelector(s);
@@ -615,15 +622,15 @@ function placeRail() {
 
 // ---------------------------------------------------------------- chrome
 function titlebar() {
+  // In the browser the page is all there is.
+  if (st.web) return '';
   const title = st.doc
-    ? `<b>${st.doc.name}.vrdp</b>${st.doc.dirty ? ' — Edited' : ''}`
+    ? `<b>${docName()}</b>${st.doc.dirty ? ' — Edited' : ''}`
     : 'Welcome';
   return `<div class="titlebar">
     <span class="brand">${LOGO}varde</span>
     <span class="title">${title}</span>
     <div class="spacer"></div>
-    <button class="op icon" data-act="theme" title="Toggle theme">${icon(isDark() ? 'sun' : 'moon')}</button>
-    <button class="op icon" data-act="help" title="Shortcuts (?)">${icon('help')}</button>
     <div class="winctl">
       <button data-act="toast:Minimize" title="Minimize">${icon('min')}</button>
       <button data-act="toast:Maximize" title="Maximize">${icon('max')}</button>
@@ -658,21 +665,35 @@ function toolbar() {
       ${icon(o.icon)}<span class="lbl">${o.label}</span>${o.key && !o.primary ? `<span class="k">${o.key}</span>` : ''}
     </button>`).join('');
 
+  // On the web, a bar under the file cell says where the design is kept
+  // (none with no name: "Not saved" in its place says it), and in browser
+  // storage the menu's head how it stands against its downloads. Pointing
+  // at the cell says where it's kept, on desktop its path, and whether it
+  // has changes not saved (the dot).
+  const where = st.web && WHERE[st.where], bar = where && st.where !== 'unsaved';
+  const at = st.web ? where.tip?.(d.name) : st.where !== 'unsaved' && d.path && `${d.path}/${d.name}.vrdp`;
+  const words = [at, d.dirty && 'Changes not saved'].filter(Boolean).join('<br>');
+  const tip = words ? ` data-tip="${words.replace(/"/g, '&quot;')}" data-tip-at="below"` : '';
   return `<div class="toolbar">
-    <div class="file" data-act="menu">
-      <span class="name">${d.name}<span class="ext">.vrdp</span></span>
-      ${d.dirty ? '<span class="dirty" title="Unsaved changes"></span>' : ''}
+    <div class="file" data-act="menu"${tip}>
+      <span class="name">${docName()}</span>
+      ${d.dirty ? '<span class="dirty"></span>' : ''}
       ${icon('chev', 'i chev')}
       ${st.menu ? `
         <div class="menu">
+          ${where && st.where === 'stored' ? `<div class="mhead"><span class="dl ${d.dirty ? 'changed' : 'latest'}">${d.dirty ? 'Changed since downloaded Sep 30' : 'Latest downloaded Sep 30'}</span></div><hr>` : ''}
           <button data-act="new">${icon('new')}New design<span class="k">Ctrl N</span></button>
           <button data-act="open:bracket">${icon('folder')}Open…<span class="k">Ctrl O</span></button>
-          <button data-act="toast:Saved">${icon('save')}Save<span class="k">Ctrl S</span></button>
+          <button data-act="toast:${where ? where.saved : 'Saved'}">${icon('save')}Save<span class="k">Ctrl S</span></button>
+          ${where ? `<button data-act="toast:Save As — not in mock">${icon('save')}Save As…<span class="k">Ctrl Shift S</span></button>
+          <button data-act="toast:Downloaded ${st.where === 'unsaved' ? 'Untitled' : d.name}.vrdp">${icon('download')}Download</button>` : ''}
+          <hr>
           <button data-act="toast:Export">${icon('export')}Export…<span class="k">Ctrl E</span></button>
           <hr>
           <button data-act="home">${icon('close')}Close document</button>
         </div>` : ''}
     </div>
+    ${bar ? `<div class="wbar ${st.where}">${icon(where.icon)}${where.label}</div>` : ''}
     <div class="save-cell"><button class="op icon" data-act="toast:Saved" title="Save (Ctrl S)">${icon('save')}</button></div>
     <div class="ctx">${ctx}</div>
     <div class="ops${list.length > 8 ? ' many' : ''}${enter ? ' enter' : ''}">${opsHtml}</div>
@@ -680,8 +701,29 @@ function toolbar() {
     <button class="op icon" data-act="toast:Undo" title="Undo (Ctrl Z)">${icon('undo')}</button>
     <button class="op icon" data-act="toast:Redo" title="Redo (Ctrl Shift Z)">${icon('redo')}</button>
     <span class="sep"></span>
-    <button class="op icon" data-act="toast:Command palette" title="Commands (Ctrl K)">${icon('search')}</button>
+    <button class="op icon" data-act="theme" data-tip="${themeSaid()[1]}" data-tip-at="below">${icon(themeSaid()[0])}</button>
   </div>`;
+}
+
+// Where a design is kept, on the web: its icon and words for the bar, what
+// Save says there and what pointing at the file cell says (a file picked
+// on the computer gives no folder).
+const WHERE = {
+  unsaved: { saved: 'Save As — not in mock' },
+  stored: {
+    icon: 'stored', label: 'In browser storage', saved: 'Saved to browser storage',
+    tip: n => `<b>In browser storage</b>${n}.vrdp, kept by this browser<br>Cleared with the site's data: download a copy to keep it`,
+  },
+  local: {
+    icon: 'computer', label: 'On your computer', saved: 'Saved',
+    tip: n => `<b>On your computer</b>${n}.vrdp, picked from your files<br>Save writes back to that file; the browser doesn't say which folder`,
+  },
+};
+// The design's name as shown: a design never saved has none, "Not saved"
+// in its place, on a grey pill in the file cell.
+function docName() {
+  if (st.where === 'unsaved') return '<span class="noname">Not saved</span>';
+  return `${st.doc.name}<span class="ext">.vrdp</span>`;
 }
 
 // ---------------------------------------------------------------- status bar
@@ -1117,11 +1159,13 @@ function render() {
   if (pane && scroll) pane.scrollTop = scroll;
   const el = field && $(`[data-field="${field}"]`);
   if (el) { el.focus(); el.setSelectionRange(...caret); }
+  mockNav();
   page.afterRender?.();
 }
 
 function renderApp() {
   const app = $('#app');
+  $('#win').classList.toggle('web', st.web);
   const help = st.help ? helpModal() : '';
   if (!st.doc) {
     app.innerHTML = titlebar() + page.welcome() + statusbar() + help;
@@ -1184,6 +1228,12 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 1400);
 }
 
+// The theme chosen, as its button shows it: its icon and what it says.
+function themeSaid() {
+  const t = root.dataset.theme;
+  return t === 'light' ? ['sun', 'Theme: Light'] : t === 'dark' ? ['moon', 'Theme: Dark'] : ['contrast', 'Theme: System'];
+}
+
 function isDark() {
   const t = root.dataset.theme;
   return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
@@ -1199,9 +1249,18 @@ function act(a) {
     case 'open': go('model.html', v); return;
     case 'home': go('welcome.html'); return;
     case 'menu': st.menu = !st.menu; break;
-    case 'theme': root.dataset.theme = isDark() ? 'light' : 'dark'; break;
+    // System, then Light, then Dark, as the app goes.
+    case 'theme': {
+      const next = { undefined: 'light', light: 'dark', dark: undefined }[root.dataset.theme];
+      if (next) root.dataset.theme = next;
+      else delete root.dataset.theme;
+      break;
+    }
     case 'help': st.help = !st.help; break;
     case 'toast': toast(v); return;
+    case 'platform': st.web = v === 'web'; keepFlags(); break;
+    case 'where': st.where = v; keepFlags(); break;
+    case 'edited': st.doc.dirty = v === 'on'; keepFlags(); break;
     case 'projmenu': st.projMenu = !st.projMenu; break;
     case 'proj': st.persp = v === 'persp'; break;
     case 'mousehints': st.mouseHints = !st.mouseHints; break;
@@ -1236,16 +1295,21 @@ function act(a) {
 let altUsed = false, altDownAt = 0;
 
 // Instant tooltips: a [data-tip] under the pointer shows one beside it, no delay.
+// None for something whose menu is open, nor over a menu.
 document.addEventListener('mousemove', e => {
-  const t = e.target.closest?.('[data-tip]'), tip = $('#tip');
-  if (!t) { tip.hidden = true; return; }
+  const t = !e.target.closest?.('.menu') && e.target.closest?.('[data-tip]'), tip = $('#tip');
+  if (!t || t.querySelector('.menu')) { tip.hidden = true; return; }
   const win = $('#win').getBoundingClientRect(), r = t.getBoundingClientRect();
   tip.innerHTML = t.dataset.tip + (t.dataset.key ? `<kbd>${t.dataset.key}</kbd>` : '');
-  tip.style.left = (r.right - win.left + 6) + 'px';
-  tip.style.top = (r.top + r.height / 2 - win.top) + 'px';
+  // Beside it, or under it (data-tip-at="below"), several lines then.
+  const below = t.dataset.tipAt === 'below';
+  tip.classList.toggle('below', below);
+  tip.style.left = (below ? r.left - win.left + 8 : r.right - win.left + 6) + 'px';
+  tip.style.top = (below ? r.bottom - win.top + 4 : r.top + r.height / 2 - win.top) + 'px';
   tip.hidden = false;
 });
 document.addEventListener('mousedown', () => { $('#tip').hidden = true; });
+document.documentElement.addEventListener('mouseleave', () => { $('#tip').hidden = true; });
 
 // Pointing at a set opens its list. Pointing at a tool on a card closes it at
 // once; anywhere else outside a set and its list closes it after a moment, so
@@ -1358,15 +1422,49 @@ addEventListener('hashchange', () => location.reload());
 // in the theme picked here.
 function go(file, hash = '') {
   const theme = root.dataset.theme;
-  const parts = [hash, theme].filter(Boolean).join('/');
+  const parts = [hash, theme, st.web && 'web'].filter(Boolean).join('/');
   location.href = file + (parts ? '#' + parts : '');
 }
 // The hash's parts after the first, as flags ('face', 'dark', 'op:fillet').
 const HASH = location.hash.slice(1).split('/');
 const flag = f => HASH.slice(1).includes(f);
+// The switches over the window (`mockNav`), kept in the hash without
+// reloading (a hashchange would).
+function keepFlags() {
+  const parts = HASH.slice(1).filter(f => !['web', 'unsaved', 'stored', 'local', 'edited', 'clean'].includes(f));
+  if (st.web) parts.push('web');
+  if (st.doc && st.where !== (st.doc.kind === 'empty' ? 'unsaved' : 'stored')) parts.push(st.where);
+  if (st.doc && st.doc.dirty !== (st.doc.kind !== 'empty')) parts.push(st.doc.dirty ? 'edited' : 'clean');
+  HASH.splice(1, Infinity, ...parts);
+  history.replaceState(null, '', '#' + HASH.join('/'));
+}
 
-// The links between the pages, then the page itself. Before this, the page
-// sets up the state; the shared flags in the hash apply here.
+// Over the window, each in a labelled group: the links between the pages
+// and Desktop or Web, then with a design open, where it's kept (on desktop
+// whether it's saved) and whether it has changes not saved. Rebuilt with
+// each render.
+function mockNav() {
+  const current = mockNav.current;
+  const b = (a, label, on) => `<button class="${on ? 'on' : ''}" data-act="${a}">${label}</button>`;
+  const g = (label, html) => `<div class="mg"><span class="lab">${label}</span>${html}</div>`;
+  const groups = [
+    g('Page', PAGES.map(([id, label, file, hash]) => `<a class="${id === current ? 'on' : ''}" href="${file}${hash && '#' + hash}" data-go="${file}" data-hash="${hash}">${label}</a>`).join('')),
+    g('Platform', b('platform:desktop', 'Desktop', !st.web) + b('platform:web', 'Web', st.web)),
+  ];
+  if (st.doc) {
+    const where = st.web
+      ? b('where:unsaved', 'Never saved', st.where === 'unsaved') + b('where:stored', 'Browser storage', st.where === 'stored') + b('where:local', 'Local', st.where === 'local')
+      : b('where:unsaved', 'Never saved', st.where === 'unsaved') + b('where:stored', 'Saved', st.where !== 'unsaved');
+    groups.push('<i class="brk"></i>', g('Location', where), g('Changes', b('edited:off', 'None', !st.doc.dirty) + b('edited:on', 'Edited', st.doc.dirty)));
+  }
+  const nav = $('.mocknav');
+  nav.innerHTML = groups.join('');
+  // The window under them, however many rows they take.
+  document.body.style.setProperty('--nav-b', nav.getBoundingClientRect().bottom + 'px');
+}
+
+// The switches over the window, then the page itself. Before this, the
+// page sets up the state; the shared flags in the hash apply here.
 const PAGES = [['welcome', 'Welcome', 'welcome.html', ''], ['model', 'Model', 'model.html', 'bracket'], ['sketch', 'Sketch', 'sketch.html', 's1']];
 function start(current) {
   if (flag('still')) root.classList.add('still');
@@ -1376,9 +1474,12 @@ function start(current) {
   if (flag('projmenu')) st.projMenu = true;
   if (flag('nomouse')) st.mouseHints = false;
   if (flag('tools')) st.gbarPinned = true;
+  st.web = flag('web');
+  st.where = flag('local') ? 'local' : flag('stored') ? 'stored' : flag('unsaved') || st.doc?.kind === 'empty' ? 'unsaved' : 'stored';
+  if (st.doc && flag('edited')) st.doc.dirty = true;
+  if (st.doc && flag('clean')) st.doc.dirty = false;
   const nav = document.createElement('nav');
-  nav.className = 'pages';
-  nav.innerHTML = PAGES.map(([id, label, file, hash]) => `<a class="${id === current ? 'on' : ''}" href="${file}${hash && '#' + hash}" data-go="${file}" data-hash="${hash}">${label}</a>`).join('');
+  nav.className = 'mocknav';
   nav.addEventListener('click', e => {
     const a = e.target.closest('a');
     if (!a) return;
@@ -1386,5 +1487,6 @@ function start(current) {
     go(a.dataset.go, a.dataset.hash);
   });
   document.body.prepend(nav);
+  mockNav.current = current;
   render();
 }

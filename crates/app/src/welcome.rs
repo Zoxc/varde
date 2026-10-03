@@ -1,5 +1,6 @@
 //! The welcome screen: making a new design and opening one, from a file,
-//! the recent files list or what crashed sessions left behind.
+//! the recent files list or what crashed sessions left behind, and on the
+//! web from browser storage.
 
 use std::path::{Path, PathBuf};
 
@@ -7,8 +8,8 @@ use iced::Element;
 use varde_document::Document;
 use varde_document::name::UNTITLED;
 use varde_io::{
-    Access, Chosen, Closing, Damage, DamageKind, OpenId, Opened, PickedFrom, Recovered,
-    RecoveryError, Request as IoRequest, StoredDamage, UnixSeconds,
+    Access, BrowserDesign, Chosen, Closing, Damage, DamageKind, DownloadStatus, ListedDamage,
+    OpenId, Opened, PickedFrom, Recovered, RecoveryError, Request as IoRequest, UnixSeconds,
 };
 use varde_view::{Message as Ui, Mode, ThemeChoice, Welcome as WelcomeUi};
 
@@ -33,6 +34,12 @@ pub(crate) struct Welcome {
     damaged: Option<Box<Damaged>>,
     /// Whether the whole of the panic recorded is showing.
     showing_panic: bool,
+    /// On the web, whether a file is dragged over the page, which lights
+    /// the drop zone.
+    dragging: bool,
+    /// On the web, the design in browser storage the user is asked about
+    /// deleting, by its file name there, see [`Welcome::delete_from_browser`].
+    deleting: Option<String>,
 }
 
 /// A file opened and found damaged past the save opened (see
@@ -66,10 +73,10 @@ struct Opening {
 #[derive(Clone, PartialEq)]
 pub(crate) enum Source {
     /// A file of the user's: a path from the recent files list or the Open
-    /// dialog, or on the web the file the user picked.
+    /// dialog, or on the web the file the user picked, or a design in
+    /// browser storage.
     Chosen(Chosen),
-    /// The store entry of a new design left behind by a crash, or
-    /// downloaded on the web.
+    /// The store entry of a new design left behind by a crash.
     Recovered(PathBuf),
 }
 
@@ -92,6 +99,24 @@ impl Welcome {
             WelcomeUi::OpenPath(path) => self.open(files, Source::Chosen(Chosen::Path(path))),
             WelcomeUi::OpenStored(path) => self.open(files, Source::Recovered(path)),
             WelcomeUi::DiscardStored(path) => self.discard_recovered(files, path),
+            WelcomeUi::OpenFromBrowser(name) => {
+                self.open(files, Source::Chosen(Chosen::Browser(name)))
+            }
+            WelcomeUi::DeleteFromBrowser(name) => self.delete_from_browser(files, name),
+            WelcomeUi::DownloadFromBrowser(name) => {
+                files.io.send(IoRequest::DownloadFromBrowser { name });
+                Next::Stay
+            }
+            WelcomeUi::ConfirmDelete => {
+                if let Some(name) = self.deleting.take() {
+                    delete(files, name);
+                }
+                Next::Stay
+            }
+            WelcomeUi::CancelDelete => {
+                self.deleting = None;
+                Next::Stay
+            }
             WelcomeUi::OpenDamaged => self.open_damaged(files),
             WelcomeUi::OpenFound => self.open_found(files),
             WelcomeUi::CancelDamaged => {
@@ -126,6 +151,8 @@ impl Welcome {
     pub(crate) fn dialog(&self) -> Option<Dialog> {
         if self.prompting() {
             Some(Dialog::Damaged)
+        } else if self.deleting.is_some() {
+            Some(Dialog::DeleteFromBrowser)
         } else if self.showing_panic {
             Some(Dialog::Panic)
         } else {
@@ -169,13 +196,26 @@ impl Welcome {
 
     /// Leaves the damaged file asked about as it is, if one is: the lane
     /// closes it, keeping what a crashed session left beside it for next
-    /// time.
+    /// time. A copy of a file from a file input, just made in browser
+    /// storage to open it, goes again: the user didn't open it after all.
     fn cancel_damaged(&mut self, files: &mut Files) {
-        if let Some(damaged) = self.damaged.take() {
-            files.io.send(IoRequest::Close {
-                file: damaged.opened.file,
-                closing: Closing::Keep,
-            });
+        let Some(damaged) = self.damaged.take() else {
+            return;
+        };
+        let copy = match (&damaged.source, damaged.opened.browser) {
+            (Source::Chosen(Chosen::File(_)), Some(name)) => Some(name),
+            _ => None,
+        };
+        let closing = match copy {
+            Some(_) => Closing::Clean,
+            None => Closing::Keep,
+        };
+        files.io.send(IoRequest::Close {
+            file: damaged.opened.file,
+            closing,
+        });
+        if let Some(name) = copy {
+            files.io.send(IoRequest::DeleteFromBrowser { name });
         }
     }
 
@@ -197,7 +237,7 @@ impl Welcome {
     fn open(&mut self, files: &mut Files, source: Source) -> Next {
         if let Source::Recovered(path) = &source
             && files.recovered.iter().any(|design| {
-                design.path == *path && design.damage == Some(StoredDamage::Unreadable)
+                design.path == *path && design.damage == Some(ListedDamage::Unreadable)
             })
         {
             return Next::Stay;
@@ -233,24 +273,75 @@ impl Welcome {
         }
     }
 
-    /// Forgets the new design at `path` left behind by a crash, or
-    /// downloaded on the web.
+    /// On the web, a file was dragged over the page, or off it again
+    /// (`over`): the drop zone lights while one is, unless a dialog is up.
+    pub(crate) fn dragged(&mut self, over: bool) -> Next {
+        self.dragging = over && self.dialog().is_none();
+        Next::Stay
+    }
+
+    /// On the web, the file `chosen` was dropped on the page, if it was a
+    /// file: opened as one picked with Open… would be, from a file input,
+    /// as a copy. Not while a dialog is up, over which it was dropped: then
+    /// it's let go of, see [`forget`].
+    pub(crate) fn dropped(&mut self, files: &mut Files, chosen: Option<Chosen>) -> Next {
+        self.dragging = false;
+        match chosen {
+            Some(chosen) if self.dialog().is_none() => self.open(files, Source::Chosen(chosen)),
+            Some(chosen) => {
+                forget(&chosen);
+                Next::Stay
+            }
+            None => Next::Stay,
+        }
+    }
+
+    /// Forgets the new design at `path` left behind by a crash.
     fn discard_recovered(&mut self, files: &mut Files, path: PathBuf) -> Next {
         if self.prompting() {
             return Next::Stay;
         }
-        // Gone from the list at once. The lane lists what's left after:
-        // changes never saved may be on top of a download, which it goes
-        // back to, to be listed as such.
+        // Gone from the list at once. The lane lists what's left after.
         files.recovered.retain(|design| design.path != path);
         files.io.send(IoRequest::DiscardRecovered { path });
         Next::Stay
     }
 
+    /// Deletes the design `name` in browser storage: at once if its latest
+    /// is downloaded, otherwise once the user agrees, as this browser may
+    /// have the only copy. Not one another tab has open, whose card offers
+    /// no Delete.
+    fn delete_from_browser(&mut self, files: &mut Files, name: String) -> Next {
+        let listed = (files.browser.iter()).find(|design| design.name == name);
+        if self.dialog().is_some() || listed.is_some_and(|design| design.in_use) {
+            return Next::Stay;
+        }
+        let latest =
+            listed.is_some_and(|design| matches!(design.download, DownloadStatus::Latest(_)));
+        if latest {
+            delete(files, name);
+        } else {
+            self.deleting = Some(name);
+        }
+        Next::Stay
+    }
+
+    /// The design asked about deleting, if one is.
+    #[cfg(test)]
+    pub(crate) fn deleting(&self) -> Option<&str> {
+        self.deleting.as_deref()
+    }
+
+    /// Something asked of the files from the welcome screen failed: says
+    /// `error`, a sentence.
+    pub(crate) fn failed(&mut self, error: &str) -> Next {
+        self.error = Some(error.to_owned());
+        Next::Stay
+    }
+
     /// Discarding a recovered design failed, with `error`.
     pub(crate) fn discard_failed(&mut self, error: &str) -> Next {
-        self.error = Some(format!("Couldn't discard the design: {error}"));
-        Next::Stay
+        self.failed(&format!("Couldn't discard the design: {error}"))
     }
 
     /// Leaves the welcome screen for `to`: only quitting does, which gives
@@ -315,6 +406,9 @@ impl Welcome {
                     (Source::Chosen(Chosen::File(picked)), _) => {
                         format!("Couldn't open {}: {error}", picked.name)
                     }
+                    (Source::Chosen(Chosen::Browser(name)), _) => {
+                        format!("Couldn't open {name}: {error}")
+                    }
                 });
                 return Next::Stay;
             }
@@ -368,6 +462,12 @@ impl Welcome {
         }
     }
 
+    /// Whether the drop zone is lit, a file dragged over the page.
+    #[cfg(test)]
+    pub(crate) fn dragging(&self) -> bool {
+        self.dragging
+    }
+
     /// Why the last open failed, if it did.
     #[cfg(test)]
     pub(crate) fn error(&self) -> Option<&str> {
@@ -383,7 +483,9 @@ impl Welcome {
         theme: ThemeChoice,
     ) -> Element<'a, Ui> {
         let now = when::now();
-        let recent = RECENT_FILES.then(|| {
+        // Where designs are kept in browser storage, the screen is the
+        // web's page, which has no recent files.
+        let recent = (RECENT_FILES && !files.browser_storage).then(|| {
             files
                 .recent
                 .entries()
@@ -403,20 +505,32 @@ impl Welcome {
                 })
                 .collect()
         });
-        let (downloaded, recovered): (Vec<_>, Vec<_>) =
-            files.recovered.iter().partition(|design| design.downloaded);
-        let recovered = recovered
-            .into_iter()
-            .map(|design| recovered_design(design, recovered_name(design), now))
-            .collect();
-        // By the name it was downloaded as.
-        let downloaded = downloaded
-            .into_iter()
-            .map(|design| {
-                let name = varde_document::name::download_name(&recovered_name(design));
-                recovered_design(design, name, now)
-            })
-            .collect();
+        // Newest first: on the web the designs saved in browser storage
+        // among the new designs left behind.
+        let mut stored: Vec<(Option<UnixSeconds>, varde_view::DesignCard<'a>)> =
+            (files.recovered.iter())
+                .map(|design| (design.modified, recovered_card(design, now)))
+                .collect();
+        stored.extend(
+            (files.browser.iter()).map(|design| (design.saved, browser_card(files, design, now))),
+        );
+        stored.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
+        let stored = stored.into_iter().map(|(_, design)| design).collect();
+        let deleting = self
+            .deleting
+            .as_deref()
+            .map(|name| varde_view::DeleteFromBrowserPrompt {
+                name,
+                downloads: (files.browser.iter())
+                    .find(|design| design.name == name)
+                    .map_or(varde_view::Downloads::Never, |design| {
+                        downloads(design.download, now)
+                    }),
+            });
+        let storage = files.browser_storage.then(|| varde_view::StorageNote {
+            may_clear: files.storage.persisted == Some(false),
+            used: files.storage.space.map(space_used),
+        });
         let damaged = self
             .damaged
             .as_ref()
@@ -429,8 +543,10 @@ impl Welcome {
         varde_view::welcome(varde_view::WelcomeState {
             error: self.error.as_deref(),
             recent,
-            recovered,
-            downloaded,
+            stored,
+            storage,
+            deleting,
+            dragging: self.dragging,
             damaged,
             panic,
             mode,
@@ -451,6 +567,7 @@ impl Damaged {
                 )
             }
             Source::Chosen(Chosen::File(picked)) => picked.name.clone(),
+            Source::Chosen(Chosen::Browser(name)) => name.clone(),
             Source::Recovered(path) => {
                 let title = (self.title.clone()).unwrap_or_else(|| files.recovered_title(path));
                 format!("the recovered {title}")
@@ -485,9 +602,19 @@ fn show(
     // Of a file of the user's: a store entry's is said of auto-saves.
     let damage = |entry| opened.damage.map(|damage| FileDamage { damage, entry });
     match source {
+        Source::Chosen(Chosen::Browser(name)) => in_browser(opened, name),
         // Picked on the web: the design goes on from the file if it can
-        // be written to, otherwise it's a copy.
+        // be written to. One only read is copied into browser storage by
+        // the lane, and goes on from there, which the status bar says, and
+        // the browser is asked to keep it; should copying it fail, it's a
+        // copy, a new design, saying why.
         Source::Chosen(Chosen::File(picked)) => {
+            if let Some(name) = opened.browser.clone() {
+                files.ask_persist = true;
+                let mut doc = in_browser(opened, name.clone());
+                doc.notice = Some(format!("Copied to browser storage as {name}"));
+                return doc;
+            }
             let title = design_name(Path::new(&picked.name));
             let file = opened.file;
             let target = match picked.from {
@@ -495,17 +622,17 @@ fn show(
                     file,
                     picked: Some(picked),
                 },
-                PickedFrom::Input => Target::Entry {
-                    file,
-                    downloaded: false,
-                },
+                PickedFrom::Input => Target::Entry { file },
             };
             let origin = Origin {
                 recovered: offered(opened.recovered, &title),
                 damage: damage(false),
                 ..Origin::new(target, opened.access, title)
             };
-            Doc::new(opened.document, origin)
+            let mut doc = Doc::new(opened.document, origin);
+            doc.notice =
+                (opened.not_copied).map(|why| format!("Opened as a copy, not kept: {why}"));
+            doc
         }
         Source::Chosen(Chosen::Path(asked)) => {
             let path = path.unwrap_or(asked);
@@ -520,33 +647,64 @@ fn show(
                 damage: damage(false),
                 ..Origin::new(target, opened.access, design_name(&path))
             };
-            Doc::new(opened.document, origin)
+            let mut doc = Doc::new(opened.document, origin);
+            doc.path = Some(files.shown_path(&path));
+            doc
         }
         // A new design left behind by a crash: never saved, and its
         // store entry is auto-saved to from now on. Known by the name
-        // of the file it was opened from, if it was, as on the web. One
-        // downloaded on the web goes on as a copy too, but isn't
-        // edited: it's what was downloaded, as far as is known, so
-        // closing it again keeps it listed rather than asking. As its
-        // entry holds it now, not as listed: another tab may have left
-        // changes in it since.
+        // of the file it was opened from, if it was, as on the web.
         Source::Recovered(path) => {
             let title = title.unwrap_or_else(|| files.recovered_title(&path));
             files.recovered.retain(|design| design.path != path);
-            // Changes recovered may be on top of a download, which the
-            // entry goes back to if they aren't saved.
-            let target = Target::Entry {
-                file: opened.file,
-                downloaded: true,
-            };
+            let target = Target::Entry { file: opened.file };
             let origin = Origin {
-                saved: opened.downloaded,
+                saved: false,
                 damage: damage(true),
                 ..Origin::new(target, opened.access, title)
             };
             Doc::new(opened.document, origin)
         }
     }
+}
+
+/// The document `opened` from browser storage, where it's called `name`
+/// (as the lane answers, see [`Opened::browser`]).
+fn in_browser(opened: Opened, name: String) -> Doc {
+    let name = opened.browser.unwrap_or(name);
+    let title = design_name(Path::new(&name));
+    let target = Target::Browser {
+        file: opened.file,
+        name: name.clone(),
+    };
+    let origin = Origin {
+        recovered: offered(opened.recovered, &name),
+        damage: opened.damage.map(|damage| FileDamage {
+            damage,
+            entry: false,
+        }),
+        download: opened.download,
+        ..Origin::new(target, opened.access, title)
+    };
+    Doc::new(opened.document, origin)
+}
+
+/// Lets go of what the page holds for `chosen`, a file dropped on it that
+/// isn't opened: kept as it was dropped, it would be held for the rest of
+/// the session otherwise, see [`varde_io::pick::forget`].
+pub(crate) fn forget(chosen: &Chosen) {
+    if let Chosen::File(picked) = chosen {
+        varde_io::pick::forget(picked);
+        #[cfg(test)]
+        FORGOTTEN.with_borrow_mut(|forgotten| forgotten.push(picked.clone()));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What [`forget`] let go of, as natively it lets go of nothing.
+    pub(crate) static FORGOTTEN: std::cell::RefCell<Vec<varde_io::Picked>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// `bytes` in kilobytes, as the prompt about a damaged file says how much
@@ -610,23 +768,99 @@ fn recovered_name(design: &Recovered) -> String {
         .map_or_else(|| UNTITLED.to_owned(), |file| design_name(Path::new(file)))
 }
 
-/// The welcome screen's card or row for `design`, known by `name`, with
+/// The welcome screen's card for `design`, a new design left behind, with
 /// when it was last written relative to `now`.
-fn recovered_design(
-    design: &Recovered,
-    name: String,
-    now: UnixSeconds,
-) -> varde_view::StoredDesign<'_> {
-    varde_view::StoredDesign {
-        path: &design.path,
-        name,
+fn recovered_card(design: &Recovered, now: UnixSeconds) -> varde_view::DesignCard<'_> {
+    varde_view::DesignCard {
+        key: varde_view::CardKey::Recovered(&design.path),
+        name: recovered_name(design),
+        file: design.name.is_some(),
         written: design.modified.map(|modified| when::ago(modified, now)),
+        downloads: None,
         damaged: design.damage.is_some(),
-        opens: design.damage != Some(StoredDamage::Unreadable),
+        opens: design.damage != Some(ListedDamage::Unreadable),
+        thumbnail: None,
+        note: None,
+        deletable: true,
     }
+}
+
+/// The welcome screen's card for `design`, saved in browser storage, with
+/// times relative to `now`: where it stands against its downloads, and
+/// whether a closed tab left changes in it or another tab has it open.
+fn browser_card<'a>(
+    files: &'a Files,
+    design: &'a BrowserDesign,
+    now: UnixSeconds,
+) -> varde_view::DesignCard<'a> {
+    let readable = design.damage != Some(ListedDamage::Unreadable);
+    let note = if design.in_use {
+        Some("Open in another tab")
+    } else if design.unsaved {
+        Some("Changes not saved")
+    } else {
+        None
+    };
+    varde_view::DesignCard {
+        key: varde_view::CardKey::Browser(&design.name),
+        name: design_name(Path::new(&design.name)),
+        file: true,
+        written: design.saved.map(|saved| when::ago(saved, now)),
+        downloads: readable.then(|| downloads(design.download, now)),
+        damaged: design.damage.is_some(),
+        opens: readable,
+        thumbnail: files.browser_thumbnail(design),
+        note,
+        deletable: !design.in_use,
+    }
+}
+
+/// How the view says where a design stands against its downloads, with
+/// times relative to `now`, to go in a sentence ("Latest downloaded just
+/// now").
+pub(crate) fn downloads(status: DownloadStatus, now: UnixSeconds) -> varde_view::Downloads {
+    let at = |time| Some(when::ago_in_sentence(time, now));
+    match status {
+        DownloadStatus::Never => varde_view::Downloads::Never,
+        DownloadStatus::Changed(time) => varde_view::Downloads::Changed(at(time)),
+        DownloadStatus::Latest(time) => varde_view::Downloads::Latest(at(time)),
+    }
+}
+
+/// How much browser storage is used, as the foot says: "1.2 MB of 2 GB
+/// used".
+pub(crate) fn space_used(space: varde_io::storage::Space) -> String {
+    format!("{} of {} used", bytes(space.used), bytes(space.quota))
+}
+
+/// `n` bytes, in the largest unit that's at least one of it, to one
+/// decimal under ten.
+fn bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
+    let mut value = n as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit + 1 < UNITS.len() {
+        value /= 1000.0;
+        unit += 1;
+    }
+    match unit {
+        0 => format!("{n} bytes"),
+        _ if value < 10.0 => format!("{value:.1} {}", UNITS[unit]),
+        _ => format!("{value:.0} {}", UNITS[unit]),
+    }
+}
+
+/// Deletes the design `name` in browser storage, gone from the list at
+/// once: the lane lists what's left after.
+fn delete(files: &mut Files, name: String) {
+    files.browser.retain(|design| design.name != name);
+    files.io.send(IoRequest::DeleteFromBrowser { name });
 }
 
 /// Whether there's a list of recently opened files. Browsers only hand
 /// over files the user picks, and the handles to them would have to be
 /// kept in IndexedDB to be opened again later, which isn't done yet.
 const RECENT_FILES: bool = cfg!(not(target_arch = "wasm32"));
+
+#[cfg(test)]
+mod tests;

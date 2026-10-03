@@ -262,36 +262,27 @@ fn a_waiting_auto_save_is_replaced_by_a_newer_one() {
     assert_eq!(queue.requests.len(), 3);
 }
 
-/// An auto-save of the design as downloaded is never replaced: a clean
-/// close goes back to it, see `Request::Close`. Nor does it replace an
-/// auto-save before it, which it keeps from being replaced in turn.
+/// Renaming a design, or recording its download, is something else
+/// asked of its file: a save or auto-save after it never replaces one
+/// before it.
 #[test]
-fn a_waiting_auto_save_of_a_download_is_kept() {
-    let downloaded = |revision: u64| Request::KeepDownload {
-        file: FileId(1),
-        revision: revision.into(),
-        document: Arc::new(varde_document::Document::default()),
-    };
-    let mut queue = Queue::default();
-    queue.push(auto_save(1, 1));
-    assert!(queue.push(downloaded(1)).is_none());
-    assert!(queue.push(auto_save(1, 2)).is_none());
-    assert!(queue.push(auto_save(1, 3)).is_some());
-    assert!(queue.push(downloaded(3)).is_none());
-    assert!(queue.push(downloaded(4)).is_none());
-    let revisions: Vec<_> = queue
-        .requests
-        .iter()
-        .map(|request| match request {
-            Request::AutoSave { revision, .. } => (u64::from(*revision), false),
-            Request::KeepDownload { revision, .. } => (u64::from(*revision), true),
-            request => panic!("unexpected {request:?}"),
-        })
-        .collect();
-    assert_eq!(
-        revisions,
-        [(1, false), (1, true), (3, false), (3, true), (4, true)]
-    );
+fn a_rename_or_a_download_recorded_keeps_saves_apart() {
+    for between in [
+        Request::Rename {
+            file: FileId(1),
+            name: "b.vrdp".to_owned(),
+        },
+        Request::RecordDownload {
+            file: FileId(1),
+            edited: false,
+        },
+    ] {
+        let mut queue = Queue::default();
+        queue.push(auto_save(1, 1));
+        queue.push(between.clone());
+        assert!(queue.push(auto_save(1, 2)).is_none());
+        assert_eq!(queue.requests.len(), 3);
+    }
 }
 
 /// Settings writes replace each other, not the recent files list's, and a

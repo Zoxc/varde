@@ -8,20 +8,24 @@ use varde_document::{Document, Snapshot};
 
 use super::sidecar::{self, LockFile};
 use super::{panicked, recent, settings, store};
-use crate::autosave::{Ending, Origin, to_open};
+use crate::autosave::{Ending, to_open};
+use crate::lock::{self, READ_ONLY};
 use crate::open::{KEPT, NOT_FOUND, OpenFiles};
 use crate::store::{NO_RECOVERED, NO_STORE, entry_in};
 use crate::thumbnail::{self, Image, previews};
-use crate::vrdp::{self, Error as FileError, Preview};
+use crate::vrdp::{self, Preview};
 use crate::{
-    Access, Chosen, Closing, Damage, FileId, Offer, OpenId, Opened, ReadOnly, RecentFile,
-    RecoveryError, Request, Response, SaveError, SaveTo, SavedAs, Settings, Stores,
+    Chosen, Closing, Damage, FileId, OpenId, Opened, ReadOnly, RecentFile, Request, Response,
+    SaveError, SaveTo, SavedAs, Settings, Stores,
 };
 
 mod document_file;
 
 use document_file::DocumentFile;
 pub(crate) use document_file::{sync_parent, temp_path};
+
+/// What requests about browser storage are answered with natively.
+const NO_BROWSER_STORAGE: &str = "only the web build keeps designs in browser storage";
 
 /// The lane's state.
 #[derive(Debug)]
@@ -54,29 +58,9 @@ struct Design {
     found: Option<vrdp::Opened<Document>>,
 }
 
-/// A design's lock, which auto-saves go to if it's editable.
-#[derive(Debug)]
-enum Lock {
-    /// The design's sidecar.
-    Sidecar {
-        sidecar: LockFile,
-        /// Whether it holds what a crashed session left, offered to the
-        /// user as [`Opened::recovered`] and not answered yet: until it's
-        /// discarded or auto-saved over, saves leave it be. So is one
-        /// whose records are all damaged, or that couldn't be read, which
-        /// [`Opened::recovered`] says why.
-        offered: bool,
-        /// Whether it's offered so, as one that can't be read
-        /// ([`RecoveryError::kept`]): auto-saves are refused till it's
-        /// discarded.
-        kept: bool,
-    },
-    /// Not held: the document is read-only.
-    ReadOnly(ReadOnly),
-}
-
-/// Why a document can't be saved or auto-saved to.
-const READ_ONLY: &str = "the design is read-only";
+/// A design's lock, which auto-saves go to if it's editable: its sidecar,
+/// see `src/lock.rs`.
+type Lock = lock::Lock<LockFile>;
 
 impl Kind {
     /// A design with a file of its own whose lock is held: saved to
@@ -103,21 +87,11 @@ impl Kind {
         }
     }
 
-    /// How the clean close lets go of its lock: only a new design's store
-    /// entry may hold the design as downloaded; a design's sidecar goes,
-    /// whatever is in it.
-    fn clean(&self) -> Ending {
-        match self {
-            Kind::New(_) => Ending::CloseButDownloaded,
-            Kind::Design(_) => Ending::Close,
-        }
-    }
-
     /// Lets go of its lock as `ending` says, as the document closes.
     fn end(self, ending: Ending) -> std::io::Result<()> {
         match self {
             Kind::New(entry) => entry.end(ending),
-            Kind::Design(design) => design.lock.end(ending),
+            Kind::Design(design) => end_lock(design.lock, ending),
         }
     }
 
@@ -135,127 +109,27 @@ impl Kind {
     }
 }
 
-impl Lock {
-    /// The sidecar of the design at `real`, locked if it can be.
-    fn of_design(real: &Path) -> Self {
-        match sidecar::lock(real) {
-            Ok(sidecar) => Lock::Sidecar {
-                sidecar,
-                offered: false,
-                kept: false,
-            },
-            Err(read_only) => Lock::ReadOnly(read_only),
-        }
-    }
+/// The sidecar of the design at `real`, locked if it can be.
+fn lock_of_design(real: &Path) -> Lock {
+    Lock::new(sidecar::lock(real))
+}
 
-    /// What a crashed session left in the sidecar of the design `file`,
-    /// just opened holding `document`, to offer the user, or why it
-    /// couldn't be read. Marks the lock `offered` if there's an offer, and
-    /// `kept` too if it's kept as it can't be read.
-    fn offer(
-        &mut self,
-        file: &DocumentFile,
-        document: &Document,
-    ) -> Result<Option<Offer>, RecoveryError> {
-        // Only the editor holding the lock may look: otherwise the sidecar
-        // is another editor's, auto-saving as it goes.
-        let Lock::Sidecar {
-            sidecar,
-            offered,
-            kept,
-        } = self
-        else {
-            return Ok(None);
-        };
-        (*offered, *kept) = (false, false);
-        match sidecar.read_with_report() {
-            Ok(Some(read)) if *read.payload.document != *document => {
-                *offered = true;
-                let recovered = read.payload;
-                let newer_base = recovered
-                    .base
-                    .is_some_and(|base| base != file.tail() && file.based_past(base));
-                Ok(Some(Offer {
-                    design_changed: !recovered.based_on(file.tail()),
-                    document: Snapshot::unwrap_or_clone(recovered.document),
-                    damage: Damage::of(&read.report, None),
-                    newer_base,
-                }))
-            }
-            Ok(_) => Ok(None),
-            Err(error) => {
-                // What may yet be got out of it, damaged records or one that
-                // couldn't be read, stays until the user answers, as an
-                // offer does: auto-saves are refused rather than start it
-                // over, nor do saves empty it. What can't ever be read,
-                // auto-saving starts over.
-                let unreadable = matches!(error, FileError::Corrupt { .. } | FileError::Io(_));
-                (*offered, *kept) = (unreadable, unreadable);
-                let message = match error {
-                    FileError::Corrupt { .. } => {
-                        "what was auto-saved is damaged and can't be read".to_owned()
-                    }
-                    error => format!("couldn't read what was auto-saved: {error}"),
-                };
-                Err(RecoveryError {
-                    message,
-                    kept: unreadable,
-                })
-            }
-        }
-    }
+/// What a crashed session left in the sidecar `lock` of the design `file`,
+/// just opened holding `document`, to offer the user, see
+/// [`lock::Lock::offer`].
+fn offer(
+    lock: &mut Lock,
+    file: &DocumentFile,
+    document: &Document,
+) -> Result<Option<crate::Offer>, crate::RecoveryError> {
+    lock.offer(file.tail(), |base| file.based_past(base), document)
+}
 
-    /// Whether it holds what a crashed session left that can't be read,
-    /// kept till the user discards it, see [`RecoveryError::kept`].
-    fn kept(&self) -> bool {
-        matches!(self, Lock::Sidecar { kept: true, .. })
-    }
-
-    fn access(&self) -> Access {
-        match self {
-            Lock::Sidecar { .. } => Access::Edit,
-            Lock::ReadOnly(read_only) => Access::ReadOnly(read_only.clone()),
-        }
-    }
-
-    fn held(&mut self) -> Option<&mut LockFile> {
-        match self {
-            Lock::Sidecar { sidecar, .. } => Some(sidecar),
-            Lock::ReadOnly(_) => None,
-        }
-    }
-
-    fn offered(&self) -> bool {
-        matches!(self, Lock::Sidecar { offered: true, .. })
-    }
-
-    fn answered(&mut self) {
-        if let Lock::Sidecar { offered, kept, .. } = self {
-            (*offered, *kept) = (false, false);
-        }
-    }
-
-    /// The design was just saved, so what was auto-saved is older. Failing
-    /// to empty it only leaves an older state to be offered should this
-    /// session crash; the next save or clean close tries again. What a
-    /// crashed session left is kept until the user answers the offer.
-    fn saved(&mut self) {
-        if let Lock::Sidecar {
-            sidecar,
-            offered: false,
-            ..
-        } = self
-        {
-            let _ = sidecar.clear();
-        }
-    }
-
-    /// Lets go of it as `ending` says. A read-only design holds none.
-    fn end(self, ending: Ending) -> std::io::Result<()> {
-        match self {
-            Lock::Sidecar { sidecar, .. } => sidecar.end(ending),
-            Lock::ReadOnly(_) => Ok(()),
-        }
+/// Lets go of `lock` as `ending` says. A read-only design holds none.
+fn end_lock(lock: Lock, ending: Ending) -> std::io::Result<()> {
+    match lock.into_held() {
+        Some(sidecar) => sidecar.end(ending),
+        None => Ok(()),
     }
 }
 
@@ -328,18 +202,7 @@ impl Files {
             } => Response::AutoSaved {
                 file,
                 revision,
-                result: self.auto_save(file, &document, Origin::Edited),
-            },
-            // What the web does after a download, handled the same way here
-            // so the native tests cover it.
-            Request::KeepDownload {
-                file,
-                revision,
-                document,
-            } => Response::AutoSaved {
-                file,
-                revision,
-                result: self.auto_save(file, &document, Origin::Downloaded),
+                result: self.auto_save(file, &document),
             },
             Request::DiscardRecovery { file } => Response::RecoveryDiscarded {
                 file,
@@ -411,6 +274,26 @@ impl Files {
                 to: SaveTo::Picked(_),
                 ..
             } => request.failed("only the web build picks files this way".to_owned()),
+            // Nor is there browser storage.
+            Request::Open {
+                from: Chosen::Browser(_),
+                ..
+            }
+            | Request::SaveAs {
+                to: SaveTo::Browser { .. },
+                ..
+            }
+            | Request::Export {
+                to: SaveTo::Browser { .. },
+                ..
+            }
+            | Request::Rename { .. }
+            | Request::DeleteFromBrowser { .. }
+            | Request::RecordDownload { .. }
+            | Request::DownloadFromBrowser { .. } => request.failed(NO_BROWSER_STORAGE.to_owned()),
+            Request::ListBrowser => Response::BrowserListed {
+                designs: Vec::new(),
+            },
             Request::Export {
                 to: SaveTo::Path { path, overwrite },
                 title,
@@ -446,8 +329,8 @@ impl Files {
                 let damage = Damage::of_design(&read);
                 let document = read.opened.payload;
                 let real = resolved(&path);
-                let mut lock = Lock::of_design(&real);
-                let recovered = lock.offer(&file, &document);
+                let mut lock = lock_of_design(&real);
+                let recovered = offer(&mut lock, &file, &document);
                 let access = lock.access();
                 let design = Design {
                     file,
@@ -461,7 +344,9 @@ impl Files {
                     document,
                     access,
                     recovered,
-                    downloaded: false,
+                    browser: None,
+                    not_copied: None,
+                    download: None,
                     damage,
                 })
             }
@@ -495,13 +380,15 @@ impl Files {
                     .ok_or_else(|| NOT_FOUND.to_owned())?;
                 let damage = Damage::of(&chosen.report, None);
                 let document = design.file.open_found(chosen);
-                let recovered = design.lock.offer(&design.file, &document);
+                let recovered = offer(&mut design.lock, &design.file, &document);
                 Ok(Opened {
                     file,
                     document,
                     access: design.lock.access(),
                     recovered,
-                    downloaded: false,
+                    browser: None,
+                    not_copied: None,
+                    download: None,
                     damage,
                 })
             });
@@ -532,7 +419,6 @@ impl Files {
             Ok(Opened::editable(
                 id,
                 Snapshot::unwrap_or_clone(saved.document),
-                saved.origin.is_download(),
                 damage,
             ))
         });
@@ -561,15 +447,8 @@ impl Files {
         Ok(())
     }
 
-    /// Auto-saves `document`, holding it as `origin` says: the design as
-    /// downloaded only for [`Request::KeepDownload`], which the native app
-    /// never sends.
-    fn auto_save(
-        &mut self,
-        file: FileId,
-        document: &Snapshot,
-        origin: Origin,
-    ) -> Result<(), String> {
+    /// Auto-saves `document` to `file`'s sidecar or store entry.
+    fn auto_save(&mut self, file: FileId, document: &Snapshot) -> Result<(), String> {
         let open = self.open.get_mut(file)?;
         // Based on the design as this lane last read or wrote it: whatever
         // changes it after, a save of ours included, makes it another.
@@ -583,9 +462,7 @@ impl Files {
             return Err(KEPT.to_owned());
         }
         let sidecar = open.held().ok_or_else(|| READ_ONLY.to_owned())?;
-        sidecar
-            .append(base, document, origin)
-            .map_err(|e| e.to_string())?;
+        sidecar.append(base, document).map_err(|e| e.to_string())?;
         // The UI only auto-saves once the offer is answered.
         open.answered();
         Ok(())
@@ -637,7 +514,7 @@ impl Files {
                 // Best effort: the error to show is the one above. Anything
                 // in it is a crashed editor's of the file that wasn't
                 // replaced after all, to be offered still.
-                let _ = lock.end(Ending::Release);
+                let _ = end_lock(lock, Ending::Release);
                 return Err(error);
             }
         };
@@ -704,8 +581,7 @@ impl Files {
     /// Lets go of `file`'s lock as `closing` says, see [`Request::Close`].
     fn close(&mut self, file: FileId, closing: Closing) -> Result<(), String> {
         let open = self.open.remove(file)?;
-        let ending = closing.ending(open.clean());
-        open.end(ending)
+        open.end(closing.ending())
             .map_err(|e| format!("couldn't remove the lock file: {e}"))
     }
 
@@ -748,7 +624,7 @@ impl Files {
 fn target_lock(real: &Path, shown: &Path) -> Result<Lock, SaveError> {
     // Locked before writing, so a design another editor has open is never
     // written over.
-    match Lock::of_design(real) {
+    match lock_of_design(real) {
         Lock::ReadOnly(ReadOnly::InUse) => Err(SaveError::Failed(format!(
             "{} is open elsewhere",
             display_name(shown)

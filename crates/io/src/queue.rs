@@ -47,11 +47,10 @@ impl<T> IntoIterator for Queue<T> {
 impl<T: Queued> Pending<T> for Queue<T> {
     /// Queues `request`. A `Save`, `AutoSave`, `WriteRecent` or
     /// `WriteSettings` replaces the last one queued of its kind and target,
-    /// if nothing else for that target is queued after it. Never across a `Flush`, which is answered
-    /// once everything sent before it is done, nor a `KeepDownload`, which
-    /// a clean close may go back to, see [`Request::Close`], and which
-    /// nothing replaces. The replaced request is returned for the caller to
-    /// drop outside its lock.
+    /// if nothing else for that target is queued after it. Never across a
+    /// `Flush`, which is answered once everything sent before it is done.
+    /// The replaced request is returned for the caller to drop outside its
+    /// lock.
     fn push(&mut self, item: T) -> Option<T> {
         let request = item.request();
         let replaced = request
@@ -110,8 +109,9 @@ impl Request {
         match self {
             Request::Save { file, .. }
             | Request::AutoSave { file, .. }
-            | Request::KeepDownload { file, .. }
             | Request::DiscardRecovery { file }
+            | Request::Rename { file, .. }
+            | Request::RecordDownload { file, .. }
             | Request::OpenFound { file, .. }
             | Request::Close { file, .. }
             | Request::SaveAs {
@@ -126,6 +126,9 @@ impl Request {
             | Request::ListRecovered
             | Request::OpenRecovered { .. }
             | Request::DiscardRecovered { .. }
+            | Request::ListBrowser
+            | Request::DeleteFromBrowser { .. }
+            | Request::DownloadFromBrowser { .. }
             | Request::Export { .. }
             | Request::LoadThumbnails { .. }
             | Request::LoadPanic

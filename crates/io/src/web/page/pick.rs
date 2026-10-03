@@ -76,19 +76,19 @@ pub(crate) fn object(picked: &Picked) -> Option<JsValue> {
 }
 
 /// Whether the browser has the File System Access API's pickers, so the
-/// user's files can be written back to: Chromium's. Elsewhere designs are
-/// downloaded.
-fn file_system_access() -> bool {
+/// user's files can be written back to: Chromium's. Elsewhere a file
+/// opened is copied into browser storage.
+pub fn file_system_access() -> bool {
     let window = js_sys::global();
     ["showOpenFilePicker", "showSaveFilePicker"]
         .iter()
         .all(|name| Reflect::has(&window, &JsValue::from_str(name)).unwrap_or(false))
 }
 
-/// How saving hands the design over, if it downloads it: without the File
-/// System Access API.
+/// How a design is handed over as a download: by the page, in every
+/// browser.
 pub fn downloader() -> Option<Download> {
-    (!file_system_access()).then_some(download as Download)
+    Some(download as Download)
 }
 
 /// Asks the user for a design to open: the File System Access picker if
@@ -133,11 +133,57 @@ async fn pick_input() -> Result<Option<Picked>, JsValue> {
     }))
 }
 
+/// What was dropped on the page, see [`dropped`].
+pub type Dropped = std::pin::Pin<Box<dyn std::future::Future<Output = Option<Chosen>>>>;
+
+/// The first file `transfer` holds, dropped on the page, kept as the Open
+/// picker's would be: where the File System Access API is, its handle
+/// (`DataTransferItem.getAsFileSystemHandle`), so the design goes on from
+/// the file itself; elsewhere the `File`, read only, which is copied into
+/// browser storage. Called as it's dropped, the only time the browser
+/// hands it over; what it hands over is waited for after. `None` if no
+/// file was dropped.
+pub fn dropped(transfer: &web_sys::DataTransfer) -> Dropped {
+    let file = transfer.files().and_then(|files| files.get(0));
+    let handle = file_system_access()
+        .then(|| transfer.items().get(0))
+        .flatten()
+        .filter(|item| item.kind() == "file")
+        .and_then(|item| {
+            let method = Reflect::get(&item, &"getAsFileSystemHandle".into()).ok()?;
+            let method: js_sys::Function = method.dyn_into().ok()?;
+            method.call0(&item).ok()?.dyn_into::<Promise>().ok()
+        });
+    Box::pin(async move {
+        if let Some(handle) = handle
+            && let Ok(handle) = JsFuture::from(handle).await
+            && let Ok(picked) = register_handle(handle)
+        {
+            return Some(Chosen::File(picked));
+        }
+        file.map(|file| {
+            let name = file.name();
+            Chosen::File(register(file.into(), name, PickedFrom::Input))
+        })
+    })
+}
+
+/// Lets go of what the page holds for `picked`, if it still holds it: a
+/// file dropped on the page that the app didn't open, which nothing
+/// would read and let go of otherwise.
+pub fn forget(picked: &Picked) {
+    PICKED.with_borrow_mut(|registry| {
+        registry.objects.remove(&picked.id);
+    });
+}
+
 /// Asks the user where to save the design `name` in the File System
-/// Access picker. `None` if they backed out, or it failed, which the
-/// console says.
+/// Access picker, suggesting nothing for a design with no name (`name`
+/// empty). `None` if they backed out, or it failed, which the console
+/// says.
 pub async fn pick_save(name: &str) -> Option<Chosen> {
-    let options = picker_options(&filter(), EXTENSION, Some(&download_name(name)));
+    let suggested = (!name.is_empty()).then(|| download_name(name));
+    let options = picker_options(&filter(), EXTENSION, suggested.as_deref());
     logged(
         pick_save_handle(options).await,
         "Couldn't pick where to save:",
@@ -145,12 +191,13 @@ pub async fn pick_save(name: &str) -> Option<Chosen> {
 }
 
 /// Asks the user where to export the design `name` as a 3MF file in the
-/// File System Access picker, suggesting `name.3mf`. `None` if they backed
-/// out, or it failed, which the console says. Only called where there's
-/// the picker: elsewhere the export is downloaded, see [`downloader`].
+/// File System Access picker, suggesting `name.3mf`, or nothing for a
+/// design with no name (`name` empty). `None` if they backed out, or it
+/// failed, which the console says. Only called where there's the picker:
+/// elsewhere the export is downloaded, see [`downloader`].
 pub async fn pick_export(name: &str) -> Option<Chosen> {
-    let suggested = download_name_with(name, three_mf::EXTENSION);
-    let options = picker_options(&export_filter(), three_mf::EXTENSION, Some(&suggested));
+    let suggested = (!name.is_empty()).then(|| download_name_with(name, three_mf::EXTENSION));
+    let options = picker_options(&export_filter(), three_mf::EXTENSION, suggested.as_deref());
     logged(
         pick_save_handle(options).await,
         "Couldn't pick where to export:",

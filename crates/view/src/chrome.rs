@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
     Button, Column, Container, Rule, Scrollable, Text, button, column, container, opaque,
-    rich_text, row, rule, scrollable, span, stack, text, tooltip,
+    rich_text, row, rule, scrollable, span, text, tooltip,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
 
@@ -95,19 +95,6 @@ pub(crate) fn side_tip<'a>(
     .into()
 }
 
-/// `content` with `status`, the floating status bar's layer
-/// ([`crate::status::status_bar`]), over its bottom right.
-pub fn window<'a>(
-    content: impl Into<Element<'a, Message>>,
-    status: Element<'a, Message>,
-) -> Element<'a, Message> {
-    stack![
-        container(content).width(Length::Fill).height(Length::Fill),
-        status
-    ]
-    .into()
-}
-
 /// A 1 px horizontal separator.
 pub fn hrule<'a>() -> Rule<'a> {
     rule::horizontal(1).style(theme::separator)
@@ -160,25 +147,24 @@ pub fn edged<'a>(content: Container<'a, Message>, edge: Edge, total: f32) -> Ele
     }
 }
 
+/// The icon of a theme button showing that `theme` is chosen, and what
+/// it says of it.
+pub(crate) fn theme_said(theme: ThemeChoice) -> (Icon, &'static str) {
+    match theme {
+        ThemeChoice::Auto => (Icon::Contrast, "Theme: System"),
+        ThemeChoice::Light => (Icon::Sun, "Theme: Light"),
+        ThemeChoice::Dark => (Icon::Moon, "Theme: Dark"),
+    }
+}
+
 /// The theme button, showing the `theme` chosen and going on to the next,
-/// and the help button, for the top-right of a screen.
-pub fn app_buttons<'a>(theme: ThemeChoice) -> Element<'a, Message> {
-    let (icon, label) = match theme {
-        ThemeChoice::Auto => (Icon::Contrast, "Theme: as the system's"),
-        ThemeChoice::Light => (Icon::Sun, "Theme: light"),
-        ThemeChoice::Dark => (Icon::Moon, "Theme: dark"),
-    };
-    let theme_toggle = tip(
+/// for the top-right of a screen.
+pub fn theme_button<'a>(theme: ThemeChoice) -> Element<'a, Message> {
+    let (icon, label) = theme_said(theme);
+    tip(
         icon_button(icon, Tone::Muted, Some(Message::CycleTheme)),
         text(label),
-    );
-    // TODO: open the shortcut sheet.
-    let help = icon_button(Icon::Help, Tone::Muted, None);
-
-    row![theme_toggle, help]
-        .spacing(4)
-        .align_y(Alignment::Center)
-        .into()
+    )
 }
 
 /// An icon-only button. Enabled, it is `tone` at rest and turns to the text
@@ -189,7 +175,7 @@ pub fn icon_button(icon: Icon, tone: Tone, message: Option<Message>) -> Button<'
         theme::flat_content(p, tone, enabled, hovered)
     }))
     .padding(0)
-    .style(theme::flat_button(false))
+    .style(theme::flat_button(false, theme::Tone::Text))
     .on_press_maybe(message)
 }
 

@@ -31,12 +31,19 @@ resvg.workspace = true
 # and copies measures to the clipboard.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
+# Waiting for the handle of a file dropped, on Chromium.
+wasm-bindgen-futures.workspace = true
 web-sys = { workspace = true, features = [
     "BeforeUnloadEvent",
     "Clipboard",
+    "DataTransfer",
     "Document",
+    "DragEvent",
     "Event",
     "EventTarget",
+    "File",
+    "FileList",
+    "MouseEvent",
     "Navigator",
     "VisibilityState",
     "Window",

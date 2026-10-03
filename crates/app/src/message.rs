@@ -13,6 +13,11 @@ use varde_solve::lane::Lane as SolveLane;
 use crate::doc::DocId;
 
 #[derive(Debug, Clone)]
+// Larger than the rest on the web, whose pointers are smaller.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "an IO answer, the largest, is made once per request and handled at once"
+)]
 pub(crate) enum Message {
     /// What the user asked for through the view.
     Ui(varde_view::Message),
@@ -23,6 +28,13 @@ pub(crate) enum Message {
     // For the welcome screen.
     /// The Open dialog closed, with the chosen file if there is one.
     Picked(Option<Chosen>),
+    /// On the web, a file was dragged over the page (`true`), or off it.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    FileDragged(bool),
+    /// On the web, something was dropped on the page: the first file
+    /// among it, if there was one.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    FileDropped(Option<Chosen>),
 
     // For the open document, if there is one.
     /// A tick of the auto-save timer.
@@ -45,6 +57,15 @@ pub(crate) enum Message {
     /// reloading), or is hidden, which it may never come back from.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     PageLeaving,
+    /// On the web, what the browser says of its storage: whether it keeps
+    /// it for good, and how much is used.
+    StorageState {
+        persisted: Option<bool>,
+        space: Option<varde_io::storage::Space>,
+    },
+    /// On the web, the browser's answer to keeping its storage for good,
+    /// asked as the user first saved to it.
+    Persisted(Option<bool>),
     /// The IO lane started; file requests go to it from now on.
     IoReady(IoLane),
     /// The IO lane answered a request.

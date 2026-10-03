@@ -30,7 +30,7 @@ use varde_document::{
     BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, Opacity,
     Plane, Removable, Removal, Revision, Tolerance,
 };
-use varde_io::{Access, Damage, DamageKind, Offer, OpenId, UnixSeconds};
+use varde_io::{Access, Damage, DamageKind, LastDownload, Offer, OpenId, UnixSeconds};
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
 use varde_view::{
@@ -58,13 +58,13 @@ pub(crate) use revolve::RevolveSession;
 use save::Persist;
 #[cfg(test)]
 pub(crate) use save::{AutoSave, Picking};
-pub(crate) use save::{Downloader, Downloads, Leave, Target};
+pub(crate) use save::{Downloader, Leave, Target};
 use sketch::GEOMETRY_SHARE;
 #[cfg(test)]
 pub(crate) use sketch::Refusal;
 pub(crate) use sketch::{Focus, Proposals, SketchSession};
 
-use crate::{Files, ForDoc, Next, when};
+use crate::{Files, ForDoc, Next, Offers, when};
 
 /// An open document and the state of its view.
 pub(crate) struct Doc {
@@ -101,6 +101,9 @@ pub(crate) struct Doc {
     pub(crate) refused_edit: Option<(FeatureId, sketch::Refusal)>,
     /// Shown to the user in place of a path.
     pub(crate) name: String,
+    /// Natively, the path of the design's own file, the home directory
+    /// as `~`, which pointing at the file cell shows.
+    pub(crate) path: Option<String>,
     pub(crate) panel: Panel,
     pub(crate) file_menu: bool,
     /// Whether the view options menu, from the status bar, is open.
@@ -205,6 +208,8 @@ pub(crate) struct Origin {
     pub(crate) recovered: Option<Recovery>,
     /// How the file it was opened from was found damaged, if it was.
     pub(crate) damage: Option<FileDamage>,
+    /// For a design in browser storage, its last download, if any.
+    pub(crate) download: Option<LastDownload>,
 }
 
 /// What a crashed session left of a design, waiting for the user's
@@ -275,6 +280,7 @@ impl Origin {
             creating: None,
             recovered: None,
             damage: None,
+            download: None,
         }
     }
 }
@@ -300,6 +306,7 @@ impl Doc {
             creating,
             recovered,
             damage,
+            download,
         } = origin;
         let editor = Editor::new(document);
         let revision = editor.revision();
@@ -325,6 +332,7 @@ impl Doc {
             placed: None,
             refused_edit: None,
             name,
+            path: None,
             panel: Panel::default(),
             file_menu: false,
             view_menu: false,
@@ -355,6 +363,7 @@ impl Doc {
             export: Export::default(),
             thumbnails: thumbnail::Thumbnails::default(),
         };
+        doc.opened_download(download);
         doc.sync();
         doc
     }
@@ -978,6 +987,8 @@ impl Doc {
     pub(crate) fn dialog(&self) -> Option<Dialog> {
         if self.prompt().is_some() {
             Some(Dialog::Unsaved)
+        } else if self.naming().is_some() {
+            Some(Dialog::Naming)
         } else if self.delete_prompt().is_some() {
             Some(Dialog::Delete)
         } else {
@@ -1031,9 +1042,15 @@ impl Doc {
 
     /// The document screen, showing the other panel tab if `peek`, unless
     /// the Dimension tool is in use, where the peek key places references,
-    /// with the view `options`.
-    pub(crate) fn view(&self, peek: bool, mode: Mode, options: ViewOptions) -> Element<'_, Ui> {
-        varde_view::document(self.state(peek, mode, options))
+    /// with the view `options`, and what the platform `offers`.
+    pub(crate) fn view(
+        &self,
+        peek: bool,
+        mode: Mode,
+        options: ViewOptions,
+        offers: Offers,
+    ) -> Element<'_, Ui> {
+        varde_view::document(self.state(peek, mode, options, offers))
     }
 
     /// What the document screen is built from, see [`Doc::view`].
@@ -1042,6 +1059,7 @@ impl Doc {
         peek: bool,
         mode: Mode,
         options: ViewOptions,
+        offers: Offers,
     ) -> varde_view::DocumentState<'_> {
         let peek = self.peeks(peek);
         let now = when::now();
@@ -1059,6 +1077,20 @@ impl Doc {
             errors: self.shown_errors(),
             model_selection: &self.pick.selection,
             name: &self.name,
+            unnamed: self.unnamed(),
+            path: self.path.as_deref(),
+            location: self.persist_target().location(),
+            downloads: self.download_status(),
+            downloadable: offers.download,
+            rename: matches!(self.persist_target(), Target::Browser { .. })
+                .then(|| self.renamable()),
+            naming: self.naming().map(|naming| varde_view::NamePrompt {
+                name: &naming.name,
+                place: naming.place,
+                places: offers.file_system_access,
+                rename: naming.rename,
+                taken: naming.replacing.as_deref(),
+            }),
             edited: self.edited(),
             read_only: self.read_only.as_deref(),
             edit_error: self.edit_error.as_ref(),
@@ -1075,6 +1107,7 @@ impl Doc {
             overlay: self
                 .prompt()
                 .map(|_| Overlay::UnsavedPrompt)
+                .or(self.naming().map(|_| Overlay::NamePrompt))
                 .or(self.file_menu.then_some(Overlay::FileMenu))
                 .or(self
                     .view_menu
@@ -1107,7 +1140,7 @@ impl Doc {
     /// peeking, the view options at their defaults.
     #[cfg(test)]
     pub(crate) fn view_in(&self, mode: Mode) -> Element<'_, Ui> {
-        self.view(false, mode, ViewOptions::default())
+        self.view(false, mode, ViewOptions::default(), Offers::default())
     }
 }
 
@@ -1153,6 +1186,11 @@ pub(crate) enum Dialog {
     Damaged,
     /// The whole of the panic recorded, on the welcome screen.
     Panic,
+    /// The app's own Save As dialog, on the web.
+    Naming,
+    /// About deleting a design in browser storage not downloaded as it
+    /// is, on the welcome screen.
+    DeleteFromBrowser,
 }
 
 /// The name shown for the design at `path`: its file name without the

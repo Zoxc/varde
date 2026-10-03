@@ -70,22 +70,24 @@ impl Doc {
     }
 
     /// Starts exporting the visible bodies, if they can be (see
-    /// [`Doc::exportable`]): asks where to, suggesting the design's name,
-    /// answered with [`Doc::export_picked`]. Where saves download, there's
-    /// nothing to ask: the bodies are welded at once and downloaded.
+    /// [`Doc::exportable`]): asks where to, suggesting the design's name
+    /// if it has one,
+    /// answered with [`Doc::export_picked`]. On the web without the File
+    /// System Access API there's nothing to ask: the bodies are welded at
+    /// once and downloaded.
     pub(crate) fn request_export(&mut self, cx: &mut Files) -> Next {
         self.file_menu = false;
         if !self.exportable() {
             return Next::Stay;
         }
-        if cx.downloader.is_some() {
+        if cx.downloader.is_some() && !cx.file_system_access {
             self.weld(None);
             return Next::Stay;
         }
         self.export.exporting = Some(Exporting::Picking);
         Next::PickExport {
             id: self.id,
-            name: self.name.clone(),
+            name: self.suggested_name(),
         }
     }
 
@@ -106,6 +108,8 @@ impl Doc {
                 SaveTo::Path { path, overwrite }
             }
             Some(Chosen::File(picked)) => SaveTo::Picked(picked),
+            // Exports are never kept in browser storage.
+            Some(Chosen::Browser(_)) => return,
         };
         self.weld(Some(to));
     }

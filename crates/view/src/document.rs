@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, column, container, row, space, stack, text};
+use iced::widget::{Space, column, container, row, space, stack, text, text_input};
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
@@ -30,9 +30,9 @@ use crate::status::{self, Status};
 use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
-    ConstraintKind, Edit, ExtrudeState, File, Look, Message, OperationKind, Panel, PlanePick,
-    RevolvePick, RevolveState, RowMenu, Snap, Target, Tool, Unsaved, panels, theme, toolbar,
-    viewport,
+    ConstraintKind, Downloads, Edit, ExtrudeState, File, Location, Look, Message, OperationKind,
+    Panel, PlanePick, RevolvePick, RevolveState, RowMenu, SavePlace, Snap, Target, Tool, Unsaved,
+    panels, theme, toolbar, viewport,
 };
 
 /// Borrowed state needed to build the document screen.
@@ -67,6 +67,28 @@ pub struct DocumentState<'a> {
     pub model_selection: &'a crate::Selection,
     /// The document name, without extension.
     pub name: &'a str,
+    /// Whether the design has no name, never saved: [`NOT_SAVED`] shows
+    /// in its name's place in the file cell.
+    ///
+    /// [`NOT_SAVED`]: crate::NOT_SAVED
+    pub unnamed: bool,
+    /// Natively, the path of the design's own file, which pointing at the
+    /// file cell shows.
+    pub path: Option<&'a str>,
+    /// Where the design is kept, on the web: a bar under the file cell
+    /// says, and pointing at the cell says more.
+    pub location: Option<Location>,
+    /// Where a design in browser storage stands against its downloads, as
+    /// the file menu says.
+    pub downloads: Option<Downloads>,
+    /// Whether the file menu offers Download: on the web.
+    pub downloadable: bool,
+    /// For a design in browser storage, the file menu offers Rename…:
+    /// whether it may be renamed now, not while it's read-only, or saving,
+    /// or asked about.
+    pub rename: Option<bool>,
+    /// The app's own Save As dialog, on the web, while it shows.
+    pub naming: Option<NamePrompt<'a>>,
     /// Whether there are unsaved changes.
     pub edited: bool,
     /// Why the document can't be edited, if it can't. Edit commands are
@@ -565,10 +587,32 @@ pub struct RefusedEdit<'a> {
 pub enum Overlay {
     /// Asks what to do about unsaved changes.
     UnsavedPrompt,
+    /// The app's own Save As dialog, see [`NamePrompt`].
+    NamePrompt,
     FileMenu,
     /// The view options menu, from the status bar, and its submenu open
     /// if one is.
     ViewMenu(Option<crate::ViewSubmenu>),
+}
+
+/// The app's own Save As dialog, on the web, where browser storage has no
+/// picker of the system's: the design's name, and where the File System
+/// Access API is, whether to save it in browser storage or as a file on
+/// the computer. It renames the design instead, in browser storage, if
+/// `rename`.
+#[derive(Debug, Clone)]
+pub struct NamePrompt<'a> {
+    /// As typed.
+    pub name: &'a str,
+    pub place: SavePlace,
+    /// Whether to offer saving as a file on the computer: where the File
+    /// System Access API is.
+    pub places: bool,
+    pub rename: bool,
+    /// The file name in browser storage the name typed is taken by, if
+    /// it's asked about: confirming again replaces it, unless renaming,
+    /// which never does.
+    pub taken: Option<&'a str>,
 }
 
 /// The document screen: toolbar on top, side panel on the left and the 3D
@@ -689,16 +733,23 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         (Some(Overlay::UnsavedPrompt), _) => {
             Element::from(stack![content, unsaved_prompt(state.name)])
         }
+        (Some(Overlay::NamePrompt), _) => match &state.naming {
+            Some(prompt) => Element::from(stack![content, name_prompt(prompt.clone())]),
+            None => content.into(),
+        },
         (_, Some(deleting)) => Element::from(stack![content, delete_prompt(deleting)]),
         (Some(Overlay::FileMenu), None) => {
             let document = state.editor.document();
-            let menu = toolbar::file_menu(
+            let menu = toolbar::file_menu(toolbar::FileMenu {
                 editable,
-                state.edited,
-                state.exportable,
-                document.units(),
-                document.tolerance(),
-            );
+                edited: state.edited,
+                exportable: state.exportable,
+                units: document.units(),
+                tolerance: document.tolerance(),
+                downloads: state.downloads.clone(),
+                downloadable: state.downloadable,
+                rename: state.rename,
+            });
             Element::from(stack![content, menu])
         }
         (Some(Overlay::ViewMenu(submenu)), None) => {
@@ -1198,6 +1249,104 @@ fn unsaved_prompt(name: &str) -> Element<'_, Message> {
                 space::horizontal(),
                 choice("Cancel", Unsaved::Cancel, Emphasis::Secondary),
                 choice("Save", Unsaved::Save, Emphasis::Primary),
+            ]
+            .spacing(8),
+        ]
+        .spacing(8),
+    )
+}
+
+/// The app's own Save As dialog, see [`NamePrompt`], as a dialog over the
+/// whole screen like [`unsaved_prompt`]: the name, with `.vrdp` after it,
+/// where to save it if there's a choice, and what's in the way if the
+/// name's taken. `Enter` in the field saves, as the primary button does.
+fn name_prompt(prompt: NamePrompt<'_>) -> Element<'_, Message> {
+    let browser = prompt.place == SavePlace::Browser || prompt.rename;
+    let confirm = Message::File(File::ConfirmName);
+    let field = text_input("Name", prompt.name)
+        .id(crate::NAME_FIELD)
+        .on_input(|name| Message::File(File::Name(name)))
+        .on_submit(confirm.clone())
+        .padding([6, 8])
+        .style(theme::field_input(prompt.taken.is_some() && browser));
+    let name = row![
+        container(field).width(Length::Fill),
+        text(format!(".{EXTENSION}")).style(theme::faint_text),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    let places = (prompt.places && !prompt.rename).then(|| {
+        let place = |label, place| {
+            let chosen = prompt.place == place;
+            toolbar::choice_item(
+                match place {
+                    SavePlace::Browser => Icon::Browser,
+                    SavePlace::Computer => Icon::Computer,
+                },
+                label,
+                chosen,
+                Message::File(File::Place(place)),
+            )
+        };
+        column![
+            place("Browser storage", SavePlace::Browser),
+            place("A file on your computer…", SavePlace::Computer),
+        ]
+    });
+    // Where it's going, unless it stays where it is.
+    let place = (!prompt.rename).then(|| {
+        text(if browser {
+            "Saved in this browser's storage."
+        } else {
+            "Saved to a file on your computer: you choose where next."
+        })
+        .size(12)
+        .style(theme::muted_text)
+    });
+    let note = match (prompt.taken, prompt.rename) {
+        (Some(taken), true) if browser => Some(
+            text(format!(
+                "A design in browser storage is called {taken} already."
+            ))
+            .style(theme::danger_text),
+        ),
+        (Some(taken), false) if browser => Some(
+            text(format!(
+                "A design in browser storage is called {taken} already. Save again to replace it."
+            ))
+            .style(theme::warning_text),
+        ),
+        _ => None,
+    };
+    let (title, action) = match (prompt.rename, browser, prompt.taken.is_some()) {
+        (true, _, _) => ("Rename design", "Rename"),
+        (false, false, _) => ("Save design as", "Choose file…"),
+        (false, true, true) => ("Save design as", "Replace"),
+        (false, true, false) => ("Save design as", "Save"),
+    };
+    // Browser storage keeps a design by its name.
+    let blocked =
+        (prompt.rename && prompt.taken.is_some()) || (browser && prompt.name.trim().is_empty());
+    dialog(
+        column![
+            text(title).size(14).font(theme::SEMIBOLD),
+            name,
+            places,
+            place,
+            note,
+            Space::new().height(4),
+            row![
+                space::horizontal(),
+                dialog_button(
+                    "Cancel",
+                    Emphasis::Secondary.button_style(),
+                    Some(Message::File(File::CancelName)),
+                ),
+                dialog_button(
+                    action,
+                    Emphasis::Primary.button_style(),
+                    (!blocked).then_some(confirm),
+                ),
             ]
             .spacing(8),
         ]

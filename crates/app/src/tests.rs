@@ -562,7 +562,9 @@ fn opened(id: OpenId, path: PathBuf, file: u64, access: Access) -> Message {
             document: with_a_line(),
             access,
             recovered: Ok(None),
-            downloaded: false,
+            browser: None,
+            not_copied: None,
+            download: None,
             damage: None,
         }),
     })
@@ -1331,6 +1333,14 @@ fn saving_an_untitled_design_asks_where() {
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     sent(&requests);
+    // Never saved, it has no name: "Not saved" in its place, and none
+    // suggested to save it as.
+    assert!(document(&varde).unnamed());
+    assert_eq!(document(&varde).suggested_name(), "");
+    assert_eq!(varde.title(), "Not saved — Edited — Varde CAD");
+    let shown = screen_texts(document(&varde));
+    assert!(shown.iter().any(|text| text == "Not saved"), "{shown:?}");
+    assert!(!shown.iter().any(|text| text == "Untitled"), "{shown:?}");
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     assert!(document(&varde).picking().is_some());
     // The dialog is only shown once.
@@ -1374,6 +1384,14 @@ fn saving_an_untitled_design_asks_where() {
     let doc = document(&varde);
     assert_eq!(doc.target().design_file(), Some(FileId(4)));
     assert_eq!(doc.name, "new");
+    assert!(!doc.unnamed());
+    assert_eq!(doc.suggested_name(), "new");
+    // Pointing at the file cell shows where it is.
+    assert_eq!(
+        doc.path.as_deref(),
+        Some(Path::new("/d/new.vrdp").to_str().unwrap())
+    );
+    assert_eq!(varde.title(), "new.vrdp — Varde CAD");
     assert!(!doc.edited());
     assert_eq!(varde.files.recent.entries()[0].entry.path, *path);
     assert!(matches!(
@@ -2145,38 +2163,15 @@ fn tick(varde: &mut Varde, start: Instant, seconds: u32) {
     let _ = varde.update(Message::AutoSaveTick(start + SECOND * seconds));
 }
 
-/// The auto-saves in `sent`, as `(file, revision)`, leaving out the
-/// designs as downloaded kept, see [`downloads_kept`].
+/// The auto-saves in `sent`, as `(file, revision)`.
 fn auto_saves(sent: &[IoRequest]) -> Vec<(u64, u64)> {
-    auto_saves_marked(sent, false)
-}
-
-/// The designs as downloaded kept in `sent`, as `(file, revision)`.
-fn downloads_kept(sent: &[IoRequest]) -> Vec<(u64, u64)> {
-    auto_saves_marked(sent, true)
-}
-
-/// The auto-saves in `sent` if not `downloaded`, the designs as
-/// downloaded kept if it is, as `(file, revision)`.
-fn auto_saves_marked(sent: &[IoRequest], downloaded: bool) -> Vec<(u64, u64)> {
     sent.iter()
-        .filter_map(|request| match (request, downloaded) {
-            (
-                IoRequest::AutoSave {
-                    file,
-                    revision,
-                    document,
-                },
-                false,
-            )
-            | (
-                IoRequest::KeepDownload {
-                    file,
-                    revision,
-                    document,
-                },
-                true,
-            ) => {
+        .filter_map(|request| match request {
+            IoRequest::AutoSave {
+                file,
+                revision,
+                document,
+            } => {
                 assert_eq!(document.check(), Ok(()));
                 Some((file.0, u64::from(*revision)))
             }
@@ -2337,7 +2332,9 @@ fn with_recovered_changed(
                 damage: None,
                 newer_base: false,
             })),
-            downloaded: false,
+            browser: None,
+            not_copied: None,
+            download: None,
             damage: None,
         }),
     }));
@@ -2841,10 +2838,7 @@ fn with_new_design() -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
     }));
     assert_eq!(
         *document(&varde).target(),
-        Target::Entry {
-            file: FileId(9),
-            downloaded: false
-        }
+        Target::Entry { file: FileId(9) }
     );
     (varde, requests)
 }
@@ -2924,6 +2918,7 @@ fn save_error(varde: &Varde) -> Option<&str> {
     match doc.save_error() {
         Some(SaveError::Failed(error)) => Some(error),
         Some(SaveError::Conflict) => Some("conflict"),
+        Some(SaveError::Taken) => Some("taken"),
         Some(SaveError::OpenedDamaged | SaveError::Damaged) => Some("damaged"),
         None => doc.auto_save_error(),
     }
@@ -3114,10 +3109,7 @@ fn a_failed_save_as_an_entry_was_closed_for_asks_for_another() {
     }));
     assert_eq!(
         *document(&varde).target(),
-        Target::Entry {
-            file: FileId(2),
-            downloaded: false
-        }
+        Target::Entry { file: FileId(2) }
     );
     let start = Instant::now();
     tick(&mut varde, start, 0);
@@ -3133,14 +3125,12 @@ fn recovered_designs_are_offered_on_the_welcome_screen() {
             path: "/data/designs/a.vrdp".into(),
             modified: Some(varde_io::UnixSeconds(1_790_424_000)),
             name: None,
-            downloaded: false,
             damage: None,
         },
         Recovered {
             path: "/data/designs/b.vrdp".into(),
             modified: None,
             name: None,
-            downloaded: false,
             damage: None,
         },
     ];
@@ -3190,7 +3180,9 @@ fn recovered_designs_are_offered_on_the_welcome_screen() {
             document: left.clone(),
             access: Access::Edit,
             recovered: Ok(None),
-            downloaded: false,
+            browser: None,
+            not_copied: None,
+            download: None,
             damage: None,
         }),
     }));
@@ -3300,7 +3292,7 @@ impl Session {
 
     /// Opens the store entry at `entry` from the welcome screen, and waits
     /// for it to open and for the list the lane follows that with.
-    fn open_stored(&mut self, entry: &Path) {
+    fn open_in_browser(&mut self, entry: &Path) {
         let _ = self
             .varde
             .update(Message::Ui(Ui::Welcome(WelcomeUi::OpenStored(
@@ -3405,7 +3397,7 @@ fn auto_saved_edits_are_recovered_after_a_crash() {
     assert_eq!(session.varde.files.recovered.len(), 1);
     let _ = session.varde.view();
     let entry = session.varde.files.recovered[0].path.clone();
-    session.open_stored(&entry);
+    session.open_in_browser(&entry);
     assert_eq!(*document(&session.varde).editor.document(), new_design);
     // Not saved: closing asks, and not saving deletes it.
     let _ = session
@@ -3502,481 +3494,6 @@ fn recovered_changes_not_answered_outlive_a_save() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Saves the open design with Save As as on the web without the File
-/// System Access API: it's handed over as downloaded, with `result` as the
-/// browser's answer.
-fn downloads(varde: &mut Varde, result: Result<(), String>) {
-    varde.files.downloader = Some(Box::new(move |name, bytes| {
-        assert!(name.ends_with(".vrdp"));
-        assert!(varde_io::vrdp::from_bytes(bytes).is_ok());
-        result.clone()
-    }));
-    let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
-}
-
-/// A download saves the design, and keeps it in its entry marked as
-/// downloaded: after the auto-saves sent before it, and before any of an
-/// edit made since, which isn't marked, and which the entry holds it under.
-#[test]
-fn a_download_is_kept_in_the_entry_after_the_auto_saves_before_it() {
-    let (mut varde, requests) = with_new_design();
-    let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    downloads(&mut varde, Ok(()));
-    let sent_now = sent(&requests);
-    assert_eq!(auto_saves(&sent_now), [(9, 1)]);
-    assert_eq!(downloads_kept(&sent_now), [(9, 2)]);
-    assert!(matches!(
-        sent_now[..],
-        [IoRequest::AutoSave { .. }, IoRequest::KeepDownload { .. }]
-    ));
-    let doc = document(&varde);
-    assert_eq!(doc.saved_revision(), Some(Revision::from(2)));
-    assert!(!doc.edited());
-    assert!(!doc.saves().any());
-    assert_eq!(
-        *doc.target(),
-        Target::Entry {
-            file: FileId(9),
-            downloaded: true
-        }
-    );
-
-    // Nothing to auto-save until the next edit, which is, unmarked.
-    tick(&mut varde, start, 10);
-    tick(&mut varde, start, 20);
-    assert!(sent(&requests).is_empty());
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    tick(&mut varde, start, 21);
-    tick(&mut varde, start, 24);
-    let sent_now = sent(&requests);
-    assert_eq!(auto_saves(&sent_now), [(9, 3)]);
-    assert_eq!(downloads_kept(&sent_now), []);
-    assert_eq!(
-        *document(&varde).target(),
-        Target::Entry {
-            file: FileId(9),
-            downloaded: true
-        }
-    );
-}
-
-/// Undone back to the design as downloaded, its entry goes back to it,
-/// rather than being emptied: it may be the only copy.
-#[test]
-fn undoing_back_to_a_download_keeps_it_in_the_entry() {
-    let (mut varde, requests) = with_new_design();
-    let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    downloads(&mut varde, Ok(()));
-    assert_eq!(downloads_kept(&sent(&requests)), [(9, 1)]);
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
-    assert_eq!(auto_saves(&sent(&requests)), [(9, 2)]);
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::Undo)));
-    tick(&mut varde, start, 4);
-    let sent_now = sent(&requests);
-    assert_eq!(sent_now.len(), 1);
-    assert_eq!(downloads_kept(&sent_now), [(9, 1)]);
-}
-
-/// Whether `sent` is the clean close of `file`, as after closing a design
-/// downloaded: its entry is kept, which the lane then lists, to show on
-/// the welcome screen.
-fn closed_clean(sent: &[IoRequest], file: u64) -> bool {
-    matches!(
-        sent,
-        [IoRequest::Close {
-            file: FileId(closed),
-            closing: Closing::Clean
-        }] if *closed == file
-    )
-}
-
-/// Closing a design downloaded from the menu doesn't ask. The clean close
-/// keeps its entry, holding the download, which may not have been kept.
-#[test]
-fn closing_after_a_download_keeps_the_entry() {
-    let (mut varde, requests) = with_new_design();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    downloads(&mut varde, Ok(()));
-    assert_eq!(downloads_kept(&sent(&requests)), [(9, 1)]);
-    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
-    assert!(is_welcome(&varde));
-    // And listed again, to show on the welcome screen.
-    assert!(closed_clean(&sent(&requests), 9));
-}
-
-/// Saving from the prompt about unsaved changes by downloading, then
-/// closing, keeps the entry too.
-#[test]
-fn closing_through_a_download_from_the_prompt_keeps_the_entry() {
-    let (mut varde, requests) = with_new_design();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
-    let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Save))));
-    // Natively the Save As dialog is showing now; the web downloads
-    // instead.
-    let Screen::Document(doc) = &mut varde.screen else {
-        panic!("closed before saving");
-    };
-    assert!(doc.picking().is_some());
-    doc.forget_picking();
-    downloads(&mut varde, Ok(()));
-    assert!(is_welcome(&varde));
-    let sent_now = sent(&requests);
-    assert_eq!(downloads_kept(&sent_now), [(9, 1)]);
-    assert!(closed_clean(&sent_now[1..], 9));
-}
-
-/// Choosing not to save changes made since a download closes the entry
-/// cleanly, as for any design not saved, which the lane takes back to the
-/// download, see `IoRequest::Close`: listed again, to show it.
-#[test]
-fn not_saving_after_a_download_goes_back_to_it() {
-    let (mut varde, requests) = with_new_design();
-    let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    downloads(&mut varde, Ok(()));
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
-    let sent_now = sent(&requests);
-    assert_eq!(downloads_kept(&sent_now), [(9, 1)]);
-    assert_eq!(auto_saves(&sent_now), [(9, 2)]);
-    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
-    assert_eq!(document(&varde).prompt(), Some(Leave::Close));
-    let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
-    assert!(is_welcome(&varde));
-    assert!(closed_clean(&sent(&requests), 9));
-}
-
-/// A new design, its store entry asked for and not made yet, as tagged.
-fn with_new_design_on_its_way() -> (Varde, Rc<RefCell<Vec<IoRequest>>>, OpenId) {
-    let (mut varde, requests) = with_files();
-    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
-    let [.., IoRequest::New { id }] = sent(&requests)[..] else {
-        panic!("no store entry asked for");
-    };
-    (varde, requests, id)
-}
-
-/// Downloaded just after New, before its entry is made: the design as
-/// downloaded is kept in it as soon as it's made, before any auto-save of
-/// an edit made since.
-#[test]
-fn a_download_before_the_entry_is_made_is_kept_once_it_is() {
-    let (mut varde, requests, id) = with_new_design_on_its_way();
-    let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    downloads(&mut varde, Ok(()));
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    // Nowhere to auto-save to yet.
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
-    assert!(sent(&requests).is_empty());
-    assert_eq!(*document(&varde).target(), Target::None);
-
-    let _ = varde.update(Message::Io(IoResponse::Created {
-        id,
-        result: Ok(FileId(4)),
-    }));
-    let sent_now = sent(&requests);
-    assert_eq!(downloads_kept(&sent_now), [(4, 1)]);
-    assert_eq!(sent_now.len(), 1);
-    assert_eq!(
-        *document(&varde).target(),
-        Target::Entry {
-            file: FileId(4),
-            downloaded: true
-        }
-    );
-    tick(&mut varde, start, 4);
-    tick(&mut varde, start, 7);
-    let sent_now = sent(&requests);
-    assert_eq!(auto_saves(&sent_now), [(4, 2)]);
-    assert_eq!(downloads_kept(&sent_now), []);
-
-    // Not edited since: nothing more to auto-save.
-    let (mut varde, requests, id) = with_new_design_on_its_way();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    downloads(&mut varde, Ok(()));
-    let _ = varde.update(Message::Io(IoResponse::Created {
-        id,
-        result: Ok(FileId(4)),
-    }));
-    assert_eq!(downloads_kept(&sent(&requests)), [(4, 1)]);
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
-    assert!(sent(&requests).is_empty());
-}
-
-/// Should the entry fail to be made, there's nowhere to keep the download,
-/// and the design isn't auto-saved at all, which is shown.
-#[test]
-fn a_download_before_an_entry_that_fails_is_not_kept() {
-    let (mut varde, requests, id) = with_new_design_on_its_way();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    downloads(&mut varde, Ok(()));
-    let _ = varde.update(Message::Io(IoResponse::Created {
-        id,
-        result: Err("no store".to_owned()),
-    }));
-    assert!(sent(&requests).is_empty());
-    assert!(varde.files.downloads.is_empty());
-    let error = save_error(&varde).expect("no error shown");
-    assert!(error.contains("no store"), "{error}");
-}
-
-/// Downloaded and closed before the entry is made, not saving changes
-/// made since or not: the entry isn't given up on, but gets the design as
-/// downloaded once it's made, and is closed cleanly, which keeps it, and
-/// listed again. An entry failing to be made has nothing kept.
-#[test]
-fn a_download_closed_before_the_entry_is_made_is_kept() {
-    for edited_since in [false, true] {
-        let (mut varde, requests, id) = with_new_design_on_its_way();
-        let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-        downloads(&mut varde, Ok(()));
-        if edited_since {
-            let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-        }
-        let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
-        if edited_since {
-            let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
-        }
-        assert!(is_welcome(&varde));
-        assert!(sent(&requests).is_empty());
-
-        let _ = varde.update(Message::Io(IoResponse::Created {
-            id,
-            result: Ok(FileId(4)),
-        }));
-        let sent_now = sent(&requests);
-        assert_eq!(downloads_kept(&sent_now), [(4, 1)]);
-        assert!(closed_clean(&sent_now[1..], 4), "{sent_now:?}");
-        assert!(varde.files.downloads.is_empty());
-    }
-
-    let (mut varde, requests, id) = with_new_design_on_its_way();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    downloads(&mut varde, Ok(()));
-    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
-    let _ = varde.update(Message::Io(IoResponse::Created {
-        id,
-        result: Err("no store".to_owned()),
-    }));
-    assert!(sent(&requests).is_empty());
-    assert!(varde.files.downloads.is_empty());
-}
-
-/// A download the browser refused saves nothing and keeps what was
-/// auto-saved.
-#[test]
-fn a_failed_download_keeps_the_entry() {
-    let (mut varde, requests) = with_new_design();
-    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    sent(&requests);
-    downloads(&mut varde, Err("no".to_owned()));
-    assert!(sent(&requests).is_empty());
-    assert!(document(&varde).edited());
-    assert_eq!(
-        *document(&varde).target(),
-        Target::Entry {
-            file: FileId(9),
-            downloaded: false
-        }
-    );
-    assert_eq!(save_error(&varde), Some("no"));
-}
-
-/// What a crashed session left is kept by a download, as by a Save, until
-/// the user answers the offer.
-#[test]
-fn a_download_keeps_recovered_changes_not_answered() {
-    let (mut varde, requests) = with_recovered(Document::default());
-    downloads(&mut varde, Ok(()));
-    assert!(sent(&requests).is_empty());
-    assert!(document(&varde).recovered().is_some());
-}
-
-/// Through the real lane: a new design downloaded and closed is kept and
-/// listed as downloaded. Opened again it's what was downloaded, not
-/// edited, and closing it keeps it listed. Edited and left behind, it's
-/// changes never saved again, and not saving them goes back to the
-/// download, listed as such again.
-#[test]
-fn a_downloaded_design_is_kept_and_listed_apart() {
-    let dir = std::env::temp_dir().join(format!("varde-app-download-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-
-    let mut session = Session::new(&dir);
-    session.answer(|r| matches!(r, IoResponse::RecoveredListed { .. }));
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
-    session.answer(|r| matches!(r, IoResponse::Created { .. }));
-    session.edit_and_auto_save();
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::Edit(an_edit(document(&session.varde)))));
-    downloads(&mut session.varde, Ok(()));
-    let downloaded = document(&session.varde).editor.document().clone();
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::File(File::CloseDocument)));
-    assert!(is_welcome(&session.varde));
-    session.answer(|r| matches!(r, IoResponse::RecoveredListed { .. }));
-    let [design] = &session.varde.files.recovered[..] else {
-        panic!("not listed: {:?}", session.varde.files.recovered);
-    };
-    assert!(design.downloaded);
-    let entry = design.path.clone();
-    let _ = session.varde.view();
-
-    session.open_stored(&entry);
-    let doc = document(&session.varde);
-    assert_eq!(*doc.editor.document(), downloaded);
-    assert_eq!(doc.name, "Untitled");
-    assert!(matches!(
-        doc.target(),
-        Target::Entry {
-            downloaded: true,
-            ..
-        }
-    ));
-    assert!(!doc.edited());
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::File(File::CloseDocument)));
-    assert!(is_welcome(&session.varde));
-    session.answer(|r| matches!(r, IoResponse::RecoveredListed { .. }));
-    assert!(entry.exists());
-    assert!(session.varde.files.recovered[0].downloaded);
-    session.open_stored(&entry);
-    session.edit_and_auto_save();
-    let edited = document(&session.varde).editor.document().clone();
-    drop(session);
-    wait_unlocked(&entry);
-
-    let mut session = Session::new(&dir);
-    session.answer(|r| matches!(r, IoResponse::RecoveredListed { .. }));
-    let [design] = &session.varde.files.recovered[..] else {
-        panic!("not listed: {:?}", session.varde.files.recovered);
-    };
-    assert!(!design.downloaded);
-    session.open_stored(&entry);
-    assert_eq!(*document(&session.varde).editor.document(), edited);
-    assert!(document(&session.varde).edited());
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::File(File::CloseDocument)));
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
-    session.answer(|r| matches!(r, IoResponse::RecoveredListed { .. }));
-    let [design] = &session.varde.files.recovered[..] else {
-        panic!("not listed: {:?}", session.varde.files.recovered);
-    };
-    assert!(design.downloaded);
-    session.open_stored(&entry);
-    assert_eq!(*document(&session.varde).editor.document(), downloaded);
-    assert!(!document(&session.varde).edited());
-    drop(session);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// Through the real lane: a new design downloaded and closed before its
-/// entry is made, with changes since not saved, ends up listed as
-/// downloaded, as it was downloaded.
-#[test]
-fn a_design_downloaded_before_its_entry_is_made_is_kept() {
-    let dir = std::env::temp_dir().join(format!("varde-app-download-early-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-
-    let mut session = Session::new(&dir);
-    session.answer(|r| matches!(r, IoResponse::RecoveredListed { .. }));
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::Edit(an_edit(document(&session.varde)))));
-    downloads(&mut session.varde, Ok(()));
-    let downloaded = document(&session.varde).editor.document().clone();
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::Edit(an_edit(document(&session.varde)))));
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::File(File::CloseDocument)));
-    let _ = session
-        .varde
-        .update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
-    assert!(is_welcome(&session.varde));
-    session.answer(|r| matches!(r, IoResponse::Created { .. }));
-    session.answer(|r| matches!(r, IoResponse::RecoveredListed { .. }));
-    let [design] = &session.varde.files.recovered[..] else {
-        panic!("not listed: {:?}", session.varde.files.recovered);
-    };
-    assert!(design.downloaded);
-    let entry = design.path.clone();
-    session.open_stored(&entry);
-    assert_eq!(*document(&session.varde).editor.document(), downloaded);
-    drop(session);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// Whether a design listed opens as downloaded, not edited, goes by what
-/// its entry holds as it's opened, not by the list, which may be out of
-/// date: another tab may have opened it since and left changes in it,
-/// which closing without asking would drop, going back to the download.
-#[test]
-fn a_listed_design_opens_as_its_entry_holds_it() {
-    for (listed, holds) in [(true, false), (false, true), (true, true)] {
-        let (mut varde, requests) = with_files();
-        let path = PathBuf::from("designs/a.vrdp");
-        let _ = varde.update(Message::Io(IoResponse::RecoveredListed {
-            designs: vec![Recovered {
-                path: path.clone(),
-                modified: None,
-                name: None,
-                downloaded: listed,
-                damage: None,
-            }],
-        }));
-        let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::OpenStored(
-            path.clone(),
-        ))));
-        let sent_now = sent(&requests);
-        let Some(IoRequest::OpenRecovered { id, .. }) = sent_now.last() else {
-            panic!("not opened: {sent_now:?}");
-        };
-        let _ = varde.update(Message::Io(IoResponse::Opened {
-            id: *id,
-            path: Some(path),
-            result: Ok(Opened {
-                file: FileId(4),
-                document: with_a_line(),
-                access: Access::Edit,
-                recovered: Ok(None),
-                downloaded: holds,
-                damage: None,
-            }),
-        }));
-        let doc = document(&varde);
-        assert_eq!(doc.edited(), !holds, "listed {listed}, holds {holds}");
-        let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
-        assert_eq!(is_welcome(&varde), holds);
-    }
-}
-
 /// A file picked on the web, `bracket.vrdp`.
 fn picked(id: u64, from: PickedFrom) -> Picked {
     Picked {
@@ -4010,6 +3527,56 @@ fn with_picked_file(picked: Picked) -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
     (varde, requests)
 }
 
+/// On the web, a file dragged over the welcome screen's page lights the
+/// drop zone, and dropped, it opens as one picked with Open… would.
+#[test]
+fn a_file_dropped_on_the_welcome_screen_opens() {
+    let (mut varde, requests) = with_files();
+    sent(&requests);
+    let dragging = |varde: &Varde| match &varde.screen {
+        Screen::Welcome(welcome) => welcome.dragging(),
+        Screen::Document(_) => panic!("not on the welcome screen"),
+    };
+    let _ = varde.update(Message::FileDragged(true));
+    assert!(dragging(&varde));
+    let _ = varde.update(Message::FileDragged(true));
+    assert!(dragging(&varde));
+    let _ = varde.update(Message::FileDragged(false));
+    assert!(!dragging(&varde));
+
+    // Something that isn't a file opens nothing.
+    let _ = varde.update(Message::FileDragged(true));
+    let _ = varde.update(Message::FileDropped(None));
+    assert!(!dragging(&varde));
+    assert!(sent(&requests).is_empty());
+
+    let dropped = picked(4, PickedFrom::Input);
+    let _ = varde.update(Message::FileDropped(Some(Chosen::File(dropped.clone()))));
+    assert!(matches!(
+        &sent(&requests)[..],
+        [IoRequest::Open { from: Chosen::File(asked), .. }] if *asked == dropped
+    ));
+    // Opened, so not let go of.
+    assert!(crate::welcome::FORGOTTEN.with_borrow(Vec::is_empty));
+}
+
+/// With a document open, a file dropped on the page opens nothing, and is
+/// let go of: the browser doesn't take it either, see `platform::drops`.
+#[test]
+fn a_file_dropped_with_a_document_open_is_ignored() {
+    let (mut varde, requests) = with_picked_file(picked(3, PickedFrom::Input));
+    sent(&requests);
+    let _ = varde.update(Message::FileDragged(true));
+    let dropped = picked(4, PickedFrom::Input);
+    let _ = varde.update(Message::FileDropped(Some(Chosen::File(dropped.clone()))));
+    assert!(sent(&requests).is_empty());
+    assert!(varde.screen.doc().is_some());
+    assert_eq!(
+        crate::welcome::FORGOTTEN.with_borrow(Clone::clone),
+        [dropped]
+    );
+}
+
 /// A file picked through the File System Access API goes on from that
 /// file, and isn't a recent file: there's no keeping its handle.
 #[test]
@@ -4028,20 +3595,16 @@ fn a_writable_picked_file_opens_as_the_design() {
     assert!(varde.files.recent.entries().is_empty());
 }
 
-/// A file from a file input can't be written back: it opens as a copy,
-/// by the file's name, which Save saves as, and which is unedited so far.
+/// A file from a file input can't be written back: the web's lane copies
+/// it into browser storage (see `storage.rs`); answered without that, it
+/// opens as a copy, by the file's name, which Save saves as, and which is
+/// unedited so far.
 #[test]
 fn a_file_only_read_opens_as_an_untitled_copy() {
     let (mut varde, requests) = with_picked_file(picked(3, PickedFrom::Input));
     let doc = document(&varde);
     assert_eq!(doc.name, "bracket");
-    assert_eq!(
-        *doc.target(),
-        Target::Entry {
-            file: FileId(0),
-            downloaded: false
-        }
-    );
+    assert_eq!(*doc.target(), Target::Entry { file: FileId(0) });
     assert!(!doc.edited());
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     assert!(is_welcome(&varde));
@@ -4266,7 +3829,6 @@ fn a_recovered_design_is_known_by_its_name() {
             path: path.clone(),
             modified: None,
             name: Some("bracket.vrdp".to_owned()),
-            downloaded: false,
             damage: None,
         }],
     }));
@@ -4707,7 +4269,12 @@ fn a_right_click_on_a_body_opens_its_menu() {
 
 /// How opaque the viewport draws each part of `doc`'s mesh.
 fn part_opacity(doc: &Doc) -> Vec<f32> {
-    let state = doc.state(false, Mode::Light, ViewOptions::default());
+    let state = doc.state(
+        false,
+        Mode::Light,
+        ViewOptions::default(),
+        Offers::default(),
+    );
     state.part_opacity().to_vec()
 }
 
@@ -4900,7 +4467,7 @@ fn the_peek_key_leaves_the_opacity_slider_being_dragged() {
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
     let peeking = |doc: &Doc, renderer: &mut iced::Renderer| {
-        let view = doc.view(true, Mode::Light, ViewOptions::default());
+        let view = doc.view(true, Mode::Light, ViewOptions::default(), Offers::default());
         let mut ui = shown(view, size, renderer);
         let labels = texts(&mut ui, renderer);
         labels.iter().any(|t| t.text == "Opacity")
@@ -5322,7 +4889,12 @@ fn a_click_on_an_empty_part_of_the_panel_or_toolbar_clears_the_selection() {
 
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
-    let view = doc.view(false, Mode::Light, ViewOptions::default());
+    let view = doc.view(
+        false,
+        Mode::Light,
+        ViewOptions::default(),
+        Offers::default(),
+    );
     let mut ui = shown(view, size, &mut renderer);
     let on_screen = texts(&mut ui, &renderer);
     drop(ui);
@@ -5337,7 +4909,12 @@ fn a_click_on_an_empty_part_of_the_panel_or_toolbar_clears_the_selection() {
         .unwrap()
         .bounds;
     let mut click = |doc: &Doc, at: iced::Point| {
-        let view = doc.view(false, Mode::Light, ViewOptions::default());
+        let view = doc.view(
+            false,
+            Mode::Light,
+            ViewOptions::default(),
+            Offers::default(),
+        );
         let mut ui = shown(view, size, &mut renderer);
         clicked(&mut ui, &mut renderer, at)
     };
@@ -5366,7 +4943,7 @@ fn a_click_on_an_empty_part_of_the_panel_or_toolbar_clears_the_selection() {
 #[test]
 fn the_view_options_menu_picks_the_projection_and_the_options() {
     fn view(varde: &Varde) -> iced::Element<'_, Ui> {
-        document(varde).view(false, Mode::Light, varde.options)
+        document(varde).view(false, Mode::Light, varde.options, varde.files.offers())
     }
 
     use varde_render::Projection;
@@ -5616,4 +5193,5 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
 mod damaged;
 mod export;
 mod panicked;
+mod storage;
 mod thumbnail;

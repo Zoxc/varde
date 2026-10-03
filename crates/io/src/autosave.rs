@@ -8,14 +8,13 @@
 //! An explicit save empties them, unless they hold what a crashed session
 //! left that the user hasn't answered the offer of yet. A clean close, once
 //! the design is saved or the user chose not to save it, empties them and
-//! deletes the file; on the web a store entry holding the design as
-//! downloaded is kept instead, see [`keep_downloaded`]. Anything else, a
-//! crash or the lane ending, leaves what's in them for the next editor to
-//! recover.
+//! deletes the file. Anything else, a crash or the lane ending, leaves
+//! what's in them for the next editor to recover.
 //!
 //! Natively the file is a lock file, a design's sidecar or a store entry,
-//! see `src/native/sidecar.rs`; on the web a store entry in the Origin Private
-//! File System (`src/web/worker/files.rs`). Only deleting it differs.
+//! see `src/native/sidecar.rs`; on the web a store entry or a sidecar in
+//! the Origin Private File System (`src/web/worker/files.rs`,
+//! `src/browser.rs`). Only deleting it differs.
 
 use std::{fmt, io};
 
@@ -43,24 +42,14 @@ pub(crate) struct AutoSaved {
     pub(crate) origin: Origin,
 }
 
-/// What an auto-save holds: the design as edited, or as it was just
-/// downloaded, on the web without the File System Access API, see
-/// [`Request::KeepDownload`](crate::Request::KeepDownload). The page isn't
-/// told whether the download was kept, so an entry holding a download
-/// outlives a clean close, going back to it (see [`keep_downloaded`]), and
-/// is listed apart from designs never saved while it's the newest record.
-/// Natively always [`Origin::Edited`].
+/// What an auto-save holds: the design as edited, or, in entries an older
+/// web build left, as it was downloaded, which that build kept past a
+/// clean close. Nothing writes `Downloaded` now; it's still read, so those
+/// entries are offered back as recovered designs like any other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Origin {
     Edited,
     Downloaded,
-}
-
-impl Origin {
-    /// Whether it's the design as downloaded.
-    pub(crate) fn is_download(self) -> bool {
-        self == Origin::Downloaded
-    }
 }
 
 /// The design in an entry left behind, to open, from `read` of it: its
@@ -159,15 +148,11 @@ impl Payload for AutoSaved {
 /// The auto-saves in a sidecar or store entry, natively or on the web,
 /// held through its lock, and what's kept of them as it's let go of, see
 /// [`Ending`]. Deleting it is up to the holder: natively `LockFile`, on
-/// the web the store's entry.
+/// the web the store's entry or the sidecar of a design in browser
+/// storage.
 #[derive(Debug)]
 pub(crate) struct Held<S> {
     file: HeldFile<S, AutoSaved>,
-    /// Whether it may hold the design as downloaded, which the clean close
-    /// goes back to rather than deleting it, see [`keep_downloaded`]: one
-    /// was auto-saved to it, or it's a store entry left behind, opened
-    /// again. Otherwise the clean close doesn't read it.
-    downloads: bool,
 }
 
 /// How a sidecar or store entry is let go of: what's kept of what's in
@@ -176,28 +161,17 @@ pub(crate) struct Held<S> {
 pub(crate) enum Ending {
     /// The clean close: emptied and deleted. What's in it is saved, or the
     /// user chose not to save it.
-    #[cfg(not(target_arch = "wasm32"))]
     Close,
-    /// The clean close of a store entry, except that a design as
-    /// downloaded in it is kept, see [`keep_downloaded`]: then it's only
-    /// let go of.
-    CloseButDownloaded,
-    /// The user discarding a store entry from the welcome screen: deleted,
-    /// unless changes never saved in it are on top of the design as
-    /// downloaded, which it goes back to instead, see
-    /// [`keep_download_under`]: then it's only let go of.
-    Discard,
     /// Deleted if there's nothing in it, but anything there is is kept for
     /// the next editor to recover.
     Release,
 }
 
 impl Closing {
-    /// How a file closed so lets go of its sidecar or store entry, `clean`
-    /// being how the clean close does for it.
-    pub(crate) fn ending(self, clean: Ending) -> Ending {
+    /// How a file closed so lets go of its sidecar or store entry.
+    pub(crate) fn ending(self) -> Ending {
         match self {
-            Closing::Clean => clean,
+            Closing::Clean => Ending::Close,
             Closing::Keep => Ending::Release,
         }
     }
@@ -208,16 +182,6 @@ impl<S: Storage> Held<S> {
     pub(crate) fn new(file: S) -> Self {
         Self {
             file: HeldFile::new(file),
-            downloads: false,
-        }
-    }
-
-    /// A store entry left behind, opened again: it may hold the design as
-    /// downloaded, see [`Held::downloads`].
-    pub(crate) fn left_behind(self) -> Self {
-        Self {
-            downloads: true,
-            ..self
         }
     }
 
@@ -226,8 +190,14 @@ impl<S: Storage> Held<S> {
         self.file.storage()
     }
 
+    /// Whether there's nothing in it.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn is_empty(&self) -> io::Result<bool> {
+        self.file.is_empty()
+    }
+
     /// The newest auto-save, if there is one.
-    #[cfg(test)]
+    #[cfg(any(target_arch = "wasm32", test))]
     pub(crate) fn read(&mut self) -> Result<Option<AutoSaved>, FileError> {
         self.file.read()
     }
@@ -240,22 +210,26 @@ impl<S: Storage> Held<S> {
 
     /// Auto-saves `document`, based on the design's file at `base`, if it
     /// has one, with the design's file `name` if it's kept with it (see
-    /// [`AutoSaved::name`]), holding it as `origin` says.
+    /// [`AutoSaved::name`]).
     pub(crate) fn append(
         &mut self,
         base: Option<Tail>,
         name: Option<String>,
         document: &Snapshot,
-        origin: Origin,
     ) -> Result<(), FileError> {
-        // Even should appending fail: it may have been written.
-        self.downloads |= origin.is_download();
         self.file.append(&AutoSaved {
             base,
             name,
             document: Snapshot::clone(document),
-            origin,
+            origin: Origin::Edited,
         })
+    }
+
+    /// Appends `saved` as it is, as when a design's auto-saves go with it
+    /// to another file.
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn append_saved(&mut self, saved: &AutoSaved) -> Result<(), FileError> {
+        self.file.append(saved)
     }
 
     /// Empties it, once what's in it is saved or not wanted.
@@ -266,47 +240,26 @@ impl<S: Storage> Held<S> {
     /// Keeps what `ending` keeps of it, returning whether it's to be
     /// deleted: then it's emptied already.
     pub(crate) fn end(&mut self, ending: Ending) -> io::Result<bool> {
-        let keep = match ending {
-            #[cfg(not(target_arch = "wasm32"))]
-            Ending::Close => false,
-            Ending::CloseButDownloaded => self.downloads && keep_downloaded(&mut self.file),
-            Ending::Discard => keep_download_under(&mut self.file),
-            Ending::Release => return self.file.is_empty(),
-        };
-        if keep {
-            return Ok(false);
+        match ending {
+            Ending::Close => {
+                // Emptied first, so it holds nothing to recover should
+                // deleting it fail, e.g. on Windows to another editor
+                // opening it.
+                self.file.clear()?;
+                Ok(true)
+            }
+            Ending::Release => self.file.is_empty(),
         }
-        // Emptied first, so it holds nothing to recover should deleting it
-        // fail, e.g. on Windows to another editor opening it.
-        self.file.clear()?;
-        Ok(true)
     }
 }
 
-/// For a clean close of a sidecar or store entry that holds the design as
-/// downloaded, see [`Origin`]: rolls it back to the newest
-/// such record, dropping the auto-saves of later edits, which the design is
-/// saved without or the user chose not to save, and returns whether it did.
-/// The download may not have been kept, so that stays. Without one, or if
-/// what's in it can't be read or rolled back, it's up to the caller to
-/// empty and delete it as usual. Natively nothing is marked.
-fn keep_downloaded<S: Storage>(file: &mut HeldFile<S, AutoSaved>) -> bool {
-    matches!(
-        file.roll_back(|saved| saved.origin.is_download()),
-        Ok(Some(_))
-    )
-}
-
-/// For the user discarding a store entry listed on the welcome screen:
-/// changes never saved in it that are on top of the design as downloaded
-/// are gone back from, as by the clean close (see [`keep_downloaded`]),
-/// rather than taking the download with them, which may be the only copy,
-/// returning whether it did. The design as downloaded is discarded as
-/// listed, as the newest record.
-fn keep_download_under<S: Storage>(file: &mut HeldFile<S, AutoSaved>) -> bool {
-    match file.read() {
-        Ok(Some(newest)) if newest.origin.is_download() => false,
-        _ => keep_downloaded(file),
+impl AutoSaved {
+    /// Whether this was based on the design whose file ends at `tail`.
+    /// Anything else means the design changed since: saved by someone
+    /// else, rewritten, or saved by the session that auto-saved this but
+    /// kept it, e.g. crashing before emptying the sidecar.
+    pub(crate) fn based_on(&self, tail: Tail) -> bool {
+        self.base == Some(tail)
     }
 }
 

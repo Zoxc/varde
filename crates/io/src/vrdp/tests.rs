@@ -1321,7 +1321,7 @@ fn a_block_of_the_files_past_is_not_taken_in() {
         tails.push(save_to(&mut file, tail, &edited(n)).unwrap());
     }
     let past = file.bytes.clone();
-    // Back to the first record, as a held file rolls back, and saved again.
+    // Back to the first record, cut short, and saved again.
     file.truncate(tails[0].end).unwrap();
     let newest = save_to(&mut file, tails[0], &edited(4)).unwrap();
     for stale in [1, 2] {
@@ -1347,10 +1347,12 @@ fn a_block_of_the_files_past_is_not_taken_in() {
     held.append(&based(3)).unwrap();
     let (_, third) = held_at(&held);
     let past = held.storage().bytes.clone();
-    assert_eq!(
-        held.roll_back(|saved| saved.document == edited(1)).unwrap(),
-        Some(based(1))
-    );
+    // Back to the first record, cut short, and appended to again.
+    let mut held = HeldFile::<_, Based>::new(Memory {
+        bytes: past[..first.end as usize].to_vec(),
+        syncs: 0,
+    });
+    assert_eq!(held.read().unwrap(), Some(based(1)));
     held.append(&based(4)).unwrap();
     let mut bytes = held.into_storage().bytes;
     bytes.extend_from_slice(&past[first.end as usize..third.end as usize]);
@@ -1450,112 +1452,6 @@ fn a_held_file_holds_other_payloads() {
     // Not a plain document.
     let mut plain = HeldFile::<Memory>::new(file.into_storage());
     assert!(matches!(plain.read(), Err(Error::Decode { .. })));
-}
-
-/// Rolling back drops the records after the newest one accepted, and a
-/// torn one, leaving it the newest to read and append after; accepting
-/// none leaves the file as it is.
-#[test]
-fn a_held_file_rolls_back_to_the_newest_record_accepted() {
-    let based = |base, n| Based {
-        base,
-        document: edited(n),
-    };
-    let dir = TempDir::new("held-roll-back");
-    let marked = Some(create_at(&dir.file(), &edited(0)));
-    let mut file = HeldFile::<Memory, Based>::new(Memory::default());
-    assert_eq!(file.roll_back(|_| true).unwrap(), None);
-    file.append(&based(marked, 1)).unwrap();
-    file.append(&based(None, 2)).unwrap();
-    file.append(&based(marked, 3)).unwrap();
-    let (_, kept) = held_at(&file);
-    file.append(&based(None, 4)).unwrap();
-    file.append(&based(None, 5)).unwrap();
-    let record = next_held(&file, &based(None, 6));
-    let mut torn = file.into_storage().bytes;
-    torn.extend_from_slice(&record[..record.len() - 2]);
-    let mut file = HeldFile::<Memory, Based>::new(Memory {
-        bytes: torn,
-        syncs: 0,
-    });
-
-    let accepted = |saved: &Based| saved.base.is_some();
-    assert_eq!(file.roll_back(accepted).unwrap(), Some(based(marked, 3)));
-    assert_eq!(file.storage().bytes.len() as u64, kept.end);
-    assert_eq!(held_at(&file).1, kept);
-    assert_eq!(file.read().unwrap(), Some(based(marked, 3)));
-    // Already the newest.
-    assert_eq!(file.roll_back(accepted).unwrap(), Some(based(marked, 3)));
-    file.append(&based(None, 7)).unwrap();
-    assert_eq!(file.read().unwrap(), Some(based(None, 7)));
-
-    let before = file.storage().bytes.clone();
-    assert_eq!(
-        file.roll_back(|saved| saved.document == edited(9)).unwrap(),
-        None
-    );
-    assert_eq!(file.storage().bytes, before);
-    let mut file = HeldFile::<Memory, Based>::new(Memory {
-        bytes: b"not a design at all".to_vec(),
-        syncs: 0,
-    });
-    assert!(matches!(file.roll_back(accepted), Err(Error::NotVarde)));
-}
-
-/// A record damaged after the one to go back to, say by the disk, doesn't
-/// keep rolling back from going back to it: one stepped over by its header
-/// is stepped over, and before damage the chain ends at, the records are
-/// whole, and cutting the file short drops the damage too. Records that
-/// don't decode aren't accepted either, nor ones only a search finds.
-/// Nothing to go back to before the damage leaves the file as it is.
-#[test]
-fn a_held_file_rolls_back_past_damage() {
-    let based = |base, n| Based {
-        base,
-        document: edited(n),
-    };
-    let dir = TempDir::new("held-roll-back-damaged");
-    let marked = Some(create_at(&dir.file(), &edited(0)));
-    let accepted = |saved: &Based| saved.base.is_some();
-    let mut file = HeldFile::<Memory, Based>::new(Memory::default());
-    file.append(&based(marked, 1)).unwrap();
-    let len = file.storage().bytes.len();
-    file.append(&based(None, 2)).unwrap();
-    let damaged = file.storage().bytes.len() - BACK_LEN - 1;
-    file.append(&based(marked, 3)).unwrap();
-    let saved = file.into_storage().bytes;
-    // The second record's payload, followed by the third.
-    let mut bytes = saved.clone();
-    bytes[damaged] ^= 0xff;
-    let mut file = HeldFile::<Memory, Based>::new(Memory {
-        bytes: bytes.clone(),
-        syncs: 0,
-    });
-    let report = file.read_with_report().unwrap().unwrap().report;
-    assert_eq!(report.outcome, Outcome::Bridged);
-    assert_eq!(file.roll_back(accepted).unwrap(), Some(based(marked, 3)));
-    assert_eq!(file.storage().bytes, bytes);
-    assert_eq!(file.roll_back(|saved| saved.base.is_none()).unwrap(), None);
-
-    // The second record's `prev`: the search finds the third.
-    let mut bytes = saved;
-    bytes[len + PREV_AT] ^= 0xff;
-    let mut file = HeldFile::<Memory, Based>::new(Memory {
-        bytes: bytes.clone(),
-        syncs: 0,
-    });
-    assert_eq!(file.read().unwrap(), Some(based(marked, 1)));
-    assert_eq!(file.roll_back(accepted).unwrap(), Some(based(marked, 1)));
-    assert_eq!(file.storage().bytes.len(), len);
-    assert_eq!(file.read().unwrap(), Some(based(marked, 1)));
-
-    let mut file = HeldFile::<Memory, Based>::new(Memory { bytes, syncs: 0 });
-    let before = file.storage().bytes.clone();
-    assert_eq!(
-        file.roll_back(|saved| saved.document == edited(3)).unwrap(),
-        None
-    );
-    assert_eq!(file.storage().bytes, before);
 }
 
 /// A whole file made in memory, as the web build writes files of the
@@ -2137,19 +2033,25 @@ fn a_block_of_the_files_past_found_by_search_is_rejected() {
 /// Blocks of the file's past that follow on from a block a shorter write
 /// overwrote, brought back by stale bytes where the file grew, are
 /// rejected too, whole or through a damaged block before them: a held
-/// file rolled back and appended to, and a design file the same. Nothing
+/// file cut back and appended to, and a design file the same. Nothing
 /// is offered as found.
 #[test]
 fn a_block_following_on_from_an_overwritten_one_is_rejected() {
     let mut file = HeldFile::<_, Document>::new(Memory::default());
+    let mut second = None;
     for i in 1..=5 {
         file.append(&edited(i)).unwrap();
+        if i == 2 {
+            second = Some(held_at(&file).1);
+        }
     }
     let old = file.storage().bytes.clone();
-    assert_eq!(
-        file.roll_back(|saved| *saved == edited(2)).unwrap(),
-        Some(edited(2))
-    );
+    // Cut back to the second record, and appended to again.
+    let mut file = HeldFile::<_, Document>::new(Memory {
+        bytes: old[..second.unwrap().end as usize].to_vec(),
+        syncs: 0,
+    });
+    assert_eq!(file.read().unwrap(), Some(edited(2)));
     file.append(&edited(0)).unwrap();
     let new = file.into_storage().bytes;
     let stale = [&new[..], &old[new.len()..]].concat();

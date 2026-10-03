@@ -12,9 +12,10 @@
 //! [`varde_lane::page`]'s), and the pickers and downloads of files of the
 //! user's (see `src/pick.rs`). `worker` is the worker's: its serve loop,
 //! what it does with each request (`src/web/worker/files.rs`), the Origin
-//! Private File System it keeps auto-saves in, whose synchronous access
-//! handles only exist in workers (see `src/opfs.rs`), and reading and
-//! writing the files the user picked. `js` is used by both.
+//! Private File System it keeps designs and auto-saves in, whose
+//! synchronous access handles only exist in workers (see `src/opfs.rs`),
+//! and reading and writing the files the user picked. `js` is used by
+//! both.
 //!
 //! A request using a file the user picked (see `src/pick.rs`) is posted
 //! along with what the browser handed over for it, a handle or a file,
@@ -27,7 +28,7 @@
 //!
 //! A worker that stops (a panic traps its wasm instance, or its script or
 //! wasm didn't load) takes its open files with it, and the browser lets go
-//! of their entries, keeping what was auto-saved for the next session to
+//! of their handles, keeping what was auto-saved for the next session to
 //! recover. The requests it hadn't answered, and every one after, are
 //! answered with the error. No new worker is started: it would hand out
 //! [`FileId`](crate::FileId)s the app still holds for files of the old one.

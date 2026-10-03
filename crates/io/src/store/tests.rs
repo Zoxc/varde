@@ -34,7 +34,6 @@ fn recovered_designs_are_listed_newest_first() {
         path: PathBuf::from("designs/a.vrdp"),
         modified: modified.map(UnixSeconds),
         name: None,
-        downloaded: false,
         damage: None,
     };
     let mut found = [
@@ -71,7 +70,6 @@ fn entries_are_listed_by_what_reading_found() {
     use varde_document::Document;
 
     use crate::autosave::Held;
-    use crate::autosave::Origin;
     use crate::tests::TempDir;
 
     let dir = TempDir::new("store-listing");
@@ -88,10 +86,10 @@ fn entries_are_listed_by_what_reading_found() {
     };
     assert!(matches!(listed(&mut held), Listing::Empty));
     let document = Arc::new(Document::example());
-    held.append(None, Some("a.vrdp".to_owned()), &document, Origin::Edited)
+    held.append(None, Some("a.vrdp".to_owned()), &document)
         .unwrap();
     let second = std::fs::metadata(&path).unwrap().len();
-    held.append(None, Some("b.vrdp".to_owned()), &document, Origin::Edited)
+    held.append(None, Some("b.vrdp".to_owned()), &document)
         .unwrap();
     let Listing::Listed(design) = listed(&mut held) else {
         panic!("not listed");
@@ -113,7 +111,7 @@ fn entries_are_listed_by_what_reading_found() {
     };
     assert_eq!(
         (design.name.as_deref(), design.damage),
-        (Some("a.vrdp"), Some(StoredDamage::Opens))
+        (Some("a.vrdp"), Some(ListedDamage::Opens))
     );
     flip(crate::vrdp::FILE_HEADER_LEN as u64 + 60);
     let Listing::Listed(design) = listed(&mut held) else {
@@ -125,8 +123,7 @@ fn entries_are_listed_by_what_reading_found() {
             path: path.clone(),
             modified: Some(UnixSeconds(3)),
             name: None,
-            downloaded: false,
-            damage: Some(StoredDamage::Unreadable),
+            damage: Some(ListedDamage::Unreadable),
         }
     );
     std::fs::write(&path, "not an entry").unwrap();

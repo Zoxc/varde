@@ -143,8 +143,11 @@ use crate::UnixSeconds;
 
 use chain::Chain;
 pub(crate) use check::check_unchanged;
-#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use preview::read_preview;
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) use preview::{FileEnd, end};
 pub use preview::{MAX_MEDIA_TYPE, MAX_PREVIEW, MAX_PREVIEWS, Preview};
 
 mod chain;
@@ -424,9 +427,16 @@ enum After {
     Damaged,
 }
 
-#[cfg(test)]
 impl Tail {
+    /// The last record's `sum`, which tells it from any other save, as
+    /// downloads are recorded by (`src/downloads.rs`).
+    #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+    pub(crate) fn sum(&self) -> u128 {
+        self.sum
+    }
+
     /// Where its record is in the file.
+    #[cfg(test)]
     pub(crate) fn span(&self) -> std::ops::Range<u64> {
         self.last..self.end
     }
@@ -454,7 +464,6 @@ impl Known {
 /// a new `id`, holding it as its one record followed by `previews`, see
 /// [`whole_file`], and returns what's known of it, to save to it. Syncing
 /// is up to the caller.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn write_new(
     file: &mut impl Storage,
     document: &Document,
@@ -487,7 +496,6 @@ pub(crate) fn write_new(
 /// version and calling it a conflict. Should cutting back fail too, the
 /// record is left for `known` to recognize by its header: it's remembered
 /// once writing starts, and forgotten once a save succeeds.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn save(
     file: &mut impl Storage,
     known: &mut Known,
@@ -582,8 +590,11 @@ pub(crate) struct WithFound {
 /// opened, which couldn't be read: `base` is at or after the end of the
 /// save opened, and the block there has a header, intact or not, whose
 /// `sum` is `base`'s.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub(crate) fn based_past(file: &impl ReadAt, opened: Tail, base: Tail) -> io::Result<bool> {
+pub(crate) fn based_past(
+    file: &(impl ReadAt + ?Sized),
+    opened: Tail,
+    base: Tail,
+) -> io::Result<bool> {
     if base.last < opened.end {
         return Ok(false);
     }
@@ -788,36 +799,6 @@ impl<S: Storage, P: Payload> HeldFile<S, P> {
             Err(_) => Held::Unknown,
         };
         opened
-    }
-
-    /// Makes the newest record that `keep` accepts the newest again,
-    /// dropping the blocks after it, and a torn tail, and returns it. If
-    /// `keep` accepts none, the file is left as it is and it's `None`.
-    /// Only the records the chain proves are looked at, damaged blocks
-    /// stepped over by their headers included, and not ones that don't
-    /// decode: going back to one before damage the chain ends at drops
-    /// that too. Crash-safe like [`HeldFile::append`]: cutting the file
-    /// short leaves the chain whole.
-    pub(crate) fn roll_back(&mut self, keep: impl Fn(&P) -> bool) -> Result<Option<P>> {
-        self.held = Held::Unknown;
-        let bytes = read_all(&self.file, FileType::Held)?;
-        let chain = Chain::scan(&bytes, FileType::Held)?;
-        let found = chain.records.iter().rev().find_map(|record| {
-            let (payload, _) = decode_record(&bytes, record).ok()?;
-            keep(&payload).then_some((record.tail(), payload))
-        });
-        let Some((tail, payload)) = found else {
-            return Ok(None);
-        };
-        // Within the file: the scan found the record in it.
-        self.file.truncate(tail.end)?;
-        self.file.sync()?;
-        self.held = Held::At {
-            id: chain.id,
-            tail,
-            damaged: None,
-        };
-        Ok(Some(payload))
     }
 
     /// Appends `payload` as the newest record, after the record last read

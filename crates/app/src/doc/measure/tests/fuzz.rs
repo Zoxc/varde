@@ -332,7 +332,12 @@ fn shows_its_values(doc: &Doc, rng: &mut Rng) {
         )
     };
     let mut renderer = varde_view::probe::renderer();
-    let view = doc.view(false, mode, varde_view::ViewOptions::default());
+    let view = doc.view(
+        false,
+        mode,
+        varde_view::ViewOptions::default(),
+        crate::Offers::default(),
+    );
     let mut ui = crate::tests::shown(view, size, &mut renderer);
     let found: Vec<String> = (crate::tests::texts(&mut ui, &renderer).into_iter())
         .map(|text| text.text)

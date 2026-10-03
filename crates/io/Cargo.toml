@@ -44,12 +44,16 @@ web-sys = { workspace = true, features = [
     "Blob",
     "BlobPropertyBag",
     "console",
+    "DataTransfer",
+    "DataTransferItem",
+    "DataTransferItemList",
     "Document",
     "DomException",
     "Element",
     "EventTarget",
     "File",
     "FileList",
+    "FileReaderSync",
     "FileSystemDirectoryHandle",
     "FileSystemFileHandle",
     "FileSystemGetDirectoryOptions",
@@ -61,6 +65,7 @@ web-sys = { workspace = true, features = [
     "HtmlAnchorElement",
     "HtmlElement",
     "HtmlInputElement",
+    "Navigator",
     "Node",
     "Storage",
     "StorageManager",
@@ -76,6 +81,8 @@ web-sys = { workspace = true, features = [
 varde-lane = { workspace = true, features = ["testing"] }
 # Polling the native lane's responses.
 futures.workspace = true
+# Running the code over a `Dir`, which is async for the browser's sake.
+pollster.workspace = true
 # Reading back the 3MF packages' XML, and the solids written.
 roxmltree.workspace = true
 glam.workspace = true

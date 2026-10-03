@@ -16,8 +16,8 @@
 
   Try: open a recent design (the model page), N for a new one, ? for
   shortcuts. Click a recent design to select it, double-click or Enter to
-  open it, the arrow keys to move through them. On the web, drag a file
-  over the page.
+  open it, the arrow keys to move through them. On the web, a click on a
+  design opens it; drag a file over the page.
   Append /web for the web build, /still to disable animations, /dark or
   /light to force the theme, /drag to show a file dragged over the web page.
 -->
@@ -30,12 +30,6 @@
 .ext { color: var(--faint); font-weight: 400; }
 .op.primary .k { color: rgba(255, 255, 255, .75); }
 
-/* Desktop and Web, beside the links between the pages. */
-.pages i { width: 1px; margin: 3px 4px; background: var(--line); }
-.pages button { padding: 3px 12px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-weight: 600; cursor: pointer; }
-.pages button:hover { background: var(--hl); color: var(--text); }
-.pages button.on { background: var(--accent-soft); color: var(--accent); }
-
 /* The logo: the mark over "Varde CAD", or beside it in a row (row). */
 .lockup { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 15px; font-weight: 700; letter-spacing: .04em; line-height: 1; white-space: nowrap; color: var(--muted); }
 .lockup .logo { width: 38px; height: 38px; }
@@ -44,7 +38,7 @@
 
 /* ---- desktop: the column ---- */
 /* The tab strip's grey, the logo on a band of the panel's colour across
-   its head, the actions, a foot of help and the version. */
+   its head, the actions and a foot of help. */
 .col { flex: none; width: 320px; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 20px 16px 14px; background: var(--tabstrip); border-right: 1px solid var(--line); }
 .lband { margin: -20px -16px 18px; padding: 22px 16px 18px; display: flex; justify-content: center; background: var(--panel); border-bottom: 1px solid var(--line); }
 .sub { margin: 0 0 6px; padding: 0 8px; color: var(--faint); font-size: 11px; font-weight: 700; }
@@ -61,7 +55,6 @@
 .cfoot button { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; text-align: left; }
 .cfoot button:hover { background: var(--hl); color: var(--text); }
 .cfoot button kbd { margin-left: auto; }
-.cfoot .ver { padding: 8px 8px 0; margin-top: 6px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; }
 
 /* ---- desktop: the recent designs, under a band ---- */
 .main { flex: 1; min-width: 0; overflow: auto; }
@@ -73,27 +66,28 @@
 .pad { padding: 18px 24px 26px; }
 
 /* Designs as cards: the thumbnail over the name and what's known of it. */
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+/* As the app's: as many to a row as it takes for each to be at most
+   220 px wide, the count set as the page is drawn (page.afterRender). */
+.cards { display: grid; grid-template-columns: repeat(var(--cols, 4), 1fr); gap: 14px; }
 .rc { position: relative; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; text-align: left; padding: 0; background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.05); }
 .rc:hover { border-color: var(--hl-line); }
 .rc:hover .rm { background: var(--hl); }
 .rc.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.rc .th { aspect-ratio: 4 / 3; display: grid; place-items: center; padding: 14px; background: var(--tabstrip); }
+.rc .th { height: 150px; display: grid; place-items: center; padding: 12px; background: var(--tabstrip); }
 .rc .th svg { width: 100%; height: 100%; }
-.rc .rm { padding: 8px 10px 9px; border-top: 1px solid var(--line); }
+.rc .rm { padding: 10px 12px 11px; border-top: 1px solid var(--line); }
+/* A long status is cut at the card's edge, as the app's. */
+.rc .rm .dl { min-width: 0; overflow: hidden; white-space: nowrap; }
 .rc .rm b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc .rm div { color: var(--muted); font-size: 11.5px; margin-top: 2px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 
 /* ---- web ---- */
-/* The page fills the browser: no title bar, the whole width of the screen
-   here, in a frame to keep it apart from the mock's page around it. */
-#win.web { --title-h: 0px; width: calc(100vw - 24px); height: calc(100vh - 58px); align-self: start; margin-top: 46px; border-radius: 10px; }
 .page { flex: 1; min-width: 0; overflow: auto; display: flex; flex-direction: column; }
 /* The header bar: the logo at the left, the actions at the right, as wide
    as the content under it. */
 .header { flex: none; height: 64px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .header .in { height: 100%; display: flex; align-items: center; }
-.wrap, .header .in { width: min(1040px, calc(100% - 48px)); margin: 0 auto; }
+.wrap, .header .in { width: min(920px, calc(100% - 48px)); margin: 0 auto; }
 .wrap { padding: 32px 0 28px; display: flex; flex-direction: column; gap: 12px; }
 .btns { display: flex; gap: 10px; }
 .btn {
@@ -106,29 +100,25 @@
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.primary kbd { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.25); color: #fff; }
 .label { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--muted); }
-/* What's in browser storage: Open and Delete at a card's foot, and a dot for
-   its downloads: none (amber), changed since (blue), the latest (green). */
-.rc.stored { cursor: default; }
-.racts { display: flex; gap: 2px; }
-.racts .op { height: 24px; padding: 0 6px; }
-.dl { display: inline-flex; align-items: center; gap: 6px; }
-.dl::before { content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ok); }
-.dl.never::before { background: #e0a01a; }
-.dl.changed::before { background: var(--accent); }
+/* What's in browser storage: the card opens it, Delete at its foot, with a
+   wash of its own over the card's on hover; and a dot for its downloads
+   (mock.css's .dl). */
+.del { width: 26px; height: 24px; display: grid; place-items: center; margin: -3px -4px -3px 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.del:hover { background: var(--danger-wash); color: var(--danger-text); }
+.del svg.i { width: 15px; height: 15px; }
 /* The drop zone, the first card: dashed, the hint where the thumbnail goes,
    lit in the accent while a file is over the page. */
 .rc.drop { border: 2px dashed color-mix(in srgb, var(--text) 18%, transparent); background: none; box-shadow: none; }
-.rc.drop .th { flex: 1; aspect-ratio: auto; display: flex; flex-direction: column; justify-content: center; gap: 6px; background: none; color: var(--muted); text-align: center; }
+.rc.drop .th { flex: 1; height: auto; display: flex; flex-direction: column; justify-content: center; gap: 6px; background: none; color: var(--muted); text-align: center; }
 .rc.drop .th svg.i { width: 28px; height: 28px; }
 .rc.drop b { color: var(--text); font-weight: 600; }
 .rc.drop u { color: var(--accent); text-decoration: none; font-weight: 600; }
 .rc.drop:hover { background: var(--hl); border-color: var(--hl-line); }
 .rc.drop.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-/* The foot: help, the theme, the desktop app and the version, in a row. */
+/* The foot: the documentation, the theme and the desktop app, in a row. */
 .foot { flex: none; margin-top: auto; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 2px 6px; padding: 14px 16px 18px; border-top: 1px solid var(--line); }
 .foot button { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
 .foot button:hover { background: var(--hl); color: var(--text); }
-.foot span { padding: 0 8px; color: var(--faint); font-size: 11px; }
 
 @media (max-width: 860px) {
   .welcome { flex-direction: column; overflow: auto; }
@@ -174,7 +164,6 @@ const DL = {
   latest: d => `Latest downloaded ${d.dlWhen}`,
 };
 
-st.web = flag('web');    // the web build's welcome screen
 st.drag = flag('drag');  // a file dragged over the page, on the web
 st.wsel = 0;             // the recent design selected, on desktop
 
@@ -242,7 +231,7 @@ function thumb(kind) {
 // ---------------------------------------------------------------- parts
 const lockup = (cls = '') => `<div class="lockup ${cls}">${LOGO}Varde CAD</div>`;
 const fileName = name => `${name}<span class="ext">.vrdp</span>`;
-const theme = () => `<button data-act="theme">${icon(isDark() ? 'sun' : 'moon')}${isDark() ? 'Light' : 'Dark'} theme</button>`;
+const theme = () => `<button data-act="theme">${icon(themeSaid()[0])}${themeSaid()[1]}</button>`;
 
 // ---------------------------------------------------------------- desktop
 function desktop() {
@@ -261,7 +250,6 @@ function desktop() {
     <div class="cfoot">
       <button data-act="help">${icon('help')}Shortcuts<kbd>?</kbd></button>
       <button data-act="toast:Documentation — not in mock">${icon('export')}Documentation</button>${theme()}
-      <div class="ver">varde 0.1 · work in progress</div>
     </div>
   </div>
   <div class="main"><div class="band">Recent<span class="n">${RECENT.length}</span></div>
@@ -273,12 +261,11 @@ function desktop() {
 // card, all kept to the middle of the page. A file is opened with Open…
 // or dropped on the page; one dragged over it lights the drop zone.
 function web() {
-  const card = d => `<div class="rc stored" data-open="${d.name}">
+  const card = d => `<div class="rc" data-act="open:${d.name}">
     <div class="th">${thumb(d.kind)}</div>
     <div class="rm"><b>${d.name === 'Untitled' ? d.name : fileName(d.name)}</b>
       <div><span class="dl ${d.dl}">${DL[d.dl](d)}</span></div>
-      <div><span>${d.when}</span><span class="racts"><button class="op" data-act="open:${d.name}">Open</button>
-        <button class="op icon" data-act="toast:Deleted — not in mock" title="Delete">${icon('trash')}</button></span></div></div></div>`;
+      <div><span>${d.when}</span><button class="del" data-act="toast:Deleted — not in mock" title="Delete">${icon('trash')}</button></div></div></div>`;
   const drop = `<div class="rc drop${st.drag ? ' on' : ''}" data-act="open:bracket">
     <div class="th">${icon('folder')}<b>${st.drag ? 'Drop to open it' : 'Drop a .vrdp file'}</b><span>or <u>choose one</u></span></div></div>`;
   return `<div class="page">
@@ -291,32 +278,25 @@ function web() {
       <div class="cards">${drop}${STORED.map(card).join('')}</div>
     </div>
     <div class="foot">
-      <button data-act="help">${icon('help')}Shortcuts<kbd>?</kbd></button>
       <button data-act="toast:Documentation — not in mock">${icon('export')}Documentation</button>${theme()}
       <button data-act="toast:Desktop app — not in mock">${icon('export')}Desktop app</button>
-      <span>varde 0.1 · work in progress</span>
     </div>
   </div>`;
 }
 
-// In the browser the page is all there is: no title bar.
-const desktopTitlebar = titlebar;
-titlebar = () => !st.web || st.doc ? desktopTitlebar() : '';
+page.welcome = () => `<div class="welcome">${st.web ? web() : desktop()}</div>`;
 
-page.welcome = () => {
-  $('#win').classList.toggle('web', st.web);
-  return `<div class="welcome">${st.web ? web() : desktop()}</div>`;
+// The cards' columns as the app counts them: as many as it takes for each
+// to be at most 220 px wide, the 14 px gaps between them.
+page.afterRender = () => {
+  for (const cards of document.querySelectorAll('.cards')) {
+    cards.style.setProperty('--cols', Math.max(1, Math.ceil((cards.clientWidth + 14) / (220 + 14))));
+  }
 };
 
 // ---------------------------------------------------------------- input
 page.act = (k, v) => {
-  if (k === 'platform') {
-    st.web = v === 'web';
-    // Kept in the hash without reloading (a hashchange would).
-    const parts = HASH.slice(1).filter(f => f !== 'web');
-    if (st.web) parts.push('web');
-    history.replaceState(null, '', '#/' + parts.join('/'));
-  } else if (k === 'wsel') st.wsel = +v;
+  if (k === 'wsel') st.wsel = +v;
   else return false;
   return true;
 };
@@ -325,15 +305,6 @@ page.dblclick = el => {
   if (!o) return false;
   go('model.html', o.dataset.open);
   return true;
-};
-// Desktop and Web, beside the links between the pages.
-page.afterRender = () => {
-  const nav = $('.pages');
-  if (!nav) return;
-  if (!nav.querySelector('[data-act^="platform"]')) {
-    nav.insertAdjacentHTML('beforeend', `<i></i><button data-act="platform:desktop">Desktop</button><button data-act="platform:web">Web</button>`);
-  }
-  for (const b of nav.querySelectorAll('[data-act^="platform"]')) b.classList.toggle('on', b.dataset.act === 'platform:' + (st.web ? 'web' : 'desktop'));
 };
 
 // Before the shared keys, on desktop: the arrow keys through the recent

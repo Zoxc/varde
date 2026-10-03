@@ -159,7 +159,9 @@ kbd {
 /* ---- window ---- */
 #win {
   position: relative; overflow: hidden;
-  width: min(1480px, calc(100vw - 56px)); height: min(920px, calc(100vh - 96px));
+  /* under the mock's switches (.mocknav), however many rows they take */
+  align-self: start; margin-top: calc(var(--nav-b, 40px) + 8px);
+  width: min(1480px, calc(100vw - 56px)); height: min(920px, calc(100vh - var(--nav-b, 40px) - 20px));
   border-radius: 12px; background: var(--panel);
   box-shadow: 0 0 0 1px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.08), 0 30px 80px rgba(20, 15, 40, .32);
 }
@@ -201,8 +203,25 @@ kbd {
 .file:hover { background: var(--hl); }
 .file .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .file .ext { color: var(--faint); font-weight: 400; }
+/* a design never saved has no name: "Not saved" in its place, muted, on
+   a grey pill in the file cell */
+.noname { color: var(--muted); font-weight: 600; }
+.file .noname { padding: 1px 8px; border-radius: 10px; background: var(--chip); font-size: 11.5px; white-space: nowrap; }
 .file .dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
 .file .chev { margin-left: auto; color: var(--muted); }
+/* Where a design is kept, on the web: a bar under the file cell in the
+   toolbar's white, the icon and the words in the location's colour:
+   browser storage the accent, the computer green. */
+.wbar {
+  --wc: var(--accent);
+  position: absolute; top: 100%; left: 0; width: var(--side-w); height: calc(var(--where-h) + 1px); z-index: 1;
+  display: flex; align-items: center; gap: 6px; padding: 0 12px; box-sizing: border-box;
+  background: var(--panel); border-bottom: 1px solid var(--line); border-top: 1px solid var(--line);
+  color: color-mix(in srgb, var(--wc) 70%, var(--text)); font-size: 11.5px; font-weight: 600;
+}
+.wbar.local { --wc: var(--ok); }
+.wbar svg.i { width: 13px; height: 13px; flex: none; }
+#win:has(.wbar) { --where-h: 26px; }
 /* With the file cell and the toolbar's 2px gap, as wide as the side panel
    under them. */
 .toolbar { --save-w: 38px; }
@@ -322,10 +341,16 @@ kbd {
 .rtool { width: 34px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; cursor: pointer; }
 .rtool:hover { background: var(--hl); }
 .rtool svg.i { width: 24px; height: 24px; }
-/* instant tooltips for the rail's tools, beside them (outside the rail, which clips) */
-.tip { position: absolute; z-index: 60; display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px;
-  background: var(--text); color: var(--vp-top); font-size: 12px; white-space: nowrap; pointer-events: none; transform: translateY(-50%); }
-.tip kbd { background: rgba(255, 255, 255, .15); color: inherit; border-color: transparent; padding: 1px 4px; font-size: 10px; }
+/* instant tooltips for the rail's tools, beside them (outside the rail,
+   which clips): boxed as the menus are, as the app's tooltips are */
+.tip { position: absolute; z-index: 60; display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 6px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(0,0,0,.14);
+  font-size: 12px; white-space: nowrap; pointer-events: none; transform: translateY(-50%); }
+.tip kbd { padding: 1px 4px; font-size: 10px; }
+/* under what it's for: a few lines, the first in bold */
+.tip.below { display: block; transform: none; white-space: normal; width: max-content; max-width: 384px; padding: 4px 7px; line-height: 1.45; }
+.tip.below b { display: block; font-weight: 600; }
+/* after .below, which would show it again */
 .tip[hidden] { display: none; }
 /* a set's tools, opened from its card: only as tall as it needs, beside the card */
 .rpop {
@@ -352,11 +377,20 @@ kbd {
 }
 .menu button:hover { background: var(--hl); }
 .menu button .k { margin-left: auto; color: var(--faint); font-size: 11px; }
+/* On the web, in browser storage, the file menu's head: how the design
+   stands against its downloads, its dot in line with the items' icons. */
+.menu .mhead { padding: 6px 8px 5px; color: var(--muted); font-size: 11.5px; }
+.dl { display: inline-flex; align-items: center; gap: 6px; }
+.dl::before { content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ok); }
+.dl.never::before { background: #e0a01a; }
+.dl.changed::before { background: var(--accent); }
+.menu .mhead .dl { gap: 10px; }
+.menu .mhead .dl::before { margin: 0 4.5px; }
 .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
 
 /* ---- side panel ---- */
 .side {
-  position: absolute; top: calc(var(--title-h) + var(--tool-h)); left: 0; bottom: var(--status-h); width: var(--side-w); z-index: 9;
+  position: absolute; top: calc(var(--title-h) + var(--tool-h) + var(--where-h, 0px)); left: 0; bottom: var(--status-h); width: var(--side-w); z-index: 9;
   background: var(--panel); border-right: 1px solid var(--line);
   display: flex; flex-direction: column;
 }
@@ -480,18 +514,30 @@ kbd {
 }
 .still *, .still *::before, .still *::after { animation: none !important; transition: none !important; }
 @media (max-width: 860px) {
-  #win { width: 100vw; height: calc(100vh - 40px); margin-top: 40px; border-radius: 0; }
+  #win { width: 100vw; height: calc(100vh - var(--nav-b, 40px) - 8px); border-radius: 0; }
   .side, .rail, .rpop, .cube-wrap, .ops, .ctx, .hints, .winctl, .titlebar .title, .gbar { display: none; }
   .vp { left: 0; }
   .file { width: auto; border-right: 0; }
 }
 
-/* ---- the links between the mock's pages, over the window ---- */
-.pages {
+/* ---- the mock's switches, over the window: the links between its pages,
+   the platform and, with a design open, what it's like; each a group of
+   its own with a label, the window under however many rows they take ---- */
+.mocknav {
   position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 100;
-  display: flex; gap: 2px; padding: 3px; border-radius: 9px;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 8px; width: max-content; max-width: calc(100vw - 24px);
+}
+.mocknav .brk { flex-basis: 100%; height: 0; }
+.mg {
+  display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 9px; white-space: nowrap;
   background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 2px 8px rgba(0,0,0,.1);
 }
-.pages a { padding: 3px 12px; border-radius: 6px; color: var(--muted); text-decoration: none; font-weight: 600; }
-.pages a:hover { background: var(--hl); color: var(--text); }
-.pages a.on { background: var(--accent-soft); color: var(--accent); }
+.mg .lab { padding: 0 6px 0 7px; color: var(--faint); font-size: 11px; font-weight: 600; }
+.mg a, .mg button { padding: 3px 12px; border: 0; border-radius: 6px; background: none; color: var(--muted); text-decoration: none; font-weight: 600; cursor: pointer; }
+.mg a:hover, .mg button:hover { background: var(--hl); color: var(--text); }
+.mg a.on, .mg button.on { background: var(--accent-soft); color: var(--accent); }
+
+/* ---- the web build: the page fills the browser (no title bar), the whole
+   width of the screen here, in a frame to keep it apart from the mock's
+   page around it ---- */
+#win.web { --title-h: 0px; width: calc(100vw - 24px); height: calc(100vh - var(--nav-b, 40px) - 12px); border-radius: 10px; }

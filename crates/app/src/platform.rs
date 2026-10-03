@@ -16,7 +16,30 @@
 //! Natively there's no page: closing the window asks instead, see
 //! `Varde::leave`, so neither [`guard`] nor [`leaving`] ever yields.
 //!
+//! # The title
+//!
+//! The window's title is iced's natively; on the web the page's
+//! (`document.title`), which [`show_title`] keeps in step, so the tab and
+//! the browser's history name the design.
+//!
+//! # Files dropped
+//!
+//! On the web a `.vrdp` file dropped on the welcome screen's page opens as
+//! one picked with Open… would: [`drops`] yields [`Message::FileDragged`]
+//! as one comes over the page and goes off it, and
+//! [`Message::FileDropped`] as it's dropped. Where the File System Access
+//! API is (Chromium), the browser hands over a handle to it
+//! (`DataTransferItem.getAsFileSystemHandle`), and the design goes on from
+//! the file; elsewhere only a `File`, which is copied into browser
+//! storage. It's subscribed to
+//! whatever shows, so that the browser never takes a file dropped, which
+//! would leave the page for it; with a document open, or over a dialog,
+//! one is let go of unopened. Natively nothing is dropped: the welcome
+//! screen has no drop zone there.
+//!
 //! [`Message::CloseRequested`]: crate::Message::CloseRequested
+//! [`Message::FileDragged`]: crate::Message::FileDragged
+//! [`Message::FileDropped`]: crate::Message::FileDropped
 //! [`Message::PageLeaving`]: crate::Message::PageLeaving
 
 use std::time::Duration;
@@ -24,12 +47,12 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use native::{auto_save_ticks, copy, guard, leaving, window_icon};
+pub(crate) use native::{auto_save_ticks, copy, drops, guard, leaving, show_title, window_icon};
 
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
-pub(crate) use web::{auto_save_ticks, copy, guard, leaving, window_icon};
+pub(crate) use web::{auto_save_ticks, copy, drops, guard, leaving, show_title, window_icon};
 
 /// How often [`auto_save_ticks`] ticks.
 const TICK: Duration = Duration::from_secs(1);

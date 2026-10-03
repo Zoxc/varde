@@ -118,3 +118,24 @@ fn a_long_report_scrolls() {
         );
     }
 }
+
+/// A file dropped over the dialog showing the panic opens nothing, doesn't
+/// light the drop zone, and is let go of.
+#[test]
+fn a_file_dropped_over_a_dialog_is_ignored() {
+    let (mut varde, requests, _) = with_panic();
+    click(&mut varde, WelcomeUi::ShowPanic);
+    let _ = varde.update(Message::FileDragged(true));
+    let Screen::Welcome(welcome) = &varde.screen else {
+        panic!("not on the welcome screen");
+    };
+    assert!(!welcome.dragging());
+    let dropped = picked(4, PickedFrom::Input);
+    let _ = varde.update(Message::FileDropped(Some(Chosen::File(dropped.clone()))));
+    assert!(sent(&requests).is_empty());
+    assert!(varde.screen.doc().is_none());
+    assert_eq!(
+        crate::welcome::FORGOTTEN.with_borrow(Clone::clone),
+        [dropped]
+    );
+}

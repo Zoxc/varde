@@ -560,7 +560,7 @@ fn card_tool<'a>(entry: Entry, keys: DocumentKeys, using: Using) -> Element<'a, 
     .width(TOOL_WIDTH)
     .height(TOOL_HEIGHT)
     .padding(0)
-    .style(theme::flat_button(entry.on(using)))
+    .style(theme::flat_button(entry.on(using), theme::Tone::Text))
     .on_press_maybe(binding.sends());
     let tool = mouse_area(tool)
         .on_enter(hover(RailSpot::Tool, true))

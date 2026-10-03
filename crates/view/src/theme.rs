@@ -506,7 +506,7 @@ const MENU_RADIUS: f32 = 9.0;
 const TAB_RADIUS: f32 = 7.0;
 
 /// Corner radius of a [`card`]; the parts inside its border are one less.
-const CARD_RADIUS: f32 = 10.0;
+pub(crate) const CARD_RADIUS: f32 = 10.0;
 
 /// Corner radius shared by [`float_panel`] and [`float_button`].
 const FLOAT_RADIUS: f32 = 7.0;
@@ -686,15 +686,17 @@ pub fn flat_content(p: &Palette, tone: Tone, enabled: bool, hovered: bool) -> Co
 }
 
 /// A borderless button that only shows a background on hover, or when `on`.
-/// Its text is [`Tone::Text`], or the accent colour when `on`.
-pub fn flat_button(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+/// Its text is `tone`, as [`flat_content`] has it, or the accent colour
+/// when `on`: [`Tone::Muted`] for a quiet one, like the welcome screen's
+/// help at its foot.
+pub fn flat_button(on: bool, tone: Tone) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
         let enabled = status != button::Status::Disabled;
         let hovered = is_hovered(status);
         let base = button::Style {
             background: None,
-            text_color: flat_content(p, Tone::Text, enabled, hovered),
+            text_color: flat_content(p, tone, enabled, hovered),
             border: border::rounded(CONTROL_RADIUS),
             ..button::Style::default()
         };
@@ -1062,8 +1064,14 @@ pub fn fail_title(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
         border: border::rounded(border::Radius::new(0).top(CONTROL_RADIUS)),
-        ..filled(mix(p.danger, p.panel, 0.14), p.text)
+        ..filled(danger_wash(p), p.text)
     }
+}
+
+/// A wash of the danger colour on the panel, behind what failed or would
+/// delete: a [`fail_title`], a hovered [`delete_button`].
+fn danger_wash(p: &Palette) -> Color {
+    mix(p.danger, p.panel, 0.14)
 }
 
 /// A button in a [`fail_box`], Add anyway and Show (or Go back): a thin
@@ -1251,6 +1259,84 @@ pub fn card_meta(theme: &Theme, hovered: bool) -> container::Style {
     }
 }
 
+/// The count beside a welcome page heading, like Recent's: muted text on
+/// a key chip's fill, rounded to a pill.
+pub fn count_chip(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: border::rounded(9),
+        ..filled(p.chip, p.muted)
+    }
+}
+
+/// The delete button at the foot of a design's card on the welcome page,
+/// over the card's own highlight: a wash of the danger colour on hover,
+/// so it reads as a button of its own. Its icon is [`delete_icon`].
+pub fn delete_button(theme: &Theme, status: button::Status) -> button::Style {
+    let p = palette(theme);
+    button::Style {
+        background: is_hovered(status).then_some(Background::Color(danger_wash(p))),
+        text_color: p.muted,
+        border: border::rounded(CONTROL_RADIUS),
+        ..button::Style::default()
+    }
+}
+
+/// The colour of a [`delete_button`]'s icon: the strong danger colour
+/// while `hovered`.
+pub fn delete_icon(p: &Palette, hovered: bool) -> Color {
+    if hovered { p.danger_strong } else { p.muted }
+}
+
+/// The welcome page's drop zone on the web: no fill but the hover
+/// background, or the soft accent while a file is dragged over the page
+/// (`lit`), its text the text colour either way. Its dashed outline is drawn over
+/// it, see [`drop_zone_line`].
+pub fn drop_zone(lit: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        let background = if lit {
+            Some(p.accent_soft)
+        } else {
+            is_hovered(status).then_some(p.hl)
+        };
+        button::Style {
+            background: background.map(Background::Color),
+            text_color: p.text,
+            border: border::rounded(CARD_RADIUS),
+            ..button::Style::default()
+        }
+    }
+}
+
+/// The colour of a [`drop_zone`]'s dashed outline: the accent while `lit`,
+/// the hover border while `hovered`, else the text 18% into the welcome
+/// page's background. Opaque, as an SVG's tint takes no alpha.
+pub fn drop_zone_line(p: &Palette, lit: bool, hovered: bool) -> Color {
+    if lit {
+        p.accent
+    } else if hovered {
+        let Srgb([r, g, b]) = p.scene.background_top;
+        mix(p.hl_line, Color::from_rgb(r, g, b), p.hl_line.a)
+    } else {
+        let Srgb([r, g, b]) = p.scene.background_top;
+        mix(p.text, Color::from_rgb(r, g, b), 0.18)
+    }
+}
+
+/// A dot `color` picks from the palette, 7 px across, like the one before
+/// a design's downloads on the welcome page.
+pub fn dot(color: fn(&Palette) -> Color) -> impl Fn(&Theme) -> container::Style {
+    move |theme| container::Style {
+        border: border::rounded(3.5),
+        ..container::background(color(palette(theme)))
+    }
+}
+
+/// The dot of a design in browser storage never downloaded: the mock's
+/// amber, the same in both palettes.
+pub const NEVER_DOWNLOADED: Color = color!(0xe0a01a);
+
 /// A key label, like `Alt` in a hint. Use a monospace font inside.
 pub fn key_chip(theme: &Theme) -> container::Style {
     let p = palette(theme);
@@ -1280,6 +1366,23 @@ pub fn file_cell(open: bool) -> impl Fn(&Theme, button::Status) -> button::Style
             ..button::Style::default()
         }
     }
+}
+
+/// The grey pill a design with no name shows in its name's place in the
+/// toolbar's file cell.
+pub fn name_pill(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: border::rounded(10),
+        ..filled(p.chip, p.muted)
+    }
+}
+
+/// The colour the bar under the file cell says where a design is kept
+/// in, on the web: the accent for browser storage, green for the
+/// `computer`, 70% into the text's colour.
+pub fn location_ink(p: &Palette, computer: bool) -> Color {
+    mix(if computer { p.ok } else { p.accent }, p.text, 0.7)
 }
 
 /// The dot after an edited document's name in the toolbar's file cell.
@@ -1418,7 +1521,7 @@ pub fn rail_strip_backing(open: bool) -> impl Fn(&Theme) -> container::Style {
 /// it's `on`.
 pub fn rail_row(on: bool, focused: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
-        let style = flat_button(on)(theme, status);
+        let style = flat_button(on, Tone::Text)(theme, status);
         if focused && !(on && status != button::Status::Disabled) {
             button::Style {
                 background: Some(Background::Color(palette(theme).hl)),

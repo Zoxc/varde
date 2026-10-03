@@ -86,7 +86,7 @@ pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
             Tone::Muted,
             Some(Message::Look(Look::ToggleViewMenu)),
         )
-        .style(theme::flat_button(open));
+        .style(theme::flat_button(open, theme::Tone::Text));
         Part::new(button, KEPT, true)
     });
     let menu_only = info.is_none() && hints.is_none();

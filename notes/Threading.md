@@ -534,20 +534,14 @@ asynchronously; it stays as it is.
   same conflict check as natively, made on the bytes read back. Only the
   page can ask for permission to write, so the app asks as the user saves,
   before sending the save. Such a file can't be locked across tabs; the
-  conflict check is all there is. A file from a file input opens as a copy,
-  and Save downloads it, after which it counts as saved. The page isn't
-  told whether the download was kept, so its OPFS entry isn't emptied as
-  by a Save: it gets the design as downloaded, as an `AutoSave` marked
-  `downloaded`, in order behind the auto-saves before it (the queue never
-  replaces a marked one), and a clean close keeps it. If the user chose
-  not to save later changes, the lane rolls the entry back to its newest
-  marked record, truncating after it, instead of deleting it. A download
-  made before `New` is answered has no entry yet: the app keeps it and
-  sends it when `Created` arrives, before any auto-save, or, if the
-  design was closed meanwhile, sends it and the clean close then instead
-  of abandoning the entry. The welcome screen lists such entries apart,
-  as downloaded, to open again or discard; discarding changes listed on
-  top of a download goes back to it, like the clean close.
+  conflict check is all there is.
+- Built since: Save and Save As keep designs in browser storage, by name
+  (`saved/<name>.vrdp` in OPFS, history kept by appending, the sidecar
+  `saved/.<name>.vrdp.autosave` held as the lock across tabs, as natively;
+  see `agents/web-files.md`). A file from a file input is copied there
+  and opened from it. Download is a command of its own, never a save,
+  recorded in `downloads.toml` for the welcome screen and the file menu
+  to say where a design stands against its downloads.
 - Auto-saves of designs opened from the user's files go to an OPFS entry
   like a new design's, along with the file's name, so one left behind is
   recovered by name, as a copy: the handle is gone with the tab. Keeping

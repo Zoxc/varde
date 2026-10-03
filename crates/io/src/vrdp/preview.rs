@@ -109,14 +109,38 @@ pub(crate) fn read_preview(
         .find(|preview| supported(preview))
 }
 
-/// The previews of the design file `file`'s newest record, in the order
+/// What the end of a design file says, read without any record's payload,
+/// see [`end`]: what a listing of designs needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FileEnd {
+    /// Its header isn't a design file's.
+    NotADesign,
+    Design {
+        /// The `sum` its newest record's header holds, if walking back to
+        /// it found it: not checked, so the record may turn out damaged.
+        newest: Option<u128>,
+        /// Its previews, as [`previews`] reads them.
+        previews: Vec<Preview>,
+    },
+}
+
+/// The previews of the design file `file`'s newest record, see [`end`].
+pub(super) fn previews(file: &(impl ReadAt + ?Sized)) -> io::Result<Vec<Preview>> {
+    Ok(match end(file)? {
+        FileEnd::NotADesign => Vec::new(),
+        FileEnd::Design { previews, .. } => previews,
+    })
+}
+
+/// What the end of the design file `file` says: the sum its newest
+/// record's header holds and that record's previews, in the order
 /// written, reading no record's payload:
 ///
 /// 1. The file header must be a design file's.
 /// 2. From the end, blocks are walked back over by their trailing `len`,
 ///    as long as their two lengths agree, within bounds, and at most
 ///    [`MAX_PREVIEWS`] of them, of any kind, until a block whose kind is
-///    `RECORD`. Anything else ends the walk with no previews.
+///    `RECORD`. Anything else ends the walk, with neither sum nor previews.
 /// 3. Of that record only the header is read, for the `sum` it holds: the
 ///    record isn't checked, so a preview may show for a file whose newest
 ///    record turns out damaged when opened.
@@ -127,11 +151,14 @@ pub(crate) fn read_preview(
 ///
 /// A preview block is read whole, at most [`MAX_PREVIEW`] and a little;
 /// any other block is hashed piece by piece.
-pub(super) fn previews(file: &(impl ReadAt + ?Sized)) -> io::Result<Vec<Preview>> {
-    let none = Ok(Vec::new());
+pub(crate) fn end(file: &(impl ReadAt + ?Sized)) -> io::Result<FileEnd> {
+    let none = Ok(FileEnd::Design {
+        newest: None,
+        previews: Vec::new(),
+    });
     let len = file.len()?;
     let Some(header) = design_header(file, len)? else {
-        return none;
+        return Ok(FileEnd::NotADesign);
     };
     let id = header_id(&header);
 
@@ -179,7 +206,10 @@ pub(super) fn previews(file: &(impl ReadAt + ?Sized)) -> io::Result<Vec<Preview>
         }
         prev = stored.sum;
     }
-    Ok(previews)
+    Ok(FileEnd::Design {
+        newest: Some(record.sum),
+        previews,
+    })
 }
 
 /// The preview block of `size` bytes at `start` in `file`, a file with

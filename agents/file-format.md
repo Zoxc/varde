@@ -47,7 +47,7 @@ All integers are little-endian; a block is `64 + len` bytes.
 | --- | --- | --- |
 | `RECORD` | the writer, `APP_NAME` and the crate version (at most 1024 bytes written, any read) | a saved `Document`, see "Records" |
 | `PREVIEW` | a media type, at most `MAX_MEDIA_TYPE` (127) bytes | the data as it is, at most `MAX_PREVIEW` (4 MiB) |
-| `AUTOSAVE` | the writer | an auto-save (`AutoSaved`): the document, the `Tail` of the design's save it was based on, on the web the design's file name, and whether it's the design as downloaded |
+| `AUTOSAVE` | the writer | an auto-save (`AutoSaved`): the document, the `Tail` of the design's save it was based on, on the web the design's file name, and whether it's the design as downloaded (only older web builds wrote that; still read) |
 
 Every `MAGIC` and kind is a different random value: a file of one type
 is refused as the other by its header (`Error::IsAutoSave`,
@@ -227,9 +227,7 @@ cutting off a torn tail and other damage. One whose records are framed
 but none intact (`Error::Corrupt`) isn't written to until its owner
 empties it, nor is one that couldn't be read (`Error::Io`), until a read
 succeeds; anything else that can't be read (not a held file, a newest
-record that won't decode) is started over with a new `id`. `roll_back`
-cuts the file back to the newest record a test accepts (the web's
-downloads).
+record that won't decode) is started over with a new `id`.
 
 **Durability.** Appends never write before `tail.end`, so saved records
 are only at risk from the device. A crash leaves a prefix of a save's

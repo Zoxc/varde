@@ -66,8 +66,7 @@ it was made from: the offset, sum and end of the design file's last
 record, as the lane last read or wrote it (new designs have none). Save
 and Save As empty the sidecar once the design is written, and so does
 undoing or redoing back to the state last saved, at the next tick, so a
-crash doesn't offer edits already undone (on the web a store entry holding
-the design as downloaded goes back to that instead). Read-only
+crash doesn't offer edits already undone. Read-only
 designs are never auto-saved. An auto-save that fails shows in a banner
 until dismissed, or until a later auto-save or save succeeds.
 
@@ -96,7 +95,7 @@ clock tick doesn't go unnoticed. Until then auto-saves wait, so as not to
 replace it, and closing keeps it to be offered again. Store entries left
 behind show up on the welcome screen as recovered designs, which open as
 untitled designs backed by their entry, or can be discarded; empty ones are
-deleted, and damaged ones listed, marked so (`StoredDamage`; "Damaged"
+deleted, and damaged ones listed, marked so (`ListedDamage`; "Damaged"
 on the welcome screen): one with an intact auto-save opens it with the
 damage in `Opened::damage` (see "Damaged files"); one with
 none ("Damaged, can't be read") can only be discarded. A damaged
@@ -165,11 +164,22 @@ succeeding leaves no banner behind. Except a Save As failing while only
 Saves are in flight: they write the design's own file, not the one the
 Save As was to write, so its error shows.
 
+A design never saved has no name (`Doc::unnamed`: no file of its own,
+and not known by the name of a file it was opened from): the toolbar's
+file cell shows "Not saved" on a grey pill in its name's place, and the
+window's title says "Not saved". Pointing at the file cell shows the
+path of the design's file natively (`Doc::path`, the home directory as
+`~`), where it's kept on the web (see `web-files.md`), and "Changes not
+saved" while it's edited. Nothing is suggested to save or export it as
+(`Doc::suggested_name`): the pickers start with no file name.
+
 Save As (`Ctrl Shift S`; Save of a design never saved) asks for a path in
-the platform's dialog (adding `.vrdp` if it's missing, refusing to replace a
-file the dialog didn't ask about) and writes a new file there: next to it
-first, then renamed over whatever was there, keeping that file's
-permissions. It takes the new file's lock first, so a design another editor
+the platform's dialog, adding `.vrdp` if it's missing and refusing to
+replace a file the dialog didn't ask about, and writes a new file there:
+next to it first, then renamed over whatever was there, keeping that
+file's permissions. On the web, where designs are saved in browser
+storage by name, an app dialog asks for the name instead, see
+`web-files.md`. It takes the new file's lock first, so a design another editor
 has open is never written over, and then lets go of the old file and its
 lock. A read-only design can't be saved (Save is disabled, and `Ctrl S`
 does nothing), but can be saved as a copy, which is editable if its lock
@@ -200,7 +210,9 @@ with a body, is saved without at once. The IO lane encodes the pixels as
 a PNG (`thumbnail::encode`, `png`; the wire checks an `Image`'s size)
 and writes it after the record, so a save without one drops the old one.
 A download on the web writes none: it's encoded on the page as the user
-clicks.
+clicks, and isn't a save (see `web-files.md`). On the web the welcome
+screen shows the thumbnails of the designs in browser storage, which the
+lane reads with the list.
 
 The welcome screen asks the lane for the recent files' thumbnails
 (`Request::LoadThumbnails`) as the list arrives and whenever it shows
@@ -211,7 +223,7 @@ sides at most `thumbnail::MAX_SIDE`, refused before its pixels are
 allocated), all off the UI thread; the app makes each an iced image
 handle once, shown in its card fitted inside the padding, or the body
 icon for a design without one. The web has no recent files, so it reads
-none.
+none of those.
 
 **Closing and quitting.** Closing the document, or the window, waits for
 sketch edits waiting on the solver first, and the changes waiting behind
@@ -299,10 +311,12 @@ directory (`Stores::panic`), replaced whole like the settings; on the web
 see `web-files.md`. It's a table of plain keys (time, version, thread,
 message, location, backtrace), each bounded and read on its own; one
 without a message isn't a panic. At startup the app asks the lane for it
-(`Request::LoadPanic`), and the welcome screen shows it under Start as
-"Internal error": a card with the message's first line and when ("Last
+(`Request::LoadPanic`), and the welcome screen shows it as "Internal
+error", first beside the column natively and over what's in browser
+storage on the web: a card with the message's first line and when ("Last
 session" for under a minute ago, as it can only be from an earlier
-session), and Details… and Discard, as tall as the Start buttons.
+session), and Details… and Discard, as tall as the web page's Start
+buttons.
 Details shows the whole report (`Panic::report`) in a dialog, scrolled
 and in monospace, with Copy (for a bug report) and Close; `Esc` closes
 it, and no key opens anything behind it. A damaged file asked about takes

@@ -20,13 +20,12 @@
 //! An entry left behind with something in it, and not locked, is from a
 //! session that crashed: each lane lists them (natively
 //! `native::store::list`, on the web the worker's `Files::list`), and the
-//! welcome screen offers them as recovered designs. On the web, one is also left behind on
-//! purpose by a design downloaded and then closed, see
-//! [`Recovered::downloaded`]. Entries are private to the user, so on Unix
-//! they're made readable by the owner only.
+//! welcome screen offers them as recovered designs. Entries are private to
+//! the user, so on Unix they're made readable by the owner only.
 //!
 //! On the web the store is the directory `designs` in the Origin Private
-//! File System, laid out and used the same way, see `src/opfs.rs`. What's
+//! File System, laid out and used the same way, see `src/opfs.rs`, beside
+//! browser storage's designs saved by name (`src/browser.rs`). What's
 //! here is what both lanes use: [`Recovered`], the checks on entry names
 //! and the constants; making, opening, listing and discarding entries at a
 //! path is `src/native/store.rs`'s.
@@ -81,7 +80,7 @@ pub fn designs() -> Option<PathBuf> {
 }
 
 /// A new design left behind by a session that crashed, or on the web by a
-/// tab closed with it open, or a design downloaded and closed since.
+/// tab closed with it open.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recovered {
     /// Its store entry, to open or discard it by.
@@ -91,17 +90,13 @@ pub struct Recovered {
     /// The file name of the design it was opened from, if any: on the web
     /// designs opened from the user's files are auto-saved to entries too.
     pub name: Option<String>,
-    /// Whether what's in it is the design as it was last downloaded, on the
-    /// web, rather than changes never saved: kept in case the download
-    /// didn't finish, see [`Request::KeepDownload`](crate::Request::KeepDownload).
-    pub downloaded: bool,
     /// Whether reading it found damage, and if so whether it opens.
-    pub damage: Option<StoredDamage>,
+    pub damage: Option<ListedDamage>,
 }
 
 /// How a [`Recovered`] design's entry is damaged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StoredDamage {
+pub enum ListedDamage {
     /// Its newest intact auto-save opens, with the damage noted in
     /// [`Opened::damage`](crate::Opened::damage). Auto-saving it cuts the
     /// damage off.
@@ -134,7 +129,7 @@ pub(crate) fn listing(
 ) -> Listing {
     match read {
         Ok(Some(opened)) => {
-            let damage = Damage::of(&opened.report, None).map(|_| StoredDamage::Opens);
+            let damage = Damage::of(&opened.report, None).map(|_| ListedDamage::Opens);
             Listing::Listed(Recovered {
                 damage,
                 ..Recovered::new(path, modified, opened.payload)
@@ -145,8 +140,7 @@ pub(crate) fn listing(
             path,
             modified,
             name: None,
-            downloaded: false,
-            damage: Some(StoredDamage::Unreadable),
+            damage: Some(ListedDamage::Unreadable),
         }),
         Err(_) => Listing::Skipped,
     }
@@ -166,7 +160,6 @@ impl Recovered {
             path,
             modified,
             name: saved.name,
-            downloaded: saved.origin.is_download(),
             damage: None,
         }
     }

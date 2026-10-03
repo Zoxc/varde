@@ -19,26 +19,34 @@ pub async fn pick_open() -> Option<Chosen> {
 }
 
 /// Shows the Save As dialog for the design `name`, suggesting
-/// [`download_name`]. `None` if the user backed out.
+/// [`download_name`], or nothing for a design with no name (`name` empty).
+/// `None` if the user backed out.
 pub async fn pick_save(name: &str) -> Option<Chosen> {
-    let file = rfd::AsyncFileDialog::new()
+    let dialog = rfd::AsyncFileDialog::new()
         .set_title("Save design as")
-        .add_filter(filter(), &[EXTENSION])
-        .set_file_name(download_name(name))
-        .save_file()
-        .await?;
+        .add_filter(filter(), &[EXTENSION]);
+    let dialog = if name.is_empty() {
+        dialog
+    } else {
+        dialog.set_file_name(download_name(name))
+    };
+    let file = dialog.save_file().await?;
     Some(Chosen::Path(file.path().to_owned()))
 }
 
 /// Shows the Export dialog for the design `name`, suggesting
-/// `name.3mf`. `None` if the user backed out.
+/// `name.3mf`, or nothing for a design with no name (`name` empty). `None`
+/// if the user backed out.
 pub async fn pick_export(name: &str) -> Option<Chosen> {
-    let file = rfd::AsyncFileDialog::new()
+    let dialog = rfd::AsyncFileDialog::new()
         .set_title("Export 3MF")
-        .add_filter(export_filter(), &[three_mf::EXTENSION])
-        .set_file_name(download_name_with(name, three_mf::EXTENSION))
-        .save_file()
-        .await?;
+        .add_filter(export_filter(), &[three_mf::EXTENSION]);
+    let dialog = if name.is_empty() {
+        dialog
+    } else {
+        dialog.set_file_name(download_name_with(name, three_mf::EXTENSION))
+    };
+    let file = dialog.save_file().await?;
     Some(Chosen::Path(file.path().to_owned()))
 }
 
@@ -48,8 +56,17 @@ pub fn downloader() -> Option<Download> {
     None
 }
 
+/// Natively the platform's dialogs pick files, by path.
+pub fn file_system_access() -> bool {
+    false
+}
+
 /// Natively nothing is picked as a [`Picked`], and a path needs no asking
 /// to be written to.
 pub async fn writable(_picked: &Picked) -> Result<(), String> {
     Ok(())
 }
+
+/// Natively nothing is picked as a [`Picked`], so there's nothing to let
+/// go of.
+pub fn forget(_picked: &Picked) {}

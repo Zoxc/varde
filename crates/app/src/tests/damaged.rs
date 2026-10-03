@@ -2,7 +2,7 @@
 //! design damaged past the save opened shows, saving such a design, what
 //! a damaged auto-save offers, and damaged store entries.
 
-use varde_io::{Damage, DamageKind, FoundSave, RecoveryError, StoredDamage, UnixSeconds};
+use varde_io::{Damage, DamageKind, FoundSave, ListedDamage, RecoveryError, UnixSeconds};
 
 use super::*;
 
@@ -48,7 +48,9 @@ fn opened_with(damage: Option<Damage>) -> Opened {
         document: with_a_line(),
         access: Access::Edit,
         recovered: Ok(None),
-        downloaded: false,
+        browser: None,
+        not_copied: None,
+        download: None,
         damage,
     }
 }
@@ -571,15 +573,13 @@ fn damaged_store_entries_are_listed_and_unreadable_ones_only_discarded() {
             path: "/data/designs/a.vrdp".into(),
             modified: None,
             name: None,
-            downloaded: false,
-            damage: Some(StoredDamage::Opens),
+            damage: Some(ListedDamage::Opens),
         },
         Recovered {
             path: "/data/designs/b.vrdp".into(),
             modified: None,
             name: None,
-            downloaded: false,
-            damage: Some(StoredDamage::Unreadable),
+            damage: Some(ListedDamage::Unreadable),
         },
     ];
     let _ = varde.update(Message::Io(IoResponse::RecoveredListed { designs }));
@@ -639,8 +639,7 @@ fn a_damaged_store_entry_keeps_its_name_while_asked_about() {
         path: path.clone(),
         modified: None,
         name: Some("bracket.vrdp".to_owned()),
-        downloaded: false,
-        damage: Some(StoredDamage::Opens),
+        damage: Some(ListedDamage::Opens),
     }];
     let _ = varde.update(Message::Io(IoResponse::RecoveredListed { designs }));
     sent(&requests);

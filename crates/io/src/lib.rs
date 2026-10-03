@@ -25,11 +25,16 @@
 //! empties and deletes them; one found with something in it and not locked
 //! is from a session that crashed, and is offered back to the user.
 //!
+//! On the web, designs are saved in browser storage, by name, laid out
+//! like a folder of designs with their sidecars (`src/browser.rs`, over the
+//! directories of `src/dir.rs`), and the downloads made of them are
+//! recorded (`src/downloads.rs`).
+//!
 //! Natively the lane is a thread for the whole app
 //! (`src/native/thread.rs`). The web has no path based file system: there
 //! the lane is a Web Worker (`src/web.rs`, handling requests in
 //! `src/web/worker/files.rs`) keeping
-//! auto-saves in the Origin Private File System (`src/opfs.rs`), and
+//! designs and auto-saves in the Origin Private File System (`src/opfs.rs`), and
 //! requests and responses cross to it as bytes (see `src/wire.rs`). Both
 //! are [`lane`]. Files of the user's are picked on the web by the page,
 //! see [`pick`], and handed to the worker as a [`Picked`].
@@ -45,8 +50,14 @@
 // worker's. The plain Rust halves of what only the web uses (`js`, `opfs`,
 // `wire`) are at the root, tested natively too.
 mod autosave;
+pub mod browser;
+#[cfg(any(target_arch = "wasm32", test))]
+mod dir;
+#[cfg(any(target_arch = "wasm32", test))]
+mod downloads;
 #[cfg(any(target_arch = "wasm32", test))]
 mod js;
+mod lock;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod open;
@@ -57,6 +68,7 @@ pub mod pick;
 mod queue;
 pub mod recent;
 pub mod settings;
+pub mod storage;
 mod store;
 pub mod three_mf;
 pub mod thumbnail;
@@ -107,10 +119,11 @@ use varde_document::{Document, Revision, Snapshot};
 
 use crate::vrdp::Error as FileError;
 
+pub use crate::browser::{BrowserDesign, DownloadStatus, LastDownload};
 pub use crate::panicked::Panic;
 pub use crate::recent::RecentFile;
 pub use crate::settings::Settings;
-pub use crate::store::{Recovered, StoredDamage};
+pub use crate::store::{ListedDamage, Recovered};
 /// Carries [`Request`]s to the lane without waiting for them to be handled.
 pub use varde_lane::Transport;
 
@@ -167,11 +180,16 @@ pub enum Request {
     /// Reads the document the user chose, answered with
     /// [`Response::Opened`]. Natively, at a path: takes its lock, see
     /// [`Access`], and finds what a crashed session auto-saved, see
-    /// [`Opened::recovered`]. On the web, the file the user picked, which
-    /// has no path to answer with: auto-saves go to a store entry made for
-    /// it, as for a new design. If it's from a [`PickedFrom::Handle`], its
-    /// file refers to the picked file from then on, which [`Request::Save`]
-    /// writes; otherwise the design is a copy, never saved.
+    /// [`Opened::recovered`]. On the web, a design in browser storage
+    /// ([`Chosen::Browser`]) opens the same way, its sidecar next to it
+    /// there. The file the user picked has no path to answer with: from a
+    /// [`PickedFrom::Handle`], its file refers to the picked file from then
+    /// on, which [`Request::Save`] writes, and auto-saves go to a store
+    /// entry made for it, as for a new design; from a file input
+    /// ([`PickedFrom::Input`]), it's copied into browser storage under its
+    /// name, made unique, and opened from there ([`Opened::browser`]), or,
+    /// should copying it fail, opened as a copy, as a new design
+    /// ([`Opened::not_copied`]).
     Open { id: OpenId, from: Chosen },
     /// Opens the save a search found past damage in `file`'s design
     /// instead of the one it opened, answered with [`Response::Opened`]
@@ -206,10 +224,11 @@ pub enum Request {
     /// Writes `document` as a new file where `to` says, and makes `file`
     /// refer to it from then on, letting go of the old file. Without a
     /// `file`, e.g. for a design never saved, the new file is opened as a
-    /// new [`FileId`]. Natively the new file's lock is taken and the old
-    /// one's let go of; refused if another editor has the design at the
-    /// path open: `file` stays as it was. On the web, `file` keeps its
-    /// store entry for auto-saves. The `thumbnail` is written as for a
+    /// new [`FileId`]. The new file's lock is taken and the old one's let
+    /// go of; refused if another editor has the design there open: `file`
+    /// stays as it was. On the web, a design going to a file of the user's
+    /// keeps a store entry for auto-saves, and one going to browser storage
+    /// has its sidecar there. The `thumbnail` is written as for a
     /// [`Request::Save`].
     SaveAs {
         file: Option<FileId>,
@@ -250,31 +269,35 @@ pub enum Request {
     /// the web has no paths to read.
     LoadThumbnails { paths: Vec<PathBuf> },
     /// Lists the new designs left behind by sessions that crashed: store
-    /// entries nobody holds with something in them, and on the web the
-    /// designs downloaded and closed since. Deletes empty ones.
+    /// entries nobody holds with something in them. Deletes empty ones.
     ListRecovered,
     /// Opens a store entry listed by [`Request::ListRecovered`] as a new
     /// design, answered with [`Response::Opened`]. Its file refers to the
     /// entry, which auto-saves go to, like one made by [`Request::New`].
     OpenRecovered { id: OpenId, path: PathBuf },
-    /// On the web without the File System Access API: appends `document`,
-    /// the design as the page just downloaded it at `revision`, to `file`'s
-    /// store entry, marked so (see [`Recovered::downloaded`]). The page is
-    /// never told whether the user kept the download, so the entry holds
-    /// on to it, rather than being emptied as by a save, and a clean close
-    /// goes back to it, see [`Request::Close`]. So it's never replaced
-    /// while it waits. Answered with [`Response::AutoSaved`].
-    KeepDownload {
-        file: FileId,
-        revision: Revision,
-        #[serde(with = "varde_document::codec::snapshot")]
-        document: Snapshot,
-    },
-    /// Deletes a store entry listed by [`Request::ListRecovered`]. Unless,
-    /// on the web, it holds changes never saved on top of the design as
-    /// downloaded (see [`Request::KeepDownload`]): then it goes back to that, as
-    /// for a clean close, and is kept, to be listed as downloaded.
+    /// Deletes a store entry listed by [`Request::ListRecovered`].
     DiscardRecovered { path: PathBuf },
+    /// On the web: lists the designs saved in browser storage, answered
+    /// with [`Response::BrowserListed`]. Natively there are none.
+    ListBrowser,
+    /// On the web: gives `file`, a design in browser storage, the file name
+    /// `name` there (see [`Chosen::Browser`]), keeping its saves and what
+    /// was auto-saved of it, and its downloads recorded. Refused if a
+    /// design is called that, or someone has one of that name open.
+    Rename { file: FileId, name: String },
+    /// On the web: deletes the design `name` in browser storage, with what
+    /// was auto-saved of it and the downloads recorded. Refused while it's
+    /// open, in this tab or another.
+    DeleteFromBrowser { name: String },
+    /// On the web: records that `file`, a design in browser storage, was
+    /// just downloaded, see [`DownloadStatus`]: as it was last saved, or
+    /// with changes not saved yet if `edited`. Answered with
+    /// [`Response::DownloadRecorded`]. Nothing to record for another file.
+    RecordDownload { file: FileId, edited: bool },
+    /// On the web: reads the design `name` in browser storage whole, as
+    /// it's saved, to download it, and records the download. Answered with
+    /// [`Response::DownloadedFromBrowser`].
+    DownloadFromBrowser { name: String },
     /// Replaces the stored recent files list. Replaces a `WriteRecent`
     /// still waiting in the queue, unless a `LoadRecent` is queued after it.
     WriteRecent { entries: Vec<RecentFile> },
@@ -341,8 +364,8 @@ pub enum Response {
         revision: Revision,
         result: Result<SavedAs, SaveError>,
     },
-    /// Answers [`Request::AutoSave`] and [`Request::KeepDownload`]. One
-    /// replaced by a newer one isn't answered.
+    /// Answers [`Request::AutoSave`]. One replaced by a newer one isn't
+    /// answered.
     AutoSaved {
         file: FileId,
         revision: Revision,
@@ -382,13 +405,41 @@ pub enum Response {
     /// answer to a request that may have changed which there are: an
     /// [`Request::OpenRecovered`], a [`Request::DiscardRecovered`], or a
     /// [`Request::Close`] or [`Request::Abandon`] of a new design's store
-    /// entry (on the web, of any design's), which may be left holding it.
+    /// entry (on the web, of any design's that has one), which may be left
+    /// holding it.
     RecoveredListed {
         designs: Vec<Recovered>,
     },
     RecoveredDiscarded {
         path: PathBuf,
         result: Result<(), String>,
+    },
+    /// Answers [`Request::ListBrowser`], newest first.
+    BrowserListed {
+        designs: Vec<BrowserDesign>,
+    },
+    Renamed {
+        file: FileId,
+        name: String,
+        result: Result<(), String>,
+    },
+    DeletedFromBrowser {
+        name: String,
+        result: Result<(), String>,
+    },
+    /// Answers [`Request::RecordDownload`] with the download recorded, if
+    /// one was: `None` for a design not in browser storage.
+    DownloadRecorded {
+        file: FileId,
+        result: Result<Option<LastDownload>, String>,
+    },
+    /// Answers [`Request::DownloadFromBrowser`] with the design's file,
+    /// whole, to download whether or not the download could be recorded,
+    /// and why it couldn't, if it couldn't.
+    DownloadedFromBrowser {
+        name: String,
+        result: Result<Vec<u8>, String>,
+        not_recorded: Option<String>,
     },
     /// Answers [`Request::Export`] with where it wrote: a path is made
     /// absolute.
@@ -450,8 +501,7 @@ impl Request {
                 revision,
                 result: Err(SaveError::Failed(error)),
             },
-            Request::AutoSave { file, revision, .. }
-            | Request::KeepDownload { file, revision, .. } => Response::AutoSaved {
+            Request::AutoSave { file, revision, .. } => Response::AutoSaved {
                 file,
                 revision,
                 result: Err(error),
@@ -482,6 +532,27 @@ impl Request {
             Request::DiscardRecovered { path } => Response::RecoveredDiscarded {
                 path,
                 result: Err(error),
+            },
+            Request::ListBrowser => Response::BrowserListed {
+                designs: Vec::new(),
+            },
+            Request::Rename { file, name } => Response::Renamed {
+                file,
+                name,
+                result: Err(error),
+            },
+            Request::DeleteFromBrowser { name } => Response::DeletedFromBrowser {
+                name,
+                result: Err(error),
+            },
+            Request::RecordDownload { file, .. } => Response::DownloadRecorded {
+                file,
+                result: Err(error),
+            },
+            Request::DownloadFromBrowser { name } => Response::DownloadedFromBrowser {
+                name,
+                result: Err(error),
+                not_recorded: None,
             },
             Request::Export { to, .. } => Response::Exported {
                 to: to.into(),
@@ -549,11 +620,6 @@ impl Request {
 pub enum Closing {
     /// The clean close: the sidecar (or store entry) is emptied and
     /// deleted, as the design is saved, or the user chose not to save it.
-    /// Unless, on the web, it holds the design as downloaded (see
-    /// [`Request::KeepDownload`]), which may be the only copy if the
-    /// download wasn't kept: then it's rolled back to the newest such
-    /// record, dropping the auto-saves of later edits, and kept, to be
-    /// listed as downloaded.
     Clean,
     /// Deleted only if there's nothing in it, keeping what it holds to be
     /// recovered later, e.g. changes offered back and not answered yet.
@@ -612,6 +678,11 @@ pub enum SaveError {
     /// could cut off what's still readable. Nothing was written; Save As
     /// keeps the design.
     Damaged,
+    /// On the web, saving as a design in browser storage without replacing
+    /// one ([`SaveTo::Browser`]): a design there has the name, as another
+    /// tab may have saved one since the app listed them. Nothing was
+    /// written; the app asks whether to replace it.
+    Taken,
     /// Anything else, as the message to show.
     Failed(String),
 }
@@ -631,6 +702,7 @@ impl fmt::Display for SaveError {
                 "the file was damaged since it was opened or saved. Save As keeps \
                  the design.",
             ),
+            SaveError::Taken => f.write_str("a design of that name is in browser storage already"),
             SaveError::Failed(error) => f.write_str(error),
         }
     }
@@ -683,11 +755,16 @@ pub struct Opened {
     /// ([`RecoveryError::kept`]): auto-saves are refused while it's kept,
     /// never starting it over, and saves leave it be.
     pub recovered: Result<Option<Offer>, RecoveryError>,
-    /// For a store entry opened with [`Request::OpenRecovered`], whether
-    /// `document` is the design as downloaded on the web, its newest
-    /// record, rather than changes never saved: see
-    /// [`Recovered::downloaded`], which may be out of date by now.
-    pub downloaded: bool,
+    /// On the web, the file name in browser storage of the design opened
+    /// from there, or copied there from a file input to be opened.
+    pub browser: Option<String>,
+    /// On the web, why a file from a file input wasn't copied into browser
+    /// storage, if it wasn't, say with the site's data blocked: it opens
+    /// as a copy, as a new design never saved, known by the file's name.
+    pub not_copied: Option<String>,
+    /// For a design in browser storage, its last download recorded, if
+    /// there's one, see [`Request::RecordDownload`].
+    pub download: Option<LastDownload>,
     /// How reading the design's file, or the store entry, found it
     /// damaged, if it did, and so which save `document` is: `None` for an
     /// intact file, or one whose torn tail (an interrupted save, say) the
@@ -697,21 +774,17 @@ pub struct Opened {
 
 impl Opened {
     /// `document`, opened as `file` for editing with nothing to offer, as
-    /// a store entry and on the web a design the user picked are:
-    /// `downloaded` says whether it's the design as downloaded, `damage`
-    /// how reading found the file.
-    pub(crate) fn editable(
-        file: FileId,
-        document: Document,
-        downloaded: bool,
-        damage: Option<Damage>,
-    ) -> Self {
+    /// a store entry and on the web a design the user picked are: `damage`
+    /// says how reading found the file.
+    pub(crate) fn editable(file: FileId, document: Document, damage: Option<Damage>) -> Self {
         Self {
             file,
             document,
             access: Access::Edit,
             recovered: Ok(None),
-            downloaded,
+            browser: None,
+            not_copied: None,
+            download: None,
             damage,
         }
     }
@@ -835,20 +908,25 @@ pub struct Offer {
 }
 
 /// A file the user chose in the Open or Save As dialog: natively its path,
-/// on the web the file the browser's picker or file input handed over.
+/// on the web the file the browser's picker or file input handed over, or
+/// a design in browser storage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Chosen {
     Path(PathBuf),
     File(Picked),
+    /// A design in browser storage, by its file name there, like
+    /// `bracket.vrdp`: what the design is called, as
+    /// [`varde_document::name::download_name`] names it, so it downloads
+    /// by the same name.
+    Browser(String),
 }
 
 impl Chosen {
-    /// Its path, if it isn't a picked file, as [`Response::Opened`] has
-    /// it.
+    /// Its path, if it's one, as [`Response::Opened`] has it.
     pub(crate) fn into_path(self) -> Option<PathBuf> {
         match self {
             Chosen::Path(path) => Some(path),
-            Chosen::File(_) => None,
+            Chosen::File(_) | Chosen::Browser(_) => None,
         }
     }
 }
@@ -862,6 +940,12 @@ pub enum SaveTo {
     /// On the web: the file the user picked in the save picker, which
     /// asked about replacing it.
     Picked(Picked),
+    /// On the web: the design `name` in browser storage, see
+    /// [`Chosen::Browser`], replacing one of that name if `overwrite`,
+    /// which the user agreed to; otherwise it's [`SaveError::Taken`]. To the
+    /// design's own name, it's refused unless `overwrite`, as the app
+    /// saves to it instead, and replaces it only once agreed to.
+    Browser { name: String, overwrite: bool },
 }
 
 impl From<SaveTo> for Chosen {
@@ -869,6 +953,7 @@ impl From<SaveTo> for Chosen {
         match to {
             SaveTo::Path { path, .. } => Chosen::Path(path),
             SaveTo::Picked(picked) => Chosen::File(picked),
+            SaveTo::Browser { name, .. } => Chosen::Browser(name),
         }
     }
 }

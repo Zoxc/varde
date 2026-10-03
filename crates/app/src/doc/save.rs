@@ -10,12 +10,13 @@ use std::time::Duration;
 
 use iced::time::Instant;
 use iced::window;
-use varde_document::name::with_extension;
-use varde_document::{Command, EXTENSION, Revision, Snapshot};
+use varde_document::name::{UNTITLED, with_extension};
+use varde_document::{Command, EXTENSION, Revision};
 use varde_io::{
-    Chosen, Closing, FileId, OpenId, Picked, Request as IoRequest, SaveError, SaveTo, UnixSeconds,
+    Chosen, Closing, FileId, LastDownload, OpenId, Picked, Request as IoRequest, SaveError, SaveTo,
+    UnixSeconds,
 };
-use varde_view::Unsaved;
+use varde_view::{NOT_SAVED, SavePlace, Unsaved};
 
 use super::{Doc, FileDamage, Recovery, design_name, read_only, shown_damage};
 use crate::io::Io;
@@ -66,6 +67,15 @@ pub(super) struct Persist {
     auto_save_error: Option<String>,
     /// What the document is waiting on the user or the browser for.
     picking: Option<Picking>,
+    /// The name asked for in the app's own Save As dialog, on the web,
+    /// while it shows (`picking` is [`Picking::Name`] then).
+    naming: Option<Naming>,
+    /// Whether the name field of the Save As dialog is to take the focus,
+    /// as it shows: see [`Doc::take_name_focus`].
+    name_focus: bool,
+    /// The last download recorded of a design in browser storage, if
+    /// there's one, see [`DocDownload`].
+    download: Option<DocDownload>,
     /// On the way out, from the user asking to leave until the document is
     /// gone or they stay after all.
     leaving: Option<Leaving>,
@@ -99,9 +109,35 @@ impl Persist {
             save_error: None,
             auto_save_error: None,
             picking: None,
+            naming: None,
+            name_focus: false,
+            download: None,
             leaving: None,
         }
     }
+}
+
+/// The last download of a design in browser storage: when, and the editor
+/// revision it was the design as saved at, if it was, with no changes
+/// since then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DocDownload {
+    pub(crate) time: UnixSeconds,
+    pub(crate) revision: Option<Revision>,
+}
+
+/// The app's own Save As dialog, on the web, where browser storage has no
+/// picker of the system's: the name, and on Chromium where to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Naming {
+    /// As typed.
+    pub(crate) name: String,
+    pub(crate) place: SavePlace,
+    /// Whether it renames the design rather than saving it as another.
+    pub(crate) rename: bool,
+    /// The file name in browser storage to ask about replacing: one of the
+    /// designs listed there has it. Confirming again replaces it.
+    pub(crate) replacing: Option<String>,
 }
 
 /// What a document is waiting on the user or the browser for, see
@@ -113,6 +149,9 @@ pub(crate) enum Picking {
     /// On the web, the browser is asking whether the document may be saved
     /// to its file, answered with [`Doc::writable`].
     Writable,
+    /// On the web, the app's own Save As dialog is showing, asking for a
+    /// name: see [`Naming`].
+    Name,
 }
 
 /// Which kind of save an answer is for.
@@ -120,7 +159,7 @@ pub(crate) enum Picking {
 pub(crate) enum SaveKind {
     /// To the document's own file.
     Save,
-    /// To a new file, or by downloading on the web.
+    /// To a new file, or on the web a design in browser storage by name.
     SaveAs,
 }
 
@@ -130,19 +169,9 @@ pub(crate) enum Target {
     /// Nowhere yet: a new design whose store entry is on its way (see
     /// [`Persist::creating`]) or couldn't be made, or whose Save As is.
     None,
-    /// The store entry of a design never saved as a file of the user's,
-    /// which is only auto-saved to: Save asks where to.
-    Entry {
-        file: FileId,
-        /// On the web, whether the entry holds the design as downloaded,
-        /// see [`Doc::downloaded`], or may: one opened from the welcome
-        /// screen may under the changes recovered. The page isn't told
-        /// whether the user kept the download, so closing the design keeps
-        /// the entry, gone back to the download if need be (see
-        /// [`IoRequest::Close`]), and lists it again. Cleared by a save to
-        /// a file, which empties the entry.
-        downloaded: bool,
-    },
+    /// The store entry of a design never saved, which is only auto-saved
+    /// to: Save asks where to.
+    Entry { file: FileId },
     /// The file of the user's the design was opened from or last saved
     /// as, which Save writes.
     File {
@@ -152,6 +181,9 @@ pub(crate) enum Target {
         /// [`Doc::save_design`].
         picked: Option<Picked>,
     },
+    /// On the web, the design `name` in browser storage, which Save
+    /// appends to.
+    Browser { file: FileId, name: String },
 }
 
 impl Target {
@@ -160,7 +192,9 @@ impl Target {
     pub(crate) fn file(&self) -> Option<FileId> {
         match *self {
             Target::None => None,
-            Target::Entry { file, .. } | Target::File { file, .. } => Some(file),
+            Target::Entry { file } | Target::File { file, .. } | Target::Browser { file, .. } => {
+                Some(file)
+            }
         }
     }
 
@@ -168,82 +202,27 @@ impl Target {
     /// store entry or nothing.
     pub(crate) fn design_file(&self) -> Option<FileId> {
         match *self {
-            Target::File { file, .. } => Some(file),
+            Target::File { file, .. } | Target::Browser { file, .. } => Some(file),
+            _ => None,
+        }
+    }
+
+    /// Where the design is kept, as the file cell says: on the web only.
+    pub(crate) fn location(&self) -> Option<varde_view::Location> {
+        match self {
+            Target::Browser { .. } => Some(varde_view::Location::Browser),
+            Target::File {
+                picked: Some(_), ..
+            } => Some(varde_view::Location::Computer),
             _ => None,
         }
     }
 }
 
 /// Hands a design to the browser as a download, by the file name and its
-/// bytes, see [`Doc::downloaded`]: [`varde_io::pick::downloader`]'s, or a
+/// bytes, see [`Doc::download`]: [`varde_io::pick::downloader`]'s, or a
 /// test's.
 pub(crate) type Downloader = Box<dyn Fn(&str, &[u8]) -> Result<(), String>>;
-
-/// The design as downloaded on the web, to be kept in its store entry.
-#[derive(Debug)]
-pub(crate) struct Download {
-    /// The editor revision downloaded.
-    pub(crate) revision: Revision,
-    pub(crate) document: Snapshot,
-}
-
-impl Download {
-    /// Keeps it in `file`, its store entry, marked as downloaded.
-    pub(crate) fn request(self, file: FileId) -> IoRequest {
-        IoRequest::KeepDownload {
-            file,
-            revision: self.revision,
-            document: self.document,
-        }
-    }
-}
-
-/// Designs downloaded just after New, before their store entry was made,
-/// by the tag of the [`IoRequest::New`] making it: the design as
-/// downloaded is kept in the entry once it's made, see [`Doc::created`].
-/// Closed meanwhile, the entry isn't given up on, but closed cleanly once
-/// it has the download, see [`Downloads::settle`].
-#[derive(Debug, Default)]
-pub(crate) struct Downloads(Vec<(OpenId, Download)>);
-
-impl Downloads {
-    /// Keeps `download` for entry `id`, in place of an older one.
-    fn keep(&mut self, id: OpenId, download: Download) {
-        self.0.retain(|(awaited, _)| *awaited != id);
-        self.0.push((id, download));
-    }
-
-    /// Takes the answer to the store entry `id` asked for for a document
-    /// gone since. The lane closes the entry once told so, see
-    /// `Io::abandon`, unless it's to keep a download: downloaded, and
-    /// closed before the entry was made, the clean close keeps it, as the
-    /// design as downloaded.
-    pub(crate) fn settle(&mut self, io: &mut Io, id: OpenId, result: Result<FileId, String>) {
-        if let Some(download) = self.take(id)
-            && let Ok(file) = result
-        {
-            io.send(download.request(file));
-            // Listed by the lane once closed.
-            io.close_clean(file);
-        }
-    }
-
-    /// Takes the download kept for entry `id`, if there is one.
-    fn take(&mut self, id: OpenId) -> Option<Download> {
-        let at = self.0.iter().position(|(awaited, _)| *awaited == id)?;
-        Some(self.0.remove(at).1)
-    }
-
-    /// Whether a download is kept for entry `id`.
-    fn awaits(&self, id: OpenId) -> bool {
-        self.0.iter().any(|(awaited, _)| *awaited == id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
 
 /// Saves of a document sent to the IO lane and not answered yet, and
 /// those waiting to be sent.
@@ -270,8 +249,8 @@ pub(crate) struct Saves {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Deferred {
     Save,
-    /// To the file the user chose.
-    SaveAs(Chosen),
+    /// To where the user chose.
+    SaveAs(SaveTo),
 }
 
 impl Saves {
@@ -489,10 +468,29 @@ impl Doc {
         self.persist.damaged_file
     }
 
+    /// Whether the design has no name: never saved, nor known by the name
+    /// of a file it was opened from. "Not saved" shows in its name's place.
+    pub(crate) fn unnamed(&self) -> bool {
+        self.persist.target.design_file().is_none() && self.name == UNTITLED
+    }
+
+    /// The name to suggest saving or exporting the design as: its own,
+    /// none for one with no name.
+    pub(crate) fn suggested_name(&self) -> String {
+        if self.unnamed() {
+            String::new()
+        } else {
+            self.name.clone()
+        }
+    }
+
     /// The design's name as the window's title shows it: with its
     /// extension, marked "(damaged file)" while its file was opened past
-    /// damage.
+    /// damage; "Not saved" for one with no name.
     pub(crate) fn title_name(&self) -> String {
+        if self.unnamed() {
+            return NOT_SAVED.to_owned();
+        }
         let damaged = if self.persist.damaged_file {
             " (damaged file)"
         } else {
@@ -504,6 +502,11 @@ impl Doc {
     /// Where the document is written, see [`Persist::target`].
     #[cfg(test)]
     pub(crate) fn target(&self) -> &Target {
+        &self.persist.target
+    }
+
+    /// Where the document is written, for the view.
+    pub(super) fn persist_target(&self) -> &Target {
         &self.persist.target
     }
 
@@ -529,12 +532,6 @@ impl Doc {
     #[cfg(test)]
     pub(crate) fn picking(&self) -> Option<Picking> {
         self.persist.picking
-    }
-
-    /// Stops waiting on the user or the browser, as if they never answer.
-    #[cfg(test)]
-    pub(crate) fn forget_picking(&mut self) {
-        self.persist.picking = None;
     }
 
     /// Leaving the document, see [`Persist::leaving`].
@@ -571,7 +568,7 @@ impl Doc {
         for deferred in mem::take(&mut self.persist.saves.waiting) {
             match deferred {
                 Deferred::Save => self.save(cx),
-                Deferred::SaveAs(chose) => self.save_as(cx, chose),
+                Deferred::SaveAs(to) => self.save_as(cx, to),
             }
         }
         self.resume_leaving(cx)
@@ -635,30 +632,23 @@ impl Doc {
             document: self.editor.snapshot(),
             thumbnail: self.thumbnail(),
         });
+        // Asked as the user saves to browser storage, once a session.
+        cx.ask_persist |= matches!(self.persist.target, Target::Browser { .. });
         self.persist.saves.save = Some(revision);
         self.persist.save_error = None;
         self.persist.auto_save.saving(revision);
     }
 
-    /// Sends the document to the new file the user `chose` in the Save As
-    /// dialog, which asked about replacing the one there.
-    fn save_as(&mut self, cx: &mut Files, chose: Chosen) {
-        if self.defer(Deferred::SaveAs(chose.clone()))
-            || self.defer_for_thumbnail(Deferred::SaveAs(chose.clone()))
+    /// Sends the document to the new file the user chose, `to`, in the
+    /// Save As dialog, which asked about replacing the one there.
+    fn save_as(&mut self, cx: &mut Files, to: SaveTo) {
+        if self.defer(Deferred::SaveAs(to.clone()))
+            || self.defer_for_thumbnail(Deferred::SaveAs(to.clone()))
         {
             return;
         }
         let revision = self.editor.revision();
         let (file, document) = (self.persist.target.file(), self.editor.snapshot());
-        let to = match chose {
-            Chosen::Path(path) => {
-                // The dialog only asked about replacing the file the user
-                // named, not one with the extension added.
-                let (path, overwrite) = with_extension(path);
-                SaveTo::Path { path, overwrite }
-            }
-            Chosen::File(picked) => SaveTo::Picked(picked),
-        };
         cx.io.send(IoRequest::SaveAs {
             file,
             to,
@@ -742,9 +732,7 @@ impl Doc {
         match result {
             // Not the current revision: edits made while saving keep the
             // document edited. The IO lane answers saves in the order sent,
-            // so this is the newest one to land. A download, booked here
-            // at once, can't overtake one: saving downloads only where
-            // the lane has no file of the user's to save to.
+            // so this is the newest one to land.
             Ok(()) => {
                 self.persist.saved_revision = Some(revision);
                 // Sending it cleared the save error, so one there now is
@@ -754,11 +742,6 @@ impl Doc {
                     self.persist.save_error = None;
                 }
                 self.persist.auto_save_error = None;
-                // The lane emptied the entry. A download marks it again
-                // after this, see `Doc::downloaded`.
-                if let Target::Entry { downloaded, .. } = &mut self.persist.target {
-                    *downloaded = false;
-                }
             }
             // The newer save decides: it clears the banner or shows its own
             // error, and leaving goes on or stops on its answer.
@@ -816,8 +799,7 @@ impl Doc {
 
     /// Undone or redone back to as saved, the document has its auto-saves
     /// of the edits since taken back, so a crash doesn't offer them: its
-    /// sidecar or store entry is emptied, as by a save, or on the web goes
-    /// back to the design as downloaded, which it's at. Not while offering
+    /// sidecar or store entry is emptied, as by a save. Not while offering
     /// to restore what a crashed session left, which the lane keeps.
     fn roll_back_auto_save(&mut self, io: &mut Io) {
         let revision = self.editor.revision();
@@ -831,18 +813,7 @@ impl Doc {
         {
             return;
         }
-        match self.persist.target {
-            Target::Entry {
-                downloaded: true, ..
-            } => io.send(
-                Download {
-                    revision,
-                    document: self.editor.snapshot(),
-                }
-                .request(file),
-            ),
-            _ => io.send(IoRequest::DiscardRecovery { file }),
-        }
+        io.send(IoRequest::DiscardRecovery { file });
         self.persist.auto_save = AutoSave {
             sent: Some(revision),
             ..AutoSave::default()
@@ -868,17 +839,6 @@ impl Doc {
             sent: Some(revision),
             ..AutoSave::default()
         };
-    }
-
-    /// Sends `download`, the design as downloaded, to be kept in its
-    /// store entry, if it has one, see [`Target::Entry`]. Auto-saves of
-    /// edits since follow it as usual.
-    fn send_download(&mut self, io: &mut Io, download: Download) {
-        if let Target::Entry { file, downloaded } = &mut self.persist.target {
-            self.persist.auto_save.sent = Some(download.revision);
-            io.send(download.request(*file));
-            *downloaded = true;
-        }
     }
 
     /// The answer to an auto-save to `file`, if it's still where the
@@ -1014,7 +974,10 @@ impl Doc {
     }
 
     /// Asks where to save the document, answered with
-    /// [`Doc::save_as_picked`].
+    /// [`Doc::save_as_picked`]: natively the platform's dialog. On the
+    /// web, where designs are saved in browser storage, which has no
+    /// picker of the system's, the app's own dialog asks for a name (and
+    /// on Chromium where), see [`Doc::name_confirmed`].
     pub(crate) fn request_save_as(&mut self, cx: &mut Files) -> Next {
         self.file_menu = false;
         // A Save As of a design never saved still on its way would make a
@@ -1024,71 +987,266 @@ impl Doc {
         if self.persist.picking.is_some() || new_on_its_way {
             return Next::Stay;
         }
-        if let Some(download) = &cx.downloader {
-            let revision = self.editor.revision();
-            let result = self.download(download);
-            return self.downloaded(cx, revision, result);
+        if cx.browser_storage {
+            self.ask_name(false);
+            return Next::Stay;
         }
         self.persist.picking = Some(Picking::SaveAs);
         Next::PickSaveAs {
             id: self.id,
-            name: self.name.clone(),
+            name: self.suggested_name(),
         }
     }
 
-    /// Hands the document to the browser with `download`, encoded on the
-    /// page: one encoding and one pass of snappy, cheaper than sending it
-    /// to the lane and having the file sent back.
-    fn download(&self, download: &Downloader) -> Result<(), String> {
-        let name = varde_document::name::download_name(&self.name);
-        varde_io::vrdp::to_bytes(self.editor.document(), &[])
-            .map_err(|e| e.to_string())
-            .and_then(|(bytes, _)| download(&name, &bytes))
+    /// Shows the app's own Save As dialog, or as it renames the design.
+    fn ask_name(&mut self, rename: bool) {
+        self.persist.picking = Some(Picking::Name);
+        self.persist.naming = Some(Naming {
+            name: self.suggested_name(),
+            place: SavePlace::Browser,
+            rename,
+            replacing: None,
+        });
+        self.persist.name_focus = true;
     }
 
-    /// The document was saved by downloading `revision`, on the web without
-    /// the File System Access API, with `result` as the browser's answer.
-    /// Once downloaded it counts as saved: the browser has it, and there's
-    /// nothing else to tell.
-    ///
-    /// Whether the user kept the download isn't something the page is
-    /// told: they may have cancelled the browser's save dialog. So rather
-    /// than being emptied as by a save, the design's store entry gets the
-    /// design as downloaded, marked so, and closing keeps it, going back to
-    /// it should the user choose not to save changes made since, see
-    /// [`IoRequest::Close`]. The welcome screen lists it apart from designs
-    /// never saved, to open again or discard.
-    fn downloaded(
-        &mut self,
-        cx: &mut Files,
-        revision: Revision,
-        result: Result<(), String>,
-    ) -> Next {
-        let ok = result.is_ok();
-        // Booked as a Save As, which it stands in for.
-        self.saved(
-            SaveKind::SaveAs,
-            revision,
-            result.map_err(SaveError::Failed),
-        );
-        // Kept in the entry, marked as downloaded: after the auto-saves
-        // sent before it, and before any of a newer revision. What a
-        // crashed session left is kept until the user answers the offer, as
-        // by a Save.
-        if ok && self.persist.recovered.is_none() {
-            let download = Download {
-                revision,
-                document: self.editor.snapshot(),
+    /// Asks for a new name for the design in browser storage, in the Save
+    /// As dialog, see [`Doc::name_confirmed`]. Only a design kept there,
+    /// editable and with nothing on its way, is renamed.
+    pub(crate) fn request_rename(&mut self) {
+        self.file_menu = false;
+        if self.renamable() {
+            self.ask_name(true);
+        }
+    }
+
+    /// Whether the design may be renamed now, see [`Doc::request_rename`].
+    pub(crate) fn renamable(&self) -> bool {
+        matches!(self.persist.target, Target::Browser { .. })
+            && self.editable()
+            && self.persist.picking.is_none()
+            && !self.persist.saves.any()
+    }
+
+    /// The Save As dialog, if it's showing.
+    pub(crate) fn naming(&self) -> Option<&Naming> {
+        self.persist.naming.as_ref()
+    }
+
+    /// Whether the Save As dialog's name field is to take the focus, as
+    /// it's just shown: the app does that.
+    pub(crate) fn take_name_focus(&mut self) -> bool {
+        std::mem::take(&mut self.persist.name_focus)
+    }
+
+    /// The name typed in the Save As dialog changed.
+    pub(crate) fn name_changed(&mut self, name: String) {
+        if let Some(naming) = &mut self.persist.naming {
+            naming.name = name;
+            naming.replacing = None;
+        }
+    }
+
+    /// Where to save the design was chosen in the Save As dialog.
+    pub(crate) fn place_chosen(&mut self, place: SavePlace) {
+        if let Some(naming) = &mut self.persist.naming {
+            naming.place = place;
+            naming.replacing = None;
+        }
+    }
+
+    /// The Save As dialog's name was confirmed: saved as that design in
+    /// browser storage, after asking about replacing one listed there of
+    /// that name (confirming again replaces it), or renamed to it, which
+    /// is refused for a name taken; or, for a file on the computer, the
+    /// system's save picker shown. Saved as the design's own name, it's
+    /// saved, appended to, its history kept; only one opened past damage,
+    /// which isn't saved to, is replaced, after asking.
+    pub(crate) fn name_confirmed(&mut self, cx: &mut Files) -> Next {
+        let Some(naming) = self.persist.naming.clone() else {
+            return Next::Stay;
+        };
+        if naming.place == SavePlace::Computer && !naming.rename {
+            self.persist.naming = None;
+            self.persist.picking = Some(Picking::SaveAs);
+            return Next::PickSaveAs {
+                id: self.id,
+                name: naming.name,
             };
-            match (&self.persist.target, self.persist.creating) {
-                // Just after New: kept once the entry is made, in place of
-                // an older download. Should making it fail, the design
-                // isn't auto-saved at all, which the banner says.
-                (Target::None, Some(id)) => cx.downloads.keep(id, download),
-                _ => self.send_download(&mut cx.io, download),
-            }
         }
-        self.resume_leaving(cx)
+        // Browser storage keeps a design by its name: there's no saving
+        // one without.
+        if naming.name.trim().is_empty() {
+            return Next::Stay;
+        }
+        let name = varde_io::browser::file_name(&naming.name);
+        let own = matches!(&self.persist.target, Target::Browser { name: current, .. } if *current == name);
+        let asked = naming.replacing.as_deref() == Some(name.as_str());
+        let taken = if own {
+            // Renaming to its own name does nothing; saving as it saves.
+            !naming.rename && self.persist.damaged_file
+        } else {
+            // Listed, or said to be taken by the lane, which asked.
+            asked || cx.browser.iter().any(|design| design.name == name)
+        };
+        if taken && (naming.rename || !asked) {
+            if let Some(naming) = &mut self.persist.naming {
+                naming.replacing = Some(name);
+            }
+            return Next::Stay;
+        }
+        self.persist.naming = None;
+        self.persist.picking = None;
+        if naming.rename {
+            if let Target::Browser { file, .. } = self.persist.target
+                && !own
+            {
+                cx.io.send(IoRequest::Rename { file, name });
+            }
+            return self.resume_leaving(cx);
+        }
+        if own && !taken {
+            return self.save_design(cx);
+        }
+        // Asked as the user saves there first, while the click counts.
+        cx.ask_persist = true;
+        self.save_as(
+            cx,
+            SaveTo::Browser {
+                name,
+                overwrite: taken,
+            },
+        );
+        Next::Stay
+    }
+
+    /// The name the design was to be saved as in browser storage, `name`,
+    /// is taken, as another tab saved a design of it since the app listed
+    /// them: the Save As dialog shows again, asking about replacing it,
+    /// unless the user is asked something else.
+    fn ask_replacing(&mut self, name: String) -> bool {
+        if self.persist.picking.is_some() {
+            return false;
+        }
+        self.persist.picking = Some(Picking::Name);
+        self.persist.naming = Some(Naming {
+            name: design_name(Path::new(&name)),
+            place: SavePlace::Browser,
+            rename: false,
+            replacing: Some(name),
+        });
+        self.persist.name_focus = true;
+        true
+    }
+
+    /// The Save As dialog was closed without saving: as backing out of the
+    /// system's, see [`Doc::save_as_picked`].
+    pub(crate) fn name_cancelled(&mut self, cx: &mut Files) -> Next {
+        if self.persist.picking != Some(Picking::Name) {
+            return Next::Stay;
+        }
+        self.persist.naming = None;
+        self.save_as_picked_with(cx, None)
+    }
+
+    /// The answer to renaming `file` to `name`, see [`Doc::request_rename`]:
+    /// why it failed shows in the status bar.
+    pub(crate) fn renamed(&mut self, file: FileId, name: String, result: Result<(), String>) {
+        match (&mut self.persist.target, result) {
+            (
+                Target::Browser {
+                    file: ours,
+                    name: kept,
+                },
+                Ok(()),
+            ) if *ours == file => {
+                self.name = design_name(Path::new(&name));
+                *kept = name;
+            }
+            (_, Ok(())) => {}
+            (_, Err(error)) => self.notice = Some(format!("Couldn't rename the design: {error}")),
+        }
+    }
+
+    /// Downloads the design as it is, as `<name>.vrdp`, on the web: encoded
+    /// on the page, one encoding and one pass of snappy, cheaper than
+    /// sending it to the lane and having the file sent back. A download
+    /// changes nothing in storage, nor whether the design is saved: of a
+    /// design in browser storage it's recorded, which the welcome screen
+    /// and the file menu tell it stands against.
+    pub(crate) fn download(&mut self, cx: &mut Files) {
+        self.file_menu = false;
+        let Some(download) = &cx.downloader else {
+            return;
+        };
+        let name = varde_document::name::download_name(&self.name);
+        let result = varde_io::vrdp::to_bytes(self.editor.document(), &[])
+            .map_err(|e| e.to_string())
+            .and_then(|(bytes, _)| download(&name, &bytes));
+        if let Err(error) = result {
+            self.notice = Some(format!("Couldn't download {name}: {error}"));
+            return;
+        }
+        if let Target::Browser { file, .. } = self.persist.target {
+            // With changes not saved, it's not the design as saved: nor
+            // with them on their way to the file, as that save may fail.
+            let edited = self.edited();
+            let revision = self.editor.revision();
+            cx.io.send(IoRequest::RecordDownload { file, edited });
+            self.persist.download = Some(DocDownload {
+                time: crate::when::now(),
+                revision: (!edited).then_some(revision),
+            });
+        }
+    }
+
+    /// The lane's answer to recording a download of `file`: only a failure
+    /// says anything.
+    pub(crate) fn download_recorded(
+        &mut self,
+        file: FileId,
+        result: Result<Option<LastDownload>, String>,
+    ) {
+        if self.persist.target.file() == Some(file)
+            && let Err(error) = result
+        {
+            self.notice = Some(format!("Couldn't record the download: {error}"));
+        }
+    }
+
+    /// Where the design stands against its downloads, as the file menu
+    /// says, for a design in browser storage, with times relative to now.
+    pub(crate) fn download_status(&self) -> Option<varde_view::Downloads> {
+        if !matches!(self.persist.target, Target::Browser { .. }) {
+            return None;
+        }
+        let revision = self.editor.revision();
+        Some(match self.persist.download {
+            None => varde_view::Downloads::Never,
+            Some(download) => {
+                let at = Some(crate::when::ago_in_sentence(
+                    download.time,
+                    crate::when::now(),
+                ));
+                let latest = download.revision == Some(revision)
+                    && self.persist.saved_revision == Some(revision);
+                if latest {
+                    varde_view::Downloads::Latest(at)
+                } else {
+                    varde_view::Downloads::Changed(at)
+                }
+            }
+        })
+    }
+
+    /// The last download of the design, as it's opened, see
+    /// [`DocDownload`].
+    pub(super) fn opened_download(&mut self, download: Option<LastDownload>) {
+        let revision = self.editor.revision();
+        self.persist.download = download.map(|download| DocDownload {
+            time: download.time,
+            revision: download.latest.then_some(revision),
+        });
     }
 
     /// The answer to the store entry `id` asked for for a new design, see
@@ -1103,21 +1261,11 @@ impl Doc {
             return false;
         }
         self.persist.creating = None;
-        let download = cx.downloads.take(id);
         // Unless a Save As without it is on its way, which gives the
         // design a file of its own.
         let needed = self.persist.target == Target::None && !self.persist.saves.any();
         match *result {
-            Ok(file) if needed => {
-                self.persist.target = Target::Entry {
-                    file,
-                    downloaded: false,
-                };
-                // Before any auto-save, which needs the entry.
-                if let Some(download) = download {
-                    self.send_download(&mut cx.io, download);
-                }
-            }
+            Ok(file) if needed => self.persist.target = Target::Entry { file },
             Ok(file) => cx.io.close_clean(file),
             // Shown: until saved, the design would be lost with the app
             // without a word.
@@ -1133,10 +1281,29 @@ impl Doc {
         if self.persist.picking != Some(Picking::SaveAs) {
             return Next::Stay;
         }
+        self.save_as_picked_with(cx, chosen)
+    }
+
+    /// The Save As dialog, the system's or the app's, closed with the file
+    /// the user `chosen`, if they did.
+    fn save_as_picked_with(&mut self, cx: &mut Files, chosen: Option<Chosen>) -> Next {
         self.persist.picking = None;
         match chosen {
             Some(chosen) => {
-                self.save_as(cx, chosen);
+                let to = match chosen {
+                    // The dialog only asked about replacing the file the
+                    // user named, not one with the extension added.
+                    Chosen::Path(path) => {
+                        let (path, overwrite) = with_extension(path);
+                        SaveTo::Path { path, overwrite }
+                    }
+                    Chosen::File(picked) => SaveTo::Picked(picked),
+                    Chosen::Browser(name) => SaveTo::Browser {
+                        name,
+                        overwrite: false,
+                    },
+                };
+                self.save_as(cx, to);
                 Next::Stay
             }
             // Backing out of the dialog backs out of leaving too, if it was
@@ -1161,24 +1328,52 @@ impl Doc {
         revision: Revision,
         result: Result<varde_io::SavedAs, SaveError>,
     ) -> Next {
+        // Another tab took the name meanwhile: asked about replacing it, as
+        // the dialog would have, unless a newer save decides; leaving goes
+        // on once that's answered.
+        if let (Err(SaveError::Taken), Chosen::Browser(name)) = (&result, &chose) {
+            self.answered(SaveKind::SaveAs, revision, false);
+            if !self.persist.saves.supersede(SaveKind::SaveAs) && self.ask_replacing(name.clone()) {
+                return self.resume_leaving(cx);
+            }
+        }
         let result = result.map(|saved| {
-            let picked = match chose {
+            let target = match chose {
                 Chosen::Path(path) => {
                     self.name = design_name(&path);
+                    self.path = Some(cx.shown_path(&path));
                     cx.remember(path);
-                    None
+                    Target::File {
+                        file: saved.file,
+                        picked: None,
+                    }
                 }
                 // A file picked on the web isn't a recent file: there's no
                 // keeping its handle.
                 Chosen::File(picked) => {
                     self.name = design_name(Path::new(&picked.name));
-                    Some(picked)
+                    self.path = None;
+                    Target::File {
+                        file: saved.file,
+                        picked: Some(picked),
+                    }
+                }
+                Chosen::Browser(name) => {
+                    self.name = design_name(Path::new(&name));
+                    self.path = None;
+                    Target::Browser {
+                        file: saved.file,
+                        name,
+                    }
                 }
             };
-            self.persist.target = Target::File {
-                file: saved.file,
-                picked,
-            };
+            // Another design's downloads, unless saved over itself.
+            let same = matches!((&self.persist.target, &target),
+                (Target::Browser { name: was, .. }, Target::Browser { name, .. }) if was == name);
+            if !same {
+                self.persist.download = None;
+            }
+            self.persist.target = target;
             self.read_only = read_only(saved.access);
             // Answering it now would reach the new file, not the design
             // it's of.
@@ -1241,20 +1436,14 @@ impl Doc {
             });
             return Next::Stay;
         }
-        // Its store entry is closed once made, see `Io::abandon`, unless
-        // it's to keep a download, see `Downloads`.
-        let creating = self.persist.creating.take();
-        if !creating.is_some_and(|id| cx.downloads.awaits(id)) {
-            cx.io.abandon(creating);
-        }
+        // Its store entry is closed once made, see `Io::abandon`.
+        cx.io.abandon(self.persist.creating.take());
         let target = mem::replace(&mut self.persist.target, Target::None);
         if let Some(file) = target.file() {
             // Changes offered to be restored and not answered are kept, to
             // be offered again. Anything else auto-saved is saved, or the
-            // user chose not to save it, but for the design as downloaded,
-            // which the lane keeps, see `IoRequest::Close`: the download
-            // may not have been kept. A store entry kept is listed again
-            // by the lane, so the welcome screen shows it.
+            // user chose not to save it. A store entry kept is listed
+            // again by the lane, so the welcome screen shows it.
             let closing = match self.persist.recovered {
                 None => Closing::Clean,
                 Some(_) => Closing::Keep,

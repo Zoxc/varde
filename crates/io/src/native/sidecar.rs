@@ -36,7 +36,8 @@ use std::path::{Path, PathBuf};
 use varde_document::Snapshot;
 
 use crate::ReadOnly;
-use crate::autosave::{AutoSaved, Ending, Held, Origin};
+use crate::autosave::{AutoSaved, Ending, Held};
+use crate::lock::AutoSaves;
 use crate::vrdp::{Error as FileError, Opened, Tail};
 
 /// How often [`lock`] starts over when the sidecar it locked was deleted.
@@ -65,16 +66,6 @@ pub(crate) fn is_sidecar_name(path: &Path) -> bool {
     name.len() > 1 + SUFFIX.len()
         && name.starts_with(b".")
         && name[name.len() - SUFFIX.len()..].eq_ignore_ascii_case(SUFFIX)
-}
-
-impl AutoSaved {
-    /// Whether this was based on the design whose file ends at `tail`.
-    /// Anything else means the design changed since: saved by someone
-    /// else, rewritten, or saved by the session that auto-saved this but
-    /// kept it, e.g. crashing before emptying the sidecar.
-    pub(crate) fn based_on(&self, tail: Tail) -> bool {
-        self.base == Some(tail)
-    }
 }
 
 /// A locked auto-save file at a path, natively: a design's sidecar or a
@@ -211,14 +202,6 @@ impl LockFile {
         }
     }
 
-    /// A store entry left behind, opened again, see [`Held::left_behind`].
-    pub(crate) fn left_behind(self) -> Self {
-        Self {
-            held: self.held.left_behind(),
-            ..self
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
@@ -241,15 +224,13 @@ impl LockFile {
     }
 
     /// Auto-saves `document`, based on the design's file at `base`, if
-    /// it has one, holding it as `origin` says. The sidecar sits next to
-    /// the design, so it's not named.
+    /// it has one. The sidecar sits next to the design, so it's not named.
     pub(crate) fn append(
         &mut self,
         base: Option<Tail>,
         document: &Snapshot,
-        origin: Origin,
     ) -> Result<(), FileError> {
-        self.held.append(base, None, document, origin)
+        self.held.append(base, None, document)
     }
 
     /// Empties it, once what's in it is saved or not wanted.
@@ -297,6 +278,16 @@ impl LockFile {
         };
         // Elsewhere `held` unlocks here, as it goes out of scope.
         result
+    }
+}
+
+impl AutoSaves for LockFile {
+    fn read_with_report(&mut self) -> Result<Option<Opened<AutoSaved>>, FileError> {
+        LockFile::read_with_report(self)
+    }
+
+    fn clear(&mut self) -> io::Result<()> {
+        LockFile::clear(self)
     }
 }
 

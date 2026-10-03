@@ -60,9 +60,7 @@ pub(crate) fn create_with(
 /// `dir`: it's taken for a new design's from then on, and deleted with it.
 pub(crate) fn open(dir: &Path, path: &Path) -> Result<LockFile, String> {
     listed_entry(dir, path)?;
-    sidecar::lock_at(path, &options(false), |_| {})
-        .map(LockFile::left_behind)
-        .map_err(|error| error.to_string())
+    sidecar::lock_at(path, &options(false), |_| {}).map_err(|error| error.to_string())
 }
 
 /// The new designs in `dir` left behind by sessions that crashed, newest
@@ -108,11 +106,10 @@ fn modified(entry: &LockFile) -> Option<UnixSeconds> {
 
 /// Deletes the entry at `path` in `dir`, left behind by a session that
 /// crashed: the user doesn't want it. Refused for anything but an entry in
-/// `dir`, or one that's open. Changes on top of a design downloaded on the
-/// web go back to it instead, see [`Ending::Discard`].
+/// `dir`, or one that's open.
 pub(crate) fn discard(dir: &Path, path: &Path) -> Result<(), String> {
     open(dir, path)?
-        .end(Ending::Discard)
+        .end(Ending::Close)
         .map_err(|e| format!("couldn't delete the recovered design: {e}"))
 }
 

@@ -151,6 +151,7 @@ fn status_bar_of(doc: &Doc, mouse_hints: bool) -> Vec<String> {
                 mouse_hints,
                 ..Default::default()
             },
+            crate::Offers::default(),
         ),
         size,
         &mut renderer,

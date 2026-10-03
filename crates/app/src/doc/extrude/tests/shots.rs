@@ -1651,7 +1651,9 @@ fn shots_26_damaged_prompt() {
             document: Document::example(),
             access: Access::Edit,
             recovered: Ok(None),
-            downloaded: false,
+            browser: None,
+            not_copied: None,
+            download: None,
             damage: Some(Damage {
                 kind: DamageKind::Damaged { found: Some(found) },
                 time: hours_ago(26),
@@ -1735,7 +1737,7 @@ fn shots_27_thumbnail() {
         let handle = iced::widget::image::Handle::from_rgba(
             image.width(),
             image.height(),
-            image.into_rgba(),
+            image.clone().into_rgba(),
         );
         files.thumbnails = vec![(path("plate"), handle)];
         let welcome = Welcome::default();
@@ -1743,6 +1745,25 @@ fn shots_27_thumbnail() {
         camera.take_view(view, "27-welcome", Shot::new());
         camera.take_view(view, "27-welcome-dark", Shot::new().dark());
         camera.take_view(view, "27-welcome-scale-2", Shot::new().scale(2.0));
+
+        // On the web: the page of what's in browser storage, its cards as
+        // wide as the mock's.
+        let mut files = Files::new(None);
+        files.browser_storage = true;
+        files.browser = ["plate", "bracket", "washer"]
+            .map(|name| varde_io::BrowserDesign {
+                name: format!("{name}.vrdp"),
+                saved: Some(UnixSeconds(crate::when::now().0 - 3600)),
+                sum: None,
+                thumbnail: (name == "plate").then(|| image.clone()),
+                download: varde_io::DownloadStatus::Never,
+                unsaved: false,
+                in_use: false,
+                damage: None,
+            })
+            .into();
+        let view = |mode| welcome.view(&files, mode, varde_view::ThemeChoice::Auto);
+        camera.take_view(view, "27-welcome-web", Shot::new().size(1500.0, 900.0));
     });
 }
 
@@ -1771,4 +1792,128 @@ fn shots_29_show_failure() {
             Shot::new().scale(2.0),
         );
     });
+}
+
+/// Scenario 30: the file cell: a design never saved, "Not saved" on its
+/// pill; natively its path shown as it's pointed at; on the web the bar
+/// under it saying where the design is kept, in browser storage (also
+/// dark, scale 2) or on the computer, what pointing at it says, and the
+/// file menu starting with where it stands against its downloads.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_30_file_cell() {
+    shooting(|camera| {
+        let (mut doc, _) = example();
+        framed(&mut doc);
+        doc.apply(
+            doc.editor
+                .document()
+                .add_sketch(varde_document::Plane::Origin(
+                    varde_document::OriginPlane::XY,
+                )),
+        );
+        camera.take(&doc, "30-file-cell-not-saved", Shot::new());
+        doc.name = "bracket".to_owned();
+        doc.path = Some("~/parts/bracket.vrdp".to_owned());
+        camera.take(
+            &doc,
+            "30-file-cell-path",
+            Shot::new().pointer(Pointer::Over("bracket")),
+        );
+        doc.path = None;
+        let over = Shot::new().pointer(Pointer::Over("bracket"));
+        let browser = varde_view::Location::Browser;
+        let doc = &doc;
+        camera.take_view(
+            |mode| web_view(doc, browser, false, mode),
+            "30-file-cell-browser",
+            Shot::new(),
+        );
+        camera.take_view(
+            |mode| web_view(doc, browser, false, mode),
+            "30-file-cell-browser-told",
+            over,
+        );
+        camera.take_view(
+            |mode| web_view(doc, browser, false, mode),
+            "30-file-cell-browser-dark-scale2",
+            over.dark().scale(2.0),
+        );
+        let computer = varde_view::Location::Computer;
+        camera.take_view(
+            |mode| web_view(doc, computer, false, mode),
+            "30-file-cell-computer",
+            Shot::new(),
+        );
+        camera.take_view(
+            |mode| web_view(doc, computer, false, mode),
+            "30-file-cell-computer-told",
+            over,
+        );
+        camera.take_view(
+            |mode| web_view(doc, browser, true, mode),
+            "30-file-menu-web",
+            Shot::new(),
+        );
+        camera.take_view(
+            |mode| web_view(doc, browser, true, mode),
+            "30-file-menu-web-dark",
+            Shot::new().dark(),
+        );
+    });
+}
+
+/// Scenario 31: the web's Save As dialog for a design with no name: its
+/// field empty, Save disabled, saying it's saved in browser storage;
+/// then a file on the computer chosen, saying where's chosen next.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_31_save_as_dialog() {
+    shooting(|camera| {
+        let (mut doc, _) = example();
+        framed(&mut doc);
+        let doc = &doc;
+        let dialog = |place| {
+            move |mode| {
+                let mut state = doc.state(false, mode, Default::default(), Default::default());
+                state.overlay = Some(varde_view::Overlay::NamePrompt);
+                state.naming = Some(varde_view::NamePrompt {
+                    name: "",
+                    place,
+                    places: true,
+                    rename: false,
+                    taken: None,
+                });
+                varde_view::document(state)
+            }
+        };
+        let browser = varde_view::SavePlace::Browser;
+        camera.take_view(dialog(browser), "31-save-as-browser", Shot::new());
+        camera.take_view(
+            dialog(browser),
+            "31-save-as-browser-dark",
+            Shot::new().dark(),
+        );
+        let computer = varde_view::SavePlace::Computer;
+        camera.take_view(dialog(computer), "31-save-as-computer", Shot::new());
+    });
+}
+
+/// `doc`'s screen in `mode` as on the web, kept at `location`, with the
+/// file menu open if `menu`, starting with a download changed since.
+fn web_view(
+    doc: &Doc,
+    location: varde_view::Location,
+    menu: bool,
+    mode: Mode,
+) -> iced::Element<'_, varde_view::Message> {
+    let mut state = doc.state(false, mode, Default::default(), Default::default());
+    state.location = Some(location);
+    if menu {
+        state.overlay = Some(varde_view::Overlay::FileMenu);
+        state.downloads = Some(varde_view::Downloads::Changed(Some("Sep 30".into())));
+        state.downloadable = true;
+        state.rename = Some(true);
+    }
+    varde_view::document(state)
 }

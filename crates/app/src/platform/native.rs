@@ -17,6 +17,14 @@ pub(crate) fn leaving() -> Subscription<Message> {
     Subscription::none()
 }
 
+/// Natively iced shows the title as the window's.
+pub(crate) fn show_title(_title: &str) {}
+
+/// Natively the welcome screen takes no files dropped.
+pub(crate) fn drops() -> Subscription<Message> {
+    Subscription::none()
+}
+
 /// Ticks every second with the time, as [`Message::AutoSaveTick`], from a
 /// thread of its own: iced's thread pool executor has no timer. The thread
 /// ends at the tick after the subscription is dropped.

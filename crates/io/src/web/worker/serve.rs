@@ -76,7 +76,8 @@ async fn run(mut woken: UnboundedReceiver<Numbered>) {
             };
             let relist = files.relists(&request);
             answer(seq, &mut files, request, object).await;
-            if relist {
+            // Listing browser storage may have made an entry, too.
+            if relist || files.take_rescued() {
                 answer(seq, &mut files, Request::ListRecovered, None).await;
             }
         }
@@ -85,7 +86,7 @@ async fn run(mut woken: UnboundedReceiver<Numbered>) {
 
 /// Handles `request` and posts its answer, numbered `seq`: the number of
 /// the request it answers, or for recovered designs listed after one (see
-/// `Files::relists`), of that one.
+/// `Files::relists` and `Files::take_rescued`), of that one.
 async fn answer(seq: u64, files: &mut Files, request: Request, object: Option<Handed>) {
     let failed = request.failure();
     let response = files.handle(request, object).await;

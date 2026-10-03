@@ -1,27 +1,28 @@
-//! The store of new designs on the web, in the Origin Private File System.
+//! The Origin Private File System, the web's browser storage, and its
+//! store of new designs.
 //!
-//! Laid out like the native store (`src/native/store.rs`): each new design is an
-//! entry `designs/<id>.vrdp`, a `.vrdp` like any other. OPFS is only
-//! reachable through handles, and its synchronous access handles, which
-//! read and write at an offset, exist only in workers, so the web's IO
-//! worker handles the entries, in `src/web/worker/files.rs`, with the OPFS primitives of
-//! `src/web/worker/opfs.rs`. A sync access handle is
-//! exclusive: holding one open on an entry for as long as its design is
-//! open is the entry's lock, like the OS lock natively, and another tab
-//! trying to take it is refused (`NoModificationAllowedError`). The browser
-//! lets go of it when the tab or its worker goes, so a closed tab never
-//! leaves an entry locked. Auto-saves are appended through the held
+//! The store is laid out like the native one (`src/native/store.rs`): each
+//! new design is an entry `designs/<id>.vrdp`, a `.vrdp` like any other,
+//! until it's first saved. Beside it, `saved` holds the designs saved to
+//! browser storage by name, each with its sidecar, see `src/browser.rs`, and
+//! `downloads.toml` the downloads made of them, see `src/downloads.rs`.
+//! OPFS is only reachable through handles, and its synchronous access
+//! handles, which read and write at an offset, exist only in workers, so
+//! the web's IO worker handles them, in `src/web/worker/files.rs`, with
+//! the OPFS primitives of `src/web/worker/opfs.rs`, which also makes a
+//! directory a [`Dir`](crate::dir::Dir). A sync access handle is
+//! exclusive: holding one open on an entry, or a sidecar, for as long as
+//! its design is open is its lock, like the OS lock natively, and another
+//! tab trying to take it is refused (`NoModificationAllowedError`). The
+//! browser lets go of it when the tab or its worker goes, so a closed tab
+//! never leaves a design locked. Auto-saves are appended through the held
 //! handle by [`autosave::Held`](crate::autosave::Held), which works on any
 //! [`Storage`](crate::vrdp::Storage).
 //!
 //! A clean close empties and deletes the entry. One found with something
 //! in it and not held by anyone is from a tab that was closed or reloaded
 //! with its design open, and is offered back on the welcome screen, as
-//! natively after a crash. Where saving downloads the design, the entry
-//! gets the design as downloaded, marked so, and closing keeps it, since
-//! the page isn't told whether the download was kept, going back to it
-//! should later changes not be saved: the welcome screen lists those
-//! apart, see [`Request::Close`](crate::Request::Close).
+//! natively after a crash.
 //!
 //! Designs opened from files of the user's get an entry too, which their
 //! auto-saves go to along with the file's name, see `src/pick.rs`. The

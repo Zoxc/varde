@@ -416,7 +416,7 @@ fn fold_header<'a>(picked: &Picked<'a>, slot: MeasureSlot, folded: bool) -> Elem
     )
     .padding([2, 0])
     .width(Length::Fill)
-    .style(theme::flat_button(false))
+    .style(theme::flat_button(false, theme::Tone::Text))
     .on_press(Message::Look(Look::Measure(MeasureLook::Fold(slot))))
     .into()
 }

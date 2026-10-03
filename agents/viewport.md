@@ -57,10 +57,11 @@ row always shows, however tall the list shows.
 
 The status bar (`status.rs`) floats over the viewport's bottom right, 12
 px in from its right and 10 px up from its bottom (`STATUS_BAR_ROOM` is
-what it takes of the height), `opaque` so a drag on it doesn't orbit; on
-the welcome screen it floats over the window's. The feature selected in
-the Timeline, or what's selected in the model (see "Selecting" below), is
-in a box of its own, with the key clearing it (`Space`);
+what it takes of the height), `opaque` so a drag on it doesn't orbit;
+the welcome screen has none, its buttons showing their keys. The
+feature selected in the Timeline, or what's selected in the model (see
+"Selecting" below), is in a box of its own, with the key clearing it
+(`Space`);
 then a bar with what's going on (picking a plane, the sketch's or the
 extrude's status, regenerating, a failed edit, saving: nothing with
 nothing selected), the hints, and the button of the view options menu,
@@ -1346,7 +1347,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_29`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_30`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `X` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -1398,11 +1399,15 @@ past the save opened, with a save found and with it failing to open
 save's thumbnail of the example's plate, rendered by the viewport's
 frame and written as `27-thumbnail.png`, then the welcome screen showing
 it in a recent file's card beside one without, light, dark and at scale
-2 (`shots_27`); the view options menu with its Shading submenu open, a
+2, and the web's page of what's in browser storage (`shots_27`); the view options menu with its Shading submenu open, a
 choice hovered, and its Edges submenu, dark at scale 2 (`shots_28`);
 a revolve about a line across its region, its failure box with Show
 left of Add anyway (light, dark), then Go back once shown (also scale
-2, `shots_29`).
+2, `shots_29`); the file cell (`shots_30`): a design never saved, "Not
+saved" on its pill, its path shown as it's pointed at, and as on the web
+the bar under it in browser storage (also dark at scale 2) and on the
+computer, each also pointed at, and the file menu starting with the
+downloads (light, dark), drawn from `Doc::state` with the location set.
 Shots are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

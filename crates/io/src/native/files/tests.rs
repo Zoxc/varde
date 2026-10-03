@@ -5,7 +5,7 @@ use varde_document::Document;
 use super::*;
 use crate::native::sidecar::sidecar_path;
 use crate::tests::{TempDir, auto_saved_at, with_sketch_named};
-use crate::{Picked, PickedFrom};
+use crate::{Access, Offer, Picked, PickedFrom};
 
 fn open(files: &mut Files, path: &Path) -> Result<Opened, String> {
     match files.handle(Request::Open {
@@ -693,11 +693,7 @@ fn crashed_with(path: &Path, document: &Document) {
     let (file, _, _) = DocumentFile::open(path).unwrap();
     let mut sidecar = sidecar::lock(path).unwrap();
     sidecar
-        .append(
-            Some(file.tail()),
-            &Arc::new(document.clone()),
-            Origin::Edited,
-        )
+        .append(Some(file.tail()), &Arc::new(document.clone()))
         .unwrap();
     drop(sidecar);
 }
@@ -1188,187 +1184,6 @@ fn only_entries_of_the_store_open_as_recovered() {
     assert!(open_recovered(&mut Files::new(Stores::default()), &path).is_err());
     assert_eq!(std::fs::read(&elsewhere).unwrap(), bytes);
     assert_eq!(listed(&mut files).len(), 1);
-}
-
-/// Auto-saves `document` to `file` as the design as downloaded, as the web
-/// app does after a download.
-fn auto_save_downloaded(
-    files: &mut Files,
-    file: FileId,
-    document: Arc<Document>,
-) -> Result<(), String> {
-    match files.handle(Request::KeepDownload {
-        file,
-        revision: 7.into(),
-        document,
-    }) {
-        Response::AutoSaved { result, .. } => result,
-        response => panic!("unexpected {response:?}"),
-    }
-}
-
-/// A new design's entry marked as downloaded, as on the web after a
-/// download: closing keeps it, listed as downloaded, and an auto-save of a
-/// later edit makes it changes never saved again, until the clean close,
-/// for "Don't save", goes back to the download.
-#[test]
-fn a_downloaded_design_outlives_closing() {
-    let dir = TempDir::new("files-new-downloaded");
-    let mut files = with_store(&dir);
-    let file = create(&mut files).unwrap();
-    auto_save(&mut files, file, edited()).unwrap();
-    auto_save_downloaded(&mut files, file, Arc::new(Document::example())).unwrap();
-    close_keeping(&mut files, file).unwrap();
-    let designs = listed(&mut files);
-    assert_eq!(designs.len(), 1);
-    assert!(designs[0].downloaded);
-    let path = designs[0].path.clone();
-    let saved = auto_saved_at(&path).unwrap();
-    assert_eq!(*saved.document, Document::example());
-    assert!(saved.origin.is_download());
-
-    let Response::Opened {
-        result: Ok(opened), ..
-    } = files.handle(Request::OpenRecovered {
-        id: OpenId(4),
-        path: path.clone(),
-    })
-    else {
-        panic!("not opened");
-    };
-    assert_eq!(opened.document, Document::example());
-    auto_save(&mut files, opened.file, edited()).unwrap();
-    close_keeping(&mut files, opened.file).unwrap();
-    let designs = listed(&mut files);
-    assert_eq!(designs.len(), 1);
-    assert!(!designs[0].downloaded);
-
-    let Response::Opened {
-        result: Ok(opened), ..
-    } = files.handle(Request::OpenRecovered {
-        id: OpenId(5),
-        path: path.clone(),
-    })
-    else {
-        panic!("not opened");
-    };
-    assert_eq!(opened.document, *edited());
-    close(&mut files, opened.file).unwrap();
-    let designs = listed(&mut files);
-    assert_eq!(designs.len(), 1);
-    assert!(designs[0].downloaded);
-    assert_eq!(auto_saved(&path), Some(Document::example()));
-}
-
-/// "Don't save" for edits made after a download goes back to the design as
-/// downloaded, the newest one if there were several: the entry is cut
-/// short right after it, auto-saves of the edits and a torn one after them
-/// dropped, and kept, listed as downloaded. An entry never downloaded is
-/// deleted as ever.
-#[test]
-fn a_clean_close_goes_back_to_the_download() {
-    let dir = TempDir::new("files-new-downloaded-discard");
-    let mut files = with_store(&dir);
-    let file = create(&mut files).unwrap();
-    let path = entry(&dir).unwrap();
-    auto_save_downloaded(&mut files, file, edited()).unwrap();
-    auto_save(&mut files, file, Arc::new(Document::default())).unwrap();
-    auto_save_downloaded(&mut files, file, Arc::new(Document::example())).unwrap();
-    let len = std::fs::metadata(&path).unwrap().len();
-    auto_save(&mut files, file, edited()).unwrap();
-    let before_last = std::fs::metadata(&path).unwrap().len() as usize;
-    auto_save(&mut files, file, Arc::new(Document::default())).unwrap();
-    // Half of another record, as a crash while appending leaves.
-    let bytes = std::fs::read(&path).unwrap();
-    let record = &bytes[before_last..];
-    let mut torn = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&path)
-        .unwrap();
-    std::io::Write::write_all(&mut torn, &record[..record.len() / 2]).unwrap();
-    drop(torn);
-
-    close(&mut files, file).unwrap();
-    assert_eq!(entry(&dir), Some(path.clone()));
-    assert_eq!(std::fs::metadata(&path).unwrap().len(), len);
-    let designs = listed(&mut files);
-    assert_eq!(designs.len(), 1);
-    assert!(designs[0].downloaded);
-    let saved = auto_saved_at(&path).unwrap();
-    assert!(saved.origin.is_download());
-    assert_eq!(*saved.document, Document::example());
-
-    // Open again and closed at once, it stays as it is.
-    let Response::Opened {
-        result: Ok(opened), ..
-    } = files.handle(Request::OpenRecovered {
-        id: OpenId(4),
-        path: path.clone(),
-    })
-    else {
-        panic!("not opened");
-    };
-    close(&mut files, opened.file).unwrap();
-    assert_eq!(std::fs::metadata(&path).unwrap().len(), len);
-    assert!(listed(&mut files)[0].downloaded);
-
-    let Response::RecoveredDiscarded { result, .. } =
-        files.handle(Request::DiscardRecovered { path })
-    else {
-        panic!("not discarded");
-    };
-    result.unwrap();
-    assert_eq!(entry(&dir), None);
-
-    let file = create(&mut files).unwrap();
-    auto_save(&mut files, file, edited()).unwrap();
-    auto_save(&mut files, file, Arc::new(Document::example())).unwrap();
-    close(&mut files, file).unwrap();
-    assert_eq!(entry(&dir), None);
-}
-
-/// Discarding changes never saved listed on the welcome screen, which a
-/// design downloaded before is under, goes back to the download, as not
-/// saving them from the document does: listed as downloaded, it may be the
-/// only copy. Discarding that deletes the entry.
-#[test]
-fn discarding_changes_on_top_of_a_download_goes_back_to_it() {
-    let dir = TempDir::new("files-discard-over-download");
-    let mut files = with_store(&dir);
-    let file = create(&mut files).unwrap();
-    auto_save_downloaded(&mut files, file, Arc::new(Document::example())).unwrap();
-    auto_save(&mut files, file, edited()).unwrap();
-    close_keeping(&mut files, file).unwrap();
-    let designs = listed(&mut files);
-    assert_eq!(designs.len(), 1);
-    assert!(!designs[0].downloaded);
-    let path = designs[0].path.clone();
-
-    let discard =
-        |files: &mut Files| match files.handle(Request::DiscardRecovered { path: path.clone() }) {
-            Response::RecoveredDiscarded { result, .. } => result,
-            response => panic!("unexpected {response:?}"),
-        };
-    discard(&mut files).unwrap();
-    let designs = listed(&mut files);
-    assert_eq!(designs.len(), 1);
-    assert!(designs[0].downloaded);
-    assert_eq!(auto_saved(&path), Some(Document::example()));
-
-    discard(&mut files).unwrap();
-    assert_eq!(entry(&dir), None);
-}
-
-/// A design's sidecar is never kept by the clean close, whatever went to
-/// it: only a new design's store entry holds the design as downloaded.
-#[test]
-fn a_clean_close_deletes_a_sidecar_whatever_it_holds() {
-    let dir = TempDir::new("files-sidecar-marked");
-    let mut files = Files::new(Stores::default());
-    let opened = open(&mut files, &dir.design()).unwrap();
-    auto_save_downloaded(&mut files, opened.file, edited()).unwrap();
-    close(&mut files, opened.file).unwrap();
-    assert!(!sidecar_path(&dir.design()).unwrap().exists());
 }
 
 /// A Save As that fails leaves the sidecar of the file it would have

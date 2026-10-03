@@ -468,7 +468,12 @@ fn the_copy_button_copies_the_value_with_its_unit_at_full_precision() {
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
     let mut ui = shown(
-        doc.view(false, Mode::Light, varde_view::ViewOptions::default()),
+        doc.view(
+            false,
+            Mode::Light,
+            varde_view::ViewOptions::default(),
+            crate::Offers::default(),
+        ),
         size,
         &mut renderer,
     );

@@ -549,7 +549,12 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
 
     // Listed in the Timeline, failing, its note naming the face as it
     // can: its maker and body are gone.
-    let state = doc.state(false, Mode::Light, varde_view::ViewOptions::default());
+    let state = doc.state(
+        false,
+        Mode::Light,
+        varde_view::ViewOptions::default(),
+        crate::Offers::default(),
+    );
     assert!(state.failed.iter().any(|f| f.feature == id));
     drop(state);
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));

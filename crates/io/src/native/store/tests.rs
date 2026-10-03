@@ -76,9 +76,7 @@ fn an_entry_held_while_made_gets_a_new_name() {
 fn list_finds_entries_left_behind() {
     let dir = TempDir::new("store-list");
     let mut saved = create(&dir.0).unwrap();
-    saved
-        .append(None, &Arc::new(Document::example()), Origin::Edited)
-        .unwrap();
+    saved.append(None, &Arc::new(Document::example())).unwrap();
     let saved_path = saved.path().to_owned();
     drop(saved);
     let empty = create(&dir.0).unwrap();
@@ -115,8 +113,7 @@ fn discard_deletes_only_entries_nobody_holds() {
     let dir = TempDir::new("store-discard");
     let designs = dir.0.join("designs");
     let mut left = create(&designs).unwrap();
-    left.append(None, &Arc::new(Document::example()), Origin::Edited)
-        .unwrap();
+    left.append(None, &Arc::new(Document::example())).unwrap();
     let path = left.path().to_owned();
     // Held.
     assert!(discard(&designs, &path).is_err());
@@ -155,32 +152,4 @@ fn an_entry_is_listed_by_the_name_it_holds() {
     assert_eq!(listed.len(), 1, "{listed:?}");
     assert_eq!(listed[0].path, path);
     assert_eq!(listed[0].name.as_deref(), Some("bracket.vrdp"));
-    assert!(!listed[0].downloaded);
-}
-
-/// An entry is listed as downloaded only while its newest record is the
-/// design as downloaded: a later auto-save makes it changes never saved.
-#[test]
-fn an_entry_is_listed_as_downloaded_by_its_newest_record() {
-    let dir = TempDir::new("store-downloaded");
-    let mut entry = create(&dir.0).unwrap();
-    entry
-        .append(None, &Arc::new(Document::default()), Origin::Edited)
-        .unwrap();
-    entry
-        .append(None, &Arc::new(Document::example()), Origin::Downloaded)
-        .unwrap();
-    drop(entry);
-    let listed = list(&dir.0);
-    assert_eq!(listed.len(), 1, "{listed:?}");
-    assert!(listed[0].downloaded);
-
-    let mut entry = open(&dir.0, &listed[0].path).unwrap();
-    entry
-        .append(None, &Arc::new(Document::default()), Origin::Edited)
-        .unwrap();
-    drop(entry);
-    let listed = list(&dir.0);
-    assert_eq!(listed.len(), 1, "{listed:?}");
-    assert!(!listed[0].downloaded);
 }

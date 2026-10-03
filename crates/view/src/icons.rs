@@ -68,6 +68,13 @@ icons! {
     // Not in the mocks: two sheets, for copying a value.
     Copy => r#"<rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V5.5a1 1 0 0 0-1-1h-9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3"/>"#,
     More => r##"<circle cx="5.5" cy="12" r=".9" fill="#000"/><circle cx="12" cy="12" r=".9" fill="#000"/><circle cx="18.5" cy="12" r=".9" fill="#000"/>"##,
+    // Where a design is kept on the web, browser storage (a database's
+    // drum) or a computer, and a download's arrow into a tray.
+    Browser => r#"<ellipse cx="12" cy="6" rx="7" ry="2.8"/><path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8"/>"#,
+    Computer => r#"<path d="M4 5h16v11H4zM2 19h20"/>"#,
+    Download => r#"<path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 16v4h16v-4"/>"#,
+    // Not in the mocks: renaming, a name's field with the text cursor in it.
+    Rename => r#"<path d="M12 8H5a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h7"/><path class="a" d="M16 5v14M14 5h4M14 19h4"/>"#,
     // The tools, from the icon mock.
     Sketch => r#"<path class="r" d="M4 20h16"/><path class="t" d="M14.5 4.5l5 5L9 20H4v-5z"/><path class="a" d="M6 13l5 5"/>"#,
     Extrude => r#"<path class="t" d="M4 15l8 4 8-4-8-4z"/><path class="a" d="M12 11V3M9 6l3-3 3 3"/>"#,

@@ -5,7 +5,7 @@ use iced::{Subscription, window};
 
 mod page;
 
-pub(crate) use page::{guard, leaving};
+pub(crate) use page::{drops, guard, leaving};
 
 use super::TICK;
 use crate::Message;
@@ -15,6 +15,16 @@ use crate::Message;
 /// `setTimeout`.
 pub(crate) fn auto_save_ticks() -> Subscription<Message> {
     iced::time::every(TICK).map(|_| Message::AutoSaveTick(Instant::now()))
+}
+
+/// Shows `title` as the page's, if it isn't already: the tab and the
+/// browser's history name the design by it.
+pub(crate) fn show_title(title: &str) {
+    if let Some(document) = web_sys::window().and_then(|window| window.document())
+        && document.title() != title
+    {
+        document.set_title(title);
+    }
 }
 
 /// Browsers have no window icon.

@@ -12,7 +12,7 @@ mod settings;
 mod welcome;
 mod when;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use iced::futures::Stream;
 use iced::keyboard::{self, key};
@@ -21,12 +21,12 @@ use iced::{Element, Subscription, Task, window};
 use varde_document::APP_NAME;
 use varde_document::Revision;
 use varde_io::{
-    Chosen, FileId, OpenId, Panic, Picked, Recovered, Request as IoRequest, Response as IoResponse,
+    BrowserDesign, Chosen, Panic, Picked, Recovered, Request as IoRequest, Response as IoResponse,
     SaveError,
 };
 use varde_view::{File, Held, Look, Message as Ui, Mode, Unsaved, ViewOptions};
 
-use crate::doc::{Dialog, Doc, DocId, Downloader, Downloads, Focus, Leave};
+use crate::doc::{Dialog, Doc, DocId, Downloader, Focus, Leave};
 use crate::io::Io;
 use crate::keys::{document_key, welcome_key};
 use crate::message::{ForDoc, Message};
@@ -54,17 +54,35 @@ pub(crate) struct Varde {
 }
 
 /// The files side of the app, which both screens' steps use: the IO lane,
-/// saving by download, and the lists the welcome screen shows.
+/// downloads, and the lists the welcome screen shows.
 struct Files {
     io: Io,
-    downloads: Downloads,
-    /// Saving by download: `None` where saves go to files, natively or on
-    /// the web with the File System Access API. Tests set it natively.
+    /// How a design is handed over as a download: on the web, by the page.
+    /// `None` natively, where there's nothing to download. Tests set it
+    /// natively.
     downloader: Option<Downloader>,
+    /// Whether designs are saved in browser storage, by name, as on the
+    /// web: Save As asks for a name in the app's own dialog. Tests set it
+    /// natively.
+    browser_storage: bool,
+    /// Whether the File System Access API is there (Chromium): files of
+    /// the user's are picked and saved back to, Save As offers one, and
+    /// exports aren't downloaded.
+    file_system_access: bool,
     recent: Recent,
-    /// New designs left behind by sessions that crashed, newest first, and
-    /// on the web designs downloaded and closed since.
+    /// New designs left behind by sessions that crashed, newest first.
     recovered: Vec<Recovered>,
+    /// On the web, the designs saved in browser storage, newest first, as
+    /// last listed, and their thumbnails as iced handles, made once per
+    /// design and save, see [`Files::browser_listed`].
+    browser: Vec<BrowserDesign>,
+    browser_thumbnails: Vec<BrowserThumbnail>,
+    /// On the web, what the browser says of its storage, see
+    /// [`varde_io::storage`].
+    storage: StorageState,
+    /// Whether to ask the browser to keep its storage for good, as the
+    /// user just saved to it: done after the step, see `Varde::update`.
+    ask_persist: bool,
     /// The recent files' thumbnails, by path, as last read: see
     /// [`Files::load_thumbnails`].
     thumbnails: Vec<(PathBuf, iced::widget::image::Handle)>,
@@ -73,23 +91,114 @@ struct Files {
     panic: Option<Panic>,
 }
 
+/// The thumbnail of a design in browser storage, as an iced handle, and
+/// the design's name and the sum of its newest save, which tell when it's
+/// another.
+struct BrowserThumbnail {
+    name: String,
+    sum: u128,
+    handle: iced::widget::image::Handle,
+}
+
+/// What the platform offers the document screen, as [`Files`] knows it:
+/// the file menu offers Download where a design can be downloaded, and
+/// the Save As dialog a file on the computer where the File System Access
+/// API is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Offers {
+    pub(crate) download: bool,
+    pub(crate) file_system_access: bool,
+}
+
+/// What the browser says of its storage, on the web.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct StorageState {
+    /// Whether it keeps the site's storage for good, if it says.
+    pub(crate) persisted: Option<bool>,
+    /// How much of it the site uses, and may, if it says.
+    pub(crate) space: Option<varde_io::storage::Space>,
+    /// Whether the app asked it to keep the site's storage this session.
+    pub(crate) asked: bool,
+}
+
 impl Files {
     fn new(downloader: Option<Downloader>) -> Self {
         Self {
             io: Io::new(),
-            downloads: Downloads::default(),
             downloader,
+            browser_storage: cfg!(target_arch = "wasm32"),
+            file_system_access: varde_io::pick::file_system_access(),
             recent: Recent::default(),
             recovered: Vec::new(),
+            browser: Vec::new(),
+            browser_thumbnails: Vec::new(),
+            storage: StorageState::default(),
+            ask_persist: false,
             thumbnails: Vec::new(),
             panic: None,
         }
     }
 
-    /// Takes the answer to the store entry `id` asked for for a document
-    /// gone since, see [`Downloads::settle`].
-    fn settle_created(&mut self, id: OpenId, result: Result<FileId, String>) {
-        self.downloads.settle(&mut self.io, id, result);
+    /// Takes the designs in browser storage as listed. Their thumbnails'
+    /// handles are kept while the design is saved as it was, by its sum:
+    /// a handle is uploaded once per id.
+    fn browser_listed(&mut self, designs: Vec<BrowserDesign>) {
+        let mut kept = std::mem::take(&mut self.browser_thumbnails);
+        self.browser_thumbnails = (designs.iter())
+            .filter_map(|design| {
+                let (image, sum) = (design.thumbnail.as_ref()?, design.sum?);
+                let same = |thumbnail: &BrowserThumbnail| {
+                    thumbnail.name == design.name && thumbnail.sum == sum
+                };
+                let handle = match kept.iter().position(same) {
+                    Some(at) => kept.swap_remove(at).handle,
+                    None => iced::widget::image::Handle::from_rgba(
+                        image.width(),
+                        image.height(),
+                        image.rgba().to_vec(),
+                    ),
+                };
+                Some(BrowserThumbnail {
+                    name: design.name.clone(),
+                    sum,
+                    handle,
+                })
+            })
+            .collect();
+        self.browser = designs;
+    }
+
+    /// The thumbnail of `design`, listed in browser storage, if it has one.
+    fn browser_thumbnail(&self, design: &BrowserDesign) -> Option<iced::widget::image::Handle> {
+        (self.browser_thumbnails.iter())
+            .find(|thumbnail| Some(thumbnail.sum) == design.sum && thumbnail.name == design.name)
+            .map(|thumbnail| thumbnail.handle.clone())
+    }
+
+    /// What the platform offers the document screen.
+    fn offers(&self) -> Offers {
+        Offers {
+            download: self.downloader.is_some(),
+            file_system_access: self.file_system_access,
+        }
+    }
+
+    /// Asks the lane for the designs in browser storage, where there's
+    /// that, and the browser for what it says of it.
+    fn list_browser(&mut self) {
+        if self.browser_storage {
+            self.io.send(IoRequest::ListBrowser);
+        }
+    }
+
+    /// Whether to ask the browser to keep its storage for good now: once a
+    /// session, as the user saves to it, unless it does already.
+    fn take_ask_persist(&mut self) -> bool {
+        let ask = std::mem::take(&mut self.ask_persist)
+            && !self.storage.asked
+            && self.storage.persisted != Some(true);
+        self.storage.asked |= ask;
+        ask
     }
 
     /// Takes the answer to a Save As whose document has gone since: the
@@ -98,6 +207,14 @@ impl Files {
         if let Ok(saved) = result {
             self.io.close_clean(saved.file);
         }
+    }
+
+    /// `path` as the file cell's tooltip shows it, the home directory as
+    /// `~`.
+    fn shown_path(&self, path: &Path) -> String {
+        let dir = self.recent.display_dir(path);
+        let file = path.file_name().unwrap_or_default();
+        Path::new(&dir).join(file).display().to_string()
     }
 
     /// Records `path` as opened just now in the recent files list, and
@@ -126,6 +243,14 @@ enum Next {
     /// Ask the browser whether document `id` may be saved to the file the
     /// user `picked`, answered with [`ForDoc::Writable`].
     AskWritable { id: DocId, picked: Picked },
+    /// Download `bytes`, a design's file named `name` in browser storage,
+    /// with the page's downloader, and say why the download couldn't be
+    /// recorded, if `not_recorded`.
+    Download {
+        name: String,
+        bytes: Vec<u8>,
+        not_recorded: Option<String>,
+    },
     /// Show the document, made or opened on the welcome screen.
     Show(Box<Doc>),
     /// The screen is left: the document's file is closed, and the screen
@@ -161,6 +286,8 @@ impl Varde {
         let mut files = Files::new(downloader);
         // The welcome screen shows the lists once they have arrived.
         files.io.send(IoRequest::LoadRecent);
+        // Browser storage first: listing it may give the store a design.
+        files.list_browser();
         files.io.send(IoRequest::ListRecovered);
         // The theme is the system's until the stored one arrives.
         files.io.send(IoRequest::LoadSettings);
@@ -180,7 +307,14 @@ impl Varde {
     /// The app as it starts, and the task asking for the mode the system
     /// prefers, which [`Varde::subscription`] hears of changes to after.
     fn boot() -> (Self, Task<Message>) {
-        (Self::new(), iced::system::theme().map(Message::SystemTheme))
+        let app = Self::new();
+        let storage = if app.files.browser_storage {
+            storage_state()
+        } else {
+            Task::none()
+        };
+        let theme = iced::system::theme().map(Message::SystemTheme);
+        (app, Task::batch([theme, storage]))
     }
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
@@ -196,6 +330,20 @@ impl Varde {
             Some(share) => Task::batch([task, scroll_rail(share)]),
             None => task,
         };
+        // The Save As dialog's name field takes the focus as it shows.
+        let task = match self.screen.doc_mut().is_some_and(Doc::take_name_focus) {
+            true => Task::batch([task, focus_name()]),
+            false => task,
+        };
+        // Asked as the user first saves to browser storage.
+        let task = match self.files.take_ask_persist() {
+            true => Task::batch([
+                task,
+                Task::perform(varde_io::storage::persist(), Message::Persisted),
+            ]),
+            false => task,
+        };
+        platform::show_title(&self.title());
         // A thumbnail asked for, rendered by the viewport's next frame.
         match self.screen.doc_mut() {
             Some(doc) => match doc.take_thumbnail() {
@@ -219,6 +367,18 @@ impl Varde {
             }
             Message::Picked(chosen) => {
                 return self.welcome(|welcome, files| welcome.picked(files, chosen));
+            }
+            Message::FileDragged(over) => {
+                return self.welcome(|welcome, _| welcome.dragged(over));
+            }
+            Message::FileDropped(chosen) => {
+                // With a document open there's no drop zone, and nothing
+                // opens.
+                if self.screen.doc().is_some() {
+                    chosen.iter().for_each(welcome::forget);
+                    return Task::none();
+                }
+                return self.welcome(|welcome, files| welcome.dropped(files, chosen));
             }
             Message::Ui(Ui::File(message)) => return self.file(message),
             Message::AutoSaveTick(now) => {
@@ -319,6 +479,17 @@ impl Varde {
                 self.peeking = peeking;
             }
             Message::CommandHeld(held) => self.command = held,
+            Message::StorageState { persisted, space } => {
+                self.files.storage.persisted = persisted.or(self.files.storage.persisted);
+                self.files.storage.space = space.or(self.files.storage.space);
+            }
+            Message::Persisted(persisted) => {
+                if persisted.is_some() {
+                    self.files.storage.persisted = persisted;
+                }
+                // The space used has changed with the save.
+                return storage_state();
+            }
             Message::AnimationFrame(now) => self.with_doc(|doc, _| {
                 doc.animation_frame(now);
                 doc.tick(now);
@@ -335,6 +506,12 @@ impl Varde {
             File::Save => return self.step(|doc, cx| doc.request_save(cx)),
             File::SaveAs => return self.step(|doc, cx| doc.request_save_as(cx)),
             File::Export => return self.step(|doc, cx| doc.request_export(cx)),
+            File::Download => self.with_doc(|doc, files| doc.download(files)),
+            File::Rename => self.with_doc(|doc, _| doc.request_rename()),
+            File::Name(name) => self.with_doc(|doc, _| doc.name_changed(name)),
+            File::Place(place) => self.with_doc(|doc, _| doc.place_chosen(place)),
+            File::ConfirmName => return self.step(|doc, cx| doc.name_confirmed(cx)),
+            File::CancelName => return self.step(|doc, cx| doc.name_cancelled(cx)),
             File::Unsaved(choice) => return self.step(|doc, cx| doc.answer_unsaved(cx, choice)),
             File::RestoreChanges => return self.step(|doc, cx| doc.restore_recovered(cx)),
             File::DiscardChanges => self.with_doc(|doc, files| doc.discard_recovered(files)),
@@ -389,6 +566,29 @@ impl Varde {
             Next::PickSaveAs { id, name } => pick_save_as(id, &name),
             Next::PickExport { id, name } => pick_export(id, &name),
             Next::AskWritable { id, picked } => ask_writable(id, picked),
+            Next::Download {
+                name,
+                bytes,
+                not_recorded,
+            } => {
+                let result = match &self.files.downloader {
+                    Some(download) => download(&name, &bytes),
+                    None => Err("there's nowhere to download to".to_owned()),
+                };
+                let error = match (result, not_recorded) {
+                    (Err(error), _) => Some(error),
+                    (Ok(()), Some(why)) => Some(format!(
+                        "Downloaded {name}, but couldn't record the download: {why}"
+                    )),
+                    (Ok(()), None) => None,
+                };
+                // Listed again, with the download recorded.
+                self.files.list_browser();
+                if let Some(error) = error {
+                    return self.welcome(|welcome, _| welcome.failed(&error));
+                }
+                Task::none()
+            }
             Next::Show(doc) => {
                 self.screen = Screen::Document(doc);
                 Task::none()
@@ -397,6 +597,12 @@ impl Varde {
                 self.screen = Screen::Welcome(Welcome::default());
                 // Saved since, with another.
                 self.files.load_thumbnails();
+                // Listed after the close, so what it lets go of shows as
+                // it's left.
+                self.files.list_browser();
+                if self.files.browser_storage {
+                    return storage_state();
+                }
                 Task::none()
             }
             Next::Left(Leave::Quit(window)) => self.quit(window),
@@ -418,13 +624,11 @@ impl Varde {
             IoResponse::Opened { id, path, result } => {
                 return self.welcome(|welcome, files| welcome.opened(files, id, path, result));
             }
+            // One not the open document's was given up on, and the lane
+            // closes it, see `Io::abandon`.
             IoResponse::Created { id, result } => {
-                let mine = self
-                    .screen
-                    .doc_mut()
-                    .is_some_and(|doc| doc.created(&mut self.files, id, &result));
-                if !mine {
-                    self.files.settle_created(id, result);
+                if let Some(doc) = self.screen.doc_mut() {
+                    doc.created(&mut self.files, id, &result);
                 }
             }
             IoResponse::AutoSaved { file, result, .. } => {
@@ -434,6 +638,39 @@ impl Varde {
                 report_failure("discard what was auto-saved", result);
             }
             IoResponse::RecoveredListed { designs } => self.files.recovered = designs,
+            IoResponse::BrowserListed { designs } => self.files.browser_listed(designs),
+            IoResponse::DeletedFromBrowser { name, result } => {
+                self.files.list_browser();
+                if let Err(error) = result {
+                    return self.welcome(|welcome, _| {
+                        welcome.failed(&format!("Couldn't delete {name}: {error}"))
+                    });
+                }
+            }
+            IoResponse::DownloadedFromBrowser {
+                name,
+                result,
+                not_recorded,
+            } => {
+                return match result {
+                    Ok(bytes) => self.follow(Next::Download {
+                        name,
+                        bytes,
+                        not_recorded,
+                    }),
+                    Err(error) => self.welcome(|welcome, _| {
+                        welcome.failed(&format!("Couldn't download {name}: {error}"))
+                    }),
+                };
+            }
+            IoResponse::Renamed { file, name, result } => {
+                // Another name taken, or another freed.
+                self.files.list_browser();
+                self.with_doc(|doc, _| doc.renamed(file, name, result));
+            }
+            IoResponse::DownloadRecorded { file, result } => {
+                self.with_doc(|doc, _| doc.download_recorded(file, result));
+            }
             IoResponse::RecoveredDiscarded { result, .. } => {
                 // The lane lists what's left after it either way.
                 if let Err(error) = result {
@@ -492,7 +729,14 @@ impl Varde {
                 revision,
                 result,
                 ..
-            } => return self.saved_as(to, revision, result),
+            } => {
+                // A name taken, or replaced: what the Save As dialog asks
+                // about replacing follows.
+                if matches!(to, Chosen::Browser(_)) {
+                    self.files.list_browser();
+                }
+                return self.saved_as(to, revision, result);
+            }
             IoResponse::Exported { result, .. } => match self.screen.doc_mut() {
                 Some(doc) => doc.export_written(result),
                 // Closed while it was written: the file is written or not
@@ -527,7 +771,9 @@ impl Varde {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let view = match &self.screen {
             Screen::Welcome(welcome) => welcome.view(&self.files, self.mode(), self.options.theme),
-            Screen::Document(doc) => doc.view(self.peeking, self.mode(), self.options),
+            Screen::Document(doc) => {
+                doc.view(self.peeking, self.mode(), self.options, self.files.offers())
+            }
         };
         view.map(Message::Ui)
     }
@@ -572,6 +818,10 @@ impl Varde {
             window::close_requests().map(Message::CloseRequested),
             // On the web, the page going away instead.
             platform::leaving(),
+            // On the web, files dragged over the page and dropped on it:
+            // always, so that the browser never takes one, which would
+            // leave the page for it. Only the welcome screen opens them.
+            platform::drops(),
             // The browser asks before the page goes, while it would lose
             // changes.
             only_if(self.at_stake(), platform::guard),
@@ -707,6 +957,8 @@ fn while_quitting(message: &Message) -> bool {
             | Message::PeekPanel(_)
             | Message::CommandHeld(_)
             | Message::SystemTheme(_)
+            | Message::StorageState { .. }
+            | Message::Persisted(_)
             | Message::Ui(
                 Ui::Look(_)
                     | Ui::ToggleMouseHints
@@ -791,6 +1043,8 @@ fn escape_key((dialog, event): (Option<Dialog>, keyboard::Event)) -> Option<Mess
         Some(Dialog::Delete) => Ui::Look(Look::CancelDelete),
         Some(Dialog::Damaged) => Ui::Welcome(varde_view::Welcome::CancelDamaged),
         Some(Dialog::Panic) => Ui::Welcome(varde_view::Welcome::ClosePanic),
+        Some(Dialog::Naming) => Ui::File(File::CancelName),
+        Some(Dialog::DeleteFromBrowser) => Ui::Welcome(varde_view::Welcome::CancelDelete),
         None => Ui::Look(Look::Escape),
     }))
 }
@@ -889,6 +1143,27 @@ impl<T: Send + 'static> iced::advanced::widget::Operation<T> for RevealField {
             offset,
         )))
     }
+}
+
+/// Has the Save As dialog's name field take the focus, its text selected
+/// to overtype.
+fn focus_name() -> Task<Message> {
+    use iced::widget::operation;
+
+    operation::focus(varde_view::NAME_FIELD).chain(operation::select_all(varde_view::NAME_FIELD))
+}
+
+/// Asks the browser what it says of its storage, answering with
+/// [`Message::StorageState`]; natively it says nothing.
+fn storage_state() -> Task<Message> {
+    Task::perform(
+        async {
+            let persisted = varde_io::storage::persisted().await;
+            let space = varde_io::storage::estimate().await;
+            (persisted, space)
+        },
+        |(persisted, space)| Message::StorageState { persisted, space },
+    )
 }
 
 /// Scrolls the rail's open list to `share` of the way to its end.

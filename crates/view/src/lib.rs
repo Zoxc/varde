@@ -60,8 +60,9 @@ use varde_sketch::{Id, Sketch};
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
-    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, MeshStatus, Overlay,
-    RecoveredChanges, RefusedEdit, SketchState, ValueField, ValueTarget, document,
+    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, MeshStatus,
+    NamePrompt, Overlay, RecoveredChanges, RefusedEdit, SketchState, ValueField, ValueTarget,
+    document,
 };
 pub use errors::{ShownError, ShownErrors};
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
@@ -92,11 +93,41 @@ pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
 pub use thumbnail::{THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailRequest};
 pub use viewport::ModelPicking;
-pub use welcome::{DamagedPrompt, PanicNote, RecentCard, StoredDesign, WelcomeState, welcome};
+pub use welcome::{
+    CardKey, DamagedPrompt, DeleteFromBrowserPrompt, DesignCard, Downloads, PanicNote, RecentCard,
+    StorageNote, WelcomeState, welcome,
+};
 
 /// The text field a dimension's value is typed in, placing it or editing
 /// it in place: there's one at a time, focused as it opens.
 pub const VALUE_FIELD: iced::widget::Id = iced::widget::Id::new("dimension-value");
+
+/// The text field of the Save As dialog's name, on the web, focused as it
+/// opens.
+pub const NAME_FIELD: iced::widget::Id = iced::widget::Id::new("design-name");
+
+/// What shows in the name's place of a design with no name, never saved.
+pub const NOT_SAVED: &str = "Not saved";
+
+/// Where a design is kept, on the web, as the bar under the file cell says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Location {
+    /// In browser storage, by name.
+    Browser,
+    /// In a file on the user's computer, through the File System Access
+    /// API.
+    Computer,
+}
+
+/// Where the Save As dialog saves a design, on the web.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavePlace {
+    /// In browser storage, under the name typed.
+    Browser,
+    /// In a file on the computer, which the system's save picker asks for:
+    /// only where the File System Access API is.
+    Computer,
+}
 
 /// What the user asks for through the view, grouped by what acts on it.
 /// The app has messages of its own on top, from its subscriptions, lanes
@@ -182,11 +213,21 @@ pub enum Welcome {
     NewDesign,
     Open,
     OpenPath(PathBuf),
-    /// Opens a design kept in the store: left behind by a crash, or
-    /// downloaded on the web.
+    /// Opens a design kept in the store: left behind by a crash.
     OpenStored(PathBuf),
     /// Deletes a design kept in the store.
     DiscardStored(PathBuf),
+    /// Opens a design saved in browser storage, by its file name there.
+    OpenFromBrowser(String),
+    /// Deletes a design saved in browser storage: at once if its latest
+    /// is downloaded, otherwise once the user agrees.
+    DeleteFromBrowser(String),
+    /// Downloads a design saved in browser storage, as it's saved.
+    DownloadFromBrowser(String),
+    /// Agrees to delete the design asked about.
+    ConfirmDelete,
+    /// Keeps the design asked about.
+    CancelDelete,
     /// Opens the newest save that can be read of the damaged file the
     /// prompt asks about.
     OpenDamaged,
@@ -216,6 +257,19 @@ pub enum File {
     /// them there; on the web without the File System Access API,
     /// downloads it.
     Export,
+    /// On the web: downloads the design as it is, which changes nothing
+    /// in storage.
+    Download,
+    /// On the web: asks for a new name for the design in browser storage.
+    Rename,
+    /// The Save As dialog's name, as typed.
+    Name(String),
+    /// Where the Save As dialog saves the design, as chosen.
+    Place(SavePlace),
+    /// Saves, or renames, as the Save As dialog says.
+    ConfirmName,
+    /// Closes the Save As dialog without saving.
+    CancelName,
     /// The answer to the prompt about unsaved changes.
     Unsaved(Unsaved),
     /// Applies the unsaved changes a crashed session left of the document.

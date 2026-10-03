@@ -50,7 +50,12 @@ fn a_save_waits_for_its_thumbnail() {
     // The plate is wider than tall from where Home looks: cropped to it.
     assert_eq!(request.shot.size[0], room[0]);
     assert!(request.shot.size[1] < room[1]);
-    let state = doc.state(false, Mode::Light, ViewOptions::default());
+    let state = doc.state(
+        false,
+        Mode::Light,
+        ViewOptions::default(),
+        Offers::default(),
+    );
     assert!(
         state
             .thumbnail
