@@ -3244,13 +3244,43 @@ fn chords_across_a_section_tip_are_refused() {
         -r + 1.7487237938396127e-4,
     );
     let before = super::chain::REFUSED.get();
-    let got = boolean(&a, &b, Op::Intersection, &TOL, &Budget::DEFAULT).stripped();
-    assert!(
-        matches!(got, Err(KernelError::Boolean(BooleanError::Inconsistent))),
-        "{:?}",
-        got.map(|s| s.volume())
-    );
+    let got = boolean(&a, &b, Op::Intersection, &TOL, &Budget::DEFAULT);
     assert!(super::chain::REFUSED.get() > before);
+    let failure = got.map(|s| s.volume()).unwrap_err();
+    // With the arc's ends as points, the curve refused between them (the
+    // conic along their tangents, or the chord), and the pair's patches,
+    // on the operands' faces it lies on: the cylinder's wall and the
+    // box's side. The same at 1 and 8 threads.
+    super::evidence::tests::on_operands(&a, &b, &failure, &TOL);
+    let again = crate::par::assert_deterministic(|| {
+        boolean(&a, &b, Op::Intersection, &TOL, &Budget::DEFAULT).unwrap_err()
+    });
+    assert_eq!(again, failure);
+    let e = &failure.evidence;
+    let ([x, y], [curve], [p, q]) = (&e.points[..], &e.curves[..], &e.patches[..]) else {
+        panic!("{e:?}");
+    };
+    assert_eq!((curve.p0, curve.p1), (*x, *y));
+    let faces = |solid: &Solid, patch: &crate::patch::Patch| {
+        let face = (solid.mesh().faces().iter())
+            .find(|f| (0..3).all(|k| f.surface.distance(patch.p[k]) <= TOL.resolution()))
+            .expect("a face the patch lies on");
+        face.name.key()
+    };
+    assert_eq!(
+        e.faces,
+        [
+            (crate::Operand::A, faces(&a, p)),
+            (crate::Operand::B, faces(&b, q))
+        ]
+    );
+    for end in [x, y] {
+        for (solid, patch) in [(&a, p), (&b, q)] {
+            let near =
+                (solid.mesh().faces().iter()).any(|f| f.surface.distance(*end) <= TOL.resolution());
+            assert!(near, "{end} {patch:?}");
+        }
+    }
 }
 
 #[test]

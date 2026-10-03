@@ -37,7 +37,8 @@ use glam::{DVec2, DVec3};
 use super::BooleanError;
 use super::count::{self, Counts};
 use super::curved::Curved;
-use super::input::Input;
+use super::evidence::Gather;
+use super::input::{Input, Side};
 use crate::budget::Work;
 use crate::failure::evidence_work;
 use crate::mesh::{MIN_SPLIT, Mesh, Node, Refiner, Surface, apart, samples};
@@ -86,17 +87,52 @@ fn ends(a: &Input, b: &Input, counts: &Counts) -> Vec<([u32; 2], u32, i8)> {
     ends
 }
 
+/// Where the crossing that is vertex `id` (a new one: see [`first_ids`])
+/// lies, along its edge.
+fn crossing_at(a: &Input, b: &Input, counts: &Counts, id: u32) -> DVec3 {
+    let [first12, first21] = first_ids(a, b, counts);
+    let (input, c) = if id < first21 {
+        (a, &counts.x12[(id - first12) as usize])
+    } else {
+        (b, &counts.x21[(id - first21) as usize])
+    };
+    input.conic(c.edge).eval(c.t)
+}
+
+/// The pair of triangle `p` of `A` and `q` of `B` whose ends `ends` (by
+/// vertex id) don't join up, as [`BooleanError::Inconsistent`]: both
+/// patches, the faces they lie on, and the ends as points.
+fn pair_failure(
+    a: &Input,
+    b: &Input,
+    [p, q]: [u32; 2],
+    ends: impl Iterator<Item = DVec3>,
+) -> Failure {
+    let mut gather = Gather::new();
+    gather.tri(Side::A, a, p);
+    gather.tri(Side::B, b, q);
+    for at in ends {
+        gather.point(at);
+    }
+    gather.failure(BooleanError::Inconsistent)
+}
+
 /// The arcs of flat operands: every pair's ends are two, one of each
-/// sign, joined.
-pub(super) fn flat(a: &Input, b: &Input, counts: &Counts) -> Result<Vec<Arc>, KernelError> {
+/// sign, joined. A pair whose ends aren't fails as
+/// [`BooleanError::Inconsistent`], with its patches and ends.
+pub(super) fn flat(a: &Input, b: &Input, counts: &Counts) -> Result<Vec<Arc>, Failure> {
     let ends = ends(a, b, counts);
     let mut arcs = Vec::with_capacity(ends.len() / 2);
     for pair in ends.chunk_by(|x, y| x.0 == y.0) {
+        let refused = || {
+            let at = pair.iter().map(|&(_, id, _)| crossing_at(a, b, counts, id));
+            pair_failure(a, b, pair[0].0, at)
+        };
         let [(tris, u, su), (_, v, sv)] = pair else {
-            return Err(KernelError::Boolean(BooleanError::Inconsistent));
+            return Err(refused());
         };
         if su + sv != 0 {
-            return Err(KernelError::Boolean(BooleanError::Inconsistent));
+            return Err(refused());
         }
         let (plus, minus) = if *su > 0 { (*u, *v) } else { (*v, *u) };
         arcs.push(Arc {
@@ -224,7 +260,7 @@ pub(super) fn counted(
     grow: bool,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Counts, KernelError> {
+) -> Result<Counts, Failure> {
     count::count(a, b, &Curved::new(a, b, grow, tol), tol, work)
 }
 
@@ -259,7 +295,8 @@ struct End {
 /// `A` grows (a union): then walls touching along a line from either
 /// side fail the operation as [`BooleanError::NotManifold`] (see
 /// [`pinched_line`]), with the pairs that show it ([`pinch_evidence`]).
-/// The error is the first pair's, in order, that fails.
+/// The error is the first pair's, in order, that fails; an
+/// `Inconsistent` comes with that pair's patches and ends.
 #[allow(clippy::too_many_arguments)]
 fn decide(
     a: &Input,
@@ -344,7 +381,11 @@ fn decide(
             grow,
         )
     });
-    if let Some(&Err(error)) = decided.iter().find(|d| d.is_err()) {
+    if let Some((k, &Err(error))) = decided.iter().enumerate().find(|(_, d)| d.is_err()) {
+        if error == BooleanError::Inconsistent {
+            let (pair, ends) = &jobs[k];
+            return Err(pair_failure(a, b, *pair, ends.iter().map(|e| e.at)));
+        }
         let mut failure = Failure::from(KernelError::Boolean(error));
         if error == BooleanError::NotManifold {
             let pinched = (jobs.iter().zip(&decided))

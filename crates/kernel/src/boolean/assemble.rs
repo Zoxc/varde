@@ -29,6 +29,7 @@ use super::chain::{self, Chain};
 use super::cleanup::Soup;
 use super::count::{Counts, Crossing};
 use super::curved::solve::near_patch;
+use super::evidence::Gather;
 use super::input::{Input, Side};
 use super::pairs::{Arc, first_ids};
 use super::surface::{Crossed, Shape, lerp, on_curve, point, polish, straight};
@@ -135,7 +136,7 @@ impl Along {
         keep: Keep,
         prims: &impl Primitives,
         resolution: f64,
-    ) -> Result<Along, KernelError> {
+    ) -> Result<Along, Failure> {
         let ne = input.edges.len();
         let mut start = vec![0u32; ne + 1];
         for c in crossings {
@@ -239,8 +240,19 @@ impl Along {
             for (&k, &param) in here.iter().zip(&place) {
                 kept.push(keep.keeps(side, w));
                 w += i32::from(crossings[k].x);
-                if param < at && last.is_some_and(|l| !together(l, k)) {
-                    return Err(KernelError::Boolean(super::BooleanError::Inconsistent));
+                if param < at
+                    && let Some(l) = last.filter(|&l| !together(l, k))
+                {
+                    // Two crossings apart along the edge, in the wrong
+                    // order: the edge, both as points and the faces they
+                    // cross.
+                    let mut gather = Gather::new();
+                    gather.edge(input, e);
+                    for k in [l, k] {
+                        gather.point(conic.eval(params[k]));
+                        gather.tri(side.other(), other, crossings[k].face);
+                    }
+                    return Err(gather.failure(BooleanError::Inconsistent));
                 }
                 at = at.max(param);
                 at_of[k] = at;
@@ -406,7 +418,19 @@ pub(super) fn assemble(
             })
             .sum(),
     )?;
-    let mut chains: Vec<Chain> = chain::chains(&chain_jobs, tol)?;
+    let mut chains: Vec<Chain> = chain::chains(&chain_jobs, tol).map_err(|i| {
+        // The first arc with no chain near enough the true cut: its ends,
+        // the curve refused for it, and the pair's patches.
+        let (job, [p, q]) = (&chain_jobs[i], arcs[i].tris);
+        let mut gather = Gather::new();
+        for end in job.ends {
+            gather.point(end);
+        }
+        gather.curve(chain::refused(job));
+        gather.tri(Side::A, a, p);
+        gather.tri(Side::B, b, q);
+        gather.failure(BooleanError::Inconsistent)
+    })?;
     work.spend(chains.iter().map(|c| c.curves.len()).sum())?;
     // A cut running beside a side of its quadric triangle from end to end
     // in one curve is halved, so the side has a vertex across from it.
@@ -681,20 +705,25 @@ impl Cutting<'_> {
     /// to a root on the patch crossed ([`params`]), but not on a face
     /// claiming no surface or where no root of its sign is on the patch.
     /// One farther, or past the search's cap, fails the operation as
-    /// `Inconsistent`.
-    fn certify(&self, work: &mut Work) -> Result<(), KernelError> {
+    /// `Inconsistent`, with the first such in order: its vertex as a
+    /// point, its edge as a curve and the face it crosses.
+    fn certify(&self, work: &mut Work) -> Result<(), Failure> {
         #[cfg(test)]
         if LOOSE.get() {
             return Ok(());
         }
         let mut asked = Vec::new();
-        for (crossings, other, first) in [
-            (&self.counts.x12, self.b, self.first[0]),
-            (&self.counts.x21, self.a, self.first[1]),
+        // Each crossing asked about, by its side and edge too, for the
+        // evidence.
+        let mut whose = Vec::new();
+        for (side, crossings, other, first) in [
+            (Side::A, &self.counts.x12, self.b, self.first[0]),
+            (Side::B, &self.counts.x21, self.a, self.first[1]),
         ] {
             for (k, c) in crossings.iter().enumerate() {
                 if !c.solved {
                     asked.push((other, c.face, first + k as u32));
+                    whose.push((side, c.edge));
                 }
             }
         }
@@ -724,8 +753,14 @@ impl Cutting<'_> {
                 .map(|&(_, units)| units)
                 .fold(0, usize::saturating_add),
         )?;
-        if near.iter().any(|&(on, _)| !on) {
-            return Err(KernelError::Boolean(super::BooleanError::Inconsistent));
+        if let Some(i) = near.iter().position(|&(on, _)| !on) {
+            let ((_, face, id), (side, edge)) = (asked[i], whose[i]);
+            let ((input, _), (other, _)) = (self.operand(side), self.operand(side.other()));
+            let mut gather = Gather::new();
+            gather.point(self.base[id as usize]);
+            gather.edge(input, edge);
+            gather.tri(side.other(), other, face);
+            return Err(gather.failure(BooleanError::Inconsistent));
         }
         Ok(())
     }
@@ -944,7 +979,9 @@ impl Cutting<'_> {
         let failed = (cut.iter().enumerate()).find_map(|(k, c)| c.as_ref().err().map(|&e| (k, e)));
         if let Some((k, error)) = failed {
             let mut failure = Failure::from(KernelError::Boolean(error));
-            if error == BooleanError::Degenerate {
+            // A face whose loops don't triangulate, or whose boundary
+            // doesn't close into loops: its boundary.
+            if matches!(error, BooleanError::Degenerate | BooleanError::Inconsistent) {
                 let job = &jobs[k];
                 let (input, offset) = self.operand(job.side);
                 *failure.evidence = face::loops_evidence(
@@ -1504,7 +1541,92 @@ fn flipped(f: Face) -> Face {
 
 #[cfg(test)]
 mod tests {
-    use super::alternate;
+    use glam::DVec3;
+
+    use super::*;
+    use crate::mesh::tests::TOL;
+    use crate::{Operand, Solid};
+
+    #[test]
+    fn crossings_out_of_order_along_an_edge_show_where() {
+        // An edge of a unit cube lying in the top plane of a larger cube,
+        // given crossings of the larger one's side and then, a grazing
+        // pair along the top, out and in again near its start: the pair
+        // goes to one place, the first within its reach as near the top
+        // as any, the edge's start, and the side's crossing, apart from
+        // it, is then out of order (the side's crossing is made up: no
+        // consistent counting gives these). The edge as a curve, the two
+        // crossings out of order as points, and the faces they cross.
+        let cube = |min: [f64; 3], size: f64| {
+            Solid::cuboid(DVec3::from(min), DVec3::splat(size), 1, &TOL).unwrap()
+        };
+        let (a, b) = (cube([0.0; 3], 1.0), cube([-0.5, -0.5, -1.0], 2.0));
+        let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
+        let e = (0..ia.edges.len() as u32)
+            .find(|&e| {
+                let [p, q] = ia.edges[e as usize].map(|v| ia.pos(v));
+                p.z == 1.0 && q.z == 1.0 && p.y == 0.0 && q.y == 0.0
+            })
+            .unwrap();
+        let on = |plane: fn(DVec3) -> bool| {
+            (0..ib.tris.len() as u32)
+                .find(|&t| ib.corners(t).into_iter().all(plane))
+                .unwrap()
+        };
+        let (top, side) = (on(|p| p.z == 1.0), on(|p| p.x == -0.5));
+        let r = TOL.resolution();
+        let crossing = |face, i, x, t| Crossing {
+            edge: e,
+            face,
+            i,
+            x,
+            t,
+            solved: true,
+        };
+        // In order along the edge from its start.
+        let crossings = [
+            crossing(side, 0, 1, 1.5 * r),
+            crossing(top, 0, -1, 3.0 * r),
+            crossing(top, 1, 1, 4.5 * r),
+        ];
+        let params: Vec<f64> = crossings.iter().map(|c| c.t).collect();
+        let windings = vec![0; ia.mesh.verts().len()];
+        let prims = super::super::flat::Flat::tied(&ia, &ib, true, 0.0);
+        let along = Along::new(
+            Side::A,
+            &ia,
+            &ib,
+            &crossings,
+            &params,
+            0,
+            &windings,
+            Keep::of(Op::Union),
+            &prims,
+            r,
+        );
+        let Err(failure) = along else {
+            panic!("in order");
+        };
+        assert_eq!(
+            failure.error,
+            KernelError::Boolean(BooleanError::Inconsistent)
+        );
+        let evidence = &failure.evidence;
+        assert_eq!(evidence.curves, [ia.conic(e)]);
+        // The side's crossing, then the grazing pair's first (where it
+        // is, not where it went).
+        let conic = ia.conic(e);
+        assert_eq!(
+            evidence.points,
+            [conic.eval(params[0]), conic.eval(params[1])]
+        );
+        let name = |t: u32| (Operand::B, ib.mesh.faces()[ib.face(t) as usize].name.key());
+        assert_eq!(evidence.faces, [name(side), name(top)]);
+        assert_eq!(
+            evidence.patches,
+            [ib.patches[side as usize], ib.patches[top as usize]]
+        );
+    }
 
     #[test]
     fn crossings_at_one_place_go_in_and_out_in_turn() {

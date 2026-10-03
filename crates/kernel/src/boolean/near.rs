@@ -50,7 +50,7 @@ use super::pairs;
 use crate::budget::Work;
 use crate::mesh::{MIN_SPLIT, apart, flat};
 use crate::patch::Patch;
-use crate::{KernelError, Tolerance};
+use crate::{Failure, KernelError, Tolerance};
 
 /// The work of one visit, in units of about half a microsecond: a GJK
 /// test of two six-point hulls, two flatness tests and a share of the
@@ -220,18 +220,19 @@ pub(crate) fn apart_along(
 /// ([`pairs::counted`], what [`pairs::refined_with`] counts first), `true`
 /// where it shows an edge through a face or a vertex inside, else
 /// whether their surfaces come within the resolution ([`near`]) in the
-/// broad phase's pairs, whose margin is the resolution too.
+/// broad phase's pairs, whose margin is the resolution too. A counting
+/// whose decisions don't fit together fails with what it is about.
 pub(super) fn touching(
     a: &Input,
     b: &Input,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<bool, KernelError> {
+) -> Result<bool, Failure> {
     let counts = pairs::counted(a, b, true, tol, work)?;
     if counts.meet() {
         return Ok(true);
     }
-    near(a, b, &counts.pairs, tol.resolution(), work)
+    Ok(near(a, b, &counts.pairs, tol.resolution(), work)?)
 }
 
 /// Whether the surfaces of `a` and `b` come within `within` of each other

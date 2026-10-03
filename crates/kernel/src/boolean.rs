@@ -70,6 +70,7 @@ mod chain;
 mod cleanup;
 mod count;
 mod curved;
+mod evidence;
 pub(crate) mod exact;
 mod flat;
 mod input;
@@ -240,7 +241,11 @@ type Found = (Vec<(i8, f64, bool)>, usize);
 /// as [`Failure::evidence`], and a pinch with its two vertices; a
 /// `NotManifold` from the decisions with the patches touching along a
 /// line and the operands' faces they lie on; a `Degenerate` with the cut
-/// face's loops and the face, or what the mesh's builder named.
+/// face's loops and the face, or what the mesh's builder named; an
+/// [`BooleanError::Inconsistent`] with what doesn't fit together (an edge
+/// and its crossings, a vertex, a pair of patches and their ends, a
+/// crossing, an arc and the curve refused for it, or a cut face's
+/// boundary) and the operands' faces involved.
 pub fn boolean(
     a: &Solid,
     b: &Solid,
@@ -934,18 +939,17 @@ fn flat_decided(
 /// apart may (the search stops on two flat pieces whose hulls come
 /// within it), where flat ones touch only within the tie distance; the
 /// difference is below anything a user can place. It only picks what an
-/// operation works on: every [`boolean`] decides for itself.
+/// operation works on: every [`boolean`] decides for itself. Decisions
+/// that don't fit together fail as [`BooleanError::Inconsistent`] with
+/// what they are about, as the boolean's counting does.
 pub fn touches(a: &Solid, b: &Solid, tol: &Tolerance, budget: &Budget) -> Result<bool, Failure> {
-    touches_within(a, b, tol, &mut Work::new(budget)).map_err(Failure::from)
+    touches_within(a, b, tol, &mut Work::new(budget))
 }
 
-/// [`touches`] within `work`, failing with the error alone.
-fn touches_within(
-    a: &Solid,
-    b: &Solid,
-    tol: &Tolerance,
-    work: &mut Work,
-) -> Result<bool, KernelError> {
+/// [`touches`] within `work`. A counting whose decisions don't fit
+/// together fails with what it is about (the exact one's, after the
+/// flat retry).
+fn touches_within(a: &Solid, b: &Solid, tol: &Tolerance, work: &mut Work) -> Result<bool, Failure> {
     let (Some(ba), Some(bb)) = (a.bounds3(), b.bounds3()) else {
         return Ok(false);
     };
@@ -964,7 +968,9 @@ fn touches_within(
         count::count(&ia, &ib, &prims, tol, work)
     };
     let counts = match counted(tie(tol), work) {
-        Err(KernelError::Boolean(BooleanError::Inconsistent)) => counted(0.0, work)?,
+        Err(f) if f.error == KernelError::Boolean(BooleanError::Inconsistent) => {
+            counted(0.0, work)?
+        }
         counts => counts?,
     };
     Ok(counts.meet())

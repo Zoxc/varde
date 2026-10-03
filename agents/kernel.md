@@ -3630,7 +3630,9 @@ elsewhere (see "Cutting curved faces").
 | `boolean/near.rs` | `touches`' search for surfaces within the resolution: pairs of patch pieces split depth first until their hulls are apart or both are flat (`search`, `settled`, `near`) |
 | `boolean/exact.rs` | exact signs: `Approx` (float with an error bound), `Exp` (expansions), `Poly` in `ε`, `Pred`, `sign`, `orient2d` |
 | `boolean/flat.rs` | `Flat`, the primitives of flat operands, with the symbolic perturbation |
-| `boolean/count.rs` | broad phase, the stored primitives, `x12`/`x21`, winding numbers |
+| `boolean/count.rs` | broad phase, the stored primitives, `x12`/`x21`, winding numbers; what an edge or vertex that doesn't fit shows (`edge_failure`, `vertex_failure`) |
+| `boolean/count/tests.rs` | the counting's `Inconsistent` failures from primitives made to disagree (`Doubled`), and what they show |
+| `boolean/evidence.rs` | `Gather`: the evidence of a boolean's `Inconsistent` failures as it is gathered (an operand's edges, triangles with their faces' names, points); its tests' `on_operands`, which the seeded suite runs on every `Inconsistent` |
 | `boolean/surface.rs` | the exact paths: what a patch lies on (`Shape`), crossings solved again on planes and quadrics, a plane's conic on a quadric (`section`) |
 | `boolean/chain.rs` | each arc's chain of shared edges: straight, exact, or traced and fitted; halving its curves |
 | `boolean/chain/trace.rs` | the point where two patches meet (Newton on four unknowns), marching along the cut, fitting conics, inverting a point into a patch |
@@ -5806,7 +5808,8 @@ operands are decided again exactly then, see "Decided again exactly";
 also a winding number out of `0..=1`, see "Counting"; or a
 crossing the search only placed isn't on the other operand; or a
 cut neither exact nor traced whose fallback curve isn't on the true
-cut, see "Chains"),
+cut, see "Chains"; each with the edge, vertex, pair or arc it is
+about, see "Boolean evidence"),
 `Degenerate` (a face's loops
 couldn't be triangulated, or the triangles don't pair up; each with
 what it is about, see "Boolean evidence" under "Limits, budgets and
@@ -7887,12 +7890,19 @@ transforms' own checks, carry none.
 
 **Boolean evidence.** Besides the check's, a boolean's own errors carry
 where they are. The internal steps on those paths fail with a `Failure`
-rather than a `KernelError` (`pairs::refined_with` and `decide`,
-`assemble::assemble` and `Cutting::round`, `boolean::assembled`,
-`flat_soup`, `flat_decided`, `cleaned` and `build`), the rest as
-before, converted by `?`; the flat retry after `Inconsistent` returns
-the second try's failure whole, and the boolean's tries keep theirs as
-for the check's. By error:
+rather than a `KernelError` (`count::count` and its `crossings`,
+`pairs::counted`, `refined_with`, `decide` and `flat`,
+`assemble::assemble`, `Along::new`, `Cutting::certify` and
+`Cutting::round`, `boolean::assembled`, `flat_soup`, `flat_decided`,
+`cleaned` and `build`; `touches_within` and `near::touching` too), the
+rest as before, converted by `?`; `chain::chains` hands up the index of
+the first arc it refused, which `assemble` makes the failure of. The
+flat retry after `Inconsistent` returns the second try's failure whole
+(none if it succeeds; its own if it fails differently), `touches`' the
+same, and the boolean's tries keep theirs as for the check's. The
+decisions' and the assembly's `Inconsistent` sites gather through
+`evidence::Gather` (a unit an item; an operand's triangle given as its
+patch and the operand's face it lies on, named once). By error:
 
 | error | evidence |
 |---|---|
@@ -7901,12 +7911,24 @@ for the check's. By error:
 | `NotManifold` from the decisions (`pinched_line`) | each pair refused, in order: its two patches as refined, and the operands' faces they lie on, each once (`pinch_evidence`, a unit a pair) |
 | `Degenerate` from a face's triangulation | the face's kept halfedges as curves, and the operand's face (`face::loops_evidence`, a unit a halfedge) |
 | `Degenerate` from the mesh's builder | the triangle it names (its sides and corners) or the halfedge (its curve and ends), by the soup's positions and curve records (`built_evidence`) |
+| `Inconsistent`: an edge through a face whose crossings can't be (`Primitives::crossings`: a straight edge through a flat face more than once, or nowhere inside it) | the edge's curve, and the face crossed (its patch and name) |
+| `Inconsistent`: an edge whose winding numbers don't add up (`agree`) | the edge's curve, each of its crossings as a point, and the faces they cross, each once (`edge_failure`) |
+| `Inconsistent`: a part's second ray disagreeing with what its edges carried, or a winding number out of `0..=1` | the vertex (the second ray's, or the first out of range) as a point, the other operand's triangles its layer counts put above it, and its own triangles round it (scanned for, a unit per 64 triangles, if the allowance has it), each with its face (`vertex_failure`) |
+| `Inconsistent`: a pair of faces whose ends don't join (`pairs::flat`, or `decide`'s first failing pair: ends on one curved surface, two ends of one sign, ends round the pair that don't pair up) | both patches, their faces, and the ends as points (`pair_failure`) |
+| `Inconsistent`: an edge's crossings out of order along it (`Along::new`, where a grazing pair went to one place) | the edge's curve, the two crossings (where they are, not where they went), and the faces they cross |
+| `Inconsistent`: a crossing only placed that isn't on the other operand (`Cutting::certify`) | the first such in order: its vertex, its edge's curve, and the face it crosses |
+| `Inconsistent`: an arc with no chain near enough the true cut (`chain::chains`) | the first such arc's ends as points, the curve refused between them (the conic along their tangents, else the chord: `chain::refused`), and the pair's patches and faces |
+| `Inconsistent` from a face's boundary that doesn't close into loops (`cut_face`) | as for a `Degenerate` face: its kept halfedges as curves and its face, and the vertices with other than one halfedge leaving and one arriving as points (`face::loops_evidence`) |
 
 Each from a fresh `EVIDENCE_WORK` allowance where it can grow; none
 changes what the operation does or spends: `pinched` hands back the
 pair it stopped at (the same work), the decisions' and the round's
-failures are the first in order as before, and the face's halfedges
-are worked out again only after the round has failed.
+failures are the first in order as before, the face's halfedges are
+worked out again only after the round has failed, and the counting's
+and assembly's sites only look at what they had already (the refused
+arc's fallback conic is fitted again, a few Newton steps). Old against
+new on the release kernel suites, ignored tests too, every operation's
+outcome and work were the same.
 
 Its rules: evidence never changes an outcome (no `Ok` becomes an error
 or the reverse, and the error is the one returned without it; tests

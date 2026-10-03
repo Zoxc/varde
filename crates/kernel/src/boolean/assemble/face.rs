@@ -510,13 +510,16 @@ pub(super) fn cut_face(
     })
 }
 
-/// What a face that couldn't be triangulated shows (see [`cut_face`],
-/// whose arguments these are): its kept halfedges in order, the loops
-/// that wouldn't triangulate, each as its curve where it has one, else
-/// straight, between its vertices' positions (where the face's layout
-/// puts them back, but for the rounding and snapping onto the domain's
-/// sides it takes them through), and the operand's face it is. From a
-/// fresh allowance, a unit a halfedge.
+/// What a face that couldn't be cut shows (see [`cut_face`], whose
+/// arguments these are): its kept halfedges in order, the loops that
+/// wouldn't triangulate, or the boundary that doesn't close into loops,
+/// each as its curve where it has one, else straight, between its
+/// vertices' positions (where the face's layout puts them back, but for
+/// the rounding and snapping onto the domain's sides it takes them
+/// through), and the operand's face it is. Where the boundary doesn't
+/// close (a vertex with other than one halfedge leaving it and one
+/// arriving), those vertices as points too; loops that close have none.
+/// From a fresh allowance, a unit a halfedge, and one a point.
 pub(super) fn loops_evidence(
     input: &Input,
     job: &Cut,
@@ -530,6 +533,12 @@ pub(super) fn loops_evidence(
     evidence.add_faces([(job.side.into(), face)]);
     let mut work = evidence_work();
     let (halfedges, _) = boundary(input, job, along, offset, pos);
+    // How many halfedges leave and arrive at each vertex.
+    let mut ends: BTreeMap<u32, [usize; 2]> = BTreeMap::new();
+    for &[u, v] in &halfedges {
+        ends.entry(u).or_default()[0] += 1;
+        ends.entry(v).or_default()[1] += 1;
+    }
     for [u, v] in halfedges {
         if !evidence.afford(&mut work, 1) {
             break;
@@ -544,6 +553,12 @@ pub(super) fn loops_evidence(
                 p1: q,
             },
         )]);
+    }
+    for (&v, _) in ends.iter().filter(|(_, n)| **n != [1, 1]) {
+        if !evidence.afford(&mut work, 1) {
+            break;
+        }
+        evidence.add_points([pos[v as usize]]);
     }
     evidence
 }

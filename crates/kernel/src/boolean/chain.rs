@@ -26,11 +26,11 @@
 use glam::DVec3;
 
 use super::surface::{Guide, Shape, section};
-use super::{BooleanError, segment, tie};
+use super::{segment, tie};
+use crate::Tolerance;
 use crate::mesh::Quadric;
 use crate::par::par_map;
 use crate::patch::{Conic3, Patch};
-use crate::{KernelError, Tolerance};
 
 pub(crate) mod trace;
 
@@ -160,9 +160,10 @@ thread_local! {
     pub(super) static REFUSED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Every job's chain (see [`chain`]), or `Inconsistent` if one of them
-/// can't be found near enough the true cut to trust.
-pub(super) fn chains(jobs: &[Job], tol: &Tolerance) -> Result<Vec<Chain>, KernelError> {
+/// Every job's chain (see [`chain`]), or the first job whose chain can't
+/// be found near enough the true cut to trust: the boolean fails as
+/// `Inconsistent` then.
+pub(super) fn chains(jobs: &[Job], tol: &Tolerance) -> Result<Vec<Chain>, usize> {
     let chains = par_map(jobs, |job| chain(job, tol));
     #[cfg(test)]
     {
@@ -178,10 +179,10 @@ pub(super) fn chains(jobs: &[Job], tol: &Tolerance) -> Result<Vec<Chain>, Kernel
         );
         REFUSED.set(REFUSED.get() + chains.iter().filter(|c| c.is_none()).count());
     }
-    chains
-        .into_iter()
-        .collect::<Option<Vec<Chain>>>()
-        .ok_or(KernelError::Boolean(BooleanError::Inconsistent))
+    if let Some(i) = chains.iter().position(Option::is_none) {
+        return Err(i);
+    }
+    Ok(chains.into_iter().flatten().collect())
 }
 
 /// The chain of `job`'s arc, within the fit tolerance of the true cut:
@@ -413,6 +414,15 @@ fn traced(job: &Job, fit: f64) -> Option<Chain> {
         curves,
         exact: false,
     })
+}
+
+/// The curve refused for `job`, whose [`chain`] is `None`: the conic
+/// along the ends' tangents if there is one, else the straight edge
+/// between the ends (both were refused).
+pub(super) fn refused(job: &Job) -> Conic3 {
+    fallback(job)
+        .and_then(|chain| chain.curves.first().copied())
+        .unwrap_or_else(|| segment(job.ends[0], job.ends[1]))
 }
 
 /// The conic along the ends' tangents with its middle on the curve if it

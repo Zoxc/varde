@@ -512,8 +512,18 @@ named it. A boolean's `NotManifold` from the decisions (walls touching
 along a line, united) carries the pairs of patches touching there and
 the operands' faces they lie on, by name; a `Degenerate` the cut face's
 loops that wouldn't triangulate, as curves, and the face by name, or
-what the mesh's builder named (a triangle or a halfedge). The other
-errors carry none yet.
+what the mesh's builder named (a triangle or a halfedge). An
+`Inconsistent` (from a boolean or `touches`) carries what doesn't fit:
+an edge whose winding numbers don't add up or whose crossings can't be
+placed, with its crossings and the faces they cross; a vertex whose
+second ray disagrees, or whose winding number isn't 0 or 1, with the
+faces above and round it; a pair of faces whose ends don't join, with
+both patches and the ends; a crossing off the face it crosses; an arc
+with no curve near the true cut, with its ends and the curve refused;
+or a cut face whose boundary doesn't close, with that boundary. Faces
+are given as patches and by the operand's face name. After the flat
+retry the evidence is the second try's. The other errors carry none
+yet.
 
 ## In the app
 

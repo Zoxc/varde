@@ -406,6 +406,10 @@ fn four(
             }
             Err(why) => {
                 println!("REFUSED {name}, {op:?}: {why:?}");
+                // Decisions that don't fit together show where.
+                if why.error == KernelError::Boolean(BooleanError::Inconsistent) {
+                    super::evidence::tests::on_operands(x, y, &why, tol);
+                }
                 tally.failed += 1;
                 None
             }
@@ -1677,6 +1681,153 @@ fn a_cut_face_that_cant_be_triangulated_shows_its_loops() {
     for curve in &evidence.curves {
         for p in [curve.p0, curve.p1] {
             assert!(face.surface.distance(p) <= tol.resolution(), "{p}");
+        }
+    }
+}
+
+#[test]
+fn tangent_cylinders_that_dont_fit_together_show_where() {
+    // Cases of `near_tangent_cylinders_are_right_or_refused` at the
+    // coarsest tolerance, refused as `Inconsistent` at three places, each
+    // with what it is about, on the walls where they touch (`x` 1, `y`
+    // 0), and the same at 1 and 8 threads.
+    let tol = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    let r = tol.resolution();
+    let a = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
+    // Each wall's distance from a point, by its operand.
+    let off = |gap: f64, operand: crate::Operand, p: DVec3| {
+        let axis = match operand {
+            crate::Operand::A => DVec2::ZERO,
+            crate::Operand::B => DVec2::new(2.0 + gap, 0.0),
+        };
+        (p.truncate() - axis).length() - 1.0
+    };
+    let wall = |solid: &Solid| {
+        (solid.mesh().faces().iter())
+            .find(|f| matches!(f.surface, Surface::Quadric(_)))
+            .unwrap()
+            .name
+            .key()
+    };
+    let near_line = |p: DVec3| (p.x - 1.0).abs() < 0.05 && p.y.abs() < 0.15;
+    for (gap, h, op) in [
+        (-1e-6, 0.25, Op::Intersection),
+        (-1e-6, 1.0, Op::Intersection),
+        (1e-6, 0.25, Op::Union),
+    ] {
+        let b = Solid::cylinder(DVec3::ZERO, 1.0, h, 3, &tol).unwrap();
+        let b = moved(&b, &tol, |p| p + DVec3::new(2.0 + gap, 0.0, 0.5));
+        let failure =
+            assert_deterministic(|| boolean(&a, &b, op, &tol, &Budget::DEFAULT).unwrap_err());
+        super::evidence::tests::on_operands(&a, &b, &failure, &tol);
+        let e = &failure.evidence;
+        assert!(!e.truncated);
+        for &p in &e.points {
+            assert!(near_line(p), "{p}");
+        }
+        match (gap, h) {
+            (_, 0.25) if gap < 0.0 => {
+                // The walls lie on one surface within the resolution, yet
+                // the counting gave their pair ends: the pair, both
+                // patches on the walls, and its ends, on both.
+                assert_eq!(e.patches.len(), 2);
+                assert!(e.curves.is_empty());
+                assert_eq!(
+                    e.faces,
+                    [(crate::Operand::A, wall(&a)), (crate::Operand::B, wall(&b))]
+                );
+                assert!(!e.points.is_empty());
+                for patch in &e.patches {
+                    assert!(patch.p.into_iter().all(near_line), "{patch:?}");
+                }
+                for &p in &e.points {
+                    for operand in [crate::Operand::A, crate::Operand::B] {
+                        assert!(off(gap, operand, p).abs() <= r, "{p}");
+                    }
+                }
+            }
+            (_, 1.0) => {
+                // An edge through a face whose crossings can't be placed:
+                // the edge, on one wall, and the patch of the other's.
+                let ([curve], [patch], [(operand, key)]) =
+                    (&e.curves[..], &e.patches[..], &e.faces[..])
+                else {
+                    panic!("{e:?}");
+                };
+                let (other, solid) = match operand {
+                    crate::Operand::A => (crate::Operand::B, &a),
+                    crate::Operand::B => (crate::Operand::A, &b),
+                };
+                assert_eq!(*key, wall(solid));
+                for t in [0.0, 0.5, 1.0] {
+                    assert!(off(gap, other, curve.eval(t)).abs() <= r);
+                }
+                for &p in &patch.p {
+                    assert!(off(gap, *operand, p).abs() <= r);
+                }
+                assert!(near_line(curve.p0) && near_line(curve.p1));
+                assert!(e.points.is_empty());
+            }
+            _ => {
+                // A crossing the search only placed, off the face it
+                // crosses: its vertex, on its edge (the second's rim) and
+                // farther than the resolution from the first's wall, and
+                // that wall's patch.
+                let ([curve], [_], [point], [(crate::Operand::A, key)]) =
+                    (&e.curves[..], &e.patches[..], &e.points[..], &e.faces[..])
+                else {
+                    panic!("{e:?}");
+                };
+                assert_eq!(*key, wall(&a));
+                assert!(off(gap, crate::Operand::B, *point).abs() <= r, "{point}");
+                assert!(off(gap, crate::Operand::A, *point) > r, "{point}");
+                for t in [0.0, 0.5, 1.0] {
+                    assert!(off(gap, crate::Operand::B, curve.eval(t)).abs() <= r);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_cut_face_whose_boundary_doesnt_close_shows_it() {
+    // The first step of the chains of parts: a cylinder of radius 0.25
+    // along `y` whose axis lies in the plane of the cap of one of radius
+    // 1 along `x`, its foot tangent to that one's wall. Intersected, and
+    // less it, a face of the first is left with pieces of boundary that
+    // don't close into loops: refused, with those pieces as curves, the
+    // vertices where they stop as points, and the face by its name; the
+    // same at 1 and 8 threads.
+    let tol = Tolerance::DEFAULT;
+    let mut rng = Rng::new(21);
+    let a = part(&mut rng, 0.25, 1, &tol).unwrap();
+    let b = part(&mut rng, 0.25, 10, &tol).unwrap();
+    for op in [Op::Intersection, Op::Difference] {
+        let failure =
+            assert_deterministic(|| boolean(&a, &b, op, &tol, &Budget::DEFAULT).unwrap_err());
+        super::evidence::tests::on_operands(&a, &b, &failure, &tol);
+        let e = &failure.evidence;
+        let [(crate::Operand::A, key)] = e.faces[..] else {
+            panic!("{:?}", e.faces);
+        };
+        let face = (a.mesh().faces().iter())
+            .find(|f| f.name.key() == key)
+            .unwrap();
+        assert!(!e.curves.is_empty() && e.patches.is_empty() && !e.truncated);
+        for curve in &e.curves {
+            for t in [0.0, 0.5, 1.0] {
+                let p = curve.eval(t);
+                assert!(face.surface.distance(p) <= tol.resolution(), "{p}");
+            }
+        }
+        // Each point is where a piece stops: an end of one curve and of
+        // no other's other end.
+        assert_eq!(e.points.len(), 2);
+        let starts = |p: DVec3| e.curves.iter().filter(|c| c.p0 == p).count();
+        let ends = |p: DVec3| e.curves.iter().filter(|c| c.p1 == p).count();
+        for &p in &e.points {
+            assert_ne!((starts(p), ends(p)), (1, 1), "{p}");
+            assert!(starts(p) + ends(p) > 0, "{p}");
         }
     }
 }

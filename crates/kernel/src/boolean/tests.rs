@@ -1756,6 +1756,31 @@ fn near_ties_that_dont_fit_together_are_decided_again_exactly() {
             Err(KernelError::Boolean(BooleanError::Inconsistent)),
             "{i}"
         );
+        // With the pair of faces whose ends don't join up: its two
+        // triangles, the operands' faces they lie on, and the ends, each
+        // where an edge of one crosses the other's plane, within the tie.
+        let failure = flat_decided(op, &ia, &ib, t, &TOL, &mut Work::new(&Budget::DEFAULT))
+            .map(|_| ())
+            .unwrap_err();
+        evidence::tests::on_operands(&a, &b, &failure, &TOL);
+        let e = &failure.evidence;
+        let [p, q] = &e.patches[..] else {
+            panic!("{i}: {e:?}");
+        };
+        assert!(matches!(
+            e.faces[..],
+            [(crate::Operand::A, _), (crate::Operand::B, _)]
+        ));
+        assert!(e.points.len() >= 2 && e.curves.is_empty(), "{i}: {e:?}");
+        let off = |patch: &crate::patch::Patch, x: DVec3| {
+            let [p0, p1, p2] = patch.p;
+            let n = (p1 - p0).cross(p2 - p0).normalize();
+            n.dot(x - p0).abs()
+        };
+        for &x in &e.points {
+            assert!(off(p, x).min(off(q, x)) <= t, "{i}: {x}");
+            assert!(off(p, x).max(off(q, x)) <= TOL.resolution(), "{i}: {x}");
+        }
         let (exact, second) = spent(0.0, false);
         assert_eq!(exact, Ok(()), "{i}");
         // Both tries are paid for.

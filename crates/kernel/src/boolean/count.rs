@@ -2,6 +2,7 @@
 //! stored by pair, the crossings of edges with faces by the identity, and
 //! winding numbers from the layer counts.
 
+use super::evidence::Gather;
 use super::exact::counted;
 use super::input::{Input, Side};
 use super::{BooleanError, Primitives, UP, parts};
@@ -9,7 +10,7 @@ use crate::budget::Work;
 use crate::mesh::Bvh;
 use crate::par::par_map;
 use crate::patch::Bounds3;
-use crate::{KernelError, Tolerance};
+use crate::{Failure, KernelError, Tolerance};
 
 /// Crossing `i` of an edge of one operand through a face of the other,
 /// counting along the edge: `x` is +1 where the edge, run in its own
@@ -111,14 +112,21 @@ impl Table<i8> {
     }
 }
 
-/// Counts `a` against `b` with `prims`.
+/// Counts `a` against `b` with `prims`. Decisions that don't fit
+/// together fail as [`BooleanError::Inconsistent`] with what they are
+/// about: an edge whose crossings no search can place, with the face
+/// crossed ([`crossings`]); an edge whose winding numbers don't add up,
+/// with its crossings ([`edge_failure`]); or a vertex whose own ray
+/// disagrees with what its edges carried there, or whose winding number
+/// isn't 0 or 1, with the faces round it and above it
+/// ([`vertex_failure`]).
 pub(super) fn count(
     a: &Input,
     b: &Input,
     prims: &impl Primitives,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Counts, KernelError> {
+) -> Result<Counts, Failure> {
     let (bvh_a, bvh_b) = (Bvh::new(a.boxes.clone()), Bvh::new(b.boxes.clone()));
 
     // Broad phase: triangle pairs whose boxes meet, or come within the
@@ -197,21 +205,23 @@ pub(super) fn count(
 
     let w03 = windings(a, &seeds_a, &x12, &s02);
     let w30 = windings(b, &seeds_b, &x21, &s20);
-    for (input, x, w, checks, s) in [
-        (a, &x12, &w03, &checks_a, &s02),
-        (b, &x21, &w30, &checks_b, &s20),
+    for (side, input, other, x, w, checks, s) in [
+        (Side::A, a, b, &x12, &w03, &checks_a, &s02),
+        (Side::B, b, a, &x21, &w30, &checks_b, &s20),
     ] {
-        agree(input, x, w)?;
+        if let Some(e) = agree(input, x, w) {
+            return Err(edge_failure(side, input, other, x, e));
+        }
         // A second ray in each part, which must find what the crossings
         // carried there from the first: a near tie decided one way at
         // the first vertex, with nothing crossing to show it, would put
         // the whole part on the wrong side. And the operands are solids,
         // whose winding numbers are 0 or 1 everywhere (`check` makes sure
         // of it), so any other number is decisions that don't fit.
-        if checks.iter().any(|&v| w[v as usize] != s.layers(v))
-            || w.iter().any(|&w| !(0..=1).contains(&w))
-        {
-            return Err(KernelError::Boolean(BooleanError::Inconsistent));
+        let disagrees = checks.iter().find(|&&v| w[v as usize] != s.layers(v));
+        let beyond = || (0..w.len() as u32).find(|&v| !(0..=1).contains(&w[v as usize]));
+        if let Some(v) = disagrees.copied().or_else(beyond) {
+            return Err(vertex_failure(side, input, other, s, v));
         }
     }
     Ok(Counts {
@@ -269,7 +279,7 @@ fn crossings(
     prims: &impl Primitives,
     work: &mut Work,
     shadow: impl Fn(u32, u32) -> i8 + Sync,
-) -> Result<Vec<Crossing>, KernelError> {
+) -> Result<Vec<Crossing>, Failure> {
     work.spend(ef.len())?;
     let x = par_map(ef, |&[e, f]| {
         let [start, end] = input.edges[e as usize];
@@ -299,8 +309,16 @@ fn crossings(
             counted(|| prims.crossings(side, e, f, x))
         });
         let mut more = 0usize;
-        for (result, exact) in here {
-            let (crossings, cost) = result.map_err(KernelError::Boolean)?;
+        for (&([e, f], _), (result, exact)) in chunk.iter().zip(here) {
+            // An edge through a face whose crossings can't be (a straight
+            // one crossing a flat one twice, or nowhere inside it): the
+            // edge and the face.
+            let (crossings, cost) = result.map_err(|error| {
+                let mut gather = Gather::new();
+                gather.edge(input, e);
+                gather.tri(side.other(), other, f);
+                gather.failure(error)
+            })?;
             more = more
                 .saturating_add(cost.saturating_sub(least))
                 .saturating_add(exact.saturating_mul(EXACT_WORK));
@@ -393,16 +411,69 @@ fn windings(input: &Input, seeds: &[u32], x: &[Crossing], s02: &Table<i8>) -> Ve
 }
 
 /// Checks that along every edge the winding number changes by its
-/// crossings: it does whenever the primitives are consistent.
-fn agree(input: &Input, x: &[Crossing], w: &[i32]) -> Result<(), KernelError> {
+/// crossings: it does whenever the primitives are consistent. The first
+/// edge where it doesn't, if any.
+fn agree(input: &Input, x: &[Crossing], w: &[i32]) -> Option<u32> {
     let mut change = vec![0i32; input.edges.len()];
     for c in x {
         change[c.edge as usize] += i32::from(c.x);
     }
-    for (e, &[start, end]) in input.edges.iter().enumerate() {
-        if w[start as usize] + change[e] != w[end as usize] {
-            return Err(KernelError::Boolean(BooleanError::Inconsistent));
+    (0..input.edges.len() as u32).find(|&e| {
+        let [start, end] = input.edges[e as usize];
+        w[start as usize] + change[e as usize] != w[end as usize]
+    })
+}
+
+/// Edge `e` of `input` (operand `side`), whose winding numbers don't add
+/// up along it ([`agree`]), as [`BooleanError::Inconsistent`]: the edge
+/// as its curve, and each of its crossings `x` (sorted by edge) as a
+/// point, with the face of `other` it crosses.
+fn edge_failure(side: Side, input: &Input, other: &Input, x: &[Crossing], e: u32) -> Failure {
+    let mut gather = Gather::new();
+    gather.edge(input, e);
+    let conic = input.conic(e);
+    let from = x.partition_point(|c| c.edge < e);
+    let mut last = None;
+    for c in x[from..].iter().take_while(|c| c.edge == e) {
+        gather.point(conic.eval(c.t));
+        if last != Some(c.face) {
+            gather.tri(side.other(), other, c.face);
+            last = Some(c.face);
         }
     }
-    Ok(())
+    gather.failure(BooleanError::Inconsistent)
 }
+
+/// How many triangles one unit of the evidence's allowance scans for
+/// those round a vertex: telling a triangle's corners from the vertex
+/// is far less than the unit's patch tested.
+const SCAN_PER_UNIT: usize = 64;
+
+/// Vertex `v` of `input` (operand `side`), whose own ray disagrees with
+/// what its edges carried there, or whose winding number is out of
+/// `0..=1`, as [`BooleanError::Inconsistent`]: the vertex as a point, the
+/// faces of `other` its layer counts `s` (`s02` or `s20`) put above it,
+/// and the triangles round it (scanned for, a unit per
+/// [`SCAN_PER_UNIT`] triangles, if the allowance has it).
+fn vertex_failure(side: Side, input: &Input, other: &Input, s: &Table<i8>, v: u32) -> Failure {
+    let mut gather = Gather::new();
+    gather.point(input.pos(v));
+    let lo = s.keys.partition_point(|k| k[0] < v);
+    let hi = s.keys.partition_point(|k| k[0] <= v);
+    for (k, &layers) in s.keys[lo..hi].iter().zip(&s.values[lo..hi]) {
+        if layers != 0 {
+            gather.tri(side.other(), other, k[1]);
+        }
+    }
+    if gather.afford(input.tris.len().div_ceil(SCAN_PER_UNIT)) {
+        for t in 0..input.tris.len() as u32 {
+            if input.tris[t as usize].contains(&v) {
+                gather.tri(side, input, t);
+            }
+        }
+    }
+    gather.failure(BooleanError::Inconsistent)
+}
+
+#[cfg(test)]
+mod tests;

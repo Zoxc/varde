@@ -252,7 +252,7 @@ fn a_loop_inside_one_patch_touches() {
 fn spent(a: &Solid, b: &Solid, tol: &Tolerance) -> (Result<bool, KernelError>, u64) {
     let mut work = Work::new(&Budget::new(BUDGET));
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
-    let answer = touching(&ia, &ib, tol, &mut work);
+    let answer = touching(&ia, &ib, tol, &mut work).map_err(|f| f.error);
     (answer, work.left())
 }
 

@@ -135,8 +135,17 @@ message is worded from the kernel's `failure.error` as before
   boolean's `Invalid` named `NotManifold`) gives the triangles the
   error names (or the pieces of them repair couldn't mend), drawn as a
   patch mesh (`history/tests/check_evidence.rs`:
-  a slot too thin, two boxes joined along an edge). The kernel's other
-  errors and regen's own failures have none yet.
+  a slot too thin, two boxes joined along an edge). A boolean's own
+  errors give where they are (`history/tests/boolean_evidence.rs`): a
+  pinch's two vertices as points, walls touching along a line as their
+  patches and the faces they lie on, a face that can't be triangulated
+  as its loops, and decisions that don't fit together
+  (`Inconsistent`) as the edge, vertex, pair of patches, crossing or
+  arc they are about, or a cut face's boundary that doesn't close (a
+  rod intersected with a cylinder whose end plane holds the rod's axis:
+  the boundary's pieces as lines, the two vertices where they stop as
+  points, the rod's face resolved to the body's faces). The kernel's
+  other errors and regen's own failures have none yet.
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s
   and the draft's `Drafted` (`MeshFeed::draft_geometry`, beside
   `draft_error`). The viewport draws the geometry of the draft's
