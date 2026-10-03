@@ -7750,13 +7750,13 @@ retry, and the profile: the evidence is the returned error's by
 construction and can't change the outcome. A `Gather` holds the
 profile, its frame (only if `Frame::check` passes: a profile is checked
 before its frame, so without one only the sketch curves are given), the
-evidence and its `EVIDENCE_WORK` allowance (a unit a segment placed,
-`NEAREST_WORK` for a nearest pair, `AXIS_WORK` for the axis's nearest
-point, a unit per 16 segments scanned for the axis's extent). Segments
-are placed on the frame at height 0, the sketch's own plane (extrude's
-`from` and `to` don't move them; a revolve's frame is the sketch's
-plane), as `Conic<DVec3>` passing `Conic3::new` with every control
-point in range, else left out; each gives its `Segment::curve` once (a
+evidence, the operation's resolution and its `EVIDENCE_WORK` allowance
+(a unit a segment placed, `NEAREST_WORK` for a nearest pair, a unit per
+16 segments scanned for the axis's extent). Segments are placed on the
+frame at height 0 (`Frame::conic`), the sketch's own plane, where its
+curves are mended (extrude's `from` and `to` don't move them; a
+revolve's frame is the sketch's plane), as `Conic<DVec3>` passing
+`Conic3::check` with every control point in range, else left out; each gives its `Segment::curve` once (a
 `BTreeSet` of those given). By error:
 
 | error | evidence |
@@ -7767,17 +7767,23 @@ point in range, else left out; each gives its `Segment::curve` once (a
 | `Segment`, `Degenerate`, `TooFine` | the segment |
 | `Open(l, s)` | the gap's two ends (`s`'s end, the next one's start) and both segments |
 | `Cusp(l, s)` | the vertex where `s` starts, and the segments before and at it |
-| `Touching([a, b])` | both segments, and where they come nearest: one point if the two are the same to about a billionth of their distance from the origin, else both |
+| `Touching([a, b])` | both segments, and where they come nearest: one point half way between where they are within the resolution (touching, as far as the operation can tell), else the point on each |
 | `CrossesAxis(l, s)` | the segment, and the axis as a line from the least to the greatest `y` of the profile's control points |
 | `TouchesAxis(l, s)` | a vertex on the axis (`s`'s start within the resolution of it) as a cusp is given; else the point of `s` nearest the axis, and `s` |
 | `NearlyFullTurn` | the whole profile on the frames at both ends of the turn (`x` turned to `from` and to `to`, as `Turn` turns it) |
 
-Where two segments come nearest (`evidence::nearest`) is a search, not
-exact: a 33 × 33 grid of their parameters, then 48 rounds narrowing a
-5 × 5 window round the best pair, halving it each round; the axis's
-nearest point (`nearest_axis`) the same on one parameter. Both are
-deterministic and lie on the segments; two places nearly as near may be
-told apart wrongly.
+Where two segments come nearest is `measure::distance`'s search between
+two edges (`curves_distance`, the placed curves as two one-curve
+elements, to the resolution), from its own `NEAREST_WORK` (4 096 units;
+arcs crossing, touching or nested take about a hundred) taken out of
+the allowance: past it, no point and `truncated`. The chain's
+`separate`, which raises `Touching`, finds only two pieces whose hulls
+aren't apart, not a point, and hands up indices alone, so the search is
+run again on the whole segments. The axis's nearest point
+(`nearest_axis`) is exact: the segment's ends and where its `x` turns
+(`measure::turns`, the roots of the derivative's numerator), the least
+`|x|` of those; `axis_rules` decides by signs and finds no place
+either.
 
 Its rules: evidence never changes an outcome (no `Ok` becomes an error
 or the reverse, and the error is the one returned without it; tests

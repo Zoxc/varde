@@ -145,6 +145,23 @@ fn distance_within(
     Ok(least(&xs, &ys, tol.resolution(), work)?)
 }
 
+/// The minimum distance between the curves `a` and `b`, and the two
+/// points where it is reached, as [`distance`]'s between two edges:
+/// within `eps` of the least, and to rounding where they touch or cross.
+/// [`KernelError::TooComplex`] past `work`.
+pub(crate) fn curves_distance(
+    a: &Conic3,
+    b: &Conic3,
+    eps: f64,
+    work: &mut Work,
+) -> Result<Distance, KernelError> {
+    let element = |curve: &Conic3| Element {
+        shape: Shape::Curve(*curve),
+        rounds: Round::of_curve(curve),
+    };
+    least(&[element(a)], &[element(b)], eps, work)
+}
+
 /// A pick's patch, curve or point, and the rounds it lies on.
 #[derive(Debug, Clone, Copy)]
 struct Element {

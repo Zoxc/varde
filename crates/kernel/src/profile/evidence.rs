@@ -12,40 +12,35 @@ use std::collections::BTreeSet;
 
 use glam::{DVec2, DVec3};
 
-use crate::budget::Work;
+use crate::budget::{Budget, Work};
 use crate::extrude::Frame;
-use crate::failure::{Evidence, evidence_work};
+use crate::failure::{Evidence, MAX_EVIDENCE, evidence_work};
+use crate::measure::{curves_distance, turns};
 use crate::patch::{Conic2, Conic3};
 use crate::profile::{Profile, ProfileError, Segment};
-use crate::{Failure, KernelError, in_range};
+use crate::{Failure, KernelError, Tolerance, in_range};
 
-/// The work units finding where two segments come nearest takes: a grid
-/// of [`GRID`]² pairs of points, then [`REFINE`] rounds of 25, a unit
-/// each.
-const NEAREST_WORK: usize = (GRID + 1) * (GRID + 1) + REFINE * 25;
-
-/// The work units finding where a segment comes nearest the axis takes,
-/// as [`NEAREST_WORK`] on one parameter.
-pub(crate) const AXIS_WORK: usize = GRID + 1 + REFINE * 5;
-
-/// The intervals each segment is cut into for the first search of where
-/// two come nearest, or where one comes nearest the axis.
-const GRID: usize = 32;
-
-/// Rounds of narrowing the search round the best pair found, each
-/// halving the window.
-const REFINE: usize = 48;
+/// The work units, out of the allowance, of finding where two segments
+/// come nearest ([`curves_distance`]): well over the hundred or so that
+/// arcs crossing, touching or nested take.
+const NEAREST_WORK: usize = 1 << 12;
 
 /// Profile segments scanned per work unit where a whole profile is only
 /// looked through (the axis's extent), not placed.
 const SCAN_PER_UNIT: usize = 16;
 
-/// `error`, failing `profile` placed on `frame`, with its evidence.
-pub(crate) fn profile_failure(error: KernelError, profile: &Profile, frame: &Frame) -> Failure {
+/// `error`, failing `profile` placed on `frame` at `tol`, with its
+/// evidence.
+pub(crate) fn profile_failure(
+    error: KernelError,
+    profile: &Profile,
+    frame: &Frame,
+    tol: &Tolerance,
+) -> Failure {
     let KernelError::Profile(e) = error else {
         return error.into();
     };
-    let mut gather = Gather::new(profile, frame);
+    let mut gather = Gather::new(profile, frame, tol);
     gather.error(e);
     gather.failure(error)
 }
@@ -58,6 +53,8 @@ pub(crate) struct Gather<'a> {
     /// errors may come with one that isn't. Without it only the sketch
     /// curves are given.
     frame: Option<Frame>,
+    /// The operation's resolution: two segments nearer are one point.
+    resolution: f64,
     evidence: Evidence,
     work: Work,
     /// The sketch curves given so far, each given once.
@@ -65,10 +62,11 @@ pub(crate) struct Gather<'a> {
 }
 
 impl<'a> Gather<'a> {
-    pub(crate) fn new(profile: &'a Profile, frame: &Frame) -> Gather<'a> {
+    pub(crate) fn new(profile: &'a Profile, frame: &Frame, tol: &Tolerance) -> Gather<'a> {
         Gather {
             profile,
             frame: frame.check().ok().map(|()| *frame),
+            resolution: tol.resolution(),
             evidence: Evidence::default(),
             work: evidence_work(),
             seen: BTreeSet::new(),
@@ -158,20 +156,25 @@ impl<'a> Gather<'a> {
         self.segment(l, s);
     }
 
-    /// Two segments that touch or cross, and where they come nearest:
-    /// one point if that is one point (to within about a billionth of
-    /// its distance from the origin), else both.
+    /// Two segments that touch or cross, and where they come nearest
+    /// ([`curves_distance`], from [`NEAREST_WORK`] of the allowance):
+    /// one point half way between where that is within the resolution
+    /// (they touch, as far as the operation can tell), else the point on
+    /// each.
     fn touching(&mut self, a: (usize, usize), b: (usize, usize)) {
+        let placed = |at: (usize, usize)| place(self.frame.as_ref()?, &self.get(at.0, at.1)?.conic);
         if a != b
-            && let (Some(sa), Some(sb)) = (self.get(a.0, a.1), self.get(b.0, b.1))
+            && let (Some(ca), Some(cb)) = (placed(a), placed(b))
             && self.afford(NEAREST_WORK)
         {
-            let (pa, pb) = nearest(&sa.conic, &sb.conic);
-            let scale = pa.abs().max(pb.abs()).max_element().max(1.0);
-            if pa.distance(pb) <= 1e-9 * scale {
-                self.points([(pa + pb) * 0.5]);
-            } else {
-                self.points([pa, pb]);
+            let mut work = Work::new(&Budget::new(NEAREST_WORK as u64));
+            match curves_distance(&ca, &cb, self.resolution, &mut work) {
+                Ok(d) if d.distance <= self.resolution => {
+                    let [p, q] = d.points;
+                    self.evidence.add_points([(p + q) * 0.5]);
+                }
+                Ok(d) => self.evidence.add_points(d.points),
+                Err(_) => self.evidence.truncated = true,
             }
         }
         self.segment(a.0, a.1);
@@ -221,7 +224,7 @@ impl<'a> Gather<'a> {
     }
 
     fn segment_on(&mut self, frame: Option<&Frame>, l: usize, s: usize) -> bool {
-        let caps = crate::failure::MAX_EVIDENCE;
+        let caps = MAX_EVIDENCE;
         let full = self.evidence.curves.len() >= caps.curves
             && self.evidence.sketch_curves.len() >= caps.sketch_curves;
         if full {
@@ -290,79 +293,26 @@ impl<'a> Gather<'a> {
     }
 }
 
-/// `conic`, of a profile's plane, placed on `frame` at height 0, if every
-/// control point lands in range and it passes [`Conic3::new`].
+/// `conic`, of a profile's plane, placed on `frame` at height 0 (in the
+/// sketch's own plane, where its curves are mended), if every control
+/// point lands in range and it is a fit conic ([`Conic3::check`]).
 fn place(frame: &Frame, conic: &Conic2) -> Option<Conic3> {
-    let [p0, c, p1] = [conic.p0, conic.c, conic.p1].map(|p| frame.point(p, 0.0));
-    if [p0, c, p1].iter().any(|&p| in_range(p).is_err()) {
-        return None;
-    }
-    Conic3::new(p0, c, conic.w, p1).ok()
+    let placed = frame.conic(conic, 0.0);
+    let in_range = placed.hull().iter().all(|&p| in_range(p).is_ok());
+    (in_range && placed.check().is_ok()).then_some(placed)
 }
 
-/// About where `a` and `b` come nearest: the closest pair of points on a
-/// grid of each one's parameter, then that pair's window narrowed round
-/// the best pair, [`REFINE`] times. Not exact (two segments may come near
-/// in more than one place, and the grid may pick the wrong one), but
-/// deterministic and on the segments.
-pub(crate) fn nearest(a: &Conic2, b: &Conic2) -> (DVec2, DVec2) {
-    let d = |s: f64, t: f64| a.eval(s).distance_squared(b.eval(t));
-    let step = 1.0 / GRID as f64;
-    let mut best = (0.0, 0.0, f64::INFINITY);
-    for i in 0..=GRID {
-        let s = i as f64 * step;
-        for j in 0..=GRID {
-            let t = j as f64 * step;
-            let e = d(s, t);
-            if e < best.2 {
-                best = (s, t, e);
-            }
-        }
-    }
-    let mut h = step;
-    for _ in 0..REFINE {
-        let (s0, t0, _) = best;
-        for i in -2..=2 {
-            let s = (s0 + f64::from(i) * h * 0.5).clamp(0.0, 1.0);
-            for j in -2..=2 {
-                let t = (t0 + f64::from(j) * h * 0.5).clamp(0.0, 1.0);
-                let e = d(s, t);
-                if e < best.2 {
-                    best = (s, t, e);
-                }
-            }
-        }
-        h *= 0.5;
-    }
-    (a.eval(best.0), b.eval(best.1))
-}
-
-/// About where `conic` comes nearest the line `x = 0`, its `x` being at
-/// least 0: as [`nearest`], on one parameter.
+/// Where `conic`, not crossing the line `x = 0`, comes nearest it: an
+/// end, or where its `x` turns ([`turns`]), whichever is nearest (the
+/// first of those as near).
 pub(crate) fn nearest_axis(conic: &Conic2) -> DVec2 {
-    let x = |t: f64| conic.eval(t).x.abs();
-    let step = 1.0 / GRID as f64;
-    let mut best = (0.0, f64::INFINITY);
-    for i in 0..=GRID {
-        let t = i as f64 * step;
-        let e = x(t);
-        if e < best.1 {
-            best = (t, e);
-        }
-    }
-    let mut h = step;
-    for _ in 0..REFINE {
-        let t0 = best.0;
-        for i in -2..=2 {
-            let t = (t0 + f64::from(i) * h * 0.5).clamp(0.0, 1.0);
-            let e = x(t);
-            if e < best.1 {
-                best = (t, e);
-            }
-        }
-        h *= 0.5;
-    }
-    conic.eval(best.0)
+    let x = [conic.p0.x, conic.c.x, conic.p1.x];
+    [0.0, 1.0]
+        .into_iter()
+        .chain(turns(x, conic.w))
+        .map(|t| conic.eval(t))
+        .min_by(|p, q| p.x.abs().total_cmp(&q.x.abs()))
+        .expect("the ends")
 }
 
 #[cfg(test)]

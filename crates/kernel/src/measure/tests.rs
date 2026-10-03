@@ -798,7 +798,7 @@ fn edge_extremes_are_the_roots_of_a_quadratic() {
         for k in 0..3 {
             let mut hi = curve.p0[k].max(curve.p1[k]);
             let mut lo = curve.p0[k].min(curve.p1[k]);
-            for t in turns(&curve, k) {
+            for t in turns(curve.hull().map(|p| p[k]), curve.w) {
                 let (_, d) = curve.eval_deriv(t);
                 let scale = (curve.p1 - curve.p0).length() + (curve.c - curve.p0).length();
                 assert!(d[k].abs() <= 1e-9 * scale * w.max(1.0 / w), "{d} at {t}");

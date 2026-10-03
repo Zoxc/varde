@@ -31,7 +31,7 @@ use crate::extrude::cap::{self, Mode, Rounds};
 use crate::extrude::chain::Chain;
 use crate::mesh::{BuildError, Face, FaceName, FacePart, Form, MeshBuilder, Surface};
 use crate::patch::{Conic2, Conic3, Patch, PatchError};
-use crate::profile::evidence::{AXIS_WORK, Gather, nearest_axis};
+use crate::profile::evidence::{Gather, nearest_axis};
 use crate::profile::{Loop, Profile, ProfileError, Segment};
 use crate::sweep::{Cap, Lathe, Pole, fitted_band_with, pole_cap_with, revolution_strip};
 use crate::{Failure, KernelError, MAX_PATCHES, Solid, Tolerance, in_range, trig};
@@ -104,12 +104,11 @@ pub fn revolve(
 }
 
 /// `error`, revolving `profile` on `frame` through `sweep`, with its
-/// evidence: a profile's as an extrude's (see
-/// [`Gather`]), placed at the frame's
-/// own angle, and for the axis's errors the axis too: a segment crossing
-/// it with the axis across the profile's extent along it, a segment
-/// touching it inside with the point nearest it (a vertex on it as a
-/// cusp is given), a turn nearly full with the profile at both its
+/// evidence: a profile's as an extrude's ([`Gather`]), placed at the
+/// frame's own angle, and for the axis's errors the axis too: a segment
+/// crossing it with the axis across the profile's extent along it, a
+/// segment touching it inside with the point nearest it (a vertex on it
+/// as a cusp is given), a turn nearly full with the profile at both its
 /// ends.
 fn revolve_failure(
     error: KernelError,
@@ -121,7 +120,7 @@ fn revolve_failure(
     let KernelError::Profile(e) = error else {
         return error.into();
     };
-    let mut gather = Gather::new(profile, frame);
+    let mut gather = Gather::new(profile, frame, tol);
     match e {
         ProfileError::CrossesAxis(l, s) => {
             gather.segment(l, s);
@@ -129,13 +128,12 @@ fn revolve_failure(
                 gather.line(DVec2::new(0.0, lo), DVec2::new(0.0, hi));
             }
         }
-        // Inside the segment: both its ends are off the axis by more than
-        // the resolution (within it they are put on it).
+        // A start off the axis by more than the resolution isn't a vertex
+        // on it (within the resolution it is put on it), so the segment
+        // comes near it inside.
         ProfileError::TouchesAxis(l, s) => match gather.get(l, s) {
             Some(seg) if seg.conic.p0.x.abs() > tol.resolution() => {
-                if gather.afford(AXIS_WORK) {
-                    gather.points([nearest_axis(&seg.conic)]);
-                }
+                gather.points([nearest_axis(&seg.conic)]);
                 gather.segment(l, s);
             }
             _ => gather.vertex(l, s),

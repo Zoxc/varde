@@ -53,6 +53,7 @@ use crate::{KernelError, MAX_REFINE_DEPTH, Solid, Tolerance, Topology, trig};
 
 mod distance;
 
+pub(crate) use distance::curves_distance;
 pub use distance::{Distance, distance};
 
 /// The weights within which a curve's piece is integrated as it is.
@@ -846,7 +847,7 @@ pub(crate) fn tight_bounds(
         }
         let curve = mesh.curve(h);
         for k in 0..3 {
-            for t in turns(&curve, k) {
+            for t in turns(curve.hull().map(|p| p[k]), curve.w) {
                 include(&mut best, curve.eval(t));
             }
         }
@@ -887,14 +888,14 @@ pub(crate) fn tight_bounds(
     Ok(Some(bounds))
 }
 
-/// The parameters in `(0, 1)` where `curve`'s coordinate `k` turns: the
-/// roots of the numerator of its derivative. With the homogeneous
-/// weights `(1, w, 1)` and the coordinates `x0, c, x1`, that numerator
-/// is twice `w(c − x0)(1 − t)² + (x1 − x0)·t(1 − t) + w(x1 − c)·t²`;
-/// with `s = t/(1 − t)` it is the quadratic `w(x1 − c)s² + (x1 − x0)s +
-/// w(c − x0)`, whose positive roots give `t = s/(1 + s)`.
-fn turns(curve: &Conic3, k: usize) -> impl Iterator<Item = f64> {
-    let (x0, c, x1, w) = (curve.p0[k], curve.c[k], curve.p1[k], curve.w);
+/// The parameters in `(0, 1)` where a conic's coordinate turns, its
+/// control points' values of it being `[x0, c, x1]` and its weight `w`:
+/// the roots of the numerator of its derivative. With the homogeneous
+/// weights `(1, w, 1)`, that numerator is twice `w(c − x0)(1 − t)² +
+/// (x1 − x0)·t(1 − t) + w(x1 − c)·t²`; with `s = t/(1 − t)` it is the
+/// quadratic `w(x1 − c)s² + (x1 − x0)s + w(c − x0)`, whose positive
+/// roots give `t = s/(1 + s)`.
+pub(crate) fn turns([x0, c, x1]: [f64; 3], w: f64) -> impl Iterator<Item = f64> {
     let (qa, qb, qc) = (w * (x1 - c), x1 - x0, w * (c - x0));
     let roots: [Option<f64>; 2] = if qa == 0.0 {
         [(qb != 0.0).then(|| -qc / qb), None]

@@ -263,8 +263,9 @@ fn crossing_loops_give_where_they_cross() {
 }
 
 #[test]
-fn loops_too_close_give_both_nearest_points() {
-    // Two squares half the resolution apart, side by side.
+fn loops_too_close_give_the_point_between() {
+    // Two squares half the resolution apart, side by side: they touch as
+    // far as the extrude can tell, so one point, between them.
     let gap = 0.5 * TOL.resolution();
     let p = profile(vec![
         rect(v(0.0, 0.0), v(1.0, 1.0), 1),
@@ -278,12 +279,30 @@ fn loops_too_close_give_both_nearest_points() {
     assert_eq!(a, (0, 1));
     assert_eq!(b.0, 1);
     segments_are(&f, ProfileError::Touching([a, b]), &p, &[a, b]);
+    let [q] = f.evidence.points[..] else {
+        panic!("{:?}", f.evidence.points);
+    };
+    assert!(distance_to(&placed(&p, a.0, a.1), q) <= gap);
+    assert!(distance_to(&placed(&p, b.0, b.1), q) <= gap);
+}
+
+#[test]
+fn segments_named_apart_give_the_nearest_point_on_each() {
+    // Touching from the error alone, naming two segments farther apart
+    // than the resolution: the nearest point on each.
+    let p = profile(vec![
+        rect(v(0.0, 0.0), v(1.0, 1.0), 1),
+        circle(v(3.0, 0.5), 1.0, 5, false),
+    ]);
+    let error = ProfileError::Touching([(0, 1), (1, 1)]);
+    let f = profile_failure(KernelError::Profile(error), &p, &TURNED, &TOL);
+    segments_are(&f, error, &p, &[(0, 1), (1, 1)]);
     let [qa, qb] = f.evidence.points[..] else {
         panic!("{:?}", f.evidence.points);
     };
-    assert!(distance_to(&placed(&p, a.0, a.1), qa) < 1e-12);
-    assert!(distance_to(&placed(&p, b.0, b.1), qb) < 1e-12);
-    assert!((qa.distance(qb) - gap).abs() < 1e-3 * gap, "{qa} {qb}");
+    // The square's right side at `(1, 0.5)`, the circle's left at `(2, 0.5)`.
+    assert!(qa.distance(TURNED.point(v(1.0, 0.5), 0.0)) < 1e-6, "{qa}");
+    assert!(qb.distance(TURNED.point(v(2.0, 0.5), 0.0)) < 1e-6, "{qb}");
 }
 
 #[test]
@@ -321,23 +340,31 @@ fn errors_naming_the_whole_profile_or_a_segment_give_them() {
     let all: Vec<(usize, usize)> = (0..2).flat_map(|l| (0..4).map(move |s| (l, s))).collect();
     let error = KernelError::Profile(ProfileError::Triangulation);
     segments_are(
-        &profile_failure(error, &p, &TURNED),
+        &profile_failure(error, &p, &TURNED, &TOL),
         ProfileError::Triangulation,
         &p,
         &all,
     );
     let error = KernelError::Profile(ProfileError::TooFine(1, 2));
     segments_are(
-        &profile_failure(error, &p, &TURNED),
+        &profile_failure(error, &p, &TURNED, &TOL),
         ProfileError::TooFine(1, 2),
         &p,
         &[(1, 2)],
     );
     // Indices past the profile give nothing, and other errors none.
     let error = KernelError::Profile(ProfileError::TooFine(2, 0));
-    assert!(profile_failure(error, &p, &TURNED).evidence.is_empty());
+    assert!(
+        profile_failure(error, &p, &TURNED, &TOL)
+            .evidence
+            .is_empty()
+    );
     let error = KernelError::TooComplex;
-    assert!(profile_failure(error, &p, &TURNED).evidence.is_empty());
+    assert!(
+        profile_failure(error, &p, &TURNED, &TOL)
+            .evidence
+            .is_empty()
+    );
 }
 
 #[test]
@@ -350,7 +377,12 @@ fn a_frame_unfit_to_place_by_gives_only_sketch_curves() {
         x: DVec3::new(1.0, 1.0, 0.0),
         ..Frame::XY
     };
-    let f = profile_failure(KernelError::Profile(ProfileError::Nesting(1)), &p, &skewed);
+    let f = profile_failure(
+        KernelError::Profile(ProfileError::Nesting(1)),
+        &p,
+        &skewed,
+        &TOL,
+    );
     assert!(f.evidence.curves.is_empty());
     assert_eq!(f.evidence.sketch_curves, [4, 5, 6, 7]);
 }
@@ -406,7 +438,7 @@ fn a_profile_touching_the_axis_gives_where() {
     let [q] = f.evidence.points[..] else {
         panic!("{:?}", f.evidence.points);
     };
-    assert!(q.distance(TURNED.point(v(0.0, 1.0), 0.0)) < 1e-6, "{q}");
+    assert!(q.distance(TURNED.point(v(0.0, 1.0), 0.0)) < 1e-12, "{q}");
     assert!(distance_to(&placed(&touching, 0, 3), q) < 1e-12);
 }
 

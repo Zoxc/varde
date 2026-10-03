@@ -68,6 +68,17 @@ impl Frame {
         self.origin + self.x * p.x + self.y * p.y + self.normal() * height
     }
 
+    /// The conic `c` of the profile's plane, moved `height` along the
+    /// normal: its control points placed by [`Frame::point`], unchecked.
+    pub(crate) fn conic(&self, c: &Conic2, height: f64) -> Conic3 {
+        Conic3 {
+            p0: self.point(c.p0, height),
+            c: self.point(c.c, height),
+            w: c.w,
+            p1: self.point(c.p1, height),
+        }
+    }
+
     /// The origin finite and within [`MAX_COORD`], the axes unit and
     /// square within [`Self::SLACK`].
     pub(crate) fn check(&self) -> Result<(), KernelError> {
@@ -112,7 +123,7 @@ pub fn extrude(
     budget: &Budget,
 ) -> Result<Solid, Failure> {
     extruded(profile, frame, from, to, feature, tol, budget)
-        .map_err(|error| profile_failure(error, profile, frame))
+        .map_err(|error| profile_failure(error, profile, frame, tol))
 }
 
 /// [`extrude`], failing with the error alone.
@@ -342,12 +353,7 @@ fn wall_form(conic: &Conic2, frame: &Frame, height: f64) -> Form {
             radius,
         },
         None => Form::ConicCylinder {
-            conic: Conic3 {
-                p0: frame.point(conic.p0, height),
-                c: frame.point(conic.c, height),
-                w: conic.w,
-                p1: frame.point(conic.p1, height),
-            },
+            conic: frame.conic(conic, height),
             along: axis,
         },
     }
