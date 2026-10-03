@@ -118,6 +118,9 @@ fn pair_failure(
     let mut gather = Gather::new();
     gather.pair(a, b, pair);
     for at in ends {
+        if gather.truncated() {
+            break;
+        }
         gather.point(at);
     }
     gather.failure(BooleanError::Inconsistent)

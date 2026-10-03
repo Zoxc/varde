@@ -1829,5 +1829,16 @@ fn a_cut_face_whose_boundary_doesnt_close_shows_it() {
             assert_ne!((starts(p), ends(p)), (1, 1), "{p}");
             assert!(starts(p) + ends(p) > 0, "{p}");
         }
+        // Working the boundary out again is charged too: an allowance
+        // that covers the face and the items but not that gives the face
+        // alone, the error as it was.
+        let items = 1 + e.curves.len() + e.points.len();
+        let short = super::evidence::tests::with_allowance(items as u64, || {
+            boolean(&a, &b, op, &tol, &Budget::DEFAULT).unwrap_err()
+        });
+        assert_eq!(short.error, failure.error);
+        assert_eq!(short.evidence.faces, e.faces);
+        assert!(short.evidence.curves.is_empty() && short.evidence.points.is_empty());
+        assert!(short.evidence.truncated);
     }
 }

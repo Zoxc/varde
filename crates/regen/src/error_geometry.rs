@@ -308,8 +308,8 @@ impl ErrorGeometry {
     /// Adds the triangles of the faces it names in `model` (the answer's
     /// mesh), from the `first`, to its mesh, their vertices and normals as
     /// the model has them, and each face's outline to its lines
-    /// ([`outline`]), as a patch's boundary is: face by face until one
-    /// doesn't fit.
+    /// ([`outline`]), as a patch's boundary is: face by face, each whole
+    /// (its triangles and its outline), until one doesn't fit.
     fn add_model_faces(&mut self, model: &RenderMesh, first: usize) {
         let Some(faces) = self.faces.get(first..).filter(|f| !f.is_empty()) else {
             return;
@@ -333,8 +333,11 @@ impl ErrorGeometry {
                     added.push(v);
                 }
             }
+            let lines = outline(model.positions(), corners);
+            let points = (lines.iter()).fold(0usize, |sum, line| sum.saturating_add(line.len()));
             let fits = positions.len().saturating_add(added.len()) <= Self::MAX_VERTICES
-                && indices.len().saturating_add(corners.len()) <= Self::MAX_INDICES;
+                && indices.len().saturating_add(corners.len()) <= Self::MAX_INDICES
+                && self.lines.points().len().saturating_add(points) <= Self::MAX_LINE_POINTS;
             if !fits {
                 self.truncated = true;
                 break;
@@ -344,12 +347,9 @@ impl ErrorGeometry {
                 normals.push(model.normals()[v as usize]);
             }
             indices.extend(corners.iter().map(|v| ids[v]));
-            for line in outline(model.positions(), corners) {
-                if (self.lines.points().len()).saturating_add(line.len()) > Self::MAX_LINE_POINTS {
-                    self.truncated = true;
-                    break;
-                }
-                // Within `MAX_POSITION`, as the model's positions are.
+            for line in lines {
+                // Within `MAX_POSITION`, as the model's positions are, and
+                // within `MAX_LINE_POINTS`, checked above.
                 self.truncated |= self.lines.push(line).is_err();
             }
         }

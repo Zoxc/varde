@@ -101,12 +101,13 @@ message is worded from the kernel's `failure.error` as before
   operand's body (`Evaluation::holder`), giving `(BodyId, face id)` of
   the answer's mesh. Those faces' triangles join the geometry's mesh,
   their vertices and normals copied from the model's
-  (`ErrorGeometry::add_model_faces`, face by face while within
-  `MAX_VERTICES` and `MAX_INDICES`, else `truncated`), so a named face is
+  (`ErrorGeometry::add_model_faces`, face by face, each whole with its
+  outline, while within `MAX_VERTICES`, `MAX_INDICES` and
+  `MAX_LINE_POINTS`, else `truncated` and no more), so a named face is
   drawn red with the rest, and each face's outline joins its lines as a
   patch's boundary does (`outline`: the sides of the face's triangles no
   other runs back along, matched by position so a seam doesn't show,
-  joined into polylines; within `MAX_LINE_POINTS`); the box then takes
+  joined into polylines); the box then takes
   them in. A
   draft's failure is resolved on the committed model answered with it.
   `ErrorGeometry::resolve_shared` takes a copy of its own only when

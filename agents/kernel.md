@@ -7903,7 +7903,8 @@ The flat retry after `Inconsistent` (`tied_or_exact`, which both
 failure whole (none if it succeeds; its own if it fails differently),
 and the boolean's tries keep theirs as for the check's. The decisions'
 and the assembly's sites gather through `evidence::Gather` (a unit an
-item, two a pair of patches given whole or not at all; an operand's
+item, two a pair of patches given whole or not at all, also where the
+cap has room for only one; an operand's
 triangle given as its patch and the operand's face it lies on, named
 once, or the face by name alone). By error:
 
@@ -7912,22 +7913,26 @@ once, or the face by name alone). By error:
 | `NotManifold` named from a near pair (`pinched_named`) | what repair or the check named, and the pair's two vertices as points, one where they are at one place |
 | `NotManifold` named from separate shells | what repair or the check named: the two triangles, or repair's pieces of them |
 | `NotManifold` from the decisions (`pinched_line`) | each pair refused, in order: its two patches as refined, and the operands' faces they lie on, each once (`pinch_failure`, stopping at the first left out) |
-| `Degenerate` from a face's triangulation | the face's kept halfedges as curves, and the operand's face (`face::boundary_failure`) |
+| `Degenerate` from a face's triangulation | the face's kept halfedges as curves, and the operand's face (`face::boundary_failure`, which charges working the boundary out again a unit a vertex or halfedge it holds: without as much left, the face alone) |
 | `Degenerate` from the mesh's builder | the triangle it names (its sides and corners) or the halfedge (its curve and ends), by the soup's positions and curve records (`built_evidence`) |
 | `Inconsistent`: an edge through a face whose crossings can't be (`Primitives::crossings`: a straight edge through a flat face more than once, or nowhere inside it) | the edge's curve, and the face crossed (its patch and name) |
 | `Inconsistent`: an edge whose winding numbers don't add up (`agree`) | the edge's curve, each of its crossings as a point, and the faces they cross, each once (`edge_failure`) |
-| `Inconsistent`: a part's second ray disagreeing with what its edges carried, or a winding number out of `0..=1` | the vertex (the second ray's, or the first out of range) as a point, the other operand's triangles its layer counts put above it, and its own triangles round it (scanned for, a unit per 64 triangles, if the allowance has it), each with its face (`vertex_failure`) |
+| `Inconsistent`: a part's second ray disagreeing with what its edges carried, or a winding number out of `0..=1` | the vertex (the second ray's, or the first out of range) as a point, the other operand's triangles its layer counts put above it, and its own triangles round it (scanned for in order, a unit per 64 triangles, until the allowance or a cap runs out), each with its face (`vertex_failure`) |
 | `Inconsistent`: a pair of faces whose ends don't join (`pairs::flat`, or `decide`'s first failing pair: ends on one curved surface, two ends of one sign, ends round the pair that don't pair up) | both patches, their faces, and the ends as points (`pair_failure`) |
 | `Inconsistent`: an edge's crossings out of order along it (`Along::new`, where a grazing pair went to one place) | the edge's curve, the two crossings (where they are, not where they went), and the faces they cross |
 | `Inconsistent`: a crossing only placed that isn't on the other operand (`Cutting::certify`) | the first such in order: its vertex, its edge's curve, and the face it crosses |
 | `Inconsistent`: an arc with no chain near enough the true cut (`chain::chains`) | the first such arc's ends as points, the curve refused between them (the conic along their tangents, else the chord: what `chain` refused last), and the pair's patches and faces |
 | `Inconsistent` from a face's boundary that doesn't close into loops (`cut_face`) | as for a `Degenerate` face: its kept halfedges as curves and its face, and the vertices with other than one halfedge leaving and one arriving as points (`face::boundary_failure`) |
 
-Each from a fresh `EVIDENCE_WORK` allowance where it can grow; none
+Each from a fresh `EVIDENCE_WORK` allowance where it can grow (a step
+adding many items, such as an edge's crossings, the faces above a
+vertex, a pair's ends or a face's boundary, stops at the first left
+out, so what it gives is the first in its order); none
 changes what the operation does or spends: `pinched` hands back the
 pair it stopped at (the same work), the decisions' and the round's
 failures are the first in order as before, the face's halfedges are
-worked out again only after the round has failed, and the counting's
+worked out again only after the round has failed (and from the
+allowance), and the counting's
 and assembly's sites only look at what they had already (`certify`
 finds the crossing's side and edge from its vertex id, `crossing_of`,
 rather than keeping a list beside the one it asks about). Old against

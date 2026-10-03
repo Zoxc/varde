@@ -13,7 +13,7 @@ use crate::budget::Work;
 use crate::failure::evidence_work;
 use crate::mesh::FaceKey;
 use crate::patch::Conic3;
-use crate::{Evidence, Failure, KernelError, Operand};
+use crate::{Evidence, Failure, KernelError, MAX_EVIDENCE, Operand};
 
 /// One failure's evidence as it is gathered, from a fresh
 /// [`EVIDENCE_WORK`](crate::EVIDENCE_WORK) allowance: a unit an item
@@ -27,6 +27,14 @@ pub(super) struct Gather {
 
 impl Gather {
     pub(super) fn new() -> Gather {
+        #[cfg(test)]
+        if let Some(units) = tests::ALLOWANCE.get() {
+            return Gather {
+                evidence: Evidence::default(),
+                work: Work::new(&crate::Budget::new(units)),
+                named: BTreeSet::new(),
+            };
+        }
         Gather {
             evidence: Evidence::default(),
             work: evidence_work(),
@@ -57,9 +65,13 @@ impl Gather {
         }
     }
 
-    /// Triangle `p` of `A` and `q` of `B`, both or neither: as
-    /// [`Gather::tri`], `A`'s first.
+    /// Triangle `p` of `A` and `q` of `B`, both or neither (neither where
+    /// only one would fit under the cap): as [`Gather::tri`], `A`'s first.
     pub(super) fn pair(&mut self, a: &Input, b: &Input, [p, q]: [u32; 2]) {
+        if self.evidence.patches.len().saturating_add(2) > MAX_EVIDENCE.patches {
+            self.evidence.truncated = true;
+            return;
+        }
         if self.afford(2) {
             self.evidence
                 .add_patches([a.patches[p as usize], b.patches[q as usize]]);

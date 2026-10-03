@@ -1,7 +1,25 @@
+use std::cell::Cell;
+
 use glam::DVec3;
 
 use super::*;
+use crate::mesh::tests::TOL;
 use crate::{Solid, Tolerance};
+
+thread_local! {
+    /// An allowance other than `EVIDENCE_WORK` for the gathers this
+    /// thread starts, for tests of running out ([`with_allowance`]).
+    pub(super) static ALLOWANCE: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+/// `f`, every gather this thread starts in it given `units` of
+/// allowance.
+pub(in crate::boolean) fn with_allowance<T>(units: u64, f: impl FnOnce() -> T) -> T {
+    ALLOWANCE.set(Some(units));
+    let result = f();
+    ALLOWANCE.set(None);
+    result
+}
 
 /// Checks that `failure`, a boolean's of `a` and `b` failing as
 /// [`BooleanError::Inconsistent`], shows something, within the caps, and
@@ -43,4 +61,24 @@ pub(in crate::boolean) fn on_operands(a: &Solid, b: &Solid, failure: &Failure, t
     for patch in &evidence.patches {
         patch.p.into_iter().for_each(inside);
     }
+}
+
+#[test]
+fn a_pair_is_whole_at_the_cap() {
+    // One patch short of room for a pair: it is left out whole, its faces
+    // too, and the evidence marked truncated.
+    let a = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 1, &TOL).unwrap();
+    let b = Solid::cuboid(DVec3::ONE, DVec3::ONE, 2, &TOL).unwrap();
+    let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
+    let mut gather = Gather::new();
+    for _ in 0..MAX_EVIDENCE.patches - 1 {
+        gather.tri(Side::A, &ia, 0);
+    }
+    assert!(!gather.truncated());
+    gather.pair(&ia, &ib, [1, 0]);
+    let failure = gather.failure(BooleanError::NotManifold);
+    let e = &failure.evidence;
+    assert_eq!(e.patches.len(), MAX_EVIDENCE.patches - 1);
+    assert!(e.faces.iter().all(|&(operand, _)| operand == Operand::A));
+    assert!(e.truncated);
 }

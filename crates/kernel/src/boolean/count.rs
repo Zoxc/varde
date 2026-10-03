@@ -435,6 +435,9 @@ fn edge_failure(side: Side, input: &Input, other: &Input, x: &[Crossing], e: u32
     let from = x.partition_point(|c| c.edge < e);
     let mut last = None;
     for c in x[from..].iter().take_while(|c| c.edge == e) {
+        if gather.truncated() {
+            break;
+        }
         gather.point(conic.eval(c.t));
         if last != Some(c.face) {
             gather.tri(side.other(), other, c.face);
@@ -453,22 +456,29 @@ const SCAN_PER_UNIT: usize = 64;
 /// what its edges carried there, or whose winding number is out of
 /// `0..=1`, as [`BooleanError::Inconsistent`]: the vertex as a point, the
 /// faces of `other` its layer counts `s` (`s02` or `s20`) put above it,
-/// and the triangles round it (scanned for, a unit per
-/// [`SCAN_PER_UNIT`] triangles, if the allowance has it).
+/// and the triangles round it, scanned for [`SCAN_PER_UNIT`] triangles
+/// a unit, in order, until the allowance or a cap runs out.
 fn vertex_failure(side: Side, input: &Input, other: &Input, s: &Table<i8>, v: u32) -> Failure {
     let mut gather = Gather::new();
     gather.point(input.pos(v));
     let lo = s.keys.partition_point(|k| k[0] < v);
     let hi = s.keys.partition_point(|k| k[0] <= v);
     for (k, &layers) in s.keys[lo..hi].iter().zip(&s.values[lo..hi]) {
+        if gather.truncated() {
+            break;
+        }
         if layers != 0 {
             gather.tri(side.other(), other, k[1]);
         }
     }
-    if gather.afford(input.tris.len().div_ceil(SCAN_PER_UNIT)) {
-        for t in 0..input.tris.len() as u32 {
-            if input.tris[t as usize].contains(&v) {
-                gather.tri(side, input, t);
+    for (c, chunk) in input.tris.chunks(SCAN_PER_UNIT).enumerate() {
+        if gather.truncated() || !gather.afford(1) {
+            break;
+        }
+        for (i, corners) in chunk.iter().enumerate() {
+            if corners.contains(&v) {
+                // Triangle ids fit `u32`.
+                gather.tri(side, input, (c * SCAN_PER_UNIT + i) as u32);
             }
         }
     }

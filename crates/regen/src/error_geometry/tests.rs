@@ -479,3 +479,22 @@ fn a_face_s_outline_runs_round_it_once() {
     // Nothing for no triangles.
     assert!(super::outline(&positions, &[]).is_empty());
 }
+
+/// Operand faces go in whole, their triangles with their outline, until
+/// one doesn't fit: lines too full for the first face's outline take
+/// neither it nor any after it.
+#[test]
+fn operand_faces_go_in_whole() {
+    let (mesh, picking) = cube();
+    let mut evidence = Evidence::default();
+    evidence.add_faces([(Operand::A, cap(1))]);
+    let mut geometry = made(&failure(evidence), [Some(BodyId::NEW), None]).unwrap();
+    // Room for a line of three points: the cap's outline takes five.
+    let full = ErrorGeometry::MAX_LINE_POINTS - 3;
+    geometry.lines = RenderLines::from_parts(vec![[0.0; 3]; full], vec![full as u32]).unwrap();
+    geometry.resolve(&mesh, &picking, Some);
+    assert_eq!(geometry.faces().len(), 1);
+    assert_eq!(geometry.mesh().triangle_count(), 0);
+    assert_eq!(geometry.lines().points().len(), full);
+    assert!(geometry.truncated());
+}

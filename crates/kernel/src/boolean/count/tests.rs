@@ -168,3 +168,69 @@ fn an_edge_whose_winding_numbers_dont_add_up_shows_its_crossings() {
     assert_eq!(ev.faces, faces);
     assert!(!ev.patches.is_empty() && !ev.truncated);
 }
+
+#[test]
+fn the_scan_round_a_vertex_stops_where_the_allowance_does() {
+    // A vertex of a prism of 400 sides whose triangles are spread over
+    // several chunks of the scan, given an allowance that runs out after
+    // the first chunk holding any: those are kept, in order, the rest
+    // left out and the evidence marked truncated. Scanning all or none
+    // would keep none.
+    let n = 400;
+    let points: Vec<glam::DVec2> = (0..n)
+        .map(|i| {
+            let (sin, cos) =
+                crate::trig::sin_cos(std::f64::consts::TAU * f64::from(i) / f64::from(n));
+            glam::DVec2::new(cos, sin)
+        })
+        .collect();
+    let profile = crate::Profile {
+        loops: vec![crate::profile::tests::polygon(&points, 1)],
+    };
+    let a = crate::extrude(
+        &profile,
+        &crate::Frame::XY,
+        0.0,
+        1.0,
+        1,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
+    let ia = Input::new(a.mesh(), &TOL);
+    let chunk = |t: u32| t as usize / SCAN_PER_UNIT;
+    let chunks = ia.tris.len().div_ceil(SCAN_PER_UNIT);
+    let round = |v: u32| -> Vec<u32> {
+        (0..ia.tris.len() as u32)
+            .filter(|&t| ia.tris[t as usize].contains(&v))
+            .collect()
+    };
+    let (v, kept) = (0..ia.mesh.verts().len() as u32)
+        .find_map(|v| {
+            let round = round(v);
+            let first = chunk(round[0]);
+            let kept: Vec<u32> = round
+                .iter()
+                .copied()
+                .filter(|&t| chunk(t) == first)
+                .collect();
+            // Past the first chunk with any, and more than the allowance.
+            let spread = kept.len() < round.len();
+            let allowance = 1 + (first + 1) + kept.len();
+            (spread && allowance < chunks).then_some((v, kept))
+        })
+        .expect("a vertex whose triangles are spread out");
+    let allowance = 1 + (chunk(kept[0]) + 1) + kept.len();
+    let empty = Table {
+        keys: Vec::new(),
+        values: Vec::new(),
+    };
+    let failure = crate::boolean::evidence::tests::with_allowance(allowance as u64, || {
+        vertex_failure(Side::A, &ia, &ia, &empty, v)
+    });
+    let e = &failure.evidence;
+    assert_eq!(e.points, [ia.pos(v)]);
+    let patches: Vec<_> = kept.iter().map(|&t| ia.patches[t as usize]).collect();
+    assert_eq!(e.patches, patches);
+    assert!(e.truncated);
+}

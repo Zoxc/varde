@@ -519,7 +519,10 @@ pub(super) fn cut_face(
 /// back, but for the rounding and snapping onto the domain's sides it
 /// takes them through); the vertices where it doesn't close, with other
 /// than one halfedge leaving and one arriving, as points (loops that
-/// close have none); and the operand's face it is.
+/// close have none); and the operand's face it is. Working the boundary
+/// out again is charged to the evidence's allowance, a unit a vertex or
+/// halfedge it holds: without as much left, the face alone; then curves
+/// and points in order until the allowance or a cap runs out.
 pub(super) fn boundary_failure(
     error: BooleanError,
     input: &Input,
@@ -531,6 +534,16 @@ pub(super) fn boundary_failure(
 ) -> Failure {
     let mut gather = Gather::new();
     gather.face(job.side, input, job.tri);
+    // The corners and cuts, and each edge's vertices and pieces.
+    let size = (input.tri_edges[job.tri as usize].iter())
+        .map(|&(e, _)| {
+            let (verts, kept) = along.of(e);
+            verts.len().saturating_add(kept.len())
+        })
+        .fold(job.cuts.len().saturating_add(3), usize::saturating_add);
+    if !gather.afford(size) {
+        return gather.failure(error);
+    }
     let (halfedges, _) = boundary(input, job, along, offset, pos);
     // How many halfedges leave and arrive at each vertex.
     let mut ends: BTreeMap<u32, [usize; 2]> = BTreeMap::new();
@@ -539,6 +552,9 @@ pub(super) fn boundary_failure(
         ends.entry(v).or_default()[1] += 1;
     }
     for [u, v] in halfedges {
+        if gather.truncated() {
+            break;
+        }
         let (p, q) = (pos[u as usize], pos[v as usize]);
         gather.curve(curves.get(&key(u, v)).map_or_else(
             || segment(p, q),
@@ -551,6 +567,9 @@ pub(super) fn boundary_failure(
         ));
     }
     for (&v, _) in ends.iter().filter(|(_, n)| **n != [1, 1]) {
+        if gather.truncated() {
+            break;
+        }
         gather.point(pos[v as usize]);
     }
     gather.failure(error)
