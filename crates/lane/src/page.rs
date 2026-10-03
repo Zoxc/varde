@@ -262,6 +262,22 @@ fn fail<R>(page: &impl Page<R>, error: String) {
     page.fail(error);
 }
 
+/// What's told of a worker's panic: its name and the panic's message.
+type Told = fn(&'static str, &str);
+
+thread_local! {
+    /// Told of each worker's panic, see [`on_worker_panic`].
+    static ON_PANIC: Cell<Option<Told>> = const { Cell::new(None) };
+}
+
+/// Has `told` called with a worker's name and its panic's message, e.g.
+/// "the file worker" and "internal error: …", whenever one panics, before
+/// its page fails: a worker can't keep anything the page can read once
+/// its wasm instance traps. Replaces what was told before.
+pub fn on_worker_panic(told: Told) {
+    ON_PANIC.with(|on_panic| on_panic.set(Some(told)));
+}
+
 /// Hands the message `data` the worker posted to `page`: `null` says it's
 /// ready, which it says once, first; a string is why it panicked; and
 /// buffers are the lane's. Anything else, or out of turn, fails the worker.
@@ -272,6 +288,9 @@ fn deliver<R>(page: &impl Page<R>, data: &JsValue) {
         host.ready.set(true);
         page.ready();
     } else if let Some(error) = data.as_string() {
+        if let Some(told) = ON_PANIC.with(Cell::get) {
+            told(host.name, &error);
+        }
         fail(page, error);
     } else if let Some(message) = Message::from_js(data).filter(|m| ready && m.objects.is_empty()) {
         if let Err(refused) = page.receive(message.parts) {

@@ -128,6 +128,8 @@ impl Request {
             | Request::DiscardRecovered { .. }
             | Request::Export { .. }
             | Request::LoadThumbnails { .. }
+            | Request::LoadPanic
+            | Request::DiscardPanic { .. }
             | Request::Flush => None,
         }
     }

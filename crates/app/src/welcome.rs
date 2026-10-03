@@ -12,7 +12,7 @@ use varde_io::{
 };
 use varde_view::{Message as Ui, Mode, ThemeChoice, Welcome as WelcomeUi};
 
-use crate::doc::{Doc, FileDamage, Leave, Origin, Recovery, Target, design_name};
+use crate::doc::{Dialog, Doc, FileDamage, Leave, Origin, Recovery, Target, design_name};
 use crate::{Files, Next, when};
 
 /// State of the welcome screen.
@@ -31,6 +31,8 @@ pub(crate) struct Welcome {
     /// The file just opened and found damaged, asked about before its
     /// design shows, if one is.
     damaged: Option<Box<Damaged>>,
+    /// Whether the whole of the panic recorded is showing.
+    showing_panic: bool,
 }
 
 /// A file opened and found damaged past the save opened (see
@@ -96,13 +98,39 @@ impl Welcome {
                 self.cancel_damaged(files);
                 Next::Stay
             }
+            WelcomeUi::ShowPanic => {
+                self.showing_panic = files.panic.is_some();
+                Next::Stay
+            }
+            WelcomeUi::ClosePanic => {
+                self.showing_panic = false;
+                Next::Stay
+            }
+            WelcomeUi::DiscardPanic => {
+                self.showing_panic = false;
+                if let Some(panic) = files.panic.take() {
+                    files.io.send(IoRequest::DiscardPanic { panic });
+                }
+                Next::Stay
+            }
         }
     }
 
-    /// Whether a damaged file is being asked about, see [`Damaged`]: no
-    /// key opens anything else meanwhile.
+    /// Whether a damaged file is being asked about, see [`Damaged`].
     pub(crate) fn prompting(&self) -> bool {
         self.damaged.is_some()
+    }
+
+    /// The dialog over the screen, if one is showing: no key opens
+    /// anything meanwhile, and `Esc` cancels it.
+    pub(crate) fn dialog(&self) -> Option<Dialog> {
+        if self.prompting() {
+            Some(Dialog::Damaged)
+        } else if self.showing_panic {
+            Some(Dialog::Panic)
+        } else {
+            None
+        }
     }
 
     /// Opens the newest save that can be read of the damaged file asked
@@ -298,6 +326,9 @@ impl Welcome {
                 Source::Recovered(path) => Some(files.recovered_title(path)),
                 Source::Chosen(_) => None,
             };
+            // Asked about in place of the panic shown, which isn't
+            // shown again after.
+            self.showing_panic = false;
             self.damaged = Some(Box::new(Damaged {
                 source: opening.source,
                 path,
@@ -390,12 +421,18 @@ impl Welcome {
             .damaged
             .as_ref()
             .map(|damaged| damaged.prompt(files, now));
+        let panic = files.panic.as_ref().map(|panic| varde_view::PanicNote {
+            when: panic.time.map(|time| when::ago_since_a_session(time, now)),
+            message: &panic.message,
+            report: self.showing_panic.then(|| panic.report()),
+        });
         varde_view::welcome(varde_view::WelcomeState {
             error: self.error.as_deref(),
             recent,
             recovered,
             downloaded,
             damaged,
+            panic,
             mode,
             theme,
         })

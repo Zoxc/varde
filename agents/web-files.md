@@ -98,6 +98,17 @@ handles kept in IndexedDB, and aren't there yet. The settings are
 taken, so another tab writing them doesn't block it) and written through a
 sync access handle, which every browser with OPFS has in workers.
 
+The panic recorded (see "Panics" in `files.md`) is the exception: the
+panic hook runs on the page, which can't reach OPFS without waiting, so
+it's kept in the page's `localStorage` under `varde-panic`, and the page
+answers `Request::LoadPanic` and `Request::DiscardPanic` itself
+(`io/src/web/page/panicked.rs`) without posting them to the worker,
+whatever became of it. A worker can't keep it either (no
+`localStorage`, and its instance traps), so a worker's panic is recorded
+by the page as the panic message arrives (`varde_lane::page::on_worker_panic`),
+with the worker's name as the thread and no location or backtrace (they
+are in the console).
+
 The page and the worker share no memory. Each message is postcard bytes in
 a transferred `ArrayBuffer` (with a picked file's handle or `File` cloned
 alongside): requests numbered in the order sent, and responses carrying

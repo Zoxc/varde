@@ -1103,7 +1103,7 @@ pub(crate) enum Change {
 }
 
 /// A prompt over a screen, see [`Doc::dialog`] and
-/// [`Welcome::prompting`](crate::welcome::Welcome::prompting).
+/// [`Welcome::dialog`](crate::welcome::Welcome::dialog).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Dialog {
     /// About unsaved changes, before the document is closed.
@@ -1112,6 +1112,8 @@ pub(crate) enum Dialog {
     Delete,
     /// About a damaged file, before its design is shown.
     Damaged,
+    /// The whole of the panic recorded, on the welcome screen.
+    Panic,
 }
 
 /// The name shown for the design at `path`: its file name without the

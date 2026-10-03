@@ -131,6 +131,7 @@ fn recent_files_round_trip_through_the_store() {
         recent: Some(dir.0.join("recent.toml")),
         settings: None,
         designs: None,
+        panic: None,
     });
     let entries = vec![RecentFile {
         path: dir.design(),
@@ -169,6 +170,37 @@ fn recent_files_without_a_store_are_empty() {
     assert!(matches!(
         files.handle(Request::LoadRecent),
         Response::RecentLoaded { entries, .. } if entries.is_empty()
+    ));
+}
+
+#[test]
+fn the_panic_recorded_loads_and_is_discarded() {
+    let dir = TempDir::new("files-panic");
+    let store = dir.0.join("panic.toml");
+    let mut files = Files::new(Stores {
+        panic: Some(store.clone()),
+        ..Stores::default()
+    });
+    assert!(matches!(
+        files.handle(Request::LoadPanic),
+        Response::PanicLoaded { panic: None }
+    ));
+    let panic = crate::Panic::new(None, "on purpose", None, None);
+    std::fs::write(&store, panic.serialize()).unwrap();
+    assert!(matches!(
+        files.handle(Request::LoadPanic),
+        Response::PanicLoaded { panic: Some(loaded) } if loaded == panic
+    ));
+    assert!(matches!(
+        files.handle(Request::DiscardPanic { panic }),
+        Response::PanicDiscarded { result: Ok(()) }
+    ));
+    assert!(!store.exists());
+    // Nowhere to keep one.
+    let mut files = Files::new(Stores::default());
+    assert!(matches!(
+        files.handle(Request::LoadPanic),
+        Response::PanicLoaded { panic: None }
     ));
 }
 
@@ -617,6 +649,7 @@ fn with_store(dir: &TempDir) -> Files {
         recent: None,
         settings: None,
         designs: Some(dir.0.join("designs")),
+        panic: None,
     })
 }
 

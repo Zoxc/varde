@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use varde_document::{Document, Snapshot};
 
 use super::sidecar::{self, LockFile};
-use super::{recent, settings, store};
+use super::{panicked, recent, settings, store};
 use crate::autosave::{Ending, Origin, to_open};
 use crate::open::{KEPT, NOT_FOUND, OpenFiles};
 use crate::store::{NO_RECOVERED, NO_STORE, entry_in};
@@ -422,6 +422,15 @@ impl Files {
                     to: Chosen::Path(path),
                 }
             }
+            Request::LoadPanic => Response::PanicLoaded {
+                panic: self.stores.panic.as_deref().and_then(panicked::load),
+            },
+            Request::DiscardPanic { panic } => Response::PanicDiscarded {
+                result: match self.stores.panic.as_deref() {
+                    Some(store) => panicked::discard(store, &panic).map_err(|e| e.to_string()),
+                    None => Ok(()),
+                },
+            },
             Request::Flush => Response::Flushed,
         }
     }

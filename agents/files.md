@@ -286,3 +286,26 @@ offset may reach `u32::MAX`, which would say a zip64 record follows). No bodies
 to write is refused too. Choices made where the 3MF spec leaves it open:
 no thumbnail, no colours or materials, no `<components>`, bodies placed
 where they are in the design rather than arranged for a build plate.
+
+**Panics.** `varde_app::run` sets the panic hook (`io::panicked::install`),
+keeping the frontend's, which logs every panic. The first panic of the
+process, on any thread (natively a lane's too, though the lane catches it
+and carries on), is recorded and told of in a dialog that waits for the
+user: natively `rfd`'s message dialog, on the web the browser's `alert`.
+Later ones are only logged: they're mostly the first one's aftermath, as
+the app comes down. The hook writes the record itself, not through the IO
+lane, which may be what panicked: natively `panic.toml` in the data
+directory (`Stores::panic`), replaced whole like the settings; on the web
+see `web-files.md`. It's a table of plain keys (time, version, thread,
+message, location, backtrace), each bounded and read on its own; one
+without a message isn't a panic. At startup the app asks the lane for it
+(`Request::LoadPanic`), and the welcome screen shows it under Start as
+"Internal error": a card with the message's first line and when ("Last
+session" for under a minute ago, as it can only be from an earlier
+session), and Details… and Discard, as tall as the Start buttons.
+Details shows the whole report (`Panic::report`) in a dialog, scrolled
+and in monospace, with Copy (for a bug report) and Close; `Esc` closes
+it, and no key opens anything behind it. A damaged file asked about takes
+its place. Discard sends `Request::DiscardPanic` with the panic, which is
+deleted only if it's still the one recorded, not one another session
+recorded since.

@@ -7,10 +7,10 @@ use std::sync::LazyLock;
 use iced::widget::{
     Space, button, column, container, grid, hover, image, row, space, stack, svg, text,
 };
-use iced::{Alignment, ContentFit, Element, Length, Padding};
+use iced::{Alignment, ContentFit, Element, Font, Length, Padding};
 use varde_document::APP_NAME;
 
-use crate::chrome::{self, ChipSize, dialog, dialog_button, key_hint};
+use crate::chrome::{self, ChipSize, dialog, dialog_button, dialog_of_width, key_hint};
 use crate::icons::{self, Icon, LOGO_SVG};
 use crate::shortcut::{Binding, Shortcut, welcome_bindings};
 use crate::status::{Status, status_bar};
@@ -32,6 +32,8 @@ pub struct WelcomeState<'a> {
     /// The damaged file just opened, asked about before its design shows,
     /// if one is.
     pub damaged: Option<DamagedPrompt<'a>>,
+    /// The panic a session recorded, if one did.
+    pub panic: Option<PanicNote<'a>>,
     pub mode: theme::Mode,
     /// The theme chosen, which the theme button shows.
     pub theme: theme::ThemeChoice,
@@ -60,6 +62,18 @@ pub struct DamagedPrompt<'a> {
     pub opening: bool,
     /// Why opening the save found failed, if it did.
     pub error: Option<&'a str>,
+}
+
+/// The panic a session recorded, kept till the user discards it: a note
+/// on the welcome screen, and the whole report in a dialog over it while
+/// they look at it.
+pub struct PanicNote<'a> {
+    /// When it happened, like "2 h ago", if that's known.
+    pub when: Option<String>,
+    /// Its message.
+    pub message: &'a str,
+    /// The whole of it, while it's shown, to copy, e.g. for a bug report.
+    pub report: Option<String>,
 }
 
 /// A card in the welcome screen's recent files.
@@ -105,9 +119,12 @@ pub struct StoredDesign<'a> {
 /// and the recently opened files.
 pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
     let [new, open] = welcome_bindings();
+    let reporting = (state.panic.as_ref()).is_some_and(|panic| panic.report.is_some());
     // The prompt takes every key but `Esc`.
     let hints = if state.damaged.is_some() {
         vec![key_hint(Shortcut::ESCAPE, "Cancel")]
+    } else if reporting {
+        vec![key_hint(Shortcut::ESCAPE, "Close")]
     } else {
         vec![
             key_hint(new.shortcut, "New design"),
@@ -120,6 +137,14 @@ pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
     if let Some(error) = state.error {
         start = start.push(text(error).style(theme::danger_text));
     }
+
+    let (panic, report) = match state.panic {
+        Some(note) => {
+            let report = note.report.clone();
+            (Some(panic_section(note)), report)
+        }
+        None => (None, None),
+    };
 
     let recovered = (!state.recovered.is_empty()).then(|| {
         section(
@@ -160,6 +185,7 @@ pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
         .push(heading())
         .push(section_label("Start"))
         .push(start)
+        .push(panic)
         .push(recovered)
         .push(downloaded)
         .push(recent)
@@ -189,10 +215,91 @@ pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
         view_menu: None,
     });
     let window = chrome::window(page, status);
-    match state.damaged {
-        Some(prompt) => stack![window, damaged_prompt(prompt)].into(),
-        None => window,
+    match (state.damaged, report) {
+        (Some(prompt), _) => stack![window, damaged_prompt(prompt)].into(),
+        (None, Some(report)) => stack![window, panic_report(report)].into(),
+        (None, None) => window,
     }
+}
+
+/// The panic a session recorded, as a card: its message's first line and
+/// when, beside buttons to show the whole of it and to discard it.
+fn panic_section<'a>(note: PanicNote<'a>) -> Element<'a, Message> {
+    let said = match &note.when {
+        Some(when) => format!("{APP_NAME} ran into an internal error · {when}"),
+        None => format!("{APP_NAME} ran into an internal error"),
+    };
+    let first = note.message.lines().next().unwrap_or_default();
+    let clipped = |line: text::Text<'a>| {
+        container(line.wrapping(text::Wrapping::None))
+            .width(Length::Fill)
+            .clip(true)
+    };
+    let card = container(
+        row![
+            icons::tinted(Icon::Alert, 20.0, |p| p.warning),
+            column![
+                clipped(text(first).font(theme::SEMIBOLD)),
+                clipped(text(said).size(11.5).style(theme::muted_text)),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
+            panic_button("Details…", Welcome::ShowPanic),
+            panic_button("Discard", Welcome::DiscardPanic),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding::from([10, 12]).left(14))
+    .width(Length::Fill)
+    .style(theme::note_card);
+    section("Internal error", [card.into()])
+}
+
+/// A button of the panic's card, as tall as the Start buttons.
+fn panic_button<'a>(label: &'a str, message: Welcome) -> Element<'a, Message> {
+    button(
+        container(text(label).font(theme::SEMIBOLD))
+            .height(Length::Fill)
+            .align_y(Alignment::Center),
+    )
+    .height(36)
+    .padding([0, 14])
+    .style(theme::secondary_button)
+    .on_press(Message::Welcome(message))
+    .into()
+}
+
+/// The whole of the panic recorded, `report`, in a dialog over the whole
+/// screen, to read and copy.
+fn panic_report<'a>(report: String) -> Element<'a, Message> {
+    let body = container(
+        chrome::scrolled(
+            container(text(report.clone()).size(12).font(Font::MONOSPACE)).padding(10),
+            2.0,
+        )
+        .height(Length::Shrink),
+    )
+    .max_height(360)
+    .width(Length::Fill)
+    .style(theme::text_well);
+    let copy = dialog_button("Copy", theme::secondary_button, Some(Message::Copy(report)));
+    let close = dialog_button(
+        "Close",
+        theme::primary_button,
+        Some(Message::Welcome(Welcome::ClosePanic)),
+    );
+    dialog_of_width(
+        column![
+            text("Internal error").size(14).font(theme::SEMIBOLD),
+            text("Copy it into a bug report to help get it fixed.").style(theme::muted_text),
+            body,
+            Space::new().height(4),
+            row![space::horizontal(), copy, close].spacing(8),
+        ]
+        .spacing(8),
+        640.0,
+    )
 }
 
 /// Asks what to do about a damaged file, see [`DamagedPrompt`], as a

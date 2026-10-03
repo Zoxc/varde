@@ -580,7 +580,8 @@ fn recent_files_are_loaded_first() {
         [
             IoRequest::LoadRecent,
             IoRequest::ListRecovered,
-            IoRequest::LoadSettings
+            IoRequest::LoadSettings,
+            IoRequest::LoadPanic
         ]
     ));
 }
@@ -713,6 +714,7 @@ fn an_open_given_up_on_is_abandoned_before_the_next() {
             "LoadRecent",
             "ListRecovered",
             "LoadSettings",
+            "LoadPanic",
             "open 0 /d/a.vrdp",
             "abandon 0",
             "open 1 /d/b.vrdp",
@@ -791,6 +793,7 @@ fn requests_before_the_lane_starts_wait_for_it() {
             IoRequest::LoadRecent,
             IoRequest::ListRecovered,
             IoRequest::LoadSettings,
+            IoRequest::LoadPanic,
             IoRequest::Open { .. }
         ]
     ));
@@ -3277,6 +3280,7 @@ impl Session {
             recent: None,
             settings: None,
             designs: Some(dir.join("designs")),
+            panic: None,
         });
         let mut varde = Varde::new();
         let _ = varde.update(Message::IoReady(lane));
@@ -3992,6 +3996,7 @@ fn with_picked_file(picked: Picked) -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
         IoRequest::LoadRecent,
         IoRequest::ListRecovered,
         IoRequest::LoadSettings,
+        IoRequest::LoadPanic,
         IoRequest::Open {
             id,
             from: Chosen::File(asked),
@@ -5604,4 +5609,5 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
 
 mod damaged;
 mod export;
+mod panicked;
 mod thumbnail;

@@ -2,4 +2,5 @@
 //! IO worker, which has no `window`.
 
 pub(crate) mod lane;
+pub(crate) mod panicked;
 pub(crate) mod pick;

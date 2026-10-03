@@ -36,6 +36,8 @@
 //!
 //! [`three_mf`] writes bodies' meshes as a 3MF package, for printing, and
 //! [`thumbnail`] encodes and decodes the PNG thumbnails saves write.
+//! [`panicked`] records the first panic of a session, from the panic hook
+//! rather than the lane, for the welcome screen to show next time.
 
 // Modules at the root are compiled for both targets. What only native
 // builds have, with a path based file system, is under `native`; what only
@@ -50,6 +52,7 @@ mod native;
 mod open;
 #[cfg(any(target_arch = "wasm32", test))]
 mod opfs;
+pub mod panicked;
 pub mod pick;
 mod queue;
 pub mod recent;
@@ -104,6 +107,7 @@ use varde_document::{Document, Revision, Snapshot};
 
 use crate::vrdp::Error as FileError;
 
+pub use crate::panicked::Panic;
 pub use crate::recent::RecentFile;
 pub use crate::settings::Settings;
 pub use crate::store::{Recovered, StoredDamage};
@@ -122,12 +126,16 @@ pub struct Stores {
     pub settings: Option<PathBuf>,
     /// The directory holding new designs until they're first saved.
     pub designs: Option<PathBuf>,
+    /// The panic recorded, `panic.toml` (see [`panicked`]). Unused on the
+    /// web, which keeps it on the page.
+    pub panic: Option<PathBuf>,
 }
 
 impl Stores {
     /// The user's: the recent files list and the settings in the platform
-    /// config directory and new designs in the data directory, e.g.
-    /// `~/.config/varde-cad` and `~/.local/share/varde-cad/designs`. On the
+    /// config directory and new designs and the panic recorded in the data
+    /// directory, e.g. `~/.config/varde-cad` and
+    /// `~/.local/share/varde-cad/designs`. On the
     /// web there's no recent files list, and the settings and new designs
     /// are kept in `settings.toml` and `designs` in the Origin Private File
     /// System.
@@ -136,6 +144,7 @@ impl Stores {
             recent: recent::store(),
             settings: settings::store(),
             designs: store::designs(),
+            panic: panicked::store(),
         }
     }
 }
@@ -288,6 +297,12 @@ pub enum Request {
     /// Replaces the stored settings. Replaces a `WriteSettings` still
     /// waiting in the queue, unless a `LoadSettings` is queued after it.
     WriteSettings { settings: Settings },
+    /// Reads the panic a session recorded (see [`panicked`]), answered
+    /// with [`Response::PanicLoaded`]. On the web the page answers it.
+    LoadPanic,
+    /// Deletes the panic recorded, if it's still `panic` rather than one
+    /// recorded since. On the web the page answers it.
+    DiscardPanic { panic: Panic },
 }
 
 /// The answer to a [`Request`]. Errors are the messages to show.
@@ -389,6 +404,13 @@ pub enum Response {
     SettingsWritten {
         result: Result<(), String>,
     },
+    /// The panic recorded, if there's one that can be read.
+    PanicLoaded {
+        panic: Option<Panic>,
+    },
+    PanicDiscarded {
+        result: Result<(), String>,
+    },
 }
 
 impl Request {
@@ -470,6 +492,8 @@ impl Request {
                 settings: Settings::default(),
             },
             Request::WriteSettings { .. } => Response::SettingsWritten { result: Err(error) },
+            Request::LoadPanic => Response::PanicLoaded { panic: None },
+            Request::DiscardPanic { .. } => Response::PanicDiscarded { result: Err(error) },
         }
     }
 

@@ -85,7 +85,7 @@ pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
 pub use thumbnail::{THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailRequest};
 pub use viewport::ModelPicking;
-pub use welcome::{DamagedPrompt, RecentCard, StoredDesign, WelcomeState, welcome};
+pub use welcome::{DamagedPrompt, PanicNote, RecentCard, StoredDesign, WelcomeState, welcome};
 
 /// The text field a dimension's value is typed in, placing it or editing
 /// it in place: there's one at a time, focused as it opens.
@@ -188,6 +188,12 @@ pub enum Welcome {
     OpenFound,
     /// Leaves the damaged file the prompt asks about as it is, unopened.
     CancelDamaged,
+    /// Shows the whole of the panic recorded, see [`PanicNote`].
+    ShowPanic,
+    /// Closes what [`Welcome::ShowPanic`] showed.
+    ClosePanic,
+    /// Deletes the panic recorded.
+    DiscardPanic,
 }
 
 /// What the user asks of the document's file: saving it, leaving it, and

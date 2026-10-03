@@ -1219,6 +1219,15 @@ pub fn card(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// A card that isn't clicked, like the welcome page's note of a panic.
+pub fn note_card(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: outline(p.line, CARD_RADIUS),
+        ..filled(p.panel, p.text)
+    }
+}
+
 /// The thumbnail at the top of a [`card`], inside its 1 px border.
 pub fn card_thumbnail(theme: &Theme) -> container::Style {
     let p = palette(theme);
@@ -1289,6 +1298,15 @@ pub fn menu(theme: &Theme) -> container::Style {
             blur_radius: 10.0,
         },
         ..filled(p.panel, p.text)
+    }
+}
+
+/// A recessed box of text in a dialog, like a panic's report.
+pub fn text_well(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: outline(p.line, CONTROL_RADIUS),
+        ..filled(well(p), p.text)
     }
 }
 

@@ -62,6 +62,7 @@ web-sys = { workspace = true, features = [
     "HtmlElement",
     "HtmlInputElement",
     "Node",
+    "Storage",
     "StorageManager",
     "Url",
     "Window",

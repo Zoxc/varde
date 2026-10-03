@@ -254,6 +254,10 @@ impl Files {
                     None => Ok(()),
                 },
             },
+            // Answered on the page, which keeps it, see `src/panicked.rs`.
+            Request::LoadPanic | Request::DiscardPanic { .. } => {
+                request.failed("the page keeps the panic recorded".to_owned())
+            }
             Request::Flush => Response::Flushed,
         }
     }

@@ -15,6 +15,7 @@ fn answers_in_order_and_closes_files_when_dropped() {
         recent: Some(dir.0.join("recent.toml")),
         settings: None,
         designs: None,
+        panic: None,
     });
 
     let entries = vec![RecentFile {

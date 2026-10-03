@@ -298,7 +298,17 @@ pub fn sentence(message: &str) -> Cow<'_, str> {
 /// `content` as a dialog over the whole screen, which dims the rest and
 /// keeps it from being clicked.
 pub(crate) fn dialog<'a>(content: Column<'a, Message>) -> Element<'a, Message> {
-    let dialog = container(content.width(380)).padding(18).style(theme::menu);
+    dialog_of_width(content, 380.0)
+}
+
+/// A [`dialog`] `width` wide, at most.
+pub(crate) fn dialog_of_width<'a>(
+    content: Column<'a, Message>,
+    width: f32,
+) -> Element<'a, Message> {
+    let dialog = container(content.width(width))
+        .padding(18)
+        .style(theme::menu);
     opaque(
         container(opaque(dialog))
             .center(Length::Fill)

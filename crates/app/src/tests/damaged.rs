@@ -91,7 +91,7 @@ fn prompting(found: Option<FoundSave>) -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
     (varde, requests)
 }
 
-fn welcome(varde: &Varde) -> &Welcome {
+pub(super) fn welcome(varde: &Varde) -> &Welcome {
     match &varde.screen {
         Screen::Welcome(welcome) => welcome,
         Screen::Document(_) => panic!("not on the welcome screen"),
@@ -99,7 +99,7 @@ fn welcome(varde: &Varde) -> &Welcome {
 }
 
 /// The texts the welcome screen shows at 1280 × 800, light.
-fn welcome_texts(varde: &Varde) -> Vec<String> {
+pub(super) fn welcome_texts(varde: &Varde) -> Vec<String> {
     let mut renderer = varde_view::probe::renderer();
     let size = iced::Size::new(1280.0, 800.0);
     let view = welcome(varde).view(&varde.files, Mode::Light, varde.options.theme);
@@ -110,7 +110,7 @@ fn welcome_texts(varde: &Varde) -> Vec<String> {
 }
 
 /// Whether one of `texts` holds `part`.
-fn shows(texts: &[String], part: &str) -> bool {
+pub(super) fn shows(texts: &[String], part: &str) -> bool {
     texts.iter().any(|text| text.contains(part))
 }
 

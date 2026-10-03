@@ -36,6 +36,12 @@ pub(crate) fn ago(time: UnixSeconds, now: UnixSeconds) -> String {
     said(time, now, ["Just now", "Yesterday", "Unknown date"])
 }
 
+/// [`ago`] of something from a session before this one, like a panic
+/// recorded: "Last session" rather than "Just now".
+pub(crate) fn ago_since_a_session(time: UnixSeconds, now: UnixSeconds) -> String {
+    said(time, now, ["Last session", "Yesterday", "Unknown date"])
+}
+
 /// [`ago`] to go in a sentence, after "from": "just now", "5 min ago",
 /// "yesterday", "Sep 12", "an unknown date".
 pub(crate) fn ago_in_sentence(time: UnixSeconds, now: UnixSeconds) -> String {

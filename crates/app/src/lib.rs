@@ -21,7 +21,7 @@ use iced::{Element, Subscription, Task, window};
 use varde_document::APP_NAME;
 use varde_document::Revision;
 use varde_io::{
-    Chosen, FileId, OpenId, Picked, Recovered, Request as IoRequest, Response as IoResponse,
+    Chosen, FileId, OpenId, Panic, Picked, Recovered, Request as IoRequest, Response as IoResponse,
     SaveError,
 };
 use varde_view::{File, Held, Look, Message as Ui, Mode, Unsaved, ViewOptions};
@@ -68,6 +68,9 @@ struct Files {
     /// The recent files' thumbnails, by path, as last read: see
     /// [`Files::load_thumbnails`].
     thumbnails: Vec<(PathBuf, iced::widget::image::Handle)>,
+    /// The panic a session recorded, see [`varde_io::panicked`], till the
+    /// user discards it.
+    panic: Option<Panic>,
 }
 
 impl Files {
@@ -79,6 +82,7 @@ impl Files {
             recent: Recent::default(),
             recovered: Vec::new(),
             thumbnails: Vec::new(),
+            panic: None,
         }
     }
 
@@ -160,6 +164,7 @@ impl Varde {
         files.io.send(IoRequest::ListRecovered);
         // The theme is the system's until the stored one arrives.
         files.io.send(IoRequest::LoadSettings);
+        files.io.send(IoRequest::LoadPanic);
         Self {
             screen: Screen::Welcome(Welcome::default()),
             system: None,
@@ -471,6 +476,10 @@ impl Varde {
             IoResponse::SettingsWritten { result } => {
                 report_failure("save the settings", result);
             }
+            IoResponse::PanicLoaded { panic } => self.files.panic = panic,
+            IoResponse::PanicDiscarded { result } => {
+                report_failure("discard the internal error", result);
+            }
             IoResponse::Saved {
                 file,
                 revision,
@@ -540,7 +549,7 @@ impl Varde {
         let doc = self.screen.doc();
         let dialog = match &self.screen {
             Screen::Document(doc) => doc.dialog(),
-            Screen::Welcome(welcome) => welcome.prompting().then_some(Dialog::Damaged),
+            Screen::Welcome(welcome) => welcome.dialog(),
         };
         Subscription::batch([
             keyboard::listen().filter_map(peek_key),
@@ -552,7 +561,7 @@ impl Varde {
             match &self.screen {
                 // No key opens anything behind the prompt.
                 Screen::Welcome(welcome) => keyboard::listen()
-                    .with(!welcome.prompting())
+                    .with(welcome.dialog().is_none())
                     .filter_map(welcome_key),
                 Screen::Document(doc) => {
                     keyboard::listen().with(doc.keys()).filter_map(document_key)
@@ -781,6 +790,7 @@ fn escape_key((dialog, event): (Option<Dialog>, keyboard::Event)) -> Option<Mess
         Some(Dialog::Unsaved) => Ui::File(File::Unsaved(Unsaved::Cancel)),
         Some(Dialog::Delete) => Ui::Look(Look::CancelDelete),
         Some(Dialog::Damaged) => Ui::Welcome(varde_view::Welcome::CancelDamaged),
+        Some(Dialog::Panic) => Ui::Welcome(varde_view::Welcome::ClosePanic),
         None => Ui::Look(Look::Escape),
     }))
 }
@@ -932,7 +942,10 @@ fn ask_writable(id: DocId, picked: Picked) -> Task<Message> {
 /// parameters default to that and otherwise make it `std`'s `Result`.
 pub type Result<T = (), E = iced::Error> = std::result::Result<T, E>;
 
+/// Runs the app. Sets the panic hook first (see [`varde_io::panicked`]),
+/// keeping the one the frontend set, which logs.
 pub fn run() -> Result {
+    varde_io::panicked::install();
     iced::application(Varde::boot, Varde::update, Varde::view)
         .title(Varde::title)
         .subscription(Varde::subscription)

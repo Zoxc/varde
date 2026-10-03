@@ -66,6 +66,14 @@ impl Page<Request> for Shared {
     }
 
     fn send(&self, request: Request) {
+        // Kept on the page, whatever became of the worker.
+        let request = match super::panicked::answer(request) {
+            Ok(response) => {
+                let _ = self.sender.unbounded_send(response);
+                return;
+            }
+            Err(request) => request,
+        };
         let mut state = self.state.borrow_mut();
         match &mut state.phase {
             Phase::Starting(waiting) => waiting.push(request),
