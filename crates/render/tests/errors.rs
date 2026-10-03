@@ -7,11 +7,12 @@
 use std::any::Any;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
-use glam::{DVec3, Vec3};
+use glam::{DVec2, DVec3, Vec3};
 use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
     Camera, ClipRect, Colors, ERROR_EDGE_WIDTH, ERROR_HALO, ERROR_POINT_RADIUS, ErrorParts, Frame,
-    GridPlane, Highlights, Renderer, Slot, Srgb, Srgba, View, Viewport, wgpu,
+    GridPlane, Highlights, LineStyle, Renderer, SketchLayer, SketchScene, Slot, Space, Srgb, Srgba,
+    View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -567,4 +568,63 @@ fn errors_are_uploaded_again_only_when_their_sources_change() {
     let pixels = scene.draw(&frame(&camera, &NO_MESH, &errors, false));
     assert_eq!(pixels.at(188, 188), [0, 0, 0, 255]);
     assert_eq!(pixels.at(68, 68), [255, 0, 0, 255]);
+}
+
+#[test]
+fn overlapping_hidden_patches_dont_darken() {
+    let Some(mut scene) = Scene::new() else {
+        return;
+    };
+    let camera = top_camera();
+    let block = Arc::new(block());
+    // Under the block, two patches overlapping from (4, -8) to (8, -4):
+    // hidden, each is drawn at about 40 %, which drawing both would add up.
+    let failures = [
+        patch([2.0, -10.0], [8.0, -4.0], -2.0),
+        patch([4.0, -8.0], [10.0, -2.0], -1.0),
+    ];
+    let errors: Vec<_> = failures.iter().map(Failure::parts).collect();
+    let pixels = scene.draw(&frame(&camera, &block, &errors, false));
+    // Where they overlap, and in the first alone, far from their
+    // boundaries.
+    let (both, one) = (pixels.at(188, 188), pixels.at(155, 225));
+    let none = scene.draw(&frame(&camera, &block, &[], false));
+    assert!(redness(one) > redness(none.at(155, 225)) + 10, "{one:?}");
+    assert!(
+        both.iter().zip(one).all(|(a, b)| a.abs_diff(b) <= 1),
+        "{both:?} {one:?}"
+    );
+}
+
+#[test]
+fn the_sketch_being_edited_is_drawn_over_the_errors() {
+    let Some(mut scene) = Scene::new() else {
+        return;
+    };
+    let camera = top_camera();
+    // A green line across the error's, both at z = 0.
+    let mut layer = SketchLayer::default();
+    let style = LineStyle {
+        color: Srgba([0.0, 1.0, 0.0, 1.0]),
+        width: 2.0,
+        dash: None,
+    };
+    let ends = [DVec2::new(6.0, -2.0), DVec2::new(6.0, -10.0)];
+    layer.polyline(Space::Sketch, &ends, style);
+    let (base, live) = (Arc::new(layer), SketchLayer::default());
+    let line = line_across();
+    let errors = [line.parts()];
+    let mut sketched = frame(&camera, &NO_MESH, &errors, true);
+    sketched.sketch = Some(SketchScene {
+        plane: GridPlane::XY,
+        depth_tested: false,
+        base: &base,
+        live: &live,
+    });
+    let pixels = scene.draw(&sketched);
+    // Where they cross, and in the error's halo.
+    for y in [188, 195] {
+        let [r, g, _, _] = pixels.at(188, y);
+        assert!(g > 200 && r < 40, "row {y}: {:?}", pixels.at(188, y));
+    }
 }

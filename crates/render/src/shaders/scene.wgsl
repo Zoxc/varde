@@ -1301,7 +1301,7 @@ fn fs_fill(in: FillOut) -> @location(0) vec4<f32> {
 // --- Error geometry ---
 //
 // What a failure is about, red within a wide translucent red halo, drawn
-// after everything else. The halo is coverage first, into a target of its
+// after everything but the sketch being edited. The halo is coverage first, into a target of its
 // own whose blending keeps the most drawn at a pixel, so halos overlapping
 // (a polyline's joints, a patch and its boundary) don't darken: the
 // boundary curves and points at the halo's width, the patches filled
@@ -1313,15 +1313,18 @@ fn fs_fill(in: FillOut) -> @location(0) vec4<f32> {
 // are pulled in by their distance from their middle as the highlight's are
 // (`highlight_slope`), patches as the edges are (`pulled`).
 
-// The errors' colour, kept in the axes' unused w's: the uniforms have no
-// room for another vector.
-fn error_color() -> vec3<f32> {
-    return vec3<f32>(u.axes[0].w, u.axes[1].w, u.axes[2].w);
-}
+// The errors' colours, linear: the core's, and the halo's with its alpha.
+// `ErrorUniforms` in renderer.rs. Group 2, bound for the halo's composite
+// and the core, not for the halo's coverage, which is drawn into the
+// texture bound beside it.
+struct ErrorColors {
+    core: vec4<f32>,
+    halo: vec4<f32>,
+};
+@group(2) @binding(0) var<uniform> errors: ErrorColors;
 
-// The halo's colour and alpha, likewise in unused w's.
-fn error_halo() -> vec4<f32> {
-    return vec4<f32>(u.origin_outline.w, u.sketch.w, u.pivot_color.w, u.hover_outline.w);
+fn error_color() -> vec3<f32> {
+    return errors.core.rgb;
 }
 
 // A corner of a patch's triangle, pulled towards the camera like the edges,
@@ -1421,13 +1424,12 @@ fn vs_error_halo_point(
 
 // The halo's coverage, as large as the target and read at the pixel's own
 // texel.
-@group(2) @binding(0) var halo: texture_2d<f32>;
+@group(2) @binding(1) var halo: texture_2d<f32>;
 
 // The halo over the frame, once: its colour at its alpha times the
 // coverage.
 @fragment
 fn fs_error_halo(in: FullscreenOut) -> @location(0) vec4<f32> {
     let coverage = textureLoad(halo, vec2<i32>(in.position.xy), 0).r;
-    let color = error_halo();
-    return output(vec4<f32>(color.rgb, color.a * coverage));
+    return output(vec4<f32>(errors.halo.rgb, errors.halo.a * coverage));
 }
