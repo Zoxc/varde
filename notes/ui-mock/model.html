@@ -159,6 +159,16 @@ svg.i .dot { fill: currentColor; stroke: none; }
 .cb.it.on .tb { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .cb.it.on:hover .tb { background: color-mix(in srgb, var(--accent) 26%, var(--panel)); }
 .pnote { color: var(--faint); font-size: 12px; padding: 2px 0; }
+/* The bodies' rows: picked rows with a box before the icon; a row hovered
+   here or its body in the view tinted. */
+.chip.hov { background: var(--hl); }
+.bl { cursor: default; }
+.brow { cursor: pointer; }
+.brow .box { width: 15px; height: 15px; flex: none; display: grid; place-items: center; box-sizing: border-box; border: 1px solid var(--faint); border-radius: 4px; color: transparent; }
+.brow:hover .box { border-color: var(--accent); }
+.brow.on .box { background: var(--accent); border-color: var(--accent); color: #fff; }
+.brow .box svg.i { width: 11px; height: 11px; stroke-width: 2.6; }
+.brow:not(.on) .nm { color: var(--muted); }
 
 /* Messages at the foot. A draft that fails: neutral words under a title
    washed red, and Add anyway (OK waits meanwhile). */
@@ -443,7 +453,7 @@ const addPlace = ph => `<span class="ph">${icon('plus')}${ph}</span>`;
 function pickList(o, name, label, list, ph) {
   const on = o.pick === name;
   return `<div class="fld"><label>${label}</label><div class="pf list${on ? ' on' : ''}" data-act="opf:${name}">
-    ${list.map(it => `<span class="chip">${it.ic ? `<span class="ci">${icon(it.ic)}</span>` : ''}<span class="nm">${it.label}</span>${it.meta ? `<span class="meta">${it.meta}</span>` : ''}<button class="x" data-act="opx:${name}:${it.id}" title="Remove">${icon('close')}</button></span>`).join('')}
+    ${list.map(it => `<span class="chip${it.body && st.hoverBody === it.body ? ' hov' : ''}"${it.body ? ` data-hover-body="${it.body}"` : ''}>${it.ic ? `<span class="ci">${icon(it.ic)}</span>` : ''}<span class="nm">${it.label}</span>${it.meta ? `<span class="meta">${it.meta}</span>` : ''}<button class="x" data-act="opx:${name}:${it.id}" title="Remove">${icon('close')}</button></span>`).join('')}
     ${on || !list.length ? addPlace(ph) : ''}
   </div></div>`;
 }
@@ -465,9 +475,11 @@ function numField(o, name, label, r) {
 const TICK_ICONS = { chain: 'tk-chain', flip: 'tk-flip', copy: 'tk-copy', keep: 'tk-keep', join: 'tk-join' };
 const tick = (o, name, label, sub) =>
   `<div class="cb it${o[name] ? ' on' : ''}" data-act="opt:${name}"${sub ? ` title="${sub}"` : ''}><span class="box">${icon('check')}</span><span class="tb">${icon(TICK_ICONS[name] || 'check')}</span><span>${label}</span></div>`;
-const bodyTicks = (o, m) => `<h4>Bodies</h4>${m.bodies.map(b =>
-  `<div class="cb${o.excl.includes(b.id) ? '' : ' on'}" data-act="opt:excl:${b.id}"><span class="box">${icon('check')}</span>${b.name}</div>`).join('') || '<div class="pnote">No bodies yet</div>'}`;
-const bodyItems = (ids, m) => ids.map(id => ({ id, ic: 'body', label: m.bodies.find(b => b.id === id)?.name || 'Missing body' }));
+// The bodies a join, cut or intersect works on: rows as the picked ones,
+// each with a box ticking it in or out; hovered, the body lights up.
+const bodyTicks = (o, m) => `<h4>Bodies</h4>${m.bodies.length ? `<div class="pf list bl">${m.bodies.map(b =>
+  `<div class="chip brow${o.excl.includes(b.id) ? '' : ' on'}${st.hoverBody === b.id ? ' hov' : ''}" data-act="opt:excl:${b.id}" data-hover-body="${b.id}"><span class="box">${icon('check')}</span><span class="ci">${icon('body')}</span><span class="nm">${b.name}</span></div>`).join('')}</div>` : '<div class="pnote">No bodies yet</div>'}`;
+const bodyItems = (ids, m) => ids.map(id => ({ id, body: id, ic: 'body', label: m.bodies.find(b => b.id === id)?.name || 'Missing body' }));
 const bodyNames = (ids, m) => ids.map(id => m.bodies.find(b => b.id === id)?.name).join(', ');
 const facesOf = (ids, m) => ids.flatMap(id => m.bodies.find(b => b.id === id)?.faces || []);
 const goneBodies = (ids, m) => ids.some(id => !m.bodies.some(b => b.id === id));
@@ -991,14 +1003,23 @@ function opPreview(m) {
 }
 
 // The failure under the fields, and the way to add it anyway.
-const failMsg = (def, fl) => `<div class="pmsg fail"><div class="ft">${icon('alert')}<b>${def.label} fails</b></div><div class="fx">${fl.message}</div>
-  <div class="fa"><button class="pbtn" data-act="op:op-add">Add anyway</button></div></div>`;
+const failMsg = (def, message, add) => `<div class="pmsg fail"><div class="ft">${icon('alert')}<b>${def.label} fails</b></div><div class="fx">${message}</div>
+  ${add ? '<div class="fa"><button class="pbtn" data-act="op:op-add">Add anyway</button></div>' : ''}</div>`;
+
+// The Timeline row of the operation as set up, or (forced) as far as it
+// reads, for one added with its error.
+function rowOf(def, o, r, m) {
+  try { return def.row(o, r, m); } catch { return null; }
+}
+// Whether the operation can be added with its error: its fields read, and
+// it's whole enough for a row.
+const addable = (def, o, r, m) => !Object.keys(r.errs).length && !r.need && !!rowOf(def, o, r, m);
 
 function opPanel() {
   const o = st.op, def = OPS[o.kind], m = opCtx(), r = def.check(o, m), ok = ready(r);
-  const failing = !r.error && !r.need && !!r.failed;
-  const msgs = (r.error ? `<div class="pmsg err">${r.error}</div>` : r.need ? `<div class="pmsg need">${r.need}</div>`
-    : failing ? failMsg(def, r.failed) : '')
+  const failing = !r.need && (!!r.error || !!r.failed);
+  const msgs = (r.error ? failMsg(def, r.error, addable(def, o, r, m)) : r.need ? `<div class="pmsg need">${r.need}</div>`
+    : r.failed ? failMsg(def, r.failed.message, true) : '')
     + (r.warn ? `<div class="pmsg warn">${r.warn}</div>` : '');
   // A failing draft is added from its message, so OK waits.
   const okBtn = `<button class="hb primary"${ok && !failing ? ' data-act="op:op-ok"' : ' disabled'} title="${failing ? 'It fails: Add anyway is in the message' : 'OK (Enter)'}">${icon('check')}</button>`;
@@ -1028,7 +1049,7 @@ function openOp(kind, editId) {
     return;
   }
   Object.assign(st.op, t ? { ...structuredClone(t.params), name: t.name, pick: Object.keys(def.picks)[0] } : def.init(m));
-  Object.assign(st, { pick: false, sel: null });
+  Object.assign(st, { pick: false, sel: null, hoverBody: null });
   focusPanel = true;
 }
 
@@ -1066,11 +1087,12 @@ function opPick(el) {
   toast(def.picks[o.pick]?.hint || 'Click a field in the panel to pick into it');
 }
 
-function commitOp() {
+// Adds the operation, or with `anyway` adds it with its error, marked failed.
+function commitOp(anyway = false) {
   const o = st.op, def = OPS[o.kind], m = opCtx(), r = def.check(o, m);
-  if (!ready(r)) { toast(r.error || Object.values(r.errs)[0] || r.need); return; }
+  if (anyway ? !addable(def, o, r, m) : !ready(r)) { toast(r.error || Object.values(r.errs)[0] || r.need); return; }
   const { kind, editing, name, pick, ...params } = o;
-  const d = st.doc, row = { type: kind, params: structuredClone(params), ...def.row(params, r, m), failed: r.failed?.message };
+  const d = st.doc, row = { type: kind, params: structuredClone(params), ...rowOf(def, params, r, m), failed: r.error || r.failed?.message };
   let id = editing;
   if (editing) Object.assign(d.timeline.find(t => t.id === editing), row);
   else {
@@ -1089,11 +1111,12 @@ Object.assign(page, {
   doOp(id) {
     // OK waits while the draft fails; Add anyway, in its message, adds it.
     if (id === 'op-ok') {
-      if (OPS[st.op.kind].check(st.op, opCtx()).failed) { toast('It fails: Add anyway is in the message'); return; }
+      const r = OPS[st.op.kind].check(st.op, opCtx());
+      if (r.failed || r.error) { toast(r.error || 'It fails: Add anyway is in the message'); return; }
       commitOp();
       return;
     }
-    if (id === 'op-add') { commitOp(); return; }
+    if (id === 'op-add') { commitOp(true); return; }
     if (id === 'op-cancel') { st.op = null; return; }
     if (OPS[id]) { openOp(id); return; }
     st.op = null;
@@ -1169,12 +1192,12 @@ Object.assign(page, {
     head() {
       const o = st.op, def = OPS[o.kind], r = def.check(o, opCtx());
       return { icon: def.icon, name: o.editing ? o.name : 'New ' + def.label.toLowerCase(), ok: ready(r) && !r.failed,
-        why: r.failed ? 'It fails: Add anyway is in the message' : r.error || r.need || Object.values(r.errs)[0] };
+        why: r.failed || r.error ? 'It fails: Add anyway is in the message' : r.need || Object.values(r.errs)[0] };
     },
     info() {
       const o = st.op, def = OPS[o.kind], r = def.check(o, opCtx()), p = def.picks[o.pick];
-      const bad = r.error || Object.values(r.errs)[0];
-      const fail = !bad && !r.need && r.failed?.message;
+      const bad = Object.values(r.errs)[0];
+      const fail = !bad && !r.need && (r.error || r.failed?.message);
       const msg = bad || r.need || fail || (ready(r) ? 'Ready: Enter or OK adds it' : '') + (p ? ` · ${p.hint}` : '');
       return `${icon(def.icon)}<b>${o.editing ? o.name : def.label}</b>${fail ? `<span class="alert">${icon('alert')}</span>` : ''}<span class="${bad ? 'bad' : 'muted'}">${msg}</span>`;
     },
@@ -1191,6 +1214,12 @@ Object.assign(page, {
       if (isBody || v.startsWith('plane-')) opPick({ dataset: isBody ? { body: v } : { face: v } });
     },
   },
+});
+
+// The cursor over a body's row in the panel lights it in the view.
+document.addEventListener('mouseover', e => {
+  const body = (st.op && e.target.closest?.('.opp [data-hover-body]')?.dataset.hoverBody) || null;
+  if (body !== (st.hoverBody ?? null)) { st.hoverBody = body; render(); }
 });
 
 // Typing in a panel field.

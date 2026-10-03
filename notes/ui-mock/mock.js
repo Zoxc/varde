@@ -986,7 +986,7 @@ function sceneInner() {
   let model = '';
   if ((!d.hidden.has('origin') || pv?.planes) && !(inSketch && d.kind === 'bracket')) model += originSvg();
   const faces = bodies.filter(b => !d.hidden.has(b.id))
-    .flatMap(b => b.faces.map(f => ({ ...f, body: b.id, fade: pv?.fade?.has(b.id), tint: pv?.tint?.get(b.id) })));
+    .flatMap(b => b.faces.map(f => ({ ...f, body: b.id, fade: pv?.fade?.has(b.id), tint: st.op && st.hoverBody === b.id ? 'h' : pv?.tint?.get(b.id) })));
   faces.push(...(pv?.faces || []));
   if (faces.length) model += solidSvg(faces, proj, pv?.marks || failed?.marks || new Set());
 
