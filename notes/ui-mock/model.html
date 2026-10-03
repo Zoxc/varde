@@ -9,10 +9,12 @@
   from a fixed camera. Open directly in a browser; the links over the window
   switch to the welcome and the sketch pages.
 
+  Fillet 2 in the timeline has failed: select it to see where, double-click
+  it to open it (R5 or less fixes it).
   Try: click faces, double-click to select the body, hold Alt (swaps
   timeline/objects), S to sketch (the sketch page), Esc to back out, ? for
   shortcuts.
-  Solid operations (Revolve O, Chamfer C, Combine B, Move M, Pattern P, and
+  Solid operations (Extrude X, Revolve O, Chamfer C, Combine B, Move M, Pattern P, and
   Shell, Mirror, Circular pattern from the Alt bar or with a body selected)
   open a panel at the viewport's right; click its fields, then the model.
   OK adds the operation to the timeline; the model stays as it is.
@@ -23,8 +25,9 @@
   instant tooltips. The set's key shows in its open list.
 
   Deep links: #bracket (any other name opens the bracket under that name),
-  #bracket/face, #bracket/body, #bracket/tools, #empty; #bracket/op:<kind>
-  opens an operation set up for a screenshot (revolve, combine, move,
+  #bracket/face, #bracket/body, #bracket/tools, #empty; #bracket/failed
+  selects Fillet 2, which fails, and #bracket/failed-edit opens it; #bracket/op:<kind>
+  opens an operation set up for a screenshot (extrude, revolve, combine, move,
   bmirror, lpattern, cpattern, fillet, chamfer, shell; /join for revolve's
   join); /v-top (any view cube view) sets the camera.
   Append /still to disable animations, /dark or /light to force the theme,
@@ -52,71 +55,131 @@
 .band.ring { fill: none; }
 .pplane { fill: var(--accent); fill-opacity: .08; stroke: var(--accent); stroke-opacity: .7; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 
-/* ---- operation panel: floats at the viewport's right, under the view cube and Home ---- */
+/* ---- operation panel: as the tool rail's cards, a white head over a
+   recessed grey well flush along the card's bottom, its top corners rounded
+   as the rail's strips are, an accent line over its head. Under the view
+   cube; OK and Cancel in the head, labels over their fields, messages at
+   the foot. Its controls are the timeline's rows' size: 28 px tall, 12.5 px
+   words, 8 px in. */
 .opp {
-  position: absolute; top: 166px; right: 12px; width: 256px; max-height: calc(100% - 178px - var(--status-float) - 10px); z-index: 4;
+  position: absolute; top: 166px; right: 12px; z-index: 4; width: 288px; max-height: calc(100% - 178px - var(--status-float) - 10px);
   display: flex; flex-direction: column; overflow: hidden;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 12px 32px rgba(0,0,0,.16);
+  border-top: 3px solid var(--accent); border-radius: 8px; background: var(--panel);
+  box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(0,0,0,.1);
+  --well: color-mix(in srgb, var(--text) 6%, var(--panel));
+  --edge: 9px; /* the body's and the foot's margin at the sides */
 }
-.opp-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-bottom: 1px solid var(--line); }
-.opp-head b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.opp-head .sum { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.opp-head { flex: none; display: flex; align-items: center; gap: 6px; padding: 7px 6px 7px 8px; }
+.opp-head .hic { display: flex; }
+.opp-head b { margin-right: auto; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.hb:hover { background: var(--hl); color: var(--text); }
+.hb.primary { background: var(--accent); border-color: transparent; color: #fff; }
+.hb:disabled { opacity: .45; cursor: default; }
+.hb svg.i { width: 15px; height: 15px; stroke-width: 2; }
+.opp-well { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; border-radius: 6px 6px 0 0; background: var(--well); }
 /* The body scrolls, so a long panel never runs off the bottom. */
-.opp-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 10px 10px; scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
-.opp-foot { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-top: 1px solid var(--line); }
-.opp h4 { margin: 11px 0 5px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.chs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.chs .ch:last-child:nth-child(odd) { grid-column: 1 / -1; }
-.ch { height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: none; cursor: pointer; font-size: 12px; white-space: nowrap; }
-.ch:hover { background: var(--hl); }
-.ch.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
-.fld { display: flex; align-items: center; gap: 6px; margin: 5px 0; }
-.fld.top { align-items: flex-start; }
-.fld > label { width: 62px; flex: none; font-size: 12px; }
-.fld.top > label { padding-top: 5px; }
+.opp-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px var(--edge) 10px; scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
+.opp-foot { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 2px var(--edge) 8px; }
+
+/* Labels, the fields' and the sections' alike: 11 px, heavy, faint. */
+.opp :is(.fld > label, h4) { font-size: 11px; font-weight: 700; color: var(--faint); }
+.opp h4 { margin: 10px 0 3px; }
+.fld { display: flex; flex-direction: column; gap: 3px; margin: 7px 0; }
 .fld input {
-  flex: 1; min-width: 0; height: 24px; padding: 0 7px;
-  border: 1px solid var(--line); border-radius: 6px; background: var(--vp-top); color: var(--text);
-  font: inherit; font-size: 12px; user-select: text;
+  min-width: 0; height: 28px; padding: 0 8px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text);
+  font: inherit; font-size: 12.5px; user-select: text;
 }
 .fld input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .fld input.bad, .fld input.bad:focus { border-color: var(--danger); }
-.ferr { margin: -2px 0 5px 68px; color: var(--danger); font-size: 11.5px; }
-.pf {
-  flex: 1; min-width: 0; min-height: 26px; padding: 2px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
-  border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
-}
-.pf:hover { background: var(--hl); }
+.ferr { margin: -3px 0 5px; color: var(--danger); font-size: 11.5px; }
+
+/* A choice among a few. */
+.chs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.chs .ch:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.ch { height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; font-size: 12.5px; white-space: nowrap; }
+.ch:hover { background: var(--hl); }
+.ch.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+.ch.on:hover { background: color-mix(in srgb, var(--accent) 24%, var(--panel)); }
+/* With icons, the choices are tiles, the icon over a small label; the
+   picked one a 1 px accent line on the accent's tint, its words the
+   text's. */
+.chs.icons { grid-template-columns: repeat(auto-fit, minmax(54px, 1fr)); }
+.chs.icons .ch:last-child:nth-child(odd) { grid-column: auto; }
+.chs.icons .ch { height: auto; padding: 6px 2px 4px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10.5px; white-space: normal; line-height: 1.15; }
+.chs.icons .ch.on { border-color: var(--accent); color: var(--text); font-weight: 400; }
+.ch .chi { display: flex; }
+.ch .chi svg.i { width: 22px; height: 22px; }
+/* Choices' own icons (.chi), in the tools' colours: profiles and results
+   filled lightly; with an accent (.a) the fill is the accent's. */
+svg.i .fl { fill: currentColor; fill-opacity: .18; }
+svg.i .a.fl { fill: color-mix(in srgb, var(--ca) 60%, var(--cc)); }
+svg.i .dot { fill: currentColor; stroke: none; }
+
+/* A field filled by clicks in the view (outlined while it takes them): what's
+   picked as rows as the timeline's, each with its icon, the cross to remove
+   it after its measure; the place to click for more (.ph) a line across the
+   box's foot, under a rule, or alone the box's one row. */
+.pf { min-width: 0; min-height: 28px; padding: 3px; display: flex; flex-wrap: wrap; align-items: center; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: pointer; }
 .pf.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .pf.list { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
-.pf .ph { padding: 2px 5px; color: var(--faint); font-size: 12px; }
-.pf.on .ph { color: var(--accent); }
-.chip { display: flex; align-items: center; gap: 4px; min-width: 0; height: 20px; padding: 0 2px 0 7px; border-radius: 4px; background: var(--chip); font-size: 12px; }
-.chip .nm { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chip .meta { color: var(--faint); font-size: 11px; white-space: nowrap; }
-.chip .x { flex: none; display: flex; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--faint); cursor: pointer; }
+.chip { position: relative; display: flex; align-items: center; gap: 8px; min-width: 0; height: 28px; padding: 0 8px; border-radius: 6px; font-size: 12.5px; }
 .pf:not(.list) .chip { flex: 1; }
-.chip .x:hover { background: var(--hl); color: var(--text); }
-.chip .x svg.i { width: 11px; height: 11px; stroke-width: 2; }
-.cb { display: flex; align-items: flex-start; gap: 7px; padding: 4px 0; font-size: 12px; cursor: pointer; }
+.chip:hover { background: var(--hl); }
+.chip .ci { display: flex; color: var(--muted); }
+.chip .ci svg.i { width: 16px; height: 16px; }
+.chip .nm { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .meta { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.chip .x { flex: none; width: 22px; height: 22px; margin-right: -5px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--faint); cursor: pointer; }
+.chip .x:hover { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
+.chip .x svg.i { width: 14px; height: 14px; stroke-width: 2.8; }
+.pf .ph { display: flex; align-items: center; gap: 8px; height: 24px; margin: 2px -3px -3px; padding: 0 11px; border-top: 1px solid var(--line); border-radius: 0 0 6px 6px; color: var(--muted); font-size: 11.5px; }
+.pf .ph:only-child { margin-top: -3px; border-top: 0; height: 28px; }
+.pf .ph svg.i { width: 13px; height: 13px; flex: none; }
+.pf.on .ph { color: var(--accent); }
+.pf:hover .ph { background: var(--hl); }
+
+/* Ticks: the bodies' list keeps boxes; an option is an icon toggle (.it), a
+   square button with the option's icon beside its name, lit when on, the
+   row and the button tinted hovered, on or off; its button on the fields'
+   left edge. */
+.cb { display: flex; align-items: flex-start; gap: 7px; padding: 6px 0 5px; font-size: 12.5px; cursor: pointer; }
 .cb .box { width: 15px; height: 15px; flex: none; display: grid; place-items: center; border: 1px solid var(--faint); border-radius: 4px; color: transparent; }
 .cb:hover .box { border-color: var(--accent); }
 .cb.on .box { background: var(--accent); border-color: var(--accent); color: #fff; }
 .cb .box svg.i { width: 11px; height: 11px; stroke-width: 2.6; }
-.cb .sub { display: block; color: var(--faint); font-size: 11px; }
+.cb .tb { display: none; }
+.cb.it { align-items: center; gap: 10px; margin: 5px -4px; padding: 3px 4px; border-radius: 7px; }
+.cb.it .box { display: none; }
+.cb.it .tb { display: grid; place-items: center; width: 28px; height: 28px; flex: none; box-sizing: border-box; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); }
+.cb.it .tb svg.i { width: 18px; height: 18px; }
+.cb.it:hover { background: var(--hl); }
+.cb.it:hover .tb { border-color: var(--accent); color: var(--text); }
+.cb.it.on .tb { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.cb.it.on:hover .tb { background: color-mix(in srgb, var(--accent) 26%, var(--panel)); }
 .pnote { color: var(--faint); font-size: 12px; padding: 2px 0; }
-.pmsg { font-size: 12px; line-height: 1.4; }
+
+/* Messages at the foot. A draft that fails: neutral words under a title
+   washed red, and Add anyway (OK waits meanwhile). */
+.pmsg { font-size: 12.5px; line-height: 1.4; }
 .pmsg.err { color: var(--danger); }
 .pmsg.warn { color: var(--c-cons); }
 .pmsg.need { color: var(--muted); }
-.pbtns { display: flex; justify-content: flex-end; gap: 6px; }
-.pbtn { height: 26px; padding: 0 14px; border: 1px solid var(--line); border-radius: 6px; background: none; cursor: pointer; font-size: 12px; font-weight: 600; }
+.pmsg.fail { border-radius: 6px; background: var(--panel); color: var(--muted); overflow: hidden; }
+.pmsg.fail .ft { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--danger-wash); }
+.pmsg.fail .ft svg.i { flex: none; width: 14px; height: 14px; color: var(--danger); }
+.pmsg.fail .ft b { font-weight: 600; color: var(--text); }
+.pmsg.fail .fx { padding: 5px 8px 7px 28px; }
+.pmsg.fail .fa { display: flex; justify-content: flex-end; padding: 0 8px 8px; }
+.pbtn { height: 24px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--danger-text); cursor: pointer; font-size: 12.5px; font-weight: 600; }
 .pbtn:hover { background: var(--hl); }
-.pbtn.primary { background: var(--accent); border-color: transparent; color: #fff; }
-.pbtn.primary:hover { filter: brightness(1.08); }
-.pbtn:disabled { opacity: .45; cursor: default; filter: none; }
-.info .bad { color: var(--danger); }
+
+/* where a failed feature went wrong, drawn over the model */
+.errband { fill: var(--danger); fill-opacity: .18; stroke: var(--danger); stroke-width: 1.2; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
+.errband.clash { fill-opacity: .5; stroke-dasharray: none; stroke-width: 1.8; }
+.erredge { stroke: var(--danger); stroke-width: 2.6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+
 </style>
 </head>
 <body>
@@ -297,6 +360,18 @@ function revolveFaces(loop, A, span) {
   return faces;
 }
 
+// A closed loop swept along unit D from a to b (a < b), as a prism: the
+// loop turned to run anticlockwise about D, so each side's outward normal
+// is its edge crossed with D. A circle's sides are drawn smooth.
+function extrudeFaces(loop, D, a, b, smooth) {
+  const ps = dot(newell(loop), D) < 0 ? [...loop].reverse() : loop, at = t => ps.map(p => add(p, mul(D, t)));
+  const lo = at(a), hi = at(b);
+  return [
+    { n: mul(D, -1), p: [...lo].reverse() }, { n: D, p: hi },
+    ...ps.map((p, i) => { const j = (i + 1) % ps.length; return { smooth, n: norm(cross(sub(ps[j], p), D)), p: [lo[i], lo[j], hi[j], hi[i]] }; }),
+  ];
+}
+
 // A face's outline moved in by t (out, for t < 0), mitred at the corners.
 function inset(ps, t) {
   const N = newell(ps), k = ps.length;
@@ -363,37 +438,42 @@ function planeSvg(pl, faces) {
 }
 
 // ---- panel parts
+// Where to click for more: a line across the box's foot, a plus before the words.
+const addPlace = ph => `<span class="ph">${icon('plus')}${ph}</span>`;
 function pickList(o, name, label, list, ph) {
   const on = o.pick === name;
-  return `<div class="fld top"><label>${label}</label><div class="pf list${on ? ' on' : ''}" data-act="opf:${name}">
-    ${list.map(it => `<span class="chip"><span class="nm">${it.label}</span>${it.meta ? `<span class="meta">${it.meta}</span>` : ''}<button class="x" data-act="opx:${name}:${it.id}" title="Remove">${icon('close')}</button></span>`).join('')}
-    ${on || !list.length ? `<span class="ph">${list.length ? '+ ' : ''}${ph}</span>` : ''}
+  return `<div class="fld"><label>${label}</label><div class="pf list${on ? ' on' : ''}" data-act="opf:${name}">
+    ${list.map(it => `<span class="chip">${it.ic ? `<span class="ci">${icon(it.ic)}</span>` : ''}<span class="nm">${it.label}</span>${it.meta ? `<span class="meta">${it.meta}</span>` : ''}<button class="x" data-act="opx:${name}:${it.id}" title="Remove">${icon('close')}</button></span>`).join('')}
+    ${on || !list.length ? addPlace(ph) : ''}
   </div></div>`;
 }
-function pickOne(o, name, label, text, ph) {
+function pickOne(o, name, label, text, ph, ic) {
   const v = o[name];
   return `<div class="fld"><label>${label}</label><div class="pf${o.pick === name ? ' on' : ''}" data-act="opf:${name}">
-    ${v ? `<span class="chip"><span class="nm">${text || 'Missing'}</span><button class="x" data-act="opx:${name}:${v}" title="Clear">${icon('close')}</button></span>` : `<span class="ph">${ph}</span>`}
+    ${v ? `<span class="chip">${ic ? `<span class="ci">${icon(ic)}</span>` : ''}<span class="nm">${text || 'Missing'}</span><button class="x" data-act="opx:${name}:${v}" title="Clear">${icon('close')}</button></span>` : addPlace(ph)}
   </div></div>`;
 }
-const choices = (o, name, list) => `<div class="chs">${list.map(([v, l]) =>
-  `<button class="ch${o[name] === v ? ' on' : ''}" data-act="opc:${name}:${v}">${l}</button>`).join('')}</div>`;
+// A choice among a few: buttons, as tiles when the choices have icons.
+const choices = (o, name, list) => `<div class="chs${list.some(c => c[2]) ? ' icons' : ''}">${list.map(([v, l, i]) =>
+  `<button class="ch${o[name] === v ? ' on' : ''}" data-act="opc:${name}:${v}">${i ? `<span class="chi">${icon(i)}</span>` : ''}<span>${l}</span></button>`).join('')}</div>`;
 function numField(o, name, label, r) {
   const err = r.errs[name];
   return `<div class="fld"><label for="f-${name}">${label}</label><input id="f-${name}" data-field="${name}" value="${esc(o[name])}"${err ? ' class="bad"' : ''} spellcheck="false" autocomplete="off"></div>${err ? `<div class="ferr">${err}</div>` : ''}`;
 }
+// An option's tick: a button with the option's icon (.it), its note the
+// tooltip; the bodies' list keeps boxes.
+const TICK_ICONS = { chain: 'tk-chain', flip: 'tk-flip', copy: 'tk-copy', keep: 'tk-keep', join: 'tk-join' };
 const tick = (o, name, label, sub) =>
-  `<div class="cb${o[name] ? ' on' : ''}" data-act="opt:${name}"><span class="box">${icon('check')}</span><span>${label}${sub ? `<span class="sub">${sub}</span>` : ''}</span></div>`;
+  `<div class="cb it${o[name] ? ' on' : ''}" data-act="opt:${name}"${sub ? ` title="${sub}"` : ''}><span class="box">${icon('check')}</span><span class="tb">${icon(TICK_ICONS[name] || 'check')}</span><span>${label}</span></div>`;
 const bodyTicks = (o, m) => `<h4>Bodies</h4>${m.bodies.map(b =>
   `<div class="cb${o.excl.includes(b.id) ? '' : ' on'}" data-act="opt:excl:${b.id}"><span class="box">${icon('check')}</span>${b.name}</div>`).join('') || '<div class="pnote">No bodies yet</div>'}`;
-const bodyItems = (ids, m) => ids.map(id => ({ id, label: m.bodies.find(b => b.id === id)?.name || 'Missing body' }));
+const bodyItems = (ids, m) => ids.map(id => ({ id, ic: 'body', label: m.bodies.find(b => b.id === id)?.name || 'Missing body' }));
 const bodyNames = (ids, m) => ids.map(id => m.bodies.find(b => b.id === id)?.name).join(', ');
 const facesOf = (ids, m) => ids.flatMap(id => m.bodies.find(b => b.id === id)?.faces || []);
 const goneBodies = (ids, m) => ids.some(id => !m.bodies.some(b => b.id === id));
 const selBodies = m => st.sel?.kind === 'body' ? [st.sel.id] : m.bodies.length === 1 ? [m.bodies[0].id] : [];
 const holeRims = m => st.sel?.kind === 'hole' ? [...m.edges.keys()].filter(k => k.startsWith(`rim:${st.sel.id}:`)) : [];
-const edgeItems = (ids, m) => ids.map(id => { const e = m.edges.get(id); return { id, label: e?.label || 'Missing edge', meta: e?.meta }; });
-const bodiesSum = o => o.bodies.length ? plural(o.bodies.length, 'body', 'bodies') : '';
+const edgeItems = (ids, m) => ids.map(id => { const e = m.edges.get(id); return { id, ic: e?.rim ? 'se-rim' : 'se-edge', label: e?.label || 'Missing edge', meta: e?.meta }; });
 const Pick = (type, what, hint, more = {}) => ({ type, what, hint, ...more });
 
 // Transforms shown as a draft over the model; moved bodies fade where they were.
@@ -404,7 +484,6 @@ function copiesPreview(o, m, r, xs, fade) {
 }
 function edgeCheck(o, m, verb) {
   const r = { errs: {} }, es = o.edges.map(id => m.edges.get(id));
-  r.sum = o.edges.length ? plural(o.edges.length, 'edge') : 'Click edges';
   if (!m.br) r.error = 'No body to ' + verb;
   else if (es.some(e => !e)) r.error = 'A picked edge is gone';
   else if (!es.length) r.need = `Click edges to ${verb}`;
@@ -413,10 +492,85 @@ function edgeCheck(o, m, verb) {
 }
 const edgePreview = (o, m, r) => ({ svg: (ready(r) ? r.es.map(e => bandSvg(e, ...r.d)).join('') : '') + edgesSvg(m.edges, o.edges) });
 
-const BOOLS = [['new', 'New body'], ['join', 'Join'], ['cut', 'Cut'], ['int', 'Intersect']];
+// What regeneration finds wrong with a fillet the panel's checks let through:
+// two rounds on facing edges of one face that need more than the face's
+// width. The evidence: both rounds' bands on that face, where they overlap,
+// and the two edges; the face is the operand drawn as selected.
+function filletClash(es, rad) {
+  const straight = es.filter(e => !e.rim);
+  for (const [i, e1] of straight.entries()) for (const e2 of straight.slice(i + 1)) {
+    for (const s1 of e1.sides) {
+      const s2 = e2.sides.find(s => s.f.id === s1.f.id);
+      if (!s2 || dot(s1.w, s2.w) > -1 + 1e-6) continue;
+      const gap = dot(sub(e2.a, e1.a), s1.w);
+      if (2 * rad <= gap + 1e-6) continue;
+      const strip = (e, w) => [e.a, e.b, add(e.b, mul(w, Math.min(rad, gap))), add(e.a, mul(w, Math.min(rad, gap)))];
+      const lo = gap - rad, hi = rad, on = t => [add(e1.a, mul(s1.w, t)), add(e1.b, mul(s1.w, t))];
+      return {
+        message: `${e1.label} and ${e2.label} overlap on ${FACE_NAME[s1.f.id]}: it’s ${fmt(gap)} mm wide, at most R${fmt(gap / 2)} fits`,
+        face: s1.f.id, edges: [e1, e2], strips: [strip(e1, s1.w), strip(e2, s2.w)], overlap: [...on(lo), ...on(hi).reverse()],
+      };
+    }
+  }
+  return null;
+}
+function failureSvg(fl) {
+  return fl.strips.map(p => `<polygon class="errband" points="${pts(p)}"/>`).join('')
+    + `<polygon class="errband clash" points="${pts(fl.overlap)}"/>`
+    + fl.edges.map(e => lineP(e.a, e.b, 'erredge')).join('');
+}
+
+const BOOLS = [['new', 'New body', 'bo-new'], ['join', 'Join', 'bo-join'], ['cut', 'Cut', 'bo-cut'], ['int', 'Intersect', 'bo-int']];
 const BOOL_TINT = { new: 's', join: 's', cut: 'x', int: 'a' };
-const REV_EXTENTS = [['full', 'Full 360°'], ['one', 'One side'], ['sym', 'Symmetric'], ['two', 'Two sides']];
-const COMBINES = [['union', 'Union'], ['sub', 'Subtract'], ['int', 'Intersect']];
+// Choices' icons, drawn as the tools' are (in the solid category's colours):
+// the profile, body or result in its colour, what's done to it (a sweep, an
+// arrow, a tool) in its accent with hollow dots at a sweep's ends, the
+// reference geometry grey. Revolve's are seen down its axis (the dot), the
+// profile the line out to the right. Extrude's: the profile as a slab and where it goes. The
+// booleans as circles, the body left and the tool right: what's left
+// filled, a tool taken away dashed.
+const SWEEP_END = (x, y) => `<circle class="af" cx="${x}" cy="${y}" r="1.6"/>`;
+const AXIS_DOT = '<circle cx="12" cy="12" r=".9"/>';
+const CHOICE_ICONS = {
+  'rv-full': `<path d="M12 12h8"/><circle class="a" cx="12" cy="12" r="8"/>${AXIS_DOT}`,
+  'rv-one': `<path d="M12 12h8"/><path class="a" d="M20 12A8 8 0 1 0 12 20"/>${AXIS_DOT}${SWEEP_END(12, 20)}`,
+  'rv-sym': `<path d="M12 12h8"/><path class="a" d="M12 4A8 8 0 0 1 12 20"/>${AXIS_DOT}${SWEEP_END(12, 4)}${SWEEP_END(12, 20)}`,
+  'rv-two': `<path d="M12 12h8"/><path class="a" d="M8 5.07A8 8 0 0 1 17.14 18.13"/>${AXIS_DOT}${SWEEP_END(8, 5.07)}${SWEEP_END(17.14, 18.13)}`,
+  'ex-one': '<path class="fl" d="M3 19l4-3h14l-4 3z"/><path class="a" d="M12 16.5V5M9.5 7.5L12 5l2.5 2.5"/>',
+  'ex-sym': '<path class="fl" d="M3 13.5l4-3h14l-4 3z"/><path class="a" d="M12 11V3.5M9.5 6L12 3.5 14.5 6M12 13.5V21M9.5 18.5L12 21l2.5-2.5"/>',
+  'ex-two': '<path class="fl" d="M3 15l4-3h14l-4 3z"/><path class="a" d="M12 12.5V3M9.5 5.5L12 3l2.5 2.5M12 15v4.5M10 17.5l2 2 2-2"/>',
+  'ex-thru': '<path class="r" d="M4 9h16v6H4z"/><path class="fl" d="M3 6l4-3h14l-4 3z"/><path class="a" d="M12 6v16M9.5 19.5L12 22l2.5-2.5"/>',
+  'bo-new': '<circle class="r" cx="7" cy="12" r="4.8"/><circle class="fl" cx="17" cy="12" r="4.8"/>',
+  'bo-join': '<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 1 0 12 6.8z"/>',
+  'bo-cut': '<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 0 1 12 6.8z"/><circle class="a" cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>',
+  'bo-int': '<circle class="r" cx="9" cy="12" r="6"/><circle class="r" cx="15" cy="12" r="6"/><path class="fl" d="M12 6.8A6 6 0 0 1 12 17.2A6 6 0 0 1 12 6.8z"/>',
+};
+Object.assign(I, CHOICE_ICONS);
+for (const n of Object.keys(CHOICE_ICONS)) CAT[n] = 'solid';
+Object.assign(I, {
+  // the options' icons, as ticks-icon shows them: a tangent chain (a line
+  // running smoothly on into an arc), flip, copy, keep the tools, join
+  'tk-chain': '<path d="M3 18h8a7 7 0 0 0 7-7V4"/><circle class="dot" cx="11" cy="18" r="1.7"/><circle class="dot" cx="18" cy="4" r="1.7"/>',
+  'tk-flip': '<path d="M4 8h15M15.5 4.5L19 8l-3.5 3.5M20 16H5M8.5 12.5L5 16l3.5 3.5"/>',
+  'tk-copy': '<rect x="3.5" y="3.5" width="11" height="11" rx="1.5"/><rect class="fl" x="9.5" y="9.5" width="11" height="11" rx="1.5"/>',
+  'tk-keep': '<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>',
+  'tk-join': '<rect x="3" y="7" width="8" height="10" rx="1.5"/><rect x="13" y="7" width="8" height="10" rx="1.5"/><path d="M8 12h8"/>',
+});
+// What a selection is, on its chip or row, drawn and coloured as the tools'
+// icons are: an edge, a hole's rim or a face on a block (the solid's colours),
+// a sketch's region, an axis or a plane (construction's).
+const SELECTION_ICONS = {
+  'se-edge': ['solid', '<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><path class="a" d="M3.5 9.5h11" stroke-width="2.6"/>'],
+  'se-rim': ['solid', '<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><ellipse class="a" cx="11.5" cy="7" rx="3.6" ry="1.5" stroke-width="2"/>'],
+  'se-face': ['solid', '<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><path class="a fl" d="M3.5 9.5h11v11h-11z"/>'],
+  'se-region': ['sketch', '<path class="fl" d="M4 6h10l6 6-6 6H4z"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="12" r="1.5"/><circle class="af" cx="4" cy="18" r="1.5"/>'],
+  'se-axis': ['cons', '<path d="M4 20L20 4"/><circle class="af" cx="7.5" cy="16.5" r="1.7"/><circle class="af" cx="16.5" cy="7.5" r="1.7"/>'],
+  'se-plane': ['cons', '<path class="t" d="M3 17l4-10h14l-4 10z"/><path class="a" d="M12 15V7"/>'],
+};
+for (const [n, [cat, svg]] of Object.entries(SELECTION_ICONS)) { I[n] = svg; CAT[n] = cat; }
+const EXT_EXTENTS = [['one', 'One side', 'ex-one'], ['sym', 'Symmetric', 'ex-sym'], ['two', 'Two sides', 'ex-two'], ['thru', 'Through all', 'ex-thru']];
+const REV_EXTENTS = [['full', 'Full 360°', 'rv-full'], ['one', 'One side', 'rv-one'], ['sym', 'Symmetric', 'rv-sym'], ['two', 'Two sides', 'rv-two']];
+const COMBINES = [['union', 'Union', 'bo-join'], ['sub', 'Subtract', 'bo-cut'], ['int', 'Intersect', 'bo-int']];
 const CIRC_MODES = [['full', 'Full 360°'], ['spacing', 'Spacing'], ['total', 'Total']];
 const CHAMFERS = [['equal', 'Equal distance'], ['two', 'Two distances'], ['angle', 'Distance and angle']];
 
@@ -426,6 +580,58 @@ const CHAMFERS = [['equal', 'Equal distance'], ['two', 'Two distances'], ['angle
 // start without a body (or the bracket, whose edges and faces are the ones the
 // mock can pick).
 const OPS = {
+  extrude: {
+    label: 'Extrude', icon: 'extrude',
+    picks: { regions: Pick('region', 'regions', 'Click regions to extrude', { multi: true }) },
+    init: m => {
+      const sk = st.sel?.kind === 'feature' && SKETCHES[st.sel.id] ? st.sel.id : null;
+      const regions = m.regions.filter(g => g.sketch === sk).map(g => g.id);
+      return { regions, extent: 'one', d1: '10 mm', d2: '10 mm', flip: false, op: m.bodies.length ? 'join' : 'new', excl: [], pick: 'regions' };
+    },
+    body: (o, m, r) => `
+      ${pickList(o, 'regions', 'Profile', o.regions.map(id => ({ id, ic: 'se-region', label: m.regions.find(g => g.id === id)?.label || 'Missing region' })), 'Click regions')}
+      <h4>Extent</h4>
+      ${choices(o, 'extent', EXT_EXTENTS)}
+      ${o.extent === 'one' || o.extent === 'sym' ? numField(o, 'd1', 'Distance', r) : ''}
+      ${o.extent === 'two' ? numField(o, 'd1', 'Side 1', r) + numField(o, 'd2', 'Side 2', r) : ''}
+      ${o.extent === 'sym' ? '' : tick(o, 'flip', 'Flip')}
+      <h4>Operation</h4>
+      ${choices(o, 'op', BOOLS)}
+      ${o.op === 'new' ? '' : bodyTicks(o, m)}`,
+    check(o, m) {
+      const r = { errs: {} }, e = r.errs, dist = k => readVal(o, k, e);
+      r.rs = o.regions.map(id => m.regions.find(g => g.id === id));
+      if (!m.regions.length) r.error = 'No closed regions to extrude: draw a sketch first';
+      else if (r.rs.some(g => !g)) r.error = 'A picked region is gone';
+      else if (!r.rs.length) r.need = 'Click regions to extrude';
+      else if (r.rs.some(g => Math.abs(Math.abs(dot(g.n, r.rs[0].n)) - 1) > 1e-6)) r.error = 'The regions face different ways: pick regions of one plane';
+      if (!r.error && !r.need && o.op !== 'new' && !m.bodies.some(b => !o.excl.includes(b.id))) {
+        r.error = m.bodies.length ? 'Every body is unticked: tick one under Bodies' : `No body to ${labelOf(BOOLS, o.op).toLowerCase()}`;
+      }
+      // The span along the regions' normal, flipped as asked.
+      const s = o.flip && o.extent !== 'sym' ? -1 : 1;
+      if (o.extent === 'one') { const a = dist('d1'); if (a != null) r.span = [0, a]; }
+      else if (o.extent === 'sym') { const a = dist('d1'); if (a != null) r.span = [-a / 2, a / 2]; }
+      else if (o.extent === 'two') { const a = dist('d1'), b = dist('d2'); if (a != null && b != null) r.span = [-b, a]; }
+      else if (r.rs[0] && !r.error) {
+        // Through all: on to the far side of the bodies it's cut from or joined to.
+        const g = r.rs[0], far = Math.max(0, ...facesOf(m.bodies.map(b => b.id).filter(id => !o.excl.includes(id)), m).flatMap(f => f.p).map(p => s * dot(sub(p, g.o), g.n)));
+        if (far < 1e-6) r.error = 'Nothing to go through on that side: flip it';
+        else r.span = [0, far];
+      }
+      if (r.span) r.span = s > 0 ? r.span : [-r.span[1], -r.span[0]];
+      return r;
+    },
+    preview: (o, m, r) => ({
+      faces: ready(r) ? r.rs.flatMap(g => extrudeFaces(g.pts, g.n, ...r.span, g.pts.length > 12)).map(f => ({ ...f, draft: true, tint: BOOL_TINT[o.op] })) : [],
+      svg: regionsSvg(o, m),
+    }),
+    row: (o, r) => {
+      const tot = fmt(r.span[1] - r.span[0]) + ' mm';
+      return { meta: o.extent === 'thru' ? 'Thru' : tot, info: `${labelOf(EXT_EXTENTS, o.extent)}${o.extent === 'thru' ? '' : ' · ' + tot} · ${labelOf(BOOLS, o.op)}` };
+    },
+  },
+
   revolve: {
     label: 'Revolve', icon: 'revolve',
     picks: {
@@ -438,8 +644,8 @@ const OPS = {
       return { regions, axis: null, extent: 'full', a1: '180°', a2: '90°', flip: false, op: 'new', excl: [], pick: regions.length ? 'axis' : 'regions' };
     },
     body: (o, m, r) => `
-      ${pickList(o, 'regions', 'Profile', o.regions.map(id => ({ id, label: m.regions.find(g => g.id === id)?.label || 'Missing region' })), 'Click regions')}
-      ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click a line or axis')}
+      ${pickList(o, 'regions', 'Profile', o.regions.map(id => ({ id, ic: 'se-region', label: m.regions.find(g => g.id === id)?.label || 'Missing region' })), 'Click regions')}
+      ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click a line or axis', 'se-axis')}
       <h4>Extent</h4>
       ${choices(o, 'extent', REV_EXTENTS)}
       ${o.extent === 'one' || o.extent === 'sym' ? numField(o, 'a1', 'Angle', r) : ''}
@@ -451,7 +657,6 @@ const OPS = {
     check(o, m) {
       const r = { errs: {} }, e = r.errs, ang = k => readVal(o, k, e, { unit: 'deg', max: 360 });
       r.rs = o.regions.map(id => m.regions.find(g => g.id === id));
-      r.sum = !m.regions.length ? 'No regions' : o.regions.length ? plural(o.regions.length, 'region') : 'Click regions';
       if (o.extent === 'full') r.span = [0, 360];
       else if (o.extent === 'one') { const a = ang('a1'); if (a != null) r.span = o.flip ? [-a, 0] : [0, a]; }
       else if (o.extent === 'sym') { const a = ang('a1'); if (a != null) r.span = [-a / 2, a / 2]; }
@@ -501,14 +706,13 @@ const OPS = {
     },
     init: m => ({ target: st.sel?.kind === 'body' ? st.sel.id : m.bodies[0].id, tools: [], op: 'union', keep: false, pick: 'tools' }),
     body: (o, m) => `
-      ${pickOne(o, 'target', 'Target', o.target && bodyItems([o.target], m)[0].label, 'Click a body')}
+      ${pickOne(o, 'target', 'Target', o.target && bodyItems([o.target], m)[0].label, 'Click a body', 'body')}
       ${pickList(o, 'tools', 'Tools', bodyItems(o.tools, m), 'Click bodies')}
       <h4>Operation</h4>
       ${choices(o, 'op', COMBINES)}
       ${tick(o, 'keep', 'Keep tool bodies', 'Otherwise the tools are used up')}`,
     check(o, m) {
       const r = { errs: {} };
-      r.sum = o.tools.length ? plural(o.tools.length, 'tool') : '';
       if (m.bodies.length < 2) r.error = 'There’s only one body: make another to combine with';
       else if (!o.target) r.need = 'Pick the target body';
       else if (goneBodies([o.target, ...o.tools], m)) r.error = 'A picked body is gone';
@@ -544,7 +748,7 @@ const OPS = {
       <h4>Translate</h4>
       ${numField(o, 'dx', 'X', r)}${numField(o, 'dy', 'Y', r)}${numField(o, 'dz', 'Z', r)}
       <h4>Rotate</h4>
-      ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click an axis or edge')}
+      ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click an axis or edge', 'se-axis')}
       ${numField(o, 'angle', 'Angle', r)}
       ${tick(o, 'copy', 'Copy', 'Leave the original where it is')}`,
     check(o, m) {
@@ -552,7 +756,6 @@ const OPS = {
       const v = ['dx', 'dy', 'dz'].map(k => readVal(o, k, e, { signed: true }));
       const a = readVal(o, 'angle', e, { unit: 'deg', signed: true, max: 360 });
       r.axis = axisOf(o.axis, m.bodies);
-      r.sum = bodiesSum(o);
       if (!o.bodies.length) r.need = 'Pick the bodies to move';
       else if (goneBodies(o.bodies, m)) r.error = 'A picked body is gone';
       else if (a && o.axis && !r.axis) r.error = 'The axis is gone: pick another';
@@ -582,12 +785,11 @@ const OPS = {
     init: m => { const b = selBodies(m); return { bodies: b, plane: null, copy: true, pick: b.length ? 'plane' : 'bodies' }; },
     body: (o, m, r) => `
       ${pickList(o, 'bodies', 'Bodies', bodyItems(o.bodies, m), 'Click bodies')}
-      ${pickOne(o, 'plane', 'Plane', r.plane?.label, 'Click a plane or face')}
+      ${pickOne(o, 'plane', 'Plane', r.plane?.label, 'Click a plane or face', 'se-plane')}
       ${tick(o, 'copy', 'Copy', 'Keep the original too')}`,
     check(o, m) {
       const r = { errs: {} };
       r.plane = planeOf(o.plane, m.bodies);
-      r.sum = bodiesSum(o);
       if (!o.bodies.length) r.need = 'Pick the bodies to mirror';
       else if (goneBodies(o.bodies, m)) r.error = 'A picked body is gone';
       else if (!o.plane) r.need = 'Pick a plane: an origin plane or a planar face';
@@ -611,7 +813,7 @@ const OPS = {
     init: m => ({ bodies: selBodies(m), dir: 'axis-x', flip: false, count: '3', mode: 'spacing', dist: '100 mm', join: false, pick: 'bodies' }),
     body: (o, m, r) => `
       ${pickList(o, 'bodies', 'Bodies', bodyItems(o.bodies, m), 'Click bodies')}
-      ${pickOne(o, 'dir', 'Direction', r.axis?.label, 'Click an axis or edge')}
+      ${pickOne(o, 'dir', 'Direction', r.axis?.label, 'Click an axis or edge', 'se-axis')}
       ${tick(o, 'flip', 'Flip direction')}
       <h4>Copies</h4>
       ${numField(o, 'count', 'Count', r)}
@@ -622,7 +824,6 @@ const OPS = {
       const r = { errs: {} }, e = r.errs;
       const n = readVal(o, 'count', e, { unit: 'count', int: true, min: 2, max: 100 }), dist = readVal(o, 'dist', e);
       r.axis = axisOf(o.dir, m.bodies);
-      r.sum = n ? `${n} in all` : '';
       if (!o.bodies.length) r.need = 'Pick the bodies to pattern';
       else if (goneBodies(o.bodies, m)) r.error = 'A picked body is gone';
       else if (!o.dir) r.need = 'Pick a direction: an origin axis or a straight edge';
@@ -652,7 +853,7 @@ const OPS = {
     init: m => ({ bodies: selBodies(m), axis: 'axis-z', count: '4', mode: 'full', angle: '90°', join: false, pick: 'bodies' }),
     body: (o, m, r) => `
       ${pickList(o, 'bodies', 'Bodies', bodyItems(o.bodies, m), 'Click bodies')}
-      ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click an axis or edge')}
+      ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click an axis or edge', 'se-axis')}
       <h4>Copies</h4>
       ${numField(o, 'count', 'Count', r)}
       ${choices(o, 'mode', CIRC_MODES)}
@@ -663,7 +864,6 @@ const OPS = {
       const n = readVal(o, 'count', e, { unit: 'count', int: true, min: 2, max: 100 });
       const a = o.mode === 'full' ? 360 : readVal(o, 'angle', e, { unit: 'deg', max: 360 });
       r.axis = axisOf(o.axis, m.bodies);
-      r.sum = n ? `${n} in all` : '';
       if (!o.bodies.length) r.need = 'Pick the bodies to pattern';
       else if (goneBodies(o.bodies, m)) r.error = 'A picked body is gone';
       else if (!o.axis) r.need = 'Pick an axis: an origin axis or a straight edge';
@@ -693,9 +893,13 @@ const OPS = {
       const bad = v != null && r.es?.find(e => v >= edgeCap(e));
       if (bad) r.errs.radius = `Too big for ${bad.label}: under ${fmt(edgeCap(bad))} mm`;
       r.d = [v, v];
+      // Regeneration's answer for the draft: it fails, but can still be added.
+      if (ready(r)) r.failed = filletClash(r.es, v);
       return r;
     },
-    preview: edgePreview,
+    preview: (o, m, r) => r.failed
+      ? { svg: failureSvg(r.failed) + edgesSvg(m.edges, o.edges), marks: new Set([r.failed.face]) }
+      : edgePreview(o, m, r),
     row: (o, r) => ({ meta: 'R' + fmt(r.d[0]), info: `${plural(o.edges.length, 'edge')} · R${fmt(r.d[0])} mm${o.chain ? ' · Tangent chain' : ''}` }),
   },
 
@@ -740,7 +944,7 @@ const OPS = {
     picks: { faces: Pick('face', 'faces to remove', 'Click faces to remove, or none for a closed hollow body', { multi: true }) },
     init: () => ({ faces: st.sel?.kind === 'face' ? [st.sel.id] : [], thick: '2 mm', dir: 'in', pick: 'faces' }),
     body: (o, m, r) => `
-      ${pickList(o, 'faces', 'Remove', o.faces.map(id => ({ id, label: FACE_NAME[id] || 'Missing face', meta: FACE_INFO[id]?.[1] })), 'Click faces')}
+      ${pickList(o, 'faces', 'Remove', o.faces.map(id => ({ id, ic: 'se-face', label: FACE_NAME[id] || 'Missing face', meta: FACE_INFO[id]?.[1] })), 'Click faces')}
       ${numField(o, 'thick', 'Thickness', r)}
       <h4>Direction</h4>
       ${choices(o, 'dir', [['in', 'Inward'], ['out', 'Outward']])}`,
@@ -748,7 +952,6 @@ const OPS = {
       const r = { errs: {} };
       r.t = readVal(o, 'thick', r.errs, { max: 100 });
       if (r.t != null && o.dir === 'in' && r.t >= 5) r.errs.thick = 'Too thick: the 10 mm walls need under 5 mm inward';
-      r.sum = 'Bracket';
       r.fs = o.faces.map(id => m.br?.faces.find(f => f.id === id));
       if (!m.br) r.error = 'No body to shell';
       else if (r.fs.some(f => !f)) r.error = 'A picked face is gone';
@@ -768,18 +971,26 @@ function opPreview(m) {
   return def.preview(o, m, def.check(o, m));
 }
 
+// The failure under the fields, and the way to add it anyway.
+const failMsg = (def, fl) => `<div class="pmsg fail"><div class="ft">${icon('alert')}<b>${def.label} fails</b></div><div class="fx">${fl.message}</div>
+  <div class="fa"><button class="pbtn" data-act="op:op-add">Add anyway</button></div></div>`;
+
 function opPanel() {
-  const o = st.op, def = OPS[o.kind], m = opCtx(), r = def.check(o, m);
-  const msg = r.error ? `<div class="pmsg err">${r.error}</div>` : r.need ? `<div class="pmsg need">${r.need}</div>` : '';
+  const o = st.op, def = OPS[o.kind], m = opCtx(), r = def.check(o, m), ok = ready(r);
+  const failing = !r.error && !r.need && !!r.failed;
+  const msgs = (r.error ? `<div class="pmsg err">${r.error}</div>` : r.need ? `<div class="pmsg need">${r.need}</div>`
+    : failing ? failMsg(def, r.failed) : '')
+    + (r.warn ? `<div class="pmsg warn">${r.warn}</div>` : '');
+  // A failing draft is added from its message, so OK waits.
+  const okBtn = `<button class="hb primary"${ok && !failing ? ' data-act="op:op-ok"' : ' disabled'} title="${failing ? 'It fails: Add anyway is in the message' : 'OK (Enter)'}">${icon('check')}</button>`;
   return `<div class="opp">
-    <div class="opp-head">${icon(def.icon)}<b>${o.editing ? o.name : 'New ' + def.label.toLowerCase()}</b><span class="sum">${r.sum || ''}</span></div>
-    <div class="opp-body">${def.body(o, m, r)}</div>
-    <div class="opp-foot">
-      ${msg}${r.warn ? `<div class="pmsg warn">${r.warn}</div>` : ''}
-      <div class="pbtns">
-        <button class="pbtn" data-act="op:op-cancel">Cancel</button>
-        <button class="pbtn primary"${ready(r) ? ' data-act="op:op-ok"' : ' disabled'}>OK</button>
-      </div>
+    <div class="opp-head"><span class="hic">${icon(def.icon)}</span><b>${o.editing ? o.name : 'New ' + def.label.toLowerCase()}</b>
+      <button class="hb" data-act="op:op-cancel" title="Cancel (Esc)">${icon('close')}</button>
+      ${okBtn}
+    </div>
+    <div class="opp-well">
+      <div class="opp-body">${def.body(o, m, r)}</div>
+      ${msgs ? `<div class="opp-foot">${msgs}</div>` : ''}
     </div>
   </div>`;
 }
@@ -840,7 +1051,7 @@ function commitOp() {
   const o = st.op, def = OPS[o.kind], m = opCtx(), r = def.check(o, m);
   if (!ready(r)) { toast(r.error || Object.values(r.errs)[0] || r.need); return; }
   const { kind, editing, name, pick, ...params } = o;
-  const d = st.doc, row = { type: kind, params: structuredClone(params), ...def.row(params, r, m) };
+  const d = st.doc, row = { type: kind, params: structuredClone(params), ...def.row(params, r, m), failed: r.failed?.message };
   let id = editing;
   if (editing) Object.assign(d.timeline.find(t => t.id === editing), row);
   else {
@@ -857,7 +1068,13 @@ const sketchOn = plane => go('sketch.html', 'new/' + plane);
 
 Object.assign(page, {
   doOp(id) {
-    if (id === 'op-ok') { commitOp(); return; }
+    // OK waits while the draft fails; Add anyway, in its message, adds it.
+    if (id === 'op-ok') {
+      if (OPS[st.op.kind].check(st.op, opCtx()).failed) { toast('It fails: Add anyway is in the message'); return; }
+      commitOp();
+      return;
+    }
+    if (id === 'op-add') { commitOp(); return; }
     if (id === 'op-cancel') { st.op = null; return; }
     if (OPS[id]) { openOp(id); return; }
     st.op = null;
@@ -902,6 +1119,27 @@ Object.assign(page, {
     if (kind === 'hole') toast('Pick a planar face');
     else sketchOn(id);
   },
+  // The selected feature's failure, from its parameters on the model as it stands.
+  failure(bodies, active) {
+    const t = st.doc.timeline.find(t => t.id === st.sel.id), def = OPS[t.type];
+    const r = t.params && def ? def.check({ kind: t.type, ...t.params }, ctxOf(bodies, active)) : null;
+    return r?.failed ? { svg: failureSvg(r.failed), marks: new Set([r.failed.face]) } : null;
+  },
+  // Double-clicking the model selects the whole body; a feature in the
+  // timeline or the objects list opens it to edit.
+  dblclick(el) {
+    if (st.op) return false;
+    const f = el.closest('.face, .hole');
+    if (f) { st.sel = { kind: 'body', id: f.dataset.body || 'body' }; return true; }
+    const r = el.closest('[data-act^="tl:"], [data-act^="obj:"]');
+    const t = r && st.doc.timeline.find(t => t.id === r.dataset.act.split(':')[1]);
+    if (!t) return false;
+    st.sel = { kind: 'feature', id: t.id };
+    if (t.type === 'sketch') go('sketch.html', t.id);
+    else if (t.params && OPS[t.type]) openOp(t.type, t.id);
+    else toast('Edit ' + t.name + ' — not wired up in the mock');
+    return true;
+  },
   afterRender() {
     if (!focusPanel) return;
     focusPanel = false;
@@ -909,11 +1147,17 @@ Object.assign(page, {
   },
   op: {
     label: () => OPS[st.op.kind].label,
+    head() {
+      const o = st.op, def = OPS[o.kind], r = def.check(o, opCtx());
+      return { icon: def.icon, name: o.editing ? o.name : 'New ' + def.label.toLowerCase(), ok: ready(r) && !r.failed,
+        why: r.failed ? 'It fails: Add anyway is in the message' : r.error || r.need || Object.values(r.errs)[0] };
+    },
     info() {
       const o = st.op, def = OPS[o.kind], r = def.check(o, opCtx()), p = def.picks[o.pick];
       const bad = r.error || Object.values(r.errs)[0];
-      const msg = bad || r.need || (ready(r) ? 'Ready: Enter or OK adds it' : '') + (p ? ` · ${p.hint}` : '');
-      return `${icon(def.icon)}<b>${o.editing ? o.name : def.label}</b><span class="${bad ? 'bad' : 'muted'}">${msg}</span>`;
+      const fail = !bad && !r.need && r.failed?.message;
+      const msg = bad || r.need || fail || (ready(r) ? 'Ready: Enter or OK adds it' : '') + (p ? ` · ${p.hint}` : '');
+      return `${icon(def.icon)}<b>${o.editing ? o.name : def.label}</b>${fail ? `<span class="alert">${icon('alert')}</span>` : ''}<span class="${bad ? 'bad' : 'muted'}">${msg}</span>`;
     },
     pickHint() {
       const p = OPS[st.op.kind].picks[st.op.pick];
@@ -938,24 +1182,11 @@ document.addEventListener('input', e => {
   render();
 });
 
-document.addEventListener('dblclick', e => {
-  if (st.op) return;
-  // Double-clicking the model selects the whole body.
-  const f = e.target.closest('.face, .hole');
-  if (f) { st.sel = { kind: 'body', id: f.dataset.body || 'body' }; render(); return; }
-  const r = e.target.closest('[data-act^="tl:"], [data-act^="obj:"]');
-  const t = r && st.doc.timeline.find(t => t.id === r.dataset.act.split(':')[1]);
-  if (!t) return;
-  if (t.type === 'sketch') { go('sketch.html', t.id); return; }
-  if (t.params && OPS[t.type]) openOp(t.type, t.id);
-  else toast('Edit ' + t.name + ' — not wired up in the mock');
-  render();
-});
-
 // The design from the hash (listed at the top of the page), and an
 // operation set up for a screenshot.
 const E = (a, b) => [a, b].sort().join('|');
 const SHOTS = {
+  extrude: { regions: ['s2:0'], d1: '20 mm', pick: null },
   revolve: { regions: ['s1:0'], axis: 's1:l5', extent: 'one', a1: '270°', flip: true, pick: null, ...(flag('join') && { op: 'join' }) },
   combine: { tools: ['dm:0:0'] },
   move: { dx: '-20 mm', dy: '-80 mm', angle: '30°' },
@@ -967,8 +1198,16 @@ const SHOTS = {
 {
   const doc = HASH[0] || 'bracket', view = HASH[1];
   st.doc = doc === 'empty' ? makeDoc('empty', 'Untitled') : makeDoc('bracket', doc);
+  if (doc !== 'empty') {
+    // Revolve 1's post, from its parameters.
+    const t = st.doc.timeline.find(t => t.id === 'r1'), all = new Set(st.doc.timeline.map(t => t.id));
+    const r = OPS.revolve.check({ kind: 'revolve', ...t.params }, ctxOf(bodiesAt(all), all));
+    st.doc.extra.push({ id: 'r1:0', feat: 'r1', name: 'Post', faces: r.rs.flatMap(g => revolveFaces(g.pts, r.axis, r.span)) });
+  }
   if (view === 'face') st.sel = { kind: 'face', id: 'base-top' };
   if (view === 'body') st.sel = { kind: 'body', id: 'body' };
+  if (view === 'failed') st.sel = { kind: 'feature', id: 'f2' };
+  if (view === 'failed-edit') openOp('fillet', 'f2');
   for (const v of Object.keys(VIEWS)) if (flag('v-' + v)) Object.assign(cam, VIEWS[v]);
   const kind = doc !== 'empty' && view?.startsWith('op:') && view.slice(3);
   if (OPS[kind]) {

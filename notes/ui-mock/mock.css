@@ -1,6 +1,7 @@
 /* The varde UI mock's shared styles: the window, its chrome, the side panel
    and the viewport. What only one page draws is styled in that page. */
 :root {
+  --danger-wash: color-mix(in srgb, var(--danger) 14%, var(--panel));
   --side-w: 256px;
   --rail-w: 56px;
   --title-h: 36px;
@@ -39,6 +40,7 @@
   --ok: #3d9b35;
   --halo: #f4f4f7;
   --danger: #cf4330;
+  --danger-text: #ad2a19;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -74,6 +76,8 @@
     --ok: #5cc052;
     --halo: #24252b;
     --danger: #f07563;
+  --danger-text: #f58a7a;
+    --danger-text: #f58a7a;
   }
 }
 :root[data-theme="dark"] {
@@ -221,6 +225,7 @@ kbd {
 .op.primary { background: var(--accent); color: #fff; }
 .op.primary:hover { filter: brightness(1.08); }
 .op.finish { height: 24px; padding: 0 5px; }
+.op.finish:disabled { opacity: .45; cursor: default; filter: none; }
 .op.icon { padding: 0 6px; color: var(--muted); height: 26px; }
 .op.icon:hover { color: var(--text); }
 .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; flex: none; }
@@ -261,6 +266,8 @@ kbd {
 .projdd .menu .mi { width: 16px; display: flex; justify-content: center; }
 .info .muted { color: var(--muted); }
 .info .accent { color: var(--accent); font-weight: 600; }
+.info .bad { color: var(--danger); display: flex; }
+.info .alert { color: var(--danger); display: flex; }
 .info .dotok { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 .info svg.i { width: 14px; height: 14px; }
 .hints { display: flex; align-items: center; gap: 14px; }
@@ -380,6 +387,9 @@ kbd {
 .row .eye:hover { color: var(--text); }
 .row.group { color: var(--muted); font-weight: 600; font-size: 11.5px; }
 .row.dim .name { color: var(--faint); }
+/* A feature that failed: its name, and an alert after it, in red. */
+.row.failed .name, .row .bad { color: var(--danger-text); }
+.row .bad { display: flex; margin-left: -3px; }
 .marker { position: relative; display: flex; align-items: center; gap: 6px; height: 16px; padding: 0 8px; color: var(--accent); font-size: 10.5px; font-weight: 600; border-radius: 6px; }
 .marker::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--accent); transform: rotate(45deg); flex: none; }
 .marker::after { content: ""; flex: 1; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; }
@@ -404,6 +414,10 @@ kbd {
 .face:hover { fill: var(--fh); }
 .hole:hover .wall { fill: #4f7a45; }
 .face.sel { fill: var(--fs); stroke: var(--accent); }
+/* A curved face's facets: no lines between them, and lit whole, not facet by
+   facet (they're the body's, with no face of their own to pick). */
+.face.smooth, .face.smooth:hover { fill: var(--f); stroke: var(--f); }
+.face.sel.smooth { fill: var(--fs); stroke: var(--fs); }
 .hole.sel .wall { fill: #2c6571; stroke: var(--accent); }
 .hole { cursor: pointer; }
 .tangent { stroke: var(--edge); opacity: .3; vector-effect: non-scaling-stroke; }

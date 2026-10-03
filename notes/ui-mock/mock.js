@@ -7,11 +7,15 @@
 //   act(k, v): a data-act the shared part doesn't handle, true if it did;
 //   escape(): Esc with nothing else to back out of;
 //   faceClick(id): a click on a face, a hole or an origin plane;
+//   dblclick(el): a double-click on el, true if it took it;
 //   afterRender(): anything to do once the page is drawn;
 //   op: the solid operation being set up (`st.op`), on the model page:
 //     label(), info(), pickHint() for the toolbar and the status bar,
+//     head() its name, icon and whether OK can add it, for the toolbar's chip,
 //     preview(bodies, active) and panel() to draw it, pick(el) and
-//     pickObject(id) for clicks in the view and the objects list.
+//     pickObject(id) for clicks in the view and the objects list;
+//   failure(bodies, active): over the model, where the selected feature
+//     that failed went wrong.
 // Pages link to each other with `go`, which keeps the theme.
 
 // ---------------------------------------------------------------- icons
@@ -76,6 +80,7 @@ const I = {
   persp: '<path d="M3 9h12v12H3z"/><path d="M10 4h8v8h-3M3 9l7-5M15 9l3-5M15 21l3-9"/>',
   save: '<path d="M5 4h11l3 3v13H5z"/><path class="a" d="M8 4v5h7V4M8 20v-6h8v6"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  alert: '<path d="M12 3.5L21.5 20h-19z"/><path d="M12 10v4.5M12 17.2v.1"/>',
   min: '<path d="M6 12h12"/>',
   max: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
   sweep: '<path class="r" d="M4 18c4 0 5-12 12-12"/><circle class="t" cx="17" cy="6" r="3"/><circle class="af" cx="4.5" cy="18" r="1.8"/>',
@@ -210,7 +215,7 @@ function solidSvg(faces, pr, marks = null) {
     const inBody = live && ((bodySel && st.sel.id === body) || marks.has('body:' + body));
     if (live) {
       const sel = inBody || (f.id && (st.sel?.id === f.id || marks.has(f.id)));
-      const cls = 'face' + (sel ? ' sel' : '') + (f.fade ? ' fade' : '');
+      const cls = 'face' + (sel ? ' sel' : '') + (f.fade ? ' fade' : '') + (f.smooth ? ' smooth' : '');
       out += `<polygon class="${cls}"${f.id ? ` data-face="${f.id}"` : ''} data-body="${body}" style="--f:${fill};--fs:${c.s};--fh:${c.h}" points="${p}"/>`;
     } else {
       out += `<polygon class="tf${f.draft ? ' draft' : ''}" style="fill:${fill}${f.smooth ? ';stroke:' + fill : ''}" points="${p}"/>`;
@@ -307,6 +312,12 @@ const SKETCHES = {
     dims: [{ a: [25, 79], b: [50, 79], t: '25' }, { a: [58, 10], b: [58, 45], t: '35' }], labels: [{ p: [37, 57], t: 'Ø14' }],
     summary: '1 circle · 3 dimensions',
   },
+  // A turned post's half section beside the bracket, its last line the axis Revolve 1 turns it about.
+  s4: {
+    plane: 'plane-xz', closed: [[115, 0], [132, 0], [132, 6], [122, 10], [122, 34], [128, 38], [128, 42], [115, 42]],
+    dims: [{ a: [115, -9], b: [132, -9], t: '17' }, { a: [137, 0], b: [137, 42], t: '42' }, { a: [115, 47], b: [128, 47], t: '13' }],
+    summary: '8 lines · 3 dimensions',
+  },
 };
 
 const FACE_INFO = {
@@ -327,18 +338,27 @@ const FACE_INFO = {
 
 const BRACKET_TIMELINE = [
   { id: 's1', type: 'sketch', name: 'Sketch 1', meta: 'Front' },
-  { id: 'e1', type: 'extrude', name: 'Extrude 1', meta: '50 mm', info: 'Distance 50 mm · New body' },
+  { id: 'e1', type: 'extrude', name: 'Extrude 1', meta: '50 mm', info: 'One side · 50 mm · New body', params: { regions: ['s1:0'], extent: 'one', d1: '50 mm', d2: '10 mm', flip: true, op: 'new', excl: [] } },
   { id: 's2', type: 'sketch', name: 'Sketch 2', meta: 'Face' },
   { id: 'h1', type: 'hole', name: 'Hole 1', meta: 'Ø16 thru', info: 'Simple · Ø16 mm · Through all' },
   { id: 's3', type: 'sketch', name: 'Sketch 3', meta: 'Face' },
   { id: 'h2', type: 'hole', name: 'Hole 2', meta: 'Ø14 thru', info: 'Simple · Ø14 mm · Through all' },
   { id: 'f1', type: 'fillet', name: 'Fillet 1', meta: 'R2', info: '1 edge · R2 mm · Tangent chain', params: { edges: ['base-top|up-x'], radius: '2 mm', chain: true } },
+  { id: 's4', type: 'sketch', name: 'Sketch 4', meta: 'XZ' },
+  // Its body, the post, is made on the model page (`revolveFaces`).
+  { id: 'r1', type: 'revolve', name: 'Revolve 1', meta: '360°', info: 'Full 360° · about Line 8 · Sketch 4 · New body', params: { regions: ['s4:0'], axis: 's4:l7', extent: 'full', a1: '180°', a2: '90°', flip: false, op: 'new', excl: [] } },
+  // Failed (`failed`, its message): the two rounds on the upright's top
+  // edges don't fit the 10 mm between them. The model page draws where.
+  {
+    id: 'f2', type: 'fillet', name: 'Fillet 2', meta: 'R6', info: '2 edges · R6 mm · Tangent chain', params: { edges: ['up-top|up-x', 'back|up-top'], radius: '6 mm', chain: true },
+    failed: 'Edge 18 and Edge 15 overlap on Upright top: it’s 10 mm wide, at most R5 fits',
+  },
 ];
 
-// `extra` holds bodies beyond the bracket's.
+// `extra` holds bodies beyond the bracket's; one with `feat` is there once that feature is.
 function makeDoc(kind, name) {
   return kind === 'bracket'
-    ? { kind, name, dirty: true, T: [40, 25, 32], timeline: BRACKET_TIMELINE.map(t => ({ ...t })), extra: [], hidden: new Set(['origin', 's1', 's2', 's3']) }
+    ? { kind, name, dirty: true, T: [40, 25, 32], timeline: BRACKET_TIMELINE.map(t => ({ ...t })), extra: [], hidden: new Set(['origin', 's1', 's2', 's3', 's4']) }
     : { kind, name, dirty: false, T: [0, 0, 0], timeline: [], extra: [], hidden: new Set() };
 }
 
@@ -374,7 +394,7 @@ function activeFeatures() {
 function bodiesAt(active) {
   const d = st.doc, bodies = [];
   if (d.kind === 'bracket' && active.has('e1')) bodies.push({ id: 'body', name: 'Bracket', faces: bracketAt(active) });
-  return [...bodies, ...d.extra];
+  return [...bodies, ...d.extra.filter(b => !b.feat || active.has(b.feat))];
 }
 
 // The page's hooks (see the top of this file); each page fills them in.
@@ -461,7 +481,8 @@ function ops() {
     case 'op':
       return [
         { id: 'op-cancel', label: 'Cancel', icon: 'close', key: 'Esc' },
-        { id: 'op-ok', label: 'OK', icon: 'check', key: 'Enter', primary: true },
+        // in the chip beside the operation's name; here for its key
+        { id: 'op-ok', label: 'OK', icon: 'check', key: 'Enter', primary: true, hidden: true },
       ];
     case 'sketch':
     case 'tool':
@@ -618,8 +639,12 @@ function toolbar() {
   if (st.mode === 'sketch') {
     const name = d.timeline.find(t => t.id === st.sketch.id).name;
     ctx = `<span class="wash"><span>${icon('sketch')}${name}</span><button class="op primary finish" data-act="op:finish" title="Finish sketch (Esc)">${icon('check')}</button></span>${st.tool ? `<span class="tag">${TOOLS[st.tool].label}</span>` : ''}`;
+  } else if (st.op) {
+    // An operation being set up shows as a sketch being edited does: its name with OK beside it.
+    const h = page.op.head();
+    ctx = `<span class="wash"><span>${icon(h.icon)}${h.name}</span><button class="op primary finish"${h.ok ? ' data-act="op:op-ok"' : ' disabled'} title="${h.ok ? 'OK (Enter)' : h.why}">${icon('check')}</button></span>`;
   } else {
-    const tag = st.op ? (st.op.editing ? 'Editing ' + st.op.name : page.op.label()) : st.pick ? 'New sketch' : '';
+    const tag = st.pick ? 'New sketch' : '';
     ctx = `Model${tag ? `<span class="tag">${tag}</span>` : ''}`;
   }
 
@@ -628,7 +653,7 @@ function toolbar() {
   const enter = key !== lastOpsKey;
   lastOpsKey = key;
   let i = 0;
-  const opsHtml = list.map(o => o.sep ? '<span class="sep"></span>' : `
+  const opsHtml = list.filter(o => !o.hidden).map(o => o.sep ? '<span class="sep"></span>' : `
     <button class="op${o.on ? ' on' : ''}${o.primary ? ' primary' : ''}" style="--i:${i++}" data-act="op:${o.id}" title="${o.label}${o.key ? ` (${o.key})` : ''}">
       ${icon(o.icon)}<span class="lbl">${o.label}</span>${o.key && !o.primary ? `<span class="k">${o.key}</span>` : ''}
     </button>`).join('');
@@ -728,6 +753,7 @@ function info() {
   if (c === 'feature') {
     const f = st.doc.timeline.find(t => t.id === st.sel.id);
     const extra = f.type === 'sketch' ? (SKETCHES[f.id]?.summary || 'Empty') : f.info;
+    if (f.failed) return `<span class="alert">${icon('alert')}</span><b>${f.name}</b><span class="muted">${f.failed}</span>`;
     return `${icon(f.type)}<b>${f.name}</b><span class="muted">${extra}</span>`;
   }
   return '';
@@ -759,8 +785,9 @@ function timeline() {
     if ((editing && t.id === st.sketch.id) || st.op?.editing === t.id) cls.push('editing');
     else if (i > cut) cls.push('rolled');
     if (st.sel?.kind === 'feature' && st.sel.id === t.id) cls.push('sel');
-    return `<div class="${cls.join(' ')}" data-act="tl:${t.id}">
-      <span class="ic">${icon(t.type)}</span><span class="name">${t.name}</span><span class="meta">${t.meta || ''}</span></div>`;
+    if (t.failed) cls.push('failed');
+    return `<div class="${cls.join(' ')}" data-act="tl:${t.id}"${t.failed ? ` data-tip="${t.failed.replace(/"/g, '&quot;')}"` : ''}>
+      <span class="ic">${icon(t.type)}</span><span class="name">${t.name}</span>${t.failed ? `<span class="bad">${icon('alert')}</span>` : ''}<span class="meta">${t.meta || ''}</span></div>`;
   }).join('');
 }
 
@@ -953,13 +980,15 @@ function sceneInner() {
   const bodies = bodiesAt(active);
   // An operation being set up adds its preview, highlights and pick targets.
   const pv = st.op ? page.op.preview(bodies, active) : null;
+  // A failed feature selected shows where it went wrong.
+  const failed = st.sel?.kind === 'feature' && !inSketch && st.doc.timeline.find(t => t.id === st.sel.id)?.failed ? page.failure?.(bodies, active) : null;
 
   let model = '';
   if ((!d.hidden.has('origin') || pv?.planes) && !(inSketch && d.kind === 'bracket')) model += originSvg();
   const faces = bodies.filter(b => !d.hidden.has(b.id))
     .flatMap(b => b.faces.map(f => ({ ...f, body: b.id, fade: pv?.fade?.has(b.id), tint: pv?.tint?.get(b.id) })));
   faces.push(...(pv?.faces || []));
-  if (faces.length) model += solidSvg(faces, proj, pv?.marks || new Set());
+  if (faces.length) model += solidSvg(faces, proj, pv?.marks || failed?.marks || new Set());
 
   let overlay = '';
   if (inSketch) {
@@ -971,7 +1000,7 @@ function sceneInner() {
   const marker = !d.hidden.has('origin') && !(inSketch && d.kind === 'bracket') ? originMarkerSvg() : '';
   // The marker is over the model and the finished sketches, under the sketch being edited.
   overlay = inSketch ? marker + overlay : overlay + marker;
-  return `${gridAxesSvg(plane)}<g class="${inSketch ? 'ghost' : ''}">${model}</g><g style="pointer-events:none">${overlay}</g><g class="opl">${pv?.svg || ''}</g>`;
+  return `${gridAxesSvg(plane)}<g class="${inSketch ? 'ghost' : ''}">${model}</g><g style="pointer-events:none">${overlay}</g><g class="opl">${pv?.svg || ''}</g><g style="pointer-events:none">${failed?.svg || ''}</g>`;
 }
 
 // The view cube, as the app's (crates/view/src/view_cube.rs): 116 px, room
@@ -1234,6 +1263,9 @@ document.addEventListener('mouseover', e => {
 
 document.addEventListener('click', e => {
   if (st.railOpen != null && !e.target.closest('.rail, .rpop')) { st.railOpen = null; render(); }
+  // A double-click is its second click: a dblclick event would go to what
+  // the first click's render replaced, off the page.
+  if (e.detail === 2 && page.dblclick?.(e.target)) { render(); return; }
   const el = e.target.closest('[data-act]');
   if (el) {
     if (el.dataset.act !== 'noop') act(el.dataset.act);
