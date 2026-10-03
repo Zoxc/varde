@@ -6597,7 +6597,10 @@ at 0.18 of it; see "Volumes with fitted cuts"); a bar of radius 0.032
 grazing a unit round's wall, whose cut has conics of weight 30 (every
 patch within the fit of the true surfaces on a grid of 32 steps a side,
 1.007 of it before bands with heavy sides were measured on a finer
-grid; see "Rounds"); a pin through a
+grid; see "Rounds"); a thin boss from a drilled box's side ending in
+the hole, beside conics of weight 31 (on a 64-step grid, the union's
+bands 0.16 of the fit off, 1.003 without the finer measures, each
+result's volume against a Simpson integral, or refused); a pin through a
 plate's hole wall (upright cylinders meeting in
 lines, exact); a boss joined flush on a plate; a block through the
 plate's hole, and one whose side runs exactly through a vertex of the

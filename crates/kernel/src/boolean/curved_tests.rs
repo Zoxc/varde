@@ -633,6 +633,118 @@ fn a_thin_bar_grazing_a_round_keeps_its_bands_within_the_fit() {
 }
 
 #[test]
+fn a_side_boss_beside_a_hole_keeps_its_bands_within_the_fit() {
+    // A fuzzing case: a box `[−1, 1]² × [0, 2]` drilled along `y`, and a
+    // thin boss along `x` from its `x = 1` side whose end lies inside the
+    // hole, just below the hole's top. The cut round the boss's wall has
+    // fitted conics of weight up to 31; the union's band beside one sat
+    // up to 1.27 of the fit off the boss's wall (1.003 without the finer
+    // measures below) while its 15 samples were within it. Bands are now
+    // measured on a grid as fine as their weights ask, the kept round
+    // again on a finer one, and a band past the fit refused: measured at
+    // 0.16 of it.
+    let (r1, x1, z1) = (
+        0.663_502_427_434_423_1,
+        0.034_646_695_447_612_76,
+        1.032_185_775_557_158_8,
+    );
+    let (y, z, r, h, d) = (
+        0.376_083_320_439_507_54,
+        1.701_476_119_785_978,
+        0.180_736_888_782_601_77,
+        0.104_144_890_768_832_32,
+        0.978_521_346_700_350_2,
+    );
+    // Four quarter arcs from `+x`, as the fuzzer built them.
+    let ring = |c: DVec2, r: f64| {
+        let p = [DVec2::X, DVec2::Y, DVec2::NEG_X, DVec2::NEG_Y].map(|d| c + d * r);
+        Loop {
+            segments: (0..4)
+                .map(|i| Segment {
+                    conic: crate::patch::Conic2::arc_between(c, r, p[i], p[(i + 1) % 4]).unwrap(),
+                    curve: 1,
+                })
+                .collect(),
+        }
+    };
+    let frame = |origin: DVec3, x: DVec3, y: DVec3| Frame { origin, x, y };
+    let cube = extruded_on(
+        vec![rect(DVec2::NEG_ONE, DVec2::ONE, 4)],
+        Frame::XY,
+        0.0,
+        2.0,
+        1,
+    );
+    let front = frame(DVec3::NEG_Y, DVec3::X, DVec3::Z);
+    let hole = extruded_on(vec![ring(DVec2::new(x1, z1), r1)], front, -3.6, 0.0, 6);
+    let a = run(&cube, &hole, Op::Difference);
+    let side = frame(DVec3::X, DVec3::Y, DVec3::Z);
+    let boss = extruded_on(vec![ring(DVec2::new(y, z), r)], side, -d, h, 7);
+    // The true volumes: the boss's part in the box less what of it lies in
+    // the hole, by Simpson's rule in `z` after `z = lo + (hi − lo)(1 − cos t)/2`.
+    let half = |r: f64, dz: f64| (r * r - dz * dz).max(0.0).sqrt();
+    let (lo, hi) = ((z1 - r1).max(z - r), (z1 + r1).min(z + r));
+    let g = |t: f64| {
+        let s = lo + (hi - lo) * (1.0 - t.cos()) / 2.0;
+        let a1 = half(r1, s - z1);
+        let len = ((x1 + a1).min(1.0 + h) - (x1 - a1).max(1.0 - d)).max(0.0);
+        len * 2.0 * half(r, s - z) * (hi - lo) / 2.0 * t.sin()
+    };
+    let n = 20_000;
+    let step = PI / n as f64;
+    let common = (1..n).fold(g(0.0) + g(PI), |sum, k| {
+        sum + if k % 2 == 1 { 4.0 } else { 2.0 } * g(k as f64 * step)
+    }) * step
+        / 3.0;
+    let va = 8.0 - 2.0 * PI * r1 * r1;
+    let vb = PI * r * r * (h + d);
+    let both = d * PI * r * r - common;
+    assert!((a.volume() - va).abs() <= 1e-9, "{}", a.volume());
+    // The nearest of the true surfaces: the box's sides, the hole's wall,
+    // the boss's wall and ends.
+    let off = |p: DVec3| {
+        [
+            p.x.abs() - 1.0,
+            p.y.abs() - 1.0,
+            p.z - 2.0,
+            p.z,
+            DVec2::new(p.x - x1, p.z - z1).length() - r1,
+            DVec2::new(p.y - y, p.z - z).length() - r,
+            p.x - 1.0 - h,
+            p.x - 1.0 + d,
+        ]
+        .into_iter()
+        .map(f64::abs)
+        .fold(f64::INFINITY, f64::min)
+    };
+    let allow = TOL.fit() * (a.area() + boss.area()) / 5.0;
+    let n = 64;
+    for (op, want) in [
+        (Op::Union, va + vb - both),
+        (Op::Intersection, both),
+        (Op::Difference, va - both),
+    ] {
+        // Refusing is allowed; a result is within its bands and volume.
+        let Ok(solid) = boolean(&a, &boss, op, &TOL, &Budget::DEFAULT) else {
+            continue;
+        };
+        let mesh = solid.mesh();
+        for t in 0..mesh.tris().len() {
+            let patch = mesh.patch(t);
+            for i in 0..=n {
+                for j in 0..=n - i {
+                    let u = DVec3::new(i as f64, j as f64, (n - i - j) as f64) / n as f64;
+                    let p = patch.eval(u);
+                    assert!(off(p) <= TOL.fit(), "{op:?}: {p} {:e} off", off(p));
+                }
+            }
+        }
+        let got = solid.volume();
+        assert!((got - want).abs() <= allow, "{op:?}: {got}, not {want}");
+    }
+}
+
+#[test]
 fn a_pin_through_a_holes_wall() {
     // Two upright cylinders crossing in straight lines, and the plate's
     // faces: all exact.
