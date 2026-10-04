@@ -402,9 +402,10 @@ impl Doc {
         self.prune_motion(replaced);
         self.prune_measure(replaced);
         self.request_analysis();
-        self.request_model();
         self.refresh_profiles();
         self.prune_picks();
+        // After the selection lets go of what's gone, as it's measured.
+        self.request_model();
         self.refresh_errors();
         self.prune_preview();
         self.follow_placement();
@@ -412,17 +413,19 @@ impl Doc {
 
     /// Asks for the model if the document changed, the sketch left out of
     /// it (the one being edited) or the extrude, revolve or combine being
-    /// set up did, which is previewed as a draft, or the measure tool's picks,
-    /// measured on it. The measure tool is never in use with a draft, so
-    /// no request carries both: a draft dragged never measures again at
-    /// each step.
+    /// set up did, which is previewed as a draft, or the measure tool's
+    /// picks, or else what's selected (see [`Doc::selection_inspect`]),
+    /// measured on it. Neither is measured with a draft, so no request
+    /// carries both: a draft dragged never measures again at each step.
     fn request_model(&mut self) {
         let exclude = self.sketch.as_ref().map(|session| session.feature);
         let draft = (self.extrude_draft())
             .or_else(|| self.revolve_draft())
             .or_else(|| self.combine_draft())
             .or_else(|| self.motion_draft());
-        let inspect = self.measure.as_ref().and_then(MeasureSession::inspect);
+        let inspect = (self.measure.as_ref())
+            .and_then(MeasureSession::inspect)
+            .or_else(|| self.selection_inspect());
         self.feed
             .request_with(&self.editor, exclude, draft, inspect);
     }
@@ -610,10 +613,11 @@ impl Doc {
         // A drag's step shows another sketch, and letting go of it the
         // sketch before.
         self.refresh_profiles();
-        // The extrude being set up is previewed as it changes.
+        self.prune_picks();
+        // The extrude being set up is previewed as it changes, and what's
+        // selected measured.
         self.request_model();
         self.follow_motion_pivot();
-        self.prune_picks();
         self.refresh_errors();
         self.prune_preview();
     }
@@ -951,11 +955,11 @@ impl Doc {
         // Which bodies are merged, which faces show as whose, may change.
         self.prune_plane_pick(false);
         self.prune_picks();
-        let combine = self.follow_merges();
-        let motion = self.follow_motion_merges();
-        if combine || motion {
-            self.request_model();
-        }
+        // The combine's and the motion's bodies may have moved on, and
+        // what's selected be found otherwise: asked again only if so.
+        self.follow_merges();
+        self.follow_motion_merges();
+        self.request_model();
         self.follow_motion_pivot();
         self.follow_edge_axis();
         self.refresh_errors();
@@ -1099,6 +1103,7 @@ impl Doc {
             highlight: self.highlight(),
             errors: self.shown_errors(),
             model_selection: &self.pick.selection,
+            selection_measured: self.selection_measured(),
             name: &self.name,
             unnamed: self.unnamed(),
             path: self.path.as_deref(),

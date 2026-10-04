@@ -552,3 +552,27 @@ fn a_cut_of_a_merged_body_is_warned_of_when_every_body_in_it_goes() {
         (vec!["Extrude 3", "Extrude 4"], vec!["Body 1", "Body 2"])
     );
 }
+
+/// In a sketch with no tool, what's selected shows in its own box, with
+/// what it measures and the key clearing it, which the hints then leave
+/// out.
+#[test]
+fn a_sketch_s_selection_shows_with_what_it_measures() {
+    let (mut doc, sketch, _, _) = example();
+    doc.look(Look::EditFeature(sketch));
+    let (_, drawn) = doc.edited_sketch().unwrap();
+    let circle = (drawn.curves.iter())
+        .find(|entry| matches!(entry.curve, varde_sketch::Curve::Circle { .. }))
+        .map(|entry| (entry.id, entry.name()))
+        .unwrap();
+    doc.look(Look::ClickRow(circle.0));
+    let bar = status_bar(&doc);
+    let at = bar.iter().position(|text| *text == circle.1);
+    let at = at.unwrap_or_else(|| panic!("{bar:?}"));
+    assert!(bar[at + 1].starts_with("Diameter "), "{bar:?}");
+    assert_eq!(bar[at + 2..at + 4], ["Space", "Clear"], "{bar:?}");
+    assert_eq!(bar.iter().filter(|text| *text == "Clear").count(), 1);
+    // A tool in use: no box.
+    doc.look(Look::SelectTool(varde_view::Tool::Line));
+    assert!(!status_bar(&doc).contains(&circle.1));
+}

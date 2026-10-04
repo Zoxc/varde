@@ -264,7 +264,14 @@ fn a_click_selects_in_the_model_and_esc_or_space_clears_it() {
     assert_eq!(doc.selected_feature, None);
     let highlight = doc.highlight().unwrap().clone();
     assert!(!highlight.is_empty());
-    assert!(requests.borrow().is_empty(), "no regeneration asked for");
+    // The model is asked for again only to measure the face.
+    let asked = requests.borrow();
+    assert!(
+        matches!(&asked[..], [varde_regen::Request::Regenerate { inspect: Some(inspect), .. }]
+            if inspect.second.is_none()),
+        "{asked:?}"
+    );
+    drop(asked);
     // Selecting a feature lets go of the model's selection.
     doc.look(Look::SelectFeature(extrude));
     assert!(doc.pick.selection.is_empty());

@@ -256,3 +256,26 @@ fn an_arc_s_sector_holds_both_its_ends() {
         assert!(sector_holds(from, sweep, from), "{from} {to} {sweep}");
     }
 }
+
+/// What a selection measures, for the status bar: straight lengths and
+/// distances wherever the label would go, the first angle under a half
+/// turn, a circle's diameter and an arc's radius; nothing for three
+/// items or a point alone.
+#[test]
+fn a_selection_measures_as_its_dimension_would() {
+    let (sketch, [slope, lone, parallel, steep, circle, arc], [a, _]) = shapes();
+    let shown = |ids: &[Id]| {
+        selected(&sketch, ids)
+            .map(|(measure, value)| shown_measure(&measure, value, LengthUnit::Mm))
+    };
+    assert_eq!(shown(&[slope]).as_deref(), Some("Length 11.18 mm"));
+    assert_eq!(shown(&[a, lone]).as_deref(), Some("Distance 28.284 mm"));
+    assert_eq!(shown(&[circle]).as_deref(), Some("Diameter 6 mm"));
+    assert_eq!(shown(&[arc]).as_deref(), Some("Radius 4 mm"));
+    let apart = shown(&[slope, parallel]).unwrap();
+    assert!(apart.starts_with("Distance "), "{apart}");
+    let angle = shown(&[slope, steep]).unwrap();
+    assert!(angle.starts_with("Angle "), "{angle}");
+    assert_eq!(shown(&[lone]), None);
+    assert_eq!(shown(&[slope, parallel, steep]), None);
+}

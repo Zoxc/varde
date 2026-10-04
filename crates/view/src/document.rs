@@ -65,6 +65,10 @@ pub struct DocumentState<'a> {
     /// What's selected in the model: Objects marks the bodies selected,
     /// and the status bar tells of it.
     pub model_selection: &'a crate::Selection,
+    /// What the newest answer measures of one or two items of
+    /// `model_selection`, which the status bar shows with them: `None`
+    /// while it's on its way, or where they aren't measured.
+    pub selection_measured: Option<&'a varde_regen::Inspected>,
     /// The document name, without extension.
     pub name: &'a str,
     /// Whether the design has no name, never saved: [`NOT_SAVED`] shows
@@ -1074,7 +1078,6 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
             .chain(convert)
             .chain(handles)
             .chain(comb)
-            .chain([key_hint(Shortcut::SPACE, "Clear")])
     });
     std::iter::once(mouse_hint(MouseButton::Left, "Select"))
         .chain(selection.into_iter().flatten())
@@ -1691,8 +1694,10 @@ fn combine_info(combine: &crate::CombineState<'_>) -> String {
 /// setting up an extrude or a revolve or picking a plane, which the bar
 /// tells of instead.
 fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
+    if let Some(sketch) = &state.sketch {
+        return sketch_selection(sketch);
+    }
     if state.picking_plane.is_some()
-        || state.sketch.is_some()
         || state.extrude.is_some()
         || state.revolve.is_some()
         || state.combine.is_some()
@@ -1743,11 +1748,52 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
     )
 }
 
+/// What's selected in the sketch being edited, for the status bar's box
+/// of the selection, while no tool is in use nor the value field open:
+/// one item by name ("Line 3"), or how many, and what they measure
+/// together as a dimension of them would ("Length 40 mm", see
+/// [`dimension::selected`](crate::dimension::selected)).
+fn sketch_selection<'a>(sketch: &SketchState<'a>) -> Option<Element<'a, Message>> {
+    if sketch.tool.is_some() || sketch.constraining || sketch.value.is_some() {
+        return None;
+    }
+    let ids: Vec<Id> = sketch.selection.iter().copied().collect();
+    let title = match ids[..] {
+        [] => return None,
+        [one] => (sketch.sketch.name(one)).unwrap_or_else(|| "1 selected".to_owned()),
+        _ => format!("{} selected", ids.len()),
+    };
+    let measured = crate::dimension::selected(sketch.sketch, &ids).map(|(measure, value)| {
+        text(crate::dimension::shown_measure(
+            &measure,
+            value,
+            sketch.units,
+        ))
+        .size(12)
+        .wrapping(Wrapping::None)
+    });
+    Some(
+        row![
+            icons::icon(Icon::Sketch, icons::INLINE),
+            text(title)
+                .size(12)
+                .wrapping(Wrapping::None)
+                .font(theme::SEMIBOLD),
+            measured,
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into(),
+    )
+}
+
 /// What's selected in the model, for the status bar's box of the
 /// selection: one face, as "Face", what surface it's on and its body's
 /// name; one edge or vertex, as "Edge" or "Vertex" and its body's; one
-/// body, by name; or how many, of each kind. Nothing if nothing is, or
-/// the cursor doesn't pick the model.
+/// body, by name; or how many, of each kind. Before the body's name, what
+/// one or two items measure once the answer has it (see
+/// [`measure::brief`](crate::measure::brief)). Nothing if nothing is
+/// selected, or the cursor doesn't pick the model.
 fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
     use crate::{Picked, Selected};
 
@@ -1800,6 +1846,15 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
         }
     };
     let info = (!info.is_empty()).then(|| text(info).size(12).wrapping(Wrapping::None));
+    let measured = (state.selection_measured)
+        .map(|inspected| crate::measure::brief(inspected, document.units()))
+        .filter(|values| !values.is_empty())
+        .map(|values| {
+            let values: Vec<String> = (values.into_iter())
+                .map(|value| format!("{} {}", value.label, value.shown))
+                .collect();
+            text(values.join(" · ")).size(12).wrapping(Wrapping::None)
+        });
     let note = (!note.is_empty()).then(|| {
         text(note)
             .size(12)
@@ -1814,6 +1869,7 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
                 .wrapping(Wrapping::None)
                 .font(theme::SEMIBOLD),
             info,
+            measured,
             note,
         ]
         .spacing(6)

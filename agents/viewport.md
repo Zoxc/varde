@@ -944,6 +944,18 @@ viewport. `Esc` (once nothing else is open) and `Space` clear it with
 the Timeline's feature; selecting a feature in the Timeline clears it,
 and selecting in the model lets go of the feature.
 
+One or two items selected, with no tool, operation or plane pick in use
+and no feature selected, are measured for the status bar's selection box
+as the measure tool's picks are: the regen request carries them as its
+`Inspect` in place of the tool's (`Doc::selection_inspect`), and the box
+shows a few values of the answer once it's of those very items
+(`Doc::selection_measured`, `MeshFeed::inspected_of`; `measure::brief`):
+a body's volume, a face's area and a round one's radius, an edge's
+length and a round one's radius, a point's place, or two items'
+distance and angle. `Doc::look`, `Doc::sync` and each answer ask for the
+model after the selection is found again, so a selection that changed
+is measured anew.
+
 What's selected is kept by name, as a reference would be: a face as its
 body, key and the point it was picked at (`Selected::Face`), an edge as
 its body, the sorted keys of the faces either side and the point

@@ -446,11 +446,16 @@ fn esc_leaves_no_trace() {
     assert_eq!(doc.highlight().cloned(), highlight);
     assert_eq!(doc.editor.generation(), generation);
     assert_eq!((doc.edited(), doc.editor.can_undo()), (edited, undo));
-    // The model is asked for again without the measure.
+    // The model is asked for again measuring what's selected in place of
+    // the picks, for the status bar.
     assert_eq!(requests.borrow().len(), 1);
-    assert_eq!(last_inspect(&requests), None);
+    let inspect = last_inspect(&requests).unwrap();
+    assert_eq!(
+        Some((inspect.first, inspect.second)),
+        doc.selection_inspect()
+    );
     answer(&mut doc, &requests);
-    assert_eq!(doc.feed.inspected(), None);
+    assert!(doc.selection_measured().is_some());
     let texts = screen_texts(&doc);
     assert!(!texts.contains(&"Close".to_owned()), "{texts:?}");
     assert!(!texts.contains(&"Pick A".to_owned()), "{texts:?}");
@@ -599,3 +604,43 @@ fn picks_of_a_merged_body_are_of_its_holder() {
 }
 
 mod fuzz;
+
+/// What's selected in the model, with no tool in use, is measured for
+/// the status bar: a face's area, two faces' distance and angle; three
+/// items, nothing; nor while the measure tool is in use.
+#[test]
+fn the_selection_is_measured_in_the_status_bar() {
+    let (mut doc, requests) = example();
+    let selecting = |doc: &mut Doc, pick: fn(&Doc) -> Pick, add| {
+        let pick = pick(doc);
+        doc.look(Look::ClickModel {
+            pick: Some(pick),
+            add,
+            double: false,
+        });
+    };
+    selecting(&mut doc, top, false);
+    // Nothing shows until the answer.
+    assert!(doc.selection_measured().is_none());
+    answer(&mut doc, &requests);
+    let texts = screen_texts(&doc);
+    assert!(
+        texts.iter().any(|text| text.starts_with("Area ")),
+        "{texts:?}"
+    );
+    selecting(&mut doc, bottom, true);
+    answer(&mut doc, &requests);
+    let texts = screen_texts(&doc);
+    assert!(
+        texts.contains(&"Distance 10 mm · Angle 180°".to_owned()),
+        "{texts:?}"
+    );
+    selecting(&mut doc, rim, true);
+    assert_eq!(doc.selection_inspect(), None);
+    assert_eq!(last_inspect(&requests), None);
+    // The measure tool measures its own picks instead.
+    doc.look(Look::ClearSelection);
+    selecting(&mut doc, top, false);
+    doc.look(Look::StartMeasure);
+    assert_eq!(doc.selection_inspect(), None);
+}

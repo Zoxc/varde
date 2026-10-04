@@ -219,6 +219,27 @@ pub fn name(measure: &Measure) -> &'static str {
     }
 }
 
+/// What the items `selected` of `sketch` measure together, as the
+/// Dimension tool would with its label nowhere in particular (see
+/// [`measure`]): a line's length rather than an extent, two points'
+/// distance straight, the first angle under a half turn between two
+/// lines; and the value measured, as a size. `None` for what doesn't
+/// measure anything.
+pub fn selected(sketch: &Sketch, selected: &[Id]) -> Option<(Measure, f64)> {
+    // A place nowhere: no line runs to it (straight, `extent`), nor is
+    // it in any angle (the first, `angle`).
+    let (measure, side) = measure(sketch, selected, DVec2::NAN, false)?;
+    let value = sketch.measure(&measure, side)?.abs();
+    Some((measure, value))
+}
+
+/// `measure` and its `value`, in model units, as the status bar shows it
+/// in a design in `units`: "Length 40 mm", "Diameter 10 mm".
+pub fn shown_measure(measure: &Measure, value: f64, units: LengthUnit) -> String {
+    let value = format(value, measure.quantity().unit(units));
+    format!("{} {value}", name(measure))
+}
+
 /// `value`, in model units, as a dimension of `measure` shows it in a
 /// design in `units`: "40 mm", "90°", "R 5 mm", "Ø 10 mm".
 fn shown_value(measure: &Measure, value: f64, units: LengthUnit) -> String {

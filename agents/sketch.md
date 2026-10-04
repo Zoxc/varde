@@ -874,6 +874,13 @@ face of Revolve 1" for other parts), by its body if that feature is
 gone ("on Body 1"), else "on a face". The status bar's says "on XY" or
 the same.
 
+**The selection's box** in the status bar shows in a sketch while no
+tool is in use (nor Constrain, nor the value field): one item by name
+("Circle 1") or how many, and what they measure together as a dimension
+of them would (`dimension::selected`, the Dimension tool's `measure`
+with its label nowhere: "Length 40 mm", "Diameter 6 mm", "Angle 30°"),
+with `Space` Clear, which the sketch's hints then leave out.
+
 Every change to the sketch is a `SketchEdit`, proposed to the solver lane
 (`Doc::propose`, `doc/sketch/propose.rs`) and committed once it's
 accepted as the whole new sketch, solved, one `Command::SetSketch`, one

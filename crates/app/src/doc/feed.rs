@@ -476,6 +476,17 @@ impl MeshFeed {
         (self.inspected.as_ref()).filter(|inspected| inspected.revision == revision)
     }
 
+    /// The newest answer's measures, if they're of `picks`.
+    pub(crate) fn inspected_of(
+        &self,
+        (first, second): (InspectPick, Option<InspectPick>),
+    ) -> Option<&Inspected> {
+        let asked = self.inspect.as_ref()?;
+        (asked.first == first && asked.second == second)
+            .then(|| self.inspected())
+            .flatten()
+    }
+
     /// The revision the newest draft was given: every later draft gets a
     /// higher one.
     pub(crate) fn revision(&self) -> u64 {

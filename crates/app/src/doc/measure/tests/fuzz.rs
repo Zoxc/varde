@@ -89,35 +89,38 @@ fn random_pick(doc: &Doc, rng: &mut Rng) -> Option<Pick> {
 }
 
 /// Answers some of the requests waiting: all in order, only the newest
-/// (the rest stay, to come late), one at random, or all newest first.
-fn deliver(doc: &mut Doc, requests: &RefCell<Vec<Request>>, rng: &mut Rng) {
+/// (the rest stay, to come late), one at random, or all newest first;
+/// returning what the answers had the document ask.
+fn deliver(doc: &mut Doc, requests: &RefCell<Vec<Request>>, rng: &mut Rng) -> Vec<Request> {
     let waiting = requests.take();
     if waiting.is_empty() {
-        return;
+        return Vec::new();
     }
     let mut waiting = waiting;
     match rng.below(4) {
         0 => {
-            for request in waiting {
+            for request in waiting.drain(..) {
                 doc.computed(varde_regen::handle(request));
             }
         }
         1 => {
             let newest = waiting.pop().unwrap();
             doc.computed(varde_regen::handle(newest));
-            requests.borrow_mut().splice(0..0, waiting);
         }
         2 => {
             let one = waiting.remove(rng.below(waiting.len()));
             doc.computed(varde_regen::handle(one));
-            requests.borrow_mut().splice(0..0, waiting);
         }
         _ => {
-            for request in waiting.into_iter().rev() {
+            for request in waiting.drain(..).rev() {
                 doc.computed(varde_regen::handle(request));
             }
         }
     }
+    // Asked again with an answer: what's selected may be measured now.
+    let asked = requests.borrow().clone();
+    requests.borrow_mut().splice(0..0, waiting);
+    asked
 }
 
 /// What the kernel measures of `pick` on `editor`'s document as it is,
@@ -375,7 +378,7 @@ fn random_measuring_keeps_its_invariants() {
         .ok()
         .and_then(|n| n.parse().ok())
         .unwrap_or(1u64);
-    let compared: usize = (first..first + seeds).map(|seed| run(seed, 160)).sum();
+    let compared: usize = (first..first + seeds).map(|seed| run(seed, 200)).sum();
     // Measures and distances compared with the kernel's: not vacuous.
     assert!(compared >= 20 * seeds as usize, "{compared}");
 }
@@ -516,11 +519,12 @@ fn run(seed: u64, steps: usize) -> usize {
                 "seed {seed} step {step}: measuring wrote to the document"
             );
         }
-        // What this step asked: the newest request has no measure once
-        // the tool is left (asked anew, or already so).
+        // What this step asked: once the tool is left, the newest request
+        // measures what's selected, if that's measured, else nothing
+        // (asked anew, or already so).
         let new: Vec<Request> = requests.borrow()[queued..].to_vec();
         sent.extend(new);
-        if escaped {
+        if escaped && doc.selection_inspect().is_none() {
             let last = sent.last();
             assert!(
                 last.is_none_or(|last| last.inspect().is_none()),
@@ -528,12 +532,15 @@ fn run(seed: u64, steps: usize) -> usize {
             );
         }
         if rng.chance(60) {
-            deliver(&mut doc, &requests, &mut rng);
+            sent.extend(deliver(&mut doc, &requests, &mut rng));
         }
         // Only the newest answer is shown: its revision is the newest
         // asked.
         if let Some(inspected) = doc.feed.inspected() {
-            assert!(doc.measure.is_some(), "seed {seed} step {step}");
+            assert!(
+                doc.measure.is_some() || doc.selection_inspect().is_some(),
+                "seed {seed} step {step}"
+            );
             assert_eq!(Some(inspected.revision), newest_revision(&sent));
         }
         if let Some(highlight) = doc.highlight() {

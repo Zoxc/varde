@@ -14,7 +14,7 @@ use iced::widget::text::Wrapping;
 use iced::widget::{button, column, container, row, space, text};
 use iced::{Alignment, Element, Length};
 use varde_expr::{AngleUnit, LengthUnit, Power, Unit};
-use varde_regen::{Between, EdgeForm, Gap, Measure, Summary};
+use varde_regen::{Between, EdgeForm, Gap, Inspected, Measure, Probed, Summary};
 
 use crate::chrome::{hrule, icon_button, sentence};
 use crate::icons::Icon;
@@ -280,6 +280,38 @@ pub fn between_values(between: &Between, units: LengthUnit) -> Vec<Value> {
     }
     values.extend(between.angle.map(|angle| Value::angle("Angle", angle)));
     values
+}
+
+/// The few values the status bar shows of one or two items selected, as
+/// `inspected` measured them, in a design in `units`: of two, the
+/// distance between them and their angle; of one, a body's volume, a
+/// face's area and a round one's radius, an edge's length and a round
+/// one's radius, or a point's place. None for what wasn't found.
+pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<Value> {
+    let kept = |labels: &[&str], values: Vec<Value>| -> Vec<Value> {
+        (values.into_iter())
+            .filter(|value| labels.contains(&value.label))
+            .collect()
+    };
+    if inspected.second.is_some() {
+        return inspected.between.as_ref().map_or_else(Vec::new, |between| {
+            kept(&["Distance", "Angle"], between_values(between, units))
+        });
+    }
+    let Ok(Probed {
+        measure: Ok(measure),
+        ..
+    }) = &inspected.first
+    else {
+        return Vec::new();
+    };
+    let labels: &[&str] = match measure {
+        Measure::Body { .. } => &["Volume"],
+        Measure::Face { .. } => &["Area", "Radius"],
+        Measure::Edge { .. } => &["Length", "Radius"],
+        Measure::Point(_) => &["X", "Y", "Z"],
+    };
+    kept(labels, values(measure, units))
 }
 
 /// The name a pick shows with in the panel once measured: its kind from

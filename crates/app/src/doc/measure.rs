@@ -20,10 +20,10 @@
 use std::sync::Arc;
 
 use varde_document::BodyId;
-use varde_regen::{At, Entity, InspectPick, Measure, Probed};
+use varde_regen::{At, Entity, InspectPick, Inspected, Measure, Probed};
 use varde_view::{
     MeasureLook, MeasureSlot, MeasureState, MeasuredPick, ModelHighlight, Outcome, Pick, PickIndex,
-    Picked, Snapped,
+    Picked, Selected, Snapped,
 };
 
 use super::Doc;
@@ -108,6 +108,22 @@ fn body(body: BodyId) -> InspectPick {
         body,
         entity: Entity::Body,
         near: [0.0; 3],
+    }
+}
+
+/// What the selected `item` names, as the measure keeps a pick: a vertex
+/// as its corner.
+fn selected_pick(item: &Selected) -> InspectPick {
+    let (entity, near) = match *item {
+        Selected::Body(body) => return self::body(body),
+        Selected::Face { key, near, .. } => (Entity::Face(key), near),
+        Selected::Edge { faces, near, .. } => (Entity::Edge(faces), near),
+        Selected::Vertex { faces, near, .. } => (Entity::Corner(faces), near),
+    };
+    InspectPick {
+        body: item.body(),
+        entity,
+        near: near.to_array(),
     }
 }
 
@@ -198,6 +214,31 @@ impl Doc {
         if replaced || self.sketch.is_some() || self.operating() {
             self.measure = None;
         }
+    }
+
+    /// What the regeneration lane is asked to measure of what's selected
+    /// in the model, for the status bar: one or two items, while the
+    /// cursor picks the model for the selection and the status bar shows
+    /// it (no tool, operation or plane pick in use, no feature selected).
+    pub(crate) fn selection_inspect(&self) -> Option<(InspectPick, Option<InspectPick>)> {
+        if !self.picks()
+            || self.measure.is_some()
+            || self.combine.is_some()
+            || self.picking_plane.is_some()
+            || self.selected_feature.is_some()
+        {
+            return None;
+        }
+        let mut picks = self.pick.selection.items().map(selected_pick);
+        let first = picks.next()?;
+        let second = picks.next();
+        picks.next().is_none().then_some((first, second))
+    }
+
+    /// The newest answer's measures of what's selected in the model, see
+    /// [`Doc::selection_inspect`]: `None` while they're on their way.
+    pub(crate) fn selection_measured(&self) -> Option<&Inspected> {
+        self.feed.inspected_of(self.selection_inspect()?)
     }
 
     /// The newest answer's outcome of the measure tool's picks, as
