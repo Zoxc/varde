@@ -83,6 +83,7 @@ mod surface;
 mod triangulate;
 
 use count::Crossing;
+use curved::SeamRules;
 use input::{Input, Side};
 use pairs::Shortcuts;
 
@@ -268,6 +269,19 @@ const AGAIN: u64 = 150_000;
 
 /// [`boolean`], charging `work`. The failure returned is a try's error
 /// with that try's evidence.
+///
+/// The tries decide by the rules for seams meeting on the cut
+/// ([`SeamRules`]); where every try fails the result's check
+/// ([`KernelError::Invalid`], or a pinch named
+/// [`BooleanError::NotManifold`]), or runs into a bound with budget
+/// left (`TooComplex`), and the rules changed some decision,
+/// the tries are made again without them, within three times the work
+/// they took, or `AGAIN` if more (and what is left; those that worked
+/// in the sweeps took up to 2.1 times as much): on frames turned by
+/// a hair, the rules are one more way of deciding a near tie, and the
+/// thin triangles a tangency's two crossings leave where seams nearly
+/// meet pass the check or not by chance either way. The failure is the
+/// first tries' then, or `TooComplex` where the budget ran out.
 fn boolean_within(
     a: &Solid,
     b: &Solid,
@@ -282,11 +296,60 @@ fn boolean_within(
         _ => {}
     }
     let start = work.left();
+    let rules = SeamRules::new(true);
+    let e = match tries(a, b, op, &rules, tol, work) {
+        Err(e)
+            if rules.differed()
+                && (matches!(
+                    e.error,
+                    KernelError::Invalid(_) | KernelError::Boolean(BooleanError::NotManifold)
+                ) || e.error == KernelError::TooComplex && work.left() > 0) =>
+        {
+            e
+        }
+        result => return result,
+    };
+    let spent = start.saturating_sub(work.left());
+    let cap = spent.saturating_mul(3).max(AGAIN).min(work.left());
+    let mut again = Work::new(&Budget::new(cap));
+    let next = tries(a, b, op, &SeamRules::new(false), tol, &mut again);
+    work.spend(usize::try_from(cap - again.left()).unwrap_or(usize::MAX))?;
+    match next {
+        // Run out of the operation's budget, not the cap: as any try.
+        Err(f) if f.error == KernelError::TooComplex && work.left() == 0 => {
+            Err(KernelError::TooComplex.into())
+        }
+        Err(_) => Err(e),
+        result => result,
+    }
+}
+
+/// [`boolean_within`]'s tries, deciding by `rules`: with every shortcut,
+/// and where that fails, without those taken.
+fn tries(
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    rules: &SeamRules,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<Solid, Failure> {
+    let start = work.left();
     let mut used = Shortcuts::NONE;
     // What the mesh that failed to repair or pass `check` leaves, to
     // tell a result touching itself from others at the end.
     let mut failed = None;
-    let first = checked_with(a, b, op, Shortcuts::ALL, &mut used, &mut failed, tol, work);
+    let first = checked_with(
+        a,
+        b,
+        op,
+        Shortcuts::ALL,
+        rules,
+        &mut used,
+        &mut failed,
+        tol,
+        work,
+    );
     // A coaxial cut's bands may stray past the fit with nothing left to
     // halve (`TooComplex` with budget to spare): tried again too.
     let retried = |e: &Failure, work: &Work| {
@@ -325,7 +388,9 @@ fn boolean_within(
         };
         let mut again = Work::new(&Budget::new(cap));
         let mut taken = Shortcuts::NONE;
-        let next = checked_with(a, b, op, shortcuts, &mut taken, &mut None, tol, &mut again);
+        let next = checked_with(
+            a, b, op, shortcuts, rules, &mut taken, &mut None, tol, &mut again,
+        );
         // What this try took, charged to the operation's budget.
         work.spend(usize::try_from(cap - again.left()).unwrap_or(usize::MAX))?;
         match next {
@@ -529,13 +594,15 @@ fn unchecked(
     work: &mut Work,
 ) -> Result<(Mesh, Vec<Hint>), KernelError> {
     let mut used = Shortcuts::NONE;
+    let rules = SeamRules::new(true);
     let (soup, faces) =
-        assembled(a, b, op, Shortcuts::ALL, &mut used, tol, work).map_err(|f| f.error)?;
+        assembled(a, b, op, Shortcuts::ALL, &rules, &mut used, tol, work).map_err(|f| f.error)?;
     cleaned(a, b, op, soup, faces, true, &mut false, tol, work).map_err(|f| f.error)
 }
 
 /// The result, taking only the `shortcuts` given (see
-/// [`pairs::refined_with`]), and setting `used` to those some pair took:
+/// [`pairs::refined_with`]) and deciding by `rules`, and setting `used`
+/// to the shortcuts some pair took:
 /// assembled, cleaned, repaired and checked. Where it fails as
 /// [`KernelError::Invalid`] from repair or the check, `failed` is left
 /// with what the mesh that failed shows (see [`checked`]), for
@@ -546,12 +613,13 @@ fn checked_with(
     b: &Solid,
     op: Op,
     shortcuts: Shortcuts,
+    rules: &SeamRules,
     used: &mut Shortcuts,
     failed: &mut Option<Failed>,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Solid, Failure> {
-    let (soup, faces) = assembled(a, b, op, shortcuts, used, tol, work)?;
+    let (soup, faces) = assembled(a, b, op, shortcuts, rules, used, tol, work)?;
     // The clean-up's last resort, unfolding sheets folded onto a flush
     // face, can leave a soup that fails where the clean-up without it
     // would have mended it by other means (Delaunay flips on a face a
@@ -646,7 +714,8 @@ fn checked(
 }
 
 /// The result's triangles and faces, before the clean-up, taking only the
-/// `shortcuts` given (see [`pairs::refined_with`]), and adding to `used`
+/// `shortcuts` given (see [`pairs::refined_with`]), deciding by `rules`
+/// where an operand is curved, and adding to `used`
 /// those some pair took. A union
 /// of walls touching along a line comes with the pairs of faces showing
 /// it, a cut face that can't be triangulated with its loops. Decisions
@@ -656,11 +725,13 @@ fn checked(
 /// and from the same `work`: the exact retry sits inside each of
 /// [`boolean_within`]'s tries with fewer shortcuts, so it is bounded by
 /// that try's cap.
+#[allow(clippy::too_many_arguments)]
 fn assembled(
     a: &Solid,
     b: &Solid,
     op: Op,
     shortcuts: Shortcuts,
+    rules: &SeamRules,
     used: &mut Shortcuts,
     tol: &Tolerance,
     work: &mut Work,
@@ -670,7 +741,7 @@ fn assembled(
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
     let (soup, faces) = if ia.curved || ib.curved {
         tied_or_exact(tie(tol), work, |tie, work| {
-            curved_decided(a, b, op, shortcuts, used, tie, tol, work)
+            curved_decided(a, b, op, shortcuts, rules, used, tie, tol, work)
         })?
     } else {
         flat_soup(op, &ia, &ib, tie(tol), tol, work)?
@@ -679,7 +750,8 @@ fn assembled(
 }
 
 /// [`assembled`]'s one try for operands with curved patches, near ties
-/// within `tie` taken as ties (0: none), taking only the `shortcuts`
+/// within `tie` taken as ties (0: none), deciding by `rules`, taking
+/// only the `shortcuts`
 /// given: counted and decided pair by pair, the operands refined where a
 /// pair needs it. Adds the shortcuts some pair took to `used`, so that
 /// after the tied try and the exact one it holds what either took: a
@@ -691,17 +763,18 @@ fn curved_decided(
     b: &Solid,
     op: Op,
     shortcuts: Shortcuts,
+    rules: &SeamRules,
     used: &mut Shortcuts,
     tie: f64,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<(cleanup::Soup, Vec<Face>), Failure> {
     let grow = op == Op::Union;
-    let refined = pairs::refined_with(a.mesh(), b.mesh(), grow, shortcuts, tie, tol, work)?;
+    let refined = pairs::refined_with(a.mesh(), b.mesh(), grow, shortcuts, tie, rules, tol, work)?;
     used.along |= refined.used.along;
     used.coaxial |= refined.used.coaxial;
     let (ra, rb) = (Input::new(&refined.a, tol), Input::new(&refined.b, tol));
-    let prims = curved::Curved::new(&ra, &rb, grow, tie, tol);
+    let prims = curved::Curved::new(&ra, &rb, grow, tie, rules, tol);
     let refinement = assemble::Refinement {
         tree: [&refined.tree[0], &refined.tree[1]],
         leaf: [&refined.leaf[0], &refined.leaf[1]],
@@ -718,6 +791,7 @@ fn curved_decided(
         Some(&refinement),
         shortcuts.coaxial,
         &mut took,
+        rules,
         work,
     );
     // Taken even where the cut faces then fail.
@@ -1025,8 +1099,10 @@ fn flat_decided(
     let prims = flat::Flat::tied(ia, ib, op == Op::Union, tie);
     let counts = count::count(ia, ib, &prims, tol, work)?;
     let arcs = pairs::flat(ia, ib, &counts)?;
+    // Flat pairs' arcs are straight edges, never traced.
+    let rules = SeamRules::new(true);
     assemble::assemble(
-        op, ia, ib, &counts, &arcs, &prims, tol, None, false, &mut false, work,
+        op, ia, ib, &counts, &arcs, &prims, tol, None, false, &mut false, &rules, work,
     )
 }
 

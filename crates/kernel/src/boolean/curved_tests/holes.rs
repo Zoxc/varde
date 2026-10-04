@@ -601,3 +601,84 @@ fn cross_holes_whose_seams_meet_where_one_touches() {
     assert!((got[0] + got[1] - va).abs() <= allowed);
     assert!((got[2] + got[1] - va - vb).abs() <= allowed);
 }
+
+/// The frame whose normal is axis `k` (`x`, `y` and `z` for 0, 1, 2) of
+/// the world turned by `q` and moved by `shift`: its `x` and `y` the next
+/// two axes, turned.
+pub(super) fn turned_frame(q: DQuat, shift: DVec3, k: usize) -> Frame {
+    let axes = [DVec3::X, DVec3::Y, DVec3::Z];
+    Frame {
+        origin: shift,
+        x: (q * axes[(k + 1) % 3]).normalize(),
+        y: (q * axes[(k + 2) % 3]).normalize(),
+    }
+}
+
+#[test]
+fn cross_holes_whose_seams_nearly_meet_on_a_frame_turned_by_a_hair() {
+    // The box `[−1, 1]² × [0, 2]` less a hole of radius 0.5625 along `y`
+    // round (x, z) = (0.0625, 1.125), then less and joined to a hole of
+    // 0.375 along `x` round (y, z) = (0.125, 1.5), on a frame turned by
+    // about `5e-11` and moved by `1e-9`: the second's bottom seam nearly
+    // meets the first's side seams on the cut. The rules for seams meeting
+    // on the cut start one arc there the other way (into both patches,
+    // where before it started out of one, failed and fell back to a
+    // checked conic); refinement then went another way, and at the other
+    // side seam the thin triangles of a tangency's two crossings (`1e-9`
+    // apart) failed the check (`VertexNeighbours`), where without the
+    // rules they passed. The operation is tried again without the rules
+    // where they changed a decision and the result failed the check.
+    let q = DQuat::from_array([
+        -1.516094053659343e-11,
+        -3.178084127423384e-11,
+        3.6975042487995123e-11,
+        1.0,
+    ]);
+    let shift = DVec3::new(
+        -9.959268283320315e-10,
+        -5.085231911441177e-10,
+        -7.334454618863398e-10,
+    );
+    let frame = |k| turned_frame(q, shift, k);
+    let block = extruded_on(
+        vec![rect(DVec2::splat(-1.0), DVec2::splat(1.0), 0)],
+        frame(2),
+        0.0,
+        2.0,
+        1,
+    );
+    let (r1, z1, r2, z2) = (0.5625, 1.125, 0.375, 1.5);
+    let first = extruded_on(
+        vec![circle(DVec2::new(z1, 0.0625), r1, 0, false)],
+        frame(1),
+        -1.5,
+        1.5,
+        2,
+    );
+    let second = extruded_on(
+        vec![circle(DVec2::new(0.125, z2), r2, 0, false)],
+        frame(0),
+        -1.5,
+        1.5,
+        3,
+    );
+    let drilled = run(&block, &first, Op::Difference);
+    let va = 8.0 - 2.0 * PI * r1 * r1;
+    assert!((drilled.volume() - va).abs() <= 1e-9);
+    let both = 2.0 * PI * r2 * r2 - crossing_volume(r1, z1, r2, z2);
+    let vb = 3.0 * PI * r2 * r2;
+    let allowed = TOL.fit() * (drilled.area() + second.area()) / 5.0;
+    let mut got = Vec::new();
+    for (op, want) in [
+        (Op::Difference, va - both),
+        (Op::Intersection, both),
+        (Op::Union, va + vb - both),
+    ] {
+        let result = run(&drilled, &second, op);
+        let v = result.volume();
+        assert!((v - want).abs() <= allowed, "{op:?}: {v}, not {want}");
+        got.push(v);
+    }
+    assert!((got[0] + got[1] - va).abs() <= allowed);
+    assert!((got[2] + got[1] - va - vb).abs() <= allowed);
+}

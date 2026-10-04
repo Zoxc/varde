@@ -118,6 +118,9 @@ pub(super) struct Curved<'a> {
     axes: Axes,
     /// Heights closer than this are ties.
     tie: f64,
+    /// How first orders of rounding are told, and whether that changed
+    /// a decision.
+    rules: &'a SeamRules,
     resolution: f64,
     /// Whether the crossing searches drop pieces whose control hulls are
     /// apart and halve long patch pieces: always, but for tests under
@@ -128,12 +131,13 @@ pub(super) struct Curved<'a> {
 impl<'a> Curved<'a> {
     /// `grow`: whether `A` grows (a union) or shrinks, for ties; near
     /// ties within `tie` taken as ties ([`super::tie`], or 0 for the
-    /// retry without them).
+    /// retry without them); first orders of rounding told by `rules`.
     pub(super) fn new(
         a: &'a Input<'a>,
         b: &'a Input<'a>,
         grow: bool,
         tie: f64,
+        rules: &'a SeamRules,
         tol: &Tolerance,
     ) -> Curved<'a> {
         Curved {
@@ -142,6 +146,7 @@ impl<'a> Curved<'a> {
             flat: Flat::tied(a, b, grow, tie),
             axes: Axes::new(),
             tie,
+            rules,
             resolution: tol.resolution(),
             #[cfg(test)]
             tall_walls: !super::assemble::LOOSE.get(),
@@ -190,6 +195,7 @@ impl<'a> Curved<'a> {
             ahead,
             &self.axes,
             self.tie,
+            self.rules,
         )
     }
 
@@ -257,7 +263,7 @@ impl<'a> Curved<'a> {
         if up == 0 {
             return self.tie_above(e, t);
         }
-        match first_sign(delta, |d| d.dot(m)) {
+        match self.rules.first_sign(delta, |d| d.dot(m)) {
             0 => self.tie_above(e, t),
             x => x == up,
         }
@@ -270,7 +276,10 @@ impl<'a> Curved<'a> {
     fn parallel_above(&self, e: u32, t: f64) -> bool {
         let (_, tangent) = self.curve(Side::A, e).eval_deriv(t);
         let across = tangent.cross(UP);
-        match first_sign(self.perturb_along(e, t), |d| tangent.cross(d).dot(across)) {
+        match self
+            .rules
+            .first_sign(self.perturb_along(e, t), |d| tangent.cross(d).dot(across))
+        {
             0 => self.tie_above(e, t),
             x => x > 0,
         }
@@ -509,7 +518,7 @@ impl<'a> Curved<'a> {
             // `v` moves; the point is above if it moves down.
             Side::A => {
                 let delta = self.flat.perturb(v);
-                match first_sign(delta, |d| n.dot(d)) {
+                match self.rules.first_sign(delta, |d| n.dot(d)) {
                     0 => delta.dot(UP) < 0.0,
                     x => facing != 0 && x != facing,
                 }
@@ -518,7 +527,7 @@ impl<'a> Curved<'a> {
             Side::B => {
                 let corners = self.a.tris[f as usize];
                 let delta: DVec3 = (0..3).map(|k| self.flat.perturb(corners[k]) * u[k]).sum();
-                match first_sign(delta, |d| n.dot(d)) {
+                match self.rules.first_sign(delta, |d| n.dot(d)) {
                     0 => delta.dot(UP) > 0.0,
                     x => facing != 0 && x == facing,
                 }
@@ -581,7 +590,7 @@ impl<'a> Curved<'a> {
             let du1 = (g00 * r1 - g01 * r0) / det;
             [du0, du1, -du0 - du1][k]
         };
-        match first_sign(motion, |d| step_k(d * towards)) {
+        match self.rules.first_sign(motion, |d| step_k(d * towards)) {
             0 => None,
             s => Some(s > 0),
         }
@@ -735,12 +744,23 @@ fn square(dh: f64, m: DVec3) -> f64 {
 /// at one point taken from rounding, half of them against the second
 /// order, no single motion's, built a zero-size handle in the result.
 pub(super) fn first_sign(delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
+    first_sign_by(delta, f, true)
+}
+
+/// [`first_sign`], an order taken as rounding within [`exact::RHO`] of
+/// `|d|·|∇f|` if `sizes`, else of its terms `Σ |d_i·∇f_i|`, as before
+/// [`SeamRules`].
+fn first_sign_by(delta: DVec3, f: impl Fn(DVec3) -> f64, sizes: bool) -> i8 {
     let gradient = DVec3::from_array(DVec3::AXES.map(&f));
     [delta, exact::T2, exact::T3]
         .into_iter()
         .map(|d| {
             let value = f(d);
-            let size = d.length() * gradient.length();
+            let size = if sizes {
+                d.length() * gradient.length()
+            } else {
+                (0..3).map(|i| (d[i] * gradient[i]).abs()).sum()
+            };
             if size.is_finite() && value.abs() <= exact::RHO * size {
                 0
             } else {
@@ -749,6 +769,68 @@ pub(super) fn first_sign(delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
         })
         .find(|&s| s != 0)
         .unwrap_or(0)
+}
+
+/// Whether an operation's try decides by the two rules for seams of the
+/// operands meeting on the cut: first orders within rounding of
+/// `|δ|·|∇f|` taken as ties ([`first_sign`]), and a traced arc started
+/// into both patches (`chain::inward_sign`); and whether some decision
+/// came out otherwise than it would without them, for the operation's
+/// retry without them (`boolean_within`).
+///
+/// Both rules make the decisions at such a point those of one
+/// configuration, but on frames turned by a hair, where the seams meet
+/// only nearly, they are one more way of deciding a near tie, and the
+/// thin triangles a tangency's two crossings leave there pass or fail
+/// the check by chance either way: a result the rules lose, deciding
+/// without them often gives. Where they changed nothing, the retry
+/// would only repeat the try, so it is skipped. The flag is set from
+/// within parallel maps, but every decision is a pure function of the
+/// operands, so which are taken, and whether one differed, is the same
+/// whatever the thread count.
+#[derive(Debug)]
+pub(super) struct SeamRules {
+    on: bool,
+    differed: std::sync::atomic::AtomicBool,
+}
+
+impl SeamRules {
+    pub(super) fn new(on: bool) -> SeamRules {
+        SeamRules {
+            on,
+            differed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Whether the rules are taken.
+    pub(super) fn on(&self) -> bool {
+        self.on
+    }
+
+    /// Whether some decision came out otherwise than without them.
+    pub(super) fn differed(&self) -> bool {
+        self.differed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Notes a decision that came out otherwise than without them.
+    pub(super) fn note(&self) {
+        self.differed
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// [`first_sign`] if the rules are taken (noting where the sum of
+    /// the terms would decide otherwise), else as it was without them.
+    pub(super) fn first_sign(&self, delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
+        let old = first_sign_by(delta, &f, false);
+        if !self.on {
+            return old;
+        }
+        let new = first_sign(delta, &f);
+        if new != old {
+            self.note();
+        }
+        new
+    }
 }
 
 /// How the sign of the polynomial `poly` (Bernstein coefficients)

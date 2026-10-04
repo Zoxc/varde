@@ -29,6 +29,7 @@ use super::chain::{self, Chain};
 use super::cleanup::Soup;
 use super::coaxial;
 use super::count::{Counts, Crossing};
+use super::curved::SeamRules;
 use super::curved::solve::near_patch;
 use super::evidence::Gather;
 use super::input::{Input, Side};
@@ -341,7 +342,8 @@ pub(super) struct Refinement<'a> {
 /// those along the cuts, arc by arc. With `refinement`, pieces of an
 /// operand's triangle kept whole are merged back into it. Quadrics of
 /// revolution on one axis are cut in their parallels only if `coaxial`
-/// (else traced), and `took` says whether some were.
+/// (else traced), and `took` says whether some were. Traced arcs start
+/// as `rules` say (see `chain::inward_sign`).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn assemble(
     op: Op,
@@ -354,6 +356,7 @@ pub(super) fn assemble(
     refinement: Option<&Refinement>,
     coaxial: bool,
     took: &mut bool,
+    rules: &SeamRules,
     work: &mut Work,
 ) -> Result<(Soup, Vec<Face>), Failure> {
     let keep = Keep::of(op);
@@ -405,6 +408,7 @@ pub(super) fn assemble(
         first: [first12, first21],
         along,
         base: Vec::new(),
+        rules,
     };
     cutting.base = cutting.positions();
     cutting.certify(work)?;
@@ -416,6 +420,7 @@ pub(super) fn assemble(
         .iter()
         .map(|arc| chain::Job {
             coaxial,
+            rules,
             ..cutting.chain_job(arc)
         })
         .collect();
@@ -626,6 +631,8 @@ struct Cutting<'a> {
     along: [Along; 2],
     /// The operands' vertices and the crossings, by id.
     base: Vec<DVec3>,
+    /// How traced arcs start.
+    rules: &'a SeamRules,
 }
 
 /// One round of cutting the faces: the vertices and curves so far, the
@@ -797,6 +804,7 @@ impl Cutting<'_> {
             dom,
             on_p: ends.map(|id| id < self.first[1]),
             flip_q: self.keep.flip_b,
+            rules: self.rules,
         }
     }
 

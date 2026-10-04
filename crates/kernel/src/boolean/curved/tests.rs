@@ -130,10 +130,10 @@ fn shadow_crossings_come_from_the_rays() {
             conic: h,
             straight: !ch,
         };
-        let derived = ray(b, &rh, true, &axes, 0.0)
-            - ray(a, &rh, true, &axes, 0.0)
-            - ray(c, &re, false, &axes, 0.0)
-            + ray(d, &re, false, &axes, 0.0);
+        let derived = ray(b, &rh, true, &axes, 0.0, &SeamRules::new(true))
+            - ray(a, &rh, true, &axes, 0.0, &SeamRules::new(true))
+            - ray(c, &re, false, &axes, 0.0, &SeamRules::new(true))
+            + ray(d, &re, false, &axes, 0.0, &SeamRules::new(true));
         assert_eq!(derived, want, "draw {draw}: {e:?} {h:?}");
         let solved = cross(&e, &h, &axes).unwrap();
         assert_eq!(solved.len(), found.len(), "draw {draw}");
@@ -168,8 +168,8 @@ fn a_straight_edge_rays_alike_exactly_and_not() {
         };
         for ahead in [true, false] {
             assert_eq!(
-                ray(v, &edge(true), ahead, &axes, 0.0),
-                ray(v, &edge(false), ahead, &axes, 0.0)
+                ray(v, &edge(true), ahead, &axes, 0.0, &SeamRules::new(true)),
+                ray(v, &edge(false), ahead, &axes, 0.0, &SeamRules::new(true))
             );
         }
     }
@@ -749,7 +749,22 @@ fn first_orders_that_are_only_rounding_are_skipped() {
         let want = sign(exact::T2.dot(g));
         assert_ne!(want, 0);
         assert_eq!(first_sign(delta, |d| g.dot(d)), want, "{delta} {g}");
+        // Taken by the seam rules, the decision is noted as differing
+        // from the terms' sum, which takes the rounding's sign; without
+        // the rules, that sign, and nothing noted.
+        let old = sign(delta.dot(g));
+        assert_ne!(old, want);
+        let rules = SeamRules::new(true);
+        assert_eq!(rules.first_sign(delta, |d| g.dot(d)), want);
+        assert!(rules.differed());
+        let without = SeamRules::new(false);
+        assert_eq!(without.first_sign(delta, |d| g.dot(d)), old);
+        assert!(!without.differed());
     }
+    // Where both measures agree, nothing is noted.
+    let rules = SeamRules::new(true);
+    assert_eq!(rules.first_sign(DVec3::X, |d| d.x - 0.5 * d.y), 1);
+    assert!(!rules.differed());
     // A first order that is small but real still decides.
     let n = DVec3::Z;
     let delta = DVec3::new(1.0, 1.0, 1e-6).normalize();
@@ -823,7 +838,8 @@ fn coincident_edges_cross_where_the_perturbation_parts_them() {
         let solid = extrude(&profile, frame, 0.0, 1.0, 7, &tol, &Budget::DEFAULT).unwrap();
         let input = Input::new(solid.mesh(), &tol);
         for grow in [false, true] {
-            let prims = Curved::new(&input, &input, grow, super::super::tie(&tol), &tol);
+            let rules = SeamRules::new(true);
+            let prims = Curved::new(&input, &input, grow, super::super::tie(&tol), &rules, &tol);
             for e in 0..input.edges.len() as u32 {
                 if input.straight[e as usize] {
                     continue;

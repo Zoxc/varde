@@ -184,7 +184,8 @@ fn an_arc_through_a_face_and_back() {
     let q = DQuat::from_rotation_z(std::f64::consts::FRAC_PI_4);
     let slab = turned_box(DVec3::new(0.9, -5.0, -1.0), DVec3::new(5.0, 5.0, 2.0), q);
     let (ia, ib) = (Input::new(bar.mesh(), &TOL), Input::new(slab.mesh(), &TOL));
-    let prims = Curved::new(&ia, &ib, false, super::super::tie(&TOL), &TOL);
+    let rules = SeamRules::new(true);
+    let prims = Curved::new(&ia, &ib, false, super::super::tie(&TOL), &rules, &TOL);
     let mut work = Work::new(&Budget::DEFAULT);
     let counts = count::count(&ia, &ib, &prims, &TOL, &mut work).unwrap();
     let twice = counts
@@ -442,7 +443,16 @@ fn parallel_walls_with_no_ends_are_certified() {
     let (a, b, _) = tangent_cylinders();
     let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
     let mut work = Work::new(&Budget::DEFAULT);
-    let counts = counted(&ia, &ib, false, super::super::tie(&TOL), &TOL, &mut work).unwrap();
+    let counts = counted(
+        &ia,
+        &ib,
+        false,
+        super::super::tie(&TOL),
+        &SeamRules::new(true),
+        &TOL,
+        &mut work,
+    )
+    .unwrap();
     assert!(counts.x12.is_empty() && counts.x21.is_empty());
     let floor = MIN_SPLIT * TOL.resolution();
     let decision = decide(
@@ -580,7 +590,16 @@ fn walls_apart(gap: f64) -> (Solid, Solid) {
 /// has ends, with its ends and that direction.
 fn wall_pairs(a: &Input, b: &Input) -> Vec<([u32; 2], Vec<End>, DVec3)> {
     let mut work = Work::new(&Budget::DEFAULT);
-    let counts = counted(a, b, false, super::super::tie(&TOL), &TOL, &mut work).unwrap();
+    let counts = counted(
+        a,
+        b,
+        false,
+        super::super::tie(&TOL),
+        &SeamRules::new(true),
+        &TOL,
+        &mut work,
+    )
+    .unwrap();
     let at12: Vec<DVec3> = counts
         .x12
         .iter()

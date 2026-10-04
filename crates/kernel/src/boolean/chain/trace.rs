@@ -570,6 +570,79 @@ mod tests {
     }
 
     #[test]
+    fn a_hairpin_whose_ends_are_within_a_step_is_followed() {
+        // A plane nearly tangent to a cylinder (radius 1 along `z`) cuts it
+        // in a narrow parabola: `y² ≈ 2k·(z_t − z)` with its tip at
+        // `z_t = 0.1`. Its ends at `z = −0.9` are 0.009 apart, within the
+        // first step, and the arc runs a whole unit up to the tip and back.
+        // (The two patches' normals are nearly parallel along it: a pair
+        // of operands' patches like these isn't certified to meet in one
+        // arc, and is split until the arc in each turns little.)
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let arc = Conic3 {
+            p0: DVec3::new(s, -s, -1.0),
+            c: DVec3::new(2.0 * s, 0.0, -1.0),
+            w: s,
+            p1: DVec3::new(s, s, -1.0),
+        };
+        let [p, _] = cylinder_strip(&arc, DVec3::Z * 2.0).unwrap();
+        let k = 1e-5;
+        let plane = |y: f64, z: f64| DVec3::new(1.0 - 1e-6 + k * z, y, z);
+        let q = Patch::flat([plane(-3.0, -3.0), plane(3.0, -3.0), plane(0.0, 3.0)]).unwrap();
+        let pair = Pair::new(
+            &p,
+            &q,
+            Crease::Plane(DVec3::new(1.0, 0.0, -k).normalize()),
+            [true, false],
+        );
+        let start = |y: DVec3, tau: DVec3| {
+            let u = invert(&p, y, DVec3::splat(1.0 / 3.0));
+            let v = invert(&q, y, DVec3::splat(1.0 / 3.0));
+            let (x, u, v) = pair.solve(u, v, y, tau).unwrap();
+            let tan = pair.tangent(u, v).unwrap();
+            Point { x, u, v, tan }
+        };
+        let y = (2.0 * k).sqrt();
+        let mut a = start(DVec3::new(1.0, y, -0.9), DVec3::Y);
+        let mut b = start(DVec3::new(1.0, -y, -0.9), DVec3::Y);
+        // Up the hairpin from `a`, down it into `b`.
+        if a.tan.z < 0.0 {
+            a.tan = -a.tan;
+        }
+        if b.tan.z > 0.0 {
+            b.tan = -b.tan;
+        }
+        assert!(a.x.distance(b.x) < 0.01, "{a:?} {b:?}");
+        let on = |x: DVec3| {
+            let cyl = (x.x * x.x + x.y * x.y).sqrt() - 1.0;
+            let pl = x.x - (1.0 - 1e-6 + k * x.z);
+            cyl.abs().max(pl.abs())
+        };
+        // The march joins the ends at once (the other end is ahead of
+        // `a`'s tangent, within its first step), the short way across;
+        // fitting finds no conic along the two tangents that follows the
+        // curve, and the trace fails, so the chain falls back to curves
+        // checked against the true cut. A traced chain, if any, must run
+        // up to the tip.
+        let points = trace(&pair, a, b).unwrap();
+        assert_eq!(points.len(), 2);
+        let Some((_, conics)) = fit(&pair, &points, 1e-3) else {
+            return;
+        };
+        let top = conics
+            .iter()
+            .flat_map(|c| (0..=16).map(|i| c.eval(f64::from(i) / 16.0)))
+            .map(|x| x.z)
+            .fold(f64::NEG_INFINITY, f64::max);
+        for c in &conics {
+            for i in 0..=16 {
+                assert!(on(c.eval(f64::from(i) / 16.0)) < 1e-3);
+            }
+        }
+        assert!(top > 0.09, "points {}, top {top}", points.len());
+    }
+
+    #[test]
     fn inverts_points_of_a_patch() {
         let (p, _) = crossing();
         let u = DVec3::new(0.2, 0.3, 0.5);

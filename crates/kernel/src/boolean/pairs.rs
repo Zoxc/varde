@@ -39,7 +39,7 @@ use glam::{DVec2, DVec3};
 use super::BooleanError;
 use super::coaxial;
 use super::count::{self, Counts};
-use super::curved::Curved;
+use super::curved::{Curved, SeamRules};
 use super::evidence::Gather;
 use super::input::{Input, Side};
 use crate::budget::Work;
@@ -216,7 +216,18 @@ pub(super) fn refined(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Refined, KernelError> {
-    refined_with(a, b, grow, Shortcuts::ALL, super::tie(tol), tol, work).map_err(|f| f.error)
+    let rules = SeamRules::new(true);
+    refined_with(
+        a,
+        b,
+        grow,
+        Shortcuts::ALL,
+        super::tie(tol),
+        &rules,
+        tol,
+        work,
+    )
+    .map_err(|f| f.error)
 }
 
 /// Counts `a` against `b` (whose meshes pass `check`, one of them with
@@ -224,7 +235,8 @@ pub(super) fn refined(
 /// it can: see the [module](self) docs. `grow` is whether `A` grows (a
 /// union) or shrinks, for ties; only the `shortcuts` given are taken
 /// (else such pairs are split as any other), and near ties within `tie`
-/// taken as ties (0: none, see [`Curved::new`]). A
+/// taken as ties (0: none, see [`Curved::new`]), first orders of
+/// rounding told by `rules`. A
 /// union failing as [`BooleanError::NotManifold`] from the decisions
 /// comes with the pairs showing it, an `Inconsistent` with what doesn't
 /// fit (see [`decide`] and the counting's [`count::count`]).
@@ -235,6 +247,7 @@ pub(super) fn refined_with(
     grow: bool,
     shortcuts: Shortcuts,
     tie: f64,
+    rules: &SeamRules,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Refined, Failure> {
@@ -258,7 +271,7 @@ pub(super) fn refined_with(
         let split = {
             let ia = Input::new(&meshes[0], tol);
             let ib = Input::new(&meshes[1], tol);
-            let counts = counted(&ia, &ib, grow, tie, tol, work)?;
+            let counts = counted(&ia, &ib, grow, tie, rules, tol, work)?;
             match decide(
                 &ia,
                 &ib,
@@ -315,10 +328,11 @@ pub(super) fn counted(
     b: &Input,
     grow: bool,
     tie: f64,
+    rules: &SeamRules,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Counts, Failure> {
-    count::count(a, b, &Curved::new(a, b, grow, tie, tol), tol, work)
+    count::count(a, b, &Curved::new(a, b, grow, tie, rules, tol), tol, work)
 }
 
 /// What a round of decisions comes to: every pair's arcs (and the

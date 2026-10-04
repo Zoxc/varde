@@ -16,7 +16,7 @@ use glam::DVec3;
 
 use super::super::exact::{self, Num, Pred, Pt, dir, dot, sub};
 use super::bernstein;
-use super::{Axes, first_sign, sign};
+use super::{Axes, SeamRules, sign};
 use crate::patch::Conic3;
 
 /// The direction rays run along: horizontal (square to [`UP`](super::UP)),
@@ -99,7 +99,14 @@ pub(crate) fn beside(v: Pt, c: Pt, tie: f64) -> i8 {
 /// `v` (ahead of `v` along [`RAY`] if `ahead`, behind it if not), +1
 /// where `g` crosses it going left (towards `+ACROSS`). `v` and `g`
 /// belong to different operands.
-pub(crate) fn ray(v: Pt, g: &RayEdge, ahead: bool, axes: &Axes, tie: f64) -> i32 {
+pub(crate) fn ray(
+    v: Pt,
+    g: &RayEdge,
+    ahead: bool,
+    axes: &Axes,
+    tie: f64,
+    rules: &SeamRules,
+) -> i32 {
     let (sc, sd) = (beside(v, g.c, tie), beside(v, g.d, tie));
     if g.straight {
         if sc == sd {
@@ -133,7 +140,7 @@ pub(crate) fn ray(v: Pt, g: &RayEdge, ahead: bool, axes: &Axes, tie: f64) -> i32
         let h = hom_eval(conic, s, v.p);
         let along = h.dot(axes.along);
         let front = if along.abs() <= tie * weight(conic, s) {
-            tied_ahead(v, g, s, axes)
+            tied_ahead(v, g, s, axes, rules)
         } else {
             sign(along)
         };
@@ -153,7 +160,7 @@ pub(crate) fn ray(v: Pt, g: &RayEdge, ahead: bool, axes: &Axes, tie: f64) -> i32
 /// `ε·(δ_across·T_along / T_across − δ_along)` along the ray: `δ` of the
 /// first order (each vertex's own direction, interpolated along `g`),
 /// else the generic translations after it.
-fn tied_ahead(v: Pt, g: &RayEdge, s: f64, axes: &Axes) -> i8 {
+fn tied_ahead(v: Pt, g: &RayEdge, s: f64, axes: &Axes, rules: &SeamRules) -> i8 {
     let (_, tangent) = g.conic.eval_deriv(s);
     let (ta, tb) = (tangent.dot(axes.along), tangent.dot(axes.across));
     // `A`'s motion (`v`'s, or `g`'s point's), and which way it moves `v`
@@ -168,7 +175,7 @@ fn tied_ahead(v: Pt, g: &RayEdge, s: f64, axes: &Axes) -> i8 {
         let (da, db) = (d.dot(axes.along), d.dot(axes.across));
         (db * ta - da * tb) * tb
     };
-    match first_sign(motion, e) {
+    match rules.first_sign(motion, e) {
         0 => 1,
         x => x,
     }

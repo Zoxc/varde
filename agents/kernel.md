@@ -3884,7 +3884,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/cleanup/fold.rs` | sheets folded onto a flush face, their two sides triangulated differently: the folded vertex moved within its star's planes; its tests on a box whose top is folded |
 | `boolean/cleanup/quality.rs` | refining the plane faces the boolean cut for their triangles' shapes |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
-| `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders (also with their seams meeting on the cut), a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
+| `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders (also with their seams meeting on the cut, or nearly on a frame turned by a hair; cross holes so in `curved_tests/holes.rs`), a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
 | `boolean/curved_tests/cones.rs` | cones and coaxial walls, exact: a countersink upright and turned, half of one (rulings), slabs tilted through a cone, a box's face square to a frustum's axis with its diagonal across the circle, a cylinder and a cone crossing on one axis, cones through a cylinder's cap, a turned shaft joined end to end and cut by a cone, a V groove and a centre drill, random coaxial frustums against closed forms, ring tops sloping down to nearly flat, nearly flat cones cut through their axis, coaxial shortcuts tried again |
 | `boolean/curved_tests/one_face.rs` | faces on one surface after booleans: tops at a crease either side of the bar, flush stacks on turned frames far from the origin, chains of joins and cuts with every operand's names resolving, faces meeting only at a corner |
@@ -4937,6 +4937,43 @@ another result). Each of these tries is itself decided with near ties
 and, where they don't fit together, again exactly within its cap (see
 "The exact retry inside the shortcut retries").
 
+**Tried again without the seam rules** (`boolean_within` around
+`tries`, `curved::SeamRules`). The first-order measure (`|δ|·|∇f|`, see
+"Ties" under the curved primitives) and the trace's start into both
+patches (`inward_sign`, see "Chains") are the rules for seams of the
+operands meeting on the cut. Where the seams meet exactly they make the
+decisions there one configuration's; on frames turned by a hair, where
+they meet only nearly, the rules are one more way of deciding a near
+tie (a first order of `1e-9` of `|δ|·|∇f|`, real but under `RHO`, goes
+to `T2`; an arc starts into both patches and is traced where before it
+failed and a checked conic stood in, and refinement goes another way),
+and the thin triangles of a tangency's two crossings there pass the
+check or not by chance either way. In the seam sweeps 14 operations
+(of 3 440) that worked without the rules failed with them, all
+`Invalid` or `NotManifold`, 12 on hair or turned frames, 2 on the
+world frame with radii and centres off the grid. So every decision
+the rules take is compared with the old one (`first_sign_by` with the
+terms' sum; the smallest coordinate of the end's own patch), a
+`SeamRules` per operation noting any that differs (an `AtomicBool` set
+from the parallel maps; which decisions are taken is a pure function of
+the operands, so the flag is the same at any thread count); and where
+all the tries (every shortcut, then fewer, each tied then exact) fail
+with `Invalid` or `NotManifold`, or `TooComplex` with budget left (a
+bound: a ball cut by a box round its pole ran into one, which the hunts
+found), and the rules changed a decision, they
+are all made again without the rules, within three times the work
+they took or `AGAIN` (and what is left). The second tries' result if it
+passes, else the first tries' error with its evidence. Those that
+worked in the sweeps took 0.1 to 2.1 times the first tries' work
+(cross holes up to 1.7); of 158 retries there, 14 worked, and those are
+the 14 operations the rules had lost (every one won back, none lost
+against the build without the rules). A retry costs a failed
+operation about its work again, only where a rule decided. A retry cut
+off by the operation's budget (not its cap) gives `TooComplex`, as the
+shortcut tries do, so a smaller budget never gives another result: of
+480 operations on skew crossing cylinders, 2 that had spent over a
+quarter of the budget failing now end so, not `Invalid`.
+
 Two patches on **one surface** (their faces claim quadrics and points
 sampled on each lie on the other's within the resolution: a pin in a
 hole cut by the same circle, cylinders of one radius stacked or
@@ -5252,7 +5289,12 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   all of them within `ALONG_SIDE = 1e-6` of its largest component (the
   cut tangent to every side), the way towards the arc's other end; where
   both leave one, or the end is on no side, the old rule, the smallest
-  coordinate of the patch the end was found on. That rule failed where
+  coordinate of the patch the end was found on. Both ways leave a side
+  only where the end lies on a side of its own patch and within `1e-9`
+  of one of the other's that the cut leaves beside it: in the sweeps
+  only at tiny arcs at fit `1e-5`, ends `5e-9` to `2e-6` apart along the
+  tangent, where the chord's way decided the same operations, so the old
+  rule (the side the end's crossing lies on) stays. That rule failed where
   seam rulings of two crossing cylinders meet on the cut: refinement puts
   a corner of a patch on the point, the cut is tangent to the seam
   there, and the first zero coordinate may be the seam's, across which
@@ -5266,9 +5308,25 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   and the arc was `Inconsistent`. The chord's way is the arc's at its
   start unless the arc turns back by more than a right angle there
   (fitting halves arcs turning past 45°, and the rounds split long
-  ones); if it did, the trace would fail, an error, but for ends within
-  a step of each other, which it joins at once: the short way, as
-  `chain` joins ends within the tie straight. In the sweeps below every
+  ones); if it did, the trace would fail, an error. Ends within the
+  march's first step of each other (about a hundredth of the pair's
+  size) it joins at once, whichever rule picked the way, if the other
+  end is ahead: the short way. A hairpin is caught by the fit (a plane
+  nearly tangent to a cylinder cuts it in a parabola a unit deep whose
+  ends are 0.009 apart: joined at once, no conic along the two
+  tangents follows the curve, the trace fails and the fallbacks are
+  checked against the true cut;
+  `a_hairpin_whose_ends_are_within_a_step_is_followed`). The long way
+  round, an arc turning back by more than a half turn to end beside its
+  start, would pass, the short way being on the curve too; but a pair
+  that can hold it isn't certified: with normals within cones apart
+  round axes `a1`, `a2` (each under 90°), the projections of `n_P` and
+  `n_Q` onto the axes' plane are never parallel, so `(n_P × n_Q)·(a1 ×
+  a2) > 0` along the whole arc, its ends are apart along `a1 × a2` by a
+  share of its length, and it can't come back beside its start. Coaxial
+  walls' arcs are exact parallels, walls along one direction meet in
+  lines, and pairs at the size floor are a few resolutions across. In
+  the sweeps below every
   arc the chord rule started had its chord within 19° of the tangent
   (cosine at least 0.95), and a thin cylinder grazing a big one with a
   seam ruling touching it (the cut a closed oval touching that seam)
@@ -5287,14 +5345,14 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   frame, 187 → 276 turned and 161 → 286 turned a hair, the control
   (seams elsewhere) 283 either way; cross holes through a box 109 → 140,
   110 → 134 and 124 → 134 of 150; random perpendicular pairs 865 →
-  1 003 of 1 200; 591 operations won, 13 lost, no wrong `Ok`, every
-  identity within the fit times the operands' area over 5. The lost
-  are refusals on the cut's thin triangles (`Invalid`, `NotManifold`),
-  11 of them on turned or hair frames: 10 from the trace start (an arc
-  from the seams' meeting point that the trace now follows where it
-  failed before and the verified fallback was kept), 3 from the
-  first-order measure on hair frames (turned by about `RHO`, so some
-  first orders go to `T2`). Marching then steps `h` along the tangent and corrects on
+  1 003 of 1 200; no wrong `Ok`, every identity within the fit times
+  the operands' area over 5 (worst 0.032 of it). The rules alone lost 14
+  operations that worked without them (refusals on the cut's thin
+  triangles, mostly on turned or hair frames); the operation is tried
+  again without the rules there ("Tried again without the seam rules"
+  under "Pairs of faces"), and with that the sweeps (also at fits
+  `1e-2` to `1e-5`) win 724 operations against the build without either
+  rule and lose none. Marching then steps `h` along the tangent and corrects on
   the plane square to it through the predicted point; a step is taken
   when the tangent turns by under about 20°, the point moved on and lies
   within half a step of the prediction, and within half a barycentric
@@ -7159,7 +7217,12 @@ slope not certified.
   fans between them and the clean-up can't collapse the fan (`fan`),
   `NotManifold` or `VertexNeighbours` (the near-tangent class;
   `tangent_edges` collapses such pairs only along straight edges on
-  plane faces). And at fit `1e-5` crossing cylinders' differences are
+  plane faces). Far from the origin (moved by `1e3` and `1e4`) the
+  turned groups work less often (crossing cylinders 40 and 33 of 60,
+  cross holes 22 and 16 of 30), all `Invalid` on those thin triangles,
+  none `Inconsistent`: the tangencies' noise over `ALONG_SIDE` there,
+  which goes by its sign, refuses none of them (a share of `1e-4`
+  decided the same). And at fit `1e-5` crossing cylinders' differences are
   refused `Inconsistent` about a quarter of the time wherever the seams
   are (43 of 60 work with the seams elsewhere): the trace arrives with
   three points and fitting fails, so the fallbacks aren't verified.
@@ -9988,3 +10051,18 @@ see `agents/features.md`, "Failures and where they are").
   loop's end (found while hunting bugs: a rise into `TooComplex`), so a
   clean-up's rounds never cost much more than visiting every triangle
   each round did.
+- **An operation the seam rules changed is tried again without them
+  where it fails the check.** Not in the plan, which took the
+  first-order measure and the trace's start into both patches alone and
+  left the operations they lose (2 in its sweeps, 14 once rebased onto
+  one tie measure: refusals on a near tangency's thin triangles,
+  `Invalid` or `NotManifold`) as the thin-triangle class. Their
+  decisions differ from the old rules' only at near ties, where either
+  is a configuration within the tie, so the result without them is as
+  good: the operation is tried again without the rules where they
+  changed a decision and every try failed so (or ran into a bound),
+  within three times the
+  work the tries took ("Tried again without the seam rules"). All 14
+  come back and none are lost against the build without the rules; in
+  the hunts off the family (revolves, cones, skew crossings, turned
+  flush shapes) none either.

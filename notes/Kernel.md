@@ -365,7 +365,13 @@ exact signs, curved ones as the numbers have them, within each try
 with fewer shortcuts (above) and its cap. Curved
 primitives decide their ties by the same perturbation to first order in each
 power; an order within rounding of the motion and the gradient (`|δ|·|∇f|`)
-counts as zero. Curved shadow crossings are derived from shared ray tests rather than
+counts as zero. That rule and a traced arc's start into both patches are
+for seams of the operands meeting on the cut; where they changed a
+decision and the result fails the check (or runs into a bound), the
+operation is tried again
+without them (within three times the work): on frames turned by a hair
+they are one more way of deciding a near tie, and the thin triangles
+there pass the check or not by chance. Curved shadow crossings are derived from shared ray tests rather than
 solved pair by pair, so the counting's balance holds by construction.
 
 **`touches`** runs the broad phase and one counting; with curved patches,

@@ -31,6 +31,7 @@
 use glam::DVec3;
 
 use super::coaxial;
+use super::curved::SeamRules;
 use super::surface::{Guide, Shape, section};
 use super::{segment, tie};
 use crate::Tolerance;
@@ -65,6 +66,9 @@ pub(super) struct Job<'a> {
     pub(super) on_p: [bool; 2],
     /// Whether `q`'s faces are turned over in the result.
     pub(super) flip_q: bool,
+    /// Whether the arc starts into both patches ([`inward_sign`]), and
+    /// where to note that this changed its start.
+    pub(super) rules: &'a SeamRules,
 }
 
 impl Job<'_> {
@@ -494,19 +498,25 @@ fn end(pair: &Pair, job: &Job, k: usize) -> Option<Point> {
     let x = job.ends[k];
     let t = pair.tangent(u, v)?;
     // At the `+` end the arc leaves its patch's side inwards; at the `−`
-    // end it arrives from inside.
-    let inwards = match inward_sign(job, k, t) {
-        Some(s) => s > 0.0,
-        None => {
-            // The coordinate that is 0 on the side the end is on: the
-            // smallest, in the patch the end was found on.
-            let (patch, at) = if job.on_p[k] { (job.p, u) } else { (job.q, v) };
-            let step = trace::domain_step(patch, at, t);
-            let side = (0..3)
-                .min_by(|&i, &j| at[i].abs().total_cmp(&at[j].abs()))
-                .expect("three coordinates");
-            step[side] > 0.0
+    // end it arrives from inside. Without the rules, the side is the
+    // smallest coordinate's, in the patch the end was found on.
+    let old = || {
+        let (patch, at) = if job.on_p[k] { (job.p, u) } else { (job.q, v) };
+        let step = trace::domain_step(patch, at, t);
+        let side = (0..3)
+            .min_by(|&i, &j| at[i].abs().total_cmp(&at[j].abs()))
+            .expect("three coordinates");
+        step[side] > 0.0
+    };
+    let inwards = match job.rules.on().then(|| inward_sign(job, k, t)).flatten() {
+        Some(s) => {
+            let inwards = s > 0.0;
+            if inwards != old() {
+                job.rules.note();
+            }
+            inwards
         }
+        None => old(),
     };
     let forward = if k == 0 { inwards } else { !inwards };
     let tan = if forward { t } else { -t };
@@ -531,6 +541,10 @@ const ALONG_SIDE: f64 = 1e-6;
 /// tangent to every side), the way towards the arc's other end. `None`
 /// where both ways leave one (or the end is on no side, or the chord is
 /// square to `t`): the smallest coordinate of the end's own patch decides.
+/// Both leave one where the end lies on a side of its own patch and
+/// within `1e-9` of one of the other's that the cut leaves: in the
+/// sweeps only at tiny arcs (ends `5e-9` to `2e-6` apart along `t`),
+/// where the chord's way decided the same operations.
 ///
 /// The smallest coordinate of one patch alone is not enough where seam
 /// rulings of two crossing cylinders meet on the cut, and refinement puts
@@ -542,7 +556,11 @@ const ALONG_SIDE: f64 = 1e-6;
 /// while it also lies on a side of the other patch. An arc between two
 /// ends leaves a tangent end towards the other unless it turns back by
 /// more than a right angle (fitting halves arcs turning past 45°, and the
-/// rounds split long ones); if it does, the trace fails, an error.
+/// rounds split long ones); if it does, the trace fails, an error. Ends
+/// within the march's first step it joins at once, the short way: a
+/// hairpin then fails the fit, and an arc back round beside its start
+/// can't lie in a pair certified to meet in one arc (normal cones apart
+/// keep `n_P × n_Q` in a half-space; see `agents/kernel.md`, "Chains").
 fn inward_sign(job: &Job, k: usize, t: DVec3) -> Option<f64> {
     let [u, v] = job.dom[k];
     // Each patch's step and the end's place in it.

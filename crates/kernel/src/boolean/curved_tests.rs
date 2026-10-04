@@ -512,6 +512,125 @@ fn a_cut_tangent_to_a_seam_at_a_refined_corner() {
 }
 
 #[test]
+fn crossing_cylinders_whose_seams_nearly_meet_on_a_frame_turned_by_a_hair() {
+    // A round of radius 0.625 round (z, x) = (0, 1.5) along `y` over
+    // `0.3125..2.6875`, and a bar of 0.1875 round (y, z) = (1.5, 0.1875)
+    // along `x` over `−0.125..3.125`, on a frame turned by about `2e-9`:
+    // the bar's bottom seam nearly meets the round's side seams on the
+    // cut. There the first orders of `A`'s motion are about `1e-9` of
+    // `|δ|·|∇f|`, real but under `RHO`, so the rules for seams meeting on
+    // the cut take them as ties, which the second order decides: one more
+    // way of deciding them, and `round − bar` failed the check
+    // (`EdgeNeighbours`) on the thin triangles the seam's near tangency
+    // leaves, where the first orders' signs gave a result that passes.
+    // The operation is tried again without the rules where they changed
+    // a decision and the result failed the check.
+    let q = DQuat::from_array([
+        1.394074105515028e-9,
+        1.6991380862726925e-9,
+        -3.1515299647225855e-10,
+        1.0,
+    ]);
+    let shift = DVec3::new(
+        -1.4605656187422561e-10,
+        -8.71434206137737e-10,
+        6.886859796516655e-10,
+    );
+    let frame = |k| holes::turned_frame(q, shift, k);
+    let (big, r) = (0.625, 0.1875);
+    let round = extruded_on(
+        vec![circle(DVec2::new(0.0, 1.5), big, 0, false)],
+        frame(1),
+        0.3125,
+        2.6875,
+        1,
+    );
+    let bar = extruded_on(
+        vec![circle(DVec2::new(1.5, 0.1875), r, 0, false)],
+        frame(0),
+        -0.125,
+        3.125,
+        2,
+    );
+    let (va, vb) = (PI * big * big * 2.375, PI * r * r * 3.25);
+    let both = crossing_volume(big, 0.0, r, 0.1875);
+    let allowed = TOL.fit() * (round.area() + bar.area()) / 5.0;
+    // The same bits at 1 and 8 threads: whether the rules changed a
+    // decision is noted from within the parallel maps.
+    let results = assert_deterministic(|| all_four(&round, &bar, allowed));
+    let want = [va + vb - both, both, va - both, vb - both];
+    let v = results.each_ref().map(Solid::volume);
+    for (k, (got, want)) in v.iter().zip(want).enumerate() {
+        assert!(
+            (got - want).abs() <= allowed,
+            "result {k}: {got}, not {want}"
+        );
+    }
+    assert!((v[0] + v[1] - va - vb).abs() <= allowed);
+    assert!((v[2] + v[1] - va).abs() <= allowed);
+    assert!((v[3] + v[1] - vb).abs() <= allowed);
+}
+
+#[test]
+fn a_ball_cut_by_a_box_through_its_axis() {
+    // A ball of radius 1.25 revolved about `y` on the world frame (two
+    // quarter arcs and a line on the axis), intersected with the box
+    // `[−0.75, 0.75] × [0, 2] × [−0.25, 0.75]`, round its pole and
+    // across its seam: the seam rules changed a decision and
+    // the intersection ran into a bound (`TooComplex`, the budget hardly
+    // touched), where without them it works. The operation is tried
+    // again without the rules then too.
+    let v = DVec2::new;
+    let r = 1.25;
+    let half = Loop {
+        segments: vec![
+            arc(v(0.0, 0.0), v(0.0, -r), v(r, 0.0), 5),
+            arc(v(0.0, 0.0), v(r, 0.0), v(0.0, r), 5),
+            Segment::line(v(0.0, r), v(0.0, -r), 6).unwrap(),
+        ],
+    };
+    let ball = crate::revolve(
+        &Profile { loops: vec![half] },
+        &Frame::XY,
+        crate::Sweep::Full,
+        1,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
+    let p = [v(-0.75, 0.0), v(0.75, 0.0), v(0.75, 2.0), v(-0.75, 2.0)];
+    let square = Loop {
+        segments: (0..4)
+            .map(|i| Segment::line(p[i], p[(i + 1) % 4], i as u64).unwrap())
+            .collect(),
+    };
+    let block = extruded(vec![square], -0.25, 0.75, 2);
+    // The ball within the box: over each point `(x, z)` of its square,
+    // the part of `0..2` within `±√(R² − x² − z²)` in `y`, by the midpoint
+    // rule.
+    let n = 1500;
+    let (dx, dz) = (1.5 / f64::from(n), 1.0 / f64::from(n));
+    let mut both = 0.0;
+    for i in 0..n {
+        let x = -0.75 + (f64::from(i) + 0.5) * dx;
+        for k in 0..n {
+            let z = -0.25 + (f64::from(k) + 0.5) * dz;
+            both += (r * r - x * x - z * z).max(0.0).sqrt().min(2.0) * dx * dz;
+        }
+    }
+    let allowed = TOL.fit() * (ball.area() + block.area()) / 5.0;
+    let (va, vb) = (ball.volume(), block.volume());
+    let results = all_four(&ball, &block, allowed);
+    let want = [va + vb - both, both, va - both, vb - both];
+    for (k, (got, want)) in results.iter().map(Solid::volume).zip(want).enumerate() {
+        assert!(
+            (got - want).abs() <= allowed,
+            "result {k}: {got}, not {want}"
+        );
+    }
+}
+
+#[test]
 fn a_thin_bar_across_a_chained_round_on_hair_frames() {
     // A fuzzing case: a box joined to a round of 0.75 along `y`, and to
     // a second box, less a box that takes nothing, each operand on its

@@ -45,6 +45,7 @@
 
 use glam::DVec3;
 
+use super::curved::SeamRules;
 use super::input::{Input, planar};
 use super::pairs;
 use crate::budget::Work;
@@ -231,7 +232,7 @@ pub(super) fn touching(
     work: &mut Work,
 ) -> Result<bool, Failure> {
     let counts = super::tied_or_exact(super::tie(tol), work, |tie, work| {
-        pairs::counted(a, b, true, tie, tol, work)
+        pairs::counted(a, b, true, tie, &SeamRules::new(true), tol, work)
     })?;
     if counts.meet() {
         return Ok(true);
