@@ -1,5 +1,5 @@
 //! The sweep feature's words in the Timeline and the status bar. Its
-//! panel and its session are still to be built.
+//! panel is the move's session's (`motion/sweep.rs`).
 
 use varde_document::{Document, PathPart, PathRef, Sweep};
 

@@ -37,6 +37,9 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
             field("45°"),
             field("2 mm"),
             field("2 mm"),
+            field("10 mm"),
+            field("5"),
+            field("0°"),
         ],
         reference: Some("Z axis".to_owned()),
         line: None,
@@ -68,6 +71,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         fillet: None,
         offset_face: None,
         draft: None,
+        sweep: None,
     }
 }
 

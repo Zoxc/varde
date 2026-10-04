@@ -295,7 +295,7 @@ impl RegionPick {
 
 /// The bodies a join, cut or intersect takes out, and those just put
 /// back.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct BodyTargets {
     /// The bodies left out, sorted: the edited feature's to start with.
     pub(crate) excluded: Vec<BodyId>,

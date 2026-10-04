@@ -229,6 +229,7 @@ icons! {
     SpBoth => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
     SpFront => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="r" x="13.5" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
     SpBack => r#"<rect class="r" x="3" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
+    SwHelix => r#"<path class="r" d="M12 2v20" stroke-dasharray="2 2"/><path d="M6 6c0-2 12-2 12 0s-12 2-12 4 12 2 12 4-12 2-12 4 12 2 12 0"/><circle class="af" cx="6" cy="6" r="1.6"/>"#,
     // The options' icons, drawn in one colour: a tangent chain (a line
     // running smoothly on into an arc, its ends filled dots), flip, keep
     // the tools.
@@ -323,6 +324,7 @@ impl Icon {
             | Icon::CatCreate
             | Icon::CatTransform
             | Icon::RvFull
+            | Icon::SwHelix
             | Icon::RvOne
             | Icon::RvSym
             | Icon::RvTwo

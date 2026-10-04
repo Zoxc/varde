@@ -35,6 +35,9 @@ sketches and editable features. It runs natively and in the browser.
   walls, moving a body's faces in or out (offset face, by a handle or a
   typed distance) and drafting faces by an angle from a neutral plane,
   set up and kept in the timeline (their geometry isn't built yet).
+- Sweeping a sketch's regions along a path of other sketches' curves and
+  model edges, or round a helix, set up and kept in the timeline (its
+  geometry isn't built yet).
 - Moving, mirroring and patterning bodies, in a row or round an axis,
   aligning one onto another by points and directions, and scaling them.
 - Faces, edges, vertices and bodies selected by clicking them with no tool

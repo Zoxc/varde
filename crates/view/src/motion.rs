@@ -25,8 +25,8 @@ const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
 use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Footer, Framing, PanelHover, Parts, TypedField, field, footer_message, label, message_text,
-    operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
+    Footer, Framing, OperationKind, PanelHover, Parts, TypedField, field, footer_message, label,
+    message_text, operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
 };
 use crate::plane_pick::face_name;
 use crate::revolve::edge_axis_name;
@@ -50,6 +50,7 @@ pub enum MotionKind {
     Fillet,
     OffsetFace,
     Draft,
+    Sweep,
 }
 
 impl MotionKind {
@@ -67,6 +68,7 @@ impl MotionKind {
             MotionKind::Fillet => "Fillet",
             MotionKind::OffsetFace => "Offset face",
             MotionKind::Draft => "Draft",
+            MotionKind::Sweep => "Sweep",
         }
     }
 
@@ -87,6 +89,7 @@ impl MotionKind {
             MotionKind::Fillet => Icon::BFillet,
             MotionKind::OffsetFace => Icon::OffsetFace,
             MotionKind::Draft => Icon::Draft,
+            MotionKind::Sweep => Icon::Sweep,
         }
     }
 
@@ -106,6 +109,7 @@ impl MotionKind {
             MotionKind::Fillet => "New fillet",
             MotionKind::OffsetFace => "New offset face",
             MotionKind::Draft => "New draft",
+            MotionKind::Sweep => "New sweep",
         }
     }
 
@@ -117,7 +121,8 @@ impl MotionKind {
         )
     }
 
-    /// Whether its reference is an axis (a move's, a pattern's), not a
+    /// Whether its reference is an axis (a move's, a pattern's, a sweep's
+    /// helix's), not a
     /// plane (a mirror's), an align's points and directions, a scale's
     /// point and edge, a split's tool, a chamfer's edges or a face
     /// session's faces.
@@ -171,6 +176,7 @@ impl MotionKind {
             FeatureKind::Fillet(_) => MotionKind::Fillet,
             FeatureKind::OffsetFace(_) => MotionKind::OffsetFace,
             FeatureKind::FaceDraft(_) => MotionKind::Draft,
+            FeatureKind::Sweep(_) => MotionKind::Sweep,
             _ => return None,
         })
     }
@@ -243,6 +249,12 @@ pub enum MotionPick {
     /// A face session's faces (a shell's, an offset face's, a draft's),
     /// each click picking a face or taking it out.
     Faces,
+    /// A sweep's profile: regions of a sketch, picked as an extrude's.
+    Regions,
+    /// A sweep's path: each click on a sketch's curve adding the chain
+    /// it's in as a part (or taking that part out), on a model edge
+    /// picking it or taking it out as a blend's edges.
+    Path,
     Nothing,
 }
 
@@ -333,13 +345,16 @@ pub enum MotionField {
     ChamferAngle,
     Thickness,
     Radius,
+    Pitch,
+    Turns,
+    Twist,
 }
 
 impl MotionField {
-    /// The seventeen, a move's in the panel's order, then a pattern's, an
-    /// align's distance, a scale's, a chamfer's, a shell's, then a
-    /// fillet's.
-    pub const ALL: [MotionField; 17] = [
+    /// The twenty, a move's in the panel's order, then a pattern's, an
+    /// align's distance, a scale's, a chamfer's, a shell's, a fillet's,
+    /// then a sweep's.
+    pub const ALL: [MotionField; 20] = [
         MotionField::Offset(Axis3::X),
         MotionField::Offset(Axis3::Y),
         MotionField::Offset(Axis3::Z),
@@ -357,6 +372,9 @@ impl MotionField {
         MotionField::ChamferAngle,
         MotionField::Thickness,
         MotionField::Radius,
+        MotionField::Pitch,
+        MotionField::Turns,
+        MotionField::Twist,
     ];
 
     /// Where it's kept in an array of them all.
@@ -379,6 +397,9 @@ impl MotionField {
             MotionField::ChamferAngle => 14,
             MotionField::Thickness => 15,
             MotionField::Radius => 16,
+            MotionField::Pitch => 17,
+            MotionField::Turns => 18,
+            MotionField::Twist => 19,
         }
     }
 
@@ -402,6 +423,9 @@ impl MotionField {
             MotionField::ChamferAngle => iced::widget::Id::new("chamfer-angle"),
             MotionField::Thickness => iced::widget::Id::new("shell-thickness"),
             MotionField::Radius => iced::widget::Id::new("fillet-radius"),
+            MotionField::Pitch => iced::widget::Id::new("sweep-pitch"),
+            MotionField::Turns => iced::widget::Id::new("sweep-turns"),
+            MotionField::Twist => iced::widget::Id::new("sweep-twist"),
         }
     }
 
@@ -420,6 +444,9 @@ impl MotionField {
             MotionField::ChamferAngle => "Angle",
             MotionField::Thickness => "Thickness",
             MotionField::Radius => "Radius",
+            MotionField::Pitch => "Pitch",
+            MotionField::Turns => "Turns",
+            MotionField::Twist => "Twist",
         }
     }
 }
@@ -461,7 +488,8 @@ pub enum MotionLook {
     /// A linear pattern's Flip direction: runs the other way, or not; an
     /// align's Flip: its directions meet the other way round; a chamfer's
     /// Flip sides: its first distance (and angle) on the other face; an
-    /// offset face's Inward; a draft's Flip pull.
+    /// offset face's Inward; a draft's Flip pull; a sweep's helix's Flip:
+    /// its axis the other way.
     Flip,
     /// A pattern's Join to original: its copies in their bodies, or each
     /// a body of its own.
@@ -496,6 +524,28 @@ pub enum MotionLook {
     DropEdge(EdgeRef),
     /// Takes a shell's face out: its row's cross.
     DropFace(FaceRef),
+    /// Picks the region `region` of `sketch` for a sweep's profile, or
+    /// takes it out: clicked in the viewport, or its row's cross.
+    SweepRegion { sketch: FeatureId, region: usize },
+    /// Adds the chain of `sketch`'s curves `curve` is in as a part of a
+    /// sweep's path, or takes that part out: clicked in the viewport.
+    SweepCurve { sketch: FeatureId, curve: Id },
+    /// Takes a sweep's path part of a sketch's curves out, by its place
+    /// among them: its row's cross.
+    DropPart(usize),
+    /// What a sweep's path is: its Path and Helix tiles.
+    SweepPath(SweepPath),
+    /// A sweep's Keep orientation: the section only moved along the
+    /// path, or turned with it.
+    KeepOrientation,
+    /// A sweep's helix's Left-handed: turning clockwise seen from the
+    /// tip of its axis, or not.
+    LeftHanded,
+    /// What a sweep does with its solid: its Operation tiles.
+    Operation(OperationKind),
+    /// Takes a body out of what a sweep's join, cut or intersect works
+    /// on, or puts it back: its row in the Bodies list.
+    Target(BodyId),
     /// Which way a shell's walls grow from the body's faces: its
     /// Direction tiles.
     ShellDirection(ShellDirection),
@@ -524,7 +574,7 @@ pub struct MotionState<'a> {
     /// and Z and its angle, a pattern's count and spread, an align's
     /// distance, a scale's factors and length, a chamfer's distances
     /// and angle, a shell's thickness, a fillet's radius.
-    pub fields: [TypedField<'a>; 17],
+    pub fields: [TypedField<'a>; 20],
     /// The reference's name, "Z axis", "Edge of Body 1", "XY plane",
     /// "Extrude 1's end", if there's one.
     pub reference: Option<String>,
@@ -609,6 +659,8 @@ pub struct MotionState<'a> {
     pub offset_face: Option<Box<OffsetFaceView>>,
     /// A draft's own parts, for a draft.
     pub draft: Option<Box<DraftView>>,
+    /// A sweep's own parts, for a sweep.
+    pub sweep: Option<Box<SweepView<'a>>>,
 }
 
 impl<'a> MotionState<'a> {
@@ -867,6 +919,9 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
         (MotionKind::Draft, _) => (state.draft.as_ref())
             .and_then(|draft| draft.info.clone())
             .unwrap_or(bodies),
+        (MotionKind::Sweep, _) => (state.sweep.as_ref())
+            .and_then(|sweep| sweep.info.clone())
+            .unwrap_or(bodies),
         _ => bodies,
     }
 }
@@ -910,7 +965,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let picking_reference = state.picking == MotionPick::Reference;
     let pick_reference = send(MotionLook::Picking(MotionPick::Reference));
     let (reference_label, reference_icon, reference_place) = match state.kind {
-        MotionKind::Move | MotionKind::CircularPattern => {
+        MotionKind::Move | MotionKind::CircularPattern | MotionKind::Sweep => {
             ("Axis", Icon::SeAxis, "Click an axis or edge")
         }
         MotionKind::LinearPattern => ("Direction", Icon::SeAxis, "Click an axis or edge"),
@@ -971,6 +1026,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         MotionKind::Fillet => fillet::body(state, field_named),
         MotionKind::OffsetFace => offset_face::body(state, field_named),
         MotionKind::Draft => draft::body(state, reference, field_named),
+        MotionKind::Sweep => sweep::body(state, reference, field_named),
         MotionKind::Move => {
             let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
             column![
@@ -1143,6 +1199,8 @@ mod offset_face;
 pub use offset_face::{FaceHandle, OffsetFaceView};
 mod draft;
 pub use draft::DraftView;
+mod sweep;
+pub use sweep::{SweepPart, SweepPath, SweepView};
 
 #[cfg(test)]
 mod tests;

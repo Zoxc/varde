@@ -605,17 +605,18 @@ fn ops<'a>(
                 (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
             };
             let buttons: Vec<Element<'a, Message>> = match motion.kind {
-                MotionKind::Move | MotionKind::LinearPattern | MotionKind::CircularPattern => {
-                    (Axis3::ALL.iter())
-                        .map(|&axis| {
-                            op(
-                                Icon::SeAxis,
-                                axis_label(axis),
-                                send(MotionLook::OriginAxis(axis)),
-                            )
-                        })
-                        .collect()
-                }
+                MotionKind::Move
+                | MotionKind::LinearPattern
+                | MotionKind::CircularPattern
+                | MotionKind::Sweep => (Axis3::ALL.iter())
+                    .map(|&axis| {
+                        op(
+                            Icon::SeAxis,
+                            axis_label(axis),
+                            send(MotionLook::OriginAxis(axis)),
+                        )
+                    })
+                    .collect(),
                 MotionKind::Mirror
                 | MotionKind::Align
                 | MotionKind::Scale

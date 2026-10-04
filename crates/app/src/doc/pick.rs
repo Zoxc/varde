@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use varde_document::BodyId;
 use varde_view::{
-    AlignRole, ModelHighlight, ModelPicking, MotionPick, PanelHover, Pick, Picked, Picks, Selection,
+    AlignRole, ModelHighlight, ModelPicking, MotionKind, MotionPick, PanelHover, Pick, Picked,
+    Picks, Selection,
 };
 
 use super::{Doc, MotionSession};
@@ -83,7 +84,10 @@ impl Doc {
                 PanelHover::Axis => true,
                 PanelHover::Edge(at) => at < session.blend.edges.refs.len(),
                 PanelHover::Face(at) => at < session.faces.refs.len(),
-                PanelHover::Region { .. } => false,
+                PanelHover::Part(at) => at < session.sweep.chains.len(),
+                PanelHover::Region { .. } => {
+                    session.kind == MotionKind::Sweep && region(&session.sweep.regions, hover)
+                }
             });
         }
         let session = self.combine.as_ref()?;
@@ -319,7 +323,7 @@ impl Doc {
                 match session.picking {
                     MotionPick::Reference if session.kind.takes_axis() => Picks::EdgesAndFaces,
                     MotionPick::Align(_) => Picks::EdgesAndFaces,
-                    MotionPick::Edge | MotionPick::Edges => Picks::Edges,
+                    MotionPick::Edge | MotionPick::Edges | MotionPick::Path => Picks::Edges,
                     _ => Picks::Faces,
                 }
             } else if self.picking_plane.is_some() || self.combine.is_some() {

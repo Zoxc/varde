@@ -325,7 +325,7 @@ impl Doc {
             return None;
         }
         let kind = session.kind;
-        if kind.blends() {
+        if kind.blends() || kind == MotionKind::Sweep {
             Some(self.ref_picked::<EdgeRef>(pick).is_some())
         } else if kind.picks_faces() {
             Some(self.ref_picked::<FaceRef>(pick).is_some())
@@ -489,6 +489,9 @@ impl Ref for EdgeRef {
     }
 
     fn only(kind: MotionKind) -> String {
+        if kind == MotionKind::Sweep {
+            return "Only an edge or a sketch's curve can be on the path".to_owned();
+        }
         format!("Only an edge can be {}ed", noun(kind))
     }
 

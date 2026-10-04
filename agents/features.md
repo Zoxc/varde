@@ -4180,7 +4180,7 @@ pub struct Helix { pub axis: AxisRef, pub pitch: Value, pub turns: Value, pub le
   list; a move's axis body, by contrast, isn't followed). The features
   that made the edges' faces are not followed: removing one leaves the
   sweep, which then fails ("its path edge wasn't found"). Adding a
-  sweep hides its profile's sketch, not its path's.
+  sweep hides its profile's sketch, not its path's (see UI).
 - `SetUnits` pins its twist and a helix's pitch by their asks (and its
   turns, which a bare number leaves as typed).
 
@@ -4288,14 +4288,102 @@ body", the uncut note).
 
 ### UI
 
-Not built yet. The Timeline shows a sweep with its icon (the icon
-mock's sweep: a path and a ring), the note "along Sketch 3", "along
-Body 1" (one edge part), "along 3 parts" or "helix · 10 turns", the
-status bar "Along Sketch 3 · Follow path · Twist 90° · New body"
-(`view/src/sweep.rs`), and "Edit sweep" in its menu, which does
-nothing yet (no session to edit it in). The UI mock has no sweep panel:
-the session (regions picked as an extrude's; the path's parts, sketch
-chains and model edge chains, picked in the model; or a helix with its
-axis row, pitch, turns, Left-handed and Flip; orientation, twist,
-operation and bodies; the preview) is to be built in the style of the
-revolve's panel.
+The move's session (`MotionSession`, above) with `MotionKind::Sweep`;
+its own parts are in `app/src/doc/motion/sweep.rs` (`SweepSetup`) and
+`view/src/motion/sweep.rs` (`SweepView`, `SweepPath`). The UI mock has
+no sweep panel (the icon mock has only the tool, Sweep in its Create
+group), so the panel is built in the style of its nearest one, the
+revolve's: Profile, "Along" as tiles (Path, Helix), the path's fields,
+Operation as tiles and the Bodies list.
+
+- **Starting**: `Look::StartSweep` from the rail's Create set (after
+  Revolve, as the mock's group orders it; its list's letter `P`, the
+  label's first free one, as the mock's) through `sweep_binding`, with
+  no key, as the mock has it; again, or another tool, backs out.
+  **Not on the toolbar**: the mock's model bar has no Sweep. Editing one
+  (`Look::EditFeature`: double-click, `Enter`, "Edit sweep") opens it
+  with its regions, path and options. It picks no bodies
+  (`MotionSession::bodies` stays empty: `kind()`, `need()`, `gone()`
+  and the draft go by the sweep's own); clicks pick, nothing takes the
+  focus.
+- **Profile** (`MotionPick::Regions`): regions picked as an extrude's
+  (`RegionPick`, the sketch selected in the Timeline as the source if
+  one is), on its sketches in the viewport (the split's picking: the
+  model isn't picked meanwhile, `picks_sketches`); rows "Region 1"
+  with a cross, the edited sweep's regions not found counted. The
+  first region picked hands the clicks to the path (or a helix's axis)
+  while there's none.
+- **Path** (`MotionPick::Path`): a click on a curve of a visible sketch
+  before the sweep but the profile's (`Doc::sweep_lines`, drawn in the
+  live layer while the path is picked, the chain under the cursor
+  lit, each part's curves in the selected colour) adds the chain it's
+  in (`Sketch::chain_of`, sorted) as a `CurveChain` part, or takes out
+  the part holding it; the profile's own sketch is refused with a
+  notice. Off the curves, the model's edges are picked as a blend's
+  (`refs`: named as of the sweep, all on one body, the Tangent chain
+  tick, lit, `MotionLook::DropEdge`), stored as one `PathPart::Edges`
+  after the chains: so a session's edge parts are on one body (an
+  edited sweep's other edge parts are kept as stored, listed as "Edges
+  of Body 2"). Rows: each chain "Sketch 3 · 2 curves" (`PanelHover::Part`
+  lighting its curves), then "Edge 1" with its length; a cross on each.
+  Then Tangent chain, Keep orientation and Twist (`MotionField::Twist`,
+  "0°" to begin with; a twist of nothing is left out, unless the
+  edited sweep stored one).
+- **Helix**: the Axis field picked as a move's (`MotionPick::Reference`:
+  the toolbar's X, Y and Z, a straight or round edge, a round face),
+  Pitch ("10" of the design's units) and Turns ("5"), Left-handed and
+  Flip (the session's `flip`; the axis is drawn as a move's, flipped);
+  the orientation and twist aren't shown and aren't stored (a path's
+  are kept for when its tile is back).
+- **Operation and Bodies** as an extrude's (`BodyTargets`, the cut's
+  uncut note as the panel's warning, `Doc::held` for a new body a
+  combine names).
+- **Whole and ready**: regions and a path (or the axis, pitch and
+  turns); "pick the regions to sweep", "pick the path: sketch curves or
+  model edges", "pick the helix's axis" otherwise. `Sweep::check_own`
+  and the document's `check_path` and `check_curves` refuse as the
+  foot ("Sweep fails"). What an edit or undo takes away is kept and
+  said to be gone ("A path's sketch or curve is gone: take its part
+  out", "A picked edge is gone", "The axis is gone: pick another"),
+  nothing previewed or committed meanwhile; the profile's sketch gone
+  lets go of its regions.
+- **Preview**: the sweep as set up is the draft while it's whole,
+  picking or not. **The kernel's sweep isn't built**, so today every
+  preview fails with "Sweep fails" over "sweeping its regions along its
+  path is too complex to work out", OK waits, and Add anyway keeps it,
+  failing in the Timeline. The app's tests sweep straight paths through
+  regen's `testing` feature (`varde_regen::testing::sweep_by_extrude`).
+- **Committing**: OK (`Enter`, Add anyway) adds "Sweep N" or sets the
+  edited one, one undo step; Cancel or `Esc` leaves no trace. Adding
+  hides the profile's sketch only (the document's): **path sketches
+  stay shown**, so their curves can be clicked when the sweep is
+  edited, and a path sketch often serves several sweeps.
+- The status bar says "Along Sketch 3 · Follow path · New body" once
+  whole (`sweep_info`), else what's next, with the hints "Pick
+  regions", "Pick the path's curves or edges" or "Pick the axis"
+  (`chrome::step_hint`).
+
+The Timeline shows a sweep with its icon (the icon mock's sweep: a path
+and a ring), the note "along Sketch 3", "along Body 1" (one edge part),
+"along 3 parts" or "helix · 10 turns", the status bar "Along Sketch 3 ·
+Follow path · Twist 90° · New body" (`view/src/sweep.rs`).
+
+Known gaps: no handle; a path sketch hidden by the user isn't offered
+(its parts stay listed); edge parts on several bodies only as stored;
+a helix's edge or face axis is drawn where the preview's regeneration
+found it (an origin axis as it is), 10 mm either side of its point, as
+a sweep has no bodies' box.
+
+Tests: `app/src/doc/motion/tests/sweep.rs` (the rail's Sweep: the
+panel, regions then path, the profile's own sketch refused, a chain a
+part, too complex in the panel, Add anyway as one undo step, the
+profile's sketch hidden and the path's not; with the stand-in, a
+straight path previewed as its box and OK; a part taken out by its
+curve or its cross; model edges as a part, a face refused, Tangent
+chain, the corner's square up the plate's edge previewed; a helix
+about the toolbar's Z, its values, hand and flip drafted, never with
+the path's options; Keep orientation, twist and the operation drafted;
+editing from the Timeline, Cancel, undo; a path's curves taken away
+said to be gone, the profile's sketch removed), `viewport/motion/tests.rs`
+(regions and path curves picked in their sketches, the model's edges
+left to the model), `rail/tests.rs` (Sweep in the Create set, `P`).

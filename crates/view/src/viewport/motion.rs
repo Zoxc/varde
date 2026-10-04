@@ -65,7 +65,7 @@ use crate::extrude::snap_step;
 use crate::hit::{self, segment_distance};
 use crate::motion::{
     AlignView, FaceHandle, MotionField, MotionKind, MotionLook, MotionPick, MotionState, ScaleView,
-    SplitMode, SplitView,
+    SketchLines, SplitMode, SplitView, SweepView,
 };
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
@@ -164,6 +164,8 @@ pub(crate) struct Input {
     split: SplitInput,
     /// An offset face's handle.
     face: FaceInput,
+    /// A sweep's profile's regions and its path sketches' curves.
+    sweep: SplitInput,
 }
 
 /// What the viewport keeps of an offset face's handle: whether it's
@@ -467,6 +469,28 @@ impl<'a> Moving<'a> {
         if let Some(scale) = &self.state.scale {
             scale_marks(&mut live, scale, scene, colors);
         }
+        if let Some(sweep) = &self.state.sweep {
+            let picking = self.sweep_picking();
+            let regions = sweep_regions(sweep, self.state.hover);
+            if picking == Some(MotionPick::Regions) {
+                regions.live(input.sweep.regions.hover, colors, &mut live);
+            }
+            regions.panel_region(camera, bounds, colors, &mut live);
+            let hovered = input
+                .sweep
+                .curve
+                .filter(|_| picking == Some(MotionPick::Path));
+            let part = match self.state.hover {
+                Some(PanelHover::Part(at)) => sweep.chains.get(at).copied(),
+                _ => None,
+            };
+            sweep_lines(&mut live, sweep, hovered, part, picking.is_some(), colors);
+            if regions.source().is_some() {
+                let base = regions.base_layer(&input.sweep.regions, colors);
+                return (base, live);
+            }
+            return (EMPTY.clone(), live);
+        }
         if let Some(split) = &self.state.split {
             let picking = self.split_picking();
             if split.mode == SplitMode::Regions {
@@ -496,9 +520,82 @@ impl<'a> Moving<'a> {
             .then_some(split.mode)
     }
 
+    /// What a sweep picks in its sketches, while it does: its profile's
+    /// regions, or its path's curves (the model's edges are picked as the
+    /// model is, where no curve is under the cursor).
+    fn sweep_picking(&self) -> Option<MotionPick> {
+        self.state.sweep.as_ref()?;
+        let picking = self.state.picking;
+        (self.state.editable && matches!(picking, MotionPick::Regions | MotionPick::Path))
+            .then_some(picking)
+    }
+
+    /// Takes the mouse `event` while a sweep picks in its sketches
+    /// ([`Moving::sweep_picking`]): hovering and clicking the region of
+    /// its profile, or the curve of a path sketch, under the cursor.
+    /// `None` for what's left to picking the model and the camera: off
+    /// the path's curves, the model's edges.
+    fn sweep_mouse(
+        &self,
+        picking: MotionPick,
+        input: &mut SplitInput,
+        event: mouse::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+    ) -> Option<Action<Message>> {
+        let sweep = self.state.sweep.as_ref()?;
+        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
+        let regions = sweep_regions(sweep, None);
+        match event {
+            mouse::Event::CursorMoved { .. } => {
+                let over = cursor.position_over(bounds).map(local);
+                let (region, curve) = match picking {
+                    MotionPick::Regions => (
+                        over.and_then(|at| regions.region_under(at, camera, bounds)),
+                        None,
+                    ),
+                    _ => (
+                        None,
+                        over.and_then(|at| curve_under(&sweep.lines, at, camera, bounds)),
+                    ),
+                };
+                let changed = std::mem::replace(&mut input.regions.hover, region) != region
+                    || std::mem::replace(&mut input.curve, curve) != curve;
+                // Over a curve, the model's edge under it isn't hovered.
+                match curve {
+                    Some(_) if changed => {
+                        Some(Action::publish(Message::Look(Look::Hover(None))).and_capture())
+                    }
+                    Some(_) => Some(Action::capture()),
+                    None if changed => Some(Action::request_redraw()),
+                    None => None,
+                }
+            }
+            mouse::Event::CursorLeft => {
+                let had = input.regions.hover.take().is_some() | input.curve.take().is_some();
+                had.then(Action::request_redraw)
+            }
+            mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                let at = local(cursor.position_over(bounds)?);
+                let look = match picking {
+                    MotionPick::Regions => {
+                        let (sketch, region) = regions.region_under(at, camera, bounds)?;
+                        MotionLook::SweepRegion { sketch, region }
+                    }
+                    _ => {
+                        let (sketch, curve) = curve_under(&sweep.lines, at, camera, bounds)?;
+                        MotionLook::SweepCurve { sketch, curve }
+                    }
+                };
+                Some(Action::publish(Message::Look(Look::Motion(look))).and_capture())
+            }
+            _ => None,
+        }
+    }
+
     /// The curve of a split's sketches under the screen position `at`, and
-    /// its sketch: of those within [`HIT_PIXELS`] on each sketch's plane,
-    /// the nearest by depth.
+    /// its sketch: see [`curve_under`].
     fn curve_under(
         &self,
         split: &SplitView<'_>,
@@ -506,26 +603,7 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         bounds: Rectangle,
     ) -> Option<(FeatureId, Id)> {
-        let mut nearest: Option<(f64, FeatureId, Id)> = None;
-        for candidate in &split.lines {
-            let Some(projector) =
-                Projector::new(camera, candidate.placement, bounds.width, bounds.height)
-            else {
-                continue;
-            };
-            let Some(cursor) = projector.cursor(at) else {
-                continue;
-            };
-            let tolerance = HIT_PIXELS * cursor.pixel;
-            let Some(curve) = hit::hit_curve(candidate.sketch, cursor.at, tolerance) else {
-                continue;
-            };
-            let depth = projector.depth(cursor.at);
-            if nearest.is_none_or(|(nearest, ..)| depth < nearest) {
-                nearest = Some((depth, candidate.feature, curve));
-            }
-        }
-        nearest.map(|(_, feature, curve)| (feature, curve))
+        curve_under(&split.lines, at, camera, bounds)
     }
 
     /// Takes the mouse `event` while a split's tool is picked in its
@@ -778,6 +856,9 @@ impl<'a> Moving<'a> {
         if self.state.kind == MotionKind::OffsetFace {
             return self.face_mouse(&mut input.face, event, bounds, cursor, camera, hovered);
         }
+        if let Some(picking) = self.sweep_picking() {
+            return self.sweep_mouse(picking, &mut input.sweep, event, bounds, cursor, camera);
+        }
         let Some(handles) = self.handles(input, camera, bounds) else {
             input.hover = None;
             input.drag = None;
@@ -943,6 +1024,11 @@ impl<'a> Moving<'a> {
     pub(crate) fn mouse_interaction(&self, input: &Input) -> Option<mouse::Interaction> {
         if self.split_picking().is_some() {
             let over = input.split.regions.hover.is_some() || input.split.curve.is_some();
+            return over.then_some(mouse::Interaction::Pointer);
+        }
+        if self.sweep_picking().is_some() {
+            let over = input.sweep.regions.hover.is_some() || input.sweep.curve.is_some();
+            // Off the curves, the model's edges as the model picks them.
             return over.then_some(mouse::Interaction::Pointer);
         }
         if input.drag.is_some() || input.face.drag.is_some() {
@@ -1138,9 +1224,107 @@ impl<'a> Moving<'a> {
     /// tool's, since it draws in the world; a split's regions' source's
     /// plane, whose regions its base layer draws.
     pub(crate) fn plane_of_layers(&self) -> GridPlane {
+        if let Some(sweep) = &self.state.sweep {
+            return sweep_regions(sweep, None).plane();
+        }
         (self.state.split.as_ref())
             .filter(|split| split.mode == SplitMode::Regions)
             .map_or(GridPlane::XY, |split| split_regions(split).plane())
+    }
+}
+
+/// The curve of `lines`' sketches under the screen position `at`, and
+/// its sketch: of those within [`HIT_PIXELS`] on each sketch's plane,
+/// the nearest by depth.
+fn curve_under(
+    lines: &[SketchLines<'_>],
+    at: DVec2,
+    camera: &Camera,
+    bounds: Rectangle,
+) -> Option<(FeatureId, Id)> {
+    let mut nearest: Option<(f64, FeatureId, Id)> = None;
+    for candidate in lines {
+        let Some(projector) =
+            Projector::new(camera, candidate.placement, bounds.width, bounds.height)
+        else {
+            continue;
+        };
+        let Some(cursor) = projector.cursor(at) else {
+            continue;
+        };
+        let tolerance = HIT_PIXELS * cursor.pixel;
+        let Some(curve) = hit::hit_curve(candidate.sketch, cursor.at, tolerance) else {
+            continue;
+        };
+        let depth = projector.depth(cursor.at);
+        if nearest.is_none_or(|(nearest, ..)| depth < nearest) {
+            nearest = Some((depth, candidate.feature, curve));
+        }
+    }
+    nearest.map(|(_, feature, curve)| (feature, curve))
+}
+
+/// A sweep's sketches whose regions show, those picked, and the one
+/// hovered in the panel (`hover`).
+fn sweep_regions<'s, 'a>(sweep: &'s SweepView<'a>, hover: Option<PanelHover>) -> Regions<'s, 'a> {
+    Regions {
+        candidates: &sweep.candidates,
+        source: sweep.source,
+        picked: sweep.picked,
+        panel: hover.and_then(PanelHover::region),
+    }
+}
+
+/// Draws a sweep's path on `live`: while it's picked (`picking`), the
+/// path sketches' curves (construction ones dashed, the chain of the one
+/// `hovered` stronger), and each part's curves in the selected colour,
+/// those of the part whose row is hovered (`part`) in the hovered one.
+fn sweep_lines(
+    live: &mut SketchLayer,
+    sweep: &SweepView<'_>,
+    hovered: Option<(FeatureId, Id)>,
+    part: Option<(FeatureId, &[Id])>,
+    picking: bool,
+    colors: SketchColors,
+) {
+    let picked = |feature: FeatureId, id: Id| {
+        (sweep.chains.iter())
+            .any(|&(sketch, curves)| sketch == feature && curves.binary_search(&id).is_ok())
+    };
+    let lit = |feature: FeatureId, id: Id| {
+        part.is_some_and(|(sketch, curves)| sketch == feature && curves.binary_search(&id).is_ok())
+    };
+    for candidate in &sweep.lines {
+        let Some(plane) = grid_plane(candidate.placement) else {
+            continue;
+        };
+        let space = LayerSpace::On(plane);
+        let sketch = candidate.sketch;
+        let chain = match hovered {
+            Some((feature, curve)) if feature == candidate.feature => sketch.chain_of(curve),
+            _ => Vec::new(),
+        };
+        for entry in &sketch.curves {
+            let is_picked = picked(candidate.feature, entry.id);
+            let is_hovered = chain.contains(&entry.id) || lit(candidate.feature, entry.id);
+            if !(picking || is_picked || is_hovered) {
+                continue;
+            }
+            let Some(points) = sketch.flatten(&entry.curve) else {
+                continue;
+            };
+            let (color, width) = if is_hovered {
+                (colors.hovered, HOVERED_CURVE_WIDTH)
+            } else if is_picked {
+                (colors.selected, PICKED_CURVE_WIDTH)
+            } else if entry.construction {
+                (colors.construction, CURVE_WIDTH)
+            } else {
+                (colors.curve, CURVE_WIDTH)
+            };
+            let dashed = entry.construction && !is_picked && !is_hovered;
+            live.polyline(space, &points, line(color, width, dashed));
+        }
     }
 }
 

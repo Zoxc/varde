@@ -28,7 +28,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         editing: None,
         bodies: Vec::new(),
         picking,
-        fields: [field(0.0); 17],
+        fields: [field(0.0); 20],
         reference: Some("Z axis".to_owned()),
         line,
         bounds: Some([DVec3::new(-30.0, -20.0, 0.0), DVec3::new(30.0, 20.0, 10.0)]),
@@ -59,6 +59,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         fillet: None,
         offset_face: None,
         draft: None,
+        sweep: None,
     }
 }
 
@@ -805,4 +806,104 @@ fn the_offset_face_handle_sends_no_distance_that_shows_as_nothing() {
         inward: true,
     };
     assert_eq!(looks(&messages), [Some(&inward)]);
+}
+
+/// A sweep in a sketch on XY holding a disc of radius 5 about (0, 10),
+/// its profile's candidate, and a path sketch holding a line from
+/// (-20, 0) to (20, 0): seen from the top, a click in the disc picks its
+/// region while the profile is picked, a click on the line its chain
+/// while the path is, the model not hovered over it; off the line, the
+/// model's edges are left to the model's picking.
+#[test]
+fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
+    use crate::motion::{BlendEdges, SweepPath, SweepView};
+    use varde_sketch::{Curve, Sketch};
+    let mut disc = Sketch::default();
+    let center = disc.add_point(DVec2::new(0.0, 10.0)).unwrap();
+    (disc.add_curve(
+        Curve::Circle {
+            center,
+            radius: 5.0,
+        },
+        false,
+    ))
+    .unwrap();
+    let mut path = Sketch::default();
+    let a = path.add_point(DVec2::new(-20.0, 0.0)).unwrap();
+    let b = path.add_point(DVec2::new(20.0, 0.0)).unwrap();
+    let line = path
+        .add_curve(Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    let profiles = Arc::new(disc.profiles().unwrap());
+    let features = varde_document::Document::example();
+    let [profile, path_feature] = [features.features()[0].id, features.features()[1].id];
+    let placement = OriginPlane::XY.placement();
+    let camera = camera(View::Top, Projection::Orthographic);
+    let top = |at: DVec3| {
+        let p = shown(&camera, at);
+        Point::new(p.x as f32, p.y as f32)
+    };
+    let index = plate();
+    for picking in [MotionPick::Regions, MotionPick::Path] {
+        let mut state: MotionState<'_> = state(MotionKind::Sweep, picking, None);
+        state.sweep = Some(Box::new(SweepView {
+            path: SweepPath::Path,
+            candidates: vec![crate::Candidate {
+                feature: profile,
+                placement,
+                sketch: &disc,
+                profiles: &profiles,
+            }],
+            source: None,
+            picked: SweepView::none_picked(),
+            missing: 0,
+            parts: Vec::new(),
+            edges: BlendEdges::default(),
+            lines: vec![crate::SketchLines {
+                feature: path_feature,
+                placement,
+                sketch: &path,
+            }],
+            chains: Vec::new(),
+            keep_orientation: false,
+            left_handed: false,
+            operation: crate::OperationKind::NewBody,
+            targets: Vec::new(),
+            info: None,
+        }));
+        let program = viewport(state, &camera, Some(&index));
+        let mut input = Interaction::default();
+        let (on, wanted) = match picking {
+            MotionPick::Path => (
+                DVec3::new(10.0, 0.0, 0.0),
+                MotionLook::SweepCurve {
+                    sketch: path_feature,
+                    curve: line,
+                },
+            ),
+            _ => (
+                DVec3::new(0.0, 10.0, 0.0),
+                MotionLook::SweepRegion {
+                    sketch: profile,
+                    region: 0,
+                },
+            ),
+        };
+        let (messages, _) = feed(&program, &mut input, &[moved(top(on))]);
+        assert!(
+            !messages
+                .iter()
+                .any(|m| matches!(m, Message::Look(Look::Hover(Some(_))))),
+            "{picking:?}: the model isn't hovered: {messages:?}"
+        );
+        let (messages, captured) = feed(&program, &mut input, &[press(top(on))]);
+        assert_eq!(looks(&messages), [Some(&wanted)], "{picking:?}");
+        assert!(captured);
+        let off = DVec3::new(25.0, -15.0, 0.0);
+        let (messages, _) = feed(&program, &mut input, &[moved(top(off)), press(top(off))]);
+        assert!(
+            looks(&messages).iter().all(Option::is_none),
+            "{picking:?}: {messages:?}"
+        );
+    }
 }

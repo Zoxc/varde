@@ -1106,3 +1106,4 @@ mod pattern;
 mod scale;
 mod shell;
 mod split;
+mod sweep;

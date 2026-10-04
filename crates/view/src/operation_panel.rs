@@ -198,6 +198,9 @@ pub enum PanelHover {
     Edge(usize),
     /// A shell's face, by its place in the list.
     Face(usize),
+    /// A sweep's path part of a sketch's curves, by its place among
+    /// them.
+    Part(usize),
 }
 
 impl PanelHover {
@@ -205,9 +208,11 @@ impl PanelHover {
     pub fn region(self) -> Option<(FeatureId, usize)> {
         match self {
             PanelHover::Region { sketch, region } => Some((sketch, region)),
-            PanelHover::Axis | PanelHover::Body(_) | PanelHover::Edge(_) | PanelHover::Face(_) => {
-                None
-            }
+            PanelHover::Axis
+            | PanelHover::Body(_)
+            | PanelHover::Edge(_)
+            | PanelHover::Face(_)
+            | PanelHover::Part(_) => None,
         }
     }
 
@@ -218,7 +223,8 @@ impl PanelHover {
             PanelHover::Region { .. }
             | PanelHover::Axis
             | PanelHover::Edge(_)
-            | PanelHover::Face(_) => None,
+            | PanelHover::Face(_)
+            | PanelHover::Part(_) => None,
         }
     }
 }

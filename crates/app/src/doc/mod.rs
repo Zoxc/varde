@@ -762,6 +762,7 @@ impl Doc {
                 | Look::StartShell
                 | Look::StartOffsetFace
                 | Look::StartDraft
+                | Look::StartSweep
                 | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
@@ -787,6 +788,7 @@ impl Doc {
                 | Look::StartShell
                 | Look::StartOffsetFace
                 | Look::StartDraft
+                | Look::StartSweep
                 | Look::EditFeature(_)
         ) {
             self.measure = None;
@@ -825,11 +827,10 @@ impl Doc {
                     | FeatureKind::Shell(_)
                     | FeatureKind::Fillet(_)
                     | FeatureKind::OffsetFace(_)
-                    | FeatureKind::FaceDraft(_),
+                    | FeatureKind::FaceDraft(_)
+
+                    | FeatureKind::Sweep(_),
                 ) => self.edit_motion(id),
-                // Its panel isn't built yet: there's nothing to edit it
-                // in.
-                Some(FeatureKind::Sweep(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
@@ -852,6 +853,7 @@ impl Doc {
             Look::StartShell => self.start_motion(varde_view::MotionKind::Shell),
             Look::StartOffsetFace => self.start_motion(varde_view::MotionKind::OffsetFace),
             Look::StartDraft => self.start_motion(varde_view::MotionKind::Draft),
+            Look::StartSweep => self.start_motion(varde_view::MotionKind::Sweep),
             Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),

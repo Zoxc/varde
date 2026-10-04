@@ -16,7 +16,9 @@
 //! faces picked as a shell's, its own parts and handle in
 //! `offset_face`), `Look::StartDraft` (the rail's Modify set; its faces
 //! picked as a shell's, its neutral plane as a mirror's plane, its own
-//! parts in `face_draft`), or by editing one, picking its bodies as a
+//! parts in `face_draft`), `Look::StartSweep` (the rail's Create set; a
+//! sweep's profile, path and options are in `sweep`, its model edges
+//! picked as a blend's), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
 //! one from the toolbar, or a model edge or face clicked, named as of the
@@ -47,8 +49,9 @@ use varde_kernel::Motion;
 use varde_regen::Summary;
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, ModelHighlight, MotionField,
-    MotionKind, MotionLook, MotionPick, MotionState, Naming, PanelHover, PatternMode, Pick, Picked,
-    ShellDirection, SplitMode, Unnamed, axis_name, pattern_copies, plane_name,
+    MotionKind, MotionLook, MotionPick, MotionState, Naming, OperationKind, PanelHover,
+    PatternMode, Pick, Picked, ShellDirection, SplitMode, SweepPath, Unnamed, axis_name,
+    pattern_copies, plane_name,
 };
 
 use self::align::AlignSetup;
@@ -56,6 +59,7 @@ use self::blend::BlendSetup;
 use self::refs::Refs;
 use self::scale::ScaleSetup;
 use self::split::SplitSetup;
+use self::sweep::SweepSetup;
 use super::combine::pickable;
 use super::feed::Merges;
 use super::regions::TypedText;
@@ -78,8 +82,8 @@ pub(crate) struct MotionSession {
     /// total, a length or a circular one's angle, as its mode reads it),
     /// an align's distance (and its angle, the move's), a scale's
     /// factors and length, a chamfer's distances and angle, a shell's
-    /// thickness, a fillet's radius.
-    pub(crate) fields: [TypedText; 17],
+    /// thickness, a fillet's radius, a sweep's pitch, turns and twist.
+    pub(crate) fields: [TypedText; 20],
     /// A move's or pattern's axis: the Z axis to begin with (a linear
     /// pattern's X), as the UI mock's. A move stores it only with an
     /// angle other than zero.
@@ -107,8 +111,10 @@ pub(crate) struct MotionSession {
     pub(crate) scale: ScaleSetup,
     /// A split's tools and what it keeps.
     pub(crate) split: SplitSetup,
-    /// A chamfer's edges and Tangent chain.
+    /// A chamfer's edges and Tangent chain; a sweep's path's edges.
     pub(crate) blend: BlendSetup,
+    /// A sweep's profile, path parts and options.
+    pub(crate) sweep: SweepSetup,
     /// How a chamfer is sized: Equal to begin with, as the UI mock's.
     pub(crate) chamfer_type: ChamferType,
     /// A face session's faces: a shell's to remove, an offset face's to
@@ -237,6 +243,9 @@ fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
         }
         MotionField::Thickness => varde_document::Shell::thickness_ask(design),
         MotionField::Radius => varde_document::Fillet::radius_ask(design),
+        MotionField::Pitch => varde_document::Sweep::pitch_ask(design),
+        MotionField::Turns => varde_document::Sweep::turns_ask(design),
+        MotionField::Twist => varde_document::Sweep::twist_ask(design),
     }
 }
 
@@ -322,6 +331,8 @@ impl MotionSession {
             // A face session picks faces, its body theirs (a shell's, or
             // the one it starts with).
             kind if kind.picks_faces() => MotionPick::Faces,
+            // A sweep picks its profile's regions first, and no bodies.
+            MotionKind::Sweep => MotionPick::Regions,
             _ => MotionPick::Bodies,
         };
         if matches!(kind, MotionKind::Align | MotionKind::Split) {
@@ -330,10 +341,11 @@ impl MotionSession {
         if kind.picks_faces() {
             bodies.truncate(usize::from(faces::takes_body(kind)));
         }
-        if kind.blends() {
+        if kind.blends() || kind == MotionKind::Sweep {
             bodies.clear();
         }
         let [chamfer_distance, chamfer_second, chamfer_angle] = chamfer::chamfer_fields(&design);
+        let [pitch, turns, twist] = sweep::sweep_fields(&design);
         let (copies, spread_field, axis, mode) = match kind {
             MotionKind::CircularPattern => (
                 read("4", &count),
@@ -388,6 +400,9 @@ impl MotionSession {
                 chamfer_angle,
                 shell::thickness_field(&design),
                 fillet::radius_field(&design),
+                pitch,
+                turns,
+                twist,
             ],
             axis,
             plane: (kind == MotionKind::Draft).then_some(face_draft::NEUTRAL),
@@ -399,6 +414,7 @@ impl MotionSession {
             scale: ScaleSetup::default(),
             split: SplitSetup::default(),
             blend: BlendSetup::default(),
+            sweep: SweepSetup::default(),
             chamfer_type: ChamferType::Equal,
             faces: Refs::default(),
             direction: ShellDirection::Inward,
@@ -533,6 +549,11 @@ impl MotionSession {
                 session.open_face_draft(draft);
                 session
             }
+            FeatureKind::Sweep(sweep) => {
+                let mut session = Self::new(MotionKind::Sweep, document, Vec::new());
+                session.open_sweep(document, sweep);
+                session
+            }
             _ => return None,
         };
         session.feature = Some(feature);
@@ -598,6 +619,10 @@ impl MotionSession {
     /// (none stored if it is), a mirror's plane, or a pattern as
     /// [`MotionSession::pattern`] makes it.
     fn kind(&self) -> Option<FeatureKind> {
+        // A sweep names no bodies of its own.
+        if self.kind == MotionKind::Sweep {
+            return self.sweep().map(FeatureKind::Sweep);
+        }
         if self.bodies.is_empty() {
             return None;
         }
@@ -632,6 +657,7 @@ impl MotionSession {
             MotionKind::Fillet => fillet::fillet_kind(self),
             MotionKind::OffsetFace => offset_face::offset_face_kind(self),
             MotionKind::Draft => face_draft::face_draft_kind(self),
+            MotionKind::Sweep => None,
         }
     }
 
@@ -753,7 +779,8 @@ impl MotionSession {
             | MotionKind::Shell
             | MotionKind::Fillet
             | MotionKind::OffsetFace
-            | MotionKind::Draft => {
+            | MotionKind::Draft
+            | MotionKind::Sweep => {
                 return Ok(None);
             }
         };
@@ -805,6 +832,9 @@ impl MotionSession {
         if self.kind.picks_faces() {
             return self.faces_need();
         }
+        if self.kind == MotionKind::Sweep {
+            return self.sweep_need();
+        }
         if self.bodies.is_empty() {
             return Some(match self.kind {
                 MotionKind::Move => "pick the bodies to move",
@@ -820,6 +850,7 @@ impl MotionSession {
                 MotionKind::Fillet => "pick the edges to fillet",
                 MotionKind::OffsetFace => "pick the faces to move",
                 MotionKind::Draft => "pick the faces to draft",
+                MotionKind::Sweep => "pick the regions to sweep",
             });
         }
         match self.kind {
@@ -841,7 +872,8 @@ impl MotionSession {
             | MotionKind::Shell
             | MotionKind::Fillet
             | MotionKind::OffsetFace
-            | MotionKind::Draft => None,
+            | MotionKind::Draft
+            | MotionKind::Sweep => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -873,6 +905,9 @@ impl MotionSession {
     /// mirror's plane, which another is to be picked for. A move's axis
     /// is only gone while it turns.
     fn gone(&self) -> Option<&'static str> {
+        if self.kind == MotionKind::Sweep {
+            return self.sweep_gone();
+        }
         if self.bodies.is_empty() {
             return None;
         }
@@ -953,6 +988,7 @@ impl MotionSession {
             FeatureKind::FaceDraft(draft) => {
                 draft.check_own(design).err().map(|why| why.to_string())
             }
+            FeatureKind::Sweep(sweep) => sweep.check_own(design).err().map(|why| why.to_string()),
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -974,6 +1010,7 @@ impl MotionSession {
             MotionKind::Fillet => fine(MotionField::Radius),
             MotionKind::OffsetFace => fine(MotionField::Distance),
             MotionKind::Draft => fine(MotionField::Angle),
+            MotionKind::Sweep => self.sweep_typed(),
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
@@ -1030,6 +1067,7 @@ impl MotionSession {
         if self.kind.picks_faces() {
             self.prune_faces(document, index);
         }
+        self.prune_sweep(document, index);
         let held = |body: BodyId| document.body(body).is_some();
         self.gone_reference = match (self.axis, self.plane) {
             (Some(axis), _)
@@ -1054,8 +1092,8 @@ impl MotionSession {
     /// scale's edge with them (it must be on one it scales; its names
     /// find it on the holder) and a split's tool body: whether any moved.
     fn follow(&mut self, merges: &Merges) -> bool {
-        // A chamfer's body is its edges'.
-        if self.kind.blends() {
+        // A chamfer's body is its edges'; a sweep's edges follow too.
+        if self.kind.blends() || self.kind == MotionKind::Sweep {
             return self.follow_refs::<EdgeRef>(merges);
         }
         // A face session's body is its faces', or a shell's the one
@@ -1115,6 +1153,15 @@ impl MotionSession {
         // preview what's left of a face removed is lit as it, a click
         // there taking it out); with no body, an edited one shows its
         // body as of the feature.
+        // A sweep is previewed while it's whole and nothing it names is
+        // gone, its path picked meanwhile; otherwise the model shown is
+        // the document's.
+        if self.kind == MotionKind::Sweep {
+            if self.gone().is_some() {
+                return None;
+            }
+            return Some((self.feature, self.kind()?));
+        }
         if self.kind.blends() || self.kind.picks_faces() {
             if self.gone().is_none()
                 && let Some(kind) = self.kind()
@@ -1208,7 +1255,7 @@ fn spread_of_mut(kind: &mut PatternKind) -> &mut Value {
 fn picks_first(kind: MotionKind) -> bool {
     matches!(
         kind,
-        MotionKind::Mirror | MotionKind::Align | MotionKind::Split
+        MotionKind::Mirror | MotionKind::Align | MotionKind::Split | MotionKind::Sweep
     ) || kind.blends()
         || kind.picks_faces()
 }
@@ -1253,6 +1300,18 @@ impl Doc {
         // A face session's faces are those selected that it takes.
         if kind.picks_faces() {
             self.refs_selected::<FaceRef>();
+        }
+        // A sweep's profile is of the sketch selected in the Timeline, if
+        // one is.
+        if kind == MotionKind::Sweep {
+            let document = self.editor.document();
+            let selected =
+                (self.selected_feature).filter(|&id| super::extrude::is_sketch(document, id));
+            if let Some(session) = &mut self.motion {
+                session.sweep.regions =
+                    super::regions::RegionPick::new(selected, varde_document::MAX_SWEEP_REGIONS);
+                session.sweep.regions.refresh(document);
+            }
         }
         if !picks_first(kind) {
             self.focus = Some(Focus::All);
@@ -1320,6 +1379,19 @@ impl Doc {
                     MotionKind::Align | MotionKind::Scale | MotionKind::Split
                 ) => {}
             MotionLook::Picking(MotionPick::Tool) if session.kind != MotionKind::Split => {}
+            // A sweep picks its profile, its path or its helix's axis: a
+            // field clicked again while it picks stops picking.
+            MotionLook::Picking(
+                picking @ (MotionPick::Regions | MotionPick::Path | MotionPick::Reference),
+            ) if session.kind == MotionKind::Sweep => {
+                session.picking = if session.picking == picking {
+                    MotionPick::Nothing
+                } else {
+                    picking
+                };
+            }
+            MotionLook::Picking(_) if session.kind == MotionKind::Sweep => {}
+            MotionLook::Picking(MotionPick::Regions | MotionPick::Path) => {}
             // A chamfer picks only its edges: its field clicked turns
             // picking them off and on.
             MotionLook::Picking(MotionPick::Edges) if session.kind.blends() => {
@@ -1414,12 +1486,14 @@ impl Doc {
             MotionLook::ChamferType(kind) if session.kind == MotionKind::Chamfer => {
                 session.chamfer_type = kind;
             }
-            MotionLook::Chain if session.kind.blends() => {
+            MotionLook::Chain if session.kind.blends() || session.kind == MotionKind::Sweep => {
                 session.blend.chains = !session.blend.chains;
             }
-            MotionLook::DropEdge(edge) if session.kind.blends() => {
+            MotionLook::DropEdge(edge)
+                if session.kind.blends() || session.kind == MotionKind::Sweep =>
+            {
                 session.blend.edges.drop_ref(&edge);
-                session.blend_body();
+                session.refs_body();
             }
             MotionLook::ChamferType(_) | MotionLook::Chain | MotionLook::DropEdge(_) => {}
             MotionLook::DropFace(face) if session.kind.picks_faces() => {
@@ -1444,9 +1518,44 @@ impl Doc {
             | MotionLook::ShellDirection(_)
             | MotionLook::TangentFaces
             | MotionLook::OffsetBy { .. } => {}
+            MotionLook::SweepRegion { sketch, region } if session.kind == MotionKind::Sweep => {
+                session.sweep_region(sketch, region, document);
+            }
+            MotionLook::SweepCurve { sketch, curve } if session.kind == MotionKind::Sweep => {
+                if let Err(why) = session.sweep_curve(sketch, curve, document) {
+                    self.notice = Some(why.into_owned());
+                }
+            }
+            MotionLook::DropPart(at) if session.kind == MotionKind::Sweep => session.drop_part(at),
+            MotionLook::SweepPath(path) if session.kind == MotionKind::Sweep => {
+                session.sweep_mode(path);
+            }
+            MotionLook::KeepOrientation if session.kind == MotionKind::Sweep => {
+                session.sweep.keep_orientation = !session.sweep.keep_orientation;
+            }
+            MotionLook::LeftHanded if session.kind == MotionKind::Sweep => {
+                session.sweep.left_handed = !session.sweep.left_handed;
+            }
+            MotionLook::Operation(kind) if session.kind == MotionKind::Sweep => {
+                session.sweep.operation = kind;
+            }
+            MotionLook::Target(body) if session.kind == MotionKind::Sweep => {
+                self.sweep_target(body);
+            }
+            MotionLook::SweepRegion { .. }
+            | MotionLook::SweepCurve { .. }
+            | MotionLook::DropPart(_)
+            | MotionLook::SweepPath(_)
+            | MotionLook::KeepOrientation
+            | MotionLook::LeftHanded
+            | MotionLook::Operation(_)
+            | MotionLook::Target(_) => {}
             // A chamfer's body is its edges', a shell's its faces' (it
             // has no body rows).
-            MotionLook::Drop(_) if session.kind.blends() || session.kind.picks_faces() => {}
+            MotionLook::Drop(_)
+                if session.kind.blends()
+                    || session.kind.picks_faces()
+                    || session.kind == MotionKind::Sweep => {}
             MotionLook::Drop(body) => {
                 session.bodies.retain(|&picked| picked != body);
             }
@@ -1477,6 +1586,13 @@ impl Doc {
                 }
             }
             MotionLook::Turn { .. } => {}
+            // A sweep's helix's axis, while it's picked.
+            MotionLook::OriginAxis(axis) if session.kind == MotionKind::Sweep => {
+                if session.picking == MotionPick::Reference {
+                    session.axis = Some(AxisRef::Origin(axis));
+                    session.picking = MotionPick::Nothing;
+                }
+            }
             MotionLook::OriginAxis(axis) if session.kind.takes_axis() => {
                 session.axis = Some(AxisRef::Origin(axis));
                 session.picking = MotionPick::Bodies;
@@ -1502,6 +1618,7 @@ impl Doc {
                         | MotionKind::Chamfer
                         | MotionKind::OffsetFace
                         | MotionKind::Draft
+                        | MotionKind::Sweep
                 ) =>
             {
                 session.flip = !session.flip;
@@ -1539,7 +1656,8 @@ impl Doc {
             MotionPick::Point => self.scale_point(pick),
             MotionPick::Edge => self.scale_edge(pick),
             MotionPick::Tool => self.split_tool(pick),
-            MotionPick::Edges => self.refs_click::<EdgeRef>(pick),
+            MotionPick::Edges | MotionPick::Path => self.refs_click::<EdgeRef>(pick),
+            MotionPick::Regions => Ok(()),
             MotionPick::Faces => self.refs_click::<FaceRef>(pick),
             MotionPick::Nothing => Ok(()),
         };
@@ -1601,9 +1719,12 @@ impl Doc {
             Reference::Axis(axis) => session.axis = Some(axis),
             Reference::Plane(plane) => session.plane = Some(plane),
         }
-        // A draft goes back to picking its faces.
+        // A draft goes back to picking its faces; a sweep has no bodies
+        // to pick: its helix shows as set up.
         session.picking = if session.kind.picks_faces() {
             MotionPick::Faces
+        } else if session.kind == MotionKind::Sweep {
+            MotionPick::Nothing
         } else {
             MotionPick::Bodies
         };
@@ -1687,6 +1808,7 @@ impl Doc {
                 && !self.proposing()
                 && session.ready(&design)
                 && self.motion_held().is_none()
+                && (session.kind != MotionKind::Sweep || self.sweep_refused(session).is_none())
         })
     }
 
@@ -1700,6 +1822,9 @@ impl Doc {
         let session = self.motion.as_ref()?;
         if session.kind == MotionKind::Split {
             return self.split_held(session);
+        }
+        if session.kind == MotionKind::Sweep {
+            return self.held(session.feature, session.sweep.operation);
         }
         let edited = session.feature?;
         let kind = session.kind()?;
@@ -1899,6 +2024,9 @@ impl Doc {
         if self.split_held(session).is_some() {
             return None;
         }
+        if session.kind == MotionKind::Sweep && self.sweep_refused(session).is_some() {
+            return None;
+        }
         Some((feature, kind))
     }
 
@@ -1921,8 +2049,9 @@ impl Doc {
         let Some(session) = &self.motion else {
             return false;
         };
-        // A blend's edges wait only for a model of the document as it is.
-        if session.picking == MotionPick::Edges {
+        // A blend's edges wait only for a model of the document as it is,
+        // as a sweep's path's do.
+        if matches!(session.picking, MotionPick::Edges | MotionPick::Path) {
             return self.refs_take::<EdgeRef>(pick);
         }
         if session.picking == MotionPick::Faces {
@@ -1953,7 +2082,7 @@ impl Doc {
         let Some(session) = &self.motion else {
             return;
         };
-        if session.kind.blends() {
+        if session.kind.blends() || session.kind == MotionKind::Sweep {
             self.follow_ref_marks::<EdgeRef>();
         } else if session.kind.picks_faces() {
             self.follow_ref_marks::<FaceRef>();
@@ -1988,8 +2117,9 @@ impl Doc {
                 | MotionPick::Edge
                 | MotionPick::Tool
                 | MotionPick::Edges
+                | MotionPick::Path
                 | MotionPick::Faces => self.takes_reference(pick).then_some((pick.target, false)),
-                MotionPick::Nothing => None,
+                MotionPick::Regions | MotionPick::Nothing => None,
             },
             (None, None) => None,
         };
@@ -1997,6 +2127,7 @@ impl Doc {
             MotionKind::Scale => [Vec::new(), self.scale_lit()],
             MotionKind::Split => [Vec::new(), self.split_lit()],
             _ if session.kind.blends() => [self.blend_lit(), Vec::new()],
+            MotionKind::Sweep => [self.refs_lit::<EdgeRef>(), Vec::new()],
             _ if session.kind.picks_faces() => [self.faces_lit(), Vec::new()],
             _ => self.align_lit(),
         };
@@ -2029,7 +2160,10 @@ impl Doc {
             }
             // A chamfer's edges and a shell's faces lit as selected, its
             // body as it is.
-            _ if session.kind.blends() || session.kind.picks_faces() => {
+            _ if session.kind.blends()
+                || session.kind.picks_faces()
+                || session.kind == MotionKind::Sweep =>
+            {
                 (key.4[0].clone(), Vec::new())
             }
             _ => (
@@ -2056,10 +2190,12 @@ impl Doc {
                 .map(|body| faces(body).collect())
                 .unwrap_or_default(),
             // A chamfer's edge with its tangent chain, while it takes it in.
-            (Some((target, false)), MotionPick::Edges) => match self.pick.hover() {
-                Some(pick) if panel_edge.is_none() => self.blend_hover(pick),
-                _ => vec![target],
-            },
+            (Some((target, false)), MotionPick::Edges | MotionPick::Path) => {
+                match self.pick.hover() {
+                    Some(pick) if panel_edge.is_none() => self.blend_hover(pick),
+                    _ => vec![target],
+                }
+            }
             (
                 Some((target, false)),
                 MotionPick::Reference
@@ -2072,7 +2208,7 @@ impl Doc {
             // A chamfer's edge hovered in its panel, while its edges
             // aren't picked.
             (Some((target, false)), MotionPick::Nothing) if panel_edge.is_some() => vec![target],
-            (Some((_, false)), MotionPick::Nothing) | (None, _) => Vec::new(),
+            (Some((_, false)), MotionPick::Nothing | MotionPick::Regions) | (None, _) => Vec::new(),
         };
         let highlight = Arc::new(index.highlight_with(&hover, &picked, &second));
         if let Some(session) = &mut self.motion {
@@ -2104,7 +2240,12 @@ impl Doc {
             .and_then(|feature| document.feature(feature))
             .map(|feature| feature.name.as_str());
         let (reference, origin) = match session.kind {
-            MotionKind::Move | MotionKind::LinearPattern | MotionKind::CircularPattern => {
+            // A sweep's helix's axis, only while its path is a helix.
+            MotionKind::Sweep if session.sweep.path != SweepPath::Helix => (None, None),
+            MotionKind::Move
+            | MotionKind::LinearPattern
+            | MotionKind::CircularPattern
+            | MotionKind::Sweep => {
                 let axis = session.axis.as_ref();
                 let origin = axis.and_then(|axis| match axis {
                     AxisRef::Origin(axis) => Some([DVec3::ZERO, axis.direction()]),
@@ -2135,6 +2276,12 @@ impl Doc {
             || session.angle().is_some_and(|angle| angle != 0.0);
         // A flipped linear pattern's arrow points the way its copies go.
         let flipped = session.kind == MotionKind::LinearPattern && session.flip;
+        // A flipped helix's origin axis too; regenerating notes its other
+        // axes as the helix climbs, flipped already.
+        let origin = origin.map(|[point, along]| {
+            let helix = session.kind == MotionKind::Sweep && session.flip;
+            [point, if helix { -along } else { along }]
+        });
         let line = origin
             .or_else(|| self.feed.draft_reference())
             .filter(|_| turning && reference.is_some())
@@ -2181,7 +2328,14 @@ impl Doc {
             join: session.join,
             warning: (self.motion_warning(session))
                 .or_else(|| self.scale_note(session))
-                .or_else(|| session.shell_warning()),
+                .or_else(|| session.shell_warning())
+                .or_else(|| {
+                    // A sweep's cut that takes nothing from a body.
+                    (session.kind == MotionKind::Sweep
+                        && session.sweep.operation == OperationKind::Cut)
+                        .then(|| self.uncut_note())
+                        .flatten()
+                }),
             mode: session.mode,
             spread_error: session.spread_error(),
             copies: match session.kind() {
@@ -2191,6 +2345,12 @@ impl Doc {
             need: session.need(),
             refused: (session.gone().map(str::to_owned))
                 .or_else(|| session.refused(&design))
+                .or_else(|| {
+                    (session.kind == MotionKind::Sweep)
+                        .then(|| self.sweep_refused(session))
+                        .flatten()
+                        .map(|why| format!("it {why}"))
+                })
                 .or_else(|| self.motion_held()),
             error: self.feed.draft_error(),
             show_error: self.draft_framed(),
@@ -2211,6 +2371,7 @@ impl Doc {
                 .then(|| Box::new(self.offset_face_view(session))),
             draft: (session.kind == MotionKind::Draft)
                 .then(|| Box::new(self.face_draft_view(session))),
+            sweep: (session.kind == MotionKind::Sweep).then(|| Box::new(self.sweep_view(session))),
         })
     }
 }
@@ -2370,6 +2531,7 @@ mod refs;
 mod scale;
 mod shell;
 mod split;
+mod sweep;
 
 #[cfg(test)]
 mod tests;
