@@ -1,6 +1,6 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits and chamfers), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers and shells), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -53,7 +53,7 @@ they share with the newer kinds is here. The kernel math of each is in
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
   `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6, `Align` 7,
-  `Scale` 8, `Split` 9, `Chamfer` 10): files store a kind by its variant name, and
+  `Scale` 8, `Split` 9, `Chamfer` 10, `Shell` 11): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -3121,3 +3121,116 @@ committed as drafted, edits opening to what they store, the edges lit
 on the body drawing theirs; at the end each working chamfer takes
 material off; `VARDE_CHAMFER_SEEDS`). The app's tests chamfer by prisms through regen's `testing`
 feature (`varde_regen::testing::chamfer_by_wedges`).
+
+## Shell
+
+`crates/document/src/shell.rs`.
+
+```rust
+pub struct Shell {
+    pub body: BodyId,                    // made by a feature before it
+    pub open: Vec<FaceRef>,              // 0..=MAX_SHELL_FACES (256), on `body`, FaceRef::order, no repeats
+    pub thickness: Value,                // a length as an extrude's
+    #[serde(default)] pub outward: bool, // walls outside the faces (the mock's Direction: Outward)
+}
+```
+
+- **What it is**: the twelfth variant (`FeatureKind::Shell`, "Shell
+  N"). Its body is hollowed to walls `thickness` thick and keeps its id;
+  it makes no body. The faces in `open` (the mock's "faces to remove")
+  are opened; none gives a closed hollow body, its void inside (the
+  mock's "No faces removed: the body becomes closed and hollow"). The
+  thickness is a length as an extrude's (`Shell::thickness_ask` =
+  `Extent::ask`). `outward` (the mock's Direction, Inward / Outward)
+  grows the walls outside the body's faces instead, the body becoming
+  the hollow; the plan's struct had no direction, the mock's panel has
+  it, and it's `#[serde(default)]` (inward). The plan's `rounded` (round
+  inner edges) is left out until rounded shells are built; it'll be a
+  defaulted field then. The list is kept in `FaceRef::order` (body, key,
+  the point's coordinates by `total_cmp`) without repeats; two picks of
+  one key at different points are two faces (a face cut in two).
+- **Checks** (`CheckError::Shell(id, ShellError)`):
+  `Shell::check_own(design)` (cheap): at most 256 faces (`Faces`), each
+  face's own check (`Face(PlaneError::Near)`: its point finite and
+  within `MAX_COORD`), in order without repeats (`FaceOrder`), all on
+  the shell's body (`Bodies`), the thickness by its ask (`Thickness`).
+  `Document::check_shell_faces(index, body, faces)` (public, for the
+  panel): the body there and made before (`Body`: depended on, as a
+  combine's bodies), and every face key's feature before it, or not
+  there with an id below the next (`RefMaker`, as a sketch's face's).
+- **Dependencies**: `FeatureKind::bodies()` is its body, so removing it
+  or its maker removes the shell. The features that made its open faces
+  are **not** followed: removing a cut whose wall it opens leaves the
+  shell, which then fails ("its open face wasn't found"), to be edited
+  (decided, as every face and edge reference).
+- `SetUnits` pins its thickness by its ask.
+
+### Regeneration
+
+`crates/regen/src/history/shell.rs`, in history order:
+
+- The body needs a solid of its own (`own_solids`: a body consumed by
+  a join or combine fails it, "Body 2 is in Body 1 now: ..."). Its
+  topology is the one drawing it keeps (`inspect::topology`), and each
+  open face is found on it by `Topology::face(key, near)`; one not found
+  fails the shell before the kernel: "its open face wasn't found", or
+  with several "its open face 2 of 3 wasn't found" (its place in the
+  list). The regions found go to the kernel sorted, each once.
+- **The shell**: `varde_kernel::shell(solid, topology, open, thickness,
+  outward, feature, tol, budget)`, cached as an `Entry::Solid` by the
+  body's key, the feature, the fit tolerance, the thickness's bits, the
+  direction and the regions; the result replaces the body's solid under
+  that key (an empty result: "shelling Body 1 leaves nothing of it").
+  Its refusals (`varde_kernel::ShellError`) are worded by
+  `message::shell_refused`: a round shrinking to nothing "the shell is
+  thicker than the smallest round of Body 1: try a thinner wall" (the
+  face drawn), the offsets crossing "the shell is too thick for Body 1:
+  its walls would run into each other", a corner of more than three
+  faces "faces of Body 1 meeting at a corner can't be offset together:
+  try another thickness" (the vertex drawn); its failures as a
+  boolean's ("shelling Body 1 is too complex to work out" for
+  `TooComplex`, `message::shelling`), the evidence's faces on the body.
+- **Kernel stand-in**: `varde_kernel::shell` (`kernel/src/shell.rs`,
+  with `ShellError`) isn't built yet: it has its planned signature and
+  fails with `TooComplex`. So every shell that finds its faces fails
+  today with "shelling Body 1 is too complex to work out", its body left
+  whole; the rest of the history goes on. The regen tests swap it
+  (`shell::SHELLER`, a thread local; other crates' tests through the
+  `testing` feature, `varde_regen::testing::shell_by_boxes`) for
+  `by_boxes`: a box along the world's axes (six planar faces square to
+  them, its volume its box's) hollowed by one boolean with another box
+  (inward: less its box shrunk by the thickness and pushed out past the
+  open faces; outward: its box grown but at the open faces, less its
+  box pushed out past them), too thick where the inner box would be
+  empty, too complex otherwise; and for recording and refusing
+  stand-ins. The planned analytic tests of the kernel's shell are
+  written out and `#[ignore = "kernel shell not built"]`.
+- The draft's reply carries nothing new.
+
+### UI
+
+Not built yet (the next stage: the face session, the mock's panel:
+Remove (faces picked, rows with a cross), Thickness, Direction tiles
+Inward / Outward `sh-in` / `sh-out`, the closed-body warning). For now:
+the Timeline row with the model mock's shell icon (`Icon::Shell`), its
+note (`view/src/shell.rs`: the thickness, "2 mm"), the status bar's
+info as the mock's row ("2 faces removed · 2 mm inward", "Closed · 1 mm
+outward") and "Edit shell", which does nothing yet
+(`Look::EditFeature`).
+
+Tests: `document/src/shell/tests.rs` (added and undone, a closed one,
+edited, its own parts, bodies and makers, removal following the body
+and not the faces, units pinned, round trip, wrong shells refused when
+read, the twelfth kind, errors), `regen/src/history/tests/shell.rs` (the
+stub failing as too complex with the history going on; an open face
+gone after its maker is removed, named by its place among others; an
+open face found again after an upstream dimension change, opened where
+it went; with the box stand-in: closed, open at one and two faces and
+outward by their volumes, too thick refused and just under it, the
+cache; recording: a face named twice handed over once, the thickness
+and direction as stored; refusals worded and drawn; a consumed body;
+ignored: the kernel's on a box open, closed and outward, a slot-shaped
+plate's round ends offset exactly, a boss on a plate open underneath,
+too thick, determinism), `io/src/vrdp/tests.rs` (through a file, a
+tampered face point and thickness refused), `view/src/shell/tests.rs`
+(the notes).

@@ -39,6 +39,14 @@ pub mod testing {
     pub fn chamfer_by_wedges() {
         crate::history::chamfer_by_wedges();
     }
+
+    /// Shells on this thread by a stand-in in place of the kernel's
+    /// shell, which isn't built yet: a box along the world's axes
+    /// hollowed by one boolean with another box; anything else is too
+    /// complex.
+    pub fn shell_by_boxes() {
+        crate::history::shell_by_boxes();
+    }
 }
 mod inspect;
 mod message;

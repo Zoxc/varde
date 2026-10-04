@@ -21,6 +21,7 @@ mod plane;
 mod removal;
 mod revolve;
 mod scale;
+mod shell;
 mod split;
 #[cfg(test)]
 mod testing;
@@ -40,6 +41,7 @@ pub use plane::{FaceRef, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
 pub use scale::{MAX_SCALE_FACTOR, Scale, ScaleError, ScaleFactor};
+pub use shell::{MAX_SHELL_FACES, Shell, ShellError};
 pub use split::{Keep, MAX_SPLIT_CURVES, Side, Split, SplitError, SplitTool};
 
 use std::collections::BTreeMap;
@@ -313,7 +315,10 @@ impl Document {
     /// wants it; and every chamfer's edges are on one body a feature
     /// before it makes, its faces' makers before it (or not there with
     /// ids no later feature can take), its edges and values as
-    /// [`Chamfer::check_own`] wants them. A
+    /// [`Chamfer::check_own`] wants them; and every shell's body is one a
+    /// feature before it makes, its open faces' makers before it (or not
+    /// there with ids no later feature can take), its faces and
+    /// thickness as [`Shell::check_own`] wants them. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
@@ -428,6 +433,13 @@ impl Document {
                         .map_err(|why| CheckError::Chamfer(id, why))?;
                     self.check_chamfer_edges(index, &chamfer.edges)
                         .map_err(|why| CheckError::Chamfer(id, why))?;
+                }
+                FeatureKind::Shell(shell) => {
+                    shell
+                        .check_own(&design)
+                        .map_err(|why| CheckError::Shell(id, why))?;
+                    self.check_shell_faces(index, shell.body, &shell.open)
+                        .map_err(|why| CheckError::Shell(id, why))?;
                 }
             }
         }
@@ -779,6 +791,28 @@ impl Document {
         Ok(())
     }
 
+    /// Checks what a shell at feature `index` (at the end for a new one,
+    /// the count of features) of `body` opening `faces` names, as
+    /// [`Document::check`] has it: its body there and made by a feature
+    /// before it (depended on, as a combine's bodies), and its faces'
+    /// makers before it, or not there with ids no later feature can
+    /// take, as a sketch's face's. For a panel keeping what it sets up one
+    /// the document takes; their own parts are [`Shell::check_own`]'s.
+    pub fn check_shell_faces(
+        &self,
+        index: usize,
+        body: BodyId,
+        faces: &[FaceRef],
+    ) -> Result<(), ShellError> {
+        if !self.made_before(index, body) {
+            return Err(ShellError::Body(body));
+        }
+        match (faces.iter()).find(|face| !self.maker_before(index, face.maker())) {
+            Some(face) => Err(ShellError::RefMaker(face.maker())),
+            None => Ok(()),
+        }
+    }
+
     /// Whether `body` is there and made by a feature before feature
     /// `index`.
     fn made_before(&self, index: usize, body: BodyId) -> bool {
@@ -883,6 +917,8 @@ pub enum CheckError {
     Split(FeatureId, SplitError),
     /// A chamfer feature is wrong, see [`ChamferError`].
     Chamfer(FeatureId, ChamferError),
+    /// A shell feature is wrong, see [`ShellError`].
+    Shell(FeatureId, ShellError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -934,6 +970,7 @@ impl fmt::Display for CheckError {
             CheckError::Scale(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Split(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Chamfer(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Shell(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -965,6 +1002,7 @@ impl std::error::Error for CheckError {
             CheckError::Scale(_, why) => Some(why),
             CheckError::Split(_, why) => Some(why),
             CheckError::Chamfer(_, why) => Some(why),
+            CheckError::Shell(_, why) => Some(why),
             _ => None,
         }
     }

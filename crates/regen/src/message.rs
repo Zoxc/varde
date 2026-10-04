@@ -443,6 +443,60 @@ pub(crate) fn chamfer_leaves_nothing(body: &str) -> String {
     format!("chamfering {body} leaves nothing of it")
 }
 
+/// Why a shell fails: its open face `index` (from 0) of its `count`
+/// isn't found on its body as the features before it leave it (renamed
+/// or gone).
+pub(crate) fn shell_face_not_found(index: usize, count: usize) -> String {
+    if count == 1 {
+        "its open face wasn't found".to_owned()
+    } else {
+        format!(
+            "its open face {} of {count} wasn't found",
+            index.saturating_add(1)
+        )
+    }
+}
+
+/// What the kernel refuses to shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShellRefusal {
+    /// A round face would shrink to nothing.
+    RoundTooSmall,
+    /// The offset faces cross.
+    TooThick,
+    /// Faces meeting at a corner can't be offset together.
+    Corner,
+}
+
+/// Why a shell of the body named `body` is refused.
+pub(crate) fn shell_refused(why: ShellRefusal, body: &str) -> String {
+    match why {
+        ShellRefusal::RoundTooSmall => {
+            format!("the shell is thicker than the smallest round of {body}: try a thinner wall")
+        }
+        ShellRefusal::TooThick => {
+            format!("the shell is too thick for {body}: its walls would run into each other")
+        }
+        ShellRefusal::Corner => format!(
+            "faces of {body} meeting at a corner can't be offset together: try another thickness"
+        ),
+    }
+}
+
+/// Why the kernel couldn't shell the body named `body`.
+pub(crate) fn shelling(body: &str, error: KernelError) -> String {
+    match error {
+        KernelError::TooComplex => format!("shelling {body} is too complex to work out"),
+        error => failed(&format!("shelling {body}"), error),
+    }
+}
+
+/// Why a shell fails though the kernel shelled the body named `body`:
+/// nothing of it is left.
+pub(crate) fn shell_leaves_nothing(body: &str) -> String {
+    format!("shelling {body} leaves nothing of it")
+}
+
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {

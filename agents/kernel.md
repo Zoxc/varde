@@ -10197,3 +10197,21 @@ see `agents/features.md`, "Failures and where they are").
   the kernel's chains, is regeneration's instead, from the
   existing `Topology::tangent_chains`: it needs only the topology and
   the curves' end tangents. See "Chamfer" in `agents/features.md`.
+- **Shell built above a stand-in.** The shell feature's document and
+  regeneration came before the kernel's offset solid and shell (kernel
+  work put off): `shell.rs` holds `shell(solid, topology, open: &[u32],
+  thickness, outward, feature, tol, budget) -> Result<Solid,
+  ShellError>`, failing with `ShellError::Failed(TooComplex)`, to be
+  replaced by the real one (and `shell/`, the offset solid with a
+  distance per region that offset face and draft share). The caller
+  hands it the regions of the solid's `Topology` to open, sorted and
+  each once; the kernel names the inner faces `FacePart::Offset { of }`
+  and refuses with `ShellError::RoundTooSmall` (a round face's radius at
+  or under the thickness), `TooThick` (the offsets crossing: the hollow
+  fails the hull rules) and `Corner` (more than three faces whose
+  offsets miss one point). Departing from the plan, it takes `outward`
+  (the UI mock's Direction): the result is then the offset solid with
+  the kept faces by `+thickness` and the open ones by zero, less the
+  body with its open faces pushed outwards past it, the same offset
+  solid's two uses. The plan's `rounded` (task of rounded shells) is not
+  in the signature yet. See "Shell" in `agents/features.md`.

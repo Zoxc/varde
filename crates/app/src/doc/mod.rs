@@ -780,6 +780,9 @@ impl Doc {
                     | FeatureKind::Split(_)
                     | FeatureKind::Chamfer(_),
                 ) => self.edit_motion(id),
+                // No panel yet: shells are made by the document's
+                // commands until their session is built.
+                Some(FeatureKind::Shell(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

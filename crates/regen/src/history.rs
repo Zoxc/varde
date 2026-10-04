@@ -59,7 +59,10 @@
 //! two by a tool (see `split`). A chamfer finds its edges on its body's
 //! topology (one not found: "its edge wasn't found"), grows them along
 //! tangent chains if asked, and cuts them off by the kernel's chamfer,
-//! the body keeping its id (see `chamfer`).
+//! the body keeping its id (see `chamfer`). A shell finds the faces it
+//! opens on its body's topology (one not found: "its open face wasn't
+//! found") and hollows the body by the kernel's shell, the body keeping
+//! its id (see `shell`).
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -112,9 +115,12 @@ mod combine;
 mod motion;
 mod pattern;
 pub(crate) mod scale;
+mod shell;
 mod split;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use chamfer::chamfer_by_wedges;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use shell::shell_by_boxes;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use split::split_by_booleans;
 
@@ -373,7 +379,8 @@ pub(crate) fn evaluate_within(
                     | FeatureKind::Align(_)
                     | FeatureKind::Scale(_)
                     | FeatureKind::Split(_)
-                    | FeatureKind::Chamfer(_) => unreachable!("matched apart"),
+                    | FeatureKind::Chamfer(_)
+                    | FeatureKind::Shell(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -467,6 +474,18 @@ pub(crate) fn evaluate_within(
                     document,
                     feature.id,
                     chamfer,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::Shell(shell) => {
+                if let Err(failed) = shell::evaluate_shell(
+                    document,
+                    feature.id,
+                    shell,
                     &tolerance,
                     &mut evaluation,
                     cache,

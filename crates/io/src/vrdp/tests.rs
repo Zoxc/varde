@@ -3268,3 +3268,76 @@ fn a_chamfer_s_edges_and_values_are_checked_as_read() {
         }
     });
 }
+
+/// The example plate shelled 1.375 mm outward, open at its top.
+fn shelled_plate() -> Document {
+    use glam::DVec3;
+    use varde_document::{FaceKey, FaceRef, PartKey, Shell};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let document = editor.document();
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let top = FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: maker,
+            part: PartKey::EndCap,
+            instance: 0,
+        },
+        near: DVec3::new(3.0, 7.25, 10.0),
+    };
+    let thickness = Value::new("1.375", &Shell::thickness_ask(&document.design())).unwrap();
+    let shell = Shell {
+        body: plate,
+        open: vec![top],
+        thickness,
+        outward: true,
+    };
+    editor
+        .apply(editor.document().add_feature(shell.into()))
+        .unwrap();
+    editor.document().clone()
+}
+
+/// A shell goes through a file and is read back in its place.
+#[test]
+fn shells_round_trip() {
+    use varde_document::FeatureKind;
+    let document = shelled_plate();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    assert!(matches!(read.features()[2].kind, FeatureKind::Shell(_)));
+}
+
+/// A record whose shell's face point or thickness was changed on disk
+/// to what the document refuses is refused as it's read; as written,
+/// it reads.
+#[test]
+fn a_tampered_shell_is_refused() {
+    let raw = record_msgpack(&shelled_plate());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let float = |x: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&x.to_bits().to_be_bytes());
+        bytes
+    };
+    for (was, nows) in [
+        (7.25, [f64::NAN, f64::INFINITY, 3e6]),
+        (1.375, [0.0, -1.375, f64::NAN]),
+    ] {
+        let was = float(was);
+        let at = (raw.windows(was.len()))
+            .position(|window| window == was)
+            .expect("the value is in the record");
+        for now in nows {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&now.to_bits().to_be_bytes());
+            assert!(
+                from_msgpack::<Document>(&changed).is_err(),
+                "{now} was taken"
+            );
+        }
+    }
+}

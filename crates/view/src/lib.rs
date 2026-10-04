@@ -35,6 +35,7 @@ mod projection;
 mod rail;
 mod revolve;
 mod select;
+mod shell;
 mod shortcut;
 mod snap;
 pub mod spline;

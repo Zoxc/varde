@@ -197,7 +197,8 @@ pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sket
         | FeatureKind::Align(_)
         | FeatureKind::Scale(_)
         | FeatureKind::Split(_)
-        | FeatureKind::Chamfer(_) => None,
+        | FeatureKind::Chamfer(_)
+        | FeatureKind::Shell(_) => None,
     }
 }
 

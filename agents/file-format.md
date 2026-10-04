@@ -328,7 +328,13 @@ length and its value in millimetres; two: two lengths, the first along
 each edge's first face; or a length and an angle, as a revolve's,
 `ChamferSize`), whether tangent chains are taken in and `flip` (the
 edges' first faces their second keys', `#[serde(default)]`, false).
-Chamfers are new, so no older record holds one. A
+Chamfers are new, so no older record holds one; or a shell,
+`crates/document/src/shell.rs`: the body's id, the faces it opens (each
+as a sketch's face: a body's id, a face key and a picked point), sorted
+by body, key and point, its thickness (a typed length and its value in
+millimetres) and `outward` (the walls outside the faces,
+`#[serde(default)]`, false). Shells are new, so no older record holds
+one. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -393,6 +399,11 @@ its point finite and within the coordinate limit, and its keys'
 features (if there) before the chamfer, or with ids below the next id;
 its distances lengths as an extrude's, its angle above 0 and under
 90°;
+a shell's body there and made by an earlier feature, its at most 256
+open faces on that body, sorted without repeats, each point finite and
+within the coordinate limit, and each key's feature (if there) before
+the shell, or with an id below the next id; its thickness a length as
+an extrude's;
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

@@ -1,6 +1,7 @@
 //! The planes sketches are drawn on: an origin plane, or a flat face of a
 //! body, and where in the world each is ([`Placement`]).
 
+use std::cmp::Ordering;
 use std::fmt;
 
 use glam::{DVec2, DVec3};
@@ -67,6 +68,18 @@ impl FaceRef {
     /// there.
     pub fn maker(&self) -> FeatureId {
         FeatureId(self.key.feature)
+    }
+
+    /// The order lists of references are kept in (a shell's open
+    /// faces): by body, then the key, then the point's coordinates in
+    /// turn ([`f64::total_cmp`]). `Equal` only for the same reference to
+    /// the bit, which such a list doesn't repeat.
+    pub fn order(&self, other: &FaceRef) -> Ordering {
+        (self.body, self.key)
+            .cmp(&(other.body, other.key))
+            .then_with(|| self.near.x.total_cmp(&other.near.x))
+            .then_with(|| self.near.y.total_cmp(&other.near.y))
+            .then_with(|| self.near.z.total_cmp(&other.near.z))
     }
 
     /// Checks what needs only the reference: its point is finite and

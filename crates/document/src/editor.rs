@@ -692,6 +692,11 @@ impl Editor {
                                 value.pin_units(&ask);
                             }
                         }
+                        FeatureKind::Shell(shell) => {
+                            for (value, ask) in shell.values_mut(&before) {
+                                value.pin_units(&ask);
+                            }
+                        }
                         // No values.
                         FeatureKind::Combine(_)
                         | FeatureKind::Mirror(_)
