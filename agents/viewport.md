@@ -68,7 +68,9 @@ nothing selected), the hints, and the button of the view options menu,
 which opens above it: the Shading and Edges submenus, then Orthographic
 or Perspective, then Mouse hints, without which the bar leaves out the
 hints of the mouse (it leaves them out anyway while it shows a
-selection or a status, to make room), and Hidden edges, without which the viewport leaves
+selection or a status, to make room, but for the step a click takes in
+the tool or operation open, `chrome::step_hint`: "Pick edges", a sketch
+tool's next point, which shows beside the operation's or sketch's status), and Hidden edges, without which the viewport leaves
 out the edges the model hides (`Frame::hidden_edges`). A submenu's item
 (`submenu_item`, showing the icon of the choice made and a chevron)
 opens it to the menu's left as it's hovered or clicked
@@ -142,8 +144,10 @@ its default direction framing the model shown, its bodies and sketches
 times its diagonal, at least 1 mm tall), or on the origin when it shows
 nothing; a document opened jumps there once its first model shows,
 unless the camera was moved meanwhile (`Doc::fit_first_model`), while a
-new design starts on the origin. Panning, zooming and the view
-cube's faces leave it. Its marker (below) shows whole for
+new design starts on the origin. A view cube face looks from its side
+at what Home looks at (the model's middle, or the sketch's in a sketch),
+keeping the zoom. Panning, zooming and the view
+cube's faces leave the pivot. Its marker (below) shows whole for
 `PIVOT_SHOWN` (2 s) once picked and fades over `PIVOT_FADE` (0.4 s),
 which takes frames, and shows whole while the cursor is over the cube,
 fading from when it leaves.

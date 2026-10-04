@@ -22,7 +22,7 @@ use varde_sketch::{
 };
 
 use crate::chrome::{
-    self, Hint, chord_hint, dialog, dialog_button, key_hint, mouse_hint, small_button,
+    self, Hint, chord_hint, dialog, dialog_button, key_hint, mouse_hint, small_button, step_hint,
 };
 use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::{DocumentKeys, Held, Shortcut};
@@ -813,12 +813,24 @@ fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
 
 /// The status bar's hints: what the keys do for what's going on and the
 /// viewport's mouse bindings; under the unsaved changes or delete prompt
-/// only that `Esc` cancels it.
+/// only that `Esc` cancels it, under the name prompt what `Enter` does, if
+/// anything, and that `Esc` cancels it.
 fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     // The unsaved changes and delete prompts take every key but `Esc`,
     // and the viewport behind them nothing.
     if state.overlay == Some(Overlay::UnsavedPrompt) || state.deleting.is_some() {
         return vec![key_hint(Shortcut::ESCAPE, "Cancel")];
+    }
+    // The name prompt's field takes the keys: `Enter` confirms it, as
+    // its button says, unless that's blocked, and `Esc` cancels it.
+    if state.overlay == Some(Overlay::NamePrompt)
+        && let Some(prompt) = &state.naming
+    {
+        let (action, blocked) = name_action(prompt);
+        let enter = (!blocked).then(|| key_hint(Shortcut::ENTER, action));
+        return (enter.into_iter())
+            .chain([key_hint(Shortcut::ESCAPE, "Cancel")])
+            .collect();
     }
     let sketching = state.sketch.is_some();
     let keys: Vec<_> = if state.picking_plane.is_some() {
@@ -826,7 +838,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     } else if let Some(extrude) = &state.extrude {
         let pick = extrude
             .editable
-            .then(|| mouse_hint(MouseButton::Left, "Pick regions"));
+            .then(|| step_hint(MouseButton::Left, "Pick regions"));
         let ok = extrude.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
         [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
             .into_iter()
@@ -838,7 +850,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                 RevolvePick::Regions => "Pick regions",
                 RevolvePick::Axis => "Pick the axis",
             };
-            mouse_hint(MouseButton::Left, what)
+            step_hint(MouseButton::Left, what)
         });
         let ok = revolve.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
         [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
@@ -851,7 +863,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                 crate::CombinePick::Target => "Pick the target",
                 crate::CombinePick::Tools => "Pick tools",
             };
-            mouse_hint(MouseButton::Left, what)
+            step_hint(MouseButton::Left, what)
         });
         let ok = combine.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
         [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
@@ -884,7 +896,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                 (crate::MotionPick::Reference, crate::MotionKind::Mirror) => "Pick the plane",
                 (crate::MotionPick::Reference, _) => "Pick the axis",
             };
-            Some(mouse_hint(MouseButton::Left, what))
+            Some(step_hint(MouseButton::Left, what))
         });
         let pick = pick.flatten();
         let ok = motion.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
@@ -921,7 +933,7 @@ fn measure_hints<'a>(measure: &crate::MeasureState<'a>) -> Vec<Hint<'a>> {
         _ => "Pick A",
     };
     vec![
-        mouse_hint(MouseButton::Left, click),
+        step_hint(MouseButton::Left, click),
         chord_hint(Held::TOGGLE, MouseButton::Left, "Replace B"),
         chrome::double_hint(MouseButton::Left, "Body"),
         key_hint(Shortcut::ESCAPE, "Done"),
@@ -984,7 +996,7 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
         };
         let escape = if picked { "Cancel" } else { "Stop tool" };
         return [
-            Some(mouse_hint(MouseButton::Left, tool.step(sketch.sketch))),
+            Some(step_hint(MouseButton::Left, tool.step(sketch.sketch))),
             done.map(|(key, label)| key_hint(key, label)),
             Some(key_hint(Shortcut::ESCAPE, escape)),
         ]
@@ -1021,7 +1033,7 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
             key_hint(Shortcut::CENTERED, label)
         });
         return [
-            Some(mouse_hint(MouseButton::Left, tool.step(sketch.sketch))),
+            Some(step_hint(MouseButton::Left, tool.step(sketch.sketch))),
             Some(chord_hint(Held::FREE, MouseButton::Left, "Don't snap")),
             values,
             place,
@@ -1045,7 +1057,7 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
             "Select"
         };
         return [
-            Some(mouse_hint(MouseButton::Left, select)),
+            Some(step_hint(MouseButton::Left, select)),
             most_likely,
             Some(key_hint(Shortcut::ESCAPE, "Stop tool")),
         ]
@@ -1109,7 +1121,7 @@ fn dimension_hints<'a>(sketch: &Sketch, tool: &ActiveTool<'a>) -> Vec<Hint<'a>> 
         "Cancel"
     };
     [
-        Some(mouse_hint(MouseButton::Left, tool.step(sketch))),
+        Some(step_hint(MouseButton::Left, tool.step(sketch))),
         switch.map(|label| key_hint(Shortcut::SWITCH_ROUND, label)),
         placing
             .is_some()
@@ -1283,6 +1295,23 @@ fn unsaved_prompt(name: &str) -> Element<'_, Message> {
 /// whole screen like [`unsaved_prompt`]: the name, with `.vrdp` after it,
 /// where to save it if there's a choice, and what's in the way if the
 /// name's taken. `Enter` in the field saves, as the primary button does.
+/// What confirming the name prompt does, its button's label and the
+/// `Enter` key's, and whether it's blocked (it then does nothing):
+/// renaming to a name taken, or keeping in browser storage, which keeps a
+/// design by its name, with none typed.
+fn name_action(prompt: &NamePrompt<'_>) -> (&'static str, bool) {
+    let browser = prompt.place == SavePlace::Browser || prompt.rename;
+    let action = match (prompt.rename, browser, prompt.taken.is_some()) {
+        (true, _, _) => "Rename",
+        (false, false, _) => "Choose file…",
+        (false, true, true) => "Replace",
+        (false, true, false) => "Save",
+    };
+    let blocked =
+        (prompt.rename && prompt.taken.is_some()) || (browser && prompt.name.trim().is_empty());
+    (action, blocked)
+}
+
 fn name_prompt(prompt: NamePrompt<'_>) -> Element<'_, Message> {
     let browser = prompt.place == SavePlace::Browser || prompt.rename;
     let confirm = Message::File(File::ConfirmName);
@@ -1341,15 +1370,12 @@ fn name_prompt(prompt: NamePrompt<'_>) -> Element<'_, Message> {
         ),
         _ => None,
     };
-    let (title, action) = match (prompt.rename, browser, prompt.taken.is_some()) {
-        (true, _, _) => ("Rename design", "Rename"),
-        (false, false, _) => ("Save design as", "Choose file…"),
-        (false, true, true) => ("Save design as", "Replace"),
-        (false, true, false) => ("Save design as", "Save"),
+    let title = if prompt.rename {
+        "Rename design"
+    } else {
+        "Save design as"
     };
-    // Browser storage keeps a design by its name.
-    let blocked =
-        (prompt.rename && prompt.taken.is_some()) || (browser && prompt.name.trim().is_empty());
+    let (action, blocked) = name_action(&prompt);
     dialog(
         column![
             text(title).size(14).font(theme::SEMIBOLD),

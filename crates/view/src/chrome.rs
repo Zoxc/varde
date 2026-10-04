@@ -187,10 +187,13 @@ pub fn small_button(label: &str, emphasis: Emphasis) -> Button<'_, Message> {
 }
 
 /// A status bar hint, and whether it's of the mouse, which the status bar
-/// leaves out with its mouse hints turned off.
+/// leaves out with its mouse hints turned off, and if so whether it's
+/// the step the tool or operation open asks a click for, which shows
+/// beside what's going on (the others make room for it).
 pub struct Hint<'a> {
     pub(crate) element: Element<'a, Message>,
     pub(crate) mouse: bool,
+    pub(crate) step: bool,
 }
 
 /// A status bar hint: `key` does `label`.
@@ -201,6 +204,16 @@ pub fn key_hint<'a>(key: impl Into<KeyName>, label: &'a str) -> Hint<'a> {
 /// A status bar hint: using the mouse `button` does `label`.
 pub fn mouse_hint<'a>(button: MouseButton, label: &'a str) -> Hint<'a> {
     hint(icons::mouse(button), label, true)
+}
+
+/// A status bar hint: clicking the mouse `button` does `label`, the step
+/// the tool or operation open asks for, which the status bar shows beside
+/// what's going on (see [`Hint`]).
+pub fn step_hint<'a>(button: MouseButton, label: &'a str) -> Hint<'a> {
+    Hint {
+        step: true,
+        ..mouse_hint(button, label)
+    }
 }
 
 /// A status bar hint: double-clicking the mouse `button` does `label`.
@@ -230,6 +243,7 @@ fn hint<'a>(input: impl Into<Element<'a, Message>>, label: &'a str, mouse: bool)
             .align_y(Alignment::Center)
             .into(),
         mouse,
+        step: false,
     }
 }
 

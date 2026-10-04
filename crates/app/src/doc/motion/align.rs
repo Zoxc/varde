@@ -53,6 +53,11 @@ pub(crate) struct AlignSetup {
     /// (an undo took their body or a face's maker away), or on a body it
     /// no longer holds: kept, said to be gone, until picked again or back.
     gone: Vec<AlignSlot>,
+    /// The target's references on the body aligned, or on a body a join
+    /// or combine before the align merged into it (one added or redone
+    /// since they were picked): kept, said to be gone, as regenerating
+    /// would refuse them, until picked again or the merge undone.
+    merged: Vec<AlignSlot>,
 }
 
 /// One side of an align as picked: its point, direction and second
@@ -248,6 +253,7 @@ impl AlignSetup {
         }
         self.marks[slot.side.index()][slot.role.index()] = mark;
         self.gone.retain(|&gone| gone != slot);
+        self.merged.retain(|&merged| merged != slot);
     }
 
     /// Takes `slot` out; a point, its rim's axis with it
@@ -259,6 +265,7 @@ impl AlignSetup {
         self.sides[slot.side.index()].clear(slot.role);
         self.marks[slot.side.index()][slot.role.index()] = None;
         self.gone.retain(|&gone| gone != slot);
+        self.merged.retain(|&merged| merged != slot);
     }
 
     /// Takes out what's picked on the moved side on another body than
@@ -283,6 +290,23 @@ impl AlignSetup {
                 self.clear(target);
             }
         }
+    }
+
+    /// Notes the target's references on `body`, the one aligned, or on a
+    /// body `merges` (the merges before the align) merged into it: picked
+    /// on another body, then that merged into the moved one by a join or
+    /// combine added or redone since. Regenerating refuses those, so the
+    /// panel says they're gone ([`AlignSetup::gone`]).
+    fn merged_into(&mut self, body: Option<BodyId>, merges: &Merges) {
+        let held = |on: BodyId| merges.holder(on).unwrap_or(on);
+        self.merged = AlignRole::ALL
+            .into_iter()
+            .map(|role| AlignSlot::new(AlignSide::Target, role))
+            .filter(|&slot| {
+                let on = self.taken(slot).and_then(|taken| taken.body());
+                body.is_some() && on.map(held) == body
+            })
+            .collect();
     }
 
     /// Finds again, by their names, the references not picked or found
@@ -393,6 +417,19 @@ impl AlignSetup {
 
     /// The first reference picked that's gone, the UI mock's words for it.
     fn gone(&self) -> Option<&'static str> {
+        if let Some(slot) = self.merged.first() {
+            return Some(match slot.role {
+                AlignRole::Point => {
+                    "The point it's aligned to is in the body aligned now: pick another"
+                }
+                AlignRole::Primary => {
+                    "The direction it's aligned to is in the body aligned now: pick another"
+                }
+                AlignRole::Secondary => {
+                    "The second direction it's aligned to is in the body aligned now: pick another"
+                }
+            });
+        }
         let slot = self.gone.first()?;
         Some(match (slot.side, slot.role) {
             (AlignSide::Moved, AlignRole::Point) => "The point on the body is gone: pick another",
@@ -495,6 +532,16 @@ impl MotionSession {
         self.align.gone()
     }
 
+    /// Notes the target's references a merge before the align
+    /// (`merges`) put in the body aligned ([`AlignSetup::merged_into`]).
+    pub(super) fn follow_align_merges(&mut self, merges: &Merges) {
+        let body = match &self.bodies[..] {
+            &[body] => Some(body),
+            _ => None,
+        };
+        self.align.merged_into(body, merges);
+    }
+
     /// Notes what `document` no longer takes at feature `index`.
     pub(super) fn prune_align(&mut self, document: &Document, index: usize) {
         self.align.prune(document, index);
@@ -517,6 +564,7 @@ impl Doc {
         }
         session.bodies = vec![body];
         session.align.moved_to(body, &merges);
+        session.follow_align_merges(&merges);
         session.picking = session.align.next();
     }
 
@@ -656,13 +704,16 @@ impl Doc {
         let merged = self.feed.merged_before(document, session.feature);
         let held = merged.holder(body).unwrap_or(body);
         let moved = session.bodies.first().copied();
-        let name = |body: BodyId| (document.body(body)).map_or("the body", |body| &body.name);
         match slot.side {
             // Named on the body holding it at the align, the one moved,
             // as the document wants the moved side's references.
             AlignSide::Moved => {
                 if let Some(moved) = moved.filter(|&moved| moved != held) {
-                    return Err(format!("Pick it on {}, the body aligned", name(moved)).into());
+                    // An undo may have taken the body aligned away.
+                    let Some(body) = document.body(moved) else {
+                        return Err("The body aligned is gone: pick the body to align first".into());
+                    };
+                    return Err(format!("Pick it on {}, the body aligned", body.name).into());
                 }
                 if !super::super::combine::pickable(document, held, session.feature) {
                     return Err(refused(Unnamed::Later, "body"));

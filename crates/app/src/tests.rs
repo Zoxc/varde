@@ -166,6 +166,29 @@ fn home_frames_the_model() {
     assert_eq!(doc.camera.backward(), home.backward());
 }
 
+/// A view cube face looks from its side at what Home looks at, the
+/// model's middle, rather than jumping back to the origin; the zoom stays.
+#[test]
+fn a_view_cube_face_looks_at_the_model_as_home_does() {
+    let (mut doc, requests) = deferred();
+    doc.apply(Command::Replace(Box::new(a_disc_off_the_origin(1.0))));
+    doc.sync();
+    answer(&mut doc, &requests);
+    doc.look(Look::ResetCamera);
+    settle_camera(&mut doc);
+    let home = doc.camera;
+    doc.look(Look::LookFrom(varde_render::View::Front));
+    settle_camera(&mut doc);
+    assert!(
+        doc.camera.target().abs_diff_eq(home.target(), 1e-4),
+        "{:?}",
+        doc.camera
+    );
+    assert!(doc.camera.target().length() > 20.0);
+    assert_eq!(doc.camera.view_height(), home.view_height());
+    assert_ne!(doc.camera.backward(), home.backward());
+}
+
 #[test]
 fn the_pivot_marker_fades_after_it_is_picked_and_shows_over_the_cube() {
     let mut doc = untitled();
@@ -392,6 +415,27 @@ pub(crate) fn screen_texts(doc: &Doc) -> Vec<String> {
     (texts(&mut ui, &renderer).into_iter())
         .map(|text| text.text)
         .collect()
+}
+
+/// The texts of `doc`'s status bar, left to right, at 1280 × 800, light,
+/// with its hints of the mouse if `mouse_hints`.
+pub(crate) fn status_bar_texts(doc: &Doc, mouse_hints: bool) -> Vec<String> {
+    let size = iced::Size::new(1280.0, 800.0);
+    let top = size.height - varde_view::STATUS_BAR_ROOM;
+    let mut renderer = varde_view::probe::renderer();
+    let options = varde_view::ViewOptions {
+        mouse_hints,
+        ..Default::default()
+    };
+    let view = doc.view(false, Mode::Light, options, crate::Offers::default());
+    let mut ui = shown(view, size, &mut renderer);
+    // It floats over the viewport, right of the side panel.
+    let mut bar: Vec<_> = texts(&mut ui, &renderer)
+        .into_iter()
+        .filter(|text| text.bounds.y >= top && text.bounds.x >= varde_view::SIDE_PANEL_WIDTH)
+        .collect();
+    bar.sort_by(|a, b| a.bounds.x.total_cmp(&b.bounds.x));
+    bar.into_iter().map(|text| text.text).collect()
 }
 
 /// Answers the requests waiting, as the lane's messages would.

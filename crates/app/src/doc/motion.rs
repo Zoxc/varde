@@ -1000,6 +1000,10 @@ impl MotionSession {
         }
         // A split's tool body too.
         let tool = self.kind == MotionKind::Split && self.follow_split(merges);
+        // An align's target merged into the body aligned is gone.
+        if self.kind == MotionKind::Align {
+            self.follow_align_merges(merges);
+        }
         moved || tool
     }
 

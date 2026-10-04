@@ -295,7 +295,8 @@ impl Origin {
     }
 }
 
-/// Where Home and the view cube turn the camera to look at: the origin.
+/// Where Home and the view cube turn the camera to look at with nothing
+/// shown: the origin.
 const HOME_TARGET: Vec3 = Vec3::ZERO;
 
 /// The camera Home turns to, framed on the origin.
@@ -909,13 +910,14 @@ impl Doc {
                 let home = self.sketch_camera().unwrap_or_else(|| self.home_view());
                 self.animate_camera(home);
             }
+            // A view cube face looks from its side, the zoom kept, at
+            // what Home looks at: the sketch's middle in a sketch, the
+            // model's outside one.
             Look::LookFrom(view) => {
                 let mut to = self.camera;
                 to.look_from(view);
-                to.set_target(
-                    self.sketch_camera()
-                        .map_or(HOME_TARGET, |home| home.target()),
-                );
+                let home = self.sketch_camera().unwrap_or_else(|| self.home_view());
+                to.set_target(home.target());
                 self.animate_camera(to);
             }
             Look::SetPivot(at) => self.set_pivot(at, Instant::now()),

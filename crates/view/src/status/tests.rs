@@ -80,6 +80,27 @@ fn mouse_hints_show_only_with_no_selection_nor_status() {
     assert!(!pan(true, true));
 }
 
+/// The step a click takes in the tool or operation open shows beside
+/// what's going on and the selection, with the mouse's hints on; the
+/// mouse's other hints make room.
+#[test]
+fn the_step_shows_beside_the_status() {
+    let shows = |mouse_hints: bool| {
+        let status = Status {
+            hints: vec![
+                crate::chrome::step_hint(MouseButton::Left, "Pick edges"),
+                mouse_hint(MouseButton::Right, "Pan"),
+                key_hint(Shortcut::ESCAPE, "Cancel"),
+            ],
+            ..status("Chamfer 1", mouse_hints)
+        };
+        let shown = laid(status, 1000.0);
+        ["Pick edges", "Pan", "Cancel"].map(|text| shown.iter().any(|shown| shown.text == text))
+    };
+    assert_eq!(shows(true), [true, false, true]);
+    assert_eq!(shows(false), [false, false, true]);
+}
+
 #[test]
 fn without_mouse_hints_the_keys_stay() {
     let shown = laid(status("Saving…", false), 1000.0);

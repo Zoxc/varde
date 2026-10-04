@@ -434,6 +434,43 @@ fn a_reference_an_undo_takes_away_is_said_to_be_gone() {
     assert!(plates.doc.motion_ready());
 }
 
+/// With the body aligned taken away by an undo, a moved side's pick on
+/// another body says the body aligned is gone rather than naming it.
+#[test]
+fn a_pick_after_the_body_aligned_is_gone_says_so() {
+    let (mut plates, _, pin) = pin_and_plate();
+    let later = super::later_disc(&mut plates);
+    plates.doc.look(Look::StartAlign);
+    plates.click(later);
+    assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
+    plates.doc.update(Edit::Undo);
+    plates.answer();
+    assert!(shows(&plates, "A picked body is gone"));
+    let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
+    plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
+    assert_eq!(
+        plates.doc.notice.as_deref(),
+        Some("The body aligned is gone: pick the body to align first")
+    );
+}
+
+/// With the mouse's hints on, the status bar hints what a click picks
+/// next beside the session's status; the viewport's own mouse hints make
+/// room for it.
+#[test]
+fn the_status_bar_hints_what_a_click_picks() {
+    let (mut plates, _, pin) = pin_and_plate();
+    plates.doc.look(Look::StartAlign);
+    let bar = crate::tests::status_bar_texts(&plates.doc, true);
+    assert!(bar.iter().any(|text| text == "Pick the body"), "{bar:?}");
+    assert!(!bar.iter().any(|text| text == "Pan"), "{bar:?}");
+    plates.click(pin);
+    let bar = crate::tests::status_bar_texts(&plates.doc, true);
+    assert!(bar.iter().any(|text| text == "Pick the point"), "{bar:?}");
+    let bar = crate::tests::status_bar_texts(&plates.doc, false);
+    assert!(!bar.iter().any(|text| text == "Pick the point"), "{bar:?}");
+}
+
 /// A pin's moved point picked again on its other rim takes that rim's
 /// axis along with it, and taken out takes the axis out too, clicks going
 /// back to it; a hole's rim picked at its centre's dot names what a click
@@ -568,6 +605,44 @@ fn a_target_merged_into_the_body_picked_to_move_is_taken_out() {
         <[crate::doc::motion::align::Side; 2]>::default()
     );
     assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
+}
+
+/// A target picked on another body, then merged into the body aligned
+/// by a combine added after it was picked, is said to be gone, as
+/// regenerating would refuse it: the session isn't ready until the
+/// combine is undone.
+#[test]
+fn a_target_a_later_combine_merges_into_the_moved_body_is_gone() {
+    let mut plates = super::plates();
+    let [_, right, left] = plates.bodies;
+    plates.doc.look(Look::StartAlign);
+    plates.click(left);
+    let other = DVec3::new(-20.0, 0.0, 15.0);
+    let moved_rim = rim(&plates, left, other);
+    plates.click_at(left, Picked::Edge(moved_rim), other + DVec3::X * 5.0);
+    let top = DVec3::new(20.0, 0.0, 15.0);
+    let target_rim = rim(&plates, right, top);
+    plates.click_at(right, Picked::Edge(target_rim), top + DVec3::X * 5.0);
+    assert!(plates.doc.motion_ready());
+    let combine = varde_document::Combine {
+        target: left,
+        tools: vec![right],
+        op: varde_document::BodyOp::Union,
+        keep_tools: false,
+    };
+    let add = plates.doc.editor.document().add_feature(combine.into());
+    plates.doc.apply(add);
+    plates.doc.sync();
+    plates.answer();
+    assert!(plates.doc.motion.is_some());
+    assert!(!plates.doc.motion_ready());
+    assert!(shows(
+        &plates,
+        "The point it's aligned to is in the body aligned now: pick another"
+    ));
+    plates.doc.update(Edit::Undo);
+    plates.answer();
+    assert!(plates.doc.motion_ready());
 }
 
 /// An edited align's references, picked again, are lit and drawn on the

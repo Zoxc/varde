@@ -205,6 +205,34 @@ fn saving_as_a_name_in_use_asks_before_replacing_it() {
     assert_eq!((name.as_str(), overwrite), ("lid.vrdp", false));
 }
 
+/// The hints of the status bar of `varde`'s document, with the mouse's
+/// (what's going on, regenerating, left out).
+fn bar(varde: &Varde) -> Vec<String> {
+    let mut bar = status_bar_texts(document(varde), true);
+    bar.retain(|text| text != "Regenerating…");
+    bar
+}
+
+/// Under the name prompt the status bar shows only what the keys do
+/// there: `Enter` as the dialog's button says (Save, Replace, Choose
+/// file…), left out while it's blocked, and `Esc` cancelling.
+#[test]
+fn the_name_prompt_hints_only_its_keys() {
+    let (mut varde, _requests) = on_the_web();
+    varde.files.browser = vec![listed("bracket.vrdp", DownloadStatus::Never)];
+    file(&mut varde, File::SaveAs);
+    file(&mut varde, File::Name("lid".to_owned()));
+    assert_eq!(bar(&varde), ["Enter", "Save", "Esc", "Cancel"]);
+    // Browser storage keeps a design by its name: none, nothing to do.
+    file(&mut varde, File::Name("  ".to_owned()));
+    assert_eq!(bar(&varde), ["Esc", "Cancel"]);
+    file(&mut varde, File::Name("bracket".to_owned()));
+    file(&mut varde, File::ConfirmName);
+    assert_eq!(bar(&varde), ["Enter", "Replace", "Esc", "Cancel"]);
+    file(&mut varde, File::Place(SavePlace::Computer));
+    assert_eq!(bar(&varde), ["Enter", "Choose file…", "Esc", "Cancel"]);
+}
+
 /// Closing with changes, choosing to save, the dialog asks for a name;
 /// cancelling it stays, as backing out of the system's dialog does.
 #[test]
@@ -391,10 +419,13 @@ fn renaming_a_design_in_browser_storage() {
     varde.files.browser = vec![listed("lid.vrdp", DownloadStatus::Never)];
     file(&mut varde, File::Rename);
     assert_eq!(naming(&varde).as_deref(), Some("bracket"));
+    assert_eq!(bar(&varde), ["Enter", "Rename", "Esc", "Cancel"]);
     file(&mut varde, File::Name("lid".to_owned()));
     file(&mut varde, File::ConfirmName);
-    // Taken: said so, never replaced.
+    // Taken: said so, never replaced; `Enter` does nothing, so isn't
+    // hinted.
     assert!(sent(&requests).is_empty());
+    assert_eq!(bar(&varde), ["Esc", "Cancel"]);
     file(&mut varde, File::ConfirmName);
     assert!(sent(&requests).is_empty());
     file(&mut varde, File::Name("washer".to_owned()));

@@ -2046,7 +2046,9 @@ a cross, an icon toggle and typed fields.
   notice in the status bar, as a move's axis: "Only a corner, a straight
   edge's middle or a round edge's centre can be the point", "Only a flat
   or round face, or a straight or round edge, can give the direction",
-  "Pick it on Body 2, the body aligned", "Pick what it's aligned to on
+  "Pick it on Body 2, the body aligned" (with that body gone, by an
+  undo, "The body aligned is gone: pick the body to align first"),
+  "Pick what it's aligned to on
   another body than the one aligned", `Naming`'s refusals ("Only an edge
   made before the align can be picked", ...), and an out of date model.
   A row's cross takes a reference out (`MotionLook::Clear`), and clicks go
@@ -2084,7 +2086,12 @@ a cross, an icon toggle and typed fields.
   and whether its body is still held decide **gone**: kept, said as the
   mock says a move's axis is ("The point it's aligned to is gone: pick
   another", "The direction on the body is gone: pick another", ...),
-  nothing previewed or committed until picked again or redone.
+  nothing previewed or committed until picked again or redone. A
+  target's reference on a body a join or combine before the align
+  merged into the body aligned (one added or redone since it was
+  picked, `AlignSetup::merged_into`, from `MotionSession::follow`) is
+  gone alike ("The point it's aligned to is in the body aligned now:
+  pick another"), as regenerating would refuse it.
 - **Preview**: the align as set up is the draft while nothing is
   picked; while a reference is picked the model is the history as of
   the feature (a new one sends no draft, an edited one a move of its

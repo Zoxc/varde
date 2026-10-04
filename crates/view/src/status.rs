@@ -45,8 +45,10 @@ pub struct Status<'a> {
     /// What's going on, on one line, cut short where it doesn't fit.
     pub info: Option<Element<'a, Message>>,
     pub hints: Vec<Hint<'a>>,
-    /// Whether the hints of the mouse show: only while there's no
-    /// selection nor what's going on to show, for which they make room.
+    /// Whether the hints of the mouse show: the step the tool or
+    /// operation open asks a click for always, the others only while
+    /// there's no selection nor what's going on to show, for which they
+    /// make room.
     pub mouse_hints: bool,
     /// On the document screen, whether the view options menu is open: its
     /// button ends the bar.
@@ -60,7 +62,8 @@ pub struct Status<'a> {
 ///
 /// The hints and the menu's button show whole: where the bar doesn't fit,
 /// what's going on is cut short first, then the selection. The mouse's
-/// hints show only with neither.
+/// hints, but for the step a click takes in the tool or operation open
+/// ([`crate::chrome::step_hint`]), show only with neither.
 pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
     let Status {
         selection,
@@ -70,10 +73,10 @@ pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
         view_menu,
     } = status;
 
-    let mouse_hints = mouse_hints && selection.is_none() && info.is_none();
+    let room = selection.is_none() && info.is_none();
     let hints: Vec<_> = hints
         .into_iter()
-        .filter(|hint| mouse_hints || !hint.mouse)
+        .filter(|hint| !hint.mouse || (mouse_hints && (room || hint.step)))
         .map(|hint| hint.element)
         .collect();
     let hints = (!hints.is_empty()).then(|| {
