@@ -37,52 +37,22 @@
   --vp-bot: #dfe1e6;
   --line: rgba(20, 30, 40, .11);
   --chip: rgba(20, 30, 40, .07);
-  --edge: #34303f;
+  --edge: #1f2126;
+  /* Around a hovered edge, for contrast: against the edges, light or dark. */
+  --rim: #fff;
+  /* Selected edges, as the app's: the accent a little darker, to show on a
+     selected face's tint; in dark mode a deep teal, apart from the light
+     edges. */
+  --sel-edge: #077e93;
+  /* Under a design's thumbnail: in dark mode a mid tone, so the dark edges
+     of one saved in light mode show as well as the light ones. */
+  --thumb-bg: #eef0f3;
   --wall: #4a4556;
   --through: #e3e5e9;
   --ok: #3d9b35;
   --halo: #f4f4f7;
   --danger: #cf4330;
   --danger-text: #ad2a19;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --accent: #39b9cf;
-    --accent-soft: rgba(57, 185, 207, .16);
-    --fill: #116d7e;
-    --hl: rgba(118, 204, 96, .15);
-    --hl-line: rgba(118, 204, 96, .5);
-    --c-sketch: #39b9cf;
-    --c-solid: #a896d6;
-    --c-cons: #f0a24a;
-    --c-insp: #3fcfbd;
-    --i-sketch: #3cc3d9; --i-mod: #ff7a66; --i-cstr: #b48cff; --i-dim: #a6b2c6;
-    --i-solid: #ef77c2; --i-cons: #f0c43c; --i-insp: #62cf7c; --i-file: #78aaff;
-    --ia-sketch: #ffad33; --ia-mod: #78aaff; --ia-cstr: #ffad33; --ia-dim: #ffad33;
-    --ia-solid: #3fd3bf; --ia-cons: #78aaff; --ia-insp: #ffad33;
-    --logo-a: #7d6bb3;
-    --logo-b: #b3a6dc;
-    --logo-dot: #76d062;
-    --text: #e4e7ea;
-    --muted: #9aa3ac;
-    --faint: #69727c;
-    --desk: radial-gradient(1200px 700px at 15% 10%, #26213a, transparent 60%), radial-gradient(900px 600px at 90% 90%, #1b2a1f, transparent 60%), linear-gradient(135deg, #14151b, #0e1013);
-    --title-bg: #17181d;
-    --panel: #212228;
-    --tabstrip: #1b1c21;
-    --vp-top: #2b2c32;
-    --vp-bot: #1a1b1f;
-    --line: rgba(255, 255, 255, .08);
-    --chip: rgba(255, 255, 255, .08);
-    --edge: #0e0d12;
-    --wall: #221f29;
-    --through: #1f2024;
-    --ok: #5cc052;
-    --halo: #24252b;
-    --danger: #f07563;
-  --danger-text: #f58a7a;
-    --danger-text: #f58a7a;
-  }
 }
 :root[data-theme="dark"] {
   --accent: #39b9cf;
@@ -112,12 +82,16 @@
   --vp-bot: #1a1b1f;
   --line: rgba(255, 255, 255, .08);
   --chip: rgba(255, 255, 255, .08);
-  --edge: #0e0d12;
+  --edge: #b5b2bd;
+  --rim: #0e0d12;
+  --sel-edge: #227a89;
+  --thumb-bg: #45474f;
   --wall: #221f29;
   --through: #1f2024;
   --ok: #5cc052;
   --halo: #24252b;
   --danger: #f07563;
+  --danger-text: #f58a7a;
 }
 
 * { box-sizing: border-box; }
@@ -452,12 +426,12 @@ kbd {
 .thru { fill: var(--through); }
 .face:hover { fill: var(--fh); }
 .hole:hover .wall { fill: #4f7a45; }
-.face.sel { fill: var(--fs); stroke: var(--accent); }
+.face.sel { fill: var(--fs); stroke: var(--sel-edge); }
 /* A curved face's facets: no lines between them, and lit whole, not facet by
    facet (they're the body's, with no face of their own to pick). */
 .face.smooth, .face.smooth:hover { fill: var(--f); stroke: var(--f); }
 .face.sel.smooth { fill: var(--fs); stroke: var(--fs); }
-.hole.sel .wall { fill: #2c6571; stroke: var(--accent); }
+.hole.sel .wall { fill: #2c6571; stroke: var(--sel-edge); }
 .hole { cursor: pointer; }
 .tangent { stroke: var(--edge); opacity: .3; vector-effect: non-scaling-stroke; }
 .ghost { opacity: .3; pointer-events: none; }

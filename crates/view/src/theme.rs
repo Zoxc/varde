@@ -79,6 +79,10 @@ pub struct Palette {
     pub line: Color,
     /// Outlines drawn over the viewport, like the view cube's.
     pub edge: Color,
+    /// Behind a design's thumbnail on its card: in dark mode a mid tone,
+    /// so the dark edges of one saved in light mode show as well as the
+    /// light ones of one saved in dark mode.
+    pub thumbnail: Color,
     /// Key chip background.
     pub chip: Color,
     pub ok: Color,
@@ -154,7 +158,6 @@ const AXES: [Srgb; 3] = [
     Srgb([0.35, 0.63, 0.31]),
     Srgb([0.25, 0.45, 0.77]),
 ];
-const FEATURE_EDGE: Srgb = Srgb([0.12, 0.13, 0.15]);
 const GRID: Srgb = Srgb([0.45, 0.49, 0.54]);
 const ORIGIN_OUTLINE: Srgb = Srgb([0.2, 0.22, 0.25]);
 /// The model behind a sketch being edited: the mock's ghosted model.
@@ -334,7 +337,8 @@ const LIGHT: Palette = Palette {
     muted: color!(0x6c747d),
     faint: color!(0x9aa2ab),
     line: color!(0x141e28, 0.11),
-    edge: color!(0x34303f),
+    edge: color!(0x1f2126),
+    thumbnail: color!(0xeef0f3),
     chip: color!(0x141e28, 0.07),
     ok: color!(0x3d9b35),
     danger: color!(0xe0564b),
@@ -349,10 +353,10 @@ const LIGHT: Palette = Palette {
     scene: Colors {
         background_top: srgb(color!(0xf7f7f9)),
         background_bottom: srgb(color!(0xdfe1e6)),
-        // hsl(258 16% 84%): the viewport's lighting spans roughly the
-        // mock's 54-87% lightness with this base.
+        // hsl(258 16% 84%), the mock's.
         model: srgb(color!(0xd4d0dd)),
-        edge: FEATURE_EDGE,
+        contrast: 1.2,
+        edge: Srgb([0.12, 0.13, 0.15]),
         grid: GRID,
         axes: AXES,
         origin_outline: ORIGIN_OUTLINE,
@@ -411,7 +415,8 @@ const DARK: Palette = Palette {
     muted: color!(0x9aa3ac),
     faint: color!(0x69727c),
     line: color!(0xffffff, 0.08),
-    edge: color!(0x0e0d12),
+    edge: color!(0xb5b2bd),
+    thumbnail: color!(0x45474f),
     chip: color!(0xffffff, 0.08),
     ok: color!(0x5cc052),
     // Lighter than the light palette's, to read on the dark panel.
@@ -427,9 +432,12 @@ const DARK: Palette = Palette {
     scene: Colors {
         background_top: srgb(color!(0x2b2c32)),
         background_bottom: srgb(color!(0x1a1b1f)),
-        // hsl(258 12% 59%), for the mock's 30-62% lightness.
-        model: srgb(color!(0x918aa3)),
-        edge: FEATURE_EDGE,
+        // hsl(258 12% 44%), the mock's.
+        model: srgb(color!(0x6b637e)),
+        // More than the light theme's, for the darker faces.
+        contrast: 1.6,
+        // Light, to show on the dark background and apart from the faces.
+        edge: srgb(color!(0xb5b2bd)),
         grid: GRID,
         axes: AXES,
         origin_outline: ORIGIN_OUTLINE,
@@ -438,14 +446,17 @@ const DARK: Palette = Palette {
         sketch: srgb(DARK_SKETCH),
         faded_alpha: FADED_ALPHA,
         hidden_edge_alpha: HIDDEN_EDGE_ALPHA,
-        // Neutral, lighter than the model.
-        hover_face: srgb(color!(0xbababa)),
-        hover_outline: srgb(color!(0xffffff)),
+        // The model 8% of the way to white, in linear light: a faint lift.
+        hover_face: srgb(color!(0x807a8e)),
+        // Near black: around the light edges, as white is around the
+        // light palette's dark ones.
+        hover_outline: srgb(color!(0x0e0d12)),
         // The accent.
         selected: srgb(color!(0x39b9cf)),
         selected_tint: 0.6,
-        // Lighter than a selected face's tint, to show on it.
-        selected_edge_shade: 0.85,
+        // A deep teal, darker than a selected face's tint to show on it,
+        // and apart from the light edges.
+        selected_edge_shade: -0.6,
         second: srgb(DARK_CONSTRUCTION),
         error: srgb(ERROR),
         error_halo: ERROR_HALO,
@@ -1252,7 +1263,7 @@ pub fn card_thumbnail(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
         border: border::rounded(border::top(CARD_RADIUS - 1.0)),
-        ..filled(p.tabstrip, p.text)
+        ..filled(p.thumbnail, p.text)
     }
 }
 

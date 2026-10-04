@@ -186,16 +186,41 @@ const zc = z => (u, v) => [u, v, z];
 const xc = x => (u, v) => [x, u, v];
 
 // ---------------------------------------------------------------- solids
-// Lit face colour, plus the selected and hovered variants, which keep the
-// shading and only swap the hue so a selected face still reads as 3D.
+// An sRGB channel, 0-1, to linear light and back, and a hex colour's channels.
+const toLin = c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const toSrgb = c => c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055;
+const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+// The app's regular shading (`shaded` in crates/render/src/shaders/scene.wgsl)
+// of a face with normal n in base colour `base` (sRGB, 0-1), seen along d, in
+// linear light, its light spread from its middle (0.8) by contrast `c`.
+function litLin(n, d, base, c) {
+  const key = norm([0.4, -0.6, 1]), t = n[2] * 0.5 + 0.5;
+  const ambient = [0.42 + 0.13 * t, 0.42 + 0.15 * t, 0.44 + 0.16 * t];
+  const diffuse = Math.max(dot(n, key), 0) * 0.30 + Math.max(dot(n, d), 0) * 0.25;
+  const spec = Math.max(dot(n, norm(add(key, d))), 0) ** 32 * 0.15 * c;
+  return base.map((b, i) => toLin(b) * Math.max(0, 0.8 + (ambient[i] + diffuse - 0.8) * c) + spec);
+}
+const enc = lin => `rgb(${lin.map(c => (toSrgb(clamp(c, 0, 1)) * 255).toFixed(0)).join(' ')})`;
+// The palettes' scene colours (crates/view/src/theme.rs): the model's, its
+// shading's contrast, the accent a selected face is tinted towards and how
+// far, and how far a hovered face is towards white (the app's hover_face).
+// The error and construction colours tint what a cut or an intersect being
+// set up takes away or keeps.
+const LOOK = {
+  light: { model: hexRgb('#d4d0dd'), contrast: 1.2, accent: hexRgb('#0a95ad'), tint: 0.3, hover: 0.7, x: hexRgb('#e0564b'), a: hexRgb('#e0861a') },
+  dark: { model: hexRgb('#6b637e'), contrast: 1.6, accent: hexRgb('#39b9cf'), tint: 0.6, hover: 0.08, x: hexRgb('#e0564b'), a: hexRgb('#f0a24a') },
+};
+
+// A face's colour lit as the app lights it, plus the selected and hovered
+// variants: a selected face is the accent, lit, blended over it as the app
+// draws it (in linear light), a hovered one white, lit, likewise.
 function shade(n, pr, dark) {
-  const i = Math.max(0, dot(n, pr.light));
-  const L = dark ? 30 + 32 * i : 54 + 33 * i;
-  const l = (h, s, dl = 0) => `hsl(${h} ${s}% ${(L + dl).toFixed(1)}%)`;
-  // x and a tint what a cut or an intersect being set up takes away or keeps.
-  return dark
-    ? { f: l(258, 9), s: l(188, 42, 2), h: l(110, 26, 2), x: l(6, 46, 2), a: l(36, 52, 2) }
-    : { f: l(258, 11), s: l(188, 52, -2), h: l(110, 34, 0), x: l(6, 62, -4), a: l(36, 72, -4) };
+  const look = LOOK[dark ? 'dark' : 'light'], lit = base => litLin(n, pr.d, base, look.contrast), m = lit(look.model);
+  const over = (top, t) => enc(m.map((c, i) => c + (top[i] - c) * t));
+  return {
+    f: enc(m), s: over(lit(look.accent), look.tint), h: over(lit([1, 1, 1]), look.hover),
+    x: over(lit(look.x), 0.5), a: over(lit(look.a), 0.5),
+  };
 }
 
 let uid = 0;
@@ -1230,13 +1255,12 @@ function toast(msg) {
 
 // The theme chosen, as its button shows it: its icon and what it says.
 function themeSaid() {
-  const t = root.dataset.theme;
-  return t === 'light' ? ['sun', 'Theme: Light'] : t === 'dark' ? ['moon', 'Theme: Dark'] : ['contrast', 'Theme: System'];
+  return isDark() ? ['moon', 'Theme: Dark'] : ['sun', 'Theme: Light'];
 }
 
+// Always light or dark: the mock has no theme following the system's.
 function isDark() {
-  const t = root.dataset.theme;
-  return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  return root.dataset.theme === 'dark';
 }
 
 function act(a) {
@@ -1249,13 +1273,7 @@ function act(a) {
     case 'open': go('model.html', v); return;
     case 'home': go('welcome.html'); return;
     case 'menu': st.menu = !st.menu; break;
-    // System, then Light, then Dark, as the app goes.
-    case 'theme': {
-      const next = { undefined: 'light', light: 'dark', dark: undefined }[root.dataset.theme];
-      if (next) root.dataset.theme = next;
-      else delete root.dataset.theme;
-      break;
-    }
+    case 'theme': root.dataset.theme = isDark() ? 'light' : 'dark'; break;
     case 'help': st.help = !st.help; break;
     case 'toast': toast(v); return;
     case 'platform': st.web = v === 'web'; keepFlags(); break;
@@ -1412,7 +1430,6 @@ document.addEventListener('keyup', e => {
   render();
 });
 window.addEventListener('blur', () => { if (st.alt) { st.alt = false; render(); } });
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
 addEventListener('resize', render);
 // Following a link to this page with another hash starts it afresh.
 addEventListener('hashchange', () => location.reload());
@@ -1468,8 +1485,9 @@ function mockNav() {
 const PAGES = [['welcome', 'Welcome', 'welcome.html', ''], ['model', 'Model', 'model.html', 'bracket'], ['sketch', 'Sketch', 'sketch.html', 's1']];
 function start(current) {
   if (flag('still')) root.classList.add('still');
-  if (flag('dark')) root.dataset.theme = 'dark';
-  if (flag('light')) root.dataset.theme = 'light';
+  // Light or dark as the hash says, else as the system is to start with.
+  root.dataset.theme = flag('dark') ? 'dark' : flag('light') ? 'light'
+    : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   if (flag('persp')) st.persp = true;
   if (flag('projmenu')) st.projMenu = true;
   if (flag('nomouse')) st.mouseHints = false;

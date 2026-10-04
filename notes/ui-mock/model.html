@@ -51,9 +51,12 @@
 .rgn.on { fill-opacity: .38; stroke-opacity: 1; stroke-width: 1.8; }
 .opl .hit { stroke: transparent; stroke-width: 11; fill: none; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
 .opl .vis { fill: none; vector-effect: non-scaling-stroke; pointer-events: none; }
+.edc .rim { fill: none; stroke: var(--rim); stroke-width: 6; stroke-opacity: 0; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: none; }
+.edc:hover .rim { stroke-opacity: 1; }
 .edc .vis { stroke: var(--hl-line); stroke-width: 3; stroke-opacity: 0; stroke-linecap: round; }
 .edc:hover .vis { stroke-opacity: 1; }
-.edc.on .vis { stroke: var(--accent); stroke-opacity: 1; }
+.edc.on .rim { stroke-opacity: .5; stroke-width: 5; }
+.edc.on .vis { stroke: var(--sel-edge); stroke-opacity: 1; }
 .axc .vis { stroke: var(--ax); stroke-width: 1.4; stroke-dasharray: 5 3; opacity: .7; }
 .axc:hover .vis { stroke-width: 2.6; opacity: 1; }
 .axc.on .vis { stroke-width: 2.6; stroke-dasharray: none; opacity: 1; }
@@ -425,7 +428,7 @@ function edgesSvg(edges, picked, straightOnly = false) {
     const on = picked.includes(e.id);
     if (!on && !e.sides.some(s => proj.facing(s.f.n, s.f.p[0]))) continue;
     const shape = cls => e.rim ? `<polygon class="${cls}" points="${pts(e.rim)}"/>` : lineP(e.a, e.b, cls);
-    out += `<g class="edc${on ? ' on' : ''}" data-pick="edge:${e.id}"><title>${e.label}</title>${shape('hit')}${shape('vis')}</g>`;
+    out += `<g class="edc${on ? ' on' : ''}" data-pick="edge:${e.id}"><title>${e.label}</title>${shape('hit')}${shape('rim')}${shape('vis')}</g>`;
   }
   return out;
 }
@@ -1258,6 +1261,15 @@ const SHOTS = {
     const t = st.doc.timeline.find(t => t.id === 'r1'), all = new Set(st.doc.timeline.map(t => t.id));
     const r = OPS.revolve.check({ kind: 'revolve', ...t.params }, ctxOf(bodiesAt(all), all));
     st.doc.extra.push({ id: 'r1:0', feat: 'r1', name: 'Post', faces: r.rs.flatMap(g => revolveFaces(g.pts, r.axis, r.span)) });
+    // A plain cylinder, to see how a curved face shades.
+    const [cx, cy, cr, ch, n] = [-25, -40, 14, 36, 32], cyl = [];
+    for (let i = 0; i < n; i++) {
+      const a0 = i / n * 2 * Math.PI, a1 = (i + 1) / n * 2 * Math.PI, am = (a0 + a1) / 2;
+      const at = (a, z) => [cx + cr * Math.cos(a), cy + cr * Math.sin(a), z];
+      cyl.push({ smooth: true, n: [Math.cos(am), Math.sin(am), 0], p: [at(a0, 0), at(a1, 0), at(a1, ch), at(a0, ch)] });
+    }
+    cyl.push({ n: [0, 0, 1], p: circ(zc(ch), cx, cy, cr, n) }, { n: [0, 0, -1], p: circ(zc(0), cx, cy, cr, n).reverse() });
+    st.doc.extra.push({ id: 'cyl', name: 'Cylinder', faces: cyl });
   }
   if (view === 'face') st.sel = { kind: 'face', id: 'base-top' };
   if (view === 'body') st.sel = { kind: 'body', id: 'body' };

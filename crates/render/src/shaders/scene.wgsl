@@ -323,8 +323,12 @@ const SHADING_FLAT: f32 = 1.0;
 const SHADING_METAL: f32 = 2.0;
 const SHADING_FLAT_METAL: f32 = 3.0;
 
+// About the middle of the light the regular shading gives a face, which
+// `Colors::contrast` spreads it from.
+const LIGHT_MIDDLE: f32 = 0.8;
+
 // The face at `in` of colour `base` lit as `u.viewport_origin.z` says: by
-// default bright, low contrast shading; flat, each triangle lit by its own
+// default bright, low contrast shading (as `Colors::contrast` spreads it); flat, each triangle lit by its own
 // plane's normal, so the tessellation shows; as polished metal (see
 // `metal`); or as metal lit flat. A back face, drawn only for a part less
 // than opaque, is lit as seen from inside.
@@ -350,8 +354,12 @@ fn shaded(in: MeshOut, front: bool, base: vec3<f32>) -> vec3<f32> {
     }
     let ambient = mix(vec3<f32>(0.42, 0.42, 0.44), vec3<f32>(0.55, 0.57, 0.60), n.z * 0.5 + 0.5);
     let diffuse = max(dot(n, key), 0.0) * 0.30 + max(dot(n, view), 0.0) * 0.25;
-    let spec = pow(max(dot(n, normalize(key + view)), 0.0), 32.0) * 0.15;
-    return base * (ambient + diffuse) + spec;
+    // `Colors::contrast`: the light spread from its middle, LIGHT_MIDDLE,
+    // and the highlight with it.
+    let contrast = u.viewport_origin.w;
+    let light = max(vec3<f32>(LIGHT_MIDDLE) + (ambient + diffuse - LIGHT_MIDDLE) * contrast, vec3<f32>(0.0));
+    let spec = pow(max(dot(n, normalize(key + view)), 0.0), 32.0) * 0.15 * contrast;
+    return base * light + spec;
 }
 
 // Normal `n` as polished metal of colour `base`, reflecting a studio fixed
@@ -890,17 +898,18 @@ fn vs_outline(in: EdgeIn) -> LineOut {
     return out;
 }
 
-// How opaque the white rim around the selected edges and vertices is.
+// How opaque the rim around the selected edges and vertices is, in the
+// hover's rim colour.
 const SELECTED_RIM_ALPHA: f32 = 0.5;
 
 // The rim around the selected edges: SELECTED_RIM wide either side of
-// their SELECTED_EDGE_WIDTH, white at SELECTED_RIM_ALPHA, for contrast
-// with what's behind them; hollow, as the hover's is.
+// their SELECTED_EDGE_WIDTH, `u.hover_outline` at SELECTED_RIM_ALPHA, for
+// contrast with what's behind them; hollow, as the hover's is.
 @vertex
 fn vs_selected_outline(in: EdgeIn) -> LineOut {
     let core = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
     let half = core + SELECTED_RIM * u.viewport.z;
-    var out = highlight_segment(in, half, vec4<f32>(1.0, 1.0, 1.0, SELECTED_RIM_ALPHA));
+    var out = highlight_segment(in, half, vec4<f32>(u.hover_outline.rgb, SELECTED_RIM_ALPHA));
     out.style.w = core;
     return out;
 }
@@ -910,7 +919,7 @@ fn vs_selected_outline(in: EdgeIn) -> LineOut {
 fn vs_second_outline(in: EdgeIn) -> LineOut {
     let core = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
     let half = core + SELECTED_RIM * u.viewport.z;
-    var out = highlight_segment(in, half, vec4<f32>(1.0, 1.0, 1.0, SELECTED_RIM_ALPHA));
+    var out = highlight_segment(in, half, vec4<f32>(u.hover_outline.rgb, SELECTED_RIM_ALPHA));
     out.style.w = core;
     return out;
 }
@@ -1355,7 +1364,7 @@ fn vs_vertex(
     out.center = center;
     out.size = vec2<f32>(radius, rim);
     let edge = vec4<f32>(u.edge.rgb, 1.0);
-    let selected_rim = vec4<f32>(1.0, 1.0, 1.0, SELECTED_RIM_ALPHA);
+    let selected_rim = vec4<f32>(u.hover_outline.rgb, SELECTED_RIM_ALPHA);
     out.rim = select(select(edge, selected_rim, selected), vec4<f32>(u.hover_outline.rgb, 1.0),
         hovered);
     out.fill = select(edge, selected_edge(), selected);

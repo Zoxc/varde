@@ -406,7 +406,10 @@ Shading. `shaded` in the shader lights every face draw (the model, faded
 or not, the glass, the hovered and selected faces) as `Frame::shading`
 says, its `Shading::code` in the uniforms' `viewport_origin.z`, as the
 uniforms have no room for another vector. Regular is bright and low
-contrast, smooth across a face by its interpolated normals. Flat (and
+contrast, smooth across a face by its interpolated normals, its light
+spread from its middle (`LIGHT_MIDDLE`, 0.8) by `Colors::contrast`, in
+`viewport_origin.w` (the light theme's 1.2, the dark's 1.6, for its
+darker faces); so is Flat's, not the metals'. Flat (and
 Flat metal) lights
 each triangle by its own plane's normal, from the derivatives of the
 world position (worked out whatever the shading, as derivatives need
@@ -1031,8 +1034,9 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   drawn again `HOVERED_EDGE_WIDTH` (2.5 logical pixels) wide in the
   edges' colour, opaque whatever its part's alpha (`vs_hovered_edge`),
   within a rim `HOVER_RIM` (1.5) wide either side of it in
-  `Colors::hover_outline` (`vs_outline`), white, brighter than the lit
-  faces. The rim is hollow: its coverage is a line `HOVER_RIM` wider
+  `Colors::hover_outline` (`vs_outline`), apart from the edges: white
+  in the light theme, around its dark edges, near black in the dark,
+  around its light ones. The rim is hollow: its coverage is a line `HOVER_RIM` wider
   than the hovered edge less the edge's own (`style.w` in `fs_line`),
   drawn before the edge. The hover's and the selection's lines and
   vertices (`fs_highlight_line`, `fs_highlight_point`) write their
@@ -1053,15 +1057,16 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   between them, so an edge both outlined and selected isn't joined to
   itself), `SELECTED_EDGE_WIDTH` (2.5) wide in the accent shaded by
   `Colors::selected_edge_shade` towards black or white (a little darker
-  in the light theme, over a light face tint; much lighter in the dark),
+  in the light theme, over a light face tint; a deep teal in the dark,
+  apart from its light edges),
   so it shows on a selected face's tint (`vs_selected_edge`,
   `selected_edge`), over the outline, within a hollow rim `SELECTED_RIM`
-  (1 logical pixel) wide either side in white at half alpha
-  (`vs_selected_outline`), for contrast with what's behind it.
+  (1 logical pixel) wide either side in `Colors::hover_outline` at half
+  alpha (`vs_selected_outline`), for contrast with what's behind it.
 - Edges in the second colour (`Highlights::second_edges`, the measure
   tool's B): a third range after the selected, drawn as those are but
   in `Colors::second` unshaded (the dark theme's shade, far towards
-  white, would wash it out) (`vs_second_outline`, `vs_second_edge`); its faces (`Frame::second_faces`) are tinted as
+  black, would muddy it) (`vs_second_outline`, `vs_second_edge`); its faces (`Frame::second_faces`) are tinted as
   selected faces are, in it (`fs_second_face`), after them.
 - Vertices: only those hovered or selected, an instance each
   (`VertexInstance`: position and flags), drawn as a sketch point is
@@ -1069,7 +1074,8 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   (3.5 logical pixels) within a rim, depth tested at its centre's pulled
   depth. Hovered, the disc is in the edge colour, its rim `HOVER_RIM`
   wide in `hover_outline`; selected, it's filled with the selected
-  edges' colour, within the selected edges' faint white rim, or the
+  edges' colour, within the selected edges' faint rim (`hover_outline`
+  at half opacity), or the
   hover's if it's hovered too.
 
 **Error geometry** (`Frame::errors`, a slice of `ErrorParts`: a failure's

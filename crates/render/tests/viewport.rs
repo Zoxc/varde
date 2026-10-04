@@ -21,6 +21,7 @@ const COLORS: Colors = Colors {
     background_top: Srgb([0.0; 3]),
     background_bottom: Srgb([0.0; 3]),
     model: Srgb([0.5; 3]),
+    contrast: 1.0,
     edge: Srgb([0.12, 0.13, 0.15]),
     grid: Srgb([0.45, 0.49, 0.54]),
     axes: [
@@ -1920,6 +1921,7 @@ fn triangle_edges_show_only_in_a_tessellation_wireframe() {
             // much as it covers.
             colors: Some(Colors {
                 model: Srgb([0.0; 3]),
+                contrast: 1.0,
                 edge: Srgb([1.0, 1.0, 0.0]),
                 ..COLORS
             }),

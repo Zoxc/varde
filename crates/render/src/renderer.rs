@@ -70,8 +70,9 @@ pub const HOVERED_EDGE_WIDTH: f32 = 2.5;
 /// [`Highlights::outlined`].
 pub const HOVER_RIM: f32 = 1.5;
 
-/// How wide the faint white rim around the selected edges and vertices
-/// is, in logical pixels, for contrast with what's behind them.
+/// How wide the faint rim around the selected edges and vertices is, in
+/// logical pixels, for contrast with what's behind them: in
+/// [`Colors::hover_outline`], translucent.
 pub const SELECTED_RIM: f32 = 1.0;
 
 /// How wide the selected edges are drawn, in logical pixels, over their
@@ -280,6 +281,12 @@ pub struct Colors {
     pub background_bottom: Srgb,
     /// Base colour of model faces, before lighting.
     pub model: Srgb,
+    /// How far the light on the faces is spread from its middle, as a
+    /// share of the regular shading's own (1): higher has faces turned to
+    /// the light brighter and the rest darker, 0 lights them all alike.
+    /// Regular and flat [`Shading`] only, not metal. Out of range (0 to 4)
+    /// or NaN is 1.
+    pub contrast: f32,
     /// Feature edges, drawn over the faces [`EDGE_WIDTH`] wide.
     pub edge: Srgb,
     /// Grid lines.
@@ -302,8 +309,10 @@ pub struct Colors {
     /// The hovered faces' colour, before lighting: brighter than
     /// [`Self::model`]. See [`Frame::hovered_faces`].
     pub hover_face: Srgb,
-    /// The rim around the hovered edges and vertex, bright for contrast:
-    /// see [`HOVER_RIM`].
+    /// The rim around the hovered edges and vertex, for contrast with
+    /// them and what's behind them: see [`HOVER_RIM`]. The selected
+    /// edges' and vertices' rim is in it too, translucent: see
+    /// [`SELECTED_RIM`].
     pub hover_outline: Srgb,
     /// The accent: selected faces are tinted with it, by
     /// [`Self::selected_tint`], selected edges and vertices drawn in it,
@@ -358,7 +367,7 @@ struct Uniforms {
     viewport: [f32; 4],
     /// xy: the viewport's top left corner on the target, in physical
     /// pixels, where fragment positions count from; z: [`Frame::shading`]
-    /// ([`Shading::code`]); w unused.
+    /// ([`Shading::code`]); w: [`Colors::contrast`].
     viewport_origin: [f32; 4],
     /// [`Colors`], converted to linear with w = 1, except `model`, whose
     /// w is how opaque the model is, and `edge`, whose w is
@@ -1718,6 +1727,11 @@ impl Renderer {
         } else {
             0.0
         };
+        let contrast = if (0.0..=4.0).contains(&colors.contrast) {
+            colors.contrast
+        } else {
+            1.0
+        };
         let hidden_alpha = if (0.0..=1.0).contains(&colors.hidden_edge_alpha) {
             colors.hidden_edge_alpha
         } else {
@@ -1742,7 +1756,7 @@ impl Renderer {
                 frame.viewport.x,
                 frame.viewport.y,
                 frame.shading.code(),
-                0.0,
+                contrast,
             ],
             background_top: linear(colors.background_top),
             background_bottom: linear(colors.background_bottom),
