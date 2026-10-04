@@ -426,6 +426,16 @@ impl MeshFeed {
             && (self.drafted.as_ref()).is_some_and(|drafted| drafted.revision >= self.run)
     }
 
+    /// Whether the model shown is of a draft of the current run of drafts
+    /// asked for, while one is: not one of a draft since let go of, nor
+    /// the document's alone.
+    pub(crate) fn shows_draft_of_run(&self) -> bool {
+        self.draft.is_some()
+            && (self.shown)
+                .and_then(|shown| shown.draft)
+                .is_some_and(|revision| revision >= self.run)
+    }
+
     /// Where the newest draft answered of the current run of drafts found
     /// its axis or plane, a move's or a mirror's, if it did
     /// ([`Drafted::reference`]): a point on it and its direction (a

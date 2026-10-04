@@ -262,6 +262,33 @@ fn the_types_flip_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     assert!(plates.doc.blend_lit().is_empty(), "cut off");
     // Its row stays, unmeasured.
     assert!(shows(&plates, "Edge 1") && !shows(&plates, "60 mm"));
+    // The edges round the cut, made by the chamfer itself, neither light
+    // nor are taken, however quickly clicked.
+    let cut = plates.face(plate, |summary| {
+        matches!(*summary, Summary::Plane { n, .. } if DVec3::from(n).distance(slope) < 1e-9)
+    });
+    let index = plates.doc.feed.pick_index();
+    let rims: Vec<u32> = (0..index.mesh().edge_count() as u32)
+        .filter(|&edge| {
+            index
+                .edge_faces(edge)
+                .is_some_and(|faces| faces.contains(&cut))
+        })
+        .collect();
+    assert!(!rims.is_empty());
+    for rim in rims {
+        let pick = Pick {
+            target: Picked::Edge(rim),
+            ..edge_pick(&plates, plate, BACK)
+        };
+        assert!(!plates.doc.takes_reference(pick));
+        plates.doc.look(Look::ClickModel {
+            pick: Some(pick),
+            add: false,
+            double: false,
+        });
+        assert_eq!(edges(&plates).len(), 1);
+    }
 
     plates.motion(MotionLook::ChamferType(ChamferType::Two));
     for text in ["Distance 1", "Distance 2", "Flip sides"] {
@@ -647,4 +674,71 @@ fn a_tangent_chain_lights_whole_and_a_click_on_it_takes_its_edge_out() {
         double: false,
     });
     assert!(edges(&plates).is_empty());
+}
+
+/// Right after a move set up to lift the plate is cancelled, the model
+/// shown is still its preview: an edge clicked there is refused as out
+/// of date (its point would be the lifted one) and doesn't light; once
+/// the document's model shows, it's picked where it is.
+#[test]
+fn a_chamfer_s_edges_wait_for_another_session_s_preview_to_go() {
+    let (mut plates, plate) = plate();
+    plates.doc.look(Look::StartMove);
+    plates.input(MotionField::Offset(varde_document::Axis3::Z), "100");
+    plates.answer();
+    plates.motion(MotionLook::Cancel);
+    plates.doc.look(Look::StartChamfer);
+    let up = ([-30.0, 20.0, 110.0], [30.0, 20.0, 110.0]);
+    let pick = edge_pick(&plates, plate, up);
+    assert!(!plates.doc.takes_reference(pick));
+    click_edge(&mut plates, plate, up);
+    assert!(edges(&plates).is_empty(), "refused");
+    assert!(shows(&plates, "out of date"));
+    plates.answer();
+    assert!(straight(&plates, plate, up.0, up.1).is_none());
+    click_edge(&mut plates, plate, BACK);
+    let picked = edges(&plates);
+    assert_eq!(picked.len(), 1);
+    assert_eq!(picked[0].near.z, 10.0);
+}
+
+/// At 1280 px wide everything on the toolbar shows whole, apart: the
+/// model's operations (Chamfer among them, Mirror on the rail as the
+/// mock's bar has it), and in a session Cancel and the origins it picks
+/// rather than the operations, as the mock's.
+#[test]
+fn the_toolbar_fits_at_1280_px() {
+    use crate::tests::{shown, texts};
+    use varde_view::Mode;
+    let (mut plates, _) = plate();
+    let fits = |plates: &Plates| {
+        let mut renderer = varde_view::probe::renderer();
+        let size = iced::Size::new(1280.0, 800.0);
+        let mut ui = shown(plates.doc.view_in(Mode::Light), size, &mut renderer);
+        let mut on: Vec<_> = (texts(&mut ui, &renderer).into_iter())
+            .filter(|t| t.bounds.y < 40.0)
+            .collect();
+        on.sort_by(|a, b| a.bounds.x.total_cmp(&b.bounds.x));
+        let mut end = 0.0;
+        for t in &on {
+            assert!(t.bounds.width > 2.0, "{} squeezed: {on:?}", t.text);
+            assert!(t.bounds.x >= end, "{} overlaps: {on:?}", t.text);
+            end = t.bounds.x + t.bounds.width;
+        }
+        // Undo, Redo, a rule and the theme's button (28, 28, 9 and 28
+        // px, with the gaps) are right of them, all whole.
+        assert!(end < 1280.0 - 120.0, "{on:?}");
+        on.into_iter().map(|t| t.text).collect::<Vec<_>>()
+    };
+    let idle = fits(&plates);
+    assert!(idle.iter().any(|t| t == "Chamfer") && idle.iter().any(|t| t == "Measure"));
+    plates.doc.look(Look::StartMove);
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    let moving = fits(&plates);
+    assert!(moving.iter().any(|t| t == "Z axis") && moving.iter().any(|t| t == "Cancel"));
+    plates.motion(MotionLook::Cancel);
+    plates.doc.look(Look::StartChamfer);
+    let chamfering = fits(&plates);
+    assert!(chamfering.iter().any(|t| t == "New chamfer"));
+    assert!(!chamfering.iter().any(|t| t == "Combine"));
 }

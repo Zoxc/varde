@@ -989,23 +989,7 @@ impl MotionSession {
             {
                 return Some((self.feature, kind));
             }
-            let feature = self.feature?;
-            let zero = || Value::new("0", &Move::offset_ask(design)).ok();
-            let bodies = (self.edited_bodies.iter())
-                .filter(|body| !self.gone_bodies.contains(body))
-                .copied()
-                .collect::<Vec<_>>();
-            if bodies.is_empty() {
-                return None;
-            }
-            return Some((
-                Some(feature),
-                FeatureKind::Move(Move {
-                    bodies,
-                    offset: [zero()?, zero()?, zero()?],
-                    turn: None,
-                }),
-            ));
+            return self.unmoved(design);
         }
         // A split isn't previewed while a face or body is picked as its
         // tool: the model shown is the document's, a new one's the history
@@ -1028,6 +1012,13 @@ impl MotionSession {
             }
             return Some((self.feature, self.kind()?));
         }
+        self.unmoved(design)
+    }
+
+    /// The draft showing an edited feature's place while it isn't
+    /// previewed itself ([`MotionSession::draft`]): a move of its bodies
+    /// by nothing. `None` for a new one.
+    fn unmoved(&self, design: &Design) -> Option<(Option<FeatureId>, FeatureKind)> {
         let feature = self.feature?;
         // What's gone is left out: the bodies still there, and the axis
         // if it is, so the model shown is the feature's place even while
@@ -1778,7 +1769,7 @@ impl Doc {
         let lit = match session.kind {
             MotionKind::Scale => [Vec::new(), self.scale_lit()],
             MotionKind::Split => [Vec::new(), self.split_lit()],
-            MotionKind::Chamfer => [self.blend_lit(), Vec::new()],
+            _ if session.kind.blends() => [self.blend_lit(), Vec::new()],
             _ => self.align_lit(),
         };
         // A split's tool body lights whole while hovered.

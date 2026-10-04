@@ -665,21 +665,22 @@ fn the_toolbar_s_revolve_button_starts_a_session_and_backs_out() {
     );
     lathe.doc.look(Look::StartRevolve);
     assert!(lathe.doc.revolve.is_some());
-    // While it's set up, the button backs out (the toolbar's tag
-    // "Revolve" beside it sends nothing).
+    // While it's set up, the toolbar has Cancel and not the operations,
+    // as the mock's (the toolbar's tag "Revolve" sends nothing); Cancel
+    // backs out.
     let sent = clicking_text(&lathe.doc, "Revolve");
-    assert_eq!(
-        sent.iter().filter(|sent| start(sent)).count(),
-        1,
+    assert!(!sent.iter().any(start), "{sent:?}");
+    let sent = clicking_text(&lathe.doc, "Cancel");
+    assert!(
+        sent.iter()
+            .any(|sent| matches!(sent[..], [Ui::Look(Look::Revolve(_))])),
         "{sent:?}"
     );
     lathe.doc.look(Look::StartRevolve);
     assert!(lathe.doc.revolve.is_none());
-    // An extrude being set up leaves it enabled, swapping the two.
+    // An extrude being set up is swapped for it by its key.
     lathe.doc.look(Look::StartExtrude);
-    let sent = clicking_text(&lathe.doc, "Revolve");
-    assert!(sent.iter().any(start), "{sent:?}");
-    lathe.doc.look(Look::StartRevolve);
+    key_in(&mut lathe.doc, keyboard::Key::Character("o".into()));
     assert!(lathe.doc.extrude.is_none() && lathe.doc.revolve.is_some());
 }
 

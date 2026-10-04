@@ -15,8 +15,8 @@ use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, Shortcut, chamfer_binding, comb_binding, combine_binding, constrain_binding,
     constraint_binding, extrude_binding, file_bindings, handles_binding, history_bindings,
-    measure_binding, mirror_binding, move_binding, pattern_binding, revolve_binding,
-    sketch_binding, switch_binding, tool_binding,
+    measure_binding, move_binding, pattern_binding, revolve_binding, sketch_binding,
+    switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
@@ -397,8 +397,8 @@ pub(crate) fn tool_icon(tool: Tool) -> Icon {
 }
 
 /// The operations for what's going on: modelling, picking the plane for a
-/// new sketch, or editing a sketch. While an `operation` is set up,
-/// Cancel leads them, its OK being in the pill.
+/// new sketch, or editing a sketch. While an `operation` is set up, only
+/// Cancel and what it picks, its OK being in the pill.
 fn ops<'a>(
     state: &DocumentState<'a>,
     operation: Option<&Operation<'a>>,
@@ -512,21 +512,17 @@ fn ops<'a>(
         combine_binding(keys),
         state.combine.is_some(),
     );
-    // Move and Mirror after Combine, as the mock's model and body bars
-    // order them.
+    // Move after Combine, as the mock's model bar orders them. Mirror
+    // isn't on it (the mock's model bar has none: its body bar does),
+    // which left no room at 1280 px wide: the rail's Transform set has
+    // it.
     let move_op = bound_op(
         Icon::Move,
         "Move",
         move_binding(keys),
         moving == Some(MotionKind::Move),
     );
-    let mirror_op = bound_op(
-        Icon::BMirror,
-        "Mirror",
-        mirror_binding(keys),
-        moving == Some(MotionKind::Mirror),
-    );
-    // The linear pattern after Mirror, with its key, as the mock's model
+    // The linear pattern after Move, with its key, as the mock's model
     // bar has it: the circular one is on the rail (the mock's model bar
     // has none either).
     let pattern_op = bound_op(
@@ -620,33 +616,33 @@ fn ops<'a>(
         measure_binding(keys),
         state.measure.is_some(),
     );
-    let cancel = operation.map(|operation| {
-        [
-            op_button(
-                Icon::Close,
-                "Cancel",
-                Some(Shortcut::ESCAPE),
-                false,
-                Some(operation.cancel.clone()),
-            ),
-            separator(),
-        ]
-    });
-    (cancel.into_iter().flatten())
-        .chain([
-            sketch,
-            extrude,
-            revolve,
-            chamfer,
-            combine,
-            move_op,
-            mirror_op,
-            pattern_op,
-            separator(),
-            measure,
-        ])
-        .chain(origins)
-        .collect()
+    // While an operation is set up, the bar is Cancel and what the
+    // operation picks, as the mock's: the operations would leave no room
+    // for the origins at 1280 px wide, and their keys still work.
+    if let Some(operation) = operation {
+        let cancel = op_button(
+            Icon::Close,
+            "Cancel",
+            Some(Shortcut::ESCAPE),
+            false,
+            Some(operation.cancel.clone()),
+        );
+        return std::iter::once(cancel).chain(origins).collect();
+    }
+    [
+        sketch,
+        extrude,
+        revolve,
+        chamfer,
+        combine,
+        move_op,
+        pattern_op,
+        separator(),
+        measure,
+    ]
+    .into_iter()
+    .chain(origins)
+    .collect()
 }
 
 /// The label of the button turning a move, or patterning, about `axis`.

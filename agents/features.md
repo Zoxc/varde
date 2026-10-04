@@ -776,8 +776,11 @@ The status bar says "New revolve · 1 region picked · about Line 3"
 "Pick regions" or "Pick the axis", `Enter` OK and `Esc` Cancel. The
 toolbar shows it as it shows a sketch being edited: a pill on the soft
 accent with its icon and name ("New revolve" or "Revolve 1") and OK
-joined to it (disabled while OK waits), then Cancel (`Esc`) leading the
-operations; the extrude and the combine alike. While a revolve is set
+joined to it (disabled while OK waits), then Cancel (`Esc`) and only
+what the operation picks (the origin axes or planes): as the mock's, not
+the other operations, which left no room for those at 1280 px (their
+keys still act); the extrude, the combine and the move's sessions
+alike. While a revolve is set
 up `B` and the selected feature's `Enter` and `Delete` don't act, `S`
 and `X` drop it for a new sketch or an extrude, and the cursor doesn't
 pick the model.
@@ -1191,8 +1194,9 @@ chamfers, its `MotionKind` saying which; their own parts are under
 "Pattern", "Align", "Scale", "Split" and "Chamfer", "UI") is started by
 `Look::StartMove` (`M`, `Shortcut::MOVE`, the UI mock's key, the
 toolbar's Move after Combine, the rail's Transform set) or
-`Look::StartMirror` (no key, as the mock has none: the toolbar's
-Mirror after Move, the rail; `Shortcut::NONE`, a binding that's never
+`Look::StartMirror` (no key, as the mock has none: the rail only, as
+the mock's model bar has no Mirror, which leaves room for Chamfer at
+1280 px; `Shortcut::NONE`, a binding that's never
 pressed and shows no key, so the rail's list gives it the first free
 letter of its name, `I`), again (or `Esc`, Cancel) backing out of it and
 one of the other kind replaced; or by editing one (`Look::EditFeature`: a
@@ -1690,7 +1694,7 @@ LinearPattern` and `CircularPattern`, following the UI mock's
 
 - **Starting**: `Look::StartPattern` (`P`, `Shortcut::PATTERN`, the
   mock's key, outside sketches where `P` is the Point tool's; the
-  toolbar's "Pattern" after Mirror; the rail's Transform set as "Linear
+  toolbar's "Pattern" after Move; the rail's Transform set as "Linear
   pattern") and `Look::StartCircularPattern` (no key, as the mock has
   none: the rail's "Circular pattern"; not on the toolbar, which the
   mock's model bar leaves it off too and which is nearly full at
@@ -2979,9 +2983,12 @@ panel.
   a row hovered in the panel lights its edge (`PanelHover::Edge`). The session's bodies are the edges' body, never
   picked itself (Objects' rows pick nothing); a body merged into another
   before the chamfer takes the edges on to its holder. Picks wait only
-  for a model of the document as it is (`Doc::blend_model_current`),
+  for a model of the document as it is (`Doc::blend_model_current`)
+  with a draft of this session's run, or for a new chamfer none (not
+  another session's preview just ended, whose bodies may be elsewhere),
   not for the preview of the last pick, so edges can be clicked one
-  after another. The Edges field clicked turns picking off
+  after another. Edges of faces the chamfer itself makes (on its
+  preview) are refused by their names, as made later. The Edges field clicked turns picking off
   (`MotionPick::Nothing`) and on.
 - **The rows**: "Edge 2" by the edge's place in the list (as
   regeneration's messages count them, "its edge 2 of 3 wasn't found"),
@@ -3033,8 +3040,10 @@ panel.
 
 The Timeline shows the model mock's chamfer icon (`Icon::BChamfer`;
 `Icon::Chamfer` is the sketch tool's) and note (`view/src/chamfer.rs`:
-"1 mm", "1 mm × 2 mm" the first face's first, "3 mm 30°"), the status
-bar's info "2 edges · Equal · 1 mm · Tangent chain".
+"1 mm", "1 × 2" along the face of the edges' first key first, so Flip
+sides swaps them, "3 mm 30°", as the mock's rows), the status bar's
+info "2 edges · Equal · 1 mm · Tangent chain", "1 × 2 mm" for two
+distances.
 
 Departures from the mock: the Tangent chain tick (above); edges named
 by their place; no bands drawn over the model (the mock's preview draws

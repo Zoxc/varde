@@ -43,12 +43,12 @@ fn a_chamfer_s_notes() {
     chamfer.distances = ChamferSize::Two(value("1", &length), value("2", &length));
     chamfer.edges.push(edge(1));
     chamfer.chains = false;
-    assert_eq!(chamfer_note(&chamfer, mm), "1 mm × 2 mm");
+    assert_eq!(chamfer_note(&chamfer, mm), "1 × 2");
     chamfer.flip = true;
-    assert_eq!(chamfer_note(&chamfer, mm), "2 mm × 1 mm");
+    assert_eq!(chamfer_note(&chamfer, mm), "2 × 1");
     assert_eq!(
         chamfer_info(&chamfer, mm),
-        "2 edges · Two distances · 2 mm × 1 mm"
+        "2 edges · Two distances · 2 × 1 mm"
     );
     chamfer.distances = ChamferSize::Angle(value("3", &length), value("30", &angle));
     assert_eq!(chamfer_note(&chamfer, mm), "3 mm 30°");

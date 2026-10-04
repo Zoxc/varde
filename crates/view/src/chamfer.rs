@@ -6,20 +6,32 @@ use varde_document::{Chamfer, ChamferSize, LengthUnit};
 use crate::panels::{angle_note, length_note};
 
 /// A chamfer's Timeline note, as the UI mock's row: its size, "1 mm",
-/// "1 mm × 2 mm" (the first face's first), "3 mm 30°".
+/// "1 × 2" (along the face of the edges' first key first, so Flip sides
+/// swaps them), "3 mm 30°".
 pub(crate) fn chamfer_note(chamfer: &Chamfer, units: LengthUnit) -> String {
     match &chamfer.distances {
         ChamferSize::Equal(d) => length_note(d, units),
-        ChamferSize::Two(a, b) => {
-            let (a, b) = if chamfer.flip { (b, a) } else { (a, b) };
-            format!("{} × {}", length_note(a, units), length_note(b, units))
+        ChamferSize::Two(..) => {
+            let [a, b] = two(chamfer, units);
+            format!("{a} × {b}")
         }
         ChamferSize::Angle(d, a) => format!("{} {}", length_note(d, units), angle_note(a.value)),
     }
 }
 
-/// What the status bar says of a selected chamfer: "2 edges · Equal · 1
-/// mm", "1 edge · Distance and angle · 3 mm at 30° · Tangent chain".
+/// A two-distance chamfer's distances as numbers of `units`, in the
+/// order its note shows them.
+fn two(chamfer: &Chamfer, units: LengthUnit) -> [String; 2] {
+    let ChamferSize::Two(a, b) = &chamfer.distances else {
+        return [String::new(), String::new()];
+    };
+    let (a, b) = if chamfer.flip { (b, a) } else { (a, b) };
+    [a, b].map(|value| varde_expr::format_number(value.value, Some(units.into())))
+}
+
+/// What the status bar says of a selected chamfer, as the UI mock's: "2
+/// edges · Equal · 1 mm", "2 edges · Two distances · 1 × 2 mm", "1 edge ·
+/// Distance and angle · 3 mm at 30° · Tangent chain".
 pub fn chamfer_info(chamfer: &Chamfer, units: LengthUnit) -> String {
     let count = chamfer.edges.len();
     let edges = if count == 1 {
@@ -31,7 +43,11 @@ pub fn chamfer_info(chamfer: &Chamfer, units: LengthUnit) -> String {
         ChamferSize::Angle(d, a) => {
             format!("{} at {}", length_note(d, units), angle_note(a.value))
         }
-        _ => chamfer_note(chamfer, units),
+        ChamferSize::Two(..) => {
+            let [a, b] = two(chamfer, units);
+            format!("{a} × {b} {}", units.symbol())
+        }
+        ChamferSize::Equal(_) => chamfer_note(chamfer, units),
     };
     let chain = if chamfer.chains {
         " · Tangent chain"

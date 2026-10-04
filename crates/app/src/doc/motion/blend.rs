@@ -1,5 +1,5 @@
 //! The edges a blend picks, in the move's session: a chamfer's
-//! ([`MotionKind::Chamfer`](varde_view::MotionKind::Chamfer)), and a
+//! ([`MotionKind::Chamfer`]), and a
 //! fillet's once there's one, which takes the same session with its own
 //! size. Each click on an edge of
 //! the model shown picks it or, picked already, takes it out; the
@@ -17,7 +17,7 @@ use std::borrow::Cow;
 use glam::DVec3;
 use varde_document::{BodyId, Document, EdgeRef, MAX_BLEND_EDGES};
 use varde_expr::Unit;
-use varde_view::{BlendEdge, BlendEdges, Pick, PickIndex, Picked, Unnamed};
+use varde_view::{BlendEdge, BlendEdges, MotionKind, Pick, PickIndex, Picked, Unnamed};
 
 use super::{Doc, MotionSession, OUT_OF_DATE, edge_radius, unnamed};
 use crate::doc::feed::Merges;
@@ -93,13 +93,20 @@ impl BlendSetup {
 
     /// Adds `edge`, picked as `target` of the model `model`, in its
     /// place; not past the limit, nor again.
-    fn add(&mut self, edge: EdgeRef, model: u64, target: u32) -> Result<(), Cow<'static, str>> {
+    fn add(
+        &mut self,
+        kind: MotionKind,
+        edge: EdgeRef,
+        model: u64,
+        target: u32,
+    ) -> Result<(), Cow<'static, str>> {
         let at = match self.edges.binary_search_by(|picked| picked.order(&edge)) {
             Ok(_) => return Ok(()),
             Err(at) => at,
         };
         if self.edges.len() >= MAX_BLEND_EDGES {
-            return Err(format!("A chamfer takes at most {MAX_BLEND_EDGES} edges").into());
+            let noun = noun(kind);
+            return Err(format!("A {noun} takes at most {MAX_BLEND_EDGES} edges").into());
         }
         self.edges.insert(at, edge);
         let mark = Mark {
@@ -187,10 +194,11 @@ impl MotionSession {
     /// What's still to be done before it can be committed, the words for
     /// the status bar: the edges.
     pub(super) fn blend_need(&self) -> Option<&'static str> {
-        self.blend
-            .edges
-            .is_empty()
-            .then_some("pick the edges to chamfer")
+        let words = match self.kind {
+            MotionKind::Chamfer => "pick the edges to chamfer",
+            _ => "pick the edges",
+        };
+        self.blend.edges.is_empty().then_some(words)
     }
 
     /// The words for its edges being gone, if they are, the UI mock's.
@@ -220,18 +228,27 @@ impl MotionSession {
     }
 }
 
-/// Why a pick can't be a blend's edge.
-const NOT_AN_EDGE: &str = "Only an edge can be chamfered";
+/// What a blend of `kind` is called in words: "chamfer".
+fn noun(kind: MotionKind) -> String {
+    kind.noun().to_lowercase()
+}
 
 impl Doc {
     /// Whether the model shown names edges as the session asks for them:
-    /// of the document as it is (the draft it shows, or none, doesn't
-    /// change the edges before the feature), and not of one replaced
-    /// whole since. Picks wait for nothing else, so edges can be clicked
-    /// one after another while the preview of the last comes.
+    /// of the document as it is, not of one replaced whole since, and
+    /// with a draft of this session's run (which of its drafts doesn't
+    /// change the edges before the feature), or for a new feature none
+    /// (added at the end, it changes nothing before it): not with the
+    /// draft of another session just ended, which may have moved or cut
+    /// them. Picks wait for nothing else, so edges can be clicked one
+    /// after another while the preview of the last comes. The edges the
+    /// feature itself makes (on its preview, or as stored) are refused
+    /// by their names ([`Naming::before`](varde_view::Naming::before)).
     fn blend_model_current(&self) -> bool {
+        let new = self.motion.as_ref().is_some_and(|s| s.feature.is_none());
         self.feed.generation() == Some(self.editor.generation())
             && !self.feed.predates_replacement()
+            && (self.feed.shows_draft_of_run() || (new && !self.feed.shows_draft()))
     }
 
     /// `pick` of the model shown as an edge of the blend being set up:
@@ -242,7 +259,7 @@ impl Doc {
         let session = self.motion.as_ref().ok_or("Nothing is set up")?;
         let kind = session.kind;
         let Picked::Edge(edge) = pick.target else {
-            return Err(NOT_AN_EDGE.into());
+            return Err(format!("Only an edge can be {}ed", noun(kind)).into());
         };
         let naming = self.motion_naming().ok_or("Nothing is set up")?;
         let index = self.feed.pick_index();
@@ -256,9 +273,11 @@ impl Doc {
             && body != held
         {
             let name = (document.body(body)).map_or("one body", |body| body.name.as_str());
-            return Err(
-                format!("A chamfer's edges are all on one body: pick edges of {name}").into(),
-            );
+            return Err(format!(
+                "A {}'s edges are all on one body: pick edges of {name}",
+                noun(kind)
+            )
+            .into());
         }
         if !super::super::combine::pickable(document, held, session.feature) {
             return Err(unnamed(Unnamed::Later, "body", kind));
@@ -327,7 +346,7 @@ impl Doc {
         let Some(session) = &mut self.motion else {
             return Ok(());
         };
-        session.blend.add(edge, pick.model, target)?;
+        session.blend.add(session.kind, edge, pick.model, target)?;
         session.blend_body();
         Ok(())
     }
