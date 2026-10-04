@@ -294,6 +294,20 @@ impl Doc {
         R::refs(session).picked(pick.model, &grown)
     }
 
+    /// Whether the session being set up has `pick` among the edges or
+    /// faces it picks, so a click would take it out: `None` for one that
+    /// picks neither (or no session).
+    pub(crate) fn motion_has(&self, pick: Pick) -> Option<bool> {
+        let kind = self.motion.as_ref()?.kind;
+        if kind.blends() {
+            Some(self.ref_picked::<EdgeRef>(pick).is_some())
+        } else if kind.picks_faces() {
+            Some(self.ref_picked::<FaceRef>(pick).is_some())
+        } else {
+            None
+        }
+    }
+
     /// Whether `pick` lights as the cursor's over it: one of type `R` a
     /// click would pick or take out.
     pub(super) fn refs_take<R: Ref>(&self, pick: Pick) -> bool {

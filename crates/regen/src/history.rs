@@ -64,7 +64,8 @@
 //! found") and hollows the body by the kernel's shell, the body keeping
 //! its id (see `shell`). A fillet finds and grows its edges as a
 //! chamfer does and rounds them off by the kernel's fillet (see
-//! `fillet`; what the two share is `blend`).
+//! `fillet`; what the two share of their edges is `blend`, of their
+//! body `own_body`).
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -117,6 +118,7 @@ mod chamfer;
 mod combine;
 mod fillet;
 mod motion;
+mod own_body;
 mod pattern;
 pub(crate) mod scale;
 mod shell;

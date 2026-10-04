@@ -1232,6 +1232,7 @@ impl Doc {
             selected_feature: self.selected_feature,
             row_menu: self.row_menu,
             overlaps: self.overlaps.as_ref().map(|listed| &listed.list),
+            overlap_ticks: self.overlap_ticks(),
             sketch: self.sketch_state(),
             extrude: self.extrude_state(),
             revolve: self.revolve_state(),

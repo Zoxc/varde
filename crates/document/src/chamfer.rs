@@ -23,9 +23,10 @@ use crate::{BlendEdgesError, BodyId, Design, EdgeRef, Extent, check_blend_edges_
 /// edge's first (regeneration's to work out).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Chamfer {
-    /// `1..=`[`MAX_BLEND_EDGES`](crate::MAX_BLEND_EDGES) edges, all on one body a feature before
-    /// it makes, in [`EdgeRef::order`] without repeats. Each is found
-    /// on the body as the features before the chamfer leave it.
+    /// `1..=`[`MAX_BLEND_EDGES`](crate::MAX_BLEND_EDGES) edges, all on
+    /// one body a feature before it makes, in [`EdgeRef::order`] without
+    /// repeats. Each is found on the body as the features before the
+    /// chamfer leave it.
     pub edges: Vec<EdgeRef>,
     pub distances: ChamferSize,
     /// Whether each edge takes in the edges running on smoothly from it

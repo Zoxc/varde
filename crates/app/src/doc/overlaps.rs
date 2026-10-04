@@ -96,6 +96,18 @@ impl Doc {
         }
     }
 
+    /// Which rows of the list of the model's overlaps are ticked while a
+    /// session picks edges or faces of its own (a chamfer's, a fillet's,
+    /// a shell's), where a row chosen picks its item or takes it out:
+    /// those it has. `None` elsewhere, where the model's selection ticks
+    /// them.
+    pub(crate) fn overlap_ticks(&self) -> Option<Vec<bool>> {
+        let OverlapItems::Model(picks) = &self.overlaps.as_ref()?.list.items else {
+            return None;
+        };
+        (picks.iter()).map(|&pick| self.motion_has(pick)).collect()
+    }
+
     /// Whether what's hovered in the model is drawn over what hides it
     /// too: while a row of the list of the model's overlaps is hovered,
     /// as what's listed is often hidden.

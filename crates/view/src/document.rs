@@ -156,6 +156,10 @@ pub struct DocumentState<'a> {
     /// What overlaps where the left button was held still in the
     /// viewport, listed to choose from, if it's open.
     pub overlaps: Option<&'a crate::Overlaps>,
+    /// Which of the model's overlaps listed are ticked, where a session
+    /// picking edges or faces of its own says (those it has); `None`:
+    /// those in `model_selection`.
+    pub overlap_ticks: Option<Vec<bool>>,
     /// The sketch being edited, if one is.
     pub sketch: Option<SketchState<'a>>,
     /// The extrude being set up, if one is: never with a sketch.
@@ -739,6 +743,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                             overlaps,
                             (state.sketch.as_ref()).map(|sketch| (sketch.sketch, sketch.selection)),
                             state.model_selection,
+                            state.overlap_ticks.as_deref(),
                             state.editor.document(),
                         )),
                         state.thumbnail,

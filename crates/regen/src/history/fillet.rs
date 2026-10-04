@@ -19,7 +19,8 @@
 use varde_document::{Document, FeatureId, Fillet};
 use varde_kernel::{BlendError, Budget, FilletChain, Solid, Tolerance, Topology};
 
-use super::blend::{OwnBody, plan, refused};
+use super::blend::{find_edges, plan, refused};
+use super::own_body::OwnBody;
 use super::{Evaluation, Failed};
 use crate::cache::{Cache, Keyer};
 use crate::message::{self, Blend};
@@ -221,7 +222,7 @@ pub(super) fn evaluate_fillet(
     };
     let own = OwnBody::take(document, body, evaluation, cache)?;
     let (solid, topology) = (&own.solid, &own.topology);
-    let found = own.edges(&fillet.edges)?;
+    let found = find_edges(&own, &fillet.edges)?;
     let planned = plan(solid, topology, &fillet.edges, &found, fillet.chains, false);
     let chains: Vec<FilletChain> = (planned.iter())
         .map(|planned| FilletChain {

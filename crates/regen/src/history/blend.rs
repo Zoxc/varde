@@ -1,11 +1,11 @@
 //! What chamfers and fillets share in the history: their body's solid
 //! and topology, the edges found on it, the chains those come to (grown
 //! along tangent chains where asked) and how they're named, and the
-//! kernel's refusals worded with the edge drawn. The shell takes its
-//! body the same way ([`OwnBody`]).
+//! kernel's refusals worded with the edge drawn. Their body is taken as
+//! `own_body` has it.
 //!
 //! The edges are found on the body's topology (the one drawing it keeps,
-//! [`inspect::topology`]) by their faces' keys and points, as a scale's
+//! [`OwnBody::topology`]) by their faces' keys and points, as a scale's
 //! edge is; one not found fails the feature ("its edge wasn't found",
 //! "its edge 2 of 3 wasn't found"). With tangent chains on, each edge
 //! takes in the chains running on smoothly from it
@@ -30,75 +30,27 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use varde_document::{BodyId, Document, EdgeRef};
+use varde_document::EdgeRef;
 use varde_kernel::mesh::FaceKey;
 use varde_kernel::topology::blend_edge;
 use varde_kernel::{BlendError, Evidence, Solid, Tolerance, Topology};
 
-use super::{Evaluation, Failed, own_solids};
-use crate::cache::{Cache, Key};
+use super::Failed;
+use super::own_body::OwnBody;
+use crate::ErrorGeometry;
 use crate::error_geometry::KernelFailure;
 use crate::message::{self, Blend, BlendRefusal};
-use crate::{ErrorGeometry, inspect};
 
-/// A body a feature changes in place (a chamfer, a fillet, a shell): its
-/// solid as the features before it leave it, and that solid's topology.
-pub(super) struct OwnBody<'a> {
-    pub(super) body: BodyId,
-    /// Its name, for messages.
-    pub(super) name: &'a str,
-    pub(super) solid: Arc<Solid>,
-    /// The solid's cache key.
-    pub(super) key: Key,
-    pub(super) topology: Arc<Topology>,
-}
-
-impl<'a> OwnBody<'a> {
-    /// The body `body` of `evaluation`, which must have a solid of its own
-    /// ([`own_solids`]: one a join or a combine consumed fails, naming the
-    /// body holding it).
-    pub(super) fn take(
-        document: &'a Document,
-        body: BodyId,
-        evaluation: &Evaluation,
-        cache: &mut Cache,
-    ) -> Result<Self, Failed> {
-        own_solids(document, std::iter::once(body), evaluation)?;
-        let name = document
-            .body(body)
-            .map_or("a body", |body| body.name.as_str());
-        let made = (evaluation.bodies.iter())
-            .find(|made| made.body == body)
-            .expect("the body has a solid of its own");
-        Ok(OwnBody {
-            body,
-            name,
-            solid: Arc::clone(&made.solid),
-            key: made.key,
-            topology: inspect::topology(made, cache),
+/// The chains of `own`'s topology `edges` are found as, in their order:
+/// one not found fails ("its edge 2 of 3 wasn't found").
+pub(super) fn find_edges(own: &OwnBody, edges: &[EdgeRef]) -> Result<Vec<u32>, Failed> {
+    let count = edges.len();
+    (edges.iter().enumerate())
+        .map(|(i, edge)| {
+            (own.topology.edge(&own.solid, edge.faces, edge.near))
+                .map_err(|_| message::blend_edge_not_found(i, count).into())
         })
-    }
-
-    /// Gives the body `result`, cached under `key`, in `evaluation`: it
-    /// keeps its id.
-    pub(super) fn replace(&self, evaluation: &mut Evaluation, result: Arc<Solid>, key: Key) {
-        if let Some(made) = (evaluation.bodies.iter_mut()).find(|made| made.body == self.body) {
-            made.solid = result;
-            made.key = key;
-        }
-    }
-
-    /// The chains of its topology `edges` are found as, in their order:
-    /// one not found fails ("its edge 2 of 3 wasn't found").
-    pub(super) fn edges(&self, edges: &[EdgeRef]) -> Result<Vec<u32>, Failed> {
-        let count = edges.len();
-        (edges.iter().enumerate())
-            .map(|(i, edge)| {
-                (self.topology.edge(&self.solid, edge.faces, edge.near))
-                    .map_err(|_| message::blend_edge_not_found(i, count).into())
-            })
-            .collect()
-    }
+        .collect()
 }
 
 /// One chain to blend as it's worked out: which, its faces' name and

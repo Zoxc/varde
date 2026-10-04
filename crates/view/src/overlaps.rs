@@ -100,7 +100,8 @@ fn list_height(rows: usize) -> f64 {
 
 /// The list as shown, a menu's rows naming the items of `sketch` or
 /// `document`'s bodies, each ticked if it's in the sketch's `selection`
-/// or the model's `model_selection`, over a layer filling the viewport
+/// or the model's `model_selection` (as `ticks` has it, where it's
+/// given: a session's own picks), over a layer filling the viewport
 /// that closes it on a press anywhere else. A row clicked selects its item
 /// alone (with `Ctrl`, `Cmd` on macOS, adds it or takes it out, the list
 /// kept open); its tick adds it or takes it out alone.
@@ -108,13 +109,15 @@ pub(crate) fn view<'a>(
     overlaps: &Overlaps,
     sketch: Option<(&Sketch, &BTreeSet<Id>)>,
     model_selection: &Selection,
+    ticks: Option<&[bool]>,
     document: &Document,
 ) -> Element<'a, Message> {
-    let checked: Vec<bool> = match &overlaps.items {
-        OverlapItems::Sketch(ids) => (ids.iter())
+    let checked: Vec<bool> = match (&overlaps.items, ticks) {
+        (OverlapItems::Model(_), Some(ticks)) => ticks.to_vec(),
+        (OverlapItems::Sketch(ids), _) => (ids.iter())
             .map(|id| sketch.is_some_and(|(_, selection)| selection.contains(id)))
             .collect(),
-        OverlapItems::Model(picks) => {
+        (OverlapItems::Model(picks), None) => {
             let targets: Vec<Picked> = model_selection.targets().collect();
             (picks.iter())
                 .map(|pick| {

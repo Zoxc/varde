@@ -4,27 +4,27 @@
 //! **Not built yet**: [`chamfer`] and [`fillet`] are stand-ins with the
 //! planned signatures that fail with [`KernelError::TooComplex`], so the
 //! chamfer and fillet features above the kernel (their documents,
-//! regeneration and messages) are built against them. The real implementation replaces this file (and adds
-//! `blend/`): per chain, the dihedral's sign the same all along and the
-//! faces neither within 1° of flat nor of folded ([`BlendError`]); a
-//! spine and two rails, exact where the faces' forms allow (two planes,
-//! a plane and a quadric of revolution round a parallel, parallel
-//! cylinders) and traced and fitted otherwise; the tool bounded by the
-//! chord surface through the rails (a plane, an exact cone round a
-//! parallel, fitted ruled strips), extended past the faces and the open
-//! ends; then one boolean, body less the tools for convex edges or with
-//! them for concave ones, and the new faces named
-//! [`FacePart::Blend`](crate::mesh::FacePart::Blend) by each chain's
-//! `name`. A fillet's tool is the notch bounded by the two surfaces
-//! through the rails square to each face, its faces then replaced by the
-//! round strip tangent to both (sharing the rails' records) and a sector
-//! at each open end on a planar end face; chains of one fillet meeting
-//! at a corner are mitred, three of them at a convex corner of three
-//! faces closed by a vertex blend.
+//! regeneration and messages) are built against them. The real
+//! implementation replaces this file (and adds `blend/`): per chain,
+//! the dihedral's sign the same all along and the faces neither within
+//! 1° of flat nor of folded ([`BlendError`]); a spine and two rails,
+//! exact where the faces' forms allow (two planes, a plane and a quadric
+//! of revolution round a parallel, parallel cylinders) and traced and
+//! fitted otherwise; the tool bounded by the chord surface through the
+//! rails (a plane, an exact cone round a parallel, fitted ruled strips),
+//! extended past the faces and the open ends; then one boolean, body
+//! less the tools for convex edges or with them for concave ones, and
+//! the new faces named [`FacePart::Blend`](crate::mesh::FacePart::Blend)
+//! by each chain's `name`. A fillet's tool is the notch bounded by the
+//! two surfaces through the rails square to each face, its faces then
+//! replaced by the round strip tangent to both (sharing the rails'
+//! records) and a sector at each open end on a planar end face; chains
+//! of one fillet meeting at a corner are mitred, three of them at a
+//! convex corner of three faces closed by a vertex blend.
 //!
-//! Which edges are chamfered is the caller's: the chains of the solid's
-//! [`Topology`] its references resolve to, grown along tangent chains
-//! ([`Topology::tangent_chains`]) where asked.
+//! Which edges are chamfered or filleted is the caller's: the chains of
+//! the solid's [`Topology`] its references resolve to, grown along
+//! tangent chains ([`Topology::tangent_chains`]) where asked.
 
 use crate::{Budget, Failure, KernelError, Solid, Tolerance, Topology};
 

@@ -8,9 +8,9 @@
 //! (the rail's Modify set; a split's own parts are in `split`),
 //! `Look::StartChamfer` (`C`, the toolbar, the rail's Modify set; a
 //! chamfer's edges are picked as a blend's, in `blend`, its own parts in
-//! `chamfer`), `Look::StartFillet` (`F`, the toolbar, the rail's Modify
-//! set; a fillet's edges are picked as a chamfer's, its own parts in
-//! `fillet`), `Look::StartShell` (the toolbar, the rail's Modify set;
+//! `chamfer`), `Look::StartFillet` (`F`, the rail's Modify set; a
+//! fillet's edges are picked as a chamfer's, its own parts in
+//! `fillet`), `Look::StartShell` (the rail's Modify set;
 //! a shell's faces are picked as a face session's, in `faces`, its own
 //! parts in `shell`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row

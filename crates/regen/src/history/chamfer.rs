@@ -18,7 +18,8 @@
 use varde_document::{Chamfer, ChamferSize, Document, FeatureId};
 use varde_kernel::{BlendError, Budget, ChamferChain, ChamferCut, Solid, Tolerance, Topology};
 
-use super::blend::{OwnBody, plan, refused};
+use super::blend::{find_edges, plan, refused};
+use super::own_body::OwnBody;
 use super::{Evaluation, Failed};
 use crate::cache::{Cache, Keyer};
 use crate::message::{self, Blend};
@@ -193,7 +194,7 @@ pub(super) fn evaluate_chamfer(
     };
     let own = OwnBody::take(document, body, evaluation, cache)?;
     let (solid, topology) = (&own.solid, &own.topology);
-    let found = own.edges(&chamfer.edges)?;
+    let found = find_edges(&own, &chamfer.edges)?;
     let planned = plan(
         solid,
         topology,

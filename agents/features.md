@@ -2908,10 +2908,11 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   before the kernel: "its edge wasn't found", or with several "its edge
   2 of 3 wasn't found" (its place in the list).
 - What the chamfer shares with the fillet is in
-  `crates/regen/src/history/blend.rs` (`OwnBody`, the body's solid and
-  topology, which the shell takes its body by too; `plan`; `refused`):
-  finding the edges, growing the chains, their first faces and names,
-  the refusals' words and drawings.
+  `crates/regen/src/history/blend.rs` (`find_edges`, `plan`,
+  `refused`): finding the edges, growing the chains, their first faces
+  and names, the refusals' words and drawings; and the body, its solid,
+  topology and cache key and the result put in its place, in
+  `history/own_body.rs` (`OwnBody`).
 - **Tangent chains** (with `chains`): each picked edge's chain takes in
   every chain with the same root in `Topology::tangent_chains` (edges
   running on into each other within 1°, from the curves' own end
@@ -2980,8 +2981,8 @@ the part it shares with the face session below
 where each is on the model shown, and the `Doc` methods clicking,
 lighting, following and taking the selection, generic over `Ref`, which
 `EdgeRef` and `FaceRef` implement), shared by
-every kind that `MotionKind::blends()` (a fillet's, once there's one,
-takes it with its own size); the chamfer's own parts are in
+every kind that `MotionKind::blends()` (the chamfer's and the
+fillet's, each with its own size); the chamfer's own parts are in
 `app/src/doc/motion/chamfer.rs` and `view/src/motion/chamfer.rs`
 (`ChamferView`, `ChamferType`). The panel is the model mock's chamfer
 panel.

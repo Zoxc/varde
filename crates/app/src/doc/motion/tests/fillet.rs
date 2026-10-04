@@ -378,3 +378,49 @@ fn a_tangent_chain_lights_whole() {
     plates.motion(MotionLook::Chain);
     assert_eq!(selected(&plates), [edge]);
 }
+
+/// What overlaps where the left button was held, listed in a fillet
+/// session: its rows ticked as the fillet has their edges (not as the
+/// model's selection), a tick picking one with the list kept open, a row
+/// chosen taking one out as a click would.
+#[test]
+fn the_overlap_list_ticks_and_picks_the_fillet_s_edges() {
+    let (mut plates, plate) = plate();
+    let (front, right) = (
+        edge_pick(&plates, plate, FRONT),
+        edge_pick(&plates, plate, RIGHT),
+    );
+    // Selected before the session, which takes it.
+    plates.doc.pick.selection = Selection::new(SelectionMode::Edges { tangent: false });
+    plates.doc.look(Look::ClickModel {
+        pick: Some(front),
+        add: true,
+        double: false,
+    });
+    plates.doc.look(Look::StartFillet);
+    assert_eq!(edges(&plates).len(), 1);
+    let list = varde_view::Overlaps {
+        held: glam::DVec2::ZERO,
+        at: glam::DVec2::ZERO,
+        items: varde_view::OverlapItems::Model(vec![front, right]),
+    };
+    plates.doc.look(Look::OpenOverlaps(list));
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, false]));
+    plates.doc.look(Look::ToggleOverlap(1));
+    assert!(plates.doc.overlaps.is_some());
+    assert_eq!(edges(&plates).len(), 2);
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, true]));
+    plates.doc.look(Look::ChooseOverlap {
+        index: 0,
+        add: false,
+    });
+    assert!(plates.doc.overlaps.is_none());
+    let left = edges(&plates);
+    assert_eq!(left.len(), 1);
+    assert!(
+        left[0]
+            .near
+            .distance(DVec3::from(RIGHT.0).midpoint(DVec3::from(RIGHT.1)))
+            < 1.0
+    );
+}
