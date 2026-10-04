@@ -223,6 +223,7 @@ fn a_face_is_measured_and_found_in_the_tables() {
         area,
         summary,
         half_angle,
+        rectangle,
     } = measured(&inspected.first)
     else {
         panic!("a face's measure");
@@ -230,6 +231,7 @@ fn a_face_is_measured_and_found_in_the_tables() {
     assert_near(area, TOP_AREA);
     assert_eq!(summary, picking.faces()[top as usize].summary);
     assert_eq!(half_angle, None);
+    assert_eq!(rectangle, None);
     assert_eq!((inspected.second, inspected.between), (None, None));
 }
 
@@ -775,6 +777,7 @@ fn broken_answers_are_checked_into_errors() {
                 area: -1.0,
                 summary: Summary::Other,
                 half_angle: None,
+                rectangle: None,
             })
         },
         |i| {

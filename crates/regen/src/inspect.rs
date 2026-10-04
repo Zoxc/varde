@@ -143,6 +143,9 @@ pub enum Measure {
         summary: Summary,
         /// A cone's half-angle.
         half_angle: Option<f64>,
+        /// A rectangle's two sides from one corner (see
+        /// [`measure::rectangle`]).
+        rectangle: Option<[[f64; 3]; 2]>,
     },
     Edge {
         length: f64,
@@ -297,10 +300,12 @@ impl Measure {
                 area,
                 summary,
                 half_angle,
+                rectangle,
             } => {
                 size(area)
                     && summary.valid()
                     && half_angle.is_none_or(|a| (0.0..=std::f64::consts::FRAC_PI_2).contains(&a))
+                    && rectangle.is_none_or(|sides| sides.into_iter().all(point))
             }
             Measure::Edge { length, shape, .. } => size(length) && shape.valid(),
             Measure::Point(p) => point(p),
@@ -513,6 +518,9 @@ fn measure_one(resolved: &Resolved, document: &Document) -> Kept {
             area: face.area,
             summary: Summary::of(&face.form),
             half_angle: face.half_angle(),
+            rectangle: face
+                .rectangle
+                .map(|sides| sides.map(|side| side.to_array())),
         },
         Measured::Edge(edge) => Measure::Edge {
             length: edge.length,

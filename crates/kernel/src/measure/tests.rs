@@ -1084,3 +1084,95 @@ fn edge_points_are_middles_and_centres() {
     assert!(close(gap.distance, 2.0, 1e-9), "{}", gap.distance);
     assert_eq!(gap.points[0], centre);
 }
+
+/// A face's rectangle as its sides' lengths, shorter first.
+fn sides(face: &FaceMeasure) -> Option<[f64; 2]> {
+    let [a, b] = face.rectangle?.map(DVec3::length);
+    Some([a.min(b), a.max(b)])
+}
+
+/// A box's faces and a tilted extrude's are rectangles by two sides
+/// from a corner; an L's ends and walls, a plate's top with a hole, a
+/// parallelogram's ends and a cylinder's faces aren't.
+#[test]
+fn a_flat_face_of_four_square_edges_is_a_rectangle() {
+    let solid = Solid::cuboid(DVec3::ZERO, DVec3::new(2.0, 3.0, 4.0), 1, &TOL).unwrap();
+    let mut found: Vec<[f64; 2]> = faces(&solid).iter().map(|f| sides(f).unwrap()).collect();
+    found.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    assert_eq!(
+        found,
+        [
+            [2.0, 3.0],
+            [2.0, 3.0],
+            [2.0, 4.0],
+            [2.0, 4.0],
+            [3.0, 4.0],
+            [3.0, 4.0]
+        ]
+    );
+    for face in faces(&solid) {
+        let [a, b] = face.rectangle.unwrap();
+        assert_eq!(a.dot(b), 0.0);
+        assert!(close(a.length() * b.length(), face.area, 1e-12));
+    }
+
+    let v = DVec2::new;
+    let rect = polygon(&[v(-1.0, -2.0), v(3.0, -2.0), v(3.0, 1.0), v(-1.0, 1.0)]);
+    let solid = extruded(vec![rect], &tilted(), 5.0);
+    let mut found: Vec<[f64; 2]> = faces(&solid).iter().map(|f| sides(f).unwrap()).collect();
+    found.sort_by_key(|side| side.map(|l| l.round() as u32));
+    let expected = [
+        [3.0, 4.0],
+        [3.0, 4.0],
+        [3.0, 5.0],
+        [3.0, 5.0],
+        [4.0, 5.0],
+        [4.0, 5.0],
+    ];
+    for (found, expected) in found.iter().zip(expected) {
+        assert!(
+            close(found[0], expected[0], 1e-12) && close(found[1], expected[1], 1e-12),
+            "{found:?}"
+        );
+    }
+
+    // An L: its two ends have six edges, its six walls four each.
+    let ell = polygon(&[
+        v(0.0, 0.0),
+        v(4.0, 0.0),
+        v(4.0, 1.0),
+        v(1.0, 1.0),
+        v(1.0, 3.0),
+        v(0.0, 3.0),
+    ]);
+    let solid = extruded(vec![ell], &Frame::XY, 2.0);
+    let rectangles = faces(&solid)
+        .iter()
+        .filter(|f| f.rectangle.is_some())
+        .count();
+    assert_eq!((faces(&solid).len(), rectangles), (8, 6));
+
+    // A square plate with a round hole: its top and bottom have a rim
+    // more, the hole's wall is round; its four sides are rectangles.
+    let square = polygon(&[v(0.0, 0.0), v(4.0, 0.0), v(4.0, 4.0), v(0.0, 4.0)]);
+    let hole = crate::profile::tests::circle(v(2.0, 2.0), 1.0, 10, true);
+    let solid = extruded(vec![square, hole], &Frame::XY, 1.0);
+    let rectangles = faces(&solid)
+        .iter()
+        .filter(|f| f.rectangle.is_some())
+        .count();
+    assert_eq!((faces(&solid).len(), rectangles), (7, 4));
+
+    // A parallelogram: its ends aren't square, its walls are.
+    let leaning = polygon(&[v(0.0, 0.0), v(4.0, 0.0), v(5.0, 2.0), v(1.0, 2.0)]);
+    let solid = extruded(vec![leaning], &Frame::XY, 1.0);
+    let rectangles = faces(&solid)
+        .iter()
+        .filter(|f| f.rectangle.is_some())
+        .count();
+    assert_eq!((faces(&solid).len(), rectangles), (6, 4));
+
+    let circle = crate::profile::tests::circle(v(0.0, 0.0), 1.0, 0, false);
+    let solid = extruded(vec![circle], &Frame::XY, 1.0);
+    assert!(faces(&solid).iter().all(|f| f.rectangle.is_none()));
+}

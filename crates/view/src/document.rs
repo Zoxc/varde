@@ -1828,8 +1828,9 @@ fn sketch_selection<'a>(sketch: &SketchState<'a>) -> Option<Element<'a, Message>
 }
 
 /// What's selected in the model, for the status bar's box of the
-/// selection: one face, as "Face", what surface it's on and its body's
-/// name; one edge or vertex, as "Edge" or "Vertex" and its body's; one
+/// selection: one face, as "Face", what surface it's on (or "Rectangle",
+/// for a flat face of four straight edges square at its corners) and its
+/// body's name; one edge or vertex, as "Edge" or "Vertex" and its body's; one
 /// body, by name; or how many, of each kind. Before the body's name, what
 /// one or two items measure once the answer has it (see
 /// [`measure::brief`](crate::measure::brief)). Nothing if nothing is
@@ -1860,6 +1861,20 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
                 picking.index.picking().faces().get(face as usize)
             });
             let surface = summary.map_or("", |face| surface_name(&face.summary));
+            // A rectangle is named so once measured, its width and
+            // height then shown.
+            let rectangle = (state.selection_measured)
+                .and_then(|inspected| inspected.first.as_ref().ok())
+                .is_some_and(|probed| {
+                    matches!(
+                        probed.measure,
+                        Ok(varde_regen::Measure::Face {
+                            rectangle: Some(_),
+                            ..
+                        })
+                    )
+                });
+            let surface = if rectangle { "Rectangle" } else { surface };
             ("Face".into(), surface.into(), drawn_in(*body))
         }
         [Selected::Edge { body, .. }] => ("Edge".into(), String::new(), drawn_in(*body)),

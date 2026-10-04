@@ -726,7 +726,7 @@ body or a hidden body's entity; the entry found from the body's part
 region's key, the chain's faces, the corner's faces and point, else
 `None`), `measure` a `Measure` (`Body` volume,
 area, centre, tight box; `Face` area, its form's `Summary`, a cone's
-half-angle; `Edge` length, closed, `EdgeForm` line/circle/ellipse;
+half-angle, a rectangle's two sides; `Edge` length, closed, `EdgeForm` line/circle/ellipse;
 `Point`) or "too complex to measure"; `between` (both found) the
 `Gap` (distance and the two points) or its error, and the angle between
 their directions (`measure::angle`). Each measure runs within
@@ -844,7 +844,9 @@ then each pick's own values under a header folding them away
 (`MeasureLook::Fold`), folded to start with. Values
 (`measure::values`, `between_values`): a point's X, Y, Z; an edge's
 length and a line's direction, a circle's radius, diameter and centre,
-an ellipse's semi-axes and centre; a face's area, a plane's normal, a
+an ellipse's semi-axes and centre; a face's area, a rectangle's width
+(the side nearer the horizontal, square to Z, or for one lying flat
+nearer X: `measure::width_height`) and height, a plane's normal, a
 cylinder's or sphere's radius and diameter, a torus's radii, a cone's
 half-angle; a body's volume, area, centre and box (from, to, size).
 Lengths, areas and volumes are in the design's units, squared and
@@ -969,7 +971,8 @@ as the measure tool's picks are: the regen request carries them as its
 `Inspect` in place of the tool's (`Doc::selection_inspect`), and the box
 shows a few values of the answer once it's of those very items
 (`Doc::selection_measured`, `MeshFeed::inspected_of`; `measure::brief`):
-a body's volume, a face's area and a round one's radius, an edge's
+a body's volume, a face's area and a round one's radius (a rectangle's
+width and height in their place), an edge's
 length and a round one's radius, a point's place, or two items'
 distance and angle. `Doc::look`, `Doc::sync` and each answer ask for the
 model after the selection is found again, so a selection that changed
@@ -1037,7 +1040,8 @@ mesh). With nothing to draw every frame gets one shared empty highlight.
 
 The status bar's box tells of the selection when no feature is
 selected: one face as "Face", its surface ("Plane", "Cylinder", "Cone",
-"Sphere", "Torus", "Curved") and its body's name; one edge or vertex as
+"Sphere", "Torus", "Curved", or "Rectangle" once measured one) and its
+body's name; one edge or vertex as
 "Edge" or "Vertex" and the body; one body by name and "Body"; several
 as "N selected" and how many faces, edges, vertices and bodies. Its hints: "Select" and a double-click
 "Body" with nothing selected, then Shift-click "Add or remove" and

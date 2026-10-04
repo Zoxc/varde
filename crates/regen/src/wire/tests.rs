@@ -2466,6 +2466,7 @@ fn face_measure(area: f64) -> crate::Measure {
         area,
         summary: face().summary,
         half_angle: None,
+        rectangle: None,
     }
 }
 
@@ -2690,6 +2691,7 @@ fn assert_sound_measure(inspected: &Inspected, mesh: &RenderMesh, picking: &Pick
                     area,
                     summary,
                     half_angle,
+                    rectangle,
                 },
                 None | Some(crate::At::Face(_)),
             ) => {
@@ -2698,6 +2700,7 @@ fn assert_sound_measure(inspected: &Inspected, mesh: &RenderMesh, picking: &Pick
                 if let Some(a) = half_angle {
                     assert!((0.0..=std::f64::consts::FRAC_PI_2).contains(&a));
                 }
+                rectangle.into_iter().flatten().for_each(point);
             }
             (crate::Measure::Edge { length, shape, .. }, None | Some(crate::At::Edge(_))) => {
                 size(length);

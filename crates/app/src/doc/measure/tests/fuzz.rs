@@ -163,6 +163,9 @@ fn answered(measured: &Measured) -> Measure {
             area: face.area,
             summary: Summary::of(&face.form),
             half_angle: face.half_angle(),
+            rectangle: face
+                .rectangle
+                .map(|sides| sides.map(|side| side.to_array())),
         },
         Measured::Edge(edge) => Measure::Edge {
             length: edge.length,

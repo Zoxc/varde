@@ -85,6 +85,7 @@ fn a_face_shows_its_area_and_its_form() {
             d: 10.0,
         },
         half_angle: None,
+        rectangle: None,
     };
     assert_eq!(
         shown(&values(&plane, LengthUnit::In)),
@@ -99,6 +100,7 @@ fn a_face_shows_its_area_and_its_form() {
             sin: 0.75f64.sqrt(),
         },
         half_angle: Some(PI / 6.0),
+        rectangle: None,
     };
     assert_eq!(
         shown(&values(&cone, LengthUnit::Mm)),
@@ -113,6 +115,7 @@ fn a_face_shows_its_area_and_its_form() {
         area: 160.0 * PI,
         summary: hole,
         half_angle: None,
+        rectangle: None,
     };
     assert_eq!(
         shown(&values(&wall, LengthUnit::Mm)),
@@ -210,6 +213,7 @@ fn the_panel_names_the_picks_and_shows_their_values() {
             d: 10.0,
         },
         half_angle: None,
+        rectangle: None,
     };
     let mut state = MeasureState {
         picks: [None, None],
@@ -336,4 +340,58 @@ fn the_viewport_draws_the_distance_the_points_and_the_hovered_dots() {
     state.hover = index.pick(&camera, crate::pick::tests::SIZE, at, crate::Picks::Faces);
     assert!(state.hover.is_some());
     assert_ne!(layer(&state), point_only);
+}
+
+/// A rectangle's width is the side nearer the horizontal, or for one
+/// lying flat nearer X; the panel shows both after its area, and the
+/// status bar's brief them in place of the area.
+#[test]
+fn a_rectangle_shows_its_width_and_height() {
+    // A wall: 20 along Y, 10 up.
+    assert_eq!(
+        width_height([[0.0, 0.0, 10.0], [0.0, 20.0, 0.0]]),
+        (20.0, 10.0)
+    );
+    // Leaning back: the side running level is still the width.
+    assert_eq!(
+        width_height([[0.0, 6.0, 8.0], [5.0, 0.0, 0.0]]),
+        (5.0, 10.0)
+    );
+    // Lying flat: the side along X.
+    assert_eq!(
+        width_height([[0.0, -30.0, 0.0], [12.0, 0.0, 0.0]]),
+        (12.0, 30.0)
+    );
+
+    let face = Measure::Face {
+        area: 200.0,
+        summary: Summary::Plane {
+            n: [1.0, 0.0, 0.0],
+            d: 0.0,
+        },
+        half_angle: None,
+        rectangle: Some([[0.0, 0.0, 10.0], [0.0, 20.0, 0.0]]),
+    };
+    assert_eq!(
+        shown(&values(&face, LengthUnit::Mm)),
+        [
+            ("Area", "200 mm²"),
+            ("Width", "20 mm"),
+            ("Height", "10 mm"),
+            ("Normal", "1, 0, 0")
+        ]
+    );
+    let inspected = Inspected {
+        revision: 0,
+        first: Ok(Probed {
+            at: None,
+            measure: Ok(face),
+        }),
+        second: None,
+        between: None,
+    };
+    assert_eq!(
+        shown(&brief(&inspected, LengthUnit::Mm)),
+        [("Width", "20 mm"), ("Height", "10 mm")]
+    );
 }

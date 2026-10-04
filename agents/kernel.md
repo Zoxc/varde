@@ -3442,7 +3442,13 @@ tol, budget)` gives the minimum distance between two targets (below).
   with `S` their squares' sum and `P` their cross's length; not for
   `1 − w² < 1e-6`), else `Other` (`measure::edge_shape(solid, chain)` gives it without
   the length, cheap enough for every edge of a model: the picking
-  tables' snap points). A straight edge's point is its
+  tables' snap points). A flat face whose region borders exactly four
+  chains, each straight (`edge_shape`), open and between two regions,
+  making one loop of vertices, each side square to the next to a cosine
+  of `1e-6`, is a rectangle (`measure::rectangle`, the `FaceMeasure`'s
+  `rectangle`: two sides from one corner); a hole's rim or a side
+  split where another face meets it makes more chains, and none. A
+  straight edge's point is its
   middle, a round one's its centre; a corner's its vertex; a body's its
   centre of mass. `angle(a, b)` is `atan2(|a × b|, a · b)`, folded to
   `[0, π/2]` (`|a · b|`) where either is a line.

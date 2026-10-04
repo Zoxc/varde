@@ -25,7 +25,9 @@
 //! - **Forms, points and directions**: a face's kind and parameters are
 //!   its [`Form`] (fitted faces are on theirs within the fit tolerance);
 //!   an edge's shape (a line, a circle, an ellipse) is read off its
-//!   curves; angles between directions are `atan2(|a × b|, a · b)`.
+//!   curves; a flat face of four straight edges, each square to the next
+//!   to a cosine of `1e-6`, is a rectangle, by two of its sides;
+//!   angles between directions are `atan2(|a × b|, a · b)`.
 //!
 //! Only `+ − × ÷ √` and [`trig`]. Integrals are summed in patch order and
 //! every search is sequential, so the results are the same bits at any
@@ -298,6 +300,9 @@ pub struct BodyMeasure {
 pub struct FaceMeasure {
     pub area: f64,
     pub form: Form,
+    /// For a flat face bounded by four straight edges, each square to the
+    /// next (see [`rectangle`]): two sides from one corner.
+    pub rectangle: Option<[DVec3; 2]>,
 }
 
 impl FaceMeasure {
@@ -413,6 +418,7 @@ pub fn measure(
             Ok(Measured::Face(FaceMeasure {
                 area,
                 form: face.form,
+                rectangle: rectangle(solid, target.topology, r),
             }))
         }
         Pick::Edge(c) => {
@@ -648,6 +654,70 @@ fn even(curve: &Conic3) -> bool {
         && a.dot(b) >= CURVE_TURN_COS * la * lb
         && la <= CURVE_LEGS * lb
         && lb <= CURVE_LEGS * la
+}
+
+/// Under this cosine of the angle between them, two sides of a
+/// rectangle are square to each other.
+const SQUARE: f64 = 1e-6;
+
+/// Two sides from one corner of region `r` of `solid`'s `topology`, if
+/// it's a rectangle: a flat face whose edges are four straight chains,
+/// not closed, making one loop, each square to the next. A hole's rim or
+/// an edge split where another face meets it makes more chains, and no
+/// rectangle.
+pub fn rectangle(solid: &Solid, topology: &Topology, r: u32) -> Option<[DVec3; 2]> {
+    let mesh = solid.mesh();
+    let region = topology.regions().get(r as usize)?;
+    let &tri = region.tris.first()?;
+    let face = mesh
+        .faces()
+        .get(mesh.tris().get(tri as usize)?.face as usize)?;
+    if !matches!(face.form, Form::Plane { .. }) {
+        return None;
+    }
+    let mut sides = Vec::new();
+    for chain in topology.chains() {
+        if !chain.regions.contains(&r) {
+            continue;
+        }
+        if sides.len() == 4 || chain.closed || chain.regions[0] == chain.regions[1] {
+            return None;
+        }
+        let EdgeShape::Line { .. } = edge_shape(solid, chain) else {
+            return None;
+        };
+        let (&first, &last) = (chain.halfedges.first()?, chain.halfedges.last()?);
+        sides.push([mesh.halfedge(first).start, mesh.end(last)]);
+    }
+    let [first, ..] = sides[..] else {
+        return None;
+    };
+    if sides.len() != 4 {
+        return None;
+    }
+    // The corners in order round the loop, from the first side's start.
+    let mut corners = vec![first[0]];
+    let mut used = [true, false, false, false];
+    let mut at = first[1];
+    while at != first[0] {
+        corners.push(at);
+        let (next, side) =
+            (sides.iter().enumerate()).find(|&(i, side)| !used[i] && side.contains(&at))?;
+        used[next] = true;
+        at = if side[0] == at { side[1] } else { side[0] };
+    }
+    if corners.len() != 4 {
+        return None;
+    }
+    let places: Vec<DVec3> = (corners.iter())
+        .map(|&v| mesh.verts().get(v as usize).copied())
+        .collect::<Option<_>>()?;
+    let sides: Vec<DVec3> = (0..4).map(|i| places[(i + 1) % 4] - places[i]).collect();
+    let square = (0..4).all(|i| {
+        let (u, w) = (sides[i].try_normalize(), sides[(i + 1) % 4].try_normalize());
+        u.zip(w).is_some_and(|(u, w)| u.dot(w).abs() < SQUARE)
+    });
+    square.then(|| [sides[0], sides[1]])
 }
 
 /// What `chain`, a chain of `solid`'s topology, makes, read off its

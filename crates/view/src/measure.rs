@@ -226,8 +226,14 @@ pub fn values(measure: &Measure, units: LengthUnit) -> Vec<Value> {
             area,
             summary,
             half_angle,
+            rectangle,
         } => {
             let mut values = vec![Value::size("Area", area, units, Power::Area)];
+            if let Some(sides) = rectangle {
+                let (width, height) = width_height(sides);
+                values.push(length("Width", width));
+                values.push(length("Height", height));
+            }
             match summary {
                 Summary::Plane { n, .. } => values.push(Value::triple("Normal", n, None)),
                 Summary::Cylinder { radius, .. } | Summary::Sphere { radius, .. } => {
@@ -307,11 +313,31 @@ pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<Value> {
     };
     let labels: &[&str] = match measure {
         Measure::Body { .. } => &["Volume"],
+        Measure::Face {
+            rectangle: Some(_), ..
+        } => &["Width", "Height"],
         Measure::Face { .. } => &["Area", "Radius"],
         Measure::Edge { .. } => &["Length", "Radius"],
         Measure::Point(_) => &["X", "Y", "Z"],
     };
     kept(labels, values(measure, units))
+}
+
+/// The width and height of a rectangle by two of its `sides` from one
+/// corner: the width is the side nearer the horizontal (square to Z),
+/// and of a rectangle lying flat, the side nearer X.
+pub fn width_height(sides: [[f64; 3]; 2]) -> (f64, f64) {
+    let [a, b] = sides.map(DVec3::from);
+    let (la, lb) = (a.length(), b.length());
+    // How far each rises out of the horizontal, and runs along X, as
+    // sines and cosines; a hair apart counts as level.
+    let (rise_a, rise_b) = (a.z.abs() / la, b.z.abs() / lb);
+    let a_wide = if (rise_a - rise_b).abs() > 1e-9 {
+        rise_a < rise_b
+    } else {
+        a.x.abs() / la >= b.x.abs() / lb
+    };
+    if a_wide { (la, lb) } else { (lb, la) }
 }
 
 /// The name a pick shows with in the panel once measured: its kind from
