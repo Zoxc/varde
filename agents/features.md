@@ -1,6 +1,6 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers and shells), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers, shells and fillets), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -2881,14 +2881,16 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   edges has one form; two picks of edges between the same two faces at
   different points are two edges.
 - **Checks** (`CheckError::Chamfer(id, ChamferError)`):
-  `Chamfer::check_own(design)` (cheap): 1..=256 edges (`Edges`), each
-  edge's own check (`Edge(EdgeError)`), in order without repeats
-  (`EdgeOrder`), one body (`Bodies`), distances (`Distance`) and the
-  angle (`Angle`) by their asks. `Document::check_chamfer_edges(index,
-  edges)` (public, for the panel): the body there and made before
-  (`Body`: depended on, as a combine's bodies), and every key's feature
-  before it, or not there with an id below the next (`RefMaker`, as a
-  sketch's face's).
+  `Chamfer::check_own(design)` (cheap): its edges by
+  `check_blend_edges_own` (`Edges(BlendEdgesError)`: 1..=256 edges,
+  `Count`; each edge's own check, `Edge(EdgeError)`; in order without
+  repeats, `Order`; one body, `Bodies`), distances (`Distance`) and the
+  angle (`Angle`) by their asks. `Document::check_blend_edges(index,
+  edges)` (public, for the panel; a fillet's edges are checked by the
+  same two, `crates/document/src/blend.rs`): the body there and made
+  before (`Body`: depended on, as a combine's bodies), and every key's
+  feature before it, or not there with an id below the next
+  (`RefMaker`, as a sketch's face's).
 - **Dependencies**: `FeatureKind::bodies()` is the edges' body, so
   removing it or its maker removes the chamfer. The features that made
   its edges' faces are **not** followed: removing a join whose wall an
@@ -2905,6 +2907,11 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   it by `Topology::edge(faces, near)`; one not found fails the chamfer
   before the kernel: "its edge wasn't found", or with several "its edge
   2 of 3 wasn't found" (its place in the list).
+- What the chamfer shares with the fillet is in
+  `crates/regen/src/history/blend.rs` (`OwnBody`, the body's solid and
+  topology, which the shell takes its body by too; `plan`; `refused`):
+  finding the edges, growing the chains, their first faces and names,
+  the refusals' words and drawings.
 - **Tangent chains** (with `chains`): each picked edge's chain takes in
   every chain with the same root in `Topology::tangent_chains` (edges
   running on into each other within 1°, from the curves' own end
@@ -2937,7 +2944,7 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   the feature, the fit tolerance and each chain's index, name and cut
   bits; the result replaces the body's solid under that key (an empty
   result: "chamfering Body 1 leaves nothing of it"). Its refusals
-  (`BlendError`) are worded by `message::chamfer_refused` with the edge
+  (`BlendError`) are worded by `message::blend_refused` with the edge
   drawn (its curves, as a scale's refused edge): flat "its edge is between
   faces that are nearly flat: there's nothing to chamfer", folded,
   "... turns from convex to concave along its length: chamfer its parts
@@ -2946,7 +2953,7 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   chain ...", a corner "edges of Body 1 meeting at a corner can't be
   chamfered together: chamfer them apart"; its failures as a boolean's
   ("chamfering Body 1 is too complex to work out" for `TooComplex`,
-  `message::chamfering`), the evidence's faces on the body.
+  `message::blending`), the evidence's faces on the body.
 - **Kernel stand-in**: `varde_kernel::chamfer` (`kernel/src/blend.rs`,
   with `ChamferChain`, `ChamferCut`, `BlendError`) isn't built yet: it
   has its planned signature and fails with `TooComplex`. So every
@@ -3392,3 +3399,113 @@ with why; `shell/fuzz.rs`, random shell sessions, `VARDE_SHELL_SEEDS`,
 each shell the model shows working holding to its volume). The app's
 tests shell by boxes through
 regen's `testing` feature (`varde_regen::testing::shell_by_boxes`).
+
+## Fillet
+
+`crates/document/src/fillet.rs`.
+
+```rust
+pub struct Fillet {
+    pub edges: Vec<EdgeRef>,   // as a chamfer's: 1..=MAX_BLEND_EDGES, one body, EdgeRef::order, no repeats
+    pub radius: Value,         // a length as an extrude's
+    pub chains: bool,          // take in each edge's tangent chain
+}
+```
+
+- **What it is**: the thirteenth variant (`FeatureKind::Fillet`, "Fillet
+  N"). Its edges are rounded off to one radius on the body they're on,
+  which keeps its id; it makes no body. Convex edges lose material,
+  concave ones gain it (the kernel's to tell). The radius is a length
+  as an extrude's (`Fillet::radius_ask` = `Extent::ask`); one radius
+  per fillet (constant-radius fillets, as decided), so unequal radii
+  meet only across features. Its edges are as a chamfer's: all on one
+  body, kept in `EdgeRef::order` without repeats; with no first faces
+  there's no Flip. The plan's struct, as built.
+- **Checks** (`CheckError::Fillet(id, FilletError)`):
+  `Fillet::check_own(design)` (cheap): its edges by
+  `check_blend_edges_own` (`Edges(BlendEdgesError)`, the chamfer's
+  checks), the radius by its ask (`Radius`); `Document::check_blend_edges`
+  for what they name, as a chamfer's.
+- **Dependencies**: `FeatureKind::bodies()` is the edges' body, so
+  removing it or its maker removes the fillet; the features that made
+  its edges' faces are not followed (it then fails, "its edge wasn't
+  found"), as a chamfer's.
+- `SetUnits` pins its radius by its ask.
+
+### Regeneration
+
+`crates/regen/src/history/fillet.rs`, in history order:
+
+- The body, its topology, the edges found on it ("its edge wasn't
+  found", "its edge 2 of 3 wasn't found"), tangent chains grown and
+  each chain's `FacePart::Blend` name: all as a chamfer's
+  (`history/blend.rs`; a fillet has no use for the first faces, so
+  they're worked out unflipped and left).
+- **The fillet**: `varde_kernel::fillet(solid, topology, chains,
+  radius, feature, tol, budget)`, each chain a `FilletChain { chain,
+  name }`, cached as an `Entry::Solid` by the body's key, the feature,
+  the fit tolerance, the radius's bits and each chain's index and name;
+  the result replaces the body's solid under that key (an empty result:
+  "filleting Body 1 leaves nothing of it"). Its refusals
+  (`BlendError`) are worded by `message::blend_refused` with the edge
+  drawn, as a chamfer's with its words: "its edge is between faces that
+  are nearly flat: there's nothing to fillet", "... fillet its parts
+  apart", "the fillet doesn't fit along its edge 2: it runs past a face
+  beside it", and the fillet's own `BlendError::End`, "the fillet along
+  its edge 2 runs into another face at its end"; a corner "edges of Body
+  1 meeting at a corner can't be filleted together: fillet them apart";
+  its failures as a boolean's ("filleting Body 1 is too complex to work
+  out", `message::blending`).
+- **Kernel stand-in**: `varde_kernel::fillet` (`kernel/src/blend.rs`,
+  with `FilletChain`) isn't built yet: it has its planned signature and
+  fails with `TooComplex`. So every fillet that finds its edges fails
+  today with "filleting Body 1 is too complex to work out", its body
+  left whole; the rest of the history goes on. The regen tests swap it
+  (`fillet::FILLETER`, a thread local; other crates' tests through the
+  `testing` feature, `varde_regen::testing::fillet_by_arcs`) for
+  `by_arcs`: each chain a straight, open, convex edge between two flat
+  faces, rounded off by one boolean taking away a prism past its ends
+  whose section is the corner between the edge and the rails (at `r /
+  tan(θ/2)` along each face, `θ` the angle between the faces) less the
+  round's circle, widened outwards along each face's normal: right for
+  a block's edges and a prism's obtuse and acute ones (square ends); a
+  rail past its face's reach across is `TooBig`; anything else too
+  complex. Two rounds meeting at a corner (a block's top loop) the
+  stand-in's booleans can't work out (the rounds touch the top
+  tangentially where they cross: "can't be worked out ... flush or
+  tangent"), which the kernel's mitres; the test takes that refusal or
+  the mitred volume, never another. The planned analytic tests of the
+  kernel's fillet are written out and `#[ignore = "kernel fillet not
+  built"]`.
+- The draft's reply carries nothing new.
+
+### UI
+
+Not built yet: a fillet is made by the document's commands, shown in
+the Timeline with the model mock's fillet icon (`Icon::BFillet`;
+`Icon::Fillet` is the sketch tool's) and note ("R2", `view/src/fillet.rs`),
+selected the status bar says `fillet_info` ("2 edges · R2 mm · Tangent
+chain", the mock's row info); "Edit fillet" does nothing until its
+session is built.
+
+Tests: `document/src/fillet/tests.rs` (added and undone, edited, its own
+parts, bodies and makers, removal following the body and not the faces,
+units pinned, round trip, wrong fillets refused when read, the
+thirteenth kind, errors), `regen/src/history/tests/fillet.rs` (the stub
+failing as too complex with the history going on; an edge gone after
+its face's maker is removed, named by its place among others; an edge
+found again after an upstream dimension change, rounded where it went;
+with the stand-in: a block's edge (an exact cylinder of the radius) and
+two opposite ones, its top loop mitred or refused, a prism's obtuse and
+acute edges by `r²(cot(θ/2) − (π − θ)/2)` per length, joins after a
+fillet clear of the round and across it by their volumes, the cache, a
+radius past the faces refused; recording: a slot's rim taken in as four
+chains named apart with the radius as typed, only the one without
+chains; refusals (too big, an end running into a face) worded and
+drawn; a consumed body; ignored: the kernel's on a block's edge, top
+loop and all twelve (the rounded box), a hole's and a boss's rims and a
+slot's rim by Pappus, determinism), `io/src/vrdp/tests.rs` (through a
+file, a tampered edge point and radius refused, a record's fillets
+damaged 2 000 ways refused or checked, edges out of order, repeated, on
+another body, none or past the limit, named by the fillet or later and
+a radius refused as read), `view/src/fillet/tests.rs` (the notes).

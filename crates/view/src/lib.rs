@@ -20,6 +20,7 @@ mod document;
 mod errors;
 mod escape;
 mod extrude;
+mod fillet;
 mod hit;
 mod icons;
 mod measure;
@@ -71,6 +72,7 @@ pub use document::{
 };
 pub use errors::{ShownError, ShownErrors};
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
+pub use fillet::fillet_info;
 pub use icons::LOGO_SVG;
 pub use measure::{
     MeasureLook, MeasureSlot, MeasureState, Outcome, Picked as MeasuredPick, Value as MeasureValue,

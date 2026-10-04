@@ -3,7 +3,10 @@ use varde_kernel::mesh::{FaceKey, PartKey};
 
 use super::*;
 use crate::testing::{extrude_again, with_body};
-use crate::{CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit, Removable};
+use crate::{
+    BlendEdgesError, CheckError, Command, Document, EdgeError, EditError, Editor, FeatureId,
+    FeatureKind, LengthUnit, MAX_BLEND_EDGES, Removable,
+};
 
 /// The example's body and another plate: the editor, the bodies and
 /// their makers.
@@ -161,13 +164,21 @@ fn its_own_parts_are_checked() {
         change(&mut chamfer);
         chamfer.check_own(&design)
     };
-    assert_eq!(check(&|c| c.edges.clear()), Err(ChamferError::Edges(0)));
+    assert_eq!(
+        check(&|c| c.edges.clear()),
+        Err(ChamferError::Edges(BlendEdgesError::Count(0)))
+    );
     let many = |c: &mut Chamfer| {
         c.edges = (0..=MAX_BLEND_EDGES)
             .map(|i| top_edge(body, maker, 0, DVec3::new(i as f64, 0.0, 10.0)))
             .collect();
     };
-    assert_eq!(check(&many), Err(ChamferError::Edges(MAX_BLEND_EDGES + 1)));
+    assert_eq!(
+        check(&many),
+        Err(ChamferError::Edges(BlendEdgesError::Count(
+            MAX_BLEND_EDGES + 1
+        )))
+    );
     // As many as there may be.
     assert_eq!(
         check(&|c| {
@@ -176,10 +187,13 @@ fn its_own_parts_are_checked() {
         }),
         Ok(())
     );
-    assert_eq!(check(&|c| c.edges.reverse()), Err(ChamferError::EdgeOrder));
+    assert_eq!(
+        check(&|c| c.edges.reverse()),
+        Err(ChamferError::Edges(BlendEdgesError::Order))
+    );
     assert_eq!(
         check(&|c| c.edges[1] = c.edges[0]),
-        Err(ChamferError::EdgeOrder)
+        Err(ChamferError::Edges(BlendEdgesError::Order))
     );
     // The same faces picked at two points: two edges between them.
     assert_eq!(
@@ -191,20 +205,22 @@ fn its_own_parts_are_checked() {
     );
     assert_eq!(
         check(&|c| c.edges[0].faces.reverse()),
-        Err(ChamferError::Edge(EdgeError::Faces))
+        Err(ChamferError::Edges(BlendEdgesError::Edge(EdgeError::Faces)))
     );
     // NaN isn't equal to itself: matched.
     let far = DVec3::new(f64::NAN, 0.0, 0.0);
     assert!(matches!(
         check(&|c| c.edges[0].near = far),
-        Err(ChamferError::Edge(EdgeError::Near(_)))
+        Err(ChamferError::Edges(BlendEdgesError::Edge(EdgeError::Near(
+            _
+        ))))
     ));
     assert_eq!(
         check(&|c| {
             let other = editor_body_after(c.edges[0].body);
             c.edges[1].body = other;
         }),
-        Err(ChamferError::Bodies)
+        Err(ChamferError::Edges(BlendEdgesError::Bodies))
     );
     // Values: lengths as an extrude's, an angle above 0 and under 90°.
     let length_ask = Chamfer::distance_ask(&design);
@@ -259,7 +275,7 @@ fn its_own_parts_are_checked() {
             edges: Vec::new(),
             ..good.clone()
         },
-        ChamferError::Edges(0),
+        ChamferError::Edges(BlendEdgesError::Count(0)),
     );
 }
 
@@ -280,12 +296,12 @@ fn bodies_and_makers_are_checked() {
     refused(
         &mut editor,
         two_edges(&document, BodyId(999), first),
-        ChamferError::Body(BodyId(999)),
+        ChamferError::Edges(BlendEdgesError::Body(BodyId(999))),
     );
     refused(
         &mut editor,
         two_edges(&document, a, later),
-        ChamferError::RefMaker(later),
+        ChamferError::Edges(BlendEdgesError::RefMaker(later)),
     );
     let id = add(&mut editor, two_edges(&document, b, second)).unwrap();
     // On the other body's faces named by the first body's maker: the
@@ -295,13 +311,13 @@ fn bodies_and_makers_are_checked() {
     document.check().unwrap();
     let index = document.feature_index(id).unwrap();
     assert_eq!(
-        document.check_chamfer_edges(index, &chamfer_of(document, id).edges),
+        document.check_blend_edges(index, &chamfer_of(document, id).edges),
         Ok(())
     );
     // Made by the chamfer itself or later: refused.
     assert_eq!(
-        document.check_chamfer_edges(1, &chamfer_of(document, id).edges),
-        Err(ChamferError::Body(b))
+        document.check_blend_edges(1, &chamfer_of(document, id).edges),
+        Err(BlendEdgesError::Body(b))
     );
 }
 
@@ -420,15 +436,19 @@ fn a_chamfer_is_the_eleventh_kind() {
 #[test]
 fn errors_say_what_is_wrong() {
     assert_eq!(
-        CheckError::Chamfer(FeatureId(3), ChamferError::Body(BodyId(2))).to_string(),
-        "feature 3: chamfers body 2, which isn't there or no earlier feature makes"
+        CheckError::Chamfer(
+            FeatureId(3),
+            ChamferError::Edges(BlendEdgesError::Body(BodyId(2)))
+        )
+        .to_string(),
+        "feature 3: its edges are on body 2, which isn't there or no earlier feature makes"
     );
     assert_eq!(
         ChamferError::Angle.to_string(),
         "its angle's expression doesn't give its value, or it isn't above 0° and under 90°"
     );
     assert_eq!(
-        ChamferError::Edge(EdgeError::Faces).to_string(),
+        ChamferError::Edges(BlendEdgesError::Edge(EdgeError::Faces)).to_string(),
         "its edge's faces are out of order or the same"
     );
     assert_eq!(ChamferSize::Two(zero(), zero()).name(), "Two distances");

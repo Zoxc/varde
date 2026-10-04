@@ -1665,6 +1665,7 @@ mod check_evidence;
 mod combine;
 mod edges;
 mod faces;
+mod fillet;
 mod merging;
 mod motion;
 mod pattern;

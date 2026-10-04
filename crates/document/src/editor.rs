@@ -697,6 +697,11 @@ impl Editor {
                                 value.pin_units(&ask);
                             }
                         }
+                        FeatureKind::Fillet(fillet) => {
+                            for (value, ask) in fillet.values_mut(&before) {
+                                value.pin_units(&ask);
+                            }
+                        }
                         // No values.
                         FeatureKind::Combine(_)
                         | FeatureKind::Mirror(_)

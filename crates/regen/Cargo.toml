@@ -7,8 +7,8 @@ license.workspace = true
 
 [features]
 # `testing`: other crates' tests split by two booleans in place of the
-# kernel's split, and chamfer and shell by stand-ins in place of the
-# kernel's chamfer and shell, which aren't built yet.
+# kernel's split, and chamfer, shell and fillet by stand-ins in place of
+# the kernel's, which aren't built yet.
 testing = []
 
 [dependencies]

@@ -121,6 +121,9 @@ icons! {
     CPattern => r#"<circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="2 2.2"/><rect class="t" x="10" y="2.5" width="4" height="4" rx="1"/><rect x="17.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="17.5" width="4" height="4" rx="1"/><rect x="2.5" y="10" width="4" height="4" rx="1" stroke-dasharray="1.6 1.4"/>"#,
     // A box grown from a smaller one, an arrow out of its corner.
     Scale => r#"<rect class="r" x="3" y="11" width="10" height="10" rx="1"/><path class="a" d="M10 14l10-10M14 4h6v6"/>"#,
+    // The model mock's fillet: a block with its top edge rounded off,
+    // the round in the accent with two of its rulings.
+    BFillet => r#"<path d="M7.67 10L3.34 7.5v9L12 21.5v-4M3.34 7.5L12 2.5l4.33 2.5M12 21.5l8.66-5v-4"/><path class="a" d="M7.67 10C10.06 11.38 12 14.74 12 17.5M16.33 5C18.72 6.38 20.66 9.74 20.66 12.5M16.33 5L7.67 10M20.66 12.5L12 17.5"/><path class="a" stroke-width="1" opacity=".75" d="M18.49 6.92L9.84 11.92M20.08 9.67L11.42 14.67"/>"#,
     // The model mock's chamfer: a block with its top edge cut off,
     // the new face in the accent.
     BChamfer => r#"<path d="M7.67 10L3.34 7.5v9L12 21.5v-4M3.34 7.5L12 2.5l4.33 2.5M12 21.5l8.66-5v-4"/><path class="a" d="M7.67 10L12 17.5M16.33 5l4.33 7.5M16.33 5L7.67 10M20.66 12.5L12 17.5"/>"#,
@@ -272,6 +275,7 @@ impl Icon {
             | Icon::Combine
             | Icon::Scale
             | Icon::Split
+            | Icon::BFillet
             | Icon::BChamfer
             | Icon::Shell
             | Icon::ScUniform

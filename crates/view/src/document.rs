@@ -2035,6 +2035,7 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
         FeatureKind::Split(split) => crate::motion::split_info(document, split),
         FeatureKind::Chamfer(chamfer) => crate::chamfer::chamfer_info(chamfer, units),
         FeatureKind::Shell(shell) => crate::shell::shell_info(shell, units),
+        FeatureKind::Fillet(fillet) => crate::fillet::fillet_info(fillet, units),
     }
 }
 

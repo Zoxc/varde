@@ -818,6 +818,9 @@ impl Doc {
                     | FeatureKind::Chamfer(_)
                     | FeatureKind::Shell(_),
                 ) => self.edit_motion(id),
+                // No panel yet: fillets are made by the document's
+                // commands until their session is built.
+                Some(FeatureKind::Fillet(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

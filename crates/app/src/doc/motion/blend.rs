@@ -76,7 +76,7 @@ impl MotionSession {
             && (edges
                 .body()
                 .is_some_and(|body| document.body(body).is_none())
-                || document.check_chamfer_edges(index, &edges.refs).is_err());
+                || document.check_blend_edges(index, &edges.refs).is_err());
     }
 }
 

@@ -5,6 +5,7 @@
 //! checks their results and records history for undo/redo.
 
 mod align;
+mod blend;
 mod chamfer;
 pub mod codec;
 mod combine;
@@ -13,6 +14,7 @@ mod editor;
 mod example;
 mod extrude;
 mod feature;
+mod fillet;
 mod motion;
 pub mod name;
 mod opacity;
@@ -27,13 +29,15 @@ mod split;
 mod testing;
 
 pub use align::{Align, AlignError, AlignRefs, DirRef, PointRef};
-pub use chamfer::{Chamfer, ChamferError, ChamferSize, MAX_BLEND_EDGES};
+pub use blend::{BlendEdgesError, MAX_BLEND_EDGES, check_blend_edges_own};
+pub use chamfer::{Chamfer, ChamferError, ChamferSize};
 pub use codec::DecodeError;
 pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
 pub use edge::{EdgeError, EdgeRef};
 pub use editor::{Command, Editor, Generation, Revision};
 pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
 pub use feature::{Feature, FeatureId, FeatureKind};
+pub use fillet::{Fillet, FilletError};
 pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
 pub use opacity::Opacity;
 pub use pattern::{Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternKind};
@@ -318,7 +322,9 @@ impl Document {
     /// [`Chamfer::check_own`] wants them; and every shell's body is one a
     /// feature before it makes, its open faces' makers before it (or not
     /// there with ids no later feature can take), its faces and
-    /// thickness as [`Shell::check_own`] wants them. A
+    /// thickness as [`Shell::check_own`] wants them; and every fillet's
+    /// edges as a chamfer's, its radius as [`Fillet::check_own`] wants
+    /// it. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
@@ -431,8 +437,8 @@ impl Document {
                     chamfer
                         .check_own(&design)
                         .map_err(|why| CheckError::Chamfer(id, why))?;
-                    self.check_chamfer_edges(index, &chamfer.edges)
-                        .map_err(|why| CheckError::Chamfer(id, why))?;
+                    self.check_blend_edges(index, &chamfer.edges)
+                        .map_err(|why| CheckError::Chamfer(id, ChamferError::Edges(why)))?;
                 }
                 FeatureKind::Shell(shell) => {
                     shell
@@ -440,6 +446,13 @@ impl Document {
                         .map_err(|why| CheckError::Shell(id, why))?;
                     self.check_shell_faces(index, shell.body, &shell.open)
                         .map_err(|why| CheckError::Shell(id, why))?;
+                }
+                FeatureKind::Fillet(fillet) => {
+                    fillet
+                        .check_own(&design)
+                        .map_err(|why| CheckError::Fillet(id, why))?;
+                    self.check_blend_edges(index, &fillet.edges)
+                        .map_err(|why| CheckError::Fillet(id, FilletError::Edges(why)))?;
                 }
             }
         }
@@ -771,26 +784,6 @@ impl Document {
         Ok(())
     }
 
-    /// Checks what `edges` name as the edges of a chamfer at feature
-    /// `index` (at the end for a new one, the count of features), as
-    /// [`Document::check`] has it: each edge's body there and made by a
-    /// feature before it (depended on, as a combine's bodies), and its
-    /// faces' makers before it, or not there with ids no later feature
-    /// can take, as a sketch's face's. For a panel keeping what it sets
-    /// up one the document takes; their own parts are
-    /// [`Chamfer::check_own`]'s.
-    pub fn check_chamfer_edges(&self, index: usize, edges: &[EdgeRef]) -> Result<(), ChamferError> {
-        for edge in edges {
-            if !self.made_before(index, edge.body) {
-                return Err(ChamferError::Body(edge.body));
-            }
-            if let Some(&maker) = (edge.makers().iter()).find(|&&m| !self.maker_before(index, m)) {
-                return Err(ChamferError::RefMaker(maker));
-            }
-        }
-        Ok(())
-    }
-
     /// Checks what a shell at feature `index` (at the end for a new one,
     /// the count of features) of `body` opening `faces` names, as
     /// [`Document::check`] has it: its body there and made by a feature
@@ -919,6 +912,8 @@ pub enum CheckError {
     Chamfer(FeatureId, ChamferError),
     /// A shell feature is wrong, see [`ShellError`].
     Shell(FeatureId, ShellError),
+    /// A fillet feature is wrong, see [`FilletError`].
+    Fillet(FeatureId, FilletError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -971,6 +966,7 @@ impl fmt::Display for CheckError {
             CheckError::Split(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Chamfer(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Shell(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Fillet(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -1003,6 +999,7 @@ impl std::error::Error for CheckError {
             CheckError::Split(_, why) => Some(why),
             CheckError::Chamfer(_, why) => Some(why),
             CheckError::Shell(_, why) => Some(why),
+            CheckError::Fillet(_, why) => Some(why),
             _ => None,
         }
     }

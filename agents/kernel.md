@@ -10203,6 +10203,19 @@ see `agents/features.md`, "Failures and where they are").
   the kernel's chains, is regeneration's instead, from the
   existing `Topology::tangent_chains`: it needs only the topology and
   the curves' end tangents. See "Chamfer" in `agents/features.md`.
+- **Fillet built above a stand-in.** The fillet feature's document and
+  regeneration came before the kernel's notch, strips, sectors, mitres
+  and vertex blends (kernel work put off): `blend.rs` holds
+  `fillet(solid, topology, chains: &[FilletChain], radius, feature,
+  tol, budget) -> Result<Solid, BlendError>`, failing with
+  `BlendError::Failed(TooComplex)`, to be replaced by the real one. The
+  caller hands it chains of the solid's `Topology`, each once, with the
+  `FacePart::Blend` edge name its faces get (grown along tangent chains
+  and named as a chamfer's), and one radius for all (constant-radius
+  fillets only; unequal radii can only meet across features). Beside
+  the chamfer's refusals, `BlendError::End { chain }`: the notch runs
+  into another face at an end of the chain rather than ending on one
+  end face. See "Fillet" in `agents/features.md`.
 - **Shell built above a stand-in.** The shell feature's document and
   regeneration came before the kernel's offset solid and shell (kernel
   work put off): `shell.rs` holds `shell(solid, topology, open: &[u32],

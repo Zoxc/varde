@@ -173,7 +173,7 @@ fn check_session(plates: &Plates, what: &str) {
         .and_then(|id| features.iter().position(|feature| feature.id == id))
         .unwrap_or(features.len());
     document
-        .check_chamfer_edges(index, &chamfer.edges)
+        .check_blend_edges(index, &chamfer.edges)
         .unwrap_or_else(|why| panic!("{what}: {why}: {chamfer:?}"));
     let body = chamfer.body().unwrap();
     assert!(

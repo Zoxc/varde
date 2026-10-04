@@ -47,6 +47,15 @@ pub mod testing {
     pub fn shell_by_boxes() {
         crate::history::shell_by_boxes();
     }
+
+    /// Fillets on this thread by a stand-in in place of the kernel's
+    /// fillet, which isn't built yet: each edge a straight convex one
+    /// between two flat faces, rounded off by cutting away a prism past
+    /// its ends whose section is the corner less the round (right for a
+    /// block's edges); anything else is too complex.
+    pub fn fillet_by_arcs() {
+        crate::history::fillet_by_arcs();
+    }
 }
 mod inspect;
 mod message;

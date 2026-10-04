@@ -62,7 +62,9 @@
 //! the body keeping its id (see `chamfer`). A shell finds the faces it
 //! opens on its body's topology (one not found: "its open face wasn't
 //! found") and hollows the body by the kernel's shell, the body keeping
-//! its id (see `shell`).
+//! its id (see `shell`). A fillet finds and grows its edges as a
+//! chamfer does and rounds them off by the kernel's fillet (see
+//! `fillet`; what the two share is `blend`).
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -110,8 +112,10 @@ use crate::picking::region_form;
 use crate::profile::profile;
 
 mod align;
+mod blend;
 mod chamfer;
 mod combine;
+mod fillet;
 mod motion;
 mod pattern;
 pub(crate) mod scale;
@@ -119,6 +123,8 @@ mod shell;
 mod split;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use chamfer::chamfer_by_wedges;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use fillet::fillet_by_arcs;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use shell::shell_by_boxes;
 #[cfg(any(test, feature = "testing"))]
@@ -402,7 +408,8 @@ fn walk(
                     | FeatureKind::Scale(_)
                     | FeatureKind::Split(_)
                     | FeatureKind::Chamfer(_)
-                    | FeatureKind::Shell(_) => unreachable!("matched apart"),
+                    | FeatureKind::Shell(_)
+                    | FeatureKind::Fillet(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -508,6 +515,18 @@ fn walk(
                     document,
                     feature.id,
                     shell,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::Fillet(fillet) => {
+                if let Err(failed) = fillet::evaluate_fillet(
+                    document,
+                    feature.id,
+                    fillet,
                     &tolerance,
                     &mut evaluation,
                     cache,

@@ -3269,6 +3269,208 @@ fn a_chamfer_s_edges_and_values_are_checked_as_read() {
     });
 }
 
+/// The example plate with two edges of its top filleted, 1.75 mm, tangent
+/// chains on, then one more, 0.625 mm, without.
+fn filleted_plate() -> Document {
+    use glam::DVec3;
+    use varde_document::{EdgeRef, FaceKey, Fillet, PartKey};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let document = editor.document();
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let key = |part| FaceKey {
+        feature: maker,
+        part,
+        instance: 0,
+    };
+    let edge = |curve, near: [f64; 3]| EdgeRef {
+        body: plate,
+        faces: [key(PartKey::EndCap), key(PartKey::Side { curve })],
+        near: DVec3::from(near),
+    };
+    let radius = |text| Value::new(text, &Fillet::radius_ask(&document.design())).unwrap();
+    let mut two = vec![edge(1, [3.0, 7.25, 10.0]), edge(2, [30.0, 1.5, 10.0])];
+    two.sort_by(EdgeRef::order);
+    let fillets = [
+        Fillet {
+            edges: two,
+            radius: radius("1.75"),
+            chains: true,
+        },
+        Fillet {
+            edges: vec![edge(4, [-30.0, -1.25, 10.0])],
+            radius: radius("0.625 mm"),
+            chains: false,
+        },
+    ];
+    for fillet in fillets {
+        editor
+            .apply(editor.document().add_feature(fillet.into()))
+            .unwrap();
+    }
+    editor.document().clone()
+}
+
+/// Fillets go through a file and are read back in their places.
+#[test]
+fn fillets_round_trip() {
+    use varde_document::FeatureKind;
+    let document = filleted_plate();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    assert!(matches!(read.features()[2].kind, FeatureKind::Fillet(_)));
+    assert!(matches!(read.features()[3].kind, FeatureKind::Fillet(_)));
+}
+
+/// A record whose fillet's edge point or radius was changed on disk to
+/// what the document refuses is refused as it's read; as written, it
+/// reads.
+#[test]
+fn a_tampered_fillet_is_refused() {
+    let raw = record_msgpack(&filleted_plate());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let from = (raw.windows(6))
+        .position(|window| window == b"Fillet")
+        .expect("a fillet's variant name");
+    let at = |value: f64| {
+        let mut was = vec![0xcb];
+        was.extend_from_slice(&value.to_bits().to_be_bytes());
+        let at = (raw[from..].windows(was.len()))
+            .position(|window| window == was)
+            .expect("the value is in the fillet");
+        from + at
+    };
+    for (was, nows) in [
+        (7.25, [f64::NAN, f64::INFINITY, 3e6]),
+        (1.75, [0.0, -1.75, 2.0]),
+    ] {
+        let at = at(was);
+        for now in nows {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&now.to_bits().to_be_bytes());
+            assert!(
+                from_msgpack::<Document>(&changed).is_err(),
+                "{now} for {was} was taken"
+            );
+        }
+    }
+}
+
+/// The fillets' part of a record damaged on disk, every float in it set
+/// to what's out of bounds or not a number and random bytes in it
+/// changed (2 000 ways): refused as it's read or read as a document that
+/// passes its check, its fillets their own, never a panic.
+#[test]
+fn a_damaged_fillet_is_refused_or_checked() {
+    let document = filleted_plate();
+    let raw = record_msgpack(&document);
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let from = (raw.windows(6))
+        .position(|window| window == b"Fillet")
+        .expect("a fillet's variant name");
+    let read = |bytes: &[u8]| {
+        if let Ok((document, _)) = from_msgpack::<Document>(bytes) {
+            document.check().unwrap();
+            for feature in document.features() {
+                if let varde_document::FeatureKind::Fillet(fillet) = &feature.kind {
+                    fillet.check_own(&document.design()).unwrap();
+                }
+            }
+        }
+    };
+    let floats: Vec<usize> = (from..raw.len().saturating_sub(8))
+        .filter(|&at| raw[at] == 0xcb)
+        .collect();
+    assert!(floats.len() > 8, "{}", floats.len());
+    for &at in &floats {
+        for x in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e300,
+            -1e300,
+            1.000_001e6,
+            1e6,
+            -0.0,
+            0.0,
+            f64::MIN_POSITIVE,
+        ] {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&x.to_bits().to_be_bytes());
+            read(&changed);
+        }
+    }
+    let size = raw.len() - from;
+    for seed in 0..2_000u64 {
+        let picks = noise(8, seed.wrapping_mul(0x9e37_79b9) + 3);
+        let mut changed = raw.clone();
+        for pair in picks.chunks(2).take(1 + (seed % 3) as usize) {
+            let at = from + (usize::from(pair[0]) * 256 + usize::from(pair[1])) % size;
+            changed[at] = picks[(seed % 8) as usize] ^ pair[1];
+        }
+        read(&changed);
+    }
+}
+
+/// A fillet's edges out of order, repeated, on two bodies, none or past
+/// the limit in a record, named by a later feature, and its radius
+/// changed to what its ask refuses: each refused as it's read.
+#[test]
+fn a_fillet_s_edges_and_radius_are_checked_as_read() {
+    use varde_document::{FeatureKind, Fillet, MAX_BLEND_EDGES};
+    let document = filleted_plate();
+    let raw = record_msgpack(&document);
+    let FeatureKind::Fillet(two) = &document.features()[2].kind else {
+        panic!("the two-edge fillet");
+    };
+    let was = rmp_serde::to_vec_named(&FeatureKind::Fillet(two.clone())).unwrap();
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the fillet in the record");
+    let refused = |change: &dyn Fn(&mut Fillet)| {
+        let mut fillet = two.clone();
+        change(&mut fillet);
+        let now = rmp_serde::to_vec_named(&FeatureKind::Fillet(fillet.clone())).unwrap();
+        let mut changed = raw[..at].to_vec();
+        changed.extend_from_slice(&now);
+        changed.extend_from_slice(&raw[at + was.len()..]);
+        assert!(
+            from_msgpack::<Document>(&changed).is_err(),
+            "taken: {fillet:?}"
+        );
+    };
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    refused(&|fillet| fillet.edges.reverse());
+    refused(&|fillet| fillet.edges[1] = fillet.edges[0]);
+    refused(&|fillet| fillet.edges[1].body = varde_document::BodyId::NEW);
+    refused(&|fillet| {
+        let edge = fillet.edges[0];
+        fillet.edges = (0..=MAX_BLEND_EDGES)
+            .map(|k| varde_document::EdgeRef {
+                near: edge.near + glam::DVec3::X * k as f64 * 1e-3,
+                ..edge
+            })
+            .collect();
+    });
+    refused(&|fillet| fillet.edges.clear());
+    // Its own id and a later one's: not made before it.
+    let own = document.features()[2].id.get();
+    for maker in [own, own + 1] {
+        refused(&|fillet| {
+            for edge in &mut fillet.edges {
+                edge.faces[1].feature = maker;
+            }
+        });
+    }
+    refused(&|fillet| {
+        fillet.radius.value = 0.0;
+        fillet.radius.text = "0".to_owned();
+    });
+    refused(&|fillet| fillet.radius.value = 3.0);
+}
+
 /// The example plate shelled 1.375 mm outward, open at its top.
 fn shelled_plate() -> Document {
     use glam::DVec3;

@@ -198,7 +198,8 @@ pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sket
         | FeatureKind::Scale(_)
         | FeatureKind::Split(_)
         | FeatureKind::Chamfer(_)
-        | FeatureKind::Shell(_) => None,
+        | FeatureKind::Shell(_)
+        | FeatureKind::Fillet(_) => None,
     }
 }
 

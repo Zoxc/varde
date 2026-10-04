@@ -42,7 +42,7 @@ fn angle(document: &Document, text: &str) -> Value {
 
 /// The edge of `body` (whose solid is `solid`) between the faces of
 /// keys `a` and `b`, picked at `near`.
-fn edge(body: BodyId, a: FaceKey, b: FaceKey, near: [f64; 3]) -> EdgeRef {
+pub(super) fn edge(body: BodyId, a: FaceKey, b: FaceKey, near: [f64; 3]) -> EdgeRef {
     let mut faces = [a, b];
     faces.sort();
     EdgeRef {
@@ -53,24 +53,24 @@ fn edge(body: BodyId, a: FaceKey, b: FaceKey, near: [f64; 3]) -> EdgeRef {
 }
 
 /// The plane `n·x = d` of a block's face.
-type Face = ([f64; 3], f64);
+pub(super) type Face = ([f64; 3], f64);
 
-const TOP: Face = ([0.0, 0.0, 1.0], 10.0);
-const BOTTOM: Face = ([0.0, 0.0, -1.0], 0.0);
-const FRONT: Face = ([0.0, -1.0, 0.0], 0.0);
-const BACK: Face = ([0.0, 1.0, 0.0], 10.0);
-const LEFT: Face = ([-1.0, 0.0, 0.0], 0.0);
-const RIGHT: Face = ([1.0, 0.0, 0.0], 10.0);
+pub(super) const TOP: Face = ([0.0, 0.0, 1.0], 10.0);
+pub(super) const BOTTOM: Face = ([0.0, 0.0, -1.0], 0.0);
+pub(super) const FRONT: Face = ([0.0, -1.0, 0.0], 0.0);
+pub(super) const BACK: Face = ([0.0, 1.0, 0.0], 10.0);
+pub(super) const LEFT: Face = ([-1.0, 0.0, 0.0], 0.0);
+pub(super) const RIGHT: Face = ([1.0, 0.0, 0.0], 10.0);
 
 /// The edge of the block `body`, its solid `solid`, between its faces
 /// `a` and `b`, picked at `near`.
-fn block_edge(solid: &Solid, body: BodyId, a: Face, b: Face, near: [f64; 3]) -> EdgeRef {
+pub(super) fn block_edge(solid: &Solid, body: BodyId, a: Face, b: Face, near: [f64; 3]) -> EdgeRef {
     let key = |(n, d): Face| key_on(solid, DVec3::from(n), d);
     edge(body, key(a), key(b), near)
 }
 
 /// The solid of `body` in `evaluation`.
-fn solid_of(evaluation: &Evaluation, body: BodyId) -> &Solid {
+pub(super) fn solid_of(evaluation: &Evaluation, body: BodyId) -> &Solid {
     &evaluation
         .bodies
         .iter()
@@ -79,13 +79,13 @@ fn solid_of(evaluation: &Evaluation, body: BodyId) -> &Solid {
         .solid
 }
 
-fn evaluated(document: &Document) -> Evaluation {
+pub(super) fn evaluated(document: &Document) -> Evaluation {
     evaluate(document, &mut Cache::default())
 }
 
 /// The 10 mm cube from the origin: the editor, its body and the solid
 /// regenerated.
-fn cube() -> (Editor, BodyId, Arc<Solid>) {
+pub(super) fn cube() -> (Editor, BodyId, Arc<Solid>) {
     let mut editor = Editor::new(Document::default());
     let body = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
     let made = evaluated(editor.document());
@@ -105,7 +105,7 @@ fn chamfer(document: &Document, mut edges: Vec<EdgeRef>, size: &str) -> Chamfer 
 }
 
 /// The cube's front top edge.
-fn front_top(solid: &Solid, body: BodyId) -> EdgeRef {
+pub(super) fn front_top(solid: &Solid, body: BodyId) -> EdgeRef {
     block_edge(solid, body, TOP, FRONT, [5.0, 0.0, 10.0])
 }
 
@@ -114,7 +114,7 @@ fn too_complex(body: &str) -> String {
     format!("chamfering {body} is too complex to work out")
 }
 
-fn assert_near(a: f64, b: f64) {
+pub(super) fn assert_near(a: f64, b: f64) {
     assert!((a - b).abs() <= 1e-9 * b.abs().max(1.0), "{a} vs {b}");
 }
 
@@ -306,7 +306,7 @@ fn distances_go_on_the_faces_they_name() {
 }
 
 /// The cube's four top edges, each named at its middle.
-fn top_loop(solid: &Solid, body: BodyId) -> Vec<EdgeRef> {
+pub(super) fn top_loop(solid: &Solid, body: BodyId) -> Vec<EdgeRef> {
     vec![
         block_edge(solid, body, TOP, FRONT, [5.0, 0.0, 10.0]),
         block_edge(solid, body, TOP, BACK, [5.0, 10.0, 10.0]),
@@ -316,7 +316,7 @@ fn top_loop(solid: &Solid, body: BodyId) -> Vec<EdgeRef> {
 }
 
 /// All twelve edges of the cube.
-fn all_twelve(solid: &Solid, body: BodyId) -> Vec<EdgeRef> {
+pub(super) fn all_twelve(solid: &Solid, body: BodyId) -> Vec<EdgeRef> {
     let mut edges = top_loop(solid, body);
     edges.extend([
         block_edge(solid, body, BOTTOM, FRONT, [5.0, 0.0, 0.0]),
@@ -406,7 +406,7 @@ fn too_big(
 
 /// Draws a slot: two lines 10 mm long, 6 mm apart, joined by half
 /// circles at each end, which they run on into smoothly.
-fn slot(sketch: &mut Sketch) {
+pub(super) fn slot(sketch: &mut Sketch) {
     let at = |sketch: &mut Sketch, x: f64, y: f64| sketch.add_point(DVec2::new(x, y)).unwrap();
     let [a, b, c, d] =
         [(0.0, -3.0), (10.0, -3.0), (10.0, 3.0), (0.0, 3.0)].map(|(x, y)| at(sketch, x, y));
@@ -578,7 +578,7 @@ fn the_kernel_chamfers_a_block_s_edges() {
 /// A 20 mm square plate 10 mm thick with a round hole of radius 3
 /// through it, or a round boss of radius 3 on it 5 mm thick: the
 /// editor, the body and the solid.
-fn holed_or_bossed(hole: bool) -> (Editor, BodyId, Arc<Solid>, f64) {
+pub(super) fn holed_or_bossed(hole: bool) -> (Editor, BodyId, Arc<Solid>, f64) {
     let mut editor = Editor::new(Document::default());
     let height = if hole { "10" } else { "5" };
     let body = block(&mut editor, 0.0, 0.0, 20.0, 20.0, height);
@@ -652,7 +652,7 @@ fn the_kernel_chamfers_alike_every_time() {
 
 /// Draws a quad on XZ, (2, 0), (10, 0), (10, 4), (2, 6): a wall 8 wide
 /// with a sloping top.
-fn sloped(sketch: &mut Sketch) {
+pub(super) fn sloped(sketch: &mut Sketch) {
     let corners = [(2.0, 0.0), (10.0, 0.0), (10.0, 4.0), (2.0, 6.0)]
         .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
     for k in 0..4 {

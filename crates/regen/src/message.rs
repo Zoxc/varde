@@ -359,10 +359,43 @@ pub(crate) fn split_one_side(body: &str) -> String {
     format!("{body} lies all on one side: the tool doesn't cut it in two")
 }
 
-/// Why a chamfer fails: its edge `index` (from 0) of its `count` isn't
-/// found on its body as the features before it leave it (the faces
-/// renamed, gone or no longer meeting).
-pub(crate) fn chamfer_edge_not_found(index: usize, count: usize) -> String {
+/// Which kind of blend a message is about: a chamfer or a fillet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Blend {
+    Chamfer,
+    Fillet,
+}
+
+impl Blend {
+    /// "chamfer", as a noun and a verb.
+    fn word(self) -> &'static str {
+        match self {
+            Blend::Chamfer => "chamfer",
+            Blend::Fillet => "fillet",
+        }
+    }
+
+    /// "chamfering".
+    fn doing(self) -> &'static str {
+        match self {
+            Blend::Chamfer => "chamfering",
+            Blend::Fillet => "filleting",
+        }
+    }
+
+    /// "chamfered".
+    fn done(self) -> &'static str {
+        match self {
+            Blend::Chamfer => "chamfered",
+            Blend::Fillet => "filleted",
+        }
+    }
+}
+
+/// Why a chamfer or a fillet fails: its edge `index` (from 0) of its
+/// `count` isn't found on its body as the features before it leave it
+/// (the faces renamed, gone or no longer meeting).
+pub(crate) fn blend_edge_not_found(index: usize, count: usize) -> String {
     if count == 1 {
         "its edge wasn't found".to_owned()
     } else {
@@ -385,14 +418,17 @@ pub(crate) enum BlendRefusal {
     Mixed,
     /// The cut runs past a face beside it.
     TooBig,
+    /// A fillet runs into another face at an end of its edge.
+    End,
     /// Edges meeting at a corner can't be cut together.
     Corner,
 }
 
-/// Why a chamfer of the body named `body` with `count` edges is refused:
-/// `why`, about its edge `which` (from 0; with `true`, an edge its
-/// tangent chain took in), or about a corner.
-pub(crate) fn chamfer_refused(
+/// Why a chamfer or fillet, `blend`, of the body named `body` with
+/// `count` edges is refused: `why`, about its edge `which` (from 0; with
+/// `true`, an edge its tangent chain took in), or about a corner.
+pub(crate) fn blend_refused(
+    blend: Blend,
     why: BlendRefusal,
     which: Option<(usize, bool)>,
     count: usize,
@@ -410,37 +446,44 @@ pub(crate) fn chamfer_refused(
         }
         None => "an edge".to_owned(),
     };
+    let word = blend.word();
     match why {
         BlendRefusal::Flat => {
-            format!("{edge} is between faces that are nearly flat: there's nothing to chamfer")
+            format!("{edge} is between faces that are nearly flat: there's nothing to {word}")
         }
         BlendRefusal::Folded => {
-            format!("{edge} is between faces folded onto each other: there's nothing to chamfer")
+            format!("{edge} is between faces folded onto each other: there's nothing to {word}")
         }
         BlendRefusal::Mixed => {
-            format!("{edge} turns from convex to concave along its length: chamfer its parts apart")
+            format!("{edge} turns from convex to concave along its length: {word} its parts apart")
         }
         BlendRefusal::TooBig => {
-            format!("the chamfer doesn't fit along {edge}: it runs past a face beside it")
+            format!("the {word} doesn't fit along {edge}: it runs past a face beside it")
+        }
+        BlendRefusal::End => {
+            format!("the {word} along {edge} runs into another face at its end")
         }
         BlendRefusal::Corner => format!(
-            "edges of {body} meeting at a corner can't be chamfered together: chamfer them apart"
+            "edges of {body} meeting at a corner can't be {} together: {word} them apart",
+            blend.done()
         ),
     }
 }
 
-/// Why the kernel couldn't chamfer the body named `body`.
-pub(crate) fn chamfering(body: &str, error: KernelError) -> String {
+/// Why the kernel couldn't chamfer or fillet, `blend`, the body named
+/// `body`.
+pub(crate) fn blending(blend: Blend, body: &str, error: KernelError) -> String {
+    let doing = blend.doing();
     match error {
-        KernelError::TooComplex => format!("chamfering {body} is too complex to work out"),
-        error => failed(&format!("chamfering {body}"), error),
+        KernelError::TooComplex => format!("{doing} {body} is too complex to work out"),
+        error => failed(&format!("{doing} {body}"), error),
     }
 }
 
-/// Why a chamfer fails though the kernel chamfered the body named
-/// `body`: nothing of it is left.
-pub(crate) fn chamfer_leaves_nothing(body: &str) -> String {
-    format!("chamfering {body} leaves nothing of it")
+/// Why a chamfer or fillet, `blend`, fails though the kernel did it to
+/// the body named `body`: nothing of it is left.
+pub(crate) fn blend_leaves_nothing(blend: Blend, body: &str) -> String {
+    format!("{} {body} leaves nothing of it", blend.doing())
 }
 
 /// Why a shell fails: its open face `index` (from 0) of its `count`

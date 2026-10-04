@@ -2,54 +2,26 @@
 //! leave it, with the chamfer's edges cut off by the kernel's
 //! [`varde_kernel::chamfer`].
 //!
-//! The edges are found on the body's topology (the one drawing it keeps,
-//! [`inspect::topology`]) by their faces' keys and points, as a scale's
-//! edge is; one not found fails the chamfer ("its edge wasn't found",
-//! "its edge 2 of 3 wasn't found"). With tangent chains on, each edge
-//! takes in the chains running on smoothly from it
-//! ([`Topology::tangent_chains`]: purely the topology and the curves'
-//! end tangents, so it's done here rather than in the kernel). A chain
-//! is chamfered once: the edges picked first, in the chamfer's order,
-//! then those grown into, each taken by the first edge reaching it.
-//!
-//! Each chain's **first face**, which a two-distance cut's first
-//! distance and an angled cut's distance and angle are taken along: for
-//! a picked edge, the region its reference's first key names (its
-//! second with `flip`; by the region's own key where aliases name both
-//! by both keys, else the lower region); for one grown into, the region
-//! it shares with its picked edge's first face, else the other region
-//! beside the one it shares with the picked edge's other face, else its
-//! lower-keyed region. Each chain's faces are named
-//! [`FacePart::Blend`](varde_kernel::mesh::FacePart::Blend) of
-//! [`blend_edge`]: a picked edge's of its reference's keys, a grown
-//! one's of its regions' keys, the ordinal counting the chains before it
-//! in that order with the same pair.
+//! The edges are found, grown along tangent chains, given their first
+//! faces and named as a fillet's are (`super::blend`).
 //!
 //! The result is cached by the body's key, the chains and how each is
 //! cut, the feature and the fit tolerance, and replaces the body's solid
 //! (the body keeps its id). The kernel's refusals are worded for the
-//! Timeline (`message::chamfer_refused`), with the edge they're about
+//! Timeline (`message::blend_refused`), with the edge they're about
 //! drawn; its other failures as a boolean's ("chamfering Body 1 ...").
 //!
 //! The kernel's chamfer isn't built yet: it fails as too complex, which
 //! reaches the user as "chamfering Body 1 is too complex to work out",
 //! and the rest of the history goes on.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use varde_document::{Chamfer, ChamferSize, Document, FeatureId};
+use varde_kernel::{BlendError, Budget, ChamferChain, ChamferCut, Solid, Tolerance, Topology};
 
-use varde_document::{Chamfer, ChamferSize, Document, EdgeRef, FeatureId};
-use varde_kernel::mesh::FaceKey;
-use varde_kernel::topology::blend_edge;
-use varde_kernel::{
-    BlendError, Budget, ChamferChain, ChamferCut, Evidence, Solid, Tolerance, Topology,
-};
-
-use super::{Evaluation, Failed, own_solids};
+use super::blend::{OwnBody, plan, refused};
+use super::{Evaluation, Failed};
 use crate::cache::{Cache, Keyer};
-use crate::error_geometry::KernelFailure;
-use crate::message;
-use crate::{ErrorGeometry, inspect};
+use crate::message::{self, Blend};
 
 /// The kernel's chamfer, which tests may replace with a stand-in to
 /// check what regeneration does with the result before the kernel's is
@@ -201,19 +173,10 @@ pub(crate) fn by_wedges(
     Ok(result)
 }
 
-/// One chain to chamfer as it's worked out: what the kernel gets, and
-/// which of the chamfer's edges it comes from and whether it was grown
-/// into, for the messages.
-struct Planned {
-    chain: ChamferChain,
-    edge: usize,
-    grown: bool,
-}
-
 /// Changes the body of `evaluation` as the chamfer `chamfer`, the
 /// feature `feature`, says, or says why it fails, changing nothing.
 ///
-/// Its body must have a solid of its own ([`own_solids`]: one a join or
+/// Its body must have a solid of its own (`own_solids`: one a join or
 /// a combine consumed fails it, naming the body holding it). Then the
 /// edges, the chains and the kernel's chamfer, as the module's docs say.
 pub(super) fn evaluate_chamfer(
@@ -228,27 +191,31 @@ pub(super) fn evaluate_chamfer(
     let Some(body) = chamfer.body() else {
         return Ok(());
     };
-    own_solids(document, std::iter::once(body), evaluation)?;
-    let body_name = document
-        .body(body)
-        .map_or("a body", |body| body.name.as_str());
-    let made = (evaluation.bodies.iter())
-        .find(|made| made.body == body)
-        .expect("the body has a solid of its own");
-    let solid = Arc::clone(&made.solid);
-    let topology = inspect::topology(made, cache);
-    let count = chamfer.edges.len();
-    let mut found = Vec::with_capacity(count);
-    for (i, edge) in chamfer.edges.iter().enumerate() {
-        let chain = (topology.edge(&solid, edge.faces, edge.near))
-            .map_err(|_| message::chamfer_edge_not_found(i, count))?;
-        found.push(chain);
-    }
-    let planned = plan(&solid, &topology, chamfer, &found);
-    let chains: Vec<ChamferChain> = planned.iter().map(|planned| planned.chain).collect();
+    let own = OwnBody::take(document, body, evaluation, cache)?;
+    let (solid, topology) = (&own.solid, &own.topology);
+    let found = own.edges(&chamfer.edges)?;
+    let planned = plan(
+        solid,
+        topology,
+        &chamfer.edges,
+        &found,
+        chamfer.chains,
+        chamfer.flip,
+    );
+    let chains: Vec<ChamferChain> = (planned.iter())
+        .map(|planned| ChamferChain {
+            chain: planned.chain,
+            name: planned.name,
+            cut: cut(
+                &chamfer.distances,
+                topology.chains()[planned.chain as usize].regions,
+                planned.first,
+            ),
+        })
+        .collect();
     let mut keyer = Keyer::new("chamfer");
     keyer
-        .key(made.key)
+        .key(own.key)
         .number(feature.get())
         .number(tolerance.fit().to_bits());
     for chain in &chains {
@@ -270,121 +237,18 @@ pub(super) fn evaluate_chamfer(
     }
     let key = keyer.finish();
     let chamfer_by = chamferer();
+    let count = chamfer.edges.len();
     let result = cache.solid(key, || {
         let budget = &Budget::DEFAULT;
-        let chamfered = chamfer_by(&solid, &topology, &chains, feature.get(), tolerance, budget)
-            .map_err(|error| {
-                refused(
-                    error, body, body_name, &planned, &solid, &topology, tolerance, count,
-                )
-            })?;
+        let chamfered = chamfer_by(solid, topology, &chains, feature.get(), tolerance, budget)
+            .map_err(|error| refused(Blend::Chamfer, error, &own, &planned, tolerance, count))?;
         if chamfered.is_empty() {
-            return Err(message::chamfer_leaves_nothing(body_name).into());
+            return Err(message::blend_leaves_nothing(Blend::Chamfer, own.name).into());
         }
         Ok(chamfered)
     })?;
-    if let Some(made) = evaluation.bodies.iter_mut().find(|made| made.body == body) {
-        made.solid = result;
-        made.key = key;
-    }
+    own.replace(evaluation, result, key);
     Ok(())
-}
-
-/// The chains `chamfer`'s edges, found as the chains `found` of
-/// `topology` (of `solid`), come to, as the module's docs say.
-fn plan(solid: &Solid, topology: &Topology, chamfer: &Chamfer, found: &[u32]) -> Vec<Planned> {
-    let regions = topology.regions();
-    let chains = topology.chains();
-    let key_of = |region: u32| regions[region as usize].key;
-    let sides_of = |chain: u32| chains[chain as usize].regions;
-    // Each picked edge's first region.
-    let firsts: Vec<u32> = (chamfer.edges.iter().zip(found))
-        .map(|(edge, &chain)| first_region(topology, sides_of(chain), edge, chamfer.flip))
-        .collect();
-    let mut planned: Vec<Planned> = Vec::new();
-    // Each chain taken, and how many chains taken have each pair: kept
-    // as they go, so a long tangent chain costs its length once.
-    let mut taken = vec![false; chains.len()];
-    let mut pairs: BTreeMap<[FaceKey; 2], u32> = BTreeMap::new();
-    let mut add =
-        |planned: &mut Vec<Planned>, chain: u32, pair: [FaceKey; 2], first, edge, grown| {
-            if std::mem::replace(&mut taken[chain as usize], true) {
-                return;
-            }
-            // Ordinals count the chains before it with the same pair.
-            let ordinal = pairs.entry(pair).or_default();
-            planned.push(Planned {
-                chain: ChamferChain {
-                    chain,
-                    name: blend_edge(pair, *ordinal),
-                    cut: cut(&chamfer.distances, sides_of(chain), first),
-                },
-                edge,
-                grown,
-            });
-            *ordinal += 1;
-        };
-    for (i, (edge, &chain)) in chamfer.edges.iter().zip(found).enumerate() {
-        add(&mut planned, chain, edge.faces, firsts[i], i, false);
-    }
-    if chamfer.chains {
-        let roots = topology.tangent_chains(solid);
-        // The chains of each tangent chain, by its root, in index order.
-        let mut members: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
-        for (chain, &root) in roots.iter().enumerate() {
-            members.entry(root).or_default().push(chain as u32);
-        }
-        let mut grown: Vec<bool> = vec![false; chains.len()];
-        for (i, &chain) in found.iter().enumerate() {
-            let root = roots[chain as usize];
-            // An earlier edge of the same tangent chain took it all.
-            if std::mem::replace(&mut grown[root as usize], true) {
-                continue;
-            }
-            let picked = sides_of(chain);
-            let first = firsts[i];
-            let second = if picked[0] == first {
-                picked[1]
-            } else {
-                picked[0]
-            };
-            for &other in &members[&root] {
-                let sides = sides_of(other);
-                let other_first = if sides.contains(&first) {
-                    first
-                } else if let Some(at) = sides.iter().position(|&r| r == second) {
-                    sides[1 - at]
-                } else if key_of(sides[0]) <= key_of(sides[1]) {
-                    sides[0]
-                } else {
-                    sides[1]
-                };
-                let mut pair = sides.map(key_of);
-                pair.sort();
-                add(&mut planned, other, pair, other_first, i, true);
-            }
-        }
-    }
-    planned
-}
-
-/// The region of the two `sides` of a picked edge's chain that is its
-/// first face: the one its reference's first key names (with `flip`,
-/// its second), by its own key where aliases name both by both keys,
-/// else the lower region.
-fn first_region(topology: &Topology, sides: [u32; 2], edge: &EdgeRef, flip: bool) -> u32 {
-    let regions = topology.regions();
-    let key = edge.faces[usize::from(flip)];
-    let named: Vec<u32> = sides
-        .into_iter()
-        .filter(|&r| regions[r as usize].named(&key))
-        .collect();
-    match named.as_slice() {
-        [one] => *one,
-        _ => (sides.into_iter())
-            .find(|&r| regions[r as usize].key == key)
-            .unwrap_or(sides[0]),
-    }
 }
 
 /// How a chain with regions `sides` and first face `first` is cut by
@@ -406,62 +270,4 @@ fn cut(size: &ChamferSize, sides: [u32; 2], first: u32) -> ChamferCut {
             angle: a.value,
         },
     }
-}
-
-/// Why the kernel's chamfer of the body `body`, named `body_name`, gave
-/// no solid, in words, with what to draw: the edge a refusal is about,
-/// or the failure's evidence.
-#[allow(clippy::too_many_arguments)]
-fn refused(
-    error: BlendError,
-    body: varde_document::BodyId,
-    body_name: &str,
-    planned: &[Planned],
-    solid: &Solid,
-    topology: &Topology,
-    tolerance: &Tolerance,
-    count: usize,
-) -> Failed {
-    let about = |chain: u32| planned.iter().find(|p| p.chain.chain == chain);
-    let edge_failed = |chain: u32, why: message::BlendRefusal| {
-        let which = about(chain).map(|p| (p.edge, p.grown));
-        Failed {
-            message: message::chamfer_refused(why, which, count, body_name),
-            geometry: chain_geometry(solid, topology, chain, tolerance),
-        }
-    };
-    match error {
-        BlendError::Flat { chain } => edge_failed(chain, message::BlendRefusal::Flat),
-        BlendError::Folded { chain } => edge_failed(chain, message::BlendRefusal::Folded),
-        BlendError::Mixed { chain } => edge_failed(chain, message::BlendRefusal::Mixed),
-        BlendError::TooBig { chain } => edge_failed(chain, message::BlendRefusal::TooBig),
-        BlendError::Corner { .. } => {
-            message::chamfer_refused(message::BlendRefusal::Corner, None, count, body_name).into()
-        }
-        BlendError::Failed(failure) => {
-            let words = message::chamfering(body_name, failure.error);
-            let failure = KernelFailure::new(failure, tolerance);
-            Failed::kernel(words, &failure, [&[body], &[]])
-        }
-    }
-}
-
-/// What a refusal about `chain` of `topology` (of `solid`) shows: its
-/// curves, drawn at the display of `tolerance`.
-fn chain_geometry(
-    solid: &Solid,
-    topology: &Topology,
-    chain: u32,
-    tolerance: &Tolerance,
-) -> Option<Arc<ErrorGeometry>> {
-    let chain = topology.chains().get(chain as usize)?;
-    let mesh = solid.mesh();
-    let tris = mesh.tris().len();
-    let mut evidence = Evidence::default();
-    evidence.add_curves(
-        (chain.halfedges.iter())
-            .filter(|&&h| (h as usize) / 3 < tris)
-            .map(|&h| mesh.curve(h)),
-    );
-    ErrorGeometry::of_evidence(&evidence, tolerance)
 }

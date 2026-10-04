@@ -334,7 +334,10 @@ as a sketch's face: a body's id, a face key and a picked point), sorted
 by body, key and point, its thickness (a typed length and its value in
 millimetres) and `outward` (the walls outside the faces,
 `#[serde(default)]`, false). Shells are new, so no older record holds
-one. A
+one; or a fillet, `crates/document/src/fillet.rs`: its edges as a
+chamfer's, its radius (a typed length and its value in millimetres)
+and whether tangent chains are taken in. Fillets are new, so no older
+record holds one. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -404,6 +407,7 @@ open faces on that body, sorted without repeats, each point finite and
 within the coordinate limit, and each key's feature (if there) before
 the shell, or with an id below the next id; its thickness a length as
 an extrude's;
+a fillet's edges as a chamfer's, its radius a length as an extrude's;
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

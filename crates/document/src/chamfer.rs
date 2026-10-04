@@ -9,10 +9,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::{BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId};
-
-/// The most edges a chamfer (or a fillet) may name.
-pub const MAX_BLEND_EDGES: usize = 256;
+use crate::{BlendEdgesError, BodyId, Design, EdgeRef, Extent, check_blend_edges_own};
 
 /// A chamfer: the edges `edges` of one body cut off as `distances` says.
 /// The body keeps its id; the new faces are named after the chamfer and
@@ -26,7 +23,7 @@ pub const MAX_BLEND_EDGES: usize = 256;
 /// edge's first (regeneration's to work out).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Chamfer {
-    /// `1..=`[`MAX_BLEND_EDGES`] edges, all on one body a feature before
+    /// `1..=`[`MAX_BLEND_EDGES`](crate::MAX_BLEND_EDGES) edges, all on one body a feature before
     /// it makes, in [`EdgeRef::order`] without repeats. Each is found
     /// on the body as the features before the chamfer leave it.
     pub edges: Vec<EdgeRef>,
@@ -96,23 +93,7 @@ impl Chamfer {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
     pub fn check_own(&self, design: &Design) -> Result<(), ChamferError> {
-        let count = self.edges.len();
-        if !(1..=MAX_BLEND_EDGES).contains(&count) {
-            return Err(ChamferError::Edges(count));
-        }
-        for edge in &self.edges {
-            edge.check_own().map_err(ChamferError::Edge)?;
-        }
-        if !(self.edges.windows(2)).all(|pair| pair[0].order(&pair[1]).is_lt()) {
-            return Err(ChamferError::EdgeOrder);
-        }
-        if self
-            .edges
-            .iter()
-            .any(|edge| edge.body != self.edges[0].body)
-        {
-            return Err(ChamferError::Bodies);
-        }
+        check_blend_edges_own(&self.edges).map_err(ChamferError::Edges)?;
         let distance = Chamfer::distance_ask(design);
         let angle = Chamfer::angle_ask(design);
         let (first, second) = match &self.distances {
@@ -144,54 +125,26 @@ impl Chamfer {
 /// [`CheckError::Chamfer`](crate::CheckError::Chamfer).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ChamferError {
-    /// It names this many edges: none, or over [`MAX_BLEND_EDGES`].
-    Edges(usize),
-    /// Its edges aren't in [`EdgeRef::order`], or one is repeated.
-    EdgeOrder,
-    /// An edge fails its own check ([`EdgeRef::check_own`]).
-    Edge(EdgeError),
-    /// Its edges are on more than one body.
-    Bodies,
+    /// Its edges are wrong, see [`BlendEdgesError`].
+    Edges(BlendEdgesError),
     /// A distance's expression doesn't give its value, or the value
     /// isn't a length [`Chamfer::distance_ask`] takes.
     Distance,
     /// Its angle's expression doesn't give its value, or the value isn't
     /// an angle [`Chamfer::angle_ask`] takes.
     Angle,
-    /// Its edges are on this body, which isn't there or which no feature
-    /// before it makes.
-    Body(BodyId),
-    /// A key of an edge's faces names this feature, which is the chamfer
-    /// itself or comes after it, or isn't there and has an id a feature
-    /// made later could take.
-    RefMaker(FeatureId),
 }
 
 impl fmt::Display for ChamferError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ChamferError::Edges(count) => {
-                write!(f, "names {count} edges, not 1 to {MAX_BLEND_EDGES}")
-            }
-            ChamferError::EdgeOrder => f.write_str("its edges are out of order or repeated"),
-            ChamferError::Edge(why) => why.fmt(f),
-            ChamferError::Bodies => f.write_str("its edges are on more than one body"),
+            ChamferError::Edges(why) => why.fmt(f),
             ChamferError::Distance => f.write_str(
                 "a distance's expression doesn't give its value, or it isn't a length it takes",
             ),
             ChamferError::Angle => f.write_str(
                 "its angle's expression doesn't give its value, or it isn't above 0° and under \
                  90°",
-            ),
-            ChamferError::Body(body) => write!(
-                f,
-                "chamfers body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            ChamferError::RefMaker(feature) => write!(
-                f,
-                "an edge is on a face made by feature {}, which doesn't come before it",
-                feature.0
             ),
         }
     }
@@ -200,7 +153,7 @@ impl fmt::Display for ChamferError {
 impl std::error::Error for ChamferError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            ChamferError::Edge(why) => Some(why),
+            ChamferError::Edges(why) => Some(why),
             _ => None,
         }
     }

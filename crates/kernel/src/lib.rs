@@ -66,7 +66,7 @@ pub mod transform;
 pub mod trig;
 
 pub use aabb::Aabb;
-pub use blend::{BlendError, ChamferChain, ChamferCut, chamfer};
+pub use blend::{BlendError, ChamferChain, ChamferCut, FilletChain, chamfer, fillet};
 pub use boolean::{
     BooleanError, Op, ToolError, boolean, chain_tool, half_space, split, surface_tool, touches,
 };

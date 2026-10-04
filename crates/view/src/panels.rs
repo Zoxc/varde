@@ -216,6 +216,7 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Split(_) => Icon::Split,
         FeatureKind::Chamfer(_) => Icon::BChamfer,
         FeatureKind::Shell(_) => Icon::Shell,
+        FeatureKind::Fillet(_) => Icon::BFillet,
     }
 }
 
@@ -251,6 +252,7 @@ fn feature_row<'a>(
         FeatureKind::Split(split) => crate::motion::split_note(document, split).into(),
         FeatureKind::Chamfer(chamfer) => crate::chamfer::chamfer_note(chamfer, units).into(),
         FeatureKind::Shell(shell) => crate::shell::shell_note(shell, units).into(),
+        FeatureKind::Fillet(fillet) => crate::fillet::fillet_note(fillet, units).into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -349,6 +351,7 @@ fn edit_label(feature: &Feature) -> &'static str {
         FeatureKind::Split(_) => "Edit split",
         FeatureKind::Chamfer(_) => "Edit chamfer",
         FeatureKind::Shell(_) => "Edit shell",
+        FeatureKind::Fillet(_) => "Edit fillet",
     }
 }
 

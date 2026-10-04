@@ -3,7 +3,7 @@
 //! through the faces it names.
 //!
 //! The open faces are found on the body's topology (the one drawing it
-//! keeps, [`inspect::topology`]) by their keys and points, as a split's
+//! keeps, `inspect::topology`) by their keys and points, as a split's
 //! tool face is; one not found fails the shell before the kernel ("its
 //! open face wasn't found", "its open face 2 of 3 wasn't found"). The
 //! regions found go to the kernel sorted, each once (two references may
@@ -20,16 +20,15 @@
 //! reaches the user as "shelling Body 1 is too complex to work out", and
 //! the rest of the history goes on.
 
-use std::sync::Arc;
-
 use varde_document::{BodyId, Document, FeatureId, Shell};
 use varde_kernel::{Budget, Evidence, ShellError, Solid, Tolerance, Topology};
 
-use super::{Evaluation, Failed, own_solids};
+use super::blend::OwnBody;
+use super::{Evaluation, Failed};
+use crate::ErrorGeometry;
 use crate::cache::{Cache, Keyer};
 use crate::error_geometry::KernelFailure;
 use crate::message;
-use crate::{ErrorGeometry, inspect};
 
 /// The kernel's shell, which tests may replace with a stand-in to check
 /// what regeneration does with the result before the kernel's is built.
@@ -188,7 +187,7 @@ pub(crate) fn by_boxes(
 /// Changes the body of `evaluation` as the shell `shell`, the feature
 /// `feature`, says, or says why it fails, changing nothing.
 ///
-/// Its body must have a solid of its own ([`own_solids`]: one a join or
+/// Its body must have a solid of its own (`own_solids`: one a join or
 /// a combine consumed fails it, naming the body holding it). Then the
 /// faces and the kernel's shell, as the module's docs say.
 pub(super) fn evaluate_shell(
@@ -199,20 +198,13 @@ pub(super) fn evaluate_shell(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    let body = shell.body;
-    own_solids(document, std::iter::once(body), evaluation)?;
-    let body_name = document
-        .body(body)
-        .map_or("a body", |body| body.name.as_str());
-    let made = (evaluation.bodies.iter())
-        .find(|made| made.body == body)
-        .expect("the body has a solid of its own");
-    let solid = Arc::clone(&made.solid);
-    let topology = inspect::topology(made, cache);
+    let own = OwnBody::take(document, shell.body, evaluation, cache)?;
+    let (body, body_name) = (own.body, own.name);
+    let (solid, topology) = (&own.solid, &own.topology);
     let count = shell.open.len();
     let mut open = Vec::with_capacity(count);
     for (i, face) in shell.open.iter().enumerate() {
-        let region = (topology.face(&solid, &face.key, face.near))
+        let region = (topology.face(solid, &face.key, face.near))
             .map_err(|_| message::shell_face_not_found(i, count))?;
         open.push(region);
     }
@@ -221,7 +213,7 @@ pub(super) fn evaluate_shell(
     let thickness = shell.thickness.value;
     let mut keyer = Keyer::new("shell");
     keyer
-        .key(made.key)
+        .key(own.key)
         .number(feature.get())
         .number(tolerance.fit().to_bits())
         .number(thickness.to_bits())
@@ -235,8 +227,8 @@ pub(super) fn evaluate_shell(
     let result = cache.solid(key, || {
         let budget = &Budget::DEFAULT;
         let shelled = shell_by(
-            &solid,
-            &topology,
+            solid,
+            topology,
             &open,
             thickness,
             shell.outward,
@@ -244,16 +236,13 @@ pub(super) fn evaluate_shell(
             tolerance,
             budget,
         )
-        .map_err(|error| refused(error, body, body_name, &solid, &topology, tolerance))?;
+        .map_err(|error| refused(error, body, body_name, solid, topology, tolerance))?;
         if shelled.is_empty() {
             return Err(message::shell_leaves_nothing(body_name).into());
         }
         Ok(shelled)
     })?;
-    if let Some(made) = evaluation.bodies.iter_mut().find(|made| made.body == body) {
-        made.solid = result;
-        made.key = key;
-    }
+    own.replace(evaluation, result, key);
     Ok(())
 }
 
