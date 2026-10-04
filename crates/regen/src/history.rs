@@ -64,11 +64,11 @@
 //! found") and hollows the body by the kernel's shell, the body keeping
 //! its id (see `shell`). A fillet finds and grows its edges as a
 //! chamfer does and rounds them off by the kernel's fillet (see
-//! `fillet`; what the two share of their edges is `blend`, of their
-//! body `own_body`). An offset face finds its faces on its body's
+//! `fillet`; what the two share of their edges is `blend`). An offset face finds its faces on its body's
 //! topology (one not found: "its face wasn't found") and moves them by
 //! the kernel's offset face, the body keeping its id and its faces their
-//! names (see `offset_face`).
+//! names (see `offset_face`). What chamfers, shells, fillets and offset
+//! faces share of their body, changed in place, is `in_place`.
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -120,9 +120,9 @@ mod blend;
 mod chamfer;
 mod combine;
 mod fillet;
+mod in_place;
 mod motion;
 mod offset_face;
-mod own_body;
 mod pattern;
 pub(crate) mod scale;
 mod shell;

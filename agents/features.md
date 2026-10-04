@@ -2911,8 +2911,8 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   `crates/regen/src/history/blend.rs` (`find_edges`, `plan`,
   `refused`): finding the edges, growing the chains, their first faces
   and names, the refusals' words and drawings; and the body, its solid,
-  topology and cache key and the result put in its place, in
-  `history/own_body.rs` (`OwnBody`).
+  topology, cache key's start and the result put in its place, with the
+  shell and offset face, in `history/in_place.rs` (`InPlace`).
 - **Tangent chains** (with `chains`): each picked edge's chain takes in
   every chain with the same root in `Topology::tangent_chains` (edges
   running on into each other within 1°, from the curves' own end
@@ -3190,7 +3190,11 @@ pub struct Shell {
 
 ### Regeneration
 
-`crates/regen/src/history/shell.rs`, in history order:
+`crates/regen/src/history/shell.rs`, in history order (the steps it
+shares with chamfer, fillet and offset face, the body's own solid and topology,
+its faces found, the cache key's start and the result put in place,
+are `history/in_place.rs`'s `InPlace`, with `box_sides` for the
+stand-ins):
 
 - The body needs a solid of its own (`own_solids`: a body consumed by
   a join or combine fails it, "Body 2 is in Body 1 now: ..."). Its
@@ -3628,7 +3632,7 @@ pub struct OffsetFace {
 ```
 
 - **What it is**: the fourteenth variant (`FeatureKind::OffsetFace`,
-  "Offset N"). Its faces, all of one body, are moved along their
+  "Offset face N"). Its faces, all of one body, are moved along their
   normals by `distance` (`OffsetFace::distance_ask` = `Extent::ask`),
   out of the body or with `inward` into it, as an extrude's flip, so the
   handle can drag the distance through zero and the stored distance
@@ -3720,7 +3724,7 @@ menu), so the panel is built in the style of the mock's shell panel.
   pick faces.
 - **Faces**: as a shell's (`MotionPick::Faces`): a click picks or takes
   out, named as of the feature, all on the first face's body
-  ("An offset's faces are all on one body: pick faces of Body 1"; the
+  ("An offset face's faces are all on one body: pick faces of Body 1"; the
   messages' article follows the noun, `refs::article`), an edge "Only a
   face can be moved", at most `MAX_OFFSET_FACES`, sorted, lit as
   selected, a row hovered lighting its face. Its body is only its
@@ -3738,7 +3742,7 @@ menu), so the panel is built in the style of the mock's shell panel.
   "Into the body, shrinking it") and **Tangent faces** (a tick, on to
   begin with, `MotionLook::TangentFaces`, `Icon::TkChain`, "Take in
   faces that run on smoothly"). The failure in the foot ("Offset
-  fails").
+  face fails").
 - **The handle** (question 21, decided: the extrude's arrow and knob
   *and* the typed distance): an arrow from the first face's point
   along its outward normal, its knob at the distance (negative
@@ -3765,12 +3769,12 @@ menu), so the panel is built in the style of the mock's shell panel.
   `OffsetFace::check_own` refuses in the foot. **Preview**: the offset
   as set up is the draft while it's whole (as a shell's). **The
   kernel's offset face isn't built**, so today every preview fails with
-  "Offset fails" over "offsetting faces of Body 1 is too complex to work
+  "Offset face fails" over "offsetting faces of Body 1 is too complex to work
   out", OK waits, and Add anyway keeps it, failing in the Timeline.
-- **Committing**: OK (`Enter`, Add anyway) adds "Offset N" or sets the
+- **Committing**: OK (`Enter`, Add anyway) adds "Offset face N" or sets the
   edited one, one undo step; Cancel or `Esc` leaves no trace. The
   status bar says `offset_info` once whole ("1 face · 2 mm inward"),
-  else what's next; the hint "Pick faces".
+  else what's next; the hint "Pick faces to move" (`chrome::step_hint`).
 
 The Timeline shows the mock's offset face icon (`Icon::OffsetFace`, the
 model mock's `offset`) and note (`view/src/offset_face.rs`: "2 mm · 3

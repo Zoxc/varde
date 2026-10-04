@@ -2,10 +2,10 @@
 //! and topology, the edges found on it, the chains those come to (grown
 //! along tangent chains where asked) and how they're named, and the
 //! kernel's refusals worded with the edge drawn. Their body is taken as
-//! `own_body` has it.
+//! `in_place` has it.
 //!
 //! The edges are found on the body's topology (the one drawing it keeps,
-//! [`OwnBody::topology`]) by their faces' keys and points, as a scale's
+//! [`InPlace::topology`]) by their faces' keys and points, as a scale's
 //! edge is; one not found fails the feature ("its edge wasn't found",
 //! "its edge 2 of 3 wasn't found"). With tangent chains on, each edge
 //! takes in the chains running on smoothly from it
@@ -36,14 +36,14 @@ use varde_kernel::topology::blend_edge;
 use varde_kernel::{BlendError, Evidence, Solid, Tolerance, Topology};
 
 use super::Failed;
-use super::own_body::OwnBody;
+use super::in_place::InPlace;
 use crate::ErrorGeometry;
 use crate::error_geometry::KernelFailure;
 use crate::message::{self, Blend, BlendRefusal};
 
 /// The chains of `own`'s topology `edges` are found as, in their order:
 /// one not found fails ("its edge 2 of 3 wasn't found").
-pub(super) fn find_edges(own: &OwnBody, edges: &[EdgeRef]) -> Result<Vec<u32>, Failed> {
+pub(super) fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, Failed> {
     let count = edges.len();
     (edges.iter().enumerate())
         .map(|(i, edge)| {
@@ -175,7 +175,7 @@ fn first_region(topology: &Topology, sides: [u32; 2], edge: &EdgeRef, flip: bool
 pub(super) fn refused(
     blend: Blend,
     error: BlendError,
-    own: &OwnBody,
+    own: &InPlace,
     planned: &[Planned],
     tolerance: &Tolerance,
     count: usize,

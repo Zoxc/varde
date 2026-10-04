@@ -20,9 +20,9 @@ use varde_document::{Document, FeatureId, Fillet};
 use varde_kernel::{BlendError, Budget, FilletChain, Solid, Tolerance, Topology};
 
 use super::blend::{find_edges, plan, refused};
-use super::own_body::OwnBody;
+use super::in_place::InPlace;
 use super::{Evaluation, Failed};
-use crate::cache::{Cache, Keyer};
+use crate::cache::Cache;
 use crate::message::{self, Blend};
 
 /// The kernel's fillet, which tests may replace with a stand-in to check
@@ -292,9 +292,9 @@ pub(super) fn evaluate_fillet(
     let Some(body) = fillet.body() else {
         return Ok(());
     };
-    let own = OwnBody::take(document, body, evaluation, cache)?;
-    let (solid, topology) = (&own.solid, &own.topology);
-    let found = find_edges(&own, &fillet.edges)?;
+    let place = InPlace::of(document, body, evaluation, cache)?;
+    let (solid, topology) = (&*place.solid, &*place.topology);
+    let found = find_edges(&place, &fillet.edges)?;
     let planned = plan(solid, topology, &fillet.edges, &found, fillet.chains, false);
     let chains: Vec<FilletChain> = (planned.iter())
         .map(|planned| FilletChain {
@@ -303,36 +303,30 @@ pub(super) fn evaluate_fillet(
         })
         .collect();
     let radius = fillet.radius.value;
-    let mut keyer = Keyer::new("fillet");
-    keyer
-        .key(own.key)
-        .number(feature.get())
-        .number(tolerance.fit().to_bits())
-        .number(radius.to_bits())
-        .number(chains.len() as u64);
+    let mut keyer = place.keyer("fillet", feature, tolerance);
+    keyer.number(radius.to_bits()).number(chains.len() as u64);
     for chain in &chains {
         keyer.number(u64::from(chain.chain)).number(chain.name);
     }
     let key = keyer.finish();
     let fillet_by = filleter();
     let count = fillet.edges.len();
-    let result = cache.solid(key, || {
-        let budget = &Budget::DEFAULT;
-        let filleted = fillet_by(
-            solid,
-            topology,
-            &chains,
-            radius,
-            feature.get(),
-            tolerance,
-            budget,
-        )
-        .map_err(|error| refused(Blend::Fillet, error, &own, &planned, tolerance, count))?;
-        if filleted.is_empty() {
-            return Err(message::blend_leaves_nothing(Blend::Fillet, own.name).into());
-        }
-        Ok(filleted)
-    })?;
-    own.replace(evaluation, result, key);
-    Ok(())
+    place.replace(
+        key,
+        evaluation,
+        cache,
+        |name| message::blend_leaves_nothing(Blend::Fillet, name),
+        |budget| {
+            fillet_by(
+                solid,
+                topology,
+                &chains,
+                radius,
+                feature.get(),
+                tolerance,
+                budget,
+            )
+            .map_err(|error| refused(Blend::Fillet, error, &place, &planned, tolerance, count))
+        },
+    )
 }

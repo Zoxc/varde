@@ -213,6 +213,19 @@ impl Input {
     pub(crate) fn holds(&self) -> bool {
         self.hover.is_some() || self.drag.is_some() || self.face.hover || self.face.drag.is_some()
     }
+
+    /// Lets go of what the other kind of handle held, for a session of
+    /// `kind`: an offset face's handle, or a move's. What a session left
+    /// held (its handle under the cursor or dragged as it ended) would
+    /// otherwise keep the next session's clicks off the model.
+    fn settle(&mut self, kind: MotionKind) {
+        if kind == MotionKind::OffsetFace {
+            self.hover = None;
+            self.drag = None;
+        } else {
+            self.face = FaceInput::default();
+        }
+    }
 }
 
 /// The handles as they're shown: where, a pixel's size there, and which
@@ -752,6 +765,7 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         hovered: bool,
     ) -> Option<Action<Message>> {
+        input.settle(self.state.kind);
         if let Some(mode) = self.split_picking() {
             return self.split_mouse(mode, &mut input.split, event, bounds, cursor, camera);
         }
@@ -823,6 +837,7 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         hovered: bool,
     ) -> Option<Action<Message>> {
+        input.settle(self.state.kind);
         if input.drag.is_some() || input.face.drag.is_some() {
             return None;
         }

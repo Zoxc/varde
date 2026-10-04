@@ -749,3 +749,39 @@ fn overlaps_at_a_corner_are_its_vertex_edges_and_faces() {
         }
     }
 }
+
+/// `face_point` takes a point onto the face drawn and gives its outward
+/// normal there: up on the plate's top, a point above it brought down
+/// onto it; on the hole's wall, a concave face, towards the hole's axis
+/// (out of the material), on the wall within the tessellation's chord.
+#[test]
+fn a_face_point_s_normal_points_out_of_the_material_on_a_hole_s_wall() {
+    let index = plate();
+    let faces = index.picking().faces();
+    let face = |wanted: fn(&Summary) -> bool| {
+        (0..faces.len() as u32)
+            .find(|&face| wanted(&faces[face as usize].summary))
+            .expect("the face")
+    };
+    let top = face(
+        |summary| matches!(*summary, Summary::Plane { n, d } if n[2] > 0.5 && (d - 10.0).abs() < 1e-9),
+    );
+    let (at, normal) = index.face_point(top, DVec3::new(20.0, 5.0, 13.0)).unwrap();
+    assert!(at.distance(DVec3::new(20.0, 5.0, 10.0)) < 1e-4, "{at}");
+    assert!(normal.distance(DVec3::Z) < 1e-6, "{normal}");
+
+    let wall = face(|summary| matches!(summary, Summary::Cylinder { .. }));
+    let Summary::Cylinder { point, radius, .. } = faces[wall as usize].summary else {
+        unreachable!()
+    };
+    let centre = DVec3::new(point[0], point[1], 5.0);
+    // Directions round the axis, as (cos, sin).
+    for (cos, sin) in [(1.0, 0.0), (0.6, 0.8), (-0.8, 0.6), (0.0, -1.0)] {
+        let on = centre + DVec3::new(radius * cos, radius * sin, 0.0);
+        let (at, normal) = index.face_point(wall, on).unwrap();
+        assert!(at.distance(on) < 0.05 * radius, "{at} for {on}");
+        let inward = DVec3::new(-cos, -sin, 0.0);
+        assert!(normal.dot(inward) > 0.99, "{normal} at {on}");
+        assert!((normal.length() - 1.0).abs() < 1e-9);
+    }
+}

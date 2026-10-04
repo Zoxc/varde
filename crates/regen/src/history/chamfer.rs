@@ -19,9 +19,9 @@ use varde_document::{Chamfer, ChamferSize, Document, FeatureId};
 use varde_kernel::{BlendError, Budget, ChamferChain, ChamferCut, Solid, Tolerance, Topology};
 
 use super::blend::{find_edges, plan, refused};
-use super::own_body::OwnBody;
+use super::in_place::InPlace;
 use super::{Evaluation, Failed};
-use crate::cache::{Cache, Keyer};
+use crate::cache::Cache;
 use crate::message::{self, Blend};
 
 /// The kernel's chamfer, which tests may replace with a stand-in to
@@ -192,9 +192,9 @@ pub(super) fn evaluate_chamfer(
     let Some(body) = chamfer.body() else {
         return Ok(());
     };
-    let own = OwnBody::take(document, body, evaluation, cache)?;
-    let (solid, topology) = (&own.solid, &own.topology);
-    let found = find_edges(&own, &chamfer.edges)?;
+    let place = InPlace::of(document, body, evaluation, cache)?;
+    let (solid, topology) = (&*place.solid, &*place.topology);
+    let found = find_edges(&place, &chamfer.edges)?;
     let planned = plan(
         solid,
         topology,
@@ -214,11 +214,7 @@ pub(super) fn evaluate_chamfer(
             ),
         })
         .collect();
-    let mut keyer = Keyer::new("chamfer");
-    keyer
-        .key(own.key)
-        .number(feature.get())
-        .number(tolerance.fit().to_bits());
+    let mut keyer = place.keyer("chamfer", feature, tolerance);
     for chain in &chains {
         keyer.number(u64::from(chain.chain)).number(chain.name);
         match chain.cut {
@@ -239,17 +235,16 @@ pub(super) fn evaluate_chamfer(
     let key = keyer.finish();
     let chamfer_by = chamferer();
     let count = chamfer.edges.len();
-    let result = cache.solid(key, || {
-        let budget = &Budget::DEFAULT;
-        let chamfered = chamfer_by(solid, topology, &chains, feature.get(), tolerance, budget)
-            .map_err(|error| refused(Blend::Chamfer, error, &own, &planned, tolerance, count))?;
-        if chamfered.is_empty() {
-            return Err(message::blend_leaves_nothing(Blend::Chamfer, own.name).into());
-        }
-        Ok(chamfered)
-    })?;
-    own.replace(evaluation, result, key);
-    Ok(())
+    place.replace(
+        key,
+        evaluation,
+        cache,
+        |name| message::blend_leaves_nothing(Blend::Chamfer, name),
+        |budget| {
+            chamfer_by(solid, topology, &chains, feature.get(), tolerance, budget)
+                .map_err(|error| refused(Blend::Chamfer, error, &place, &planned, tolerance, count))
+        },
+    )
 }
 
 /// How a chain with regions `sides` and first face `first` is cut by

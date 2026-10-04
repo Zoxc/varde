@@ -3,7 +3,7 @@
 //! through the faces it names.
 //!
 //! The open faces are found on the body's topology (the one drawing it
-//! keeps, [`inspect::topology`]) by their keys and points, as a split's
+//! keeps) by their keys and points, as a split's
 //! tool face is; one not found fails the shell before the kernel ("its
 //! open face wasn't found", "its open face 2 of 3 wasn't found"). The
 //! regions found go to the kernel sorted, each once (two references may
@@ -20,16 +20,15 @@
 //! reaches the user as "shelling Body 1 is too complex to work out", and
 //! the rest of the history goes on.
 
-use std::sync::Arc;
-
-use varde_document::{BodyId, Document, FeatureId, Shell};
+use varde_document::{Document, FeatureId, Shell};
 use varde_kernel::{Budget, Evidence, ShellError, Solid, Tolerance, Topology};
 
-use super::{Evaluation, Failed, own_solids};
-use crate::cache::{Cache, Keyer};
+use super::in_place::{self, InPlace};
+use super::{Evaluation, Failed};
+use crate::ErrorGeometry;
+use crate::cache::Cache;
 use crate::error_geometry::KernelFailure;
 use crate::message;
-use crate::{ErrorGeometry, inspect};
 
 /// The kernel's shell, which tests may replace with a stand-in to check
 /// what regeneration does with the result before the kernel's is built.
@@ -60,8 +59,7 @@ pub(crate) fn shell_by_boxes() {
 }
 
 /// A stand-in for the kernel's shell, for tests: the solid must be a
-/// box along the world's axes (six planar faces square to them, its
-/// volume its box's), and is hollowed by one boolean with another box:
+/// box along the world's axes ([`in_place::box_sides`]), and is hollowed by one boolean with another box:
 /// inward, the body less its box shrunk by the thickness (pushed out
 /// past the open faces); outward, its box grown by the thickness (but
 /// at the open faces) less the body's box pushed out past the open
@@ -83,31 +81,9 @@ pub(crate) fn by_boxes(
     budget: &Budget,
 ) -> Result<Solid, ShellError> {
     use glam::{DVec2, DVec3};
-    use varde_kernel::mesh::Form;
     use varde_kernel::{Frame, KernelError, Loop, Op, Profile, Segment};
     let too_complex = || ShellError::Failed(KernelError::TooComplex.into());
-    let bounds = solid.bounds3().ok_or_else(too_complex)?;
-    let (min, max) = (bounds.min, bounds.max);
-    let size = max - min;
-    if topology.regions().len() != 6
-        || (solid.volume() - size.x * size.y * size.z).abs() > 1e-9 * size.x * size.y * size.z
-    {
-        return Err(too_complex());
-    }
-    // Each region's side of the box: the axis, and 0 at the low end, 1
-    // at the high.
-    let mut sides = Vec::with_capacity(6);
-    for region in topology.regions() {
-        let Form::Plane { n, .. } = *crate::picking::region_form(solid, region) else {
-            return Err(too_complex());
-        };
-        let n = n.normalize();
-        let axis = n.abs().max_position();
-        if (n.abs()[axis] - 1.0).abs() > 1e-12 {
-            return Err(too_complex());
-        }
-        sides.push((axis, usize::from(n[axis] > 0.0)));
-    }
+    let (min, max, sides) = in_place::box_sides(solid, topology).ok_or_else(too_complex)?;
     let mut opened = [[false; 2]; 3];
     for &region in open {
         let (axis, end) = *sides.get(region as usize).ok_or_else(too_complex)?;
@@ -188,8 +164,7 @@ pub(crate) fn by_boxes(
 /// Changes the body of `evaluation` as the shell `shell`, the feature
 /// `feature`, says, or says why it fails, changing nothing.
 ///
-/// Its body must have a solid of its own ([`own_solids`]: one a join or
-/// a combine consumed fails it, naming the body holding it). Then the
+/// Its body must have a solid of its own ([`InPlace::of`]). Then the
 /// faces and the kernel's shell, as the module's docs say.
 pub(super) fn evaluate_shell(
     document: &Document,
@@ -199,31 +174,11 @@ pub(super) fn evaluate_shell(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    let body = shell.body;
-    own_solids(document, std::iter::once(body), evaluation)?;
-    let body_name = document
-        .body(body)
-        .map_or("a body", |body| body.name.as_str());
-    let made = (evaluation.bodies.iter())
-        .find(|made| made.body == body)
-        .expect("the body has a solid of its own");
-    let solid = Arc::clone(&made.solid);
-    let topology = inspect::topology(made, cache);
-    let count = shell.open.len();
-    let mut open = Vec::with_capacity(count);
-    for (i, face) in shell.open.iter().enumerate() {
-        let region = (topology.face(&solid, &face.key, face.near))
-            .map_err(|_| message::shell_face_not_found(i, count))?;
-        open.push(region);
-    }
-    open.sort_unstable();
-    open.dedup();
+    let place = InPlace::of(document, shell.body, evaluation, cache)?;
+    let open = place.regions(&shell.open, message::shell_face_not_found)?;
     let thickness = shell.thickness.value;
-    let mut keyer = Keyer::new("shell");
+    let mut keyer = place.keyer("shell", feature, tolerance);
     keyer
-        .key(made.key)
-        .number(feature.get())
-        .number(tolerance.fit().to_bits())
         .number(thickness.to_bits())
         .number(u64::from(shell.outward))
         .number(open.len() as u64);
@@ -232,68 +187,51 @@ pub(super) fn evaluate_shell(
     }
     let key = keyer.finish();
     let shell_by = sheller();
-    let result = cache.solid(key, || {
-        let budget = &Budget::DEFAULT;
-        let shelled = shell_by(
-            &solid,
-            &topology,
-            &open,
-            thickness,
-            shell.outward,
-            feature.get(),
-            tolerance,
-            budget,
-        )
-        .map_err(|error| refused(error, body, body_name, &solid, &topology, tolerance))?;
-        if shelled.is_empty() {
-            return Err(message::shell_leaves_nothing(body_name).into());
-        }
-        Ok(shelled)
-    })?;
-    if let Some(made) = evaluation.bodies.iter_mut().find(|made| made.body == body) {
-        made.solid = result;
-        made.key = key;
-    }
-    Ok(())
+    place.replace(
+        key,
+        evaluation,
+        cache,
+        message::shell_leaves_nothing,
+        |budget| {
+            shell_by(
+                &place.solid,
+                &place.topology,
+                &open,
+                thickness,
+                shell.outward,
+                feature.get(),
+                tolerance,
+                budget,
+            )
+            .map_err(|error| refused(error, &place, tolerance))
+        },
+    )
 }
 
-/// Why the kernel's shell of the body `body`, named `body_name`, gave no
-/// solid, in words, with what to draw: the face or corner a refusal is
-/// about, or the failure's evidence.
-fn refused(
-    error: ShellError,
-    body: BodyId,
-    body_name: &str,
-    solid: &Solid,
-    topology: &Topology,
-    tolerance: &Tolerance,
-) -> Failed {
-    let mesh = solid.mesh();
+/// Why the kernel's shell of the body `place` gave no solid, in words,
+/// with what to draw: the face or corner a refusal is about, or the
+/// failure's evidence.
+fn refused(error: ShellError, place: &InPlace<'_>, tolerance: &Tolerance) -> Failed {
+    let solid = &*place.solid;
     let mut evidence = Evidence::default();
     let why = match error {
         ShellError::RoundTooSmall { region } => {
-            if let Some(region) = topology.regions().get(region as usize) {
-                evidence.add_patches(
-                    (region.tris.iter())
-                        .filter(|&&t| (t as usize) < mesh.tris().len())
-                        .map(|&t| mesh.patch(t as usize)),
-                );
-            }
+            in_place::draw_region(&mut evidence, solid, &place.topology, region);
             message::ShellRefusal::RoundTooSmall
         }
         ShellError::TooThick => message::ShellRefusal::TooThick,
         ShellError::Corner { vertex } => {
-            evidence.add_points(mesh.verts().get(vertex as usize).copied());
+            evidence.add_points(solid.mesh().verts().get(vertex as usize).copied());
             message::ShellRefusal::Corner
         }
         ShellError::Failed(failure) => {
-            let words = message::shelling(body_name, failure.error);
+            let words = message::shelling(place.name, failure.error);
             let failure = KernelFailure::new(failure, tolerance);
-            return Failed::kernel(words, &failure, [&[body], &[]]);
+            return Failed::kernel(words, &failure, [&[place.body], &[]]);
         }
     };
     Failed {
-        message: message::shell_refused(why, body_name),
+        message: message::shell_refused(why, place.name),
         geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
     }
 }

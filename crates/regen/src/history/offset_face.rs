@@ -3,7 +3,7 @@
 //! the kernel's [`varde_kernel::offset_faces()`].
 //!
 //! The faces are found on the body's topology (the one drawing it
-//! keeps, [`inspect::topology`]) by their keys and points, as a shell's
+//! keeps) by their keys and points, as a shell's
 //! open faces are; one not found fails the offset before the kernel
 //! ("its face wasn't found", "its face 2 of 3 wasn't found"). The
 //! regions found go to the kernel sorted, each once (two references may
@@ -23,16 +23,15 @@
 //! which reaches the user as "offsetting faces of Body 1 is too complex
 //! to work out", and the rest of the history goes on.
 
-use std::sync::Arc;
-
-use varde_document::{BodyId, Document, FeatureId, OffsetFace};
+use varde_document::{Document, FeatureId, OffsetFace};
 use varde_kernel::{Budget, Evidence, OffsetError, Solid, Tolerance, Topology};
 
-use super::{Evaluation, Failed, own_solids};
-use crate::cache::{Cache, Keyer};
+use super::in_place::{self, InPlace};
+use super::{Evaluation, Failed};
+use crate::ErrorGeometry;
+use crate::cache::Cache;
 use crate::error_geometry::KernelFailure;
 use crate::message;
-use crate::{ErrorGeometry, inspect};
 
 /// The kernel's offset face, which tests may replace with a stand-in to
 /// check what regeneration does with the result before the kernel's is
@@ -72,13 +71,12 @@ pub(crate) fn offset_by_boxes() {
 }
 
 /// A stand-in for the kernel's offset face, for tests: the solid must be
-/// a box along the world's axes (six planar faces square to them, its
-/// volume its box's), and each face picked moves along its normal by
-/// `distance`, the four around it stretched to meet it: one scale along
-/// each axis and a move, so every face keeps its name (as the kernel's
-/// keeps them). A face moved onto or past the face opposite it (the
-/// walls between shrinking to nothing) is
-/// [`OffsetError::PastNeighbour`], a box past
+/// a box along the world's axes ([`in_place::box_sides`]), and each face
+/// picked moves along its normal by `distance`, the four around it
+/// stretched to meet it: one scale along each axis and a move, so every
+/// face keeps its name (as the kernel's keeps them). A face moved onto
+/// or past the face opposite it (the walls between shrinking to
+/// nothing) is [`OffsetError::PastNeighbour`], a box past
 /// [`MAX_COORD`](varde_kernel::MAX_COORD) [`OffsetError::OutOfRange`];
 /// anything else is [`KernelError::TooComplex`].
 ///
@@ -97,30 +95,9 @@ pub(crate) fn by_boxes(
 ) -> Result<Solid, OffsetError> {
     use varde_kernel::KernelError;
     use varde_kernel::Motion;
-    use varde_kernel::mesh::Form;
     let too_complex = || OffsetError::Failed(KernelError::TooComplex.into());
-    let bounds = solid.bounds3().ok_or_else(too_complex)?;
-    let (min, max) = (bounds.min, bounds.max);
+    let (min, max, sides) = in_place::box_sides(solid, topology).ok_or_else(too_complex)?;
     let size = max - min;
-    if topology.regions().len() != 6
-        || (solid.volume() - size.x * size.y * size.z).abs() > 1e-9 * size.x * size.y * size.z
-    {
-        return Err(too_complex());
-    }
-    // Each region's side of the box: the axis, and 0 at the low end, 1
-    // at the high.
-    let mut sides = Vec::with_capacity(6);
-    for region in topology.regions() {
-        let Form::Plane { n, .. } = *crate::picking::region_form(solid, region) else {
-            return Err(too_complex());
-        };
-        let n = n.normalize();
-        let axis = n.abs().max_position();
-        if (n.abs()[axis] - 1.0).abs() > 1e-12 {
-            return Err(too_complex());
-        }
-        sides.push((axis, usize::from(n[axis] > 0.0)));
-    }
     let (mut lo, mut hi) = (min, max);
     for &region in faces {
         let (axis, end) = *sides.get(region as usize).ok_or_else(too_complex)?;
@@ -158,8 +135,7 @@ pub(crate) fn by_boxes(
 /// Changes the body of `evaluation` as the offset face `offset`, the
 /// feature `feature`, says, or says why it fails, changing nothing.
 ///
-/// Its body must have a solid of its own ([`own_solids`]: one a join or
-/// a combine consumed fails it, naming the body holding it). Then the
+/// Its body must have a solid of its own ([`InPlace::of`]). Then the
 /// faces and the kernel's offset, as the module's docs say.
 pub(super) fn evaluate_offset_face(
     document: &Document,
@@ -170,30 +146,11 @@ pub(super) fn evaluate_offset_face(
     cache: &mut Cache,
 ) -> Result<(), Failed> {
     let body = offset.body().expect("a checked offset face has faces");
-    own_solids(document, std::iter::once(body), evaluation)?;
-    let body_name = document
-        .body(body)
-        .map_or("a body", |body| body.name.as_str());
-    let made = (evaluation.bodies.iter())
-        .find(|made| made.body == body)
-        .expect("the body has a solid of its own");
-    let solid = Arc::clone(&made.solid);
-    let topology = inspect::topology(made, cache);
-    let count = offset.faces.len();
-    let mut faces = Vec::with_capacity(count);
-    for (i, face) in offset.faces.iter().enumerate() {
-        let region = (topology.face(&solid, &face.key, face.near))
-            .map_err(|_| message::offset_face_not_found(i, count))?;
-        faces.push(region);
-    }
-    faces.sort_unstable();
-    faces.dedup();
+    let place = InPlace::of(document, body, evaluation, cache)?;
+    let faces = place.regions(&offset.faces, message::offset_face_not_found)?;
     let distance = offset.signed_distance();
-    let mut keyer = Keyer::new("offset face");
+    let mut keyer = place.keyer("offset face", feature, tolerance);
     keyer
-        .key(made.key)
-        .number(feature.get())
-        .number(tolerance.fit().to_bits())
         .number(distance.to_bits())
         .number(u64::from(offset.tangent))
         .number(faces.len() as u64);
@@ -202,53 +159,35 @@ pub(super) fn evaluate_offset_face(
     }
     let key = keyer.finish();
     let offset_by = offsetter();
-    let result = cache.solid(key, || {
-        let budget = &Budget::DEFAULT;
-        let moved = offset_by(
-            &solid,
-            &topology,
-            &faces,
-            distance,
-            offset.tangent,
-            feature.get(),
-            tolerance,
-            budget,
-        )
-        .map_err(|error| refused(error, body, body_name, &solid, &topology, tolerance))?;
-        if moved.is_empty() {
-            return Err(message::offset_leaves_nothing(body_name).into());
-        }
-        Ok(moved)
-    })?;
-    if let Some(made) = evaluation.bodies.iter_mut().find(|made| made.body == body) {
-        made.solid = result;
-        made.key = key;
-    }
-    Ok(())
+    place.replace(
+        key,
+        evaluation,
+        cache,
+        message::offset_leaves_nothing,
+        |budget| {
+            offset_by(
+                &place.solid,
+                &place.topology,
+                &faces,
+                distance,
+                offset.tangent,
+                feature.get(),
+                tolerance,
+                budget,
+            )
+            .map_err(|error| refused(error, &place, tolerance))
+        },
+    )
 }
 
-/// Why the kernel's offset of faces of the body `body`, named
-/// `body_name`, gave no solid, in words, with what to draw: the face or
-/// corner a refusal is about, or the failure's evidence.
-fn refused(
-    error: OffsetError,
-    body: BodyId,
-    body_name: &str,
-    solid: &Solid,
-    topology: &Topology,
-    tolerance: &Tolerance,
-) -> Failed {
-    let mesh = solid.mesh();
+/// Why the kernel's offset of faces of the body `place` gave no solid,
+/// in words, with what to draw: the face or corner a refusal is about,
+/// or the failure's evidence.
+fn refused(error: OffsetError, place: &InPlace<'_>, tolerance: &Tolerance) -> Failed {
+    let (solid, topology) = (&*place.solid, &*place.topology);
     let mut evidence = Evidence::default();
-    let mut region_drawn = |region: u32| {
-        if let Some(region) = topology.regions().get(region as usize) {
-            evidence.add_patches(
-                (region.tris.iter())
-                    .filter(|&&t| (t as usize) < mesh.tris().len())
-                    .map(|&t| mesh.patch(t as usize)),
-            );
-        }
-    };
+    let mut region_drawn =
+        |region: u32| in_place::draw_region(&mut evidence, solid, topology, region);
     let why = match error {
         OffsetError::PastNeighbour { region } => {
             region_drawn(region);
@@ -268,18 +207,18 @@ fn refused(
             message::OffsetRefusal::TangentNeighbour
         }
         OffsetError::Corner { vertex } => {
-            evidence.add_points(mesh.verts().get(vertex as usize).copied());
+            evidence.add_points(solid.mesh().verts().get(vertex as usize).copied());
             message::OffsetRefusal::Corner
         }
         OffsetError::OutOfRange => message::OffsetRefusal::OutOfRange,
         OffsetError::Failed(failure) => {
-            let words = message::offsetting(body_name, failure.error);
+            let words = message::offsetting(place.name, failure.error);
             let failure = KernelFailure::new(failure, tolerance);
-            return Failed::kernel(words, &failure, [&[body], &[]]);
+            return Failed::kernel(words, &failure, [&[place.body], &[]]);
         }
     };
     Failed {
-        message: message::offset_refused(why, body_name),
+        message: message::offset_refused(why, place.name),
         geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
     }
 }

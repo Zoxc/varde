@@ -80,7 +80,7 @@ fn refused(editor: &mut Editor, offset: OffsetFace, why: OffsetFaceError) {
     assert_eq!(*editor.document(), before);
 }
 
-/// An offset face is "Offset 1", makes no body, names its faces' body
+/// An offset face is "Offset face 1", makes no body, names its faces' body
 /// and uses no sketch; undo takes it away and redo puts it back.
 #[test]
 fn an_offset_face_is_added_and_undone() {
@@ -91,8 +91,8 @@ fn an_offset_face_is_added_and_undone() {
     let id = add(&mut editor, offset.clone()).unwrap();
     let document = editor.document();
     let feature = document.feature(id).unwrap();
-    assert_eq!(feature.name, "Offset 1");
-    assert_eq!(feature.kind.noun(), "Offset");
+    assert_eq!(feature.name, "Offset face 1");
+    assert_eq!(feature.kind.noun(), "Offset face");
     assert_eq!(*offset_of(document, id), offset);
     assert_eq!(document.bodies, before.bodies);
     assert_eq!(offset.body(), Some(body));
@@ -102,7 +102,7 @@ fn an_offset_face_is_added_and_undone() {
     assert_eq!(feature.kind.operation(), None);
     assert_eq!(feature.kind.new_body(), None);
     assert_eq!(offset.signed_distance(), 1.0);
-    // Inward, "Offset 2", the distance taken off.
+    // Inward, "Offset face 2", the distance taken off.
     let inward = OffsetFace {
         inward: true,
         tangent: false,
@@ -110,7 +110,10 @@ fn an_offset_face_is_added_and_undone() {
     };
     assert_eq!(inward.signed_distance(), -1.0);
     let again = add(&mut editor, inward.clone()).unwrap();
-    assert_eq!(editor.document().feature(again).unwrap().name, "Offset 2");
+    assert_eq!(
+        editor.document().feature(again).unwrap().name,
+        "Offset face 2"
+    );
     assert_eq!(*offset_of(editor.document(), again), inward);
     editor.undo();
     editor.undo();
@@ -147,7 +150,7 @@ fn an_offset_face_is_edited() {
     set(&mut editor, edited.clone()).unwrap();
     let now = editor.document();
     assert_eq!(*offset_of(now, id), edited);
-    assert_eq!(now.feature(id).unwrap().name, "Offset 1");
+    assert_eq!(now.feature(id).unwrap().name, "Offset face 1");
     editor.undo();
     assert_eq!(
         *offset_of(editor.document(), id),

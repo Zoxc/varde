@@ -78,7 +78,7 @@ impl FeatureKind {
             FeatureKind::Chamfer(_) => "Chamfer",
             FeatureKind::Shell(_) => "Shell",
             FeatureKind::Fillet(_) => "Fillet",
-            FeatureKind::OffsetFace(_) => "Offset",
+            FeatureKind::OffsetFace(_) => "Offset face",
         }
     }
 

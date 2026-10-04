@@ -64,7 +64,7 @@ impl MotionKind {
             MotionKind::Chamfer => "Chamfer",
             MotionKind::Shell => "Shell",
             MotionKind::Fillet => "Fillet",
-            MotionKind::OffsetFace => "Offset",
+            MotionKind::OffsetFace => "Offset face",
         }
     }
 

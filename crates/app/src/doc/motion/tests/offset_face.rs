@@ -172,6 +172,7 @@ fn offset_face_picks_faces_and_add_anyway_keeps_the_too_complex_offset() {
         "Inward",
         "Tangent faces",
         "pick the faces to move",
+        "Pick faces to move",
     ] {
         assert!(shows(&plates, text), "{text}");
     }
@@ -204,7 +205,7 @@ fn offset_face_picks_faces_and_add_anyway_keeps_the_too_complex_offset() {
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
     assert!(error.contains("too complex"), "{error}");
-    assert!(shows(&plates, "Offset fails"));
+    assert!(shows(&plates, "Offset face fails"));
     assert!(shows(&plates, "Add anyway"));
     // The body is shown as it is: the handle stands on the top.
     let handle = handle(&plates).expect("a handle");
@@ -219,7 +220,7 @@ fn offset_face_picks_faces_and_add_anyway_keeps_the_too_complex_offset() {
     assert!(matches!(kind, FeatureKind::OffsetFace(_)));
     assert_eq!(
         plates.doc.editor.document().feature(id).unwrap().name,
-        "Offset 1"
+        "Offset face 1"
     );
     plates.answer();
     assert!(
@@ -310,7 +311,7 @@ fn the_offset_is_previewed_the_handle_follows_and_ok_adds_one_undo_step() {
     plates
         .doc
         .look(Look::SelectPanel(varde_view::Panel::Timeline));
-    assert!(shows(&plates, "Offset 1") && shows(&plates, "2 mm in · 1 face"));
+    assert!(shows(&plates, "Offset face 1") && shows(&plates, "2 mm in · 1 face"));
     assert!(shows(&plates, "1 face · 2 mm inward"));
     plates.doc.update(Edit::Undo);
     assert_eq!(*plates.doc.editor.document(), before);
@@ -337,7 +338,7 @@ fn editing_an_offset_face_from_the_timeline() {
     let session = plates.doc.motion.as_ref().expect("editing");
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.faces.refs.len(), 1);
-    assert!(shows(&plates, "Offset 1"));
+    assert!(shows(&plates, "Offset face 1"));
     plates.answer();
     // The handle stands on the top as it was before the offset.
     assert!(near(
@@ -361,7 +362,7 @@ fn editing_an_offset_face_from_the_timeline() {
     assert_eq!(*plates.doc.editor.document(), committed);
 }
 
-/// An offset's faces are all on one body: once one is picked, another
+/// An offset face's faces are all on one body: once one is picked, another
 /// body's face is refused with why, and a body's row does nothing.
 #[test]
 fn an_offset_face_s_faces_are_all_on_one_body() {
@@ -389,7 +390,7 @@ fn an_offset_face_s_faces_are_all_on_one_body() {
     assert_eq!(faces(&plates).len(), 1);
     assert_eq!(
         plates.doc.notice.as_deref(),
-        Some("An offset's faces are all on one body: pick faces of Body 1")
+        Some("An offset face's faces are all on one body: pick faces of Body 1")
     );
     plates.doc.look(Look::ClickBody {
         body: second,
@@ -397,7 +398,7 @@ fn an_offset_face_s_faces_are_all_on_one_body() {
     });
     assert_eq!(
         plates.doc.notice.as_deref(),
-        Some("An offset's faces are all on one body: take them out to pick another")
+        Some("An offset face's faces are all on one body: take them out to pick another")
     );
     // Taking the face out leaves nothing to commit.
     let face = faces(&plates)[0];

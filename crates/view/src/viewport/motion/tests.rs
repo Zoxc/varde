@@ -735,3 +735,21 @@ fn the_offset_face_handle_drags_through_zero_turning_inward() {
     );
     assert!(!captured && !input.motion.holds());
 }
+
+/// An offset face's handle held as its session ends (under the cursor
+/// as OK was hit) doesn't keep the next session's clicks off the model:
+/// a shell's first mouse event lets go of it.
+#[test]
+fn an_offset_face_handle_left_held_lets_go_in_the_next_session() {
+    let camera = front();
+    let mut input = Interaction::default();
+    let knob = at(DVec3::new(0.0, 0.0, 14.0));
+    let offset = viewport(offset_face(4.0), &camera, None);
+    feed(&offset, &mut input, &[moved(knob)]);
+    assert!(input.motion.holds());
+    let mut shell = state(MotionKind::Shell, MotionPick::Faces, None);
+    shell.reference = None;
+    let shell = viewport(shell, &camera, None);
+    let (_, captured) = feed(&shell, &mut input, &[moved(knob)]);
+    assert!(!captured && !input.motion.holds());
+}
