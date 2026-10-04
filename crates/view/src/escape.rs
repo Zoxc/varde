@@ -8,7 +8,9 @@ use iced::keyboard::{self, key::Named};
 use iced::{Element, Event, Length, Rectangle, Size};
 
 /// `content`, sending `on_escape` when `Esc` is pressed, whatever has the
-/// focus, and keeping the key from `content` and the app.
+/// focus, and keeping the key from `content` and the app. Where a widget
+/// before it took the key (another `OnEscape`, a focused field), it
+/// sends nothing.
 pub(crate) struct OnEscape<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
     on_escape: Message,
@@ -87,8 +89,12 @@ where
             ..
         }) = event
         {
-            shell.publish(self.on_escape.clone());
-            shell.capture_event();
+            // A panel's every field sends its cancel: the first takes the
+            // key, and the others see it taken, so it's sent once.
+            if !shell.is_event_captured() {
+                shell.publish(self.on_escape.clone());
+                shell.capture_event();
+            }
             return;
         }
         self.content.as_widget_mut().update(

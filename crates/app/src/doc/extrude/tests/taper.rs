@@ -9,7 +9,7 @@
 //! taper; units changed mid-session keep it.
 
 use varde_document::{Command, Document, Editor, Extrude, FeatureKind, OriginPlane, Plane};
-use varde_view::{Edit, ExtrudeLook, Look};
+use varde_view::{Edit, ExtrudeLook, Look, Message as Ui};
 
 use super::{Requests, enter, extrude, extrudes, key, last_draft};
 use crate::doc::Doc;
@@ -209,4 +209,27 @@ fn a_taper_keeps_its_angle_when_the_units_change() {
         panic!("an extrude");
     };
     assert_eq!(taper.as_ref().unwrap().value, 7.5f64.to_radians());
+}
+
+/// `Esc` cancels an extrude once, whatever fields its extent shows (the
+/// distances and the taper each send the cancel, the first takes the
+/// key), through all's taper alone too.
+#[test]
+fn escape_cancels_an_extrude_once() {
+    use crate::tests::{pressed, typing};
+    use varde_view::{ExtentKind, OperationKind};
+    let (mut doc, _requests) = rectangle_picked();
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
+    let escape = iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape);
+    for extent in ExtentKind::ALL {
+        extrude(&mut doc, ExtrudeLook::Extent(extent));
+        for focused in [true, false] {
+            let (sent, shortcuts) = pressed(&doc, &[typing(escape.clone(), None)], focused);
+            assert!(
+                matches!(sent[..], [Ui::Look(Look::Extrude(ExtrudeLook::Cancel))]),
+                "{extent:?} {sent:?}"
+            );
+            assert!(shortcuts.is_empty(), "{shortcuts:?}");
+        }
+    }
 }

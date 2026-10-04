@@ -432,9 +432,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         state.taper,
         editable.then_some(|text| Message::Look(Look::Extrude(ExtrudeLook::Taper(text)))),
         Message::Edit(Edit::CommitExtrude),
-        // The distance's field sends it, where there is one.
-        (state.extent.distances().is_empty())
-            .then_some(Message::Look(Look::Extrude(ExtrudeLook::Cancel))),
+        Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
     );
     let operations = OperationKind::ALL.map(|kind| {
         tile(
@@ -514,8 +512,7 @@ fn distance_field<'a>(
         field,
         input,
         Message::Edit(Edit::CommitExtrude),
-        // One field sends it, so `Esc` cancels once.
-        (distance == Distance::First).then_some(Message::Look(Look::Extrude(ExtrudeLook::Cancel))),
+        Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
     )
 }
 

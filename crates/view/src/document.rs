@@ -2004,7 +2004,7 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
                 Extent::ThroughAll => note,
             };
             let operation = OperationKind::of(&extrude.operation).label();
-            match &extrude.taper {
+            match extrude.tapered() {
                 Some(taper) => {
                     let taper = panels::angle_note(taper.value);
                     format!("{extent} · Taper {taper} · {operation}")

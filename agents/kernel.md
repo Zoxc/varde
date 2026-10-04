@@ -8125,14 +8125,18 @@ operation })`:
   through all, which regen works out from the bodies).
 - `taper`: `Option<Value>`, the angle the walls lean by, checked
   against `Extrude::taper_ask` (an angle under 90° either way, bare
-  numbers in degrees) and not zero (`ExtrudeError::Taper`; no taper is
-  `None`). Positive narrows the profile away from the sketch's plane, on
+  numbers in degrees; else `ExtrudeError::Taper`). The panel stores no
+  taper as `None`; a zero one (either sign, as a file may hold) is taken
+  as none rather than refused: `Extrude::tapered()` gives the taper only
+  where it isn't zero, and regen, its key and the notes go by it, so it
+  is the untapered extrude exactly. Positive narrows the profile away from the sketch's plane, on
   both sides of it for two sides and symmetric (each side drafted away
   from the plane), negative widens it; the walls turn about where they
   meet the sketch's plane, also for a span that doesn't reach it
   (through all). `#[serde(default)]`: extrudes written before tapers
-  read untapered. `Extrude::taper_angle()` is its radians, zero for
-  none.
+  read untapered. Written as nil where there's none, as every defaulted
+  field is (the workspace never skips a field on writing: the workers'
+  postcard is positional and would misread a skipped one).
 - `operation`: `NewBody(BodyId)`, or `Join`, `Cut`, `Intersect` of
   `Targets { excluded }`, the bodies taken out (sorted without repeats,
   each made by an earlier feature).
@@ -8187,7 +8191,11 @@ failing feature changes no body, and the later ones still run.
   `FeatureId::get()`: the tool solid. A tapered extrude calls
   `kernel::extrude_tapered` instead (`src/history/taper.rs`), its key
   the untapered one's plus `"taper"` and the angle's bits (an untapered
-  extrude keeps its key); its refusals read "the taper closes the
+  extrude, or one of zero, keeps its key and its tool bit for bit). For
+  through all the span is the bodies' with its margin, the walls still
+  hinged at the sketch's plane: a narrowing taper that closes inside the
+  margin past the last body is refused though the bodies end before it;
+  its refusals read "the taper closes the
   profile before its end: try a smaller taper or a shorter distance",
   "the taper is too steep for this profile: try a smaller taper", "the
   taper widens it out of range", its running out of budget "tapering
@@ -8759,13 +8767,13 @@ Profile, a field of the regions picked as rows (`Icon::SeRegion`,
 extrude"), always the one picking; the extents (Through all only while Cut is
 chosen, else disabled with "Only a cut goes through all"; choosing
 another operation while through all goes back to one side), the distance fields (the first is `VALUE_FIELD`, which
-takes the focus as the session opens, all selected; `Esc` in it cancels,
-the one field sending it, so `Esc` cancels once: `value_field`'s
-`cancel` is optional), Flip for one side and two sides, Taper (a typed
+takes the focus as the session opens, all selected; `Esc` in any field
+cancels, once: every field's `OnEscape` sends its cancel, but only where
+nothing before it took the key, so the first takes it and the rest stay
+quiet, in every panel of value fields), Flip for one side and two sides, Taper (a typed
 angle, `ExtrudeLook::Taper`, read with `Extrude::taper_ask`, 0° to begin
 with and stored as none, refused at 90° or more either way; the mock has
 no taper, so it's a field in the style of the distances, after Flip;
-`Esc` in it cancels only for through all, which has no distance field;
 the handle still drags only the distance), the operations, for Join, Cut and
 Intersect a "Bodies" list with a checkbox per body (`BodyTarget`: the
 draft's touched bodies as the newest answer of the current run of drafts

@@ -1108,3 +1108,22 @@ mod scale;
 mod shell;
 mod split;
 mod sweep;
+
+/// `Esc` cancels a move once, though its four fields each send the
+/// cancel: the first takes the key.
+#[test]
+fn escape_cancels_a_move_once() {
+    use crate::tests::{pressed, typing};
+    use varde_view::Message as Ui;
+    let (mut doc, _requests) = holding(Document::example());
+    doc.start_motion(MotionKind::Move);
+    let escape = keyboard::Key::Named(key::Named::Escape);
+    for focused in [true, false] {
+        let (sent, shortcuts) = pressed(&doc, &[typing(escape.clone(), None)], focused);
+        assert!(
+            matches!(sent[..], [Ui::Look(Look::Motion(MotionLook::Cancel))]),
+            "{sent:?}"
+        );
+        assert!(shortcuts.is_empty(), "{shortcuts:?}");
+    }
+}

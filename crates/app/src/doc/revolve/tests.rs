@@ -870,3 +870,28 @@ fn the_session_ends_when_its_revolve_or_its_document_goes() {
 
 mod edges;
 mod fuzz;
+
+/// `Esc` cancels a revolve once, whichever of its angle fields there
+/// are: every field sends the cancel, the first takes the key.
+#[test]
+fn escape_cancels_a_revolve_once() {
+    use crate::tests::{pressed, typing};
+    use varde_view::Message as Ui;
+    let mut lathe = lathe();
+    lathe.doc.look(Look::StartRevolve);
+    let escape = keyboard::Key::Named(key::Named::Escape);
+    for extent in [TurnKind::TwoSides, TurnKind::OneSide, TurnKind::Full] {
+        lathe.revolve(RevolveLook::Extent(extent));
+        for focused in [true, false] {
+            let (sent, shortcuts) = pressed(&lathe.doc, &[typing(escape.clone(), None)], focused);
+            let cancels = (sent.iter())
+                .filter(|ui| matches!(ui, Ui::Look(Look::Revolve(RevolveLook::Cancel))))
+                .count();
+            // A full turn has no field: the app's `Esc` backs out.
+            let fields = extent != TurnKind::Full;
+            assert_eq!(cancels, usize::from(fields), "{extent:?} {sent:?}");
+            assert_eq!(sent.len(), cancels, "{extent:?} {sent:?}");
+            assert!(shortcuts.is_empty() || !fields, "{shortcuts:?}");
+        }
+    }
+}

@@ -349,3 +349,32 @@ fn a_two_sided_taper_is_too_complex_with_the_kernel_stub() {
     assert_eq!(failure(&evaluation, boss).unwrap().message, TOO_COMPLEX);
     assert!(evaluation.bodies.is_empty());
 }
+
+/// A taper of zero (either sign), as a file may hold, is the untapered
+/// extrude exactly: the same key, so found in the cache, and the same
+/// solid, with the kernel's stand-in, which would refuse any other.
+#[test]
+fn a_zero_taper_is_the_untapered_extrude() {
+    let mut editor = Editor::new(Document::example());
+    let feature = editor.document().features()[1].id;
+    let mut cache = Cache::default();
+    let plain = evaluate(editor.document(), &mut cache);
+    assert!(plain.failed.is_empty(), "{:?}", plain.failed);
+    for text in ["0", "-0", "3 - 3"] {
+        let zero = taper(editor.document(), text);
+        assert_eq!(zero.value, 0.0);
+        set_extrude(&mut editor, feature, |extrude| extrude.taper = Some(zero));
+        let misses = cache.counts().1;
+        let again = evaluate(editor.document(), &mut cache);
+        assert!(again.failed.is_empty(), "{text}: {:?}", again.failed);
+        assert_eq!(cache.counts().1, misses, "{text}: nothing worked out again");
+        assert_eq!(again.bodies.len(), plain.bodies.len());
+        for (a, b) in again.bodies.iter().zip(&plain.bodies) {
+            assert_eq!(a.key, b.key);
+            assert!(Arc::ptr_eq(&a.solid, &b.solid), "{text}: the same solid");
+        }
+        // Cold, the same solid bit for bit.
+        let cold = evaluated(editor.document());
+        assert_eq!(cold.bodies[0].solid.mesh(), plain.bodies[0].solid.mesh());
+    }
+}

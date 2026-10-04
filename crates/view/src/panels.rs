@@ -391,7 +391,7 @@ pub(crate) fn extent_note(extent: &Extent, units: LengthUnit) -> String {
 /// one, "10 mm · 2°".
 pub(crate) fn extrude_note(extrude: &varde_document::Extrude, units: LengthUnit) -> String {
     let extent = extent_note(&extrude.extent, units);
-    match &extrude.taper {
+    match extrude.tapered() {
         Some(taper) => format!("{extent} · {}", angle_note(taper.value)),
         None => extent,
     }

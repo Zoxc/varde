@@ -274,9 +274,10 @@ extrude,
 regions as `varde_sketch::RegionRef`s (curve ids of the outer loop and of
 each hole, and a point inside), the extent (one side, symmetric, two
 sides, each distance a typed expression and its value, or through all),
-flip, the taper (a typed expression and its value in radians, or none; `#[serde(default)]`,
-so an extrude written before tapers reads untapered, and an older build
-skips it, reading a tapered extrude untapered), and the operation: a
+flip, the taper (a typed expression and its value in radians, or none,
+written as nil; `#[serde(default)]`, so an extrude written before tapers
+reads untapered, and an older build skips it, reading a tapered extrude
+untapered; one of zero reads as none), and the operation: a
 new body, by id, or join, cut or intersect with the bodies taken out of
 its targets; or a revolve,
 `crates/document/src/revolve.rs`: the sketch, regions, flip and

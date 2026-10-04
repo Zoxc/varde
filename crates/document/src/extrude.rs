@@ -29,13 +29,15 @@ pub struct Extrude {
     /// Swaps the direction of [`Extent::OneSide`] and the two sides of
     /// [`Extent::TwoSides`]; the others ignore it.
     pub flip: bool,
-    /// The angle its walls lean by ([`Extrude::taper_ask`]: not zero,
-    /// under 90° either way), if they do: positive narrows the profile
-    /// away from the sketch's plane, on both sides of it for two sides
-    /// and symmetric, negative widens it. Each wall turns about where it
+    /// The angle its walls lean by ([`Extrude::taper_ask`]: under 90°
+    /// either way), if they do: positive narrows the profile away from
+    /// the sketch's plane, on both sides of it for two sides and
+    /// symmetric, negative widens it. Each wall turns about where it
     /// meets the sketch's plane, also where the extrude doesn't reach the
     /// plane (through all). None: straight walls, as every extrude made
-    /// before tapers came reads (`#[serde(default)]`).
+    /// before tapers came reads (`#[serde(default)]`). The panel stores a
+    /// taper of zero as none; one read from a file is taken as none too
+    /// ([`Extrude::tapered`]).
     #[serde(default)]
     pub taper: Option<Value>,
     pub operation: Operation,
@@ -140,15 +142,15 @@ impl Extent {
 
 impl Extrude {
     /// What a taper is checked against in `design`: an angle under a
-    /// right angle either way, bare numbers in degrees. Zero is refused
-    /// apart ([`ExtrudeError::Taper`]): no taper is none.
+    /// right angle either way, bare numbers in degrees.
     pub fn taper_ask(design: &Design) -> Ask {
         Ask::angle(design.units, FRAC_PI_2).under_max()
     }
 
-    /// Its taper's angle in radians, zero for none.
-    pub fn taper_angle(&self) -> f64 {
-        self.taper.as_ref().map_or(0.0, |taper| taper.value)
+    /// Its taper, if its walls lean: none for no taper or one of zero
+    /// (either sign), which is the untapered extrude exactly.
+    pub fn tapered(&self) -> Option<&Value> {
+        self.taper.as_ref().filter(|taper| taper.value != 0.0)
     }
 
     /// Its typed values and what each is checked against in `design`:
@@ -219,10 +221,6 @@ impl Extrude {
             taper
                 .check(&Extrude::taper_ask(design))
                 .map_err(|_| ExtrudeError::Taper)?;
-            // Not NaN: checked above.
-            if taper.value == 0.0 {
-                return Err(ExtrudeError::Taper);
-            }
         }
         if self.extent == Extent::ThroughAll && !matches!(self.operation, Operation::Cut(_)) {
             return Err(ExtrudeError::ThroughAll);
@@ -247,7 +245,7 @@ pub enum ExtrudeError {
     /// Its two sides come to more than [`MAX_COORD`].
     Length,
     /// Its taper's expression doesn't give its value, or the value isn't
-    /// an angle [`Extrude::taper_ask`] takes, or it's zero.
+    /// an angle [`Extrude::taper_ask`] takes.
     Taper,
     /// It goes through all, but doesn't cut.
     ThroughAll,
@@ -274,9 +272,7 @@ impl fmt::Display for ExtrudeError {
             ExtrudeError::Region(why) => why.fmt(f),
             ExtrudeError::Distance => f.write_str("a distance's expression doesn't give its value"),
             ExtrudeError::Length => write!(f, "its two sides come to over {MAX_COORD} mm"),
-            ExtrudeError::Taper => {
-                f.write_str("its taper isn't an angle under 90° either way, other than 0")
-            }
+            ExtrudeError::Taper => f.write_str("its taper isn't an angle under 90° either way"),
             ExtrudeError::ThroughAll => f.write_str("only a cut can go through all"),
             ExtrudeError::NewBody(body) => write!(
                 f,

@@ -4839,8 +4839,8 @@ fn a_loft_s_parts_are_checked_as_read() {
 }
 
 /// An extrude written before tapers (no `taper` field) reads untapered;
-/// a tapered one goes through a file; a taper changed on disk, or zero,
-/// is refused.
+/// a tapered one goes through a file; a taper changed on disk is
+/// refused, one of zero read as none.
 #[test]
 fn tapers_read_from_older_files_and_are_checked() {
     use varde_document::{Extrude, FeatureKind};
@@ -4888,7 +4888,7 @@ fn tapers_read_from_older_files_and_are_checked() {
     let (read, _) = from_bytes(&bytes).unwrap();
     assert_eq!(&read, document);
 
-    // Its value changed on disk, or a taper of nothing, is refused.
+    // Its value changed on disk is refused, to zero or out of range.
     let raw = record_msgpack(document);
     let float = |value: f64| {
         let mut bytes = vec![0xcb];
@@ -4904,13 +4904,24 @@ fn tapers_read_from_older_files_and_are_checked() {
         changed[at..at + was.len()].copy_from_slice(&float(now));
         assert!(from_msgpack::<Document>(&changed).is_err(), "{now} taken");
     }
+    // A taper of zero, which the panel stores as none, reads as one
+    // rather than refusing the file.
     let zero = Extrude {
         taper: Some(Value::new("0", &ask).unwrap()),
         ..extrude.clone()
     };
-    let refused = editor.apply(Command::SetFeature {
-        feature: id,
-        kind: Box::new(zero.into()),
-    });
-    assert!(refused.is_err());
+    editor
+        .apply(Command::SetFeature {
+            feature: id,
+            kind: Box::new(zero.into()),
+        })
+        .unwrap();
+    let document = editor.document();
+    let (bytes, _) = to_bytes(document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(&read, document);
+    let FeatureKind::Extrude(read) = &read.features()[1].kind else {
+        panic!("the example's extrude");
+    };
+    assert_eq!(read.tapered(), None);
 }

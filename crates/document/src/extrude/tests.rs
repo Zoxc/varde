@@ -530,43 +530,64 @@ fn taper(text: &str) -> Value {
     Value::new(text, &Extrude::taper_ask(&Document::default().design())).unwrap()
 }
 
-/// A taper is an angle under 90° either way, not zero; none is none.
+/// A taper is an angle under 90° either way; none is none, and one of
+/// zero (as a file may hold, though the panel stores none) is taken as
+/// none.
 #[test]
 fn tapers_are_checked() {
     let document = with_body();
     let id = document.features[1].id;
     let with = |taper: Option<Value>| changed(&document, id, |extrude| extrude.taper = taper);
-    for text in ["2", "-2", "89.999", "-89.999", "0.5 rad"] {
+    for text in ["2", "-2", "89.999", "-89.999", "0.5 rad", "1e-300 rad"] {
         let tapered = with(Some(taper(text)));
         assert_eq!(tapered.check(), Ok(()), "{text}");
+        assert!(extrude_of(&tapered, id).tapered().is_some(), "{text}");
         assert_eq!(
             Document::from_postcard(&tapered.to_postcard()),
             Ok(tapered.clone())
         );
     }
     assert_eq!(with(None).check(), Ok(()));
-    // Zero, a right angle or more, a value its text doesn't give, a
-    // length.
-    for text in ["0", "-0", "90", "-90", "100", "2 mm"] {
+    // Zero, either sign, is untapered.
+    let mut zero = taper("3 - 3");
+    assert_eq!(zero.value, 0.0);
+    for _ in 0..2 {
+        let untapered = with(Some(zero.clone()));
+        assert_eq!(untapered.check(), Ok(()));
+        assert_eq!(extrude_of(&untapered, id).tapered(), None);
+        zero = taper("-0");
+        assert!(zero.value == 0.0 && zero.value.is_sign_negative());
+    }
+    // A right angle or more, a value its text doesn't give, a length,
+    // not a number.
+    for text in ["90", "-90", "100", "2 mm", "1/0", "nan", "", "5 deg deg"] {
         let value = Value {
             text: text.to_owned(),
             value: 0.0,
         };
         refused(&with(Some(value)), id, ExtrudeError::Taper);
     }
+    for value in [f64::NAN, f64::INFINITY, 1.6, -1.6, FRAC_PI_2] {
+        let value = Value {
+            text: format!("{value:e} rad"),
+            value,
+        };
+        refused(&with(Some(value)), id, ExtrudeError::Taper);
+    }
     let mut tampered = taper("3");
     tampered.value = 0.1;
     refused(&with(Some(tampered)), id, ExtrudeError::Taper);
-    let mut zero = taper("3 - 3");
-    assert_eq!(zero.value, 0.0);
-    refused(&with(Some(zero.clone())), id, ExtrudeError::Taper);
-    zero.value = -0.0;
-    refused(&with(Some(zero)), id, ExtrudeError::Taper);
-    let none = with(Some(taper("0")));
+    let mut tampered = taper("3");
+    tampered.value = 0.0;
+    refused(&with(Some(tampered)), id, ExtrudeError::Taper);
+    let wrong = with(Some(Value {
+        text: "95 - 5".to_owned(),
+        value: 90f64.to_radians(),
+    }));
     assert_eq!(
-        none.check().unwrap_err().to_string(),
+        wrong.check().unwrap_err().to_string(),
         format!(
-            "feature {}: its taper isn't an angle under 90° either way, other than 0",
+            "feature {}: its taper isn't an angle under 90° either way",
             id.0
         )
     );

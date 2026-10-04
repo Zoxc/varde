@@ -1053,7 +1053,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             state.fields[which.index()],
             input,
             Message::Edit(Edit::CommitMotion),
-            Some(Message::Look(Look::Motion(MotionLook::Cancel))),
+            Message::Look(Look::Motion(MotionLook::Cancel)),
         )
     };
     let field_of = |which: MotionField| field_named(which, which.label());

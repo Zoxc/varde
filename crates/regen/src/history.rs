@@ -1023,15 +1023,17 @@ impl Run<'_> {
             .number(to.to_bits())
             .key(self.sketch.key)
             .placement(&placement);
-        // An untapered extrude keeps the key it had before tapers.
-        if let Some(taper) = &extrude.taper {
+        // An untapered extrude keeps the key it had before tapers, one
+        // of zero too.
+        let tapered = extrude.tapered();
+        if let Some(taper) = tapered {
             keyer.bytes(b"taper").number(taper.value.to_bits());
         }
         let key = keyer.finish();
         let solid = cache.solid(key, || {
             let profile = self.profile()?;
             let (feature, budget) = (self.feature.id.get(), &Budget::DEFAULT);
-            match &extrude.taper {
+            match tapered {
                 None => varde_kernel::extrude(
                     &profile,
                     &frame,
