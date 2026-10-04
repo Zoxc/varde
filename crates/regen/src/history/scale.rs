@@ -225,9 +225,11 @@ fn in_range(f: f64) -> bool {
 /// The world axis (0, 1 or 2) the direction `d` runs along, if it's
 /// within a sine of [`AXIS_SINE`] of one: the sum of the squares of its
 /// other two components at most `AXIS_SINE²` of its length's square. A
-/// decision by `+ −  ×` alone. `d` is a difference of points within the
-/// coordinate limit, so its squares are finite. The panel offers "Along
-/// its axis only" by it too.
+/// decision by `+  ×` alone: the other two squares are added as they
+/// are, not taken from the length's square, which would lose them to
+/// its rounding (a sine under about `1e-8` would read as none). `d` is
+/// a difference of points within the coordinate limit, so its squares
+/// are finite. The panel offers "Along its axis only" by it too.
 pub fn along_axis(d: DVec3) -> Option<usize> {
     let squares = d * d;
     let axis = if squares.x >= squares.y && squares.x >= squares.z {
@@ -237,8 +239,9 @@ pub fn along_axis(d: DVec3) -> Option<usize> {
     } else {
         2
     };
-    let all = squares.x + squares.y + squares.z;
-    let across = all - squares[axis];
+    let [a, b] = [(axis + 1) % 3, (axis + 2) % 3];
+    let across = squares[a] + squares[b];
+    let all = squares[axis] + across;
     (all > 0.0 && across <= AXIS_SINE * AXIS_SINE * all).then_some(axis)
 }
 

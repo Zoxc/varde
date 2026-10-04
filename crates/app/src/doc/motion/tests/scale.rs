@@ -591,3 +591,5 @@ fn an_edge_follows_its_body_a_redone_combine_merges() {
     );
     assert_eq!(plates.doc.scale_lit().len(), 1, "the rim lit on the plate");
 }
+
+mod fuzz;

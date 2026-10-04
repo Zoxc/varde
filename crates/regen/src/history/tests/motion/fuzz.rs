@@ -37,7 +37,7 @@
 use std::collections::BTreeMap;
 
 use glam::{DMat3, DQuat};
-use varde_document::{Align, AlignRefs, DirRef, PointRef};
+use varde_document::{Align, AlignRefs, DirRef, PointRef, Scale, ScaleFactor};
 use varde_document::{Copies, Pattern, PatternKind};
 use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::topology::Topology;
@@ -142,6 +142,9 @@ fn random_motion(
     }
     if rng.below(4) == 0 {
         return random_align(evaluation, &bodies, rng).map(FeatureKind::from);
+    }
+    if rng.below(4) == 0 {
+        return random_scale(document, evaluation, &bodies, rng).map(FeatureKind::from);
     }
     let picked = some_of(&bodies, rng);
     let any = bodies[rng.below(bodies.len())];
@@ -529,6 +532,167 @@ fn random_align(evaluation: &Evaluation, bodies: &[BodyId], rng: &mut Rng) -> Op
     })
 }
 
+const FACTORS: [&str; 9] = [
+    "2", "0.5", "1.5", "3", "0.25", "25.4", "1000", "0.001", "1/3",
+];
+const LENGTHS: [&str; 5] = ["20", "5", "50", "12.5", "0.1"];
+
+/// A random scale of some of `bodies` (those with solids of their own in
+/// `evaluation`, the history before it) about the origin or a point on
+/// any of them: by one factor, one per axis, or to the length of an
+/// edge of one of them, along its axis only or not.
+fn random_scale(
+    document: &Document,
+    evaluation: &Evaluation,
+    bodies: &[BodyId],
+    rng: &mut Rng,
+) -> Option<Scale> {
+    let design = document.design();
+    let picked = some_of(bodies, rng);
+    let about = match rng.below(2) {
+        0 => PointRef::Origin,
+        _ => random_point(evaluation, bodies[rng.below(bodies.len())], rng)?,
+    };
+    let ask = Scale::factor_ask(&design);
+    let factor = |rng: &mut Rng| Value::new(FACTORS[rng.below(FACTORS.len())], &ask).unwrap();
+    let factor = match rng.below(3) {
+        0 => ScaleFactor::Uniform(factor(rng)),
+        1 => ScaleFactor::PerAxis([factor(rng), factor(rng), factor(rng)]),
+        _ => {
+            let on = picked[rng.below(picked.len())];
+            let edge = random_chain(evaluation, on, rng, |_| true)?;
+            let text = LENGTHS[rng.below(LENGTHS.len())];
+            ScaleFactor::EdgeLength {
+                edge,
+                length: Value::new(text, &Scale::length_ask(&design)).unwrap(),
+                axis_only: rng.below(2) == 0,
+            }
+        }
+    };
+    Some(Scale {
+        bodies: picked,
+        about,
+        factor,
+    })
+}
+
+/// The length of `edge` on the bodies as `evaluation` has them, by the
+/// measure tool, and its ends if it's straight; `None` where it isn't
+/// found or isn't the only chain of its names.
+fn edge_length(evaluation: &Evaluation, edge: &EdgeRef) -> Option<(f64, Option<[DVec3; 2]>)> {
+    let made = super::super::super::motion::holding(edge.body, evaluation)?;
+    let topology = made.solid.topology();
+    if chains_named(&topology, &edge.faces) != 1 {
+        return None;
+    }
+    let chain = topology.edge(&made.solid, edge.faces, edge.near).ok()?;
+    let target = varde_kernel::measure::Target {
+        solid: &made.solid,
+        topology: &topology,
+        pick: varde_kernel::measure::Pick::Edge(chain),
+    };
+    let tolerance = Tolerance::default();
+    match varde_kernel::measure::measure(&target, &tolerance, &Budget::DEFAULT).ok()? {
+        varde_kernel::measure::Measured::Edge(measured) => Some((
+            measured.length,
+            match measured.shape {
+                EdgeShape::Line { from, to } => Some([from, to]),
+                _ => None,
+            },
+        )),
+        _ => None,
+    }
+}
+
+/// Holds the scale `scale` (the feature `feature`, named `what`), which
+/// worked, to what it noted and did: its point where the topology before
+/// it finds it, its factors those typed or the edge's length before it
+/// over the length typed, each body scaled (its volume times the
+/// factors' product, its centre of mass where the scale takes the old
+/// one), the edge then the length typed, every other body left alone.
+fn check_scale(
+    scale: &Scale,
+    feature: FeatureId,
+    before: &Evaluation,
+    after: &Evaluation,
+    what: &str,
+) {
+    let found = (after.scaled.iter())
+        .find(|(id, _)| *id == feature)
+        .map(|(_, found)| *found)
+        .unwrap_or_else(|| panic!("{what}: nothing noted"));
+    let centre = DVec3::from(found.centre.expect("a point"));
+    let factors = DVec3::from(found.factors.expect("factors"));
+    if let Some(point) = point_on(before, &scale.about, true) {
+        assert!(
+            close_at(centre, point, point.abs().max_element()),
+            "{what}: {centre} {point}"
+        );
+    }
+    match &scale.factor {
+        ScaleFactor::Uniform(f) => assert_eq!(factors, DVec3::splat(f.value), "{what}"),
+        ScaleFactor::PerAxis(f) => {
+            assert_eq!(factors.to_array(), f.each_ref().map(|f| f.value), "{what}");
+        }
+        ScaleFactor::EdgeLength {
+            edge,
+            length,
+            axis_only,
+        } => {
+            let measured = found.length.expect("the edge's length");
+            if let Some((was, line)) = edge_length(before, edge) {
+                assert!(
+                    (measured - was).abs() <= 1e-12 * was,
+                    "{what}: {measured} {was}"
+                );
+                let f = length.value / was;
+                let wanted = match (axis_only, line) {
+                    (false, _) => DVec3::splat(f),
+                    (true, Some([from, to])) => {
+                        let axis = crate::history::scale::along_axis(to - from)
+                            .unwrap_or_else(|| panic!("{what}: slanted, scaled"));
+                        let mut wanted = DVec3::ONE;
+                        wanted[axis] = f;
+                        wanted
+                    }
+                    (true, None) => panic!("{what}: not straight, scaled along its axis"),
+                };
+                assert!(
+                    (factors - wanted).abs().max_element() <= 1e-12 * wanted.max_element(),
+                    "{what}: {factors} {wanted}"
+                );
+            }
+            if let Some((now, _)) = edge_length(after, edge) {
+                assert!(
+                    (now - length.value).abs() <= 1e-9 * length.value,
+                    "{what}: the edge is {now}, not {}",
+                    length.value
+                );
+            }
+        }
+    }
+    let product = factors.x * factors.y * factors.z;
+    for made in &before.bodies {
+        let now = solid(after, made.body).expect("still a body");
+        if scale.bodies.binary_search(&made.body).is_err() {
+            assert_eq!(now, &made.solid, "{what}: {:?} changed", made.body);
+            continue;
+        }
+        let (volume, was) = mass(&made.solid);
+        let (volume_now, centre_now) = mass(now);
+        let wanted = volume * product;
+        assert!(
+            (volume_now - wanted).abs() <= 1e-6 * wanted,
+            "{what}: {volume} × {product} became {volume_now}"
+        );
+        let to = centre + factors * (was - centre);
+        assert!(
+            close_at(centre_now, to, size(now).max(size(&made.solid))),
+            "{what}: centre {was} went to {centre_now}, not {to}"
+        );
+    }
+}
+
 /// The point `point` names on the bodies as `evaluation` has them, by
 /// the kernel's topology; `None` where it isn't found or isn't the only
 /// one of its names (`unique`), so a stale `near` can't choose another.
@@ -646,6 +810,53 @@ fn rotation_arc(a: DVec3, b: DVec3) -> DMat3 {
     DMat3::from_axis_angle(square, std::f64::consts::PI)
 }
 
+/// Five points of the chain `edge` names on `solid`, spread along its
+/// first curve.
+fn ellipse_points(solid: &Solid, edge: &EdgeRef) -> [DVec3; 5] {
+    let topology = solid.topology();
+    let chain = topology.edge(solid, edge.faces, edge.near).unwrap();
+    let curve = solid
+        .mesh()
+        .curve(topology.chains()[chain as usize].halfedges[0]);
+    [0.0, 0.25, 0.5, 0.75, 1.0].map(|t| curve.eval(t))
+}
+
+/// The centre of the conic through `points` in their plane square to
+/// `axis`, by solving for its coefficients (`A x² + B xy + C y² + D x +
+/// E y = 1` about the points' mean, inside the conic so it isn't on it)
+/// with Gaussian elimination: independent of the kernel's own centre.
+fn conic_centre(points: &[DVec3; 5], axis: DVec3) -> DVec3 {
+    let n = axis.normalize();
+    let u = n.any_orthonormal_vector();
+    let v = n.cross(u);
+    let mean = points.iter().copied().sum::<DVec3>() / 5.0;
+    let mut rows = points.map(|p| {
+        let (x, y) = ((p - mean).dot(u), (p - mean).dot(v));
+        [x * x, x * y, y * y, x, y, 1.0]
+    });
+    for col in 0..5 {
+        let pivot = (col..5)
+            .max_by(|&a, &b| rows[a][col].abs().total_cmp(&rows[b][col].abs()))
+            .unwrap();
+        rows.swap(col, pivot);
+        for row in 0..5 {
+            if row != col {
+                let k = rows[row][col] / rows[col][col];
+                for c in col..6 {
+                    rows[row][c] -= k * rows[col][c];
+                }
+            }
+        }
+    }
+    let [a, b, c, d, e] = std::array::from_fn(|i| rows[i][5] / rows[i][i]);
+    // The gradient vanishes at the centre: 2a x + b y + d = 0 and
+    // b x + 2c y + e = 0.
+    let det = 4.0 * a * c - b * b;
+    let x = (b * e - 2.0 * c * d) / det;
+    let y = (b * d - 2.0 * a * e) / det;
+    mean + u * x + v * y
+}
+
 /// Holds what `align`'s references found on `before` (`sides`) to what
 /// the geometry says, told apart from the topology's own code: a flat
 /// face's normal square to its triangles and out of the body (their
@@ -683,7 +894,19 @@ fn check_found(align: &Align, before: &Evaluation, sides: (Found, Found), what: 
     };
     let check_point = |point: &PointRef, found: DVec3| match point {
         PointRef::Centre(edge) => {
-            let (_, size, ends, inside) = chain_of(edge);
+            let (shape, size, ends, inside) = chain_of(edge);
+            if let EdgeShape::Ellipse { axis, .. } = shape {
+                // An ellipse (a rim scaled per axis): the centre of the
+                // conic through five of its points.
+                let points = ellipse_points(&on(edge.body).solid, edge);
+                let centre = conic_centre(&points, axis);
+                let reach = size.max(centre.abs().max_element());
+                assert!(
+                    centre.distance(found) <= 1e-6 * reach,
+                    "{what}: centre {found}, five points give {centre}"
+                );
+                return;
+            }
             let [a, c] = extremes(&ends);
             let b = inside;
             // The circumcentre, where the three points tell it well (a
@@ -891,8 +1114,17 @@ fn check_align(
         }
     }
     // Found again on the moved body where the target's are (where the
-    // name is the only one, so the stale point can't choose another).
-    if let Some(found) = point_on(after, &align.from.point, true) {
+    // name is the only one, so the stale point can't choose another). A
+    // nearly flat arc's centre, far off the body, is found again only as
+    // well as the arc's sagitta is told at its new place: within the
+    // rounding there over the sagitta, times the radius.
+    let far = |found: DVec3| {
+        let extent = now.bounds3().map_or(0.0, |b| (b.max - b.min).length());
+        found.distance(centre_now) > 1e3 * extent.max(1.0)
+    };
+    if let Some(found) = point_on(after, &align.from.point, true)
+        .filter(|&found| !(matches!(align.from.point, PointRef::Centre(_)) && far(found)))
+    {
         assert!(
             close_at(found, lands, scale),
             "{what}: {found} not at {lands}"
@@ -1001,7 +1233,7 @@ fn check_motions(document: &Document, evaluation: &Evaluation, cache: &mut Cache
                 check_pattern(document, index, pattern, evaluation, cache, &what);
                 continue;
             }
-            FeatureKind::Align(_) => (&Vec::new(), None, None),
+            FeatureKind::Align(_) | FeatureKind::Scale(_) => (&Vec::new(), None, None),
             _ => continue,
         };
         let what = format!("{what}: {} {index}", feature.name);
@@ -1018,6 +1250,10 @@ fn check_motions(document: &Document, evaluation: &Evaluation, cache: &mut Cache
         }
         if let FeatureKind::Align(align) = &feature.kind {
             check_align(align, feature.id, &before, &after, &what);
+            continue;
+        }
+        if let FeatureKind::Scale(scale) = &feature.kind {
+            check_scale(scale, feature.id, &before, &after, &what);
             continue;
         }
         let reference = (after.references.iter())
@@ -1292,6 +1528,7 @@ fn run(seed: u64, steps: usize) {
                         | FeatureKind::Mirror(_)
                         | FeatureKind::Pattern(_)
                         | FeatureKind::Align(_)
+                        | FeatureKind::Scale(_)
                 )
             })
             .collect();
@@ -1472,6 +1709,7 @@ fn run(seed: u64, steps: usize) {
         assert_eq!(hot.failed, cold.failed, "{what}");
         assert_eq!(hot.references, cold.references, "{what}");
         assert_eq!(hot.aligned, cold.aligned, "{what}");
+        assert_eq!(hot.scaled, cold.scaled, "{what}");
         check_motions(&document, &hot, &mut warm, &what);
         if step % 4 == 3 {
             not_stuck(&document, &what);

@@ -2254,7 +2254,9 @@ pub enum ScaleFactor {
   must be straight ("its edge isn't straight, so it can't scale along
   its axis only") and along a world axis: the sum of the squares of its
   direction's two smaller components at most `AXIS_SINE²` (`1e-18`) of
-  its length's square (`along_axis`, `+ − ×` only), else "its edge
+  its length's square (`along_axis`, `+ ×` only; the two are added as
+  they are, never taken from the length's square, whose rounding would
+  lose them and let a sine of up to about `1e-8` pass), else "its edge
   isn't along an axis any more, so it can't scale along it only". The
   edge's other components aren't scaled, so it gets `L` within about
   `1e-12` relative.
@@ -2417,7 +2419,20 @@ don't meet, lengths past a thousand times either way (the bounds
 themselves scale), out of range, a slanted edge along its axis only
 (uniform it scales); a plate a micrometre thick × 0.001 refused; the
 cache by the motion's bits; a draft answering what it found, a point on
-a merged body, a point not found), `regen/src/wire/tests.rs` (what's
+a merged body, a point not found; a sphere × 2, 1, 1/2: an exact
+quadric of the sphere's volume, then cut in half and sliced square to
+each axis, each the ellipsoid's analytic volume within the fit over the
+faces cut, or refused changing nothing; an elliptic cylinder cut along
+a chord and joined to a block, a cone × 2 along X cut square to its
+axis, the example plate × 2 along X with a disc tangent to its
+elliptic hole and one crossing it joined: analytic volumes; a sphere
+and a torus at factors 1000 and 1/1000, uniform and per axis: the
+volume times the factors' product, the fitted faces' slack × the
+largest factor, or refused as too small; along its axis only for
+edges with a sine just under and over `1e-9`, and `along_axis` at any
+length; a point on a scaled block merged into another; the edge
+through an upstream edit making it taller, a join edit, and a cut
+taking it away), `regen/src/wire/tests.rs` (what's
 found on the wire, bad ones refused), `io/src/vrdp/tests.rs` (through a
 file after an align, tampered records refused),
 `expr/src/eval/tests.rs` (`Ask::factor`), `view/src/motion/tests.rs`
@@ -2437,4 +2452,24 @@ ring × 25.4 noting its fitted face, none scaled down; editing from the
 Timeline, a move by nothing while the point is picked, Esc, another
 factor and undo; a point an undo takes away said to be gone, back on
 redo; an edge picked on a disc a redone combine then merges into the
-plate following it there, still whole and measured).
+plate following it there, still whole and measured) with its session
+fuzz (`motion/tests/scale/fuzz.rs`, `VARDE_SCALE_SEEDS`,
+`VARDE_SCALE_FROM`: picks of faces, edges, vertices and snap dots on the
+model shown or one gone by as the point or the edge, modes switched,
+Along its axis only, bodies picked and dropped, factors and lengths
+typed out of range, overflowing or not numbers, the origin, units, undo
+and redo, joins and combines merging bodies before it, bodies added and
+features removed, models answered at any point; after each step a ready
+session whole, passing its own and the document's checks with its edge
+on one of its bodies, previewed as set up, committed as drafted; the
+edge lit naming the edge picked on the body drawing it; an edited scale
+opening to what it stores and OK writing nothing). The motion fuzz
+(`VARDE_MOTION_SEEDS`) makes scales too: uniform, per axis or to the
+length of a random edge (along its axis or not), about the origin or a
+random point of any body; each that works is held to its noted point
+(the topology's), its factors (typed, or the length typed over the
+edge's measured before it), every body's volume times their product
+and its centre of mass where the scale takes it, the edge then the
+length typed; one failing changes nothing; an align's point on an
+elliptic rim is checked against the conic through five of its
+points.
