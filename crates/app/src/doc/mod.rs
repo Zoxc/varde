@@ -755,6 +755,8 @@ impl Doc {
                 Some(FeatureKind::Move(_) | FeatureKind::Mirror(_) | FeatureKind::Pattern(_)) => {
                     self.edit_motion(id)
                 }
+                // No panel yet: aligns are made by the document's commands.
+                Some(FeatureKind::Align(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

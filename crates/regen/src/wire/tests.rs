@@ -156,6 +156,7 @@ fn a_revolve_and_its_draft_round_trip() {
             error: Some(crosses.clone()),
             touched: None,
             reference: None,
+            datums: None,
         }
     );
     let revolve = editor.document().features().last().unwrap().id;
@@ -256,6 +257,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
             error: None,
             touched: None,
             reference: None,
+            datums: None,
         })
     );
     assert!(failed.is_empty(), "{failed:?}");
@@ -331,6 +333,7 @@ fn request_with_a_draft_round_trips() {
             error: None,
             touched: None,
             reference: None,
+            datums: None,
         })
     );
 
@@ -398,6 +401,7 @@ fn untested_and_touching_nothing_stay_apart() {
                 error: None,
                 touched: touched.clone(),
                 reference: None,
+                datums: None,
             });
         }
         let Head::Regenerated { draft, .. } = Head::decode(&head.encode()).unwrap() else {
@@ -492,6 +496,7 @@ fn draft_references_must_be_lines_within_bounds() {
                 error: None,
                 touched: None,
                 reference: Some(Box::new(bad)),
+                datums: None,
             });
         }
         let Response::Failed { error, .. } =
@@ -511,6 +516,7 @@ fn draft_references_must_be_lines_within_bounds() {
             error: None,
             touched: None,
             reference: Some(Box::new(good)),
+            datums: None,
         });
     }
     let Response::Regenerated { draft, .. } =
@@ -519,6 +525,69 @@ fn draft_references_must_be_lines_within_bounds() {
         panic!("a good reference was refused");
     };
     assert_eq!(draft.unwrap().reference.as_deref(), Some(&good));
+}
+
+/// An align draft's points and directions: finite, within bounds, no
+/// direction zero, at least one side; refused otherwise, and a good one
+/// goes as it was.
+#[test]
+fn draft_datums_must_be_within_bounds() {
+    use crate::{AlignDatums, AlignSide};
+    let far = crate::MAX_REFERENCE * 2.0;
+    let side = AlignSide {
+        point: [1.0, 2.0, 3.0],
+        primary: Some([0.0, 0.0, -1.0]),
+        secondary: Some([1.0, 0.0, 0.0]),
+    };
+    let with = |change: &dyn Fn(&mut AlignSide)| {
+        let mut side = side;
+        change(&mut side);
+        AlignDatums {
+            moved: Some(side),
+            target: Some(AlignSide {
+                point: [0.0; 3],
+                primary: Some([0.0, 0.0, 1.0]),
+                secondary: None,
+            }),
+            opposed: true,
+        }
+    };
+    let head_with = |datums: AlignDatums| {
+        let mut head = regenerated(5);
+        if let Head::Regenerated { draft, .. } = &mut head {
+            *draft = Some(Drafted {
+                revision: 1,
+                geometry: None,
+                error: None,
+                touched: None,
+                reference: None,
+                datums: Some(Box::new(datums)),
+            });
+        }
+        decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
+    };
+    for bad in [
+        with(&|s| s.point[0] = f64::NAN),
+        with(&|s| s.point[2] = far),
+        with(&|s| s.primary = Some([0.0; 3])),
+        with(&|s| s.secondary = Some([0.0, f64::INFINITY, 0.0])),
+        with(&|s| s.secondary = Some([-far, 0.0, 0.0])),
+        AlignDatums {
+            moved: None,
+            target: None,
+            opposed: false,
+        },
+    ] {
+        let Response::Failed { error, .. } = head_with(bad) else {
+            panic!("bad datums were taken: {bad:?}");
+        };
+        assert_eq!(error, Error::Reference.to_string());
+    }
+    let good = with(&|_| {});
+    let Response::Regenerated { draft, .. } = head_with(good) else {
+        panic!("good datums were refused");
+    };
+    assert_eq!(draft.unwrap().datums.as_deref(), Some(&good));
 }
 
 #[test]
@@ -2763,6 +2832,7 @@ fn answer_with_failures() -> Response {
             geometry: Some(failure_geometry()),
             touched: None,
             reference: None,
+            datums: None,
         });
     }
     response

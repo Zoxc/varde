@@ -106,6 +106,7 @@ pub(crate) enum Moving {
     Move,
     Mirror,
     Pattern,
+    Align,
 }
 
 impl Moving {
@@ -115,6 +116,7 @@ impl Moving {
             Moving::Move => "moving",
             Moving::Mirror => "mirroring",
             Moving::Pattern => "patterning",
+            Moving::Align => "aligning",
         }
     }
 }
@@ -166,6 +168,70 @@ pub(crate) fn too_many_copies(body: &str, count: u32, patches: usize) -> String 
         varde_kernel::MAX_PATCHES
     )
 }
+
+/// Which of an align's references a message is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AlignRef {
+    Point,
+    Primary,
+    Secondary,
+}
+
+/// Which side of an align a reference is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Side {
+    Moved,
+    Target,
+}
+
+impl Side {
+    /// "on the moved body", "on the target".
+    fn on(self) -> &'static str {
+        match self {
+            Side::Moved => "on the moved body",
+            Side::Target => "on the target",
+        }
+    }
+}
+
+/// Why an align's reference `which` on `side` isn't there, `why` saying
+/// what's wrong with it ("wasn't found", "is a face that isn't flat"):
+/// "its first direction on the target is a face that isn't flat".
+pub(crate) fn align_ref(which: AlignRef, side: Side, why: &str) -> String {
+    let what = match which {
+        AlignRef::Point => "its point",
+        AlignRef::Primary => "its first direction",
+        AlignRef::Secondary => "its second direction",
+    };
+    format!("{what} {} {why}", side.on())
+}
+
+/// Why an align's reference on the target fails: its body was merged
+/// into the body the align moves.
+pub(crate) const ALIGN_ON_MOVED: &str =
+    "is in the moved body now: a feature before this one merged them; pick it on another body";
+
+/// Why an align's reference fails: its body has no solid.
+pub(crate) const ALIGN_BODY_GONE: &str = "is on a body that's gone";
+
+/// Why an align fails: a secondary direction on `side` is parallel to its
+/// primary, so it says nothing of the turn about it.
+pub(crate) fn align_parallel(side: Side) -> String {
+    format!(
+        "its second direction {} is parallel to its first: pick one across it",
+        side.on()
+    )
+}
+
+/// Why an align fails: its point on `side` (a nearly straight arc's
+/// centre) is past the coordinate limit.
+pub(crate) fn align_too_far(side: Side) -> String {
+    align_ref(AlignRef::Point, side, "is too far out to align by")
+}
+
+/// Why an align fails where the document should have refused it (its
+/// directions don't pair, or its offset or turn is out of range).
+pub(crate) const ALIGN_MALFORMED: &str = "its directions, offset or turn can't be used";
 
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

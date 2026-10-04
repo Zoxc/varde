@@ -2472,3 +2472,169 @@ fn a_tampered_list_of_copy_bodies_is_refused() {
         assert!(from_msgpack::<Document>(&bytes).is_err(), "{value}");
     }
 }
+
+/// The example plate and a second one with an align of the second's top
+/// corner onto the first's, face to face with a secondary pair, an
+/// offset of 12.5 and a turn of 30°: the document.
+fn aligned_plates() -> Document {
+    use glam::DVec3;
+    use varde_document::{
+        Align, AlignRefs, AxisRef, BodyId, DirRef, EdgeRef, FaceKey, FaceRef, FeatureKind, Move,
+        Operation, PartKey, PointRef,
+    };
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let FeatureKind::Extrude(extrude) = editor.document().features()[1].kind.clone() else {
+        panic!("the example's extrude");
+    };
+    let again = varde_document::Extrude {
+        operation: Operation::NewBody(BodyId::NEW),
+        ..extrude
+    };
+    editor
+        .apply(editor.document().add_feature(again.into()))
+        .unwrap();
+    let document = editor.document();
+    let [a, b] = [0, 1].map(|k| document.bodies()[k].id);
+    let [first, second] = [1, 2].map(|k| document.features()[k].id.get());
+    let design = document.design();
+    let key = |feature, part| FaceKey {
+        feature,
+        part,
+        instance: 0,
+    };
+    let corner = |body, feature| {
+        let mut faces = [
+            key(feature, PartKey::EndCap),
+            key(feature, PartKey::Side { curve: 0 }),
+            key(feature, PartKey::Side { curve: 1 }),
+        ];
+        faces.sort();
+        PointRef::Corner {
+            body,
+            faces,
+            near: DVec3::new(30.0, 17.25, 10.0),
+        }
+    };
+    let top = |body, feature| {
+        DirRef::Normal(FaceRef {
+            body,
+            key: key(feature, PartKey::EndCap),
+            near: DVec3::new(0.0, 15.0, 10.0),
+        })
+    };
+    let mut faces = [
+        key(first, PartKey::EndCap),
+        key(first, PartKey::Side { curve: 0 }),
+    ];
+    faces.sort();
+    let edge = EdgeRef {
+        body: a,
+        faces,
+        near: DVec3::new(0.0, 20.0, 10.0),
+    };
+    let align = Align {
+        body: b,
+        from: AlignRefs {
+            point: corner(b, second),
+            primary: Some(top(b, second)),
+            secondary: Some(DirRef::Axis(AxisRef::Face(FaceRef {
+                body: b,
+                key: key(second, PartKey::Side { curve: 0 }),
+                near: DVec3::new(0.0, 20.0, 5.0),
+            }))),
+        },
+        to: AlignRefs {
+            point: corner(a, first),
+            primary: Some(top(a, first)),
+            secondary: Some(DirRef::Axis(AxisRef::Edge(edge))),
+        },
+        flip: true,
+        offset: Some(Value::new("12.5", &Move::offset_ask(&design)).unwrap()),
+        turn: Some(Value::new("30", &Move::angle_ask(&design)).unwrap()),
+    };
+    editor
+        .apply(editor.document().add_feature(align.into()))
+        .unwrap();
+    editor.document().clone()
+}
+
+/// An align is kept through a file.
+#[test]
+fn an_align_round_trips() {
+    let document = aligned_plates();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+}
+
+/// A pattern and an align, the two kinds after the mirror, go through
+/// one file together: each read back as its own kind, in its place.
+#[test]
+fn a_pattern_and_an_align_round_trip_together() {
+    use varde_document::{Axis3, AxisRef, Copies, FeatureKind, Pattern, PatternKind};
+    use varde_expr::Value;
+    let mut editor = Editor::new(aligned_plates());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let pattern = Pattern {
+        bodies: vec![plate],
+        kind: PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::X),
+            count: Value::new("3", &Pattern::count_ask(&design)).unwrap(),
+            spacing: Value::new("80", &Pattern::spacing_ask(&design)).unwrap(),
+        },
+        copies: Copies::Separate(Vec::new()),
+    };
+    editor
+        .apply(editor.document().add_feature(pattern.into()))
+        .unwrap();
+    let document = editor.document();
+    let kinds: Vec<&str> = (document.features().iter())
+        .map(|feature| feature.kind.noun())
+        .collect();
+    assert_eq!(kinds[kinds.len() - 2..], ["Align", "Pattern"]);
+    let (bytes, _) = to_bytes(document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(&read, document);
+    let n = read.features().len();
+    assert!(matches!(read.features()[n - 2].kind, FeatureKind::Align(_)));
+    assert!(matches!(read.features()[n - 1].kind, FeatureKind::Pattern(_)));
+}
+
+/// A record whose align was changed on disk to what the document refuses
+/// (its offset or turn not what its text gives or past its bounds, a
+/// reference's point out of bounds) is refused as it's read, never a
+/// panic; as written, it reads.
+#[test]
+fn a_tampered_align_is_refused() {
+    let raw = record_msgpack(&aligned_plates());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let float = |x: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&x.to_bits().to_be_bytes());
+        bytes
+    };
+    let swap = |was: f64, now: f64| {
+        let (was, now) = (float(was), float(now));
+        let at = (raw.windows(was.len()))
+            .position(|window| window == was)
+            .unwrap_or_else(|| panic!("{was:?} isn't in the record"));
+        let mut changed = raw.clone();
+        changed[at..at + now.len()].copy_from_slice(&now);
+        changed
+    };
+    let thirty = 30.0 * (std::f64::consts::PI / 180.0);
+    for (was, now) in [
+        (12.5, f64::NAN),
+        (12.5, 12.25),
+        (12.5, 2e6),
+        (thirty, 7.0),
+        (thirty, f64::INFINITY),
+        (17.25, f64::NAN),
+        (17.25, -1e300),
+    ] {
+        let decoded = from_msgpack::<Document>(&swap(was, now));
+        assert!(decoded.is_err(), "{was} as {now} was taken");
+    }
+}

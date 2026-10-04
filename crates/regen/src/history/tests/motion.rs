@@ -38,7 +38,7 @@ fn shift(
 }
 
 /// Adds `kind` as one edit: its id.
-fn add(editor: &mut Editor, kind: impl Into<FeatureKind>) -> FeatureId {
+pub(super) fn add(editor: &mut Editor, kind: impl Into<FeatureKind>) -> FeatureId {
     editor
         .apply(editor.document().add_feature(kind.into()))
         .unwrap();
@@ -69,7 +69,7 @@ fn set_move(
 }
 
 /// Sets feature `feature` to `kind`.
-fn set(editor: &mut Editor, feature: FeatureId, kind: impl Into<FeatureKind>) {
+pub(super) fn set(editor: &mut Editor, feature: FeatureId, kind: impl Into<FeatureKind>) {
     editor
         .apply(Command::SetFeature {
             feature,
@@ -80,25 +80,32 @@ fn set(editor: &mut Editor, feature: FeatureId, kind: impl Into<FeatureKind>) {
 
 /// Adds the block from `(x0, y0)` to `(x1, y1)`, `height` up from XY: its
 /// body.
-fn block(editor: &mut Editor, x0: f64, y0: f64, x1: f64, y1: f64, height: &str) -> BodyId {
+pub(super) fn block(
+    editor: &mut Editor,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    height: &str,
+) -> BodyId {
     add_body(editor, rectangle((x0, y0), (x1, y1)), height)
 }
 
 /// Whether `solid`'s box is `min` to `max` to the bit.
-fn boxed(solid: &Solid, min: [f64; 3], max: [f64; 3]) -> bool {
+pub(super) fn boxed(solid: &Solid, min: [f64; 3], max: [f64; 3]) -> bool {
     let bounds = solid.bounds3().unwrap();
     bounds.min == DVec3::from(min) && bounds.max == DVec3::from(max)
 }
 
 /// Whether `solid`'s box is `min` to `max` within rounding.
-fn near_box(solid: &Solid, min: [f64; 3], max: [f64; 3]) -> bool {
+pub(super) fn near_box(solid: &Solid, min: [f64; 3], max: [f64; 3]) -> bool {
     let bounds = solid.bounds3().unwrap();
     (bounds.min - DVec3::from(min)).abs().max_element() < 1e-9
         && (bounds.max - DVec3::from(max)).abs().max_element() < 1e-9
 }
 
 /// The key of the one region of `solid` whose form `pick` takes.
-fn key_where(solid: &Solid, pick: impl Fn(&Form) -> bool) -> FaceKey {
+pub(super) fn key_where(solid: &Solid, pick: impl Fn(&Form) -> bool) -> FaceKey {
     let topology = solid.topology();
     let found: Vec<FaceKey> = (topology.regions().iter())
         .filter(|region| pick(region_form(solid, region)))
@@ -111,7 +118,7 @@ fn key_where(solid: &Solid, pick: impl Fn(&Form) -> bool) -> FaceKey {
 }
 
 /// The key of the one region of `solid` on the plane `n·x = d`.
-fn key_on(solid: &Solid, n: DVec3, d: f64) -> FaceKey {
+pub(super) fn key_on(solid: &Solid, n: DVec3, d: f64) -> FaceKey {
     key_where(solid, |form| {
         matches!(*form, Form::Plane { n: m, d: e }
             if m.abs_diff_eq(n, 1e-12) && (e - d).abs() < 1e-9)
@@ -119,17 +126,17 @@ fn key_on(solid: &Solid, n: DVec3, d: f64) -> FaceKey {
 }
 
 /// The key of the one cylinder of `solid`.
-fn cylinder(solid: &Solid) -> FaceKey {
+pub(super) fn cylinder(solid: &Solid) -> FaceKey {
     key_where(solid, |form| matches!(form, Form::Cylinder { .. }))
 }
 
 /// What `evaluation` says of `feature`'s failing, if it failed.
-fn failure(evaluation: &Evaluation, feature: FeatureId) -> Option<&FeatureFailure> {
+pub(super) fn failure(evaluation: &Evaluation, feature: FeatureId) -> Option<&FeatureFailure> {
     evaluation.failed.iter().find(|f| f.feature == feature)
 }
 
 /// The volume of the example plate.
-fn the_plate() -> f64 {
+pub(super) fn the_plate() -> f64 {
     plate(8.0, 10.0)
 }
 
@@ -670,14 +677,14 @@ fn a_symmetric_body_mirrored_onto_itself_is_itself_or_fails() {
 fn an_axis_is_found_beside_its_face() {
     let far = DVec3::new(0.0, 0.0, -3.0e7);
     let at =
-        super::super::motion::beside(far, DVec3::new(0.0, 0.0, 2.0), DVec3::new(8.0, 0.0, 5.0));
+        varde_kernel::topology::beside(far, DVec3::new(0.0, 0.0, 2.0), DVec3::new(8.0, 0.0, 5.0));
     assert_eq!(at, DVec3::new(0.0, 0.0, 5.0));
-    let along = super::super::motion::beside(far, DVec3::ZERO, DVec3::new(8.0, 0.0, 5.0));
+    let along = varde_kernel::topology::beside(far, DVec3::ZERO, DVec3::new(8.0, 0.0, 5.0));
     assert_eq!(along, far);
     // A face at the coordinate limit whose axis is just past it: the
     // point beside it, not the far apex, which the wire would refuse.
     let apex = DVec3::new(1.0e6 + 5.0, 0.0, -3.0e7);
-    let at = super::super::motion::beside(apex, DVec3::Z, DVec3::new(1.0e6, 0.0, 5.0));
+    let at = varde_kernel::topology::beside(apex, DVec3::Z, DVec3::new(1.0e6, 0.0, 5.0));
     assert_eq!(at, DVec3::new(1.0e6 + 5.0, 0.0, 5.0));
     assert!(crate::reference_fits(&[at.to_array(), [0.0, 0.0, 1.0]]));
 }

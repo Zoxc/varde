@@ -1,10 +1,10 @@
 //! Features: the steps a design is built from, sketches, extrudes,
-//! revolves, combines, moves, mirrors and patterns.
+//! revolves, combines, moves, mirrors, patterns and aligns.
 
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
-use crate::{BodyId, Combine, Extrude, Mirror, Move, Operation, Pattern, Plane, Revolve};
+use crate::{Align, BodyId, Combine, Extrude, Mirror, Move, Operation, Pattern, Plane, Revolve};
 
 /// A feature's handle in one document. It's opaque: ids come from the
 /// document's features, not from literals. Features and bodies take their
@@ -36,13 +36,18 @@ pub struct Feature {
 /// can go anywhere; a name is never renamed or reused.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FeatureKind {
-    Sketch { plane: Plane, sketch: Sketch },
+    Sketch {
+        plane: Plane,
+        sketch: Sketch,
+    },
     Extrude(Extrude),
     Revolve(Revolve),
     Combine(Combine),
     Move(Move),
     Mirror(Mirror),
     Pattern(Pattern),
+    /// Boxed: its two sides' references make it the largest kind by far.
+    Align(Box<Align>),
 }
 
 impl FeatureKind {
@@ -57,6 +62,7 @@ impl FeatureKind {
             FeatureKind::Move(_) => "Move",
             FeatureKind::Mirror(_) => "Mirror",
             FeatureKind::Pattern(_) => "Pattern",
+            FeatureKind::Align(_) => "Align",
         }
     }
 
@@ -77,18 +83,20 @@ impl FeatureKind {
 
     /// The bodies it names, which features before it make, and which it
     /// depends on: a combine's target and tools, the bodies a move, a
-    /// mirror or a pattern moves or copies. Removing one of them, or its maker, removes this too.
-    /// Not the bodies an extrude or revolve takes out of its targets,
-    /// which are dropped from its list instead, nor the body under a
-    /// sketch's face plane, a revolve's axis edge or a move's or pattern's
-    /// axis or a mirror's plane (the feature stays, and fails until it's given
-    /// another).
+    /// mirror or a pattern moves or copies, the body an align moves.
+    /// Removing one of them, or its maker, removes this too. Not the
+    /// bodies an extrude or revolve takes out of its targets, which are
+    /// dropped from its list instead, nor the body under a sketch's face
+    /// plane, a revolve's axis edge, a move's or pattern's axis, a
+    /// mirror's plane or an align's target (the feature stays, and fails
+    /// until it's given another).
     pub fn bodies(&self) -> Vec<BodyId> {
         match self {
             FeatureKind::Combine(combine) => combine.bodies().collect(),
             FeatureKind::Move(moved) => moved.bodies.clone(),
             FeatureKind::Mirror(mirror) => mirror.bodies.clone(),
             FeatureKind::Pattern(pattern) => pattern.bodies.clone(),
+            FeatureKind::Align(align) => vec![align.body],
             FeatureKind::Sketch { .. } | FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
                 Vec::new()
             }
@@ -103,7 +111,8 @@ impl FeatureKind {
             | FeatureKind::Combine(_)
             | FeatureKind::Move(_)
             | FeatureKind::Mirror(_)
-            | FeatureKind::Pattern(_) => None,
+            | FeatureKind::Pattern(_)
+            | FeatureKind::Align(_) => None,
             FeatureKind::Extrude(extrude) => Some(extrude.sketch),
             FeatureKind::Revolve(revolve) => Some(revolve.sketch),
         }
@@ -117,7 +126,8 @@ impl FeatureKind {
             | FeatureKind::Combine(_)
             | FeatureKind::Move(_)
             | FeatureKind::Mirror(_)
-            | FeatureKind::Pattern(_) => None,
+            | FeatureKind::Pattern(_)
+            | FeatureKind::Align(_) => None,
             FeatureKind::Extrude(extrude) => Some(&extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&revolve.operation),
         }
@@ -130,7 +140,8 @@ impl FeatureKind {
             | FeatureKind::Combine(_)
             | FeatureKind::Move(_)
             | FeatureKind::Mirror(_)
-            | FeatureKind::Pattern(_) => None,
+            | FeatureKind::Pattern(_)
+            | FeatureKind::Align(_) => None,
             FeatureKind::Extrude(extrude) => Some(&mut extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&mut revolve.operation),
         }
@@ -175,5 +186,11 @@ impl From<Pattern> for FeatureKind {
 impl From<Combine> for FeatureKind {
     fn from(combine: Combine) -> Self {
         FeatureKind::Combine(combine)
+    }
+}
+
+impl From<Align> for FeatureKind {
+    fn from(align: Align) -> Self {
+        FeatureKind::Align(Box::new(align))
     }
 }

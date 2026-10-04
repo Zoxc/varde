@@ -1892,6 +1892,7 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
         FeatureKind::Move(moved) => crate::motion::move_info(document, moved),
         FeatureKind::Mirror(mirror) => crate::motion::mirror_info(document, mirror),
         FeatureKind::Pattern(pattern) => crate::motion::pattern_info(document, pattern),
+        FeatureKind::Align(align) => crate::motion::align_info(document, align),
     }
 }
 

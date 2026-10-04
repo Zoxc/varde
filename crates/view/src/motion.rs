@@ -467,6 +467,23 @@ pub(crate) fn pattern_note(pattern: &Pattern) -> String {
     format!("×{}", pattern.kind.count_value().value)
 }
 
+/// What an align's target is on: the body its point or, failing that,
+/// a direction is on, or "the origin". The Timeline's note, "to Body 2".
+pub(crate) fn align_note(document: &Document, align: &varde_document::Align) -> String {
+    let to = &align.to;
+    let body = (to.point.body()).or_else(|| to.directions().find_map(|direction| direction.body()));
+    match body {
+        Some(body) => format!("to {}", body_names(document, &[body])),
+        None => "to the origin".to_owned(),
+    }
+}
+
+/// What the status bar says of a selected align: "Body 1 to Body 2".
+pub(crate) fn align_info(document: &Document, align: &varde_document::Align) -> String {
+    let moved = body_names(document, &[align.body]);
+    format!("{moved} {}", align_note(document, align))
+}
+
 /// The names of `bodies` of `document`, joined: "Body 1, Body 2".
 pub(crate) fn body_names(document: &Document, bodies: &[BodyId]) -> String {
     let names: Vec<&str> = (bodies.iter())

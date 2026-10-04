@@ -1,27 +1,35 @@
 //! Random histories of blocks and discs made as bodies, joins, cuts and
-//! intersects over them, combines, and moves, mirrors and patterns among
-//! them: moves by offsets and turns about origin axes, straight model
-//! edges and round faces; mirrors in origin planes and flat faces,
-//! keeping their originals or not; linear and circular patterns of two
-//! to four copies along or about the same axes, half of them of bodies
-//! patterned already, about their copies' edges and faces (copies of
-//! copies), a third of them with each copy a body of its own (later
-//! features then moving, mirroring, patterning, combining, joining and
-//! naming the copy bodies); earlier ones edited, earlier patterns
-//! changed one way (count, tick, kind, a body more or less: each copy
-//! keeps its body as it was, new ones named apart), copy bodies hidden
-//! or removed with their pattern, removals, undo and redo. After each
-//! step: the document passes its check, the cache warm and cold give
-//! the same evaluation; every move and mirror that worked put each of its
-//! bodies where the motion worked out here takes it (the volume kept, the
-//! centre of mass moved, turned or reflected, by `glam`'s own rotations
-//! and reflections), a mirror keeping its original holding the body and
-//! its image as the boolean identities say, every pattern each body and
-//! its copies (each copy's centre where `glam` puts it, the whole as the
-//! copies united one by one; unjoined, the body as it was and each copy
-//! the solid of its own body, the copy itself), every other body left
-//! alone, the axis or
-//! plane found on what it names; one that failed changed nothing; every
+//! intersects over them, combines, and moves, mirrors, patterns and
+//! aligns among them: moves by offsets and turns about origin axes,
+//! straight model edges and round faces; mirrors in origin planes and
+//! flat faces, keeping their originals or not; linear and circular
+//! patterns of two to four copies along or about the same axes, half of
+//! them of bodies patterned already, about their copies' edges and faces
+//! (copies of copies), a third of them with each copy a body of its own
+//! (later features then moving, mirroring, patterning, combining,
+//! joining and naming the copy bodies); aligns of corners, edges'
+//! middles and rims' centres, with flat faces' normals, round faces'
+//! axes and edges' directions or none, onto another body's or the
+//! origin's, with secondaries, flips, offsets and turns or not; earlier
+//! ones edited, earlier patterns changed one way (count, tick, kind, a
+//! body more or less: each copy keeps its body as it was, new ones named
+//! apart), copy bodies hidden or removed with their pattern, removals,
+//! undo and redo. After each step: the document passes its check, the
+//! cache warm and cold give the same evaluation; every move and mirror
+//! that worked put each of its bodies where the motion worked out here
+//! takes it (the volume kept, the centre of mass moved, turned or
+//! reflected, by `glam`'s own rotations and reflections), a mirror
+//! keeping its original holding the body and its image as the boolean
+//! identities say, every pattern each body and its copies (each copy's
+//! centre where `glam` puts it, the whole as the copies united one by
+//! one; unjoined, the body as it was and each copy the solid of its own
+//! body, the copy itself), every other body left alone, the axis or
+//! plane found on what it names; every align that worked noted what
+//! the topology gives for its references before it, and put the moved
+//! body so its point, primary and frame meet the target's as they must
+//! (its centre of mass at the same place relative to them, its
+//! references found again where the target's are); one that failed
+//! changed nothing; every
 //! later edit can still be made; the document survives its bytes,
 //! flipped bits included; and a request with a move's, mirror's or
 //! pattern's draft and its answer cross the wire as they went.
@@ -30,7 +38,9 @@ use std::collections::BTreeMap;
 
 use glam::DQuat;
 use varde_document::{Copies, Pattern, PatternKind};
+use varde_document::{Align, AlignRefs, DirRef, PointRef};
 use varde_kernel::measure::{EdgeShape, edge_shape};
+use varde_kernel::topology::Topology;
 use varde_kernel::{Budget, Instance, Motion, Op};
 
 use super::super::combine::fuzz::{
@@ -129,6 +139,9 @@ fn random_motion(
     let bodies = movable(document, evaluation, before);
     if bodies.is_empty() {
         return None;
+    }
+    if rng.below(4) == 0 {
+        return random_align(evaluation, &bodies, rng).map(FeatureKind::from);
     }
     let picked = some_of(&bodies, rng);
     let any = bodies[rng.below(bodies.len())];
@@ -354,6 +367,390 @@ fn kept_copies(before: &Document, after: &Document, feature: FeatureId, what: &s
     }
 }
 
+/// The keys of `topology`'s regions `regions`, sorted without repeats.
+fn keys_of(topology: &Topology, regions: &[u32]) -> Vec<FaceKey> {
+    let mut keys: Vec<FaceKey> = (regions.iter())
+        .map(|&r| topology.regions()[r as usize].key)
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+/// A random chain of `body`'s solid in `evaluation` whose shape `wanted`
+/// takes, as an edge reference near a point of it.
+fn random_chain(
+    evaluation: &Evaluation,
+    body: BodyId,
+    rng: &mut Rng,
+    wanted: impl Fn(&EdgeShape) -> bool,
+) -> Option<EdgeRef> {
+    let solid = solid(evaluation, body)?;
+    let topology = solid.topology();
+    let chains: Vec<_> = (topology.chains().iter())
+        .filter(|chain| wanted(&edge_shape(solid, chain)))
+        .collect();
+    let chain = chains.get(rng.below(chains.len()))?;
+    let [a, b] = keys_of(&topology, &chain.regions)[..] else {
+        return None;
+    };
+    let near = solid.mesh().curve(chain.halfedges[0]).eval(0.5);
+    Some(EdgeRef {
+        body,
+        faces: [a, b],
+        near,
+    })
+}
+
+fn is_line(shape: &EdgeShape) -> bool {
+    matches!(shape, EdgeShape::Line { .. })
+}
+
+fn is_round(shape: &EdgeShape) -> bool {
+    matches!(shape, EdgeShape::Circle { .. } | EdgeShape::Ellipse { .. })
+}
+
+/// A random point of `body` in `evaluation`: a corner, a straight edge's
+/// middle or a round edge's centre.
+fn random_point(evaluation: &Evaluation, body: BodyId, rng: &mut Rng) -> Option<PointRef> {
+    match rng.below(3) {
+        0 => {
+            let solid = solid(evaluation, body)?;
+            let topology = solid.topology();
+            let corners = topology.corners();
+            let corner = corners.get(rng.below(corners.len()))?;
+            let keys = keys_of(&topology, &corner.regions);
+            let faces: [FaceKey; 3] = keys.get(..3)?.try_into().ok()?;
+            let near = solid.mesh().verts()[corner.vertex as usize];
+            Some(PointRef::Corner { body, faces, near })
+        }
+        1 => random_chain(evaluation, body, rng, is_line).map(PointRef::Middle),
+        _ => random_chain(evaluation, body, rng, is_round).map(PointRef::Centre),
+    }
+}
+
+/// A random direction of `body` in `evaluation`: a flat face's normal, a
+/// round face's axis, a straight edge's direction or a round edge's
+/// axis, whichever of a few tries the body has.
+fn random_direction(evaluation: &Evaluation, body: BodyId, rng: &mut Rng) -> Option<DirRef> {
+    (0..4).find_map(|_| match rng.below(4) {
+        0 => random_face(evaluation, body, rng, |form| {
+            matches!(form, Form::Plane { .. })
+        })
+        .map(DirRef::Normal),
+        1 => random_face(evaluation, body, rng, |form| {
+            matches!(form, Form::Cylinder { .. } | Form::Cone { .. })
+        })
+        .map(|face| DirRef::Axis(AxisRef::Face(face))),
+        2 => random_chain(evaluation, body, rng, is_line)
+            .map(|edge| DirRef::Axis(AxisRef::Edge(edge))),
+        _ => random_chain(evaluation, body, rng, is_round)
+            .map(|edge| DirRef::Axis(AxisRef::Edge(edge))),
+    })
+}
+
+/// A random align of one of `bodies` (those with solids of their own in
+/// `evaluation`, the history before it) onto another or the origin.
+fn random_align(evaluation: &Evaluation, bodies: &[BodyId], rng: &mut Rng) -> Option<Align> {
+    let body = bodies[rng.below(bodies.len())];
+    let others: Vec<BodyId> = bodies.iter().copied().filter(|&b| b != body).collect();
+    let target = (rng.below(4) != 0)
+        .then(|| others.get(rng.below(others.len())).copied())
+        .flatten();
+    let point = random_point(evaluation, body, rng)?;
+    let target_point = match target {
+        Some(target) => random_point(evaluation, target, rng)?,
+        None => PointRef::Origin,
+    };
+    let direction = |on: Option<BodyId>, rng: &mut Rng| match on {
+        Some(body) => random_direction(evaluation, body, rng),
+        None => Some(DirRef::Origin(Axis3::ALL[rng.below(3)])),
+    };
+    let (mut from, mut to) = (
+        AlignRefs {
+            point,
+            primary: None,
+            secondary: None,
+        },
+        AlignRefs {
+            point: target_point,
+            primary: None,
+            secondary: None,
+        },
+    );
+    if rng.below(3) != 0
+        && let (Some(a), Some(b)) = (direction(Some(body), rng), direction(target, rng))
+    {
+        from.primary = Some(a);
+        to.primary = Some(b);
+        if rng.below(2) == 0 {
+            // Across its primary, mostly: one along it is refused.
+            let across = |primary: &DirRef, secondary: &DirRef| {
+                let at = |d| direction_on(evaluation, d, false);
+                at(primary)
+                    .zip(at(secondary))
+                    .is_some_and(|(p, s)| p.normalize().cross(s.normalize()).length() > 0.1)
+            };
+            let tries = if rng.below(4) == 0 { 1 } else { 6 };
+            let pick = |on, primary: &DirRef, rng: &mut Rng| {
+                let mut last = None;
+                for _ in 0..tries {
+                    last = direction(on, rng);
+                    if last.as_ref().is_some_and(|s| across(primary, s)) {
+                        break;
+                    }
+                }
+                last
+            };
+            if let (Some(a), Some(b)) = (pick(Some(body), &a, rng), pick(target, &b, rng)) {
+                from.secondary = Some(a);
+                to.secondary = Some(b);
+            }
+        }
+    }
+    let design = varde_document::Document::default().design();
+    let primaries = from.primary.is_some();
+    let offset = (primaries && rng.below(2) == 0).then(|| {
+        Value::new(
+            OFFSETS[rng.below(OFFSETS.len())],
+            &Move::offset_ask(&design),
+        )
+        .unwrap()
+    });
+    let turn = (primaries && rng.below(2) == 0)
+        .then(|| Value::new(ANGLES[rng.below(ANGLES.len())], &Move::angle_ask(&design)).unwrap());
+    Some(Align {
+        body,
+        from,
+        to,
+        flip: primaries && rng.below(3) == 0,
+        offset,
+        turn,
+    })
+}
+
+/// The point `point` names on the bodies as `evaluation` has them, by
+/// the kernel's topology; `None` where it isn't found or isn't the only
+/// one of its names (`unique`), so a stale `near` can't choose another.
+fn point_on(evaluation: &Evaluation, point: &PointRef, unique: bool) -> Option<DVec3> {
+    let on = |body| super::super::super::motion::holding(body, evaluation);
+    match point {
+        PointRef::Origin => Some(DVec3::ZERO),
+        PointRef::Corner { body, faces, near } => {
+            let made = on(*body)?;
+            let topology = made.solid.topology();
+            let count = (topology.corners().iter())
+                .filter(|corner| {
+                    faces.iter().all(|key| {
+                        (corner.regions.iter()).any(|&r| topology.regions()[r as usize].named(key))
+                    })
+                })
+                .count();
+            if unique && count != 1 {
+                return None;
+            }
+            topology.corner_point(&made.solid, *faces, *near).ok()
+        }
+        PointRef::Middle(edge) | PointRef::Centre(edge) => {
+            let made = on(edge.body)?;
+            let topology = made.solid.topology();
+            if unique && chains_named(&topology, &edge.faces) != 1 {
+                return None;
+            }
+            match point {
+                PointRef::Middle(_) => topology.middle(&made.solid, edge.faces, edge.near),
+                _ => topology.centre(&made.solid, edge.faces, edge.near),
+            }
+            .ok()
+        }
+    }
+}
+
+/// How many chains of `topology` are between faces of the keys `faces`.
+fn chains_named(topology: &Topology, faces: &[FaceKey; 2]) -> usize {
+    let named = |r: u32, key: &FaceKey| topology.regions()[r as usize].named(key);
+    (topology.chains().iter())
+        .filter(|chain| {
+            let [r0, r1] = chain.regions;
+            (named(r0, &faces[0]) && named(r1, &faces[1]))
+                || (named(r0, &faces[1]) && named(r1, &faces[0]))
+        })
+        .count()
+}
+
+/// The direction `direction` names, as [`point_on`] finds a point.
+fn direction_on(evaluation: &Evaluation, direction: &DirRef, unique: bool) -> Option<DVec3> {
+    let on = |body| super::super::super::motion::holding(body, evaluation);
+    match direction {
+        DirRef::Origin(axis) | DirRef::Axis(AxisRef::Origin(axis)) => Some(axis.direction()),
+        DirRef::Normal(face) | DirRef::Axis(AxisRef::Face(face)) => {
+            let made = on(face.body)?;
+            let topology = made.solid.topology();
+            let count = (topology.regions().iter())
+                .filter(|region| region.named(&face.key))
+                .count();
+            if unique && count != 1 {
+                return None;
+            }
+            match direction {
+                DirRef::Normal(_) => topology.normal(&made.solid, &face.key, face.near).ok(),
+                _ => (topology.face_axis(&made.solid, &face.key, face.near))
+                    .ok()
+                    .map(|[_, axis]| axis),
+            }
+        }
+        DirRef::Axis(AxisRef::Edge(edge)) => {
+            let made = on(edge.body)?;
+            let topology = made.solid.topology();
+            if unique && chains_named(&topology, &edge.faces) != 1 {
+                return None;
+            }
+            topology
+                .edge_direction(&made.solid, edge.faces, edge.near)
+                .ok()
+        }
+    }
+}
+
+/// The right-handed orthonormal frame of `a` and the part of `b` square
+/// to it, by `glam`.
+fn frame(a: DVec3, b: DVec3) -> [DVec3; 3] {
+    let f1 = a.normalize();
+    let f2 = (b - f1 * b.dot(f1)).normalize();
+    [f1, f2, f1.cross(f2)]
+}
+
+/// Holds the align `align` (the feature `feature`, named `what`), which
+/// worked, to what it must do: what it noted is what the topology gives
+/// on `before` (the history before it); on `after` (with it), the moved
+/// body's centre of mass stands to the target's point and directions as
+/// it stood to its own, its point and primary are found again where the
+/// target's are, and every other body is left alone.
+fn check_align(
+    align: &Align,
+    feature: FeatureId,
+    before: &Evaluation,
+    after: &Evaluation,
+    what: &str,
+) {
+    let noted = (after.aligned.iter())
+        .find(|(id, _)| *id == feature)
+        .map(|(_, datums)| *datums);
+    let side = |refs: &AlignRefs| -> Option<(DVec3, Option<DVec3>, Option<DVec3>)> {
+        let point = point_on(before, &refs.point, false)?;
+        let primary = match &refs.primary {
+            Some(d) => Some(direction_on(before, d, false)?),
+            None => None,
+        };
+        let secondary = match &refs.secondary {
+            Some(d) => Some(direction_on(before, d, false)?),
+            None => None,
+        };
+        Some((point, primary, secondary))
+    };
+    let (moved, target) = (side(&align.from).unwrap(), side(&align.to).unwrap());
+    let as_array = |(p, a, b): (DVec3, Option<DVec3>, Option<DVec3>)| {
+        (
+            p.to_array(),
+            a.map(|v| v.to_array()),
+            b.map(|v| v.to_array()),
+        )
+    };
+    if let Some(noted) = noted {
+        for (found, side) in [(moved, noted.moved), (target, noted.target)] {
+            if let Some(side) = side {
+                assert_eq!(
+                    as_array(found),
+                    (side.point, side.primary, side.secondary),
+                    "{what}: noted"
+                );
+            }
+        }
+    }
+    let Some(noted) = noted.filter(|n| n.moved.is_some() && n.target.is_some()) else {
+        return;
+    };
+    let (p, m, ms) = moved;
+    let (q, t, ts) = target;
+    let (Some(made), Some(now)) = (solid(before, align.body), solid(after, align.body)) else {
+        panic!("{what}: the moved body has a solid");
+    };
+    let scale = size(made)
+        .max(size(now))
+        .max(p.abs().max_element())
+        .max(q.abs().max_element());
+    let (volume, centre) = mass(made);
+    let (volume_now, centre_now) = mass(now);
+    assert!(close(volume_now, volume, volume), "{what}: volume");
+    let offset = align.offset.as_ref().map_or(0.0, |v| v.value);
+    let radians = align.turn.as_ref().map_or(0.0, |v| v.value);
+    let lands = match t {
+        Some(t) => q + t.normalize() * offset,
+        None => q,
+    };
+    let (r, r_now) = (centre - p, centre_now - lands);
+    assert!(
+        close(r.length(), r_now.length(), scale),
+        "{what}: the centre's distance from the point"
+    );
+    if let (Some(m), Some(t)) = (m, t) {
+        let sign = if noted.opposed { -1.0 } else { 1.0 };
+        let toward = t.normalize() * sign;
+        assert!(
+            close(r.dot(m.normalize()), r_now.dot(toward), scale),
+            "{what}: along the primary"
+        );
+        // Found again on the moved body (where the name is the only one,
+        // so the stale point can't choose another).
+        if let Some(found) = point_on(after, &align.from.point, true) {
+            assert!(
+                close_at(found, lands, scale),
+                "{what}: {found} not at {lands}"
+            );
+        }
+        if let Some(found) =
+            (align.from.primary.as_ref()).and_then(|d| direction_on(after, d, true))
+        {
+            assert!(
+                found.normalize().distance(toward) < 1e-9,
+                "{what}: primary {found} not along {toward}"
+            );
+        }
+        if let (Some(ms), Some(ts)) = (ms, ts) {
+            let from = frame(m, ms);
+            let to = frame(toward, ts);
+            let back = DQuat::from_axis_angle(t.normalize(), -radians) * r_now;
+            for (a, b) in from.iter().zip(&to) {
+                assert!(
+                    close(r.dot(*a), back.dot(*b), scale),
+                    "{what}: in the frames"
+                );
+            }
+        } else if radians == 0.0 {
+            // The smallest rotation leaves what's along its axis.
+            let axis = m.normalize().cross(toward);
+            if axis.length() > 1e-3 {
+                let axis = axis.normalize();
+                assert!(
+                    close(r.dot(axis), r_now.dot(axis), scale),
+                    "{what}: about the axis"
+                );
+            }
+        }
+    } else if let Some(found) = point_on(after, &align.from.point, true) {
+        assert!(
+            close_at(found, lands, scale),
+            "{what}: {found} not at {lands}"
+        );
+    }
+    for made in &before.bodies {
+        if made.body != align.body {
+            let now = solid(after, made.body).expect("still a body");
+            assert_eq!(now, &made.solid, "{what}: {:?} changed", made.body);
+        }
+    }
+}
+
 fn close(a: f64, b: f64, scale: f64) -> bool {
     (a - b).abs() <= 1e-6 * scale.max(1.0)
 }
@@ -439,6 +836,7 @@ fn check_motions(document: &Document, evaluation: &Evaluation, cache: &mut Cache
                 check_pattern(document, index, pattern, evaluation, cache, &what);
                 continue;
             }
+            FeatureKind::Align(_) => (&Vec::new(), None, None),
             _ => continue,
         };
         let what = format!("{what}: {} {index}", feature.name);
@@ -451,6 +849,10 @@ fn check_motions(document: &Document, evaluation: &Evaluation, cache: &mut Cache
                 same_bodies(&before, &after),
                 "{what}: failing, it changed bodies"
             );
+            continue;
+        }
+        if let FeatureKind::Align(align) = &feature.kind {
+            check_align(align, feature.id, &before, &after, &what);
             continue;
         }
         let reference = (after.references.iter())
@@ -721,7 +1123,10 @@ fn run(seed: u64, steps: usize) {
             .filter(|&i| {
                 matches!(
                     document.features()[i].kind,
-                    FeatureKind::Move(_) | FeatureKind::Mirror(_) | FeatureKind::Pattern(_)
+                    FeatureKind::Move(_)
+                    | FeatureKind::Mirror(_)
+                    | FeatureKind::Pattern(_)
+                    | FeatureKind::Align(_)
                 )
             })
             .collect();
@@ -893,6 +1298,7 @@ fn run(seed: u64, steps: usize) {
         assert!(same_bodies(&hot, &cold), "{what}: warm and cold differ");
         assert_eq!(hot.failed, cold.failed, "{what}");
         assert_eq!(hot.references, cold.references, "{what}");
+        assert_eq!(hot.aligned, cold.aligned, "{what}");
         check_motions(&document, &hot, &mut warm, &what);
         if step % 4 == 3 {
             not_stuck(&document, &what);
@@ -905,7 +1311,7 @@ fn run(seed: u64, steps: usize) {
 /// See the module's docs. `VARDE_MOTION_SEEDS` runs more seeds
 /// (`VARDE_MOTION_FROM` the first).
 #[test]
-fn random_histories_with_moves_mirrors_and_patterns_hold() {
+fn random_histories_with_moves_mirrors_patterns_and_aligns_hold() {
     let number = |name: &str, default: u64| {
         std::env::var(name)
             .ok()

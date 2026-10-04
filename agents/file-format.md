@@ -298,8 +298,14 @@ bodies) or `Separate` with the ids of the bodies the copies are, copy
 by copy then body by body. `copies` is `#[serde(default)]`: a record
 written before it (none had it) reads as `Joined`, and an older build
 skips it (reading a separate pattern's copy bodies as bodies made by a
-feature that doesn't make them, which its check refuses).
-A
+feature that doesn't make them, which its check refuses); or an align,
+`crates/document/src/align.rs`: the moved body's id, its two sides
+(each a point: the origin, a corner by the keys of three faces, sorted,
+and a picked point, the middle of an edge or the centre of an edge as a
+revolve's; and an optional primary and secondary direction: an origin
+axis, a face's normal as a sketch's face, or an axis as a move's), the
+flip, and an optional offset (a typed length and its value in
+millimetres) and turn (an angle as a revolve's). A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -342,7 +348,13 @@ its angle within a turn either way; a pattern's count a whole number
 from 2 to 1024, its spacing within the coordinate limit of zero and not
 zero, its angle above zero and at most a turn; a move's or pattern's
 axis edge or face and a mirror's face as a revolve's edge and a
-sketch's face;
+sketch's face; an align's body there and made by an earlier feature,
+its sides paired (a primary on both or neither, a secondary likewise
+and only with a primary), its flip, offset and turn only with
+primaries, its offset and turn as a move's, its corners' keys sorted
+and different, its moved side's references on the moved body and none
+the origin's, its target side's on other bodies, each named as a move's
+axis;
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

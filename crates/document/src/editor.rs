@@ -640,6 +640,14 @@ impl Editor {
                                 value.pin_units(&ask);
                             }
                         }
+                        FeatureKind::Align(align) => {
+                            if let Some(value) = &mut align.offset {
+                                value.pin_units(&offset);
+                            }
+                            if let Some(value) = &mut align.turn {
+                                value.pin_units(&angle_ask);
+                            }
+                        }
                         // No values.
                         FeatureKind::Combine(_) | FeatureKind::Mirror(_) => {}
                     }

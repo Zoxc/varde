@@ -211,6 +211,7 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Move(_) | FeatureKind::Mirror(_) | FeatureKind::Pattern(_) => {
             crate::MotionKind::of(&feature.kind).map_or(Icon::Move, crate::MotionKind::icon)
         }
+        FeatureKind::Align(_) => Icon::Align,
     }
 }
 
@@ -241,6 +242,7 @@ fn feature_row<'a>(
         FeatureKind::Move(moved) => crate::motion::move_note(moved, units).into(),
         FeatureKind::Mirror(mirror) => crate::motion::plane_short(document, &mirror.plane).into(),
         FeatureKind::Pattern(pattern) => crate::motion::pattern_note(pattern).into(),
+        FeatureKind::Align(align) => crate::motion::align_note(document, align).into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -322,6 +324,7 @@ fn edit_label(feature: &Feature) -> &'static str {
         FeatureKind::Move(_) => "Edit move",
         FeatureKind::Mirror(_) => "Edit mirror",
         FeatureKind::Pattern(_) => "Edit pattern",
+        FeatureKind::Align(_) => "Edit align",
     }
 }
 

@@ -1,6 +1,6 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines, moves, mirrors and patterns), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns and aligns), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -47,7 +47,7 @@ they share with the newer kinds is here. The kernel math of each is in
   distances by `Extent::ask` (angles' bare numbers are degrees whatever
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
-  `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6): files store a kind by its variant name, and
+  `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6, `Align` 7): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -202,7 +202,10 @@ message is worded from the kernel's `failure.error` as before
     pattern's copies too many patches), its axis's or
     plane's body gone or face not found (a mirror face that isn't flat,
     an axis face that isn't round and an axis edge that isn't straight
-    or round show themselves, as above; see "Move and mirror").
+    or round show themselves, as above; see "Move and mirror"); an
+    align's reference gone, on a body that's gone or merged into the
+    moved body, or its point out of range (one of the wrong kind, and a
+    secondary parallel to its primary, show themselves: see "Align").
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s
   and the draft's `Drafted` (`MeshFeed::draft_geometry`, beside
   `draft_error`). The viewport draws the geometry of the draft's
@@ -1821,3 +1824,151 @@ fields' own error words for other refusals; the axis may also be a
 round edge or face, as a move's; no faded originals (the preview
 replaces the model); Circular pattern isn't on the toolbar (the rail
 has it; the mock's body bar does, the app has no such bar).
+
+## Align
+
+`crates/document/src/align.rs`.
+
+```rust
+pub struct Align {
+    pub body: BodyId,             // moved in place, made before it (question 23: one body, in place)
+    pub from: AlignRefs,          // on `body`, no origin reference
+    pub to: AlignRefs,            // on other bodies made before it, or the origin's
+    pub flip: bool,               // against the default (opposed for normals and rims)
+    pub offset: Option<Value>,    // along the target's primary as found: Move::offset_ask
+    pub turn: Option<Value>,      // about it, right-handed: Move::angle_ask (radians)
+}
+pub struct AlignRefs { pub point: PointRef, pub primary: Option<DirRef>, pub secondary: Option<DirRef> }
+pub enum PointRef { Origin, Corner { body, faces: [FaceKey; 3], near }, Middle(EdgeRef), Centre(EdgeRef) }
+pub enum DirRef { Origin(Axis3), Normal(FaceRef), Axis(AxisRef) }
+```
+
+- **What it is**: a timeline step on a body already made, the eighth
+  variant (`FeatureKind::Align(Box<Align>)`, boxed as it's by far the
+  largest kind; serde sees through the box; "Align N"). It makes no body; the body
+  keeps its id and its faces their names (a move). Its motion is worked
+  out from the references at every regeneration (`Motion::align`, see
+  "Aligning" in `agents/kernel.md`), so the body follows either side's
+  upstream edits. A point alone is a move between the points; a point
+  and a primary pair also turn the primary onto the target's by the
+  smallest rotation (a pin into a hole: its turn about its own axis
+  doesn't matter); a secondary pair fixes the turn about it.
+- **References**, resolved by the kernel's `topology/datums.rs`: a
+  corner (three keys sorted and different, the vertex where faces of
+  all three meet, nearest `near` among several), a straight edge's
+  middle, a round edge's centre (a circle's or an ellipse's), the
+  origin; a flat face's outward normal, a round face's axis
+  (`DirRef::Axis(AxisRef::Face)`, as the form has it), a straight
+  edge's direction (first key's face on its left from outside) or a
+  round edge's axis (`DirRef::Axis(AxisRef::Edge)`: a flat neighbour's
+  outward normal, else a round neighbour's axis), an origin axis
+  (`DirRef::Origin`, or `DirRef::Axis(AxisRef::Origin)`, the same).
+- **Flip**: the primaries meet **opposed** by default where each is a
+  flat face's normal or a round edge's axis (a rim's; checked at
+  regeneration, an edge being round or straight only there), so faces
+  meet face to face and a pin's foot rim onto a hole's top rim puts the
+  pin in the hole; the same way otherwise. `flip` turns the default
+  round. Decided here: a normal on one side and a rim on the other is
+  opposed too (both point out of their bodies), where the plan named
+  only the like pairs. The offset and turn go along and about the
+  target's primary as found, never as flipped.
+- **Checks** (`CheckError::Align(id, AlignError)`): `Align::check_own
+  (design)` (cheap, for a panel): a secondary only with a primary, and
+  the sides paired, a primary on both or neither and a secondary
+  likewise (`Unpaired`); flip, offset and turn only with primaries
+  (`Options`); the offset a length `Move::offset_ask` takes (within
+  `MAX_COORD` of zero: `Offset`), the turn an angle `Move::angle_ask`
+  takes (within a turn either way: `Angle`); a corner's keys sorted and
+  different (`Corner`), an edge's own check (`Edge`), a corner's or
+  face's point finite and within `MAX_COORD` (`Near`); no origin
+  reference on the moved side (`FromOrigin`: a reference there is on
+  the body, as the plan has it). `Document::check` then wants the body
+  there and made before it (`Body`), every moved-side reference on it
+  (`FromBody`), no target-side reference on it (`OnMoved`), and each
+  reference's body and faces' makers before it as a move's axis's
+  (`RefBody`, `RefMaker`: one not there is allowed with ids no later
+  body or feature can take). `Document::check_align_refs(index, refs)`
+  checks one side's references by those last rules, for a panel.
+- **Removal**: `FeatureKind::bodies()` is the moved body, so removing it
+  or its maker removes the align; the target's bodies aren't listed
+  (the align stays and fails until given another, as a move's axis).
+- `SetUnits` pins the offset and the turn as a move's.
+
+### Regeneration
+
+`crates/regen/src/history/align.rs`, in history order:
+
+- The body needs a solid of its own (`own_solids`, worded as a
+  combine's).
+- **Each side** is found in order (point, primary, secondary) on its
+  bodies as the features before it leave them, through
+  `Evaluation::holder`, by the kernel's `Topology::corner_point`,
+  `middle`, `centre`, `normal`, `face_axis` and `edge_direction`, each
+  cached (`Entry::Datum`: the point or direction and whether it points
+  out of its body, keyed by the holder's key, the reference's kind,
+  names and point, which reference on which side, and the fit
+  tolerance). A target reference whose body a join or combine merged
+  into the moved body fails it: aligning a body onto itself.
+- **Noted** for the draft (`Evaluation::aligned`, `Drafted::datums`:
+  `AlignDatums { moved, target, opposed }`, each side an `AlignSide {
+  point, primary, secondary }` of `[f64; 3]`s, the moved side where it
+  is before the align), whether or not the align goes on to work, each
+  side only if all its references were found and the wire takes it
+  (`AlignSide::fits`: finite, within `MAX_REFERENCE`, directions not
+  zero). `opposed` is the flip the motion takes (the default turned by
+  `flip`; just `flip` while a side isn't found). Not in `.vrdp`.
+- **The motion**: `Motion::align(moved, target, AlignOptions { flip:
+  opposed, offset, degrees })`, the turn's radians turned into degrees
+  by `value / (π/180)` as a move's (quarter turns exact); then the body
+  is placed as a move's bodies are (`motion::place`: refused if its box
+  leaves `MAX_COORD`, "aligning Body 2 takes it out of range ...", then
+  `Solid::transformed` cached by `Motion::bits()`).
+- **Failures**, worded by which reference on which side
+  (`message::align_ref`): "its point on the target wasn't found", "its
+  first direction on the moved body is a face that isn't flat" (isn't
+  round, an edge that isn't straight, isn't round, isn't straight or
+  round, whose direction can't be told; these show the face's
+  triangles or the edge's curves), "... is on a body that's gone", "its
+  point on the target is in the moved body now: a feature before this
+  one merged them; pick it on another body"; the motion's refusals:
+  "its second direction on the target is parallel to its first: pick
+  one across it" (the side found by aligning it onto itself; shows both
+  its directions' faces or edges), "its point on the moved body is too
+  far out to align by" (a nearly straight arc's centre past the limit;
+  shows the edge), and a fallback for what the document refuses
+  (`ALIGN_MALFORMED`).
+- **Dedup with moves**: a move's round-face axis (`motion::face_axis`)
+  now calls the kernel's `Topology::face_axis` (same result: the form's
+  axis through the point nearest the face's point); a move's axis edge
+  and a mirror's plane keep their own code, since a move's round edge
+  turns as the edge runs (not the align's rim sign) and a mirror wants
+  the plane's offset too.
+
+Tests: `document/src/align/tests.rs` (pairing, values, every reference
+check, removal, units, postcard and hostile bytes, the variant index),
+`regen/src/history/tests/align.rs` (a pin of the hole's radius aligned
+by its foot rim into the example plate's hole 10 down and joined: the
+analytic volume, following the hole moved upstream, undo; the hole's
+rim found after a join merged another body into the plate, and a target
+on a merged body refused; a block aligned corner to corner face to face
+exact to the bit, with an offset, a quarter turn, a secondary pair, a
+flip and a point alone; each refusal with its geometry and no body
+changed; a consumed body; the cache by the motion's bits; what's noted
+against the topology), `regen/src/wire/tests.rs` (datums on the wire,
+bad ones refused), `io/src/vrdp/tests.rs` (through a file, tampered
+records refused), and the motion fuzz (`VARDE_MOTION_SEEDS`): random
+aligns of corners, middles and centres, with normals, face axes and
+edge directions or none, onto other bodies or the origin, with
+secondaries (mostly across), flips, offsets and turns, each one that
+works held to what the topology gives before it (the noted datums to
+the bit), its centre of mass standing to the target's point, primary and
+frame as it stood to its own, and its point and primary found again on
+the target's where their names are unique; one failing changes nothing.
+
+Known gaps: no UI yet (the panel, point picking with measure's snap
+dots, the session's rows, the preview and the datums drawn come next);
+the Timeline shows the mock's `align` icon (the tool icons' set),
+"to Body 2" or "to the origin" as its note and "Body 2 to Body 1" as the
+status info, and editing an align from the Timeline does nothing yet.
+A far centre (a nearly straight arc's) is refused only when the motion
+is made, and noted for the draft only within the wire's bounds.

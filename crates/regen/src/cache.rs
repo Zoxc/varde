@@ -137,6 +137,17 @@ impl Keyer {
     }
 }
 
+/// A point or a direction an align names, as found on its body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Datum {
+    /// The point, or the direction (not zero, not unit).
+    pub(crate) at: DVec3,
+    /// For a direction, whether it points out of its body: a flat face's
+    /// normal or a round edge's axis (a rim's). Two such meet opposed by
+    /// default.
+    pub(crate) outward: bool,
+}
+
 /// A result kept.
 #[derive(Clone)]
 enum Entry {
@@ -152,6 +163,8 @@ enum Entry {
     /// Where a move's axis or a mirror's plane is, as a point and a
     /// direction, or why it isn't anywhere (with what to draw of where).
     Reference(Result<[DVec3; 2], Failed>),
+    /// A point or direction an align names, or why it isn't anywhere.
+    Datum(Result<Datum, Failed>),
     /// Whether a sketch solves.
     Solves(bool),
     /// A feature's tool solid, or why it has none (with what to draw of
@@ -191,7 +204,8 @@ impl Entry {
             Entry::Solid(Err(failed))
             | Entry::Placement(Err(failed))
             | Entry::Edge(Err(failed))
-            | Entry::Reference(Err(failed)) => (failed.message.len())
+            | Entry::Reference(Err(failed))
+            | Entry::Datum(Err(failed)) => (failed.message.len())
                 .saturating_add(failed.geometry.as_deref().map_or(0, ErrorGeometry::bytes)),
             Entry::Touches(Err(failure)) | Entry::Boolean(Err(failure)) => failure.bytes(),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
@@ -203,6 +217,7 @@ impl Entry {
             | Entry::Placement(Ok(_))
             | Entry::Edge(Ok(_))
             | Entry::Reference(Ok(_))
+            | Entry::Datum(Ok(_))
             | Entry::Touches(Ok(_)) => 0,
         };
         data.saturating_add(OVERHEAD)
@@ -468,6 +483,17 @@ impl Cache {
     ) -> Result<[DVec3; 2], Failed> {
         match self.entry(key, || Entry::Reference(make())) {
             Entry::Reference(found) => found,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn datum(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<Datum, Failed>,
+    ) -> Result<Datum, Failed> {
+        match self.entry(key, || Entry::Datum(make())) {
+            Entry::Datum(found) => found,
             _ => unreachable!("keys of different kinds differ"),
         }
     }

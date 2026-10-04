@@ -9,6 +9,7 @@ use varde_document::{
 };
 use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::mesh::Form;
+use varde_kernel::topology::Unresolved;
 use varde_kernel::{Budget, Instance, Motion, Solid, Tolerance, assemble};
 
 use super::{
@@ -125,12 +126,12 @@ pub(super) fn note_reference(
 
 /// How [`place`] moves a body.
 #[derive(Clone, Copy)]
-struct How {
+pub(super) struct How {
     /// What it's doing, for the messages.
-    moving: Moving,
+    pub(super) moving: Moving,
     /// With the original kept, the copy the image is named as; `None`
     /// replaces the body by its image, keeping its faces' names.
-    copy: Option<Instance>,
+    pub(super) copy: Option<Instance>,
 }
 
 /// Moves each of `bodies` (each with a solid of its own in
@@ -141,7 +142,7 @@ struct How {
 /// [`Solid::transformed`] moves it, cached by the body's key, the
 /// motion's bits ([`Motion::bits`]), the copy and the fit tolerance, so
 /// an edit that leaves the motion as it was finds every body again.
-fn place(
+pub(super) fn place(
     document: &Document,
     bodies: &[BodyId],
     motion: &Motion,
@@ -247,7 +248,7 @@ fn moved(
 /// axis through its centre, turning the way the edge runs as so
 /// directed); a face must be round, a cylinder, cone, torus or other
 /// surface of revolution (its form's axis, directed as the form has it,
-/// through the point of it nearest the face's point: [`beside`]).
+/// through the point of it nearest the face's point: [`beside`](varde_kernel::topology::beside)).
 /// Cached by the solid's key, the reference and the fit tolerance.
 pub(super) fn resolve_axis(
     axis: &AxisRef,
@@ -342,34 +343,27 @@ fn edge_line(solid: &Solid, edge: &EdgeRef, tolerance: &Tolerance) -> Result<[DV
 }
 
 /// The axis of the round face `face` names on `solid`, see
-/// [`resolve_axis`].
+/// [`resolve_axis`]: the kernel's ([`Topology::face_axis`]), through the
+/// point of the axis nearest the face's point, not the form's own point:
+/// a cone that's nearly a cylinder has its apex far along its axis, past
+/// where the workers' bytes take a draft's axis, and the axis is drawn
+/// from its point. The face's point is on the face, within `MAX_COORD`,
+/// so the one found is within the wire's bounds even where the face is
+/// at the limit.
+///
+/// [`Topology::face_axis`]: varde_kernel::Topology::face_axis
 fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DVec3; 2], Failed> {
     let topology = solid.topology();
-    let region =
-        (topology.face(solid, &face.key, face.near)).map_err(|_| message::AXIS_FACE_NOT_FOUND)?;
-    let region = &topology.regions()[region as usize];
-    let [point, axis] = match *region_form(solid, region) {
-        Form::Cylinder { point, axis, .. } => [point, axis],
-        Form::Cone { apex, axis, .. } => [apex, axis],
-        Form::Torus { centre, axis, .. } => [centre, axis],
-        Form::Revolved { origin, axis, .. } => [origin, axis],
-        _ => {
-            return Err(Failed {
+    topology
+        .face_axis(solid, &face.key, face.near)
+        .map_err(|why| match why {
+            Unresolved::NotRound { region } => Failed {
                 message: message::AXIS_FACE_NOT_ROUND.to_owned(),
-                geometry: face_geometry(solid, region, tolerance),
-            });
-        }
-    };
-    Ok([beside(point, axis, face.near), axis])
+                geometry: face_geometry(solid, &topology.regions()[region as usize], tolerance),
+            },
+            _ => message::AXIS_FACE_NOT_FOUND.into(),
+        })
 }
-
-// The point of the axis nearest the face's point, not the form's own
-// point: a cone that's nearly a cylinder has its apex far along its axis,
-// past where the workers' bytes take a draft's axis, and the axis is
-// drawn from its point. The face's point is on the face, within
-// `MAX_COORD`, so the one found is within the wire's bounds even where
-// the face is at the limit.
-pub(super) use varde_kernel::topology::beside;
 
 /// The plane of the flat face `face` names on `solid`, see
 /// [`resolve_plane`]: the point of `n·x = d` nearest the origin, `n·d`

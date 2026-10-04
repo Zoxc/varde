@@ -178,6 +178,54 @@ pub struct Drafted {
     /// finite, within four times the coordinate limit, the direction not
     /// zero.
     pub reference: Option<Box<[[f64; 3]; 2]>>,
+    /// For an align, the points and directions found on each side, as
+    /// [`Evaluation::aligned`] has them, whether or not the draft goes on
+    /// to work. Checked on the wire as [`Drafted::reference`] is
+    /// ([`AlignDatums::fits`]).
+    pub datums: Option<Box<AlignDatums>>,
+}
+
+/// One side of an align as regenerating found it, on the bodies as the
+/// features before the align leave them: its point, and its directions
+/// (not unit; a flat face's normal out of its body, the others signed as
+/// the document's `DirRef` says).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AlignSide {
+    pub point: [f64; 3],
+    pub primary: Option<[f64; 3]>,
+    pub secondary: Option<[f64; 3]>,
+}
+
+/// What an align found: each side whose references were all found, and
+/// whether the moved side's primary goes against the target's (the
+/// default for two flat faces' normals or rims' axes, turned round by
+/// the align's flip). A side that wasn't, or whose numbers the wire
+/// wouldn't take ([`AlignDatums::fits`]: a nearly straight arc's centre
+/// far out), is `None`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AlignDatums {
+    pub moved: Option<AlignSide>,
+    pub target: Option<AlignSide>,
+    pub opposed: bool,
+}
+
+impl AlignSide {
+    /// Whether the workers' wire takes it: its point and directions
+    /// within [`MAX_REFERENCE`] of zero, finite, no direction zero.
+    pub fn fits(&self) -> bool {
+        let within = |v: &[f64; 3]| v.iter().all(|x| x.is_finite() && x.abs() <= MAX_REFERENCE);
+        let direction = |v: &[f64; 3]| within(v) && v.iter().any(|&x| x != 0.0);
+        within(&self.point) && self.primary.iter().chain(&self.secondary).all(direction)
+    }
+}
+
+impl AlignDatums {
+    /// Whether the workers' wire takes it: each side there
+    /// [`AlignSide::fits`], and at least one there.
+    pub fn fits(&self) -> bool {
+        let sides = [self.moved, self.target];
+        sides.iter().any(Option::is_some) && sides.iter().flatten().all(AlignSide::fits)
+    }
 }
 
 /// How far from zero a coordinate of a draft's axis or plane
@@ -443,7 +491,7 @@ impl Regenerator {
         let Some(draft) = draft else {
             return self.model(document, exclude, None, inspect);
         };
-        let (error, geometry, touched, reference) = match applied(document, draft) {
+        let (error, geometry, touched, reference, datums) = match applied(document, draft) {
             Ok((drafted, feature)) => {
                 let mut evaluation = evaluate(&drafted, &mut self.cache);
                 let touched = (evaluation.touched.iter())
@@ -452,10 +500,13 @@ impl Regenerator {
                 let reference = (evaluation.references.iter())
                     .find(|(id, _)| *id == feature)
                     .map(|(_, [point, along])| Box::new([point.to_array(), along.to_array()]));
+                let datums = (evaluation.aligned.iter())
+                    .find(|(id, _)| *id == feature)
+                    .map(|(_, datums)| Box::new(*datums));
                 match (evaluation.failed.iter()).position(|failed| failed.feature == feature) {
                     Some(at) => {
                         let failed = evaluation.failed.swap_remove(at);
-                        (failed.message, failed.geometry, touched, reference)
+                        (failed.message, failed.geometry, touched, reference, datums)
                     }
                     None => {
                         let done = Drafted {
@@ -464,12 +515,13 @@ impl Regenerator {
                             geometry: None,
                             touched,
                             reference,
+                            datums,
                         };
                         return self.draw(&drafted, evaluation, exclude, Some(done), inspect);
                     }
                 }
             }
-            Err(error) => (error, None, None, None),
+            Err(error) => (error, None, None, None, None),
         };
         let failed = Drafted {
             revision: draft.revision,
@@ -477,6 +529,7 @@ impl Regenerator {
             geometry,
             touched,
             reference,
+            datums,
         };
         self.model(document, exclude, Some(failed), inspect)
     }

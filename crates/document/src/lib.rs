@@ -4,6 +4,7 @@
 //! modifications go through an [`Editor`], which applies [`Command`]s,
 //! checks their results and records history for undo/redo.
 
+mod align;
 pub mod codec;
 mod combine;
 mod edge;
@@ -21,6 +22,7 @@ mod revolve;
 #[cfg(test)]
 mod testing;
 
+pub use align::{Align, AlignError, AlignRefs, DirRef, PointRef};
 pub use codec::DecodeError;
 pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
 pub use edge::{EdgeError, EdgeRef};
@@ -285,7 +287,10 @@ impl Document {
     /// features before it make, as [`Move::check_own`],
     /// [`Mirror::check_own`] and [`Pattern::check_own`] want them with
     /// its values, its axis edge or face, or plane face, named as a
-    /// revolve's edge is. A
+    /// revolve's edge is; and every align's body is one a feature before
+    /// it makes, its sides shaped and its values as [`Align::check_own`]
+    /// wants them, its moved side's references on that body, its target
+    /// side's on others, each named as a move's axis is. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
@@ -372,6 +377,13 @@ impl Document {
                     let made = copies.get(&id).copied().unwrap_or(0);
                     self.check_copies(id, pattern, made)
                         .map_err(|why| CheckError::Pattern(id, why))?;
+                }
+                FeatureKind::Align(align) => {
+                    align
+                        .check_own(&design)
+                        .map_err(|why| CheckError::Align(id, why))?;
+                    self.check_align(index, align)
+                        .map_err(|why| CheckError::Align(id, why))?;
                 }
             }
         }
@@ -579,6 +591,49 @@ impl Document {
         Ok(())
     }
 
+    /// Checks what an align, feature `index`, names: its body there and
+    /// made by a feature before it, as a move's; every reference on the
+    /// moved side on that body, every one on the target side on another;
+    /// and each named as a move's axis is ([`Document::check_motion`]).
+    fn check_align(&self, index: usize, align: &Align) -> Result<(), AlignError> {
+        if !self.made_before(index, align.body) {
+            return Err(AlignError::Body(align.body));
+        }
+        for named in align.from.named() {
+            if named.body != align.body {
+                return Err(AlignError::FromBody(named.body));
+            }
+        }
+        for named in align.to.named() {
+            if named.body == align.body {
+                return Err(AlignError::OnMoved);
+            }
+        }
+        self.check_align_refs(index, &align.to)?;
+        self.check_align_refs(index, &align.from)
+    }
+
+    /// Checks `refs` as one side of an align at feature `index` (at the
+    /// end for a new one) would name them: each reference's own parts,
+    /// and its body and its faces' makers before it, as
+    /// [`Document::check`] has them. For a panel keeping what it sets up
+    /// one the document takes; which side is which body is the caller's.
+    pub fn check_align_refs(&self, index: usize, refs: &AlignRefs) -> Result<(), AlignError> {
+        refs.point.check_own()?;
+        for direction in refs.directions() {
+            direction.check_own()?;
+        }
+        for named in refs.named() {
+            if !self.body_before(index, named.body) {
+                return Err(AlignError::RefBody(named.body));
+            }
+            if let Some(&maker) = (named.makers.iter()).find(|&&m| !self.maker_before(index, m)) {
+                return Err(AlignError::RefMaker(maker));
+            }
+        }
+        Ok(())
+    }
+
     /// Whether `body` is there and made by a feature before feature
     /// `index`.
     fn made_before(&self, index: usize, body: BodyId) -> bool {
@@ -675,6 +730,8 @@ pub enum CheckError {
     Mirror(FeatureId, MotionError),
     /// A pattern feature is wrong, see [`MotionError`].
     Pattern(FeatureId, MotionError),
+    /// An align feature is wrong, see [`AlignError`].
+    Align(FeatureId, AlignError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -722,6 +779,7 @@ impl fmt::Display for CheckError {
             CheckError::Move(id, why)
             | CheckError::Mirror(id, why)
             | CheckError::Pattern(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Align(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -749,6 +807,7 @@ impl std::error::Error for CheckError {
             CheckError::Move(_, why) | CheckError::Mirror(_, why) | CheckError::Pattern(_, why) => {
                 Some(why)
             }
+            CheckError::Align(_, why) => Some(why),
             _ => None,
         }
     }

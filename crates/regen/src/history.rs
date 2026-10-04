@@ -47,7 +47,10 @@
 //! named as that copy of the pattern, assembled into the body (side by
 //! side where apart, united where they meet; see `pattern`); a count
 //! whose copies would be more patches than a solid may have, or a copy
-//! past the coordinate limit, fails it before anything is copied.
+//! past the coordinate limit, fails it before anything is copied. An
+//! align moves its body as a move does, by the motion taking the point
+//! and directions picked on it onto those picked on the target, found
+//! as the features before it leave their bodies (see `align`).
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -61,7 +64,8 @@
 //! ones still run. Of regen's own failures, a face that isn't flat (a
 //! sketch's or a mirror's) or isn't round (a move's axis) shows the face,
 //! an axis line of no length its point, and an axis edge of the wrong
-//! shape its curves; the others (a face or body gone, a face too far out,
+//! shape its curves, as an align's references of the wrong kind do (and
+//! its secondary parallel to its primary, both of them); the others (a face or body gone, a face too far out,
 //! a sketch not placed or not there, an axis not found, a combine's or a
 //! move's body with no solid, a body moved out of range) have nothing to
 //! show.
@@ -91,6 +95,7 @@ use crate::message::{self, Doing, Making};
 use crate::picking::region_form;
 use crate::profile::profile;
 
+mod align;
 mod combine;
 mod motion;
 mod pattern;
@@ -135,6 +140,10 @@ pub struct Evaluation {
     /// the direction), in the document's order. For the app to draw a draft's axis or
     /// plane where regenerating found it.
     pub references: Vec<(FeatureId, [DVec3; 2])>,
+    /// Each align that found the references of either side, and what it
+    /// found, in the document's order. For the app to draw a draft's
+    /// points and directions where regenerating found them.
+    pub aligned: Vec<(FeatureId, crate::AlignDatums)>,
 }
 
 impl Evaluation {
@@ -328,7 +337,8 @@ pub(crate) fn evaluate_within(
                     | FeatureKind::Combine(_)
                     | FeatureKind::Move(_)
                     | FeatureKind::Mirror(_)
-                    | FeatureKind::Pattern(_) => unreachable!("matched apart"),
+                    | FeatureKind::Pattern(_)
+                    | FeatureKind::Align(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -386,6 +396,18 @@ pub(crate) fn evaluate_within(
                     document,
                     feature.id,
                     pattern,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::Align(align) => {
+                if let Err(failed) = align::evaluate_align(
+                    document,
+                    feature.id,
+                    align,
                     &tolerance,
                     &mut evaluation,
                     cache,
