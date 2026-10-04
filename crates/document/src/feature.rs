@@ -1,12 +1,12 @@
 //! Features: the steps a design is built from, sketches, extrudes,
 //! revolves, combines, moves, mirrors, patterns, aligns, scales, splits,
-//! chamfers, shells, fillets, offset faces, drafts and sweeps.
+//! chamfers, shells, fillets, offset faces, drafts, sweeps and lofts.
 
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
 use crate::{
-    Align, BodyId, Chamfer, Combine, Extrude, FaceDraft, Fillet, Mirror, Move, OffsetFace,
+    Align, BodyId, Chamfer, Combine, Extrude, FaceDraft, Fillet, Loft, Mirror, Move, OffsetFace,
     Operation, Pattern, Plane, Revolve, Scale, Shell, Split, Sweep,
 };
 
@@ -60,6 +60,7 @@ pub enum FeatureKind {
     OffsetFace(OffsetFace),
     FaceDraft(FaceDraft),
     Sweep(Sweep),
+    Loft(Loft),
 }
 
 impl FeatureKind {
@@ -83,13 +84,15 @@ impl FeatureKind {
             FeatureKind::OffsetFace(_) => "Offset face",
             FeatureKind::FaceDraft(_) => "Draft",
             FeatureKind::Sweep(_) => "Sweep",
+            FeatureKind::Loft(_) => "Loft",
         }
     }
 
     /// The features it builds on, which come before it: an extrude's or a
     /// revolve's sketch, the sketch a split takes regions or a line
-    /// from, or a sweep's profile's sketch and its path's sketches.
-    /// Removing one of them removes this too. Sorted,
+    /// from, a sweep's profile's sketch and its path's sketches, or the
+    /// sketches of a loft's sections and rails. Removing one of them
+    /// removes this too. Sorted,
     /// without repeats. The makers of the bodies it names
     /// ([`FeatureKind::bodies`]) aren't listed, as finding them takes the
     /// document, but [`Document::removal`](crate::Document::removal)
@@ -97,6 +100,9 @@ impl FeatureKind {
     /// plane ([`Plane::Face`]): removing it leaves the sketch, which then
     /// doesn't regenerate until it's put on another plane.
     pub fn uses(&self) -> Vec<FeatureId> {
+        if let FeatureKind::Loft(loft) = self {
+            return loft.sketches();
+        }
         let mut uses: Vec<FeatureId> = self.sketch().into_iter().collect();
         if let FeatureKind::Sweep(sweep) = self {
             uses.extend(sweep.path_sketches());
@@ -104,6 +110,17 @@ impl FeatureKind {
             uses.dedup();
         }
         uses
+    }
+
+    /// The sketches whose regions (or points) it takes, which adding it
+    /// hides: [`FeatureKind::sketch`]'s, or a loft's sections' sketches;
+    /// sorted without repeats. Not a loft's rails' sketches, which stay
+    /// as they were.
+    pub fn profile_sketches(&self) -> Vec<FeatureId> {
+        match self {
+            FeatureKind::Loft(loft) => loft.section_sketches(),
+            _ => self.sketch().into_iter().collect(),
+        }
     }
 
     /// The bodies it names, which features before it make, and which it
@@ -136,15 +153,17 @@ impl FeatureKind {
             FeatureKind::OffsetFace(offset) => offset.bodies(),
             FeatureKind::FaceDraft(draft) => draft.bodies(),
             FeatureKind::Sweep(sweep) => sweep.bodies(),
-            FeatureKind::Sketch { .. } | FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
-                Vec::new()
-            }
+            FeatureKind::Sketch { .. }
+            | FeatureKind::Extrude(_)
+            | FeatureKind::Revolve(_)
+            | FeatureKind::Loft(_) => Vec::new(),
         }
     }
 
     /// The sketch whose regions it takes: an extrude's, a revolve's or a
     /// sweep's (its profile's, not its path's), or a split's regions or
-    /// line, which adding it hides.
+    /// line, which adding it hides. None for a loft, whose sections may be of several
+    /// ([`FeatureKind::profile_sketches`]).
     pub fn sketch(&self) -> Option<FeatureId> {
         match self {
             FeatureKind::Sketch { .. }
@@ -158,7 +177,8 @@ impl FeatureKind {
             | FeatureKind::Shell(_)
             | FeatureKind::Fillet(_)
             | FeatureKind::OffsetFace(_)
-            | FeatureKind::FaceDraft(_) => None,
+            | FeatureKind::FaceDraft(_)
+            | FeatureKind::Loft(_) => None,
             FeatureKind::Extrude(extrude) => Some(extrude.sketch),
             FeatureKind::Revolve(revolve) => Some(revolve.sketch),
             FeatureKind::Sweep(sweep) => Some(sweep.sketch),
@@ -167,7 +187,8 @@ impl FeatureKind {
     }
 
     /// What it does with the solid it makes: an extrude's, a revolve's or
-    /// a sweep's operation. A combine has none: it makes no solid of its own.
+    /// a sweep's or a loft's operation. A combine has none: it makes no
+    /// solid of its own.
     pub fn operation(&self) -> Option<&Operation> {
         match self {
             FeatureKind::Sketch { .. }
@@ -186,6 +207,7 @@ impl FeatureKind {
             FeatureKind::Extrude(extrude) => Some(&extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&revolve.operation),
             FeatureKind::Sweep(sweep) => Some(&sweep.operation),
+            FeatureKind::Loft(loft) => Some(&loft.operation),
         }
     }
 
@@ -208,10 +230,11 @@ impl FeatureKind {
             FeatureKind::Extrude(extrude) => Some(&mut extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&mut revolve.operation),
             FeatureKind::Sweep(sweep) => Some(&mut sweep.operation),
+            FeatureKind::Loft(loft) => Some(&mut loft.operation),
         }
     }
 
-    /// The body it makes: an extrude's, a revolve's or a sweep's
+    /// The body it makes: an extrude's, a revolve's, a sweep's or a loft's
     /// [`Operation::NewBody`], or a split's new body.
     pub fn new_body(&self) -> Option<BodyId> {
         match self {
@@ -319,5 +342,11 @@ impl From<FaceDraft> for FeatureKind {
 impl From<Sweep> for FeatureKind {
     fn from(sweep: Sweep) -> Self {
         FeatureKind::Sweep(sweep)
+    }
+}
+
+impl From<Loft> for FeatureKind {
+    fn from(loft: Loft) -> Self {
+        FeatureKind::Loft(loft)
     }
 }

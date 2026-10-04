@@ -700,6 +700,126 @@ pub(crate) fn draft_leaves_nothing(body: &str) -> String {
     format!("drafting faces of {body} leaves nothing of it")
 }
 
+/// The number of the section or rail `index` (from 0), as the messages
+/// count them, from 1.
+fn nth(index: usize) -> usize {
+    index.saturating_add(1)
+}
+
+/// Why a loft fails: its section `index` (from 0) isn't found in its
+/// sketch (its region or point gone).
+pub(crate) fn section_not_found(index: usize) -> String {
+    format!("section {} not found", nth(index))
+}
+
+/// Why a loft fails: the sketch of its section `index` isn't there (not
+/// of a checked document).
+pub(crate) fn section_sketch_gone(index: usize) -> String {
+    format!("section {}'s sketch isn't there", nth(index))
+}
+
+/// Why a loft fails: the sketch of its section `index` isn't placed.
+pub(crate) fn section_not_placed(index: usize) -> String {
+    format!("section {}'s sketch isn't placed", nth(index))
+}
+
+/// Why a loft fails: the sketch of its section `index` is too complex
+/// to find regions in, or the region can't be made into an outline,
+/// `why`.
+pub(crate) fn section_unusable(index: usize, why: impl std::fmt::Display) -> String {
+    format!("section {} can't be used: {why}", nth(index))
+}
+
+/// Why a loft fails: its section `index`'s region has holes.
+pub(crate) fn section_holes(index: usize) -> String {
+    format!(
+        "section {} has holes: only sections with one loop can be lofted",
+        nth(index)
+    )
+}
+
+/// Why a loft fails: the start point of its section `index` isn't in
+/// its sketch any more.
+pub(crate) fn start_not_found(index: usize) -> String {
+    format!("section {}'s start point wasn't found", nth(index))
+}
+
+/// Why a loft fails: the start point of its section `index` isn't one of
+/// its outline's corners.
+pub(crate) fn start_not_corner(index: usize) -> String {
+    format!(
+        "section {}'s start point isn't one of its corners",
+        nth(index)
+    )
+}
+
+/// Why a loft fails: its sections `a` and `b` (from 0) lie on one plane.
+pub(crate) fn sections_on_one_plane(a: usize, b: usize) -> String {
+    format!("sections {} and {} are on one plane", nth(a), nth(b))
+}
+
+/// Why a loft fails: the sketch of its rail `index` isn't there (not of a
+/// checked document).
+pub(crate) fn rail_sketch_gone(index: usize) -> String {
+    format!("rail {}'s sketch isn't there", nth(index))
+}
+
+/// Why a loft fails: the sketch of its rail `index` isn't placed.
+pub(crate) fn rail_not_placed(index: usize) -> String {
+    format!("rail {}'s sketch isn't placed", nth(index))
+}
+
+/// Why a loft fails: its rail `index`'s curves don't make one open
+/// chain, `error` saying how.
+pub(crate) fn rail_chain(index: usize, error: crate::profile::ChainError) -> String {
+    use crate::profile::ChainError;
+    let n = nth(index);
+    match error {
+        ChainError::Missing => format!("rail {n} not found"),
+        ChainError::Closed => {
+            format!("rail {n} is closed: a rail runs from the first section to the last")
+        }
+        ChainError::Branches => format!("rail {n}'s curves don't join end to end into one line"),
+        ChainError::Profile(error) => format!("rail {n} can't be used: {error}"),
+    }
+}
+
+/// What the kernel refuses to loft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoftRefusal {
+    /// Sections `.0` and `.1` (from 0) are on one plane.
+    OnePlane(usize, usize),
+    /// Rail `rail` misses its vertex of section `section` (both from 0).
+    RailMisses { rail: usize, section: usize },
+    /// The strips fold over.
+    Twists,
+    /// The loft runs into itself.
+    IntoItself,
+}
+
+/// Why a loft is refused.
+pub(crate) fn loft_refused(why: LoftRefusal) -> String {
+    match why {
+        LoftRefusal::OnePlane(a, b) => sections_on_one_plane(a, b),
+        LoftRefusal::RailMisses { rail, section } => format!(
+            "rail {} doesn't pass through section {}",
+            nth(rail),
+            nth(section)
+        ),
+        LoftRefusal::Twists => "the loft twists: pick matching start points".to_owned(),
+        LoftRefusal::IntoItself => "the loft runs into itself".to_owned(),
+    }
+}
+
+/// Why the kernel couldn't loft the sections, at the finest tolerance if
+/// `finest`.
+pub(crate) fn lofting(error: KernelError, finest: bool) -> String {
+    match error {
+        KernelError::TooComplex => "lofting its sections is too complex to work out".to_owned(),
+        error => tool(Making::Loft, error, finest),
+    }
+}
+
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {
@@ -732,6 +852,7 @@ pub(crate) enum Making {
     Extrude,
     Revolve,
     Sweep,
+    Loft,
 }
 
 impl Making {
@@ -741,6 +862,7 @@ impl Making {
             Making::Extrude => "extrude",
             Making::Revolve => "revolve",
             Making::Sweep => "sweep",
+            Making::Loft => "loft",
         }
     }
 
@@ -750,6 +872,7 @@ impl Making {
             Making::Extrude => "extruded",
             Making::Revolve => "revolved",
             Making::Sweep => "swept",
+            Making::Loft => "lofted",
         }
     }
 }

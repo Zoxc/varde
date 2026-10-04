@@ -82,6 +82,14 @@ pub mod testing {
     pub fn sweep_by_extrude() {
         crate::history::sweep_by_extrude();
     }
+
+    /// Lofts on this thread by a stand-in in place of the kernel's loft,
+    /// which isn't built yet: two parallel sections of straight sides,
+    /// the second the first moved along its normal, make the first
+    /// extruded to the second; anything else is too complex.
+    pub fn loft_by_extrude() {
+        crate::history::loft_by_extrude();
+    }
 }
 mod inspect;
 mod message;

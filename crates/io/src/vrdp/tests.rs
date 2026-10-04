@@ -4554,3 +4554,286 @@ fn a_sweep_s_path_limits_are_checked_as_read() {
     let (_, read) = changed(&|sweep| sweep.path = path(vec![curves(vec![999])]));
     assert!(read.is_ok(), "{:?}", read.err());
 }
+
+/// The example with two lofts: a square on XZ to a point on YZ, ruled,
+/// making a body; and the square to a square on YZ, smooth, along a rail
+/// on XY, joined.
+fn lofted_plate() -> Document {
+    use varde_document::{BodyId, CurveChain, Loft, LoftMode, Operation, Section, Sketch, Targets};
+    use varde_sketch::Curve;
+    let mut editor = Editor::new(Document::example());
+    let mut sketch_on = |plane: OriginPlane, draw: &dyn Fn(&mut Sketch)| {
+        editor
+            .apply(editor.document().add_sketch(Plane::Origin(plane)))
+            .unwrap();
+        let feature = editor.document().features().last().unwrap().id;
+        let mut sketch = Sketch::default();
+        draw(&mut sketch);
+        editor
+            .apply(Command::SetSketch {
+                feature,
+                sketch: Box::new(sketch.clone()),
+            })
+            .unwrap();
+        (feature, sketch)
+    };
+    let square = |(x, y): (f64, f64)| {
+        move |sketch: &mut Sketch| {
+            let corners = [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)]
+                .map(|(dx, dy)| sketch.add_point(glam::DVec2::new(x + dx, y + dy)).unwrap());
+            for k in 0..4 {
+                let (start, end) = (corners[k], corners[(k + 1) % 4]);
+                sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+            }
+        }
+    };
+    let (front, front_sketch) = sketch_on(OriginPlane::XZ, &square((0.0, 25.375)));
+    let (side, side_sketch) = sketch_on(OriginPlane::YZ, &|sketch| {
+        square((40.0, 25.0))(sketch);
+        sketch.add_point(glam::DVec2::new(60.0, 25.0)).unwrap();
+    });
+    let (rail, rail_sketch) = sketch_on(OriginPlane::XY, &|sketch| {
+        let a = sketch.add_point(glam::DVec2::new(5.0, 0.0)).unwrap();
+        let b = sketch.add_point(glam::DVec2::new(5.0, 35.0)).unwrap();
+        sketch
+            .add_curve(Curve::Line { start: a, end: b }, false)
+            .unwrap();
+    });
+    let region = |sketch: &Sketch| sketch.profiles().unwrap().reference(0).unwrap();
+    let front_section = Section::Region {
+        sketch: front,
+        region: region(&front_sketch),
+        start: Some(front_sketch.points[0].id),
+    };
+    let to_point = Loft {
+        sections: vec![
+            front_section.clone(),
+            Section::Point {
+                sketch: side,
+                point: side_sketch.points[4].id,
+            },
+        ],
+        mode: LoftMode::Ruled,
+        closed: false,
+        rails: Vec::new(),
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    let along = Loft {
+        sections: vec![
+            front_section,
+            Section::Region {
+                sketch: side,
+                region: region(&side_sketch),
+                start: None,
+            },
+        ],
+        mode: LoftMode::Smooth,
+        closed: false,
+        rails: vec![CurveChain {
+            sketch: rail,
+            curves: vec![rail_sketch.curves[0].id],
+        }],
+        operation: Operation::Join(Targets::default()),
+    };
+    for loft in [to_point, along] {
+        editor
+            .apply(editor.document().add_feature(loft.into()))
+            .unwrap();
+    }
+    editor.document().clone()
+}
+
+/// Lofts go through a file and are read back in their places.
+#[test]
+fn lofts_round_trip() {
+    use varde_document::FeatureKind;
+    let document = lofted_plate();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    let count = (read.features().iter())
+        .filter(|feature| matches!(feature.kind, FeatureKind::Loft(_)))
+        .count();
+    assert_eq!(count, 2);
+}
+
+/// A record whose loft's region point was changed on disk to what the
+/// document refuses is refused as it's read; as written, it reads.
+#[test]
+fn a_tampered_loft_is_refused() {
+    use varde_document::{FeatureKind, Section};
+    let document = lofted_plate();
+    let raw = record_msgpack(&document);
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let FeatureKind::Loft(loft) = &document.features().last().unwrap().kind else {
+        panic!("a loft last");
+    };
+    let Section::Region { region, .. } = &loft.sections[1] else {
+        panic!("a region");
+    };
+    let float = |x: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&x.to_bits().to_be_bytes());
+        bytes
+    };
+    let was = float(region.inside.x);
+    let at = (raw.windows(was.len()))
+        .rposition(|window| window == was)
+        .expect("the region's point is in the record");
+    for now in [f64::NAN, f64::INFINITY, 3e6] {
+        let mut changed = raw.clone();
+        changed[at + 1..at + 9].copy_from_slice(&now.to_bits().to_be_bytes());
+        assert!(
+            from_msgpack::<Document>(&changed).is_err(),
+            "{now} was taken"
+        );
+    }
+}
+
+/// The lofts' part of a record damaged on disk, every float in it set to
+/// what's out of bounds or not a number and random bytes in it changed
+/// (2 000 ways): refused as it's read or read as a document that passes
+/// its check, its lofts their own, never a panic.
+#[test]
+fn a_damaged_loft_is_refused_or_checked() {
+    let document = lofted_plate();
+    let raw = record_msgpack(&document);
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let from = (raw.windows(4))
+        .position(|window| window == b"Loft")
+        .expect("a loft's variant name");
+    let read = |bytes: &[u8]| {
+        if let Ok((document, _)) = from_msgpack::<Document>(bytes) {
+            document.check().unwrap();
+            for feature in document.features() {
+                if let varde_document::FeatureKind::Loft(loft) = &feature.kind {
+                    loft.check_own().unwrap();
+                }
+            }
+        }
+    };
+    let floats: Vec<usize> = (from..raw.len().saturating_sub(8))
+        .filter(|&at| raw[at] == 0xcb)
+        .collect();
+    assert!(floats.len() >= 4, "{}", floats.len());
+    for &at in &floats {
+        for x in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e300,
+            -1e300,
+            1.000_001e6,
+            1e6,
+            -0.0,
+            0.0,
+            f64::MIN_POSITIVE,
+            -1.0,
+        ] {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&x.to_bits().to_be_bytes());
+            read(&changed);
+        }
+    }
+    let size = raw.len() - from;
+    for seed in 0..2_000u64 {
+        let picks = noise(8, seed.wrapping_mul(0x9e37_79b9) + 13);
+        let mut changed = raw.clone();
+        for pair in picks.chunks(2).take(1 + (seed % 3) as usize) {
+            let at = from + (usize::from(pair[0]) * 256 + usize::from(pair[1])) % size;
+            changed[at] = picks[(seed % 8) as usize] ^ pair[1];
+        }
+        read(&changed);
+    }
+}
+
+/// A loft's sections too few or too many, a point in the middle, all
+/// points, a region with holes, closed with two sections or with a
+/// rail, too many rails, a rail's curves out of order or none, a rail
+/// twice, a section or rail of a feature that isn't a sketch before it,
+/// or an excluded body no feature before it makes, in a record: each
+/// refused as it's read.
+#[test]
+fn a_loft_s_parts_are_checked_as_read() {
+    use varde_document::{
+        BodyId, FeatureKind, Loft, MAX_LOFT_RAILS, MAX_LOFT_SECTIONS, Operation, Section, Targets,
+    };
+    let document = lofted_plate();
+    let raw = record_msgpack(&document);
+    let last = document.features().last().unwrap();
+    let FeatureKind::Loft(along) = &last.kind else {
+        panic!("the loft along the rail");
+    };
+    let was = rmp_serde::to_vec_named(&FeatureKind::Loft(along.clone())).unwrap();
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the loft in the record");
+    let changed = |change: &dyn Fn(&mut Loft)| {
+        let mut loft = along.clone();
+        change(&mut loft);
+        let now = rmp_serde::to_vec_named(&FeatureKind::Loft(loft.clone())).unwrap();
+        let mut changed = raw[..at].to_vec();
+        changed.extend_from_slice(&now);
+        changed.extend_from_slice(&raw[at + was.len()..]);
+        (loft, from_msgpack::<Document>(&changed))
+    };
+    let refused = |change: &dyn Fn(&mut Loft)| {
+        let (loft, read) = changed(change);
+        assert!(read.is_err(), "taken: {loft:?}");
+    };
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let (_, same) = changed(&|_| {});
+    assert!(same.is_ok());
+    let point = || {
+        let FeatureKind::Loft(to_point) = &document.features()[document.features().len() - 2].kind
+        else {
+            panic!("the loft to a point");
+        };
+        to_point.sections[1].clone()
+    };
+    refused(&|loft| loft.sections.truncate(1));
+    refused(&|loft| {
+        let first = loft.sections[0].clone();
+        loft.sections = vec![first; MAX_LOFT_SECTIONS + 1];
+    });
+    refused(&|loft| loft.sections.insert(1, point()));
+    refused(&|loft| loft.sections = vec![point(), point()]);
+    refused(&|loft| {
+        if let Section::Region { region, .. } = &mut loft.sections[0] {
+            region.holes = vec![region.curves.clone()];
+        }
+    });
+    refused(&|loft| loft.closed = true);
+    refused(&|loft| {
+        loft.closed = true;
+        let first = loft.sections[0].clone();
+        loft.sections.push(first);
+    });
+    refused(&|loft| {
+        let rail = loft.rails[0].clone();
+        loft.rails = vec![rail; MAX_LOFT_RAILS + 1];
+    });
+    refused(&|loft| loft.rails[0].curves.clear());
+    refused(&|loft| {
+        let curve = loft.rails[0].curves[0];
+        loft.rails[0].curves = vec![curve, curve];
+    });
+    refused(&|loft| {
+        let rail = loft.rails[0].clone();
+        loft.rails.push(rail);
+    });
+    let own = last.id;
+    refused(&|loft| {
+        if let Section::Region { sketch, .. } = &mut loft.sections[1] {
+            *sketch = own;
+        }
+    });
+    refused(&|loft| loft.rails[0].sketch = own);
+    let plate_maker = document.features()[1].id;
+    refused(&|loft| loft.rails[0].sketch = plate_maker);
+    refused(&|loft| {
+        loft.operation = Operation::Join(Targets {
+            excluded: vec![BodyId::NEW],
+        });
+    });
+}

@@ -2051,6 +2051,7 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
         FeatureKind::OffsetFace(offset) => crate::offset_face::offset_info(offset, units),
         FeatureKind::FaceDraft(draft) => crate::face_draft::draft_info(document, draft),
         FeatureKind::Sweep(sweep) => crate::sweep::sweep_info(document, sweep),
+        FeatureKind::Loft(loft) => crate::loft::loft_info(loft),
     }
 }
 

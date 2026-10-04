@@ -3362,3 +3362,108 @@ fn a_sweep_and_a_helix_draft_round_trip() {
     let committed = editor.document().features().last().unwrap().id;
     assert_eq!(failed, [(committed, too_complex.to_owned())]);
 }
+
+/// A document holding a loft and a loft's draft cross and come back as
+/// they went; the reply carries the kernel's too-complex failure of
+/// both.
+#[test]
+fn a_loft_and_its_draft_round_trip() {
+    use varde_document::{
+        CurveChain, Loft, LoftMode, Operation, OriginPlane, Plane, Section, Targets,
+    };
+    use varde_sketch::{Curve, Sketch};
+
+    let mut editor = Editor::new(Document::example());
+    let mut add_sketch = |plane: OriginPlane, draw: &dyn Fn(&mut Sketch)| {
+        editor
+            .apply(editor.document().add_sketch(Plane::Origin(plane)))
+            .unwrap();
+        let feature = editor.document().features().last().unwrap().id;
+        let mut sketch = Sketch::default();
+        draw(&mut sketch);
+        editor
+            .apply(Command::SetSketch {
+                feature,
+                sketch: Box::new(sketch.clone()),
+            })
+            .unwrap();
+        (feature, sketch)
+    };
+    let (square, drawn) = add_sketch(OriginPlane::YZ, &|sketch| {
+        let corners = [(-5.0, 20.0), (5.0, 20.0), (5.0, 30.0), (-5.0, 30.0)]
+            .map(|(x, y)| sketch.add_point(glam::DVec2::new(x, y)).unwrap());
+        for k in 0..4 {
+            let (start, end) = (corners[k], corners[(k + 1) % 4]);
+            sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+        }
+    });
+    let (apex, pointed) = add_sketch(OriginPlane::XZ, &|sketch| {
+        let a = sketch.add_point(glam::DVec2::new(30.0, 25.0)).unwrap();
+        let b = sketch.add_point(glam::DVec2::new(15.0, 25.0)).unwrap();
+        sketch
+            .add_curve(Curve::Line { start: a, end: b }, false)
+            .unwrap();
+    });
+    let region = drawn.profiles().unwrap().reference(0).unwrap();
+    let point = pointed.points[0].id;
+    let rail = pointed.curves[0].id;
+    let loft = Loft {
+        sections: vec![
+            Section::Region {
+                sketch: square,
+                region,
+                start: Some(drawn.points[2].id),
+            },
+            Section::Point {
+                sketch: apex,
+                point,
+            },
+        ],
+        mode: LoftMode::Ruled,
+        closed: false,
+        rails: Vec::new(),
+        operation: Operation::NewBody(varde_document::BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(loft.clone().into()))
+        .unwrap();
+    let draft = Draft {
+        revision: 7,
+        feature: None,
+        kind: Loft {
+            mode: LoftMode::Smooth,
+            rails: vec![CurveChain {
+                sketch: apex,
+                curves: vec![rail],
+            }],
+            operation: Operation::Join(Targets::default()),
+            ..loft
+        }
+        .into(),
+    };
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(Box::new(draft.clone())),
+        inspect: None,
+    };
+    let decoded = decode_request(&encode_request(&request)).unwrap();
+    let Request::Regenerate {
+        document,
+        draft: back,
+        ..
+    } = &decoded
+    else {
+        panic!("not a regeneration");
+    };
+    assert_eq!(**document, *editor.document());
+    assert_eq!(back, &Some(Box::new(draft)));
+    let Response::Regenerated { draft, failed, .. } = round_trip(&handle(decoded)) else {
+        panic!("regeneration failed");
+    };
+    let too_complex = "lofting its sections is too complex to work out";
+    assert_eq!(draft.unwrap().error.as_deref(), Some(too_complex));
+    let committed = editor.document().features().last().unwrap().id;
+    assert_eq!(failed, [(committed, too_complex.to_owned())]);
+}

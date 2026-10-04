@@ -1,7 +1,7 @@
 # Features
 
 The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers, shells, fillets, offset faces,
-drafts and sweeps), and sketches' planes on faces:
+drafts, sweeps and lofts), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -13,8 +13,9 @@ they share with the newer kinds is here. The kernel math of each is in
 
 - `Command::AddFeature { name, kind: Box<FeatureKind> }`, made by
   `Document::add_feature(kind)`, which names it one past the highest
-  "Extrude N", "Revolve N" ... (`FeatureKind::noun`). It hides the sketch
-  whose regions the feature takes (`FeatureKind::sketch`); one whose
+  "Extrude N", "Revolve N" ... (`FeatureKind::noun`). It hides the
+  sketches whose regions the feature takes (`FeatureKind::profile_sketches`:
+  `FeatureKind::sketch`'s, or a loft's sections' sketches); one whose
   operation is `NewBody` also adds "Body N" with the next id, replacing
   whatever id the command held (`BodyId::NEW`); a pattern whose copies
   are bodies of their own adds one per copy, laid out as "Pattern"
@@ -38,8 +39,9 @@ they share with the newer kinds is here. The kernel math of each is in
   `check_new` on the added or set feature: what's required of a feature
   when the user makes or edits it, but not of one already in a document
   (a later edit of its sketch may break it, which regeneration reports).
-  Today that's a revolve's axis line, a split's line's curves and a
-  sweep's path's curves.
+  Today that's a revolve's axis line, a split's line's curves, a
+  sweep's path's curves and a loft's start points, point sections and
+  rails' curves.
 - `FeatureKind` helpers: `noun`, `sketch` (the profile sketch, or a
   split's regions' or line's sketch; a sweep's profile's, not its
   path's, so adding a sweep hides only its profile's sketch),
@@ -58,7 +60,7 @@ they share with the newer kinds is here. The kernel math of each is in
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
   `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6, `Align` 7,
   `Scale` 8, `Split` 9, `Chamfer` 10, `Shell` 11, `Fillet` 12, `OffsetFace` 13,
-  `FaceDraft` 14, `Sweep` 15): files store a kind by its variant name, and
+  `FaceDraft` 14, `Sweep` 15, `Loft` 16): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -95,7 +97,7 @@ message is worded from the kernel's `failure.error` as before
   running solid itself, so the two can't part through the retry pass;
   the running solid holds their faces, and while the combine fails each
   is still its own body), then the tool's body; `touches`: the body, then
-  none; extrude and revolve: none. With no operand face on a body that
+  none; extrude, revolve and loft: none. With no operand face on a body that
   is the very `Arc` kept, so an unchanged failure is the same `Arc` from
   one answer to the next; with some, a copy with those faces pending
   (keeping the evidence's `truncated` even when its faces are all there
@@ -4440,3 +4442,152 @@ sketches, the model's edges left to the model, an edge hovered by the
 move off a curve onto it, the hover handed over between a curve and
 the model as the camera moves and let go of while it's dragged),
 `rail/tests.rs` (Sweep in the Create set, `P`).
+
+## Loft
+
+`crates/document/src/loft.rs`; `CurveChain` is the sweep's (`crates/document/src/sweep.rs`).
+
+```rust
+pub struct Loft {
+    pub sections: Vec<Section>,   // 2..=MAX_LOFT_SECTIONS (64), in the order lofted
+    pub mode: LoftMode,           // Smooth (default) | Ruled; two sections are ruled whatever
+    pub closed: bool,             // the last section lofts back to the first, no caps
+    pub rails: Vec<CurveChain>,   // 0..=MAX_LOFT_RAILS (4)
+    pub operation: Operation,     // extrude's: NewBody, Join, Cut, Intersect
+}
+pub enum Section {
+    Region { sketch: FeatureId, region: RegionRef, start: Option<Id> },  // one loop; start a sketch point on it
+    Point { sketch: FeatureId, point: Id },                              // first or last only
+}
+pub struct CurveChain { pub sketch: FeatureId, pub curves: Vec<Id> }    // 1..=MAX_RAIL_CURVES (256), sorted
+```
+
+- **What it is**: the seventeenth variant (`FeatureKind::Loft`, "Loft
+  N"), a solid through its sections in order, each a region of one loop
+  of a sketch before it (named as an extrude's regions are) or, first
+  or last only, a sketch point, made into a new body or joined, cut or
+  intersected as an extrude's tool (`operation()`, `new_body()`). A
+  region's `start` is the sketch point its outline starts from (`None`:
+  the vertex nearest the previous section's start, the kernel's
+  default). `CurveChain` is a sketch's curves making one chain, ordered
+  by regeneration, shared with a sweep path's sketch parts.
+- **Checks** (`CheckError::Loft(id, LoftError)`): `Loft::check_own()`
+  (cheap): 2 to 64 sections (`Sections`), each region's own check
+  (`Region`) and no holes in its reference (`Holes(index)`: a section is
+  one loop), a point only first or last (`PointInside(index)`), not
+  every section a point (`Points`); closed only with three or more
+  sections (`ClosedSections`), no point (`ClosedPoint`) and no rails
+  (`ClosedRails`: a decision, see below); at most 4 rails (`Rails`),
+  each of 1 to 256 curves (`RailCurves`) sorted without repeats
+  (`RailOrder`), no rail twice (`RailRepeated`). `Document::check`
+  adds: every section's and rail's sketch a sketch feature before it
+  (`Sketch`, `RailSketch`), and the operation as an extrude's
+  (`NewBody`, `Excluded`, `ExcludedOrder`). On `AddFeature` and
+  `SetFeature` only (`check_new`, `Loft::check_names`): a start point
+  and a point section's point are points of their sketch (`Start`,
+  `Point`), a rail's curves curves of its sketch (`RailCurve`); a later
+  sketch edit may take them away, which regeneration reports.
+- **Dependencies**: `uses()` is every section's and rail's sketch
+  (sorted, no repeats), so removing any of them removes the loft and its
+  body. `bodies()` is none (as an extrude's). `sketch()` is `None`;
+  `profile_sketches()` is the sections' sketches, which adding the loft
+  hides (the rails' sketches stay shown),
+  and which the app's failure marks follow (`uses_edited_sketch`).
+- `SetUnits` changes nothing: a loft has no values.
+- **Decision**: a closed loft takes no rails (the document refuses
+  them). A rail is an open chain through every section's matching
+  vertex; a closed loft's vertex paths are closed, which an open chain
+  can't follow and `profile::chain` doesn't make. The UI should
+  turn Rails off with Closed.
+
+### Regeneration
+
+`crates/regen/src/history/loft.rs`, through extrude's `Run` (`Shape::Loft`,
+its first section's sketch standing as `Run::sketch`, every sketch
+before it in `Run::sketches`), in history order:
+
+- **Sections**, each from its sketch as the features before the loft
+  leave it, in the feature's order: a region found again in its
+  sketch's profiles (`Profiles::resolve`; gone: "section 2 not found";
+  the sketch too complex or the region unusable: "section 2 can't be
+  used: ...") and made into a kernel profile (`profile`), one loop or
+  "section 2 has holes: only sections with one loop can be lofted"; its
+  start the outline's segment starting within the resolution of the
+  sketch point ("section 2's start point wasn't found", "section 2's
+  start point isn't one of its corners"); its frame its sketch's
+  placement. A point section is the sketch point placed in the world
+  ("section 1 not found" when gone). A section whose sketch isn't
+  placed: "section 2's sketch isn't placed".
+- **One plane**: two consecutive sections (and, closed, the last and
+  the first) on one plane fail before the kernel, "sections 1 and 2 are
+  on one plane", by the kernel's own rule (`varde_kernel::loft::on_one_plane`:
+  each one's vertices within the resolution of the other's plane; a
+  point on a loop's plane; two points never).
+- **Rails**: each sketch chain ordered by `profile::chain` (as a
+  split's line: lines, arcs of at most 90°, splines' fitted conics; the
+  joints to the bit), mapped into the world by its sketch's placement
+  as `Rail { conics }`; "rail 1 not found", "rail 1 is closed: a rail
+  runs from the first section to the last", "rail 1's curves don't join
+  end to end into one line", "rail 1 can't be used: ...", "rail 1's
+  sketch isn't placed".
+- **The loft**: `varde_kernel::loft::loft(sections, mode, closed, rails,
+  feature, tol, budget)`, cached as an `Entry::Solid` by the feature,
+  the fit tolerance, the mode, `closed`, and every section's and rail's
+  sketch key, placement bits and what the feature names of it (an edit
+  elsewhere finds it again; a section's sketch edited or moved makes it
+  again). Its refusals (`LoftError`) are worded by
+  `message::loft_refused`: "sections 2 and 3 are on one plane", "rail 1
+  doesn't pass through section 2", "the loft twists: pick matching
+  start points", "the loft runs into itself"; its failures by
+  `message::lofting` ("lofting its sections is too complex to work
+  out", else as an extrude's tool with the verb "loft"). Then the tool
+  goes on as an extrude's: a new body, or touches and booleans (a join
+  touching several bodies merges them).
+- **Kernel stand-in**: `varde_kernel::loft::loft` (`kernel/src/loft.rs`)
+  isn't built: it fails with `TooComplex`, so every loft that gets as
+  far as the kernel fails today with "lofting its sections is too
+  complex to work out", making no body, and the rest of the history
+  goes on. The regen tests swap it (`loft::LOFTER`, a thread local;
+  other crates' tests through the `testing` feature,
+  `varde_regen::testing::loft_by_extrude`) for `by_extrude`: two open
+  sections, no rails, each a loop of straight segments, the second the
+  first moved along its normal vertex for vertex (either way round), is
+  the first extruded to the second, faces named as an extrude's; a
+  second start other than the first's moved is `LoftError::Twists`;
+  anything else too complex. The planned analytic tests of the
+  kernel's loft are written and `#[ignore = "kernel loft not built"]`
+  (`kernel/src/loft/tests.rs`).
+- The draft's reply carries nothing new; the wire carries the loft as
+  any kind (postcard, validated by `Document::check`).
+
+### UI
+
+Not built yet (a later stage): `Look::EditFeature` on a loft does
+nothing, and lofts are made by the document's commands. The Timeline
+shows a loft's row with the model mock's `loft` icon (`Icon::Loft`,
+a slab and a disc joined by two rulings) and its note, "3 sections"
+(`view/src/loft.rs`, `loft_note`); the status bar says "3 sections ·
+Smooth · Closed · 2 rails · New body" (`loft_info`; two sections say
+Ruled whatever the mode). The model mock has no loft panel (only the
+icon and "Loft" in the toolbar's Create group): the planned session
+lists the sections in order with up, down and remove, a start dot on
+each section (a click on another vertex moves it), Ruled or Smooth,
+Closed (Rails off while closed), Rails picked as sketch curve chains in
+the model, operation and bodies, and the preview.
+
+### Tests
+
+`document/src/loft/tests.rs` (adding, naming, hiding the sections'
+sketches, undo; editing keeping or dropping the body; every own check;
+what it names in other features and in its sketches, the latter only
+on add; removal through any sketch it uses; units; postcard round trip
+and refusals; its kind's index, held in `a_loft_is_the_seventeenth_kind`),
+`regen/src/history/tests/loft.rs` (the stub's failure with the history
+going on; by the stand-in a box, a transition piece joined between two
+blocks merging them and following one moved, a section's sketch edited
+and the loft following, undo; sections handed over in order and placed,
+starts; regen's refusals; one plane, closed too; rails placed and
+refused; the kernel's refusals worded; twisted starts; the cache),
+`regen/src/wire/tests.rs` (a loft and its draft round trip),
+`io/src/vrdp/tests.rs` (round trip, tampered and damaged records, a
+loft's parts refused as read), `view/src/loft/tests.rs` (the notes).

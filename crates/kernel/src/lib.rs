@@ -44,6 +44,7 @@ mod budget;
 mod error;
 mod extrude;
 mod failure;
+pub mod loft;
 mod manifold;
 pub mod measure;
 pub mod mesh;

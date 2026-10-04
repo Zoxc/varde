@@ -90,12 +90,28 @@ pub enum PathPart {
 }
 
 /// Curves of a sketch that make one chain, end to end: `1..` of them,
-/// sorted without repeats. Regenerating orders them along the chain.
+/// sorted without repeats (a sweep path's part, or a loft's rail).
+/// Regenerating orders them along the chain.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CurveChain {
     /// A sketch feature before the feature naming it.
     pub sketch: FeatureId,
     pub curves: Vec<Id>,
+}
+
+impl CurveChain {
+    /// Whether its curves are sorted without repeats.
+    pub(crate) fn sorted(&self) -> bool {
+        self.curves.windows(2).all(|pair| pair[0] < pair[1])
+    }
+
+    /// The first of its curves `sketch` (its sketch) doesn't hold.
+    pub(crate) fn missing(&self, sketch: &Sketch) -> Option<Id> {
+        self.curves
+            .iter()
+            .copied()
+            .find(|&id| sketch.curve(id).is_none())
+    }
 }
 
 /// A helix a sweep carries its profile round: about `axis`, `pitch` a
@@ -243,8 +259,7 @@ impl Sweep {
         for part in parts {
             if let PathPart::Curves(chain) = part
                 && let Some(sketch) = sketch_of(chain.sketch)
-                && let Some(&missing) =
-                    (chain.curves.iter()).find(|&&id| sketch.curve(id).is_none())
+                && let Some(missing) = chain.missing(sketch)
             {
                 return Err(SweepError::Curve(missing));
             }
@@ -288,7 +303,7 @@ fn check_parts(parts: &[PathPart]) -> Result<(), SweepError> {
     for part in parts {
         match part {
             PathPart::Curves(chain) => {
-                if !(chain.curves.windows(2)).all(|pair| pair[0] < pair[1]) {
+                if !chain.sorted() {
                     return Err(SweepError::CurveOrder);
                 }
             }

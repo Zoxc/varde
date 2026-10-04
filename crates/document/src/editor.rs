@@ -40,8 +40,8 @@ pub enum Command {
         plane: Plane,
     },
     /// Adds a feature of any kind but a sketch's ([`Command::AddSketch`]
-    /// adds those), hiding the sketch whose regions it takes
-    /// ([`FeatureKind::sketch`]). One making a new body adds the body,
+    /// adds those), hiding the sketches whose regions it takes
+    /// ([`FeatureKind::profile_sketches`]: a loft's sections' sketches). One making a new body adds the body,
     /// "Body N" one past the bodies so named, and gives it its id whatever
     /// [`Operation::NewBody`] held ([`BodyId::NEW`]); a split keeping
     /// both sides makes one too, whatever its `new_body` held, and one
@@ -50,9 +50,11 @@ pub enum Command {
     /// one per copy, named so in turn, whatever its list held. A
     /// revolve's axis must be a line of its sketch
     /// ([`Revolve::check_axis`]), a split's line's curves curves of its
-    /// sketch ([`Split::check_curves`]), and a sweep's path's curves
-    /// curves of theirs ([`Sweep::check_curves`]).
+    /// sketch ([`Split::check_curves`]), a sweep's path's curves curves
+    /// of theirs ([`Sweep::check_curves`]), and a loft's start points,
+    /// points and rail curves those of theirs ([`Loft::check_names`]).
     ///
+    /// [`Loft::check_names`]: crate::Loft::check_names
     /// [`Revolve::check_axis`]: crate::Revolve::check_axis
     /// [`Operation::NewBody`]: crate::Operation::NewBody
     /// [`Split::new_body`]: crate::Split::new_body
@@ -304,15 +306,20 @@ impl Document {
 
     /// Checks what [`Command::AddFeature`] and [`Command::SetFeature`]
     /// require of `kind`, feature `index` of this document, beyond
-    /// [`Document::check`]: a revolve's axis is a line of its sketch, and
-    /// a split's line's and a sweep's path's curves are curves of their
-    /// sketches.
+    /// [`Document::check`]: a revolve's axis is a line of its sketch, a
+    /// split's line's and a sweep's path's curves are curves of their
+    /// sketches, and a loft's points and rail curves are of its sketches.
     fn check_new(&self, index: usize, kind: &FeatureKind) -> Result<(), EditError> {
         if let FeatureKind::Sweep(sweep) = kind {
             let id = self.features[index].id;
             sweep
                 .check_curves(|sketch| self.sketch_before(index, sketch))
                 .map_err(|why| EditError::Invalid(CheckError::Sweep(id, why)))?;
+        }
+        if let FeatureKind::Loft(loft) = kind {
+            let id = self.features[index].id;
+            loft.check_names(|sketch| self.sketch_before(index, sketch))
+                .map_err(|why| EditError::Invalid(CheckError::Loft(id, why)))?;
         }
         if let FeatureKind::Split(split) = kind
             && let Some(sketch) = (split.tool.sketch()).and_then(|id| self.sketch_before(index, id))
@@ -544,7 +551,7 @@ impl Editor {
                 let mut kind = kind;
                 planned_new_body(&mut kind);
                 let mut next = Document::clone(document);
-                let sketch = kind.sketch();
+                let sketches = kind.profile_sketches();
                 let makes_body = kind.new_body().is_some();
                 let copies = match &*kind {
                     FeatureKind::Pattern(pattern) => planned_copies(None, pattern),
@@ -558,8 +565,10 @@ impl Editor {
                 if let Some(planned) = copies {
                     next.make_copies(id, planned)?;
                 }
-                if let Some(index) = sketch.and_then(|sketch| next.feature_index(sketch)) {
-                    next.features[index].visible = false;
+                for sketch in sketches {
+                    if let Some(index) = next.feature_index(sketch) {
+                        next.features[index].visible = false;
+                    }
                 }
                 let index = next.features.len() - 1;
                 next.check_new(index, &next.features[index].kind)?;
@@ -731,7 +740,8 @@ impl Editor {
                         // No values.
                         FeatureKind::Combine(_)
                         | FeatureKind::Mirror(_)
-                        | FeatureKind::Split(_) => {}
+                        | FeatureKind::Split(_)
+                        | FeatureKind::Loft(_) => {}
                     }
                 }
                 next.units = units;

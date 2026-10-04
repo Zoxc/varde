@@ -77,7 +77,10 @@
 //! by the kernel's sweep along its path (sketch chains placed by their
 //! sketches, model edges found on their bodies, joined end to end from
 //! the profile's plane, or a helix about an axis found as a move's; see
-//! `sweep`), then goes on as an extrude does.
+//! `sweep`), then goes on as an extrude does. A loft makes its tool as an extrude does, but by the kernel's loft through
+//! its sections in order (each a region of one loop or a point, placed
+//! by its sketch), following its rails (sketch chains placed likewise;
+//! see `loft`), then goes on as an extrude does.
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -109,8 +112,8 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use varde_document::{
-    AxisLine, BodyId, Document, EdgeRef, Extrude, FaceRef, Feature, FeatureId, FeatureKind,
-    MAX_COORD, Operation, Placement, Plane, Revolve, Sketch, Sweep,
+    AxisLine, BodyId, Document, EdgeRef, Extrude, FaceRef, Feature, FeatureId, FeatureKind, Loft,
+    MAX_COORD, Operation, Placement, Plane, Revolve, Section, Sketch, Sweep,
 };
 use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::mesh::Form;
@@ -131,6 +134,7 @@ mod combine;
 mod face_draft;
 mod fillet;
 mod in_place;
+mod loft;
 mod motion;
 mod offset_face;
 mod pattern;
@@ -144,6 +148,8 @@ pub(crate) use chamfer::chamfer_by_wedges;
 pub(crate) use face_draft::draft_by_boxes;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use fillet::fillet_by_arcs;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use loft::loft_by_extrude;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use offset_face::offset_by_boxes;
 #[cfg(any(test, feature = "testing"))]
@@ -414,7 +420,10 @@ fn walk(
                     key,
                 });
             }
-            FeatureKind::Extrude(_) | FeatureKind::Revolve(_) | FeatureKind::Sweep(_) => {
+            FeatureKind::Extrude(_)
+            | FeatureKind::Revolve(_)
+            | FeatureKind::Sweep(_)
+            | FeatureKind::Loft(_) => {
                 let (sketch, shape, operation) = match &feature.kind {
                     FeatureKind::Extrude(extrude) => {
                         (extrude.sketch, Shape::Extrude(extrude), &extrude.operation)
@@ -425,6 +434,14 @@ fn walk(
                     FeatureKind::Sweep(sweep) => {
                         (sweep.sketch, Shape::Sweep(sweep), &sweep.operation)
                     }
+                    // Its first section's sketch stands as its own (a
+                    // checked loft has sections): the others are found
+                    // among `sketches`.
+                    FeatureKind::Loft(loft) => (
+                        loft.sections.first().map_or(feature.id, Section::sketch),
+                        Shape::Loft(loft),
+                        &loft.operation,
+                    ),
                     FeatureKind::Sketch { .. }
                     | FeatureKind::Combine(_)
                     | FeatureKind::Move(_)
@@ -439,7 +456,7 @@ fn walk(
                     | FeatureKind::OffsetFace(_)
                     | FeatureKind::FaceDraft(_) => unreachable!("matched apart"),
                 };
-                // A checked document's extrude, revolve or sweep names a
+                // A checked document's extrude, revolve, sweep or loft names a
                 // sketch before it.
                 let Some(sketch) = sketches.iter().find(|s| s.id == sketch) else {
                     let failed = Failed::from("its sketch isn't there");
@@ -626,15 +643,18 @@ enum Shape<'a> {
     Extrude(&'a Extrude),
     Revolve(&'a Revolve),
     Sweep(&'a Sweep),
+    Loft(&'a Loft),
 }
 
 impl<'a> Shape<'a> {
-    /// Its regions.
+    /// Its regions: none of its sketch's for a loft, whose sections
+    /// name their own.
     fn regions(self) -> &'a [RegionRef] {
         match self {
             Shape::Extrude(extrude) => &extrude.regions,
             Shape::Revolve(revolve) => &revolve.regions,
             Shape::Sweep(sweep) => &sweep.regions,
+            Shape::Loft(_) => &[],
         }
     }
 
@@ -644,18 +664,22 @@ impl<'a> Shape<'a> {
             Shape::Extrude(_) => Making::Extrude,
             Shape::Revolve(_) => Making::Revolve,
             Shape::Sweep(_) => Making::Sweep,
+            Shape::Loft(_) => Making::Loft,
         }
     }
 }
 
 /// An extrude, revolve or sweep being evaluated.
+/// An extrude, revolve, sweep or loft being evaluated.
 struct Run<'a> {
     document: &'a Document,
     feature: &'a Feature,
     shape: Shape<'a>,
     operation: &'a Operation,
+    /// Its sketch: a loft's first section's.
     sketch: &'a SketchOutput<'a>,
-    /// Every sketch before it, for a sweep's path.
+    /// Every sketch before it, for a sweep's path or a loft's sections
+    /// and rails.
     sketches: &'a [SketchOutput<'a>],
     tolerance: Tolerance,
     /// The budget of each [`varde_kernel::touches`].
@@ -673,6 +697,7 @@ impl Run<'_> {
             Shape::Extrude(extrude) => self.extruded(extrude, evaluation, cache)?,
             Shape::Revolve(revolve) => self.revolved(revolve, evaluation, cache)?,
             Shape::Sweep(sweep) => self.swept(sweep, evaluation, cache)?,
+            Shape::Loft(loft) => self.lofted(loft, cache)?,
         };
         let (op, doing) = match self.operation {
             Operation::NewBody(body) => {

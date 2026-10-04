@@ -1667,6 +1667,7 @@ mod edges;
 mod face_draft;
 mod faces;
 mod fillet;
+mod loft;
 mod merging;
 mod motion;
 mod offset_face;

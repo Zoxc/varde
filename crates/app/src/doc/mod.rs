@@ -830,6 +830,9 @@ impl Doc {
                     | FeatureKind::FaceDraft(_)
                     | FeatureKind::Sweep(_),
                 ) => self.edit_motion(id),
+                // No panel yet: lofts are made by the document's commands
+                // until their session is built.
+                Some(FeatureKind::Loft(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

@@ -24,6 +24,7 @@ mod face_draft;
 mod fillet;
 mod hit;
 mod icons;
+mod loft;
 mod measure;
 mod motion;
 mod mouse_only;

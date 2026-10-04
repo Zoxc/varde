@@ -202,7 +202,8 @@ pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sket
         | FeatureKind::Fillet(_)
         | FeatureKind::OffsetFace(_)
         | FeatureKind::FaceDraft(_)
-        | FeatureKind::Sweep(_) => None,
+        | FeatureKind::Sweep(_)
+        | FeatureKind::Loft(_) => None,
     }
 }
 

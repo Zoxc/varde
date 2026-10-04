@@ -107,15 +107,14 @@ impl Doc {
             .as_ref()
     }
 
-    /// Whether `feature` takes its regions from the sketch being edited.
+    /// Whether `feature` takes its regions from the sketch being edited
+    /// (a loft's from any of its sections' sketches).
     fn uses_edited_sketch(&self, feature: FeatureId) -> bool {
-        let edited = self.sketch.as_ref().map(|session| session.feature);
-        let document = self.editor.document();
-        edited.is_some()
-            && document
-                .feature(feature)
-                .and_then(|feature| feature.kind.sketch())
-                == edited
+        let Some(edited) = self.sketch.as_ref().map(|session| session.feature) else {
+            return false;
+        };
+        (self.editor.document().feature(feature))
+            .is_some_and(|feature| feature.kind.profile_sketches().contains(&edited))
     }
 
     /// The curves of the sketch being edited that the failures of the

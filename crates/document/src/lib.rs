@@ -16,6 +16,7 @@ mod extrude;
 mod face_draft;
 mod feature;
 mod fillet;
+mod loft;
 mod motion;
 pub mod name;
 mod offset_face;
@@ -42,6 +43,9 @@ pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation,
 pub use face_draft::{FaceDraft, FaceDraftError, MAX_DRAFT_FACES};
 pub use feature::{Feature, FeatureId, FeatureKind};
 pub use fillet::{Fillet, FilletError};
+pub use loft::{
+    Loft, LoftError, LoftMode, MAX_LOFT_RAILS, MAX_LOFT_SECTIONS, MAX_RAIL_CURVES, Section,
+};
 pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
 pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
@@ -106,7 +110,7 @@ pub const MAX_NAME_LEN: usize = 1024;
 
 /// A body: a solid the feature history makes. The document holds only
 /// its name, whether it's shown and how opaque, and which feature makes
-/// it (an extrude, revolve or sweep making a new body, [`Operation::NewBody`],
+/// it (an extrude, revolve, sweep or loft making a new body, [`Operation::NewBody`],
 /// a pattern whose copies are bodies of their own,
 /// [`Copies::Separate`], or a split's other piece, [`Split::new_body`]); its geometry is whatever regenerating the history gives it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -296,7 +300,7 @@ impl Document {
     /// feature ids; no name is longer than [`MAX_NAME_LEN`]; every body's
     /// opacity is one [`Opacity::new`] takes; the tolerance is one
     /// [`Tolerance::new`] takes; every body is made by an extrude,
-    /// revolve, sweep or split the document holds that names it as its new
+    /// revolve, sweep, loft or split the document holds that names it as its new
     /// body, and every such body is there, or by a pattern listing it as a copy
     /// body ([`Copies::Separate`]), every such body there too, one per
     /// copy; every sketch passes [`Sketch::check`]
@@ -339,15 +343,18 @@ impl Document {
     /// [`OffsetFace::check_own`] wants them; every draft's faces
     /// likewise, its neutral face on a body a feature before it makes and
     /// made by a feature before it, its faces and angle as
-    /// [`FaceDraft::check_own`] wants them; and every sweep is
+    /// [`FaceDraft::check_own`] wants them; every sweep is
     /// as an extrude is, its path's sketches sketches before it other than
     /// its profile's, its path's edges on bodies features before it make
     /// (with their faces' makers before it, or not there with ids no
     /// later feature can take), its helix's axis named likewise, its
-    /// parts and values as [`Sweep::check_own`] wants them. A
-    /// revolve's axis line and a sweep's path's curves aren't checked
-    /// against their sketches here (see [`Revolve::check_axis`] and
-    /// [`Sweep::check_curves`]).
+    /// parts and values as [`Sweep::check_own`] wants them; and every
+    /// loft's sections and rails are of sketch features before it, its
+    /// sections, mode, rails and operation as [`Loft::check_own`] wants
+    /// them and its operation as an extrude's. A revolve's axis line, a
+    /// sweep's path's curves and a loft's points and rail curves aren't
+    /// checked against their sketches here (see [`Revolve::check_axis`],
+    /// [`Sweep::check_curves`] and [`Loft::check_names`]).
     pub fn check(&self) -> Result<(), CheckError> {
         // Orders first: features and bodies are found by binary search.
         if let Some(pair) = self
@@ -496,6 +503,9 @@ impl Document {
                 FeatureKind::Sweep(sweep) => self
                     .check_sweep(index, sweep)
                     .map_err(|why| CheckError::Sweep(id, why))?,
+                FeatureKind::Loft(loft) => self
+                    .check_loft(index, loft)
+                    .map_err(|why| CheckError::Loft(id, why))?,
             }
         }
         if let Some(last) = self.bodies.last()
@@ -622,6 +632,32 @@ impl Document {
             referred.check_own()?;
         }
         self.check_motion(index, &[], plane.refers())
+    }
+
+    /// Checks `loft`, feature `index`, see [`Document::check`]: every
+    /// section's and rail's sketch a sketch feature before it, its own
+    /// parts, and its operation as an extrude's.
+    fn check_loft(&self, index: usize, loft: &Loft) -> Result<(), LoftError> {
+        if let Some(section) =
+            (loft.sections.iter()).find(|s| self.sketch_before(index, s.sketch()).is_none())
+        {
+            return Err(LoftError::Sketch(section.sketch()));
+        }
+        if let Some(rail) =
+            (loft.rails.iter()).find(|r| self.sketch_before(index, r.sketch).is_none())
+        {
+            return Err(LoftError::RailSketch(rail.sketch));
+        }
+        loft.check_own()?;
+        // Checked above: it has sections, each of a sketch before it.
+        let sketch = loft.sections[0].sketch();
+        self.check_uses(index, sketch, &loft.operation)
+            .map_err(|why| match why {
+                Uses::Sketch(sketch) => LoftError::Sketch(sketch),
+                Uses::NewBody(body) => LoftError::NewBody(body),
+                Uses::Excluded(body) => LoftError::Excluded(body),
+                Uses::ExcludedOrder => LoftError::ExcludedOrder,
+            })
     }
 
     /// Checks `combine`, feature `index`, see [`Document::check`]: its own
@@ -969,7 +1005,7 @@ impl Document {
         }
     }
 
-    /// Checks what extrudes and revolves share, of feature `index`: its
+    /// Checks what extrudes, revolves and lofts share, of feature `index`: its
     /// sketch `sketch` is a sketch feature before it, and `operation`'s
     /// new body names it as its maker and its excluded bodies are sorted
     /// and made by features before it.
@@ -1018,7 +1054,7 @@ pub enum CheckError {
     /// A body's opacity is this percent, out of [`Opacity::MIN`] to
     /// [`Opacity::MAX`].
     Opacity(BodyId, u8),
-    /// A body's maker isn't an extrude, revolve, sweep or split the document
+    /// A body's maker isn't an extrude, revolve, sweep, loft or split the document
     /// holds that makes it as its new body, or a pattern (whose own check
     /// holds it to the copy bodies it lists).
     Creator(BodyId, FeatureId),
@@ -1063,6 +1099,8 @@ pub enum CheckError {
     FaceDraft(FeatureId, FaceDraftError),
     /// A sweep feature is wrong, see [`SweepError`].
     Sweep(FeatureId, SweepError),
+    /// A loft feature is wrong, see [`LoftError`].
+    Loft(FeatureId, LoftError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -1119,6 +1157,7 @@ impl fmt::Display for CheckError {
             CheckError::OffsetFace(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::FaceDraft(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Sweep(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Loft(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -1155,6 +1194,7 @@ impl std::error::Error for CheckError {
             CheckError::OffsetFace(_, why) => Some(why),
             CheckError::FaceDraft(_, why) => Some(why),
             CheckError::Sweep(_, why) => Some(why),
+            CheckError::Loft(_, why) => Some(why),
             _ => None,
         }
     }

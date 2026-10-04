@@ -357,7 +357,14 @@ in millimetres), its turns (a typed number and its value), whether
 left-handed and whether flipped), its orientation (`Orientation`:
 follow the path or keep it), an optional twist (an angle as a
 revolve's) and its operation as an extrude's. Sweeps are new, so no
-older record holds one. A
+older record holds one; or a loft, `crates/document/src/loft.rs`: its
+sections in order (each a region of a sketch, named as an extrude's
+regions are, with an optional start point's sketch id, or a sketch
+point: the sketch's feature id and the point's id; `Section`'s variants
+by name), its mode (`Smooth` or `Ruled`), whether it's closed, its
+rails (each a `CurveChain`, as a sweep path's part: a sketch's feature
+id and its curves' ids, sorted) and its operation as an extrude's.
+Lofts are new, so no older record holds one. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -449,6 +456,14 @@ helix's axis as a move's, the axis's body there and made earlier, its
 pitch a length as an extrude's, its turns from 0.001 to 1000, and with
 a helix the orientation following the path and no twist; a twist
 within 8 turns either way;
+a loft's 2 to 64 sections each of a sketch feature before it, a region
+whose reference passes its check with no holes, a point only first or
+last and not every section one, closed only with three or more
+sections, no point and no rail, at most 4 rails each of a sketch
+feature before it with 1 to 256 curves sorted without repeats and none
+twice, and its operation as an extrude's (its points and curves in
+their sketches are only checked as it's added or edited, as a split's
+line's are);
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

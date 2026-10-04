@@ -10298,3 +10298,38 @@ see `agents/features.md`, "Failures and where they are").
   helices, refusals, thread counts) are in `sweep/path/tests.rs`,
   `#[ignore = "kernel sweep not built"]`. See "Sweep" in
   `agents/features.md`.
+- **Loft built above a stand-in.** The loft feature's document and
+  regeneration came before the kernel's loft (kernel work put off; the
+  plan's sections and correspondence, ruled and fitted strips, smooth
+  and closed lofts and rails are not built): `loft.rs` holds the
+  kernel's loft types and `loft(sections, mode, closed, rails, feature,
+  tol, budget) -> Result<Solid, LoftError>` with its planned signature,
+  failing with `LoftError::Failed(TooComplex)`, to be replaced whole by
+  the real one (with what it needs beside it under `loft/`). Reached as
+  `varde_kernel::loft::{loft, Section, LoftMode, Rail, LoftError,
+  on_one_plane, MAX_SECTIONS, MAX_RAILS}`, not re-exported at the
+  crate's root. A `Section` is `Loop { outline: Loop, frame: Frame,
+  start: Option<usize> }` (one loop, no holes, the start the index of
+  the segment starting at the start vertex, `None` for the plan's
+  default nearest the previous start) or `Point(DVec3)`; a `Rail` is
+  `{ conics: Vec<Conic3> }`, an open chain in the world. The refusals
+  are `OnePlane { section }` (sections `section` and the next, the first
+  after the last of a closed loft), `RailMisses { rail, section }`,
+  `Twists` and `IntoItself`; the plan's "a section with holes" can't
+  reach the kernel (a section is one `Loop`): regeneration refuses it,
+  and the document refuses a region reference with holes. Departing
+  from the plan, regeneration refuses two consecutive sections on one
+  plane before the kernel, by the kernel's own built rule
+  `on_one_plane` (every vertex of each within the resolution of the
+  other's plane; a point on a loop's plane; two points never), which
+  the kernel should guard with too; and a closed loft takes no rails
+  (the document refuses them: a rail is an open chain). The face names
+  the plan gives a loft's walls (`Lofted { curve, span, segment }`)
+  aren't in `PartKey` yet: they come with the kernel's loft, and become
+  part of the format then. The planned analytic tests (frustum,
+  hyperbolic paraboloids, oblique cone, cone to a point, square to a
+  circle against its sections' integral, three sections ruled and
+  smooth, a closed frame, a rail, the refusals, thread counts) are in
+  `loft/tests.rs`, `#[ignore = "kernel loft not built"]`; their
+  references are checked against closed forms by a test that runs. See
+  "Loft" in `agents/features.md`.
