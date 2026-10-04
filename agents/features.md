@@ -1,7 +1,7 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers, shells, fillets,
-offset faces and drafts), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers, shells, fillets, offset faces,
+drafts and sweeps), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -38,14 +38,17 @@ they share with the newer kinds is here. The kernel math of each is in
   `check_new` on the added or set feature: what's required of a feature
   when the user makes or edits it, but not of one already in a document
   (a later edit of its sketch may break it, which regeneration reports).
-  Today that's a revolve's axis line and a split's line's curves.
+  Today that's a revolve's axis line, a split's line's curves and a
+  sweep's path's curves.
 - `FeatureKind` helpers: `noun`, `sketch` (the profile sketch, or a
-  split's regions' or line's sketch),
+  split's regions' or line's sketch; a sweep's profile's, not its
+  path's, so adding a sweep hides only its profile's sketch),
   `operation` / `new_body` (an extrude's or revolve's `Operation`, or a
   split's new body; a body's maker is checked by `new_body`, or a
   pattern's copy bodies),
   and `uses`, now a **list**
-  (sorted, no repeats) of the features this one builds on, which
+  (sorted, no repeats) of the features this one builds on (a sweep's
+  profile's sketch and its path's sketches), which
   `Document::removal` follows. Every extrude-only path that only cared
   about the operation (`drop_excluded`, the app's delete prompt and its
   join merges) goes through `operation()` so revolves get them too.
@@ -54,8 +57,8 @@ they share with the newer kinds is here. The kernel math of each is in
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
   `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6, `Align` 7,
-  `Scale` 8, `Split` 9, `Chamfer` 10, `Shell` 11, `OffsetFace` 12,
-  `FaceDraft` 13): files store a kind by its variant name, and
+  `Scale` 8, `Split` 9, `Chamfer` 10, `Shell` 11, `Fillet` 12, `OffsetFace` 13,
+  `FaceDraft` 14, `Sweep` 15): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -217,7 +220,10 @@ message is worded from the kernel's `failure.error` as before
     a scale's point or edge not found, its edge too short, its length
     too far from the edge's, its edge not straight or not along an axis
     for a scale along it, a factor out of range, a body scaled out of
-    range (see "Scale").
+    range (see "Scale"); a sweep's path not found, its sketch not
+    placed, its edge or its edge's body gone, its parts apart, a closed
+    part with others, its start off the profile's plane or not square
+    to it, its helix too long (a corner shows its joint: see "Sweep").
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s
   and the draft's `Drafted` (`MeshFeed::draft_geometry`, beside
   `draft_error`). The viewport draws the geometry of the draft's
@@ -4109,3 +4115,187 @@ picks; each ready session whole and checked, committed as set up, the
 plane drawn finite, and each draft that works by its volume;
 `VARDE_DRAFT_SEEDS`). What the face sessions' tests share (boxes, flat faces found
 and clicked, the screen's text) is `app/src/doc/motion/tests/face_session.rs`.
+
+## Sweep
+
+`crates/document/src/sweep.rs`.
+
+```rust
+pub struct Sweep {
+    pub sketch: FeatureId,              // the profile's sketch, before it
+    pub regions: Vec<RegionRef>,        // 1..=MAX_SWEEP_REGIONS (256)
+    pub path: PathRef,
+    pub orientation: Orientation,       // FollowPath (default) | Keep; FollowPath with a helix
+    pub twist: Option<Value>,           // an angle over the whole path, within 8 turns; none with a helix
+    pub operation: Operation,           // an extrude's
+}
+pub enum PathRef { Chain(Vec<PathPart>), Helix(Helix) }             // parts 1..=MAX_PATH_PARTS (64)
+pub enum PathPart { Curves(CurveChain), Edges { edges: Vec<EdgeRef>, tangent: bool } }
+pub struct CurveChain { pub sketch: FeatureId, pub curves: Vec<Id> }  // sorted, no repeats
+pub struct Helix { pub axis: AxisRef, pub pitch: Value, pub turns: Value, pub left_handed: bool, pub flip: bool }
+```
+
+- **What it is**: the sixteenth variant (`FeatureKind::Sweep`, "Sweep
+  N"), appended after the draft (`a_sweep_is_the_sixteenth_kind` is
+  the one test that writes its index down). The profile's regions, made as an extrude's,
+  moved along the path into a tool solid that makes a new body or
+  joins, cuts or intersects as an extrude's does (`operation()`,
+  `new_body()`, excluded bodies dropped as theirs). The path is chains
+  of other sketches' curves and of model edges, joined end to end by
+  regeneration in whatever order they're listed, or a helix alone:
+  about its axis (an origin axis, a straight or round edge, a round
+  face, as a move's turn's), `pitch` a turn along it (a length as an
+  extrude's distance), `turns` (`1e-3 ..= 1000`, a number), right-handed
+  unless `left_handed`, `flip` reversing the axis. The profile's plane
+  holds a helix's axis (each profile point runs on a helix of its own);
+  for a chain it's square to the path at its start.
+- **Checks** (`CheckError::Sweep(id, SweepError)`):
+  `Sweep::check_own(design)` (cheap): 1..=256 regions each checked;
+  for a chain 1..=64 parts, none empty (`EmptyPart`), at most 1 024
+  curves and edges in all (`PathCurves`, summed checked as it goes), a
+  part's curves sorted without repeats (`CurveOrder`), its edges each
+  checked on their own (`Edge`), in `EdgeRef::order` without repeats
+  (`EdgeOrder`), all on one body (`EdgeBodies`); for a helix,
+  FollowPath and no twist (`HelixOptions`), its axis checked on its own
+  as a move's (`Axis`), its pitch and turns by their asks
+  (`Sweep::pitch_ask`, `turns_ask`); a twist by `twist_ask` (an angle
+  within `MAX_TWIST_TURNS` turns either way). `Document::check` then
+  wants the profile's sketch a sketch before it and the operation as an
+  extrude's, and `Document::check_path(index, profile, path)` (public,
+  for the panel): each part's sketch a sketch before it
+  (`PathSketch`) other than the profile's (`OwnSketch`: a path in the
+  profile's plane can't be square to it), each edge part's body there
+  and made before it (`EdgeBody`: depended on) and its faces' makers
+  before it or not there with ids no later feature can take
+  (`EdgeMaker`), a helix axis's body likewise (`AxisBody`,
+  `AxisMaker`). On add and set only (`check_new`): a part's curves are
+  curves of its sketch (`Sweep::check_curves`, `Curve`); a later edit
+  deleting one makes regeneration fail it ("path not found"). Several
+  parts may name one sketch: joining them is regeneration's.
+- **Dependencies**: `uses()` is the profile's sketch and every part's
+  sketch, so removing a path's sketch removes the sweep (and the body
+  it makes), as removing the profile's does; `bodies()` is the edge
+  parts' bodies and a helix axis's body (an edge or a face), so
+  removing them or their makers removes it too (the plan's dependency
+  list; a move's axis body, by contrast, isn't followed). The features
+  that made the edges' faces are not followed: removing one leaves the
+  sweep, which then fails ("its path edge wasn't found"). Adding a
+  sweep hides its profile's sketch, not its path's.
+- `SetUnits` pins its twist and a helix's pitch by their asks (and its
+  turns, which a bare number leaves as typed).
+
+### Regeneration
+
+`crates/regen/src/history/sweep.rs`, in history order, as part of the
+extrude's and revolve's run (`Run`, `Shape::Sweep`): the tool, then a
+new body, or touches and booleans exactly as an extrude's (the touched
+bodies noted, excluded bodies kept, merges, "it doesn't touch any
+body", the uncut note).
+
+- **The profile**: its sketch placed (else "its sketch isn't placed"),
+  its regions merged into a kernel `Profile` as an extrude's, on the
+  `Frame` of the placement.
+- **A sketch part**: its sketch must be placed ("its path's sketch
+  isn't placed"); its curves ordered by `profile::path_chain` (the
+  split's `profile::chain`, which now also takes a closed chain for a
+  path: a circle alone, from its `+x` point round counter-clockwise, a
+  closed spline alone, or curves joining into a loop, run as the lowest
+  curve runs, its last conic ending on the first's start to the bit;
+  ends joined within the resolution): "path not found" for a curve
+  gone, "its path's curves don't join end to end into one line" for
+  branches or pieces, "its path has a closed part and others" for a
+  closed curve among others; then mapped into the world by the
+  placement (control points mapped, weights kept: exact), one piece per
+  curve: a line `Piece::Line`, an arc or circle `Piece::Arc` about its
+  centre, right-handed about the sketch's normal where it turns
+  counter-clockwise in the sketch and against it otherwise, a spline
+  `Piece::Curve` with the sketch's normal.
+- **An edge part**: its body's holder must have a solid ("its path
+  edge's body is gone"); each edge found on the topology drawing it
+  keeps (`inspect::topology`) by keys and point ("its path edge wasn't
+  found", "its path edge 2 of 3 wasn't found"); with `tangent` every
+  chain sharing a root in `Topology::tangent_chains` taken in (as a
+  chamfer's chains grow); the chains ordered end to end by their
+  vertices (mesh vertex ids, never distance): three ends at a vertex or
+  chains in several pieces "its path's edges don't join end to end into
+  one line", a closed chain (a rim) only alone; each chain one piece by
+  `edge_shape`: a line, an arc about its circle's centre (its axis
+  negated where the walk runs it backwards), anything else a curve of
+  its conics with no plane.
+- **Joining**: a closed part must be the only one (its joints, the
+  closing one too, checked; the start where the profile's plane crosses
+  it is the kernel's to find). Otherwise the first part is the one with
+  an end within the resolution of the profile's plane, of several the
+  end nearest the middle of the profile's box (a choice by distance,
+  not a merge; none: "its path doesn't start on its profile's plane"),
+  run from that end; each next the only part with an end within the
+  resolution of the chain's end (none or several: "its path's parts
+  don't join into one chain: there's a gap or a branch between them"),
+  reversed as needed, the gap carried, not closed. Then every joint
+  between pieces (between a sketch part's curves, an edge part's chains
+  and the parts; not inside a piece, whose conics a traced chain fits
+  only to the tolerance) must be tangent-continuous: the unit tangents
+  (from the control points: `c − p0` leaving, `p1 − c` arriving)
+  pointing the same way within a sine of `1e-6` (the solver holds
+  tangent joints to `1e-10`), else "its path has a corner: sweep each
+  side of it apart and join them", the joint drawn as a point; and the
+  start's tangent square to the profile's plane within a sine of
+  `1e-6`, else "its profile isn't square to its path where the path
+  starts". These are regen's own refusals, before the kernel (the
+  kernel's sweep keeps the same checks as a guard).
+- **A helix**: its axis resolved as a move's turn's
+  (`motion::resolve_axis`: its messages, "its axis edge wasn't found"
+  and the rest), reversed with `flip`, noted in
+  `Evaluation::references` (so a draft's reply carries it, for drawing),
+  made unit ("its helix's axis has no direction"); `pitch × turns`
+  within `MAX_COORD` (both checked, so finite), else "its helix is too
+  long".
+- **The kernel**: `varde_kernel::sweep::sweep(profile, frame, path,
+  orientation, twist, feature, tol, budget)` (`Orientation::Follow` or
+  `Keep`, the twist's value or 0), cached as an `Entry::Solid` by the
+  feature, the regions, the fit tolerance, the profile sketch's key and
+  placement, the orientation, the twist's bits and every number of the
+  path as built (so an edit that leaves the path where it was, a model
+  edge on a body changed elsewhere say, finds the tool again; building
+  the path again is linear in its curves and edges, the topology cached
+  by the body's key). Its refusals (`SweepError`) are worded by
+  `message::sweep_refused`: a corner (drawn), off the start, not square,
+  "its path bends tighter than its profile ...", "its path turns
+  parallel to its profile: follow the path instead of keeping the
+  orientation", "its profile's plane must hold its helix's axis", "its
+  profile reaches its helix's axis", "its helix's pitch is smaller than
+  its profile: neighbouring turns would meet", "the sweep runs into
+  itself"; its failures as a tool's (`message::tool` with
+  `Making::Sweep`: too complex is "sweeping its regions along its path
+  is too complex to work out").
+- **Kernel stand-in**: the kernel's sweep (`kernel/src/sweep/path.rs`)
+  isn't built yet: it fails with `TooComplex`. So every sweep whose path
+  regen builds fails today with that message, making no body (its new
+  body has no solid; a feature naming it fails as for any), and the rest
+  of the history goes on. The regen tests swap it (`sweep::SWEEPER`, a
+  thread local; other crates' tests through the `testing` feature,
+  `varde_regen::testing::sweep_by_extrude`) for `by_extrude`: a path of
+  straight pieces along one line from the profile's plane, square to
+  it, untwisted, extruded along it as far as it reaches (a box's volume
+  for a rectangle); anything else too complex; and for a recording
+  stand-in that checks the path handed over. The planned analytic tests
+  of the feature with the kernel's sweep (a pipe joined to a plate at
+  its start, cut through a block, a bead along a round rim following
+  it, a spring joined to a plate) are written out in
+  `history/tests/sweep.rs` and `#[ignore = "kernel sweep not built"]`.
+- The draft's reply carries a helix's axis as `Drafted::reference`, as
+  a move's (checked on the wire as theirs).
+
+### UI
+
+Not built yet. The Timeline shows a sweep with its icon (the icon
+mock's sweep: a path and a ring), the note "along Sketch 3", "along
+Body 1" (one edge part), "along 3 parts" or "helix · 10 turns", the
+status bar "Along Sketch 3 · Follow path · Twist 90° · New body"
+(`view/src/sweep.rs`), and "Edit sweep" in its menu, which does
+nothing yet (no session to edit it in). The UI mock has no sweep panel:
+the session (regions picked as an extrude's; the path's parts, sketch
+chains and model edge chains, picked in the model; or a helix with its
+axis row, pitch, turns, Left-handed and Flip; orientation, twist,
+operation and bodies; the preview) is to be built in the style of the
+revolve's panel.

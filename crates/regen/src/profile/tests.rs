@@ -647,3 +647,88 @@ fn errors_display() {
         assert!(!error.to_string().is_empty());
     }
 }
+
+/// A path's chain may close: a circle alone (four quarter arcs from its
+/// `+x` point, counter-clockwise), a closed spline alone, or lines
+/// joining in a loop (from the lowest's start, ending on it to the bit);
+/// a split's chain still refuses all three, and a circle among other
+/// curves is closed for a path too.
+#[test]
+fn a_path_chain_may_close() {
+    let ends_meet = |segments: &[Segment]| {
+        let (first, last) = (segments[0].conic, segments[segments.len() - 1].conic);
+        assert_eq!(first.p0, last.p1);
+        for pair in segments.windows(2) {
+            assert_eq!(pair[0].conic.p1, pair[1].conic.p0);
+        }
+    };
+    let mut sketch = Sketch::default();
+    let center = sketch.add_point(DVec2::new(1.0, 2.0)).unwrap();
+    let circle = (sketch.add_curve(
+        Curve::Circle {
+            center,
+            radius: 3.0,
+        },
+        false,
+    ))
+    .unwrap();
+    let (segments, closed) = path_chain(&sketch, &[circle], 1e-9, FIT).unwrap();
+    assert!(closed);
+    assert_eq!(segments.len(), 4);
+    assert_eq!(segments[0].conic.p0, DVec2::new(4.0, 2.0));
+    assert_eq!(segments[0].conic.p1, DVec2::new(1.0, 5.0));
+    ends_meet(&segments);
+    assert_eq!(
+        chain(&sketch, &[circle], 1e-9, FIT),
+        Err(ChainError::Closed)
+    );
+
+    let mut sketch = Sketch::default();
+    let spline = blob(&mut sketch);
+    let (segments, closed) = path_chain(&sketch, &[spline], 1e-9, FIT).unwrap();
+    assert!(closed);
+    ends_meet(&segments);
+    assert!(segments.iter().all(|s| s.curve == u64::from(spline.get())));
+
+    let mut sketch = Sketch::default();
+    let corners = [(0.0, 0.0), (4.0, 0.0), (4.0, 3.0), (0.0, 3.0)]
+        .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+    let mut lines: Vec<varde_sketch::Id> = (0..4)
+        .map(|k| {
+            let line = Curve::Line {
+                start: corners[(k + 1) % 4],
+                end: corners[k],
+            };
+            sketch.add_curve(line, false).unwrap()
+        })
+        .collect();
+    lines.sort();
+    let (segments, closed) = path_chain(&sketch, &lines, 1e-9, FIT).unwrap();
+    assert!(closed);
+    assert_eq!(segments.len(), 4);
+    // The lowest line runs from (4, 0) to (0, 0).
+    assert_eq!(segments[0].conic.p0, DVec2::new(4.0, 0.0));
+    assert_eq!(segments[0].conic.p1, DVec2::new(0.0, 0.0));
+    ends_meet(&segments);
+    assert_eq!(chain(&sketch, &lines, 1e-9, FIT), Err(ChainError::Closed));
+    // Open, it's a chain either way.
+    let (open, closed) = path_chain(&sketch, &lines[..3], 1e-9, FIT).unwrap();
+    assert!(!closed);
+    assert_eq!(open, chain(&sketch, &lines[..3], 1e-9, FIT).unwrap());
+    // A circle among lines.
+    let center = sketch.add_point(DVec2::new(9.0, 9.0)).unwrap();
+    let circle = (sketch.add_curve(
+        Curve::Circle {
+            center,
+            radius: 1.0,
+        },
+        false,
+    ))
+    .unwrap();
+    let mut mixed = lines[..2].to_vec();
+    mixed.push(circle);
+    assert_eq!(
+        path_chain(&sketch, &mixed, 1e-9, FIT),
+        Err(ChainError::Closed)
+    );
+}

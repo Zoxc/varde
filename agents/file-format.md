@@ -347,7 +347,17 @@ in). Offset faces are new, so no older record holds one; or a draft
 plane (a `PlaneRef`, as a mirror's: an origin plane or a face), its
 angle (a typed angle and its value in radians), `flip` (the pull
 against the plane's normal) and `tangent` (tangent faces taken in).
-Drafts are new, so no older record holds one. A
+Drafts are new, so no older record holds one; or a sweep, `crates/document/src/sweep.rs`: its profile's sketch's
+id and regions as an extrude's, its path (`PathRef`: a chain of parts,
+each a sketch's id and the ids of its curves, sorted (`CurveChain`), or
+the edges of one body, each as a revolve's axis edge, sorted by body,
+keys and point, and whether tangent chains are taken in; or a helix,
+`Helix`: its axis as a move's, its pitch (a typed length and its value
+in millimetres), its turns (a typed number and its value), whether
+left-handed and whether flipped), its orientation (`Orientation`:
+follow the path or keep it), an optional twist (an angle as a
+revolve's) and its operation as an extrude's. Sweeps are new, so no
+older record holds one. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -368,7 +378,7 @@ bodies and features take. A document read from a file is checked
 (`Document::check`, which runs `Sketch::check` on each sketch): body and
 feature ids increasing and below the next id, every body's opacity from
 10 to 100, every body made by an
-extrude or revolve the document holds whose operation makes it as its
+extrude, revolve or sweep the document holds whose operation makes it as its
 new body, or a split naming it as its new body, and every such body there, or by a pattern listing it as a
 copy body (one per copy, none repeated, every body it makes listed, at
 most 1024, none for a joined one), an extrude's or revolve's sketch a
@@ -428,6 +438,17 @@ a draft's faces as an offset face's, its neutral face (if a face) on a
 body made by an earlier feature, its point finite and within the
 coordinate limit and its key's feature (if there) before the draft or
 with an id below the next id; its angle above zero and under 90°;
+a sweep as an extrude (its profile's sketch, regions, operation and
+excluded bodies), its chain path of 1 to 64 parts with at most 1024
+curves and edges in all, each part naming at least one, a part's
+curves sorted without repeats and its sketch a sketch before the sweep
+other than its profile's (its curves aren't required to exist, as a
+region isn't), a part's edges on one body there and made by an earlier
+feature, sorted without repeats, each as a chamfer's edge; or its
+helix's axis as a move's, the axis's body there and made earlier, its
+pitch a length as an extrude's, its turns from 0.001 to 1000, and with
+a helix the orientation following the path and no twist; a twist
+within 8 turns either way;
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

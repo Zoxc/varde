@@ -46,6 +46,7 @@ mod snap;
 pub mod spline;
 mod split;
 mod status;
+mod sweep;
 #[cfg(test)]
 mod testing;
 mod theme;

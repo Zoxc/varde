@@ -49,13 +49,15 @@ pub enum Command {
     /// copies are bodies of their own ([`Copies::Separate`]) adds them,
     /// one per copy, named so in turn, whatever its list held. A
     /// revolve's axis must be a line of its sketch
-    /// ([`Revolve::check_axis`]), and a split's line's curves curves of
-    /// its sketch ([`Split::check_curves`]).
+    /// ([`Revolve::check_axis`]), a split's line's curves curves of its
+    /// sketch ([`Split::check_curves`]), and a sweep's path's curves
+    /// curves of theirs ([`Sweep::check_curves`]).
     ///
     /// [`Revolve::check_axis`]: crate::Revolve::check_axis
     /// [`Operation::NewBody`]: crate::Operation::NewBody
     /// [`Split::new_body`]: crate::Split::new_body
     /// [`Split::check_curves`]: crate::Split::check_curves
+    /// [`Sweep::check_curves`]: crate::Sweep::check_curves
     AddFeature {
         name: String,
         kind: Box<FeatureKind>,
@@ -303,8 +305,15 @@ impl Document {
     /// Checks what [`Command::AddFeature`] and [`Command::SetFeature`]
     /// require of `kind`, feature `index` of this document, beyond
     /// [`Document::check`]: a revolve's axis is a line of its sketch, and
-    /// a split's line's curves are curves of its sketch.
+    /// a split's line's and a sweep's path's curves are curves of their
+    /// sketches.
     fn check_new(&self, index: usize, kind: &FeatureKind) -> Result<(), EditError> {
+        if let FeatureKind::Sweep(sweep) = kind {
+            let id = self.features[index].id;
+            sweep
+                .check_curves(|sketch| self.sketch_before(index, sketch))
+                .map_err(|why| EditError::Invalid(CheckError::Sweep(id, why)))?;
+        }
         if let FeatureKind::Split(split) = kind
             && let Some(sketch) = (split.tool.sketch()).and_then(|id| self.sketch_before(index, id))
         {
@@ -709,6 +718,13 @@ impl Editor {
                         }
                         FeatureKind::FaceDraft(draft) => {
                             for (value, ask) in draft.values_mut(&before) {
+                                value.pin_units(&ask);
+                            }
+                        }
+                        // Turns have no unit, but are pinned as a
+                        // scale's factors are.
+                        FeatureKind::Sweep(sweep) => {
+                            for (value, ask) in sweep.values_mut(&before) {
                                 value.pin_units(&ask);
                             }
                         }

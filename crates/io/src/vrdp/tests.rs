@@ -4152,3 +4152,297 @@ fn a_draft_s_faces_and_values_are_checked_as_read() {
     });
     assert!(origin.is_ok());
 }
+
+/// The example plate with "Sketch 2" on XZ, a line up from (20, 0, 0) to
+/// (20, 0, 30), and three sweeps of the plate's region: along that line
+/// making a new body, along the plate's top front edge and the line kept
+/// upright with a twist of 22.5° as a join, and round a helix about the
+/// plate's corner edge, 1.25 a turn, 3.5 turns, as a cut.
+fn swept_plate() -> Document {
+    use glam::{DVec2, DVec3};
+    use varde_document::{
+        AxisRef, BodyId, CurveChain, EdgeRef, FaceKey, FeatureKind, Helix, Operation, Orientation,
+        PartKey, PathPart, PathRef, Sweep, Targets,
+    };
+    use varde_expr::Value;
+    use varde_sketch::{Curve, Sketch};
+    let mut editor = Editor::new(Document::example());
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XZ)))
+        .unwrap();
+    let path = editor.document().features().last().unwrap().id;
+    let mut drawn = Sketch::default();
+    let [a, b] =
+        [(20.0, 0.0), (20.0, 30.0)].map(|(x, y)| drawn.add_point(DVec2::new(x, y)).unwrap());
+    let line = drawn
+        .add_curve(Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: path,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let document = editor.document().clone();
+    let FeatureKind::Extrude(extrude) = &document.features()[1].kind else {
+        unreachable!()
+    };
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let key = |part| FaceKey {
+        feature: maker,
+        part,
+        instance: 0,
+    };
+    let edge = |a, b, near: [f64; 3]| {
+        let mut faces = [key(a), key(b)];
+        faces.sort();
+        EdgeRef {
+            body: plate,
+            faces,
+            near: DVec3::from(near),
+        }
+    };
+    let curves = PathPart::Curves(CurveChain {
+        sketch: path,
+        curves: vec![line],
+    });
+    let design = document.design();
+    let first = Sweep {
+        sketch: extrude.sketch,
+        regions: extrude.regions.clone(),
+        path: PathRef::Chain(vec![curves.clone()]),
+        orientation: Orientation::FollowPath,
+        twist: None,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    let second = Sweep {
+        path: PathRef::Chain(vec![
+            PathPart::Edges {
+                edges: vec![edge(
+                    PartKey::EndCap,
+                    PartKey::Side { curve: 5 },
+                    [0.0, -20.0, 10.0],
+                )],
+                tangent: true,
+            },
+            curves,
+        ]),
+        orientation: Orientation::Keep,
+        twist: Some(Value::new("22.5", &Sweep::twist_ask(&design)).unwrap()),
+        operation: Operation::Join(Targets::default()),
+        ..first.clone()
+    };
+    let third = Sweep {
+        path: PathRef::Helix(Helix {
+            axis: AxisRef::Edge(edge(
+                PartKey::Side { curve: 5 },
+                PartKey::Side { curve: 6 },
+                [30.0, -20.0, 5.0],
+            )),
+            pitch: Value::new("1.25", &Sweep::pitch_ask(&design)).unwrap(),
+            turns: Value::new("3.5", &Sweep::turns_ask(&design)).unwrap(),
+            left_handed: true,
+            flip: true,
+        }),
+        operation: Operation::Cut(Targets::default()),
+        ..first.clone()
+    };
+    for sweep in [first, second, third] {
+        editor
+            .apply(editor.document().add_feature(sweep.into()))
+            .unwrap();
+    }
+    editor.document().clone()
+}
+
+/// Sweeps go through a file and are read back in their places.
+#[test]
+fn sweeps_round_trip() {
+    use varde_document::FeatureKind;
+    let document = swept_plate();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    let sweeps = (read.features().iter())
+        .filter(|feature| matches!(feature.kind, FeatureKind::Sweep(_)))
+        .count();
+    assert_eq!(sweeps, 3);
+}
+
+/// A record whose sweep's twist, pitch, turns or edge point was changed
+/// on disk to what the document refuses is refused as it's read; as
+/// written, it reads.
+#[test]
+fn a_tampered_sweep_is_refused() {
+    let raw = record_msgpack(&swept_plate());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let float = |x: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&x.to_bits().to_be_bytes());
+        bytes
+    };
+    let twist = 22.5_f64.to_radians();
+    for (was, nows) in [
+        (twist, vec![f64::NAN, 1e9, twist * 2.0]),
+        (1.25, vec![0.0, -1.25, f64::INFINITY]),
+        (3.5, vec![0.0, 1e4, 3.5e-4]),
+        (-20.0, vec![f64::NAN, -3e6]),
+    ] {
+        let was = float(was);
+        let at = (raw.windows(was.len()))
+            .position(|window| window == was)
+            .expect("the value is in the record");
+        for now in nows {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&now.to_bits().to_be_bytes());
+            assert!(
+                from_msgpack::<Document>(&changed).is_err(),
+                "{now} was taken"
+            );
+        }
+    }
+}
+
+/// The sweeps' part of a record damaged on disk, every float in it set
+/// to what's out of bounds or not a number and random bytes in it
+/// changed (2 000 ways): refused as it's read or read as a document that
+/// passes its check, its sweeps their own, never a panic.
+#[test]
+fn a_damaged_sweep_is_refused_or_checked() {
+    let document = swept_plate();
+    let raw = record_msgpack(&document);
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let from = (raw.windows(5))
+        .position(|window| window == b"Sweep")
+        .expect("a sweep's variant name");
+    let read = |bytes: &[u8]| {
+        if let Ok((document, _)) = from_msgpack::<Document>(bytes) {
+            document.check().unwrap();
+            for (index, feature) in document.features().iter().enumerate() {
+                if let varde_document::FeatureKind::Sweep(sweep) = &feature.kind {
+                    sweep.check_own(&document.design()).unwrap();
+                    document
+                        .check_path(index, sweep.sketch, &sweep.path)
+                        .unwrap();
+                }
+            }
+        }
+    };
+    let floats: Vec<usize> = (from..raw.len().saturating_sub(8))
+        .filter(|&at| raw[at] == 0xcb)
+        .collect();
+    assert!(floats.len() > 6, "{}", floats.len());
+    for &at in &floats {
+        for x in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e300,
+            -1e300,
+            1.000_001e6,
+            1e6,
+            -0.0,
+            0.0,
+            f64::MIN_POSITIVE,
+            -1.0,
+        ] {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&x.to_bits().to_be_bytes());
+            read(&changed);
+        }
+    }
+    let size = raw.len() - from;
+    for seed in 0..2_000u64 {
+        let picks = noise(8, seed.wrapping_mul(0x9e37_79b9) + 11);
+        let mut changed = raw.clone();
+        for pair in picks.chunks(2).take(1 + (seed % 3) as usize) {
+            let at = from + (usize::from(pair[0]) * 256 + usize::from(pair[1])) % size;
+            changed[at] = picks[(seed % 8) as usize] ^ pair[1];
+        }
+        read(&changed);
+    }
+}
+
+/// A sweep's path naming its profile's own sketch, a later or missing
+/// body's edge, out-of-order edges or curves, a helix with a twist, or
+/// no parts, in a record: each refused as it's read.
+#[test]
+fn a_sweep_s_path_is_checked_as_read() {
+    use varde_document::{FeatureKind, Orientation, PathPart, PathRef, Sweep};
+    let document = swept_plate();
+    let raw = record_msgpack(&document);
+    let count = document.features().len();
+    let (index, second) = (count - 2, &document.features()[count - 2].kind);
+    let FeatureKind::Sweep(second) = second else {
+        panic!("the second sweep");
+    };
+    let was = rmp_serde::to_vec_named(&FeatureKind::Sweep(second.clone())).unwrap();
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the sweep in the record");
+    let changed = |change: &dyn Fn(&mut Sweep)| {
+        let mut sweep = second.clone();
+        change(&mut sweep);
+        let now = rmp_serde::to_vec_named(&FeatureKind::Sweep(sweep.clone())).unwrap();
+        let mut changed = raw[..at].to_vec();
+        changed.extend_from_slice(&now);
+        changed.extend_from_slice(&raw[at + was.len()..]);
+        (sweep, from_msgpack::<Document>(&changed))
+    };
+    let refused = |change: &dyn Fn(&mut Sweep)| {
+        let (sweep, read) = changed(change);
+        assert!(read.is_err(), "taken: {sweep:?}");
+    };
+    fn parts(sweep: &mut Sweep) -> &mut Vec<PathPart> {
+        match &mut sweep.path {
+            PathRef::Chain(parts) => parts,
+            PathRef::Helix(_) => unreachable!(),
+        }
+    }
+    refused(&|sweep| parts(sweep).clear());
+    refused(&|sweep| {
+        let profile = sweep.sketch;
+        if let PathPart::Curves(chain) = &mut parts(sweep)[1] {
+            chain.sketch = profile;
+        }
+    });
+    refused(&|sweep| {
+        if let PathPart::Edges { edges, .. } = &mut parts(sweep)[0] {
+            edges[0].body = varde_document::BodyId::NEW;
+        }
+    });
+    refused(&|sweep| {
+        if let PathPart::Edges { edges, .. } = &mut parts(sweep)[0] {
+            let edge = edges[0];
+            edges.insert(
+                0,
+                varde_document::EdgeRef {
+                    near: edge.near + glam::DVec3::X,
+                    ..edge
+                },
+            );
+        }
+    });
+    let own = document.features()[index].id.get();
+    refused(&|sweep| {
+        if let PathPart::Edges { edges, .. } = &mut parts(sweep)[0] {
+            edges[0].faces[1].feature = own;
+        }
+    });
+    // The third sweep's helix with the second's twist, or kept upright.
+    let FeatureKind::Sweep(third) = &document.features()[count - 1].kind else {
+        panic!("the third sweep");
+    };
+    refused(&|sweep| sweep.path = third.path.clone());
+    refused(&|sweep| {
+        sweep.path = third.path.clone();
+        sweep.twist = None;
+    });
+    let (_, helical) = changed(&|sweep| {
+        sweep.path = third.path.clone();
+        sweep.twist = None;
+        sweep.orientation = Orientation::FollowPath;
+    });
+    assert!(helical.is_ok());
+}

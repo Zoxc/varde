@@ -10269,3 +10269,30 @@ see `agents/features.md`, "Failures and where they are").
   and its own, `FacingPull { region }` (a plane square to the pull: no
   hinge) and `CannotDraft { region }` (neither flat nor a wall along
   the pull). See "Draft" in `agents/features.md`.
+- **Sweep built above a stand-in.** The sweep feature's document and
+  regeneration came before the kernel's path sweep (kernel work put
+  off; the plan's sweep in one plane, 3D paths and helices are not
+  built): `sweep/path.rs` holds the kernel's path types and
+  `sweep(profile, frame, path, orientation, twist, feature, tol,
+  budget) -> Result<Solid, SweepError>` with its planned signature,
+  failing with `SweepError::Failed(TooComplex)`, to be replaced whole by
+  the real one (with what it needs beside it under `sweep/`). Reached
+  as `varde_kernel::sweep::sweep` and `varde_kernel::sweep::{Path,
+  Piece, Helix, Orientation, SweepError}`, not re-exported at the
+  crate's root, where revolve's `Sweep` (its span) already is. A
+  `Path` is `Chain { pieces, closed }` or `Helix(Helix { point, axis,
+  pitch, turns, left })`; a `Piece` is `Line { from, to }`, `Arc {
+  conics, centre, axis }` (each conic at most a quarter turn, right-handed
+  about the unit axis) or `Curve { conics, normal }` (the plane's normal
+  where it's a sketch's, none for a model edge); the refusals are
+  `Corner { at }`, `OffStart`, `NotSquare`, `TooTight { piece }`,
+  `Parallel`, `HelixPlane`, `ReachesAxis`, `Pitch` and `IntoItself`.
+  Departing from the plan, regeneration orders and joins the parts
+  and checks the joints' tangents, an open path's start on the
+  profile's plane and its squareness (the plan has the kernel check
+  those too; it still should, as a guard, with the same rules); a closed
+  path's start, where the profile's plane crosses it, stays the
+  kernel's. The planned analytic tests (paths in one plane, 3D paths,
+  helices, refusals, thread counts) are in `sweep/path/tests.rs`,
+  `#[ignore = "kernel sweep not built"]`. See "Sweep" in
+  `agents/features.md`.

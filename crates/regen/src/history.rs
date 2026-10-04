@@ -64,7 +64,8 @@
 //! found") and hollows the body by the kernel's shell, the body keeping
 //! its id (see `shell`). A fillet finds and grows its edges as a
 //! chamfer does and rounds them off by the kernel's fillet (see
-//! `fillet`; what the two share of their edges is `blend`). An offset face finds its faces on its body's
+//! `fillet`; what the two share of their edges is `blend`). An offset
+//! face finds its faces on its body's
 //! topology (one not found: "its face wasn't found") and moves them by
 //! the kernel's offset face, the body keeping its id and its faces their
 //! names (see `offset_face`). A draft finds its faces and its neutral
@@ -72,7 +73,11 @@
 //! faces by the kernel's draft, the body keeping its id and its faces
 //! their names (see `face_draft`). What chamfers, shells, fillets,
 //! offset faces and drafts share of their body, changed in place, is
-//! `in_place`.
+//! `in_place`. A sweep makes its tool as an extrude does, but
+//! by the kernel's sweep along its path (sketch chains placed by their
+//! sketches, model edges found on their bodies, joined end to end from
+//! the profile's plane, or a helix about an axis found as a move's; see
+//! `sweep`), then goes on as an extrude does.
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -105,12 +110,12 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3};
 use varde_document::{
     AxisLine, BodyId, Document, EdgeRef, Extrude, FaceRef, Feature, FeatureId, FeatureKind,
-    MAX_COORD, Operation, Placement, Plane, Revolve, Sketch,
+    MAX_COORD, Operation, Placement, Plane, Revolve, Sketch, Sweep,
 };
 use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::mesh::Form;
 use varde_kernel::patch::{Conic2, Conic3};
-use varde_kernel::{Budget, Failure, Frame, Loop, Op, Profile, Segment, Solid, Sweep, Tolerance};
+use varde_kernel::{Budget, Failure, Frame, Loop, Op, Profile, Segment, Solid, Tolerance};
 use varde_sketch::{Curve, Id, Profiles, RegionRef, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
@@ -132,6 +137,7 @@ mod pattern;
 pub(crate) mod scale;
 mod shell;
 mod split;
+mod sweep;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use chamfer::chamfer_by_wedges;
 #[cfg(any(test, feature = "testing"))]
@@ -144,6 +150,8 @@ pub(crate) use offset_face::offset_by_boxes;
 pub(crate) use shell::shell_by_boxes;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use split::split_by_booleans;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use sweep::sweep_by_extrude;
 
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.
@@ -406,13 +414,16 @@ fn walk(
                     key,
                 });
             }
-            FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
+            FeatureKind::Extrude(_) | FeatureKind::Revolve(_) | FeatureKind::Sweep(_) => {
                 let (sketch, shape, operation) = match &feature.kind {
                     FeatureKind::Extrude(extrude) => {
                         (extrude.sketch, Shape::Extrude(extrude), &extrude.operation)
                     }
                     FeatureKind::Revolve(revolve) => {
                         (revolve.sketch, Shape::Revolve(revolve), &revolve.operation)
+                    }
+                    FeatureKind::Sweep(sweep) => {
+                        (sweep.sketch, Shape::Sweep(sweep), &sweep.operation)
                     }
                     FeatureKind::Sketch { .. }
                     | FeatureKind::Combine(_)
@@ -428,8 +439,8 @@ fn walk(
                     | FeatureKind::OffsetFace(_)
                     | FeatureKind::FaceDraft(_) => unreachable!("matched apart"),
                 };
-                // A checked document's extrude or revolve names a sketch
-                // before it.
+                // A checked document's extrude, revolve or sweep names a
+                // sketch before it.
                 let Some(sketch) = sketches.iter().find(|s| s.id == sketch) else {
                     let failed = Failed::from("its sketch isn't there");
                     evaluation.failed.push(failed.of(feature.id));
@@ -441,6 +452,7 @@ fn walk(
                     shape,
                     operation,
                     sketch,
+                    sketches: &sketches,
                     tolerance,
                     touching,
                 };
@@ -613,6 +625,7 @@ fn walk(
 enum Shape<'a> {
     Extrude(&'a Extrude),
     Revolve(&'a Revolve),
+    Sweep(&'a Sweep),
 }
 
 impl<'a> Shape<'a> {
@@ -621,6 +634,7 @@ impl<'a> Shape<'a> {
         match self {
             Shape::Extrude(extrude) => &extrude.regions,
             Shape::Revolve(revolve) => &revolve.regions,
+            Shape::Sweep(sweep) => &sweep.regions,
         }
     }
 
@@ -629,17 +643,20 @@ impl<'a> Shape<'a> {
         match self {
             Shape::Extrude(_) => Making::Extrude,
             Shape::Revolve(_) => Making::Revolve,
+            Shape::Sweep(_) => Making::Sweep,
         }
     }
 }
 
-/// An extrude or revolve being evaluated.
+/// An extrude, revolve or sweep being evaluated.
 struct Run<'a> {
     document: &'a Document,
     feature: &'a Feature,
     shape: Shape<'a>,
     operation: &'a Operation,
     sketch: &'a SketchOutput<'a>,
+    /// Every sketch before it, for a sweep's path.
+    sketches: &'a [SketchOutput<'a>],
     tolerance: Tolerance,
     /// The budget of each [`varde_kernel::touches`].
     touching: Budget,
@@ -655,6 +672,7 @@ impl Run<'_> {
         let (tool, tool_key) = match self.shape {
             Shape::Extrude(extrude) => self.extruded(extrude, evaluation, cache)?,
             Shape::Revolve(revolve) => self.revolved(revolve, evaluation, cache)?,
+            Shape::Sweep(sweep) => self.swept(sweep, evaluation, cache)?,
         };
         let (op, doing) = match self.operation {
             Operation::NewBody(body) => {
@@ -1045,9 +1063,9 @@ impl Run<'_> {
             let (profile, frame, same_way) = axis_frame(&profile, &axis, &placement)
                 .map_err(|error| self.axis_failed(error, &placement))?;
             let sweep = match span {
-                None => Sweep::Full,
-                Some((from, to)) if same_way => Sweep::Part { from, to },
-                Some((from, to)) => Sweep::Part {
+                None => varde_kernel::Sweep::Full,
+                Some((from, to)) if same_way => varde_kernel::Sweep::Part { from, to },
+                Some((from, to)) => varde_kernel::Sweep::Part {
                     from: -to,
                     to: -from,
                 },

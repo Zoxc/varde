@@ -1,13 +1,13 @@
 //! Features: the steps a design is built from, sketches, extrudes,
 //! revolves, combines, moves, mirrors, patterns, aligns, scales, splits,
-//! chamfers, shells, fillets, offset faces and drafts.
+//! chamfers, shells, fillets, offset faces, drafts and sweeps.
 
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
 use crate::{
     Align, BodyId, Chamfer, Combine, Extrude, FaceDraft, Fillet, Mirror, Move, OffsetFace,
-    Operation, Pattern, Plane, Revolve, Scale, Shell, Split,
+    Operation, Pattern, Plane, Revolve, Scale, Shell, Split, Sweep,
 };
 
 /// A feature's handle in one document. It's opaque: ids come from the
@@ -59,6 +59,7 @@ pub enum FeatureKind {
     Fillet(Fillet),
     OffsetFace(OffsetFace),
     FaceDraft(FaceDraft),
+    Sweep(Sweep),
 }
 
 impl FeatureKind {
@@ -81,12 +82,14 @@ impl FeatureKind {
             FeatureKind::Fillet(_) => "Fillet",
             FeatureKind::OffsetFace(_) => "Offset face",
             FeatureKind::FaceDraft(_) => "Draft",
+            FeatureKind::Sweep(_) => "Sweep",
         }
     }
 
     /// The features it builds on, which come before it: an extrude's or a
-    /// revolve's sketch, or the sketch a split takes regions or a line
-    /// from. Removing one of them removes this too. Sorted,
+    /// revolve's sketch, the sketch a split takes regions or a line
+    /// from, or a sweep's profile's sketch and its path's sketches.
+    /// Removing one of them removes this too. Sorted,
     /// without repeats. The makers of the bodies it names
     /// ([`FeatureKind::bodies`]) aren't listed, as finding them takes the
     /// document, but [`Document::removal`](crate::Document::removal)
@@ -94,10 +97,13 @@ impl FeatureKind {
     /// plane ([`Plane::Face`]): removing it leaves the sketch, which then
     /// doesn't regenerate until it's put on another plane.
     pub fn uses(&self) -> Vec<FeatureId> {
-        match self.sketch() {
-            Some(sketch) => vec![sketch],
-            None => Vec::new(),
+        let mut uses: Vec<FeatureId> = self.sketch().into_iter().collect();
+        if let FeatureKind::Sweep(sweep) = self {
+            uses.extend(sweep.path_sketches());
+            uses.sort_unstable();
+            uses.dedup();
         }
+        uses
     }
 
     /// The bodies it names, which features before it make, and which it
@@ -107,7 +113,8 @@ impl FeatureKind {
     /// body a split splits, its tool body and its face tool's body, the
     /// body a chamfer's or a fillet's edges are on, the body a shell
     /// hollows, the body an offset face's faces are on, the bodies of a
-    /// draft's faces and of its neutral plane's face.
+    /// draft's faces and of its neutral plane's face, the bodies a
+    /// sweep's path's edges are on and its helix's axis's body.
     /// Removing one of them, or its maker, removes this too. Not the
     /// bodies an extrude or revolve takes out of its targets, which are
     /// dropped from its list instead, nor the body under a sketch's face
@@ -128,14 +135,16 @@ impl FeatureKind {
             FeatureKind::Fillet(fillet) => fillet.bodies(),
             FeatureKind::OffsetFace(offset) => offset.bodies(),
             FeatureKind::FaceDraft(draft) => draft.bodies(),
+            FeatureKind::Sweep(sweep) => sweep.bodies(),
             FeatureKind::Sketch { .. } | FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
                 Vec::new()
             }
         }
     }
 
-    /// The sketch whose regions it takes: an extrude's or a revolve's,
-    /// or a split's regions or line, which adding it hides.
+    /// The sketch whose regions it takes: an extrude's, a revolve's or a
+    /// sweep's (its profile's, not its path's), or a split's regions or
+    /// line, which adding it hides.
     pub fn sketch(&self) -> Option<FeatureId> {
         match self {
             FeatureKind::Sketch { .. }
@@ -152,12 +161,13 @@ impl FeatureKind {
             | FeatureKind::FaceDraft(_) => None,
             FeatureKind::Extrude(extrude) => Some(extrude.sketch),
             FeatureKind::Revolve(revolve) => Some(revolve.sketch),
+            FeatureKind::Sweep(sweep) => Some(sweep.sketch),
             FeatureKind::Split(split) => split.tool.sketch(),
         }
     }
 
-    /// What it does with the solid it makes: an extrude's or a revolve's
-    /// operation. A combine has none: it makes no solid of its own.
+    /// What it does with the solid it makes: an extrude's, a revolve's or
+    /// a sweep's operation. A combine has none: it makes no solid of its own.
     pub fn operation(&self) -> Option<&Operation> {
         match self {
             FeatureKind::Sketch { .. }
@@ -175,6 +185,7 @@ impl FeatureKind {
             | FeatureKind::FaceDraft(_) => None,
             FeatureKind::Extrude(extrude) => Some(&extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&revolve.operation),
+            FeatureKind::Sweep(sweep) => Some(&sweep.operation),
         }
     }
 
@@ -196,10 +207,11 @@ impl FeatureKind {
             | FeatureKind::FaceDraft(_) => None,
             FeatureKind::Extrude(extrude) => Some(&mut extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&mut revolve.operation),
+            FeatureKind::Sweep(sweep) => Some(&mut sweep.operation),
         }
     }
 
-    /// The body it makes: an extrude's or a revolve's
+    /// The body it makes: an extrude's, a revolve's or a sweep's
     /// [`Operation::NewBody`], or a split's new body.
     pub fn new_body(&self) -> Option<BodyId> {
         match self {
@@ -301,5 +313,11 @@ impl From<OffsetFace> for FeatureKind {
 impl From<FaceDraft> for FeatureKind {
     fn from(draft: FaceDraft) -> Self {
         FeatureKind::FaceDraft(draft)
+    }
+}
+
+impl From<Sweep> for FeatureKind {
+    fn from(sweep: Sweep) -> Self {
+        FeatureKind::Sweep(sweep)
     }
 }

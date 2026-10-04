@@ -219,6 +219,7 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Fillet(_) => Icon::BFillet,
         FeatureKind::OffsetFace(_) => Icon::OffsetFace,
         FeatureKind::FaceDraft(_) => Icon::Draft,
+        FeatureKind::Sweep(_) => Icon::Sweep,
     }
 }
 
@@ -257,6 +258,7 @@ fn feature_row<'a>(
         FeatureKind::Fillet(fillet) => crate::fillet::fillet_note(fillet, units).into(),
         FeatureKind::OffsetFace(offset) => crate::offset_face::offset_note(offset, units).into(),
         FeatureKind::FaceDraft(draft) => crate::face_draft::draft_note(draft).into(),
+        FeatureKind::Sweep(sweep) => crate::sweep::sweep_note(document, sweep).into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -358,6 +360,7 @@ fn edit_label(feature: &Feature) -> &'static str {
         FeatureKind::Fillet(_) => "Edit fillet",
         FeatureKind::OffsetFace(_) => "Edit offset face",
         FeatureKind::FaceDraft(_) => "Edit draft",
+        FeatureKind::Sweep(_) => "Edit sweep",
     }
 }
 

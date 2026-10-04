@@ -79,6 +79,7 @@ icons! {
     Sketch => r#"<path class="r" d="M4 20h16"/><path class="t" d="M14.5 4.5l5 5L9 20H4v-5z"/><path class="a" d="M6 13l5 5"/>"#,
     Extrude => r#"<path class="t" d="M4 15l8 4 8-4-8-4z"/><path class="a" d="M12 11V3M9 6l3-3 3 3"/>"#,
     Revolve => r#"<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path class="a" d="M17.5 2.5v4h4"/><path class="r" d="M12 7v10" stroke-dasharray="2 2"/>"#,
+    Sweep => r#"<path class="r" d="M4 18c4 0 5-12 12-12"/><circle class="t" cx="17" cy="6" r="3"/><circle class="af" cx="4.5" cy="18" r="1.8"/>"#,
     Plane => r#"<path class="r" d="M3 20l4-5h14l-4 5z"/><path class="t" d="M3 11l4-5h14l-4 5z"/><path class="a" d="M12 17.5V9.5M10 11.5l2-2 2 2"/>"#,
     Line => r#"<path d="M6 18L18 6"/><circle class="a" cx="5" cy="19" r="1.6"/><circle class="a" cx="19" cy="5" r="1.6"/>"#,
     Circle => r#"<circle class="t" cx="12" cy="12" r="8"/><path class="r" d="M12 12l5.66-5.66" stroke-dasharray="2 2"/><circle class="af" cx="12" cy="12" r="1.5"/><circle class="af" cx="17.66" cy="6.34" r="1.5"/>"#,
@@ -313,6 +314,7 @@ impl Icon {
             Icon::Body
             | Icon::Extrude
             | Icon::Revolve
+            | Icon::Sweep
             | Icon::Move
             | Icon::BMirror
             | Icon::LPattern

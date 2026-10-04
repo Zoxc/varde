@@ -74,6 +74,14 @@ pub mod testing {
     pub fn draft_by_boxes() {
         crate::history::draft_by_boxes();
     }
+
+    /// Sweeps on this thread by a stand-in in place of the kernel's
+    /// sweep, which isn't built yet: a path of straight pieces all along
+    /// one line is the profile extruded along it; anything else is too
+    /// complex.
+    pub fn sweep_by_extrude() {
+        crate::history::sweep_by_extrude();
+    }
 }
 mod inspect;
 mod message;

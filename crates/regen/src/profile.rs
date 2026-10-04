@@ -194,7 +194,38 @@ pub(crate) fn chain(
     join: f64,
     fit: f64,
 ) -> Result<Vec<Segment>, ChainError> {
+    walk_chain(sketch, curves, join, fit, false).map(|(segments, _)| segments)
+}
+
+/// [`chain`], or with `closed` also a closed one: a circle or a closed
+/// spline alone (a circle from its point on its `+x` side round
+/// counter-clockwise, a spline from its start), or curves joining into
+/// one loop (from the lowest curve's start, the way it runs). Whether the
+/// chain closes comes with it. For a sweep's path.
+pub(crate) fn path_chain(
+    sketch: &Sketch,
+    curves: &[Id],
+    join: f64,
+    fit: f64,
+) -> Result<(Vec<Segment>, bool), ChainError> {
+    walk_chain(sketch, curves, join, fit, true)
+}
+
+/// [`chain`] and [`path_chain`]: a closed chain only with `closed`.
+fn walk_chain(
+    sketch: &Sketch,
+    curves: &[Id],
+    join: f64,
+    fit: f64,
+    closed: bool,
+) -> Result<(Vec<Segment>, bool), ChainError> {
     let at = |id| sketch.point(id).map(|point| point.at);
+    if closed && let [only] = curves {
+        let entry = sketch.curve(*only).ok_or(ChainError::Missing)?;
+        if entry.curve.ends().is_none() {
+            return closed_curve(sketch, *only, fit).map(|segments| (segments, true));
+        }
+    }
     // Each curve's end points and where they are.
     let mut ends: Vec<[(Id, DVec2); 2]> = Vec::with_capacity(curves.len());
     for &id in curves {
@@ -230,16 +261,20 @@ pub(crate) fn chain(
         return Err(ChainError::Closed);
     }
     let mut free = (0..n).flat_map(|i| (0..2).map(move |e| (i, e)));
-    let Some(start) = free.find(|&(i, e)| partner[i][e].is_none()) else {
-        return Err(ChainError::Closed);
+    let (start, loops) = match free.find(|&(i, e)| partner[i][e].is_none()) {
+        Some(start) => (start, false),
+        // Every end joined: a loop, walked from the lowest curve's start.
+        None if closed => ((0, 0), true),
+        None => return Err(ChainError::Closed),
     };
-    // Walked from a free end: each step a curve and whether it runs
-    // backwards (from its end to its start).
+    // Walked from a free end (or round the loop): each step a curve and
+    // whether it runs backwards (from its end to its start).
     let mut walk: Vec<(usize, bool)> = Vec::with_capacity(n);
     let (mut curve, mut from) = start;
     loop {
         walk.push((curve, from == 1));
         match partner[curve][1 - from] {
+            Some(next) if loops && next == start => break,
             Some((next, end)) if walk.len() < n => (curve, from) = (next, end),
             Some(_) => return Err(ChainError::Branches),
             None => break,
@@ -300,6 +335,48 @@ pub(crate) fn chain(
             Curve::Circle { .. } => return Err(ChainError::Closed),
         }
         joint = Some(b);
+    }
+    if loops
+        && let (Some(first), Some(last)) = (out.segments.first().copied(), out.segments.last_mut())
+    {
+        // Round to where it started, to the bit.
+        last.conic.p1 = first.conic.p0;
+    }
+    Ok((out.segments, loops))
+}
+
+/// The conics of the closed curve `id` of `sketch` (a circle or a closed
+/// spline), as [`path_chain`] makes them.
+fn closed_curve(sketch: &Sketch, id: Id, fit: f64) -> Result<Vec<Segment>, ChainError> {
+    let entry = sketch.curve(id).ok_or(ChainError::Missing)?;
+    let mut out = Segments {
+        count: 0,
+        fit,
+        segments: Vec::new(),
+    };
+    let curve = u64::from(id.get());
+    match &entry.curve {
+        &Curve::Circle { center, radius } => {
+            let center = (sketch.point(center).map(|point| point.at)).ok_or(ChainError::Missing)?;
+            let start = center + DVec2::new(radius, 0.0);
+            arc(
+                center,
+                radius,
+                start,
+                start,
+                2.0 * PI,
+                true,
+                curve,
+                &mut out,
+            )?;
+        }
+        Curve::Spline(spline) => {
+            let shape = sketch.spline_shape(spline).ok_or(ChainError::Missing)?;
+            let t = shape.breaks().first().copied().ok_or(ChainError::Missing)?;
+            let start = shape.eval(t)[0];
+            fit::spline(&shape, false, start, start, curve, &mut out)?;
+        }
+        Curve::Line { .. } | Curve::Arc { .. } => return Err(ChainError::Closed),
     }
     Ok(out.segments)
 }

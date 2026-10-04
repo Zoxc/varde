@@ -2048,6 +2048,7 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
         FeatureKind::Fillet(fillet) => crate::fillet::fillet_info(fillet, units),
         FeatureKind::OffsetFace(offset) => crate::offset_face::offset_info(offset, units),
         FeatureKind::FaceDraft(draft) => crate::face_draft::draft_info(document, draft),
+        FeatureKind::Sweep(sweep) => crate::sweep::sweep_info(document, sweep),
     }
 }
 

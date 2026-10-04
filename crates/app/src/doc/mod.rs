@@ -827,6 +827,9 @@ impl Doc {
                     | FeatureKind::OffsetFace(_)
                     | FeatureKind::FaceDraft(_),
                 ) => self.edit_motion(id),
+                // Its panel isn't built yet: there's nothing to edit it
+                // in.
+                Some(FeatureKind::Sweep(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

@@ -647,7 +647,9 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   single-threaded and a running operation isn't interrupted.
 - **Not built yet**: the revolve feature's UI (the kernel's `revolve`
   is built and the history evaluates revolves), taper, sketches on faces, fillets and other features the reserved
-  face parts are for, picking by face, a batch boolean of many operands,
+  face parts are for, path sweeps (`sweep/path.rs` is a stand-in with the
+  planned signature, failing as too complex, which the sweep feature is
+  built on), picking by face, a batch boolean of many operands,
   GPU patch evaluation, and wasm threads (which would need cross-origin
   isolation; results would be identical either way).
 

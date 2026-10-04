@@ -731,6 +731,7 @@ impl Doing {
 pub(crate) enum Making {
     Extrude,
     Revolve,
+    Sweep,
 }
 
 impl Making {
@@ -739,6 +740,7 @@ impl Making {
         match self {
             Making::Extrude => "extrude",
             Making::Revolve => "revolve",
+            Making::Sweep => "sweep",
         }
     }
 
@@ -747,6 +749,7 @@ impl Making {
         match self {
             Making::Extrude => "extruded",
             Making::Revolve => "revolved",
+            Making::Sweep => "swept",
         }
     }
 }
@@ -757,6 +760,11 @@ impl Making {
 pub(crate) fn tool(making: Making, error: KernelError, finest: bool) -> String {
     let verb = making.verb();
     match error {
+        // A sweep's pieces, stations and strips are what it costs, more
+        // than its regions.
+        KernelError::TooComplex if making == Making::Sweep => {
+            "sweeping its regions along its path is too complex to work out".to_owned()
+        }
         // Out of budget or past a limit: a coarser tolerance changes
         // neither, so it isn't offered.
         KernelError::TooComplex => {
@@ -969,3 +977,112 @@ pub(crate) fn emptied(doing: Doing, body: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+/// Why a sweep fails: a part's sketch isn't a sketch before it (never,
+/// in a checked document).
+pub(crate) const PATH_SKETCH_GONE: &str = "its path's sketch isn't there";
+
+/// Why a sweep fails: a part's sketch isn't placed (its own failure
+/// says why).
+pub(crate) const PATH_SKETCH_NOT_PLACED: &str = "its path's sketch isn't placed";
+
+/// Why a sweep fails: a part's curves aren't all in its sketch any more.
+pub(crate) const PATH_NOT_FOUND: &str = "path not found";
+
+/// Why a sweep fails: a part's curves don't make one chain.
+pub(crate) const PATH_CURVES_BRANCH: &str = "its path's curves don't join end to end into one line";
+
+/// Why a sweep fails: a part's sketch is too complex to make its
+/// profiles, or a spline of it couldn't be fitted.
+pub(crate) fn path_curves(error: impl std::fmt::Display) -> String {
+    format!("its path's curves can't be followed: {error}")
+}
+
+/// Why a sweep fails: an edge part's body has no solid when the history
+/// reaches the sweep.
+pub(crate) const PATH_EDGE_BODY_GONE: &str = "its path edge's body is gone";
+
+/// Why a sweep fails: the edge at `index` of an edge part of `count`
+/// edges wasn't found on its body.
+pub(crate) fn path_edge_not_found(index: usize, count: usize) -> String {
+    if count == 1 {
+        "its path edge wasn't found".to_owned()
+    } else {
+        format!(
+            "its path edge {} of {count} wasn't found",
+            index.saturating_add(1)
+        )
+    }
+}
+
+/// Why a sweep fails: an edge part's chains don't make one chain.
+pub(crate) const PATH_EDGES_BRANCH: &str = "its path's edges don't join end to end into one line";
+
+/// Why a sweep fails: a closed part (a circle, a rim) and others.
+pub(crate) const PATH_CLOSED_NOT_ALONE: &str =
+    "its path has a closed part and others: a closed path must be the only part";
+
+/// Why a sweep fails: its parts don't join end to end, with a gap
+/// between two or three meeting at a point.
+pub(crate) const PATH_PARTS_APART: &str =
+    "its path's parts don't join into one chain: there's a gap or a branch between them";
+
+/// Why a sweep fails: no end of its path is on its profile's plane.
+pub(crate) const PATH_OFF_START: &str = "its path doesn't start on its profile's plane";
+
+/// Why a sweep fails: its profile's plane isn't square to its path where
+/// the path starts.
+pub(crate) const PATH_NOT_SQUARE: &str =
+    "its profile isn't square to its path where the path starts";
+
+/// Why a sweep fails: two pieces of its path meet at an angle.
+pub(crate) const PATH_CORNER: &str =
+    "its path has a corner: sweep each side of it apart and join them";
+
+/// Why a helix sweep fails: its axis's direction has no length.
+pub(crate) const HELIX_NO_DIRECTION: &str = "its helix's axis has no direction";
+
+/// Why a helix sweep fails: it climbs past the coordinate limit.
+pub(crate) fn helix_too_long() -> String {
+    format!(
+        "its helix is too long: its pitch times its turns must stay within {} mm",
+        varde_kernel::MAX_COORD
+    )
+}
+
+/// What the kernel refuses to sweep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SweepRefusal {
+    Corner,
+    OffStart,
+    NotSquare,
+    TooTight,
+    Parallel,
+    HelixPlane,
+    ReachesAxis,
+    Pitch,
+    IntoItself,
+}
+
+/// Why the kernel refused a sweep, as `why` says.
+pub(crate) fn sweep_refused(why: SweepRefusal) -> String {
+    match why {
+        SweepRefusal::Corner => PATH_CORNER.to_owned(),
+        SweepRefusal::OffStart => PATH_OFF_START.to_owned(),
+        SweepRefusal::NotSquare => PATH_NOT_SQUARE.to_owned(),
+        SweepRefusal::TooTight => {
+            "its path bends tighter than its profile: the profile would fold over itself on the \
+             inside of the bend"
+                .to_owned()
+        }
+        SweepRefusal::Parallel => "its path turns parallel to its profile: follow the path \
+             instead of keeping the orientation"
+            .to_owned(),
+        SweepRefusal::HelixPlane => "its profile's plane must hold its helix's axis".to_owned(),
+        SweepRefusal::ReachesAxis => "its profile reaches its helix's axis".to_owned(),
+        SweepRefusal::Pitch => "its helix's pitch is smaller than its profile: neighbouring \
+             turns would meet"
+            .to_owned(),
+        SweepRefusal::IntoItself => "the sweep runs into itself".to_owned(),
+    }
+}

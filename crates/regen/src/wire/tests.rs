@@ -3270,3 +3270,95 @@ fn progress_round_trips() {
         other => panic!("not progress: {other:?}"),
     }
 }
+
+/// A document holding a sweep and a helix sweep's draft cross and come
+/// back as they went; the reply carries the helix's axis as found
+/// (flipped: down z) and the kernel's too-complex failure.
+#[test]
+fn a_sweep_and_a_helix_draft_round_trip() {
+    use varde_document::{
+        Axis3, AxisRef, CurveChain, Helix, Operation, Orientation, OriginPlane, PathPart, PathRef,
+        Plane, Sweep, Targets,
+    };
+    use varde_sketch::{Curve, Sketch};
+
+    let mut editor = Editor::new(Document::example());
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XZ)))
+        .unwrap();
+    let path = editor.document().features().last().unwrap().id;
+    let mut drawn = Sketch::default();
+    let [a, b] =
+        [(20.0, 0.0), (20.0, 30.0)].map(|(x, y)| drawn.add_point(glam::DVec2::new(x, y)).unwrap());
+    let line = drawn
+        .add_curve(Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: path,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let extrude = crate::history::tests::example_extrude(editor.document());
+    let sweep = Sweep {
+        sketch: extrude.sketch,
+        regions: extrude.regions.clone(),
+        path: PathRef::Chain(vec![PathPart::Curves(CurveChain {
+            sketch: path,
+            curves: vec![line],
+        })]),
+        orientation: Orientation::Keep,
+        twist: None,
+        operation: Operation::Join(Targets::default()),
+    };
+    editor
+        .apply(editor.document().add_feature(sweep.clone().into()))
+        .unwrap();
+    let design = editor.document().design();
+    let draft = Draft {
+        revision: 4,
+        feature: None,
+        kind: Sweep {
+            path: PathRef::Helix(Helix {
+                axis: AxisRef::Origin(Axis3::Z),
+                pitch: varde_expr::Value::new("4", &Sweep::pitch_ask(&design)).unwrap(),
+                turns: varde_expr::Value::new("2", &Sweep::turns_ask(&design)).unwrap(),
+                left_handed: true,
+                flip: true,
+            }),
+            orientation: Orientation::FollowPath,
+            ..sweep
+        }
+        .into(),
+    };
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(Box::new(draft.clone())),
+        inspect: None,
+    };
+    let decoded = decode_request(&encode_request(&request)).unwrap();
+    let Request::Regenerate {
+        document,
+        draft: back,
+        ..
+    } = &decoded
+    else {
+        panic!("not a regeneration");
+    };
+    assert_eq!(**document, *editor.document());
+    assert_eq!(back, &Some(Box::new(draft)));
+    let Response::Regenerated { draft, failed, .. } = round_trip(&handle(decoded)) else {
+        panic!("regeneration failed");
+    };
+    let too_complex = "sweeping its regions along its path is too complex to work out";
+    let draft = draft.unwrap();
+    assert_eq!(draft.error.as_deref(), Some(too_complex));
+    assert_eq!(
+        draft.reference.as_deref(),
+        Some(&[[0.0; 3], [0.0, 0.0, -1.0]])
+    );
+    let committed = editor.document().features().last().unwrap().id;
+    assert_eq!(failed, [(committed, too_complex.to_owned())]);
+}

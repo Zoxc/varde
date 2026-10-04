@@ -1676,3 +1676,4 @@ mod revolve;
 mod scale;
 mod shell;
 mod split;
+mod sweep;

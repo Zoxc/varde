@@ -56,6 +56,10 @@
 //! (stations about an axis) makes the bands of a surface of revolution in
 //! fitted strips, halved until they fit ([`fitted_band`]), and the caps
 //! round poles and apexes ([`pole_cap`]).
+//!
+//! [`path`] is the sweep along a path of pieces or a helix, which the
+//! sweep feature calls; it isn't built yet (a stand-in failing as too
+//! complex, see its docs).
 
 use glam::{DVec3, DVec4};
 
@@ -63,10 +67,12 @@ use crate::patch::{Conic, Conic3, Patch, PatchError, Point};
 
 mod fit;
 mod lathe;
+pub mod path;
 
 pub use fit::{Fitted, deviation, fitted_strip};
 pub use lathe::{Band, Cap, Lathe, Pole, fitted_band, pole_cap};
 pub(crate) use lathe::{fitted_band_with, pole_cap_with};
+pub use path::{Helix, Orientation, Path, Piece, SweepError, sweep};
 
 /// How far the diagonal's plane must keep from the apex, or two tangents
 /// from parallel, as a sine.
