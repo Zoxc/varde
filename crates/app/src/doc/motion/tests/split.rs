@@ -11,8 +11,8 @@
 
 use glam::DVec3;
 use varde_document::{
-    BodyId, Command, Document, Editor, FeatureId, FeatureKind, Keep, Move, OriginPlane, Plane,
-    PlaneRef, Side, Split, SplitTool,
+    BodyId, BodyOp, Combine, Command, Document, Editor, FeatureId, FeatureKind, Keep, Move,
+    OriginPlane, Plane, PlaneRef, Side, Split, SplitTool,
 };
 use varde_regen::Summary;
 use varde_sketch::{Curve, Id};
@@ -575,4 +575,33 @@ fn faces_of_an_edited_split_s_new_body_are_named_on_the_body_split() {
     plates.motion(MotionLook::Picking(MotionPick::Bodies));
     plates.click(new);
     assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [plate]);
+}
+
+/// Editing a split whose new body a later combine joined a disc into: a
+/// face of the disc, shown on the new body, is named on the disc, where
+/// it is at the split, not on the body split.
+#[test]
+fn a_face_joined_into_a_split_s_new_body_later_is_named_on_its_own_body() {
+    varde_regen::testing::split_by_booleans();
+    let (mut editor, id, new) = split_plates();
+    let disc = editor.document().bodies()[2].id;
+    let combine = Combine {
+        target: new,
+        tools: vec![disc],
+        op: BodyOp::Union,
+        keep_tools: false,
+    };
+    editor
+        .apply(editor.document().add_feature(combine.into()))
+        .unwrap();
+    let mut plates = held(&editor);
+    plates.doc.look(Look::EditFeature(id));
+    plates.motion(MotionLook::SplitWith(SplitMode::Face));
+    plates.answer();
+    let disc_top = |summary: &Summary| matches!(summary, Summary::Plane { n, d } if n[2] > 0.5 && (d - 15.0).abs() < 1e-6);
+    click_face(&mut plates, new, disc_top, DVec3::new(-20.0, 0.0, 15.0));
+    let Some(SplitTool::Plane(PlaneRef::Face(face))) = tool(&plates) else {
+        panic!("a plane face: {:?} {:?}", tool(&plates), plates.doc.notice);
+    };
+    assert_eq!(face.body, disc);
 }

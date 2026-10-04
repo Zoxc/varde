@@ -1029,10 +1029,7 @@ pub(crate) fn place_on_face(
         .find(|made| Some(made.body) == holder)
         .ok_or(message::FACE_BODY_GONE)?;
     let placed = place_on(made, face, tolerance, cache);
-    if placed
-        .as_ref()
-        .is_err_and(|failed| failed.message == message::FACE_NOT_FOUND)
-    {
+    if not_found(&placed) {
         // Followed into the bodies splits made of it, the first split
         // first, and on into those made of them.
         let mut on = vec![made.body];
@@ -1051,17 +1048,23 @@ pub(crate) fn place_on_face(
                     continue;
                 };
                 let followed = place_on(made, face, tolerance, cache);
-                if followed
-                    .as_ref()
-                    .is_err_and(|failed| failed.message == message::FACE_NOT_FOUND)
-                {
-                    continue;
+                if !not_found(&followed) {
+                    return followed;
                 }
-                return followed;
             }
         }
     }
     placed
+}
+
+/// Whether [`place_on`] found no face of the name on its body, which a
+/// split before the sketch may have given to its new body. The cached
+/// placement keeps only the words, and [`place_on`] says
+/// [`message::FACE_NOT_FOUND`] for that alone.
+fn not_found(placed: &Result<Placement, Failed>) -> bool {
+    placed
+        .as_ref()
+        .is_err_and(|failed| failed.message == message::FACE_NOT_FOUND)
 }
 
 /// Where a sketch on `face` is on the body `made` holds, or why it isn't

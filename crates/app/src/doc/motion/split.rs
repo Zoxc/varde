@@ -3,7 +3,7 @@
 //! splits with, by its "Split with" tiles: a plane or face (an origin
 //! plane from the toolbar, or a face of the model clicked, flat as a
 //! plane and curved as the face's surface, named as of the feature by
-//! [`Naming`]), another body clicked, regions of a sketch (picked as an
+//! [`Naming`](varde_view::Naming)), another body clicked, regions of a sketch (picked as an
 //! extrude's, [`RegionPick`]) or the curves of an open line of one,
 //! clicked in the viewport. Each tile keeps its own tool while another is
 //! shown. Then which piece keeps the body's id (Front or Back) and which
@@ -21,11 +21,11 @@ use varde_document::{
 use varde_regen::Summary;
 use varde_sketch::Id;
 use varde_view::{
-    MotionKind, MotionPick, Naming, Pick, Picked, SketchLines, SplitMode, SplitPiece, SplitView,
-    Unnamed, plane_name, split_info,
+    MotionKind, MotionPick, Pick, Picked, SketchLines, SplitMode, SplitPiece, SplitView, Unnamed,
+    plane_name, split_info,
 };
 
-use super::{Doc, MotionSession, OUT_OF_DATE};
+use super::{Doc, MotionSession, OUT_OF_DATE, unnamed};
 use crate::doc::combine::pickable;
 use crate::doc::feed::Merges;
 use crate::doc::regions::RegionPick;
@@ -316,17 +316,6 @@ const NOT_A_FACE: &str = "Only a face or an origin plane can split a body here";
 const SAME_BODY: &str = "That's the body being split: pick another body to split with";
 
 impl Doc {
-    /// The naming of picks as of the split being set up.
-    fn split_naming(&self) -> Option<Naming> {
-        let session = self.motion.as_ref()?;
-        let document = self.editor.document();
-        let features = document.features();
-        let before = (session.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len());
-        Some(Naming::before(document, before, self.shown()))
-    }
-
     /// `body` of the model shown as the body a feature being set up names:
     /// the body holding it before the feature where a join merged it,
     /// and the body a split at or after the feature cut it from.
@@ -336,7 +325,7 @@ impl Doc {
         };
         let document = self.editor.document();
         let merged = self.feed.merged_before(document, session.feature);
-        let body = (self.split_naming()).map_or(body, |naming| naming.unsplit(body));
+        let body = (self.motion_naming()).map_or(body, |naming| naming.unsplit(body));
         merged.holder(body).unwrap_or(body)
     }
 
@@ -352,11 +341,11 @@ impl Doc {
                 let Picked::Face(face) = pick.target else {
                     return Err(NOT_A_FACE.into());
                 };
-                let naming = self.split_naming().ok_or("Nothing is set up")?;
+                let naming = self.motion_naming().ok_or("Nothing is set up")?;
                 let index = self.feed.pick_index();
                 let named = naming
                     .checked_face_ref(index, face, pick.at)
-                    .map_err(|why| split_refused(why, "face"))?;
+                    .map_err(|why| unnamed(why, "face", MotionKind::Split))?;
                 let summary = (index.picking().faces().get(face as usize)).map(|face| face.summary);
                 Ok(match summary {
                     Some(Summary::Plane { .. }) => SplitTool::Plane(PlaneRef::Face(named)),
@@ -369,7 +358,7 @@ impl Doc {
                     return Err(SAME_BODY.into());
                 }
                 if !pickable(document, body, session.feature) {
-                    return Err(split_refused(Unnamed::Later, "body"));
+                    return Err(unnamed(Unnamed::Later, "body", MotionKind::Split));
                 }
                 Ok(SplitTool::Body(body))
             }
@@ -508,11 +497,7 @@ impl Doc {
             .filter(|feature| feature.kind.bodies().contains(&body))
             .count();
         let name = &document.body(body)?.name;
-        let kept = match session.split.keep {
-            Keep::Both => session.split.original,
-            Keep::Front => Side::Front,
-            Keep::Back => Side::Back,
-        };
+        let kept = session.split.keep.kept(session.split.original);
         let piece = kept.name().to_lowercase();
         match later {
             0 => None,
@@ -648,17 +633,6 @@ impl Doc {
                 Some([DVec3::ZERO, origin.placement().normal]),
             ),
             _ => (None, None),
-        }
-    }
-}
-
-/// `Naming`'s refusal of `what` as words for the status bar.
-fn split_refused(why: Unnamed, what: &str) -> Cow<'static, str> {
-    match why {
-        Unnamed::Missing => format!("That {what} isn't in the model").into(),
-        Unnamed::Later => format!("Only a {what} made before the split can be picked").into(),
-        Unnamed::Unclear => {
-            format!("Which body that {what} is on at the split can't be told: pick another").into()
         }
     }
 }

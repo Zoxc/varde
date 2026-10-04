@@ -116,6 +116,18 @@ pub enum Keep {
     Back,
 }
 
+impl Keep {
+    /// The piece that keeps the body's id: the one kept, or with both
+    /// kept, `original`.
+    pub fn kept(self, original: Side) -> Side {
+        match self {
+            Keep::Both => original,
+            Keep::Front => Side::Front,
+            Keep::Back => Side::Back,
+        }
+    }
+}
+
 impl SplitTool {
     /// The sketch it takes regions or curves from.
     pub fn sketch(&self) -> Option<FeatureId> {
@@ -124,29 +136,13 @@ impl SplitTool {
             SplitTool::Plane(_) | SplitTool::Face(_) | SplitTool::Body(_) => None,
         }
     }
-
-    /// The tool as the user sees it, for the Timeline: "XY", "a face",
-    /// "a sketch".
-    pub fn name(&self) -> &'static str {
-        match self {
-            SplitTool::Plane(plane) => plane.name(),
-            SplitTool::Face(_) => "a face",
-            SplitTool::Body(_) => "a body",
-            SplitTool::Regions { .. } => "a sketch's regions",
-            SplitTool::Chain { .. } => "a sketch's line",
-        }
-    }
 }
 
 impl Split {
     /// The piece that keeps the body's id: the one kept, or with both
     /// kept, `original`.
     pub fn kept(&self) -> Side {
-        match self.keep {
-            Keep::Both => self.original,
-            Keep::Front => Side::Front,
-            Keep::Back => Side::Back,
-        }
+        self.keep.kept(self.original)
     }
 
     /// Whether it keeps both pieces, and so makes a new body.

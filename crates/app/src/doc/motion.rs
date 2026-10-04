@@ -879,7 +879,7 @@ impl MotionSession {
     /// merged into others on to the bodies holding them, as a click on
     /// one picks, as a combine's ([`super::CombineSession`]), and a
     /// scale's edge with them (it must be on one it scales; its names
-    /// find it on the holder): whether any moved.
+    /// find it on the holder) and a split's tool body: whether any moved.
     fn follow(&mut self, merges: &Merges) -> bool {
         let held = |body: BodyId| merges.holder(body).unwrap_or(body);
         let mut bodies: Vec<BodyId> = self.bodies.iter().map(|&body| held(body)).collect();
@@ -1577,8 +1577,8 @@ impl Doc {
         Some((feature, kind))
     }
 
-    /// The naming of picks as of the move, mirror, pattern, align or
-    /// scale being set up ([`Naming`]): the history stopped at its
+    /// The naming of picks as of the move, mirror, pattern, align, scale
+    /// or split being set up ([`Naming`]): the history stopped at its
     /// feature, all of it for a new one.
     fn motion_naming(&self) -> Option<Naming> {
         let session = self.motion.as_ref()?;

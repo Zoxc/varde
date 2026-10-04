@@ -2607,7 +2607,9 @@ pub enum SplitTool {
   merged bodies: `place_on_face` looks for the face on the holder, and
   where it isn't found, on the holders of the new bodies of splits of
   it (in `Evaluation::splits`' order), and on those of splits of those,
-  and the sketch is placed on the first it's found on. Switching
+  and the sketch is placed on the first it's found on (a placement's
+  cached failure keeps only its words, so "not found" is told by
+  `FACE_NOT_FOUND`, which `place_on` says for that alone). Switching
   `original` swaps which body later features work on.
 - **Kernel stand-in**: the kernel's `split`, `half_space`,
   `surface_tool` and `chain_tool` (`kernel/src/boolean/split.rs`) are
@@ -2749,7 +2751,11 @@ body of each split at or after the feature named is noted with the body
 it split, and `Naming::body_of` takes a face shown on such a piece as on
 that body (through splits of splits), where it is at the feature: so a
 face of an edited split's new piece (or of a later split's) names the
-body split, not a body made after the feature, which was refused.
+body split, not a body made after the feature, which was refused. A
+body a later join or combine merged into the new piece still names its
+own faces: `body_of` takes a body held by the body shown or by the body
+it was split from. The status bar's refusals are the shared
+`unnamed(.., MotionKind::Split)`, the naming `Doc::motion_naming`.
 
 The Timeline shows its icon (the icon mock's split body, `Icon::Split`,
 in the Modify set) and note: "by XY", "by Body 3", "by Extrude 1's end",

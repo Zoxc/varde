@@ -156,11 +156,7 @@ impl SplitView<'_> {
     /// The piece keeping the body's id: the one kept, or with both
     /// kept, the original.
     pub fn kept(&self) -> Side {
-        match self.keep {
-            Keep::Both => self.original,
-            Keep::Front => Side::Front,
-            Keep::Back => Side::Back,
-        }
+        self.keep.kept(self.original)
     }
 }
 

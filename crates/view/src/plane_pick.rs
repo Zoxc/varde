@@ -486,11 +486,17 @@ impl Naming {
     /// The body a face shown on `shown` and named by the feature numbered
     /// `maker` is on where the history stops: the body that feature made,
     /// or one the join, cut or intersect touched that's merged into the
-    /// body shown; `shown` itself where neither is known. None if those
+    /// body shown or into the body a split after the feature cut it from
+    /// ([`Naming::unsplit`]); that body itself where neither is known.
+    /// None if those
     /// are more than one body where the history stops, so which it's on
     /// there can't be told.
     fn body_of(&self, shown: BodyId, key: &FaceKey) -> Option<BodyId> {
-        let shown = self.unsplit(shown);
+        // A split at or after the feature may have moved the face from
+        // the body it splits to its new body, which may hold others
+        // merged into it later: a body counts as shown if it's held by
+        // the body shown or by the body that one was split from.
+        let unsplit = self.unsplit(shown);
         let maker = key.feature;
         let lookup = |list: &[(u64, BodyId)]| {
             (list.binary_search_by_key(&maker, |(feature, _)| *feature)).map(|at| list[at].1)
@@ -517,9 +523,12 @@ impl Naming {
             }
             hopped
         };
-        on.retain(|&body| holder(&self.merged, body) == shown);
+        on.retain(|&body| {
+            let held = holder(&self.merged, body);
+            held == shown || held == unsplit
+        });
         let Some(&first) = on.first() else {
-            return Some(shown);
+            return Some(unsplit);
         };
         let there = holder(&self.merged_before, first);
         if on
