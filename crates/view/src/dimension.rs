@@ -233,6 +233,63 @@ pub fn selected(sketch: &Sketch, selected: &[Id]) -> Option<(Measure, f64)> {
     Some((measure, value))
 }
 
+/// Under this cosine of the angle between them, two sides of a
+/// rectangle selected are square to each other.
+const SQUARE: f64 = 1e-6;
+
+/// The width and height of the rectangle the items `selected` of
+/// `sketch` make, if they do: four lines closing a loop, each square to
+/// the next, and perhaps the points at its corners. The width is the
+/// side nearer the horizontal.
+pub fn rectangle(sketch: &Sketch, selected: &[Id]) -> Option<(f64, f64)> {
+    let mut lines = Vec::new();
+    let mut points = Vec::new();
+    for &id in selected {
+        match sketch.curve(id).map(|entry| &entry.curve) {
+            Some(&Curve::Line { start, end }) if lines.len() < 4 => lines.push([start, end]),
+            None if sketch.point(id).is_some() => points.push(id),
+            _ => return None,
+        }
+    }
+    let [first, ..] = lines[..] else {
+        return None;
+    };
+    if lines.len() != 4 {
+        return None;
+    }
+    // The corners in order round the loop, from the first line's start.
+    let mut corners = vec![first[0]];
+    let mut used = [true, false, false, false];
+    let mut at = first[1];
+    while at != first[0] {
+        corners.push(at);
+        let (next, line) =
+            (lines.iter().enumerate()).find(|&(i, line)| !used[i] && line.contains(&at))?;
+        used[next] = true;
+        at = if line[0] == at { line[1] } else { line[0] };
+    }
+    if corners.len() != 4 || points.iter().any(|point| !corners.contains(point)) {
+        return None;
+    }
+    let place = |id| sketch.point(id).map(|point| point.at);
+    let places = [0, 1, 2, 3].map(|i| place(corners[i]));
+    let places: Vec<DVec2> = places.into_iter().collect::<Option<_>>()?;
+    let sides: Vec<DVec2> = (0..4).map(|i| places[(i + 1) % 4] - places[i]).collect();
+    let square = (0..4).all(|i| {
+        let (u, w) = (sides[i].try_normalize(), sides[(i + 1) % 4].try_normalize());
+        u.zip(w).is_some_and(|(u, w)| u.dot(w).abs() < SQUARE)
+    });
+    if !square {
+        return None;
+    }
+    let (a, b) = (sides[0], sides[1]);
+    Some(if a.x.abs() >= a.y.abs() {
+        (a.length(), b.length())
+    } else {
+        (b.length(), a.length())
+    })
+}
+
 /// `measure` and its `value`, in model units, as the status bar shows it
 /// in a design in `units`: "Length 40 mm", "Diameter 10 mm".
 pub fn shown_measure(measure: &Measure, value: f64, units: LengthUnit) -> String {

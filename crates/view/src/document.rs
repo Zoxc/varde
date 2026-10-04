@@ -1752,26 +1752,31 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
 /// of the selection, while no tool is in use nor the value field open:
 /// one item by name ("Line 3"), or how many, and what they measure
 /// together as a dimension of them would ("Length 40 mm", see
-/// [`dimension::selected`](crate::dimension::selected)).
+/// [`dimension::selected`](crate::dimension::selected)); or a rectangle,
+/// by its width and height (see
+/// [`dimension::rectangle`](crate::dimension::rectangle)).
 fn sketch_selection<'a>(sketch: &SketchState<'a>) -> Option<Element<'a, Message>> {
     if sketch.tool.is_some() || sketch.constraining || sketch.value.is_some() {
         return None;
     }
     let ids: Vec<Id> = sketch.selection.iter().copied().collect();
+    let rectangle = crate::dimension::rectangle(sketch.sketch, &ids);
     let title = match ids[..] {
         [] => return None,
+        _ if rectangle.is_some() => "Rectangle".to_owned(),
         [one] => (sketch.sketch.name(one)).unwrap_or_else(|| "1 selected".to_owned()),
         _ => format!("{} selected", ids.len()),
     };
-    let measured = crate::dimension::selected(sketch.sketch, &ids).map(|(measure, value)| {
-        text(crate::dimension::shown_measure(
-            &measure,
-            value,
-            sketch.units,
-        ))
-        .size(12)
-        .wrapping(Wrapping::None)
-    });
+    let measured = match rectangle {
+        Some((width, height)) => {
+            let unit = Some(varde_expr::Unit::Length(sketch.units));
+            let [width, height] = [width, height].map(|size| varde_expr::format(size, unit));
+            Some(format!("Width {width} · Height {height}"))
+        }
+        None => crate::dimension::selected(sketch.sketch, &ids)
+            .map(|(measure, value)| crate::dimension::shown_measure(&measure, value, sketch.units)),
+    };
+    let measured = measured.map(|measured| text(measured).size(12).wrapping(Wrapping::None));
     Some(
         row![
             icons::icon(Icon::Sketch, icons::INLINE),

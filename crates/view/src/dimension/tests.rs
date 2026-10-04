@@ -279,3 +279,52 @@ fn a_selection_measures_as_its_dimension_would() {
     assert_eq!(shown(&[lone]), None);
     assert_eq!(shown(&[slope, parallel, steep]), None);
 }
+
+/// Four lines closing `corners` in order, and the corners' points.
+fn quad(sketch: &mut Sketch, corners: [(f64, f64); 4]) -> ([Id; 4], [Id; 4]) {
+    let points = corners.map(|(x, y)| point(sketch, x, y));
+    let lines = [0, 1, 2, 3].map(|i| line(sketch, points[i], points[(i + 1) % 4]));
+    (lines, points)
+}
+
+/// A rectangle selected measures its width, the side nearer the
+/// horizontal, and its height, its corners selected with it or not; a
+/// quadrilateral that isn't square, three of its lines, or a point off
+/// it with them, nothing.
+#[test]
+fn a_rectangle_selected_measures_its_width_and_height() {
+    let mut sketch = Sketch::default();
+    let (lines, points) = quad(
+        &mut sketch,
+        [(0.0, 0.0), (0.0, 10.0), (20.0, 10.0), (20.0, 0.0)],
+    );
+    assert_eq!(rectangle(&sketch, &lines), Some((20.0, 10.0)));
+    let mut all = lines.to_vec();
+    all.extend(points);
+    assert_eq!(rectangle(&sketch, &all), Some((20.0, 10.0)));
+    assert_eq!(rectangle(&sketch, &lines[..3]), None);
+    let lone = point(&mut sketch, 50.0, 50.0);
+    all.push(lone);
+    assert_eq!(rectangle(&sketch, &all), None);
+
+    // Turned 30°, its lines in any order.
+    let along = varde_sketch::angle::from_angle(30f64.to_radians());
+    let up = along.perp();
+    let corner = |p: glam::DVec2| (p.x, p.y);
+    let turned = [
+        corner(at(100.0, 0.0)),
+        corner(at(100.0, 0.0) + along * 20.0),
+        corner(at(100.0, 0.0) + along * 20.0 + up * 10.0),
+        corner(at(100.0, 0.0) + up * 10.0),
+    ];
+    let (mut lines, _) = quad(&mut sketch, turned);
+    lines.reverse();
+    let (width, height) = rectangle(&sketch, &lines).unwrap();
+    assert!((width - 20.0).abs() < 1e-9 && (height - 10.0).abs() < 1e-9);
+
+    let (skewed, _) = quad(
+        &mut sketch,
+        [(0.0, 50.0), (2.0, 60.0), (22.0, 60.0), (20.0, 50.0)],
+    );
+    assert_eq!(rectangle(&sketch, &skewed), None);
+}

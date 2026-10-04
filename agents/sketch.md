@@ -879,7 +879,10 @@ tool is in use (nor Constrain, nor the value field): one item by name
 ("Circle 1") or how many, and what they measure together as a dimension
 of them would (`dimension::selected`, the Dimension tool's `measure`
 with its label nowhere: "Length 40 mm", "Diameter 6 mm", "Angle 30°"),
-with `Space` Clear, which the sketch's hints then leave out.
+or for four lines closing a loop with square corners (their points
+selected too or not) "Rectangle" and its width, the side nearer the
+horizontal, and height (`dimension::rectangle`), with `Space` Clear,
+which the sketch's hints then leave out.
 
 Every change to the sketch is a `SketchEdit`, proposed to the solver lane
 (`Doc::propose`, `doc/sketch/propose.rs`) and committed once it's
