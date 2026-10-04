@@ -3752,7 +3752,9 @@ menu), so the panel is built in the style of the mock's shell panel.
   answers what was asked last: the first face found there, the point
   nearest its stored point on the face's nearest triangle and the
   outward normal there (`PickIndex::face_point`: the mesh's corner
-  normals, or the triangle's own), taken back by the distance the
+  normals, or the triangle's own; a flat face's exactly its summary's
+  plane, since the mesh's single precision is micrometres off far out
+  and a handle found on a preview moved far kept that), taken back by the distance the
   preview moved it when the model shows a working preview of this
   session. It's kept while the first face and the document's
   generation stay, so dragging moves only the knob. Dragged (knob or
@@ -3761,7 +3763,10 @@ menu), so the panel is built in the style of the mock's shell panel.
   (`snap_step` of a pixel at the origin), **through zero to the other
   side**: `MotionLook::OffsetBy { distance, inward }` sets the field to
   the size and Inward to the side; zero itself is never sent (no
-  distance is zero). A typed distance, or Inward ticked, moves the
+  distance is zero), nor a distance the design's units show as zero
+  (zoomed in far, the snap is finer than they show: "0 mm"). Dragged
+  through zero to a distance or ticked Inward at it, the draft is the
+  same. A typed distance, or Inward ticked, moves the
   knob. It takes the mouse ahead of picking faces (`Input::holds`).
   With the kernel's stand-in the preview fails, the body shown as it
   is, and the handle stands on the face as it is.
@@ -3785,7 +3790,10 @@ Departures from the plan and mock: the panel is in the shell panel's
 style (the mock has none); not on the toolbar; Inward and Tangent faces
 as ticks. Known gaps: the handle stands on the first face only (as the
 plan has it); on a curved first face the normal is the drawn mesh's
-there, which for a cylinder is radial as the kernel's offset is.
+there, which for a cylinder is radial as the kernel's offset is; an
+edited offset's handle is found on the whole history's model, so a
+later feature changing the face's body other than rigidly (a scale)
+leaves the knob off the face as it's dragged.
 
 Tests: `document/src/offset_face/tests.rs` (added and undone, edited,
 its own parts, bodies and makers, removal following the body and not
@@ -3816,7 +3824,8 @@ refused as read), `view/src/offset_face/tests.rs` (the notes),
 the status text), `view/src/viewport/motion/tests.rs` (the handle drawn
 only while there's one and the document can be changed; the knob
 dragged out, past zero (not sent) and inward, snapped, holding the
-cursor ahead of the model), `rail/tests.rs` (Offset face in the Modify
+cursor ahead of the model; zoomed in as far as the camera goes, no
+distance sent that shows as "0 mm"), `rail/tests.rs` (Offset face in the Modify
 set) and `app/src/doc/motion/tests/offset_face.rs` (the rail's Offset
 face on the example plate: no body until a face, the panel, an edge
 refused, the top picked, lit and listed, the stand-in's too-complex
@@ -3827,6 +3836,28 @@ moving the knob and the preview, the handle's drag inward, Inward and
 Tangent faces drafted, a distance of nothing refused, OK and the
 Timeline's row, undo; editing from the Timeline, the handle where the
 face was, Cancel, another distance, undo; another body's face and
-row refused with why, the face taken out leaving nothing to commit).
-The app's tests offset by boxes through regen's `testing` feature
-(`varde_regen::testing::offset_by_boxes`).
+row refused with why, the face taken out leaving nothing to commit;
+Inward ticked and the handle dragged through zero giving the same
+draft and preview, in millimetres and inches; the handle dragged while
+the previews are on their way and the first face changed: none until
+the model shown is of what was asked last, then on the new first face
+as it was; the overlap list ticking, picking and taking out the
+session's faces, its rows found again on each preview; a handle found
+on a preview moved 10 000 mm out standing where the face was,
+exactly), and
+`app/src/doc/motion/tests/offset_face/fuzz.rs` (random offset face
+sessions in the shell's fuzz's style, with handle drags (through zero,
+previews on their way, the first face changed between them), quick
+clicks, the overlap list, a shell or chamfer being set up when it
+starts: each step's session whole when ready, checked, previewed and
+committed as drafted, its handle's knob at the distance, and for a new
+one whose working preview is shown on the first face as moved with the
+handle on it as it is; each offset working giving its box's volume;
+`VARDE_OFFSET_SEEDS`). `regen/src/history/tests/offset_face/fuzz.rs`
+is the shell's history fuzz with offsets of one to four faces, out and
+in, each failing alike whole and cut short, one failing changing
+nothing, one working giving its box's moved volume, every face keeping
+its name and the other bodies untouched (`VARDE_OFFSET_SEEDS`);
+`document/src/offset_face/tests.rs` holds old "Offset N" names mixing
+with "Offset face N" ones. The app's tests offset by boxes through
+regen's `testing` feature (`varde_regen::testing::offset_by_boxes`).

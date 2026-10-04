@@ -802,4 +802,4 @@ fn a_shell_takes_at_most_256_faces() {
     );
 }
 
-mod fuzz;
+pub(super) mod fuzz;

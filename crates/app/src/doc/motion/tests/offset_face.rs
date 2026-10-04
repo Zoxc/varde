@@ -407,3 +407,207 @@ fn an_offset_face_s_faces_are_all_on_one_body() {
     assert!(!plates.doc.motion_ready());
     assert!(shows(&plates, "pick the faces to move"));
 }
+
+/// The box's front, at y 0 (or wherever the model shown has it).
+fn front(plates: &Plates, body: BodyId, y: f64) -> Pick {
+    face_pick(plates, body, -DVec3::Y, -y, DVec3::new(20.0, y, 5.0))
+}
+
+/// Answers every request but the last, which stays on its way.
+fn answer_all_but_the_last(plates: &mut Plates) {
+    let mut requests = plates.requests.take();
+    let last = requests.pop();
+    for request in requests {
+        plates.doc.computed(varde_regen::handle(request));
+    }
+    plates.requests.borrow_mut().extend(last);
+}
+
+/// Inward ticked and the handle dragged through zero to the same
+/// distance give the same draft and the same preview, out and in, in
+/// millimetres and in inches.
+#[test]
+fn inward_ticked_or_the_handle_dragged_through_zero_give_the_same_draft() {
+    varde_regen::testing::offset_by_boxes();
+    for (units, typed, dragged, top_at) in [
+        (varde_expr::LengthUnit::Mm, "2", "2 mm", 8.0),
+        (varde_expr::LengthUnit::In, "0.1", "0.1 in", 10.0 - 2.54),
+    ] {
+        let mut plates = boxes(false);
+        let body = plates.bodies[0];
+        plates.doc.update(Edit::SetUnits(units));
+        plates.answer();
+        plates.doc.look(Look::StartOffsetFace);
+        plates.answer();
+        let pick = top(&plates, body, 10.0);
+        click(&mut plates, pick);
+        plates.answer();
+        plates.input(MotionField::Distance, typed);
+        plates.motion(MotionLook::Flip);
+        let ticked = drafted(&plates).expect("a draft");
+        assert_eq!(
+            handle(&plates).map(|handle| handle.at),
+            Some(-ticked.distance.value)
+        );
+        plates.answer();
+        assert!(near(plates.bounds(body)[1], DVec3::new(40.0, 30.0, top_at)));
+        let shown = plates.bounds(body);
+        assert_eq!(handle(&plates).unwrap().at, -ticked.distance.value);
+
+        // Out again, then dragged down through zero.
+        plates.motion(MotionLook::Flip);
+        assert!(!drafted(&plates).unwrap().inward);
+        plates.answer();
+        plates.motion(MotionLook::OffsetBy {
+            distance: dragged.to_owned(),
+            inward: true,
+        });
+        let dragged = drafted(&plates).expect("a draft");
+        assert_eq!(dragged.faces, ticked.faces);
+        assert_eq!(dragged.inward, ticked.inward);
+        assert_eq!(dragged.tangent, ticked.tangent);
+        assert!(
+            (dragged.distance.value - ticked.distance.value).abs() < 1e-12,
+            "{dragged:?} vs {ticked:?}"
+        );
+        assert_eq!(handle(&plates).unwrap().at, -dragged.distance.value);
+        plates.answer();
+        assert_eq!(plates.bounds(body), shown);
+        // And back out by the tick: the same as dragged up.
+        plates.motion(MotionLook::Flip);
+        let ticked_out = drafted(&plates).unwrap();
+        assert!(!ticked_out.inward && ticked_out.distance.value == dragged.distance.value);
+    }
+}
+
+/// The handle dragged while the previews are on their way, and the first
+/// face changed before they come (the top taken out, the front picked):
+/// no handle while the models shown aren't of what was asked last, then
+/// the handle stands on the front as it is before the offset (y 0), its
+/// knob at the distance, on the front as the preview moved it.
+#[test]
+fn a_drag_while_the_preview_is_on_its_way_and_the_first_face_changed() {
+    varde_regen::testing::offset_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartOffsetFace);
+    plates.answer();
+    let pick = top(&plates, body, 10.0);
+    click(&mut plates, pick);
+    plates.answer();
+    assert!(near(
+        handle(&plates).expect("a handle").origin,
+        DVec3::new(20.0, 15.0, 10.0)
+    ));
+    // Dragged up, then down through zero, nothing answered.
+    plates.motion(MotionLook::OffsetBy {
+        distance: "3 mm".to_owned(),
+        inward: false,
+    });
+    plates.motion(MotionLook::OffsetBy {
+        distance: "2 mm".to_owned(),
+        inward: true,
+    });
+    // The front picked on the model shown (the top moved 1 mm out), the
+    // top taken out.
+    let pick = front(&plates, body, 0.0);
+    click(&mut plates, pick);
+    let top = faces(&plates)
+        .into_iter()
+        .find(|face| face.near.z > 9.0)
+        .expect("the top");
+    plates.motion(MotionLook::DropFace(top));
+    assert_eq!(faces(&plates).len(), 1);
+    assert!(handle(&plates).is_none(), "{:?}", handle(&plates));
+    // The older answers come: the model shown isn't of what was asked
+    // last, so no handle yet.
+    answer_all_but_the_last(&mut plates);
+    assert!(handle(&plates).is_none(), "{:?}", handle(&plates));
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    // The front 2 mm in.
+    assert!(near(plates.bounds(body)[0], DVec3::new(0.0, 2.0, 0.0)));
+    let handle = handle(&plates).expect("a handle");
+    assert!(near(handle.normal, -DVec3::Y), "{handle:?}");
+    assert!(handle.origin.y.abs() < 1e-4, "{handle:?}");
+    assert_eq!(handle.at, -2.0);
+    let knob = handle.origin + handle.normal * handle.at;
+    assert!((knob.y - 2.0).abs() < 1e-4, "{knob}");
+}
+
+/// Held open in an offset face session, the list of what overlaps ticks
+/// the session's faces, picks and takes them out, and follows each
+/// preview: a moved face keeps its name, so its row stays.
+#[test]
+fn the_overlap_list_ticks_picks_and_follows_the_offset_s_faces() {
+    varde_regen::testing::offset_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartOffsetFace);
+    plates.answer();
+    let list = varde_view::Overlaps {
+        held: DVec2::ZERO,
+        at: DVec2::ZERO,
+        items: varde_view::OverlapItems::Model(vec![
+            top(&plates, body, 10.0),
+            front(&plates, body, 0.0),
+        ]),
+    };
+    plates.doc.look(Look::OpenOverlaps(list));
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, false]));
+    plates.doc.look(Look::ToggleOverlap(0));
+    assert_eq!(faces(&plates).len(), 1);
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, false]));
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    // The top moved out: still listed, ticked.
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, false]));
+    plates.doc.look(Look::ToggleOverlap(1));
+    assert_eq!(faces(&plates).len(), 2);
+    plates.answer();
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, true]));
+    let listed = plates.doc.overlaps.as_ref().expect("still open");
+    let varde_view::OverlapItems::Model(picks) = &listed.list.items else {
+        panic!("the model's");
+    };
+    assert!(
+        picks
+            .iter()
+            .all(|pick| pick.model == plates.doc.feed.model())
+    );
+    plates.doc.look(Look::ToggleOverlap(0));
+    assert_eq!(faces(&plates).len(), 1);
+    plates.doc.look(Look::ChooseOverlap {
+        index: 1,
+        add: false,
+    });
+    assert!(plates.doc.overlaps.is_none());
+    assert!(faces(&plates).is_empty());
+}
+
+/// The handle found on a preview that moved the face far out stands
+/// where the face was, exactly: a flat face's point and normal are its
+/// plane's, not the drawn mesh's single precision (10 000 mm out, that
+/// was 0.4 µm off, and stayed so as the distance came back).
+#[test]
+fn a_handle_found_on_a_face_moved_far_out_stands_where_it_was_exactly() {
+    varde_regen::testing::offset_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartOffsetFace);
+    plates.answer();
+    let pick = face_pick(&plates, body, DVec3::X, 40.0, DVec3::new(40.0, 0.1, 0.1));
+    click(&mut plates, pick);
+    plates.input(MotionField::Distance, "9999.9");
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    let handle_now = handle(&plates).expect("a handle");
+    assert_eq!(handle_now.normal, DVec3::X);
+    assert_eq!(handle_now.origin.x, 40.0, "{handle_now:?}");
+    plates.input(MotionField::Distance, "2.5");
+    plates.answer();
+    let handle_now = handle(&plates).expect("a handle");
+    assert_eq!(handle_now.origin.x + handle_now.at, 42.5, "{handle_now:?}");
+}
+
+mod fuzz;

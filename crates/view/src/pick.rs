@@ -707,9 +707,20 @@ impl PickIndex {
     /// Where face `face` is nearest `near` as drawn, and its outward
     /// normal there (unit): `near` taken onto the plane of the face's
     /// triangle nearest it, the normal that triangle's corners' (the
-    /// mesh's analytic ones), or its own where those cancel. `None` for
-    /// no such face, or one with no triangle that isn't degenerate.
+    /// mesh's analytic ones), or its own where those cancel. A flat
+    /// face's is its plane's, exactly as its summary has it, not as the
+    /// mesh's single precision draws it (far out, that's micrometres
+    /// off). `None` for no such face, or one with no triangle that isn't
+    /// degenerate.
     pub fn face_point(&self, face: u32, near: DVec3) -> Option<(DVec3, DVec3)> {
+        if let Some(Summary::Plane { n, d }) =
+            (self.picking.faces().get(face as usize)).map(|face| &face.summary)
+            && let Some(n) = DVec3::from(*n).try_normalize()
+            && self.face_triangles(face).next().is_some()
+        {
+            let point = near - n * (n.dot(near) - d);
+            return point.is_finite().then_some((point, n));
+        }
         let mut best: Option<(f64, [u32; 3], [DVec3; 3])> = None;
         for triangle in self.face_triangles(face) {
             let Some(corners) = self.corners(triangle) else {

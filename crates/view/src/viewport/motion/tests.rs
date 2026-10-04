@@ -753,3 +753,55 @@ fn an_offset_face_handle_left_held_lets_go_in_the_next_session() {
     let (_, captured) = feed(&shell, &mut input, &[moved(knob)]);
     assert!(!captured && !input.motion.holds());
 }
+
+/// Zoomed in as far as the camera goes, the knob snaps finer than the
+/// design's units show a distance: dragged to where its distance would
+/// show as nothing ("0 mm", which no offset is), nothing's sent, as at
+/// zero; a little further, the distance is sent as it shows.
+#[test]
+fn the_offset_face_handle_sends_no_distance_that_shows_as_nothing() {
+    let mut camera = front();
+    camera.set_target(glam::Vec3::new(0.0, 0.0, 10.0));
+    camera.zoom(1e-9);
+    let point = |p: DVec3| {
+        let p = shown(&camera, p);
+        Point::new(p.x as f32, p.y as f32)
+    };
+    // How far a pixel is here, and the knob's snap.
+    let pixel = 1.0
+        / (shown(&camera, DVec3::new(0.0, 0.0, 10.0)) - shown(&camera, DVec3::new(0.0, 0.0, 11.0)))
+            .length();
+    let step = crate::extrude::snap_step(pixel, LengthUnit::Mm).expect("a step");
+    assert!(step < 1e-4, "{step}");
+    let start = 10.0 * step;
+    let viewport = viewport(offset_face(start), &camera, None);
+    let mut input = Interaction::default();
+    let knob = point(DVec3::new(0.0, 0.0, 10.0 + start));
+    feed(&viewport, &mut input, &[moved(knob)]);
+    let (_, captured) = feed(&viewport, &mut input, &[press(knob)]);
+    assert!(captured);
+    // Two steps up from the face: it would show as "0 mm".
+    let (messages, _) = feed(
+        &viewport,
+        &mut input,
+        &[moved(point(DVec3::new(0.0, 0.0, 10.0 + 2.0 * step)))],
+    );
+    assert!(messages.is_empty(), "{messages:?}");
+    let (messages, _) = feed(
+        &viewport,
+        &mut input,
+        &[moved(point(DVec3::new(0.0, 0.0, 10.0 - 2.0 * step)))],
+    );
+    assert!(messages.is_empty(), "{messages:?}");
+    // A micrometre into the body shows (the snap a fraction of it).
+    let (messages, _) = feed(
+        &viewport,
+        &mut input,
+        &[moved(point(DVec3::new(0.0, 0.0, 10.0 - 1e-3)))],
+    );
+    let inward = MotionLook::OffsetBy {
+        distance: "0.001 mm".to_owned(),
+        inward: true,
+    };
+    assert_eq!(looks(&messages), [Some(&inward)]);
+}

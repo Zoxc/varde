@@ -1049,7 +1049,9 @@ impl<'a> Moving<'a> {
     /// An offset face's handle `drag` dragged to the screen position
     /// `at`: the message setting the distance and side there, if that's
     /// changed since it was last sent, within the coordinate limit and
-    /// not zero (which no distance is: the knob passes it).
+    /// not zero (which no distance is: the knob passes it), nor shown as
+    /// zero in the design's units (zoomed in far, the snap is finer than
+    /// they show).
     fn face_drag(
         &self,
         drag: &mut FaceDrag,
@@ -1063,10 +1065,14 @@ impl<'a> Moving<'a> {
         if !(to.is_finite() && to.abs() <= f64::from(MAX_COORD)) || to == 0.0 || to == drag.sent {
             return None;
         }
+        let units = Some(Unit::Length(self.state.units));
+        let distance = varde_expr::format(to.abs(), units);
+        if distance == varde_expr::format(0.0, units) {
+            return None;
+        }
         drag.sent = to;
-        let units = Unit::Length(self.state.units);
         Some(MotionLook::OffsetBy {
-            distance: varde_expr::format(to.abs(), Some(units)),
+            distance,
             inward: to < 0.0,
         })
     }

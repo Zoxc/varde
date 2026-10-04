@@ -26,28 +26,9 @@
 use varde_document::{BodyOp, Combine, Targets};
 use varde_expr::LengthUnit;
 
+use super::super::chamfer::fuzz::Rng;
 use super::*;
 use crate::tests::{add_disc, two_sides};
-
-/// A small deterministic generator: xorshift64*.
-struct Rng(u64);
-
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
-    }
-
-    fn below(&mut self, n: usize) -> usize {
-        (self.next() % n.max(1) as u64) as usize
-    }
-
-    fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
-        &items[self.below(items.len())]
-    }
-}
 
 const THICKNESSES: &[&str] = &[
     "1",
@@ -83,7 +64,7 @@ fn shells(plates: &Plates) -> Vec<FeatureId> {
 /// A random click on the model shown: mostly a face (of the session's
 /// body, while it has one), now and then an edge; mostly on the model
 /// shown, now and then on one gone by.
-fn random_pick(plates: &Plates, rng: &mut Rng) -> Option<Pick> {
+pub(in crate::doc::motion::tests) fn random_pick(plates: &Plates, rng: &mut Rng) -> Option<Pick> {
     let index = plates.doc.feed.pick_index();
     let body = plates
         .doc

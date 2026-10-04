@@ -871,3 +871,5 @@ fn the_kernel_grows_across_tangent_faces() {
         "it is tangent to a face of Body 1 that isn't picked: pick it too, or turn on Tangent faces"
     );
 }
+
+mod fuzz;

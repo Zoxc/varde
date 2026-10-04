@@ -122,6 +122,60 @@ fn an_offset_face_is_added_and_undone() {
     assert_eq!(*offset_of(editor.document(), id), offset);
 }
 
+/// Offsets named as they once were, "Offset N" (and one renamed past
+/// the numbers), don't count towards "Offset face N": a new one is one
+/// past the highest "Offset face N"; neither kind of name is taken as
+/// the other's, and the old names are kept as the document is
+/// serialized and read back.
+#[test]
+fn old_offset_names_mix_with_offset_face_names() {
+    let mut editor = Editor::new(with_body());
+    let before = editor.document().clone();
+    let (body, maker) = (before.bodies[0].id, before.features[1].id);
+    let offset = top_and_wall(&before, body, maker);
+    for name in [
+        "Offset 3",
+        "Offset 7",
+        "Offset face x",
+        "Offset face 2",
+        "Offset faces 9",
+    ] {
+        editor
+            .apply(Command::AddFeature {
+                name: name.to_owned(),
+                kind: Box::new(offset.clone().into()),
+            })
+            .unwrap();
+    }
+    let id = add(&mut editor, offset.clone()).unwrap();
+    assert_eq!(editor.document().feature(id).unwrap().name, "Offset face 3");
+    let bytes = postcard::to_stdvec(editor.document()).unwrap();
+    let read: Document = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(read, *editor.document());
+    let names: Vec<&str> = (read.features.iter().skip(2))
+        .map(|feature| feature.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Offset 3",
+            "Offset 7",
+            "Offset face x",
+            "Offset face 2",
+            "Offset faces 9",
+            "Offset face 3"
+        ]
+    );
+    // Read back, the next is one past it still.
+    assert_eq!(
+        read.add_feature(offset.into()),
+        Command::AddFeature {
+            name: "Offset face 4".to_owned(),
+            kind: Box::new(read.features[2].kind.clone()),
+        }
+    );
+}
+
 /// Editing an offset face's distance, side, tangent faces and faces
 /// keeps its id and name, one undo step each; setting what's there
 /// changes nothing.
