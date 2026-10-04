@@ -84,7 +84,13 @@ impl Doc {
                 PanelHover::Axis => true,
                 PanelHover::Edge(at) => at < session.blend.edges.refs.len(),
                 PanelHover::Face(at) => at < session.faces.refs.len(),
+                PanelHover::Part(at) if session.kind == MotionKind::Loft => {
+                    at < session.loft.rails.len()
+                }
                 PanelHover::Part(at) => at < session.sweep.chains.len(),
+                PanelHover::Section(at) => {
+                    session.kind == MotionKind::Loft && at < session.loft.sections.len()
+                }
                 PanelHover::Region { .. } => {
                     session.kind == MotionKind::Sweep && region(&session.sweep.regions, hover)
                 }

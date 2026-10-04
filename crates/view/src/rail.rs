@@ -20,9 +20,9 @@ use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, DocumentKeys, Shortcut, align_binding, chamfer_binding, circular_pattern_binding,
     combine_binding, constrain_binding, constraint_binding, draft_binding, extrude_binding,
-    fillet_binding, measure_binding, mirror_binding, move_binding, offset_face_binding,
-    pattern_binding, revolve_binding, scale_binding, shell_binding, sketch_binding, split_binding,
-    sweep_binding, tool_binding,
+    fillet_binding, loft_binding, measure_binding, mirror_binding, move_binding,
+    offset_face_binding, pattern_binding, revolve_binding, scale_binding, shell_binding,
+    sketch_binding, split_binding, sweep_binding, tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
@@ -122,6 +122,7 @@ pub(crate) enum Entry {
     Extrude,
     Revolve,
     Sweep,
+    Loft,
     Combine,
     Move,
     Mirror,
@@ -151,6 +152,7 @@ impl Entry {
             Entry::Extrude => Icon::Extrude,
             Entry::Revolve => Icon::Revolve,
             Entry::Sweep => Icon::Sweep,
+            Entry::Loft => Icon::Loft,
             Entry::Combine => Icon::Combine,
             Entry::Move => Icon::Move,
             Entry::Mirror => Icon::BMirror,
@@ -177,6 +179,7 @@ impl Entry {
             Entry::Extrude => "Extrude",
             Entry::Revolve => "Revolve",
             Entry::Sweep => "Sweep",
+            Entry::Loft => "Loft",
             Entry::Combine => "Combine",
             Entry::Move => "Move",
             Entry::Mirror => "Mirror",
@@ -214,6 +217,7 @@ impl Entry {
             Entry::Extrude => extrude_binding(keys),
             Entry::Revolve => revolve_binding(keys),
             Entry::Sweep => sweep_binding(keys),
+            Entry::Loft => loft_binding(keys),
             Entry::Combine => combine_binding(keys),
             Entry::Move => move_binding(keys),
             Entry::Mirror => mirror_binding(keys),
@@ -243,6 +247,7 @@ impl Entry {
             Entry::Extrude => using.extruding,
             Entry::Revolve => using.revolving,
             Entry::Sweep => using.motion == Some(crate::MotionKind::Sweep),
+            Entry::Loft => using.motion == Some(crate::MotionKind::Loft),
             Entry::Combine => using.combining,
             Entry::Move => using.motion == Some(crate::MotionKind::Move),
             Entry::Mirror => using.motion == Some(crate::MotionKind::Mirror),
@@ -315,7 +320,13 @@ const MODEL: [ToolSet; 4] = [
     ToolSet {
         name: "Create",
         icon: Icon::CatCreate,
-        entries: &[Entry::Sketch, Entry::Extrude, Entry::Revolve, Entry::Sweep],
+        entries: &[
+            Entry::Sketch,
+            Entry::Extrude,
+            Entry::Revolve,
+            Entry::Sweep,
+            Entry::Loft,
+        ],
     },
     ToolSet {
         name: "Modify",

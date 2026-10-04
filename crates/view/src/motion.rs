@@ -13,8 +13,8 @@ use iced::Element;
 use iced::widget::text::Wrapping;
 use iced::widget::{column, text};
 use varde_document::{
-    Axis3, AxisRef, BodyId, Document, EdgeRef, FaceRef, FeatureId, FeatureKind, Keep, OriginPlane,
-    Pattern, PatternKind, PlaneRef, Side,
+    Axis3, AxisRef, BodyId, Document, EdgeRef, FaceRef, FeatureId, FeatureKind, Keep, LoftMode,
+    OriginPlane, Pattern, PatternKind, PlaneRef, Side,
 };
 use varde_expr::{AngleUnit, LengthUnit, Unit};
 use varde_sketch::Id;
@@ -51,6 +51,7 @@ pub enum MotionKind {
     OffsetFace,
     Draft,
     Sweep,
+    Loft,
 }
 
 impl MotionKind {
@@ -69,6 +70,7 @@ impl MotionKind {
             MotionKind::OffsetFace => "Offset face",
             MotionKind::Draft => "Draft",
             MotionKind::Sweep => "Sweep",
+            MotionKind::Loft => "Loft",
         }
     }
 
@@ -90,6 +92,7 @@ impl MotionKind {
             MotionKind::OffsetFace => Icon::OffsetFace,
             MotionKind::Draft => Icon::Draft,
             MotionKind::Sweep => Icon::Sweep,
+            MotionKind::Loft => Icon::Loft,
         }
     }
 
@@ -110,6 +113,7 @@ impl MotionKind {
             MotionKind::OffsetFace => "New offset face",
             MotionKind::Draft => "New draft",
             MotionKind::Sweep => "New sweep",
+            MotionKind::Loft => "New loft",
         }
     }
 
@@ -138,6 +142,7 @@ impl MotionKind {
                 | MotionKind::Fillet
                 | MotionKind::OffsetFace
                 | MotionKind::Draft
+                | MotionKind::Loft
         )
     }
 
@@ -177,6 +182,7 @@ impl MotionKind {
             FeatureKind::OffsetFace(_) => MotionKind::OffsetFace,
             FeatureKind::FaceDraft(_) => MotionKind::Draft,
             FeatureKind::Sweep(_) => MotionKind::Sweep,
+            FeatureKind::Loft(_) => MotionKind::Loft,
             _ => return None,
         })
     }
@@ -249,11 +255,14 @@ pub enum MotionPick {
     /// A face session's faces (a shell's, an offset face's, a draft's),
     /// each click picking a face or taking it out.
     Faces,
-    /// A sweep's profile: regions of a sketch, picked as an extrude's.
+    /// A sweep's profile: regions of a sketch, picked as an extrude's;
+    /// a loft's sections: regions of sketches and sketch points, a click
+    /// on a section's corner moving its start there.
     Regions,
     /// A sweep's path: each click on a sketch's curve adding the chain
     /// it's in as a part (or taking that part out), on a model edge
-    /// picking it or taking it out as a blend's edges.
+    /// picking it or taking it out as a blend's edges; a loft's rails,
+    /// each a chain of a sketch's curves.
     Path,
     Nothing,
 }
@@ -546,6 +555,31 @@ pub enum MotionLook {
     /// Takes a body out of what a sweep's join, cut or intersect works
     /// on, or puts it back: its row in the Bodies list.
     Target(BodyId),
+    /// Adds the region `region` of `sketch` as a loft's last section (a
+    /// final point stays last), or takes that section out: clicked in
+    /// the viewport.
+    LoftRegion { sketch: FeatureId, region: usize },
+    /// Adds the point `point` of `sketch` as a loft's first or last
+    /// section, or takes that section out: clicked in the viewport.
+    LoftPoint { sketch: FeatureId, point: Id },
+    /// Moves the start of a loft's section `section` (from 0) to its
+    /// corner at the sketch point `point`: clicked in the viewport.
+    LoftStart { section: usize, point: Id },
+    /// Moves a loft's section up its list, before the one above it: its
+    /// row's up chevron (or the row above's down one).
+    SectionUp(usize),
+    /// Takes a loft's section out: its row's cross.
+    DropSection(usize),
+    /// Adds the chain of `sketch`'s curves `curve` is in as a loft's
+    /// rail, or takes that rail out: clicked in the viewport.
+    LoftRail { sketch: FeatureId, curve: Id },
+    /// Takes a loft's rail out: its row's cross.
+    DropRail(usize),
+    /// How a loft runs between its sections: its Smooth and Ruled tiles.
+    LoftMode(LoftMode),
+    /// A loft's Closed: its last section lofted back to the first, or
+    /// not.
+    Closed,
     /// Which way a shell's walls grow from the body's faces: its
     /// Direction tiles.
     ShellDirection(ShellDirection),
@@ -661,6 +695,8 @@ pub struct MotionState<'a> {
     pub draft: Option<Box<DraftView>>,
     /// A sweep's own parts, for a sweep.
     pub sweep: Option<Box<SweepView<'a>>>,
+    /// A loft's own parts, for a loft.
+    pub loft: Option<Box<LoftView<'a>>>,
 }
 
 impl<'a> MotionState<'a> {
@@ -922,6 +958,9 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
         (MotionKind::Sweep, _) => (state.sweep.as_ref())
             .and_then(|sweep| sweep.info.clone())
             .unwrap_or(bodies),
+        (MotionKind::Loft, _) => (state.loft.as_ref())
+            .and_then(|loft| loft.info.clone())
+            .unwrap_or(bodies),
         _ => bodies,
     }
 }
@@ -978,7 +1017,8 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         | MotionKind::Chamfer
         | MotionKind::Shell
         | MotionKind::Fillet
-        | MotionKind::OffsetFace => ("Plane", Icon::SePlane, "Click a plane or face"),
+        | MotionKind::OffsetFace
+        | MotionKind::Loft => ("Plane", Icon::SePlane, "Click a plane or face"),
     };
     let reference_row = state.reference.clone().map(|name| {
         picked_row(
@@ -1027,6 +1067,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         MotionKind::OffsetFace => offset_face::body(state, field_named),
         MotionKind::Draft => draft::body(state, reference, field_named),
         MotionKind::Sweep => sweep::body(state, reference, field_named),
+        MotionKind::Loft => loft::body(state),
         MotionKind::Move => {
             let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
             column![
@@ -1201,6 +1242,8 @@ mod draft;
 pub use draft::DraftView;
 mod sweep;
 pub use sweep::{SweepPart, SweepPath, SweepView};
+mod loft;
+pub use loft::{LoftSection, LoftShape, LoftView};
 
 #[cfg(test)]
 mod tests;

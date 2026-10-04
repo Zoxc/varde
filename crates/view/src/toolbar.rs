@@ -605,6 +605,8 @@ fn ops<'a>(
                 (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
             };
             let buttons: Vec<Element<'a, Message>> = match motion.kind {
+                // A loft picks no reference.
+                MotionKind::Loft => Vec::new(),
                 MotionKind::Move
                 | MotionKind::LinearPattern
                 | MotionKind::CircularPattern

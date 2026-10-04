@@ -14,7 +14,7 @@ pub(crate) fn loft_note(loft: &Loft) -> String {
 /// What the status bar says of a selected loft: "3 sections · Smooth ·
 /// Closed · 2 rails · New body", "2 sections · Ruled · Join" (two
 /// sections are ruled whatever the mode says).
-pub(crate) fn loft_info(loft: &Loft) -> String {
+pub fn loft_info(loft: &Loft) -> String {
     let mut parts = vec![loft_note(loft)];
     let ruled = loft.mode == LoftMode::Ruled || loft.sections.len() <= 2;
     parts.push(if ruled { "Ruled" } else { "Smooth" }.to_owned());

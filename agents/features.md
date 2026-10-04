@@ -4562,18 +4562,99 @@ before it in `Run::sketches`), in history order:
 
 ### UI
 
-Not built yet (a later stage): `Look::EditFeature` on a loft does
-nothing, and lofts are made by the document's commands. The Timeline
-shows a loft's row with the model mock's `loft` icon (`Icon::Loft`,
-a slab and a disc joined by two rulings) and its note, "3 sections"
-(`view/src/loft.rs`, `loft_note`); the status bar says "3 sections ·
-Smooth · Closed · 2 rails · New body" (`loft_info`; two sections say
-Ruled whatever the mode). The model mock has no loft panel (only the
-icon and "Loft" in the toolbar's Create group): the planned session
-lists the sections in order with up, down and remove, a start dot on
-each section (a click on another vertex moves it), Ruled or Smooth,
-Closed (Rails off while closed), Rails picked as sketch curve chains in
-the model, operation and bodies, and the preview.
+The move's session (`MotionSession`) with `MotionKind::Loft`; its own
+parts are in `app/src/doc/motion/loft.rs` (`LoftSetup`) and
+`view/src/motion/loft.rs` (`LoftView`, `LoftSection`, `LoftShape`). The
+UI mock has no loft panel (the model mock has only the icon and "Loft"
+in its Create group), so the panel is built in the style of its
+nearest ones, the revolve's and the sweep's: Sections, "Between
+sections" as tiles (Smooth, Ruled), Closed, Rails, Operation as tiles
+and the Bodies list.
+
+- **Starting**: `Look::StartLoft` from the rail's Create set (after
+  Sweep, as the mock's group orders it; its list's letter `L`), through
+  `loft_binding`, with no key, as the mock has it; again, or another
+  tool, backs out. **Not on the toolbar**: the mock's model bar has no
+  Loft. Editing one (`Look::EditFeature`: double-click, `Enter`, "Edit
+  loft") opens it with its sections, rails and options, picking
+  nothing. It picks no bodies; the model isn't picked while its
+  sections or rails are (`MotionSession::picks_sketches`): the clicks go
+  to the sketches, and off them the left button orbits.
+- **Sections** (`MotionPick::Regions`): while they're picked, every
+  visible sketch before the loft (and each section's own, shown or not:
+  adding the loft hid them; `RegionPick::also`, each worked out within
+  the whole of `MAX_WORK`, with no source) shows its regions on its
+  plane, and every visible sketch's points on their own (no curve's) as
+  dots. Under the cursor, in this order: a corner of a region section
+  (a sketch point at one of its outer loop's vertices, drawn as a small
+  dot), a point on its own, a region. A click on a region adds it as
+  the last section (before a last point section), or takes out the
+  section that is that region; a region with holes is refused ("A
+  section is one loop: pick a region without holes"), as are one too
+  thin to name, a sketch after the loft, and the 65th section. Its
+  start is set as it's added: the corner nearest the previous section's
+  start dot in the world, or the first corner for the first section (a
+  region with no sketch point at a corner, a circle's, has none, and
+  the kernel's default holds). A click on a point adds it as the last
+  section, or the first if the last is a point already, or takes it
+  out; "A loft takes a point only as its first or last section"
+  otherwise. A click on a corner moves that section's start there
+  (`MotionLook::LoftStart`).
+- **Drawn**: each region section filled and outlined in the selected
+  colour on its plane (the one whose row is hovered in the hovered
+  colour), its start dot in the accent (a point section's point too),
+  and each section's number in a chip by it (`Moving::labels`).
+- **Rows**: "Section 1" with its sketch's name ("gone" once what it
+  names is), an up and a down chevron (`ordered_row`; the first's up
+  and the last's down faint) moving it past its neighbour
+  (`MotionLook::SectionUp`), and a cross. Moving a point into the
+  middle is allowed and refused as the foot ("Loft fails: its section
+  2 is a point, which only the first or last may be").
+- **Between sections**: Smooth (the default) or Ruled; two sections are
+  ruled whatever it says (the status bar says Ruled). **Closed**: the
+  last section lofted back to the first; while it's on, the Rails field
+  isn't shown, its rails aren't stored and aren't picked (kept for when
+  it's off: the document refuses rails on a closed loft).
+- **Rails** (`MotionPick::Path`): picked as a sweep's path's sketch
+  parts: a click on a curve of a sketch before the loft (visible, or a
+  section's or rail's own) adds the chain it's in (`Sketch::chain_of`,
+  sorted), or takes out the rail holding it; at most 4 rails ("A loft
+  takes at most 4 rails") of at most 256 curves. Rows "Sketch 3 · 2
+  curves" (`PanelHover::Part`) with a cross. Unlike a sweep's path, a
+  section's own sketch may hold a rail.
+- **Operation and Bodies** as an extrude's (the cut's uncut note as the
+  panel's warning, `Doc::held` for a new body a combine names).
+- **Whole and ready**: two sections or more ("pick the sections to
+  loft: regions or sketch points", "pick the next section").
+  `Loft::check_own` refuses as the foot ("Loft fails"); `check_names`
+  (start points, point sections, rail curves in their sketches) through
+  `motion_held`. What an edit or undo takes away is kept and said to be
+  gone ("A section's sketch, region or point is gone: take it out", "A
+  rail's sketch or curve is gone: take it out"), nothing previewed or
+  committed meanwhile; its row says "gone".
+- **Preview**: the loft as set up is the draft while it's whole,
+  picking or not. **The kernel's loft isn't built**, so today every
+  preview fails with "Loft fails" over "lofting its sections is too
+  complex to work out", OK waits, and Add anyway keeps it, failing in
+  the Timeline. The app's tests loft through regen's `testing` feature
+  (`varde_regen::testing::loft_by_extrude`).
+- **Committing**: OK (`Enter`, Add anyway) adds "Loft N" or sets the
+  edited one, one undo step; Cancel or `Esc` leaves no trace. Adding
+  hides the sections' sketches (`profile_sketches`), not the rails'.
+- The status bar says "3 sections · Smooth · New body" once whole
+  (`loft_info`), else what's next, with the hints "Pick sections:
+  regions or points" or "Pick the rails' curves" (`chrome::step_hint`).
+
+The Timeline shows a loft's row with the model mock's `loft` icon
+(`Icon::Loft`, a slab and a disc joined by two rulings) and its note, "3
+sections" (`view/src/loft.rs`, `loft_note`); the status bar says "3
+sections · Smooth · Closed · 2 rails · New body" (`loft_info`).
+
+Known gaps: no handle; the start dots follow sketch points only (a
+corner where curves cross without a point can't be a start); a section
+sketch hidden by the user is still offered (its regions are found to
+draw the section); the camera moving under a still cursor doesn't work
+out what's under it again until it moves.
 
 ### Tests
 

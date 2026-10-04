@@ -56,9 +56,9 @@ fn every_entry_has_a_letter_of_its_own_and_its_key_s_where_it_s_a_letter_alone()
         .into_iter()
         .flatten()
         .collect();
-    // Sweep, with no key, takes the first free letter of its name, as
-    // the mock's list has it.
-    assert_eq!(create, "sxop");
+    // Sweep and Loft, with no key, take the first free letter of their
+    // names, as the mock's list has it.
+    assert_eq!(create, "sxopl");
     let modify: String = letters(MODEL[1].entries, false)
         .into_iter()
         .flatten()
@@ -108,6 +108,7 @@ fn the_sets_hold_every_tool_the_app_has_and_only_those() {
             Entry::Extrude,
             Entry::Revolve,
             Entry::Sweep,
+            Entry::Loft,
             Entry::Fillet,
             Entry::Chamfer,
             Entry::Shell,

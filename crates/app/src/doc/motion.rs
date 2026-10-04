@@ -18,7 +18,8 @@
 //! picked as a shell's, its neutral plane as a mirror's plane, its own
 //! parts in `face_draft`), `Look::StartSweep` (the rail's Create set; a
 //! sweep's profile, path and options are in `sweep`, its model edges
-//! picked as a blend's), or by editing one, picking its bodies as a
+//! picked as a blend's), `Look::StartLoft` (the rail's Create set; a
+//! loft's sections, rails and options are in `loft`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
 //! one from the toolbar, or a model edge or face clicked, named as of the
@@ -56,6 +57,7 @@ use varde_view::{
 
 use self::align::AlignSetup;
 use self::blend::BlendSetup;
+use self::loft::LoftSetup;
 use self::refs::Refs;
 use self::scale::ScaleSetup;
 use self::split::SplitSetup;
@@ -115,6 +117,8 @@ pub(crate) struct MotionSession {
     pub(crate) blend: BlendSetup,
     /// A sweep's profile, path parts and options.
     pub(crate) sweep: SweepSetup,
+    /// A loft's sections, rails and options.
+    pub(crate) loft: LoftSetup,
     /// How a chamfer is sized: Equal to begin with, as the UI mock's.
     pub(crate) chamfer_type: ChamferType,
     /// A face session's faces: a shell's to remove, an offset face's to
@@ -333,6 +337,8 @@ impl MotionSession {
             kind if kind.picks_faces() => MotionPick::Faces,
             // A sweep picks its profile's regions first, and no bodies.
             MotionKind::Sweep => MotionPick::Regions,
+            // A loft picks its sections first, and no bodies.
+            MotionKind::Loft => MotionPick::Regions,
             _ => MotionPick::Bodies,
         };
         if matches!(kind, MotionKind::Align | MotionKind::Split) {
@@ -341,7 +347,7 @@ impl MotionSession {
         if kind.picks_faces() {
             bodies.truncate(usize::from(faces::takes_body(kind)));
         }
-        if kind.blends() || kind == MotionKind::Sweep {
+        if kind.blends() || matches!(kind, MotionKind::Sweep | MotionKind::Loft) {
             bodies.clear();
         }
         let [chamfer_distance, chamfer_second, chamfer_angle] = chamfer::chamfer_fields(&design);
@@ -415,6 +421,7 @@ impl MotionSession {
             split: SplitSetup::default(),
             blend: BlendSetup::default(),
             sweep: SweepSetup::default(),
+            loft: LoftSetup::default(),
             chamfer_type: ChamferType::Equal,
             faces: Refs::default(),
             direction: ShellDirection::Inward,
@@ -554,6 +561,11 @@ impl MotionSession {
                 session.open_sweep(document, sweep);
                 session
             }
+            FeatureKind::Loft(loft) => {
+                let mut session = Self::new(MotionKind::Loft, document, Vec::new());
+                session.open_loft(document, loft);
+                session
+            }
             _ => return None,
         };
         session.feature = Some(feature);
@@ -623,6 +635,10 @@ impl MotionSession {
         if self.kind == MotionKind::Sweep {
             return self.sweep().map(FeatureKind::Sweep);
         }
+        // Nor does a loft.
+        if self.kind == MotionKind::Loft {
+            return self.loft().map(FeatureKind::Loft);
+        }
         if self.bodies.is_empty() {
             return None;
         }
@@ -657,7 +673,7 @@ impl MotionSession {
             MotionKind::Fillet => fillet::fillet_kind(self),
             MotionKind::OffsetFace => offset_face::offset_face_kind(self),
             MotionKind::Draft => face_draft::face_draft_kind(self),
-            MotionKind::Sweep => None,
+            MotionKind::Sweep | MotionKind::Loft => None,
         }
     }
 
@@ -780,7 +796,8 @@ impl MotionSession {
             | MotionKind::Fillet
             | MotionKind::OffsetFace
             | MotionKind::Draft
-            | MotionKind::Sweep => {
+            | MotionKind::Sweep
+            | MotionKind::Loft => {
                 return Ok(None);
             }
         };
@@ -835,6 +852,9 @@ impl MotionSession {
         if self.kind == MotionKind::Sweep {
             return self.sweep_need();
         }
+        if self.kind == MotionKind::Loft {
+            return self.loft_need();
+        }
         if self.bodies.is_empty() {
             return Some(match self.kind {
                 MotionKind::Move => "pick the bodies to move",
@@ -851,6 +871,7 @@ impl MotionSession {
                 MotionKind::OffsetFace => "pick the faces to move",
                 MotionKind::Draft => "pick the faces to draft",
                 MotionKind::Sweep => "pick the regions to sweep",
+                MotionKind::Loft => "pick the sections to loft",
             });
         }
         match self.kind {
@@ -873,7 +894,8 @@ impl MotionSession {
             | MotionKind::Fillet
             | MotionKind::OffsetFace
             | MotionKind::Draft
-            | MotionKind::Sweep => None,
+            | MotionKind::Sweep
+            | MotionKind::Loft => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -907,6 +929,9 @@ impl MotionSession {
     fn gone(&self) -> Option<&'static str> {
         if self.kind == MotionKind::Sweep {
             return self.sweep_gone();
+        }
+        if self.kind == MotionKind::Loft {
+            return self.loft_gone();
         }
         if self.bodies.is_empty() {
             return None;
@@ -989,6 +1014,7 @@ impl MotionSession {
                 draft.check_own(design).err().map(|why| why.to_string())
             }
             FeatureKind::Sweep(sweep) => sweep.check_own(design).err().map(|why| why.to_string()),
+            FeatureKind::Loft(loft) => loft.check_own().err().map(|why| why.to_string()),
             _ => None,
         };
         refused.map(|why| said(&why))
@@ -1011,6 +1037,7 @@ impl MotionSession {
             MotionKind::OffsetFace => fine(MotionField::Distance),
             MotionKind::Draft => fine(MotionField::Angle),
             MotionKind::Sweep => self.sweep_typed(),
+            MotionKind::Loft => true,
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
@@ -1068,6 +1095,7 @@ impl MotionSession {
             self.prune_faces(document, index);
         }
         self.prune_sweep(document, index);
+        self.prune_loft(document, index);
         let held = |body: BodyId| document.body(body).is_some();
         self.gone_reference = match (self.axis, self.plane) {
             (Some(axis), _)
@@ -1156,7 +1184,8 @@ impl MotionSession {
         // A sweep is previewed while it's whole and nothing it names is
         // gone, its path picked meanwhile; otherwise the model shown is
         // the document's.
-        if self.kind == MotionKind::Sweep {
+        // A loft likewise.
+        if matches!(self.kind, MotionKind::Sweep | MotionKind::Loft) {
             if self.gone().is_some() {
                 return None;
             }
@@ -1266,7 +1295,11 @@ fn said(why: &str) -> String {
 fn picks_first(kind: MotionKind) -> bool {
     matches!(
         kind,
-        MotionKind::Mirror | MotionKind::Align | MotionKind::Split | MotionKind::Sweep
+        MotionKind::Mirror
+            | MotionKind::Align
+            | MotionKind::Split
+            | MotionKind::Sweep
+            | MotionKind::Loft
     ) || kind.blends()
         || kind.picks_faces()
 }
@@ -1324,6 +1357,13 @@ impl Doc {
                 session.sweep.regions.refresh(document);
             }
         }
+        // A loft's candidates' regions.
+        if kind == MotionKind::Loft {
+            let document = self.editor.document();
+            if let Some(session) = &mut self.motion {
+                session.loft.regions.refresh(document);
+            }
+        }
         if !picks_first(kind) {
             self.focus = Some(Focus::All);
         }
@@ -1372,6 +1412,13 @@ impl Doc {
     /// Takes `message`, changing the move, mirror or pattern being set up.
     pub(crate) fn motion_look(&mut self, message: MotionLook) {
         let editable = self.editable();
+        if editable
+            && (self.motion.as_ref()).is_some_and(|session| session.kind == MotionKind::Loft)
+            && loft::loft_message(&message)
+        {
+            self.loft_look(message);
+            return;
+        }
         let document = self.editor.document();
         let Some(session) = &mut self.motion else {
             return;
@@ -1555,6 +1602,15 @@ impl Doc {
             }
             MotionLook::SweepRegion { .. }
             | MotionLook::SweepCurve { .. }
+            | MotionLook::LoftRegion { .. }
+            | MotionLook::LoftPoint { .. }
+            | MotionLook::LoftStart { .. }
+            | MotionLook::SectionUp(_)
+            | MotionLook::DropSection(_)
+            | MotionLook::LoftRail { .. }
+            | MotionLook::DropRail(_)
+            | MotionLook::LoftMode(_)
+            | MotionLook::Closed
             | MotionLook::DropPart(_)
             | MotionLook::SweepPath(_)
             | MotionLook::KeepOrientation
@@ -1566,7 +1622,8 @@ impl Doc {
             MotionLook::Drop(_)
                 if session.kind.blends()
                     || session.kind.picks_faces()
-                    || session.kind == MotionKind::Sweep => {}
+                    || session.kind == MotionKind::Sweep
+                    || session.kind == MotionKind::Loft => {}
             MotionLook::Drop(body) => {
                 session.bodies.retain(|&picked| picked != body);
             }
@@ -1842,6 +1899,10 @@ impl Doc {
                 .map(|why| said(&why.to_string())))
             .or_else(|| self.held(session.feature, session.sweep.operation));
         }
+        if session.kind == MotionKind::Loft {
+            return (self.loft_refused(session).map(|why| said(&why.to_string())))
+                .or_else(|| self.held(session.feature, session.loft.operation));
+        }
         let edited = session.feature?;
         let kind = session.kind()?;
         let document = self.editor.document();
@@ -2043,6 +2104,9 @@ impl Doc {
         if session.kind == MotionKind::Sweep && self.sweep_refused(session).is_some() {
             return None;
         }
+        if session.kind == MotionKind::Loft && self.loft_refused(session).is_some() {
+            return None;
+        }
         Some((feature, kind))
     }
 
@@ -2144,6 +2208,7 @@ impl Doc {
             MotionKind::Split => [Vec::new(), self.split_lit()],
             _ if session.kind.blends() => [self.blend_lit(), Vec::new()],
             MotionKind::Sweep => [self.refs_lit::<EdgeRef>(), Vec::new()],
+            MotionKind::Loft => [Vec::new(), Vec::new()],
             _ if session.kind.picks_faces() => [self.faces_lit(), Vec::new()],
             _ => self.align_lit(),
         };
@@ -2274,7 +2339,8 @@ impl Doc {
             | MotionKind::Chamfer
             | MotionKind::Shell
             | MotionKind::Fillet
-            | MotionKind::OffsetFace => (None, None),
+            | MotionKind::OffsetFace
+            | MotionKind::Loft => (None, None),
             MotionKind::Split => self.split_reference(session),
             MotionKind::Mirror | MotionKind::Draft => {
                 let plane = session.plane.as_ref();
@@ -2346,9 +2412,14 @@ impl Doc {
                 .or_else(|| self.scale_note(session))
                 .or_else(|| session.shell_warning())
                 .or_else(|| {
-                    // A sweep's cut that takes nothing from a body.
-                    (session.kind == MotionKind::Sweep
-                        && session.sweep.operation == OperationKind::Cut)
+                    // A sweep's or loft's cut that takes nothing from a
+                    // body.
+                    let cut = match session.kind {
+                        MotionKind::Sweep => session.sweep.operation,
+                        MotionKind::Loft => session.loft.operation,
+                        _ => OperationKind::NewBody,
+                    };
+                    (cut == OperationKind::Cut)
                         .then(|| self.uncut_note())
                         .flatten()
                 }),
@@ -2382,6 +2453,7 @@ impl Doc {
             draft: (session.kind == MotionKind::Draft)
                 .then(|| Box::new(self.face_draft_view(session))),
             sweep: (session.kind == MotionKind::Sweep).then(|| Box::new(self.sweep_view(session))),
+            loft: (session.kind == MotionKind::Loft).then(|| Box::new(self.loft_view(session))),
         })
     }
 }
@@ -2536,6 +2608,7 @@ mod chamfer;
 mod face_draft;
 mod faces;
 mod fillet;
+mod loft;
 mod offset_face;
 mod refs;
 mod scale;

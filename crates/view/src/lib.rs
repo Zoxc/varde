@@ -25,6 +25,7 @@ mod fillet;
 mod hit;
 mod icons;
 mod loft;
+pub use loft::loft_info;
 mod measure;
 mod motion;
 mod mouse_only;
@@ -86,11 +87,11 @@ pub use measure::{
 };
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, ChamferType,
-    ChamferView, DraftView, FaceHandle, FilletView, MotionField, MotionKind, MotionLook,
-    MotionPick, MotionState, OffsetFaceView, PatternMode, PickedFace, PickedFaces, ScaleMode,
-    ScaleView, ShellDirection, ShellView, SketchLines, SplitMode, SplitPiece, SplitView, SweepPart,
-    SweepPath, SweepView, align_info, axis_name, direction_name, pattern_copies, plane_name,
-    point_name, scale_info, split_info,
+    ChamferView, DraftView, FaceHandle, FilletView, LoftSection, LoftShape, LoftView, MotionField,
+    MotionKind, MotionLook, MotionPick, MotionState, OffsetFaceView, PatternMode, PickedFace,
+    PickedFaces, ScaleMode, ScaleView, ShellDirection, ShellView, SketchLines, SplitMode,
+    SplitPiece, SplitView, SweepPart, SweepPath, SweepView, align_info, axis_name, direction_name,
+    pattern_copies, plane_name, point_name, scale_info, split_info,
 };
 pub use offset_face::offset_info;
 pub use operation_panel::{
@@ -508,6 +509,9 @@ pub enum Look {
     /// sketch selected in the Timeline if one is, or backs out of the one
     /// being set up.
     StartSweep,
+    /// Starts setting up a new loft, or backs out of the one being set
+    /// up.
+    StartLoft,
     /// Changes the move, mirror, pattern, align or scale being set up, see [`MotionLook`]: it
     /// isn't in the document until [`Edit::CommitMotion`].
     Motion(MotionLook),

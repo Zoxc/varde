@@ -72,6 +72,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         offset_face: None,
         draft: None,
         sweep: None,
+        loft: None,
     }
 }
 

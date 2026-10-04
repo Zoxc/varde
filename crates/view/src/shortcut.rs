@@ -785,6 +785,17 @@ pub fn sweep_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
+/// Starting a new loft, or backing out of the one being set up, as
+/// [`sweep_binding`] does a sweep: with no key, as the UI mock has it
+/// (its Create group lists Loft without one).
+pub fn loft_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::NONE,
+        Message::Look(Look::StartLoft),
+        keys.editable && !keys.sketching,
+    )
+}
+
 /// Starting the measure tool, or leaving it: outside a sketch and the
 /// operations being set up. Measuring changes nothing, so a read-only
 /// document is measured too.

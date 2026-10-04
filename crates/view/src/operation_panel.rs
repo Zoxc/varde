@@ -199,8 +199,10 @@ pub enum PanelHover {
     /// A shell's face, by its place in the list.
     Face(usize),
     /// A sweep's path part of a sketch's curves, by its place among
-    /// them.
+    /// them; a loft's rail, by its place among them.
     Part(usize),
+    /// A loft's section, by its place among them.
+    Section(usize),
 }
 
 impl PanelHover {
@@ -212,7 +214,8 @@ impl PanelHover {
             | PanelHover::Body(_)
             | PanelHover::Edge(_)
             | PanelHover::Face(_)
-            | PanelHover::Part(_) => None,
+            | PanelHover::Part(_)
+            | PanelHover::Section(_) => None,
         }
     }
 
@@ -224,7 +227,8 @@ impl PanelHover {
             | PanelHover::Axis
             | PanelHover::Edge(_)
             | PanelHover::Face(_)
-            | PanelHover::Part(_) => None,
+            | PanelHover::Part(_)
+            | PanelHover::Section(_) => None,
         }
     }
 }
@@ -843,6 +847,38 @@ pub(crate) fn picked_row<'a>(
     what: PanelHover,
     hovered: Option<PanelHover>,
 ) -> Element<'a, Message> {
+    ordered_row(icon, name, meta, None, remove, press, what, hovered)
+}
+
+/// A [`picked_row`] of a list whose order counts, a loft's sections:
+/// with `moves`, an up and a down chevron before its cross, each sending
+/// its message, or shown faint without one (the first row's up, the
+/// last's down).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn ordered_row<'a>(
+    icon: Icon,
+    name: impl text::IntoFragment<'a>,
+    meta: Option<String>,
+    moves: Option<[Option<Message>; 2]>,
+    remove: Option<Message>,
+    press: Option<Message>,
+    what: PanelHover,
+    hovered: Option<PanelHover>,
+) -> Element<'a, Message> {
+    let chevron = |glyph: Icon, message: Option<Message>| {
+        let enabled = message.is_some();
+        let tint = icons::tinted(
+            glyph,
+            14.0,
+            move |p| if enabled { p.muted } else { p.faint },
+        );
+        button(container(tint).center(22))
+            .padding(0)
+            .style(theme::remove_button)
+            .on_press_maybe(message)
+    };
+    let moves = moves
+        .map(|[up, down]| row![chevron(Icon::ChevUp, up), chevron(Icon::Chev, down)].spacing(0));
     let cross = remove.map(|remove| {
         button(container(icons::tinted(Icon::Remove, 14.0, |p| p.faint)).center(22))
             .padding(0)
@@ -862,6 +898,7 @@ pub(crate) fn picked_row<'a>(
                 .width(Length::Fill)
                 .clip(true),
             meta,
+            moves,
             cross,
         ]
         .spacing(8)

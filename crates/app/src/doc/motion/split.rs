@@ -380,12 +380,15 @@ impl MotionSession {
 
     /// Whether its tool is picked in the viewport in its sketches, where
     /// the model isn't picked: regions or a line.
-    /// A sweep's profile's regions likewise.
+    /// A sweep's profile's regions likewise, and a loft's sections and
+    /// rails.
     pub(crate) fn picks_sketches(&self) -> bool {
         let split = self.kind == MotionKind::Split
             && self.picking == MotionPick::Tool
             && matches!(self.split.mode, SplitMode::Regions | SplitMode::Line);
-        split || (self.kind == MotionKind::Sweep && self.picking == MotionPick::Regions)
+        let loft = self.kind == MotionKind::Loft
+            && matches!(self.picking, MotionPick::Regions | MotionPick::Path);
+        split || loft || (self.kind == MotionKind::Sweep && self.picking == MotionPick::Regions)
     }
 }
 

@@ -60,6 +60,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         offset_face: None,
         draft: None,
         sweep: None,
+        loft: None,
     }
 }
 
@@ -913,6 +914,142 @@ fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
                 (messages.iter()).any(|m| matches!(m, Message::Look(Look::Hover(None)))),
                 "back on the line, the model's let go of: {messages:?}"
             );
+        }
+        let off = DVec3::new(25.0, -15.0, 0.0);
+        let (messages, _) = feed(&program, &mut input, &[moved(top(off)), press(top(off))]);
+        assert!(
+            looks(&messages).iter().all(Option::is_none),
+            "{picking:?}: {messages:?}"
+        );
+    }
+}
+
+/// A loft over a sketch on XY holding an 8 × 8 square at (20, 12) as
+/// its section starting at its corner (20, 12), a disc of radius 5 about
+/// (0, 10) as a candidate, and a sketch holding a point on its own at
+/// (-30, 20) and a line from (-20, -20) to (20, -20): seen from the top,
+/// while its sections are picked a click on the square's corner
+/// (28, 20) moves its start there, one on the point adds it, one in the
+/// disc adds its region; while its rails are, one on the line adds its
+/// chain; off them, nothing.
+#[test]
+fn a_loft_s_sections_starts_and_rails_are_picked_in_their_sketches() {
+    use crate::motion::{LoftSection, LoftShape, LoftView};
+    use varde_sketch::{Curve, Sketch};
+    let mut drawn = Sketch::default();
+    let center = drawn.add_point(DVec2::new(0.0, 10.0)).unwrap();
+    (drawn.add_curve(
+        Curve::Circle {
+            center,
+            radius: 5.0,
+        },
+        false,
+    ))
+    .unwrap();
+    let corners = [(20.0, 12.0), (28.0, 12.0), (28.0, 20.0), (20.0, 20.0)]
+        .map(|(x, y)| drawn.add_point(DVec2::new(x, y)).unwrap());
+    for (k, &start) in corners.iter().enumerate() {
+        let end = corners[(k + 1) % 4];
+        drawn.add_curve(Curve::Line { start, end }, false).unwrap();
+    }
+    let mut other = Sketch::default();
+    let apex = other.add_point(DVec2::new(-30.0, 20.0)).unwrap();
+    let a = other.add_point(DVec2::new(-20.0, -20.0)).unwrap();
+    let b = other.add_point(DVec2::new(20.0, -20.0)).unwrap();
+    let line = other
+        .add_curve(Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    let profiles = Arc::new(drawn.profiles().unwrap());
+    let square = (profiles.regions.iter())
+        .position(|region| region.bounds.0.x > 15.0)
+        .unwrap();
+    let disc = 1 - square;
+    let features = varde_document::Document::example();
+    let [section_sketch, other_sketch] = [features.features()[0].id, features.features()[1].id];
+    let placement = OriginPlane::XY.placement();
+    let camera = camera(View::Top, Projection::Orthographic);
+    let top = |at: DVec3| {
+        let p = shown(&camera, at);
+        Point::new(p.x as f32, p.y as f32)
+    };
+    let index = plate();
+    let corner_list: Vec<(varde_sketch::Id, DVec2)> = corners
+        .iter()
+        .map(|&id| (id, drawn.point(id).unwrap().at))
+        .collect();
+    for picking in [MotionPick::Regions, MotionPick::Path] {
+        let mut state: MotionState<'_> = state(MotionKind::Loft, picking, None);
+        state.loft = Some(Box::new(LoftView {
+            candidates: vec![crate::Candidate {
+                feature: section_sketch,
+                placement,
+                sketch: &drawn,
+                profiles: &profiles,
+            }],
+            lines: vec![crate::SketchLines {
+                feature: other_sketch,
+                placement,
+                sketch: &other,
+            }],
+            sections: vec![LoftSection {
+                name: "Sketch 1".to_owned(),
+                gone: false,
+                sketch: section_sketch,
+                placement: Some(placement),
+                shape: LoftShape::Region {
+                    region: profiles.regions.get(square),
+                    corners: corner_list.clone(),
+                    start: Some(corners[0]),
+                },
+            }],
+            rails: Vec::new(),
+            chains: Vec::new(),
+            mode: varde_document::LoftMode::Smooth,
+            closed: false,
+            operation: crate::OperationKind::NewBody,
+            targets: Vec::new(),
+            info: None,
+        }));
+        let program = viewport(state, &camera, Some(&index));
+        let mut input = Interaction::default();
+        let clicks: Vec<(DVec3, MotionLook)> = match picking {
+            MotionPick::Path => vec![(
+                DVec3::new(10.0, -20.0, 0.0),
+                MotionLook::LoftRail {
+                    sketch: other_sketch,
+                    curve: line,
+                },
+            )],
+            _ => vec![
+                (
+                    DVec3::new(28.0, 20.0, 0.0),
+                    MotionLook::LoftStart {
+                        section: 0,
+                        point: corners[2],
+                    },
+                ),
+                (
+                    DVec3::new(-30.0, 20.0, 0.0),
+                    MotionLook::LoftPoint {
+                        sketch: other_sketch,
+                        point: apex,
+                    },
+                ),
+                (
+                    DVec3::new(0.0, 10.0, 0.0),
+                    MotionLook::LoftRegion {
+                        sketch: section_sketch,
+                        region: disc,
+                    },
+                ),
+            ],
+        };
+        for (on, wanted) in clicks {
+            let (messages, captured) =
+                feed(&program, &mut input, &[moved(top(on)), press(top(on))]);
+            let sent: Vec<&MotionLook> = looks(&messages).into_iter().flatten().collect();
+            assert_eq!(sent, [&wanted], "{picking:?}");
+            assert!(captured);
         }
         let off = DVec3::new(25.0, -15.0, 0.0);
         let (messages, _) = feed(&program, &mut input, &[moved(top(off)), press(top(off))]);

@@ -763,6 +763,7 @@ impl Doc {
                 | Look::StartOffsetFace
                 | Look::StartDraft
                 | Look::StartSweep
+                | Look::StartLoft
                 | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
@@ -789,6 +790,7 @@ impl Doc {
                 | Look::StartOffsetFace
                 | Look::StartDraft
                 | Look::StartSweep
+                | Look::StartLoft
                 | Look::EditFeature(_)
         ) {
             self.measure = None;
@@ -828,11 +830,9 @@ impl Doc {
                     | FeatureKind::Fillet(_)
                     | FeatureKind::OffsetFace(_)
                     | FeatureKind::FaceDraft(_)
-                    | FeatureKind::Sweep(_),
+                    | FeatureKind::Sweep(_)
+                    | FeatureKind::Loft(_),
                 ) => self.edit_motion(id),
-                // No panel yet: lofts are made by the document's commands
-                // until their session is built.
-                Some(FeatureKind::Loft(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
@@ -856,6 +856,7 @@ impl Doc {
             Look::StartOffsetFace => self.start_motion(varde_view::MotionKind::OffsetFace),
             Look::StartDraft => self.start_motion(varde_view::MotionKind::Draft),
             Look::StartSweep => self.start_motion(varde_view::MotionKind::Sweep),
+            Look::StartLoft => self.start_motion(varde_view::MotionKind::Loft),
             Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),

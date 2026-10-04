@@ -48,6 +48,8 @@ icons! {
     Plus => r#"<path d="M12 5v14M5 12h14"/>"#,
     Folder => r#"<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>"#,
     Chev => r#"<path d="M7 10l5 5 5-5"/>"#,
+    // The chevron turned up, for moving a row up a list.
+    ChevUp => r#"<path d="M7 14l5-5 5 5"/>"#,
     Home => r#"<path d="M4 11l8-7 8 7"/><path d="M6 9.5V20h12V9.5"/>"#,
     Undo => r#"<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>"#,
     Redo => r#"<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>"#,

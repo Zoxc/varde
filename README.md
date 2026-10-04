@@ -38,6 +38,9 @@ sketches and editable features. It runs natively and in the browser.
 - Sweeping a sketch's regions along a path of other sketches' curves and
   model edges, or round a helix, set up and kept in the timeline (its
   geometry isn't built yet).
+- Lofting through sketch regions and points in order, smooth or ruled,
+  closed or along rails, set up and kept in the timeline (its geometry
+  isn't built yet).
 - Moving, mirroring and patterning bodies, in a row or round an axis,
   aligning one onto another by points and directions, and scaling them.
 - Faces, edges, vertices and bodies selected by clicking them with no tool

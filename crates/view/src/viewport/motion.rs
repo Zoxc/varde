@@ -59,13 +59,13 @@ use varde_render::{Camera, Colors, GridPlane, PointStyle, SketchLayer, Space as 
 use varde_sketch::{Id, angle};
 
 use super::regions::{self, Regions, grid_plane};
-use super::sketch::{line, srgba};
+use super::sketch::{fill_region_in, line, srgba};
 use crate::anchors::Anchors;
 use crate::extrude::snap_step;
 use crate::hit::{self, segment_distance};
 use crate::motion::{
-    AlignView, FaceHandle, MotionField, MotionKind, MotionLook, MotionPick, MotionState, ScaleView,
-    SketchLines, SplitMode, SplitView, SweepView,
+    AlignView, FaceHandle, LoftShape, LoftView, MotionField, MotionKind, MotionLook, MotionPick,
+    MotionState, ScaleView, SketchLines, SplitMode, SplitView, SweepView,
 };
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
@@ -92,6 +92,13 @@ const ALIGN_POINT_RADIUS: f32 = 5.0;
 const CURVE_WIDTH: f32 = 1.5;
 const HOVERED_CURVE_WIDTH: f32 = 3.0;
 const PICKED_CURVE_WIDTH: f32 = 2.5;
+/// How opaque a loft's sections are filled.
+const PICKED_FILL: f32 = 0.35;
+/// How wide a loft's sections' corners and its points on their own are
+/// drawn while its sections are picked, and its start dots (and the
+/// corner or point under the cursor), in pixels.
+const CORNER_RADIUS: f32 = 3.5;
+const START_RADIUS: f32 = 5.5;
 
 /// How long the handles' arrows are, and the rings' radius, in pixels.
 const ARROW_PIXELS: f64 = 100.0;
@@ -166,6 +173,8 @@ pub(crate) struct Input {
     face: FaceInput,
     /// A sweep's profile's regions and its path sketches' curves.
     sweep: SplitInput,
+    /// A loft's sections and rails picked in their sketches.
+    loft: LoftInput,
     /// Whether the cursor just left a sweep's path curve: the move is
     /// the model's picking's too (an edge there hovered at once), and the
     /// curve's lit chain is drawn away after it ([`Input::take_redraw`]).
@@ -203,6 +212,26 @@ struct FaceDrag {
 struct SplitInput {
     regions: regions::Input,
     curve: Option<(FeatureId, Id)>,
+}
+
+/// What the viewport keeps of a loft's sections and rails picked in
+/// their sketches: what's under the cursor, the corner of a section (by
+/// its place, and the sketch point there) taking the click ahead of a
+/// sketch point on its own, and that ahead of a region; or, while its
+/// rails are picked, the curve.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct LoftInput {
+    corner: Option<(usize, Id)>,
+    point: Option<(FeatureId, Id)>,
+    region: Option<(FeatureId, usize)>,
+    curve: Option<(FeatureId, Id)>,
+}
+
+impl LoftInput {
+    /// Whether anything is under the cursor.
+    fn over(&self) -> bool {
+        *self != Self::default()
+    }
 }
 
 impl std::fmt::Debug for SplitInput {
@@ -504,11 +533,23 @@ impl<'a> Moving<'a> {
                 Some(PanelHover::Part(at)) => sweep.chains.get(at).copied(),
                 _ => None,
             };
-            sweep_lines(&mut live, sweep, hovered, part, picking.is_some(), colors);
+            sweep_lines(
+                &mut live,
+                &sweep.lines,
+                &sweep.chains,
+                hovered,
+                part,
+                picking.is_some(),
+                colors,
+            );
             if regions.source().is_some() {
                 let base = regions.base_layer(&input.sweep.regions, colors);
                 return (base, live);
             }
+            return (EMPTY.clone(), live);
+        }
+        if let Some(loft) = &self.state.loft {
+            self.loft_layers(&mut live, loft, &input.loft, scene, colors);
             return (EMPTY.clone(), live);
         }
         if let Some(split) = &self.state.split {
@@ -694,6 +735,9 @@ impl<'a> Moving<'a> {
     /// the one keeping the body's id in the accent: none while there are
     /// none.
     pub(crate) fn labels(&self, camera: &Camera) -> Option<Element<'a, Message>> {
+        if let Some(loft) = &self.state.loft {
+            return loft_labels(loft, camera);
+        }
         let split = self.state.split.as_ref()?;
         if split.pieces.is_empty() {
             return None;
@@ -892,6 +936,24 @@ impl<'a> Moving<'a> {
         if let Some(picking) = self.sweep_picking() {
             return self.sweep_mouse(picking, input, event, bounds, cursor, camera);
         }
+        let Some(picking) = self.loft_picking() else {
+            input.loft = LoftInput::default();
+            return self.handles_mouse(input, event, bounds, cursor, camera, hovered);
+        };
+        self.loft_mouse(picking, &mut input.loft, event, bounds, cursor, camera)
+    }
+
+    /// [`Moving::mouse`] for a session picking none of its sketches: a
+    /// move's handles.
+    fn handles_mouse(
+        &self,
+        input: &mut Input,
+        event: mouse::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+        hovered: bool,
+    ) -> Option<Action<Message>> {
         let Some(handles) = self.handles(input, camera, bounds) else {
             input.hover = None;
             input.drag = None;
@@ -1111,6 +1173,9 @@ impl<'a> Moving<'a> {
             // Off the curves, the model's edges as the model picks them.
             return over.then_some(mouse::Interaction::Pointer);
         }
+        if self.loft_picking().is_some() {
+            return input.loft.over().then_some(mouse::Interaction::Pointer);
+        }
         if input.drag.is_some() || input.face.drag.is_some() {
             Some(mouse::Interaction::Grabbing)
         } else if input.face.hover {
@@ -1300,6 +1365,193 @@ impl<'a> Moving<'a> {
         );
     }
 
+    /// What a loft picks in its sketches, while it does: its sections
+    /// (regions, sketch points and its sections' corners) or its rails'
+    /// curves. The model isn't picked meanwhile.
+    fn loft_picking(&self) -> Option<MotionPick> {
+        self.state.loft.as_ref()?;
+        let picking = self.state.picking;
+        (self.state.editable && matches!(picking, MotionPick::Regions | MotionPick::Path))
+            .then_some(picking)
+    }
+
+    /// What's under the screen position `at` for a loft picking
+    /// `picking`: see [`LoftInput`].
+    fn loft_under(
+        &self,
+        loft: &LoftView<'_>,
+        picking: MotionPick,
+        at: DVec2,
+        camera: &Camera,
+        bounds: Rectangle,
+    ) -> LoftInput {
+        if picking == MotionPick::Path {
+            return LoftInput {
+                curve: curve_under(&loft.lines, at, camera, bounds),
+                ..LoftInput::default()
+            };
+        }
+        if let Some(corner) = corner_under(loft, at, camera, bounds) {
+            return LoftInput {
+                corner: Some(corner),
+                ..LoftInput::default()
+            };
+        }
+        if let Some(point) = point_under(&loft.lines, at, camera, bounds) {
+            return LoftInput {
+                point: Some(point),
+                ..LoftInput::default()
+            };
+        }
+        LoftInput {
+            region: loft_regions(loft, None).region_under(at, camera, bounds),
+            ..LoftInput::default()
+        }
+    }
+
+    /// Takes the mouse `event` while a loft picks in its sketches
+    /// ([`Moving::loft_picking`]): hovering and clicking what's under the
+    /// cursor ([`LoftInput`]). `None` for what's left to the camera: the
+    /// left button pressed off them orbits.
+    fn loft_mouse(
+        &self,
+        picking: MotionPick,
+        input: &mut LoftInput,
+        event: mouse::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+    ) -> Option<Action<Message>> {
+        let loft = self.state.loft.as_ref()?;
+        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
+        match event {
+            mouse::Event::CursorMoved { .. } => {
+                let over = cursor.position_over(bounds).map(local);
+                let under = over.map_or_else(LoftInput::default, |at| {
+                    self.loft_under(loft, picking, at, camera, bounds)
+                });
+                (std::mem::replace(input, under) != under).then(Action::request_redraw)
+            }
+            mouse::Event::CursorLeft => {
+                let had = std::mem::take(input).over();
+                had.then(Action::request_redraw)
+            }
+            mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                let at = local(cursor.position_over(bounds)?);
+                let under = self.loft_under(loft, picking, at, camera, bounds);
+                let look = if let Some((section, point)) = under.corner {
+                    MotionLook::LoftStart { section, point }
+                } else if let Some((sketch, point)) = under.point {
+                    MotionLook::LoftPoint { sketch, point }
+                } else if let Some((sketch, region)) = under.region {
+                    MotionLook::LoftRegion { sketch, region }
+                } else {
+                    let (sketch, curve) = under.curve?;
+                    MotionLook::LoftRail { sketch, curve }
+                };
+                Some(Action::publish(Message::Look(Look::Motion(look))).and_capture())
+            }
+            _ => None,
+        }
+    }
+
+    /// Draws a loft on `live`: while its sections are picked, every
+    /// candidate sketch's regions (the one under the cursor filled
+    /// stronger) and its points on their own; its sections' regions
+    /// filled and outlined in the selected colour (the one whose row is
+    /// hovered in the hovered colour), their corners while picking, and
+    /// each section's start dot (a point section's point) in the accent,
+    /// the corner under the cursor in the hovered colour; its rails as a
+    /// sweep's path.
+    fn loft_layers(
+        &self,
+        live: &mut SketchLayer,
+        loft: &LoftView<'_>,
+        input: &LoftInput,
+        scene: &Colors,
+        colors: SketchColors,
+    ) {
+        let picking = self.loft_picking();
+        let sections = picking == Some(MotionPick::Regions);
+        if sections {
+            loft_regions(loft, None).live(input.region, colors, live);
+            loose_points(live, &loft.lines, input.point, colors);
+        }
+        let panel = match self.state.hover {
+            Some(PanelHover::Section(at)) => Some(at),
+            _ => None,
+        };
+        let [r, g, b] = scene.selected.0;
+        let accent = iced::Color::from_rgb(r, g, b);
+        let dot = |radius: f32, color: iced::Color| PointStyle {
+            radius,
+            rim_width: 1.5,
+            rim: srgba(color),
+            fill: srgba(colors.point_fill),
+            fixed: true,
+        };
+        for (at, section) in loft.sections.iter().enumerate() {
+            let Some(placement) = section.placement else {
+                continue;
+            };
+            let lit = panel == Some(at);
+            let color = if lit { colors.hovered } else { colors.selected };
+            if let LoftShape::Region {
+                region: Some(region),
+                corners,
+                ..
+            } = &section.shape
+                && let Some(plane) = grid_plane(placement)
+            {
+                let space = LayerSpace::On(plane);
+                fill_region_in(live, space, region, color.scale_alpha(PICKED_FILL));
+                for polyline in &region.outline {
+                    let mut closed = polyline.clone();
+                    closed.extend(polyline.first().copied());
+                    live.polyline(space, &closed, line(color, PICKED_CURVE_WIDTH, false));
+                }
+                if sections {
+                    for &(id, corner) in corners {
+                        let hovered = input.corner == Some((at, id));
+                        let rim = if hovered {
+                            colors.hovered
+                        } else {
+                            colors.curve
+                        };
+                        let radius = if hovered { START_RADIUS } else { CORNER_RADIUS };
+                        live.world_point(placement.to_world(corner).as_vec3(), dot(radius, rim));
+                    }
+                }
+            }
+            if let Some(start) = section.shape.dot() {
+                let color = if lit { colors.hovered } else { accent };
+                let style = PointStyle {
+                    fill: srgba(color),
+                    fixed: false,
+                    ..dot(START_RADIUS, colors.point_fill)
+                };
+                live.world_point(placement.to_world(start).as_vec3(), style);
+            }
+        }
+        let hovered = input.curve.filter(|_| picking == Some(MotionPick::Path));
+        let part = match self.state.hover {
+            Some(PanelHover::Part(at)) => loft.chains.get(at).copied(),
+            _ => None,
+        };
+        let rails = picking == Some(MotionPick::Path);
+        if rails || !loft.chains.is_empty() {
+            sweep_lines(
+                live,
+                &loft.lines,
+                &loft.chains,
+                hovered,
+                part,
+                rails,
+                colors,
+            );
+        }
+    }
+
     /// Where its layers are drawn: the world's XY plane, as the measure
     /// tool's, since it draws in the world; a split's regions' source's
     /// plane, whose regions its base layer draws.
@@ -1355,26 +1607,28 @@ fn sweep_regions<'s, 'a>(sweep: &'s SweepView<'a>, hover: Option<PanelHover>) ->
     }
 }
 
-/// Draws a sweep's path on `live`: while it's picked (`picking`), the
-/// path sketches' curves (construction ones dashed, the chain of the one
-/// `hovered` stronger), and each part's curves in the selected colour,
-/// those of the part whose row is hovered (`part`) in the hovered one.
+/// Draws a sweep's path (or a loft's rails) on `live`: while it's picked
+/// (`picking`), the curves of the sketches of `lines` (construction ones
+/// dashed, the chain of the one `hovered` stronger), and each part's
+/// curves of `chains` in the selected colour, those of the part whose
+/// row is hovered (`part`) in the hovered one.
 fn sweep_lines(
     live: &mut SketchLayer,
-    sweep: &SweepView<'_>,
+    lines: &[SketchLines<'_>],
+    chains: &[(FeatureId, &[Id])],
     hovered: Option<(FeatureId, Id)>,
     part: Option<(FeatureId, &[Id])>,
     picking: bool,
     colors: SketchColors,
 ) {
     let picked = |feature: FeatureId, id: Id| {
-        (sweep.chains.iter())
+        (chains.iter())
             .any(|&(sketch, curves)| sketch == feature && curves.binary_search(&id).is_ok())
     };
     let lit = |feature: FeatureId, id: Id| {
         part.is_some_and(|(sketch, curves)| sketch == feature && curves.binary_search(&id).is_ok())
     };
-    for candidate in &sweep.lines {
+    for candidate in lines {
         let Some(plane) = grid_plane(candidate.placement) else {
             continue;
         };
@@ -1406,6 +1660,147 @@ fn sweep_lines(
             live.polyline(space, &points, line(color, width, dashed));
         }
     }
+}
+
+/// A loft's sketches whose regions show, each on its own plane (no
+/// source: its sections are drawn apart), and the one hovered in the
+/// panel (`hover`).
+fn loft_regions<'s, 'a>(loft: &'s LoftView<'a>, hover: Option<PanelHover>) -> Regions<'s, 'a> {
+    Regions {
+        candidates: &loft.candidates,
+        source: None,
+        picked: LoftView::none_picked(),
+        panel: hover.and_then(PanelHover::region),
+    }
+}
+
+/// The corner of a loft's section under the screen position `at`, by the
+/// section's place and the sketch point there: of those within
+/// [`HIT_PIXELS`] on the screen, the nearest.
+fn corner_under(
+    loft: &LoftView<'_>,
+    at: DVec2,
+    camera: &Camera,
+    bounds: Rectangle,
+) -> Option<(usize, Id)> {
+    let mut nearest: Option<(f64, usize, Id)> = None;
+    for (index, section) in loft.sections.iter().enumerate() {
+        let (Some(placement), LoftShape::Region { corners, .. }) =
+            (section.placement, &section.shape)
+        else {
+            continue;
+        };
+        let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height) else {
+            continue;
+        };
+        for &(id, corner) in corners {
+            let Some(shown) = projector.project(corner) else {
+                continue;
+            };
+            let distance = shown.distance(at);
+            if distance <= HIT_PIXELS && nearest.is_none_or(|(nearest, ..)| distance < nearest) {
+                nearest = Some((distance, index, id));
+            }
+        }
+    }
+    nearest.map(|(_, index, id)| (index, id))
+}
+
+/// The points on their own (no curve's) of `sketch`, with where they are.
+fn loose(sketch: &varde_sketch::Sketch) -> impl Iterator<Item = (Id, DVec2)> + '_ {
+    let used: std::collections::BTreeSet<Id> = (sketch.curves.iter())
+        .flat_map(|entry| entry.curve.points())
+        .collect();
+    (sketch.points.iter())
+        .filter(move |point| !used.contains(&point.id))
+        .map(|point| (point.id, point.at))
+}
+
+/// The point on its own of `lines`' sketches under the screen position
+/// `at`, and its sketch: of those within [`HIT_PIXELS`] on the screen, the
+/// nearest.
+fn point_under(
+    lines: &[SketchLines<'_>],
+    at: DVec2,
+    camera: &Camera,
+    bounds: Rectangle,
+) -> Option<(FeatureId, Id)> {
+    let mut nearest: Option<(f64, FeatureId, Id)> = None;
+    for candidate in lines {
+        let Some(projector) =
+            Projector::new(camera, candidate.placement, bounds.width, bounds.height)
+        else {
+            continue;
+        };
+        for (id, point) in loose(candidate.sketch) {
+            let Some(shown) = projector.project(point) else {
+                continue;
+            };
+            let distance = shown.distance(at);
+            if distance <= HIT_PIXELS && nearest.is_none_or(|(nearest, ..)| distance < nearest) {
+                nearest = Some((distance, candidate.feature, id));
+            }
+        }
+    }
+    nearest.map(|(_, feature, id)| (feature, id))
+}
+
+/// Draws the points on their own of `lines`' sketches on `live`, as a
+/// sketch's points, the one `hovered` in the hovered colour.
+fn loose_points(
+    live: &mut SketchLayer,
+    lines: &[SketchLines<'_>],
+    hovered: Option<(FeatureId, Id)>,
+    colors: SketchColors,
+) {
+    for candidate in lines {
+        for (id, point) in loose(candidate.sketch) {
+            let lit = hovered == Some((candidate.feature, id));
+            let style = PointStyle {
+                radius: if lit { START_RADIUS } else { CORNER_RADIUS },
+                rim_width: 1.5,
+                rim: srgba(if lit { colors.hovered } else { colors.curve }),
+                fill: srgba(colors.point_fill),
+                fixed: false,
+            };
+            let at = candidate.placement.to_world(point);
+            live.world_point(at.as_vec3(), style);
+        }
+    }
+}
+
+/// The numbers of a loft's sections, each in a chip by its start dot
+/// (or its region's middle) seen by `camera`: none while there are none.
+fn loft_labels<'a>(loft: &LoftView<'_>, camera: &Camera) -> Option<Element<'a, Message>> {
+    let chips: Vec<Element<'a, Message>> = (loft.sections.iter().enumerate())
+        .filter_map(|(at, section)| {
+            let placement = section.placement?;
+            let middle = match &section.shape {
+                LoftShape::Region {
+                    region: Some(region),
+                    ..
+                } => (region.bounds.0 + region.bounds.1) / 2.0,
+                shape => shape.dot()?,
+            };
+            let world = placement.to_world(middle);
+            if !world.is_finite() {
+                return None;
+            }
+            let chip = container(text((at + 1).to_string()).size(12))
+                .padding([1, 4])
+                .style(|theme| theme::glyph(theme, false));
+            let placement = Placement {
+                origin: world,
+                ..OriginPlane::XY.placement()
+            };
+            Some(Element::from(Anchors::new(
+                *camera,
+                placement,
+                [(DVec2::ZERO, chip.into())],
+            )))
+        })
+        .collect();
+    (!chips.is_empty()).then(|| iced::widget::stack(chips).into())
 }
 
 /// A split's sketches whose regions show, and those picked.

@@ -59,6 +59,10 @@ pub(crate) struct RegionPick {
     pub(crate) missing: usize,
     /// The most regions that can be picked: the feature's limit.
     most: usize,
+    /// Sketches whose profiles are found too while there's no source,
+    /// whether shown or not, each within the whole of [`MAX_WORK`] as a
+    /// source's: a loft's sections' sketches, which adding it hid.
+    pub(crate) also: Vec<FeatureId>,
 }
 
 /// A sketch's profiles, and the sketch they're of.
@@ -85,6 +89,7 @@ impl RegionPick {
             references: Vec::new(),
             missing: 0,
             most,
+            also: Vec::new(),
         }
     }
 
@@ -192,7 +197,7 @@ impl RegionPick {
             None => document
                 .features()
                 .iter()
-                .filter(|feature| feature.visible)
+                .filter(|feature| feature.visible || self.also.contains(&feature.id))
                 .map(|feature| feature.id)
                 .collect(),
         };
@@ -210,6 +215,7 @@ impl RegionPick {
             };
             let kept = old.iter().position(|found| found.feature == id);
             let is_source = Some(id) == self.source;
+            let worked_whole = is_source || (self.source.is_none() && self.also.contains(&id));
             if let Some(at) = kept.filter(|&at| old[at].sketch == *sketch) {
                 self.found.push(old.swap_remove(at));
                 continue;
@@ -228,7 +234,7 @@ impl RegionPick {
             // skipped, as it's no more complex than those that took the
             // work: tried again on a later change, when those found are
             // kept and spend none.
-            if !is_source && left == 0 {
+            if !worked_whole && left == 0 {
                 continue;
             }
             #[cfg(test)]
@@ -239,14 +245,14 @@ impl RegionPick {
             // to pick; too complex for less than the whole of
             // [`MAX_WORK`], as with that left of the budget, it may not
             // be, and it's tried again on a later change.
-            let whole = is_source || left >= MAX_WORK;
-            let found = if is_source {
+            let whole = worked_whole || left >= MAX_WORK;
+            let found = if worked_whole {
                 sketch.profiles()
             } else {
                 sketch.profiles_spending(&mut left)
             };
             match found {
-                Ok(profiles) if is_source || !profiles.regions.is_empty() => {
+                Ok(profiles) if worked_whole || !profiles.regions.is_empty() => {
                     self.found.push(Found {
                         feature: id,
                         sketch: sketch.clone(),
