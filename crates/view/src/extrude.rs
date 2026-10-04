@@ -288,7 +288,7 @@ impl ExtrudeState<'_> {
 /// The centre of `regions` together, weighing each loop of their outlines
 /// by its area (holes taking theirs away), or of their boxes if that
 /// comes to nothing.
-fn centroid<'r>(regions: impl Iterator<Item = &'r Region>) -> Option<DVec2> {
+pub(crate) fn centroid<'r>(regions: impl Iterator<Item = &'r Region>) -> Option<DVec2> {
     let mut area = 0.0;
     let mut moment = DVec2::ZERO;
     let mut boxes: Option<(DVec2, DVec2)> = None;

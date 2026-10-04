@@ -208,9 +208,10 @@ keeps the other buttons. The handle is an arrow from the picked regions'
 area-weighted centre (holes taking theirs away) along the plane's
 normal: its shaft is drawn in the live layer projected to the screen
 (`Space::Screen`, cut where it passes behind the eye), so it shows over
-the model, and at each knob a puck, drawn in the live layer in the world, so the renderer depth
-tests it as the regions: a ring square to the axis, 11 px in radius, filled at 0.2,
-with a 2.6 px dot at its middle, and a 20 px arrow out of the cap (along
+the model, and at each knob a puck, projected to the screen too, so the
+whole handle shows over the model from any side, never hidden by it: a
+ring square to the axis, 11 px in radius, filled at 0.2 (the ring left
+out where it passes behind the eye), with a 2.6 px dot at its middle, and a 20 px arrow out of the cap (along
 the knob's side of the axis) whose open head lies across the axis in the
 plane through it facing the eye (left out looking along the axis). Its
 sizes are pixels at the knob, so it keeps its size on the screen and
@@ -222,21 +223,15 @@ white) with its rail: a line along the axis 170 px either way in
 16 steps, on the screen over the model as the shaft is, each way one
 joined polyline whose segments' alphas fall
 (`SketchLayer::polyline_fading`; separate segments would overlap at
-their round ends and dot the line). One side has a knob at its distance (negative when flipped),
-symmetric at half of it, two sides one per side. A knob the model's
-mesh hides isn't drawn or grabbed (`viewport/extrude.rs`'s `hidden_by`:
-a ray from the knob towards the eye meets a triangle of an opaque part
-(glass hides nothing, as the shaft shows through it) more than 0.002
-view heights in front of it, as far as the renderer pulls the layers,
-so a knob on the cap it ends on shows; a triangle whose plane passes
-within the mesh's `f32` rounding of the knob doesn't count either, or
-far from the origin, seen at a grazing angle, the cap's rounded corners
-would hide its own knob; past 2¹⁸ triangles the knobs always show,
-rather than slow every frame). An extrude its own check refuses
+their round ends and dot the line). The pucks, their hit testing, the shafts
+and the rails are `viewport/handle.rs`'s, shared with a revolve's handle,
+whose shaft and rail are arcs round its axis (`agents/features.md`,
+Revolve). One side has a knob at its distance (negative when flipped),
+symmetric at half of it, two sides one per side. An extrude its own check refuses
 (`ExtrudeState::refused`, two sides over the limit) has no preview, and
 draws no shaft, which would be a line on its own; its pucks stay. The
-knobs take the mouse ahead of the regions (`Extruding::mouse`, with the
-`Model` the scene shows): within 13 px of a knob or 6 px of its arrow
+knobs take the mouse ahead of the regions (`Extruding::mouse`), behind
+the model or not: within 13 px of a knob or 6 px of its arrow
 on the screen (the nearest arrow first) one is hovered, captured, the
 cursor a grab hand, no region hovered meanwhile; not in an extrude that
 can't be changed. Pressing one sends `GrabHandle`; while the app says
@@ -1551,7 +1546,8 @@ sends, `Shooter::hover`); the top selected with an edge hovered, then
 the edge added, then the body double-clicked and marked in Objects
 (`shots_19`, light and dark); the revolve (`shots_20`): `O` with the
 lathe's regions, the axis asked for, a full turn about the construction
-line, one side of 270° flipped, two sides (also scale 2, dark), then its
+line, one side of 270° flipped, then not with its knob grabbed (also
+scale 2, dark), two sides (also scale 2, dark), then its
 Timeline row selected and the rail's Create list; a ball and a torus
 turned about one line (`shots_21`, also scale 2, and close up from
 above, dark), for their silhouettes; the measure tool

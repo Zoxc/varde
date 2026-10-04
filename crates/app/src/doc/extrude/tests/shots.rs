@@ -1141,8 +1141,9 @@ fn shots_19_select() {
 
 /// Scenario 20: the revolve: `O` with the lathe's regions offered, the
 /// rectangle picked and the axis asked for, a full turn about the
-/// construction line previewed, one side of 270° flipped, two sides,
-/// then the revolve in the Timeline with the rail's Create list open.
+/// construction line previewed, one side of 270° flipped, then not, its
+/// knob grabbed with its rail, two sides, then the revolve in the
+/// Timeline with the rail's Create list open.
 #[test]
 #[ignore = "writes screenshots, see the module"]
 fn shots_20_revolve() {
@@ -1168,6 +1169,18 @@ fn shots_20_revolve() {
         lathe.revolve(RevolveLook::Flip);
         lathe.answer();
         camera.take(&lathe.doc, "20-revolve-one-side", Shot::new());
+        // Not flipped, its knob's end turned to the camera, the knob
+        // grabbed: lighter, with its rail round the axis.
+        lathe.revolve(RevolveLook::Flip);
+        lathe.answer();
+        lathe.revolve(RevolveLook::GrabHandle(Angle::First));
+        camera.take(&lathe.doc, "20-revolve-grabbed", Shot::new());
+        camera.take(
+            &lathe.doc,
+            "20-revolve-grabbed-dark-scale2",
+            Shot::new().dark().scale(2.0),
+        );
+        lathe.revolve(RevolveLook::DropHandle);
         lathe.revolve(RevolveLook::Extent(TurnKind::TwoSides));
         lathe.input(Angle::First, "100");
         lathe.input(Angle::Second, "45");

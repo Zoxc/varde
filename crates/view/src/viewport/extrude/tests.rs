@@ -298,109 +298,6 @@ fn an_extrude_its_own_check_refuses_draws_no_shaft() {
     assert_ne!(whole, refused);
 }
 
-/// A box from the origin to (2, 2, 2), tessellated.
-fn cube() -> RenderMesh {
-    let tol = varde_kernel::Tolerance::DEFAULT;
-    let solid = varde_kernel::Solid::cuboid(DVec3::ZERO, DVec3::splat(2.0), 0, &tol);
-    let display = varde_kernel::Display::new(&tol);
-    solid.unwrap().tessellate(&display).unwrap()
-}
-
-#[test]
-fn a_knob_the_model_is_in_front_of_is_hidden() {
-    // From the top, over a box from the origin to (2, 2, 2): beneath it,
-    // inside it, on its top face, above it and beside it.
-    let mesh = cube();
-    let mut perspective = top_camera();
-    perspective.set_projection(Projection::Perspective);
-    for camera in [top_camera(), perspective] {
-        for (z, behind) in [(-1.0, true), (1.0, true), (2.0, false), (3.0, false)] {
-            let at = DVec3::new(1.0, 1.5, z);
-            assert_eq!(hidden(&mesh, &camera, at), behind, "{camera:?} at {at}");
-        }
-        assert!(!hidden(&mesh, &camera, DVec3::new(5.0, 1.0, -1.0)));
-        assert!(!hidden(
-            &RenderMesh::default(),
-            &camera,
-            DVec3::new(1.0, 1.0, -1.0)
-        ));
-    }
-    // From below, the other way round.
-    let mut camera = top_camera();
-    camera.look_from(varde_render::View::Bottom);
-    assert!(hidden(&mesh, &camera, DVec3::new(1.0, 1.0, 3.0)));
-    assert!(!hidden(&mesh, &camera, DVec3::new(1.0, 1.0, 0.0)));
-}
-
-#[test]
-fn knobs_the_model_hides_are_left_out() {
-    // One side, 10 mm up from the plate's ring on XY: a box around the
-    // plate up to 20 mm hides the knob from the top.
-    let (profiles, feature) = plate();
-    let picked = BTreeSet::from([ring(&profiles)]);
-    let extruding = Extruding::new(state(
-        &profiles,
-        feature,
-        OriginPlane::XY,
-        true,
-        &picked,
-        None,
-    ));
-    let tol = varde_kernel::Tolerance::DEFAULT;
-    let solid = varde_kernel::Solid::cuboid(DVec3::splat(-20.0), DVec3::splat(40.0), 0, &tol);
-    let display = varde_kernel::Display::new(&tol);
-    let mesh = solid.unwrap().tessellate(&display).unwrap();
-    let knob = extruding.handle.as_ref().unwrap();
-    let at = knob.origin + knob.normal * knob.knobs[0].1;
-    assert!(hidden(&mesh, &top_camera(), at));
-    assert!(!hidden(&RenderMesh::default(), &top_camera(), at));
-    let shown = |mesh: &RenderMesh, opacity: &[f32]| {
-        extruding.shown_knobs(&top_camera(), mesh, opacity).count()
-    };
-    assert_eq!(shown(&RenderMesh::default(), &[]), 1);
-    assert_eq!(shown(&mesh, &[]), 0);
-    assert_eq!(shown(&mesh, &[1.0]), 0);
-    // Less than opaque, the box hides nothing: the shaft is drawn through
-    // it, and the knob shows at its end.
-    assert_eq!(shown(&mesh, &[0.3]), 1);
-}
-
-#[test]
-fn a_knob_on_a_face_far_out_shows_from_any_angle() {
-    // A box 2 on a side far from the origin, where its mesh's `f32`
-    // corners are thousandths off the `f64` ones: a knob on its top face,
-    // looked at closely from nearly straight down to barely above it,
-    // shows; one inside it doesn't.
-    let tol = varde_kernel::Tolerance::DEFAULT;
-    let display = varde_kernel::Display::new(&tol);
-    // Rounded up and down to `f32`, by a few steps of 0.0007.
-    for step in 0..6 {
-        let corner = DVec3::new(
-            123_456.789,
-            -98_765.432_1,
-            54_321.123 + f64::from(step) * 7e-4,
-        );
-        let solid = varde_kernel::Solid::cuboid(corner, DVec3::splat(2.0), 0, &tol);
-        let mesh = solid.unwrap().tessellate(&display).unwrap();
-        let on_top = corner + DVec3::new(0.6, 1.3, 2.0);
-        let inside = corner + DVec3::new(0.6, 1.3, 1.0);
-        for view_height in [0.5f32, 12.8] {
-            for elevation in [89.0f32, 20.0, 3.0, 1.0] {
-                for projection in [Projection::Orthographic, Projection::Perspective] {
-                    let mut camera = top_camera();
-                    camera.set_projection(projection);
-                    camera.set_target(on_top.as_vec3());
-                    camera.zoom(view_height / camera.view_height());
-                    camera.orbit(0.4, elevation.to_radians() - Camera::PITCH_LIMIT);
-                    let case = format!("{step}: {view_height} high at {elevation}° {projection:?}");
-                    assert!(!hidden(&mesh, &camera, on_top), "on top, {case}");
-                    assert!(hidden(&mesh, &camera, inside), "inside, {case}");
-                }
-            }
-        }
-    }
-}
-
 /// One side, 5 mm along -Y from the plate's ring on XZ: seen from the top,
 /// the knob 50 pixels below the middle, its ring edge on across the
 /// screen and its arrow on down it.
@@ -474,7 +371,7 @@ fn a_knob_is_drawn_lighter_with_its_rail_while_hovered() {
 }
 
 #[test]
-fn a_knob_is_not_grabbed_read_only_or_behind_the_model() {
+fn a_knob_is_grabbed_behind_the_model_but_not_read_only() {
     let (profiles, feature) = plate();
     let picked = BTreeSet::from([ring(&profiles)]);
     let at = Point::new(100.0, 150.0);
@@ -492,9 +389,11 @@ fn a_knob_is_not_grabbed_read_only_or_behind_the_model() {
     state.editable = false;
     assert!(!grabs(&shown(state)));
 
-    // Inside a box around it, seen from the top.
+    // Inside a box around it, seen from the top: the handle is drawn
+    // over the model, so it shows and grabs.
     let tol = varde_kernel::Tolerance::DEFAULT;
-    let solid = varde_kernel::Solid::cuboid(DVec3::splat(-20.0), DVec3::splat(40.0), 0, &tol);
+    let solid =
+        varde_kernel::Solid::cuboid(glam::DVec3::splat(-20.0), glam::DVec3::splat(40.0), 0, &tol);
     let display = varde_kernel::Display::new(&tol);
     let mesh = Arc::new(solid.unwrap().tessellate(&display).unwrap());
     let state = knob_state(&profiles, feature, &picked);
@@ -507,5 +406,5 @@ fn a_knob_is_not_grabbed_read_only_or_behind_the_model() {
         None,
         Some(crate::viewport::Operating::Extrude(Extruding::new(state))),
     );
-    assert!(!grabs(&viewport));
+    assert!(grabs(&viewport));
 }

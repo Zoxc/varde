@@ -8,19 +8,28 @@
 //! and before the regions. A click on another edge, where there's no
 //! region, sends it to be refused, saying why. The axis picked is drawn
 //! on the source with an arrow at the end positive angles turn
-//! right-handed about (against the line or edge when flipped). No
-//! handle. The renderer depth tests all of it, so the model hides what's
-//! behind it; the arrow, in screen space, is on top.
+//! right-handed about (against the line or edge when flipped). Its
+//! handle (`handle.rs`, as the extrude's): a puck at the picked regions'
+//! centre turned to each angle, its arrow along the way the centre turns,
+//! and a shaft round the axis from the sketch plane to it; the knob
+//! hovered or dragged lighter, with its rail round the axis. Dragging a
+//! knob turns it to where the cursor's ray meets the plane square to the
+//! axis through the regions' centre, snapped as a move's ring
+//! ([`angle_step`]). The renderer depth tests the regions and lines, so
+//! the model hides what's behind them; the axis's arrow and the handle,
+//! on the screen, are on top, so the handle always shows.
 
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
 use iced::{Point, Rectangle, mouse};
-use varde_document::{AxisLine, FeatureId};
+use varde_document::{AxisLine, FeatureId, OriginPlane};
 use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
-use varde_sketch::{Curve, Sketch};
+use varde_sketch::{Curve, Sketch, angle};
 
+use super::handle::{self, Puck};
+use super::motion::{angle_step, wrapped};
 use super::regions::{self, Regions, grid_plane};
 use super::sketch::{line, srgba};
 use crate::hit;
@@ -28,7 +37,8 @@ use crate::operation_panel::{Candidate, PanelHover};
 use crate::pick::{Picked, Picks};
 use crate::projection::Projector;
 use crate::revolve::{
-    RevolveLook, RevolvePick, RevolveState, axis_edge, axis_line, axis_of, axis_reach, on_sketch,
+    Angle, RevolveHandle, RevolveLook, RevolvePick, RevolveState, axis_edge, axis_line, axis_of,
+    axis_reach, on_sketch,
 };
 use crate::theme::SketchColors;
 use crate::{Look, Message};
@@ -45,11 +55,19 @@ const AXIS_WIDTH: f32 = 2.5;
 /// pixels.
 const ARROW_LENGTH: f64 = 11.0;
 const ARROW_HALF_WIDTH: f64 = 4.5;
+/// How many degrees each step of the shaft's arc turns at most.
+const SHAFT_STEP: f64 = 3.0;
+/// How near to edge on the plane a knob turns in the cursor's ray may run
+/// and still turn it, as the cosine between the ray and the axis: a
+/// move's ring's.
+const EDGE_ON: f64 = 1e-3;
 
 /// The revolve being set up, as the viewport shows it.
 #[derive(Debug, Clone)]
 pub(crate) struct Revolving<'a> {
-    state: RevolveState<'a>,
+    /// Boxed, as a move's is: it's of the largest the viewport operates.
+    state: Box<RevolveState<'a>>,
+    handle: Option<RevolveHandle>,
 }
 
 /// What the viewport keeps of the revolve between events and frames.
@@ -62,11 +80,18 @@ pub(crate) struct Input {
     /// The model edge that could be the axis under the cursor as it last
     /// moved while the axis is picked, and its ends.
     edge: Option<(u32, [DVec3; 2])>,
+    /// The knob under the cursor as it last moved, if one is: then nothing
+    /// else is.
+    knob: Option<Angle>,
 }
 
 impl<'a> Revolving<'a> {
     pub(crate) fn new(state: RevolveState<'a>) -> Self {
-        Self { state }
+        let handle = state.handle();
+        Self {
+            state: Box::new(state),
+            handle,
+        }
     }
 
     /// Its sketches and the regions picked.
@@ -85,9 +110,11 @@ impl<'a> Revolving<'a> {
     }
 
     /// Takes the mouse `event` with the `cursor` over `bounds` seen by
-    /// `camera`: hovering and picking regions, and while the axis is
-    /// picked lines and axes, which go first. `None` for what's left to
-    /// the camera: the left button pressed off them orbits.
+    /// `camera`: hovering and grabbing the knobs,
+    /// which go first, and dragging the knob grabbed; hovering and picking
+    /// regions, and while the axis is picked lines and axes, which go
+    /// ahead of them. `None` for what's left to the camera: the left
+    /// button pressed off them orbits.
     pub(crate) fn mouse(
         &self,
         input: &mut Input,
@@ -98,8 +125,29 @@ impl<'a> Revolving<'a> {
     ) -> Option<Action<Message>> {
         let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         match event {
-            mouse::Event::CursorMoved { .. } => {
+            mouse::Event::CursorMoved { position } => {
+                if let Some(angle) = self.state.grabbed {
+                    // The raw position, so a drag goes on over the rest of
+                    // the window.
+                    let to = self.drag_to(angle, local(position), camera, bounds)?;
+                    let look = RevolveLook::DragHandle { angle, to };
+                    return Some(Action::publish(Message::Look(Look::Revolve(look))).and_capture());
+                }
                 let over = cursor.position_over(bounds).map(local);
+                let knob = over.and_then(|at| self.knob_at(at, camera, bounds));
+                if knob.is_some() {
+                    let moved = std::mem::replace(&mut input.knob, knob) != knob;
+                    let changed = moved
+                        | input.axis.take().is_some()
+                        | input.edge.take().is_some()
+                        | input.regions.hover.take().is_some();
+                    return Some(if changed {
+                        Action::request_redraw().and_capture()
+                    } else {
+                        Action::capture()
+                    });
+                }
+                let knob_left = input.knob.take().is_some();
                 let axis = over.and_then(|at| self.axis_under(at, camera, bounds));
                 let edge = over
                     .filter(|_| axis.is_none())
@@ -112,16 +160,26 @@ impl<'a> Revolving<'a> {
                     || std::mem::replace(&mut input.edge, edge).map(|(e, _)| e)
                         != edge.map(|(e, _)| e)
                     || std::mem::replace(&mut input.regions.hover, region) != region;
-                changed.then(Action::request_redraw)
+                (changed || knob_left).then(Action::request_redraw)
             }
             mouse::Event::CursorLeft => {
                 let had = input.axis.take().is_some()
                     | input.edge.take().is_some()
-                    | input.regions.hover.take().is_some();
+                    | input.regions.hover.take().is_some()
+                    | input.knob.take().is_some();
                 had.then(Action::request_redraw)
+            }
+            mouse::Event::ButtonReleased(mouse::Button::Left) => {
+                self.state.grabbed?;
+                let look = Look::Revolve(RevolveLook::DropHandle);
+                Some(Action::publish(Message::Look(look)).and_capture())
             }
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
                 let at = local(cursor.position_over(bounds)?);
+                if let Some(angle) = self.knob_at(at, camera, bounds) {
+                    let look = RevolveLook::GrabHandle(angle);
+                    return Some(Action::publish(Message::Look(Look::Revolve(look))).and_capture());
+                }
                 let model = self.state.index.model();
                 let edge = self.edge_under(at, camera, bounds);
                 let look = match self.axis_under(at, camera, bounds) {
@@ -149,16 +207,92 @@ impl<'a> Revolving<'a> {
         }
     }
 
-    /// The cursor over a region, a line or an axis it would pick.
+    /// The cursor dragging a knob, over one, or over a region, a line or
+    /// an axis it would pick.
     pub(crate) fn mouse_interaction(
         &self,
         input: &Input,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<mouse::Interaction> {
+        if self.state.grabbed.is_some() {
+            return Some(mouse::Interaction::Grabbing);
+        }
         cursor.position_over(bounds)?;
+        if input.knob.is_some() {
+            return Some(mouse::Interaction::Grab);
+        }
         let over = input.axis.is_some() || input.edge.is_some() || input.regions.hover.is_some();
         (over && self.state.editable).then_some(mouse::Interaction::Pointer)
+    }
+
+    /// A projector for what's in the world, seen by `camera` over
+    /// `bounds`.
+    fn projector(camera: &Camera, bounds: Rectangle) -> Option<Projector> {
+        let placement = OriginPlane::XY.placement();
+        Projector::new(camera, placement, bounds.width, bounds.height)
+    }
+
+    /// The pucks of the handle's knobs, seen by `camera` over `bounds`,
+    /// those behind the eye left out: each at the regions' centre turned
+    /// to its angle, its arrow the way it turns, on round past the end
+    /// it's on.
+    fn pucks(&self, camera: &Camera, bounds: Rectangle) -> Vec<Puck<Angle>> {
+        let (Some(handle), Some(projector)) = (&self.handle, Self::projector(camera, bounds))
+        else {
+            return Vec::new();
+        };
+        (handle.knobs.iter())
+            .filter_map(|&(angle, turn)| {
+                let at = handle.at(turn);
+                let back = turn < 0.0 || (turn == 0.0 && angle == Angle::Second);
+                let out = handle.tangent(turn) * if back { -1.0 } else { 1.0 };
+                Puck::new(angle, at, out, &projector)
+            })
+            .collect()
+    }
+
+    /// The knob under the screen position `at`, if the revolve can be
+    /// changed ([`handle::knob_at`]).
+    fn knob_at(&self, at: DVec2, camera: &Camera, bounds: Rectangle) -> Option<Angle> {
+        if !self.state.editable {
+            return None;
+        }
+        handle::knob_at(&self.pucks(camera, bounds), at)
+    }
+
+    /// Where the screen position `at` turns the knob of `angle`: the
+    /// angle about the axis, in radians from the sketch plane, of where
+    /// the cursor's ray meets the plane through the regions' centre square
+    /// to the axis, the nearer way round from where the knob is, snapped
+    /// to round degrees ([`angle_step`] of the arc's radius on the
+    /// screen). `None` without a handle or the knob, with the plane edge
+    /// on, or the ray meeting it behind the eye or on the axis.
+    fn drag_to(&self, angle: Angle, at: DVec2, camera: &Camera, bounds: Rectangle) -> Option<f64> {
+        let handle = self.handle.as_ref()?;
+        let &(_, from) = handle.knobs.iter().find(|(knob, _)| *knob == angle)?;
+        let projector = Self::projector(camera, bounds)?;
+        let (origin, ray) = projector.ray(at)?;
+        let facing = ray.dot(handle.axis);
+        if facing.is_nan() || facing.abs() <= EDGE_ON * ray.length() {
+            return None;
+        }
+        let t = (handle.origin - origin).dot(handle.axis) / facing;
+        if projector.perspective() && t <= 0.0 {
+            return None;
+        }
+        let p = origin + ray * t - handle.origin;
+        let x = handle.radial.normalize_or_zero();
+        let y = handle.axis.cross(x);
+        let (u, v) = (p.dot(x), p.dot(y));
+        if u == 0.0 && v == 0.0 {
+            return None;
+        }
+        let to = from + wrapped(angle::atan2(v, u) - from);
+        let pixel = projector.pixel_at(projector.world_depth(handle.at(from)));
+        let step = angle_step(handle.radius() / pixel).to_radians();
+        let to = (to / step).round() * step;
+        to.is_finite().then_some(to)
     }
 
     /// The sketches whose lines and axes a click picks: none unless the
@@ -331,7 +465,49 @@ impl<'a> Revolving<'a> {
                 arrow(&mut live, a, b, colors);
             }
         }
+        self.draw_handle(&mut live, input, colors, camera, bounds);
         (base, live)
+    }
+
+    /// The handle into `live`: each knob's shaft round the axis from the
+    /// sketch plane, unless the revolve's own check refuses it, and the
+    /// pucks, the one hovered or dragged lighter with its rail round the
+    /// axis, half a turn each way at most.
+    fn draw_handle(
+        &self,
+        live: &mut SketchLayer,
+        input: &Input,
+        colors: SketchColors,
+        camera: &Camera,
+        bounds: Rectangle,
+    ) {
+        let (Some(handle), Some(projector)) = (&self.handle, Self::projector(camera, bounds))
+        else {
+            return;
+        };
+        if self.state.refused.is_none() {
+            for &(_, turn) in &handle.knobs {
+                let steps = (turn.abs().to_degrees() / SHAFT_STEP).ceil().max(1.0) as usize;
+                let arc: Vec<DVec3> = (0..=steps)
+                    .map(|k| handle.at(turn * k as f64 / steps as f64))
+                    .collect();
+                handle::draw_shaft(live, &projector, &arc, colors.handle);
+            }
+        }
+        let active = self.state.grabbed.or(input.knob);
+        let radius = handle.radius();
+        for puck in self.pucks(camera, bounds) {
+            let hot = active == Some(puck.knob) && self.state.editable;
+            if hot && let Some(&(_, turn)) = handle.knobs.iter().find(|(k, _)| *k == puck.knob) {
+                // An angle a pixel along the arc turns, at most half a turn
+                // over the rail's reach.
+                let per_pixel =
+                    (puck.pixel / radius).min(std::f64::consts::PI / handle::RAIL_REACH);
+                let path = |px: f64| handle.at(turn + px * per_pixel);
+                handle::draw_rail(live, &projector, colors.rail, path);
+            }
+            handle::draw_puck(live, &projector, &puck, colors, hot);
+        }
     }
 }
 

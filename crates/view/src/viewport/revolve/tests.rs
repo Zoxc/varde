@@ -90,6 +90,7 @@ fn state<'a>(
         accept: false,
         editable: true,
         hover: None,
+        grabbed: None,
     }
 }
 
@@ -231,7 +232,8 @@ fn the_arrow_follows_the_line_and_flip() {
 
 /// Random sketches (degenerate and far lines among them), cameras and
 /// cursors: clicks pick only what the state lets them, an axis only of
-/// the source's lines and axes, and drawing never panics.
+/// the source's lines and axes, a knob only of the extent's angles, and
+/// drawing never panics.
 #[test]
 fn random_clicks_pick_only_what_they_may() {
     let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
@@ -296,6 +298,10 @@ fn random_clicks_pick_only_what_they_may() {
                     Message::Look(Look::Revolve(RevolveLook::PickRegion { region, .. })) => {
                         assert!(region < profiles.regions.len(), "round {round}");
                         regions += 1;
+                    }
+                    // A knob, of an angle the extent has.
+                    Message::Look(Look::Revolve(RevolveLook::GrabHandle(angle))) => {
+                        assert!(revolve.extent.angles().contains(&angle), "round {round}");
                     }
                     other => panic!("round {round}: {other:?}"),
                 }
@@ -518,4 +524,153 @@ fn a_model_edge_is_in_the_plane_within_the_resolution() {
             }
         }
     }
+}
+
+/// One side of 90° about the lathe's left side, from (2, 4) to (2, -4):
+/// its knob at the rectangle's centre, (4, 0), turned a quarter about -y,
+/// up to (2, 0, 2).
+fn turned<'a>(
+    sketch: &'a Sketch,
+    profiles: &'a Arc<Profiles>,
+    picked: &'a BTreeSet<usize>,
+    axis: Id,
+) -> RevolveState<'a> {
+    let mut state = state(
+        sketch,
+        profiles,
+        picked,
+        RevolvePick::Regions,
+        Some(AxisLine::Curve(axis)),
+    );
+    state.extent = TurnKind::OneSide;
+    state
+}
+
+/// The viewport setting up `state`, seen by `camera`.
+fn seen<'a>(state: RevolveState<'a>, camera: &Camera) -> Program<'a> {
+    program(
+        &Arc::default(),
+        &Arc::default(),
+        camera,
+        None,
+        Mode::Light.palette(),
+        None,
+        Some(Operating::Revolve(Revolving::new(state))),
+    )
+}
+
+/// The messages `viewport` sends for `events` with the cursor at `at`,
+/// and whether it captured the last.
+fn feed(
+    viewport: &Program<'_>,
+    input: &mut Interaction,
+    at: Point,
+    events: &[mouse::Event],
+) -> (Vec<Message>, bool) {
+    let mut messages = Vec::new();
+    let mut captured = false;
+    for event in events {
+        let cursor = mouse::Cursor::Available(at);
+        let action = viewport.update(input, &Event::Mouse(*event), bounds(), cursor);
+        captured = false;
+        if let Some(action) = action {
+            let (message, _, status) = action.into_inner();
+            messages.extend(message);
+            captured = status == iced::event::Status::Captured;
+        }
+    }
+    (messages, captured)
+}
+
+#[test]
+fn a_knob_is_hovered_and_grabbed_ahead_of_the_regions() {
+    let (sketch, left, profiles) = lathe();
+    let picked = BTreeSet::from([0]);
+    let viewport = shown(turned(&sketch, &profiles, &picked, left));
+    let mut input = Interaction::default();
+    // Seen from the top, the knob at (2, 0, 2), its arrow on towards -x.
+    for at in [Point::new(120.0, 100.0), Point::new(108.0, 100.0)] {
+        let moved = mouse::Event::CursorMoved { position: at };
+        let (messages, captured) = feed(&viewport, &mut input, at, &[moved]);
+        assert!(captured && messages.is_empty(), "{at:?} {messages:?}");
+        let cursor = mouse::Cursor::Available(at);
+        assert_eq!(
+            viewport.mouse_interaction(&input, bounds(), cursor),
+            mouse::Interaction::Grab
+        );
+        let press = mouse::Event::ButtonPressed(mouse::Button::Left);
+        let (messages, _) = feed(&viewport, &mut input, at, &[press]);
+        assert!(
+            matches!(
+                messages[..],
+                [Message::Look(Look::Revolve(RevolveLook::GrabHandle(
+                    Angle::First
+                )))]
+            ),
+            "{messages:?}"
+        );
+    }
+
+    // A full turn has no knob.
+    let mut state = turned(&sketch, &profiles, &picked, left);
+    state.extent = TurnKind::Full;
+    let viewport = shown(state);
+    let at = Point::new(120.0, 100.0);
+    let moved = mouse::Event::CursorMoved { position: at };
+    let (_, captured) = feed(&viewport, &mut Interaction::default(), at, &[moved]);
+    assert!(!captured);
+}
+
+#[test]
+fn a_grabbed_knob_turns_where_the_cursor_is_round_the_axis_snapped() {
+    let (sketch, left, profiles) = lathe();
+    let picked = BTreeSet::from([0]);
+    let mut camera = top_camera();
+    camera.look_from(varde_render::View::Front);
+    let mut state = turned(&sketch, &profiles, &picked, left);
+    state.grabbed = Some(Angle::First);
+    let handle = Revolving::new(state.clone()).handle.expect("a handle");
+    let viewport = seen(state, &camera);
+    let projector = Projector::new(&camera, OriginPlane::XY.placement(), SIZE, SIZE).unwrap();
+    // 2 mm out, 20 pixels: snapped to 30°.
+    for (towards, snapped) in [(55.0f64, 60.0f64), (-80.0, -90.0), (200.0, 210.0)] {
+        let at = projector.show(handle.at(towards.to_radians()));
+        let at = Point::new(at.x as f32, at.y as f32);
+        let moved = mouse::Event::CursorMoved { position: at };
+        let (messages, captured) = feed(&viewport, &mut Interaction::default(), at, &[moved]);
+        assert!(captured);
+        let [Message::Look(Look::Revolve(RevolveLook::DragHandle { angle, to }))] = messages[..]
+        else {
+            panic!("{messages:?}");
+        };
+        assert_eq!(angle, Angle::First);
+        assert!(
+            (to.to_degrees() - snapped).abs() < 1e-9,
+            "{towards}: {}",
+            to.to_degrees()
+        );
+    }
+    let release = mouse::Event::ButtonReleased(mouse::Button::Left);
+    let at = Point::new(100.0, 100.0);
+    let (messages, _) = feed(&viewport, &mut Interaction::default(), at, &[release]);
+    assert!(matches!(
+        messages[..],
+        [Message::Look(Look::Revolve(RevolveLook::DropHandle))]
+    ));
+}
+
+#[test]
+fn a_knob_is_drawn_lighter_with_its_rail_while_grabbed() {
+    let (sketch, left, profiles) = lathe();
+    let picked = BTreeSet::from([0]);
+    let input = Interaction::default();
+    let live = |state: RevolveState<'_>| {
+        let viewport = shown(state);
+        let frame = viewport.draw(&input, mouse::Cursor::Unavailable, bounds());
+        frame.sketch.expect("drawn").live
+    };
+    let idle = live(turned(&sketch, &profiles, &picked, left));
+    let mut grabbed = turned(&sketch, &profiles, &picked, left);
+    grabbed.grabbed = Some(Angle::First);
+    assert_ne!(live(grabbed), idle);
 }

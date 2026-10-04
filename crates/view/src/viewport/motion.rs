@@ -429,7 +429,7 @@ fn plane_axes(axis: Axis3) -> (DVec3, DVec3) {
 /// The step, in degrees, a ring `radius` pixels across snaps its angle
 /// to: the first of [`ANGLE_STEPS`] at least [`SNAP_PIXELS`] along it,
 /// or the last.
-fn angle_step(radius: f64) -> f64 {
+pub(crate) fn angle_step(radius: f64) -> f64 {
     let least = (SNAP_PIXELS / radius).to_degrees();
     (ANGLE_STEPS.into_iter())
         .find(|&step| step >= least)
@@ -437,7 +437,7 @@ fn angle_step(radius: f64) -> f64 {
 }
 
 /// `turn` brought within half a turn either way.
-fn wrapped(turn: f64) -> f64 {
+pub(crate) fn wrapped(turn: f64) -> f64 {
     let turn = turn % TAU;
     if turn > PI {
         turn - TAU

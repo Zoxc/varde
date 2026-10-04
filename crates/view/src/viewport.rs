@@ -3,6 +3,7 @@
 //! input on it.
 
 mod extrude;
+mod handle;
 mod measure;
 mod motion;
 mod pivot;
@@ -255,16 +256,6 @@ fn program<'a>(
     }
 }
 
-impl Scene {
-    /// The model it shows, for what it hides of an operation's handles.
-    fn model(&self) -> extrude::Model<'_> {
-        extrude::Model {
-            mesh: &self.mesh,
-            opacity: &self.opacity,
-        }
-    }
-}
-
 /// What's drawn over the model while nothing is: one for all frames, so
 /// the renderer uploads nothing again for it.
 static NO_HIGHLIGHT: std::sync::LazyLock<Arc<ModelHighlight>> =
@@ -461,14 +452,10 @@ impl shader::Program<Message> for Program<'_> {
             let camera = &self.scene.camera;
             let action = match operating {
                 // Its knobs, ahead of its regions.
-                Operating::Extrude(extruding) => extruding.mouse(
-                    &mut state.extrude,
-                    *event,
-                    bounds,
-                    cursor,
-                    camera,
-                    self.scene.model(),
-                ),
+                Operating::Extrude(extruding) => {
+                    extruding.mouse(&mut state.extrude, *event, bounds, cursor, camera)
+                }
+                // Its knobs, ahead of its lines, edges and regions.
                 Operating::Revolve(revolving) => {
                     revolving.mouse(&mut state.revolve, *event, bounds, cursor, camera)
                 }
@@ -560,13 +547,7 @@ impl shader::Program<Message> for Program<'_> {
             let (plane, (base, live)) = match operating {
                 Operating::Extrude(extruding) => (
                     extruding.plane(),
-                    extruding.layers(
-                        &state.extrude,
-                        colors,
-                        &self.scene.camera,
-                        bounds,
-                        self.scene.model(),
-                    ),
+                    extruding.layers(&state.extrude, colors, &self.scene.camera, bounds),
                 ),
                 Operating::Revolve(revolving) => (
                     revolving.plane(),

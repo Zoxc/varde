@@ -763,7 +763,7 @@ seen down the axis), the angle fields ("Angle", or "Side 1" and "Side
 for one side and two sides; Operation and Bodies as an extrude's; the
 refusal ("Revolve fails", with no Add anyway), the draft failing
 ("Revolve fails", Add anyway) or "Checking
-the sketch…". No handle in this plan.
+the sketch…". The angles are dragged by the handle in the viewport too.
 
 **The viewport** (`view/src/viewport/revolve.rs`, `Revolving`, one of
 `viewport::Operating`): the regions as an extrude's
@@ -784,7 +784,33 @@ colour with an arrowhead (screen space) at the end positive angles turn
 right-handed about: the line's end, a built-in axis's +x / +y end, or a
 model edge's end as its reference runs (its ends mapped onto the
 source's plane), and the other end when flipped for one side or two
-sides (as the revolve's `span` does). The labels' layer under the panel is an empty
+sides (as the revolve's `span` does). **The handle**
+(`RevolveState::handle`, `RevolveHandle`; drawn and hit tested as the
+extrude's, `viewport/handle.rs`, see `agents/viewport.md`): once there
+are regions and an axis, and the regions' area-weighted centre is off
+the axis, a knob for each angle the extent has (none for a full turn),
+at that centre turned about the axis to the angle: one side's at its
+angle (negative flipped), symmetric's at half of it, two sides' one
+each way (swapped flipped), as `span` turns. Each is a puck whose ring
+lies in the end face it's on and whose arrow points along the way the
+centre turns, on round past that end; its shaft is the arc round the
+axis from the sketch plane to it, on the screen over the model (none
+while the revolve's own check refuses it, as the extrude's), and its
+rail, hovered or dragged, the arc on round either way, half a turn at
+most. The handle is drawn over the model, so a knob on an end turned
+away from the camera shows and grabs too. Pressing one sends
+`RevolveLook::GrabHandle`; while it's grabbed the cursor's moves send
+`DragHandle` with the angle about the axis where its ray meets the
+plane through the centre square to the axis, the nearer way round from
+the knob (so it turns on past half a turn), snapped as a move's ring
+(`angle_step`: 1, 2, 5, 10, 15, 30, 45 or 90°, the first at least 6 px
+along the arc), nothing with the plane edge on; letting go sends
+`DropHandle`. The app types the angle into the field as degrees
+(`RevolveSession::drag`): one side's how far round either way, back
+past the plane flipping it; symmetric's twice it; two sides' each how
+far its own way; an angle the field refuses (none, past a turn)
+changes nothing, nor does a drag taking two sides further over a turn.
+The labels' layer under the panel is an empty
 placeholder for a revolve, so the panel's state keeps its place. A test
 checks the turn against regeneration's: a quarter turn's preview lies
 on the side right-handed about the line from its start to its end (or
@@ -838,8 +864,6 @@ box clips what doesn't fit at 1280 px and the axis says least, and left
 out while its sketch doesn't have it). Double-click, `Enter` or Edit revolve reopen it
 (a double-click on a sketch's row, in the Timeline or Objects, enters
 the sketch).
-
-Not yet: a handle dragging the angle.
 
 ## Combine
 

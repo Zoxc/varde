@@ -895,3 +895,58 @@ fn escape_cancels_a_revolve_once() {
         }
     }
 }
+
+#[test]
+fn dragging_a_knob_types_its_angle() {
+    let mut lathe = lathe();
+    lathe.set_up(AxisLine::SketchY);
+    let span = |lathe: &Lathe| lathe.last_draft().unwrap().1.span().expect("a part turn");
+    let near = |(a0, a1): (f64, f64), (b0, b1): (f64, f64)| {
+        assert!(
+            (a0 - b0).abs() < 1e-9 && (a1 - b1).abs() < 1e-9,
+            "{a0} {a1}, {b0} {b1}"
+        );
+    };
+    let drag = |lathe: &mut Lathe, angle: Angle, to: f64| {
+        lathe.revolve(RevolveLook::DragHandle { angle, to });
+    };
+
+    // Not grabbed, a drag changes nothing.
+    lathe.revolve(RevolveLook::Extent(TurnKind::OneSide));
+    drag(&mut lathe, Angle::First, PI / 3.0);
+    near(span(&lathe), (0.0, PI));
+
+    // One side: as far round as it's dragged, back past the plane
+    // flipping it.
+    lathe.revolve(RevolveLook::GrabHandle(Angle::First));
+    assert_eq!(
+        lathe.doc.revolve_state().unwrap().grabbed,
+        Some(Angle::First)
+    );
+    drag(&mut lathe, Angle::First, PI / 3.0);
+    near(span(&lathe), (0.0, PI / 3.0));
+    drag(&mut lathe, Angle::First, -PI / 2.0);
+    near(span(&lathe), (-PI / 2.0, 0.0));
+    assert!(lathe.doc.revolve.as_ref().unwrap().flip);
+    // Past a turn, or onto the plane, the field doesn't take it.
+    drag(&mut lathe, Angle::First, -3.0 * PI);
+    drag(&mut lathe, Angle::First, 0.0);
+    near(span(&lathe), (-PI / 2.0, 0.0));
+
+    // Symmetric: its knob at half the angle.
+    lathe.revolve(RevolveLook::Extent(TurnKind::Symmetric));
+    drag(&mut lathe, Angle::First, PI / 4.0);
+    near(span(&lathe), (-PI / 4.0, PI / 4.0));
+
+    // Two sides: each its own way; not together past a turn.
+    lathe.revolve(RevolveLook::Flip);
+    lathe.revolve(RevolveLook::Extent(TurnKind::TwoSides));
+    lathe.revolve(RevolveLook::GrabHandle(Angle::Second));
+    drag(&mut lathe, Angle::Second, -PI / 3.0);
+    near(span(&lathe), (-PI / 3.0, PI / 2.0));
+    drag(&mut lathe, Angle::Second, -1.9 * PI);
+    near(span(&lathe), (-PI / 3.0, PI / 2.0));
+
+    lathe.revolve(RevolveLook::DropHandle);
+    assert_eq!(lathe.doc.revolve_state().unwrap().grabbed, None);
+}

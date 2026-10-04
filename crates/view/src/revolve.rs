@@ -11,9 +11,9 @@ use iced::Element;
 use iced::widget::text::Wrapping;
 use iced::widget::{column, text};
 use varde_document::{AxisLine, BodyId, Document, EdgeRef, FeatureId, Placement, RevolveError};
-use varde_sketch::{Curve, Id, Sketch};
+use varde_sketch::{Curve, Id, Sketch, angle};
 
-use crate::extrude::region_name;
+use crate::extrude::{centroid, region_name};
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, TypedField, bodies,
@@ -153,6 +153,17 @@ pub enum RevolveLook {
     Operation(OperationKind),
     /// Takes a body out of a join, cut or intersect, or puts it back.
     Target(BodyId),
+    /// The knob of `Angle` pressed in the viewport: the cursor drags it
+    /// until [`RevolveLook::DropHandle`].
+    GrabHandle(Angle),
+    /// The knob grabbed dragged to `to` radians about the axis, from the
+    /// sketch plane, positive right-handed about the axis's direction.
+    DragHandle {
+        angle: Angle,
+        to: f64,
+    },
+    /// The knob grabbed let go of.
+    DropHandle,
     /// Drops the revolve being set up, changing nothing: Cancel, or `Esc`.
     Cancel,
 }
@@ -229,6 +240,8 @@ pub struct RevolveState<'a> {
     /// The row of the panel the cursor is over, if any: the viewport
     /// lights it up too.
     pub hover: Option<PanelHover>,
+    /// The knob grabbed, if one is.
+    pub grabbed: Option<Angle>,
 }
 
 impl<'a> RevolveState<'a> {
@@ -253,6 +266,106 @@ impl<'a> RevolveState<'a> {
     /// the way positive angles turn right-handed about.
     pub(crate) fn reversed(&self) -> bool {
         self.flip && self.extent.flips()
+    }
+}
+
+/// A revolve's handle: a knob for each angle its extent has, at the
+/// picked regions' centre turned about the axis to that angle.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RevolveHandle {
+    /// The point of the axis nearest the regions' centre.
+    pub origin: DVec3,
+    /// The axis's direction, of unit length: positive angles turn
+    /// right-handed about it.
+    pub axis: DVec3,
+    /// From `origin` to the regions' centre, square to the axis: where
+    /// angle 0, the sketch plane, is.
+    pub radial: DVec3,
+    /// Each knob, and its angle in radians.
+    pub knobs: Vec<(Angle, f64)>,
+}
+
+impl RevolveHandle {
+    /// The regions' centre turned `angle` radians about the axis.
+    pub(crate) fn at(&self, angle: f64) -> DVec3 {
+        let (sin, cos) = (angle::sin(angle), angle::cos(angle));
+        self.origin + self.radial * cos + self.axis.cross(self.radial) * sin
+    }
+
+    /// Which way the regions' centre goes turned `angle` radians, of unit
+    /// length: positive angles' way.
+    pub(crate) fn tangent(&self, angle: f64) -> DVec3 {
+        let (sin, cos) = (angle::sin(angle), angle::cos(angle));
+        (self.axis.cross(self.radial) * cos - self.radial * sin).normalize_or_zero()
+    }
+
+    /// How far the regions' centre is from the axis.
+    pub(crate) fn radius(&self) -> f64 {
+        self.radial.length()
+    }
+}
+
+impl RevolveState<'_> {
+    /// The axis picked in the world, as a point of it and its direction of
+    /// unit length, if its source shows it.
+    pub(crate) fn axis_in_world(&self) -> Option<(DVec3, DVec3)> {
+        let source = self.source()?;
+        let placement = source.placement;
+        let (at, along) = match self.axis? {
+            AxisLine::Edge(_) => {
+                let [start, end] = self.edge_ends?;
+                (start, end - start)
+            }
+            axis => {
+                let (at, along) = axis_line(source.sketch, axis)?;
+                (
+                    placement.to_world(at),
+                    placement.x * along.x + placement.y * along.y,
+                )
+            }
+        };
+        Some((at, along.try_normalize()?))
+    }
+
+    /// The handle, once regions and the axis are picked, the extent has
+    /// angles, and the regions' centre is off the axis.
+    pub fn handle(&self) -> Option<RevolveHandle> {
+        let source = self.source()?;
+        let regions = (self.picked.iter()).filter_map(|&index| source.profiles.regions.get(index));
+        let centre = source.placement.to_world(centroid(regions)?);
+        let (at, axis) = self.axis_in_world()?;
+        let origin = at + axis * (centre - at).dot(axis);
+        let radial = centre - origin;
+        let scale = centre.abs().max_element().max(1.0);
+        if !(radial.length() > 1e-9 * scale && radial.is_finite()) {
+            return None;
+        }
+        let value = |angle: Angle| self.fields[angle.index()].value;
+        let sign = if self.reversed() { -1.0 } else { 1.0 };
+        let knobs: Vec<(Angle, f64)> = match self.extent {
+            TurnKind::Full => Vec::new(),
+            TurnKind::OneSide => value(Angle::First)
+                .map(|a| (Angle::First, sign * a))
+                .into_iter()
+                .collect(),
+            TurnKind::Symmetric => value(Angle::First)
+                .map(|a| (Angle::First, a / 2.0))
+                .into_iter()
+                .collect(),
+            TurnKind::TwoSides => [
+                value(Angle::First).map(|a| (Angle::First, sign * a)),
+                value(Angle::Second).map(|b| (Angle::Second, -sign * b)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        };
+        Some(RevolveHandle {
+            origin,
+            axis,
+            radial,
+            knobs,
+        })
     }
 }
 

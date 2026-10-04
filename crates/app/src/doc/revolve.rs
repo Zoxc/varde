@@ -66,6 +66,8 @@ pub(crate) struct RevolveSession {
     /// lengths in them are in: see [`RevolveSession::follow_units`].
     /// The panel's row the cursor is over, if any.
     pub(crate) hover: Option<PanelHover>,
+    /// The knob being dragged in the viewport, if one is.
+    pub(crate) grabbed: Option<Angle>,
     design: Design,
 }
 
@@ -89,6 +91,7 @@ impl RevolveSession {
             feature: None,
             regions: RegionPick::new(source, MAX_REVOLVE_REGIONS),
             hover: None,
+            grabbed: None,
             axis: None,
             axis_missing: false,
             edge_ends: None,
@@ -248,6 +251,49 @@ impl RevolveSession {
     fn refused(&self, document: &Document) -> Option<RevolveError> {
         let design = document.design();
         self.revolve(document)?.check_own(&design).err()
+    }
+
+    /// Types into `angle`'s field where its knob is dragged to: `to`
+    /// radians about the axis from the sketch plane. One side's angle is
+    /// how far round either way, a turn back past the plane flipping it;
+    /// symmetric's twice it; two sides' each how far its own way. Nothing
+    /// changes for an angle the field doesn't take (none, or past a turn),
+    /// nor for a drag that takes two sides further over a turn than they
+    /// were.
+    fn drag(&mut self, angle: Angle, to: f64, document: &Document) {
+        let (turn, flip) = match (self.extent, angle) {
+            (TurnKind::OneSide, Angle::First) => (to.abs(), Some(to < 0.0)),
+            (TurnKind::Symmetric, Angle::First) => (2.0 * to.abs(), None),
+            (TurnKind::TwoSides, _) => (to.abs(), None),
+            _ => return,
+        };
+        if !(turn > 0.0 && turn.is_finite()) {
+            return;
+        }
+        let text = varde_expr::format(turn, Some(Unit::Angle(AngleUnit::Deg)));
+        let mut field = self.fields[angle.index()].clone();
+        field.input(text, &Turn::ask(&document.design()));
+        if field.error.is_some() {
+            return;
+        }
+        let before = self.refused(document);
+        let old = std::mem::replace(&mut self.fields[angle.index()], field);
+        let old_flip = self.flip;
+        if let Some(flip) = flip {
+            self.flip = flip;
+        }
+        let worse = match (before, self.refused(document)) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            // Already over a turn (typed so), the knob only goes back.
+            (Some(_), Some(after)) => {
+                after == RevolveError::Turn && old.value.as_ref().is_none_or(|old| turn > old.value)
+            }
+        };
+        if worse {
+            self.fields[angle.index()] = old;
+            self.flip = old_flip;
+        }
     }
 
     /// Whether it can be committed to `document`: it's whole, none of the
@@ -473,6 +519,13 @@ impl Doc {
                 let revision = self.feed.revision();
                 (session.targets).toggle(body, session.feature, document, revision);
             }
+            RevolveLook::GrabHandle(angle) => session.grabbed = Some(angle),
+            RevolveLook::DragHandle { angle, to } => {
+                if session.grabbed == Some(angle) {
+                    session.drag(angle, to, document);
+                }
+            }
+            RevolveLook::DropHandle => session.grabbed = None,
         }
     }
 
@@ -585,6 +638,7 @@ impl Doc {
             accept: self.commit_by(self.revolve_ready(), true),
             editable: self.editable(),
             hover: self.panel_hover(),
+            grabbed: session.grabbed,
         })
     }
 }

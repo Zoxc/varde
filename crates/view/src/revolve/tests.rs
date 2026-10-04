@@ -71,6 +71,7 @@ fn state_of<'a>(
         accept: false,
         editable: true,
         hover: None,
+        grabbed: None,
     }
 }
 
