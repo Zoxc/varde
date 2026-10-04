@@ -1021,7 +1021,13 @@ a session (measure, combine, move) takes it as its click: alone it
 closes the list; with `add` it adds or takes out, the list kept open
 (taken out of `Doc` meanwhile, so the click doesn't close it), as does
 the tick (`ToggleOverlap`). `Esc` closes it alone; anything else done but hovering and
-scrolling closes it too.
+scrolling closes it too. A list of the model's is found again on each
+new model shown while it's open (`Doc::follow_overlaps`, from
+`prune_picks`), as a session's preview of each tick brings one: its
+rows by their names (`Selected`, named when it opened), each on the
+body drawing its body there; a row not found (an edge the preview
+rounded off) is dropped, and the list closes once none is left, so no
+row stays of a model gone by, where a click would do nothing.
 
 One or two items selected, with no tool, operation or plane pick in use
 and no feature selected, are measured for the status bar's selection box

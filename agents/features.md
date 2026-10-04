@@ -3012,7 +3012,7 @@ panel.
   stored. Picked edges are lit as selected, the one under the cursor as
   hovered, each with its tangent chain (`PickIndex::tangent_chain`, the
   topology's rule regen grows chains by) while Tangent chain is on, and
-  a click on any edge of a picked edge's lit chain takes that edge out;
+  a click on any edge of a picked edge's lit chain takes that edge out (every edge picked on that chain, where more were picked apart with Tangent chain off);
   a row hovered in the panel lights its edge (`PanelHover::Edge`). The session's bodies are the edges' body, never
   picked itself (Objects' rows pick nothing); a body merged into another
   before the chamfer takes the edges on to its holder. Picks wait only
@@ -3472,11 +3472,17 @@ pub struct Fillet {
   round's circle, widened outwards along each face's normal: right for
   a block's edges and a prism's obtuse and acute ones (square ends); a
   rail past its face's reach across is `TooBig`; anything else too
-  complex. Two rounds meeting at a corner (a block's top loop) the
-  stand-in's booleans can't work out (the rounds touch the top
-  tangentially where they cross: "can't be worked out ... flush or
-  tangent"), which the kernel's mitres; the test takes that refusal or
-  the mitred volume, never another. The planned analytic tests of the
+  complex. So that no test takes a wrong solid from it, it refuses what
+  it can't do right: each boolean must take off exactly the corner's
+  section along the edge, `r·b − r²(π − θ)/2` per length (`b` the
+  rails' distance from the edge), else too complex (a prism running
+  past an end into more of the body, a wall standing out past the
+  edge's end); and two chains' strips on a face they share (from the
+  edge to the rail) must keep apart: meeting at a corner too complex
+  (a block's top loop, which the kernel mitres; the test takes that
+  refusal or the mitred volume, never another), elsewhere `TooBig` for
+  the later chain (a 3 mm rib's two top edges at R2, whose rounds
+  would overlap on its top). The planned analytic tests of the
   kernel's fillet are written out and `#[ignore = "kernel fillet not
   built"]`.
 - The draft's reply carries nothing new.
@@ -3562,12 +3568,20 @@ with the stand-in: a block's edge (an exact cylinder of the radius) and
 two opposite ones, its top loop mitred or refused, a prism's obtuse and
 acute edges by `r²(cot(θ/2) − (π − θ)/2)` per length, joins after a
 fillet clear of the round and across it by their volumes, the cache, a
-radius past the faces refused; recording: a slot's rim taken in as four
+radius past the faces refused, a 3 mm rib's two top edges at R2
+refused as too big (alone, or at 1.4 mm, rounded), an edge running into
+a wall standing out past its end refused or rounded along its own
+length only; recording: a slot's rim taken in as four
 chains named apart with the radius as typed, only the one without
 chains; refusals (too big, an end running into a face) worded and
 drawn; a consumed body; ignored: the kernel's on a block's edge, top
 loop and all twelve (the rounded box), a hole's and a boss's rims and a
-slot's rim by Pappus, determinism), `io/src/vrdp/tests.rs` (through a
+slot's rim by Pappus, determinism),
+`regen/src/history/tests/fillet/fuzz.rs` (the chamfer's history fuzz
+with fillets of every radius: each failing alike whole and cut short,
+one failing changing nothing, one working taking material off its body
+alone and leaving a round of its radius; `VARDE_FILLET_SEEDS`),
+`io/src/vrdp/tests.rs` (through a
 file, a tampered edge point and radius refused, a record's fillets
 damaged 2 000 ways refused or checked, edges out of order, repeated, on
 another body, none or past the limit, named by the fillet or later and
@@ -3588,6 +3602,12 @@ its edges all taken out previewed as a move of nothing; an edge an undo
 takes away said to be gone, back on redo; the edges selected taken in,
 `F` again backing out; another body's edge refused in the fillet's
 words; a slot's rim lit whole and the line alone with Tangent chain
-off); the chamfer's toolbar test checks a fillet session's bar fits and
+off; the overlap list ticking and picking the fillet's edges),
+`app/src/doc/motion/tests/fillet/fuzz.rs` (the chamfer's session fuzz
+with radii, plus quick clicks with nothing answered, `F` while
+measuring or with a combine or chamfer set up, and the overlap list
+opened, hovered, ticked and chosen across models answered and undo;
+`VARDE_FILLET_SEEDS`); the chamfer's toolbar test checks a fillet
+session's bar fits and
 that Fillet isn't on the idle bar. The app's tests fillet through
 regen's `testing` feature (`varde_regen::testing::fillet_by_arcs`).

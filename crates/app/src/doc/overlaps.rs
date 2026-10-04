@@ -1,9 +1,11 @@
 //! The list of what overlaps where the left button was held still in the
 //! viewport (see `varde_view::Overlaps`): hovering a row highlights its
 //! item, choosing one selects it as a click on it would, and closing it
-//! leaves the selection as it was.
+//! leaves the selection as it was. A list of the model's is found again
+//! on each new model shown while it's open (a session's preview of each
+//! tick), its rows by their names.
 
-use varde_view::{Look, OverlapItems, Overlaps};
+use varde_view::{Look, OverlapItems, Overlaps, Pick, PickIndex, Picked, Selected};
 
 use super::Doc;
 
@@ -12,6 +14,56 @@ use super::Doc;
 pub(crate) struct Listed {
     pub(crate) list: Overlaps,
     hovered: Option<usize>,
+    /// A list of the model's: each row's item by its names, as on the
+    /// model it was opened on, to find it again on a new one.
+    names: Vec<Option<Selected>>,
+}
+
+/// The item `pick` is of on `index`'s model by its names: its face's key,
+/// its edge's faces' or its vertex's, and its body as drawn there.
+fn name(index: &PickIndex, pick: &Pick) -> Option<Selected> {
+    let (body, near) = (pick.body, pick.at);
+    Some(match pick.target {
+        Picked::Face(face) => Selected::Face {
+            body,
+            key: index.picking().faces().get(face as usize)?.key,
+            near,
+        },
+        Picked::Edge(chain) => Selected::Edge {
+            body,
+            faces: index.chain_keys(chain)?,
+            near,
+        },
+        Picked::Vertex(corner) => Selected::Vertex {
+            body,
+            faces: index.vertex_keys(corner)?,
+            near,
+        },
+    })
+}
+
+/// The item `named` on `index`'s model, drawn on `body` there, if it's
+/// there: a pick of it where it was named.
+fn found(index: &PickIndex, named: &Selected, body: varde_document::BodyId) -> Option<Pick> {
+    let (target, at) = match *named {
+        Selected::Face { key, near, .. } => {
+            (Picked::Face(index.find_face(body, &key, near)?), near)
+        }
+        Selected::Edge { faces, near, .. } => {
+            (Picked::Edge(index.find_edge(body, faces, near)?), near)
+        }
+        Selected::Vertex { faces, near, .. } => {
+            (Picked::Vertex(index.find_vertex(body, faces, near)?), near)
+        }
+        Selected::Body(_) => return None,
+    };
+    Some(Pick {
+        model: index.model(),
+        target,
+        body,
+        at,
+        snap: None,
+    })
 }
 
 impl Doc {
@@ -29,10 +81,65 @@ impl Doc {
             return;
         }
         self.unhover_overlap();
+        let names = match &list.items {
+            OverlapItems::Sketch(_) => Vec::new(),
+            OverlapItems::Model(picks) => {
+                let index = self.feed.pick_index();
+                picks.iter().map(|pick| name(index, pick)).collect()
+            }
+        };
         self.overlaps = Some(Listed {
             list,
             hovered: None,
+            names,
         });
+    }
+
+    /// Finds the rows of the list of the model's overlaps again on the
+    /// model shown, if it's another than theirs, by their names, each on
+    /// the body drawing its body there: those not found are dropped, and
+    /// the list closes once none is left (or the cursor doesn't pick).
+    pub(crate) fn follow_overlaps(&mut self) {
+        let model = self.feed.model();
+        let Some(listed) = &self.overlaps else {
+            return;
+        };
+        let OverlapItems::Model(picks) = &listed.list.items else {
+            return;
+        };
+        if picks.iter().all(|pick| pick.model == model) {
+            return;
+        }
+        if !self.picks() {
+            return self.close_overlaps();
+        }
+        let document = self.editor.document();
+        let merged = self.feed.merged_bodies();
+        let drawn = |body| {
+            document.body(body)?;
+            let holder = merged.iter().find(|(merged, _)| *merged == body);
+            Some(holder.map_or(body, |&(_, holder)| holder))
+        };
+        let index = self.feed.pick_index();
+        let mut rows: Vec<(Pick, Option<Selected>)> = Vec::new();
+        for named in listed.names.iter().flatten() {
+            let Some(pick) = drawn(named.body()).and_then(|body| found(index, named, body)) else {
+                continue;
+            };
+            if rows.iter().all(|(other, _)| other.target != pick.target) {
+                rows.push((pick, Some(*named)));
+            }
+        }
+        if rows.is_empty() {
+            return self.close_overlaps();
+        }
+        self.unhover_overlap();
+        if let Some(listed) = &mut self.overlaps {
+            let (picks, names) = rows.into_iter().unzip();
+            listed.list.items = OverlapItems::Model(picks);
+            listed.names = names;
+            listed.hovered = None;
+        }
     }
 
     /// Hovers the list's row `row`, or none: its item is highlighted as

@@ -8,7 +8,8 @@
 //! what regeneration hands it and does with the result: a block's edges
 //! and a prism's obtuse and acute edges by their volumes, the round a cylinder of the radius, a join
 //! after it, tangent chains grown and named, refusals worded with their
-//! edge drawn, the cache. The analytic volumes of the kernel's fillet (a
+//! edge drawn, rounds overlapping on a narrow rib and one running into a
+//! wall refused (never a wrong solid from the stand-in), the cache. The analytic volumes of the kernel's fillet (a
 //! block's edges, all twelve with their corner spheres, a hole's and a
 //! boss's rims, a slot's rim as a tangent chain, the same bits twice) are
 //! written out, ignored until the kernel's fillet is built.
@@ -24,10 +25,10 @@ use varde_kernel::{BlendError, FilletChain, Topology};
 use crate::picking::region_form;
 
 use super::chamfer::{
-    assert_near, cube, edge, evaluated, front_top, holed_or_bossed, sloped, slot, solid_of,
-    top_loop,
+    Face, LEFT, TOP, assert_near, cube, edge, evaluated, front_top, holed_or_bossed, sloped, slot,
+    solid_of, top_loop,
 };
-use super::motion::{add, cylinder, failure, key_on, key_where, set};
+use super::motion::{add, block, cylinder, failure, key_on, key_where, set};
 use super::*;
 
 /// Fillets on this test's thread by the stand-in.
@@ -179,8 +180,8 @@ fn an_edge_is_found_again_after_an_upstream_change() {
 /// Through the stand-in: one of a block's edges (the round an exact
 /// cylinder of the radius), then two opposite ones; its top loop, whose
 /// rounds meet at the corners, either mitred as the kernel's are or
-/// refused (the stand-in's booleans find the rounds tangent where they
-/// meet on the top: they give up), never another volume.
+/// refused (the stand-in finds their strips on the top meeting at a
+/// corner: too complex for it), never another volume.
 #[test]
 fn a_block_s_edges_are_rounded() {
     with_arcs();
@@ -215,7 +216,109 @@ fn a_block_s_edges_are_rounded() {
             four.volume(),
             1000.0 - 4.0 * corner(1.0) * 10.0 + 4.0 * overlap(1.0),
         ),
-        Err(message) => assert!(message.starts_with("filleting Body 1 can't be worked out")),
+        Err(message) => assert_eq!(message, too_complex("Body 1")),
+    }
+}
+
+/// The edge of `body` (its solid `solid`) between the planes `a` and `b`
+/// (each `n·x = d`), named at its first curve's middle.
+fn edge_on_planes(solid: &Solid, body: BodyId, a: Face, b: Face) -> EdgeRef {
+    let topology = solid.topology();
+    let regions = topology.regions();
+    let on = |region: u32, (n, d): Face| {
+        matches!(*region_form(solid, &regions[region as usize]), Form::Plane { n: m, d: e }
+            if m.abs_diff_eq(DVec3::from(n), 1e-12) && (e - d).abs() < 1e-9)
+    };
+    let chain = (topology.chains().iter())
+        .find(|chain| {
+            let [p, q] = chain.regions;
+            (on(p, a) && on(q, b)) || (on(p, b) && on(q, a))
+        })
+        .expect("the faces meet");
+    let keys = chain.regions.map(|r| regions[r as usize].key);
+    let curve = solid.mesh().curve(chain.halfedges[0]);
+    edge(body, keys[0], keys[1], ((curve.p0 + curve.p1) / 2.0).into())
+}
+
+/// A rib 3 mm wide, both its top edges rounded 2 mm: each round alone
+/// fits, but on the top they'd take 4 mm of its 3, so the two together
+/// are refused (the stand-in's rounds would overlap there, leaving a
+/// ridge no fillet makes), never a solid.
+#[test]
+fn rounds_overlapping_on_a_narrow_rib_are_refused() {
+    with_arcs();
+    let mut editor = Editor::new(Document::default());
+    let body = block(&mut editor, 0.0, 0.0, 3.0, 10.0, "10");
+    let solid = evaluated(editor.document()).bodies[0].solid.clone();
+    let left = edge_on_planes(&solid, body, TOP, LEFT);
+    let right = edge_on_planes(&solid, body, TOP, ([1.0, 0.0, 0.0], 3.0));
+    let document = editor.document().clone();
+    let id = add(&mut editor, fillet(&document, vec![left], "2"));
+    let evaluation = evaluated(editor.document());
+    assert!(
+        failure(&evaluation, id).is_none(),
+        "{:?}",
+        evaluation.failed
+    );
+    assert_near(
+        solid_of(&evaluation, body).volume(),
+        300.0 - corner(2.0) * 10.0,
+    );
+    for size in ["2", "1.5"] {
+        set(&mut editor, id, fillet(&document, vec![left, right], size));
+        let evaluation = evaluated(editor.document());
+        let failed = failure(&evaluation, id).expect("refused");
+        assert!(
+            failed.message.starts_with("the fillet doesn't fit"),
+            "{}",
+            failed.message
+        );
+        assert_near(solid_of(&evaluation, body).volume(), 300.0);
+    }
+    // 1.4 mm each leaves 0.2 mm of the top between them.
+    set(&mut editor, id, fillet(&document, vec![left, right], "1.4"));
+    let evaluation = evaluated(editor.document());
+    assert!(
+        failure(&evaluation, id).is_none(),
+        "{:?}",
+        evaluation.failed
+    );
+    assert_near(
+        solid_of(&evaluation, body).volume(),
+        300.0 - 2.0 * corner(1.4) * 10.0,
+    );
+}
+
+/// A step: a block 5 mm high with a wall 10 mm high joined along its
+/// back half, standing 2 mm out past its left. The lower top's left
+/// edge runs into the wall: the
+/// stand-in's prism, running past the edge's ends, would cut a groove
+/// into the wall, so it's refused, or rounded as a fillet would be (the
+/// corner taken off along the edge's 5 mm alone), never another volume.
+#[test]
+fn a_round_running_into_a_wall_cuts_nothing_past_it() {
+    with_arcs();
+    let mut editor = Editor::new(Document::default());
+    let body = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "5");
+    let extent = Extent::OneSide(length(editor.document(), "10"));
+    add_extrude(
+        &mut editor,
+        rectangle((-2.0, 5.0), (10.0, 10.0)),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let solid = evaluated(editor.document()).bodies[0].solid.clone();
+    assert_near(solid.volume(), 850.0);
+    let at = edge_on_planes(&solid, body, ([0.0, 0.0, 1.0], 5.0), LEFT);
+    let document = editor.document().clone();
+    let id = add(&mut editor, fillet(&document, vec![at], "1"));
+    let evaluation = evaluated(editor.document());
+    match failure(&evaluation, id) {
+        None => assert_near(
+            solid_of(&evaluation, body).volume(),
+            850.0 - corner(1.0) * 5.0,
+        ),
+        Some(_) => assert_near(solid_of(&evaluation, body).volume(), 850.0),
     }
 }
 
@@ -671,3 +774,5 @@ fn the_kernel_rounds_alike_every_time() {
     assert_eq!(a.volume().to_bits(), b.volume().to_bits());
     assert_eq!(a.mesh().tris().len(), b.mesh().tris().len());
 }
+
+mod fuzz;

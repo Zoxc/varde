@@ -331,7 +331,7 @@ fn fillet_takes_the_edges_selected_and_f_backs_out() {
     assert!(plates.doc.motion.is_none());
 
     let mut plates = super::plates();
-    let [plate, right, _] = plates.bodies;
+    let [_, right, _] = plates.bodies;
     plates.doc.look(Look::StartFillet);
     click_edge(&mut plates, plate, FRONT);
     let index = plates.doc.feed.pick_index();
@@ -424,3 +424,211 @@ fn the_overlap_list_ticks_and_picks_the_fillet_s_edges() {
             < 1.0
     );
 }
+
+/// The rim of `body` about (20, 0) at height `z` on the model shown, as
+/// a pick at its point at x 25.
+fn disc_rim(plates: &Plates, body: varde_document::BodyId, z: f64) -> varde_view::Pick {
+    let index = plates.doc.feed.pick_index();
+    let snaps = index.picking().snaps();
+    let rim = (0..snaps.len() as u32)
+        .find(|&edge| {
+            index.body(Picked::Edge(edge)) == Some(body)
+                && snaps[edge as usize]
+                    .is_some_and(|at| DVec3::from(at).distance(DVec3::new(20.0, 0.0, z)) < 1e-9)
+        })
+        .expect("the disc's rim");
+    varde_view::Pick {
+        model: index.model(),
+        target: Picked::Edge(rim),
+        body,
+        at: DVec3::new(25.0, 0.0, z),
+        snap: None,
+    }
+}
+
+/// A fillet of the right disc's top rim, then a join merging the disc
+/// into the plate after it: edited, its rim is found and lit on the
+/// plate drawing it, the disc's other rim is picked on it as the
+/// disc's, the plate's own edges refused, and OK keeps it on the disc.
+#[test]
+fn editing_a_fillet_whose_body_a_later_join_merged() {
+    let mut plates = super::plates();
+    let [_, right, _] = plates.bodies;
+    plates.doc.look(Look::StartFillet);
+    let top = disc_rim(&plates, right, 15.0);
+    plates.doc.look(Look::ClickModel {
+        pick: Some(top),
+        add: false,
+        double: false,
+    });
+    assert_eq!(edges(&plates).len(), 1);
+    plates.answer();
+    plates.doc.update(Edit::AcceptError);
+    assert!(plates.doc.motion.is_none());
+    let (id, _) = plates.last_feature();
+    let extent = crate::tests::two_sides(plates.doc.editor.document(), "12", "1");
+    crate::tests::add_disc(
+        &mut plates.doc.editor,
+        (14.0, 0.0),
+        extent,
+        varde_document::Operation::Join(varde_document::Targets::default()),
+    );
+    plates.doc.sync();
+    plates.answer();
+    assert!(
+        (plates.doc.feed.merged_bodies().iter()).any(|&(consumed, _)| consumed == right),
+        "the disc merged"
+    );
+    plates.doc.look(Look::EditFeature(id));
+    plates.answer();
+    let holder = plates.doc.feed.pick_index().body(top.target);
+    let lit = plates.doc.blend_lit();
+    assert_eq!(lit.len(), 1, "its rim lit");
+    assert_ne!(holder, Some(right), "drawn by the plate");
+    let bottom = disc_rim(&plates, holder.unwrap(), -5.0);
+    plates.doc.look(Look::ClickModel {
+        pick: Some(bottom),
+        add: false,
+        double: false,
+    });
+    assert_eq!(edges(&plates).len(), 2, "{:?}", plates.doc.notice);
+    assert!(edges(&plates).iter().all(|edge| edge.body == right));
+    let front = super::chamfer::edge_pick(&plates, holder.unwrap(), FRONT);
+    plates.doc.look(Look::ClickModel {
+        pick: Some(front),
+        add: false,
+        double: false,
+    });
+    assert_eq!(edges(&plates).len(), 2);
+    plates.answer();
+    plates.doc.update(Edit::AcceptError);
+    plates.doc.update(Edit::CommitMotion);
+    assert!(plates.doc.motion.is_none(), "{:?}", plates.doc.edit_error);
+    let Some(FeatureKind::Fillet(stored)) =
+        (plates.doc.editor.document().feature(id)).map(|feature| feature.kind.clone())
+    else {
+        panic!("the fillet");
+    };
+    assert_eq!(stored.edges.len(), 2);
+    assert_eq!(stored.body(), Some(right));
+}
+
+/// The list of what overlaps held open in a fillet session while each
+/// tick's preview comes: its rows are found again on each new model by
+/// their names, so the next tick picks, and a tick takes out, as on the
+/// model the list was opened on. With the stand-in rounding, an edge
+/// rounded off in the preview isn't there to list: its row goes.
+#[test]
+fn the_overlap_list_follows_each_preview() {
+    let (mut plates, plate) = plate();
+    let (front, right, back) = (
+        edge_pick(&plates, plate, FRONT),
+        edge_pick(&plates, plate, RIGHT),
+        edge_pick(&plates, plate, BACK),
+    );
+    plates.doc.look(Look::StartFillet);
+    let list = varde_view::Overlaps {
+        held: glam::DVec2::ZERO,
+        at: glam::DVec2::ZERO,
+        items: varde_view::OverlapItems::Model(vec![front, right, back]),
+    };
+    plates.doc.look(Look::OpenOverlaps(list));
+    plates.doc.look(Look::ToggleOverlap(0));
+    assert_eq!(edges(&plates).len(), 1);
+    plates.answer();
+    assert!(plates.doc.feed.draft_error().is_some(), "the kernel's stub");
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, false, false]));
+    plates.doc.look(Look::ToggleOverlap(1));
+    assert_eq!(edges(&plates).len(), 2);
+    plates.answer();
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, true, false]));
+    plates.doc.look(Look::ToggleOverlap(0));
+    assert_eq!(edges(&plates).len(), 1);
+    plates.answer();
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, true, false]));
+    plates.doc.look(Look::ToggleOverlap(1));
+    assert!(edges(&plates).is_empty());
+    plates.answer();
+
+    // Rounded off in the preview, the front edge's row goes.
+    varde_regen::testing::fillet_by_arcs();
+    plates.doc.look(Look::ToggleOverlap(0));
+    plates.answer();
+    assert!(plates.doc.feed.draft_error().is_none());
+    let rows = |plates: &Plates| {
+        let listed = plates.doc.overlaps.as_ref().expect("still open");
+        let varde_view::OverlapItems::Model(picks) = &listed.list.items else {
+            panic!("the model's");
+        };
+        assert!(
+            picks
+                .iter()
+                .all(|pick| pick.model == plates.doc.feed.model())
+        );
+        picks.clone()
+    };
+    assert_eq!(rows(&plates).len(), 2, "the right and back edges");
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, false]));
+    plates.doc.look(Look::ToggleOverlap(1));
+    assert_eq!(edges(&plates).len(), 2, "the front and back edges");
+    plates.answer();
+    assert!(plates.doc.feed.draft_error().is_none());
+    assert_eq!(rows(&plates).len(), 1, "the right edge alone");
+    plates.doc.look(Look::ToggleOverlap(0));
+    assert_eq!(edges(&plates).len(), 3);
+}
+
+/// Two edges of one tangent chain picked apart (the line with Tangent
+/// chain off, then an arc of its rim), then Tangent chain on: the rim
+/// lights whole as both pick it, and a click on another of its edges
+/// takes the chain out, both edges, not one of them leaving the rim lit
+/// as picked still.
+#[test]
+fn a_click_on_a_chain_takes_out_every_edge_picked_on_it() {
+    let (mut plates, body) = slot();
+    plates.doc.look(Look::StartFillet);
+    plates.motion(MotionLook::Chain);
+    let line = super::chamfer::edge_pick(&plates, body, ([0.0, -3.0, 5.0], [10.0, -3.0, 5.0]));
+    let Picked::Edge(edge) = line.target else {
+        unreachable!()
+    };
+    let rim = plates.doc.feed.pick_index().tangent_chain(edge).to_vec();
+    assert_eq!(rim.len(), 4);
+    let index = plates.doc.feed.pick_index();
+    let arcs: Vec<u32> = (rim.iter().copied())
+        .filter(|&other| {
+            other != edge
+                && index
+                    .chain_keys(other)
+                    .and_then(|keys| index.edge_ends(other, &keys))
+                    .is_none()
+        })
+        .collect();
+    assert_eq!(arcs.len(), 2);
+    let at_arc = |arc: u32, plates: &Plates| {
+        let at = plates.doc.feed.pick_index().chain_point(arc).unwrap();
+        varde_view::Pick {
+            target: Picked::Edge(arc),
+            at,
+            ..line
+        }
+    };
+    for pick in [line, at_arc(arcs[0], &plates)] {
+        plates.doc.look(Look::ClickModel {
+            pick: Some(pick),
+            add: false,
+            double: false,
+        });
+    }
+    assert_eq!(edges(&plates).len(), 2);
+    plates.motion(MotionLook::Chain);
+    plates.doc.look(Look::ClickModel {
+        pick: Some(at_arc(arcs[1], &plates)),
+        add: false,
+        double: false,
+    });
+    assert!(edges(&plates).is_empty(), "{:?}", edges(&plates));
+    assert!(plates.doc.blend_lit().is_empty());
+}
+
+mod fuzz;

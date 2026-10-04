@@ -143,6 +143,15 @@ impl<R: Ref> Refs<R> {
         Ok(())
     }
 
+    /// Takes out every one that is one of `targets` of the model
+    /// `model`: all a click on a tangent chain takes out, where more than
+    /// one of its edges were picked (apart, with Tangent chain off).
+    fn remove_all(&mut self, model: u64, targets: &[u32]) {
+        while let Some(at) = self.picked(model, targets) {
+            self.remove(at);
+        }
+    }
+
     /// Takes out the one at `at`.
     fn remove(&mut self, at: usize) {
         self.refs.remove(at);
@@ -322,9 +331,15 @@ impl Doc {
         if !self.refs_model_current() {
             return Err(OUT_OF_DATE.into());
         }
-        if let Some(at) = self.ref_picked::<R>(pick) {
+        if self.ref_picked::<R>(pick).is_some() {
+            // Every one picked a click on it lights takes out: a tangent
+            // chain's edges picked apart all go with it.
+            let grown = R::target(pick.target).map_or_else(Vec::new, |target| {
+                let session = self.motion.as_ref().expect("a session picked it");
+                R::grown(self, session, self.feed.pick_index(), target)
+            });
             if let Some(session) = &mut self.motion {
-                R::refs_mut(session).remove(at);
+                R::refs_mut(session).remove_all(pick.model, &grown);
                 session.refs_body();
             }
             return Ok(());

@@ -190,8 +190,10 @@ impl Doc {
     /// doesn't hold or a join merged into another, stops being selected
     /// but is looked for in later models; a face or edge of a merged body
     /// in the body holding it), and rebuilds the highlight if what it's
-    /// of changed.
+    /// of changed. The list of the model's overlaps is found again on a
+    /// new model ([`Doc::follow_overlaps`]).
     pub(crate) fn prune_picks(&mut self) {
+        self.follow_overlaps();
         let stale = |pick: Pick| pick.model != self.feed.model() || !self.picks();
         if self.pick.hover.is_some_and(stale) {
             self.pick.hover = None;

@@ -826,4 +826,4 @@ fn edges_dont_follow_their_body_into_a_combine_that_fails() {
     assert!(plates.doc.motion_ready());
 }
 
-mod fuzz;
+pub(super) mod fuzz;

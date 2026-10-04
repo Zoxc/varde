@@ -66,12 +66,20 @@ pub(crate) fn fillet_by_arcs() {
 /// the corner between the edge and the two rails (where the round
 /// touches each face) less the round's circle, widened outwards along
 /// each face's normal: one boolean each. Right where the faces at the
-/// chain's ends are square to it (a block's edges); where two rounds
-/// meet at a corner the booleans find them tangent there and fail (the
-/// kernel's mitres them). Anything else is [`KernelError::TooComplex`],
-/// and a rail past the face it's on is [`BlendError::TooBig`] as far as
-/// the stand-in can tell (past the edge's own faces' extent along the
-/// section).
+/// chain's ends are square to it (a block's edges). So that no test
+/// takes a wrong solid from it, it refuses what it can't do right:
+/// each boolean must take off exactly the corner's section along the
+/// edge (`r·b − r²(π − θ)/2` per length, `b` the rails' distance from
+/// the edge, `θ` the angle between the faces), or it's
+/// [`KernelError::TooComplex`] (a prism running past an end into more
+/// of the body, a face beside the edge ending short of the rail); and
+/// two chains' strips on a face they share (each from its edge to its
+/// rail) must keep apart: meeting at a corner the two are too complex
+/// (the kernel's mitres them), elsewhere [`BlendError::TooBig`] for the
+/// later one (a narrow rib's two rounds overlapping on its top). A rail
+/// past the face it's on is [`BlendError::TooBig`] as far as the
+/// stand-in can tell (past the edge's own faces' extent along the
+/// section). Anything else is too complex.
 ///
 /// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
 #[cfg(any(test, feature = "testing"))]
@@ -91,6 +99,9 @@ pub(crate) fn by_arcs(
     let too_complex = || BlendError::Failed(KernelError::TooComplex.into());
     let mesh = solid.mesh();
     let mut result = solid.clone();
+    // Each chain's strip on each of its faces: the region, the edge's
+    // start, along it, into the face and how far the rail is.
+    let mut strips: Vec<(u32, DVec3, DVec3, DVec3)> = Vec::new();
     for filleted in chains {
         let chain = (topology.chains())
             .get(filleted.chain as usize)
@@ -146,6 +157,28 @@ pub(crate) fn by_arcs(
                 chain: filleted.chain,
             });
         }
+        for (side, &region) in chain.regions.iter().enumerate() {
+            let strip = (region, a, b - a, into[side] * back);
+            for &(other, oa, along, across) in &strips {
+                if other != region {
+                    continue;
+                }
+                if strips_meet((oa, along, across), (strip.1, strip.2, strip.3)) {
+                    let ends = [oa, oa + along];
+                    let corner = [a, b]
+                        .iter()
+                        .any(|p| ends.iter().any(|q| (*p - *q).length() <= tol.fit()));
+                    return Err(if corner {
+                        too_complex()
+                    } else {
+                        BlendError::TooBig {
+                            chain: filleted.chain,
+                        }
+                    });
+                }
+            }
+            strips.push(strip);
+        }
         let x = into[0];
         let y = t.cross(x);
         let frame = Frame { origin: a, x, y };
@@ -197,9 +230,48 @@ pub(crate) fn by_arcs(
             tol,
             budget,
         )?;
-        result = varde_kernel::boolean(&result, &notch, Op::Difference, tol, budget)?;
+        let rounded = varde_kernel::boolean(&result, &notch, Op::Difference, tol, budget)?;
+        // What a round takes off: the kite between the edge, the rails
+        // and the centre less the arc's sector, along the edge.
+        let theta = cos.acos();
+        let taken =
+            (radius * back - radius * radius * (std::f64::consts::PI - theta) / 2.0) * length;
+        let was = result.volume();
+        let removed = was - rounded.volume();
+        if (removed - taken).abs() > 1e-9 * was.abs().max(1.0) {
+            return Err(too_complex());
+        }
+        result = rounded;
     }
     Ok(result)
+}
+
+/// Whether two strips on one plane meet (touching counts): each from a
+/// point `p`, along `along` and across `across`, the parallelogram
+/// `p + s·along + u·across` for `s`, `u` in `0..=1`. By separating
+/// axes, the strips' sides' directions.
+#[cfg(any(test, feature = "testing"))]
+fn strips_meet(
+    a: (glam::DVec3, glam::DVec3, glam::DVec3),
+    b: (glam::DVec3, glam::DVec3, glam::DVec3),
+) -> bool {
+    let corners = |(p, along, across): (glam::DVec3, glam::DVec3, glam::DVec3)| {
+        [p, p + along, p + along + across, p + across]
+    };
+    let (ca, cb) = (corners(a), corners(b));
+    // In the plane, square to each side.
+    let normal = a.1.cross(a.2);
+    [a.1, a.2, b.1, b.2].iter().all(|side| {
+        let axis = normal.cross(*side);
+        let span = |points: &[glam::DVec3; 4]| {
+            (points.iter()).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                let x = p.dot(axis);
+                (lo.min(x), hi.max(x))
+            })
+        };
+        let ((alo, ahi), (blo, bhi)) = (span(&ca), span(&cb));
+        ahi >= blo && bhi >= alo
+    })
 }
 
 /// Changes the body of `evaluation` as the fillet `fillet`, the feature
