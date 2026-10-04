@@ -38,7 +38,7 @@ const OFFSET: f32 = 10.0;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Overlaps {
     /// Where the button was held, in the viewport's pixels: ringed
-    /// [`OVERLAP_REACH`] round, how far it picks.
+    /// `OVERLAP_REACH` round, how far it picks.
     pub held: DVec2,
     /// The list's top left corner, in the viewport's pixels.
     pub at: DVec2,
