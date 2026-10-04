@@ -61,6 +61,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         draft: None,
         sweep: None,
         loft: None,
+        knobs: Vec::new(),
     }
 }
 
@@ -640,29 +641,31 @@ fn a_split_s_pieces_are_labelled() {
     assert_eq!(names, ["Body 1", "New body"]);
 }
 
-/// An offset face of the plate's top, its handle from (0, 0, 10) up,
-/// the knob at `at` (negative inward).
+/// An offset face of the plate's top, its knob on the line from
+/// (0, 0, 10) up, at `at` (negative inward).
 fn offset_face(at: f64) -> MotionState<'static> {
     let mut state = state(MotionKind::OffsetFace, MotionPick::Faces, None);
     state.reference = None;
-    state.offset_face = Some(Box::new(crate::OffsetFaceView {
-        faces: crate::PickedFaces::default(),
-        inward: at < 0.0,
-        tangent: true,
-        handle: Some(crate::FaceHandle {
+    state.knobs = vec![crate::OpKnob {
+        field: MotionField::Distance,
+        path: crate::KnobPath::Line {
             origin: DVec3::new(0.0, 0.0, 10.0),
-            normal: DVec3::Z,
-            at,
-        }),
-        info: None,
-    }));
+            along: DVec3::Z,
+        },
+        value: at,
+        scale: crate::KnobScale::Times(1.0),
+        snap: crate::KnobSnap::Length,
+        out: DVec3::Z,
+        shaft: true,
+        tone: crate::KnobTone::Modify,
+    }];
     state
 }
 
-/// An offset face's handle is drawn while there's one and the document
-/// can be changed; a move's handles aren't.
+/// A session's knobs are drawn while it has some; a move's handles
+/// aren't.
 #[test]
-fn an_offset_face_draws_its_handle() {
+fn a_session_draws_its_knobs() {
     let colors = Mode::Light.palette().sketching;
     let scene = Mode::Light.palette().scene;
     let camera = front();
@@ -673,77 +676,64 @@ fn an_offset_face_draws_its_handle() {
     };
     assert!(!layers(offset_face(4.0)).is_empty());
     let mut none = offset_face(4.0);
-    none.offset_face.as_mut().unwrap().handle = None;
+    none.knobs.clear();
     assert!(layers(none).is_empty());
-    let mut locked = offset_face(4.0);
-    locked.editable = false;
-    assert!(layers(locked).is_empty());
 }
 
-/// The knob dragged: the distance snapped as the extrude's handle's, up
-/// out of the body, then down through zero, inward; zero itself is
-/// never sent; the handle holds the cursor ahead of the model.
+/// A knob dragged along its line: its value snapped as the extrude's
+/// handle's, on from where it was grabbed, up out of the body, then down
+/// through zero, inward; the knob holds the cursor ahead of the model.
+/// Not in a document that can't be changed.
 #[test]
-fn the_offset_face_handle_drags_through_zero_turning_inward() {
+fn a_line_knob_drags_through_zero() {
     let camera = front();
-    let viewport = viewport(offset_face(4.0), &camera, None);
+    let shown = viewport(offset_face(4.0), &camera, None);
+    let viewport = &shown;
     let mut input = Interaction::default();
     let knob = at(DVec3::new(0.0, 0.0, 14.0));
-    let (messages, captured) = feed(&viewport, &mut input, &[moved(knob)]);
+    let (messages, captured) = feed(viewport, &mut input, &[moved(knob)]);
     assert!(captured && messages.is_empty(), "{messages:?}");
     assert!(input.motion.holds());
-    let (_, captured) = feed(&viewport, &mut input, &[press(knob)]);
+    let (_, captured) = feed(viewport, &mut input, &[press(knob)]);
     assert!(captured);
     assert_eq!(
         viewport.mouse_interaction(&input, bounds(), mouse::Cursor::Available(knob)),
         mouse::Interaction::Grabbing
     );
+    let drag = |input: &mut Interaction, z: f64| {
+        let (messages, _) = feed(viewport, input, &[moved(at(DVec3::new(0.0, 0.0, z)))]);
+        messages
+    };
+    let sent = |value: f64| MotionLook::DragKnob { knob: 0, value };
     // 2.3 mm above the face snaps to 2 mm out.
-    let (messages, _) = feed(
-        &viewport,
-        &mut input,
-        &[moved(at(DVec3::new(0.0, 0.0, 12.3)))],
-    );
-    let out = MotionLook::OffsetBy {
-        distance: "2 mm".to_owned(),
-        inward: false,
-    };
-    assert_eq!(looks(&messages), [Some(&out)]);
-    // At the face: zero, which isn't sent.
-    let (messages, _) = feed(
-        &viewport,
-        &mut input,
-        &[moved(at(DVec3::new(0.0, 0.0, 10.2)))],
-    );
-    assert!(messages.is_empty(), "{messages:?}");
+    assert_eq!(looks(&drag(&mut input, 12.3)), [Some(&sent(2.0))]);
+    // The same again sends nothing.
+    assert!(drag(&mut input, 12.2).is_empty());
     // 3.7 mm into the body: 4 mm inward.
-    let (messages, _) = feed(
-        &viewport,
-        &mut input,
-        &[moved(at(DVec3::new(0.0, 0.0, 6.3)))],
-    );
-    let inward = MotionLook::OffsetBy {
-        distance: "4 mm".to_owned(),
-        inward: true,
-    };
-    assert_eq!(looks(&messages), [Some(&inward)]);
-    let (messages, captured) = feed(&viewport, &mut input, &[release(knob)]);
+    assert_eq!(looks(&drag(&mut input, 6.3)), [Some(&sent(-4.0))]);
+    let (messages, captured) = feed(viewport, &mut input, &[release(knob)]);
     assert!(captured && messages.is_empty());
-    assert!(input.motion.face.drag.is_none());
-    // Off the handle, nothing's held.
+    // Off the knob, nothing's held.
     let (_, captured) = feed(
-        &viewport,
+        viewport,
         &mut input,
         &[moved(at(DVec3::new(25.0, 0.0, 2.0)))],
     );
     assert!(!captured && !input.motion.holds());
+
+    let mut locked = offset_face(4.0);
+    locked.editable = false;
+    let locked = self::viewport(locked, &camera, None);
+    let mut input = Interaction::default();
+    let (_, captured) = feed(&locked, &mut input, &[moved(knob)]);
+    assert!(!captured && !input.motion.holds());
 }
 
-/// An offset face's handle held as its session ends (under the cursor
-/// as OK was hit) doesn't keep the next session's clicks off the model:
-/// a shell's first mouse event lets go of it.
+/// A knob held as its session ends (under the cursor as OK was hit)
+/// doesn't keep the next session's clicks off the model: a session with
+/// no knobs lets go of it at its first mouse event.
 #[test]
-fn an_offset_face_handle_left_held_lets_go_in_the_next_session() {
+fn a_knob_left_held_lets_go_in_the_next_session() {
     let camera = front();
     let mut input = Interaction::default();
     let knob = at(DVec3::new(0.0, 0.0, 14.0));
@@ -803,56 +793,75 @@ fn a_move_s_handle_left_hovered_lets_go_in_a_session_picking_sketches() {
     );
 }
 
-/// Zoomed in as far as the camera goes, the knob snaps finer than the
-/// design's units show a distance: dragged to where its distance would
-/// show as nothing ("0 mm", which no offset is), nothing's sent, as at
-/// zero; a little further, the distance is sent as it shows.
+/// A knob dragged round an arc: about -y through the origin from +x, 10
+/// mm out (50 pixels, so it snaps to 10°), the angle the cursor turns
+/// about the axis; a slider in pixels (a scale's), 100 pixels a factor
+/// of 1, snapped to tenths.
 #[test]
-fn the_offset_face_handle_sends_no_distance_that_shows_as_nothing() {
-    let mut camera = front();
-    camera.set_target(glam::Vec3::new(0.0, 0.0, 10.0));
-    camera.zoom(1e-9);
-    let point = |p: DVec3| {
-        let p = shown(&camera, p);
-        Point::new(p.x as f32, p.y as f32)
-    };
-    // How far a pixel is here, and the knob's snap.
-    let pixel = 1.0
-        / (shown(&camera, DVec3::new(0.0, 0.0, 10.0)) - shown(&camera, DVec3::new(0.0, 0.0, 11.0)))
-            .length();
-    let step = crate::extrude::snap_step(pixel, LengthUnit::Mm).expect("a step");
-    assert!(step < 1e-4, "{step}");
-    let start = 10.0 * step;
-    let viewport = viewport(offset_face(start), &camera, None);
+fn an_arc_knob_turns_and_a_slider_scales() {
+    let camera = front();
+    let mut arc = offset_face(0.0);
+    arc.kind = MotionKind::Draft;
+    arc.knobs = vec![crate::OpKnob {
+        field: MotionField::Angle,
+        path: crate::KnobPath::Arc {
+            centre: DVec3::ZERO,
+            axis: -DVec3::Y,
+            radial: DVec3::X,
+            radius: crate::KnobRadius::World(10.0),
+        },
+        value: 0.0,
+        scale: crate::KnobScale::Times(1.0),
+        snap: crate::KnobSnap::Angle,
+        out: DVec3::Z,
+        shaft: true,
+        tone: crate::KnobTone::Modify,
+    }];
+    let viewport_arc = viewport(arc, &camera, None);
     let mut input = Interaction::default();
-    let knob = point(DVec3::new(0.0, 0.0, 10.0 + start));
-    feed(&viewport, &mut input, &[moved(knob)]);
-    let (_, captured) = feed(&viewport, &mut input, &[press(knob)]);
-    assert!(captured);
-    // Two steps up from the face: it would show as "0 mm".
-    let (messages, _) = feed(
-        &viewport,
-        &mut input,
-        &[moved(point(DVec3::new(0.0, 0.0, 10.0 + 2.0 * step)))],
-    );
-    assert!(messages.is_empty(), "{messages:?}");
-    let (messages, _) = feed(
-        &viewport,
-        &mut input,
-        &[moved(point(DVec3::new(0.0, 0.0, 10.0 - 2.0 * step)))],
-    );
-    assert!(messages.is_empty(), "{messages:?}");
-    // A micrometre into the body shows (the snap a fraction of it).
-    let (messages, _) = feed(
-        &viewport,
-        &mut input,
-        &[moved(point(DVec3::new(0.0, 0.0, 10.0 - 1e-3)))],
-    );
-    let inward = MotionLook::OffsetBy {
-        distance: "0.001 mm".to_owned(),
-        inward: true,
+    let knob = at(DVec3::new(10.0, 0.0, 0.0));
+    feed(&viewport_arc, &mut input, &[moved(knob), press(knob)]);
+    let turned = |degrees: f64| {
+        let a = degrees.to_radians();
+        at(DVec3::new(
+            10.0 * varde_sketch::angle::cos(a),
+            0.0,
+            10.0 * varde_sketch::angle::sin(a),
+        ))
     };
-    assert_eq!(looks(&messages), [Some(&inward)]);
+    let (messages, _) = feed(&viewport_arc, &mut input, &[moved(turned(37.0))]);
+    let [Some(MotionLook::DragKnob { knob: 0, value })] = looks(&messages)[..] else {
+        panic!("{messages:?}");
+    };
+    assert!(
+        (value.to_degrees() - 40.0).abs() < 1e-9,
+        "{}",
+        value.to_degrees()
+    );
+    feed(&viewport_arc, &mut input, &[release(knob)]);
+
+    let mut slider = offset_face(1.0);
+    slider.kind = MotionKind::Scale;
+    slider.knobs[0].path = crate::KnobPath::Line {
+        origin: DVec3::ZERO,
+        along: DVec3::X,
+    };
+    slider.knobs[0].scale = crate::KnobScale::Pixels(100.0);
+    slider.knobs[0].snap = crate::KnobSnap::Factor;
+    let viewport_slider = viewport(slider, &camera, None);
+    let mut input = Interaction::default();
+    // 100 pixels is 20 mm here.
+    let knob = at(DVec3::new(20.0, 0.0, 0.0));
+    feed(&viewport_slider, &mut input, &[moved(knob), press(knob)]);
+    let (messages, _) = feed(
+        &viewport_slider,
+        &mut input,
+        &[moved(at(DVec3::new(30.4, 0.0, 0.0)))],
+    );
+    let [Some(MotionLook::DragKnob { knob: 0, value })] = looks(&messages)[..] else {
+        panic!("{messages:?}");
+    };
+    assert!((value - 1.5).abs() < 1e-12, "{value}");
 }
 
 /// A sweep in a sketch on XY holding a disc of radius 5 about (0, 10),

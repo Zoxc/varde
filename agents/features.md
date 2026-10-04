@@ -3834,8 +3834,8 @@ menu), so the panel is built in the style of the mock's shell panel.
 - **The handle** (question 21, decided: the extrude's arrow and knob
   *and* the typed distance): an arrow from the first face's point
   along its outward normal, its knob at the distance (negative
-  inward), drawn over the model as a move's arrows are (selected
-  colour, hovered while under the cursor or dragged). Where it stands
+  inward): one of the operations' knobs (see Operation knobs below),
+  drawn as the extrude's puck in the Modify colours. Where it stands
   (`offset_face::Anchor`) is found once on the model shown, once it
   answers what was asked last: the first face found there, the point
   nearest its stored point on the face's nearest triangle and the
@@ -3845,14 +3845,14 @@ menu), so the panel is built in the style of the mock's shell panel.
   and a handle found on a preview moved far kept that), taken back by the distance the
   preview moved it when the model shows a working preview of this
   session. It's kept while the first face and the document's
-  generation stay, so dragging moves only the knob. Dragged (knob or
-  shaft, within 6 pixels), the knob follows the cursor's ray where it
-  passes nearest the arrow's line, snapped as the extrude's handle
-  (`snap_step` of a pixel at the origin), **through zero to the other
-  side**: `MotionLook::OffsetBy { distance, inward }` sets the field to
-  the size and Inward to the side; zero itself is never sent (no
-  distance is zero), nor a distance the design's units show as zero
-  (zoomed in far, the snap is finer than they show: "0 mm"). Dragged
+  generation stay, so dragging moves only the knob. Dragged, the knob
+  follows the cursor's ray where it passes nearest the arrow's line,
+  snapped as the extrude's handle, **through zero to the other side**:
+  `MotionLook::DragKnob` (or `OffsetBy { distance, inward }`, which
+  tests send) sets the field to the size and Inward to the side; zero
+  itself is taken as nothing (no distance is zero), nor a distance the
+  design's units show as zero (zoomed in far, the snap is finer than
+  they show: "0 mm"). Dragged
   through zero to a distance or ticked Inward at it, the draft is the
   same. A typed distance, or Inward ticked, moves the
   knob. It takes the mouse ahead of picking faces (`Input::holds`).
@@ -4152,8 +4152,8 @@ Shell), so the panel is built in the style of the mock's shell panel.
   the point of the plane nearest the middle of the body's box, with the
   pull as an axis's arrow through it (`face_draft::neutral_line`; an
   origin plane's from its axis, a face's from regeneration's answer,
-  which notes the plane found as a mirror's, unflipped). No handle (the
-  plan has none).
+  which notes the plane found as a mirror's, unflipped). Its knob turns
+  the first face about its hinge (see Operation knobs).
 - **Preview**: the draft as set up is the draft while it's whole, picking
   faces or the plane. **The kernel's draft isn't built**, so today
   every preview fails with "Draft fails" over "drafting faces of Body 1
@@ -4788,3 +4788,59 @@ hover worked out again as the camera moves),
 `regen/src/wire/tests.rs` (a loft and its draft round trip),
 `io/src/vrdp/tests.rs` (round trip, tampered and damaged records, a
 loft's parts refused as read), `view/src/loft/tests.rs` (the notes).
+
+## Operation knobs
+
+The operations set up in the move's session that have a value to drag
+(offset face, shell, draft, chamfer, fillet, scale, align) have a
+handle of knobs, as the extrude's and revolve's are drawn
+(`agents/viewport.md`): `MotionState::knobs`, `OpKnob`
+(`view/src/motion/knobs.rs`), worked out by the app
+(`app/src/doc/motion/knobs.rs`, `Doc::motion_knobs`) and drawn and
+dragged by the viewport (`view/src/viewport/knobs.rs`). A knob names
+the field it types into, its path (a line through a point along a
+direction, or round an axis through a centre from a radial, its radius
+in millimetres or pixels), its value in the field's own units
+(millimetres, radians, a factor; an offset face's signed by its side),
+how a value maps onto the path (times a factor, or a slider so many
+pixels a unit), what it snaps to (lengths as the extrude's handle,
+angles as a move's ring, factors 1, 2 or 5 × 10ⁿ, each at least 6 px
+along the path), its arrow's way (the way the value grows), whether it
+has a shaft from where the value is zero, and its colours (Create's or
+Modify's). Dragged, the viewport sends `MotionLook::DragKnob { knob,
+value }`, the value snapped; the app (`Doc::drag_knob`) types it into
+the field as the design's units (or degrees, or a bare factor) write
+it, where the field takes it: none at or below zero but an offset
+face's (its sign its side, zero nothing) and an align's, no draft of a
+quarter turn or more. None in a document that can't be changed.
+
+- **Offset face**: along the first face's outward normal (its
+  `Anchor`, above), at the distance.
+- **Shell**: from the first face removed into the body (out of it for
+  Outward walls), at the thickness.
+- **Draft**: on the first face, turning about its hinge, where it meets
+  the neutral plane along the face's way up towards the pull, by the
+  angle, so the face's top goes into the body and its normal leans
+  towards the pull; none for a face square to the pull or whose point
+  is on its hinge.
+- **Chamfer**: from the first edge along the bisector of its faces for
+  Equal (half the bisector's sum a millimetre of distance, so the knob
+  is on the chamfer's middle); along each face for Two distances (the
+  first face as Flip sides takes it); along the first face for
+  Distance and angle.
+- **Fillet**: along the bisector, on the round's middle, `r (1 / sin(φ
+  / 2) − 1)` from the edge for faces at an angle `φ`.
+- **Scale**: a slider from its point, 100 px a factor of 1: towards the
+  bodies' box centre for Uniform, along each world axis towards it for
+  Per axis; none for Edge length.
+- **Align**: along the target's primary direction from its point at the
+  offset, and on a ring 60 px out about it there at the turn, from the
+  target's second direction.
+
+A shell's, draft's, chamfer's and fillet's knobs stand where their
+first face or edge is before the feature changes it (`KnobAnchor`):
+found on the model shown while it's the document's alone (no draft
+shown, of the document as it is), so for a new feature only, kept
+while the first face or edge and the document stay; the point and
+normal of `PickIndex::face_point`, an edge's point taken onto both its
+faces. An edited one has no knob (the model shown has it changed).

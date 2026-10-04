@@ -157,6 +157,12 @@ pub struct SketchColors {
     pub handle_accent: Color,
     pub handle_hovered: Color,
     pub handle_accent_hovered: Color,
+    /// The handles of the Modify tools (a chamfer's, a shell's, ...): in
+    /// their icon colour and accent as the extrude's are in Create's.
+    pub modify_handle: Color,
+    pub modify_handle_accent: Color,
+    pub modify_handle_hovered: Color,
+    pub modify_handle_accent_hovered: Color,
     /// The rail along a handle's axis while it's hovered or dragged: ink,
     /// the text mixed 80% into the panel.
     pub rail: Color,
@@ -420,6 +426,10 @@ const LIGHT: Palette = Palette {
         handle_accent: LIGHT_ICONS.solid.accent,
         handle_hovered: mix(LIGHT_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
         handle_accent_hovered: mix(LIGHT_ICONS.solid.accent, Color::WHITE, HANDLE_HOVERED),
+        modify_handle: LIGHT_ICONS.modify.line,
+        modify_handle_accent: LIGHT_ICONS.modify.accent,
+        modify_handle_hovered: mix(LIGHT_ICONS.modify.line, Color::WHITE, HANDLE_HOVERED),
+        modify_handle_accent_hovered: mix(LIGHT_ICONS.modify.accent, Color::WHITE, HANDLE_HOVERED),
         rail: mix(LIGHT_TEXT, LIGHT_PANEL, 0.8),
     },
 };
@@ -504,6 +514,10 @@ const DARK: Palette = Palette {
         handle_accent: DARK_ICONS.solid.accent,
         handle_hovered: mix(DARK_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
         handle_accent_hovered: mix(DARK_ICONS.solid.accent, Color::WHITE, HANDLE_HOVERED),
+        modify_handle: DARK_ICONS.modify.line,
+        modify_handle_accent: DARK_ICONS.modify.accent,
+        modify_handle_hovered: mix(DARK_ICONS.modify.line, Color::WHITE, HANDLE_HOVERED),
+        modify_handle_accent_hovered: mix(DARK_ICONS.modify.accent, Color::WHITE, HANDLE_HOVERED),
         rail: mix(DARK_TEXT, DARK_PANEL, 0.8),
     },
 };

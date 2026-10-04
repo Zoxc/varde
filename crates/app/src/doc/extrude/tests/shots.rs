@@ -1999,3 +1999,116 @@ fn web_view(
     }
     varde_view::document(state)
 }
+
+/// The example plate's edge of the model shown from `a` to `b`, either
+/// way round, as a pick at its middle.
+fn edge_pick(doc: &Doc, a: [f64; 3], b: [f64; 3]) -> varde_view::Pick {
+    use glam::DVec3;
+    let (a, b) = (DVec3::from(a), DVec3::from(b));
+    let index = doc.feed.pick_index();
+    let near = |p: DVec3, q: DVec3| p.distance(q) < 1e-6;
+    let edge = (0..index.mesh().edge_count() as u32)
+        .find(|&edge| {
+            (index.chain_keys(edge))
+                .and_then(|keys| index.edge_ends(edge, &keys))
+                .is_some_and(|[p, q]| (near(p, a) && near(q, b)) || (near(p, b) && near(q, a)))
+        })
+        .expect("the edge shown");
+    varde_view::Pick {
+        model: index.model(),
+        target: varde_view::Picked::Edge(edge),
+        body: doc.editor.document().bodies()[0].id,
+        at: (a + b) / 2.0,
+        snap: None,
+    }
+}
+
+/// The example plate's flat face of the model shown facing `normal`, as
+/// a pick at `at`.
+fn face_pick(doc: &Doc, normal: [f64; 3], at: [f64; 3]) -> varde_view::Pick {
+    use glam::DVec3;
+    let index = doc.feed.pick_index();
+    let body = doc.editor.document().bodies()[0].id;
+    let face = (index.body_faces(body))
+        .find(|&face| {
+            matches!(index.picking().faces()[face as usize].summary,
+                varde_regen::Summary::Plane { n, .. } if DVec3::from(n).distance(DVec3::from(normal)) < 1e-9)
+        })
+        .expect("the face shown");
+    varde_view::Pick {
+        model: index.model(),
+        target: varde_view::Picked::Face(face),
+        body,
+        at: DVec3::from(at),
+        snap: None,
+    }
+}
+
+/// Scenario 33: the knobs of the operations set up in the move's
+/// session, on the example's plate: a chamfer of its top front edge,
+/// Equal then Two distances; a fillet of it; a shell of its top; an
+/// offset of its top; a draft of its front about the XY plane; a scale
+/// about the origin; the last also dark at scale 2.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_33_op_knobs() {
+    use varde_view::{ChamferType, MotionLook};
+
+    shooting(|camera| {
+        let (mut doc, requests) = crate::tests::holding(varde_document::Document::example());
+        answer(&mut doc, &requests);
+        aim(&mut doc, -0.35, 0.35, PLATE_ZOOM);
+        let front_edge = ([-30.0, -20.0, 10.0], [30.0, -20.0, 10.0]);
+        let click = |doc: &mut Doc, pick: varde_view::Pick| {
+            doc.look(Look::ClickModel {
+                pick: Some(pick),
+                add: false,
+                double: false,
+            });
+        };
+        let cancel = |doc: &mut Doc| doc.look(Look::Motion(MotionLook::Cancel));
+
+        doc.look(Look::StartChamfer);
+        let edge = edge_pick(&doc, front_edge.0, front_edge.1);
+        click(&mut doc, edge);
+        camera.take(&doc, "33-chamfer", Shot::new());
+        doc.look(Look::Motion(MotionLook::ChamferType(ChamferType::Two)));
+        camera.take(&doc, "33-chamfer-two", Shot::new());
+        cancel(&mut doc);
+        answer(&mut doc, &requests);
+
+        doc.look(Look::StartFillet);
+        let edge = edge_pick(&doc, front_edge.0, front_edge.1);
+        click(&mut doc, edge);
+        camera.take(&doc, "33-fillet", Shot::new());
+        cancel(&mut doc);
+        answer(&mut doc, &requests);
+
+        doc.look(Look::StartShell);
+        let top = face_pick(&doc, [0.0, 0.0, 1.0], [18.0, 10.0, 10.0]);
+        click(&mut doc, top);
+        camera.take(&doc, "33-shell", Shot::new());
+        cancel(&mut doc);
+        answer(&mut doc, &requests);
+
+        doc.look(Look::StartOffsetFace);
+        answer(&mut doc, &requests);
+        let top = face_pick(&doc, [0.0, 0.0, 1.0], [18.0, 10.0, 10.0]);
+        click(&mut doc, top);
+        answer(&mut doc, &requests);
+        camera.take(&doc, "33-offset-face", Shot::new());
+        cancel(&mut doc);
+        answer(&mut doc, &requests);
+
+        doc.look(Look::StartDraft);
+        let front = face_pick(&doc, [0.0, -1.0, 0.0], [10.0, -20.0, 6.0]);
+        click(&mut doc, front);
+        camera.take(&doc, "33-draft", Shot::new());
+        cancel(&mut doc);
+        answer(&mut doc, &requests);
+
+        doc.look(Look::StartScale);
+        camera.take(&doc, "33-scale", Shot::new());
+        camera.take(&doc, "33-scale-dark-scale2", Shot::new().dark().scale(2.0));
+    });
+}

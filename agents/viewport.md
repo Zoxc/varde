@@ -275,6 +275,20 @@ dragged as its session ended doesn't keep the next session's hover off
 the model, even a session that takes the mouse before the handles are
 worked out (a split or sweep picking in its sketches).
 
+The knobs of an operation with a value to drag (`viewport/knobs.rs`,
+`MotionState::knobs`; what they are in `agents/features.md`, Operation
+knobs) replace a move's handles for sessions that have them: drawn as
+the extrude's (`handle.rs`, in their tool's colours), they take the
+mouse first (`Moving::mouse`), hovered within 13 px of a knob or 6 px
+of its arrow, the model's hover let go of; a press grabs one, its path
+kept as grabbed; dragged along a line, the value follows where the
+cursor's ray passes nearest it on from where it was grabbed; round an
+arc, the angle the cursor turns about the axis on the arc's plane (all
+the way round as often as it goes, nothing with the plane edge on);
+each new snapped value is sent (`MotionLook::DragKnob`). A session
+without knobs lets go of what one held (`Input::settle`), and one with
+them of a move's handles.
+
 The panel follows the mock's (`.opp`): a card 288 px wide, 8 px round,
 with a 3 px accent line along its top and the mock's shadow, drawn by
 `operation_panel`'s `Sections` (the head on the panel's colour, the well
@@ -1584,7 +1598,10 @@ computer, each also pointed at, and the file menu starting with the
 downloads (light, dark), drawn from `Doc::state` with the location set;
 a slow regeneration's card (`shots_32`) before the lane has said how far
 it has got, on the example's extrude (light, dark) and drawing the model
-at scale 2, `DocumentState::regenerating` set on `Doc::state`.
+at scale 2, `DocumentState::regenerating` set on `Doc::state`; the
+operations' knobs (`shots_33`) on the example's plate: a chamfer of its
+top front edge, Equal and Two distances, a fillet of it, a shell and an
+offset of its top, a draft of its front, a scale (also dark at scale 2).
 Shots are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

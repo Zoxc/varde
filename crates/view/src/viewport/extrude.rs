@@ -17,6 +17,7 @@ use varde_render::{Camera, GridPlane, SketchLayer};
 use super::handle::{self, Puck};
 use super::regions::{self, Regions};
 use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle, snap_step};
+use crate::motion::KnobTone;
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
 use crate::theme::SketchColors;
@@ -228,7 +229,8 @@ impl<'a> Extruding<'a> {
                 handle::draw_rail(&mut live, projector, colors.rail, |px| puck.along(px));
             }
             if let Some(projector) = &projector {
-                handle::draw_puck(&mut live, projector, &puck, colors, hot);
+                let tone = handle::tone(colors, KnobTone::Create, hot);
+                handle::draw_puck(&mut live, projector, &puck, tone);
             }
         }
         (base, live)

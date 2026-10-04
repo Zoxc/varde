@@ -1101,6 +1101,7 @@ mod chamfer;
 mod face_draft;
 mod face_session;
 mod fillet;
+mod knobs;
 mod loft;
 mod offset_face;
 mod overlaps;

@@ -4,6 +4,7 @@
 
 mod extrude;
 mod handle;
+mod knobs;
 mod measure;
 mod motion;
 mod pivot;

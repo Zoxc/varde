@@ -33,6 +33,7 @@ use super::motion::{angle_step, wrapped};
 use super::regions::{self, Regions, grid_plane};
 use super::sketch::{line, srgba};
 use crate::hit;
+use crate::motion::KnobTone;
 use crate::operation_panel::{Candidate, PanelHover};
 use crate::pick::{Picked, Picks};
 use crate::projection::Projector;
@@ -506,7 +507,8 @@ impl<'a> Revolving<'a> {
                 let path = |px: f64| handle.at(turn + px * per_pixel);
                 handle::draw_rail(live, &projector, colors.rail, path);
             }
-            handle::draw_puck(live, &projector, &puck, colors, hot);
+            let tone = handle::tone(colors, KnobTone::Create, hot);
+            handle::draw_puck(live, &projector, &puck, tone);
         }
     }
 }

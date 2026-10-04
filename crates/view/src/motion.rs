@@ -589,6 +589,11 @@ pub enum MotionLook {
     /// An offset face's handle dragged: the distance, as typed in its
     /// field, and whether it's inward (past zero).
     OffsetBy { distance: String, inward: bool },
+    /// A knob of the operation's handle ([`MotionState::knobs`], by its
+    /// place there) dragged to `value`, in its field's own units
+    /// (millimetres, radians or a factor), snapped: typed into its
+    /// field.
+    DragKnob { knob: usize, value: f64 },
     /// Drops the move or mirror being set up, changing nothing: Cancel,
     /// or `Esc`.
     Cancel,
@@ -697,6 +702,11 @@ pub struct MotionState<'a> {
     pub sweep: Option<Box<SweepView<'a>>>,
     /// A loft's own parts, for a loft.
     pub loft: Option<Box<LoftView<'a>>>,
+    /// The knobs of its handle, for an offset face, a shell, a draft, a
+    /// chamfer, a fillet, a scale and an align, once the app knows where
+    /// they stand ([`OpKnob`]): none while it doesn't, or the document
+    /// can't be changed.
+    pub knobs: Vec<OpKnob>,
 }
 
 impl<'a> MotionState<'a> {
@@ -1244,6 +1254,8 @@ mod sweep;
 pub use sweep::{SweepPart, SweepPath, SweepView};
 mod loft;
 pub use loft::{LoftSection, LoftShape, LoftView};
+mod knobs;
+pub use knobs::{KnobPath, KnobRadius, KnobScale, KnobSnap, KnobTone, OpKnob};
 
 #[cfg(test)]
 mod tests;

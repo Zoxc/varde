@@ -10,6 +10,7 @@ use varde_sketch::angle;
 
 use super::sketch::{line, srgba};
 use crate::hit::segment_distance;
+use crate::motion::KnobTone;
 use crate::projection::Projector;
 use crate::theme::SketchColors;
 
@@ -116,9 +117,23 @@ pub(crate) fn knob_at<K: Copy>(pucks: &[Puck<K>], at: DVec2) -> Option<K> {
         .map(|(knob, _)| knob)
 }
 
+/// A handle's colours: its line and its accent, the hovered ones if
+/// `hot`; Create's (the extrude's and revolve's) or Modify's.
+pub(crate) fn tone(colors: SketchColors, tone: KnobTone, hot: bool) -> (Color, Color) {
+    match (tone, hot) {
+        (KnobTone::Create, false) => (colors.handle, colors.handle_accent),
+        (KnobTone::Create, true) => (colors.handle_hovered, colors.handle_accent_hovered),
+        (KnobTone::Modify, false) => (colors.modify_handle, colors.modify_handle_accent),
+        (KnobTone::Modify, true) => (
+            colors.modify_handle_hovered,
+            colors.modify_handle_accent_hovered,
+        ),
+    }
+}
+
 /// The ring of `puck`, square to its arrow, filled faintly, with a dot at
-/// its middle, and its arrow out of the end, in the handle's colours, the
-/// hovered ones if `hot`: on the screen as `projector` shows them, so it's
+/// its middle, and its arrow out of the end, in `color` and `accent`
+/// ([`tone`]): on the screen as `projector` shows them, so it's
 /// drawn over the model and always shows. The arrow's head is open, across
 /// the arrow in the plane through it facing the eye, left out looking
 /// along it; the ring is left out where it passes behind the eye of a
@@ -127,14 +142,8 @@ pub(crate) fn draw_puck<K>(
     live: &mut SketchLayer,
     projector: &Projector,
     puck: &Puck<K>,
-    colors: SketchColors,
-    hot: bool,
+    (color, accent): (Color, Color),
 ) {
-    let (color, accent) = if hot {
-        (colors.handle_hovered, colors.handle_accent_hovered)
-    } else {
-        (colors.handle, colors.handle_accent)
-    };
     let (x, y) = puck.out.any_orthonormal_pair();
     let radius = RING_RADIUS * puck.pixel;
     let ring: Vec<DVec3> = (0..=RING_SEGMENTS)

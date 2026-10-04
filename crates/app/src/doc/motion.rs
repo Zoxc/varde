@@ -134,6 +134,9 @@ pub(crate) struct MotionSession {
     /// Where an offset face's handle stands, once the model shown has
     /// told: [`offset_face::Anchor`].
     anchor: Option<offset_face::Anchor>,
+    /// Where a shell's, draft's, chamfer's or fillet's knobs stand, once
+    /// the model shown has told: [`knobs::KnobAnchor`].
+    knob_anchor: Option<knobs::KnobAnchor>,
     /// A pattern's Join to original: ticked to begin with, each body
     /// holding its copies, as the pattern stores by default (the UI
     /// mock's starts unticked; the user's decision is ticked); unticked,
@@ -428,6 +431,7 @@ impl MotionSession {
             direction: ShellDirection::Inward,
             tangent: true,
             anchor: None,
+            knob_anchor: None,
             join: true,
             opened: None,
             mode,
@@ -1632,6 +1636,7 @@ impl Doc {
                 let ask = field_ask(session.kind, field, &document.design());
                 session.fields[field.index()].input(text, &ask);
             }
+            MotionLook::DragKnob { knob, value } => self.drag_knob(knob, value),
             // Only as the handles offer it: a move's, while its bodies
             // are picked, turning by nothing yet or about that world
             // axis already (the offsets are worked out as turning on
@@ -2038,6 +2043,7 @@ impl Doc {
     /// when the model shows the bodies where the document has them.
     pub(crate) fn follow_motion_pivot(&mut self) {
         self.follow_offset_anchor();
+        self.follow_knob_anchor();
         let generation = self.editor.generation();
         let Some(session) = &self.motion else {
             return;
@@ -2377,8 +2383,7 @@ impl Doc {
             .map(|[point, along]| [point, if flipped { -along } else { along }]);
         // The bodies where the model shown has them: a merged one in its
         // holder.
-        let shown = self.shown_bodies(&session.bodies);
-        let bounds = self.feed.pick_index().bodies_bounds(&shown);
+        let bounds = self.motion_bounds(session);
         // A draft's neutral plane is drawn by the body, along the pull.
         let line = match session.kind {
             MotionKind::Draft => {
@@ -2461,6 +2466,7 @@ impl Doc {
                 .then(|| Box::new(self.face_draft_view(session))),
             sweep: (session.kind == MotionKind::Sweep).then(|| Box::new(self.sweep_view(session))),
             loft: (session.kind == MotionKind::Loft).then(|| Box::new(self.loft_view(session))),
+            knobs: self.motion_knobs(session, bounds),
         })
     }
 }
@@ -2615,6 +2621,7 @@ mod chamfer;
 mod face_draft;
 mod faces;
 mod fillet;
+mod knobs;
 mod loft;
 mod offset_face;
 mod refs;

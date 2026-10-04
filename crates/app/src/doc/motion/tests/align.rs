@@ -1022,3 +1022,50 @@ pub(super) fn made() -> (Plates, varde_document::FeatureId) {
     let (plates, _, id) = face_to_face();
     (plates, id)
 }
+
+/// An align's knobs once its target's point and primary are found: one
+/// along the target's normal from its corner, at the offset; one on a
+/// ring about it there, at the turn. Dragged, they type the offset and
+/// the turn.
+#[test]
+fn an_align_s_knobs_offset_and_turn_it() {
+    let (editor, [top, below]) = two_plates();
+    let mut plates = plates_of(&editor);
+    plates.click(below);
+    plates.doc.look(Look::StartAlign);
+    let at = DVec3::new(30.0, 20.0, -3.0);
+    let (moved_corner, face) = corner(&plates, below, at);
+    click_snapped(&mut plates, below, face, at, Snapped::Corner(moved_corner));
+    let at = DVec3::new(30.0, 20.0, 10.0);
+    let (target_corner, face) = corner(&plates, top, at);
+    click_snapped(&mut plates, top, face, at, Snapped::Corner(target_corner));
+    let bottom = flat(&plates, below, DVec3::NEG_Z);
+    plates.click_at(below, Picked::Face(bottom), DVec3::new(0.0, 15.0, -3.0));
+    let top_face = flat(&plates, top, DVec3::Z);
+    plates.click_at(top, Picked::Face(top_face), DVec3::new(0.0, 15.0, 10.0));
+    plates.answer();
+    let knobs = plates.doc.motion_state().unwrap().knobs;
+    let [offset, turn] = knobs[..] else {
+        panic!("{knobs:?}");
+    };
+    assert_eq!(offset.field, MotionField::Distance);
+    assert_eq!(turn.field, MotionField::Angle);
+    assert!(matches!(
+        offset.path,
+        varde_view::KnobPath::Line { origin, along }
+            if near(origin, DVec3::new(30.0, 20.0, 10.0)) && near(along, DVec3::Z)
+    ));
+    assert!(matches!(turn.path, varde_view::KnobPath::Arc { axis, .. } if near(axis, DVec3::Z)));
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: 5.0,
+    });
+    plates.motion(MotionLook::DragKnob {
+        knob: 1,
+        value: 90f64.to_radians(),
+    });
+    let align = drafted(&plates).expect("an align's draft");
+    assert_eq!(align.offset.map(|offset| offset.value), Some(5.0));
+    let turned = align.turn.map(|turn| turn.value).expect("a turn");
+    assert!((turned - 90f64.to_radians()).abs() < 1e-12, "{turned}");
+}
