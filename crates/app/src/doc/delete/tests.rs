@@ -190,7 +190,7 @@ fn the_status_bar_says_what_is_selected_and_under_the_prompt_only_esc() {
     );
     assert!(status_bar_of(&doc, false).is_empty());
     // The feature selected, in its box, with the key clearing it, then
-    // the hints, those of the keys without the mouse's.
+    // the hints of the keys: the mouse's make room for the selection.
     doc.look(Look::SelectFeature(extrude));
     let bar = status_bar(&doc);
     assert_eq!(
@@ -204,14 +204,9 @@ fn the_status_bar_says_what_is_selected_and_under_the_prompt_only_esc() {
             "Edit",
             "Del",
             "Delete",
-            "Drag to orbit",
-            "Pan",
-            "Zoom",
-            "Click to set pivot"
         ],
     );
-    let bar = status_bar_of(&doc, false);
-    assert_eq!(bar[bar.len() - 4..], ["Enter", "Edit", "Del", "Delete"]);
+    assert_eq!(status_bar_of(&doc, false), bar);
 
     // Under the delete prompt, which counts the body too, only `Esc`
     // does anything.

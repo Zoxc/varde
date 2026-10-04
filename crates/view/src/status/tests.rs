@@ -18,14 +18,16 @@ fn find<'a>(shown: &'a [Shown], text: &str) -> &'a Shown {
         .unwrap_or_else(|| panic!("no {text:?} in {shown:?}"))
 }
 
-/// A status of `info` and the hints "Edit" and "Pan", the second the
-/// mouse's, with a feature selected and the view options menu's button.
+/// A status of `info` and the hints "Edit", "Delete" and "Pan", the last
+/// the mouse's, with a feature selected and the view options menu's
+/// button.
 fn status(info: &str, mouse_hints: bool) -> Status<'_> {
     Status {
         selection: Some(text("Extrude 1").size(12).into()),
         info: Some(text(info).size(12).into()),
         hints: vec![
             key_hint(Shortcut::ENTER, "Edit"),
+            key_hint(Shortcut::DELETE, "Delete"),
             mouse_hint(MouseButton::Right, "Pan"),
         ],
         mouse_hints,
@@ -36,7 +38,7 @@ fn status(info: &str, mouse_hints: bool) -> Status<'_> {
 #[test]
 fn the_bar_floats_at_the_bottom_right_in_one_line() {
     let shown = laid(status("Regenerating…", true), 1000.0);
-    let pan = find(&shown, "Pan");
+    let pan = find(&shown, "Delete");
     // Right of everything else, and in the bar's height above its margin.
     assert!(pan.bounds.x + pan.bounds.width < 1000.0 - RIGHT, "{pan:?}");
     assert!(pan.bounds.y >= 400.0 - STATUS_BAR_ROOM, "{pan:?}");
@@ -51,13 +53,31 @@ fn the_bar_floats_at_the_bottom_right_in_one_line() {
         "Regenerating…",
         "Enter",
         "Edit",
-        "Pan",
+        "Delete",
     ]
     .map(|text| find(&shown, text).bounds.x)
     .into();
     assert!(order.is_sorted(), "{shown:?}");
     // Floating, not across the screen.
-    assert!(find(&shown, "Extrude 1").bounds.x > 500.0, "{shown:?}");
+    assert!(find(&shown, "Extrude 1").bounds.x > 400.0, "{shown:?}");
+}
+
+/// The mouse's hints make room for the selection and what's going on:
+/// they show only with neither.
+#[test]
+fn mouse_hints_show_only_with_no_selection_nor_status() {
+    let pan = |selection: bool, info: bool| {
+        let status = Status {
+            selection: selection.then(|| text("Extrude 1").size(12).into()),
+            info: info.then(|| text("Saving…").size(12).into()),
+            ..status("", true)
+        };
+        laid(status, 1000.0).iter().any(|shown| shown.text == "Pan")
+    };
+    assert!(pan(false, false));
+    assert!(!pan(true, false));
+    assert!(!pan(false, true));
+    assert!(!pan(true, true));
 }
 
 #[test]
@@ -73,7 +93,7 @@ fn a_long_status_is_cut_short_and_the_hints_stay_whole() {
                 body with very many curved faces; try a coarser tolerance";
     for width in [1000.0, 600.0, 300.0] {
         let shown = laid(status(long, true), width);
-        for hint in ["Edit", "Pan"] {
+        for hint in ["Edit", "Delete"] {
             let hint = find(&shown, hint);
             let seen = hint.seen();
             assert!(

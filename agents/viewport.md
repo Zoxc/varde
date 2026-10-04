@@ -67,7 +67,8 @@ extrude's status, regenerating, a failed edit, saving: nothing with
 nothing selected), the hints, and the button of the view options menu,
 which opens above it: the Shading and Edges submenus, then Orthographic
 or Perspective, then Mouse hints, without which the bar leaves out the
-hints of the mouse, and Hidden edges, without which the viewport leaves
+hints of the mouse (it leaves them out anyway while it shows a
+selection or a status, to make room), and Hidden edges, without which the viewport leaves
 out the edges the model hides (`Frame::hidden_edges`). A submenu's item
 (`submenu_item`, showing the icon of the choice made and a chevron)
 opens it to the menu's left as it's hovered or clicked

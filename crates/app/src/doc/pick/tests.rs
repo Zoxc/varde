@@ -372,21 +372,9 @@ fn the_status_bar_tells_of_the_selection_and_how_to_change_it() {
         add: false,
         double: false,
     });
+    // The mouse's hints make room for the selection.
     let bar = status_bar(&doc);
-    assert_eq!(
-        bar[..8],
-        [
-            "Face",
-            "Plane",
-            "Body 1",
-            "Space",
-            "Clear",
-            "Shift",
-            "Add or remove",
-            "Body"
-        ],
-        "{bar:?}"
-    );
+    assert_eq!(bar, ["Face", "Plane", "Body 1", "Space", "Clear"]);
     doc.look(Look::ClickBody {
         body: pick.body,
         add: true,

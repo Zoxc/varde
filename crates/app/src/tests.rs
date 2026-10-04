@@ -5050,6 +5050,13 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
     let mut renderer = varde_view::probe::renderer();
     let mut varde = Varde::new();
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    // Regenerated, so the status bar has nothing to say and the mouse's
+    // hints show.
+    let requests = Rc::default();
+    let doc = varde.screen.doc_mut().unwrap();
+    doc.feed.connect(Deferred(Rc::clone(&requests)));
+    doc.sync();
+    answer(doc, &requests);
     let shown = |varde: &Varde, renderer: &mut iced::Renderer| {
         let mut ui = crate::tests::shown(view(varde), size, renderer);
         texts(&mut ui, renderer)
@@ -5262,13 +5269,11 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     let shown = texts(&mut ui, &renderer);
     let status_top = size.height - varde_view::STATUS_BAR_ROOM;
     let in_bar: Vec<_> = shown.iter().filter(|t| t.bounds.y >= status_top).collect();
-    for hint in [
-        "Edit",
-        "Delete",
-        "Drag to orbit",
-        "Zoom",
-        "Click to set pivot",
-    ] {
+    // The mouse's hints make room for the status.
+    for hint in ["Drag to orbit", "Zoom", "Click to set pivot"] {
+        assert!(!in_bar.iter().any(|t| t.text == hint), "{hint:?}");
+    }
+    for hint in ["Edit", "Delete"] {
         let text = in_bar
             .iter()
             .find(|t| t.text == hint)
