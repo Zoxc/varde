@@ -233,3 +233,133 @@ fn escape_cancels_an_extrude_once() {
         }
     }
 }
+
+/// Whatever is typed in the Taper field, the session holds a finite
+/// angle under 90° either way or refuses the text, keeping the last;
+/// the draft carries the angle (none for zero), and OK is offered only
+/// for one taken.
+#[test]
+fn typed_tapers_are_taken_or_refused_never_out_of_range() {
+    let (mut doc, requests) = rectangle_picked();
+    let texts = [
+        "5",
+        "-5",
+        "1e400",
+        "-1e400",
+        "1e-400",
+        "nan",
+        "inf",
+        "-inf",
+        "1/0",
+        "0/0",
+        "",
+        "   ",
+        "°",
+        "5 deg",
+        "5°",
+        "0.5 rad",
+        "-1.5 rad",
+        "1.5708 rad",
+        "-1.5707963 rad",
+        "89.99999999",
+        "-89.99999999",
+        "90 - 1e-12",
+        "90",
+        "-90",
+        "180",
+        "360 + 5",
+        "5 mm",
+        "5 mm / 1 mm",
+        "2 * 3",
+        "3 - 3",
+        "-0",
+        "(",
+        "5 5",
+        "1e308 * 10",
+        "9999999999999999999999",
+        "0x10",
+        "5 grad",
+        "ÿ",
+        "1e-300 rad",
+    ];
+    let half = std::f64::consts::FRAC_PI_2;
+    let mut last = None;
+    for text in texts {
+        typed(&mut doc, text);
+        let session = doc.extrude.as_ref().unwrap();
+        match &session.taper.error {
+            Some(_) => {
+                assert_eq!(
+                    session.taper.value.as_ref().map(|v| v.value),
+                    last,
+                    "{text}"
+                );
+                let state = doc.extrude_state().unwrap();
+                assert!(!state.ready && !state.accept, "{text}");
+            }
+            None => {
+                let value = session.taper.value.as_ref().unwrap().value;
+                assert!(value.is_finite() && value.abs() < half, "{text}: {value}");
+                last = Some(value);
+                // Asked for again only where it changed: the newest
+                // request is its.
+                let drafted = drafted_taper(&requests);
+                assert_eq!(drafted, (value != 0.0).then_some(value), "{text}");
+            }
+        }
+    }
+}
+
+/// The taper stays with the extrude as its extent and Flip change: each
+/// draft carries it. With regeneration tapering rectangles, one side
+/// either way previews; symmetric, two sides and through all, spanning
+/// the sketch's plane, fail as too complex; OK on one adds it as one
+/// undo step, which redo puts back.
+#[test]
+fn a_taper_stays_through_extents_and_flips() {
+    use varde_view::{ExtentKind, OperationKind};
+    varde_regen::testing::taper_by_frustum();
+    let (mut doc, requests) = rectangle_picked();
+    let before = doc.editor.document().clone();
+    typed(&mut doc, "8");
+    let eight = Some(8f64.to_radians());
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::NewBody));
+    for (look, works) in [
+        (ExtrudeLook::Flip, Some(true)),
+        (ExtrudeLook::Extent(ExtentKind::Symmetric), Some(false)),
+        (ExtrudeLook::Extent(ExtentKind::TwoSides), Some(false)),
+        (ExtrudeLook::Operation(OperationKind::Cut), Some(false)),
+        // There's no body to go through.
+        (ExtrudeLook::Extent(ExtentKind::ThroughAll), None),
+        (ExtrudeLook::Operation(OperationKind::NewBody), Some(true)),
+        (ExtrudeLook::Flip, Some(true)),
+    ] {
+        extrude(&mut doc, look.clone());
+        assert_eq!(drafted_taper(&requests), eight, "{look:?}");
+        answer(&mut doc, &requests);
+        let error = doc.feed.draft_error();
+        if works == Some(true) {
+            assert_eq!(error, None, "{look:?}");
+        } else if works == Some(false) {
+            assert_eq!(
+                error,
+                Some("tapering its walls is too complex to work out"),
+                "{look:?}"
+            );
+        }
+    }
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.extent, ExtentKind::OneSide);
+    assert!(doc.extrude_ready());
+    key_in(&mut doc, enter());
+    let tapered = doc.editor.document().clone();
+    let taper = |doc: &Doc| extrudes(doc)[0].taper.as_ref().map(|t| t.value);
+    assert_eq!(taper(&doc), eight);
+    doc.update(Edit::Undo);
+    assert_eq!(*doc.editor.document(), before);
+    doc.update(Edit::Redo);
+    assert_eq!(*doc.editor.document(), tapered);
+    answer(&mut doc, &requests);
+    assert!(doc.feed.failed_features().is_empty());
+}

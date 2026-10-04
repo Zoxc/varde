@@ -3467,3 +3467,52 @@ fn a_loft_and_its_draft_round_trip() {
     let committed = editor.document().features().last().unwrap().id;
     assert_eq!(failed, [(committed, too_complex.to_owned())]);
 }
+
+/// A tapered draft crosses the workers' wire with its taper, and is
+/// answered as the kernel's stub has it, too complex; one whose taper
+/// was changed on its way is refused as the draft's error, never made.
+#[test]
+fn a_tapered_draft_crosses_the_wire() {
+    let editor = Editor::new(Document::example());
+    let FeatureKind::Extrude(extrude) = &editor.document().features()[1].kind else {
+        panic!("the example's second feature is its extrude");
+    };
+    let ask = varde_document::Extrude::taper_ask(&editor.document().design());
+    let mut tapered = extrude.clone();
+    tapered.taper = Some(varde_expr::Value::new("4", &ask).unwrap());
+    let request = |extrude: varde_document::Extrude| Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(Box::new(Draft {
+            revision: 3,
+            feature: Some(editor.document().features()[1].id),
+            kind: extrude.into(),
+        })),
+        inspect: None,
+    };
+    let sent = request(tapered.clone());
+    let Request::Regenerate { draft, .. } = decode_request(&encode_request(&sent)).unwrap() else {
+        panic!("not a regeneration");
+    };
+    let FeatureKind::Extrude(back) = draft.unwrap().kind else {
+        panic!("an extrude");
+    };
+    assert_eq!(back.taper, tapered.taper);
+    let Response::Regenerated { draft, .. } = round_trip(&handle(sent)) else {
+        panic!("regeneration failed");
+    };
+    let error = draft.unwrap().error;
+    assert_eq!(
+        error.as_deref(),
+        Some("tapering its walls is too complex to work out")
+    );
+
+    let mut tampered = tapered;
+    tampered.taper.as_mut().unwrap().value = 1.6;
+    let Response::Regenerated { draft, .. } = round_trip(&handle(request(tampered))) else {
+        panic!("regeneration failed");
+    };
+    let error = draft.unwrap().error.expect("refused");
+    assert!(error.contains("taper"), "{error}");
+}

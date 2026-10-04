@@ -8203,7 +8203,11 @@ failing feature changes no body, and the later ones still run.
   the extrude makes no body and changes none, and the history goes on),
   its other failures as an untapered tool's. Tests replace the kernel's
   by `testing::taper_by_frustum` (a rectangle on one side of its plane
-  made a frustum of a pyramid by moving its box's corners). A `NewBody` body gets it. Through
+  made a frustum of a pyramid by moving its box's corners): through it
+  `src/history/tests/taper.rs` checks volumes (flipped, through all on a
+  body away from the plane, steep and slight tapers), refusals changing
+  nothing, a zero taper's key and tool, and warm against cold caches; the
+  draft crosses the workers' wire (`src/wire/tests.rs`). A `NewBody` body gets it. Through
   all's span is worked out first (`through_all`): the extent along the
   normal of the boxes (`bounds3`, the control points') of every body made
   before it, excluded or not (so taking one out or putting it back

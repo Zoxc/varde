@@ -4925,3 +4925,108 @@ fn tapers_read_from_older_files_and_are_checked() {
     };
     assert_eq!(read.tapered(), None);
 }
+
+/// A taper tampered with on disk is refused, never read as none or as
+/// another angle: a value of another type in its place, its map short
+/// of a field, a NaN; its fields as an array are still the taper.
+#[test]
+fn a_tampered_taper_is_refused() {
+    use std::f64::consts::FRAC_PI_2;
+    use varde_document::{Extrude, FeatureKind};
+    use varde_expr::Value;
+    let plain = Document::example();
+    let FeatureKind::Extrude(extrude) = &plain.features()[1].kind else {
+        panic!("the example's extrude");
+    };
+    let mut editor = Editor::new(plain.clone());
+    let ask = Extrude::taper_ask(&plain.design());
+    let tapered = Extrude {
+        taper: Some(Value::new("-2.5", &ask).unwrap()),
+        ..extrude.clone()
+    };
+    let id = plain.features()[1].id;
+    editor
+        .apply(Command::SetFeature {
+            feature: id,
+            kind: Box::new(tapered.into()),
+        })
+        .unwrap();
+    let document = editor.document().clone();
+    let raw = record_msgpack(&document);
+    let float = |value: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&value.to_be_bytes());
+        bytes
+    };
+    let string = |text: &str| {
+        let mut bytes = vec![0xa0 | u8::try_from(text.len()).unwrap()];
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    };
+    let value = -(2.5f64.to_radians());
+    // The taper's map as written: `{ text: "-2.5", value }`.
+    let mut map = vec![0x82];
+    for part in [
+        string("text"),
+        string("-2.5"),
+        string("value"),
+        float(value),
+    ] {
+        map.extend(part);
+    }
+    let mut field = string("taper");
+    field.extend_from_slice(&map);
+    let at = (raw.windows(field.len()))
+        .position(|window| window == field)
+        .expect("the taper as written");
+    let with = |taper: &[u8]| {
+        let mut bytes = raw[..at].to_vec();
+        bytes.extend(string("taper"));
+        bytes.extend_from_slice(taper);
+        bytes.extend_from_slice(&raw[at + field.len()..]);
+        bytes
+    };
+    assert_eq!(from_msgpack::<Document>(&with(&map)).unwrap().0, document);
+    let mut short = vec![0x81];
+    short.extend(string("text"));
+    short.extend(string("-2.5"));
+    let mut nan = vec![0x82];
+    for part in [
+        string("text"),
+        string("-2.5"),
+        string("value"),
+        float(f64::NAN),
+    ] {
+        nan.extend(part);
+    }
+    let mut ninety = vec![0x82];
+    for part in [
+        string("text"),
+        string("90"),
+        string("value"),
+        float(FRAC_PI_2),
+    ] {
+        ninety.extend(part);
+    }
+    let tampered: [(&str, Vec<u8>); 7] = [
+        ("a string", string("-2.5")),
+        ("a number", float(value)),
+        ("true", vec![0xc3]),
+        ("an empty map", vec![0x80]),
+        ("no value", short),
+        ("a NaN", nan),
+        ("a right angle", ninety),
+    ];
+    for (what, taper) in tampered {
+        assert!(
+            from_msgpack::<Document>(&with(&taper)).is_err(),
+            "{what} taken"
+        );
+    }
+    // Its fields in order, as an array: the same taper.
+    let mut array = vec![0x92];
+    array.extend(string("-2.5"));
+    array.extend(float(value));
+    let read = from_msgpack::<Document>(&with(&array));
+    assert_eq!(read.map(|(read, _)| read).ok(), Some(document));
+}
