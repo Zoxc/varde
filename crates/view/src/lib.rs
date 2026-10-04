@@ -58,6 +58,7 @@ use varde_expr::LengthUnit;
 use varde_render::{Projection, Shading, View};
 use varde_sketch::{Id, Sketch};
 
+pub use chamfer::chamfer_info;
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
@@ -73,10 +74,10 @@ pub use measure::{
     between_values, face_kind, values as measure_values,
 };
 pub use motion::{
-    AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, MotionField, MotionKind, MotionLook,
-    MotionPick, MotionState, PatternMode, ScaleMode, ScaleView, SketchLines, SplitMode, SplitPiece,
-    SplitView, align_info, axis_name, direction_name, pattern_copies, plane_name, point_name,
-    scale_info, split_info,
+    AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, ChamferType,
+    ChamferView, MotionField, MotionKind, MotionLook, MotionPick, MotionState, PatternMode,
+    ScaleMode, ScaleView, SketchLines, SplitMode, SplitPiece, SplitView, align_info, axis_name,
+    direction_name, pattern_copies, plane_name, point_name, scale_info, split_info,
 };
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
@@ -471,6 +472,9 @@ pub enum Look {
     /// Starts setting up a new split, its body from what's selected in
     /// the model if anything is, as [`Look::StartMove`] a move.
     StartSplit,
+    /// Starts setting up a new chamfer, its edges those selected in the
+    /// model if any are, or backs out of the one being set up.
+    StartChamfer,
     /// Changes the move, mirror, pattern, align or scale being set up, see [`MotionLook`]: it
     /// isn't in the document until [`Edit::CommitMotion`].
     Motion(MotionLook),

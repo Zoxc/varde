@@ -32,6 +32,9 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
             field("1"),
             field("1"),
             field(""),
+            field("1 mm"),
+            field("2 mm"),
+            field("45°"),
         ],
         reference: Some("Z axis".to_owned()),
         line: None,
@@ -58,6 +61,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         align: None,
         scale: None,
         split: None,
+        chamfer: None,
     }
 }
 
@@ -613,4 +617,117 @@ fn a_trim_s_kept_piece_keeps_the_id_whatever_the_original() {
     assert_eq!(view.kept(), Side::Back);
     view.original = Side::Front;
     assert_eq!(view.kept(), Side::Front);
+}
+
+/// A chamfer's view: the edges `edges` (name, meta, round), of `kind`.
+fn chamfer_view(edges: &[(&str, Option<&str>, bool)], kind: ChamferType) -> ChamferView {
+    let example = Document::example();
+    let body = example.bodies()[0].id;
+    let key = |curve| FaceKey {
+        feature: 1,
+        part: PartKey::Side { curve },
+        instance: 0,
+    };
+    let edges = (edges.iter().enumerate())
+        .map(|(at, &(name, meta, round))| BlendEdge {
+            edge: varde_document::EdgeRef {
+                body,
+                faces: [key(0), key(1)],
+                near: glam::DVec3::new(at as f64, 0.0, 0.0),
+            },
+            name: name.to_owned(),
+            meta: meta.map(str::to_owned),
+            round,
+        })
+        .collect();
+    ChamferView {
+        edges: BlendEdges {
+            edges,
+            chains: true,
+        },
+        kind,
+        info: None,
+    }
+}
+
+/// A chamfer's panel is the mock's: Edges (each with its measure beside
+/// it), Type's tiles, the type's fields, Flip sides but for Equal, and
+/// the Tangent chain tick the mock has on the fillet's only; no Bodies.
+#[test]
+fn a_chamfer_s_panel_is_the_mock_s() {
+    let mut state = state_of(MotionKind::Chamfer, vec![body("Body 1")]);
+    state.reference = None;
+    state.picking = MotionPick::Edges;
+    let edges = [
+        ("Edge 1", Some("60 mm"), false),
+        ("Edge 2", Some("Ø16 mm"), true),
+    ];
+    state.chamfer = Some(Box::new(chamfer_view(&edges, ChamferType::Equal)));
+    let shown = texts_of(&state);
+    let order = [
+        "New chamfer",
+        "Edges",
+        "Edge 1",
+        "Edge 2",
+        "Click edges",
+        "Type",
+        "Equal",
+        "Distance",
+        "Tangent chain",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    for text in ["Two distances", "Distance and angle", "60 mm", "Ø16 mm"] {
+        found(&shown, text);
+    }
+    let edge = found(&shown, "Edge 1").bounds;
+    let meta = found(&shown, "60 mm").bounds;
+    assert!((meta.y - edge.y).abs() < 4.0 && meta.x > edge.x);
+    for text in [
+        "Flip sides",
+        "Distance 1",
+        "Distance 2",
+        "Angle",
+        "Bodies",
+        "Body 1",
+    ] {
+        assert!(!has(&shown, text), "{text}");
+    }
+
+    // Two distances: Distance 1 and 2, then Flip sides.
+    state.chamfer = Some(Box::new(chamfer_view(&edges, ChamferType::Two)));
+    state.picking = MotionPick::Nothing;
+    let shown = texts_of(&state);
+    assert!(!has(&shown, "Click edges"), "not picking");
+    let mut y = f32::MIN;
+    for text in ["Distance 1", "Distance 2", "Flip sides", "Tangent chain"] {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    // Distance and angle.
+    state.chamfer = Some(Box::new(chamfer_view(&edges, ChamferType::Angle)));
+    let shown = texts_of(&state);
+    let mut y = f32::MIN;
+    for text in ["Distance", "Angle", "Flip sides", "Tangent chain"] {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    assert!(!has(&shown, "Distance 2"));
+
+    state.need = Some("pick the edges to chamfer");
+    assert_eq!(status_info(&state), "pick the edges to chamfer");
+    state.need = None;
+    if let Some(chamfer) = &mut state.chamfer {
+        chamfer.info = Some("2 edges · Equal · 1 mm · Tangent chain".to_owned());
+    }
+    assert_eq!(
+        status_info(&state),
+        "2 edges · Equal · 1 mm · Tangent chain"
+    );
 }

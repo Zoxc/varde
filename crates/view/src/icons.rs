@@ -165,6 +165,10 @@ icons! {
     SeRegion => r#"<path class="fl" d="M4 6h10l6 6-6 6H4z"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="12" r="1.5"/><circle class="af" cx="4" cy="18" r="1.5"/>"#,
     SeAxis => r#"<path d="M4 20L20 4"/><circle class="af" cx="7.5" cy="16.5" r="1.7"/><circle class="af" cx="16.5" cy="7.5" r="1.7"/>"#,
     SePlane => r#"<path class="t" d="M3 17l4-10h14l-4 10z"/><path class="a" d="M12 15V7"/>"#,
+    // An edge, and a hole's rim, on a block: the model mock's
+    // `se-edge` and `se-rim`, a chamfer's edges' rows.
+    SeEdge => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><path class="a" d="M3.5 9.5h11" stroke-width="2.6"/>"#,
+    SeRim => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><ellipse class="a" cx="11.5" cy="7" rx="3.6" ry="1.5" stroke-width="2"/>"#,
     // The operation panel's choices, the model mock's `CHOICE_ICONS`:
     // a revolve's extents seen down its axis (the dot), the profile the
     // line out to the right; an extrude's, the profile as a slab and where
@@ -190,6 +194,12 @@ icons! {
     CpFull => r#"<circle cx="12" cy="12" r=".9"/><circle cx="12" cy="4.5" r="2"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="19.5" r="2"/><circle cx="4.5" cy="12" r="2"/><circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="1.6 1.8"/>"#,
     CpSpacing => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle class="r" cx="4.5" cy="12" r="2"/><path class="a" d="M17.3 8.3A7.5 7.5 0 0 0 15.7 6.7"/><path class="a" d="M12 12L19.5 12M12 12L12 4.5" stroke-width="1"/>"#,
     CpTotal => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle cx="4.5" cy="12" r="2"/><path class="a" d="M19.5 9A7.5 7.5 0 0 0 7.5 7.5"/>"#,
+    // The chamfers' types: the corner (dashed) cut, what sets the cut in
+    // the accent: two equal distances along the faces, two different
+    // ones, or one distance and the cut's angle to the face.
+    ChEqual => r#"<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3M3.5 7v8M2 7h3M2 15h3"/>"#,
+    ChTwo => r#"<path class="r" d="M7 11V7h12" stroke-dasharray="1.6 1.8"/><path d="M7 22V11l12-4h3"/><path class="a" d="M7 3.5h12M7 2v3M19 2v3M3.5 7v4M2 7h3M2 11h3"/>"#,
+    ChAngle => r#"<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3"/><path class="a" d="M8.5 7A6.5 6.5 0 0 0 10.4 11.6" stroke-width="2"/>"#,
     // Not in the mocks: a scale's modes, drawn as the patterns' are: a
     // box grown into a dashed larger one every way, stretched along one
     // axis, and measured along an edge (the length in the accent).
@@ -201,7 +211,10 @@ icons! {
     SpBoth => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
     SpFront => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="r" x="13.5" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
     SpBack => r#"<rect class="r" x="3" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
-    // The options' icons, drawn in one colour: flip, keep the tools.
+    // The options' icons, drawn in one colour: a tangent chain (a line
+    // running smoothly on into an arc, its ends filled dots), flip, keep
+    // the tools.
+    TkChain => r##"<path d="M3 18h8a7 7 0 0 0 7-7V4"/><circle cx="11" cy="18" r="1.7" fill="#000" stroke="none"/><circle cx="18" cy="4" r="1.7" fill="#000" stroke="none"/>"##,
     TkFlip => r#"<path d="M4 8h15M15.5 4.5L19 8l-3.5 3.5M20 16H5M8.5 12.5L5 16l3.5 3.5"/>"#,
     TkKeep => r#"<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
     TkCopy => r#"<rect x="3.5" y="3.5" width="11" height="11" rx="1.5"/><rect class="fl" x="9.5" y="9.5" width="11" height="11" rx="1.5"/>"#,
@@ -302,7 +315,12 @@ impl Icon {
             | Icon::LpTotal
             | Icon::CpFull
             | Icon::CpSpacing
-            | Icon::CpTotal => IconCategory::Solid,
+            | Icon::CpTotal
+            | Icon::ChEqual
+            | Icon::ChTwo
+            | Icon::ChAngle
+            | Icon::SeEdge
+            | Icon::SeRim => IconCategory::Solid,
             Icon::Plane | Icon::SeAxis | Icon::SePlane => IconCategory::Construction,
             Icon::Measure | Icon::CatInspect => IconCategory::Inspect,
             Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,

@@ -1186,9 +1186,9 @@ wire), `io/src/vrdp/tests.rs` (through a file).
 ### UI
 
 **The session** (`app/src/doc/motion.rs`, `Doc::motion`, one
-`MotionSession` for both and for patterns, aligns and scales, its
-`MotionKind` saying which; the patterns', aligns' and scales' own parts
-are under "Pattern", "Align" and "Scale", "UI") is started by
+`MotionSession` for both and for patterns, aligns, scales, splits and
+chamfers, its `MotionKind` saying which; their own parts are under
+"Pattern", "Align", "Scale", "Split" and "Chamfer", "UI") is started by
 `Look::StartMove` (`M`, `Shortcut::MOVE`, the UI mock's key, the
 toolbar's Move after Combine, the rail's Transform set) or
 `Look::StartMirror` (no key, as the mock has none: the toolbar's
@@ -2941,14 +2941,109 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
 
 ### UI
 
-Not built yet (the next stage: the edge session, `C`, the mock's
-panel: Edges, Type tiles Equal / Two distances / Distance and angle,
-Distance (1, 2), Angle, Flip sides). For now: the Timeline row with the
-model mock's chamfer icon (`Icon::BChamfer`; `Icon::Chamfer` is the
-sketch tool's), its note (`view/src/chamfer.rs`: "1 mm", "1 mm × 2 mm"
-the first face's first, "3 mm 30°"), the status bar's info ("2 edges ·
-Equal · 1 mm · Tangent chain") and "Edit chamfer", which does nothing
-yet (`Look::EditFeature`).
+The move's session (`MotionSession`, above) with `MotionKind::Chamfer`;
+**the edge session**, picking the edges a blend cuts, is its own part
+(`app/src/doc/motion/blend.rs`, `BlendSetup`; `view/src/motion/blend.rs`,
+`BlendEdges`, its Edges field and the Tangent chain tick), shared by
+every kind that `MotionKind::blends()` (a fillet's, once there's one,
+takes it with its own size); the chamfer's own parts are in
+`app/src/doc/motion/chamfer.rs` and `view/src/motion/chamfer.rs`
+(`ChamferView`, `ChamferType`). The panel is the model mock's chamfer
+panel.
+
+- **Starting**: `Look::StartChamfer` from `C` (`Shortcut::CHAMFER`,
+  `chamfer_binding`, the mock's key; in sketches `C` is the Circle
+  tool's), the toolbar's Chamfer after Revolve (where the mock has it,
+  after Hole and Fillet, before Shell and Combine: those aren't built)
+  and the rail's Modify set (first, as the icon mock orders it:
+  Chamfer, Scale, Combine, Split body), again backing out; or editing
+  one (`Look::EditFeature`: double-click, `Enter`, "Edit chamfer"),
+  which opens with its edges, type, values, Flip sides and Tangent
+  chain. A new one takes the edges selected in the model shown that a
+  click would take (as the mock's takes a hole's rims selected), the
+  first one's body deciding. Nothing takes the focus: clicks pick
+  edges.
+- **Edges** (`MotionPick::Edges`, the viewport picking edges only):
+  a click on an edge picks it, named as of the feature
+  (`Naming::edge_ref`) on the body holding it there (`Merges::holder`),
+  made before it; a click on an edge picked (found again on the model
+  shown by its names) takes it out. Once one is picked, the others must
+  be on its body: another body's edges don't light under the cursor and
+  a click says "A chamfer's edges are all on one body: pick edges of
+  Body 1"; a face says "Only an edge can be chamfered". At most
+  `MAX_BLEND_EDGES`. Kept in `EdgeRef::order`, so the list is sorted as
+  stored. Picked edges are lit as selected, the one under the cursor as
+  hovered, each with its tangent chain (`PickIndex::tangent_chain`, the
+  topology's rule regen grows chains by) while Tangent chain is on, and
+  a click on any edge of a picked edge's lit chain takes that edge out;
+  a row hovered in the panel lights its edge (`PanelHover::Edge`). The session's bodies are the edges' body, never
+  picked itself (Objects' rows pick nothing); a body merged into another
+  before the chamfer takes the edges on to its holder. Picks wait only
+  for a model of the document as it is (`Doc::blend_model_current`),
+  not for the preview of the last pick, so edges can be clicked one
+  after another. The Edges field clicked turns picking off
+  (`MotionPick::Nothing`) and on.
+- **The rows**: "Edge 2" by the edge's place in the list (as
+  regeneration's messages count them, "its edge 2 of 3 wasn't found"),
+  the mock's `se-edge` icon (`Icon::SeEdge`), or its rim icon
+  (`Icon::SeRim`) for a closed round edge; beside it what the model
+  shown measures of it where it's found there: a straight edge's length
+  ("60 mm"), a closed round one's diameter ("Ø16 mm"), an arc's radius
+  ("R8 mm"); a cross takes it out (`MotionLook::DropEdge`). The mock
+  numbers the body's edges ("Edge 7") and names rims by their hole;
+  numbering by place was taken here.
+- **Type**: three tiles (`MotionLook::ChamferType`, the mock's icons
+  `ch-equal`, `ch-two`, `ch-angle`: `Icon::ChEqual`, `ChTwo`,
+  `ChAngle`): Equal (Distance), Two distances (Distance 1, Distance 2)
+  and Distance and angle (Distance, Angle), the fields
+  `MotionField::ChamferDistance`, `ChamferSecond`, `ChamferAngle`
+  (read by `Chamfer::distance_ask` and `angle_ask`: "1" and "2" of the
+  design's units and "45°" to begin with, the mock's), each type
+  keeping the others' values. **Flip sides** (`MotionLook::Flip`, the
+  mock's `tk-flip`) under them for Two and Angle only, the mock's;
+  Equal is stored unflipped. **Tangent chain** (`MotionLook::Chain`,
+  `Icon::TkChain`, the mock's `tk-chain`, "Take in edges that run on
+  smoothly"), on to begin with: **the mock has this tick on the
+  fillet's panel only**; the plan has it on both, so the chamfer's
+  panel has it too, last.
+- **Whole and ready**: edges, and the type's values ("pick the edges
+  to chamfer" otherwise); `Chamfer::check_own` refuses as the panel's
+  foot ("Chamfer fails"). Edges the document no longer takes at the
+  feature's place (`Document::check_chamfer_edges`, their body not held)
+  are kept and said to be gone ("A picked edge is gone", the mock's),
+  nothing previewed or committed until taken out or a redo brings them
+  back.
+- **Preview**: the chamfer as set up is the draft while it's whole,
+  picking or not; so on a preview that cuts, the edges picked are gone
+  from the model shown (cut off: their rows stay, unmeasured, and a
+  row's cross takes one out). An edited one that isn't whole (its edges
+  all taken out) is previewed as a move of nothing of its body, which
+  shows the body as of the feature with its edges to pick. **The
+  kernel's chamfer isn't built**, so today every preview fails with
+  "Chamfer fails" over "chamfering Body 1 is too complex to work out",
+  the body shown whole (its edges there to pick), OK waits, and Add
+  anyway keeps it, failing in the Timeline. Regeneration's own
+  refusals ("its edge 2 wasn't found", the flat, folded, too-big and
+  corner refusals) show in the panel the same way, the failure's edge
+  drawn.
+- **Committing**: OK (`Enter`, Add anyway) adds "Chamfer N" or sets the
+  edited one, one undo step; Cancel or `Esc` leaves no trace. The
+  status bar says "2 edges · Equal · 1 mm · Tangent chain" once whole
+  (`chamfer_info`), else what's next, with the hint "Pick edges".
+
+The Timeline shows the model mock's chamfer icon (`Icon::BChamfer`;
+`Icon::Chamfer` is the sketch tool's) and note (`view/src/chamfer.rs`:
+"1 mm", "1 mm × 2 mm" the first face's first, "3 mm 30°"), the status
+bar's info "2 edges · Equal · 1 mm · Tangent chain".
+
+Departures from the mock: the Tangent chain tick (above); edges named
+by their place; no bands drawn over the model (the mock's preview draws
+each edge's chamfer as a band on the faces; here the preview is the
+model regenerated with the chamfer). Known gaps: an edge cut off in the
+preview can't be clicked to take it out (its row's cross does); the
+rows' measures are the model shown's (an edited chamfer's preview holds
+the features after it); two picked edges of one tangent chain are both
+kept (regen chamfers the chain once).
 
 Tests: `document/src/chamfer/tests.rs` (added and undone, edited, its
 own parts, bodies and makers, removal following the body and not the
@@ -2963,4 +3058,23 @@ taken in as four chains named apart with the top the first face all
 round, only the one without chains; a refusal named and drawn; ignored:
 the kernel's on a block's edges, a hole's and a boss's rims by Pappus,
 determinism), `io/src/vrdp/tests.rs` (through a file, a tampered edge
-point refused), `view/src/chamfer/tests.rs` (the notes).
+point refused), `view/src/chamfer/tests.rs` (the notes),
+`view/src/motion/tests.rs` (the chamfer's panel: its order for each
+type, the rows' measures beside them, no Flip sides for Equal, the
+status text), `rail/tests.rs` (Chamfer's `C` in the Modify set) and
+`app/src/doc/motion/tests/chamfer.rs` (`C` on the example plate: a face
+refused, edges hovered and lit, picked and listed sorted with their
+lengths, clicked again taken out, the row hovered lighting its edge, the
+stand-in's too-complex failure in the panel, OK waiting and Add anyway
+keeping it as one undo step; a slot's rim lit whole under the cursor
+and picked, the line alone with Tangent chain off, a click on its arc
+taking the line out; with the prisms, the cut previewed and the
+edge gone from the model shown, Two distances, Flip sides, an angle of
+90° refused under its field, 30°, Tangent chain off, OK and undo, a
+row's cross; another body's edges neither lit nor taken, Objects' rows
+picking nothing, a disc's rim with its diameter; editing from the
+Timeline, Cancel, another distance, undo, and its edges all taken out
+previewed as a move of nothing; an edge an undo takes away said to be
+gone, back on redo; the edges selected taken in, `C` again backing
+out). The app's tests chamfer by prisms through regen's `testing`
+feature (`varde_regen::testing::chamfer_by_wedges`).

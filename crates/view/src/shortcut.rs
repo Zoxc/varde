@@ -75,6 +75,9 @@ impl Shortcut {
     /// Starts a new linear pattern: outside sketches, where `P` takes up
     /// the Point tool. The UI mock's key (its circular pattern has none).
     pub const PATTERN: Self = Self::plain('p');
+    /// Starts a new chamfer: outside sketches, where `C` takes up the
+    /// Circle tool. The UI mock's key.
+    pub const CHAMFER: Self = Self::plain('c');
     /// No key: what a tool the UI mock gives none is bound to, never
     /// pressed (the mirror's).
     pub const NONE: Self = Self::named(Key::None);
@@ -718,6 +721,16 @@ pub fn split_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
+/// Starting a new chamfer, or backing out of the one being set up, as
+/// [`move_binding`] does a move: `C`, the UI mock's key.
+pub fn chamfer_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::CHAMFER,
+        Message::Look(Look::StartChamfer),
+        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
+    )
+}
+
 /// Starting the measure tool, or leaving it: outside a sketch and the
 /// operations being set up. Measuring changes nothing, so a read-only
 /// document is measured too.
@@ -905,7 +918,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             )
     });
     // Outside a sketch, where `X` is construction's, `O` Offset's, `B`
-    // the Rectangle's and `I` Coincident's.
+    // the Rectangle's, `C` the Circle's and `I` Coincident's.
     let extrude = (!keys.sketching).then(|| {
         [
             extrude_binding(keys),
@@ -913,6 +926,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             combine_binding(keys),
             move_binding(keys),
             pattern_binding(keys),
+            chamfer_binding(keys),
             measure_binding(keys),
         ]
     });

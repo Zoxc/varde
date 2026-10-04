@@ -81,6 +81,7 @@ impl Doc {
             return session.hover.filter(|&hover| match hover {
                 PanelHover::Body(body) => session.bodies.contains(&body),
                 PanelHover::Axis => true,
+                PanelHover::Edge(at) => at < session.blend.edges.len(),
                 PanelHover::Region { .. } => false,
             });
         }
@@ -315,7 +316,7 @@ impl Doc {
                 match session.picking {
                     MotionPick::Reference if session.kind.takes_axis() => Picks::EdgesAndFaces,
                     MotionPick::Align(_) => Picks::EdgesAndFaces,
-                    MotionPick::Edge => Picks::Edges,
+                    MotionPick::Edge | MotionPick::Edges => Picks::Edges,
                     _ => Picks::Faces,
                 }
             } else if self.picking_plane.is_some() || self.combine.is_some() {

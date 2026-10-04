@@ -1,5 +1,5 @@
-//! A chamfer's notes in the Timeline and the status bar. Its panel and
-//! edge picking come with its session.
+//! A chamfer's notes in the Timeline and the status bar. Its panel is
+//! in `motion/chamfer.rs`, its edges' field in `motion/blend.rs`.
 
 use varde_document::{Chamfer, ChamferSize, LengthUnit};
 
@@ -20,7 +20,7 @@ pub(crate) fn chamfer_note(chamfer: &Chamfer, units: LengthUnit) -> String {
 
 /// What the status bar says of a selected chamfer: "2 edges · Equal · 1
 /// mm", "1 edge · Distance and angle · 3 mm at 30° · Tangent chain".
-pub(crate) fn chamfer_info(chamfer: &Chamfer, units: LengthUnit) -> String {
+pub fn chamfer_info(chamfer: &Chamfer, units: LengthUnit) -> String {
     let count = chamfer.edges.len();
     let edges = if count == 1 {
         "1 edge".to_owned()

@@ -5,8 +5,10 @@
 //! `Look::StartCircularPattern` (the rail), `Look::StartAlign` (the rail;
 //! an align's own parts are in `align`), `Look::StartScale` (the rail's
 //! Modify set; a scale's own parts are in `scale`) or `Look::StartSplit`
-//! (the rail's Modify set; a split's own parts are in `split`), or by
-//! editing one, picking its bodies as a
+//! (the rail's Modify set; a split's own parts are in `split`),
+//! `Look::StartChamfer` (`C`, the toolbar, the rail's Modify set; a
+//! chamfer's edges are picked as a blend's, in `blend`, its own parts in
+//! `chamfer`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
 //! one from the toolbar, or a model edge or face clicked, named as of the
@@ -35,12 +37,13 @@ use varde_expr::{AngleUnit, Ask, ErrorKind, Unit, Value};
 use varde_kernel::Motion;
 use varde_regen::Summary;
 use varde_view::{
-    AlignRole, AlignSide, AlignSlot, CombineBody, ModelHighlight, MotionField, MotionKind,
-    MotionLook, MotionPick, MotionState, Naming, PanelHover, PatternMode, Pick, Picked, SplitMode,
-    Unnamed, axis_name, pattern_copies, plane_name,
+    AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, ModelHighlight, MotionField,
+    MotionKind, MotionLook, MotionPick, MotionState, Naming, PanelHover, PatternMode, Pick, Picked,
+    SplitMode, Unnamed, axis_name, pattern_copies, plane_name,
 };
 
 use self::align::AlignSetup;
+use self::blend::BlendSetup;
 use self::scale::ScaleSetup;
 use self::split::SplitSetup;
 use super::combine::pickable;
@@ -64,8 +67,8 @@ pub(crate) struct MotionSession {
     /// and Z and its angle, a pattern's count and spread (its spacing or
     /// total, a length or a circular one's angle, as its mode reads it),
     /// an align's distance (and its angle, the move's), a scale's
-    /// factors and length.
-    pub(crate) fields: [TypedText; 12],
+    /// factors and length, a chamfer's distances and angle.
+    pub(crate) fields: [TypedText; 15],
     /// A move's or pattern's axis: the Z axis to begin with (a linear
     /// pattern's X), as the UI mock's. A move stores it only with an
     /// angle other than zero.
@@ -92,6 +95,10 @@ pub(crate) struct MotionSession {
     pub(crate) scale: ScaleSetup,
     /// A split's tools and what it keeps.
     pub(crate) split: SplitSetup,
+    /// A chamfer's edges and Tangent chain.
+    pub(crate) blend: BlendSetup,
+    /// How a chamfer is sized: Equal to begin with, as the UI mock's.
+    pub(crate) chamfer_type: ChamferType,
     /// A pattern's Join to original: ticked to begin with, each body
     /// holding its copies, as the pattern stores by default (the UI
     /// mock's starts unticked; the user's decision is ticked); unticked,
@@ -138,14 +145,16 @@ struct Pivot {
 /// hovered and whether its row in the panel is, what clicks pick, and
 /// the bodies.
 /// An align's lit picks, the moved side's and the target's
-/// ([`Doc::align_lit`]), too; and whether a split's tool body is picked,
-/// which lights the body hovered whole.
+/// ([`Doc::align_lit`]), too; whether a split's tool body is picked,
+/// which lights the body hovered whole; and whether a chamfer's edges
+/// take in their tangent chains, which light with the edge hovered.
 type Built = (
     u64,
     Option<(Picked, bool)>,
     MotionPick,
     Vec<BodyId>,
     [Vec<Picked>; 2],
+    bool,
     bool,
 );
 
@@ -192,6 +201,9 @@ fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
         MotionField::Spread => spread_ask(kind, design),
         MotionField::Factor | MotionField::AxisFactor(_) => Scale::factor_ask(design),
         MotionField::Length => Scale::length_ask(design),
+        MotionField::ChamferDistance | MotionField::ChamferSecond | MotionField::ChamferAngle => {
+            chamfer::chamfer_ask(field, design).expect("a chamfer's field")
+        }
     }
 }
 
@@ -272,11 +284,17 @@ impl MotionSession {
             }
             // A split splits one body, then picks its tool.
             MotionKind::Split if !bodies.is_empty() => MotionPick::Tool,
+            // A chamfer picks edges, its body theirs.
+            MotionKind::Chamfer => MotionPick::Edges,
             _ => MotionPick::Bodies,
         };
         if matches!(kind, MotionKind::Align | MotionKind::Split) {
             bodies.truncate(1);
         }
+        if kind.blends() {
+            bodies.clear();
+        }
+        let [chamfer_distance, chamfer_second, chamfer_angle] = chamfer::chamfer_fields(&design);
         let (copies, spread_field, axis, mode) = match kind {
             MotionKind::CircularPattern => (
                 read("4", &count),
@@ -318,6 +336,9 @@ impl MotionSession {
                 read("1", &factor),
                 read("1", &factor),
                 scale::empty_length(),
+                chamfer_distance,
+                chamfer_second,
+                chamfer_angle,
             ],
             axis,
             plane: None,
@@ -328,6 +349,8 @@ impl MotionSession {
             align: AlignSetup::default(),
             scale: ScaleSetup::default(),
             split: SplitSetup::default(),
+            blend: BlendSetup::default(),
+            chamfer_type: ChamferType::Equal,
             join: true,
             opened: None,
             mode,
@@ -432,6 +455,11 @@ impl MotionSession {
                 session.picking = MotionPick::Nothing;
                 session
             }
+            FeatureKind::Chamfer(chamfer) => {
+                let mut session = Self::new(MotionKind::Chamfer, document, Vec::new());
+                session.open_chamfer(chamfer);
+                session
+            }
             _ => return None,
         };
         session.feature = Some(feature);
@@ -526,6 +554,7 @@ impl MotionSession {
             MotionKind::Align => self.align().map(FeatureKind::from),
             MotionKind::Scale => self.scale().map(FeatureKind::Scale),
             MotionKind::Split => self.split().map(FeatureKind::Split),
+            MotionKind::Chamfer => chamfer::chamfer_kind(self),
         }
     }
 
@@ -642,7 +671,8 @@ impl MotionSession {
             | MotionKind::Mirror
             | MotionKind::Align
             | MotionKind::Scale
-            | MotionKind::Split => {
+            | MotionKind::Split
+            | MotionKind::Chamfer => {
                 return Ok(None);
             }
         };
@@ -688,6 +718,9 @@ impl MotionSession {
         if self.kind == MotionKind::Split {
             return self.split_need();
         }
+        if self.kind.blends() {
+            return self.blend_need();
+        }
         if self.bodies.is_empty() {
             return Some(match self.kind {
                 MotionKind::Move => "pick the bodies to move",
@@ -698,6 +731,7 @@ impl MotionSession {
                 MotionKind::Align => "pick the body to align",
                 MotionKind::Scale => "pick the bodies to scale",
                 MotionKind::Split => "pick the body to split",
+                MotionKind::Chamfer => "pick the edges to chamfer",
             });
         }
         match self.kind {
@@ -711,7 +745,11 @@ impl MotionSession {
             MotionKind::Mirror if self.plane.is_none() => {
                 Some("pick a plane: an origin plane or a planar face")
             }
-            MotionKind::Mirror | MotionKind::Align | MotionKind::Scale | MotionKind::Split => None,
+            MotionKind::Mirror
+            | MotionKind::Align
+            | MotionKind::Scale
+            | MotionKind::Split
+            | MotionKind::Chamfer => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -745,6 +783,15 @@ impl MotionSession {
     fn gone(&self) -> Option<&'static str> {
         if self.bodies.is_empty() {
             return None;
+        }
+        // A chamfer's body is its edges': with it gone, so are they.
+        if self.kind.blends() {
+            let body = (self.bodies.iter()).any(|body| self.gone_bodies.contains(body));
+            return if body {
+                Some("A picked edge is gone")
+            } else {
+                self.blend_gone()
+            };
         }
         if (self.bodies.iter()).any(|body| self.gone_bodies.contains(body)) {
             return Some("A picked body is gone");
@@ -791,6 +838,9 @@ impl MotionSession {
             FeatureKind::Align(align) => align.check_own(design).err().map(|why| why.to_string()),
             FeatureKind::Scale(scale) => scale.check_own(design).err().map(|why| why.to_string()),
             FeatureKind::Split(split) => split.check_own().err().map(|why| why.to_string()),
+            FeatureKind::Chamfer(chamfer) => {
+                chamfer.check_own(design).err().map(|why| why.to_string())
+            }
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -807,6 +857,7 @@ impl MotionSession {
             MotionKind::Mirror | MotionKind::Split => true,
             MotionKind::Align => fine(MotionField::Distance) && fine(MotionField::Angle),
             MotionKind::Scale => self.scale_fields().iter().all(|&field| fine(field)),
+            MotionKind::Chamfer => self.chamfer_type.fields().iter().all(|&field| fine(field)),
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
@@ -857,6 +908,9 @@ impl MotionSession {
         self.prune_align(document, index);
         self.prune_scale(document, index);
         self.prune_split(document, index);
+        if self.kind.blends() {
+            self.prune_blend(document, index);
+        }
         let held = |body: BodyId| document.body(body).is_some();
         self.gone_reference = match (self.axis, self.plane) {
             (Some(axis), _)
@@ -881,6 +935,10 @@ impl MotionSession {
     /// scale's edge with them (it must be on one it scales; its names
     /// find it on the holder) and a split's tool body: whether any moved.
     fn follow(&mut self, merges: &Merges) -> bool {
+        // A chamfer's body is its edges'.
+        if self.kind.blends() {
+            return self.follow_blend(merges);
+        }
         let held = |body: BodyId| merges.holder(body).unwrap_or(body);
         let mut bodies: Vec<BodyId> = self.bodies.iter().map(|&body| held(body)).collect();
         bodies.sort_unstable();
@@ -920,6 +978,35 @@ impl MotionSession {
     /// shows), and a new one not at all: the model shown is the history
     /// as of the feature, which the edges and faces clicked are named as.
     fn draft(&self, design: &Design) -> Option<(Option<FeatureId>, FeatureKind)> {
+        // A chamfer is previewed as set up while it's whole and nothing it
+        // names is gone, its edges picked meanwhile (on the preview they
+        // go, as they're cut off: a row's cross takes one out). Not whole,
+        // an edited one shows its body as of the feature, by a move of
+        // nothing, so its edges are there to pick.
+        if self.kind.blends() {
+            if self.gone().is_none()
+                && let Some(kind) = self.kind()
+            {
+                return Some((self.feature, kind));
+            }
+            let feature = self.feature?;
+            let zero = || Value::new("0", &Move::offset_ask(design)).ok();
+            let bodies = (self.edited_bodies.iter())
+                .filter(|body| !self.gone_bodies.contains(body))
+                .copied()
+                .collect::<Vec<_>>();
+            if bodies.is_empty() {
+                return None;
+            }
+            return Some((
+                Some(feature),
+                FeatureKind::Move(Move {
+                    bodies,
+                    offset: [zero()?, zero()?, zero()?],
+                    turn: None,
+                }),
+            ));
+        }
         // A split isn't previewed while a face or body is picked as its
         // tool: the model shown is the document's, a new one's the history
         // as of the feature, and an edited one's with its split as stored,
@@ -1024,10 +1111,15 @@ impl Doc {
             bodies.extend(self.only_body());
         }
         self.motion = Some(MotionSession::new(kind, self.editor.document(), bodies));
-        // A mirror, an align and a split start by picking in the viewport.
+        // A chamfer's edges are those selected that it takes.
+        if kind.blends() {
+            self.blend_selected();
+        }
+        // A mirror, an align, a split and a chamfer start by picking in the
+        // viewport.
         if !matches!(
             kind,
-            MotionKind::Mirror | MotionKind::Align | MotionKind::Split
+            MotionKind::Mirror | MotionKind::Align | MotionKind::Split | MotionKind::Chamfer
         ) {
             self.focus = Some(Focus::All);
         }
@@ -1069,7 +1161,7 @@ impl Doc {
         self.selected_feature = Some(id);
         if !matches!(
             session.kind,
-            MotionKind::Mirror | MotionKind::Align | MotionKind::Split
+            MotionKind::Mirror | MotionKind::Align | MotionKind::Split | MotionKind::Chamfer
         ) {
             self.focus = Some(Focus::All);
         }
@@ -1097,6 +1189,16 @@ impl Doc {
                     MotionKind::Align | MotionKind::Scale | MotionKind::Split
                 ) => {}
             MotionLook::Picking(MotionPick::Tool) if session.kind != MotionKind::Split => {}
+            // A chamfer picks only its edges: its field clicked turns
+            // picking them off and on.
+            MotionLook::Picking(MotionPick::Edges) if session.kind.blends() => {
+                session.picking = match session.picking {
+                    MotionPick::Edges => MotionPick::Nothing,
+                    _ => MotionPick::Edges,
+                };
+            }
+            MotionLook::Picking(_) if session.kind.blends() => {}
+            MotionLook::Picking(MotionPick::Edges) => {}
             // A split's tool field clicked again while it picks stops
             // picking, so the split shows as set up.
             MotionLook::Picking(MotionPick::Tool) if session.picking == MotionPick::Tool => {
@@ -1161,6 +1263,19 @@ impl Doc {
                 }
             }
             MotionLook::Clear(_) => {}
+            MotionLook::ChamferType(kind) if session.kind == MotionKind::Chamfer => {
+                session.chamfer_type = kind;
+            }
+            MotionLook::Chain if session.kind.blends() => {
+                session.blend.chains = !session.blend.chains;
+            }
+            MotionLook::DropEdge(edge) if session.kind.blends() => {
+                session.blend.drop_edge(&edge);
+                session.blend_body();
+            }
+            MotionLook::ChamferType(_) | MotionLook::Chain | MotionLook::DropEdge(_) => {}
+            // A chamfer's body is its edges'.
+            MotionLook::Drop(_) if session.kind.blends() => {}
             MotionLook::Drop(body) => {
                 session.bodies.retain(|&picked| picked != body);
             }
@@ -1202,7 +1317,10 @@ impl Doc {
             MotionLook::OriginAxis(_) | MotionLook::OriginPlane(_) => {}
             MotionLook::Copy => session.keep_original = !session.keep_original,
             MotionLook::Flip
-                if matches!(session.kind, MotionKind::LinearPattern | MotionKind::Align) =>
+                if matches!(
+                    session.kind,
+                    MotionKind::LinearPattern | MotionKind::Align | MotionKind::Chamfer
+                ) =>
             {
                 session.flip = !session.flip;
             }
@@ -1239,6 +1357,7 @@ impl Doc {
             MotionPick::Point => self.scale_point(pick),
             MotionPick::Edge => self.scale_edge(pick),
             MotionPick::Tool => self.split_tool(pick),
+            MotionPick::Edges => self.blend_click(pick),
             MotionPick::Nothing => Ok(()),
         };
         if let Err(why) = picked {
@@ -1259,7 +1378,8 @@ impl Doc {
         let Some(session) = &mut self.motion else {
             return;
         };
-        if !pickable(document, body, session.feature) {
+        // A chamfer's body is its edges', never picked itself.
+        if !pickable(document, body, session.feature) || session.kind.blends() {
             return;
         }
         // An align moves one body, a split splits one: another replaces
@@ -1596,6 +1716,10 @@ impl Doc {
         let Some(session) = &self.motion else {
             return false;
         };
+        // A blend's edges wait only for a model of the document as it is.
+        if session.picking == MotionPick::Edges {
+            return self.blend_takes(pick);
+        }
         (self.feed.answers_request() && !self.feed.predates_replacement())
             && match session.picking {
                 MotionPick::Align(slot) => self.align_reference(slot, pick).is_ok(),
@@ -1618,8 +1742,13 @@ impl Doc {
         }
         self.follow_align();
         self.follow_scale();
+        self.follow_blend_marks();
         let Some(session) = &self.motion else {
             return;
+        };
+        let panel_edge = match self.panel_hover() {
+            Some(PanelHover::Edge(at)) => self.blend_hovered(at),
+            _ => None,
         };
         let panel = self.panel_hover().and_then(PanelHover::body);
         let hovered: Option<(Picked, bool)> = match (panel, self.pick.hover()) {
@@ -1630,6 +1759,8 @@ impl Doc {
                     .next()
                     .map(|face| (Picked::Face(face), true))
             }
+            // A chamfer's edge hovered in its panel lights alone.
+            (None, _) if panel_edge.is_some() => panel_edge.map(|edge| (edge, false)),
             (None, Some(pick)) => match session.picking {
                 MotionPick::Bodies => {
                     (!session.bodies.contains(&pick.body)).then_some((pick.target, false))
@@ -1638,7 +1769,8 @@ impl Doc {
                 | MotionPick::Align(_)
                 | MotionPick::Point
                 | MotionPick::Edge
-                | MotionPick::Tool => self.takes_reference(pick).then_some((pick.target, false)),
+                | MotionPick::Tool
+                | MotionPick::Edges => self.takes_reference(pick).then_some((pick.target, false)),
                 MotionPick::Nothing => None,
             },
             (None, None) => None,
@@ -1646,6 +1778,7 @@ impl Doc {
         let lit = match session.kind {
             MotionKind::Scale => [Vec::new(), self.scale_lit()],
             MotionKind::Split => [Vec::new(), self.split_lit()],
+            MotionKind::Chamfer => [self.blend_lit(), Vec::new()],
             _ => self.align_lit(),
         };
         // A split's tool body lights whole while hovered.
@@ -1657,6 +1790,7 @@ impl Doc {
             session.bodies.clone(),
             lit,
             tool_body,
+            session.blend.chains,
         );
         if session.built.as_ref() == Some(&key) {
             return;
@@ -1674,6 +1808,8 @@ impl Doc {
                 let [moved, target] = key.4.clone();
                 (moved, target)
             }
+            // A chamfer's edges lit as selected, its body as it is.
+            _ if session.kind.blends() => (key.4[0].clone(), Vec::new()),
             _ => (
                 (session.bodies.iter())
                     .filter(|&&body| Some(body) != lit)
@@ -1697,6 +1833,11 @@ impl Doc {
                 .body(target)
                 .map(|body| faces(body).collect())
                 .unwrap_or_default(),
+            // A chamfer's edge with its tangent chain, while it takes it in.
+            (Some((target, false)), MotionPick::Edges) => match self.pick.hover() {
+                Some(pick) if panel_edge.is_none() => self.blend_hover(pick),
+                _ => vec![target],
+            },
             (
                 Some((target, false)),
                 MotionPick::Reference
@@ -1705,6 +1846,9 @@ impl Doc {
                 | MotionPick::Edge
                 | MotionPick::Tool,
             ) => vec![target],
+            // A chamfer's edge hovered in its panel, while its edges
+            // aren't picked.
+            (Some((target, false)), MotionPick::Nothing) if panel_edge.is_some() => vec![target],
             (Some((_, false)), MotionPick::Nothing) | (None, _) => Vec::new(),
         };
         let highlight = Arc::new(index.highlight_with(&hover, &picked, &second));
@@ -1745,7 +1889,7 @@ impl Doc {
                 });
                 (axis.map(|axis| axis_name(document, axis)), origin)
             }
-            MotionKind::Align | MotionKind::Scale => (None, None),
+            MotionKind::Align | MotionKind::Scale | MotionKind::Chamfer => (None, None),
             MotionKind::Split => self.split_reference(session),
             MotionKind::Mirror => {
                 let plane = session.plane.as_ref();
@@ -1821,6 +1965,8 @@ impl Doc {
             align: (session.kind == MotionKind::Align).then(|| Box::new(self.align_view(session))),
             scale: (session.kind == MotionKind::Scale).then(|| Box::new(self.scale_view(session))),
             split: (session.kind == MotionKind::Split).then(|| Box::new(self.split_view(session))),
+            chamfer: (session.kind == MotionKind::Chamfer)
+                .then(|| Box::new(self.chamfer_view(session))),
         })
     }
 }
@@ -1870,14 +2016,18 @@ fn undo_motion(moved: &Move, line: Option<[DVec3; 2]>, p: DVec3) -> Option<DVec3
 /// regenerating refuses as an axis. Regenerating decides from the exact
 /// curves.
 fn round_edge(index: &varde_view::PickIndex, edge: u32) -> bool {
+    edge_radius(index, edge).is_some()
+}
+
+/// The radius of `edge` of `index`'s model if it's round as
+/// [`round_edge`] tells: its largest distance from its centre.
+fn edge_radius(index: &varde_view::PickIndex, edge: u32) -> Option<f64> {
     let Some(Some(centre)) = index.picking().snaps().get(edge as usize) else {
-        return false;
+        return None;
     };
     let centre = DVec3::from(*centre);
     let mesh = index.mesh();
-    let Some(polyline) = mesh.polyline(edge as usize) else {
-        return false;
-    };
+    let polyline = mesh.polyline(edge as usize)?;
     let points: Vec<DVec3> = (polyline.iter())
         .filter_map(|&i| mesh.positions().get(i as usize))
         .map(|&p| glam::Vec3::from(p).as_dvec3())
@@ -1890,7 +2040,7 @@ fn round_edge(index: &varde_view::PickIndex, edge: u32) -> bool {
         .map(|p| p.abs().max_element())
         .fold(centre.abs().max_element(), f64::max);
     let slack = 1e-6 * high + 8.0 * f64::from(f32::EPSILON) * scale;
-    points.len() >= 2 && low > slack && high - low <= slack
+    (points.len() >= 2 && low > slack && high - low <= slack).then_some(high)
 }
 
 /// The body `axis`'s edge or face is on, if it names one.
@@ -1955,6 +2105,8 @@ fn unnamed(why: Unnamed, what: &str, kind: MotionKind) -> Cow<'static, str> {
 }
 
 mod align;
+mod blend;
+mod chamfer;
 mod scale;
 mod split;
 

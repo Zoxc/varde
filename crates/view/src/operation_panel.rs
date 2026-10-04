@@ -188,9 +188,14 @@ impl OperationKind {
 /// combine's target or tool, or one a join, cut or intersect touches).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelHover {
-    Region { sketch: FeatureId, region: usize },
+    Region {
+        sketch: FeatureId,
+        region: usize,
+    },
     Axis,
     Body(BodyId),
+    /// A chamfer's edge, by its place in the list.
+    Edge(usize),
 }
 
 impl PanelHover {
@@ -198,7 +203,7 @@ impl PanelHover {
     pub fn region(self) -> Option<(FeatureId, usize)> {
         match self {
             PanelHover::Region { sketch, region } => Some((sketch, region)),
-            PanelHover::Axis | PanelHover::Body(_) => None,
+            PanelHover::Axis | PanelHover::Body(_) | PanelHover::Edge(_) => None,
         }
     }
 
@@ -206,7 +211,7 @@ impl PanelHover {
     pub fn body(self) -> Option<BodyId> {
         match self {
             PanelHover::Body(body) => Some(body),
-            PanelHover::Region { .. } | PanelHover::Axis => None,
+            PanelHover::Region { .. } | PanelHover::Axis | PanelHover::Edge(_) => None,
         }
     }
 }

@@ -870,6 +870,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                 },
                 (crate::MotionPick::Point, _) => "Pick the point",
                 (crate::MotionPick::Edge, _) => "Pick the edge",
+                (crate::MotionPick::Edges, _) => "Pick edges",
                 (crate::MotionPick::Tool, _) => {
                     (motion.split.as_ref()).map_or("Pick the tool", |split| split.mode.hint())
                 }

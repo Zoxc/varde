@@ -13,10 +13,10 @@ use varde_expr::LengthUnit;
 use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
-    Binding, Shortcut, comb_binding, combine_binding, constrain_binding, constraint_binding,
-    extrude_binding, file_bindings, handles_binding, history_bindings, measure_binding,
-    mirror_binding, move_binding, pattern_binding, revolve_binding, sketch_binding, switch_binding,
-    tool_binding,
+    Binding, Shortcut, chamfer_binding, comb_binding, combine_binding, constrain_binding,
+    constraint_binding, extrude_binding, file_bindings, handles_binding, history_bindings,
+    measure_binding, mirror_binding, move_binding, pattern_binding, revolve_binding,
+    sketch_binding, switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
@@ -496,6 +496,15 @@ fn ops<'a>(
             .chain(planes)
             .collect();
     }
+    // Chamfer after the solids, before Combine, as the mock's model bar
+    // orders them (its Hole, Fillet and Shell aren't built).
+    let moving = state.motion.as_ref().map(|motion| motion.kind);
+    let chamfer = bound_op(
+        Icon::BChamfer,
+        "Chamfer",
+        chamfer_binding(keys),
+        moving == Some(MotionKind::Chamfer),
+    );
     // After the solids, as the mock orders them.
     let combine = bound_op(
         Icon::Combine,
@@ -505,7 +514,6 @@ fn ops<'a>(
     );
     // Move and Mirror after Combine, as the mock's model and body bars
     // order them.
-    let moving = state.motion.as_ref().map(|motion| motion.kind);
     let move_op = bound_op(
         Icon::Move,
         "Move",
@@ -587,17 +595,19 @@ fn ops<'a>(
                         })
                         .collect()
                 }
-                MotionKind::Mirror | MotionKind::Align | MotionKind::Scale | MotionKind::Split => {
-                    (OriginPlane::ALL.iter())
-                        .map(|&plane| {
-                            op(
-                                Icon::SePlane,
-                                plane_label(plane),
-                                send(MotionLook::OriginPlane(plane)),
-                            )
-                        })
-                        .collect()
-                }
+                MotionKind::Mirror
+                | MotionKind::Align
+                | MotionKind::Scale
+                | MotionKind::Split
+                | MotionKind::Chamfer => (OriginPlane::ALL.iter())
+                    .map(|&plane| {
+                        op(
+                            Icon::SePlane,
+                            plane_label(plane),
+                            send(MotionLook::OriginPlane(plane)),
+                        )
+                    })
+                    .collect(),
             };
             std::iter::once(separator()).chain(buttons).collect()
         }
@@ -627,6 +637,7 @@ fn ops<'a>(
             sketch,
             extrude,
             revolve,
+            chamfer,
             combine,
             move_op,
             mirror_op,
