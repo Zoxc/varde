@@ -23,8 +23,9 @@
 //! A section whose sketch isn't placed fails it ("section 2's sketch
 //! isn't placed"). Two consecutive sections on one plane (the last and
 //! the first too, for a closed loft) fail it before the kernel is asked
-//! ("sections 1 and 2 are on one plane"), by the kernel's own rule
-//! ([`on_one_plane`]).
+//! ("sections 1 and 2 are on one plane"; a point on the plane of the
+//! section next to it, "section 3 is a point on section 2's plane: move
+//! it off the plane"), by the kernel's own rule ([`on_one_plane`]).
 //!
 //! **The rails**: each a sketch's curves ordered into one open chain
 //! ([`chain`], as a split's line: lines, arcs of at most 90° and
@@ -252,7 +253,13 @@ impl Run<'_> {
             for i in 0..pairs {
                 let j = (i + 1) % count;
                 if kernel_loft::on_one_plane(&sections[i], &sections[j], resolution) {
-                    return Err(message::sections_on_one_plane(i, j).into());
+                    let point = |at: usize| matches!(sections[at], kernel_loft::Section::Point(_));
+                    return Err(match (point(i), point(j)) {
+                        (true, _) => message::point_on_section_plane(i, j),
+                        (_, true) => message::point_on_section_plane(j, i),
+                        _ => message::sections_on_one_plane(i, j),
+                    }
+                    .into());
                 }
             }
             let mut rails = Vec::with_capacity(rails_placed.len());

@@ -4526,7 +4526,9 @@ before it in `Run::sketches`), in history order:
   placed: "section 2's sketch isn't placed".
 - **One plane**: two consecutive sections (and, closed, the last and
   the first) on one plane fail before the kernel, "sections 1 and 2 are
-  on one plane", by the kernel's own rule (`varde_kernel::loft::on_one_plane`:
+  on one plane" (a point on the plane of the section next to it:
+  "section 3 is a point on section 2's plane: move it off the plane"),
+  by the kernel's own rule (`varde_kernel::loft::on_one_plane`:
   each one's vertices within the resolution of the other's plane; a
   point on a loop's plane; two points never).
 - **Rails**: each sketch chain ordered by `profile::chain` (as a
@@ -4609,7 +4611,10 @@ and the Bodies list.
   section, or the first if the last is a point already, or takes it
   out; "A loft takes a point only as its first or last section"
   otherwise. A click on a corner moves that section's start there
-  (`MotionLook::LoftStart`).
+  (`MotionLook::LoftStart`). Where two sketch points are on one corner,
+  the corner is the first of them; a start at the other (from a file,
+  or an edit of the sketch) is drawn at that corner all the same
+  (`shown_start`), as regeneration takes it.
 - **Drawn**: each region section filled and outlined in the selected
   colour on its plane (the one whose row is hovered in the hovered
   colour), its start dot in the accent (a point section's point too),
@@ -4683,7 +4688,18 @@ going on; by the stand-in a box, a transition piece joined between two
 blocks merging them and following one moved, a section's sketch edited
 and the loft following, undo; sections handed over in order and placed,
 starts; regen's refusals; one plane, closed too; rails placed and
-refused; the kernel's refusals worded; twisted starts; the cache),
+refused; the kernel's refusals worded; twisted starts; the cache; a
+point on its neighbour's plane), `regen/src/history/tests/loft/fuzz.rs`
+(random histories with lofts by the stand-in: warm and cold cache alike,
+failures changing nothing, those that work an extrude's; bytes and the
+wire; `VARDE_LOFT_SEEDS`, `VARDE_LOFT_FROM`),
+`app/src/doc/motion/tests/loft.rs` (the session; deferred section
+sketches through undo and redo) and its `fuzz.rs` (random sessions:
+limits, a start not gone always drawn, ready only when the document
+takes it and regeneration finds every section and start, commits as
+drafted, edits reopening as stored; `VARDE_LOFT_SEEDS`),
+`view/src/viewport/motion/tests.rs` (rails', regions' and corners'
+hover worked out again as the camera moves),
 `regen/src/wire/tests.rs` (a loft and its draft round trip),
 `io/src/vrdp/tests.rs` (round trip, tampered and damaged records, a
 loft's parts refused as read), `view/src/loft/tests.rs` (the notes).

@@ -758,6 +758,17 @@ pub(crate) fn sections_on_one_plane(a: usize, b: usize) -> String {
     format!("sections {} and {} are on one plane", nth(a), nth(b))
 }
 
+/// Why a loft fails: its section `point` (from 0), a point, lies on the
+/// plane of its section `section` next to it, so nothing runs between
+/// them.
+pub(crate) fn point_on_section_plane(point: usize, section: usize) -> String {
+    format!(
+        "section {} is a point on section {}'s plane: move it off the plane",
+        nth(point),
+        nth(section)
+    )
+}
+
 /// Why a loft fails: the sketch of its rail `index` isn't there (not of a
 /// checked document).
 pub(crate) fn rail_sketch_gone(index: usize) -> String {

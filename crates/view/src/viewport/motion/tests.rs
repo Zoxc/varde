@@ -1293,3 +1293,136 @@ fn a_loft_s_and_a_split_s_curves_are_hovered_again_as_the_camera_moves() {
         feed(&there, &mut input, &[(right(false), far)]);
     }
 }
+
+/// A loft picking its sections and a split picking regions, each in a
+/// sketch on XY holding a square from (0, 0) to (10, 10), seen from the
+/// top, the cursor still while the camera moves: the square's region (and
+/// for the loft, with the square a section, its corner) brought under it
+/// is hovered as the frame is drawn, and let go of once moved away.
+#[test]
+fn a_loft_s_and_a_split_s_regions_and_corners_are_hovered_again_as_the_camera_moves() {
+    use crate::motion::{LoftSection, LoftShape, LoftView};
+    use varde_sketch::{Curve, Sketch};
+    let mut square = Sketch::default();
+    let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+        .map(|(x, y)| square.add_point(DVec2::new(x, y)).unwrap());
+    for k in 0..4 {
+        let (start, end) = (corners[k], corners[(k + 1) % 4]);
+        square.add_curve(Curve::Line { start, end }, false).unwrap();
+    }
+    let profiles = Arc::new(square.profiles().unwrap());
+    let feature = varde_document::Document::example().features()[0].id;
+    let placement = OriginPlane::XY.placement();
+    let candidates = || {
+        vec![crate::Candidate {
+            feature,
+            placement,
+            sketch: &square,
+            profiles: &profiles,
+        }]
+    };
+    let loft = |section: bool| {
+        let mut state: MotionState<'_> = state(MotionKind::Loft, MotionPick::Regions, None);
+        let sections = if section {
+            vec![LoftSection {
+                name: "Sketch 1".to_owned(),
+                gone: false,
+                sketch: feature,
+                placement: Some(placement),
+                shape: LoftShape::Region {
+                    region: profiles.regions.first(),
+                    corners: corners
+                        .iter()
+                        .map(|&id| (id, square.point(id).unwrap().at))
+                        .collect(),
+                    start: Some(corners[0]),
+                },
+            }]
+        } else {
+            Vec::new()
+        };
+        state.loft = Some(Box::new(LoftView {
+            candidates: candidates(),
+            lines: Vec::new(),
+            sections,
+            rails: Vec::new(),
+            chains: Vec::new(),
+            mode: varde_document::LoftMode::Smooth,
+            closed: false,
+            operation: crate::OperationKind::NewBody,
+            targets: Vec::new(),
+            info: None,
+        }));
+        state
+    };
+    let split = || {
+        let mut state: MotionState<'_> = state(MotionKind::Split, MotionPick::Tool, None);
+        state.split = Some(Box::new(SplitView {
+            mode: SplitMode::Regions,
+            tool: None,
+            body: Some("Body 1"),
+            original: varde_document::Side::Front,
+            keep: varde_document::Keep::Both,
+            later: None,
+            info: None,
+            candidates: candidates(),
+            source: None,
+            picked: SplitView::none_picked(),
+            lines: Vec::new(),
+            chain: None,
+            pieces: Vec::new(),
+        }));
+        state
+    };
+    let redraw = || {
+        Event::Window(iced::window::Event::RedrawRequested(
+            iced::time::Instant::now(),
+        ))
+    };
+    let off = camera(View::Top, Projection::Orthographic);
+    // Panned 30 along x, then 20 more: the cursor over (−25, 5) is over
+    // (5, 5), the square's middle, then its corner (0, 0) one way and
+    // nothing the other.
+    let pan = |by: glam::Vec3| {
+        let mut moved = off;
+        moved.set_target(off.target() + by);
+        moved
+    };
+    let cursor = |at: DVec3| {
+        let p = shown(&off, at);
+        Point::new(p.x as f32, p.y as f32)
+    };
+    // The square's middle and its first corner brought under the cursor.
+    let middle = pan(glam::Vec3::new(30.0, 0.0, 0.0));
+    let corner = pan(glam::Vec3::new(25.0, -5.0, 0.0));
+    let at = cursor(DVec3::new(-25.0, 5.0, 0.0));
+    for kind in 0..3 {
+        let state = || match kind {
+            0 => loft(false),
+            1 => loft(true),
+            _ => split(),
+        };
+        let here = viewport(state(), &off, None);
+        let there = viewport(state(), &middle, None);
+        let mut input = Interaction::default();
+        feed(&here, &mut input, &[moved(at)]);
+        let region = |input: &Interaction| match kind {
+            2 => input.motion.split.regions.hover,
+            _ => input.motion.loft.region,
+        };
+        assert_eq!(region(&input), None, "{kind}");
+        feed(&there, &mut input, &[(redraw(), at)]);
+        assert_eq!(region(&input), Some((feature, 0)), "{kind}");
+        feed(&here, &mut input, &[(redraw(), at)]);
+        assert_eq!(region(&input), None, "{kind}");
+        if kind == 1 {
+            // The section's corner, ahead of its region.
+            let near = viewport(state(), &corner, None);
+            feed(&near, &mut input, &[(redraw(), at)]);
+            assert_eq!(input.motion.loft.corner, Some((0, corners[0])));
+            assert_eq!(input.motion.loft.region, None);
+            feed(&here, &mut input, &[(redraw(), at)]);
+            assert_eq!(input.motion.loft.corner, None);
+        }
+    }
+}

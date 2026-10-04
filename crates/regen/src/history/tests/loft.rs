@@ -674,6 +674,42 @@ fn sections_on_one_plane_are_refused() {
     assert!(asked().is_empty());
 }
 
+/// A point on the plane of the section next to it is refused as that,
+/// first or last: the square on XY to a point on XY, and back.
+#[test]
+fn a_point_on_its_neighbour_s_plane_is_refused_as_that() {
+    with_recording(None);
+    let Stack {
+        mut editor, low, ..
+    } = stack();
+    let (apex, point) = add_sketch(&mut editor, Plane::Origin(OriginPlane::XY), |sketch| {
+        sketch.add_point(DVec2::new(20.0, 20.0)).unwrap()
+    });
+    let document = editor.document().clone();
+    let tip = Section::Point {
+        sketch: apex,
+        point,
+    };
+    let up = add(
+        &mut editor,
+        loft(vec![region(&document, low, None), tip.clone()], new_body()),
+    );
+    let down = add(
+        &mut editor,
+        loft(vec![tip, region(&document, low, None)], new_body()),
+    );
+    let evaluation = evaluated(editor.document());
+    let words = "a point on section 1's plane: move it off the plane";
+    assert_eq!(
+        evaluation.failed,
+        [
+            (up, format!("section 2 is {words}")),
+            (down, format!("section 1 is {}", words.replace('1', "2"))),
+        ]
+    );
+    assert!(asked().is_empty());
+}
+
 /// A rail's curves ordered into one chain and placed in the world; gone,
 /// "rail 1 not found"; a closed one refused.
 #[test]
@@ -995,3 +1031,5 @@ fn starts_are_the_pieces_corners() {
         assert_eq!(outline.segments[start].conic.p0, want);
     }
 }
+
+mod fuzz;

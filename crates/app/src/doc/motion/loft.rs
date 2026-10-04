@@ -83,6 +83,28 @@ fn corners(
         .unwrap_or_default()
 }
 
+/// The corner of `corners` (region `region`'s, [`corners`]) that the start
+/// `start` is at by regeneration's rule ([`loft_corner`]), as its dot
+/// shows it: `start` itself, or that corner's first point where two
+/// points are on one vertex and the start is a later one, which
+/// regeneration takes as well. `None` if it's at none of them.
+fn shown_start(
+    sketch: &Sketch,
+    profiles: &Profiles,
+    region: usize,
+    corners: &[(Id, DVec2)],
+    start: Id,
+    resolution: f64,
+) -> Option<Id> {
+    if corners.iter().any(|&(id, _)| id == start) {
+        return Some(start);
+    }
+    let outer = &profiles.regions.get(region)?.outer;
+    let piece = loft_corner(sketch, profiles, outer, start, resolution)?;
+    let vertex = profiles.vertices.get(outer.get(piece)?.start)?;
+    (corners.iter()).find_map(|&(id, corner)| (corner == *vertex).then_some(id))
+}
+
 impl MotionSession {
     /// Opens the loft `loft` of `document` in this session: its sections,
     /// rails and options.
@@ -571,17 +593,28 @@ impl Doc {
                     Section::Region { start, .. } => {
                         let found = setup.regions.found(sketch);
                         let resolved = session.section_region(section);
-                        let (region, corners) = match (found, resolved) {
-                            (Some(found), Some((profiles, index))) => (
-                                profiles.regions.get(index),
-                                corners(&found.sketch, profiles, index, resolution),
-                            ),
-                            _ => (None, Vec::new()),
+                        let (region, corners, start) = match (found, resolved) {
+                            (Some(found), Some((profiles, index))) => {
+                                let corners = corners(&found.sketch, profiles, index, resolution);
+                                let start = (*start).map(|start| {
+                                    shown_start(
+                                        &found.sketch,
+                                        profiles,
+                                        index,
+                                        &corners,
+                                        start,
+                                        resolution,
+                                    )
+                                    .unwrap_or(start)
+                                });
+                                (profiles.regions.get(index), corners, start)
+                            }
+                            _ => (None, Vec::new(), *start),
                         };
                         LoftShape::Region {
                             region,
                             corners,
-                            start: *start,
+                            start,
                         }
                     }
                     Section::Point { point, .. } => {

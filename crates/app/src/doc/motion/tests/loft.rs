@@ -802,3 +802,123 @@ fn hidden_section_sketches_share_their_own_work() {
     }
     assert!(pick.skipped.is_empty());
 }
+
+/// Editing a loft whose sections are of more hidden sketches than
+/// [`ALSO_WORK`] works out at once: those deferred are never said to be
+/// gone, an undo and a redo of an edit after the loft while it's edited
+/// leave it ready, and OK on it unchanged writes nothing.
+///
+/// [`ALSO_WORK`]: crate::doc::regions::ALSO_WORK
+#[test]
+fn a_loft_of_deferred_sketches_through_undo_and_redo() {
+    use crate::doc::regions::ALSO_WORK;
+    let drawn = concentric(1500);
+    let mut left = usize::MAX;
+    let profiles = drawn.profiles_spending(&mut left).unwrap();
+    let fit = ALSO_WORK / (usize::MAX - left);
+    // The innermost disc: the region with no holes.
+    let disc = (profiles.regions.iter())
+        .position(|region| region.holes.is_empty())
+        .unwrap();
+    let region = profiles.reference(disc).unwrap();
+    let mut editor = Editor::new(Document::default());
+    let sketches: Vec<FeatureId> = (0..(4 * fit + 2).min(64))
+        .map(|_| {
+            sketch_on(&mut editor, Plane::Origin(OriginPlane::XY), |sketch| {
+                *sketch = drawn.clone();
+            })
+        })
+        .collect();
+    let sections = (sketches.iter())
+        .map(|&sketch| Section::Region {
+            sketch,
+            region: region.clone(),
+            start: None,
+        })
+        .collect();
+    let loft = Loft {
+        sections,
+        mode: LoftMode::Ruled,
+        closed: false,
+        rails: Vec::new(),
+        operation: varde_document::Operation::NewBody(BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(loft.into()))
+        .unwrap();
+    let id = editor.document().features().last().unwrap().id;
+    let (doc, requests) = holding(editor.document().clone());
+    let mut plates = Plates {
+        doc,
+        requests,
+        bodies: [BodyId::NEW; 3],
+    };
+    let plates = &mut plates;
+    // An edit after the loft, to undo and redo.
+    let add = (plates.doc.editor.document()).add_sketch(Plane::Origin(OriginPlane::XZ));
+    plates.doc.apply(add);
+    plates.doc.sync();
+    plates.answer();
+    let before = plates.doc.editor.document().clone();
+    plates.doc.look(Look::EditFeature(id));
+    let found = set_up(plates).regions.found.len();
+    assert!(
+        found < sketches.len(),
+        "some deferred: {found} of {}",
+        sketches.len()
+    );
+    let check = |plates: &Plates, what: &str| {
+        assert!(!shows(plates, "is gone"), "{what}");
+        assert!(
+            plates.doc.motion_ready(),
+            "{what}: {:?} {:?}",
+            crate::tests::screen_texts(&plates.doc),
+            plates.doc.editor.document().features().len()
+        );
+        let state = plates.doc.motion_state().unwrap();
+        let view = state.loft.as_ref().unwrap();
+        assert!(view.sections.iter().all(|section| !section.gone), "{what}");
+    };
+    check(plates, "opened");
+    plates.doc.update(Edit::Undo);
+    check(plates, "undone");
+    plates.doc.update(Edit::Redo);
+    check(plates, "redone");
+    plates.answer();
+    plates.doc.update(Edit::CommitMotion);
+    plates.doc.update(Edit::AcceptError);
+    assert!(plates.doc.motion.is_none());
+    assert_eq!(*plates.doc.editor.document(), before, "nothing changed");
+}
+
+/// A second sketch point on a section's corner: a click with it as the
+/// start (regeneration takes it) keeps it, and its dot is drawn at the
+/// corner, not the section said to be gone.
+#[test]
+fn a_start_at_a_corner_s_second_point_is_drawn() {
+    let mut lofted = lofted();
+    let (low, top) = (lofted.low, lofted.top);
+    let plates = &mut lofted.plates;
+    plates.doc.look(Look::StartLoft);
+    pick(plates, low);
+    pick(plates, top);
+    let mut redrawn = sketch_of(plates.doc.editor.document(), top).clone();
+    let second = redrawn.add_point(DVec2::new(25.0, 5.0)).unwrap();
+    plates.doc.apply(Command::SetSketch {
+        feature: top,
+        sketch: Box::new(redrawn),
+    });
+    plates.doc.sync();
+    plates.motion(MotionLook::LoftStart {
+        section: 1,
+        point: second,
+    });
+    assert_eq!(start(plates, 1), Some(second));
+    let state = plates.doc.motion_state().unwrap();
+    let view = state.loft.as_ref().unwrap();
+    assert!(!view.sections[1].gone);
+    assert_eq!(view.sections[1].shape.dot(), Some(DVec2::new(25.0, 5.0)));
+    assert!(plates.doc.motion_ready());
+}
+
+mod fuzz;
