@@ -289,6 +289,35 @@ impl Doc {
         targets
     }
 
+    /// Whether the measure tool has `pick` as A or B, for the list of
+    /// the model's overlaps: lit as picked (a body picked whole by its
+    /// faces), or the corner picked.
+    pub(crate) fn measure_has(&self, pick: Pick) -> bool {
+        let Some(session) = &self.measure else {
+            return false;
+        };
+        if (self.measure_targets().iter()).any(|targets| targets.contains(&pick.target)) {
+            return true;
+        }
+        let Picked::Vertex(vertex) = pick.target else {
+            return false;
+        };
+        let index = self.feed.pick_index();
+        let merged = self.feed.merged_bodies();
+        let holder = |body: BodyId| {
+            (merged.iter())
+                .find(|(merged, _)| *merged == body)
+                .map_or(body, |&(_, holder)| holder)
+        };
+        (session.picks.iter().flatten()).any(|picked| match picked.entity {
+            Entity::Corner(faces) => {
+                let near = glam::DVec3::from(picked.near);
+                index.find_vertex(holder(picked.body), faces, near) == Some(vertex)
+            }
+            _ => false,
+        })
+    }
+
     /// Rebuilds the measure tool's highlight if the model, the target
     /// hovered or what's highlighted of the picks changed since it was
     /// built.

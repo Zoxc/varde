@@ -379,6 +379,56 @@ fn a_tangent_chain_lights_whole() {
     assert_eq!(selected(&plates), [edge]);
 }
 
+/// With Tangent chain on, the list of the model's overlaps names a row
+/// of an edge of a picked chain (the line picked, or another edge of its
+/// rim) as the chain, ticked, which a click on it takes out whole;
+/// with Tangent chain off, the line alone is ticked, as an edge.
+#[test]
+fn the_overlap_list_names_an_edge_of_a_picked_chain_as_the_chain() {
+    use varde_view::OverlapNote;
+    let (mut plates, body) = slot();
+    plates.doc.look(Look::StartFillet);
+    let line = edge_pick(&plates, body, ([0.0, -3.0, 5.0], [10.0, -3.0, 5.0]));
+    let Picked::Edge(edge) = line.target else {
+        unreachable!()
+    };
+    let rim = plates.doc.feed.pick_index().tangent_chain(edge).to_vec();
+    let other = *rim.iter().find(|&&other| other != edge).expect("the rim");
+    let other = varde_view::Pick {
+        target: Picked::Edge(other),
+        ..line
+    };
+    plates.doc.look(Look::ClickModel {
+        pick: Some(line),
+        add: false,
+        double: false,
+    });
+    assert_eq!(edges(&plates).len(), 1);
+    let list = varde_view::Overlaps {
+        held: glam::DVec2::ZERO,
+        at: glam::DVec2::ZERO,
+        items: varde_view::OverlapItems::Model(vec![line, other]),
+    };
+    let notes = |plates: &Plates| -> Vec<OverlapNote> {
+        let ticks = plates.doc.overlap_ticks().expect("the session's");
+        ticks.iter().map(|tick| tick.note).collect()
+    };
+    plates.doc.look(Look::OpenOverlaps(list.clone()));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, true]));
+    assert_eq!(notes(&plates), [OverlapNote::Chain, OverlapNote::Chain]);
+    plates.doc.look(Look::CloseOverlaps);
+    plates.motion(MotionLook::Chain);
+    plates.doc.look(Look::OpenOverlaps(list.clone()));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, false]));
+    assert_eq!(notes(&plates), [OverlapNote::None, OverlapNote::None]);
+    plates.doc.look(Look::CloseOverlaps);
+    plates.motion(MotionLook::Chain);
+    plates.doc.look(Look::OpenOverlaps(list));
+    plates.doc.look(Look::ToggleOverlap(1));
+    assert!(edges(&plates).is_empty(), "the chain taken out");
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![false, false]));
+}
+
 /// What overlaps where the left button was held, listed in a fillet
 /// session: its rows ticked as the fillet has their edges (not as the
 /// model's selection), a tick picking one with the list kept open, a row
@@ -405,11 +455,11 @@ fn the_overlap_list_ticks_and_picks_the_fillet_s_edges() {
         items: varde_view::OverlapItems::Model(vec![front, right]),
     };
     plates.doc.look(Look::OpenOverlaps(list));
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, false]));
     plates.doc.look(Look::ToggleOverlap(1));
     assert!(plates.doc.overlaps.is_some());
     assert_eq!(edges(&plates).len(), 2);
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, true]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, true]));
     plates.doc.look(Look::ChooseOverlap {
         index: 0,
         add: false,
@@ -517,7 +567,8 @@ fn editing_a_fillet_whose_body_a_later_join_merged() {
 /// tick's preview comes: its rows are found again on each new model by
 /// their names, so the next tick picks, and a tick takes out, as on the
 /// model the list was opened on. With the stand-in rounding, an edge
-/// rounded off in the preview isn't there to list: its row goes.
+/// rounded off in the preview isn't there to list: its row stays,
+/// marked removed, to take it out.
 #[test]
 fn the_overlap_list_follows_each_preview() {
     let (mut plates, plate) = plate();
@@ -537,20 +588,22 @@ fn the_overlap_list_follows_each_preview() {
     assert_eq!(edges(&plates).len(), 1);
     plates.answer();
     assert!(plates.doc.feed.draft_error().is_some(), "the kernel's stub");
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, false, false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, false, false]));
     plates.doc.look(Look::ToggleOverlap(1));
     assert_eq!(edges(&plates).len(), 2);
     plates.answer();
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, true, false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, true, false]));
     plates.doc.look(Look::ToggleOverlap(0));
     assert_eq!(edges(&plates).len(), 1);
     plates.answer();
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, true, false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![false, true, false]));
     plates.doc.look(Look::ToggleOverlap(1));
     assert!(edges(&plates).is_empty());
     plates.answer();
 
-    // Rounded off in the preview, the front edge's row goes.
+    // Rounded off in the preview, the front edge's row stays, marked
+    // removed and ticked, so it can be taken out from the list; hovered,
+    // it lights nothing, as it's on no model shown.
     varde_regen::testing::fillet_by_arcs();
     plates.doc.look(Look::ToggleOverlap(0));
     plates.answer();
@@ -567,15 +620,41 @@ fn the_overlap_list_follows_each_preview() {
         );
         picks.clone()
     };
-    assert_eq!(rows(&plates).len(), 2, "the right and back edges");
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, false]));
-    plates.doc.look(Look::ToggleOverlap(1));
+    use varde_view::OverlapNote;
+    let notes = |plates: &Plates| -> Vec<OverlapNote> {
+        let ticks = plates.doc.overlap_ticks().expect("the session's");
+        ticks.iter().map(|tick| tick.note).collect()
+    };
+    assert_eq!(rows(&plates).len(), 3, "the front edge kept");
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, false, false]));
+    assert_eq!(
+        notes(&plates),
+        [OverlapNote::Removed, OverlapNote::None, OverlapNote::None]
+    );
+    plates.doc.look(Look::HoverOverlap(Some(0)));
+    assert!(plates.doc.pick.hover().is_none());
+    plates.doc.look(Look::HoverOverlap(None));
+    // The back edge ticked too, rounded off alike.
+    plates.doc.look(Look::ToggleOverlap(2));
     assert_eq!(edges(&plates).len(), 2, "the front and back edges");
     plates.answer();
     assert!(plates.doc.feed.draft_error().is_none());
-    assert_eq!(rows(&plates).len(), 1, "the right edge alone");
+    assert_eq!(rows(&plates).len(), 3);
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, false, true]));
+    // The front unticked from the list: taken out, and its edge, back in
+    // the next preview, found again as it was.
     plates.doc.look(Look::ToggleOverlap(0));
-    assert_eq!(edges(&plates).len(), 3);
+    assert_eq!(edges(&plates).len(), 1, "the back edge alone");
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![false, false, true]));
+    plates.answer();
+    assert_eq!(rows(&plates).len(), 3);
+    assert_eq!(
+        notes(&plates),
+        [OverlapNote::None, OverlapNote::None, OverlapNote::Removed]
+    );
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![false, false, true]));
+    plates.doc.look(Look::ToggleOverlap(1));
+    assert_eq!(edges(&plates).len(), 2);
 }
 
 /// Two edges of one tangent chain picked apart (the line with Tangent

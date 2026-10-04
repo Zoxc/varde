@@ -97,7 +97,7 @@ pub use offset_face::offset_info;
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
 };
-pub use overlaps::{OverlapItems, Overlaps};
+pub use overlaps::{OverlapItems, OverlapNote, OverlapTick, Overlaps};
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };

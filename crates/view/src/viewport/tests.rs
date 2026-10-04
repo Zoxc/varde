@@ -1042,7 +1042,10 @@ fn a_left_press_held_still_on_the_model_lists_what_overlaps_there() {
     // the viewport.
     assert_eq!(
         list.at,
-        glam::DVec2::new(f64::from(at.x) - 10.0 - 180.0, f64::from(at.y) + 10.0)
+        glam::DVec2::new(
+            f64::from(at.x) - 10.0 - f64::from(crate::overlaps::WIDTH),
+            f64::from(at.y) + 10.0
+        )
     );
     // Off the model, over nothing, it stays a click.
     let off = plate.at(glam::DVec3::new(0.0, 26.0, 10.0));

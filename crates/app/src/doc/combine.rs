@@ -264,6 +264,22 @@ impl Doc {
         }
     }
 
+    /// Whether the combine being set up has the body of `pick` in the
+    /// role a click on it gives it, for the list of the model's overlaps:
+    /// its target, or a tool while tools are picked (a click on a tool
+    /// while the target is picked makes it the target).
+    pub(crate) fn combine_has(&self, pick: Pick) -> bool {
+        let Some(session) = &self.combine else {
+            return false;
+        };
+        let merged = self
+            .feed
+            .merged_before(self.editor.document(), session.feature);
+        let body = merged.holder(pick.body).unwrap_or(pick.body);
+        session.target == Some(body)
+            || (session.picking == CombinePick::Tools && session.tools.contains(&body))
+    }
+
     /// Picks `body` for the combine being set up, from the viewport or its
     /// row in Objects, as the session says ([`CombineSession::pick`]): a
     /// body merged into another before the combine as the one holding it,

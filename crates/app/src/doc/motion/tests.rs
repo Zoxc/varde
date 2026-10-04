@@ -1103,6 +1103,7 @@ mod face_session;
 mod fillet;
 mod loft;
 mod offset_face;
+mod overlaps;
 mod pattern;
 mod scale;
 mod shell;

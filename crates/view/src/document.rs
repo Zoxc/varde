@@ -156,10 +156,11 @@ pub struct DocumentState<'a> {
     /// What overlaps where the left button was held still in the
     /// viewport, listed to choose from, if it's open.
     pub overlaps: Option<&'a crate::Overlaps>,
-    /// Which of the model's overlaps listed are ticked, where a session
-    /// picking edges or faces of its own says (those it has); `None`:
-    /// those in `model_selection`.
-    pub overlap_ticks: Option<Vec<bool>>,
+    /// How each of the model's overlaps listed shows where a session
+    /// picks the model for itself: ticked as the session has it (what a
+    /// click on it would leave or take out), and what it is to the
+    /// session; `None`: ticked as `model_selection` has it.
+    pub overlap_ticks: Option<Vec<crate::OverlapTick>>,
     /// The sketch being edited, if one is.
     pub sketch: Option<SketchState<'a>>,
     /// The extrude being set up, if one is: never with a sketch.

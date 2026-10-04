@@ -3,11 +3,16 @@
 //! item, choosing one selects it as a click on it would, and closing it
 //! leaves the selection as it was. A list of the model's is found again
 //! on each new model shown while it's open (a session's preview of each
-//! tick), its rows by their names.
+//! tick), its rows by their names; a row of the session's own edge or
+//! face that the new preview took away (rounded off, cut out) is kept,
+//! marked removed, so it can be taken out from the list.
 
-use varde_view::{Look, OverlapItems, Overlaps, Pick, PickIndex, Picked, Selected};
+use varde_view::{
+    Look, OverlapItems, OverlapNote, OverlapTick, Overlaps, Pick, PickIndex, Picked, Selected,
+};
 
 use super::Doc;
+use super::motion::HeldRef;
 
 /// The list open, and the row of it hovered.
 #[derive(Debug)]
@@ -17,6 +22,21 @@ pub(crate) struct Listed {
     /// A list of the model's: each row's item by its names, as on the
     /// model it was opened on, to find it again on a new one.
     names: Vec<Option<Selected>>,
+    /// A list of the model's: each row's item as the session being set
+    /// up had it among its own edges or faces when the row was last
+    /// chosen (or the list opened), to keep the row while it has it.
+    held: Vec<Option<HeldRef>>,
+    /// A list of the model's: whether each row's item is gone from the
+    /// model shown, kept for the session's edge or face it is
+    /// (`held`): not hovered, and chosen, takes that out.
+    removed: Vec<bool>,
+}
+
+impl Listed {
+    /// Whether row `row` is one whose item the model shown no longer has.
+    fn removed(&self, row: usize) -> bool {
+        self.removed.get(row).copied().unwrap_or(false)
+    }
 }
 
 /// The item `pick` is of on `index`'s model by its names: its face's key,
@@ -66,6 +86,15 @@ fn found(index: &PickIndex, named: &Selected, body: varde_document::BodyId) -> O
     })
 }
 
+/// A row of the list of the model's overlaps as it's found again on a
+/// new model, see [`Doc::follow_overlaps`].
+struct Row {
+    pick: Pick,
+    named: Selected,
+    held: Option<HeldRef>,
+    removed: bool,
+}
+
 impl Doc {
     /// Opens `list`, in a sketch only of its items, outside one only of
     /// the model shown while the cursor picks it. Nothing's hovered till
@@ -81,24 +110,31 @@ impl Doc {
             return;
         }
         self.unhover_overlap();
-        let names = match &list.items {
-            OverlapItems::Sketch(_) => Vec::new(),
+        let (names, held) = match &list.items {
+            OverlapItems::Sketch(_) => (Vec::new(), Vec::new()),
             OverlapItems::Model(picks) => {
                 let index = self.feed.pick_index();
-                picks.iter().map(|pick| name(index, pick)).collect()
+                let names = picks.iter().map(|pick| name(index, pick)).collect();
+                let held = picks.iter().map(|&pick| self.motion_ref_at(pick)).collect();
+                (names, held)
             }
         };
+        let removed = vec![false; held.len()];
         self.overlaps = Some(Listed {
             list,
             hovered: None,
             names,
+            held,
+            removed,
         });
     }
 
     /// Finds the rows of the list of the model's overlaps again on the
     /// model shown, if it's another than theirs, by their names, each on
-    /// the body drawing its body there: those not found are dropped, and
-    /// the list closes once none is left (or the cursor doesn't pick).
+    /// the body drawing its body there: those not found are dropped,
+    /// but for one of the session's own edges or faces it still has
+    /// (its preview took it away), kept marked removed; the list closes
+    /// once none is left (or the cursor doesn't pick).
     pub(crate) fn follow_overlaps(&mut self) {
         let model = self.feed.model();
         let Some(listed) = &self.overlaps else {
@@ -121,13 +157,35 @@ impl Doc {
             Some(holder.map_or(body, |&(_, holder)| holder))
         };
         let index = self.feed.pick_index();
-        let mut rows: Vec<(Pick, Option<Selected>)> = Vec::new();
-        for named in listed.names.iter().flatten() {
-            let Some(pick) = drawn(named.body()).and_then(|body| found(index, named, body)) else {
+        let mut rows: Vec<Row> = Vec::new();
+        for (row, &pick) in picks.iter().enumerate() {
+            let Some(named) = listed.names.get(row).copied().flatten() else {
                 continue;
             };
-            if rows.iter().all(|(other, _)| other.target != pick.target) {
-                rows.push((pick, Some(*named)));
+            let held = listed.held.get(row).copied().flatten();
+            let found = drawn(named.body()).and_then(|body| found(index, &named, body));
+            match found {
+                Some(found) => {
+                    let again =
+                        (rows.iter()).any(|row| !row.removed && row.pick.target == found.target);
+                    if !again {
+                        rows.push(Row {
+                            pick: found,
+                            named,
+                            held,
+                            removed: false,
+                        });
+                    }
+                }
+                // Its item is on no model shown now: the pick kept, as
+                // of this model, never hovered nor clicked.
+                None if held.is_some_and(|held| self.motion_holds(&held)) => rows.push(Row {
+                    pick: Pick { model, ..pick },
+                    named,
+                    held,
+                    removed: true,
+                }),
+                None => {}
             }
         }
         if rows.is_empty() {
@@ -135,9 +193,10 @@ impl Doc {
         }
         self.unhover_overlap();
         if let Some(listed) = &mut self.overlaps {
-            let (picks, names) = rows.into_iter().unzip();
-            listed.list.items = OverlapItems::Model(picks);
-            listed.names = names;
+            listed.list.items = OverlapItems::Model(rows.iter().map(|row| row.pick).collect());
+            listed.names = rows.iter().map(|row| Some(row.named)).collect();
+            listed.held = rows.iter().map(|row| row.held).collect();
+            listed.removed = rows.iter().map(|row| row.removed).collect();
             listed.hovered = None;
         }
     }
@@ -152,7 +211,10 @@ impl Doc {
         listed.hovered = row;
         let (sketch, model) = match (&listed.list.items, row) {
             (OverlapItems::Sketch(ids), Some(row)) => (Some(ids[row]), None),
-            (OverlapItems::Model(picks), Some(row)) => (None, Some(picks[row])),
+            // Removed, it's on no model shown to highlight.
+            (OverlapItems::Model(picks), Some(row)) => {
+                (None, (!listed.removed(row)).then_some(picks[row]))
+            }
             (_, None) => return self.unhover_overlap(),
         };
         if sketch.is_some() {
@@ -176,13 +238,23 @@ impl Doc {
 
     /// Selects the item of the list's row `row` as a click on it would:
     /// alone, closing the list, or with `add` added or taken out, the list
-    /// kept open to pick more.
+    /// kept open to pick more. A row removed takes the session's edge or
+    /// face it is out, as a click on it would have.
     pub(crate) fn choose_overlap(&mut self, row: usize, add: bool) {
-        let Some(listed) = self.overlaps.take() else {
+        let Some(mut listed) = self.overlaps.take() else {
             return;
         };
         if !add {
             self.unhover_overlap();
+        }
+        if listed.removed(row) {
+            if let Some(held) = listed.held.get(row).copied().flatten() {
+                self.drop_motion_ref(&held);
+            }
+            if add {
+                self.overlaps = Some(listed);
+            }
+            return;
         }
         let click = match &listed.list.items {
             OverlapItems::Sketch(ids) => ids
@@ -199,20 +271,76 @@ impl Doc {
             self.look_at(click);
         }
         if add {
+            // What the session has of each row now, to keep a row its
+            // next preview takes away.
+            if let OverlapItems::Model(picks) = &listed.list.items {
+                for (row, &pick) in picks.iter().enumerate() {
+                    if !listed.removed(row) {
+                        listed.held[row] = self.motion_ref_at(pick);
+                    }
+                }
+            }
             self.overlaps = Some(listed);
         }
     }
 
-    /// Which rows of the list of the model's overlaps are ticked while a
-    /// session picks edges or faces of its own (a chamfer's, a fillet's,
-    /// a shell's), where a row chosen picks its item or takes it out:
-    /// those it has. `None` elsewhere, where the model's selection ticks
-    /// them.
-    pub(crate) fn overlap_ticks(&self) -> Option<Vec<bool>> {
-        let OverlapItems::Model(picks) = &self.overlaps.as_ref()?.list.items else {
+    /// How the rows of the list of the model's overlaps show while a
+    /// session picks the model for itself (a combine, a move or other
+    /// motion session, the measure tool, picking a plane), as the session
+    /// a click goes to has their items: ticked where the click would leave
+    /// it as it is or take it out, see [`Doc::motion_tick`]; a row removed
+    /// ticked while the session still has it. `None` elsewhere, where the
+    /// model's selection ticks them.
+    pub(crate) fn overlap_ticks(&self) -> Option<Vec<OverlapTick>> {
+        let listed = self.overlaps.as_ref()?;
+        let OverlapItems::Model(picks) = &listed.list.items else {
             return None;
         };
-        (picks.iter()).map(|&pick| self.motion_has(pick)).collect()
+        let own = self.combine.is_some()
+            || self.motion.is_some()
+            || self.measure.is_some()
+            || self.picking_plane.is_some();
+        if !own {
+            return None;
+        }
+        let tick = |row: usize, pick: Pick| {
+            if listed.removed(row) {
+                let held = listed.held.get(row).copied().flatten();
+                return OverlapTick {
+                    ticked: held.is_some_and(|held| self.motion_holds(&held)),
+                    note: OverlapNote::Removed,
+                };
+            }
+            // As `look_at` hands a click on.
+            let ticked = if self.combine.is_some() {
+                self.combine_has(pick)
+            } else if self.motion.is_some() {
+                return self.motion_tick(pick);
+            } else if self.measure.is_some() {
+                self.measure_has(pick)
+            } else {
+                // Picking a plane, a click on a face takes it: none is.
+                false
+            };
+            OverlapTick {
+                ticked,
+                note: OverlapNote::None,
+            }
+        };
+        Some(
+            picks
+                .iter()
+                .enumerate()
+                .map(|(row, &pick)| tick(row, pick))
+                .collect(),
+        )
+    }
+
+    /// Which rows [`Doc::overlap_ticks`] ticks.
+    #[cfg(test)]
+    pub(crate) fn overlap_ticked(&self) -> Option<Vec<bool>> {
+        let ticks = self.overlap_ticks()?;
+        Some(ticks.iter().map(|tick| tick.ticked).collect())
     }
 
     /// Whether what's hovered in the model is drawn over what hides it

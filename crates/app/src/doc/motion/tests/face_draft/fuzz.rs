@@ -65,15 +65,26 @@ fn check_session(plates: &Plates, what: &str) {
     if let (Some(ticks), Some(listed)) = (plates.doc.overlap_ticks(), &plates.doc.overlaps)
         && let OverlapItems::Model(picks) = &listed.list.items
     {
-        for (&tick, &pick) in ticks.iter().zip(picks) {
-            assert_eq!(Some(tick), plates.doc.motion_has(pick), "{what}");
+        for (tick, &pick) in ticks.iter().zip(picks) {
+            if tick.note == varde_view::OverlapNote::Removed {
+                continue;
+            }
+            if let Some(has) = plates.doc.motion_has(pick) {
+                assert_eq!(tick.ticked, has, "{what}");
+            }
         }
     }
     if session.kind != MotionKind::Draft {
         return;
     }
-    if session.picking == MotionPick::Reference {
-        assert_eq!(plates.doc.overlap_ticks(), None, "{what}");
+    // While the plane picks, a row is ticked only as the plane.
+    if session.picking == MotionPick::Reference
+        && let Some(ticks) = plates.doc.overlap_ticks()
+    {
+        assert!(
+            ticks.iter().filter(|tick| tick.ticked).count() <= 1,
+            "{what}"
+        );
     }
     let document = plates.doc.editor.document();
     if let Some(id) = session.feature {

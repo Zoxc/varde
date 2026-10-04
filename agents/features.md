@@ -2101,7 +2101,15 @@ a cross, an icon toggle and typed fields.
   merged into the body aligned (one added or redone since it was
   picked, `AlignSetup::merged_into`, from `MotionSession::follow`) is
   gone alike ("The point it's aligned to is in the body aligned now:
-  pick another"), as regenerating would refuse it.
+  pick another"), as regenerating would refuse it. The other way round,
+  the body aligned merged into another (the target's, say) by a join or
+  combine added or redone since: the body moved follows to the body
+  holding it (`MotionSession::follow`, as a move's bodies do) and the
+  moved side's references go with it, named on the holder as a pick
+  there now would be (`AlignSetup::moved_merged`, `Taken::on`; their
+  marks found again on the next model), rather than left on the body
+  merged away, where regenerating wouldn't find them and nothing would
+  ask for them again.
 - **Preview**: the align as set up is the draft while nothing is
   picked; while a reference is picked the model is the history as of
   the feature (a new one sends no draft, an edited one a move of its
@@ -4057,7 +4065,11 @@ Shell), so the panel is built in the style of the mock's shell panel.
   (`MotionLook::OriginPlane`, taken only then) and a flat face clicked
   is taken (`Doc::reference_of`, named as of the feature; anything else
   "Only a flat face can be the neutral plane"), the clicks going back to
-  the faces either way. A face neutral plane an undo takes away (its
+  the faces either way. One of the faces drafted is refused, "That face
+  is one the draft tilts: pick a face it doesn't, or an origin plane":
+  the preview shows it tilted, while the plane named would be the face
+  as before the draft (and regenerating refuses a neutral plane among
+  the faces drafted anyway); it doesn't light under the cursor either. A face neutral plane an undo takes away (its
   body or its maker, checked by `Document::check_neutral_plane`) is kept
   and said to be gone, "The neutral plane is gone: pick another",
   nothing previewed or committed until another is picked or a redo

@@ -273,16 +273,29 @@ impl Input {
         self.split.regions.hover.take().is_some() | self.split.curve.take().is_some()
     }
 
-    /// Lets go of what the other kind of handle held, for a session of
-    /// `kind`: an offset face's handle, or a move's. What a session left
-    /// held (its handle under the cursor or dragged as it ended) would
-    /// otherwise keep the next session's clicks off the model.
+    /// Lets go of what another kind of session held, for a session of
+    /// `kind`: a move's handles, an offset face's handle, a split's
+    /// region or curve. What a session left held (its handle under the
+    /// cursor or dragged as it ended) would otherwise keep the next
+    /// session's hover off the model, as [`Input::holds`] says: even
+    /// one returning before its own handles are worked out (a split,
+    /// sweep or loft picking in its sketches).
     fn settle(&mut self, kind: MotionKind) {
-        if kind == MotionKind::OffsetFace {
+        if kind != MotionKind::Move {
             self.hover = None;
             self.drag = None;
-        } else {
+        }
+        if kind != MotionKind::OffsetFace {
             self.face = FaceInput::default();
+        }
+        if kind != MotionKind::Split {
+            self.split = SplitInput::default();
+        }
+        if kind != MotionKind::Sweep {
+            self.sweep = SplitInput::default();
+        }
+        if kind != MotionKind::Loft {
+            self.loft = LoftInput::default();
         }
     }
 

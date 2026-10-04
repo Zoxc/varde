@@ -13,11 +13,21 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use glam::DVec3;
-use varde_document::{BodyId, EdgeRef, FaceRef};
-use varde_view::{MotionKind, MotionPick, Naming, Pick, PickIndex, Picked, Selected, Unnamed};
+use varde_document::{AxisRef, BodyId, EdgeRef, FaceRef, PlaneRef};
+use varde_view::{
+    MotionKind, MotionPick, Naming, OverlapNote, OverlapTick, Pick, PickIndex, Picked, Selected,
+    Unnamed,
+};
 
 use super::{Doc, MotionSession, OUT_OF_DATE, unnamed};
 use crate::doc::feed::Merges;
+
+/// One of the edges or faces a session picks several of, as it has it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum HeldRef {
+    Edge(EdgeRef),
+    Face(FaceRef),
+}
 
 /// An edge or face reference a session picks several of.
 pub(crate) trait Ref: Copy + PartialEq {
@@ -304,7 +314,7 @@ impl Doc {
 
     /// Whether a click on `pick` takes a reference of type `R` out: it's
     /// one picked, or one it grows into ([`Ref::grown`]).
-    fn ref_picked<R: Ref>(&self, pick: Pick) -> Option<usize> {
+    pub(super) fn ref_picked<R: Ref>(&self, pick: Pick) -> Option<usize> {
         let session = self.motion.as_ref()?;
         let target = R::target(pick.target)?;
         let index = self.feed.pick_index();
@@ -332,6 +342,138 @@ impl Doc {
         } else {
             None
         }
+    }
+
+    /// How the row of `pick` in the list of the model's overlaps shows
+    /// while the session being set up picks: ticked where the session has
+    /// it in the role a click on it would give it, so the click leaves it
+    /// as it is or takes it out (its edges or faces, as
+    /// [`Doc::motion_has`] has them; its bodies; the axis or plane, the
+    /// tool, the scale's edge, the align's directions, while they're
+    /// picked), an edge of a picked tangent chain noted as the chain a
+    /// click takes out. A point isn't ticked: the row is the edge or
+    /// vertex, the point where on it.
+    pub(crate) fn motion_tick(&self, pick: Pick) -> OverlapTick {
+        let mut tick = OverlapTick::default();
+        let Some(session) = &self.motion else {
+            return tick;
+        };
+        if let Some(has) = self.motion_has(pick) {
+            tick.ticked = has;
+            let index = self.feed.pick_index();
+            let chain = (session.kind.blends() || session.kind == MotionKind::Sweep)
+                && EdgeRef::target(pick.target)
+                    .is_some_and(|edge| EdgeRef::grown(self, session, index, edge).len() > 1);
+            if has && chain {
+                tick.note = OverlapNote::Chain;
+            }
+            return tick;
+        }
+        tick.ticked = match session.picking {
+            MotionPick::Bodies => session.bodies.contains(&self.named_body(pick.body)),
+            MotionPick::Reference => self.reference_target() == Some(pick.target),
+            MotionPick::Align(_) => self
+                .align_lit()
+                .iter()
+                .any(|lit| lit.contains(&pick.target)),
+            MotionPick::Edge => self.scale_lit().contains(&pick.target),
+            MotionPick::Tool => self.split_tool_has(pick),
+            MotionPick::Edges
+            | MotionPick::Path
+            | MotionPick::Faces
+            | MotionPick::Point
+            | MotionPick::Regions
+            | MotionPick::Nothing => false,
+        };
+        tick
+    }
+
+    /// Where the face or edge `face` or `edge` names is on the model
+    /// shown, by its names on the body drawing its body there.
+    pub(super) fn shown_face_ref(&self, face: &FaceRef) -> Option<Picked> {
+        let body = *self.shown_bodies(&[face.body]).first()?;
+        let index = self.feed.pick_index();
+        (index.find_face(body, &face.key, face.near)).map(Picked::Face)
+    }
+
+    fn shown_edge_ref(&self, edge: &EdgeRef) -> Option<Picked> {
+        let body = *self.shown_bodies(&[edge.body]).first()?;
+        let index = self.feed.pick_index();
+        (index.find_edge(body, edge.faces, edge.near)).map(Picked::Edge)
+    }
+
+    /// Where the axis or plane of the session being set up is on the
+    /// model shown, if it's an edge or face found there.
+    fn reference_target(&self) -> Option<Picked> {
+        let session = self.motion.as_ref()?;
+        if session.kind.takes_axis() {
+            match session.axis? {
+                AxisRef::Edge(edge) => self.shown_edge_ref(&edge),
+                AxisRef::Face(face) => self.shown_face_ref(&face),
+                AxisRef::Origin(_) => None,
+            }
+        } else {
+            match session.plane? {
+                PlaneRef::Face(face) => self.shown_face_ref(&face),
+                PlaneRef::Origin(_) => None,
+            }
+        }
+    }
+
+    /// The reference of the session's own (an edge or face it picks
+    /// several of) a click on `pick` takes out, if one is: the first.
+    pub(crate) fn motion_ref_at(&self, pick: Pick) -> Option<HeldRef> {
+        let session = self.motion.as_ref()?;
+        self.motion_has(pick)?;
+        if session.kind.blends() || session.kind == MotionKind::Sweep {
+            let at = self.ref_picked::<EdgeRef>(pick)?;
+            Some(HeldRef::Edge(*EdgeRef::refs(session).refs.get(at)?))
+        } else {
+            let at = self.ref_picked::<FaceRef>(pick)?;
+            Some(HeldRef::Face(*FaceRef::refs(session).refs.get(at)?))
+        }
+    }
+
+    /// Whether the session being set up still has `held`.
+    pub(crate) fn motion_holds(&self, held: &HeldRef) -> bool {
+        let Some(session) = &self.motion else {
+            return false;
+        };
+        match held {
+            HeldRef::Edge(edge) => {
+                (EdgeRef::refs(session).refs.iter()).any(|r| r.order(edge).is_eq())
+            }
+            HeldRef::Face(face) => {
+                (FaceRef::refs(session).refs.iter()).any(|r| r.order(face).is_eq())
+            }
+        }
+    }
+
+    /// Takes `held` out of the session being set up, if it has it, as a
+    /// click on it would: from a row of the list of the model's overlaps
+    /// whose item the preview took away.
+    pub(crate) fn drop_motion_ref(&mut self, held: &HeldRef) {
+        if !self.editable() {
+            return;
+        }
+        let Some(session) = &mut self.motion else {
+            return;
+        };
+        match held {
+            HeldRef::Edge(edge) => {
+                let found = (EdgeRef::refs(session).refs.iter()).find(|r| r.order(edge).is_eq());
+                if let Some(found) = found.copied() {
+                    EdgeRef::refs_mut(session).drop_ref(&found);
+                }
+            }
+            HeldRef::Face(face) => {
+                let found = (FaceRef::refs(session).refs.iter()).find(|r| r.order(face).is_eq());
+                if let Some(found) = found.copied() {
+                    FaceRef::refs_mut(session).drop_ref(&found);
+                }
+            }
+        }
+        session.refs_body();
     }
 
     /// Whether `pick` lights as the cursor's over it: one of type `R` a

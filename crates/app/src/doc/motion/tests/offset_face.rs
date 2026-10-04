@@ -450,18 +450,18 @@ fn the_overlap_list_ticks_picks_and_follows_the_offset_s_faces() {
         ]),
     };
     plates.doc.look(Look::OpenOverlaps(list));
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![false, false]));
     plates.doc.look(Look::ToggleOverlap(0));
     assert_eq!(faces(&plates).len(), 1);
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, false]));
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     // The top moved out: still listed, ticked.
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, false]));
     plates.doc.look(Look::ToggleOverlap(1));
     assert_eq!(faces(&plates).len(), 2);
     plates.answer();
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![true, true]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, true]));
     let listed = plates.doc.overlaps.as_ref().expect("still open");
     let varde_view::OverlapItems::Model(picks) = &listed.list.items else {
         panic!("the model's");

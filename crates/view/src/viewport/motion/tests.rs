@@ -757,6 +757,52 @@ fn an_offset_face_handle_left_held_lets_go_in_the_next_session() {
     assert!(!captured && !input.motion.holds());
 }
 
+/// A move's arrow left under the cursor as its session ends doesn't keep
+/// the model unhovered in a sweep picking its path next, which takes the
+/// mouse before a move's handles are worked out: the model's edge off
+/// the path's curves is hovered at once.
+#[test]
+fn a_move_s_handle_left_hovered_lets_go_in_a_session_picking_sketches() {
+    use crate::motion::{BlendEdges, SweepPath, SweepView};
+    let camera = front();
+    let mut input = Interaction::default();
+    let arrow = at(CENTRE + DVec3::Z * 10.0);
+    let moving = viewport(
+        state(MotionKind::Move, MotionPick::Bodies, None),
+        &camera,
+        None,
+    );
+    feed(&moving, &mut input, &[moved(arrow)]);
+    assert_eq!(input.motion.hover, Some(Grip::Arrow(Axis3::Z)));
+    let index = plate();
+    let mut sweep = state(MotionKind::Sweep, MotionPick::Path, None);
+    sweep.sweep = Some(Box::new(SweepView {
+        path: SweepPath::Path,
+        candidates: Vec::new(),
+        source: None,
+        picked: SweepView::none_picked(),
+        missing: 0,
+        parts: Vec::new(),
+        edges: BlendEdges::default(),
+        lines: Vec::new(),
+        chains: Vec::new(),
+        keep_orientation: false,
+        left_handed: false,
+        operation: crate::OperationKind::NewBody,
+        targets: Vec::new(),
+        info: None,
+    }));
+    let sweep = viewport(sweep, &camera, Some(&index));
+    // The plate's front, low by its right end.
+    let body = at(DVec3::new(25.0, -20.0, 2.0));
+    let (messages, _) = feed(&sweep, &mut input, &[moved(body)]);
+    assert!(!input.motion.holds());
+    assert!(
+        matches!(messages[..], [Message::Look(Look::Hover(Some(_)))]),
+        "{messages:?}"
+    );
+}
+
 /// Zoomed in as far as the camera goes, the knob snaps finer than the
 /// design's units show a distance: dragged to where its distance would
 /// show as nothing ("0 mm", which no offset is), nothing's sent, as at

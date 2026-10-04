@@ -359,10 +359,10 @@ fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
     };
     let picks = vec![top(&plates), front(&plates, body)];
     plates.doc.look(Look::OpenOverlaps(list(picks)));
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![false, false]));
     plates.doc.look(Look::ToggleOverlap(1));
     assert_eq!(faces(&plates).len(), 1);
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, true]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![false, true]));
     plates.answer();
     // The plane's row clicked closes the list; opened again while the
     // plane picks (the front drafted, the top as it was), nothing's
@@ -370,13 +370,13 @@ fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     let picks = vec![top(&plates)];
     plates.doc.look(Look::OpenOverlaps(list(picks)));
-    assert_eq!(plates.doc.overlap_ticks(), None);
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![false]));
     plates.doc.look(Look::ToggleOverlap(0));
     let session = plates.doc.motion.as_ref().unwrap();
     assert!(matches!(session.plane, Some(PlaneRef::Face(_))));
     assert_eq!(picking(&plates), MotionPick::Faces);
     assert_eq!(faces(&plates).len(), 1);
-    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![false]));
 }
 
 /// The neutral plane the top of another box, which a combine merges into
@@ -463,6 +463,35 @@ fn the_neutral_face_among_the_faces_drafted_is_refused() {
     assert!(error.contains("faces the pull direction"), "{error}");
     let [low, high] = plates.bounds(body);
     assert!(near(low, DVec3::ZERO) && near(high, DVec3::new(40.0, 30.0, 10.0)));
+}
+
+/// While the neutral plane picks, the preview shows the faces drafted
+/// tilted: a click on one is refused, saying why, rather than taking the
+/// plane the face was before the draft; the plane is left as it was.
+#[test]
+fn a_face_drafted_in_the_preview_is_refused_as_the_neutral_plane() {
+    varde_regen::testing::draft_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartDraft);
+    plates.answer();
+    let pick = front(&plates, body);
+    click(&mut plates, pick);
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    let plane = plates.doc.motion.as_ref().unwrap().plane;
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    let lit = plates.doc.refs_lit::<varde_document::FaceRef>();
+    let [Picked::Face(drafted)] = lit[..] else {
+        panic!("the front drafted: {lit:?}");
+    };
+    plates.click_at(body, Picked::Face(drafted), DVec3::new(20.0, 0.0, 5.0));
+    assert_eq!(
+        plates.doc.notice.as_deref(),
+        Some("That face is one the draft tilts: pick a face it doesn't, or an origin plane")
+    );
+    assert_eq!(picking(&plates), MotionPick::Reference);
+    assert_eq!(plates.doc.motion.as_ref().unwrap().plane, plane);
 }
 
 /// The units changed while a draft is set up: the 3° it opens with, and

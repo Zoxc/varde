@@ -645,6 +645,63 @@ fn a_target_a_later_combine_merges_into_the_moved_body_is_gone() {
     assert!(plates.doc.motion_ready());
 }
 
+/// The body aligned merged into the target's body by a combine added
+/// after the picks: the body moved follows to the one holding it, and
+/// the moved side's references go with it, named on it as a pick there
+/// now would be (not left on the body merged away, which regenerating
+/// wouldn't find them on); the target's, on the body aligned now, are
+/// said to be gone and asked for again.
+#[test]
+fn the_moved_sides_picks_follow_the_moved_body_merged_into_the_targets() {
+    let mut plates = super::plates();
+    let [_, right, left] = plates.bodies;
+    plates.doc.look(Look::StartAlign);
+    plates.click(left);
+    let other = DVec3::new(-20.0, 0.0, 15.0);
+    let moved_rim = rim(&plates, left, other);
+    plates.click_at(left, Picked::Edge(moved_rim), other + DVec3::X * 5.0);
+    let top = DVec3::new(20.0, 0.0, 15.0);
+    let target_rim = rim(&plates, right, top);
+    plates.click_at(right, Picked::Edge(target_rim), top + DVec3::X * 5.0);
+    assert!(plates.doc.motion_ready());
+    let combine = varde_document::Combine {
+        target: right,
+        tools: vec![left],
+        op: varde_document::BodyOp::Union,
+        keep_tools: false,
+    };
+    let add = plates.doc.editor.document().add_feature(combine.into());
+    plates.doc.apply(add);
+    plates.doc.sync();
+    plates.answer();
+    let session = plates.doc.motion.as_ref().expect("the session stays");
+    assert_eq!(session.bodies, [right]);
+    let moved = session.align.sides[0];
+    assert!(
+        matches!(moved.point, Some(PointRef::Centre(edge)) if edge.body == right),
+        "{moved:?}"
+    );
+    assert!(moved.primary.is_some_and(|d| d.body() == Some(right)));
+    assert!(!plates.doc.motion_ready());
+    assert!(shows(
+        &plates,
+        "The point it's aligned to is in the body aligned now: pick another"
+    ));
+    assert!(!shows(
+        &plates,
+        "pick the points and directions on the body again"
+    ));
+    // The target picked again, on the body the combine left out (none
+    // here but the origin): the moved side as it followed is ready.
+    plates.motion(MotionLook::Picking(slot(
+        AlignSide::Target,
+        AlignRole::Point,
+    )));
+    plates.motion(MotionLook::OriginPoint);
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert!(session.align.sides[1].point == Some(PointRef::Origin));
+}
+
 /// An edited align's references, picked again, are lit and drawn on the
 /// model as of the align, found by their names: its faces in each
 /// side's colour, its corners as dots.

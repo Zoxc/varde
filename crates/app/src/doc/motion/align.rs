@@ -292,6 +292,40 @@ impl AlignSetup {
         }
     }
 
+    /// Moves the moved side's references on a body `merges` (the merges
+    /// before the align) merged into `body`, the one aligned, on to it,
+    /// as one picked there now is named ([`Taken::on`]): the body moved
+    /// followed to the body holding it, a join or combine added or redone
+    /// since merging it in, and its references go with it, where
+    /// regenerating finds them by their keys. Their marks are found again
+    /// on the body holding them.
+    fn moved_merged(&mut self, body: BodyId, merges: &Merges) {
+        for role in AlignRole::ALL {
+            let slot = AlignSlot::new(AlignSide::Moved, role);
+            let Some(taken) = self.taken(slot) else {
+                continue;
+            };
+            let merged = taken.body().filter(|&on| on != body);
+            if merged.and_then(|on| merges.holder(on)) != Some(body) {
+                continue;
+            }
+            let side = &mut self.sides[AlignSide::Moved.index()];
+            match (role, taken.on(body)) {
+                (AlignRole::Point, Taken::Point(point)) => side.point = Some(point),
+                (AlignRole::Primary, Taken::Direction(direction)) => {
+                    side.primary = Some(direction);
+                }
+                (AlignRole::Secondary, Taken::Direction(direction)) => {
+                    side.secondary = Some(direction);
+                }
+                _ => continue,
+            }
+            // Found again on the next model shown, on the body holding
+            // it there ([`AlignSetup::follow`]).
+            self.marks[AlignSide::Moved.index()][role.index()] = None;
+        }
+    }
+
     /// Notes the target's references on `body`, the one aligned, or on a
     /// body `merges` (the merges before the align) merged into it: picked
     /// on another body, then that merged into the moved one by a join or
@@ -533,12 +567,17 @@ impl MotionSession {
     }
 
     /// Notes the target's references a merge before the align
-    /// (`merges`) put in the body aligned ([`AlignSetup::merged_into`]).
+    /// (`merges`) put in the body aligned ([`AlignSetup::merged_into`]),
+    /// and moves the moved side's on to the body aligned where a merge
+    /// put theirs in it ([`AlignSetup::moved_merged`]).
     pub(super) fn follow_align_merges(&mut self, merges: &Merges) {
         let body = match &self.bodies[..] {
             &[body] => Some(body),
             _ => None,
         };
+        if let Some(body) = body {
+            self.align.moved_merged(body, merges);
+        }
         self.align.merged_into(body, merges);
     }
 

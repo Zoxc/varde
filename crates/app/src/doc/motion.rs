@@ -58,6 +58,7 @@ use varde_view::{
 use self::align::AlignSetup;
 use self::blend::BlendSetup;
 use self::loft::LoftSetup;
+pub(crate) use self::refs::HeldRef;
 use self::refs::Refs;
 use self::scale::ScaleSetup;
 use self::split::SplitSetup;
@@ -1311,6 +1312,8 @@ const NOT_A_DIRECTION: &str =
     "Only a straight or round edge, or a round face, can give the direction";
 const NOT_A_PLANE: &str = "Only a flat face can be the mirror plane";
 const NOT_A_NEUTRAL_PLANE: &str = "Only a flat face can be the neutral plane";
+const DRAFTED_NEUTRAL_PLANE: &str =
+    "That face is one the draft tilts: pick a face it doesn't, or an origin plane";
 const OUT_OF_DATE: &str = "The model shown is out of date: try again once it's regenerated";
 
 impl Doc {
@@ -1777,7 +1780,7 @@ impl Doc {
         if !self.feed.answers_request() || self.feed.predates_replacement() {
             return Err(OUT_OF_DATE.into());
         }
-        let reference = self.reference_of(pick.target, pick.at)?;
+        let reference = self.reference_of(pick)?;
         let Some(session) = &mut self.motion else {
             return Ok(());
         };
@@ -1797,15 +1800,21 @@ impl Doc {
         Ok(())
     }
 
-    /// `target` of the model shown, picked at `at`, as the axis or plane
-    /// of the move or mirror being set up, named as the feature stores it
-    /// ([`Naming`], the history stopped at the feature): for a move a
-    /// straight or round edge, or a round face (a cylinder's, cone's,
-    /// torus's or other surface of revolution's); for a mirror a flat
-    /// face. Refused, why, if it's none of those, made by the feature or
-    /// a later one, or on a body which can't be told there.
-    fn reference_of(&self, target: Picked, at: DVec3) -> Result<Reference, Cow<'static, str>> {
+    /// `pick` of the model shown as the axis or plane of the move or
+    /// mirror being set up, named as the feature stores it ([`Naming`],
+    /// the history stopped at the feature): for a move a straight or
+    /// round edge, or a round face (a cylinder's, cone's, torus's or
+    /// other surface of revolution's); for a mirror a flat face. Refused,
+    /// why, if it's none of those, made by the feature or a later one, or
+    /// on a body which can't be told there; for a draft, one of the faces
+    /// it drafts, which its preview shows drafted while the plane named
+    /// is the face as before the draft.
+    fn reference_of(&self, pick: Pick) -> Result<Reference, Cow<'static, str>> {
+        let (target, at) = (pick.target, pick.at);
         let session = self.motion.as_ref().ok_or("Nothing is set up")?;
+        if session.kind == MotionKind::Draft && self.ref_picked::<FaceRef>(pick).is_some() {
+            return Err(DRAFTED_NEUTRAL_PLANE.into());
+        }
         let index = self.feed.pick_index();
         let naming = self.motion_naming().ok_or("Nothing is set up")?;
         let refused = |why: Unnamed, what: &str| unnamed(why, what, session.kind);
@@ -2141,7 +2150,7 @@ impl Doc {
                 MotionPick::Point => self.scale_point_of(pick).is_ok(),
                 MotionPick::Edge => self.scale_edge_of(pick).is_ok(),
                 MotionPick::Tool => self.split_tool_of(pick).is_ok(),
-                _ => self.reference_of(pick.target, pick.at).is_ok(),
+                _ => self.reference_of(pick).is_ok(),
             }
     }
 

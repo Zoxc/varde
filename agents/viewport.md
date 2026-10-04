@@ -273,7 +273,12 @@ press anywhere else goes on to picking and the camera. While dragging,
 moves send the snapped value only when it changes, and the release is
 captured. The cursor is a grab hand over one, grabbing while dragging.
 A move with no handles (picking its axis, a mirror, read-only) resets
-the input on its next mouse event.
+the input on its next mouse event. Every event first lets go of what
+another kind of session held (`Input::settle`): a move's handle, an
+offset face's, a split's region or curve, so one left hovered or
+dragged as its session ended doesn't keep the next session's hover off
+the model, even a session that takes the mouse before the handles are
+worked out (a split or sweep picking in its sketches).
 
 The panel follows the mock's (`.opp`): a card 288 px wide, 8 px round,
 with a 3 px accent line along its top and the mock's shadow, drawn by
@@ -1029,11 +1034,21 @@ rows) hovers its item as a list's row or the cursor would
 meanwhile, and in the model drawn over what hides it (see "Through"
 under the highlight). Each row has a tick, checked while its item is
 selected (in the sketch's selection, or the model's targets, of its
-model); in a session picking edges or faces of its own (a chamfer's, a
-fillet's, a shell's, an offset face's, a draft's) while the session has
-it, a click taking it out, none ticked while a draft's neutral plane
-picks, a click then taking the face as the plane (`Doc::overlap_ticks`,
-`Doc::motion_has`; `DocumentState::overlap_ticks`).
+model). In a session picking the model for itself (a combine, a move
+or any other motion session, the measure tool, picking a plane) the
+selection ticks nothing: a row is ticked as the session a click goes to
+has its item, in the role a click on it gives it, so the click leaves
+it as it is or takes it out (`Doc::overlap_ticks`, `OverlapTick`;
+`DocumentState::overlap_ticks`): a combine's target, and its tools
+while they're picked (`Doc::combine_has`); a motion session's own edges
+or faces (`Doc::motion_has`), its bodies while they're picked, its axis
+or plane while that's picked (a draft's neutral plane included), a
+split's tool, a scale's edge, an align's directions; the measure tool's
+A and B (`Doc::measure_has`); never a point (the row is the edge or
+vertex) nor a face while a plane is picked for a sketch
+(`Doc::motion_tick`). An edge of a tangent chain a blend picked reads
+"Chain of Body 1" (`OverlapNote::Chain`): a click on any of its edges
+takes the chain out.
 A row clicked (`ChooseOverlap`, the app filling in `add` from
 Ctrl/Cmd held) takes a `ClickGeometry` or `ClickModel` on that item, so
 a session (measure, combine, move) takes it as its click: alone it
@@ -1044,9 +1059,17 @@ scrolling closes it too. A list of the model's is found again on each
 new model shown while it's open (`Doc::follow_overlaps`, from
 `prune_picks`), as a session's preview of each tick brings one: its
 rows by their names (`Selected`, named when it opened), each on the
-body drawing its body there; a row not found (an edge the preview
-rounded off) is dropped, and the list closes once none is left, so no
-row stays of a model gone by, where a click would do nothing.
+body drawing its body there; a row not found is dropped, and the list
+closes once none is left, so no row stays of a model gone by, where a
+click would do nothing. The one exception is a row of the session's own
+edge or face its preview took away (an edge rounded off, a face a shell
+removed), which the session still has (`HeldRef`, noted per row when
+the list opens and after each row chosen with `add`): it stays, marked
+removed ("Removed edge of Body 1", `OverlapNote::Removed`), ticked
+while the session has it, never hovered, and chosen it takes the
+session's reference out directly (`Doc::drop_motion_ref`), as a click
+on it would have; once a later preview has its item again it's found
+by its name as before.
 
 One or two items selected, with no tool, operation or plane pick in use
 and no feature selected, are measured for the status bar's selection box

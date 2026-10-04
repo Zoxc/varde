@@ -447,6 +447,24 @@ impl Doc {
         }
     }
 
+    /// Whether `pick` is the tool of the split being set up, of the kind
+    /// its mode picks: the face picked, or a face of the tool body.
+    pub(super) fn split_tool_has(&self, pick: Pick) -> bool {
+        let Some(session) = &self.motion else {
+            return false;
+        };
+        match session.split.mode {
+            SplitMode::Body => session.split.body == Some(self.named_body(pick.body)),
+            SplitMode::Face => match &session.split.surface {
+                Some(SplitTool::Plane(PlaneRef::Face(face)) | SplitTool::Face(face)) => {
+                    self.shown_face_ref(face) == Some(pick.target)
+                }
+                _ => false,
+            },
+            SplitMode::Regions | SplitMode::Line => false,
+        }
+    }
+
     /// Takes `pick` as the tool of the split being set up, handing the
     /// clicks on to nothing (the preview shows), or says why it can't be.
     pub(super) fn split_tool(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {

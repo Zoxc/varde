@@ -26,7 +26,7 @@ pub(crate) const OVERLAP_REACH: f64 = 8.0;
 /// five edges and five faces about it, hidden ones included.
 pub(crate) const MAX_OVERLAPS: usize = 16;
 /// How wide the list is, and how tall a row, in pixels.
-const WIDTH: f32 = 180.0;
+pub(crate) const WIDTH: f32 = 220.0;
 const ROW_HEIGHT: f32 = crate::toolbar::MENU_ITEM_HEIGHT;
 const PADDING: f32 = 4.0;
 /// How far from where the button was held the list's corner is, in
@@ -80,6 +80,30 @@ impl Overlaps {
     }
 }
 
+/// How a row of the list of the model's overlaps shows while a session
+/// picks the model for itself ([`DocumentState::overlap_ticks`](crate::DocumentState::overlap_ticks)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OverlapTick {
+    /// Whether the session has the row's item: a click on it would leave
+    /// it as it is or take it out.
+    pub ticked: bool,
+    pub note: OverlapNote,
+}
+
+/// What a row's item is to the session, where that's more than the item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OverlapNote {
+    #[default]
+    None,
+    /// An edge of a tangent chain the session picked: a click on it
+    /// takes the chain's edges out. "Chain of Body 1".
+    Chain,
+    /// The session's own edge or face that its preview has taken away
+    /// (rounded off, cut out): listed still, to take out. "Removed edge
+    /// of Body 1".
+    Removed,
+}
+
 impl OverlapItems {
     pub fn len(&self) -> usize {
         match self {
@@ -101,7 +125,7 @@ fn list_height(rows: usize) -> f64 {
 /// The list as shown, a menu's rows naming the items of `sketch` or
 /// `document`'s bodies, each ticked if it's in the sketch's `selection`
 /// or the model's `model_selection` (as `ticks` has it, where it's
-/// given: a session's own picks), over a layer filling the viewport
+/// given: a session's own picks, named as they are to it), over a layer filling the viewport
 /// that closes it on a press anywhere else. A row clicked selects its item
 /// alone (with `Ctrl`, `Cmd` on macOS, adds it or takes it out, the list
 /// kept open); its tick adds it or takes it out alone.
@@ -109,11 +133,11 @@ pub(crate) fn view<'a>(
     overlaps: &Overlaps,
     sketch: Option<(&Sketch, &BTreeSet<Id>)>,
     model_selection: &Selection,
-    ticks: Option<&[bool]>,
+    ticks: Option<&[OverlapTick]>,
     document: &Document,
 ) -> Element<'a, Message> {
     let checked: Vec<bool> = match (&overlaps.items, ticks) {
-        (OverlapItems::Model(_), Some(ticks)) => ticks.to_vec(),
+        (OverlapItems::Model(_), Some(ticks)) => ticks.iter().map(|tick| tick.ticked).collect(),
         (OverlapItems::Sketch(ids), _) => (ids.iter())
             .map(|id| sketch.is_some_and(|(_, selection)| selection.contains(id)))
             .collect(),
@@ -135,10 +159,12 @@ pub(crate) fn view<'a>(
                     .unwrap_or_default()
             })
             .collect(),
-        OverlapItems::Model(picks) => (picks.iter())
-            .map(|pick| {
+        OverlapItems::Model(picks) => (picks.iter().enumerate())
+            .map(|(row, pick)| {
                 let body = document.body(pick.body).map(|body| body.name.as_str());
-                model_name(pick.target, body)
+                let tick = ticks.and_then(|ticks| ticks.get(row));
+                let note = tick.map_or(OverlapNote::None, |tick| tick.note);
+                model_name(pick.target, body, note)
             })
             .collect(),
     };
@@ -182,12 +208,17 @@ pub(crate) fn view<'a>(
 }
 
 /// A face, edge or vertex of the model as a row names it: "Face of Body
-/// 1", by its body's name if that's known.
-fn model_name(target: Picked, body: Option<&str>) -> String {
-    let kind = match target {
-        Picked::Face(_) => "Face",
-        Picked::Edge(_) => "Edge",
-        Picked::Vertex(_) => "Vertex",
+/// 1", by its body's name if that's known, as `note` says it is to the
+/// session: "Chain of Body 1", "Removed edge of Body 1".
+fn model_name(target: Picked, body: Option<&str>, note: OverlapNote) -> String {
+    let kind = match (target, note) {
+        (Picked::Edge(_), OverlapNote::Chain) => "Chain",
+        (Picked::Face(_), OverlapNote::Removed) => "Removed face",
+        (Picked::Edge(_), OverlapNote::Removed) => "Removed edge",
+        (Picked::Vertex(_), OverlapNote::Removed) => "Removed vertex",
+        (Picked::Face(_), _) => "Face",
+        (Picked::Edge(_), _) => "Edge",
+        (Picked::Vertex(_), _) => "Vertex",
     };
     match body {
         Some(body) => format!("{kind} of {body}"),
@@ -216,9 +247,22 @@ mod tests {
     #[test]
     fn a_model_item_is_named_by_its_kind_and_body() {
         assert_eq!(
-            model_name(Picked::Edge(3), Some("Body 2")),
+            model_name(Picked::Edge(3), Some("Body 2"), OverlapNote::None),
             "Edge of Body 2"
         );
-        assert_eq!(model_name(Picked::Vertex(0), None), "Vertex");
+        assert_eq!(
+            model_name(Picked::Vertex(0), None, OverlapNote::None),
+            "Vertex"
+        );
+        // As a session has it: an edge of a picked chain, a face its
+        // preview took away.
+        assert_eq!(
+            model_name(Picked::Edge(3), Some("Body 2"), OverlapNote::Chain),
+            "Chain of Body 2"
+        );
+        assert_eq!(
+            model_name(Picked::Face(1), Some("Body 2"), OverlapNote::Removed),
+            "Removed face of Body 2"
+        );
     }
 }

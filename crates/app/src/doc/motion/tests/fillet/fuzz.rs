@@ -66,12 +66,18 @@ fn check_session(plates: &Plates, what: &str) {
     let Some(session) = &plates.doc.motion else {
         return;
     };
-    // The overlap list's ticks are the session's own while it picks.
+    // The overlap list's ticks are the session's own while it picks;
+    // a row its preview took away is ticked while it still has it.
     if let (Some(ticks), Some(listed)) = (plates.doc.overlap_ticks(), &plates.doc.overlaps)
         && let OverlapItems::Model(picks) = &listed.list.items
     {
-        for (&tick, &pick) in ticks.iter().zip(picks) {
-            assert_eq!(Some(tick), plates.doc.motion_has(pick), "{what}");
+        for (tick, &pick) in ticks.iter().zip(picks) {
+            if tick.note == varde_view::OverlapNote::Removed {
+                continue;
+            }
+            if let Some(has) = plates.doc.motion_has(pick) {
+                assert_eq!(tick.ticked, has, "{what}");
+            }
         }
     }
     if session.kind != MotionKind::Fillet {
