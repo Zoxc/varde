@@ -2404,3 +2404,71 @@ fn join_to_original_reads_from_older_files_and_is_checked() {
     assert!(from_msgpack::<Document>(&unknown).is_err(), "Separatz");
     assert!(from_msgpack::<Document>(&raw).is_ok());
 }
+
+/// A list of copy bodies changed on disk is refused, never taken as room
+/// to make: a length of 2³² − 1, ids past any made (the largest there
+/// is among them), and a pattern's count raised so its bodies times its
+/// copies would overflow were they multiplied unchecked.
+#[test]
+fn a_tampered_list_of_copy_bodies_is_refused() {
+    use varde_document::{Axis3, AxisRef, Copies, Pattern, PatternKind};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let row = Pattern {
+        bodies: vec![plate],
+        kind: PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::Y),
+            count: Value::new("3", &Pattern::count_ask(&design)).unwrap(),
+            spacing: Value::new("40", &Pattern::spacing_ask(&design)).unwrap(),
+        },
+        copies: Copies::Separate(Vec::new()),
+    };
+    editor
+        .apply(editor.document().add_feature(row.into()))
+        .unwrap();
+    let raw = record_msgpack(editor.document());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let mut list = vec![0xa8];
+    list.extend_from_slice(b"Separate");
+    let at = (raw.windows(list.len()))
+        .position(|window| window == list)
+        .expect("the copies' variant")
+        + list.len();
+    assert_eq!(raw[at], 0x92);
+    let (first, second) = (raw[at + 1], raw[at + 2]);
+    assert!(first < 0x80 && second < 0x80, "small ids");
+    let with = |head: &[u8], items: &[u8]| {
+        let mut bytes = raw[..at].to_vec();
+        bytes.extend_from_slice(head);
+        bytes.extend_from_slice(items);
+        bytes.extend_from_slice(&raw[at + 3..]);
+        bytes
+    };
+    // An array of 2³² − 1, holding the two.
+    let long = with(&[0xdd, 0xff, 0xff, 0xff, 0xff], &[first, second]);
+    assert!(from_msgpack::<Document>(&long).is_err());
+    // As an array 32 of two, it reads.
+    let same = with(&[0xdd, 0, 0, 0, 2], &[first, second]);
+    assert!(from_msgpack::<Document>(&same).is_ok());
+    // The largest id there is in place of the second.
+    let mut largest = vec![first, 0xcf];
+    largest.extend_from_slice(&u64::MAX.to_be_bytes());
+    let past = with(&[0x92], &largest);
+    assert!(from_msgpack::<Document>(&past).is_err());
+    // The count raised as far as a number goes: refused, not overflowed.
+    let mut three = vec![0xa5];
+    three.extend_from_slice(b"value");
+    three.extend_from_slice(&[0xcb]);
+    three.extend_from_slice(&3.0f64.to_be_bytes());
+    let count = (raw.windows(three.len()))
+        .position(|window| window == three)
+        .expect("the count's value")
+        + 7;
+    for value in [f64::MAX, 1.8e19, 4294967297.0, 1025.0] {
+        let mut bytes = raw.clone();
+        bytes[count..count + 8].copy_from_slice(&value.to_be_bytes());
+        assert!(from_msgpack::<Document>(&bytes).is_err(), "{value}");
+    }
+}

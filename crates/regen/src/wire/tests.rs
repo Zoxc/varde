@@ -2991,3 +2991,94 @@ fn a_revolve_about_an_edge_round_trips() {
     assert!(Document::from_postcard(&hostile_bytes).is_err());
     assert_eq!(Document::from_postcard(&bytes).unwrap(), *editor.document());
 }
+
+/// A draft of a pattern whose copies are bodies of their own carries a
+/// list of them the page could have sent any way: the document lays the
+/// copies out whatever it held, so a list naming the plate, repeated, or
+/// far too long, or ids past any made, previews the same copies; a list
+/// whose length was changed in the bytes is refused as they're decoded,
+/// not taken as a length to make room for.
+#[test]
+fn a_draft_s_list_of_copy_bodies_is_laid_out_again_or_refused() {
+    use varde_document::{Axis3, AxisRef, BodyId, Copies, Pattern, PatternKind};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let row = |copies: Copies| Pattern {
+        bodies: vec![plate],
+        kind: PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::X),
+            count: Value::new("3", &Pattern::count_ask(&design)).unwrap(),
+            spacing: Value::new("100", &Pattern::spacing_ask(&design)).unwrap(),
+        },
+        copies,
+    };
+    editor
+        .apply(editor.document().add_feature(row(Copies::Joined).into()))
+        .unwrap();
+    let id = editor.document().features()[2].id;
+    let request = |list: Vec<BodyId>| Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(Box::new(Draft {
+            revision: 1,
+            feature: Some(id),
+            kind: row(Copies::Separate(list)).into(),
+        })),
+        inspect: None,
+    };
+    let varint = |mut value: u64| {
+        let mut out = Vec::new();
+        while value >= 0x80 {
+            out.push((value as u8) | 0x80);
+            value >>= 7;
+        }
+        out.push(value as u8);
+        out
+    };
+    // Ids are opaque: any number, as bytes could carry it.
+    let body = |number: u64| postcard::from_bytes::<BodyId>(&varint(number)).unwrap();
+    let lists = [
+        Vec::new(),
+        vec![plate, plate],
+        vec![body(u64::MAX); 3],
+        (0..5000).map(body).collect(),
+    ];
+    for list in lists {
+        let what = format!("{} listed", list.len());
+        let decoded = decode_request(&encode_request(&request(list))).unwrap();
+        let Response::Regenerated {
+            draft,
+            failed,
+            bodies,
+            ..
+        } = round_trip(&handle(decoded))
+        else {
+            panic!("{what}: regeneration failed");
+        };
+        assert_eq!(draft.unwrap().error, None, "{what}");
+        assert!(failed.is_empty(), "{what}: {failed:?}");
+        // The plate as it was, and two copy bodies 100 and 200 on.
+        let lows: Vec<f32> = bodies.iter().map(|(_, aabb)| aabb.min.x).collect();
+        assert_eq!(lows, [-30.0, 70.0, 170.0], "{what}");
+        assert_eq!(bodies[0].0, plate, "{what}");
+    }
+
+    // Three ids no varint mistakes for anything else, then their count
+    // made 2³² − 1.
+    let marker = 0x0123_4567_89ab_u64;
+    let list = vec![body(marker), body(marker + 1), body(marker + 2)];
+    let bytes = encode_request(&request(list));
+    let mut wanted = vec![3];
+    wanted.extend(varint(marker));
+    let at = (bytes.windows(wanted.len()))
+        .position(|window| window == wanted)
+        .expect("the list");
+    let mut tampered = bytes[..at].to_vec();
+    tampered.extend(varint(u64::from(u32::MAX)));
+    tampered.extend_from_slice(&bytes[at + 1..]);
+    assert!(decode_request(&tampered).is_err());
+    assert!(decode_request(&bytes).is_ok());
+}

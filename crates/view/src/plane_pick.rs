@@ -837,4 +837,55 @@ mod tests {
         assert!(!naming.takes_body(made[0]));
         assert!(!naming.takes_key(&original.copy(first.get(), 1)));
     }
+
+    /// Copies of a copy body, patterned on by joined patterns, its copy
+    /// later merged into the plate: named on the copy body up to the cap;
+    /// past it, which body a copy's face is on can't be told (none is
+    /// guessed), while the plate's own faces are still named.
+    #[test]
+    fn copies_of_a_copy_body_are_named_up_to_the_cap_and_unclear_past_it() {
+        let grid = |last: &str| {
+            let mut editor = Editor::new(Document::example());
+            let plate = editor.document().bodies()[0].id;
+            let mut pattern = row(editor.document(), plate, Axis3::X, "2");
+            pattern.copies = Copies::Separate(Vec::new());
+            editor
+                .apply(editor.document().add_feature(pattern.into()))
+                .unwrap();
+            let copy = editor.document().bodies()[1].id;
+            for (axis, count) in [(Axis3::Y, "64"), (Axis3::Z, last)] {
+                let add = (editor.document())
+                    .add_feature(row(editor.document(), copy, axis, count).into());
+                editor.apply(add).unwrap();
+            }
+            (editor.document().clone(), plate, copy)
+        };
+        for (last, clear) in [("32", true), ("33", false)] {
+            let (document, plate, copy) = grid(last);
+            let ids: Vec<u64> = document.features().iter().map(|f| f.id.get()).collect();
+            let top = FaceKey {
+                feature: ids[1],
+                part: PartKey::EndCap,
+                instance: 0,
+            };
+            let far = top.copy(ids[2], 1).copy(ids[3], 63).copy(ids[4], 1);
+            // The copy body merged into the plate by a later join.
+            let merged = [(copy, plate)];
+            let shown = Shown {
+                merged: &merged,
+                touched: &[],
+                failed: &[],
+            };
+            let naming = Naming::before(&document, document.features().len(), shown);
+            assert_eq!(
+                instances_before(&document, document.features().len()).is_some(),
+                clear,
+                "{last}"
+            );
+            assert!(naming.takes_key(&far), "{last}");
+            let wanted = clear.then_some(copy);
+            assert_eq!(naming.body_of(plate, &far), wanted, "{last}");
+            assert_eq!(naming.body_of(plate, &top), Some(plate), "{last}");
+        }
+    }
 }

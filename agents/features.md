@@ -1529,7 +1529,11 @@ pub enum Copies { Joined /* default */, Separate(Vec<BodyId>) }  // the copy bod
   pattern's (`created_by`), so **removing the pattern removes them**,
   and every later feature naming one (`Document::removal`); removing
   one copy body removes its maker, the pattern, with all its copy
-  bodies, as removing an extrude's body removes the extrude.
+  bodies, as removing an extrude's body removes the extrude. The app
+  asks first there (`Doc::remove_now`): a body goes quietly only where
+  nothing but its own feature goes with it, and a copy body takes the
+  pattern's other copy bodies, which the user didn't pick; deleting the
+  pattern itself takes its own bodies without asking.
 
 ### Regeneration
 
@@ -1596,12 +1600,14 @@ units, postcard and hostile values read back), `document/src/pattern/
 tests/separate.rs` (copy bodies laid out and named, kept by copy across
 spacing, count, body and join edits and undo, a later combine naming one
 refusing the edits that drop it, removal both ways, the limit, wrong
-lists refused from postcard), `regen/src/history/tests/pattern/
+lists refused from postcard; renamed, hidden and see-through copy
+bodies kept across edits, units and a kind swap), `regen/src/history/tests/pattern/
 separate.rs` (pins patterned unjoined, overlapping, each copy a pin of
 its own with its wall named as its copy; the tick toggled and undone;
 a combine cutting a copy body from a plate, a ring about a copy's wall,
 a join merging copies into the original; the cache across a count
-raised), `regen/src/history/tests/pattern.rs` (a row of pins against its volume and box, names per copy, a
+raised, for two bodies too; unjoined rings whole turn and part of one
+by each copy's volume and centre), `regen/src/history/tests/pattern.rs` (a row of pins against its volume and box, names per copy, a
 negative spacing; copies end to end along the pin's own round face
 united into one; a ring of pins, whole turn exact at quarter turns and
 three over 90° by its centre of mass; three bars through a hub against
@@ -1612,8 +1618,11 @@ pattern of a pattern 64 by 64, an edge of the last copy of the last
 copy found; discs touching along a line refused, a hair closer or
 farther right; copies on the original to the bit; a ring about a disc's
 wall near the coordinate limit; out of range; the patch bound with
-overflow; the cache), `regen/src/wire/tests.rs` (a draft and its axis),
-`io/src/vrdp/tests.rs` (through a file; tampered records refused), and
+overflow; the cache), `regen/src/wire/tests.rs` (a draft and its axis;
+a draft's list of copy bodies laid out again whatever it held, its
+length tampered refused), `io/src/vrdp/tests.rs` (through a file;
+tampered records refused, a copy list's length, ids and the count
+among them), and
 the motion fuzz (`motion/fuzz.rs`, `VARDE_MOTION_SEEDS`): random linear
 and circular patterns of 2 to 4 copies about origin axes, edges and
 round faces, half of them of bodies patterned already (copies of copies),
@@ -1622,7 +1631,10 @@ united one by one; a third of them unjoined, the originals left alone
 and each copy body the copy itself where `glam` places it, later
 features (moves, mirrors, patterns, combines, joins, faces as axes)
 then taking copy bodies like any, and edits dropping a copy body a
-later feature names refused.
+later feature names refused; earlier patterns changed one way (count,
+tick, kind swapped, a body added or taken out), each copy keeping its
+body, name and visibility, new ones named apart; copy bodies hidden
+or removed with their pattern.
 
 Known gaps: the 10 × 10 grid of pins (100 holes) cut from a plate in
 **one** difference runs out of work (`MAX_WORK`) in about 2 s (release);
@@ -1754,8 +1766,10 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   bodies), so the model shows as committed rather than as "Pattern
   fails" over a later feature's missing body. **The overlap warning** (the mock's, linear only, as the
   mock has it, `Doc::motion_warning`): unticked, with a spacing shorter
-  than the bodies are long along the direction ("The copies overlap (10
-  mm long this way): tick Join to original to merge them"), the length
+  than one of the bodies is long along the direction, so its own copies
+  overlap ("The copies overlap (10 mm long this way): tick Join to
+  original to merge them"; each body on its own, so two bodies far
+  apart whose copies miss aren't taken as one long one), the length
   from their faces in the model shown (`PickIndex::bodies_extent`, the
   mesh's points; the direction an origin axis's or, for an edge or
   face, the draft's reference). It doesn't stop OK (separate bodies may
@@ -1781,10 +1795,14 @@ opened writing nothing however it was typed), `pattern/separate.rs`
 listed and undone, the overlap warning and when it goes; editing the
 tick, and a later combine's copy body holding back fewer copies or
 joining, and sending no draft while the direction is picked; too many
-copy bodies refused), `pattern/fuzz.rs`
+copy bodies refused; the warning for two bodies apart, in inches,
+flipped and along the plate's edges; deleting a copy body asking
+first), `pattern/fuzz.rs`
 (`VARDE_PATTERN_SEEDS`: random modes, Flip, counts, long and nested
-spreads, units, undo and redo, kind swaps, commits, edits held to the
-values their fields come to);
+spreads, units, undo and redo, kind swaps, commits, the direction
+picked, copy bodies picked, named by later combines and mirrors,
+hidden and deleted; edits held to the values their fields come to, a
+held edit neither ready nor previewed);
 `view/src/motion/tests.rs` (both panels' rows and modes, the infos).
 
 Departures from the mock: "Join to original" starts ticked (the mock's

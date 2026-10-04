@@ -7,8 +7,11 @@
 //! patterned already, about their copies' edges and faces (copies of
 //! copies), a third of them with each copy a body of its own (later
 //! features then moving, mirroring, patterning, combining, joining and
-//! naming the copy bodies); earlier ones edited, removals, undo and
-//! redo. After each step: the cache warm and cold give
+//! naming the copy bodies); earlier ones edited, earlier patterns
+//! changed one way (count, tick, kind, a body more or less: each copy
+//! keeps its body as it was, new ones named apart), copy bodies hidden
+//! or removed with their pattern, removals, undo and redo. After each
+//! step: the document passes its check, the cache warm and cold give
 //! the same evaluation; every move and mirror that worked put each of its
 //! bodies where the motion worked out here takes it (the volume kept, the
 //! centre of mass moved, turned or reflected, by `glam`'s own rotations
@@ -22,6 +25,8 @@
 //! later edit can still be made; the document survives its bytes,
 //! flipped bits included; and a request with a move's, mirror's or
 //! pattern's draft and its answer cross the wire as they went.
+
+use std::collections::BTreeMap;
 
 use glam::DQuat;
 use varde_document::{Copies, Pattern, PatternKind};
@@ -235,6 +240,117 @@ fn random_pattern(
         bodies,
         kind,
         copies,
+    }
+}
+
+/// `old`, the pattern feature `index` of `document`, changed one way, as
+/// an edit of it might: its count, its Join to original ticked or not,
+/// linear and circular swapped (the axis, count and tick kept), a body
+/// added or taken out; `evaluation` is the history before it.
+fn tweaked(
+    document: &Document,
+    evaluation: &Evaluation,
+    old: &Pattern,
+    index: usize,
+    rng: &mut Rng,
+) -> Pattern {
+    let design = document.design();
+    let mut pattern = old.clone();
+    match rng.below(5) {
+        0 => {
+            let count = Value::new(
+                COUNTS[rng.below(COUNTS.len())],
+                &Pattern::count_ask(&design),
+            )
+            .unwrap();
+            match &mut pattern.kind {
+                PatternKind::Linear { count: was, .. }
+                | PatternKind::Circular { count: was, .. } => {
+                    *was = count;
+                }
+            }
+        }
+        1 => {
+            pattern.copies = match pattern.copies {
+                Copies::Joined => Copies::Separate(Vec::new()),
+                Copies::Separate(_) => Copies::Joined,
+            };
+        }
+        2 => {
+            let axis = *pattern.kind.axis();
+            let count = pattern.kind.count_value().clone();
+            pattern.kind = match pattern.kind {
+                PatternKind::Linear { .. } => PatternKind::Circular {
+                    about: axis,
+                    count,
+                    angle: Value::new(SPANS[rng.below(SPANS.len())], &Pattern::angle_ask(&design))
+                        .unwrap(),
+                },
+                PatternKind::Circular { .. } => PatternKind::Linear {
+                    along: axis,
+                    count,
+                    spacing: Value::new(
+                        SPACINGS[rng.below(SPACINGS.len())],
+                        &Pattern::spacing_ask(&design),
+                    )
+                    .unwrap(),
+                },
+            };
+        }
+        3 if pattern.bodies.len() > 1 => {
+            pattern.bodies.remove(rng.below(pattern.bodies.len()));
+        }
+        _ => {
+            let others: Vec<BodyId> = (movable(document, evaluation, Some(index)).into_iter())
+                .filter(|body| !pattern.bodies.contains(body))
+                .collect();
+            if !others.is_empty() {
+                pattern.bodies.push(others[rng.below(others.len())]);
+                pattern.bodies.sort_unstable();
+            }
+        }
+    }
+    pattern
+}
+
+/// The copy bodies of the pattern feature `feature` of `document`, by
+/// the body each is a copy of and its `k`.
+fn copies_of(document: &Document, feature: FeatureId) -> BTreeMap<(BodyId, u32), BodyId> {
+    match document.feature(feature).map(|feature| &feature.kind) {
+        Some(FeatureKind::Pattern(pattern)) => pattern
+            .copy_bodies()
+            .map(|(source, k, body)| ((source, k), body))
+            .collect(),
+        _ => BTreeMap::new(),
+    }
+}
+
+/// Holds an edit of the pattern `feature` from `before` to `after` to
+/// keeping each copy's body (by its original and `k`) as it was, name,
+/// visibility and opacity, removing those of copies it no longer makes
+/// and adding new ones, named apart from every body there was.
+fn kept_copies(before: &Document, after: &Document, feature: FeatureId, what: &str) {
+    let (old, new) = (copies_of(before, feature), copies_of(after, feature));
+    for (copy, &body) in &new {
+        match old.get(copy) {
+            Some(&was) => {
+                assert_eq!(body, was, "{what}: copy {copy:?} changed body");
+                assert_eq!(after.body(body), before.body(was), "{what}: {body:?}");
+            }
+            None => {
+                assert!(before.body(body).is_none(), "{what}: {body:?} reused");
+                let name = &after.body(body).unwrap().name;
+                assert!(
+                    before.bodies().iter().all(|other| other.name != *name),
+                    "{what}: {name} named twice"
+                );
+            }
+        }
+    }
+    for (copy, &was) in &old {
+        if !new.contains_key(copy) {
+            assert!(after.body(was).is_none(), "{what}: {was:?} left behind");
+        }
     }
 }
 
@@ -595,7 +711,7 @@ fn run(seed: u64, steps: usize) {
         let document = editor.document().clone();
         warm.begin();
         let now = evaluate(&document, &mut warm);
-        let roll = if step < 2 { 0 } else { rng.below(14) };
+        let roll = if step < 2 { 0 } else { rng.below(17) };
         let mut draft = None;
         let mut apply = |command: Command| {
             let _ = editor.apply(command);
@@ -693,6 +809,58 @@ fn run(seed: u64, steps: usize) {
                 } else if !document.bodies().is_empty() {
                     let body = &document.bodies()[rng.below(document.bodies().len())];
                     apply(Command::RemoveBody(body.id));
+                }
+            }
+            14 | 15 => {
+                // An earlier pattern changed one way.
+                let patterns: Vec<usize> = (motions.iter().copied())
+                    .filter(|&i| matches!(document.features()[i].kind, FeatureKind::Pattern(_)))
+                    .collect();
+                if !patterns.is_empty() {
+                    let index = patterns[rng.below(patterns.len())];
+                    let feature = document.features()[index].id;
+                    let FeatureKind::Pattern(old) = &document.features()[index].kind else {
+                        unreachable!()
+                    };
+                    let then = evaluate(&truncated(&document, index), &mut warm);
+                    let kind =
+                        FeatureKind::Pattern(tweaked(&document, &then, old, index, &mut rng));
+                    let dropped = document.copies_dropped(feature, &kind);
+                    let named = (document.features().iter())
+                        .any(|f| f.kind.bodies().iter().any(|b| dropped.contains(b)));
+                    let set = Command::SetFeature {
+                        feature,
+                        kind: Box::new(kind),
+                    };
+                    match editor.apply(set) {
+                        Ok(()) => kept_copies(&document, editor.document(), feature, &what),
+                        Err(_) if named => assert_eq!(*editor.document(), document),
+                        Err(error) => panic!("{what}: {error}"),
+                    }
+                }
+            }
+            16 => {
+                // A copy body hidden or shown, or removed (its pattern
+                // with it).
+                let copies: Vec<BodyId> = (document.features().iter())
+                    .filter_map(|f| match &f.kind {
+                        FeatureKind::Pattern(pattern) => Some(pattern.copy_bodies()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .map(|(_, _, body)| body)
+                    .collect();
+                if !copies.is_empty() {
+                    let body = copies[rng.below(copies.len())];
+                    if rng.below(3) == 0 {
+                        let maker = document.body(body).unwrap().created_by;
+                        apply(Command::RemoveBody(body));
+                        assert!(editor.document().feature(maker).is_none(), "{what}");
+                        assert!(editor.document().body(body).is_none(), "{what}");
+                    } else {
+                        let visible = document.body(body).unwrap().visible;
+                        apply(Command::SetVisible(body, !visible));
+                    }
                 }
             }
             11 => editor.undo(),

@@ -1155,9 +1155,11 @@ impl Doc {
 
     /// What the panel warns of for the pattern being set up, if anything:
     /// a linear one's copies, each a body of its own, overlapping, as the
-    /// UI mock has it: the spacing shorter than its bodies are long that
-    /// way (their faces in the model shown, so within its mesh), or the
-    /// mock's words for it.
+    /// UI mock has it: the spacing shorter than one of its bodies is long
+    /// that way (its faces in the model shown, so within its mesh), so
+    /// that body's copies overlap each other, or the mock's words for it.
+    /// Each body on its own: bodies far apart whose copies miss each
+    /// other aren't one long body.
     fn motion_warning(&self, session: &MotionSession) -> Option<String> {
         if session.kind != MotionKind::LinearPattern
             || session.join
@@ -1177,7 +1179,12 @@ impl Doc {
             _ => self.feed.draft_reference()?[1],
         };
         let shown = self.shown_bodies(&session.bodies);
-        let long = self.feed.pick_index().bodies_extent(&shown, direction)?;
+        let index = self.feed.pick_index();
+        let long = (shown.iter())
+            .filter_map(|&body| index.bodies_extent(&[body], direction))
+            .fold(None, |longest: Option<f64>, long| {
+                Some(longest.map_or(long, |longest| longest.max(long)))
+            })?;
         // The mock's slack, for copies end to end.
         (spacing.value.abs() < long - 1e-6).then(|| {
             let units = self.editor.document().units();

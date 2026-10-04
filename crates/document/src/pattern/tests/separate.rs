@@ -311,3 +311,69 @@ fn wrong_copy_bodies_are_refused_when_read() {
         )))
     );
 }
+
+/// Copy bodies renamed (as a file can), hidden and made see-through keep
+/// all that across edits keeping their copies: another spacing, a higher
+/// count, the circular kind for the linear, units; new copies are named
+/// on from the highest "Body N", the renamed among them; one dropped and
+/// made again is a new body, shown.
+#[test]
+fn renamed_and_hidden_copy_bodies_keep_it_across_edits() {
+    let (mut editor, [a, _], _) = two_bodies();
+    let document = editor.document().clone();
+    let id = add(&mut editor, separate(linear(&document, &[a], "3", "25"))).unwrap();
+    let made = listed(&pattern_of(&editor, id));
+    let mut renamed = editor.document().clone();
+    let at = renamed.body_index(made[0]).unwrap();
+    renamed.bodies[at].name = "Body 41".into();
+    let at = renamed.body_index(made[1]).unwrap();
+    renamed.bodies[at].name = "Spare".into();
+    editor.apply(Command::Replace(Box::new(renamed))).unwrap();
+    editor.apply(Command::SetVisible(made[0], false)).unwrap();
+    let half = crate::Opacity::new(50).unwrap();
+    editor.apply(Command::SetOpacity(made[1], half)).unwrap();
+    let kept = |editor: &Editor| {
+        let document = editor.document();
+        let first = document.body(made[0]).unwrap();
+        let second = document.body(made[1]).unwrap();
+        assert_eq!((first.name.as_str(), first.visible), ("Body 41", false));
+        assert_eq!((second.name.as_str(), second.opacity), ("Spare", half));
+        assert_eq!(document.check(), Ok(()));
+    };
+    let set = |editor: &mut Editor, pattern: Pattern| {
+        editor
+            .apply(Command::SetFeature {
+                feature: id,
+                kind: Box::new(pattern.into()),
+            })
+            .unwrap();
+    };
+    set(&mut editor, separate(linear(&document, &[a], "3", "40")));
+    kept(&editor);
+    set(&mut editor, separate(linear(&document, &[a], "5", "40")));
+    kept(&editor);
+    let five = listed(&pattern_of(&editor, id));
+    let names: Vec<&str> = (five[2..].iter())
+        .map(|&body| editor.document().body(body).unwrap().name.as_str())
+        .collect();
+    assert_eq!(names, ["Body 42", "Body 43"]);
+    set(&mut editor, separate(circular(&document, &[a], "5", "360")));
+    kept(&editor);
+    assert_eq!(listed(&pattern_of(&editor, id)), five);
+    editor
+        .apply(Command::SetUnits(varde_expr::LengthUnit::In))
+        .unwrap();
+    kept(&editor);
+    // Two copies: the hidden one stays, the see-through one goes; three
+    // again, a new body in its place, shown and opaque.
+    set(&mut editor, separate(circular(&document, &[a], "2", "360")));
+    assert!(editor.document().body(made[1]).is_none());
+    set(&mut editor, separate(circular(&document, &[a], "3", "360")));
+    let again = listed(&pattern_of(&editor, id));
+    assert_eq!(again[0], made[0]);
+    assert!(again[1] > five[3]);
+    let new = editor.document().body(again[1]).unwrap();
+    assert!(new.visible && new.opacity == crate::Opacity::default());
+    assert_eq!(new.name, "Body 42");
+    assert!(!editor.document().body(made[0]).unwrap().visible);
+}

@@ -2,11 +2,14 @@
 //! starting and editing linear and circular patterns, their modes, Flip,
 //! Join to original, counts and spreads (long and deeply nested texts among them), units
 //! changed, undo and redo while editing, the pattern's kind swapped by
-//! another edit, commits and cancels. After each step: a session that's
-//! ready drafts and commits the values its fields come to (worked out
-//! here), a pattern edited opens to the values it stores and OK on it
-//! straight away writes nothing, and a session never outlives the
-//! pattern it edits or its kind.
+//! another edit, the direction picked, copy bodies picked, named by
+//! later combines and mirrors, hidden and deleted, commits and cancels.
+//! After each step: a session that's ready drafts and commits the
+//! values its fields come to (worked out here), one held back by a later
+//! feature naming a copy body it'd drop is neither ready nor previewed,
+//! a pattern edited opens to the values it stores and OK on it straight
+//! away writes nothing, a session never outlives the pattern it edits or
+//! its kind, and the document passes its check.
 
 use std::f64::consts::TAU;
 
@@ -79,6 +82,18 @@ fn patterns(plates: &Plates) -> Vec<FeatureId> {
     (plates.doc.editor.document().features().iter())
         .filter(|feature| matches!(feature.kind, FeatureKind::Pattern(_)))
         .map(|feature| feature.id)
+        .collect()
+}
+
+/// The copy bodies of `plates`' document's patterns.
+fn copy_bodies(plates: &Plates) -> Vec<BodyId> {
+    (plates.doc.editor.document().features().iter())
+        .filter_map(|feature| match &feature.kind {
+            FeatureKind::Pattern(pattern) => Some(pattern.copy_bodies()),
+            _ => None,
+        })
+        .flatten()
+        .map(|(_, _, body)| body)
         .collect()
 }
 
@@ -162,8 +177,9 @@ fn check_ready(plates: &Plates, what: &str) {
             assert!(!pattern.full_turn(), "{what}");
         }
     }
-    // The draft previews it.
-    if plates.doc.editable() {
+    // The draft previews it (while an axis is picked, the bodies stay
+    // where they are, or for a new pattern nothing is previewed).
+    if plates.doc.editable() && session.picking == MotionPick::Bodies {
         let draft = plates.doc.motion_draft().map(|(_, kind)| kind);
         assert_eq!(draft, Some(FeatureKind::Pattern(pattern)), "{what}");
     }
@@ -208,11 +224,20 @@ fn run(seed: u64, steps: usize) {
     for step in 0..steps {
         let what = format!("seed {seed} step {step}");
         // What the session edits and its kind, before the step.
-        match rng.below(20) {
+        match rng.below(25) {
             0 => plates.doc.look(Look::StartPattern),
             1 => plates.doc.look(Look::StartCircularPattern),
             2 | 3 => {
-                let body = *rng.pick(&bodies);
+                // The plates, or any body there now, copy bodies among
+                // them.
+                let all: Vec<BodyId> = (plates.doc.editor.document().bodies().iter())
+                    .map(|body| body.id)
+                    .collect();
+                let body = if rng.below(2) == 0 || all.is_empty() {
+                    *rng.pick(&bodies)
+                } else {
+                    *rng.pick(&all)
+                };
                 plates.doc.look(Look::ClickBody {
                     body,
                     add: rng.below(2) == 0,
@@ -241,13 +266,21 @@ fn run(seed: u64, steps: usize) {
             12 => plates.doc.update(Edit::Redo),
             13 | 14 => {
                 let before = plates.doc.motion.as_ref().and_then(|session| {
-                    let ready = plates.doc.motion_ready();
+                    // OK waits on a preview that failed.
+                    let ready =
+                        plates.doc.motion_ready() && plates.doc.feed.draft_error().is_none();
                     (ready && session.kind.pattern()).then(|| (session.feature, session.kind()))
                 });
                 plates.doc.update(Edit::CommitMotion);
                 if let Some((edited, Some(kind))) = before {
                     // Committed: the document holds what it drafted.
-                    assert!(plates.doc.motion.is_none(), "{what}: not committed");
+                    assert!(
+                        plates.doc.motion.is_none(),
+                        "{what}: not committed: {:?} {:?} {:?}",
+                        plates.doc.feed.draft_error(),
+                        plates.doc.edit_error,
+                        plates.doc.motion.as_ref().map(|s| (s.feature, s.kind()))
+                    );
                     let id = edited.unwrap_or_else(|| plates.last_feature().0);
                     let mut stored = plates
                         .doc
@@ -317,7 +350,63 @@ fn run(seed: u64, steps: usize) {
                     plates.doc.sync();
                 }
             }
+            20 | 21 => {
+                // Another edit names a copy body: a combine of it into the
+                // plate, or a mirror of it.
+                let copies = copy_bodies(&plates);
+                if !copies.is_empty() {
+                    let body = *rng.pick(&copies);
+                    let kind: FeatureKind = if rng.below(2) == 0 {
+                        varde_document::Combine {
+                            target: bodies[0],
+                            tools: vec![body],
+                            op: varde_document::BodyOp::Union,
+                            keep_tools: rng.below(2) == 0,
+                        }
+                        .into()
+                    } else {
+                        varde_document::Mirror {
+                            bodies: vec![body],
+                            plane: varde_document::PlaneRef::Origin(
+                                varde_document::OriginPlane::YZ,
+                            ),
+                            keep_original: rng.below(2) == 0,
+                        }
+                        .into()
+                    };
+                    let add = plates.doc.editor.document().add_feature(kind);
+                    plates.doc.apply(add);
+                    plates.doc.sync();
+                }
+            }
+            22 => {
+                // A copy body removed (its pattern with it), or hidden or
+                // shown.
+                let copies = copy_bodies(&plates);
+                if !copies.is_empty() {
+                    let body = *rng.pick(&copies);
+                    let document = plates.doc.editor.document();
+                    let maker = document.body(body).unwrap().created_by;
+                    if rng.below(2) == 0 {
+                        plates.doc.apply(Command::RemoveBody(body));
+                        let document = plates.doc.editor.document();
+                        assert!(document.feature(maker).is_none(), "{what}");
+                        assert!(document.body(body).is_none(), "{what}");
+                    } else {
+                        let visible = document.body(body).unwrap().visible;
+                        plates.doc.apply(Command::SetVisible(body, !visible));
+                    }
+                    plates.doc.sync();
+                }
+            }
+            23 => plates.motion(MotionLook::Picking(MotionPick::Reference)),
             _ => plates.answer(),
+        }
+        // An edit held back by a later feature naming a copy body it'd
+        // drop isn't ready, and isn't previewed.
+        if plates.doc.motion_held().is_some() {
+            assert!(!plates.doc.motion_ready(), "{what}");
+            assert_eq!(plates.doc.motion_draft(), None, "{what}");
         }
         // A session edits a pattern of its own kind that's there.
         if let Some(session) = &plates.doc.motion

@@ -208,3 +208,84 @@ fn unjoined_copies_are_found_in_the_cache() {
     let other = evaluate(editor.document(), &mut cache);
     assert!(!Arc::ptr_eq(&arc(&first, made[0]), &arc(&other, made[0])));
 }
+
+/// Unjoined rings of a pin 10 from the Z axis, whole turn and part of
+/// one: each copy body a pin (its volume, exactly the pin's to the
+/// moments' rounding) where the turn takes its centre; the count raised
+/// spreads them again, made anew where they move, the original never
+/// touched.
+#[test]
+fn unjoined_rings_hold_a_pin_per_copy_where_it_turns_to() {
+    let mut editor = Editor::new(Document::default());
+    let body = pin(&mut editor, 10.0, 0.0);
+    let original = evaluated(editor.document());
+    let ring = |editor: &Editor, n: &str, span: &str| {
+        separate(circular(editor.document(), &[body], Z, n, span))
+    };
+    let four = ring(&editor, "4", "360");
+    let id = add(&mut editor, four);
+    for (n, span, steps) in [("4", "360", 4.0), ("6", "360", 6.0), ("3", "90", 2.0)] {
+        let pattern = ring(&editor, n, span);
+        set(&mut editor, id, pattern);
+        let evaluation = evaluated(editor.document());
+        assert_eq!(failure(&evaluation, id), None, "{n} over {span}");
+        assert_eq!(solid_of(&evaluation, body), solid_of(&original, body));
+        let made = copy_bodies(editor.document(), id);
+        let span: f64 = span.parse().unwrap();
+        assert_eq!(made.len() + 1, n.parse::<usize>().unwrap());
+        for (k, &copy) in (1..).zip(&made) {
+            let (volume, centre) = mass(solid_of(&evaluation, copy));
+            assert!(near(volume, PIN, 1e-9), "copy {k}: {volume}");
+            let turn = (f64::from(k) * span / steps).to_radians();
+            let wanted = DVec3::new(10.0 * turn.cos(), 10.0 * turn.sin(), 5.0);
+            assert!(
+                centre.abs_diff_eq(wanted, 1e-9),
+                "{n} over {span}, copy {k}: {centre}, not {wanted}"
+            );
+        }
+    }
+}
+
+/// Two bodies, an unjoined row raised from 3 to 5 copies: the copy
+/// bodies laid out by copy then body, each copy made before found in
+/// the cache though its place in the list moved, the new ones made.
+#[test]
+fn a_row_of_two_bodies_raised_finds_each_copy_in_the_cache() {
+    let mut editor = Editor::new(Document::default());
+    let a = pin(&mut editor, 0.0, 0.0);
+    let b = pin(&mut editor, 0.0, 20.0);
+    let row = |editor: &Editor, n: &str| separate(linear(editor.document(), &[a, b], X, n, "10"));
+    let three = row(&editor, "3");
+    let id = add(&mut editor, three);
+    let mut cache = Cache::default();
+    cache.begin();
+    let first = evaluate(editor.document(), &mut cache);
+    let copies = |document: &Document| -> Vec<(BodyId, u32, BodyId)> {
+        match &document.feature(id).unwrap().kind {
+            FeatureKind::Pattern(pattern) => pattern.copy_bodies().collect(),
+            _ => Vec::new(),
+        }
+    };
+    let before = copies(editor.document());
+    let five = row(&editor, "5");
+    set(&mut editor, id, five);
+    cache.begin();
+    let more = evaluate(editor.document(), &mut cache);
+    let after = copies(editor.document());
+    assert_eq!(after.len(), 8);
+    assert_eq!(after[..4], before[..]);
+    let arc = |evaluation: &Evaluation, body: BodyId| {
+        let made = evaluation.bodies.iter().find(|m| m.body == body).unwrap();
+        made.solid.clone()
+    };
+    for &(_, _, copy) in &before {
+        assert!(Arc::ptr_eq(&arc(&first, copy), &arc(&more, copy)));
+    }
+    for &(source, k, copy) in &after {
+        let (volume, centre) = mass(&arc(&more, copy));
+        assert!(near(volume, PIN, 1e-9));
+        let y = if source == a { 0.0 } else { 20.0 };
+        let wanted = DVec3::new(10.0 * f64::from(k), y, 5.0);
+        assert!(centre.abs_diff_eq(wanted, 1e-9), "{centre} vs {wanted}");
+    }
+}

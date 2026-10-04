@@ -20,7 +20,8 @@ pub(crate) struct Deleting {
 impl Doc {
     /// Removes `target` and what depends on it, as one undo step: at once
     /// if no other feature goes with it (a feature's own bodies, or a
-    /// body's own feature, go without asking) and no join, cut or
+    /// body's own feature, go without asking, but not a pattern's other
+    /// copy bodies with one of them) and no join, cut or
     /// intersect that stays worked only on bodies that go
     /// ([`Doc::worked`]),
     /// or else asks first, listing everything that would go and warning
@@ -72,7 +73,14 @@ impl Doc {
             return;
         }
         let removal = self.editor.document().removal(target);
-        let quiet = removal.features.len() <= 1 && self.worked(&removal).0.is_empty();
+        // A body goes quietly only with the feature making it alone: a
+        // copy body takes its pattern, and the pattern's other copy
+        // bodies, which the user didn't pick.
+        let alone = match target {
+            Removable::Body(body) => removal.bodies.iter().all(|&other| other == body),
+            Removable::Feature(_) => true,
+        };
+        let quiet = removal.features.len() <= 1 && alone && self.worked(&removal).0.is_empty();
         if quiet || confirmed.as_ref() == Some(&removal) {
             self.apply(command(target));
         } else {
