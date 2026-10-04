@@ -89,7 +89,9 @@ pub use revolve::{
     axis_edge,
 };
 pub use select::{Selected, Selection, SelectionMode};
-pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
+pub use shortcut::{
+    Binding, DocumentKeys, Held, claimed, document_bindings, escapes, pressed, welcome_bindings,
+};
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};

@@ -812,6 +812,22 @@ impl Varde {
         }
     }
 
+    /// Whether a shortcut of the screen takes Tab, which otherwise backs
+    /// out as Escape does, see `escape_key`.
+    fn tab_taken(&self) -> bool {
+        let Screen::Document(doc) = &self.screen else {
+            return false;
+        };
+        doc.keys().is_some_and(|keys| {
+            let tab = keyboard::Key::Named(key::Named::Tab);
+            varde_view::claimed(
+                varde_view::document_bindings(keys),
+                &tab,
+                keyboard::Modifiers::empty(),
+            )
+        })
+    }
+
     pub(crate) fn subscription(&self) -> Subscription<Message> {
         let doc = self.screen.doc();
         let dialog = match &self.screen {
@@ -821,7 +837,9 @@ impl Varde {
         Subscription::batch([
             keyboard::listen().filter_map(peek_key),
             keyboard::listen().filter_map(command_key),
-            keyboard::listen().with(dialog).filter_map(escape_key),
+            keyboard::listen()
+                .with((dialog, self.tab_taken()))
+                .filter_map(escape_key),
             // The release is never seen if the window loses focus while
             // the peek key is held, e.g. to an Alt+Tab.
             window::events().filter_map(unfocused),
@@ -1053,18 +1071,21 @@ fn command_key(event: keyboard::Event) -> Option<Message> {
     }
 }
 
-/// Escape, given the prompt the user is being asked, if any: cancels it
-/// (staying, or deleting nothing), and otherwise backs out of what's
-/// open, see [`Look::Escape`].
-fn escape_key((dialog, event): (Option<Dialog>, keyboard::Event)) -> Option<Message> {
-    // With any modifiers, unlike a shortcut.
-    let keyboard::Event::KeyPressed {
-        key: keyboard::Key::Named(key::Named::Escape),
-        ..
-    } = event
-    else {
+/// Escape, or Tab where no shortcut takes it (`tab_taken`), given the
+/// prompt the user is being asked, if any: cancels it (staying, or
+/// deleting nothing), and otherwise backs out of what's open, see
+/// [`Look::Escape`].
+fn escape_key(
+    ((dialog, tab_taken), event): ((Option<Dialog>, bool), keyboard::Event),
+) -> Option<Message> {
+    // Escape with any modifiers, unlike a shortcut.
+    let keyboard::Event::KeyPressed { key, modifiers, .. } = event else {
         return None;
     };
+    let tab = key == keyboard::Key::Named(key::Named::Tab);
+    if !varde_view::escapes(&key, modifiers) || (tab && tab_taken) {
+        return None;
+    }
     Some(Message::Ui(match dialog {
         Some(Dialog::Unsaved) => Ui::File(File::Unsaved(Unsaved::Cancel)),
         Some(Dialog::Delete) => Ui::Look(Look::CancelDelete),

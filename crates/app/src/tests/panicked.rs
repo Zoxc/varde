@@ -50,7 +50,7 @@ fn the_panic_recorded_shows_until_discarded() {
     // `Esc` closes it.
     let escape = press(keyboard::Key::Named(key::Named::Escape), Default::default());
     assert!(matches!(
-        escape_key((welcome(&varde).dialog(), escape)),
+        escape_key(((welcome(&varde).dialog(), false), escape)),
         Some(Message::Ui(Ui::Welcome(WelcomeUi::ClosePanic)))
     ));
     click(&mut varde, WelcomeUi::ClosePanic);

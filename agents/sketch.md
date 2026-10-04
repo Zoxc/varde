@@ -1091,7 +1091,9 @@ bar says why (`EditError::Sketch`).
   (`Sketching::fields`, a fifth `Anchors` layer, `Anchors::beside` the
   cursor), each with the value typed or what it measures of the preview.
   `Tab` (`Look::NextField`; one binding with the Dimension tool's
-  `SwitchRound`, as the two never go together) opens the value field
+  `SwitchRound`, as the two never go together; elsewhere `Tab` alone
+  backs out as `Esc` does, the app's `escape_key` leaving it to these
+  bindings where they claim it, `Varde::tab_taken`) opens the value field
   (`ValueTarget::Field`, the step 3c field: `VALUE_FIELD`, `Doc::take_focus`,
   `OnEscape`) on the first field, or takes the text of the one open
   (`Doc::take_field`: `typed::read` for the field's `ask` in the design's

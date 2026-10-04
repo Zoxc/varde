@@ -3899,17 +3899,51 @@ pub(crate) fn press(key: keyboard::Key, modifiers: keyboard::Modifiers) -> keybo
 fn escape_cancels_a_prompt_or_closes_the_file_menu() {
     let escape = || press(keyboard::Key::Named(key::Named::Escape), Default::default());
     assert!(matches!(
-        escape_key((Some(Dialog::Unsaved), escape())),
+        escape_key(((Some(Dialog::Unsaved), false), escape())),
         Some(Message::Ui(Ui::File(File::Unsaved(Unsaved::Cancel))))
     ));
     assert!(matches!(
-        escape_key((Some(Dialog::Delete), escape())),
+        escape_key(((Some(Dialog::Delete), false), escape())),
         Some(Message::Ui(Ui::Look(Look::CancelDelete)))
     ));
     assert!(matches!(
-        escape_key((None, escape())),
+        escape_key(((None, false), escape())),
         Some(Message::Ui(Ui::Look(Look::Escape)))
     ));
+}
+
+/// Tab alone backs out as Escape does, prompts included, but not where a
+/// shortcut takes it: a drawing tool's fields, the Dimension tool's
+/// switch between radius and diameter.
+#[test]
+fn tab_backs_out_as_escape_where_nothing_else_takes_it() {
+    let tab = |modifiers| press(keyboard::Key::Named(key::Named::Tab), modifiers);
+    let none = keyboard::Modifiers::empty();
+    assert!(matches!(
+        escape_key(((None, false), tab(none))),
+        Some(Message::Ui(Ui::Look(Look::Escape)))
+    ));
+    assert!(matches!(
+        escape_key(((Some(Dialog::Delete), false), tab(none))),
+        Some(Message::Ui(Ui::Look(Look::CancelDelete)))
+    ));
+    assert!(escape_key(((None, true), tab(none))).is_none());
+    assert!(escape_key(((None, false), tab(keyboard::Modifiers::SHIFT))).is_none());
+    // Escape is taken whatever Tab does.
+    let escape = press(keyboard::Key::Named(key::Named::Escape), none);
+    assert!(escape_key(((None, true), escape)).is_some());
+}
+
+#[test]
+fn tab_is_taken_by_a_line_s_fields_once_it_starts() {
+    let (mut varde, _, _) = sketching_in_open_file();
+    assert!(!varde.tab_taken());
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
+        varde_view::Tool::Line,
+    ))));
+    assert!(!varde.tab_taken());
+    place_point(&mut varde);
+    assert!(varde.tab_taken());
 }
 
 /// The sketches of `doc` by name, each with whether it's visible.

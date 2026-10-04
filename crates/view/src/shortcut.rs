@@ -943,6 +943,29 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
         .collect()
 }
 
+/// Whether pressing `key` with `modifiers` backs out as `Esc` does: `Esc`
+/// with any modifiers, or `Tab` alone, which the app leaves to bindings
+/// taking it where there are any (see [`claimed`]).
+pub fn escapes(key: &KeyPress, modifiers: Modifiers) -> bool {
+    match key {
+        KeyPress::Named(Named::Escape) => true,
+        KeyPress::Named(Named::Tab) => modifiers.is_empty(),
+        _ => false,
+    }
+}
+
+/// Whether a binding of `bindings` takes pressing `key` with `modifiers`,
+/// enabled or claiming it, see [`pressed`].
+pub fn claimed(
+    bindings: impl IntoIterator<Item = Binding>,
+    key: &KeyPress,
+    modifiers: Modifiers,
+) -> bool {
+    bindings.into_iter().any(|binding| {
+        (binding.enabled || binding.claims) && binding.shortcut.matches(key, modifiers)
+    })
+}
+
 /// The message of the first enabled binding of `bindings` that pressing
 /// `key` with `modifiers` is, if any, unless a disabled one that
 /// claims the key comes before it (the rail's open set's letters do).

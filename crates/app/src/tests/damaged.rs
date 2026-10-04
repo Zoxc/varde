@@ -178,7 +178,7 @@ fn a_damaged_file_is_asked_about_before_it_shows_and_cancel_keeps_it() {
     assert!(keys::welcome_key((true, n)).is_some());
     let escape = press(keyboard::Key::Named(key::Named::Escape), Default::default());
     assert!(matches!(
-        escape_key((Some(Dialog::Damaged), escape)),
+        escape_key(((Some(Dialog::Damaged), false), escape)),
         Some(Message::Ui(Ui::Welcome(WelcomeUi::CancelDamaged)))
     ));
 

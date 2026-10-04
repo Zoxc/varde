@@ -260,7 +260,7 @@ fn escape(varde: &Varde) -> Message {
         text: None,
         repeat: false,
     };
-    escape_key((document(varde).dialog(), event)).unwrap()
+    escape_key(((document(varde).dialog(), false), event)).unwrap()
 }
 
 /// Where the File System Access API is, the dialog offers a file on the
