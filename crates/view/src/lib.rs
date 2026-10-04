@@ -20,6 +20,7 @@ mod document;
 mod errors;
 mod escape;
 mod extrude;
+mod face_draft;
 mod fillet;
 mod hit;
 mod icons;
@@ -73,6 +74,7 @@ pub use document::{
 };
 pub use errors::{ShownError, ShownErrors};
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
+pub use face_draft::draft_info;
 pub use fillet::fillet_info;
 pub use icons::LOGO_SVG;
 pub use measure::{

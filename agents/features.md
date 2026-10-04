@@ -1,6 +1,7 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers, shells, fillets and offset faces), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers, shells, fillets,
+offset faces and drafts), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -53,7 +54,8 @@ they share with the newer kinds is here. The kernel math of each is in
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
   `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6, `Align` 7,
-  `Scale` 8, `Split` 9, `Chamfer` 10, `Shell` 11, `OffsetFace` 12): files store a kind by its variant name, and
+  `Scale` 8, `Split` 9, `Chamfer` 10, `Shell` 11, `OffsetFace` 12,
+  `FaceDraft` 13): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -3861,3 +3863,142 @@ its name and the other bodies untouched (`VARDE_OFFSET_SEEDS`);
 `document/src/offset_face/tests.rs` holds old "Offset N" names mixing
 with "Offset face N" ones. The app's tests offset by boxes through
 regen's `testing` feature (`varde_regen::testing::offset_by_boxes`).
+
+## Draft
+
+`crates/document/src/face_draft.rs`.
+
+```rust
+pub struct FaceDraft {
+    pub faces: Vec<FaceRef>,   // 1..=MAX_DRAFT_FACES (256), one body, FaceRef::order, no repeats
+    pub neutral: PlaneRef,     // an origin plane, or a flat face of a body made before
+    pub angle: Value,          // above 0 and under 90° (FaceDraft::angle_ask)
+    pub flip: bool,            // the pull against the neutral plane's normal
+    pub tangent: bool,         // tangent faces taken in (the kernel grows them)
+}
+```
+
+- **What it is**: the fifteenth variant (`FeatureKind::FaceDraft`,
+  "Draft N"; the type isn't `Draft`, which is regeneration's preview).
+  Its faces, all of one body, are turned by `angle` about their
+  **hinges**, where each meets the neutral plane, so that each face's
+  outward normal leans towards the **pull**: the neutral plane's normal
+  (a face's outward normal, an origin plane's axis: +Z for XY),
+  reversed by `flip`. The part narrows along the pull (as it would come
+  out of a mould pulled that way); a face that doesn't reach the
+  neutral plane turns about the hinge line all the same, outside it.
+  The neutral plane only (no parting lines, question decided); planes
+  not facing the pull and walls along the pull are drafted, the rest
+  refused (decided). The angle is `Chamfer::angle_ask`'s kind,
+  `FaceDraft::angle_ask` (above 0, under a right angle, bare numbers in
+  degrees). The body keeps its id and every face its name. It has no
+  body of its own: `body()` is the first face's.
+- **Checks** (`CheckError::FaceDraft(id, FaceDraftError)`):
+  `FaceDraft::check_own(design)` (cheap): at least one face (`NoFaces`),
+  at most 256 (`Faces`), each face's own check (`Face`), in order without
+  repeats (`FaceOrder`), all on one body (`Bodies`), the neutral face's
+  own check (`Neutral`), the angle by its ask (`Angle`).
+  `Document::check_face_set` as an offset face's (`Body`, `RefMaker`),
+  and `Document::check_neutral_plane(index, neutral)` (public, for the
+  panel): a face's body there and made by a feature before the draft
+  (`NeutralBody`), its key's maker before it or not there with an id no
+  later feature can take (`NeutralMaker`). An origin plane needs
+  nothing.
+- **Dependencies**: `FeatureKind::bodies()` is its faces' body and the
+  neutral face's body (sorted, once), as the plan has it, so removing
+  either or its maker removes the draft (unlike a mirror's or a split's
+  plane face, which leaves the feature to fail). The features that made
+  its faces or its neutral face are not followed: removing one leaves
+  the draft failing ("its face wasn't found", "its neutral face wasn't
+  found").
+- `SetUnits` pins its angle by its ask.
+
+### Regeneration
+
+`crates/regen/src/history/face_draft.rs`, in history order:
+
+- The body needs a solid of its own (`InPlace::of`, as the other
+  in-place features). Each face is found on its topology; one not found
+  fails the draft before the kernel: "its face wasn't found", or "its
+  face 2 of 3 wasn't found". The neutral plane is resolved as a
+  mirror's (`motion::resolve_plane`, now taking the feature's words,
+  `PlaneWords`: `MIRROR_PLANE`, `NEUTRAL_PLANE`): an origin plane
+  through the origin, a face found on its body (`holding`: its holder if
+  merged) as the features before leave it, which must be flat; its
+  failures "its neutral face's body is gone", "its neutral face wasn't
+  found", "its neutral face isn't flat" (the face drawn). The pull is
+  the plane's unit normal, negated by `flip`.
+- **The draft**: `varde_kernel::draft_faces(solid, topology, faces,
+  neutral point, pull, angle in radians, tangent, feature, tol,
+  budget)`, cached as an `Entry::Solid` by the body's key, the feature,
+  the fit tolerance, the neutral point's and pull's bits, the angle's
+  bits, the tangent flag and the regions; the result replaces the
+  body's solid under that key. Faces keep their names, so a sketch on a
+  drafted face after it is placed on the face as turned, and follows
+  the angle, the flip or a dimension upstream. Its refusals
+  (`varde_kernel::DraftError`) are worded by `message::draft_refused`:
+  facing the pull "a face of Body 1 faces the pull direction: nothing
+  to draft", can't be drafted "a face of Body 1 can't be drafted: only
+  flat faces and walls along the pull can", past a neighbour "the face
+  turns past a neighbouring face of Body 1: try a smaller angle", into
+  the body "the face runs into another part of Body 1: try a smaller
+  angle", a round to nothing "a round face of Body 1 narrows to
+  nothing: try a smaller angle", no surface and a tangent neighbour as
+  an offset face's, a corner "faces of Body 1 meeting at a corner can't
+  be drafted together: try another angle", out of range "it moves Body
+  1 out of range" (the face or corner drawn where there is one); its
+  failures as a boolean's ("drafting faces of Body 1 is too complex to
+  work out", `message::drafting`); an empty result "drafting faces of
+  Body 1 leaves nothing of it".
+- **Kernel stand-in**: `varde_kernel::draft_faces` (`kernel/src/shell.rs`,
+  beside `offset_faces`, with `DraftError`) isn't built: it fails with
+  `TooComplex`, so every draft that finds its faces and neutral plane
+  fails today with "drafting faces of Body 1 is too complex to work
+  out", the body left as it was, and the rest of the history goes on.
+  The regen tests swap it (`face_draft::DRAFTER`, a thread local; other
+  crates' tests through the `testing` feature,
+  `varde_regen::testing::draft_by_boxes`) for `by_boxes`: a box along
+  the world's axes of eight corners, the pull along a world axis; each
+  picked side along the pull turns about its hinge by moving its four
+  corners across the pull by `tan α` times their height above the
+  neutral plane (the faces around stay on their planes, the turned
+  one's form and claim become the turned plane), rebuilt and checked by
+  `Solid::new`, every face keeping its name; a top or bottom picked is
+  `FacingPull`, sides meeting the ones opposite at the box's top or
+  bottom `PastNeighbour`, past the coordinate limit `OutOfRange`, the
+  rest too complex. The planned analytic tests of the kernel's draft
+  are written and `#[ignore = "kernel draft not built"]`.
+- The draft's reply carries nothing new.
+
+Tests: `document/src/face_draft/tests.rs` (added and undone, edited,
+its own parts, bodies and makers with the neutral face's, removal
+following both bodies and not the faces, units pinned, round trip,
+wrong ones refused when read, the fifteenth kind (the one test holding
+its index), errors), `regen/src/history/tests/face_draft.rs` (the stub
+failing as too complex with the history going on; a face gone after
+its maker is removed, named by its place; the neutral face gone ("its
+neutral face wasn't found") and a round one not flat; with the box
+stand-in: a draft surviving an upstream height change, flip and a
+neutral face on top by their volumes and undo, four sides from the
+foot (a frustum), from a plane through the middle and from another
+body's face, a sketch on a drafted face following the angle and an
+upstream change, sides meeting and a face facing the pull refused, the
+cache, a consumed body; recording: a face named twice handed over
+once, the neutral point, pull, angle and tangent flag; every refusal
+worded and drawn; the stand-in against every set of a box's faces
+drafted from XY and from its top, flipped or not, by volume and names
+kept; ignored, the kernel's: a box's sides from the foot and the top,
+names kept, the same bits twice; hinges inside the faces; a boss's
+wall an exact cone and a hole's widening; a rounded slot across its
+tangent faces and refused without them; a plate with holes drafted as a
+whole; an elliptic wall fitted; a sphere and a narrow slot closing
+refused), `io/src/vrdp/tests.rs` (through a file, tampered points and
+angles refused, damaged 2 000 ways refused or checked, faces out of
+order, repeated, none, on two bodies, past the limit, named by the
+draft or later, the neutral face named by the draft or on a body not
+there, angles of 0 and 90° refused as read), `view/src/face_draft/tests.rs`
+(the notes).
+
+The Timeline shows the icon mock's draft icon (`Icon::Draft`) and note
+(`view/src/face_draft.rs`: "3° · 4 faces"); selected, the status bar
+says `draft_info` ("4 faces · 3° from XY", ", flipped").

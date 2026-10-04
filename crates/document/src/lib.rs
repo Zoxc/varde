@@ -13,6 +13,7 @@ mod edge;
 mod editor;
 mod example;
 mod extrude;
+mod face_draft;
 mod feature;
 mod fillet;
 mod motion;
@@ -37,6 +38,7 @@ pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
 pub use edge::{EdgeError, EdgeRef};
 pub use editor::{Command, Editor, Generation, Revision};
 pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
+pub use face_draft::{FaceDraft, FaceDraftError, MAX_DRAFT_FACES};
 pub use feature::{Feature, FeatureId, FeatureKind};
 pub use fillet::{Fillet, FilletError};
 pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
@@ -326,10 +328,13 @@ impl Document {
     /// there with ids no later feature can take), its faces and
     /// thickness as [`Shell::check_own`] wants them; every fillet's
     /// edges as a chamfer's, its radius as [`Fillet::check_own`] wants
-    /// it; and every offset face's faces are on one body a feature
-    /// before it makes, their makers before it (or not there with ids no
-    /// later feature can take), its faces and distance as
-    /// [`OffsetFace::check_own`] wants them. A
+    /// it; every offset face's faces are on one body a feature before it
+    /// makes, their makers before it (or not there with ids no later
+    /// feature can take), its faces and distance as
+    /// [`OffsetFace::check_own`] wants them; and every draft's faces
+    /// likewise, its neutral face on a body a feature before it makes and
+    /// made by a feature before it, its faces and angle as
+    /// [`FaceDraft::check_own`] wants them. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
@@ -466,6 +471,16 @@ impl Document {
                         .map_err(|why| CheckError::Fillet(id, why))?;
                     self.check_blend_edges(index, &fillet.edges)
                         .map_err(|why| CheckError::Fillet(id, FilletError::Edges(why)))?;
+                }
+                FeatureKind::FaceDraft(draft) => {
+                    draft
+                        .check_own(&design)
+                        .map_err(|why| CheckError::FaceDraft(id, why))?;
+                    let body = draft.body().expect("checked: it has faces");
+                    self.check_face_set(index, body, &draft.faces)
+                        .map_err(|why| CheckError::FaceDraft(id, why.into()))?;
+                    self.check_neutral_plane(index, &draft.neutral)
+                        .map_err(|why| CheckError::FaceDraft(id, why))?;
                 }
             }
         }
@@ -821,6 +836,30 @@ impl Document {
         }
     }
 
+    /// Checks `neutral` as the neutral plane of a draft at feature
+    /// `index` (at the end for a new one, the count of features) would
+    /// name it, as [`Document::check`] has it: a face's body there and
+    /// made by a feature before it (the draft depends on it), its key's
+    /// maker before it or not there with an id no later feature can
+    /// take. For a panel keeping what it sets up one the document takes;
+    /// the face's own parts are [`FaceDraft::check_own`]'s.
+    pub fn check_neutral_plane(
+        &self,
+        index: usize,
+        neutral: &PlaneRef,
+    ) -> Result<(), FaceDraftError> {
+        let PlaneRef::Face(face) = neutral else {
+            return Ok(());
+        };
+        if !self.made_before(index, face.body) {
+            return Err(FaceDraftError::NeutralBody(face.body));
+        }
+        if !self.maker_before(index, face.maker()) {
+            return Err(FaceDraftError::NeutralMaker(face.maker()));
+        }
+        Ok(())
+    }
+
     /// Whether `body` is there and made by a feature before feature
     /// `index`.
     fn made_before(&self, index: usize, body: BodyId) -> bool {
@@ -931,6 +970,8 @@ pub enum CheckError {
     Fillet(FeatureId, FilletError),
     /// An offset face feature is wrong, see [`OffsetFaceError`].
     OffsetFace(FeatureId, OffsetFaceError),
+    /// A draft feature is wrong, see [`FaceDraftError`].
+    FaceDraft(FeatureId, FaceDraftError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -985,6 +1026,7 @@ impl fmt::Display for CheckError {
             CheckError::Shell(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Fillet(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::OffsetFace(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::FaceDraft(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -1019,6 +1061,7 @@ impl std::error::Error for CheckError {
             CheckError::Shell(_, why) => Some(why),
             CheckError::Fillet(_, why) => Some(why),
             CheckError::OffsetFace(_, why) => Some(why),
+            CheckError::FaceDraft(_, why) => Some(why),
             _ => None,
         }
     }

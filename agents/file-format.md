@@ -341,7 +341,13 @@ record holds one; or an offset face, `crates/document/src/offset_face.rs`:
 the faces it moves (each as a sketch's face), sorted by body, key and
 point, its distance (a typed length and its value in millimetres, above
 zero), `inward` (moved into the body) and `tangent` (tangent faces taken
-in). Offset faces are new, so no older record holds one. A
+in). Offset faces are new, so no older record holds one; or a draft
+(`FaceDraft`), `crates/document/src/face_draft.rs`: the faces it turns
+(each as a sketch's face), sorted by body, key and point, its neutral
+plane (a `PlaneRef`, as a mirror's: an origin plane or a face), its
+angle (a typed angle and its value in radians), `flip` (the pull
+against the plane's normal) and `tangent` (tangent faces taken in).
+Drafts are new, so no older record holds one. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -418,6 +424,10 @@ feature, sorted without repeats, each point finite and within the
 coordinate limit, and each key's feature (if there) before the offset,
 or with an id below the next id; its distance a length as an
 extrude's;
+a draft's faces as an offset face's, its neutral face (if a face) on a
+body made by an earlier feature, its point finite and within the
+coordinate limit and its key's feature (if there) before the draft or
+with an id below the next id; its angle above zero and under 90°;
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

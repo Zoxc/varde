@@ -664,7 +664,7 @@ fn a_draft_answers_what_the_scale_found() {
 
 /// Draws the half disc of radius `r` about the origin right of the
 /// sketch's Y axis, which a whole turn about that axis makes a sphere.
-fn half_disc(r: f64) -> impl FnOnce(&mut varde_sketch::Sketch) {
+pub(super) fn half_disc(r: f64) -> impl FnOnce(&mut varde_sketch::Sketch) {
     move |sketch| {
         let point = |sketch: &mut varde_sketch::Sketch, x: f64, y: f64| {
             sketch.add_point(glam::DVec2::new(x, y)).unwrap()

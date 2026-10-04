@@ -1,9 +1,11 @@
 //! Shells: a solid hollowed out to walls of one thickness, opened
-//! through the faces asked for; and offset faces: faces of a solid
-//! moved along their normals, the faces around them extended or
-//! trimmed to meet them.
+//! through the faces asked for; offset faces: faces of a solid moved
+//! along their normals; and drafts: faces of a solid turned about where
+//! they meet a neutral plane. In the last two the faces around them are
+//! extended or trimmed to meet them.
 //!
-//! **Not built yet**: [`shell`] and [`offset_faces`] are stand-ins with
+//! **Not built yet**: [`shell`], [`offset_faces`] and [`draft_faces`]
+//! are stand-ins with
 //! the planned signatures that fail with [`KernelError::TooComplex`], so
 //! the shell and offset face features above the kernel (their
 //! documents, regeneration and messages) are built against them. The real implementation replaces this file (and adds
@@ -28,8 +30,21 @@
 //! distance and every other by zero, rebuilt only where a corner or
 //! chain moved, no boolean; its refusals are [`OffsetError`]'s.
 //!
+//! Draft generalizes the offset solid to a new form per region (keep,
+//! offset by a distance, or a new form): each picked face gets its
+//! drafted form (a plane turned about its hinge line on the neutral
+//! plane; a cylinder along the pull a cone through its circle there; a
+//! cone along the pull its half-angle grown; other walls along the pull
+//! a fitted constant-slope surface over their foot curve), the rest
+//! kept, rebuilt as offset face's; a chain on the neutral plane between
+//! two drafted faces stays, and a tangent chain between two drafted
+//! faces becomes the ruling through its foot. Its refusals are
+//! [`DraftError`]'s.
+//!
 //! Which faces are open, or moved, is the caller's: regions of the
 //! solid's [`Topology`] its references resolve to.
+
+use glam::DVec3;
 
 use crate::{Budget, Failure, KernelError, Solid, Tolerance, Topology};
 
@@ -185,4 +200,110 @@ pub fn offset_faces(
     _budget: &Budget,
 ) -> Result<Solid, OffsetError> {
     Err(OffsetError::Failed(KernelError::TooComplex.into()))
+}
+
+/// Why a draft of faces gives no solid. Regions are named by their
+/// index in the topology, corners by their vertex. Offset face's
+/// refusals, as a draft is that offset solid with new forms, and its
+/// own: a face facing the pull, a face that can't be drafted.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DraftError {
+    /// The face `region` is flat and square to the pull (parallel to the
+    /// neutral plane): it has no hinge, nothing to draft.
+    FacingPull { region: u32 },
+    /// The face `region` is neither flat nor a wall along the pull (a
+    /// sphere, a torus, a wall across the pull, a face of no known
+    /// surface): only flat faces and walls along the pull are drafted.
+    CannotDraft { region: u32 },
+    /// A chain between faces turned would run the other way between its
+    /// corners, or a rebuilt face's loop would turn over: the face
+    /// `region` turns past a neighbouring face.
+    PastNeighbour { region: u32 },
+    /// The turned faces reach another part of the same solid.
+    IntoBody,
+    /// The round face `region` would narrow to nothing: a drafted boss's
+    /// cone closing at its apex inside the face, a hole's closing.
+    RoundTooSmall { region: u32 },
+    /// The face `region`, next to a turned one, has no surface to extend.
+    NoSurface { region: u32 },
+    /// The face `region`, tangent to a turned one, isn't turned with it
+    /// (tangent growth off).
+    TangentNeighbour { region: u32 },
+    /// More than three faces meet at this corner, and their new
+    /// surfaces don't meet in one point.
+    Corner { vertex: u32 },
+    /// The result would reach past [`MAX_COORD`](crate::MAX_COORD).
+    OutOfRange,
+    /// The kernel failed otherwise: out of budget, or a check.
+    Failed(Failure),
+}
+
+impl std::fmt::Display for DraftError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DraftError::FacingPull { region } => {
+                write!(f, "face {region} faces the pull direction")
+            }
+            DraftError::CannotDraft { region } => write!(f, "face {region} can't be drafted"),
+            DraftError::PastNeighbour { region } => {
+                write!(f, "face {region} turns past a neighbouring face")
+            }
+            DraftError::IntoBody => f.write_str("the faces run into another part of the solid"),
+            DraftError::RoundTooSmall { region } => {
+                write!(f, "the round face {region} narrows to nothing")
+            }
+            DraftError::NoSurface { region } => {
+                write!(f, "face {region} has no surface to extend")
+            }
+            DraftError::TangentNeighbour { region } => {
+                write!(
+                    f,
+                    "face {region} is tangent to a drafted face but isn't drafted"
+                )
+            }
+            DraftError::Corner { vertex } => {
+                write!(f, "the faces meeting at vertex {vertex} can't be drafted")
+            }
+            DraftError::OutOfRange => f.write_str("the draft moves the solid out of range"),
+            DraftError::Failed(failure) => write!(f, "{}", failure.error),
+        }
+    }
+}
+
+impl std::error::Error for DraftError {}
+
+impl From<Failure> for DraftError {
+    fn from(failure: Failure) -> Self {
+        DraftError::Failed(failure)
+    }
+}
+
+/// `solid` with the regions `faces` of `topology` (made from `solid`;
+/// sorted, each at most once, at least one) drafted: each turned by
+/// `angle` (radians, above 0 and under a right angle; its sine and
+/// cosine from [`trig`](crate::trig)) about its hinge, where it meets
+/// the neutral plane through `neutral` square to `pull` (a unit vector),
+/// so that its outward normal leans towards `pull` and the solid
+/// narrows along it; grown first across tangent-continuous chains when
+/// `tangent` is on; every face around them extended or trimmed to meet
+/// them. A face that doesn't reach the neutral plane turns about the
+/// hinge line all the same, outside it. No boolean, the topology
+/// unchanged, every face keeping its name; faces made new (none, unless
+/// a chain must be split) are named for `feature`. The refusals are
+/// [`DraftError`]'s. Not built yet: always [`DraftError::Failed`] with
+/// [`KernelError::TooComplex`].
+#[allow(clippy::too_many_arguments)]
+pub fn draft_faces(
+    _solid: &Solid,
+    _topology: &Topology,
+    _faces: &[u32],
+    _neutral: DVec3,
+    _pull: DVec3,
+    _angle: f64,
+    _tangent: bool,
+    _feature: u64,
+    _tol: &Tolerance,
+    _budget: &Budget,
+) -> Result<Solid, DraftError> {
+    Err(DraftError::Failed(KernelError::TooComplex.into()))
 }

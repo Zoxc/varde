@@ -10251,3 +10251,21 @@ see `agents/features.md`, "Failures and where they are").
   `PastNeighbour { region }`, `IntoBody`, `NoSurface { region }`,
   `TangentNeighbour { region }` and `OutOfRange`. See "Offset face" in
   `agents/features.md`.
+- **Draft built above a stand-in.** As offset face's: `shell.rs` also
+  holds `draft_faces(solid, topology, faces: &[u32], neutral: DVec3,
+  pull: DVec3, angle, tangent, feature, tol, budget) -> Result<Solid,
+  DraftError>`, failing with `DraftError::Failed(TooComplex)`, to be
+  replaced by the offset solid generalized to a new form per region
+  (the drafted forms: planes turned about their hinges, cylinders along
+  the pull to cones, cones' half-angles grown, other walls along the
+  pull fitted constant-slope surfaces; the rest kept). The plan's
+  `neutral: Plane` is a point of the neutral plane and the unit `pull`,
+  its normal as the caller directs it (the plane's normal, reversed by
+  the feature's flip), since the pull is always square to it; the angle
+  is in radians, above zero and under a right angle, the kernel taking
+  its sine and cosine from `trig`. `DraftError` is its own enum: offset
+  face's refusals (`PastNeighbour`, `IntoBody`, `RoundTooSmall`,
+  `NoSurface`, `TangentNeighbour`, `Corner`, `OutOfRange`, `Failed`)
+  and its own, `FacingPull { region }` (a plane square to the pull: no
+  hinge) and `CannotDraft { region }` (neither flat nor a wall along
+  the pull). See "Draft" in `agents/features.md`.

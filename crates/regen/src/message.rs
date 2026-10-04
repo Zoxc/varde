@@ -93,6 +93,17 @@ pub(crate) const MIRROR_FACE_NOT_FOUND: &str = "its mirror face wasn't found";
 /// Why a mirror in a face fails: the face found isn't a plane.
 pub(crate) const MIRROR_FACE_NOT_FLAT: &str = "its mirror face isn't flat";
 
+/// Why a draft from a face fails: the face's body has no solid when the
+/// history reaches the draft.
+pub(crate) const NEUTRAL_FACE_BODY_GONE: &str = "its neutral face's body is gone";
+
+/// Why a draft from a face fails: no face of its body as the features
+/// before it leave it has the face's name.
+pub(crate) const NEUTRAL_FACE_NOT_FOUND: &str = "its neutral face wasn't found";
+
+/// Why a draft from a face fails: the face found isn't a plane.
+pub(crate) const NEUTRAL_FACE_NOT_FLAT: &str = "its neutral face isn't flat";
+
 /// Why a pattern fails: its count isn't one it takes (never, checked as
 /// it is).
 pub(crate) const PATTERN_COUNT: &str = "its count is out of range";
@@ -612,6 +623,81 @@ pub(crate) fn offsetting(body: &str, error: KernelError) -> String {
 /// named `body`: nothing of it is left.
 pub(crate) fn offset_leaves_nothing(body: &str) -> String {
     format!("offsetting faces of {body} leaves nothing of it")
+}
+
+/// Why a draft fails: its face `index` (from 0) of its `count` isn't
+/// found on its body as the features before it leave it (renamed or
+/// gone).
+pub(crate) fn draft_face_not_found(index: usize, count: usize) -> String {
+    offset_face_not_found(index, count)
+}
+
+/// What the kernel refuses to draft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DraftRefusal {
+    /// A face is square to the pull: nothing to draft.
+    FacingPull,
+    /// A face is neither flat nor a wall along the pull.
+    CannotDraft,
+    /// A turned face would pass a neighbouring face.
+    PastNeighbour,
+    /// A turned face would run into another part of the body.
+    IntoBody,
+    /// A round face would narrow to nothing.
+    RoundTooSmall,
+    /// A face next to a turned one has no surface to extend.
+    NoSurface,
+    /// A face tangent to a turned one isn't drafted with it.
+    TangentNeighbour,
+    /// Faces meeting at a corner can't be drafted together.
+    Corner,
+    /// The body would reach out of range.
+    OutOfRange,
+}
+
+/// Why a draft of faces of the body named `body` is refused.
+pub(crate) fn draft_refused(why: DraftRefusal, body: &str) -> String {
+    match why {
+        DraftRefusal::FacingPull => {
+            format!("a face of {body} faces the pull direction: nothing to draft")
+        }
+        DraftRefusal::CannotDraft => format!(
+            "a face of {body} can't be drafted: only flat faces and walls along the pull can"
+        ),
+        DraftRefusal::PastNeighbour => {
+            format!("the face turns past a neighbouring face of {body}: try a smaller angle")
+        }
+        DraftRefusal::IntoBody => {
+            format!("the face runs into another part of {body}: try a smaller angle")
+        }
+        DraftRefusal::RoundTooSmall => {
+            format!("a round face of {body} narrows to nothing: try a smaller angle")
+        }
+        DraftRefusal::NoSurface => {
+            format!("a face of {body} next to it has no surface to extend")
+        }
+        DraftRefusal::TangentNeighbour => format!(
+            "it is tangent to a face of {body} that isn't picked: pick it too, or turn on Tangent faces"
+        ),
+        DraftRefusal::Corner => format!(
+            "faces of {body} meeting at a corner can't be drafted together: try another angle"
+        ),
+        DraftRefusal::OutOfRange => format!("it moves {body} out of range"),
+    }
+}
+
+/// Why the kernel couldn't draft faces of the body named `body`.
+pub(crate) fn drafting(body: &str, error: KernelError) -> String {
+    match error {
+        KernelError::TooComplex => format!("drafting faces of {body} is too complex to work out"),
+        error => failed(&format!("drafting faces of {body}"), error),
+    }
+}
+
+/// Why a draft fails though the kernel drafted faces of the body named
+/// `body`: nothing of it is left.
+pub(crate) fn draft_leaves_nothing(body: &str) -> String {
+    format!("drafting faces of {body} leaves nothing of it")
 }
 
 /// What a feature was doing with a body when the kernel gave up.

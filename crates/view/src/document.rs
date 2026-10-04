@@ -2043,6 +2043,7 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
         FeatureKind::Shell(shell) => crate::shell::shell_info(shell, units),
         FeatureKind::Fillet(fillet) => crate::fillet::fillet_info(fillet, units),
         FeatureKind::OffsetFace(offset) => crate::offset_face::offset_info(offset, units),
+        FeatureKind::FaceDraft(draft) => crate::face_draft::draft_info(document, draft),
     }
 }
 

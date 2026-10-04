@@ -1,5 +1,5 @@
 //! What the features changing one body's solid in place share (chamfer,
-//! shell, offset face): the body's own solid and topology as the
+//! shell, offset face, draft): the body's own solid and topology as the
 //! features before leave it, its faces found by their references, the
 //! cache key's start, the kernel's result put in the body's place, and a
 //! region drawn for a refusal; for tests, the box their stand-ins take.

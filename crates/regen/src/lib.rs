@@ -65,6 +65,15 @@ pub mod testing {
     pub fn offset_by_boxes() {
         crate::history::offset_by_boxes();
     }
+
+    /// Drafts faces on this thread by a stand-in in place of the
+    /// kernel's draft, which isn't built yet: a box along the world's
+    /// axes, the pull along one, its sides along the pull turned about
+    /// their hinges on the neutral plane by moving their corners, so
+    /// every face keeps its name; anything else is too complex.
+    pub fn draft_by_boxes() {
+        crate::history::draft_by_boxes();
+    }
 }
 mod inspect;
 mod message;

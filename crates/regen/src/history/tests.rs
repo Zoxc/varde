@@ -1664,6 +1664,7 @@ mod chamfer;
 mod check_evidence;
 mod combine;
 mod edges;
+mod face_draft;
 mod faces;
 mod fillet;
 mod merging;

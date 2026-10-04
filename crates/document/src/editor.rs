@@ -707,6 +707,11 @@ impl Editor {
                                 value.pin_units(&ask);
                             }
                         }
+                        FeatureKind::FaceDraft(draft) => {
+                            for (value, ask) in draft.values_mut(&before) {
+                                value.pin_units(&ask);
+                            }
+                        }
                         // No values.
                         FeatureKind::Combine(_)
                         | FeatureKind::Mirror(_)

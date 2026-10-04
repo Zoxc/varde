@@ -200,7 +200,8 @@ pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sket
         | FeatureKind::Chamfer(_)
         | FeatureKind::Shell(_)
         | FeatureKind::Fillet(_)
-        | FeatureKind::OffsetFace(_) => None,
+        | FeatureKind::OffsetFace(_)
+        | FeatureKind::FaceDraft(_) => None,
     }
 }
 

@@ -3916,3 +3916,239 @@ fn an_offset_face_s_faces_and_values_are_checked_as_read() {
     refused(&|offset| offset.faces[0].key.feature = own);
     refused(&|offset| offset.faces[0].key.feature = own + 1);
 }
+
+/// The example plate with two of its walls drafted 3° from its
+/// underside, and its top drafted 7.5° from XY flipped, tangent faces
+/// left out (the stand-in's failure is regeneration's, not the file's).
+fn drafted_plate() -> Document {
+    use glam::DVec3;
+    use varde_document::{FaceDraft, FaceKey, FaceRef, OriginPlane, PartKey, PlaneRef};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let document = editor.document();
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let face = |part, near: [f64; 3]| FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: maker,
+            part,
+            instance: 0,
+        },
+        near: DVec3::from(near),
+    };
+    let ask = FaceDraft::angle_ask(&document.design());
+    let mut faces = vec![
+        face(PartKey::Side { curve: 1 }, [3.0, -12.5, 4.25]),
+        face(PartKey::Side { curve: 2 }, [12.5, 1.0, 5.75]),
+    ];
+    faces.sort_by(FaceRef::order);
+    let walls = FaceDraft {
+        faces,
+        neutral: PlaneRef::Face(face(PartKey::StartCap, [7.75, -2.0, 0.0])),
+        angle: Value::new("3", &ask).unwrap(),
+        flip: false,
+        tangent: true,
+    };
+    let top = FaceDraft {
+        faces: vec![face(PartKey::EndCap, [3.0, 7.25, 10.0])],
+        neutral: PlaneRef::Origin(OriginPlane::XY),
+        angle: Value::new("7.5", &ask).unwrap(),
+        flip: true,
+        tangent: false,
+    };
+    for draft in [walls, top] {
+        editor
+            .apply(editor.document().add_feature(draft.into()))
+            .unwrap();
+    }
+    editor.document().clone()
+}
+
+/// Drafts go through a file and are read back in their places.
+#[test]
+fn drafts_round_trip() {
+    use varde_document::FeatureKind;
+    let document = drafted_plate();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    assert!(matches!(read.features()[2].kind, FeatureKind::FaceDraft(_)));
+    assert!(matches!(read.features()[3].kind, FeatureKind::FaceDraft(_)));
+}
+
+/// A record whose draft's face point, neutral face's point or angle was
+/// changed on disk to what the document refuses is refused as it's
+/// read; as written, it reads.
+#[test]
+fn a_tampered_draft_is_refused() {
+    use std::f64::consts::FRAC_PI_2;
+    let raw = record_msgpack(&drafted_plate());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let float = |x: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&x.to_bits().to_be_bytes());
+        bytes
+    };
+    let three = 3f64.to_radians();
+    let seven = 7.5f64.to_radians();
+    for (was, nows) in [
+        (4.25, [f64::NAN, f64::INFINITY, 3e6]),
+        (7.75, [f64::NAN, f64::NEG_INFINITY, -3e6]),
+        (three, [0.0, -three, FRAC_PI_2]),
+        (seven, [f64::NAN, 2.0, 0.1]),
+    ] {
+        let was = float(was);
+        let at = (raw.windows(was.len()))
+            .position(|window| window == was)
+            .expect("the value is in the record");
+        for now in nows {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&now.to_bits().to_be_bytes());
+            assert!(
+                from_msgpack::<Document>(&changed).is_err(),
+                "{now} was taken"
+            );
+        }
+    }
+}
+
+/// The drafts' part of a record damaged on disk, every float in it set
+/// to what's out of bounds or not a number and random bytes in it
+/// changed (2 000 ways): refused as it's read or read as a document that
+/// passes its check, its drafts their own, never a panic.
+#[test]
+fn a_damaged_draft_is_refused_or_checked() {
+    let document = drafted_plate();
+    let raw = record_msgpack(&document);
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let from = (raw.windows(9))
+        .position(|window| window == b"FaceDraft")
+        .expect("a draft's variant name");
+    let read = |bytes: &[u8]| {
+        if let Ok((document, _)) = from_msgpack::<Document>(bytes) {
+            document.check().unwrap();
+            for (index, feature) in document.features().iter().enumerate() {
+                if let varde_document::FeatureKind::FaceDraft(draft) = &feature.kind {
+                    draft.check_own(&document.design()).unwrap();
+                    let body = draft.body().unwrap();
+                    document.check_face_set(index, body, &draft.faces).unwrap();
+                    document.check_neutral_plane(index, &draft.neutral).unwrap();
+                }
+            }
+        }
+    };
+    let floats: Vec<usize> = (from..raw.len().saturating_sub(8))
+        .filter(|&at| raw[at] == 0xcb)
+        .collect();
+    assert!(floats.len() > 8, "{}", floats.len());
+    for &at in &floats {
+        for x in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e300,
+            -1e300,
+            1.000_001e6,
+            1e6,
+            -0.0,
+            0.0,
+            f64::MIN_POSITIVE,
+            -1.0,
+            std::f64::consts::FRAC_PI_2,
+        ] {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&x.to_bits().to_be_bytes());
+            read(&changed);
+        }
+    }
+    let size = raw.len() - from;
+    for seed in 0..2_000u64 {
+        let picks = noise(8, seed.wrapping_mul(0x9e37_79b9) + 13);
+        let mut changed = raw.clone();
+        for pair in picks.chunks(2).take(1 + (seed % 3) as usize) {
+            let at = from + (usize::from(pair[0]) * 256 + usize::from(pair[1])) % size;
+            changed[at] = picks[(seed % 8) as usize] ^ pair[1];
+        }
+        read(&changed);
+    }
+}
+
+/// A draft's faces out of order, repeated, on two bodies, none, or past
+/// the limit in a record, its faces' or neutral face's body one no
+/// feature before it makes, a face named by itself or a later feature,
+/// or its angle changed to what its ask refuses: each refused as it's
+/// read.
+#[test]
+fn a_draft_s_faces_and_values_are_checked_as_read() {
+    use varde_document::{FaceDraft, FeatureKind, MAX_DRAFT_FACES, PlaneRef};
+    let document = drafted_plate();
+    let raw = record_msgpack(&document);
+    let FeatureKind::FaceDraft(two) = &document.features()[2].kind else {
+        panic!("the two-face draft");
+    };
+    let was = rmp_serde::to_vec_named(&FeatureKind::FaceDraft(two.clone())).unwrap();
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the draft in the record");
+    let changed = |change: &dyn Fn(&mut FaceDraft)| {
+        let mut draft = two.clone();
+        change(&mut draft);
+        let now = rmp_serde::to_vec_named(&FeatureKind::FaceDraft(draft.clone())).unwrap();
+        let mut changed = raw[..at].to_vec();
+        changed.extend_from_slice(&now);
+        changed.extend_from_slice(&raw[at + was.len()..]);
+        (draft, from_msgpack::<Document>(&changed))
+    };
+    let refused = |change: &dyn Fn(&mut FaceDraft)| {
+        let (draft, read) = changed(change);
+        assert!(read.is_err(), "taken: {draft:?}");
+    };
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let (_, same) = changed(&|_| {});
+    assert!(same.is_ok());
+    refused(&|draft| draft.faces.reverse());
+    refused(&|draft| draft.faces[1] = draft.faces[0]);
+    refused(&|draft| draft.faces.clear());
+    refused(&|draft| draft.faces[1].body = varde_document::BodyId::NEW);
+    refused(&|draft| {
+        for face in &mut draft.faces {
+            face.body = varde_document::BodyId::NEW;
+        }
+    });
+    refused(&|draft| {
+        let face = draft.faces[0];
+        draft.faces = (0..=MAX_DRAFT_FACES)
+            .map(|k| varde_document::FaceRef {
+                near: face.near + glam::DVec3::X * k as f64 * 1e-3,
+                ..face
+            })
+            .collect();
+    });
+    refused(&|draft| {
+        draft.angle.value = 0.0;
+        draft.angle.text = "0".to_owned();
+    });
+    refused(&|draft| {
+        draft.angle.value = std::f64::consts::FRAC_PI_2;
+        draft.angle.text = "90".to_owned();
+    });
+    refused(&|draft| draft.angle.value = 1.0);
+    let own = document.features()[2].id.get();
+    refused(&|draft| draft.faces[0].key.feature = own);
+    refused(&|draft| draft.faces[0].key.feature = own + 1);
+    refused(&|draft| {
+        if let PlaneRef::Face(face) = &mut draft.neutral {
+            face.key.feature = own;
+        }
+    });
+    refused(&|draft| {
+        if let PlaneRef::Face(face) = &mut draft.neutral {
+            face.body = varde_document::BodyId::NEW;
+        }
+    });
+    let (_, origin) = changed(&|draft| {
+        draft.neutral = PlaneRef::Origin(varde_document::OriginPlane::XZ);
+    });
+    assert!(origin.is_ok());
+}

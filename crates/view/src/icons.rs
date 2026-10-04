@@ -133,6 +133,9 @@ icons! {
     // The model mock's offset face: a face with a smaller one inside it
     // (the face it was), an arrow pushing it out.
     OffsetFace => r#"<rect class="t" x="3" y="3" width="18" height="18" rx="2"/><rect class="r" x="8" y="8" width="8" height="8" rx="1"/><path class="a" d="M16.5 12h2.5M17.5 10.5L19 12l-1.5 1.5"/>"#,
+    // The icon mock's draft: a wall leaning in from its foot, the
+    // pull dashed through it, the drafted side in the accent.
+    Draft => r#"<path class="r" d="M12 2v20" stroke-dasharray="2 2"/><path class="t" d="M6 20L9 4h6l3 16z"/><path class="a" d="M6 20L9 4"/>"#,
     // The icon mock's split body: a box cut by a dashed plane.
     Split => r#"<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M2 15L22 9" stroke-dasharray="2.5 2"/>"#,
     Align => r#"<path class="a" d="M4 3v18"/><rect class="t" x="7" y="5" width="13" height="5" rx="1"/><rect x="7" y="14" width="8" height="5" rx="1"/>"#,
@@ -282,6 +285,7 @@ impl Icon {
             | Icon::BChamfer
             | Icon::Shell
             | Icon::OffsetFace
+            | Icon::Draft
             | Icon::ScUniform
             | Icon::ScAxes
             | Icon::ScEdge

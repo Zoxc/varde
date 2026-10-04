@@ -88,7 +88,8 @@ pub(super) fn evaluate_mirror(
     cache: &mut Cache,
 ) -> Result<(), Failed> {
     own_solids(document, mirror.bodies.iter().copied(), evaluation)?;
-    let [point, normal] = resolve_plane(&mirror.plane, evaluation, tolerance, cache)?;
+    let [point, normal] =
+        resolve_plane(&mirror.plane, &MIRROR_PLANE, evaluation, tolerance, cache)?;
     note_reference(evaluation, feature, [point, normal]);
     let motion = Motion::mirror(point, normal).ok_or(message::MIRROR_FACE_NOT_FLAT)?;
     let how = How {
@@ -272,12 +273,39 @@ pub(super) fn resolve_axis(
     }
 }
 
+/// What a feature calls the plane it names, for its failures: the
+/// cache key's kind, and why a face fails (its body gone, the face not
+/// found, the face not flat).
+pub(super) struct PlaneWords {
+    kind: &'static str,
+    body_gone: &'static str,
+    not_found: &'static str,
+    not_flat: &'static str,
+}
+
+/// A mirror's plane: "its mirror face wasn't found".
+pub(super) const MIRROR_PLANE: PlaneWords = PlaneWords {
+    kind: "mirror face",
+    body_gone: message::MIRROR_FACE_BODY_GONE,
+    not_found: message::MIRROR_FACE_NOT_FOUND,
+    not_flat: message::MIRROR_FACE_NOT_FLAT,
+};
+
+/// A draft's neutral plane: "its neutral face wasn't found".
+pub(super) const NEUTRAL_PLANE: PlaneWords = PlaneWords {
+    kind: "neutral face",
+    body_gone: message::NEUTRAL_FACE_BODY_GONE,
+    not_found: message::NEUTRAL_FACE_NOT_FOUND,
+    not_flat: message::NEUTRAL_FACE_NOT_FLAT,
+};
+
 /// The plane `plane` names, as a point on it and its normal (not unit,
 /// not zero), as [`resolve_axis`] finds a line: an origin plane through
 /// the origin; a face must be flat (its form's plane, its normal out of
-/// the solid).
+/// the solid: then unit). Failures are worded by `words`.
 pub(super) fn resolve_plane(
     plane: &PlaneRef,
+    words: &PlaneWords,
     evaluation: &Evaluation,
     tolerance: &Tolerance,
     cache: &mut Cache,
@@ -285,9 +313,9 @@ pub(super) fn resolve_plane(
     match plane {
         PlaneRef::Origin(origin) => Ok([DVec3::ZERO, origin.placement().normal]),
         PlaneRef::Face(face) => {
-            let made = holding(face.body, evaluation).ok_or(message::MIRROR_FACE_BODY_GONE)?;
-            let key = reference_key("mirror face", made.key, &face.key, face.near, tolerance);
-            cache.reference(key, || face_plane(&made.solid, face, tolerance))
+            let made = holding(face.body, evaluation).ok_or(words.body_gone)?;
+            let key = reference_key(words.kind, made.key, &face.key, face.near, tolerance);
+            cache.reference(key, || face_plane(&made.solid, face, words, tolerance))
         }
     }
 }
@@ -370,17 +398,21 @@ fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DV
 /// [`resolve_plane`]: the point of `n·x = d` nearest the origin, `n·d`
 /// (`n` is unit, so a face square to a world axis gives its coordinate
 /// to the bit), and `n`.
-fn face_plane(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DVec3; 2], Failed> {
+fn face_plane(
+    solid: &Solid,
+    face: &FaceRef,
+    words: &PlaneWords,
+    tolerance: &Tolerance,
+) -> Result<[DVec3; 2], Failed> {
     let topology = solid.topology();
-    let region =
-        (topology.face(solid, &face.key, face.near)).map_err(|_| message::MIRROR_FACE_NOT_FOUND)?;
+    let region = (topology.face(solid, &face.key, face.near)).map_err(|_| words.not_found)?;
     let region = &topology.regions()[region as usize];
     match *region_form(solid, region) {
         Form::Plane { n, d } if n != DVec3::ZERO && n.is_finite() && d.is_finite() => {
             Ok([n * d, n])
         }
         _ => Err(Failed {
-            message: message::MIRROR_FACE_NOT_FLAT.to_owned(),
+            message: words.not_flat.to_owned(),
             geometry: face_geometry(solid, region, tolerance),
         }),
     }

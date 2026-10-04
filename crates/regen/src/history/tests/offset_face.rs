@@ -812,7 +812,7 @@ fn the_kernel_refuses_past_a_neighbour_and_into_the_body() {
 
 /// Draws a slot: two lines 10 mm long, 6 mm apart, joined by half
 /// circles at each end, tangent to them.
-fn slot(sketch: &mut Sketch) {
+pub(super) fn slot(sketch: &mut Sketch) {
     let at = |sketch: &mut Sketch, x: f64, y: f64| sketch.add_point(DVec2::new(x, y)).unwrap();
     let [a, b, c, d] =
         [(0.0, -3.0), (10.0, -3.0), (10.0, 3.0), (0.0, 3.0)].map(|(x, y)| at(sketch, x, y));

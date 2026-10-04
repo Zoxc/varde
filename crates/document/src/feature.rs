@@ -1,13 +1,13 @@
 //! Features: the steps a design is built from, sketches, extrudes,
 //! revolves, combines, moves, mirrors, patterns, aligns, scales, splits,
-//! chamfers, shells, fillets and offset faces.
+//! chamfers, shells, fillets, offset faces and drafts.
 
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
 use crate::{
-    Align, BodyId, Chamfer, Combine, Extrude, Fillet, Mirror, Move, OffsetFace, Operation, Pattern,
-    Plane, Revolve, Scale, Shell, Split,
+    Align, BodyId, Chamfer, Combine, Extrude, FaceDraft, Fillet, Mirror, Move, OffsetFace,
+    Operation, Pattern, Plane, Revolve, Scale, Shell, Split,
 };
 
 /// A feature's handle in one document. It's opaque: ids come from the
@@ -58,6 +58,7 @@ pub enum FeatureKind {
     Shell(Shell),
     Fillet(Fillet),
     OffsetFace(OffsetFace),
+    FaceDraft(FaceDraft),
 }
 
 impl FeatureKind {
@@ -79,6 +80,7 @@ impl FeatureKind {
             FeatureKind::Shell(_) => "Shell",
             FeatureKind::Fillet(_) => "Fillet",
             FeatureKind::OffsetFace(_) => "Offset face",
+            FeatureKind::FaceDraft(_) => "Draft",
         }
     }
 
@@ -104,7 +106,8 @@ impl FeatureKind {
     /// bodies a scale scales (its edge length's edge among them), the
     /// body a split splits, its tool body and its face tool's body, the
     /// body a chamfer's or a fillet's edges are on, the body a shell
-    /// hollows, the body an offset face's faces are on.
+    /// hollows, the body an offset face's faces are on, the bodies of a
+    /// draft's faces and of its neutral plane's face.
     /// Removing one of them, or its maker, removes this too. Not the
     /// bodies an extrude or revolve takes out of its targets, which are
     /// dropped from its list instead, nor the body under a sketch's face
@@ -124,6 +127,7 @@ impl FeatureKind {
             FeatureKind::Shell(shell) => shell.bodies(),
             FeatureKind::Fillet(fillet) => fillet.bodies(),
             FeatureKind::OffsetFace(offset) => offset.bodies(),
+            FeatureKind::FaceDraft(draft) => draft.bodies(),
             FeatureKind::Sketch { .. } | FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
                 Vec::new()
             }
@@ -144,7 +148,8 @@ impl FeatureKind {
             | FeatureKind::Chamfer(_)
             | FeatureKind::Shell(_)
             | FeatureKind::Fillet(_)
-            | FeatureKind::OffsetFace(_) => None,
+            | FeatureKind::OffsetFace(_)
+            | FeatureKind::FaceDraft(_) => None,
             FeatureKind::Extrude(extrude) => Some(extrude.sketch),
             FeatureKind::Revolve(revolve) => Some(revolve.sketch),
             FeatureKind::Split(split) => split.tool.sketch(),
@@ -166,7 +171,8 @@ impl FeatureKind {
             | FeatureKind::Chamfer(_)
             | FeatureKind::Shell(_)
             | FeatureKind::Fillet(_)
-            | FeatureKind::OffsetFace(_) => None,
+            | FeatureKind::OffsetFace(_)
+            | FeatureKind::FaceDraft(_) => None,
             FeatureKind::Extrude(extrude) => Some(&extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&revolve.operation),
         }
@@ -186,7 +192,8 @@ impl FeatureKind {
             | FeatureKind::Chamfer(_)
             | FeatureKind::Shell(_)
             | FeatureKind::Fillet(_)
-            | FeatureKind::OffsetFace(_) => None,
+            | FeatureKind::OffsetFace(_)
+            | FeatureKind::FaceDraft(_) => None,
             FeatureKind::Extrude(extrude) => Some(&mut extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&mut revolve.operation),
         }
@@ -288,5 +295,11 @@ impl From<Fillet> for FeatureKind {
 impl From<OffsetFace> for FeatureKind {
     fn from(offset: OffsetFace) -> Self {
         FeatureKind::OffsetFace(offset)
+    }
+}
+
+impl From<FaceDraft> for FeatureKind {
+    fn from(draft: FaceDraft) -> Self {
+        FeatureKind::FaceDraft(draft)
     }
 }

@@ -67,8 +67,12 @@
 //! `fillet`; what the two share of their edges is `blend`). An offset face finds its faces on its body's
 //! topology (one not found: "its face wasn't found") and moves them by
 //! the kernel's offset face, the body keeping its id and its faces their
-//! names (see `offset_face`). What chamfers, shells, fillets and offset
-//! faces share of their body, changed in place, is `in_place`.
+//! names (see `offset_face`). A draft finds its faces and its neutral
+//! plane (one not found: "its neutral face wasn't found") and turns the
+//! faces by the kernel's draft, the body keeping its id and its faces
+//! their names (see `face_draft`). What chamfers, shells, fillets,
+//! offset faces and drafts share of their body, changed in place, is
+//! `in_place`.
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -80,7 +84,7 @@
 //! combine's running solid is the first body or target and those united
 //! with it so far, a feature's tool none), and changes no body; the later
 //! ones still run. Of regen's own failures, a face that isn't flat (a
-//! sketch's or a mirror's) or isn't round (a move's axis) shows the face,
+//! sketch's, a mirror's or a draft's neutral face) or isn't round (a move's axis) shows the face,
 //! an axis line of no length its point, and an axis edge of the wrong
 //! shape its curves, as an align's references of the wrong kind do (and
 //! its secondary parallel to its primary, both of them); the others (a
@@ -119,6 +123,7 @@ mod align;
 mod blend;
 mod chamfer;
 mod combine;
+mod face_draft;
 mod fillet;
 mod in_place;
 mod motion;
@@ -129,6 +134,8 @@ mod shell;
 mod split;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use chamfer::chamfer_by_wedges;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use face_draft::draft_by_boxes;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use fillet::fillet_by_arcs;
 #[cfg(any(test, feature = "testing"))]
@@ -418,7 +425,8 @@ fn walk(
                     | FeatureKind::Chamfer(_)
                     | FeatureKind::Shell(_)
                     | FeatureKind::Fillet(_)
-                    | FeatureKind::OffsetFace(_) => unreachable!("matched apart"),
+                    | FeatureKind::OffsetFace(_)
+                    | FeatureKind::FaceDraft(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -548,6 +556,18 @@ fn walk(
                     document,
                     feature.id,
                     offset,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::FaceDraft(draft) => {
+                if let Err(failed) = face_draft::evaluate_face_draft(
+                    document,
+                    feature.id,
+                    draft,
                     &tolerance,
                     &mut evaluation,
                     cache,
