@@ -340,7 +340,9 @@ a balanced tree.
    the triangles of the class it can change (short sides, no height, a
    seam, a sliver, a curved side on a plane face, a vertex where triangles
    face apart), worked out once and kept in step as triangles change: the
-   same changes in the same order as looking at every triangle.
+   same changes in the same order as looking at every triangle. Rounds
+   that change so much that keeping the classes costs more look at every
+   triangle instead.
 8. **Repair and check**, then the result is a `Solid`. Both test only
    what the operation changed and what comes near it: a triangle of an
    operand carried through bit for bit (same patch, corners mapped one to

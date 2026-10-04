@@ -2729,13 +2729,25 @@ fn the_exact_retry_returns_its_own_failure() {
 /// A plate `2n` square and 1 thick with an `n × n` grid of round holes
 /// of radius 0.4, one in the middle of each 2 × 2 cell.
 fn holed_plate(n: usize) -> Solid {
-    use crate::profile::tests::{circle, rect};
+    holed_plate_at(n, true, &TOL)
+}
+
+/// [`holed_plate`] at `tol`, its holes round, or square and as wide.
+fn holed_plate_at(n: usize, round: bool, tol: &Tolerance) -> Solid {
+    use crate::profile::tests::{circle, polygon, rect};
+    use glam::DVec2;
     let side = 2.0 * n as f64;
-    let mut loops = vec![rect(glam::DVec2::ZERO, glam::DVec2::splat(side), 0)];
+    let mut loops = vec![rect(DVec2::ZERO, DVec2::splat(side), 0)];
     for i in 0..n {
         for j in 0..n {
-            let c = glam::DVec2::new(1.0 + 2.0 * i as f64, 1.0 + 2.0 * j as f64);
-            loops.push(circle(c, 0.4, 10 + 4 * (i * n + j) as u64, true));
+            let c = DVec2::new(1.0 + 2.0 * i as f64, 1.0 + 2.0 * j as f64);
+            let curve = 10 + 4 * (i * n + j) as u64;
+            loops.push(if round {
+                circle(c, 0.4, curve, true)
+            } else {
+                let [x, y] = [DVec2::X * 0.4, DVec2::Y * 0.4];
+                polygon(&[c - x - y, c - x + y, c + x + y, c + x - y], curve)
+            });
         }
     }
     let profile = crate::Profile { loops };
@@ -2745,7 +2757,7 @@ fn holed_plate(n: usize) -> Solid {
         0.0,
         1.0,
         1,
-        &TOL,
+        tol,
         &Budget::DEFAULT,
     )
     .unwrap()
@@ -2884,4 +2896,22 @@ fn operands_checked_at_another_resolution_are_tested_again() {
     assert!(boolean(&pair, &tool, Op::Difference, &fine, &Budget::DEFAULT).is_ok());
     let coarse_result = boolean(&pair, &tool, Op::Difference, &coarse, &Budget::DEFAULT);
     assert!(coarse_result.is_err(), "{coarse_result:?}");
+}
+
+#[test]
+fn clean_ups_that_change_much_cost_no_more_than_visiting_everything() {
+    // A plate of round holes united with its square-holed version cut by
+    // it (each hole's circle touching its square at four points): the
+    // clean-up's rounds change triangles all over the soup, every round
+    // up to its last, and keeping the classes of the triangles round every
+    // change came to ten times the soup a round, `TooComplex` where
+    // visiting every triangle gave its `NotManifold` within the budget.
+    // Rounds that change that much visit every triangle instead.
+    let tol = Tolerance::new(1e-4).unwrap();
+    let round = holed_plate_at(2, true, &tol);
+    let square = holed_plate_at(2, false, &tol);
+    let meet = boolean(&round, &square, Op::Intersection, &tol, &Budget::DEFAULT).unwrap();
+    assert!((meet.volume() - (16.0 - 4.0 * 0.64)).abs() < 1e-9);
+    let error = boolean(&meet, &round, Op::Union, &tol, &Budget::DEFAULT).unwrap_err();
+    assert_eq!(error.error, KernelError::Boolean(BooleanError::NotManifold));
 }

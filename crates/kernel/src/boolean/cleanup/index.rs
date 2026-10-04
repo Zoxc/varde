@@ -19,6 +19,15 @@
 //! bit for bit, for work that follows the triangles of those classes and
 //! what changes, rather than the whole soup every round.
 //!
+//! A round of the rounds' loops whose changes come so thick that keeping
+//! the classes costs more than visiting every triangle (a flip or a
+//! collapse classes a few dozen triangles again: in a round changing a
+//! tenth of the soup, more than visiting all of it) gives that up: from
+//! there to the loop's end every pass visits every triangle and vertex,
+//! as it would with no classes, a unit a triangle a round, and the
+//! classes are worked out afresh before they are read again
+//! ([`Cleaner::adaptive`]).
+//!
 //! A class depends on a triangle's corners, face and the curves of its
 //! sides, and for [`SEAM`] and [`SLIVERS`] on those of the triangles
 //! sharing a side with it. Every change goes through a triangle whose
@@ -80,6 +89,16 @@ pub(super) struct Index {
     left: Vec<u32>,
     /// Triangles and vertices classed or visited since last charged.
     pub(super) visits: usize,
+    /// Triangles and vertices classed again since the round began.
+    since: usize,
+    /// Whether a round that keeps the classes too often may give them up
+    /// ([`Cleaner::adaptive`]).
+    adaptive: bool,
+    /// Whether the passes visit every triangle and vertex, the classes
+    /// not kept, until the loop's end ([`Cleaner::adaptive`]).
+    whole: bool,
+    /// Whether the classes must be worked out afresh before they are read.
+    stale: bool,
 }
 
 /// The bit index of class `bit`.
@@ -299,6 +318,8 @@ impl Cleaner<'_> {
         }
         let mut index = Index {
             bits,
+            visits: self.index.visits,
+            adaptive: self.index.adaptive,
             folds: vec![false; self.soup.pos.len()],
             made: (0..n as u32)
                 .filter(|&t| self.soup.made[t as usize])
@@ -339,6 +360,21 @@ impl Cleaner<'_> {
     /// corners (now, or before [`Self::touch_before`]), and those vertices
     /// are classed again.
     pub(super) fn settle(&mut self) {
+        if self.index.whole {
+            // Every pass visits everything: the classes are worked out
+            // afresh once the loop ends.
+            self.index.touched.clear();
+            self.index.left.clear();
+            return;
+        }
+        if self.index.stale {
+            self.index.touched.clear();
+            self.index.left.clear();
+            let n = self.soup.tris.len();
+            self.index_all();
+            self.index.visits = self.index.visits.saturating_add(n);
+            return;
+        }
         if self.index.touched.is_empty() {
             return;
         }
@@ -370,11 +406,9 @@ impl Cleaner<'_> {
                 self.index.made.insert(t);
             }
         }
-        self.index.visits = self
-            .index
-            .visits
-            .saturating_add(again.len())
-            .saturating_add(corners.len());
+        let classed = again.len().saturating_add(corners.len());
+        self.index.visits = self.index.visits.saturating_add(classed);
+        self.index.since = self.index.since.saturating_add(classed);
         for t in again {
             let bits = self.classes(t);
             self.set_classes(t, bits);
@@ -383,12 +417,46 @@ impl Cleaner<'_> {
             let fold = self.may_fold(v);
             self.set_fold(v, fold);
         }
+        // Classing again in this round more than visiting everything once:
+        // the round visits everything from here.
+        if self.index.adaptive && self.index.since > n {
+            self.index.whole = true;
+            self.index.stale = true;
+        }
+    }
+
+    /// Lets the rounds of a loop give up the classes where keeping them
+    /// costs more than visiting everything (`true`, at the loop's start),
+    /// or ends that at the loop's end, the classes worked out afresh
+    /// before they are next read if they were given up.
+    pub(super) fn adaptive(&mut self, on: bool) {
+        self.index.adaptive = on;
+        self.index.since = 0;
+        if !on {
+            self.index.whole = false;
+        }
+    }
+
+    /// The units a round of a loop takes up front: the visits counted
+    /// since last charged, and a unit a triangle if the passes visit
+    /// every triangle (as visiting every triangle each round did).
+    pub(super) fn round(&mut self) -> usize {
+        self.index.since = 0;
+        let whole = if self.index.whole {
+            self.soup.tris.len()
+        } else {
+            0
+        };
+        self.visits().saturating_add(whole)
     }
 
     /// The first member of `class` from `from` on, below `end`, the classes
     /// brought up to date first; counted as a visit.
     pub(super) fn next_in(&mut self, class: u8, from: u32, end: u32) -> Option<u32> {
         self.settle();
+        if self.index.whole {
+            return (from < end).then_some(from);
+        }
         let t = *self.index.sets[slot(class)].range(from..end).next()?;
         self.index.visits = self.index.visits.saturating_add(1);
         Some(t)
@@ -398,6 +466,11 @@ impl Cleaner<'_> {
     /// visits.
     pub(super) fn members(&mut self, class: u8) -> Vec<u32> {
         self.settle();
+        if self.index.whole {
+            return (0..self.soup.tris.len() as u32)
+                .filter(|&t| self.alive[t as usize])
+                .collect();
+        }
         let out: Vec<u32> = self.index.sets[slot(class)].iter().copied().collect();
         self.index.visits = self.index.visits.saturating_add(out.len());
         out
@@ -408,6 +481,9 @@ impl Cleaner<'_> {
     /// first; counted as a visit.
     pub(super) fn next_fold(&mut self, from: u32, end: u32) -> Option<u32> {
         self.settle();
+        if self.index.whole {
+            return (from < end).then_some(from);
+        }
         let v = *self.index.folded.range(from..end).next()?;
         self.index.visits = self.index.visits.saturating_add(1);
         Some(v)
@@ -417,6 +493,11 @@ impl Cleaner<'_> {
     /// classes brought up to date first; counted as visits.
     pub(super) fn made_alive(&mut self) -> Vec<u32> {
         self.settle();
+        if self.index.whole {
+            return (0..self.soup.tris.len() as u32)
+                .filter(|&t| self.alive[t as usize] && self.soup.made[t as usize])
+                .collect();
+        }
         let out: Vec<u32> = self
             .index
             .made
@@ -431,7 +512,7 @@ impl Cleaner<'_> {
     /// Whether triangle `t` has a side with a record in the curves, the
     /// classes brought up to date.
     pub(super) fn has_record(&self, t: u32) -> bool {
-        debug_assert!(self.index.touched.is_empty());
+        debug_assert!(self.index.touched.is_empty() && !self.index.whole && !self.index.stale);
         self.index.bits[t as usize] & RECORDED != 0
     }
 
@@ -447,6 +528,9 @@ impl Cleaner<'_> {
             return;
         }
         self.settle();
+        if self.index.whole {
+            return;
+        }
         for t in 0..self.soup.tris.len() as u32 {
             assert_eq!(
                 self.index.bits[t as usize],

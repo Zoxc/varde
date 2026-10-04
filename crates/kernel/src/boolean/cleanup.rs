@@ -213,8 +213,9 @@ pub(super) fn clean(
     work.spend(c.soup.tris.len() / SCAN)?;
     c.index_all();
     let mut unfolded = false;
+    c.adaptive(true);
     for _ in 0..ROUNDS {
-        work.spend(c.visits())?;
+        work.spend(c.round())?;
         let mut changed = false;
         for [u, v] in c.short_edges() {
             // An earlier collapse may have taken the edge already: then no
@@ -255,7 +256,7 @@ pub(super) fn clean(
         // Last resort, where nothing else changed: folded sheets whose
         // two sides are triangulated differently.
         if !changed && unfold {
-            work.spend(c.visits())?;
+            work.spend(c.round())?;
             changed = c.unfold();
             unfolded |= changed;
         }
@@ -263,13 +264,15 @@ pub(super) fn clean(
             break;
         }
     }
+    c.adaptive(false);
     // What is left of them, triangulated again by regions, and the plane
     // faces they joined made one.
     c.dissolve(work)?;
     c.merge_joined(faces);
     // Then slivers on plane faces, flipped towards Delaunay.
+    c.adaptive(true);
     for _ in 0..ROUNDS {
-        work.spend(c.visits())?;
+        work.spend(c.round())?;
         let mut changed = false;
         let n = c.soup.tris.len() as u32;
         let mut from = 0;
@@ -288,6 +291,7 @@ pub(super) fn clean(
             break;
         }
     }
+    c.adaptive(false);
     work.spend(c.visits())?;
     c.assert_indexed();
     // Then the triangles made on plane faces refined for their shapes.

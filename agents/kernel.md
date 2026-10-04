@@ -6242,6 +6242,19 @@ vertex visited or classed again instead of the soup's size each round.
 Debug builds assert, after the rounds and before the components are
 dropped, that the classes are what working them out afresh gives.
 
+A flip or a collapse classes a few dozen triangles again, so a round
+that changes a tenth of the soup costs more than visiting all of it,
+and clean-ups that flip back and forth all over the soup for every
+round up to the last came to ten times its size a round (a plate of
+round holes united with its square-holed version cut by it, at a fit of
+`1e-4`: `TooComplex` where visiting every triangle gave its
+`NotManifold`, in twice the time). So in the two loops of rounds, once a
+round has classed again more triangles and vertices than the soup has
+triangles, the passes visit every triangle and vertex from there to the
+loop's end, as with no classes (the same questions in the same order),
+charged a unit a triangle a round, and the classes are worked out afresh
+(a unit a triangle) before they are next read (`Cleaner::adaptive`).
+
 Integrating every curved patch to drop the empty components took most of
 a boolean's time on a curved body (four 8 × 8 rules a patch, about
 30 µs; 0.76 s of a 0.2 mm cut on a plate of 900 round holes). Each
@@ -9856,4 +9869,8 @@ see `agents/features.md`, "Failures and where they are").
   integrates only a component its bound can't tell (not in the plan:
   it was most of a boolean's time on a curved body, and charged
   nothing). `faces_out`, whose unit a patch the plan wanted charged once,
-  is no longer in the code.
+  is no longer in the code. Rounds that change so much that keeping the
+  classes costs more than visiting every triangle give them up to the
+  loop's end (found while hunting bugs: a rise into `TooComplex`), so a
+  clean-up's rounds never cost much more than visiting every triangle
+  each round did.
