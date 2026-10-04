@@ -190,9 +190,12 @@ fn pill<'a>(
     container(
         row![
             container(
-                row![icons::icon(icon, icons::INLINE), text(name).font(SEMIBOLD)]
-                    .spacing(6)
-                    .align_y(Alignment::Center)
+                row![
+                    icons::icon(icon, icons::INLINE),
+                    text(shortened(name, PILL_NAME_CHARS)).font(SEMIBOLD)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center)
             )
             .padding([0, 8]),
             crate::chrome::tip(finish, text(tip)),
@@ -203,6 +206,25 @@ fn pill<'a>(
     .height(24)
     .style(theme::pill)
     .into()
+}
+
+/// The most characters of a name a pill shows: a longer one (a file's;
+/// the app's own are short) is cut short to fit the bar at 1280 px.
+const PILL_NAME_CHARS: usize = 32;
+
+/// `name`, cut to its first `max − 1` characters and "…" if it's longer
+/// than `max`.
+fn shortened(name: &str, max: usize) -> Cow<'_, str> {
+    match name.char_indices().nth(max) {
+        None => Cow::Borrowed(name),
+        Some(_) => {
+            let end = name
+                .char_indices()
+                .nth(max.saturating_sub(1))
+                .map_or(0, |(at, _)| at);
+            Cow::Owned(format!("{}…", name[..end].trim_end()))
+        }
+    }
 }
 
 /// What the toolbar's tag says of `tool`: its name, and how it draws: the
@@ -1005,6 +1027,18 @@ mod tests {
 
     use super::*;
     use crate::testing::Laid;
+
+    /// A name past the limit is cut on a character's edge, with "…";
+    /// one at it is kept whole.
+    #[test]
+    fn long_names_are_cut_short() {
+        assert_eq!(shortened("Chamfer 1", 4), "Cha…");
+        assert_eq!(shortened("Chamfer", 7), "Chamfer");
+        assert_eq!(shortened("Chamfer 12", 9), "Chamfer…");
+        assert_eq!(shortened("ÆØÅæøå", 3), "ÆØ…");
+        assert_eq!(shortened("", 3), "");
+        assert_eq!(shortened("abc", 0), "…");
+    }
 
     /// The file menu as natively, `exportable` or not.
     fn native_menu(exportable: bool) -> FileMenu {

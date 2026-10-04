@@ -726,7 +726,8 @@ impl MeshFeed {
     /// it touched two or more and didn't fail; one the model shown doesn't
     /// know (added since, or a new extrude's draft) merges nothing. A
     /// combine that uses its tools up merges them into its target unless
-    /// it failed, as regen's own rule has it.
+    /// it failed, or names a body merged in before it (which fails it),
+    /// as regen's own rule has it.
     pub(crate) fn merged_before(&self, document: &Document, until: Option<FeatureId>) -> Merges {
         let mut merges = Merges::default();
         for feature in document.features() {
@@ -735,8 +736,11 @@ impl MeshFeed {
             }
             match &feature.kind {
                 FeatureKind::Combine(combine) => {
-                    if self.consumes(document, feature.id) {
-                        let bodies: Vec<BodyId> = combine.bodies().collect();
+                    // One naming a body merged in before it fails, as
+                    // regen has it, even before the model shown knows it.
+                    let bodies: Vec<BodyId> = combine.bodies().collect();
+                    let held = bodies.iter().any(|&body| merges.holder(body).is_some());
+                    if self.consumes(document, feature.id) && !held {
                         merges.join(&bodies);
                     }
                 }

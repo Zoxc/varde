@@ -3110,3 +3110,161 @@ fn a_tampered_chamfer_is_refused() {
         );
     }
 }
+
+/// [`chamfered_plate`] chamfered twice more: two edges of its top by two
+/// distances, flipped, and one by a distance and an angle, without
+/// tangent chains.
+fn chamfered_every_way() -> Document {
+    use glam::DVec3;
+    use varde_document::{Chamfer, ChamferSize, EdgeRef, FaceKey, PartKey};
+    use varde_expr::Value;
+    let mut editor = Editor::new(chamfered_plate());
+    let document = editor.document();
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let key = |part| FaceKey {
+        feature: maker,
+        part,
+        instance: 0,
+    };
+    let edge = |curve, near: [f64; 3]| EdgeRef {
+        body: plate,
+        faces: [key(PartKey::EndCap), key(PartKey::Side { curve })],
+        near: DVec3::from(near),
+    };
+    let distance = |text| Value::new(text, &Chamfer::distance_ask(&document.design())).unwrap();
+    let angle = Value::new("30", &Chamfer::angle_ask(&document.design())).unwrap();
+    let mut two = vec![edge(2, [30.0, 1.5, 10.0]), edge(3, [-2.5, 20.0, 10.0])];
+    two.sort_by(EdgeRef::order);
+    let chamfers = [
+        Chamfer {
+            edges: two,
+            distances: ChamferSize::Two(distance("1"), distance("2.5 mm")),
+            chains: true,
+            flip: true,
+        },
+        Chamfer {
+            edges: vec![edge(4, [-30.0, -1.25, 10.0])],
+            distances: ChamferSize::Angle(distance("0.75"), angle),
+            chains: false,
+            flip: false,
+        },
+    ];
+    for chamfer in chamfers {
+        editor
+            .apply(editor.document().add_feature(chamfer.into()))
+            .unwrap();
+    }
+    editor.document().clone()
+}
+
+/// The chamfers' part of a record damaged on disk, every float in it set
+/// to what's out of bounds or not a number and random bytes in it
+/// changed (2 000 ways): refused as it's read or read as a document that
+/// passes its check, its chamfers their own, never a panic.
+#[test]
+fn a_damaged_chamfer_is_refused_or_checked() {
+    let document = chamfered_every_way();
+    let raw = record_msgpack(&document);
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let from = (raw.windows(7))
+        .position(|window| window == b"Chamfer")
+        .expect("a chamfer's variant name");
+    let read = |bytes: &[u8]| {
+        if let Ok((document, _)) = from_msgpack::<Document>(bytes) {
+            document.check().unwrap();
+            for feature in document.features() {
+                if let varde_document::FeatureKind::Chamfer(chamfer) = &feature.kind {
+                    chamfer.check_own(&document.design()).unwrap();
+                }
+            }
+        }
+    };
+    let floats: Vec<usize> = (from..raw.len().saturating_sub(8))
+        .filter(|&at| raw[at] == 0xcb)
+        .collect();
+    assert!(floats.len() > 10, "{}", floats.len());
+    for &at in &floats {
+        for x in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e300,
+            -1e300,
+            1.000_001e6,
+            1e6,
+            -0.0,
+            0.0,
+            f64::MIN_POSITIVE,
+            std::f64::consts::FRAC_PI_2,
+        ] {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&x.to_bits().to_be_bytes());
+            read(&changed);
+        }
+    }
+    let size = raw.len() - from;
+    for seed in 0..2_000u64 {
+        let picks = noise(8, seed.wrapping_mul(0x9e37_79b9) + 1);
+        let mut changed = raw.clone();
+        for pair in picks.chunks(2).take(1 + (seed % 3) as usize) {
+            let at = from + (usize::from(pair[0]) * 256 + usize::from(pair[1])) % size;
+            changed[at] = picks[(seed % 8) as usize] ^ pair[1];
+        }
+        read(&changed);
+    }
+}
+
+/// A chamfer's edges out of order, repeated, on two bodies, or past the
+/// limit in a record, and its values changed on disk to what its asks
+/// refuse: each refused as it's read.
+#[test]
+fn a_chamfer_s_edges_and_values_are_checked_as_read() {
+    use varde_document::{Chamfer, ChamferSize, FeatureKind, MAX_BLEND_EDGES};
+    let document = chamfered_every_way();
+    let raw = record_msgpack(&document);
+    let FeatureKind::Chamfer(two) = &document.features()[3].kind else {
+        panic!("the two-edge chamfer");
+    };
+    let was = rmp_serde::to_vec_named(&FeatureKind::Chamfer(two.clone())).unwrap();
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the chamfer in the record");
+    let refused = |change: &dyn Fn(&mut Chamfer)| {
+        let mut chamfer = two.clone();
+        change(&mut chamfer);
+        let now = rmp_serde::to_vec_named(&FeatureKind::Chamfer(chamfer.clone())).unwrap();
+        let mut changed = raw[..at].to_vec();
+        changed.extend_from_slice(&now);
+        changed.extend_from_slice(&raw[at + was.len()..]);
+        assert!(
+            from_msgpack::<Document>(&changed).is_err(),
+            "taken: {chamfer:?}"
+        );
+    };
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    refused(&|chamfer| chamfer.edges.reverse());
+    refused(&|chamfer| chamfer.edges[1] = chamfer.edges[0]);
+    refused(&|chamfer| chamfer.edges[1].body = varde_document::BodyId::NEW);
+    refused(&|chamfer| {
+        let edge = chamfer.edges[0];
+        chamfer.edges = (0..=MAX_BLEND_EDGES)
+            .map(|k| varde_document::EdgeRef {
+                near: edge.near + glam::DVec3::X * k as f64 * 1e-3,
+                ..edge
+            })
+            .collect();
+    });
+    refused(&|chamfer| chamfer.edges.clear());
+    refused(&|chamfer| {
+        if let ChamferSize::Two(a, _) = &mut chamfer.distances {
+            a.value = 0.0;
+            a.text = "0".to_owned();
+        }
+    });
+    refused(&|chamfer| {
+        if let ChamferSize::Two(_, b) = &mut chamfer.distances {
+            b.value = 3.0;
+        }
+    });
+}

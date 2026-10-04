@@ -35,6 +35,7 @@
 //! reaches the user as "chamfering Body 1 is too complex to work out",
 //! and the rest of the history goes on.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use varde_document::{Chamfer, ChamferSize, Document, EdgeRef, FeatureId};
@@ -200,12 +201,11 @@ pub(crate) fn by_wedges(
     Ok(result)
 }
 
-/// One chain to chamfer as it's worked out: what the kernel gets, the
-/// pair of keys its name is made of, and which of the chamfer's edges
-/// it comes from and whether it was grown into, for the messages.
+/// One chain to chamfer as it's worked out: what the kernel gets, and
+/// which of the chamfer's edges it comes from and whether it was grown
+/// into, for the messages.
 struct Planned {
     chain: ChamferChain,
-    pair: [FaceKey; 2],
     edge: usize,
     grown: bool,
 }
@@ -302,29 +302,45 @@ fn plan(solid: &Solid, topology: &Topology, chamfer: &Chamfer, found: &[u32]) ->
         .map(|(edge, &chain)| first_region(topology, sides_of(chain), edge, chamfer.flip))
         .collect();
     let mut planned: Vec<Planned> = Vec::new();
-    let add = |planned: &mut Vec<Planned>, chain: u32, pair: [FaceKey; 2], first, edge, grown| {
-        if planned.iter().any(|p| p.chain.chain == chain) {
-            return;
-        }
-        // Ordinals count the chains before it with the same pair.
-        let ordinal = planned.iter().filter(|p| p.pair == pair).count();
-        planned.push(Planned {
-            chain: ChamferChain {
-                chain,
-                name: blend_edge(pair, ordinal as u32),
-                cut: cut(&chamfer.distances, sides_of(chain), first),
-            },
-            pair,
-            edge,
-            grown,
-        });
-    };
+    // Each chain taken, and how many chains taken have each pair: kept
+    // as they go, so a long tangent chain costs its length once.
+    let mut taken = vec![false; chains.len()];
+    let mut pairs: BTreeMap<[FaceKey; 2], u32> = BTreeMap::new();
+    let mut add =
+        |planned: &mut Vec<Planned>, chain: u32, pair: [FaceKey; 2], first, edge, grown| {
+            if std::mem::replace(&mut taken[chain as usize], true) {
+                return;
+            }
+            // Ordinals count the chains before it with the same pair.
+            let ordinal = pairs.entry(pair).or_default();
+            planned.push(Planned {
+                chain: ChamferChain {
+                    chain,
+                    name: blend_edge(pair, *ordinal),
+                    cut: cut(&chamfer.distances, sides_of(chain), first),
+                },
+                edge,
+                grown,
+            });
+            *ordinal += 1;
+        };
     for (i, (edge, &chain)) in chamfer.edges.iter().zip(found).enumerate() {
         add(&mut planned, chain, edge.faces, firsts[i], i, false);
     }
     if chamfer.chains {
         let roots = topology.tangent_chains(solid);
+        // The chains of each tangent chain, by its root, in index order.
+        let mut members: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+        for (chain, &root) in roots.iter().enumerate() {
+            members.entry(root).or_default().push(chain as u32);
+        }
+        let mut grown: Vec<bool> = vec![false; chains.len()];
         for (i, &chain) in found.iter().enumerate() {
+            let root = roots[chain as usize];
+            // An earlier edge of the same tangent chain took it all.
+            if std::mem::replace(&mut grown[root as usize], true) {
+                continue;
+            }
             let picked = sides_of(chain);
             let first = firsts[i];
             let second = if picked[0] == first {
@@ -332,9 +348,7 @@ fn plan(solid: &Solid, topology: &Topology, chamfer: &Chamfer, found: &[u32]) ->
             } else {
                 picked[0]
             };
-            let root = roots[chain as usize];
-            for (other, _) in (roots.iter().enumerate()).filter(|&(_, &r)| r == root) {
-                let other = other as u32;
+            for &other in &members[&root] {
                 let sides = sides_of(other);
                 let other_first = if sides.contains(&first) {
                     first

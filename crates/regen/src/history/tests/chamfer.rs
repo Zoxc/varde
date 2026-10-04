@@ -21,6 +21,8 @@ use varde_kernel::mesh::{FaceKey, Form};
 use varde_kernel::topology::blend_edge;
 use varde_kernel::{BlendError, ChamferChain, Topology};
 
+use crate::picking::region_form;
+
 use super::motion::{add, block, cylinder, failure, key_on, key_where, set};
 use super::*;
 
@@ -646,4 +648,221 @@ fn the_kernel_chamfers_alike_every_time() {
     let (a, b) = (solid_of(&a, body), solid_of(&b, body));
     assert_eq!(a.volume().to_bits(), b.volume().to_bits());
     assert_eq!(a.mesh().tris().len(), b.mesh().tris().len());
+}
+
+/// Draws a quad on XZ, (2, 0), (10, 0), (10, 4), (2, 6): a wall 8 wide
+/// with a sloping top.
+fn sloped(sketch: &mut Sketch) {
+    let corners = [(2.0, 0.0), (10.0, 0.0), (10.0, 4.0), (2.0, 6.0)]
+        .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+    for k in 0..4 {
+        let line = Curve::Line {
+            start: corners[k],
+            end: corners[(k + 1) % 4],
+        };
+        sketch.add_curve(line, false).unwrap();
+    }
+}
+
+/// [`sloped`] turned a quarter about Z, and the same drawn again
+/// extruded 10 straight on from where the turn starts, joined: one body
+/// whose outer top rim runs smoothly from the block's straight edge
+/// (between its sloping top and its flat side) into the turn's arc
+/// (between a cone and a cylinder), the two sharing no face. The
+/// editor, the body and its solid.
+fn turned_and_straight() -> (Editor, BodyId, Arc<Solid>) {
+    use varde_document::{AxisLine, Revolve, Turn};
+    for flip in [false, true] {
+        let mut editor = Editor::new(Document::default());
+        editor
+            .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XZ)))
+            .unwrap();
+        let sketch = editor.document().features().last().unwrap().id;
+        let mut drawn = Sketch::default();
+        sloped(&mut drawn);
+        let region = drawn.profiles().unwrap().reference(0).unwrap();
+        editor
+            .apply(Command::SetSketch {
+                feature: sketch,
+                sketch: Box::new(drawn),
+            })
+            .unwrap();
+        let quarter = Value::new("90", &Turn::ask(&editor.document().design())).unwrap();
+        let revolve = Revolve {
+            sketch,
+            regions: vec![region.clone()],
+            axis: AxisLine::SketchY,
+            extent: Turn::OneSide(quarter),
+            flip,
+            operation: Operation::NewBody(BodyId::NEW),
+        };
+        add(&mut editor, revolve);
+        let body = editor.document().bodies()[0].id;
+        let turned = evaluated(editor.document()).bodies[0].solid.volume();
+        let extrude = Extrude {
+            sketch,
+            regions: vec![region],
+            extent: Extent::OneSide(length(editor.document(), "10")),
+            flip: false,
+            operation: Operation::Join(Targets::default()),
+        };
+        add(&mut editor, extrude);
+        let evaluation = evaluated(editor.document());
+        let solid = Arc::clone(&evaluation.bodies[0].solid);
+        // The quad's area is 40, so the straight part is 400.
+        if evaluation.failed.is_empty() && (solid.volume() - (turned + 400.0)).abs() < 1e-6 {
+            return (editor, body, solid);
+        }
+    }
+    panic!("the block and the turn overlap either way");
+}
+
+/// An edge grown into that shares no face with the picked edge (the
+/// turn's arc, from the block's straight edge) takes its first face on
+/// the side the picked edge's is as the rim runs on: the cone when the
+/// first is the block's sloping top, the cylinder when it's its side.
+/// Sharing no face with the picked edge, the arc takes its lower-keyed
+/// face (regen has no side to go by), right for one of the two at most;
+/// but the kernel can't make the body yet: the join, flush on tangent
+/// faces, is too complex.
+#[test]
+#[ignore = "the kernel can't join bodies meeting flush on tangent faces"]
+fn a_grown_edge_sharing_no_face_takes_the_picked_edge_s_side() {
+    super::super::chamfer::CHAMFERER.set(Some(recording));
+    let mm = Document::default();
+    let (mut editor, body, solid) = turned_and_straight();
+    let topology = solid.topology();
+    let regions = topology.regions();
+    let form = |r: u32| region_form(&solid, &regions[r as usize]);
+    let slope = key_where(
+        &solid,
+        |form| matches!(*form, Form::Plane { n, .. } if n.z > 0.1 && n.z < 0.99),
+    );
+    let side = key_where(
+        &solid,
+        |form| matches!(*form, Form::Plane { n, d } if n.x > 0.99 && (d - 10.0).abs() < 1e-9),
+    );
+    let chain = (topology.chains().iter())
+        .find(|chain| {
+            chain.regions.map(|r| regions[r as usize].key) == [slope, side]
+                || chain.regions.map(|r| regions[r as usize].key) == [side, slope]
+        })
+        .expect("the block's outer top edge");
+    let mesh = solid.mesh();
+    let middle = {
+        let curve = mesh.curve(chain.halfedges[0]);
+        (curve.p0 + curve.p1) / 2.0
+    };
+    let at = edge(body, slope, side, middle.into());
+    for flip in [false, true] {
+        let two = Chamfer {
+            distances: ChamferSize::Two(distance(&mm, "1"), distance(&mm, "2")),
+            flip,
+            ..chamfer(&mm, vec![at], "1")
+        };
+        let id = add(&mut editor, two);
+        let evaluation = evaluated(editor.document());
+        assert!(
+            failure(&evaluation, id).is_none(),
+            "{:?}",
+            evaluation.failed
+        );
+        let handed = HANDED.with_borrow(Clone::clone);
+        assert_eq!(handed.len(), 2, "the straight edge and the arc");
+        // The first face: the slope's side unflipped (the slope's key is
+        // the lower: both the extrude's, the cap before the side), else
+        // the side's.
+        assert_eq!(at.faces[0], slope);
+        let sloping = |r: u32| match *form(r) {
+            Form::Plane { n, .. } => n.z > 0.1,
+            Form::Cone { .. } => true,
+            _ => false,
+        };
+        for chain in &handed {
+            let sides = topology.chains()[chain.chain as usize].regions;
+            let first = if sloping(sides[0]) != flip { 0 } else { 1 };
+            let wanted = if first == 0 { [1.0, 2.0] } else { [2.0, 1.0] };
+            assert_eq!(
+                chain.cut,
+                varde_kernel::ChamferCut::Distances(wanted),
+                "flip {flip}: {:?}",
+                sides.map(form)
+            );
+        }
+        editor.apply(Command::RemoveFeature(id)).unwrap();
+    }
+}
+
+mod fuzz;
+
+/// A prism on a 2000-gon, 6000 edges, its rims' edges running on into
+/// each other within 1°: a chamfer of the most edges it may name,
+/// tangent chains on, is worked out (the edges found, the rims grown
+/// whole, each chain handed over once) well within a second, where each
+/// picked edge went through its whole rim: 2.6 s.
+#[test]
+fn the_most_edges_are_worked_out_quickly() {
+    super::super::chamfer::CHAMFERER.set(Some(recording));
+    let mut editor = Editor::new(Document::default());
+    let gon = |sketch: &mut Sketch| {
+        let n = 2000;
+        let corners: Vec<_> = (0..n)
+            .map(|k| {
+                let t = std::f64::consts::TAU * f64::from(k) / f64::from(n);
+                sketch
+                    .add_point(DVec2::new(20.0 * t.cos(), 20.0 * t.sin()))
+                    .unwrap()
+            })
+            .collect();
+        for k in 0..corners.len() {
+            let line = Curve::Line {
+                start: corners[k],
+                end: corners[(k + 1) % corners.len()],
+            };
+            sketch.add_curve(line, false).unwrap();
+        }
+    };
+    let extent = Extent::OneSide(length(editor.document(), "5"));
+    add_extrude(&mut editor, gon, extent, Operation::NewBody(BodyId::NEW));
+    let body = editor.document().bodies()[0].id;
+    let evaluation = evaluated(editor.document());
+    let solid = solid_of(&evaluation, body).clone();
+    let topology = solid.topology();
+    let regions = topology.regions();
+    let mut edges: Vec<EdgeRef> = (topology.chains().iter())
+        .map(|chain| {
+            let curve = solid.mesh().curve(chain.halfedges[0]);
+            let mut faces = chain.regions.map(|r| regions[r as usize].key);
+            faces.sort();
+            EdgeRef {
+                body,
+                faces,
+                near: (curve.p0 + curve.p1) / 2.0,
+            }
+        })
+        .collect();
+    assert_eq!(edges.len(), 6000);
+    edges.truncate(varde_document::MAX_BLEND_EDGES);
+    // Each picked edge's whole tangent chain: the rims, 2000 edges each.
+    let roots = topology.tangent_chains(&solid);
+    let mut picked: Vec<u32> = roots[..edges.len()].to_vec();
+    picked.sort_unstable();
+    picked.dedup();
+    let wanted = (roots.iter()).filter(|root| picked.contains(root)).count();
+    assert!(wanted >= 2000, "{wanted}");
+    let kind = chamfer(editor.document(), edges, "0.5");
+    let mut cache = Cache::default();
+    evaluate(editor.document(), &mut cache);
+    let id = add(&mut editor, kind);
+    cache.begin();
+    let started = std::time::Instant::now();
+    let evaluation = evaluate(editor.document(), &mut cache);
+    let took = started.elapsed();
+    assert!(
+        failure(&evaluation, id).is_none(),
+        "{:?}",
+        evaluation.failed
+    );
+    assert_eq!(HANDED.with_borrow(Vec::len), wanted);
+    assert!(took.as_secs_f64() < 1.0, "{took:?}");
 }

@@ -775,7 +775,9 @@ The status bar says "New revolve · 1 region picked · about Line 3"
 (or "pick the regions to revolve", "pick the axis"), with the hints
 "Pick regions" or "Pick the axis", `Enter` OK and `Esc` Cancel. The
 toolbar shows it as it shows a sketch being edited: a pill on the soft
-accent with its icon and name ("New revolve" or "Revolve 1") and OK
+accent with its icon and name ("New revolve" or "Revolve 1"; a name
+past 32 characters, a file's, cut short with "…" so the bar fits at
+1280 px) and OK
 joined to it (disabled while OK waits), then Cancel (`Esc`) and only
 what the operation picks (the origin axes or planes): as the mock's, not
 the other operations, which left no room for those at 1280 px (their
@@ -1040,7 +1042,9 @@ Union · tools kept" (`feature_info`).
 until)` replays, in the document's order, the joins the model shown
 found merging and the combines using their tools up that it didn't find
 failing (`MeshFeed::consumes`), by regen's rule (`note_merge`, a
-combine as its target then its tools): the extrude's and revolve's
+combine as its target then its tools); a combine naming a body merged in
+before it merges nothing, as regen fails it, even before the model shown
+knows (a session's bodies and edges don't follow into it): the extrude's and revolve's
 Bodies lists and the combine's picking use it, and the delete prompt's
 warning replays combines alike. `feed/tests.rs`'s
 `merged_before_agrees_with_regen_on_random_histories` holds the two to
@@ -2900,13 +2904,21 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   tangents). That's purely the topology, so it's done in regen rather
   than behind the kernel stub. A chain is chamfered once: the picked
   edges first, in the list's order, then the grown ones, each taken by
-  the first edge reaching it.
+  the first edge reaching it (a tangent chain is gone through once,
+  by the first picked edge on it: 256 edges on a 2000-edge rim take
+  milliseconds).
 - **First faces and names**: a picked edge's first face is the region
   its first key (second with `flip`) names (by the region's own key
   where aliases name both by both keys, else the lower region); a grown
   chain's is the region it shares with its picked edge's first face,
   else the region across from one it shares with the picked edge's other
-  face, else its lower-keyed region. The kernel gets each chain as a
+  face, else its lower-keyed region. That last is a guess: a rim running
+  on from a block's edge into a turned body's arc between a cone and a
+  cylinder shares no face with it, and its first face should follow the
+  side the picked edge's is on as the rim runs (the chains' directions
+  through the vertices joining them); the kernel can't make that body
+  yet (the join, flush on tangent faces, is too complex), so it waits,
+  its test ignored. The kernel gets each chain as a
   `ChamferChain { chain, name, cut }`: `cut` in the chain's region order
   (`ChamferCut::Distances([d0, d1])`, or `Angle { on, distance, angle }`
   with `on` the first face's side), `name` the
@@ -3066,8 +3078,19 @@ all twelve edges by their volumes, the cache; recording: a slot's rim
 taken in as four chains named apart with the top the first face all
 round, only the one without chains; a refusal named and drawn; ignored:
 the kernel's on a block's edges, a hole's and a boss's rims by Pappus,
-determinism), `io/src/vrdp/tests.rs` (through a file, a tampered edge
-point refused), `view/src/chamfer/tests.rs` (the notes),
+determinism; a 2000-gon's rims grown from 256 edges in well under a
+second; a rim sharing no face with the picked edge, ignored until the
+kernel joins flush on tangent faces), `regen/src/history/tests/chamfer/fuzz.rs`
+(random histories of blocks, discs, joins, cuts, combines and chamfers
+by the stand-in of one to four edges of every size, now and then named
+on a used-up body, chamfers edited, upstream extrudes changed, removals,
+undo and redo, drafts: each chamfer failing alike whole and cut short,
+one failing changing nothing, one working taking material off its body
+alone; cache warm and cold alike; edits, bytes and the wire;
+`VARDE_CHAMFER_SEEDS`), `io/src/vrdp/tests.rs` (through a file, a
+tampered edge point refused, a damaged chamfers' record refused or
+checked, edges out of order, repeated, on another body, none or past
+the limit and values disagreeing refused as read), `view/src/chamfer/tests.rs` (the notes),
 `view/src/motion/tests.rs` (the chamfer's panel: its order for each
 type, the rows' measures beside them, no Flip sides for Equal, the
 status text), `rail/tests.rs` (Chamfer's `C` in the Modify set) and
@@ -3085,5 +3108,16 @@ picking nothing, a disc's rim with its diameter; editing from the
 Timeline, Cancel, another distance, undo, and its edges all taken out
 previewed as a move of nothing; an edge an undo takes away said to be
 gone, back on redo; the edges selected taken in, `C` again backing
-out). The app's tests chamfer by prisms through regen's `testing`
+out; edges not following their body into a combine that fails for
+naming a body merged in before it; the toolbar at 1280 px with a long
+name cut short in the pill), `app/src/doc/motion/tests/chamfer/fuzz.rs`
+(random sessions: edges clicked on the model shown or one gone by,
+faces and other bodies' among them, rows' crosses, Tangent chain,
+types, Flip sides, values out of range or not numbers, units, rows
+hovered, undo and redo, merges, an edit taking every edge out then a
+merge, commits, Add anyway, cancels; each step the session sorted on
+one body, ready only when its checks pass and previewed as set up,
+committed as drafted, edits opening to what they store, the edges lit
+on the body drawing theirs; at the end each working chamfer takes
+material off; `VARDE_CHAMFER_SEEDS`). The app's tests chamfer by prisms through regen's `testing`
 feature (`varde_regen::testing::chamfer_by_wedges`).

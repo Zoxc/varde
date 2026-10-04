@@ -741,4 +741,78 @@ fn the_toolbar_fits_at_1280_px() {
     let chamfering = fits(&plates);
     assert!(chamfering.iter().any(|t| t == "New chamfer"));
     assert!(!chamfering.iter().any(|t| t == "Combine"));
+
+    // A chamfer with a long name (a file's: the app names them
+    // "Chamfer 1") edited: its name in the pill is cut short to fit.
+    let (editor, id) = chamfered();
+    let bytes = editor.document().to_postcard();
+    let was = b"\x09Chamfer 1";
+    let at = (bytes.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the chamfer's name");
+    let long = "Chamfer of the front top edge of the base plate, before the holes and the \
+                pockets are cut into it";
+    assert!(long.len() < 128);
+    let mut changed = bytes[..at].to_vec();
+    changed.push(long.len() as u8);
+    changed.extend_from_slice(long.as_bytes());
+    changed.extend_from_slice(&bytes[at + was.len()..]);
+    let document = Document::from_postcard(&changed).unwrap();
+    assert_eq!(document.feature(id).unwrap().name, long);
+    let (doc, requests) = holding(document);
+    let plate = editor.document().bodies()[0].id;
+    let mut plates = Plates {
+        doc,
+        requests,
+        bodies: [plate; 3],
+    };
+    plates.doc.look(Look::EditFeature(id));
+    let shown = fits(&plates);
+    assert!(
+        shown
+            .iter()
+            .any(|t| t.starts_with("Chamfer of the") && t.ends_with('…')),
+        "{shown:?}"
+    );
 }
+
+/// A combine into a body merged into another before it fails, as
+/// regeneration has it: the edges picked don't follow their body into
+/// it, even before the model shown knows it fails.
+#[test]
+fn edges_dont_follow_their_body_into_a_combine_that_fails() {
+    use varde_document::{BodyOp, Combine};
+    let mut plates = plates();
+    let [plate, right, left] = plates.bodies;
+    let combine = |target, tool| Combine {
+        target,
+        tools: vec![tool],
+        op: BodyOp::Union,
+        keep_tools: false,
+    };
+    let add = plates
+        .doc
+        .editor
+        .document()
+        .add_feature(combine(left, right).into());
+    plates.doc.apply(add);
+    plates.doc.sync();
+    plates.answer();
+    plates.doc.look(Look::StartChamfer);
+    click_edge(&mut plates, plate, FRONT);
+    assert_eq!(edges(&plates)[0].body, plate);
+    // Right is in Left now: this one fails.
+    let add = plates
+        .doc
+        .editor
+        .document()
+        .add_feature(combine(right, plate).into());
+    plates.doc.apply(add);
+    plates.doc.sync();
+    assert_eq!(edges(&plates)[0].body, plate, "before the answer");
+    plates.answer();
+    assert_eq!(edges(&plates)[0].body, plate);
+    assert!(plates.doc.motion_ready());
+}
+
+mod fuzz;
