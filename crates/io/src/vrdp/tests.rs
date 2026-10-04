@@ -2815,3 +2815,86 @@ fn a_tampered_scale_is_refused() {
         assert!(decoded.is_err(), "{was} as {now} was taken");
     }
 }
+
+/// The example plate split by XY keeping both sides, then by its top
+/// face's plane keeping the back: the document.
+fn split_plate() -> Document {
+    use glam::DVec3;
+    use varde_document::{
+        FaceKey, FaceRef, Keep, OriginPlane, PartKey, PlaneRef, Side, Split, SplitTool,
+    };
+    let mut editor = Editor::new(Document::example());
+    let document = editor.document();
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let by_xy = Split {
+        body: plate,
+        tool: SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY)),
+        original: Side::Back,
+        keep: Keep::Both,
+        new_body: None,
+    };
+    editor
+        .apply(editor.document().add_feature(by_xy.into()))
+        .unwrap();
+    let top = FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: maker,
+            part: PartKey::EndCap,
+            instance: 0,
+        },
+        near: DVec3::new(3.0, 7.25, 10.0),
+    };
+    let trim = Split {
+        body: plate,
+        tool: SplitTool::Plane(PlaneRef::Face(top)),
+        original: Side::Front,
+        keep: Keep::Back,
+        new_body: None,
+    };
+    editor
+        .apply(editor.document().add_feature(trim.into()))
+        .unwrap();
+    editor.document().clone()
+}
+
+/// Splits go through a file, each read back as a split in its place,
+/// the first with the new body it makes.
+#[test]
+fn splits_round_trip() {
+    use varde_document::FeatureKind;
+    let document = split_plate();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    assert_eq!(read.bodies().len(), 2);
+    let FeatureKind::Split(split) = &read.features()[2].kind else {
+        panic!("a split");
+    };
+    assert_eq!(split.new_body, Some(read.bodies()[1].id));
+}
+
+/// A record whose split's face point was changed on disk to what the
+/// document refuses is refused as it's read; as written, it reads.
+#[test]
+fn a_tampered_split_is_refused() {
+    let raw = record_msgpack(&split_plate());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let was = {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&7.25f64.to_bits().to_be_bytes());
+        bytes
+    };
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the face's point is in the record");
+    for now in [f64::NAN, f64::INFINITY, 3e6] {
+        let mut changed = raw.clone();
+        changed[at + 1..at + 9].copy_from_slice(&now.to_bits().to_be_bytes());
+        assert!(
+            from_msgpack::<Document>(&changed).is_err(),
+            "{now} was taken"
+        );
+    }
+}

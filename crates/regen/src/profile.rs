@@ -26,7 +26,7 @@ use std::fmt;
 use glam::DVec2;
 use varde_kernel::patch::{Conic2, PatchError};
 use varde_kernel::{Loop, MAX_PROFILE_SEGMENTS, Profile, Segment};
-use varde_sketch::{Curve, Piece, Profiles, Sketch};
+use varde_sketch::{Curve, Id, Piece, Profiles, Sketch};
 
 mod fit;
 
@@ -152,6 +152,156 @@ fn piece_segments(
             fit::spline(&part, !ccw, a, b, curve, out)
         }
     }
+}
+
+/// Why a split's curves give no open chain ([`chain`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ChainError {
+    /// A curve isn't in the sketch any more, or names a point it doesn't
+    /// have, or a spline has no shape.
+    Missing,
+    /// A curve is closed (a circle, a closed spline), or the curves join
+    /// up into a loop.
+    Closed,
+    /// The curves don't join end to end into one chain: three or more
+    /// ends meet at a point, or they're in several pieces.
+    Branches,
+    /// What turning them into conics found wrong.
+    Profile(ProfileError),
+}
+
+impl From<ProfileError> for ChainError {
+    fn from(e: ProfileError) -> Self {
+        ChainError::Profile(e)
+    }
+}
+
+/// The open chain the curves `curves` of `sketch` make, as conics, each
+/// starting to the bit where the one before ends, or why they make none.
+/// Each curve is whole and has two ends (a line, an arc or an open
+/// spline); ends join where they're the same point or within `join` of
+/// each other, two at a time; the curves must join into one chain with
+/// two free ends. It runs the way its lowest curve (by id) runs. Each
+/// curve's conics are made as a region's pieces are (lines, arcs of at
+/// most 90°, splines fitted within `fit`), from the point where the one
+/// before ends: a joint's place is where the earlier curve along the
+/// chain ends. At most [`MAX_PROFILE_SEGMENTS`] conics; the work is
+/// linear in the curves but for finding the joints, quadratic in them
+/// (`curves` holds at most a few hundred).
+pub(crate) fn chain(
+    sketch: &Sketch,
+    curves: &[Id],
+    join: f64,
+    fit: f64,
+) -> Result<Vec<Segment>, ChainError> {
+    let at = |id| sketch.point(id).map(|point| point.at);
+    // Each curve's end points and where they are.
+    let mut ends: Vec<[(Id, DVec2); 2]> = Vec::with_capacity(curves.len());
+    for &id in curves {
+        let entry = sketch.curve(id).ok_or(ChainError::Missing)?;
+        let [a, b] = entry.curve.ends().ok_or(ChainError::Closed)?;
+        let (Some(pa), Some(pb)) = (at(a), at(b)) else {
+            return Err(ChainError::Missing);
+        };
+        ends.push([(a, pa), (b, pb)]);
+    }
+    // The end each end joins, as (curve, end).
+    let n = ends.len();
+    let mut partner: Vec<[Option<(usize, usize)>; 2]> = vec![[None; 2]; n];
+    for i in 0..n {
+        for e in 0..2 {
+            for j in (i + 1)..n {
+                for f in 0..2 {
+                    let (p, q) = (ends[i][e], ends[j][f]);
+                    if p.0 != q.0 && p.1.distance(q.1) > join {
+                        continue;
+                    }
+                    if partner[i][e].is_some() || partner[j][f].is_some() {
+                        return Err(ChainError::Branches);
+                    }
+                    partner[i][e] = Some((j, f));
+                    partner[j][f] = Some((i, e));
+                }
+            }
+        }
+    }
+    // A curve whose own two ends meet is a loop of its own.
+    if (0..n).any(|i| ends[i][0].0 == ends[i][1].0 || ends[i][0].1.distance(ends[i][1].1) <= join) {
+        return Err(ChainError::Closed);
+    }
+    let mut free = (0..n).flat_map(|i| (0..2).map(move |e| (i, e)));
+    let Some(start) = free.find(|&(i, e)| partner[i][e].is_none()) else {
+        return Err(ChainError::Closed);
+    };
+    // Walked from a free end: each step a curve and whether it runs
+    // backwards (from its end to its start).
+    let mut walk: Vec<(usize, bool)> = Vec::with_capacity(n);
+    let (mut curve, mut from) = start;
+    loop {
+        walk.push((curve, from == 1));
+        match partner[curve][1 - from] {
+            Some((next, end)) if walk.len() < n => (curve, from) = (next, end),
+            Some(_) => return Err(ChainError::Branches),
+            None => break,
+        }
+    }
+    if walk.len() != n {
+        return Err(ChainError::Branches);
+    }
+    // The way the lowest curve runs: `curves` is sorted, so it's the
+    // first.
+    if walk
+        .iter()
+        .any(|&(curve, backwards)| curve == 0 && backwards)
+    {
+        walk.reverse();
+        for step in &mut walk {
+            step.1 = !step.1;
+        }
+    }
+    let mut out = Segments {
+        count: 0,
+        fit,
+        segments: Vec::new(),
+    };
+    let mut joint: Option<DVec2> = None;
+    for &(index, backwards) in &walk {
+        let [first, last] = ends[index];
+        let (start, end) = if backwards {
+            (last, first)
+        } else {
+            (first, last)
+        };
+        let a = joint.unwrap_or(start.1);
+        let b = end.1;
+        let id = curves[index];
+        let entry = sketch.curve(id).ok_or(ChainError::Missing)?;
+        let curve = u64::from(id.get());
+        match &entry.curve {
+            Curve::Line { .. } => {
+                let line = Conic2::line(a, b).map_err(ProfileError::from)?;
+                out.push(line, curve)?;
+            }
+            &Curve::Arc { center, .. } => {
+                let center = at(center).ok_or(ChainError::Missing)?;
+                // Counter-clockwise from its start to its end.
+                let radius = first.1.distance(center);
+                let turn = |p: DVec2| varde_kernel::trig::angle(p - center);
+                let mut sweep = turn(last.1) - turn(first.1);
+                if sweep <= 0.0 {
+                    sweep += 2.0 * PI;
+                }
+                arc(center, radius, a, b, sweep, !backwards, curve, &mut out)?;
+            }
+            Curve::Spline(spline) => {
+                let shape = sketch.spline_shape(spline).ok_or(ChainError::Missing)?;
+                fit::spline(&shape, backwards, a, b, curve, &mut out)?;
+            }
+            Curve::Circle { .. } => return Err(ChainError::Closed),
+        }
+        joint = Some(b);
+    }
+    Ok(out.segments)
 }
 
 /// Adds the arc of the circle about `center` of `radius` from `a` to `b`,

@@ -107,6 +107,7 @@ mod combine;
 mod motion;
 mod pattern;
 pub(crate) mod scale;
+mod split;
 
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.
@@ -161,6 +162,11 @@ pub struct Evaluation {
     /// in the document's order. For the app to show a draft's edge's
     /// length and fitted faces, and draw its point.
     pub scaled: Vec<(FeatureId, crate::ScaleFound)>,
+    /// Each split that kept both pieces: the body split, which kept one,
+    /// and its new body, which got the other, in the document's order.
+    /// A sketch on a face of the body that went to the new body follows
+    /// it there.
+    pub splits: Vec<(BodyId, BodyId)>,
 }
 
 impl Evaluation {
@@ -356,7 +362,8 @@ pub(crate) fn evaluate_within(
                     | FeatureKind::Mirror(_)
                     | FeatureKind::Pattern(_)
                     | FeatureKind::Align(_)
-                    | FeatureKind::Scale(_) => unreachable!("matched apart"),
+                    | FeatureKind::Scale(_)
+                    | FeatureKind::Split(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -438,6 +445,19 @@ pub(crate) fn evaluate_within(
                     document,
                     feature.id,
                     scale,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::Split(split) => {
+                if let Err(failed) = split::evaluate_split(
+                    document,
+                    feature.id,
+                    split,
+                    &sketches,
                     &tolerance,
                     &mut evaluation,
                     cache,
@@ -984,7 +1004,10 @@ impl Run<'_> {
 /// face is found on its solid's [`Topology`](varde_kernel::Topology) by
 /// name or alias, the nearest to its point among several
 /// ([`Topology::face`](varde_kernel::Topology::face); none is "wasn't
-/// found"); its form must be a plane ("isn't flat", which shows the face
+/// found", unless a split before the sketch gave the face to its new
+/// body: the face is then looked for on the bodies splits made of the
+/// holder, in [`Evaluation::splits`]' order, and on those made of them,
+/// and the sketch follows it to the first it's found on); its form must be a plane ("isn't flat", which shows the face
 /// found, see [`face_geometry`]), whose `n` and `d`
 /// give the placement by [`Placement::on_plane`], the same rule and the
 /// same bits as the app's from the picking tables' summary of the face
@@ -1003,6 +1026,50 @@ pub(crate) fn place_on_face(
     let made = (evaluation.bodies.iter())
         .find(|made| Some(made.body) == holder)
         .ok_or(message::FACE_BODY_GONE)?;
+    let placed = place_on(made, face, tolerance, cache);
+    if placed
+        .as_ref()
+        .is_err_and(|failed| failed.message == message::FACE_NOT_FOUND)
+    {
+        // Followed into the bodies splits made of it, the first split
+        // first, and on into those made of them.
+        let mut on = vec![made.body];
+        let mut at = 0;
+        while let Some(&body) = on.get(at) {
+            at += 1;
+            for &(split, new) in &evaluation.splits {
+                let Some(new) = evaluation.holder(new) else {
+                    continue;
+                };
+                if evaluation.holder(split) != Some(body) || on.contains(&new) {
+                    continue;
+                }
+                on.push(new);
+                let Some(made) = evaluation.bodies.iter().find(|made| made.body == new) else {
+                    continue;
+                };
+                let followed = place_on(made, face, tolerance, cache);
+                if followed
+                    .as_ref()
+                    .is_err_and(|failed| failed.message == message::FACE_NOT_FOUND)
+                {
+                    continue;
+                }
+                return followed;
+            }
+        }
+    }
+    placed
+}
+
+/// Where a sketch on `face` is on the body `made` holds, or why it isn't
+/// anywhere, as [`place_on_face`] finds it.
+fn place_on(
+    made: &BodySolid,
+    face: &FaceRef,
+    tolerance: &Tolerance,
+    cache: &mut Cache,
+) -> Result<Placement, Failed> {
     let near = face.near.to_array().map(f64::to_bits);
     let key = Keyer::new("placement")
         .key(made.key)

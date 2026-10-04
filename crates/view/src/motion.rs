@@ -637,6 +637,32 @@ pub fn scale_info(document: &Document, scale: &varde_document::Scale, units: Len
     format!("{bodies} {}", scale_note(scale, units))
 }
 
+/// A split's Timeline note: what it splits with, "by XY", "by Body 3",
+/// "by a face", "by Sketch 2", and the side kept where it keeps one
+/// ("by XY · front only").
+pub(crate) fn split_note(document: &Document, split: &varde_document::Split) -> String {
+    use varde_document::{Keep, SplitTool};
+    let tool = match &split.tool {
+        SplitTool::Plane(plane) => plane_short(document, plane),
+        SplitTool::Face(face) => face_name(document, face),
+        SplitTool::Body(body) => body_names(document, std::slice::from_ref(body)),
+        SplitTool::Regions { sketch, .. } | SplitTool::Chain { sketch, .. } => (document
+            .feature(*sketch))
+        .map_or_else(|| "a sketch".to_owned(), |feature| feature.name.clone()),
+    };
+    match split.keep {
+        Keep::Both => format!("by {tool}"),
+        Keep::Front => format!("by {tool} · front only"),
+        Keep::Back => format!("by {tool} · back only"),
+    }
+}
+
+/// What the status bar says of a selected split: "Body 1 by XY".
+pub(crate) fn split_info(document: &Document, split: &varde_document::Split) -> String {
+    let body = body_names(document, std::slice::from_ref(&split.body));
+    format!("{body} {}", split_note(document, split))
+}
+
 /// The names of `bodies` of `document`, joined: "Body 1, Body 2".
 pub(crate) fn body_names(document: &Document, bodies: &[BodyId]) -> String {
     let names: Vec<&str> = (bodies.iter())

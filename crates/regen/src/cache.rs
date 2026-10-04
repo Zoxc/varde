@@ -185,6 +185,9 @@ enum Entry {
     Touches(Result<bool, Arc<KernelFailure>>),
     /// A boolean of two solids, or the kernel's failure.
     Boolean(Result<Arc<Solid>, Arc<KernelFailure>>),
+    /// A solid split by a tool, its front and back, or the kernel's
+    /// failure.
+    Split(Result<[Arc<Solid>; 2], Arc<KernelFailure>>),
     /// A solid drawn, with its picking tables.
     Drawn(Arc<Drawn>),
     /// The model's mesh and picking tables: the shown bodies' joined.
@@ -219,7 +222,10 @@ impl Entry {
             | Entry::Datum(Err(failed))
             | Entry::Length(Err(failed)) => (failed.message.len())
                 .saturating_add(failed.geometry.as_deref().map_or(0, ErrorGeometry::bytes)),
-            Entry::Touches(Err(failure)) | Entry::Boolean(Err(failure)) => failure.bytes(),
+            Entry::Split(Ok([front, back])) => solid_bytes(front).saturating_add(solid_bytes(back)),
+            Entry::Touches(Err(failure))
+            | Entry::Boolean(Err(failure))
+            | Entry::Split(Err(failure)) => failure.bytes(),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
             Entry::Scene(scene) => mesh_bytes(&scene.mesh).saturating_add(scene.picking.bytes()),
             Entry::Topology(topology) => topology_bytes(topology),
@@ -560,6 +566,23 @@ impl Cache {
             Entry::Boolean(make().map(Arc::new).map_err(Arc::new))
         }) {
             Entry::Boolean(solid) => solid,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn split(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<(Solid, Solid), KernelFailure>,
+    ) -> Result<[Arc<Solid>; 2], Arc<KernelFailure>> {
+        match self.entry(key, || {
+            Entry::Split(
+                make()
+                    .map(|(front, back)| [Arc::new(front), Arc::new(back)])
+                    .map_err(Arc::new),
+            )
+        }) {
+            Entry::Split(pieces) => pieces,
             _ => unreachable!("keys of different kinds differ"),
         }
     }

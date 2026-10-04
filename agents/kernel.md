@@ -10173,3 +10173,12 @@ see `agents/features.md`, "Failures and where they are").
   given, not as flipped. The fixed direction for the smallest rotation
   takes over within `1e-8` of parallel or opposite, not only at exactly
   opposite, where the cross product is rounding.
+- **Split built above a stand-in.** The split feature's document and
+  regeneration came before the kernel's split (the user put kernel work
+  off): `boolean/split.rs` holds `split`, `half_space`, `surface_tool`
+  (with `ToolError`) and `chain_tool` with their planned signatures,
+  each failing with `KernelError::TooComplex`, to be replaced whole by
+  the real ones (one arrangement for both pieces; the half-space box,
+  the extended surfaces and the open chain's tool from the body's box).
+  Until then every split fails as too complex (see "Split" in
+  `agents/features.md`).

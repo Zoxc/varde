@@ -409,6 +409,46 @@ fn a_scale_s_notes() {
     assert_eq!(scale_note(&scale, LengthUnit::In), "edge → 1.9685 in");
 }
 
+/// A split's note names its tool, and the side kept for a trim.
+#[test]
+fn a_split_s_notes() {
+    use varde_document::{Keep, OriginPlane, PlaneRef, Side, Split, SplitTool};
+    let example = Document::example();
+    let document = &example;
+    let plate = document.bodies()[0].id;
+    let extrude = document.features()[1].id;
+    let sketch = document.features()[0].id;
+    let mut split = Split {
+        body: plate,
+        tool: SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY)),
+        original: Side::Front,
+        keep: Keep::Both,
+        new_body: None,
+    };
+    assert_eq!(split_note(document, &split), "by XY");
+    assert_eq!(split_info(document, &split), "Body 1 by XY");
+    split.keep = Keep::Back;
+    assert_eq!(split_note(document, &split), "by XY · back only");
+    split.keep = Keep::Both;
+    split.tool = SplitTool::Face(FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: extrude.get(),
+            part: PartKey::EndCap,
+            instance: 0,
+        },
+        near: glam::DVec3::ZERO,
+    });
+    assert_eq!(split_note(document, &split), "by Extrude 1's end");
+    split.tool = SplitTool::Body(plate);
+    assert_eq!(split_note(document, &split), "by Body 1");
+    split.tool = SplitTool::Chain {
+        sketch,
+        curves: Vec::new(),
+    };
+    assert_eq!(split_note(document, &split), "by Sketch 1");
+}
+
 /// A scale's panel, built in the mock's Move panel's style: Bodies, the
 /// Point, Scale's three tiles and the mode's fields; to an edge's
 /// length, the edge with its length now, Length and Along its axis only

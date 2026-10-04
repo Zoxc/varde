@@ -292,6 +292,73 @@ pub(crate) fn scale_measure(error: varde_kernel::measure::MeasureError) -> Strin
     format!("its edge can't be measured: {error}")
 }
 
+/// Why a split by a face's plane fails: the face's body has no solid
+/// when the history reaches the split.
+pub(crate) const SPLIT_PLANE_BODY_GONE: &str = "its plane face's body is gone";
+
+/// Why a split by a face's plane fails: no face of its body as the
+/// features before it leave it has the face's name.
+pub(crate) const SPLIT_PLANE_NOT_FOUND: &str = "its plane face wasn't found";
+
+/// Why a split by a face's plane fails: the face found isn't a plane.
+pub(crate) const SPLIT_PLANE_NOT_FLAT: &str = "its plane face isn't flat";
+
+/// Why a split by a face's surface fails: the face's body has no solid
+/// when the history reaches the split.
+pub(crate) const SPLIT_FACE_BODY_GONE: &str = "its face's body is gone";
+
+/// Why a split by a face's surface fails: no face of its body as the
+/// features before it leave it has the face's name.
+pub(crate) const SPLIT_FACE_NOT_FOUND: &str = "its face wasn't found";
+
+/// Why a split by a face's surface fails: the face's form has no surface
+/// to continue past the face (a blend traced along its edges, a drafted
+/// face).
+pub(crate) const SPLIT_CANT_EXTEND: &str = "its face can't be extended to split with";
+
+/// Why a split by a sketch's regions or line fails: the sketch isn't
+/// there (not of a checked document).
+pub(crate) const SPLIT_SKETCH_GONE: &str = "its sketch isn't there";
+
+/// Why a split by a sketch's line fails, `error` saying how its curves
+/// don't make one.
+pub(crate) fn split_line(error: crate::profile::ChainError) -> String {
+    use crate::profile::ChainError;
+    match error {
+        ChainError::Missing => "its line's curves weren't found".to_owned(),
+        ChainError::Closed => {
+            "its line is closed: split with the region it encloses instead".to_owned()
+        }
+        ChainError::Branches => "its line's curves don't join end to end into one line".to_owned(),
+        ChainError::Profile(error) => format!("its line can't be used: {error}"),
+    }
+}
+
+/// Why making the tool a split cuts the body named `body` with failed.
+pub(crate) fn split_tool(body: &str, error: KernelError) -> String {
+    match error {
+        KernelError::TooComplex => {
+            format!("extending its tool past {body} is too complex to work out")
+        }
+        KernelError::Patch(_) => format!("{body} is too near the edge of the space to split"),
+        KernelError::Profile(ProfileError::Touching(_)) => {
+            format!("the line doesn't split {body}: it crosses itself once extended")
+        }
+        error => format!("its tool past {body} can't be made: {error}"),
+    }
+}
+
+/// Why splitting the body named `body` failed in the kernel.
+pub(crate) fn splitting(body: &str, error: KernelError) -> String {
+    failed(&format!("splitting {body}"), error)
+}
+
+/// Why a split fails though the kernel split the body named `body`: one
+/// side holds nothing of it, so it isn't cut in two.
+pub(crate) fn split_one_side(body: &str) -> String {
+    format!("{body} lies all on one side: the tool doesn't cut it in two")
+}
+
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {

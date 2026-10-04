@@ -312,7 +312,15 @@ millimetres) and turn (an angle as a revolve's); or a scale,
 scales about (a point as an align's) and its factor: uniform (a typed
 number and its value), per axis (three, X, Y and Z) or an edge length
 (an edge as a revolve's, a typed length and its value in millimetres,
-and whether it scales along the edge's axis only). A
+and whether it scales along the edge's axis only); or a split,
+`crates/document/src/split.rs`: the body's id, its tool (an origin
+plane or a face's plane as a mirror's; a face as a sketch's; another
+body's id; a sketch's id and regions as an extrude's; or a sketch's id
+and the ids of its curves, sorted), which piece keeps the body's id
+(front or back), which pieces are kept (both, front or back) and the
+id of the body the other piece becomes, there exactly when both are
+kept. `original`, `keep` and `new_body` are `#[serde(default)]` (front,
+both, none); splits are new, so no older record holds one. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -334,7 +342,7 @@ bodies and features take. A document read from a file is checked
 feature ids increasing and below the next id, every body's opacity from
 10 to 100, every body made by an
 extrude or revolve the document holds whose operation makes it as its
-new body, and every such body there, or by a pattern listing it as a
+new body, or a split naming it as its new body, and every such body there, or by a pattern listing it as a
 copy body (one per copy, none repeated, every body it makes listed, at
 most 1024, none for a joined one), an extrude's or revolve's sketch a
 sketch feature before it, 1 to 256 regions, each within the coordinate
@@ -364,7 +372,13 @@ the origin's, its target side's on other bodies, each named as a move's
 axis; a scale's bodies as a move's, its factors their expressions give
 from 0.001 to 1000, its edge length a length as an extrude's distance,
 its edge on one of its bodies, its point and edge named as a move's
-axis;
+axis; a split's body made by an earlier feature, its tool body there,
+made earlier and not the body, its face tool's body there and made
+earlier, its plane face's body and any face's maker as a mirror's
+plane's, a sketch tool's sketch a sketch before it, 1 to 256 regions
+or 1 to 256 curves sorted without repeats, and its new body there
+exactly when it keeps both pieces, a body it makes (a body made by a
+split must be its new body);
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

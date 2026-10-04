@@ -1,6 +1,6 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns and scales), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales and splits), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -17,7 +17,9 @@ they share with the newer kinds is here. The kernel math of each is in
   operation is `NewBody` also adds "Body N" with the next id, replacing
   whatever id the command held (`BodyId::NEW`); a pattern whose copies
   are bodies of their own adds one per copy, laid out as "Pattern"
-  says. One undo step. A sketch
+  says; a split keeping both pieces adds one for its other piece
+  (`Split::new_body`, filled in or taken out as its `keep` says, see
+  "Split"). One undo step. A sketch
   kind is refused (`EditError::SketchKind`): sketches are added empty by
   `AddSketch` and set by `SetSketch`.
 - `Command::SetFeature { feature, kind }` replaces a feature's kind,
@@ -25,7 +27,8 @@ they share with the newer kinds is here. The kernel math of each is in
   sketch feature, or a sketch kind, is refused (`EditError::SketchKind`).
   The kind may change (an extrude may become a revolve): what matters is
   the operation. A `NewBody` that stays one keeps its body (whatever id
-  the command held); one that stops removes the body and drops it from
+  the command held; a split's new body likewise, `FeatureKind::new_body`
+  / `new_body_mut`); one that stops removes the body and drops it from
   the other features' excluded lists; one that starts adds one. A
   pattern's copy bodies go the same way, copy by copy (see "Pattern").
   The caller passes regions referenced afresh from the sketch as it is.
@@ -34,10 +37,12 @@ they share with the newer kinds is here. The kernel math of each is in
   `check_new` on the added or set feature: what's required of a feature
   when the user makes or edits it, but not of one already in a document
   (a later edit of its sketch may break it, which regeneration reports).
-  Today that's only a revolve's axis line.
-- `FeatureKind` helpers: `noun`, `sketch` (the profile sketch),
-  `operation` / `new_body` (an extrude's or revolve's `Operation`; a
-  body's maker is checked by `new_body`, or a pattern's copy bodies),
+  Today that's a revolve's axis line and a split's line's curves.
+- `FeatureKind` helpers: `noun`, `sketch` (the profile sketch, or a
+  split's regions' or line's sketch),
+  `operation` / `new_body` (an extrude's or revolve's `Operation`, or a
+  split's new body; a body's maker is checked by `new_body`, or a
+  pattern's copy bodies),
   and `uses`, now a **list**
   (sorted, no repeats) of the features this one builds on, which
   `Document::removal` follows. Every extrude-only path that only cared
@@ -48,7 +53,7 @@ they share with the newer kinds is here. The kernel math of each is in
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
   `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6, `Align` 7,
-  `Scale` 8): files store a kind by its variant name, and
+  `Scale` 8, `Split` 9): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -2473,3 +2478,175 @@ and its centre of mass where the scale takes it, the edge then the
 length typed; one failing changes nothing; an align's point on an
 elliptic rim is checked against the conic through five of its
 points.
+
+## Split
+
+`crates/document/src/split.rs`.
+
+```rust
+pub struct Split {
+    pub body: BodyId,                // made by a feature before it
+    pub tool: SplitTool,
+    #[serde(default)] pub original: Side,           // Front | Back: which piece keeps the id
+    #[serde(default)] pub keep: Keep,               // Both | Front | Back
+    #[serde(default)] pub new_body: Option<BodyId>, // Some exactly when keep is Both
+}
+pub enum SplitTool {
+    Plane(PlaneRef),                                      // an origin plane or a flat face's
+    Face(FaceRef),                                        // a face's surface, continued past the body
+    Body(BodyId),                                         // another body, kept
+    Regions { sketch: FeatureId, regions: Vec<RegionRef> },  // through the body both ways
+    Chain { sketch: FeatureId, curves: Vec<Id> },          // one open chain, 1..=MAX_SPLIT_CURVES (256), sorted
+}
+```
+
+- **What it is**: the tenth variant (`FeatureKind::Split(Split)`,
+  "Split N", not boxed). The **front** is the part of the body inside
+  the tool: on the side a plane's normal points to (out of a face's
+  body), inside the closed solid a face's surface bounds, inside the
+  tool body or the sketch's regions, left of the chain (which runs as
+  its lowest curve by id does); the **back** is the rest. With `keep`
+  `Both`, the piece `original` names keeps the body's id (so every later
+  feature naming the body gets it) and the other becomes `new_body`, a
+  body the split makes ("Body N", `created_by` the split). Keeping one
+  side is a trim: that side keeps the id whatever `original` says
+  (`Split::kept`), no new body. A side of several pieces is one body of
+  several shells.
+- **The new body** goes through the commands as an extrude's
+  `NewBody` does: `AddFeature` makes one for a split keeping both
+  (whatever `new_body` held: `planned_new_body` sets it to
+  `BodyId::NEW` or `None` from `keep` first, so a panel needn't keep the
+  two in step), `SetFeature` keeps it while both are kept (switching
+  `original` keeps the same body, now the other piece), removes it when
+  one side is kept (refused while a later feature names it, as an
+  extrude's new body is), and adds a new one when both are kept again.
+- **Checks** (`CheckError::Split(id, SplitError)`): `Split::check_own()`
+  (cheap): the new body there exactly when both are kept
+  (`NewBodyKept`), a tool body not the body (`ToolIsBody`), a face's
+  point in bounds (`Face(PlaneError)`), 1..=256 regions each checked
+  (`Regions`, `Region`), 1..=256 curves sorted without repeats
+  (`Curves`, `CurveOrder`). `Document::check` then wants the body made
+  before (`Body`), a tool body there and made before (`ToolBody`), a
+  face tool's body there and made before (`FaceBody`: depended on), a
+  plane face's body and any face's maker as a mirror's plane's
+  (`RefBody`, `RefMaker`: one not there is allowed with ids no later
+  body or feature can take), a sketch tool's sketch a sketch before it
+  (`Sketch`), and the new body a body it makes (`NewBody`). On add and
+  set only (`check_new`): a chain's curves are curves of its sketch
+  (`Split::check_curves`, `Curve`); a later edit deleting one makes
+  regeneration fail it, as a revolve's axis line.
+- **Dependencies**: `FeatureKind::bodies()` is the body, a tool body and
+  a face tool's body (sorted, no repeats), so removing any of them (or
+  its maker) removes the split, and with it its new body and whatever
+  names that; removing the new body removes the split (its maker). A
+  plane face's body isn't listed (the split stays and fails, as a
+  mirror's plane). `uses()` and `sketch()` give a sketch tool's sketch,
+  which adding the split hides, as an extrude does.
+- `SetUnits`: nothing to pin.
+
+### Regeneration
+
+`crates/regen/src/history/split.rs`, in history order:
+
+- The body needs a solid of its own, and so does a tool body
+  (`own_solids`, as a combine's: consumed or failed fails the split).
+- **The tool**, from the body's box (`Solid::bounds3`), cached as an
+  `Entry::Solid` by the feature, the box's bits and the fit tolerance
+  and, by kind: an origin plane, `varde_kernel::half_space(normal, 0)`;
+  a flat face (found on its body's holder by key and point, as a
+  mirror's plane: "its plane face's body is gone", "... wasn't found",
+  "... isn't flat" with the face drawn), `half_space(n, d)` of its form,
+  keyed by the holder's key and the reference; a face,
+  `varde_kernel::surface_tool(form, on, bounds, ..)` with its region's
+  form and a point inside it (the middle of its first patch, picking a
+  cone's nappe; "its face's body is gone", "its face wasn't found";
+  `ToolError::CantExtend` is "its face can't be extended to split with",
+  the face drawn); a tool body, its solid and key as they are; a
+  sketch's regions, found and merged as an extrude's and extruded by
+  `varde_kernel::extrude` over the body's span along the sketch's
+  normal with through all's margin (`through_all` of the body alone),
+  its walls `Side { curve, .. }` of the split, keyed by the regions, the
+  span's bits, the sketch's key and placement; a chain, ordered by
+  `profile::chain` then `varde_kernel::chain_tool(segments, frame,
+  bounds, RIM, ..)` (the rectangle round the shadow named as profile
+  curve `RIM = 1 << 32`, past every sketch curve id), keyed by the
+  curves, the sketch's key and placement. A sketch not placed is "its
+  sketch isn't placed". The kernel's tool errors are worded by
+  `message::split_tool`: too complex "extending its tool past Body 1 is
+  too complex to work out", out of bounds "Body 1 is too near the edge
+  of the space to split", a profile touching itself "the line doesn't
+  split Body 1: it crosses itself once extended".
+- **The chain** (`profile::chain(sketch, curves, join, fit)`): each curve
+  whole with two ends (a line, an arc, an open spline; a circle or
+  closed spline is `Closed`), ends joined two at a time where they're
+  one point or within the resolution, into one chain with two free ends
+  (three ends at a point or pieces apart: `Branches`; a loop:
+  `Closed`; a curve gone: `Missing`), run the way its lowest curve runs;
+  each curve's conics made as a region's pieces are (lines, arcs of at
+  most 90° from `trig::angle`, splines fitted), from where the one
+  before ended, so the conics meet to the bit. Messages: "its line's
+  curves weren't found", "its line is closed: split with the region it
+  encloses instead", "its line's curves don't join end to end into one
+  line".
+- **The split**: `varde_kernel::split(body, tool, tol, budget)` →
+  `(front, back)`, cached as `Entry::Split` (both pieces, or the
+  `KernelFailure`) by the body's key and the tool's; its failure is
+  worded as a boolean's, "splitting Body 1 ...", the evidence's faces on
+  the body and a tool body. A side empty fails it: "Body 1 lies all on
+  one side: the tool doesn't cut it in two" (no body is ever empty).
+- **The pieces**: the one `Split::kept` names replaces the body's solid
+  (keyed `split piece` of the split's key and the side); the other, with
+  both kept, is pushed as the new body's (after the bodies made before:
+  the split makes it), and `(body, new_body)` noted in
+  `Evaluation::splits` (in the document's order; not on the wire).
+- **References after a split** (decided as proposed): later features
+  naming the body get the piece that kept its id, and their face and
+  edge references resolve on it only: one that went to the other piece
+  fails as not found (a mirror's face: "its mirror face wasn't found"),
+  to be picked again. **A sketch on a face** is the exception, as for
+  merged bodies: `place_on_face` looks for the face on the holder, and
+  where it isn't found, on the holders of the new bodies of splits of
+  it (in `Evaluation::splits`' order), and on those of splits of those,
+  and the sketch is placed on the first it's found on. Switching
+  `original` swaps which body later features work on.
+- **Kernel stand-in**: the kernel's `split`, `half_space`,
+  `surface_tool` and `chain_tool` (`kernel/src/boolean/split.rs`) are
+  not built yet: each has its planned signature and fails with
+  `TooComplex`. So every split fails today with the too-complex message
+  (a plane's, a face's or a line's tool first, as "extending its tool
+  ..."; a tool body or a sketch's regions, whose tools the kernel
+  already builds, as "splitting Body 1 is too complex to work out: ..."),
+  its body is left whole and its new body has no solid (a feature naming
+  it fails: "Body 3 has no solid: the feature making it failed"); the
+  rest of the history goes on. The regen tests swap the kernel's split
+  for two booleans (`a ∩ t`, `a − t`; `split::SPLITTER`, a test-only
+  thread local) to test what's done with the pieces; the planned
+  analytic tests of the kernel's split are written out and
+  `#[ignore = "kernel split not built"]`.
+- The draft's reply carries nothing new: a split draft applied by
+  `AddFeature` makes its new body as the command does, drawn as its own
+  part (the app can tell its id by applying the same command to its
+  copy of the document).
+
+### UI
+
+None yet (next): editing a split from the Timeline does nothing. The
+Timeline shows its icon (the icon mock's split body, `Icon::Split`, in
+the Modify set) and note: "by XY", "by Body 3", "by Extrude 1's end",
+"by Sketch 2", with " · front only" or " · back only" for a trim; the
+status bar "Body 1 by XY".
+
+Tests: `document/src/split/tests.rs` (a new body made and undone, a
+trim making none, editing what's kept adding and removing the new body
+and refused while a scale names it, sketch tools hiding and using their
+sketch, every check, removal along the bodies named, units, postcard
+round trip, wrong splits refused when read, the tenth kind),
+`regen/src/history/tests/split.rs` (the stand-in failing as too complex
+with the history going on, every tool reaching the kernel, regen's
+refusals before it, the chain joined end to end; with the booleans: the
+pieces to the body and the new body with `original` and `keep`, a
+sketch region through all, a side empty, a sketch on a face following
+into the new body while a mirror's face doesn't, a draft, the cache;
+ignored: a box by XY, by a cylinder face, an L by its own step's plane,
+by another body, by an open line, determinism),
+`io/src/vrdp/tests.rs` (through a file, a tampered face point refused).

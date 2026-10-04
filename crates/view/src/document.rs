@@ -1965,6 +1965,7 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
         FeatureKind::Pattern(pattern) => crate::motion::pattern_info(document, pattern),
         FeatureKind::Align(align) => crate::motion::align_info(document, align),
         FeatureKind::Scale(scale) => crate::motion::scale_info(document, scale, units),
+        FeatureKind::Split(split) => crate::motion::split_info(document, split),
     }
 }
 

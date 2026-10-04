@@ -774,6 +774,8 @@ impl Doc {
                     | FeatureKind::Align(_)
                     | FeatureKind::Scale(_),
                 ) => self.edit_motion(id),
+                // No panel yet: splits are made by the document's commands.
+                Some(FeatureKind::Split(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

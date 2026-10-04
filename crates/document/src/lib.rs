@@ -20,6 +20,7 @@ mod plane;
 mod removal;
 mod revolve;
 mod scale;
+mod split;
 #[cfg(test)]
 mod testing;
 
@@ -37,6 +38,7 @@ pub use plane::{FaceRef, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
 pub use scale::{MAX_SCALE_FACTOR, Scale, ScaleError, ScaleFactor};
+pub use split::{Keep, MAX_SPLIT_CURVES, Side, Split, SplitError, SplitTool};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -88,8 +90,8 @@ pub const MAX_NAME_LEN: usize = 1024;
 /// A body: a solid the feature history makes. The document holds only
 /// its name, whether it's shown and how opaque, and which feature makes
 /// it (an extrude or revolve making a new body, [`Operation::NewBody`],
-/// or a pattern whose copies are bodies of their own,
-/// [`Copies::Separate`]); its geometry is whatever regenerating the history gives it.
+/// a pattern whose copies are bodies of their own,
+/// [`Copies::Separate`], or a split's other piece, [`Split::new_body`]); its geometry is whatever regenerating the history gives it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     pub id: BodyId,
@@ -276,9 +278,9 @@ impl Document {
     /// ids and come last, where an edit adds them, and the same for
     /// feature ids; no name is longer than [`MAX_NAME_LEN`]; every body's
     /// opacity is one [`Opacity::new`] takes; the tolerance is one
-    /// [`Tolerance::new`] takes; every body is made by an extrude or
-    /// revolve the document holds that names it as its new body, and
-    /// every such body is there, or by a pattern listing it as a copy
+    /// [`Tolerance::new`] takes; every body is made by an extrude,
+    /// revolve or split the document holds that names it as its new
+    /// body, and every such body is there, or by a pattern listing it as a copy
     /// body ([`Copies::Separate`]), every such body there too, one per
     /// copy; every sketch passes [`Sketch::check`]
     /// against [`MAX_COORD`] and the document's units
@@ -301,7 +303,12 @@ impl Document {
     /// side's on others, each named as a move's axis is; and every scale's
     /// bodies are bodies features before it make, its factors or edge
     /// length as [`Scale::check_own`] wants them, its edge on one of
-    /// them, its point and edge named as a move's axis is. A
+    /// them, its point and edge named as a move's axis is; and every
+    /// split's body, tool body and face tool's body are bodies features
+    /// before it make, its plane face and faces' makers named as a
+    /// mirror's plane is, its sketch a sketch before it, and its new body
+    /// there exactly when it keeps both pieces, as [`Split::check_own`]
+    /// wants it. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
@@ -402,6 +409,13 @@ impl Document {
                         .map_err(|why| CheckError::Scale(id, why))?;
                     self.check_scale(index, scale)
                         .map_err(|why| CheckError::Scale(id, why))?;
+                }
+                FeatureKind::Split(split) => {
+                    split
+                        .check_own()
+                        .map_err(|why| CheckError::Split(id, why))?;
+                    self.check_split(index, split)
+                        .map_err(|why| CheckError::Split(id, why))?;
                 }
             }
         }
@@ -680,6 +694,47 @@ impl Document {
         Ok(())
     }
 
+    /// Checks what a split, feature `index`, names: its body, a tool
+    /// body and a face tool's body there and made by features before it,
+    /// as a combine's ([`Document::check_combine`]); a plane face's body
+    /// and any face's maker as a mirror's plane ([`Document::check_motion`]);
+    /// a sketch tool's sketch a sketch feature before it; and its new
+    /// body, if it has one, a body it makes.
+    fn check_split(&self, index: usize, split: &Split) -> Result<(), SplitError> {
+        if !self.made_before(index, split.body) {
+            return Err(SplitError::Body(split.body));
+        }
+        match &split.tool {
+            SplitTool::Body(tool) if !self.made_before(index, *tool) => {
+                return Err(SplitError::ToolBody(*tool));
+            }
+            SplitTool::Face(face) if !self.made_before(index, face.body) => {
+                return Err(SplitError::FaceBody(face.body));
+            }
+            SplitTool::Plane(PlaneRef::Face(face)) if !self.body_before(index, face.body) => {
+                return Err(SplitError::RefBody(face.body));
+            }
+            SplitTool::Regions { sketch, .. } | SplitTool::Chain { sketch, .. }
+                if self.sketch_before(index, *sketch).is_none() =>
+            {
+                return Err(SplitError::Sketch(*sketch));
+            }
+            _ => {}
+        }
+        if let Some(face) = split.face()
+            && !self.maker_before(index, face.maker())
+        {
+            return Err(SplitError::RefMaker(face.maker()));
+        }
+        let id = self.features[index].id;
+        if let Some(body) = split.new_body
+            && self.body(body).is_none_or(|body| body.created_by != id)
+        {
+            return Err(SplitError::NewBody(body));
+        }
+        Ok(())
+    }
+
     /// Whether `body` is there and made by a feature before feature
     /// `index`.
     fn made_before(&self, index: usize, body: BodyId) -> bool {
@@ -749,9 +804,9 @@ pub enum CheckError {
     /// A body's opacity is this percent, out of [`Opacity::MIN`] to
     /// [`Opacity::MAX`].
     Opacity(BodyId, u8),
-    /// A body's maker isn't an extrude or revolve the document holds that
-    /// makes it as its new body, or a pattern (whose own check holds it to
-    /// the copy bodies it lists).
+    /// A body's maker isn't an extrude, revolve or split the document
+    /// holds that makes it as its new body, or a pattern (whose own check
+    /// holds it to the copy bodies it lists).
     Creator(BodyId, FeatureId),
     /// The first body's id doesn't come after the second's, the one
     /// before it.
@@ -780,6 +835,8 @@ pub enum CheckError {
     Align(FeatureId, AlignError),
     /// A scale feature is wrong, see [`ScaleError`].
     Scale(FeatureId, ScaleError),
+    /// A split feature is wrong, see [`SplitError`].
+    Split(FeatureId, SplitError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -829,6 +886,7 @@ impl fmt::Display for CheckError {
             | CheckError::Pattern(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Align(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Scale(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Split(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -858,6 +916,7 @@ impl std::error::Error for CheckError {
             }
             CheckError::Align(_, why) => Some(why),
             CheckError::Scale(_, why) => Some(why),
+            CheckError::Split(_, why) => Some(why),
             _ => None,
         }
     }

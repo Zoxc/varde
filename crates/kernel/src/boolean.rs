@@ -79,6 +79,7 @@ mod flat;
 mod input;
 pub(crate) mod near;
 mod pairs;
+mod split;
 mod surface;
 mod triangulate;
 
@@ -86,6 +87,7 @@ use count::Crossing;
 use curved::SeamRules;
 use input::{Input, Side};
 use pairs::Shortcuts;
+pub use split::{ToolError, chain_tool, half_space, split, surface_tool};
 
 /// A boolean operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

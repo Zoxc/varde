@@ -64,7 +64,9 @@ pub mod transform;
 pub mod trig;
 
 pub use aabb::Aabb;
-pub use boolean::{BooleanError, Op, boolean, touches};
+pub use boolean::{
+    BooleanError, Op, ToolError, boolean, chain_tool, half_space, split, surface_tool, touches,
+};
 pub use budget::Budget;
 pub use error::KernelError;
 pub use extrude::{Frame, extrude};

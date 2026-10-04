@@ -121,6 +121,8 @@ icons! {
     CPattern => r#"<circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="2 2.2"/><rect class="t" x="10" y="2.5" width="4" height="4" rx="1"/><rect x="17.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="17.5" width="4" height="4" rx="1"/><rect x="2.5" y="10" width="4" height="4" rx="1" stroke-dasharray="1.6 1.4"/>"#,
     // A box grown from a smaller one, an arrow out of its corner.
     Scale => r#"<rect class="r" x="3" y="11" width="10" height="10" rx="1"/><path class="a" d="M10 14l10-10M14 4h6v6"/>"#,
+    // The icon mock's split body: a box cut by a dashed plane.
+    Split => r#"<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M2 15L22 9" stroke-dasharray="2.5 2"/>"#,
     Align => r#"<path class="a" d="M4 3v18"/><rect class="t" x="7" y="5" width="13" height="5" rx="1"/><rect x="7" y="14" width="8" height="5" rx="1"/>"#,
     // Not in the icon mock: the offset constraint's nested squares, arrows
     // each way, a handle on a curve, a comb's teeth over one.
@@ -240,6 +242,7 @@ impl Icon {
             | Icon::Offset
             | Icon::Combine
             | Icon::Scale
+            | Icon::Split
             | Icon::ScUniform
             | Icon::ScAxes
             | Icon::ScEdge

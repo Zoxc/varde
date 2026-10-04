@@ -8,7 +8,7 @@ use varde_sketch::Sketch;
 
 use crate::{
     Body, BodyId, CheckError, Copies, Document, EditError, Extent, FeatureId, FeatureKind,
-    MAX_PATTERN_BODIES, Move, Opacity, Operation, Pattern, Plane, Removable, Snapshot, Turn,
+    MAX_PATTERN_BODIES, Move, Opacity, Pattern, Plane, Removable, Snapshot, Turn,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
@@ -43,13 +43,19 @@ pub enum Command {
     /// adds those), hiding the sketch whose regions it takes
     /// ([`FeatureKind::sketch`]). One making a new body adds the body,
     /// "Body N" one past the bodies so named, and gives it its id whatever
-    /// [`Operation::NewBody`] held ([`BodyId::NEW`]). A pattern whose
+    /// [`Operation::NewBody`] held ([`BodyId::NEW`]); a split keeping
+    /// both sides makes one too, whatever its `new_body` held, and one
+    /// keeping a side makes none ([`Split::new_body`]). A pattern whose
     /// copies are bodies of their own ([`Copies::Separate`]) adds them,
     /// one per copy, named so in turn, whatever its list held. A
     /// revolve's axis must be a line of its sketch
-    /// ([`Revolve::check_axis`]).
+    /// ([`Revolve::check_axis`]), and a split's line's curves curves of
+    /// its sketch ([`Split::check_curves`]).
     ///
     /// [`Revolve::check_axis`]: crate::Revolve::check_axis
+    /// [`Operation::NewBody`]: crate::Operation::NewBody
+    /// [`Split::new_body`]: crate::Split::new_body
+    /// [`Split::check_curves`]: crate::Split::check_curves
     AddFeature {
         name: String,
         kind: Box<FeatureKind>,
@@ -64,7 +70,8 @@ pub enum Command {
     /// excluded lists (but refused while a combine names it, as a target
     /// or a tool: removing it would leave the combine naming a body that
     /// isn't there); one that starts making one adds it, as
-    /// [`Command::AddFeature`] does. A pattern's copy bodies go the same
+    /// [`Command::AddFeature`] does. A split's new body goes the same
+    /// way, as its `keep` has both sides or one. A pattern's copy bodies go the same
     /// way: each copy (by its original and its `k`) the feature made a
     /// body of keeps it, the others get new ones, and those it no longer
     /// makes (fewer copies, a body taken out, joined to the original
@@ -183,6 +190,18 @@ fn planned_copies(old: Option<&FeatureKind>, pattern: &Pattern) -> Option<Vec<Op
         .collect::<Option<Vec<_>>>()
 }
 
+/// Gives a split keeping both sides a new body ([`BodyId::NEW`] unless
+/// it names one) and one keeping a side none, as [`Command::AddFeature`]
+/// and [`Command::SetFeature`] take it: a panel needn't keep the two in
+/// step.
+fn planned_new_body(kind: &mut FeatureKind) {
+    if let FeatureKind::Split(split) = kind {
+        split.new_body = split
+            .keeps_both()
+            .then(|| split.new_body.unwrap_or(BodyId::NEW));
+    }
+}
+
 /// The bodies `old`, a pattern, makes of its copies ([`Copies::Separate`]).
 fn copy_bodies_of(old: &FeatureKind) -> Vec<BodyId> {
     match old {
@@ -213,9 +232,9 @@ impl Document {
     /// Has `feature` make `body` as its new body.
     fn set_new_body(&mut self, feature: FeatureId, body: BodyId) {
         if let Some(index) = self.feature_index(feature)
-            && let Some(operation) = self.features[index].kind.operation_mut()
+            && let Some(new) = self.features[index].kind.new_body_mut()
         {
-            *operation = Operation::NewBody(body);
+            *new = body;
         }
     }
 
@@ -283,8 +302,17 @@ impl Document {
 
     /// Checks what [`Command::AddFeature`] and [`Command::SetFeature`]
     /// require of `kind`, feature `index` of this document, beyond
-    /// [`Document::check`]: a revolve's axis is a line of its sketch.
+    /// [`Document::check`]: a revolve's axis is a line of its sketch, and
+    /// a split's line's curves are curves of its sketch.
     fn check_new(&self, index: usize, kind: &FeatureKind) -> Result<(), EditError> {
+        if let FeatureKind::Split(split) = kind
+            && let Some(sketch) = (split.tool.sketch()).and_then(|id| self.sketch_before(index, id))
+        {
+            let id = self.features[index].id;
+            split
+                .check_curves(sketch)
+                .map_err(|why| EditError::Invalid(CheckError::Split(id, why)))?;
+        }
         if let FeatureKind::Revolve(revolve) = kind
             && let Some(sketch) = self.sketch_before(index, revolve.sketch)
         {
@@ -504,6 +532,8 @@ impl Editor {
                 if matches!(*kind, FeatureKind::Sketch { .. }) {
                     return Err(EditError::SketchKind);
                 }
+                let mut kind = kind;
+                planned_new_body(&mut kind);
                 let mut next = Document::clone(document);
                 let sketch = kind.sketch();
                 let makes_body = kind.new_body().is_some();
@@ -538,8 +568,9 @@ impl Editor {
                 {
                     return Err(EditError::SketchKind);
                 }
+                planned_new_body(&mut kind);
                 let kept = old.new_body();
-                if let (Some(body), Some(Operation::NewBody(new))) = (kept, kind.operation_mut()) {
+                if let (Some(body), Some(new)) = (kept, kind.new_body_mut()) {
                     *new = body;
                 }
                 let copies = match &mut *kind {
@@ -657,7 +688,9 @@ impl Editor {
                             }
                         }
                         // No values.
-                        FeatureKind::Combine(_) | FeatureKind::Mirror(_) => {}
+                        FeatureKind::Combine(_)
+                        | FeatureKind::Mirror(_)
+                        | FeatureKind::Split(_) => {}
                     }
                 }
                 next.units = units;
