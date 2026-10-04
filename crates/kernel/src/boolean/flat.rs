@@ -21,6 +21,7 @@
 //! exactly (`tie` 0), never giving a wrong result.
 
 use std::cmp::Ordering;
+use std::sync::OnceLock;
 
 use glam::DVec3;
 
@@ -32,8 +33,11 @@ use super::{BooleanError, Cross11, Crossing, Found, Primitives, UP};
 pub(super) struct Flat<'a> {
     a: &'a Input<'a>,
     b: &'a Input<'a>,
-    /// Each vertex of `A`'s first perturbation, `s·n_v`.
-    perturb: Vec<DVec3>,
+    /// `s`: +1 where `A` grows, −1 where it shrinks.
+    s: f64,
+    /// Each vertex of `A`'s first perturbation, `s·n_v`, once a decision
+    /// has asked for it: only the vertices near `B` are.
+    perturb: Vec<OnceLock<DVec3>>,
     /// Distances this close to a tie are decided as it
     /// ([`exact::sign_tied`]); 0 decides exactly.
     tie: f64,
@@ -47,7 +51,8 @@ impl<'a> Flat<'a> {
         Flat {
             a,
             b,
-            perturb: a.vertex_normals().into_iter().map(|n| n * s).collect(),
+            s,
+            perturb: vec![OnceLock::new(); a.mesh.verts().len()],
             tie,
         }
     }
@@ -70,7 +75,7 @@ impl<'a> Flat<'a> {
         match side {
             Side::A => Pt {
                 p,
-                n: Some(self.perturb[v as usize]),
+                n: Some(self.perturb(v)),
             },
             Side::B => Pt { p, n: None },
         }
@@ -78,7 +83,7 @@ impl<'a> Flat<'a> {
 
     /// Vertex `v` of `A`'s first perturbation, `s·n_v`.
     pub(super) fn perturb(&self, v: u32) -> DVec3 {
-        self.perturb[v as usize]
+        *self.perturb[v as usize].get_or_init(|| self.a.vertex_normal(v) * self.s)
     }
 
     fn tri(&self, side: Side, t: u32) -> [Pt; 3] {

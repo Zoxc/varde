@@ -49,6 +49,7 @@ use glam::{DVec2, DVec3};
 
 use super::super::triangulate::{Meter, in_circle};
 use super::Cleaner;
+use super::index::BENT;
 use super::seams::{REGION_STEPS, STEPS_PER_UNIT};
 use crate::KernelError;
 use crate::budget::Work;
@@ -129,25 +130,33 @@ impl Cleaner<'_> {
     /// repair splits.
     pub(super) fn quality(&mut self, resolution: f64, work: &mut Work) -> Result<(), KernelError> {
         let least = MIN_SPLIT * resolution;
-        work.spend(self.soup.tris.len())?;
         // Triangles with a curved corner closed: flipped open where they
         // can be, else their curves may leave them, bulging over the
-        // triangles beyond, and no point may come near those curves.
+        // triangles beyond, and no point may come near those curves. Only
+        // a triangle on a plane face with a curved side can have one, and
+        // only those the boolean made are refined (see [`super::index`]).
+        // The triangles made, as each is passed: those at the start, and
+        // those a flip makes before they are passed.
+        let mut made = self.made_alive().len();
         let mut closed = Vec::new();
-        let mut made = 0usize;
-        for t in 0..self.soup.tris.len() {
-            if !self.alive[t] {
-                continue;
-            }
-            made += usize::from(self.soup.made[t]);
-            let on_plane = self.planes[self.soup.faces[t] as usize].is_some();
-            if on_plane
-                && !self.open(self.soup.tris[t])
-                && !(self.soup.made[t] && self.open_by_flip(t as u32))
-            {
-                closed.push(t as u32);
+        let n = self.soup.tris.len() as u32;
+        let mut from = 0;
+        while let Some(t) = self.next_in(BENT, from, n) {
+            from = t + 1;
+            let i = t as usize;
+            if !self.open(self.soup.tris[i]) {
+                let flipped = if self.soup.made[i] {
+                    self.open_by_flip_with(t)
+                } else {
+                    None
+                };
+                match flipped {
+                    Some((s, was)) => made += usize::from(s > t && !was),
+                    None => closed.push(t),
+                }
             }
         }
+        work.spend(self.visits())?;
         let bulges = closed
             .iter()
             .flat_map(|&t| self.bulges(self.soup.tris[t as usize]))
@@ -157,7 +166,9 @@ impl Cleaner<'_> {
         // Vertices inside a plane face at a bad triangle's corner (a
         // seam's, left in a cap two flush caps made one) taken out where
         // the star triangulated again on its link is better shaped.
-        let mut inner: Vec<u32> = (0..self.soup.tris.len() as u32)
+        let mut inner: Vec<u32> = self
+            .made_alive()
+            .into_iter()
             .filter(|&t| self.bad(t, least).is_some())
             .flat_map(|t| self.soup.tris[t as usize])
             .collect();
@@ -177,7 +188,7 @@ impl Cleaner<'_> {
         let mut steps = 0usize;
         self.delaunay_made(most, &mut steps);
         let mut queue: BinaryHeap<Entry> = BinaryHeap::new();
-        for t in 0..self.soup.tris.len() as u32 {
+        for t in self.made_alive() {
             self.judge(&mut queue, t, least);
         }
         let first = self.soup.pos.len();
@@ -336,6 +347,12 @@ impl Cleaner<'_> {
     /// rim closed, which no split mends; the triangle across that side
     /// gives the rim another corner to join. Gives whether it flipped.
     fn open_by_flip(&mut self, t: u32) -> bool {
+        self.open_by_flip_with(t).is_some()
+    }
+
+    /// [`Self::open_by_flip`], giving the triangle across the side
+    /// flipped, and whether the boolean had made it.
+    fn open_by_flip_with(&mut self, t: u32) -> Option<(u32, bool)> {
         let tri = self.soup.tris[t as usize];
         let face = self.soup.faces[t as usize];
         for k in 0..3 {
@@ -351,11 +368,12 @@ impl Cleaner<'_> {
             if !(self.proper_on(n1, face) && self.proper_on(n2, face)) {
                 continue;
             }
+            let was = self.soup.made[s as usize];
             self.swap(t, s, [u, v], a, b);
             self.soup.curves.remove(&(a.min(b), a.max(b)));
-            return true;
+            return Some((s, was));
         }
-        false
+        None
     }
 
     /// The triangle across side `u → v` of triangle `t` if the side is
@@ -707,12 +725,9 @@ impl Cleaner<'_> {
     /// triangles split into pieces of the same shape, without end.
     fn delaunay_made(&mut self, most: usize, steps: &mut usize) {
         let mut sides: Vec<(u32, u32)> = Vec::new();
-        for t in 0..self.soup.tris.len() {
-            if self.alive[t]
-                && self.soup.made[t]
-                && self.planes[self.soup.faces[t] as usize].is_some()
-            {
-                let tri = self.soup.tris[t];
+        for t in self.made_alive() {
+            if self.planes[self.soup.faces[t as usize] as usize].is_some() {
+                let tri = self.soup.tris[t as usize];
                 sides.extend((0..3).map(|k| (tri[k], tri[(k + 1) % 3])));
             }
         }
@@ -884,6 +899,7 @@ impl Cleaner<'_> {
         for w in tri {
             self.around[w as usize].push(t);
         }
+        self.touch(t);
     }
 
     /// A new triangle `tri` on `face`, a piece of triangle `of`: made by
@@ -898,6 +914,7 @@ impl Cleaner<'_> {
         for w in tri {
             self.around[w as usize].push(t);
         }
+        self.touch(t);
         t
     }
 }
@@ -952,7 +969,9 @@ mod tests {
             joined: Vec::new(),
             small: 1e-3 / 8.0,
             thin: 4e-3,
+            index: super::super::Index::default(),
         };
+        c.index_all();
         let mut work = Work::new(&Budget::DEFAULT);
         c.quality(1e-3, &mut work).unwrap();
         let alive = c.alive.clone();

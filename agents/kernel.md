@@ -3959,6 +3959,15 @@ leaves by all, and the sum is kept: some face there moves the wrong way
 and a flush contact leaves a sheet of zero thickness folded onto the
 surface, which the clean-up takes out.
 
+Each vertex's `n_v` is worked out when a decision first asks for it
+(`Input::vertex_normal`, kept in a `OnceLock` a vertex by
+`Flat::perturb`), from its own triangles: found round it through the
+halfedges from one each vertex keeps, then taken in triangle order, so
+the sum is the same bits as working out every vertex's from all the
+triangles in order (`each_vertex_normal_is_the_one_from_every_triangle`).
+Only `A`'s vertices near `B` are asked for; before, every refinement
+round worked out all of `A`'s, a list of normals for each vertex.
+
 Each predicate is a polynomial in the points' coordinates, and so in
 `ε`; its sign is that of the first coefficient that isn't zero. The
 constant term is first evaluated in floating point with a running error
@@ -5613,10 +5622,18 @@ tried instead. A restored node is within one face, with its own corners
 and edge records: exactly the operand's surface. A ball just inside a
 slab, whose pairs were refined to rule out loops, comes back as the slab's
 12 patches and the ball's 8. Demoting a candidate can bring another's
-into the way, a round later, so the rounds run until none is demoted,
-each looking at every triangle (flags by node and by vertex, a unit of
-work each): on 48 000 refined triangles they took 14 s with sets, and
-now take 20 ms.
+into the way, a round later, so the rounds run until none is demoted.
+One pass over the triangles (a unit for every 16) finds those under a
+candidate and counts, for each of their corners, the triangles under no
+candidate and the candidates with it as a corner; each round then looks
+only at the triangles under a candidate (a unit each), and a demotion
+moves the triangles under it to a child that is a candidate, or to none
+(counted then). Demotion only ever takes triangles out from under
+candidates, so the counts stay what flags over every triangle would
+give, and the candidates come out the same (debug builds run the rounds
+over every triangle too and assert it). On 48 000 refined triangles the
+rounds took 14 s with sets, then 20 ms with flags over every triangle
+each round.
 
 ### Assembly (`boolean/assemble.rs`)
 
@@ -5918,9 +5935,10 @@ before the mesh is built, at most 64 rounds:
   the normal of its face's plane (a sliver no higher than about twice
   the short length can lie that close to the star's plane steeply,
   facing its way by the star's plane but not by its face's). The scan
-  goes over the vertices in id order and is charged the soup's size, as
-  a round is (on a plate with 64 square pockets, 8 flush bars and 8
-  holes it took under 1 % of the clean-up). Chained grid boxes (random half-grid
+  goes over the vertices in id order (only those that may fold: see
+  "Work local to the change" below), a unit each (on a plate with 64
+  square pockets, 8 flush bars and 8 holes it took under 1 % of the
+  clean-up). Chained grid boxes (random half-grid
   boxes, chains of five, as `grid_boxes_chained`; seeds 1 and 3–29,
   140 000 steps): 11 failed on a manifold result before, 1 now (a hull
   failure, not a fold: see Known gaps), none new and no wrong volume;
@@ -6183,6 +6201,56 @@ Collapsing removes an edge and keeps a closed manifold; it never decides
 that two separate vertices are one. What the clean-up can't mend fails the
 final check.
 
+**Work local to the change** (`cleanup/index.rs`). Each pass above
+changes something only at a triangle (or a vertex) of a class its own
+state and its neighbours' tell, and asked of any other it says no and
+changes nothing: the collapses' edges are sides no longer than `thin`
+(`SHORT`); the flips' triangles no higher than it (`FLAT`); the seams'
+triangles (straightened, unbent, triangulated again) have a curved side
+whose neighbour across lies in their face's plane (`SEAM`); the
+Delaunay flips need a sliver on a plane face, in the triangle or one
+sharing a side with it on that face (`SLIVERS`); a closed curved corner
+needs a plane face and a side with a record in the curves (`BENT`); and
+a folded star a vertex whose triangles are all on plane faces, two of
+them facing apart. The classes are worked out once for every triangle
+and vertex (a pass over the corners, and one over the curves' records
+for the classes that need a curved side: a seam also needs the far
+corner of the triangle across within the short length of the plane),
+charged a unit for every 16 triangles. Every change goes through a
+triangle whose corners, face or sides' curves changed, or that was
+taken out or made (`touch`: in `swap`, a collapse's triangles and all
+round the vertex kept, straightened seams, unfolding's new faces,
+merged faces, regions and stars triangulated again, the quality pass's
+pieces), and before a class is read again every living triangle with a
+corner among those triangles' corners, and those vertices, are classed
+again: that reaches each triangle that shares a side with a changed
+one. A record left where an edge went (no triangle has it) changes no
+class, and is the only kind a pass that says no takes out. Each pass
+then visits its class in id order as it is at each step (a triangle
+joining it past the one being visited is visited in that round, as the
+pass over every triangle would), the collapses' lists are made from the
+`SHORT` triangles, the quality pass's from the triangles the boolean
+made (and its closed corners from `BENT`'s), and each member is asked
+what every triangle was. So the same changes happen in the same order,
+and the results are the same bits, for a unit for each triangle or
+vertex visited or classed again instead of the soup's size each round.
+Debug builds assert, after the rounds and before the components are
+dropped, that the classes are what working them out afresh gives.
+
+Integrating every curved patch to drop the empty components took most of
+a boolean's time on a curved body (four 8 × 8 rules a patch, about
+30 µs; 0.76 s of a 0.2 mm cut on a plate of 900 round holes). Each
+component is now first told by its corner triangles' volume less the
+cones over its curved sides' lunes, which is off what integrating gives
+by no more than the patches' `lune_bound`s, the quadrature's error
+(`QUADRATURE` of the integrand's scale, bounded by the patch's distance
+from the component's root vertex times sixteen times its control net's
+area) and rounding, as the orientation check tells a shell's sign
+(`mesh/orient.rs`). Only a component within that of the short length
+times its area is integrated, in the same order as before, so the same
+components go (debug builds integrate them all and assert the
+verdicts). That pass is 17 ms on that plate.
+
 ### Results that aren't manifolds
 
 Where the exact result isn't a manifold (two boxes touching along an
@@ -6424,8 +6492,11 @@ a flat torus of 18 432 patches against itself, every primitive a tie,
 ran 16 s before running out, and stops in 1.6 s now), the square of each
 edge's crossings (ordering them), a unit
 per cut face and its triangulation's steps over 16 (the `Meter`, see
-"Triangulating"; an exact orientation 4 units), the soup's size per
-clean-up round, the triangles per round of merging, repair's own
+"Triangulating"; an exact orientation 4 units), the clean-up's unit for
+every 16 triangles and one for each triangle or vertex its passes visit
+or class again ("Work local to the change"), merging's unit for every 16
+triangles and one for each triangle under a candidate each round,
+repair's own
 (near the change, see "Repair and the check near the change"), a unit a
 patch naming faces of one surface alike (`Mesh::merge_faces`), and for
 the check that makes it a solid a unit a patch and 5 for each patch it
@@ -6515,7 +6586,7 @@ of them, 0.72 s and 0.28 s (1.9 million); crossing cylinders, 31 ms and
 37 s. So rayon gives 1.3 to 2.6 times, about 2.2 over the suite: the
 counting's primitives, the searches, the chains, the faces' cuts and
 repair's tests run in parallel, but rebuilding each refinement round's
-tables (`Input::new`, the vertex normals, the refiner's pieces), the
+tables (`Input::new`, the refiner's pieces), the
 BVHs, the clean-up, merging and the check's topology are sequential.
 
 A unit of work is about 0.2 to 0.7 µs on one thread across these and
@@ -6523,24 +6594,33 @@ across booleans that fail, so `MAX_WORK` (about 4.2 million) lets the
 heaviest of them through with room to spare and stops a failing one
 within about two seconds on one thread.
 
-**Whole-body costs.** Much of an operation's work is over everything
-both operands hold, whatever the boolean touches: every refinement
-round rebuilds and counts both operands, the clean-up looks at the whole
-soup each round, merging names faces over the whole result, and the
-check's topology, orientation and face tags run over all of it. Repair
-and the check's fold and hull tests work near the change only (see
-"Repair and the check near the change"); before, they took about 18 of
-the 25 units a patch a small cut cost. Measured in release (units by
-bisecting the budget, to 1%), a 0.2 mm box cut at the corner of a plate
-of round holes, away from them: 5 532 patches 128 000 → 47 000 units,
-19 180 patches 442 000 → 158 000, 39 388 patches 950 000 → 362 000
-(about 24 → 8.5 a patch; plates of square holes 27 → 9.5, and a pin
-the same); the last of 100 holes drilled one at a time into a plate
-(10 242 patches) 240 000 → 81 000 (23.4 → 7.9 a patch); 60 holes drilled
-one at a time into a 20 × 20 × 1 box 4.97 → 2.46 million units all
-told, 5.9 → 4.3 s of CPU (the earlier holes, on a small body, cost
-mostly what they cut). The results and errors are the same bits. So a
-body past about 400 000 patches can take no boolean within `MAX_WORK`.
+**Whole-body costs.** Some of an operation's work is still over
+everything both operands hold, whatever the boolean touches: every
+refinement round rebuilds and counts both operands, the soup is built,
+merging names faces over the whole result, repair bounds every patch,
+the check's topology, orientation and face tags run over all of it, and
+the clean-up's first pass classes every triangle (see "Work local to the
+change"). Repair and the check's fold and hull tests work near the
+change only (see "Repair and the check near the change"), and so do the
+clean-up's passes and merging's rounds; the vertex normals are worked
+out only where asked for. Measured in release (units by bisecting the
+budget, to 1%), a 0.2 mm box cut at the corner of a plate of round
+holes, away from them: 5 532 patches 128 000 → 47 000 → 21 600 units
+(as it was → with repair and the check near the change → with the
+clean-up and merging too), 19 180 patches 442 000 → 158 000 → 70 700,
+39 388 patches 950 000 → 362 000 → 144 000 (about 24 → 8.5 → 3.7 a
+patch; plates of square holes 27 → 9.5 → 3.3 to 4.2, a pin 3.8 to 5.3
+but 11 on the smallest, 2 060 patches); the last of 100 holes drilled
+one at a time into a plate (10 242 patches) 240 000 → 81 000 → 44 500
+(23.4 → 7.9 → 4.3 a patch), the hundred 16.0 → 12.3 → 4.2 s of CPU; 60
+holes drilled one at a time into a 20 × 20 × 1 box 4.97 → 2.46 → 1.57
+million units all told, 5.8 → 4.3 → 1.6 s of CPU (the earlier holes, on
+a small body, cost mostly what they cut). Of the CPU, most went to
+dropping the empty components, which integrated every curved patch:
+the box at the corner of the plate of 900 round holes, 0.83 s of CPU on
+one thread, now 0.22 s. The results and errors are the same bits. So a
+body past about 1 000 000 patches can take no boolean within
+`MAX_WORK`.
 A grid of many holes cut at once is another matter: a 100 × 100 × 5 plate
 less a 10 × 10 grid of pins assembled into one tool runs out (7 × 7
 takes 2.9 million units, 8 × 8 runs out), not for the whole body but
@@ -9751,3 +9831,24 @@ see `agents/features.md`, "Failures and where they are").
   a patch (`CHECK_WHOLE_WORK`), which the plan's "≤ 8 units a patch"
   didn't count: a small cut of a large plate now takes about 8 to 10 a
   patch (17 for a pin in the smallest plate measured, 2 060 patches).
+- **The clean-up visits classes of triangles, not the triangles a
+  boolean changed.** The plan seeded the clean-up's rounds with the
+  triangles that aren't an operand's kept whole and those a change
+  reaches, and planned a harness to show that the clean-up over every
+  triangle changes no kept one. Here each pass visits the class of
+  triangles it can change at all, by their own state and their
+  neighbours' (see "Work local to the change" under "Clean-up"), worked
+  out by one cheap pass over every triangle and kept in step: the same
+  results bit for bit whatever the operands hold (an extrude's cap can
+  hold slivers the Delaunay flips take up), so the harness wasn't
+  needed; debug builds assert the classes instead. That first pass is
+  charged a unit for every 16 triangles, and the members of the classes
+  an operand brings along are visited too: the plane triangles with a
+  side that has a curve (the caps round the holes of a plate) once by the
+  quality pass's closed-corner scan, about 7 700 of the 70 650 units a
+  small cut of the 20 × 20 plate of round holes takes. Dropping the
+  empty components integrated every curved patch of the result; it now
+  integrates only a component its bound can't tell (not in the plan:
+  it was most of a boolean's time on a curved body, and charged
+  nothing). `faces_out`, whose unit a patch the plan wanted charged once,
+  is no longer in the code.

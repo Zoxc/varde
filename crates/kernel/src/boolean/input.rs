@@ -70,6 +70,9 @@ pub(super) struct Input<'a> {
     pub(super) planar: Vec<bool>,
     /// Whether any patch isn't flat.
     pub(super) curved: bool,
+    /// A halfedge starting at each vertex (`u32::MAX` if none): where
+    /// [`Self::vertex_normal`] starts round the vertex.
+    star: Vec<u32>,
 }
 
 impl<'a> Input<'a> {
@@ -87,12 +90,18 @@ impl<'a> Input<'a> {
         let mut tri_edges = Vec::with_capacity(n);
         let mut boxes = Vec::with_capacity(n);
         let mut patches = Vec::with_capacity(n);
+        let mut star = vec![u32::MAX; mesh.verts().len()];
         for (t, tri) in mesh.tris().iter().enumerate() {
             let patch = mesh.patch(t);
             boxes.push(patch.bounds());
             patches.push(patch);
             let hs = tri.halfedges;
             tris.push(hs.map(|h| h.start));
+            for (i, h) in hs.iter().enumerate() {
+                if let Some(first) = star.get_mut(h.start as usize) {
+                    *first = (3 * t + i) as u32;
+                }
+            }
             let mut te = [(0u32, true); 3];
             for i in 0..3 {
                 let h = (3 * t + i) as u32;
@@ -138,6 +147,7 @@ impl<'a> Input<'a> {
             flat,
             planar,
             curved,
+            star,
         }
     }
 
@@ -172,55 +182,81 @@ impl<'a> Input<'a> {
         self.mesh.faces()[self.face(t) as usize].form
     }
 
-    /// Each vertex's direction out of the solid: one that leaves by
-    /// every triangle round the vertex (on the outer side of each one's
-    /// plane, a curved patch's normal at the corner standing in for its
-    /// triangle's) wherever there is one, so that moving the vertices
-    /// along them moves every face outwards. The sum of the triangles' unit
-    /// normals, normalized, when it does; else the axis of the smallest
-    /// cone round their normals (for up to [`CONE_NORMALS`] different
-    /// ones), which does whenever any direction does. Where none does (a
-    /// saddle), the sum: it only perturbs ties, and any direction keeps
-    /// the operands real.
+    /// Each vertex's direction out of the solid: see
+    /// [`Self::vertex_normal`], which works out one vertex's.
+    #[cfg(test)]
     pub(super) fn vertex_normals(&self) -> Vec<DVec3> {
-        let mut around: Vec<Vec<DVec3>> = vec![Vec::new(); self.mesh.verts().len()];
-        for t in 0..self.tris.len() as u32 {
-            let [a, b, c] = self.corners(t);
-            let flat = (b - a).cross(c - a).normalize_or_zero();
-            for (k, v) in self.tris[t as usize].into_iter().enumerate() {
+        (0..self.mesh.verts().len() as u32)
+            .map(|v| self.vertex_normal(v))
+            .collect()
+    }
+
+    /// Vertex `v`'s direction out of the solid: one that leaves by every
+    /// triangle round the vertex (on the outer side of each one's plane, a
+    /// curved patch's normal at the corner standing in for its
+    /// triangle's) wherever there is one, so that moving the vertices
+    /// along them moves every face outwards. The sum of the triangles'
+    /// unit normals (in the triangles' order), normalized, when it does;
+    /// else the axis of the smallest cone round their normals (for up to
+    /// [`CONE_NORMALS`] different ones), which does whenever any direction
+    /// does. Where none does (a saddle), the sum: it only perturbs ties,
+    /// and any direction keeps the operands real. Only the vertex's own
+    /// triangles are looked at, found round it through the halfedges (a
+    /// checked mesh has one fan at every vertex), so each vertex's costs
+    /// what its triangles do, whichever are asked for.
+    pub(super) fn vertex_normal(&self, v: u32) -> DVec3 {
+        let mesh = self.mesh;
+        // The halfedges starting at `v`, one a triangle, round its fan.
+        let mut star: Vec<u32> = Vec::new();
+        if let Some(&first) = self.star.get(v as usize)
+            && first != u32::MAX
+        {
+            let mut h = first;
+            for _ in 0..mesh.tris().len() {
+                star.push(h);
+                // The halfedge ending at `v` in the same triangle, and its
+                // pair, which starts at `v` in the next one.
+                let back = Mesh::next(Mesh::next(h));
+                h = mesh.halfedge(back).pair;
+                if h == first {
+                    break;
+                }
+            }
+        }
+        star.sort_unstable();
+        let mut normals: Vec<DVec3> = star
+            .iter()
+            .map(|&h| {
+                let (t, k) = (h / 3, h as usize % 3);
+                let [a, b, c] = self.corners(t);
+                let flat = (b - a).cross(c - a).normalize_or_zero();
                 // A curved patch's own normal at the corner.
-                let n = if self.flat[t as usize] {
+                if self.flat[t as usize] {
                     flat
                 } else {
                     self.patches[t as usize]
                         .normal(DVec3::AXES[k])
                         .try_normalize()
                         .unwrap_or(flat)
-                };
-                around[v as usize].push(n);
+                }
+            })
+            .collect();
+        let sum = normals.iter().copied().sum::<DVec3>().try_normalize();
+        let leaves = |d: DVec3| normals.iter().all(|n| n.dot(d) > 0.0);
+        if let Some(d) = sum
+            && leaves(d)
+        {
+            return d;
+        }
+        normals.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
+        normals.dedup();
+        if (1..=CONE_NORMALS).contains(&normals.len()) {
+            let (axis, least) = smallest_cone(&normals);
+            if least > 0.0 {
+                return axis;
             }
         }
-        around
-            .into_iter()
-            .map(|mut normals| {
-                let sum = normals.iter().copied().sum::<DVec3>().try_normalize();
-                let leaves = |d: DVec3| normals.iter().all(|n| n.dot(d) > 0.0);
-                if let Some(d) = sum
-                    && leaves(d)
-                {
-                    return d;
-                }
-                normals.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
-                normals.dedup();
-                if (1..=CONE_NORMALS).contains(&normals.len()) {
-                    let (axis, least) = smallest_cone(&normals);
-                    if least > 0.0 {
-                        return axis;
-                    }
-                }
-                sum.unwrap_or(DVec3::Z)
-            })
-            .collect()
+        sum.unwrap_or(DVec3::Z)
     }
 }
 

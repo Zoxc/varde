@@ -19,6 +19,7 @@ use super::{Curves, Refinement, key};
 use crate::KernelError;
 use crate::budget::Work;
 use crate::mesh::{Edge, Hint};
+use crate::solid::SCAN;
 
 /// Replaces the kept whole pieces (`whole`: which refined triangle of
 /// which operand each triangle is) of every refinement patch that can be
@@ -120,61 +121,157 @@ pub(super) fn merge(
             )
             .max()
             .map_or(0, |v| v as usize + 1);
-        let mut corner = vec![false; verts];
+        // Debug builds: the candidates as rounds over every triangle leave
+        // them, to check the worklist's against.
+        let whole_rounds = cfg!(debug_assertions).then(|| {
+            let mut candidate = candidate.clone();
+            let mut corner = vec![false; verts];
+            loop {
+                let covering: Vec<Option<u32>> =
+                    (0..tris.len()).map(|i| under(i, &candidate)).collect();
+                corner.fill(false);
+                for (tri, c) in tris.iter().zip(&covering) {
+                    if c.is_none() {
+                        for &v in tri {
+                            corner[v as usize] = true;
+                        }
+                    }
+                }
+                for (id, node) in nodes.iter().enumerate() {
+                    if candidate[id] {
+                        for v in node.corners {
+                            corner[(v + offsets[k]) as usize] = true;
+                        }
+                    }
+                }
+                let mut demoted = BTreeSet::new();
+                for (tri, c) in tris.iter().zip(&covering) {
+                    let Some(c) = c else { continue };
+                    let own = nodes[*c as usize].corners.map(|v| v + offsets[k]);
+                    if tri.iter().any(|v| !own.contains(v) && corner[*v as usize]) {
+                        demoted.insert(*c);
+                    }
+                }
+                if demoted.is_empty() {
+                    break candidate;
+                }
+                for c in demoted {
+                    candidate[c as usize] = false;
+                    for &ch in &children[c as usize] {
+                        if worth(ch as usize) {
+                            candidate[ch as usize] = true;
+                        }
+                    }
+                }
+            }
+        });
+        // The triangles under a candidate, and the corners of the
+        // triangles there will be among their corners (those of a triangle
+        // under none, or of a candidate): kept as candidates are demoted,
+        // which only takes triangles out from under candidates. A pass over
+        // the triangles, a unit for every `SCAN`.
+        work.spend(tris.len() / SCAN)?;
+        let mut covering: Vec<Option<u32>> =
+            (0..tris.len()).map(|i| under(i, &candidate)).collect();
+        let mut covered: Vec<u32> = (0..tris.len() as u32)
+            .filter(|&i| covering[i as usize].is_some())
+            .collect();
+        let mut asked = vec![false; verts];
+        for &i in &covered {
+            for v in tris[i as usize] {
+                asked[v as usize] = true;
+            }
+        }
+        // How many triangles under no candidate, and how many candidates,
+        // have each asked vertex as a corner.
+        let mut outside = vec![0u32; verts];
+        for (tri, c) in tris.iter().zip(&covering) {
+            if c.is_none() {
+                for &v in tri {
+                    if asked[v as usize] {
+                        outside[v as usize] += 1;
+                    }
+                }
+            }
+        }
+        let mut corners_of = vec![0u32; verts];
+        let count = |corners_of: &mut [u32], id: usize, add: bool| {
+            for v in nodes[id].corners {
+                let v = (v + offsets[k]) as usize;
+                if asked[v] {
+                    if add {
+                        corners_of[v] += 1;
+                    } else {
+                        corners_of[v] -= 1;
+                    }
+                }
+            }
+        };
+        for (id, _) in candidate.iter().enumerate().filter(|(_, c)| **c) {
+            count(&mut corners_of, id, true);
+        }
         // Each round demotes the candidates in the way a level down (each
-        // round at least one, so it ends), a unit of work per triangle.
+        // round at least one, so it ends), a unit of work per triangle
+        // under a candidate.
         loop {
-            work.spend(tris.len())?;
-            let covering: Vec<Option<u32>> =
-                (0..tris.len()).map(|i| under(i, &candidate)).collect();
-            // Corners of the triangles there will be.
-            corner.fill(false);
-            for (tri, c) in tris.iter().zip(&covering) {
-                if c.is_none() {
-                    for &v in tri {
-                        corner[v as usize] = true;
-                    }
-                }
-            }
-            for (id, node) in nodes.iter().enumerate() {
-                if candidate[id] {
-                    for v in node.corners {
-                        corner[(v + offsets[k]) as usize] = true;
-                    }
-                }
-            }
+            work.spend(covered.len())?;
             // A candidate with a vertex inside it that stays a corner
             // outside it gives way to its children.
             let mut demoted = BTreeSet::new();
-            for (tri, c) in tris.iter().zip(&covering) {
-                let Some(c) = c else { continue };
-                let own = nodes[*c as usize].corners.map(|v| v + offsets[k]);
-                let inside = tri.iter().any(|v| !own.contains(v) && corner[*v as usize]);
+            for &i in &covered {
+                let c = covering[i as usize].expect("under a candidate");
+                let own = nodes[c as usize].corners.map(|v| v + offsets[k]);
+                let inside = tris[i as usize].iter().any(|v| {
+                    !own.contains(v) && (outside[*v as usize] > 0 || corners_of[*v as usize] > 0)
+                });
                 if inside {
-                    demoted.insert(*c);
+                    demoted.insert(c);
                 }
             }
             if demoted.is_empty() {
                 break;
             }
-            for c in demoted {
+            for &c in &demoted {
                 candidate[c as usize] = false;
+                count(&mut corners_of, c as usize, false);
                 for &ch in &children[c as usize] {
                     if worth(ch as usize) {
                         candidate[ch as usize] = true;
+                        count(&mut corners_of, ch as usize, true);
                     }
                 }
             }
+            // Those under a demoted candidate are under a child of it, or
+            // under none now.
+            covered.retain(|&i| {
+                let i = i as usize;
+                if !demoted.contains(&covering[i].expect("under a candidate")) {
+                    return true;
+                }
+                covering[i] = under(i, &candidate);
+                if covering[i].is_none() {
+                    for v in tris[i] {
+                        outside[v as usize] += 1;
+                    }
+                }
+                covering[i].is_some()
+            });
+        }
+        if let Some(want) = whole_rounds {
+            assert_eq!(candidate, want, "the candidates the rounds leave");
         }
         if !candidate.contains(&true) {
             continue;
         }
         // Replace the pieces by their candidate, in the candidates' order.
-        let covering: Vec<Option<u32>> = (0..tris.len()).map(|i| under(i, &candidate)).collect();
-        let mut face_of: Vec<(u32, u32)> = covering
+        let mut face_of: Vec<(u32, u32)> = covered
             .iter()
-            .zip(faces.iter())
-            .filter_map(|(c, &f)| c.map(|c| (c, f)))
+            .map(|&i| {
+                (
+                    covering[i as usize].expect("under a candidate"),
+                    faces[i as usize],
+                )
+            })
             .collect();
         face_of.sort_unstable();
         face_of.dedup_by_key(|x| x.0);

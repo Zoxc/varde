@@ -336,7 +336,11 @@ a balanced tree.
    towards Delaunay, and refine the plane faces the boolean cut for their
    triangles' shapes (no angle under 5°, a Delaunay refinement that may
    halve a cap's edge in both faces beside it), so the next operation
-   finds no long fans from far corners to rims.
+   finds no long fans from far corners to rims. Each pass looks only at
+   the triangles of the class it can change (short sides, no height, a
+   seam, a sliver, a curved side on a plane face, a vertex where triangles
+   face apart), worked out once and kept in step as triangles change: the
+   same changes in the same order as looking at every triangle.
 8. **Repair and check**, then the result is a `Solid`. Both test only
    what the operation changed and what comes near it: a triangle of an
    operand carried through bit for bit (same patch, corners mapped one to
@@ -613,11 +617,12 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
 - **Plane sections** nearly along a cylinder's rulings, and on quadrics
   other than elliptic cylinders, take less exact paths (tracing, or weights
   from a sampled point).
-- **Cost.** Much of a boolean's work still scales with both whole
-  operands (refinement rounds, the clean-up, merging, passes over the
-  whole result; repair and the check work near the change), about 8 to 10
-  units a patch for a small cut, so bodies past some 400 000 patches can
-  take no boolean within the budget. A
+- **Cost.** Some of a boolean's work still scales with both whole
+  operands (refinement rounds, passes over the whole result to build,
+  name and check it, the clean-up's first pass; repair, the check's tests
+  and the clean-up's passes work near the change), about 4 units a patch
+  for a small cut, so bodies past some 1 000 000 patches can take no
+  boolean within the budget. A
   failing operation runs for seconds, and on the web the regen worker is
   single-threaded and a running operation isn't interrupted.
 - **Not built yet**: the revolve feature's UI (the kernel's `revolve`

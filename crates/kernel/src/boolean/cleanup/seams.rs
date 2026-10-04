@@ -36,6 +36,7 @@ use glam::{DVec2, DVec3};
 
 use super::super::triangulate::{Bends, Meter, NO_CUT, Vert, triangulate};
 use super::Cleaner;
+use super::index::SEAM;
 use crate::KernelError;
 use crate::budget::Work;
 use crate::mesh::{Face, Surface};
@@ -128,6 +129,8 @@ impl Cleaner<'_> {
                 self.rejoin(t, s);
                 self.soup.source[t as usize] = None;
                 self.soup.source[s as usize] = None;
+                self.touch(t);
+                self.touch(s);
                 any = true;
             } else {
                 self.soup.curves.insert(k, saved);
@@ -211,6 +214,7 @@ impl Cleaner<'_> {
             }
             for &t in tris {
                 self.soup.faces[t as usize] = r;
+                self.touch(t);
             }
             // Its key names `r` from now on, and `r` allows its slack.
             self.soup.absorb(f, r);
@@ -237,7 +241,10 @@ impl Cleaner<'_> {
     pub(super) fn dissolve(&mut self, work: &mut Work) -> Result<(), KernelError> {
         let count = self.soup.tris.len();
         let mut done = vec![false; count];
-        for seed in 0..count as u32 {
+        // Only a triangle with a seam is a seed (see [`super::index`]).
+        let mut from = 0;
+        while let Some(seed) = self.next_in(SEAM, from, count as u32) {
+            from = seed + 1;
             if !self.alive[seed as usize] || done[seed as usize] {
                 continue;
             }
@@ -446,6 +453,7 @@ impl Cleaner<'_> {
                 self.soup.absorb(f, face);
             }
             self.kill(t);
+            self.touch(t);
         }
         for tri in made {
             let t = u32::try_from(self.soup.tris.len()).expect("fewer triangles than u32::MAX");
@@ -457,6 +465,7 @@ impl Cleaner<'_> {
             for v in tri {
                 self.around[v as usize].push(t);
             }
+            self.touch(t);
         }
     }
 }

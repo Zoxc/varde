@@ -190,7 +190,10 @@ impl Cleaner<'_> {
     /// [`Self::retag`]). Whether any vertex moved.
     pub(super) fn unfold(&mut self) -> bool {
         let mut changed = false;
-        for v in 0..self.soup.pos.len() as u32 {
+        // Only such a vertex may be one (see [`super::index`]).
+        let (mut from, end) = (0, self.soup.pos.len() as u32);
+        while let Some(v) = self.next_fold(from, end) {
+            from = v + 1;
             let Some(star) = self.folded(v) else {
                 continue;
             };
@@ -235,6 +238,7 @@ impl Cleaner<'_> {
                             self.soup.faces[t as usize] = face;
                             self.soup.made[t as usize] = true;
                             self.soup.source[t as usize] = None;
+                            self.touch(t);
                         }
                     }
                     changed = true;
@@ -338,7 +342,7 @@ mod tests {
                 around[v as usize].push(t as u32);
             }
         }
-        Cleaner {
+        let mut c = Cleaner {
             alive: vec![true; soup.tris.len()],
             planar: planes.iter().map(Option::is_some).collect(),
             soup,
@@ -355,7 +359,10 @@ mod tests {
             joined: Vec::new(),
             small: SMALL,
             thin: SMALL,
-        }
+            index: super::super::Index::default(),
+        };
+        c.index_all();
+        c
     }
 
     /// The living triangles on `face`, their corners sorted.

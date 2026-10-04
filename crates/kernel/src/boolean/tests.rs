@@ -2763,9 +2763,11 @@ fn a_small_cut_costs_little_a_patch_of_a_large_body() {
     // A small box cut from the corner of plates of round holes, away from
     // every hole: repair and the check test only what the cut changed
     // and its neighbours, as the plate's other triangles passed the check
-    // in the plate. That took about 25 units a patch, 442 000 on the
-    // 20 × 20 plate (19 180 patches); now about 8 (157 577), and the
-    // same for any size of plate.
+    // in the plate, and the clean-up looks only at the triangles of the
+    // classes its passes change and what changes. That took about 25
+    // units a patch, 442 000 on the 20 × 20 plate (19 180 patches), then
+    // about 8 with repair and the check near the change (157 577); now
+    // under 4 (70 650), and the same for any size of plate.
     let corner = cube([-0.1, -0.1, 0.5], [0.2, 0.2, 0.2]);
     let removed = 0.1 * 0.1 * 0.2;
     let sizes: &[usize] = if cfg!(debug_assertions) {
@@ -2781,15 +2783,82 @@ fn a_small_cut_costs_little_a_patch_of_a_large_body() {
         let patches = plate.mesh().tris().len();
         per_patch.push(units as f64 / patches as f64);
         if n == 20 {
-            let within = boolean(&plate, &corner, Op::Difference, &TOL, &Budget::new(160_000));
+            let within = boolean(&plate, &corner, Op::Difference, &TOL, &Budget::new(75_000));
             assert!(within.stripped() == Ok(cut));
         }
     }
-    assert!(per_patch.iter().all(|&u| u < 10.0), "{per_patch:?}");
+    assert!(per_patch.iter().all(|&u| u < 4.0), "{per_patch:?}");
     let spread = per_patch
         .iter()
         .fold(0.0f64, |m, &u| m.max((u - per_patch[0]).abs()));
-    assert!(spread < 3.0, "{per_patch:?}");
+    assert!(spread < 1.0, "{per_patch:?}");
+}
+
+#[test]
+fn each_vertex_normal_is_the_one_from_every_triangle() {
+    // A vertex's direction out of `A`, worked out from its own triangles
+    // when a decision asks for it, is the one working out every vertex's
+    // from all triangles in order gave, to the bit: the normals summed in
+    // the triangles' order.
+    let reference = |input: &Input| -> Vec<DVec3> {
+        let mut around: Vec<Vec<DVec3>> = vec![Vec::new(); input.mesh.verts().len()];
+        for t in 0..input.tris.len() as u32 {
+            let [a, b, c] = input.corners(t);
+            let flat = (b - a).cross(c - a).normalize_or_zero();
+            for (k, v) in input.tris[t as usize].into_iter().enumerate() {
+                let n = if input.flat[t as usize] {
+                    flat
+                } else {
+                    input.patches[t as usize]
+                        .normal(DVec3::AXES[k])
+                        .try_normalize()
+                        .unwrap_or(flat)
+                };
+                around[v as usize].push(n);
+            }
+        }
+        around
+            .into_iter()
+            .map(|mut normals| {
+                let sum = normals.iter().copied().sum::<DVec3>().try_normalize();
+                if let Some(d) = sum
+                    && normals.iter().all(|n| n.dot(d) > 0.0)
+                {
+                    return d;
+                }
+                normals.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
+                normals.dedup();
+                if (1..=16).contains(&normals.len()) {
+                    let (axis, least) = crate::patch::smallest_cone(&normals);
+                    if least > 0.0 {
+                        return axis;
+                    }
+                }
+                sum.unwrap_or(DVec3::Z)
+            })
+            .collect()
+    };
+    let plate = holed_plate(3);
+    let drilled = run(
+        &plate,
+        &Solid::cylinder(DVec3::new(3.0, 2.0, -1.0), 0.3, 3.0, 7, &TOL).unwrap(),
+        Op::Difference,
+    )
+    .unwrap();
+    let solids = [
+        cube([0.0; 3], [1.0, 2.0, 3.0]),
+        octahedron([0.5, 0.25, 0.0], 1.5),
+        Solid::cylinder(DVec3::new(0.1, 0.2, 0.3), 0.7, 2.0, 5, &TOL).unwrap(),
+        plate,
+        drilled,
+    ];
+    for solid in &solids {
+        let input = Input::new(solid.mesh(), &TOL);
+        let want = reference(&input);
+        for (v, n) in want.iter().enumerate() {
+            assert_eq!(input.vertex_normal(v as u32).to_array(), n.to_array());
+        }
+    }
 }
 
 #[test]

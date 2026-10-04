@@ -47,15 +47,20 @@ use glam::DVec3;
 use super::assemble::Curves;
 use super::parts;
 use crate::budget::Work;
-use crate::mesh::{Edge, Face, Hint, Surface, off_surface, straight};
+use crate::mesh::{
+    Edge, Face, Hint, QUADRATURE, Surface, lune_bound, lune_cones, off_surface, straight,
+};
 use crate::patch::Patch;
-use crate::solid::patch_volume;
+use crate::solid::{SCAN, patch_volume};
 use crate::trig;
 use crate::{KernelError, Tolerance};
 
 mod fold;
+mod index;
 mod quality;
 mod seams;
+
+use index::{FLAT, Index, SEAM, SHORT, SLIVERS};
 
 #[cfg(test)]
 pub(super) use seams::DISSOLVED;
@@ -149,6 +154,8 @@ struct Cleaner<'a> {
     /// Triangles no higher than this are thin: flipped when the triangle
     /// across their longest side is on the same face.
     thin: f64,
+    /// Which triangles each pass may change ([`index`]).
+    index: Index,
 }
 
 /// Cleans `soup`: see the module docs. `small` is the size below which
@@ -198,10 +205,16 @@ pub(super) fn clean(
         joined: Vec::new(),
         small,
         thin,
+        index: Index::default(),
     };
+    // Each pass visits only the triangles that may need it, as they are
+    // at each step: the same changes in the same order as visiting every
+    // triangle, for work that follows them ([`index`]).
+    work.spend(c.soup.tris.len() / SCAN)?;
+    c.index_all();
     let mut unfolded = false;
     for _ in 0..ROUNDS {
-        work.spend(c.soup.tris.len())?;
+        work.spend(c.visits())?;
         let mut changed = false;
         for [u, v] in c.short_edges() {
             // An earlier collapse may have taken the edge already: then no
@@ -222,14 +235,19 @@ pub(super) fn clean(
                 changed = true;
             }
         }
-        for t in 0..c.soup.tris.len() as u32 {
+        let n = c.soup.tris.len() as u32;
+        let mut from = 0;
+        while let Some(t) = c.next_in(FLAT, from, n) {
+            from = t + 1;
             if c.alive[t as usize] && c.thin(t) && c.flip(t) {
                 changed = true;
             }
         }
         // Curves between two triangles in one plane: straightened, else
         // flipped away.
-        for t in 0..c.soup.tris.len() as u32 {
+        let mut from = 0;
+        while let Some(t) = c.next_in(SEAM, from, n) {
+            from = t + 1;
             if c.alive[t as usize] && (c.straighten(t) | c.unbend(t)) {
                 changed = true;
             }
@@ -237,7 +255,7 @@ pub(super) fn clean(
         // Last resort, where nothing else changed: folded sheets whose
         // two sides are triangulated differently.
         if !changed && unfold {
-            work.spend(c.soup.tris.len())?;
+            work.spend(c.visits())?;
             changed = c.unfold();
             unfolded |= changed;
         }
@@ -251,9 +269,12 @@ pub(super) fn clean(
     c.merge_joined(faces);
     // Then slivers on plane faces, flipped towards Delaunay.
     for _ in 0..ROUNDS {
-        work.spend(c.soup.tris.len())?;
+        work.spend(c.visits())?;
         let mut changed = false;
-        for t in 0..c.soup.tris.len() as u32 {
+        let n = c.soup.tris.len() as u32;
+        let mut from = 0;
+        while let Some(t) = c.next_in(SLIVERS, from, n) {
+            from = t + 1;
             if c.alive[t as usize] && c.delaunay(t) {
                 changed = true;
             }
@@ -267,8 +288,11 @@ pub(super) fn clean(
             break;
         }
     }
+    work.spend(c.visits())?;
+    c.assert_indexed();
     // Then the triangles made on plane faces refined for their shapes.
     c.quality(tol.resolution(), work)?;
+    work.spend(c.visits())?;
     c.drop_empty_components();
     c.leave_surfaces(faces, tol)?;
     let Cleaner { alive, soup, .. } = c;
@@ -355,12 +379,10 @@ impl Cleaner<'_> {
     }
 
     /// The short edges of living triangles, each once, sorted.
-    fn short_edges(&self) -> Vec<[u32; 2]> {
+    fn short_edges(&mut self) -> Vec<[u32; 2]> {
         let mut out = Vec::new();
-        for (t, tri) in self.soup.tris.iter().enumerate() {
-            if !self.alive[t] {
-                continue;
-            }
+        for t in self.members(SHORT) {
+            let tri = self.soup.tris[t as usize];
             for i in 0..3 {
                 let (u, v) = (tri[i], tri[(i + 1) % 3]);
                 if self.p(u).distance(self.p(v)) <= self.small && !self.curved(u, v) {
@@ -395,10 +417,11 @@ impl Cleaner<'_> {
     /// crossed in and out a micrometre apart), leaves triangles no split
     /// mends: one of zero width between its two sides and the rim, whose
     /// corner at the rim is closed.
-    fn plane_edges(&self) -> Vec<[u32; 2]> {
+    fn plane_edges(&mut self) -> Vec<[u32; 2]> {
         let mut out = Vec::new();
-        for (t, tri) in self.soup.tris.iter().enumerate() {
-            if !self.alive[t] || self.planes[self.soup.faces[t] as usize].is_none() {
+        for t in self.members(SHORT) {
+            let tri = self.soup.tris[t as usize];
+            if self.planes[self.soup.faces[t as usize] as usize].is_none() {
                 continue;
             }
             for i in 0..3 {
@@ -440,13 +463,11 @@ impl Cleaner<'_> {
     ///   line): a triangle of straight sides whose two other sides both
     ///   border faces other than its own, the edge its shortest, either
     ///   end moved (the higher id first).
-    fn tangent_edges(&self) -> Vec<[u32; 2]> {
+    fn tangent_edges(&mut self) -> Vec<[u32; 2]> {
         let mut out = Vec::new();
-        for (t, tri) in self.soup.tris.iter().enumerate() {
-            if !self.alive[t] {
-                continue;
-            }
-            let face = self.soup.faces[t];
+        for t in self.members(SHORT) {
+            let tri = &self.soup.tris[t as usize];
+            let face = self.soup.faces[t as usize];
             let up = self.planes[face as usize].map(|(up, _)| up);
             let length = |a: u32, b: u32| self.p(a).distance(self.p(b));
             let fits = |a: u32, b: u32| {
@@ -500,7 +521,7 @@ impl Cleaner<'_> {
                 .expect("three sides");
             let (a, b, c) = (tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]);
             let borders = |x: u32, y: u32| {
-                self.across(t as u32, x, y)
+                self.across(t, x, y)
                     .is_some_and(|s| self.soup.faces[s as usize] != face)
             };
             if fits(a, b) && borders(b, c) && borders(c, a) {
@@ -706,6 +727,14 @@ impl Cleaner<'_> {
             };
             let on: Vec<u32> = self.shared(u, w);
             self.recurved.extend(on);
+        }
+        // Those taken out, and every one round `u`: moved, or with a side
+        // whose curve changed.
+        for t in shared.into_iter().chain(cancelled.into_iter().flatten()) {
+            self.touch(t);
+        }
+        for k in 0..self.around[u as usize].len() {
+            self.touch(self.around[u as usize][k]);
         }
         true
     }
@@ -983,6 +1012,8 @@ impl Cleaner<'_> {
         self.soup.made[s as usize] = true;
         self.soup.source[t as usize] = None;
         self.soup.source[s as usize] = None;
+        self.touch(t);
+        self.touch(s);
         self.around[u as usize].retain(|&x| x != s);
         self.around[v as usize].retain(|&x| x != t);
         self.around[a as usize].push(s);
@@ -1179,33 +1210,131 @@ impl Cleaner<'_> {
     /// curved sides: a sliver cut off a wall along its rulings has every
     /// corner on the cutting plane, and by its corners alone encloses
     /// nothing.
+    ///
+    /// Integrating every curved patch took most of a boolean's time on a
+    /// curved body (four 8 × 8 rules a patch), so each component is first
+    /// told by its corner triangles' volume less the cones over its
+    /// lunes, which is off its patches' by no more than their
+    /// [`lune_bound`]s, the quadrature's error ([`QUADRATURE`] of the
+    /// integrand's scale, bounded by the patch's distance from the root
+    /// times sixteen times its control net's area) and rounding (as the
+    /// orientation check tells a shell's sign). Only a component that
+    /// comes within that of `small` times its area is integrated, as
+    /// before, in the same order: the same components go.
     fn drop_empty_components(&mut self) {
+        self.settle();
+        self.assert_indexed();
         let n = self.soup.pos.len();
-        let living = || {
-            self.soup
-                .tris
-                .iter()
-                .zip(&self.alive)
-                .filter(|(_, alive)| **alive)
-                .map(|(tri, _)| *tri)
-        };
-        let part = parts(n, living().flat_map(|[a, b, c]| [[a, b], [a, c]]));
+        let living: Vec<u32> = (0..self.soup.tris.len() as u32)
+            .filter(|&t| self.alive[t as usize])
+            .collect();
+        let part = parts(
+            n,
+            living.iter().flat_map(|&t| {
+                let [a, b, c] = self.soup.tris[t as usize];
+                [[a, b], [a, c]]
+            }),
+        );
+        // By component (its root): the estimate, its slack, the scale of
+        // its terms, how many, and the area.
         let mut volume = vec![0.0f64; n];
+        let mut slack = vec![0.0f64; n];
+        let mut scale = vec![0.0f64; n];
+        let mut count = vec![0usize; n];
         let mut area = vec![0.0f64; n];
-        for tri in living() {
-            let root = part[tri[0] as usize];
-            let o = self.soup.pos[root as usize];
-            let [a, b, c] = tri.map(|v| self.soup.pos[v as usize] - o);
-            volume[root as usize] += self.curved_patch(tri).map_or_else(
-                || a.dot(b.cross(c)) / 6.0,
-                |patch| patch_volume(&patch, o).0,
-            );
-            area[root as usize] += (b - a).cross(c - a).length() / 2.0;
-        }
-        for (tri, alive) in self.soup.tris.iter().zip(&mut self.alive) {
+        for &t in &living {
+            let tri = self.soup.tris[t as usize];
             let root = part[tri[0] as usize] as usize;
-            if *alive && volume[root].abs() <= self.small * area[root] {
-                *alive = false;
+            let o = self.soup.pos[root];
+            let [a, b, c] = tri.map(|v| self.soup.pos[v as usize] - o);
+            let tet = a.dot(b.cross(c)) / 6.0;
+            volume[root] += tet;
+            scale[root] += tet.abs();
+            count[root] += 1;
+            // A patch that can't be built counts as its triangle, as
+            // integrating does.
+            if self.has_record(t)
+                && let Some(patch) = self.curved_patch(tri)
+            {
+                let (lune, lune_size) = lune_cones(&patch, o);
+                volume[root] -= lune;
+                let net = [
+                    [patch.p[0], patch.c[0], patch.c[2]],
+                    [patch.c[0], patch.p[1], patch.c[1]],
+                    [patch.c[2], patch.c[1], patch.p[2]],
+                    [patch.c[0], patch.c[1], patch.c[2]],
+                ]
+                .iter()
+                .map(|[p, q, r]| (*q - *p).cross(*r - *p).length() / 2.0)
+                .sum::<f64>();
+                let reach = patch
+                    .p
+                    .iter()
+                    .chain(&patch.c)
+                    .map(|x| x.distance(o))
+                    .fold(0.0, f64::max);
+                slack[root] +=
+                    lune_bound(&patch) + QUADRATURE * (16.0 * reach * net + lune_size + tet.abs());
+                scale[root] += lune_size;
+            }
+            area[root] += (b - a).cross(c - a).length() / 2.0;
+        }
+        let mut open = vec![false; n];
+        let mut any = false;
+        let mut empty = vec![false; n];
+        for root in 0..n {
+            if count[root] == 0 {
+                continue;
+            }
+            let rounding = 8.0
+                * (count[root] as f64 + 2.0)
+                * f64::EPSILON
+                * (scale[root] + slack[root] + volume[root].abs());
+            let off = 1.25 * slack[root] + rounding + f64::MIN_POSITIVE;
+            let least = self.small * area[root];
+            let v = volume[root].abs();
+            if v - off > least {
+                continue;
+            }
+            if v + off < least {
+                empty[root] = true;
+                continue;
+            }
+            // Too near to tell: integrated, as it always was.
+            open[root] = true;
+            any = true;
+        }
+        // Debug builds integrate every component, and check the others'
+        // verdicts against it.
+        let all = cfg!(debug_assertions);
+        if any || all {
+            let mut exact = vec![0.0f64; n];
+            for &t in &living {
+                let tri = self.soup.tris[t as usize];
+                let root = part[tri[0] as usize] as usize;
+                if !open[root] && !all {
+                    continue;
+                }
+                let o = self.soup.pos[root];
+                let [a, b, c] = tri.map(|v| self.soup.pos[v as usize] - o);
+                exact[root] += self.curved_patch(tri).map_or_else(
+                    || a.dot(b.cross(c)) / 6.0,
+                    |patch| patch_volume(&patch, o).0,
+                );
+            }
+            for root in 0..n {
+                let verdict = exact[root].abs() <= self.small * area[root];
+                if open[root] {
+                    empty[root] = verdict;
+                } else if all && count[root] > 0 {
+                    assert_eq!(empty[root], verdict, "whether component {root} is empty");
+                }
+            }
+        }
+        for &t in &living {
+            let root = part[self.soup.tris[t as usize][0] as usize] as usize;
+            if empty[root] {
+                self.alive[t as usize] = false;
             }
         }
     }
@@ -1349,6 +1478,7 @@ mod tests {
             joined: Vec::new(),
             small: 1e-9,
             thin: 1e-9,
+            index: Index::default(),
         };
         assert!(c.collapse(0, 1, Turn::Proper));
         assert_eq!(c.shared(0, 2).len(), 2);
@@ -1430,6 +1560,7 @@ mod tests {
             joined: Vec::new(),
             small: 1e-9,
             thin: 4e-8,
+            index: Index::default(),
         };
         if c.collapse(0, 1, Turn::Closing) {
             assert!(c.curved(0, 2), "the arc became its chord");

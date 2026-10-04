@@ -57,7 +57,7 @@ const NUDGE: DVec3 = DVec3::new(0.6, 0.0, 0.8);
 /// integral of the integrand's absolute value, or the corner triangle's
 /// volume where that is larger (the quadrature isn't exact for rational
 /// patches; the solids' volumes are held to `1e-12` in their tests).
-const QUADRATURE: f64 = 1e-9;
+pub(crate) const QUADRATURE: f64 = 1e-9;
 
 /// The most patches of one shell integrated in one parallel batch. Batches
 /// start at one patch and double, so a shell decided after a few wastes
@@ -371,7 +371,7 @@ fn shell_sign(
 /// in a shell all of them cancel; but where one of the two is integrated
 /// and the other isn't, the cone would be left over, and from an `o`
 /// far off it can be larger than the whole volume.
-fn lune_cones(patch: &Patch, o: DVec3) -> (f64, f64) {
+pub(crate) fn lune_cones(patch: &Patch, o: DVec3) -> (f64, f64) {
     let (mut sum, mut size) = (0.0, 0.0);
     for i in 0..3 {
         let (a, b, c) = (patch.p[i], patch.p[(i + 1) % 3], patch.c[i]);
@@ -474,7 +474,7 @@ fn orient3d(o: DVec3, [a, b, c]: [DVec3; 3]) -> (f64, f64) {
 /// convex hull of the control points' shadows) as deep as the control
 /// points lie either side of the plane; twice that, for safety. Infinite
 /// for a triangle with no plane.
-fn lune_bound(patch: &Patch) -> f64 {
+pub(crate) fn lune_bound(patch: &Patch) -> f64 {
     let [p0, p1, p2] = patch.p;
     let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
         return f64::INFINITY;
