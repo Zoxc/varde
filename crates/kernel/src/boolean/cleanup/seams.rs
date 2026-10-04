@@ -415,8 +415,15 @@ impl Cleaner<'_> {
         for tri in &made.tris {
             for i in 0..3 {
                 let (u, v) = (tri[i], tri[(i + 1) % 3]);
-                if !sides.contains(&(u, v)) && !inner.contains(&(u.min(v), u.max(v))) {
-                    self.soup.curves.remove(&(u.min(v), u.max(v)));
+                if !sides.contains(&(u, v))
+                    && !inner.contains(&(u.min(v), u.max(v)))
+                    && self.soup.curves.remove(&(u.min(v), u.max(v))).is_some()
+                {
+                    // Stays out if this fails: a triangle with that edge
+                    // (turned against the boundary) is classed again.
+                    for t in self.shared(u, v) {
+                        self.touch(t);
+                    }
                 }
             }
         }

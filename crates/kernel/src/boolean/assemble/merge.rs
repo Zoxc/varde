@@ -14,6 +14,7 @@
 
 use std::collections::BTreeSet;
 
+use super::super::cleanup::retain;
 use super::super::input::Side;
 use super::{Curves, Refinement, key};
 use crate::KernelError;
@@ -304,13 +305,4 @@ pub(super) fn merge(
         }
     }
     Ok(())
-}
-
-/// Keeps the items of `list` whose flag in `keep` is set.
-fn retain<T>(list: &mut Vec<T>, keep: &[bool]) {
-    let mut i = 0;
-    list.retain(|_| {
-        i += 1;
-        keep[i - 1]
-    });
 }

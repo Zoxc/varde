@@ -2803,40 +2803,11 @@ fn each_vertex_normal_is_the_one_from_every_triangle() {
     let reference = |input: &Input| -> Vec<DVec3> {
         let mut around: Vec<Vec<DVec3>> = vec![Vec::new(); input.mesh.verts().len()];
         for t in 0..input.tris.len() as u32 {
-            let [a, b, c] = input.corners(t);
-            let flat = (b - a).cross(c - a).normalize_or_zero();
             for (k, v) in input.tris[t as usize].into_iter().enumerate() {
-                let n = if input.flat[t as usize] {
-                    flat
-                } else {
-                    input.patches[t as usize]
-                        .normal(DVec3::AXES[k])
-                        .try_normalize()
-                        .unwrap_or(flat)
-                };
-                around[v as usize].push(n);
+                around[v as usize].push(input.corner_normal(t, k));
             }
         }
-        around
-            .into_iter()
-            .map(|mut normals| {
-                let sum = normals.iter().copied().sum::<DVec3>().try_normalize();
-                if let Some(d) = sum
-                    && normals.iter().all(|n| n.dot(d) > 0.0)
-                {
-                    return d;
-                }
-                normals.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
-                normals.dedup();
-                if (1..=16).contains(&normals.len()) {
-                    let (axis, least) = crate::patch::smallest_cone(&normals);
-                    if least > 0.0 {
-                        return axis;
-                    }
-                }
-                sum.unwrap_or(DVec3::Z)
-            })
-            .collect()
+        around.into_iter().map(super::input::outward).collect()
     };
     let plate = holed_plate(3);
     let drilled = run(

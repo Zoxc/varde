@@ -224,40 +224,49 @@ impl<'a> Input<'a> {
             }
         }
         star.sort_unstable();
-        let mut normals: Vec<DVec3> = star
+        let normals: Vec<DVec3> = star
             .iter()
-            .map(|&h| {
-                let (t, k) = (h / 3, h as usize % 3);
-                let [a, b, c] = self.corners(t);
-                let flat = (b - a).cross(c - a).normalize_or_zero();
-                // A curved patch's own normal at the corner.
-                if self.flat[t as usize] {
-                    flat
-                } else {
-                    self.patches[t as usize]
-                        .normal(DVec3::AXES[k])
-                        .try_normalize()
-                        .unwrap_or(flat)
-                }
-            })
+            .map(|&h| self.corner_normal(h / 3, h as usize % 3))
             .collect();
-        let sum = normals.iter().copied().sum::<DVec3>().try_normalize();
-        let leaves = |d: DVec3| normals.iter().all(|n| n.dot(d) > 0.0);
-        if let Some(d) = sum
-            && leaves(d)
-        {
-            return d;
-        }
-        normals.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
-        normals.dedup();
-        if (1..=CONE_NORMALS).contains(&normals.len()) {
-            let (axis, least) = smallest_cone(&normals);
-            if least > 0.0 {
-                return axis;
-            }
-        }
-        sum.unwrap_or(DVec3::Z)
+        outward(normals)
     }
+
+    /// Triangle `t`'s unit normal at its corner `k`: its plane's, or a
+    /// curved patch's own there (its plane's where that has no length).
+    pub(super) fn corner_normal(&self, t: u32, k: usize) -> DVec3 {
+        let [a, b, c] = self.corners(t);
+        let flat = (b - a).cross(c - a).normalize_or_zero();
+        if self.flat[t as usize] {
+            flat
+        } else {
+            self.patches[t as usize]
+                .normal(DVec3::AXES[k])
+                .try_normalize()
+                .unwrap_or(flat)
+        }
+    }
+}
+
+/// The direction out of the solid at a vertex whose triangles' unit
+/// normals there are `normals`, in the triangles' order: see
+/// [`Input::vertex_normal`].
+pub(super) fn outward(mut normals: Vec<DVec3>) -> DVec3 {
+    let sum = normals.iter().copied().sum::<DVec3>().try_normalize();
+    let leaves = |d: DVec3| normals.iter().all(|n| n.dot(d) > 0.0);
+    if let Some(d) = sum
+        && leaves(d)
+    {
+        return d;
+    }
+    normals.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
+    normals.dedup();
+    if (1..=CONE_NORMALS).contains(&normals.len()) {
+        let (axis, least) = smallest_cone(&normals);
+        if least > 0.0 {
+            return axis;
+        }
+    }
+    sum.unwrap_or(DVec3::Z)
 }
 
 /// Whether `patch`'s control points all lie within `margin` of the plane

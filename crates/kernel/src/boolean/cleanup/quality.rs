@@ -891,6 +891,7 @@ impl Cleaner<'_> {
     /// Gives triangle `t` the corners `tri` (on its face): a piece of
     /// what it was, made by this boolean if that was.
     fn set_tri(&mut self, t: u32, tri: [u32; 3]) {
+        self.touch_before(t);
         for w in self.soup.tris[t as usize] {
             self.around[w as usize].retain(|&x| x != t);
         }
@@ -899,7 +900,6 @@ impl Cleaner<'_> {
         for w in tri {
             self.around[w as usize].push(t);
         }
-        self.touch(t);
     }
 
     /// A new triangle `tri` on `face`, a piece of triangle `of`: made by

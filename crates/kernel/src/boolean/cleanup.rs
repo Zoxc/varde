@@ -296,15 +296,17 @@ pub(super) fn clean(
     c.drop_empty_components();
     c.leave_surfaces(faces, tol)?;
     let Cleaner { alive, soup, .. } = c;
-    let mut keep = alive.iter();
-    soup.faces.retain(|_| *keep.next().expect("a flag"));
-    let mut keep = alive.iter();
-    soup.tris.retain(|_| *keep.next().expect("a flag"));
-    let mut keep = alive.iter();
-    soup.made.retain(|_| *keep.next().expect("a flag"));
-    let mut keep = alive.iter();
-    soup.source.retain(|_| *keep.next().expect("a flag"));
+    retain(&mut soup.faces, &alive);
+    retain(&mut soup.tris, &alive);
+    retain(&mut soup.made, &alive);
+    retain(&mut soup.source, &alive);
     Ok(unfolded)
+}
+
+/// Keeps the items of `list` that `keep` flags, one flag an item.
+pub(super) fn retain<T>(list: &mut Vec<T>, keep: &[bool]) {
+    let mut keep = keep.iter();
+    list.retain(|_| *keep.next().expect("a flag"));
 }
 
 impl Cleaner<'_> {

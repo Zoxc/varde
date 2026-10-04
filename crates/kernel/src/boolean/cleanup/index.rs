@@ -76,6 +76,8 @@ pub(super) struct Index {
     made: BTreeSet<u32>,
     /// Triangles changed since the classes were last brought up to date.
     touched: Vec<u32>,
+    /// Vertices a changed triangle had as corners before, since then.
+    left: Vec<u32>,
     /// Triangles and vertices classed or visited since last charged.
     pub(super) visits: usize,
 }
@@ -324,13 +326,23 @@ impl Cleaner<'_> {
         self.index.touched.push(t);
     }
 
+    /// [`Self::touch`] for triangle `t` about to take other corners: its
+    /// corners now are classed again with its new ones.
+    pub(super) fn touch_before(&mut self, t: u32) {
+        let old = self.soup.tris[t as usize];
+        self.index.left.extend(old);
+        self.index.touched.push(t);
+    }
+
     /// Brings the classes up to date with the triangles touched since:
     /// those triangles, every living one with a corner among their
-    /// corners, and those vertices are classed again.
+    /// corners (now, or before [`Self::touch_before`]), and those vertices
+    /// are classed again.
     pub(super) fn settle(&mut self) {
         if self.index.touched.is_empty() {
             return;
         }
+        let left = std::mem::take(&mut self.index.left);
         let mut touched = std::mem::take(&mut self.index.touched);
         touched.sort_unstable();
         touched.dedup();
@@ -342,6 +354,8 @@ impl Cleaner<'_> {
         let mut corners: Vec<u32> = touched
             .iter()
             .flat_map(|&t| self.soup.tris[t as usize])
+            .chain(left)
+            .filter(|&v| (v as usize) < verts)
             .collect();
         corners.sort_unstable();
         corners.dedup();

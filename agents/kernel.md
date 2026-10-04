@@ -6224,8 +6224,13 @@ merged faces, regions and stars triangulated again, the quality pass's
 pieces), and before a class is read again every living triangle with a
 corner among those triangles' corners, and those vertices, are classed
 again: that reaches each triangle that shares a side with a changed
-one. A record left where an edge went (no triangle has it) changes no
-class, and is the only kind a pass that says no takes out. Each pass
+one. A triangle given other corners (`set_tri`) also has its old ones
+classed again (`touch_before`), so that doesn't rest on its pieces
+covering them. A record left where an edge went (no triangle has it)
+changes no class, and is the only kind a pass that says no takes out;
+a region's triangulation that fails after taking out a record some
+triangle still has (one turned against the region's boundary) touches
+that triangle. Each pass
 then visits its class in id order as it is at each step (a triangle
 joining it past the one being visited is visited in that round, as the
 pass over every triangle would), the collapses' lists are made from the
