@@ -7,7 +7,8 @@
 use varde_document::{
     Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind, MAX_EXTRUDE_REGIONS,
 };
-use varde_expr::Unit;
+use varde_expr::{LengthUnit, Unit};
+use varde_render::Camera;
 use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind, PanelHover};
 
 use super::regions::{BodyTargets, RegionPick, TypedText};
@@ -45,15 +46,37 @@ pub(crate) struct ExtrudeSession {
     design: Design,
 }
 
-/// The distance a new extrude starts with, in millimetres.
-const DEFAULT_DISTANCE: f64 = 10.0;
+/// The part of the view's height a new extrude's distance starts at, at
+/// most: see [`default_distance`].
+const DEFAULT_SHARE: f64 = 0.25;
+
+/// The distance a new extrude starts with, in millimetres, seen by
+/// `camera` in a design of `units`: [`DEFAULT_SHARE`] of the view's
+/// height at the target, rounded down to 1, 2 or 5 times a power of ten
+/// of `units`, and no less than a thousandth of one. Made as
+/// [`snap_step`](varde_view::snap_step) makes its step, so it's the same
+/// natively and on the web.
+fn default_distance(camera: &Camera, units: LengthUnit) -> f64 {
+    let most = f64::from(camera.view_height()) * DEFAULT_SHARE / units.mm();
+    // The view's height is positive and within the camera's extent, so
+    // the decade is within ±324. Should the logarithm round down across
+    // a power of ten, the 10 still finds that power.
+    let decade = (varde_sketch::angle::log10(most).floor() as i32).max(-3);
+    let distance = [(1, 1), (5, 0), (2, 0), (1, 0)]
+        .into_iter()
+        .filter_map(|(m, up)| format!("{m}e{}", decade + up).parse::<f64>().ok())
+        .find(|&distance| distance <= most)
+        .unwrap_or(0.001);
+    distance * units.mm()
+}
 
 impl ExtrudeSession {
-    /// A session setting up a new extrude, in `document`'s units, taking
-    /// the regions of `source` if given, else of the one the first region
-    /// picked is in.
-    fn new(document: &Document, source: Option<FeatureId>) -> Self {
-        let text = varde_expr::format(DEFAULT_DISTANCE, Some(Unit::Length(document.units())));
+    /// A session setting up a new extrude, in `document`'s units, its
+    /// distance one that fits the view of `camera`, taking the regions of
+    /// `source` if given, else of the one the first region picked is in.
+    fn new(document: &Document, camera: &Camera, source: Option<FeatureId>) -> Self {
+        let units = document.units();
+        let text = varde_expr::format(default_distance(camera, units), Some(Unit::Length(units)));
         let distance = TypedText::read(text, &Extent::ask(&document.design()));
         Self {
             feature: None,
@@ -71,9 +94,15 @@ impl ExtrudeSession {
     }
 
     /// A session editing the extrude `feature` of `document`, with its
-    /// values and the regions of its sketch its references find.
-    fn editing(document: &Document, feature: FeatureId, extrude: &Extrude) -> Self {
-        let mut session = Self::new(document, Some(extrude.sketch));
+    /// values and the regions of its sketch its references find; a
+    /// distance it has no value for, one that fits the view of `camera`.
+    fn editing(
+        document: &Document,
+        camera: &Camera,
+        feature: FeatureId,
+        extrude: &Extrude,
+    ) -> Self {
+        let mut session = Self::new(document, camera, Some(extrude.sketch));
         session.feature = Some(feature);
         session.regions = RegionPick::editing(
             document,
@@ -244,7 +273,7 @@ impl Doc {
         self.motion = None;
         let document = self.editor.document();
         let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
-        let mut session = ExtrudeSession::new(document, selected);
+        let mut session = ExtrudeSession::new(document, &self.camera, selected);
         session.regions.refresh(document);
         self.extrude = Some(session);
         self.focus = Some(Focus::All);
@@ -267,7 +296,7 @@ impl Doc {
         self.combine = None;
         self.motion = None;
         self.selected_feature = Some(id);
-        self.extrude = Some(ExtrudeSession::editing(document, id, extrude));
+        self.extrude = Some(ExtrudeSession::editing(document, &self.camera, id, extrude));
         self.focus = Some(Focus::All);
     }
 

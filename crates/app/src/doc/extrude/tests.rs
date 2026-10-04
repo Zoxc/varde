@@ -31,7 +31,13 @@ fn plate() -> (Doc, FeatureId, Requests) {
     doc.apply(Command::Replace(Box::new(editor.document().clone())));
     doc.sync();
     answer(&mut doc, &requests);
+    ten_mm_view(&mut doc);
     (doc, sketch, requests)
+}
+
+/// Zooms `doc`'s camera so a new extrude starts 10 mm long.
+fn ten_mm_view(doc: &mut Doc) {
+    doc.camera.set_view_height(40.0);
 }
 
 /// The plate's region with the hole in it, by its index.
@@ -1024,6 +1030,7 @@ fn plate_with_the_hole_deleted_waiting() -> (Doc, FeatureId, Requests, crate::te
     doc.look(Look::FinishSketch);
     assert!(doc.sketch.is_none());
     assert!(doc.proposing());
+    ten_mm_view(&mut doc);
     key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
@@ -3218,4 +3225,23 @@ fn bodies_are_counted_as_the_joins_leave_them() {
     doc.sync();
     crate::tests::answer(&mut doc, &requests);
     assert_eq!(counted(&doc), merged);
+}
+
+#[test]
+fn a_new_extrude_starts_at_a_round_quarter_of_the_view() {
+    let mut camera = Camera::default();
+    let at = |camera: &mut Camera, height: f32, units| {
+        camera.set_view_height(height);
+        default_distance(camera, units)
+    };
+    assert_eq!(at(&mut camera, 40.0, LengthUnit::Mm), 10.0);
+    assert_eq!(at(&mut camera, 39.0, LengthUnit::Mm), 5.0);
+    assert_eq!(at(&mut camera, 9.0, LengthUnit::Mm), 2.0);
+    assert_eq!(at(&mut camera, 7.0, LengthUnit::Mm), 1.0);
+    assert_eq!(at(&mut camera, 1000.0, LengthUnit::Mm), 200.0);
+    // Round in the design's units: an inch, not 20 mm.
+    assert!((at(&mut camera, 120.0, LengthUnit::In) - 25.4).abs() < 1e-9);
+    // Never less than a thousandth of the units, however close.
+    camera.zoom(1e-9);
+    assert_eq!(default_distance(&camera, LengthUnit::Mm), 0.001);
 }

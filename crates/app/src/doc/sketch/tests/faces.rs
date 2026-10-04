@@ -360,6 +360,8 @@ fn an_extrude_from_the_top_previews_joined_and_follows_the_plate() {
     circle_in(&mut doc, &requests, id, DVec2::new(20.0, 10.0), 4.0);
 
     doc.look(Look::SelectFeature(id));
+    // Zoomed so the extrude starts 10 mm long.
+    doc.camera.set_view_height(40.0);
     doc.look(Look::StartExtrude);
     let state = doc.extrude_state().unwrap();
     let [candidate] = &state.candidates[..] else {
@@ -500,6 +502,8 @@ fn a_sketch_on_a_tilted_face_is_placed_up_and_extruded() {
     circle_in(&mut doc, &requests, id, DVec2::ZERO, 2.0);
     let before = top_of_mesh(&doc);
     doc.look(Look::SelectFeature(id));
+    // Zoomed so the extrude starts 10 mm long.
+    doc.camera.set_view_height(40.0);
     doc.look(Look::StartExtrude);
     doc.look(Look::Extrude(ExtrudeLook::PickRegion {
         sketch: id,
