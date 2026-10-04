@@ -78,7 +78,7 @@ pub use solid::Solid;
 pub use tessellate::{Display, PatchSamples};
 pub use tolerance::Tolerance;
 pub use topology::Topology;
-pub use transform::{Instance, Motion, assemble};
+pub use transform::{AlignError, AlignOptions, Datum, Instance, Motion, assemble};
 
 /// The largest coordinate or size, in model units, a design may have: its
 /// sketches' coordinates and lengths, and so the solids built from them. A

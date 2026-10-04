@@ -263,6 +263,12 @@ a scale up records on each face how far its fitted patches may now stray
 from its form (`Face::slack`). `assemble` makes one solid of
 copies: those that can't meet side by side in one mesh, the rest unioned in
 a balanced tree.
+`Motion::align` is the rigid motion putting one point onto another and
+optionally a primary and a secondary direction onto the other side's
+(orthonormal frames by Gram–Schmidt; without secondaries the smallest
+rotation), with a flip, an offset along and a turn about the target's
+primary; directions along the world axes give signed permutations, so it is
+exact there.
 
 ## The boolean pipeline
 
@@ -490,6 +496,11 @@ in. `Topology::face`, `edge` and `corner` resolve keys to regions, chains
 and corners, choosing among several candidates of one name by distance to
 a point. `Topology::tangent_chains` groups the chains that run on into
 each other smoothly (tangents within 1°), what "tangent chain" selects.
+The topology also gives **points and directions** by the same names:
+corners, straight edges' middles, round edges' centres; flat faces'
+outward normals, round faces' axes, edges' directions (a round edge's
+axis out of its flat face), with signs that follow the keys, not the
+mesh.
 
 ## Determinism
 

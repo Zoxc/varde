@@ -363,18 +363,13 @@ fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DV
     Ok([beside(point, axis, face.near), axis])
 }
 
-/// The point of the line through `point` along `axis` nearest `near`, or
-/// `point` where that isn't a finite point (an axis of no length). A
-/// form's own point can be far out: a cone that's nearly a cylinder has
-/// its apex far along its axis, past where the workers' bytes take a
-/// draft's axis, and the axis is drawn from its point. The face's point
-/// is on the face, within [`MAX_COORD`], and the point found is no
-/// further from it than the face's radius there, so it's beside the
-/// face, within the wire's bounds even where the face is at the limit.
-pub(super) fn beside(point: DVec3, axis: DVec3, near: DVec3) -> DVec3 {
-    let foot = point + axis * ((near - point).dot(axis) / axis.length_squared());
-    if foot.is_finite() { foot } else { point }
-}
+// The point of the axis nearest the face's point, not the form's own
+// point: a cone that's nearly a cylinder has its apex far along its axis,
+// past where the workers' bytes take a draft's axis, and the axis is
+// drawn from its point. The face's point is on the face, within
+// `MAX_COORD`, so the one found is within the wire's bounds even where
+// the face is at the limit.
+pub(super) use varde_kernel::topology::beside;
 
 /// The plane of the flat face `face` names on `solid`, see
 /// [`resolve_plane`]: the point of `n·x = d` nearest the origin, `n·d`

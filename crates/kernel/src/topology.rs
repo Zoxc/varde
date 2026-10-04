@@ -22,6 +22,11 @@
 //! regenerated solid with other dimensions, another tolerance or another
 //! triangulation resolves the same references to the same faces.
 //!
+//! Points and directions (corners, edges' middles and centres, faces'
+//! normals and axes, edges' directions) are resolved by the same names
+//! ([`Topology::corner_point`], [`Topology::edge_direction`] and the
+//! others in `topology/datums.rs`).
+//!
 //! Names derived from keys (a copy's instance, a blend's edge, a shell's
 //! offset face) are a fixed 64-bit [`mix`]: names are stored in files, so
 //! it must never change, and `std`'s hasher may.
@@ -38,7 +43,10 @@ use glam::DVec3;
 use crate::Solid;
 use crate::mesh::{FaceKey, Mesh};
 
+mod datums;
 pub(crate) mod distance;
+
+pub use datums::{Unresolved, beside, runs_with};
 
 /// The odd constant splitmix64 steps by: `2⁶⁴/φ`.
 const GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;

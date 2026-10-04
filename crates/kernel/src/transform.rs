@@ -1,4 +1,6 @@
 //! Motions and scales of solids, and copies of them assembled into one.
+//! [`Motion::align`] works out the motion that puts one body's point and
+//! directions onto another's (see `transform/align.rs`).
 //!
 //! A [`Motion`] is an affine map `x ↦ L·x + t`, built as a move, a turn
 //! about a line, a mirror in a plane or a scale about a point (uniform or
@@ -38,6 +40,10 @@ use crate::budget::Work;
 use crate::mesh::{Edge, Face, FaceKey, FaceName, Form, Halfedge, Mesh, Quadric, Surface, Tri};
 use crate::patch::{Bounds3, Conic, Conic3};
 use crate::{Budget, Failure, KernelError, MAX_PATCHES, Solid, Tolerance, in_range};
+
+mod align;
+
+pub use align::{AlignError, AlignOptions, Datum, PARALLEL};
 
 /// The largest factor [`Motion::scale`] takes, and the inverse of the
 /// smallest: far beyond what a design asks (a scale's feature allows a

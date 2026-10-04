@@ -56,22 +56,7 @@ impl EdgeRef {
         left: (&FaceKey, &[FaceKey]),
         right: (&FaceKey, &[FaceKey]),
     ) -> Option<bool> {
-        let [a, b] = faces;
-        let named = |(key, aliases): (&FaceKey, &[FaceKey]), by: &FaceKey| {
-            key == by || aliases.binary_search(by).is_ok()
-        };
-        let along = named(left, a) && named(right, b);
-        let against = named(right, a) && named(left, b);
-        match (along, against) {
-            (true, false) => Some(true),
-            (false, true) => Some(false),
-            (false, false) => None,
-            (true, true) => {
-                let along = left.0 == a || right.0 == b;
-                let against = right.0 == a || left.0 == b;
-                (along != against).then_some(along)
-            }
-        }
+        varde_kernel::topology::runs_with(faces, left, right)
     }
 
     /// Checks what needs only the reference: its keys sorted and

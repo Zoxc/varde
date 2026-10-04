@@ -3682,6 +3682,46 @@ where any candidate is as good. A `near` that isn't finite takes the
 lowest candidate without measuring. It only chooses among candidates of
 one name: nothing is decided by distance.
 
+**Points and directions** (`topology/datums.rs`): what align moves a
+body by, resolved by the same keys and points as faces, edges and
+corners. Points: `corner_point(solid, [a, b, c], near)` (the corner's
+vertex), `middle(solid, [a, b], near)` (a straight chain's ends'
+mean), `centre(solid, [a, b], near)` (a circle's or an ellipse's centre
+from `measure::edge_shape`, the same as the picking tables' snap points;
+it may lie far off for a nearly straight arc, so what uses it bounds
+it). Directions: `normal(solid, key, near)` (a flat face's form's unit
+normal, out of the solid), `face_axis(solid, key, near)` (a cylinder's,
+cone's, torus's or revolved face's form's unit axis as the form has it,
+through the point of the axis nearest `near`: `topology::beside`, since a
+near-cylinder cone's apex can be millions out), `edge_direction(solid,
+[a, b], near)`: a straight chain from end to end, the way it runs with
+the first key's face on its left seen from outside
+(`topology::runs_with`, the rule a revolve's axis edge and a move's turn
+axis already followed; `EdgeRef::runs_with` calls it, and the keys the
+other way round reverse it); a round chain's axis is a flat neighbour's
+outward normal (the first key's face first), else a round neighbour's
+form axis where it runs along the circle's axis within `1e-6` (the sine;
+a torus's meridian circle doesn't), else the circle's own axis turning
+the way the chain runs by the keys. So a hole's top rim points up out of
+the plate, a pin's bottom rim down out of the pin, and putting the two
+face to face puts the pin in the hole. Normals and axes come from forms
+(intent, exact where the form is: a face square to a world axis gives
+that axis to the bit). `Topology::form(solid, region)` is a region's
+form (its first triangle's face's, as regen's picking tables take it).
+The errors (`Unresolved`) carry the region or chain found for showing:
+`NotFound`, `NotFlat` ("isn't flat"), `NotRound` and `NotCircular`
+("isn't round"), `NotStraight` ("isn't straight"), `NotAnAxis` ("isn't
+straight or round"), `Undirected` (aliases name both faces by both keys,
+"its direction can't be told"). Tests (`topology/tests/datums.rs`): an
+extruded plate with a hole (corners, middles and normals to the bit, the
+rim's centre, axes and signs, every straight edge's direction against its
+faces' normals and reversed with its keys, every wrong kind), a revolved
+cylinder under a cone (the shoulder rim between two round faces) and a
+torus, a boss joined on a plate, drilled and pocketed, everything after
+a turn following the motion, a pin aligned by its rim into the plate's
+hole and into a tilted plate's (joined, analytic volume to `1e-9`), and
+determinism at 1 and 8 threads.
+
 ## Transforms and assembly (`src/transform.rs`)
 
 `Motion` is an affine map `x ↦ L·x + t`, kept with `N`, the map of
@@ -3731,6 +3771,48 @@ Constructors give `None` for input that isn't finite, a zero axis or
 normal, a factor out of range, or an offset that overflows (`k·spacing`,
 `c − S·c`); points the motion
 takes past `MAX_COORD` are refused when it is applied.
+
+**Aligning** (`transform/align.rs`): `Motion::align(moved, target,
+options)` takes each side's `Datum { point, primary, secondary }`
+(directions any length; a secondary needs a primary, and the sides must
+pair: both primaries or neither, both secondaries or neither) and
+`AlignOptions { flip, offset, degrees }`. A point alone is the move
+between the points (an offset or a turn without primaries is refused;
+a flip is ignored). Otherwise each side's frame is Gram–Schmidt's: `f1`
+the unit primary (the target's negated with `flip`), `f2` the unit
+secondary less its part along `f1`, taken off twice, `f3 = f1 × f2`; a
+secondary within `PARALLEL = 1e-9` (the sine) of its primary is refused
+(`AlignError::Parallel`, "the second direction is parallel to the
+first", the one decision on geometry). Without secondaries both sides
+take `f_m × f_t` as theirs, the axis the smallest rotation turns about,
+so it stays; within `1e-8` (the sine) of parallel or opposite that cross
+product is lost in rounding and a direction square to the target's
+primary takes its place, chosen as a sketch placement's x axis (world X
+less its part along it within a nanoradian of world Z, else `Z × d`):
+parallel, the rotation is the smallest to within the angle between them;
+opposite, the half turn about that direction. `R = Σ t_i·m_iᵀ`, the
+identity where the frames agree to the bit. Then the turn `T` about the
+target's primary as given (`Motion::turn`'s matrix: quarter turns
+exact), and one offset worked out from the one matrix: `x ↦ T·R·(x −
+p_m) + p_t + offset·d_t`, `d_t` the target's primary unflipped (so a
+positive offset is a gap either way the two face, and the turn goes the
+same way round). Units divide by the length after dividing by the
+largest coordinate, never multiply by an inverse, so a direction along a
+world axis is that axis exactly; then frames are signed permutations, `R`
+and quarter turns have only `0` and `±1`, and the moved point lands to
+the bit wherever the offset's arithmetic is exact (to a few ulps
+otherwise). `−0` becomes `+0`, so equal motions have equal `bits()`.
+Points finite and within `MAX_COORD`, the offset within it, the turn
+finite, directions finite and not zero (`AlignError::{Point, Options,
+Direction, Unpaired}`). Tests (`transform/align/tests.rs`): every pair of
+signed axes with and without flip (point and primary to the bit, a
+signed permutation, the cross product fixed), quarter-turned frames with
+secondaries exact, a box corner to corner face to face (every vertex to
+the bit), 500 random tilted frames (point to `1e-12`, primary to `1e-15`,
+secondaries' square parts agreeing, a rotation), frames that agree giving
+the identity, flips exactly and nearly opposite or parallel, offset and
+turn (quarter exact, 30° against `Motion::turn`), every refusal, and
+determinism.
 
 `Solid::transformed(motion, copy, tol, budget)` maps every vertex and edge
 control point (weights stay: an affine image of a rational curve is the
@@ -10066,3 +10148,17 @@ see `agents/features.md`, "Failures and where they are").
   come back and none are lost against the build without the rules; in
   the hunts off the family (revolves, cones, skew crossings, turned
   flush shapes) none either.
+- **Align's signs and options.** The plan had a straight edge run "from
+  the end whose corner's sorted keys come first"; it runs as the
+  existing edge references do (the first key's face on its left seen
+  from outside), since a chain can end where no corner is and the rule
+  was already the revolve's and the move's. A round edge's axis
+  follows the plan (a flat neighbour's normal, else a round
+  neighbour's axis), which differs from what a move's turn about a
+  round edge takes (the circle's axis as the edge runs): align puts a
+  pin in a hole face to face by it, and the move's stays as it was.
+  Ellipses (rims after a scale per axis) give centres and axes too. The
+  offset and the turn go along and about the target's primary as
+  given, not as flipped. The fixed direction for the smallest rotation
+  takes over within `1e-8` of parallel or opposite, not only at exactly
+  opposite, where the cross product is rounding.
