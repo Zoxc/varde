@@ -49,7 +49,15 @@ pub(crate) struct RevolveSession {
     pub(crate) extent: TurnKind,
     /// The first angle's field, and two sides' second.
     pub(crate) fields: [TypedText; 2],
+    /// Whether one side goes the other way, or two sides swap: kept
+    /// while the extent ignores it (see [`RevolveSession::stored_flip`]), for when
+    /// it's switched back.
     pub(crate) flip: bool,
+    /// The flip the revolve edited was stored with while its extent ignores
+    /// it, as old files may have it: written back as it was while the
+    /// extent set up ignores it too, so an edit changing nothing writes
+    /// nothing. False otherwise.
+    ignored_flip: bool,
     pub(crate) operation: OperationKind,
     /// The bodies a join, cut or intersect leaves out: the edited
     /// revolve's to start with.
@@ -88,6 +96,7 @@ impl RevolveSession {
             extent: TurnKind::Full,
             fields: DEFAULT_ANGLES.map(field),
             flip: false,
+            ignored_flip: false,
             operation: OperationKind::NewBody,
             targets: BodyTargets::default(),
             design: document.design(),
@@ -127,6 +136,7 @@ impl RevolveSession {
             session.fields[1] = TypedText::of(second, &ask);
         }
         session.flip = revolve.flip;
+        session.ignored_flip = revolve.flip && !session.extent.flips();
         session.operation = OperationKind::of(&revolve.operation);
         session.targets = BodyTargets::new(revolve.operation.excluded());
         session
@@ -194,6 +204,18 @@ impl RevolveSession {
         self.design = design;
     }
 
+    /// The flip to store: the one set up where the extent takes it,
+    /// else the one stored before if that extent ignored it too
+    /// ([`RevolveSession::ignored_flip`]), else none, so a flip left set
+    /// from another extent isn't stored where it changes nothing.
+    fn stored_flip(&self) -> bool {
+        if self.extent.flips() {
+            self.flip
+        } else {
+            self.ignored_flip
+        }
+    }
+
     /// The revolve as set up of `document`, if it's whole: a source,
     /// regions picked, an axis the source has, and the angles its extent
     /// takes, as they last read.
@@ -215,7 +237,7 @@ impl RevolveSession {
             regions: self.regions.references().to_vec(),
             axis,
             extent,
-            flip: self.flip,
+            flip: self.stored_flip(),
             operation: self.targets.operation(self.operation),
         })
     }
@@ -555,6 +577,9 @@ impl Doc {
             show_error: self.draft_framed(),
             refused: session.refused(document),
             held: self.held(session.feature, session.operation),
+            uncut: (session.operation == OperationKind::Cut)
+                .then(|| self.uncut_note())
+                .flatten(),
             checking: self.proposals.slow(),
             ready: self.commit_by(self.revolve_ready(), false),
             accept: self.commit_by(self.revolve_ready(), true),

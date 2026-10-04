@@ -75,6 +75,7 @@
 //!
 //! [`Sketch::profiles`]: varde_sketch::Sketch::profiles
 
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -126,6 +127,11 @@ pub struct Evaluation {
     /// One failing while finding them lists those found before and the
     /// body it couldn't tell, which taking out gets past.
     pub touched: Vec<(FeatureId, Vec<BodyId>)>,
+    /// Each cut that worked, with the bodies it cut that it takes
+    /// nothing from (it only touches them, face to face, say), in the
+    /// order they were made; in the document's order. Told by their
+    /// volumes and the tool's intersection with them holding nothing.
+    pub uncut: Vec<(FeatureId, Vec<BodyId>)>,
     /// Each sketch on a face that was placed, and where, in the
     /// document's order: on the plane of its face on the body as the
     /// features before it leave it, by [`Placement::on_plane`]. A
@@ -532,6 +538,7 @@ impl Run<'_> {
         // Worked out for every target before any body changes. Where
         // there are others, one failing can be left out.
         let mut changed = Vec::with_capacity(targets.len());
+        let mut uncut = Vec::new();
         for made in evaluation
             .bodies
             .iter()
@@ -563,11 +570,18 @@ impl Run<'_> {
                 }
                 .into());
             }
+            if doing == Doing::Cutting && self.cuts_nothing(made, &solid, (&tool, tool_key), cache)
+            {
+                uncut.push(made.body);
+            }
             changed.push(BodySolid {
                 body: made.body,
                 solid,
                 key,
             });
+        }
+        if doing == Doing::Cutting {
+            evaluation.uncut.push((self.feature.id, uncut));
         }
         for change in changed {
             if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == change.body) {
@@ -575,6 +589,34 @@ impl Run<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Whether the cut leaving `made` as `cut` took nothing from it: the
+    /// tool, filed under `tool_key`, only touches it, face to face or
+    /// along an edge. Their volumes tell a body cut from one left whole
+    /// but for a sliver; the tool's intersection with the body,
+    /// worked out (and cached) as an intersect's would be, makes sure
+    /// it holds nothing. One that fails says the cut took something:
+    /// this is only for a note.
+    fn cuts_nothing(
+        &self,
+        made: &BodySolid,
+        cut: &Solid,
+        (tool, tool_key): (&Solid, Key),
+        cache: &mut Cache,
+    ) -> bool {
+        let before = made.solid.volume();
+        let taken = before - cut.volume();
+        if taken.abs().partial_cmp(&(UNCUT_SHARE * before.abs())) != Some(Ordering::Less) {
+            return false;
+        }
+        let key = boolean_key(Doing::Intersecting, made.key, tool_key);
+        let common = cache.boolean(key, || {
+            let op = Op::Intersection;
+            varde_kernel::boolean(&made.solid, tool, op, &self.tolerance, &Budget::DEFAULT)
+                .map_err(|failure| KernelFailure::new(failure, &self.tolerance))
+        });
+        common.is_ok_and(|common| common.is_empty())
     }
 
     /// Merges the bodies `targets` (two or more, in the order they were
@@ -1317,6 +1359,11 @@ fn touches_key(body: Key, tool: Key) -> Key {
 
 /// The key of `doing` the tool filed under `tool` to the body's solid
 /// filed under `body`: the body's new solid's.
+/// The share of a body's volume below which a cut may have taken
+/// nothing from it, for [`Run::cuts_nothing`] to make sure of: the
+/// volumes are integrated, accurate to rounding but not exact.
+const UNCUT_SHARE: f64 = 1e-6;
+
 fn boolean_key(doing: Doing, body: Key, tool: Key) -> Key {
     Keyer::new("boolean")
         .bytes(doing.name().as_bytes())

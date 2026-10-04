@@ -1361,6 +1361,36 @@ fn a_body_that_cant_be_told_is_passed_over_or_listed() {
     assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
 }
 
+/// A cut that only touches a body, face to face, takes nothing from it,
+/// and says so; the body it cuts isn't listed.
+#[test]
+fn a_cut_only_touching_a_body_takes_nothing_from_it() {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    // Up through the top plate, on the face of the one below.
+    let up = Extent::OneSide(length(editor.document(), "10"));
+    let block = rectangle((15.0, -15.0), (25.0, -5.0));
+    let cut = add_extrude(&mut editor, block, up, Operation::Cut(Targets::default()));
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(evaluation.touched, [(cut, vec![top, below])]);
+    assert_eq!(evaluation.uncut, [(cut, vec![below])]);
+    assert_near(
+        evaluation.bodies[0].solid.volume(),
+        plate(8.0, 10.0) - 1000.0,
+    );
+    assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
+
+    // Into the plate below too, it takes from both.
+    set_extrude(&mut editor, cut, |extrude| {
+        extrude.extent = two_sides(&Document::example(), "10", "1");
+    });
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(evaluation.uncut, [(cut, vec![])]);
+}
+
 /// Adds a cut through the example plate of a disc of `radius` whose
 /// centre is `distance` from the plate's hole's at `angle` from x. The
 /// cut's id.

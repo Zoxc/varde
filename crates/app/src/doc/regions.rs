@@ -508,6 +508,18 @@ impl Doc {
         ))
     }
 
+    /// The note saying which bodies the cut set up takes nothing from
+    /// (it only touches them, face to face, say), as the UI mock's
+    /// "Body 2: nothing to cut", once its preview says so.
+    pub(crate) fn uncut_note(&self) -> Option<String> {
+        let document = self.editor.document();
+        let names: Vec<&str> = (self.feed.draft_uncut().iter())
+            .filter_map(|&body| document.body(body))
+            .map(|body| body.name.as_str())
+            .collect();
+        (!names.is_empty()).then(|| format!("{}: nothing to cut", names.join(", ")))
+    }
+
     /// The bodies a session's `operation` lists, of the feature `edited`
     /// (or a new one) with `targets`: those its preview touches, those
     /// taken out, and those put back since the touch test last answered,

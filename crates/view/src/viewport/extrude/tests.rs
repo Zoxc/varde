@@ -79,6 +79,7 @@ fn state<'a>(
         show_error: None,
         refused: None,
         held: None,
+        uncut: None,
         checking: false,
         ready: !picked.is_empty(),
         accept: false,

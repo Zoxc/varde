@@ -120,7 +120,11 @@ fn check(lathe: &Lathe, step: usize, what: &str) {
             assert_eq!(feature, doc.revolve.as_ref().unwrap().feature, "{}", at());
             assert_eq!(Some(draft.axis), state.axis, "{}", at());
             assert_eq!(draft.regions.len(), state.picked.len(), "{}", at());
-            assert_eq!(draft.flip, state.flip, "{}", at());
+            // A flip kept from another extent isn't stored where this
+            // one ignores it.
+            if state.extent.flips() {
+                assert_eq!(draft.flip, state.flip, "{}", at());
+            }
             assert_eq!(OperationKind::of(&draft.operation), state.operation);
             let values: Vec<f64> = match &draft.extent {
                 Turn::Full => vec![],

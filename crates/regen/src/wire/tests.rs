@@ -149,12 +149,13 @@ fn a_revolve_and_its_draft_round_trip() {
     let geometry = draft.geometry.clone().expect("the draft's geometry");
     assert!(!geometry.lines().points().is_empty() && !geometry.sketch_curves().is_empty());
     assert_eq!(
-        draft,
+        *draft,
         Drafted {
             revision: 3,
             geometry: Some(geometry),
             error: Some(crosses.clone()),
             touched: None,
+            uncut: Vec::new(),
             reference: None,
             datums: None,
         }
@@ -251,14 +252,15 @@ fn a_revolve_that_works_crosses_in_the_reply() {
     };
     assert_eq!(
         draft,
-        Some(Drafted {
+        Some(Box::new(Drafted {
             revision: 5,
             geometry: None,
             error: None,
             touched: None,
+            uncut: Vec::new(),
             reference: None,
             datums: None,
-        })
+        }))
     );
     assert!(failed.is_empty(), "{failed:?}");
     assert_eq!(touched, [(revolve, vec![plate])]);
@@ -327,14 +329,15 @@ fn request_with_a_draft_round_trips() {
     };
     assert_eq!(
         draft,
-        Some(Drafted {
+        Some(Box::new(Drafted {
             revision: 7,
             geometry: None,
             error: None,
             touched: None,
+            uncut: Vec::new(),
             reference: None,
             datums: None,
-        })
+        }))
     );
 
     // A join says what it touches.
@@ -400,6 +403,7 @@ fn untested_and_touching_nothing_stay_apart() {
                 geometry: None,
                 error: None,
                 touched: touched.clone(),
+                uncut: Vec::new(),
                 reference: None,
                 datums: None,
             });
@@ -495,6 +499,7 @@ fn draft_references_must_be_lines_within_bounds() {
                 geometry: None,
                 error: None,
                 touched: None,
+                uncut: Vec::new(),
                 reference: Some(Box::new(bad)),
                 datums: None,
             });
@@ -515,6 +520,7 @@ fn draft_references_must_be_lines_within_bounds() {
             geometry: None,
             error: None,
             touched: None,
+            uncut: Vec::new(),
             reference: Some(Box::new(good)),
             datums: None,
         });
@@ -560,6 +566,7 @@ fn draft_datums_must_be_within_bounds() {
                 geometry: None,
                 error: None,
                 touched: None,
+                uncut: Vec::new(),
                 reference: None,
                 datums: Some(Box::new(datums)),
             });
@@ -2826,14 +2833,15 @@ fn answer_with_failures() -> Response {
             message: "no geometry".to_owned(),
             geometry: None,
         });
-        *draft = Some(Drafted {
+        *draft = Some(Box::new(Drafted {
             revision: 2,
             error: Some("it failed too".to_owned()),
             geometry: Some(failure_geometry()),
             touched: None,
+            uncut: Vec::new(),
             reference: None,
             datums: None,
-        });
+        }));
     }
     response
 }

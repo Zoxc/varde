@@ -491,7 +491,7 @@ pub(crate) fn answered(response: Response) -> Answer {
     let parts = picking.bodies().to_vec();
     assert_eq!(parts.len(), mesh.part_ends().len());
     Answer {
-        draft,
+        draft: draft.map(|draft| *draft),
         mesh,
         parts,
         failed,
@@ -565,6 +565,7 @@ fn a_draft_is_answered_as_if_applied() {
             error: None,
             // A new body isn't tested for touching.
             touched: None,
+            uncut: Vec::new(),
             reference: None,
             datums: None,
         })
@@ -658,6 +659,7 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
                 error: Some(error),
                 geometry: None,
                 touched,
+                uncut: Vec::new(),
                 reference: None,
                 datums: None,
             })
@@ -792,6 +794,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
             geometry: None,
             error: None,
             touched: Some(vec![body]),
+            uncut: Vec::new(),
             reference: None,
             datums: None,
         })
@@ -842,7 +845,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
 /// whether the tool touches the plate is worked out again for each
 /// tool, and says it does, so the plate is listed and the cut decided by
 /// its boolean, never failed by the touch test. Inside the hole the cut
-/// is a no-op; outside it the holes would meet along a line, which the
+/// is a no-op, and says it takes nothing from the plate; outside it the holes would meet along a line, which the
 /// boolean refuses.
 #[test]
 fn a_tangent_hole_dragged_reruns_its_touch_test_which_holds() {
@@ -865,10 +868,12 @@ fn a_tangent_hole_dragged_reruns_its_touch_test_which_holds() {
             assert!(answer.failed.is_empty(), "{:?}", answer.failed);
             let (_, worked) = regenerator.cache().counts();
             match error {
-                // The tool, whether it touches, the cut and its mesh.
+                // The tool, whether it touches, the cut, its mesh and,
+                // the cut taking nothing, the intersection telling so.
                 None => {
                     assert_eq!(drafted.error, None);
-                    assert_eq!(worked, before + 4);
+                    assert_eq!(drafted.uncut, [body]);
+                    assert_eq!(worked, before + 5);
                 }
                 // The tool, whether it touches and the refused cut.
                 Some(error) => {

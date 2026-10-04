@@ -6,7 +6,7 @@ use glam::Vec3;
 use iced::time::Instant;
 use varde_render::Camera;
 
-use super::Doc;
+use super::{Doc, home_camera};
 
 /// How long the camera takes to turn to a new view, every turn alike, as
 /// the UI mock's `CAM_MS`.
@@ -65,7 +65,46 @@ impl CameraAnimation {
     }
 }
 
+/// The least height, in millimetres, Home frames a model to: a tiny one is
+/// shown with what's around it rather than filling the view.
+const MIN_HOME_HEIGHT: f32 = 1.0;
+
 impl Doc {
+    /// The camera Home turns to outside a sketch: from where Home looks,
+    /// framing the model shown, its bodies and its sketches, or on the
+    /// origin if it shows nothing.
+    pub(super) fn home_view(&self) -> Camera {
+        let mut camera = home_camera(self.camera.projection());
+        let bounds = [self.feed.mesh().bounds(), self.feed.sketches().bounds()]
+            .into_iter()
+            .flatten()
+            .reduce(|a, b| varde_kernel::Aabb {
+                min: a.min.min(b.min),
+                max: a.max.max(b.max),
+            });
+        if let Some(bounds) = bounds {
+            // The mesh and lines keep their positions finite and bounded,
+            // and the camera clamps what it's given.
+            camera.set_target(bounds.center());
+            let diagonal = (bounds.max - bounds.min).length();
+            camera.set_view_height((diagonal * FRAME_MARGIN).max(MIN_HOME_HEIGHT));
+        }
+        camera
+    }
+
+    /// Frames the model once the first one of a document opened shows,
+    /// unless the camera was moved meanwhile: the camera starts out on
+    /// the origin, a model away from it would open off the view.
+    pub(super) fn fit_first_model(&mut self) {
+        if !self.fit_on_model || self.feed.generation().is_none() {
+            return;
+        }
+        self.fit_on_model = false;
+        if self.animation.is_none() && self.camera == home_camera(self.camera.projection()) {
+            self.camera = self.home_view();
+        }
+    }
+
     pub(crate) fn animate_camera(&mut self, to: Camera) {
         self.animation = Some(CameraAnimation {
             from: self.camera,

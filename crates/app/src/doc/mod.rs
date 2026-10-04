@@ -162,6 +162,10 @@ pub(crate) struct Doc {
     /// it: see [`Doc::take_focus`].
     focus: Option<Focus>,
     animation: Option<CameraAnimation>,
+    /// Whether the camera is to frame the first model shown, see
+    /// [`Doc::fit_first_model`]: a document opened, until its first model
+    /// shows.
+    fit_on_model: bool,
     /// The view the camera had before turning to the sketch being edited,
     /// which it turns back to on leaving it.
     before_sketch: Option<Camera>,
@@ -314,6 +318,7 @@ impl Doc {
             damage,
             download,
         } = origin;
+        let fit_on_model = !matches!(target, Target::None);
         let editor = Editor::new(document);
         let revision = editor.revision();
         let lineage = editor.lineage();
@@ -361,6 +366,7 @@ impl Doc {
             sketch_split: GEOMETRY_SHARE,
             focus: None,
             animation: None,
+            fit_on_model,
             before_sketch: None,
             before_show: None,
             pivot: None,
@@ -835,7 +841,13 @@ impl Doc {
             Look::ToggleConstrain => self.toggle_constrain(),
             Look::ToggleGlyphs => self.toggle_glyphs(),
             Look::SelectBox { ids, add } => self.select_box(ids, add),
-            Look::ClearSelection => self.clear_selection(),
+            // While measuring, the selection is hidden, and kept for
+            // after: Space doesn't clear what can't be seen.
+            Look::ClearSelection => {
+                if self.measure.is_none() {
+                    self.clear_selection();
+                }
+            }
             Look::SelectTool(tool) => self.select_tool(tool),
             Look::DragGeometry { id, from, to } => self.drag_geometry(id, from, to),
             Look::CancelDrag => {
@@ -873,13 +885,11 @@ impl Doc {
                 self.animation = None;
                 self.camera.zoom_at(factor, x, y);
             }
-            // In a sketch, Home faces it. Either way it orbits its target
-            // again.
+            // In a sketch, Home faces it; outside, it frames the model.
+            // Either way it orbits its target again.
             Look::ResetCamera => {
                 self.pivot = None;
-                let home = self
-                    .sketch_camera()
-                    .unwrap_or_else(|| home_camera(self.camera.projection()));
+                let home = self.sketch_camera().unwrap_or_else(|| self.home_view());
                 self.animate_camera(home);
             }
             Look::LookFrom(view) => {
@@ -952,6 +962,7 @@ impl Doc {
     /// goes to [`Doc::export_welded`] instead.
     pub(crate) fn computed(&mut self, response: varde_regen::Response) {
         self.feed.apply(response);
+        self.fit_first_model();
         // Which bodies are merged, which faces show as whose, may change.
         self.prune_plane_pick(false);
         self.prune_picks();

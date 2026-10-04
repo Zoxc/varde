@@ -16,8 +16,9 @@ use varde_sketch::{Curve, Id, Sketch};
 use crate::extrude::region_name;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, Framing, OperationKind, PanelHover, Parts, TypedField, bodies, field,
-    footer_message, operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
+    BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, TypedField, bodies,
+    field, footer_message, message_text, operation_panel, pick_field, picked_row, tile, tiles,
+    toggle, value_field,
 };
 use crate::pick::{PickIndex, Snapped};
 use crate::theme;
@@ -211,6 +212,9 @@ pub struct RevolveState<'a> {
     /// cut or intersect is picked while a combine names its body: shown
     /// in place of the preview's error, and OK waits.
     pub held: Option<String>,
+    /// For a cut whose preview works, which bodies it takes nothing from
+    /// (it only touches them), as a note: "Body 2: nothing to cut".
+    pub uncut: Option<String>,
     /// Whether sketch edits have waited on the solver long enough to say
     /// so: OK waits for them, and the panel says why.
     pub checking: bool,
@@ -501,7 +505,11 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         state.show_error,
         state.accept.then_some(Message::Edit(Edit::AcceptError)),
         state.checking,
-    );
+    )
+    // A cut that works but takes nothing from a body says so.
+    .or_else(|| {
+        (state.uncut.clone()).map(|note| Footer::Text(message_text(note, theme::warning_text)))
+    });
 
     let body = column![
         profile,

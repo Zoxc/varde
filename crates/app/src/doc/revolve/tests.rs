@@ -7,7 +7,7 @@ use glam::DVec2;
 use iced::keyboard::{self, key};
 use varde_document::{
     AxisLine, BodyId, Command, Document, Editor, FeatureId, FeatureKind, Id, OriginPlane, Plane,
-    Revolve, RevolveError, Sketch,
+    Revolve, RevolveError, Sketch, Turn,
 };
 use varde_regen::Request;
 use varde_sketch::Curve;
@@ -373,6 +373,40 @@ fn enter_commits_the_revolve_as_one_undo_step() {
 
     lathe.doc.update(Edit::Undo);
     assert_eq!(*lathe.doc.editor.document(), before);
+}
+
+#[test]
+fn a_flip_left_from_one_side_is_not_stored_where_it_does_nothing() {
+    let mut lathe = lathe();
+    lathe.set_up(AxisLine::SketchY);
+    lathe.revolve(RevolveLook::Extent(TurnKind::OneSide));
+    lathe.revolve(RevolveLook::Flip);
+    lathe.revolve(RevolveLook::Extent(TurnKind::Full));
+    lathe.doc.update(Edit::CommitRevolve);
+    let [(feature, revolve)] = lathe.revolves()[..] else {
+        panic!("one revolve");
+    };
+    assert!(!revolve.flip);
+
+    // Flipped under One side, then back: nothing changed, and nothing
+    // is written. Full, then Symmetric alike.
+    let flip_and_back = |lathe: &mut Lathe, kind: TurnKind| {
+        let revision = lathe.doc.editor.revision();
+        lathe.doc.look(Look::EditFeature(feature));
+        lathe.revolve(RevolveLook::Extent(TurnKind::OneSide));
+        lathe.revolve(RevolveLook::Flip);
+        lathe.revolve(RevolveLook::Extent(kind));
+        lathe.doc.update(Edit::CommitRevolve);
+        assert!(lathe.doc.revolve.is_none());
+        assert_eq!(lathe.doc.editor.revision(), revision);
+        assert!(!lathe.revolves()[0].1.flip);
+    };
+    flip_and_back(&mut lathe, TurnKind::Full);
+    lathe.doc.look(Look::EditFeature(feature));
+    lathe.revolve(RevolveLook::Extent(TurnKind::Symmetric));
+    lathe.doc.update(Edit::CommitRevolve);
+    assert!(matches!(lathe.revolves()[0].1.extent, Turn::Symmetric(_)));
+    flip_and_back(&mut lathe, TurnKind::Symmetric);
 }
 
 #[test]

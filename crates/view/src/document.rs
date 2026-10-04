@@ -812,12 +812,12 @@ fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
 }
 
 /// The status bar's hints: what the keys do for what's going on and the
-/// viewport's mouse bindings; under the delete prompt only that `Esc`
-/// cancels it.
+/// viewport's mouse bindings; under the unsaved changes or delete prompt
+/// only that `Esc` cancels it.
 fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
-    // The delete prompt takes every key but `Esc`, and the viewport
-    // behind it nothing.
-    if state.deleting.is_some() {
+    // The unsaved changes and delete prompts take every key but `Esc`,
+    // and the viewport behind them nothing.
+    if state.overlay == Some(Overlay::UnsavedPrompt) || state.deleting.is_some() {
         return vec![key_hint(Shortcut::ESCAPE, "Cancel")];
     }
     let sketching = state.sketch.is_some();

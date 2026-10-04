@@ -23,7 +23,15 @@ pub(crate) struct ExtrudeSession {
     pub(crate) extent: ExtentKind,
     /// The first distance's field, and two sides' second.
     pub(crate) fields: [TypedText; 2],
+    /// Whether one side goes the other way, or two sides swap: kept
+    /// while the extent ignores it (see [`ExtrudeSession::stored_flip`]), for when
+    /// it's switched back.
     pub(crate) flip: bool,
+    /// The flip the extrude edited was stored with while its extent ignores
+    /// it, as old files may have it: written back as it was while the
+    /// extent set up ignores it too, so an edit changing nothing writes
+    /// nothing. False otherwise.
+    ignored_flip: bool,
     pub(crate) operation: OperationKind,
     /// The bodies a join, cut or intersect leaves out: the edited
     /// extrude's to start with.
@@ -53,6 +61,7 @@ impl ExtrudeSession {
             extent: ExtentKind::OneSide,
             fields: [distance.clone(), distance],
             flip: false,
+            ignored_flip: false,
             operation: OperationKind::NewBody,
             targets: BodyTargets::default(),
             grabbed: None,
@@ -88,6 +97,7 @@ impl ExtrudeSession {
             session.fields[1] = TypedText::of(second, &ask);
         }
         session.flip = extrude.flip;
+        session.ignored_flip = extrude.flip && !session.extent.flips();
         session.operation = OperationKind::of(&extrude.operation);
         session.targets = BodyTargets::new(extrude.operation.excluded());
         session
@@ -107,6 +117,18 @@ impl ExtrudeSession {
             field.follow_units(&ask);
         }
         self.design = design;
+    }
+
+    /// The flip to store: the one set up where the extent takes it,
+    /// else the one stored before if that extent ignored it too
+    /// ([`ExtrudeSession::ignored_flip`]), else none, so a flip left set
+    /// from another extent isn't stored where it changes nothing.
+    fn stored_flip(&self) -> bool {
+        if self.extent.flips() {
+            self.flip
+        } else {
+            self.ignored_flip
+        }
     }
 
     /// The extrude as set up, if it's whole: a source, regions picked, and
@@ -129,7 +151,7 @@ impl ExtrudeSession {
             sketch,
             regions: self.regions.references().to_vec(),
             extent,
-            flip: self.flip,
+            flip: self.stored_flip(),
             operation: self.targets.operation(self.operation),
         })
     }
@@ -393,6 +415,9 @@ impl Doc {
             show_error: self.draft_framed(),
             refused: session.refused(&document.design()),
             held: self.held(session.feature, session.operation),
+            uncut: (session.operation == OperationKind::Cut)
+                .then(|| self.uncut_note())
+                .flatten(),
             checking: self.proposals.slow(),
             ready: self.commit_by(self.extrude_ready(), false),
             accept: self.commit_by(self.extrude_ready(), true),

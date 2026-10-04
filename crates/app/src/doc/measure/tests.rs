@@ -644,3 +644,23 @@ fn the_selection_is_measured_in_the_status_bar() {
     doc.look(Look::StartMeasure);
     assert_eq!(doc.selection_inspect(), None);
 }
+
+/// Space doesn't clear the selection while measuring, which is hidden
+/// then and shows again after; the measure's picks stay too.
+#[test]
+fn space_keeps_the_hidden_selection_while_measuring() {
+    let (mut doc, _requests) = example();
+    click(&mut doc, top, false);
+    assert!(doc.selected_face().is_some());
+    let space = || keyboard::Key::Named(keyboard::key::Named::Space);
+    key_in(&mut doc, keyboard::Key::Character("i".into()));
+    click(&mut doc, bottom, false);
+    key_in(&mut doc, space());
+    let session = doc.measure.as_ref().expect("still measuring");
+    assert!(session.picks[0].is_some());
+    doc.look(Look::Measure(MeasureLook::Close));
+    assert!(doc.selected_face().is_some());
+    // Outside it, Space clears it.
+    key_in(&mut doc, space());
+    assert!(doc.selected_face().is_none());
+}

@@ -83,6 +83,89 @@ fn the_camera_orbits_the_pivot_picked_until_home() {
     assert_eq!(doc.camera.target(), target);
 }
 
+/// A document holding a disc of `radius` about (25, 20) on XY, extruded
+/// 4 mm up into a new body.
+fn a_disc_off_the_origin(radius: f64) -> Document {
+    let mut editor = Editor::new(Document::default());
+    let up = varde_document::Extent::OneSide(length(editor.document(), "4"));
+    let new_body = varde_document::Operation::NewBody(varde_document::BodyId::NEW);
+    add_disc_of(&mut editor, (25.0, 20.0), radius, up, new_body);
+    editor.document().clone()
+}
+
+/// Whether `camera` frames the box from `low` to `high`: looking at its
+/// middle, the view taller than the box's diagonal but not much more.
+fn frames(camera: &Camera, low: Vec3, high: Vec3) -> bool {
+    let diagonal = (high - low).length();
+    camera.target().abs_diff_eq((low + high) / 2.0, 1e-2)
+        && (diagonal..2.0 * diagonal).contains(&camera.view_height())
+}
+
+#[test]
+fn an_opened_document_frames_its_first_model_unless_the_camera_moved() {
+    let opened = || {
+        let requests = Rc::default();
+        let target = Target::Entry { file: FileId(0) };
+        let origin = Origin::new(target, Access::Edit, "part".to_owned());
+        let mut doc = Doc::new(a_disc_off_the_origin(5.0), origin);
+        doc.feed.connect(Deferred(Rc::clone(&requests)));
+        doc.sync();
+        (doc, requests)
+    };
+    let (mut doc, requests) = opened();
+    let home = doc.camera;
+    answer(&mut doc, &requests);
+    let (low, high) = (Vec3::new(20.0, 15.0, 0.0), Vec3::new(30.0, 25.0, 4.0));
+    assert!(frames(&doc.camera, low, high), "{:?}", doc.camera);
+    assert_eq!(doc.camera.backward(), home.backward());
+    // Once only: a later model leaves the camera where the user put it.
+    doc.look(Look::Zoom {
+        factor: 3.0,
+        x: 0.0,
+        y: 0.0,
+    });
+    let zoomed = doc.camera;
+    doc.apply(Command::Replace(Box::new(a_disc_off_the_origin(8.0))));
+    doc.sync();
+    answer(&mut doc, &requests);
+    assert_eq!(doc.camera, zoomed);
+
+    // Nor does it move the camera the user moved before the model came.
+    let (mut doc, requests) = opened();
+    doc.look(Look::Orbit {
+        yaw: 0.4,
+        pitch: -0.3,
+    });
+    let moved = doc.camera;
+    answer(&mut doc, &requests);
+    assert_eq!(doc.camera, moved);
+
+    // A new design starts on the origin, as before.
+    let (mut doc, requests) = deferred();
+    doc.apply(Command::Replace(Box::new(a_disc_off_the_origin(5.0))));
+    doc.sync();
+    answer(&mut doc, &requests);
+    assert_eq!(doc.camera, home);
+}
+
+#[test]
+fn home_frames_the_model() {
+    let (mut doc, requests) = deferred();
+    doc.look(Look::ResetCamera);
+    settle_camera(&mut doc);
+    let home = doc.camera;
+    // A part of 2 × 2 × 4 mm away from the origin, as a first extrude.
+    doc.apply(Command::Replace(Box::new(a_disc_off_the_origin(1.0))));
+    doc.sync();
+    answer(&mut doc, &requests);
+    doc.look(Look::ResetCamera);
+    settle_camera(&mut doc);
+    let (low, high) = (Vec3::new(24.0, 19.0, 0.0), Vec3::new(26.0, 21.0, 4.0));
+    assert!(frames(&doc.camera, low, high), "{:?}", doc.camera);
+    assert!(doc.camera.view_height() < home.view_height());
+    assert_eq!(doc.camera.backward(), home.backward());
+}
+
 #[test]
 fn the_pivot_marker_fades_after_it_is_picked_and_shows_over_the_cube() {
     let mut doc = untitled();
@@ -1742,6 +1825,21 @@ fn closing_unsaved_changes_asks_and_cancel_stays() {
     assert!(doc.leaving().is_none());
     assert!(doc.edited());
     assert!(sent(&requests).is_empty());
+}
+
+/// Under the unsaved changes prompt, the status bar's hints are only that
+/// `Esc` cancels it: no other key reaches the document behind it.
+#[test]
+fn the_unsaved_changes_prompt_hints_only_its_keys() {
+    let (mut varde, _requests) = with_open_file();
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
+    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
+    let texts = screen_texts(document(&varde));
+    assert!(!texts.contains(&"Select".to_owned()), "{texts:?}");
+    assert!(texts.contains(&"Esc".to_owned()), "{texts:?}");
+    // The prompt's button and the hint.
+    let cancels = texts.iter().filter(|text| *text == "Cancel").count();
+    assert_eq!(cancels, 2, "{texts:?}");
 }
 
 /// Leaving is stepped through on the document alone, the app only doing

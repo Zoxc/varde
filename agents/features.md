@@ -454,7 +454,13 @@ pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
 - **Direction**: positive angles turn right-handed about the axis's
   direction, starting from the sketch plane. `flip` turns one side and
   swaps two sides the other way, as an extrude's; full and symmetric
-  ignore it.
+  ignore it. The panel keeps a flip set under one side or two sides
+  while another extent is picked, for switching back, but stores it only
+  where the extent takes it: under one that ignores it, the flip the
+  edited feature stored under such an extent, else none, so OK after
+  flipping and switching back writes no revision (extrude's Symmetric
+  and Through all alike; `stored_flip` in `doc/extrude.rs` and
+  `doc/revolve.rs`).
 - **Angles** are `varde_expr::Value`s asked by `Turn::ask`
   (`Ask::angle(units, TAU).positive()`): above zero, at most a turn, bare
   numbers in degrees, stored in radians. Two sides together at most a

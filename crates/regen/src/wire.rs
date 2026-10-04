@@ -297,7 +297,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             let mut head = Head::Regenerated {
                 generation: *generation,
                 exclude: *exclude,
-                draft: draft.clone(),
+                draft: draft.as_deref().cloned(),
                 draft_geometry: draft.as_ref().and_then(|draft| geometry(&draft.geometry)),
                 unsolved: unsolved.clone(),
                 failed: (failed.iter())
@@ -496,7 +496,7 @@ pub fn decode_reply(
                     Response::Regenerated {
                         generation,
                         exclude,
-                        draft,
+                        draft: draft.map(Box::new),
                         inspected: inspected
                             .map(|inspected| Box::new(inspected.checked(&mesh, &picking))),
                         mesh: Arc::new(mesh),

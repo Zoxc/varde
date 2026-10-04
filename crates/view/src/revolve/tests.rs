@@ -65,6 +65,7 @@ fn state_of<'a>(
         show_error: None,
         refused: None,
         held: None,
+        uncut: None,
         checking: false,
         ready: false,
         accept: false,

@@ -328,7 +328,7 @@ impl MeshFeed {
                     revision,
                     touched: Some(touched),
                     ..
-                }) = &draft
+                }) = draft.as_deref()
                     && self
                         .touched
                         .as_ref()
@@ -343,7 +343,7 @@ impl MeshFeed {
                         generation: asked.generation,
                     });
                 }
-                self.drafted = draft;
+                self.drafted = draft.map(|draft| *draft);
                 self.inspected = inspected.map(|inspected| *inspected);
                 self.shown = Some(asked);
                 self.failed = None;
@@ -397,6 +397,15 @@ impl MeshFeed {
         (drafted.revision == revision)
             .then_some(drafted.error.as_deref())
             .flatten()
+    }
+
+    /// The bodies the draft asked for last, a cut that works, takes
+    /// nothing from, once its answer is shown ([`Drafted::uncut`]).
+    pub(crate) fn draft_uncut(&self) -> &[BodyId] {
+        match (&self.draft, &self.drafted) {
+            (Some(draft), Some(drafted)) if drafted.revision == draft.revision => &drafted.uncut,
+            _ => &[],
+        }
     }
 
     /// What to draw of where the draft asked for last fails, when

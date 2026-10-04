@@ -244,8 +244,7 @@ fn write_png(path: &std::path::Path, size: Size<u32>, rgba: &[u8]) {
 /// `zoom`, through the messages the controls and the mouse send, the turn
 /// finished.
 fn aim(doc: &mut Doc, yaw: f32, pitch: f32, zoom: f32) {
-    doc.look(Look::ResetCamera);
-    doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
+    old_home(doc);
     doc.look(Look::Orbit { yaw, pitch });
     doc.look(Look::Zoom {
         factor: zoom,
@@ -254,9 +253,19 @@ fn aim(doc: &mut Doc, yaw: f32, pitch: f32, zoom: f32) {
     });
 }
 
-/// How far out the camera is zoomed from Home's to frame the example's
-/// 60 × 40 mm plate: Home shows about 7.5 mm of height (there's no zoom to
-/// fit yet).
+/// Turns the camera Home, the turn finished, then back onto the origin
+/// at the default camera's height, as Home was before it framed the
+/// model: the shots' zooms are from there.
+fn old_home(doc: &mut Doc) {
+    doc.look(Look::ResetCamera);
+    doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
+    let default = varde_render::Camera::default();
+    doc.camera.set_target(default.target());
+    doc.camera.set_view_height(default.view_height());
+}
+
+/// How far out the camera is zoomed from the old Home's to frame the
+/// example's 60 × 40 mm plate: that showed about 7.5 mm of height.
 const PLATE_ZOOM: f32 = 12.0;
 
 /// Home's direction, zoomed out to frame the example's plate.
@@ -786,10 +795,9 @@ fn shots_28_view_menu() {
 /// Looks from `view` in `projection`, the turn finished, zoomed by `zoom`.
 fn look_from(doc: &mut Doc, view: View, projection: Projection, zoom: f32) {
     doc.look(Look::SetProjection(projection));
-    for look in [Look::ResetCamera, Look::LookFrom(view)] {
-        doc.look(look);
-        doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
-    }
+    old_home(doc);
+    doc.look(Look::LookFrom(view));
+    doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
     doc.look(Look::Zoom {
         factor: zoom,
         x: 0.0,

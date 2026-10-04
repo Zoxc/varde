@@ -171,6 +171,10 @@ pub struct Drafted {
     /// it; `Some` of an empty list where it ran and touched nothing. See
     /// [`Evaluation::touched`].
     pub touched: Option<Vec<BodyId>>,
+    /// For a cut that works, the bodies it cuts that it takes nothing
+    /// from, which it only touches (face to face, say), in the order they
+    /// were made: see [`Evaluation::uncut`]. Empty otherwise.
+    pub uncut: Vec<BodyId>,
     /// For a move turning about an axis, a mirror or a pattern, where its
     /// axis or plane is, if it was found: a point on it and its direction (a
     /// mirror's normal), not unit, as [`Evaluation::references`] has it,
@@ -359,8 +363,9 @@ pub enum Response {
         /// The sketch left out of `sketches`, as the request asked: a
         /// request can ask again for the same generation with another one.
         exclude: Option<FeatureId>,
-        /// How the request's draft went, if it had one.
-        draft: Option<Drafted>,
+        /// How the request's draft went, if it had one. Boxed, as the
+        /// variant is large enough.
+        draft: Option<Box<Drafted>>,
         mesh: Arc<RenderMesh>,
         /// The body of each of `mesh`'s parts, and its faces' and edges'
         /// tables, see [`Picking`].
@@ -446,7 +451,7 @@ impl Regenerator {
                     Ok(model) => Response::Regenerated {
                         generation,
                         exclude,
-                        draft: model.draft,
+                        draft: model.draft.map(Box::new),
                         mesh: model.scene.mesh,
                         picking: model.scene.picking,
                         sketches: Arc::new(model.sketches),
@@ -509,11 +514,16 @@ impl Regenerator {
                         (failed.message, failed.geometry, touched, reference, datums)
                     }
                     None => {
+                        let uncut = (evaluation.uncut.iter())
+                            .find(|(id, _)| *id == feature)
+                            .map(|(_, uncut)| uncut.clone())
+                            .unwrap_or_default();
                         let done = Drafted {
                             revision: draft.revision,
                             error: None,
                             geometry: None,
                             touched,
+                            uncut,
                             reference,
                             datums,
                         };
@@ -528,6 +538,7 @@ impl Regenerator {
             error: Some(error),
             geometry,
             touched,
+            uncut: Vec::new(),
             reference,
             datums,
         };

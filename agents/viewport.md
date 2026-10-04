@@ -136,7 +136,13 @@ the zoom stays; animated as the view cube's turns are), and orbits about
 it
 (`Camera::orbit_about`, which turns the target about the pivot with
 the view, so the pivot stays where it shows on screen); `None`, and
-Home, go back to orbiting the target. Panning, zooming and the view
+Home, go back to orbiting the target. Home outside a sketch looks from
+its default direction framing the model shown, its bodies and sketches
+(`Doc::home_view`: target the box's middle, the view `FRAME_MARGIN`
+times its diagonal, at least 1 mm tall), or on the origin when it shows
+nothing; a document opened jumps there once its first model shows,
+unless the camera was moved meanwhile (`Doc::fit_first_model`), while a
+new design starts on the origin. Panning, zooming and the view
 cube's faces leave it. Its marker (below) shows whole for
 `PIVOT_SHOWN` (2 s) once picked and fades over `PIVOT_FADE` (0.4 s),
 which takes frames, and shows whole while the cursor is over the cube,
@@ -617,7 +623,12 @@ command would apply it, and says how it went (`Drafted`, with the
 revision, its error and the bodies a join, cut or intersect touches,
 which the panel lists: `MeshFeed::draft_touched` gives the newest
 answer's that ran the touch test, of the current run of drafts, while a
-draft is asked for); a draft that fails, or that the document
+draft is asked for; and for a cut that works, the bodies it touches but
+takes nothing from, `uncut`: their volumes barely change and the tool's
+intersection with them, cached as an intersect's, is empty. The panel
+notes them under its body list, as the UI mock's combine notes a
+subtract taking nothing, in the warning colour: "Body 2: nothing to
+cut"); a draft that fails, or that the document
 refuses, is answered with the committed model and the draft's error. The
 lane keeps a cache of what it worked out per feature (profiles, solids,
 meshes, whether each sketch solves), keyed by a hash of the feature, the
@@ -739,7 +750,7 @@ starting ends the other), so no request carries both a draft and picks.
 **The measure tool** (`app/src/doc/measure.rs`, `Doc::measure`, a
 `MeasureSession`; `view/src/measure.rs`; `view/src/viewport/measure.rs`)
 writes nothing to the document, has no undo and leaves the selection as
-it was. `I` (`Shortcut::MEASURE`, outside sketches, where `I` is
+it was (hidden meanwhile, so `Space` doesn't clear it). `I` (`Shortcut::MEASURE`, outside sketches, where `I` is
 Coincident's), the toolbar's Measure button (after a separator, as the
 mock has it) and the rail's Inspect set (the model rail's second, `W`;
 its list's letter `I`) send `Look::StartMeasure` through
@@ -1364,8 +1375,10 @@ primitives) and takes `Headless::screenshot` at the window's physical
 size and scale factor, which reaches the viewport's primitive as on
 screen. Hover and tooltips come from a `CursorMoved` and a later
 `RedrawRequested` sent through `ui.update`, never from poking state; the
-camera is set through `Look` messages (Home, orbit, zoom: Home shows only
-about 7.5 mm, so shots zoom out to frame the 60 mm plate). Each shot draws
+camera is set through `Look` messages (Home, orbit, zoom), Home then put
+back on the origin at the default camera's 7.5 mm (`old_home`, as Home
+was before it framed the model), so shots zoom out to frame the 60 mm
+plate. Each shot draws
 twice: the first frame, cleared to magenta, lays out the scene's caches
 and the anchored knobs and checks that less than 2 % of the window is left
 undrawn (the translucent 1 px separators show the clear colour; a viewport

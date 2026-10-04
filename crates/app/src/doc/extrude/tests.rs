@@ -3,7 +3,9 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use iced::keyboard::{self, key};
-use varde_document::{Command, Document, Editor, FeatureId, FeatureKind, Operation, Tolerance};
+use varde_document::{
+    Command, Document, Editor, Extent, FeatureId, FeatureKind, Operation, Tolerance,
+};
 use varde_regen::Request;
 use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, Mode, OperationKind};
 
@@ -291,6 +293,56 @@ fn enter_on_a_selected_extrude_edits_it() {
 }
 
 #[test]
+fn a_flip_left_from_one_side_is_not_stored_where_it_does_nothing() {
+    let (mut doc, _) = example();
+    let feature = doc.editor.document().features()[1].id;
+    doc.look(Look::EditFeature(feature));
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::Symmetric));
+    doc.update(Edit::CommitExtrude);
+    assert!(matches!(extrudes(&doc)[0].extent, Extent::Symmetric(_)));
+
+    // Flipped under One side, then back to Symmetric: nothing changed,
+    // and nothing is written.
+    let revision = doc.editor.revision();
+    doc.look(Look::EditFeature(feature));
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::OneSide));
+    extrude(&mut doc, ExtrudeLook::Flip);
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::Symmetric));
+    // The panel keeps it for One side again.
+    assert!(doc.extrude_state().unwrap().flip);
+    doc.update(Edit::CommitExtrude);
+    assert!(doc.extrude.is_none());
+    assert_eq!(doc.editor.revision(), revision);
+    assert!(!extrudes(&doc)[0].flip);
+
+    // One flipped and stored so, as before, is kept as it is.
+    let FeatureKind::Extrude(stored) = &doc.editor.document().features()[1].kind else {
+        panic!("an extrude");
+    };
+    let flipped = varde_document::Extrude {
+        flip: true,
+        ..stored.clone()
+    };
+    doc.apply(Command::SetFeature {
+        feature,
+        kind: Box::new(flipped.into()),
+    });
+    let revision = doc.editor.revision();
+    doc.look(Look::EditFeature(feature));
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::OneSide));
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::Symmetric));
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.editor.revision(), revision);
+
+    // Switched to One side, its flip counts.
+    doc.look(Look::EditFeature(feature));
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::OneSide));
+    doc.update(Edit::CommitExtrude);
+    assert!(matches!(extrudes(&doc)[0].extent, Extent::OneSide(_)));
+    assert!(extrudes(&doc)[0].flip);
+}
+
+#[test]
 fn the_handle_drags_the_distance_and_flips_one_side() {
     let (mut doc, sketch, requests) = plate();
     key_in(&mut doc, key("x"));
@@ -486,6 +538,40 @@ fn two_sides_at_the_limit_stay_ready_when_the_units_change() {
     doc.update(Edit::CommitExtrude);
     assert_eq!(doc.edit_error, None);
     assert_eq!(extrudes(&doc)[0].span(), Some((-400000.0, 600000.0)));
+}
+
+/// A cut that only touches a body, face to face, is noted as taking
+/// nothing from it, as the mock's combine notes a subtract.
+#[test]
+fn a_cut_only_touching_a_body_says_it_takes_nothing_from_it() {
+    let (mut editor, [_, below]) = crate::tests::two_plates();
+    // Up through the top plate, on the face of the one below.
+    let up = varde_document::Extent::OneSide(crate::tests::length(editor.document(), "10"));
+    let cut = Operation::Cut(varde_document::Targets::default());
+    let feature = crate::tests::add_disc(&mut editor, (20.0, 0.0), up, cut);
+    let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+    doc.look(Look::EditFeature(feature));
+    answer(&mut doc, &requests);
+    let state = doc.extrude_state().unwrap();
+    assert_eq!(state.error, None);
+    assert_eq!(state.targets.len(), 2);
+    assert_eq!(doc.feed.draft_uncut(), [below]);
+    assert_eq!(state.uncut.as_deref(), Some("Body 2: nothing to cut"));
+    let texts = crate::tests::screen_texts(&doc);
+    assert!(
+        texts.contains(&"Body 2: nothing to cut".to_owned()),
+        "{texts:?}"
+    );
+
+    // Taken out of it, nothing's noted; through both, neither.
+    extrude(&mut doc, ExtrudeLook::Target(below));
+    answer(&mut doc, &requests);
+    assert_eq!(doc.extrude_state().unwrap().uncut, None);
+    extrude(&mut doc, ExtrudeLook::Target(below));
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::Symmetric));
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.draft_error(), None);
+    assert_eq!(doc.extrude_state().unwrap().uncut, None);
 }
 
 #[test]
