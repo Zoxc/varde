@@ -10,6 +10,9 @@
   --status-float: 30px;
   --accent: #0a95ad;
   --accent-soft: rgba(10, 149, 173, .13);
+  /* A fill under white text (a primary button, a ticked box): the accent,
+     darker in dark mode where the accent is too bright for it. */
+  --fill: #0a95ad;
   --hl: #e3f5da;
   --hl-line: #9dd488;
   --c-sketch: #0a95ad;
@@ -46,6 +49,7 @@
   :root:not([data-theme="light"]) {
     --accent: #39b9cf;
     --accent-soft: rgba(57, 185, 207, .16);
+    --fill: #116d7e;
     --hl: rgba(118, 204, 96, .15);
     --hl-line: rgba(118, 204, 96, .5);
     --c-sketch: #39b9cf;
@@ -83,6 +87,7 @@
 :root[data-theme="dark"] {
   --accent: #39b9cf;
   --accent-soft: rgba(57, 185, 207, .16);
+  --fill: #116d7e;
   --hl: rgba(118, 204, 96, .15);
   --hl-line: rgba(118, 204, 96, .5);
   --c-sketch: #39b9cf;
@@ -241,7 +246,7 @@ kbd {
 .op .k { color: var(--faint); font: 500 10.5px ui-monospace, Menlo, monospace; }
 .op.on { background: var(--accent-soft); color: var(--accent); }
 .op.on .k { color: var(--accent); opacity: .7; }
-.op.primary { background: var(--accent); color: #fff; }
+.op.primary { background: var(--fill); color: #fff; }
 .op.primary:hover { filter: brightness(1.08); }
 .op.finish { height: 24px; padding: 0 5px; }
 .op.finish:disabled { opacity: .45; cursor: default; filter: none; }

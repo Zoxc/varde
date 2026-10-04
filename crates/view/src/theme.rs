@@ -64,6 +64,10 @@ pub struct Palette {
     pub accent: Color,
     /// Background of selected and toggled-on items.
     pub accent_soft: Color,
+    /// A fill under white text, a [`primary_button`] or a ticked [`tick`]:
+    /// the accent, darker in the dark palette, where the accent is too
+    /// bright for it (the mock's `--fill`).
+    pub fill: Color,
     /// Hover background.
     pub hl: Color,
     /// Hover border.
@@ -323,6 +327,7 @@ const DARK_CONSTRUCTION: Color = color!(0xf0a24a);
 const LIGHT: Palette = Palette {
     accent: color!(0x0a95ad),
     accent_soft: color!(0x0a95ad, 0.13),
+    fill: color!(0x0a95ad),
     hl: color!(0xe3f5da),
     hl_line: color!(0x9dd488),
     text: LIGHT_TEXT,
@@ -399,6 +404,7 @@ const LIGHT: Palette = Palette {
 const DARK: Palette = Palette {
     accent: color!(0x39b9cf),
     accent_soft: color!(0x39b9cf, 0.16),
+    fill: color!(0x116d7e),
     hl: color!(0x76cc60, 0.15),
     hl_line: color!(0x76cc60, 0.5),
     text: DARK_TEXT,
@@ -755,10 +761,10 @@ impl Emphasis {
     }
 }
 
-/// The main call to action: accent fill with white text.
+/// The main call to action: the fill colour with white text.
 pub fn primary_button(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
-    filled_button(p, p.accent, status)
+    filled_button(p, p.fill, status)
 }
 
 /// A [`primary_button`] closing the right end of a [`pill`]: square on
@@ -859,15 +865,15 @@ fn control_fill(p: &Palette, enabled: bool) -> Color {
 }
 
 /// A square icon button in the operation panel's head, Cancel or (the
-/// `primary`) OK: a thin border, the hover background on hover; OK filled
-/// with the accent, faded while disabled.
+/// `primary`) OK: a thin border, the hover background on hover; OK in the
+/// fill colour, faded while disabled.
 pub fn head_button(primary: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
         if primary {
             return button::Style {
                 border: border::rounded(CONTROL_RADIUS),
-                ..filled_button(p, p.accent, status)
+                ..filled_button(p, p.fill, status)
             };
         }
         let hovered = is_hovered(status);
@@ -1101,8 +1107,8 @@ pub fn fail_button(danger: bool) -> impl Fn(&Theme, button::Status) -> button::S
 /// Corner radius of a [`tick`]'s box.
 const TICK_RADIUS: f32 = 4.0;
 
-/// A checkbox: a faint box whose border turns accent on hover, filled
-/// with the accent and a white check while ticked; its label in the
+/// A checkbox: a faint box whose border turns accent on hover, in the
+/// fill colour with a white check while ticked; its label in the
 /// text colour, whatever the colour around it.
 pub fn tick(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
     let p = palette(theme);
@@ -1111,14 +1117,16 @@ pub fn tick(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
         checkbox::Status::Hovered { is_checked } => (is_checked, true, true),
         checkbox::Status::Disabled { is_checked } => (is_checked, false, false),
     };
-    let edge = if checked || hovered {
+    let edge = if checked {
+        p.fill
+    } else if hovered {
         p.accent
     } else {
         p.faint
     };
     let style = checkbox::Style {
         background: Background::Color(if checked {
-            p.accent
+            p.fill
         } else {
             Color::TRANSPARENT
         }),
@@ -1132,7 +1140,7 @@ pub fn tick(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
         let fade = |color: Color| color.scale_alpha(DISABLED_OPACITY);
         checkbox::Style {
             background: Background::Color(if checked {
-                fade(p.accent)
+                fade(p.fill)
             } else {
                 Color::TRANSPARENT
             }),
@@ -1826,7 +1834,7 @@ mod tests {
             let hovered = tick(&theme, Status::Hovered { is_checked: false });
             assert_eq!(hovered.border.color, p.accent);
             let on = tick(&theme, Status::Active { is_checked: true });
-            assert_eq!(on.background, Background::Color(p.accent));
+            assert_eq!(on.background, Background::Color(p.fill));
             assert_eq!(on.icon_color, Color::WHITE);
         }
     }
