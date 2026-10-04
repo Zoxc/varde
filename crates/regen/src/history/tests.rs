@@ -1668,6 +1668,7 @@ mod faces;
 mod fillet;
 mod merging;
 mod motion;
+mod offset_face;
 mod pattern;
 mod profile_evidence;
 mod revolve;

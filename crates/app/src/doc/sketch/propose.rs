@@ -199,7 +199,8 @@ pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sket
         | FeatureKind::Split(_)
         | FeatureKind::Chamfer(_)
         | FeatureKind::Shell(_)
-        | FeatureKind::Fillet(_) => None,
+        | FeatureKind::Fillet(_)
+        | FeatureKind::OffsetFace(_) => None,
     }
 }
 

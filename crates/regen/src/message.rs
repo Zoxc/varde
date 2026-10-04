@@ -540,6 +540,80 @@ pub(crate) fn shell_leaves_nothing(body: &str) -> String {
     format!("shelling {body} leaves nothing of it")
 }
 
+/// Why an offset face fails: its face `index` (from 0) of its `count`
+/// isn't found on its body as the features before it leave it (renamed
+/// or gone).
+pub(crate) fn offset_face_not_found(index: usize, count: usize) -> String {
+    if count == 1 {
+        "its face wasn't found".to_owned()
+    } else {
+        format!(
+            "its face {} of {count} wasn't found",
+            index.saturating_add(1)
+        )
+    }
+}
+
+/// What the kernel refuses to offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OffsetRefusal {
+    /// A moved face would pass a neighbouring face.
+    PastNeighbour,
+    /// A moved face would run into another part of the body.
+    IntoBody,
+    /// A round face would shrink to nothing.
+    RoundTooSmall,
+    /// A face next to a moved one has no surface to extend.
+    NoSurface,
+    /// A face tangent to a moved one isn't moved with it.
+    TangentNeighbour,
+    /// Faces meeting at a corner can't be offset together.
+    Corner,
+    /// The body would reach out of range.
+    OutOfRange,
+}
+
+/// Why an offset of faces of the body named `body` is refused.
+pub(crate) fn offset_refused(why: OffsetRefusal, body: &str) -> String {
+    match why {
+        OffsetRefusal::PastNeighbour => {
+            format!("the face moves past a neighbouring face of {body}: try a smaller distance")
+        }
+        OffsetRefusal::IntoBody => {
+            format!("the face runs into another part of {body}: try a smaller distance")
+        }
+        OffsetRefusal::RoundTooSmall => {
+            format!("a round face of {body} shrinks to nothing: try a smaller distance")
+        }
+        OffsetRefusal::NoSurface => {
+            format!("a face of {body} next to it has no surface to extend")
+        }
+        OffsetRefusal::TangentNeighbour => format!(
+            "it is tangent to a face of {body} that isn't picked: pick it too, or turn on Tangent faces"
+        ),
+        OffsetRefusal::Corner => format!(
+            "faces of {body} meeting at a corner can't be offset together: try another distance"
+        ),
+        OffsetRefusal::OutOfRange => format!("it moves {body} out of range"),
+    }
+}
+
+/// Why the kernel couldn't offset faces of the body named `body`.
+pub(crate) fn offsetting(body: &str, error: KernelError) -> String {
+    match error {
+        KernelError::TooComplex => {
+            format!("offsetting faces of {body} is too complex to work out")
+        }
+        error => failed(&format!("offsetting faces of {body}"), error),
+    }
+}
+
+/// Why an offset face fails though the kernel moved faces of the body
+/// named `body`: nothing of it is left.
+pub(crate) fn offset_leaves_nothing(body: &str) -> String {
+    format!("offsetting faces of {body} leaves nothing of it")
+}
+
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {

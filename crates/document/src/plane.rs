@@ -110,6 +110,40 @@ pub enum PlaneError {
     Near(DVec3),
 }
 
+/// What's wrong with what a set of faces names
+/// ([`Document::check_face_set`](crate::Document::check_face_set)): a
+/// shell's open faces, an offset face's faces. Each feature's own error
+/// takes it in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaceSetError {
+    /// The faces' body, this one, isn't there or no feature before it
+    /// makes it.
+    Body(BodyId),
+    /// A face's key names this feature, which is the feature itself or
+    /// comes after it, or isn't there and has an id a feature made later
+    /// could take.
+    RefMaker(FeatureId),
+}
+
+impl fmt::Display for FaceSetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FaceSetError::Body(body) => write!(
+                f,
+                "its faces' body {} isn't there or no earlier feature makes it",
+                body.0
+            ),
+            FaceSetError::RefMaker(feature) => write!(
+                f,
+                "a face it names was made by feature {}, which doesn't come before it",
+                feature.0
+            ),
+        }
+    }
+}
+
+impl std::error::Error for FaceSetError {}
+
 impl fmt::Display for PlaneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

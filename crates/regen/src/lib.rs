@@ -56,6 +56,15 @@ pub mod testing {
     pub fn fillet_by_arcs() {
         crate::history::fillet_by_arcs();
     }
+
+    /// Offsets faces on this thread by a stand-in in place of the
+    /// kernel's offset face, which isn't built yet: a box along the
+    /// world's axes with its picked faces moved by a scale along each
+    /// axis and a move, so every face keeps its name; anything else is
+    /// too complex.
+    pub fn offset_by_boxes() {
+        crate::history::offset_by_boxes();
+    }
 }
 mod inspect;
 mod message;

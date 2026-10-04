@@ -337,7 +337,11 @@ millimetres) and `outward` (the walls outside the faces,
 one; or a fillet, `crates/document/src/fillet.rs`: its edges as a
 chamfer's, its radius (a typed length and its value in millimetres)
 and whether tangent chains are taken in. Fillets are new, so no older
-record holds one. A
+record holds one; or an offset face, `crates/document/src/offset_face.rs`:
+the faces it moves (each as a sketch's face), sorted by body, key and
+point, its distance (a typed length and its value in millimetres, above
+zero), `inward` (moved into the body) and `tangent` (tangent faces taken
+in). Offset faces are new, so no older record holds one. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -407,7 +411,13 @@ open faces on that body, sorted without repeats, each point finite and
 within the coordinate limit, and each key's feature (if there) before
 the shell, or with an id below the next id; its thickness a length as
 an extrude's;
-a fillet's edges as a chamfer's, its radius a length as an extrude's;
+a fillet's edges as a chamfer's, its radius a length as an
+extrude's;
+an offset face's 1 to 256 faces all on one body made by an earlier
+feature, sorted without repeats, each point finite and within the
+coordinate limit, and each key's feature (if there) before the offset,
+or with an id below the next id; its distance a length as an
+extrude's;
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

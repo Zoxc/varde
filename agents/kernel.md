@@ -10234,3 +10234,20 @@ see `agents/features.md`, "Failures and where they are").
   body with its open faces pushed outwards past it, the same offset
   solid's two uses. The plan's `rounded` (task of rounded shells) is not
   in the signature yet. See "Shell" in `agents/features.md`.
+- **Offset face built above a stand-in.** As the shell's: `shell.rs`
+  also holds `offset_faces(solid, topology, faces: &[u32], distance,
+  tangent, feature, tol, budget) -> Result<Solid, OffsetError>`,
+  failing with `OffsetError::Failed(TooComplex)`, to be replaced by the
+  offset solid with the picked regions by `distance` and the rest by
+  zero (rebuilt only where a corner or chain moved, no boolean, every
+  face keeping its name). The caller hands it regions of the solid's
+  `Topology`, sorted, each once, at least one, and the distance signed
+  (positive out of the solid, negative into it, never zero); growing
+  across tangent faces is the kernel's (`tangent`), as the plan has it,
+  not regeneration's as the chamfer's chains are. `OffsetError` is its
+  own enum beside `ShellError` (the plan's names): it shares the round
+  shrinking to nothing (`RoundTooSmall { region }`), the corner of more
+  than three faces (`Corner { vertex }`) and `Failed`, and adds
+  `PastNeighbour { region }`, `IntoBody`, `NoSurface { region }`,
+  `TangentNeighbour { region }` and `OutOfRange`. See "Offset face" in
+  `agents/features.md`.

@@ -3,7 +3,10 @@ use varde_kernel::mesh::{FaceKey, PartKey};
 
 use super::*;
 use crate::testing::{extrude_again, with_body};
-use crate::{CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit, Removable};
+use crate::{
+    CheckError, Command, Document, EditError, Editor, FaceSetError, FeatureKind, LengthUnit,
+    Removable,
+};
 
 /// The example's body and another plate: the editor, the bodies and
 /// their makers.
@@ -279,17 +282,17 @@ fn bodies_and_makers_are_checked() {
     let index = document.feature_index(id).unwrap();
     let shell = shell_of(document, id);
     assert_eq!(
-        document.check_shell_faces(index, shell.body, &shell.open),
+        document.check_face_set(index, shell.body, &shell.open),
         Ok(())
     );
     // Made by the shell itself or later: refused.
     assert_eq!(
-        document.check_shell_faces(1, shell.body, &shell.open),
-        Err(ShellError::Body(b))
+        document.check_face_set(1, shell.body, &shell.open),
+        Err(FaceSetError::Body(b))
     );
     assert_eq!(
-        document.check_shell_faces(index, a, &open_top(document, a, later).open),
-        Err(ShellError::RefMaker(later))
+        document.check_face_set(index, a, &open_top(document, a, later).open),
+        Err(FaceSetError::RefMaker(later))
     );
 }
 

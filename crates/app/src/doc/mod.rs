@@ -821,6 +821,9 @@ impl Doc {
                     | FeatureKind::Shell(_)
                     | FeatureKind::Fillet(_),
                 ) => self.edit_motion(id),
+                // No panel yet: offset faces are made by the document's
+                // commands until their session is built.
+                Some(FeatureKind::OffsetFace(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

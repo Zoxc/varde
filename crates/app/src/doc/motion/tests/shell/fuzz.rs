@@ -167,7 +167,7 @@ fn check_session(plates: &Plates, what: &str) {
         .and_then(|id| features.iter().position(|feature| feature.id == id))
         .unwrap_or(features.len());
     document
-        .check_shell_faces(index, shell.body, &shell.open)
+        .check_face_set(index, shell.body, &shell.open)
         .unwrap_or_else(|why| panic!("{what}: {why}: {shell:?}"));
     assert!(
         crate::doc::combine::pickable(document, shell.body, session.feature),

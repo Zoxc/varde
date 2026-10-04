@@ -17,6 +17,7 @@ mod feature;
 mod fillet;
 mod motion;
 pub mod name;
+mod offset_face;
 mod opacity;
 mod pattern;
 mod plane;
@@ -39,9 +40,10 @@ pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation,
 pub use feature::{Feature, FeatureId, FeatureKind};
 pub use fillet::{Fillet, FilletError};
 pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
+pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
 pub use pattern::{Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternKind};
-pub use plane::{FaceRef, OriginPlane, Placement, Plane, PlaneError};
+pub use plane::{FaceRef, FaceSetError, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
 pub use scale::{MAX_SCALE_FACTOR, Scale, ScaleError, ScaleFactor};
@@ -322,9 +324,12 @@ impl Document {
     /// [`Chamfer::check_own`] wants them; and every shell's body is one a
     /// feature before it makes, its open faces' makers before it (or not
     /// there with ids no later feature can take), its faces and
-    /// thickness as [`Shell::check_own`] wants them; and every fillet's
+    /// thickness as [`Shell::check_own`] wants them; every fillet's
     /// edges as a chamfer's, its radius as [`Fillet::check_own`] wants
-    /// it. A
+    /// it; and every offset face's faces are on one body a feature
+    /// before it makes, their makers before it (or not there with ids no
+    /// later feature can take), its faces and distance as
+    /// [`OffsetFace::check_own`] wants them. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
@@ -444,8 +449,16 @@ impl Document {
                     shell
                         .check_own(&design)
                         .map_err(|why| CheckError::Shell(id, why))?;
-                    self.check_shell_faces(index, shell.body, &shell.open)
-                        .map_err(|why| CheckError::Shell(id, why))?;
+                    self.check_face_set(index, shell.body, &shell.open)
+                        .map_err(|why| CheckError::Shell(id, why.into()))?;
+                }
+                FeatureKind::OffsetFace(offset) => {
+                    offset
+                        .check_own(&design)
+                        .map_err(|why| CheckError::OffsetFace(id, why))?;
+                    let body = offset.body().expect("checked: it has faces");
+                    self.check_face_set(index, body, &offset.faces)
+                        .map_err(|why| CheckError::OffsetFace(id, why.into()))?;
                 }
                 FeatureKind::Fillet(fillet) => {
                     fillet
@@ -784,24 +797,26 @@ impl Document {
         Ok(())
     }
 
-    /// Checks what a shell at feature `index` (at the end for a new one,
-    /// the count of features) of `body` opening `faces` names, as
-    /// [`Document::check`] has it: its body there and made by a feature
-    /// before it (depended on, as a combine's bodies), and its faces'
-    /// makers before it, or not there with ids no later feature can
-    /// take, as a sketch's face's. For a panel keeping what it sets up one
-    /// the document takes; their own parts are [`Shell::check_own`]'s.
-    pub fn check_shell_faces(
+    /// Checks what a set of faces of `body` at feature `index` (at the
+    /// end for a new one, the count of features) names, as
+    /// [`Document::check`] has it for a shell's open faces and an offset
+    /// face's faces: the body there and made by a feature before it
+    /// (depended on, as a combine's bodies), and the faces' makers
+    /// before it, or not there with ids no later feature can take, as a
+    /// sketch's face's. For a panel keeping what it sets up one the
+    /// document takes; the faces' own parts (on `body`, in order) are
+    /// the feature's `check_own`'s.
+    pub fn check_face_set(
         &self,
         index: usize,
         body: BodyId,
         faces: &[FaceRef],
-    ) -> Result<(), ShellError> {
+    ) -> Result<(), FaceSetError> {
         if !self.made_before(index, body) {
-            return Err(ShellError::Body(body));
+            return Err(FaceSetError::Body(body));
         }
         match (faces.iter()).find(|face| !self.maker_before(index, face.maker())) {
-            Some(face) => Err(ShellError::RefMaker(face.maker())),
+            Some(face) => Err(FaceSetError::RefMaker(face.maker())),
             None => Ok(()),
         }
     }
@@ -914,6 +929,8 @@ pub enum CheckError {
     Shell(FeatureId, ShellError),
     /// A fillet feature is wrong, see [`FilletError`].
     Fillet(FeatureId, FilletError),
+    /// An offset face feature is wrong, see [`OffsetFaceError`].
+    OffsetFace(FeatureId, OffsetFaceError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -967,6 +984,7 @@ impl fmt::Display for CheckError {
             CheckError::Chamfer(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Shell(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Fillet(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::OffsetFace(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -1000,6 +1018,7 @@ impl std::error::Error for CheckError {
             CheckError::Chamfer(_, why) => Some(why),
             CheckError::Shell(_, why) => Some(why),
             CheckError::Fillet(_, why) => Some(why),
+            CheckError::OffsetFace(_, why) => Some(why),
             _ => None,
         }
     }

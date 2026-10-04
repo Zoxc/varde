@@ -3599,7 +3599,7 @@ fn a_damaged_shell_is_refused_or_checked() {
                 if let varde_document::FeatureKind::Shell(shell) = &feature.kind {
                     shell.check_own(&document.design()).unwrap();
                     document
-                        .check_shell_faces(index, shell.body, &shell.open)
+                        .check_face_set(index, shell.body, &shell.open)
                         .unwrap();
                 }
             }
@@ -3701,4 +3701,218 @@ fn a_shell_s_faces_and_values_are_checked_as_read() {
     refused(&|shell| shell.open[0].key.feature = own + 1);
     let (_, closed) = changed(&|shell| shell.open.clear());
     assert!(closed.is_ok());
+}
+
+/// The example plate with its top moved 1.375 mm out, and its underside
+/// and the hole's wall 0.625 mm in, tangent faces left out.
+fn offset_plate() -> Document {
+    use glam::DVec3;
+    use varde_document::{FaceKey, FaceRef, OffsetFace, PartKey};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let document = editor.document();
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let face = |part, near: [f64; 3]| FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: maker,
+            part,
+            instance: 0,
+        },
+        near: DVec3::from(near),
+    };
+    let ask = OffsetFace::distance_ask(&document.design());
+    let out = OffsetFace {
+        faces: vec![face(PartKey::EndCap, [3.0, 7.25, 10.0])],
+        distance: Value::new("1.375", &ask).unwrap(),
+        inward: false,
+        tangent: true,
+    };
+    let mut faces = vec![
+        face(PartKey::StartCap, [10.5, -12.25, 0.0]),
+        face(PartKey::Side { curve: 4 }, [8.0, 0.0, 4.5]),
+    ];
+    faces.sort_by(FaceRef::order);
+    let inward = OffsetFace {
+        faces,
+        distance: Value::new("0.625", &ask).unwrap(),
+        inward: true,
+        tangent: false,
+    };
+    for offset in [out, inward] {
+        editor
+            .apply(editor.document().add_feature(offset.into()))
+            .unwrap();
+    }
+    editor.document().clone()
+}
+
+/// Offset faces go through a file and are read back in their places.
+#[test]
+fn offset_faces_round_trip() {
+    use varde_document::FeatureKind;
+    let document = offset_plate();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    assert!(matches!(
+        read.features()[2].kind,
+        FeatureKind::OffsetFace(_)
+    ));
+    assert!(matches!(
+        read.features()[3].kind,
+        FeatureKind::OffsetFace(_)
+    ));
+}
+
+/// A record whose offset's face point or distance was changed on disk
+/// to what the document refuses is refused as it's read; as written,
+/// it reads.
+#[test]
+fn a_tampered_offset_face_is_refused() {
+    let raw = record_msgpack(&offset_plate());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let float = |x: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&x.to_bits().to_be_bytes());
+        bytes
+    };
+    for (was, nows) in [
+        (7.25, [f64::NAN, f64::INFINITY, 3e6]),
+        (1.375, [0.0, -1.375, f64::NAN]),
+        (0.625, [0.0, -0.625, f64::INFINITY]),
+    ] {
+        let was = float(was);
+        let at = (raw.windows(was.len()))
+            .position(|window| window == was)
+            .expect("the value is in the record");
+        for now in nows {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&now.to_bits().to_be_bytes());
+            assert!(
+                from_msgpack::<Document>(&changed).is_err(),
+                "{now} was taken"
+            );
+        }
+    }
+}
+
+/// The offsets' part of a record damaged on disk, every float in it set
+/// to what's out of bounds or not a number and random bytes in it
+/// changed (2 000 ways): refused as it's read or read as a document that
+/// passes its check, its offsets their own, never a panic.
+#[test]
+fn a_damaged_offset_face_is_refused_or_checked() {
+    let document = offset_plate();
+    let raw = record_msgpack(&document);
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let from = (raw.windows(10))
+        .position(|window| window == b"OffsetFace")
+        .expect("an offset face's variant name");
+    let read = |bytes: &[u8]| {
+        if let Ok((document, _)) = from_msgpack::<Document>(bytes) {
+            document.check().unwrap();
+            for (index, feature) in document.features().iter().enumerate() {
+                if let varde_document::FeatureKind::OffsetFace(offset) = &feature.kind {
+                    offset.check_own(&document.design()).unwrap();
+                    let body = offset.body().unwrap();
+                    document.check_face_set(index, body, &offset.faces).unwrap();
+                }
+            }
+        }
+    };
+    let floats: Vec<usize> = (from..raw.len().saturating_sub(8))
+        .filter(|&at| raw[at] == 0xcb)
+        .collect();
+    assert!(floats.len() > 6, "{}", floats.len());
+    for &at in &floats {
+        for x in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e300,
+            -1e300,
+            1.000_001e6,
+            1e6,
+            -0.0,
+            0.0,
+            f64::MIN_POSITIVE,
+            -1.0,
+        ] {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&x.to_bits().to_be_bytes());
+            read(&changed);
+        }
+    }
+    let size = raw.len() - from;
+    for seed in 0..2_000u64 {
+        let picks = noise(8, seed.wrapping_mul(0x9e37_79b9) + 11);
+        let mut changed = raw.clone();
+        for pair in picks.chunks(2).take(1 + (seed % 3) as usize) {
+            let at = from + (usize::from(pair[0]) * 256 + usize::from(pair[1])) % size;
+            changed[at] = picks[(seed % 8) as usize] ^ pair[1];
+        }
+        read(&changed);
+    }
+}
+
+/// An offset's faces out of order, repeated, on two bodies, none, or
+/// past the limit in a record, its faces' body one no feature before it
+/// makes, a face named by itself or a later feature, or its distance
+/// changed to what its ask refuses: each refused as it's read.
+#[test]
+fn an_offset_face_s_faces_and_values_are_checked_as_read() {
+    use varde_document::{FeatureKind, MAX_OFFSET_FACES, OffsetFace};
+    let document = offset_plate();
+    let raw = record_msgpack(&document);
+    let FeatureKind::OffsetFace(two) = &document.features()[3].kind else {
+        panic!("the two-face offset");
+    };
+    let was = rmp_serde::to_vec_named(&FeatureKind::OffsetFace(two.clone())).unwrap();
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the offset in the record");
+    let changed = |change: &dyn Fn(&mut OffsetFace)| {
+        let mut offset = two.clone();
+        change(&mut offset);
+        let now = rmp_serde::to_vec_named(&FeatureKind::OffsetFace(offset.clone())).unwrap();
+        let mut changed = raw[..at].to_vec();
+        changed.extend_from_slice(&now);
+        changed.extend_from_slice(&raw[at + was.len()..]);
+        (offset, from_msgpack::<Document>(&changed))
+    };
+    let refused = |change: &dyn Fn(&mut OffsetFace)| {
+        let (offset, read) = changed(change);
+        assert!(read.is_err(), "taken: {offset:?}");
+    };
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let (_, same) = changed(&|_| {});
+    assert!(same.is_ok());
+    refused(&|offset| offset.faces.reverse());
+    refused(&|offset| offset.faces[1] = offset.faces[0]);
+    refused(&|offset| offset.faces.clear());
+    refused(&|offset| offset.faces[1].body = varde_document::BodyId::NEW);
+    refused(&|offset| {
+        for face in &mut offset.faces {
+            face.body = varde_document::BodyId::NEW;
+        }
+    });
+    refused(&|offset| {
+        let face = offset.faces[0];
+        offset.faces = (0..=MAX_OFFSET_FACES)
+            .map(|k| varde_document::FaceRef {
+                near: face.near + glam::DVec3::X * k as f64 * 1e-3,
+                ..face
+            })
+            .collect();
+    });
+    refused(&|offset| {
+        offset.distance.value = 0.0;
+        offset.distance.text = "0".to_owned();
+    });
+    refused(&|offset| offset.distance.value = 3.0);
+    let own = document.features()[3].id.get();
+    refused(&|offset| offset.faces[0].key.feature = own);
+    refused(&|offset| offset.faces[0].key.feature = own + 1);
 }

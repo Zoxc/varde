@@ -87,7 +87,7 @@ impl MotionSession {
             return;
         };
         let taken = match self.kind {
-            MotionKind::Shell => document.check_shell_faces(index, body, faces).is_ok(),
+            MotionKind::Shell => document.check_face_set(index, body, faces).is_ok(),
             _ => true,
         };
         self.faces.gone = document.body(body).is_none() || !taken;

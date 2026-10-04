@@ -702,6 +702,11 @@ impl Editor {
                                 value.pin_units(&ask);
                             }
                         }
+                        FeatureKind::OffsetFace(offset) => {
+                            for (value, ask) in offset.values_mut(&before) {
+                                value.pin_units(&ask);
+                            }
+                        }
                         // No values.
                         FeatureKind::Combine(_)
                         | FeatureKind::Mirror(_)

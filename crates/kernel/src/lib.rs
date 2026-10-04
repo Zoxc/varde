@@ -79,7 +79,7 @@ pub use profile::{Loop, MAX_PROFILE_SEGMENTS, Profile, ProfileError, Segment};
 pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, MeshParts, RenderMesh, RenderPart};
 pub use revolve::{Sweep, revolve};
-pub use shell::{ShellError, shell};
+pub use shell::{OffsetError, ShellError, offset_faces, shell};
 pub use solid::Solid;
 pub use tessellate::{Display, PatchSamples};
 pub use tolerance::Tolerance;

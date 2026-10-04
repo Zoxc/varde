@@ -26,6 +26,7 @@ mod icons;
 mod measure;
 mod motion;
 mod mouse_only;
+mod offset_face;
 mod operation_panel;
 mod overlaps;
 mod panels;

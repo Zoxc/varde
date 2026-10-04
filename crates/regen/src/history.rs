@@ -65,7 +65,10 @@
 //! its id (see `shell`). A fillet finds and grows its edges as a
 //! chamfer does and rounds them off by the kernel's fillet (see
 //! `fillet`; what the two share of their edges is `blend`, of their
-//! body `own_body`).
+//! body `own_body`). An offset face finds its faces on its body's
+//! topology (one not found: "its face wasn't found") and moves them by
+//! the kernel's offset face, the body keeping its id and its faces their
+//! names (see `offset_face`).
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -118,6 +121,7 @@ mod chamfer;
 mod combine;
 mod fillet;
 mod motion;
+mod offset_face;
 mod own_body;
 mod pattern;
 pub(crate) mod scale;
@@ -127,6 +131,8 @@ mod split;
 pub(crate) use chamfer::chamfer_by_wedges;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use fillet::fillet_by_arcs;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use offset_face::offset_by_boxes;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use shell::shell_by_boxes;
 #[cfg(any(test, feature = "testing"))]
@@ -411,7 +417,8 @@ fn walk(
                     | FeatureKind::Split(_)
                     | FeatureKind::Chamfer(_)
                     | FeatureKind::Shell(_)
-                    | FeatureKind::Fillet(_) => unreachable!("matched apart"),
+                    | FeatureKind::Fillet(_)
+                    | FeatureKind::OffsetFace(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -529,6 +536,18 @@ fn walk(
                     document,
                     feature.id,
                     fillet,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::OffsetFace(offset) => {
+                if let Err(failed) = offset_face::evaluate_offset_face(
+                    document,
+                    feature.id,
+                    offset,
                     &tolerance,
                     &mut evaluation,
                     cache,

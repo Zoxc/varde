@@ -6,7 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::{BodyId, Design, Extent, FaceRef, FeatureId, PlaneError};
+use crate::{BodyId, Design, Extent, FaceRef, FaceSetError, FeatureId, PlaneError};
 
 /// The most faces a shell may open.
 pub const MAX_SHELL_FACES: usize = 256;
@@ -119,6 +119,15 @@ impl fmt::Display for ShellError {
                 "a face it opens was made by feature {}, which doesn't come before it",
                 feature.0
             ),
+        }
+    }
+}
+
+impl From<FaceSetError> for ShellError {
+    fn from(why: FaceSetError) -> Self {
+        match why {
+            FaceSetError::Body(body) => ShellError::Body(body),
+            FaceSetError::RefMaker(feature) => ShellError::RefMaker(feature),
         }
     }
 }
