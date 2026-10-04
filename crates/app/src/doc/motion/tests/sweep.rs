@@ -662,3 +662,229 @@ fn refusals_read_as_sentences() {
         "a face it opens is on another body"
     );
 }
+
+/// Draws `count` lines on XZ apart from each other, each a chain of its
+/// own, upright at x 100, 102, ...
+fn apart(count: usize) -> impl FnOnce(&mut Sketch) {
+    move |sketch| {
+        for k in 0..count {
+            let x = 100.0 + 2.0 * k as f64;
+            let [start, end] =
+                [(x, 0.0), (x, 5.0)].map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+            sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+        }
+    }
+}
+
+/// The path's limits are held while it's picked: 64 parts, a model
+/// edge's part among them (an edge clicked with 64 sketch parts is
+/// refused, nothing added), and 1024 curves and edges in all (a chain
+/// past what's left refused, the parts as they were); the session never
+/// sets up a path the document refuses.
+#[test]
+fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
+    let mut swept = swept();
+    let (plate, profile) = (swept.plate, swept.profile);
+    let mut editor = swept.plates.doc.editor.clone();
+    let many = sketch_on(&mut editor, OriginPlane::XZ, apart(64));
+    let long = sketch_on(
+        &mut editor,
+        OriginPlane::YZ,
+        polyline((0..=1000).map(|k| (k as f64, 0.0)).collect()),
+    );
+    let (doc, requests) = holding(editor.document().clone());
+    swept.plates = Plates {
+        doc,
+        requests,
+        bodies: [plate; 3],
+    };
+    let plates = &mut swept.plates;
+    plates.doc.look(Look::StartSweep);
+    plates.motion(MotionLook::SweepRegion {
+        sketch: profile,
+        region: 0,
+    });
+    let lines = curves_of(plates.doc.editor.document(), many);
+    for &curve in &lines {
+        plates.motion(MotionLook::SweepCurve {
+            sketch: many,
+            curve,
+        });
+    }
+    assert_eq!(plates.doc.motion.as_ref().unwrap().sweep.chains.len(), 64);
+    plates.answer();
+    plates.doc.notice = None;
+    click_edge(plates, plate, CORNER);
+    assert!(
+        (plates.doc.notice.as_deref()).is_some_and(|notice| notice.contains("64 parts")),
+        "{:?}",
+        plates.doc.notice
+    );
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert!(session.blend.edges.refs.is_empty(), "no 65th part");
+    let sweep = session.sweep().expect("whole");
+    sweep
+        .check_own(&plates.doc.editor.document().design())
+        .unwrap();
+
+    // 30 parts out, then the long chain: 1000 curves past what's left
+    // of 1024.
+    for _ in 0..30 {
+        plates.motion(MotionLook::DropPart(0));
+    }
+    plates.doc.notice = None;
+    let curve = first_curve(plates, long);
+    plates.motion(MotionLook::SweepCurve {
+        sketch: long,
+        curve,
+    });
+    assert!(
+        (plates.doc.notice.as_deref()).is_some_and(|notice| notice.contains("1024")),
+        "{:?}",
+        plates.doc.notice
+    );
+    assert_eq!(plates.doc.motion.as_ref().unwrap().sweep.chains.len(), 34);
+    // With room for it, it's taken; an edge then is one too many.
+    for _ in 0..34 {
+        plates.motion(MotionLook::DropPart(0));
+    }
+    plates.motion(MotionLook::SweepCurve {
+        sketch: long,
+        curve,
+    });
+    let sweep = plates.doc.motion.as_ref().unwrap().sweep().expect("whole");
+    assert_eq!(
+        sweep.path,
+        PathRef::Chain(vec![PathPart::Curves(varde_document::CurveChain {
+            sketch: long,
+            curves: curves_of(plates.doc.editor.document(), long),
+        })])
+    );
+    for &curve in &lines[..24] {
+        plates.motion(MotionLook::SweepCurve {
+            sketch: many,
+            curve,
+        });
+    }
+    plates.answer();
+    plates.doc.notice = None;
+    click_edge(plates, plate, CORNER);
+    assert!(
+        (plates.doc.notice.as_deref()).is_some_and(|notice| notice.contains("1024")),
+        "{:?}",
+        plates.doc.notice
+    );
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert!(session.blend.edges.refs.is_empty());
+    let sweep = session.sweep().expect("whole");
+    sweep
+        .check_own(&plates.doc.editor.document().design())
+        .unwrap();
+}
+
+/// An edited sweep whose path lists an edge part first and holds two
+/// edge parts (as a file may have it) opens to what it stores, its parts
+/// in their order, and OK on it straight away writes nothing.
+#[test]
+fn an_edited_sweep_with_several_edge_parts_opens_as_stored() {
+    let mut swept = swept();
+    set_up(&mut swept);
+    let plate = swept.plate;
+    let plates = &mut swept.plates;
+    plates.answer();
+    click_edge(plates, plate, CORNER);
+    let edges = |plates: &Plates| plates.doc.motion.as_ref().unwrap().blend.edges.refs.clone();
+    let first = edges(plates);
+    let chain = plates.doc.motion.as_ref().unwrap().sweep.chains[0].clone();
+    plates.answer();
+    plates.doc.update(Edit::AcceptError);
+    let (id, FeatureKind::Sweep(stored)) = plates.last_feature() else {
+        panic!("a sweep");
+    };
+    plates.answer();
+    // Another edge of the plate, picked in a session given up.
+    plates.doc.look(Look::StartSweep);
+    plates.motion(MotionLook::Picking(MotionPick::Path));
+    click_edge(plates, plate, ([-30.0, -20.0, 0.0], [-30.0, -20.0, 10.0]));
+    let second = edges(plates);
+    assert_eq!(second.len(), 1);
+    plates.motion(MotionLook::Cancel);
+    let path = PathRef::Chain(vec![
+        PathPart::Edges {
+            edges: first,
+            tangent: true,
+        },
+        PathPart::Curves(chain),
+        PathPart::Edges {
+            edges: second,
+            tangent: false,
+        },
+    ]);
+    let kind = Sweep { path, ..stored };
+    plates.doc.apply(Command::SetFeature {
+        feature: id,
+        kind: Box::new(kind.clone().into()),
+    });
+    plates.doc.sync();
+    plates.answer();
+    let revision = plates.doc.editor.revision();
+    let document = plates.doc.editor.document().clone();
+    plates.doc.look(Look::EditFeature(id));
+    let opened = plates.doc.motion.as_ref().unwrap().sweep().unwrap();
+    // A body it makes is the document's to number.
+    assert_eq!(
+        Sweep {
+            operation: kind.operation.clone(),
+            ..opened
+        },
+        kind
+    );
+    assert!(shows(plates, "Edges of"));
+    plates.answer();
+    plates.doc.update(Edit::CommitMotion);
+    plates.doc.update(Edit::AcceptError);
+    assert!(plates.doc.motion.is_none());
+    assert_eq!(plates.doc.editor.revision(), revision);
+    assert_eq!(*plates.doc.editor.document(), document);
+}
+
+/// A helix's axis on a round face of a body an undo takes away is said
+/// to be gone, nothing previewed or committed; toggled to Path and back
+/// to Helix it's still said to be gone (never previewed about an axis
+/// the document refuses); the redo brings it back, ready again.
+#[test]
+fn a_helix_s_axis_gone_stays_gone_through_path_and_helix() {
+    let mut swept = swept();
+    let profile = swept.profile;
+    let plates = &mut swept.plates;
+    let disc = super::later_disc(plates);
+    plates.doc.look(Look::StartSweep);
+    plates.motion(MotionLook::SweepRegion {
+        sketch: profile,
+        region: 0,
+    });
+    plates.motion(MotionLook::SweepPath(SweepPath::Helix));
+    assert_eq!(picking(plates), MotionPick::Reference);
+    let round = plates.face(disc, |s| matches!(s, Summary::Cylinder { .. }));
+    plates.click_at(disc, Picked::Face(round), DVec3::new(5.0, 30.0, 0.0));
+    let ready = |plates: &Plates| plates.doc.motion_ready() && plates.doc.motion_draft().is_some();
+    assert!(ready(plates), "{:?}", plates.doc.notice);
+    plates.doc.update(Edit::Undo);
+    plates.doc.sync();
+    plates.answer();
+    let gone = |plates: &Plates| shows(plates, "The axis is gone");
+    assert!(gone(plates) && !ready(plates));
+    plates.motion(MotionLook::SweepPath(SweepPath::Path));
+    assert!(!gone(plates));
+    plates.motion(MotionLook::SweepPath(SweepPath::Helix));
+    plates.answer();
+    assert!(gone(plates) && !ready(plates));
+    assert!(plates.doc.motion_draft().is_none());
+    plates.doc.update(Edit::Redo);
+    plates.doc.sync();
+    plates.answer();
+    assert!(!gone(plates));
+    assert!(ready(plates));
+}
+
+mod fuzz;

@@ -15,8 +15,8 @@
 use std::borrow::Cow;
 
 use varde_document::{
-    BodyId, CurveChain, Design, Document, FeatureId, FeatureKind, Helix, MAX_PATH_PARTS,
-    MAX_SWEEP_REGIONS, Orientation, PathPart, PathRef, Sweep, SweepError,
+    BodyId, CurveChain, Design, Document, FeatureId, FeatureKind, Helix, MAX_PATH_CURVES,
+    MAX_PATH_PARTS, MAX_SWEEP_REGIONS, Orientation, PathPart, PathRef, Sweep, SweepError,
 };
 use varde_expr::{AngleUnit, Unit, Value};
 use varde_sketch::{Id, RegionRef};
@@ -51,6 +51,11 @@ pub(crate) struct SweepSetup {
     /// Whether the edited sweep stored a twist: a twist of nothing is
     /// then stored as typed, else left out.
     twist_stored: bool,
+    /// The edited sweep's path's parts in the order it stored them: a
+    /// path set up of the same parts keeps that order (the session lists
+    /// sketch parts before edge parts), so OK on it unchanged writes
+    /// nothing.
+    stored_parts: Vec<PathPart>,
     /// Whether a part's sketch or curve is gone: the document no longer
     /// takes it at the feature's place.
     chains_gone: bool,
@@ -73,6 +78,7 @@ impl Default for SweepSetup {
             operation: OperationKind::NewBody,
             targets: BodyTargets::default(),
             twist_stored: false,
+            stored_parts: Vec::new(),
             chains_gone: false,
             stale_regions: None,
         }
@@ -118,6 +124,7 @@ impl MotionSession {
         match &sweep.path {
             PathRef::Chain(parts) => {
                 setup.path = SweepPath::Path;
+                setup.stored_parts = parts.clone();
                 let mut edges = None;
                 for part in parts {
                     match part {
@@ -164,6 +171,9 @@ impl MotionSession {
                     });
                 }
                 parts.extend(setup.stored_edges.iter().cloned());
+                if same_parts(&setup.stored_parts, &parts) {
+                    parts.clone_from(&setup.stored_parts);
+                }
                 (!parts.is_empty()).then_some(PathRef::Chain(parts))
             }
             SweepPath::Helix => Some(PathRef::Helix(Helix {
@@ -342,16 +352,42 @@ impl MotionSession {
             chains.remove(at);
             return Ok(());
         }
-        let parts = (chains.len())
-            .saturating_add(self.sweep.stored_edges.len())
-            .saturating_add(usize::from(!self.blend.edges.refs.is_empty()));
-        if parts >= MAX_PATH_PARTS {
-            return Err(format!("A sweep's path takes at most {MAX_PATH_PARTS} parts").into());
-        }
         let mut curves = drawn.chain_of(curve);
         curves.sort_unstable();
         curves.dedup();
-        chains.push(CurveChain { sketch, curves });
+        self.sweep_room(1, curves.len())?;
+        self.sweep.chains.push(CurveChain { sketch, curves });
+        Ok(())
+    }
+
+    /// How many parts its path has as set up, and how many curves and
+    /// edges they name in all.
+    pub(super) fn path_counts(&self) -> (usize, usize) {
+        let setup = &self.sweep;
+        let edges = self.blend.edges.refs.len();
+        let parts = (setup.chains.len())
+            .saturating_add(setup.stored_edges.len())
+            .saturating_add(usize::from(edges > 0));
+        let curves = (setup.chains.iter().map(|chain| chain.curves.len()))
+            .chain(setup.stored_edges.iter().map(PathPart::len))
+            .fold(edges, usize::saturating_add);
+        (parts, curves)
+    }
+
+    /// Whether its path has room for `parts` more parts naming `curves`
+    /// more curves and edges, as the document takes them
+    /// ([`MAX_PATH_PARTS`], [`MAX_PATH_CURVES`]); why not, if it hasn't.
+    pub(super) fn sweep_room(&self, parts: usize, curves: usize) -> Result<(), Cow<'static, str>> {
+        let (had, named) = self.path_counts();
+        if had.saturating_add(parts) > MAX_PATH_PARTS {
+            return Err(format!("A sweep's path takes at most {MAX_PATH_PARTS} parts").into());
+        }
+        if named.saturating_add(curves) > MAX_PATH_CURVES {
+            return Err(format!(
+                "A sweep's path takes at most {MAX_PATH_CURVES} curves and edges in all"
+            )
+            .into());
+        }
         Ok(())
     }
 
@@ -380,6 +416,19 @@ impl MotionSession {
             };
         }
     }
+}
+
+/// Whether `a` and `b` hold the same parts, each as many times, in
+/// whatever order.
+fn same_parts(a: &[PathPart], b: &[PathPart]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut used = vec![false; b.len()];
+    a.iter().all(|part| {
+        let found = (0..b.len()).find(|&k| !used[k] && b[k] == *part);
+        found.inspect(|&k| used[k] = true).is_some()
+    })
 }
 
 impl Doc {

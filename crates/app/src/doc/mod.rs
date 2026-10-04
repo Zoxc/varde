@@ -828,7 +828,6 @@ impl Doc {
                     | FeatureKind::Fillet(_)
                     | FeatureKind::OffsetFace(_)
                     | FeatureKind::FaceDraft(_)
-
                     | FeatureKind::Sweep(_),
                 ) => self.edit_motion(id),
                 _ => self.enter_sketch(id),

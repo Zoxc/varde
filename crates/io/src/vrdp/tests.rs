@@ -4445,4 +4445,112 @@ fn a_sweep_s_path_is_checked_as_read() {
         sweep.orientation = Orientation::FollowPath;
     });
     assert!(helical.is_ok());
+    // Its helix's axis named by the sweep itself.
+    refused(&|sweep| {
+        sweep.path = third.path.clone();
+        sweep.twist = None;
+        sweep.orientation = Orientation::FollowPath;
+        if let PathRef::Helix(helix) = &mut sweep.path
+            && let varde_document::AxisRef::Edge(edge) = &mut helix.axis
+        {
+            edge.faces[1].feature = own;
+        }
+    });
+}
+
+/// A sweep's path past its limits in a record (65 parts, 1 025 curves
+/// and edges in all), with a part naming nothing, curves out of order or
+/// repeated, edges on two bodies, or a part's sketch a feature that
+/// isn't a sketch: each refused as it's read. A part's curve not in its
+/// sketch is read (a later edit of the sketch may take it away).
+#[test]
+fn a_sweep_s_path_limits_are_checked_as_read() {
+    use varde_document::{CurveChain, FeatureKind, PathPart, PathRef, Sweep};
+    let document = swept_plate();
+    let raw = record_msgpack(&document);
+    let count = document.features().len();
+    let FeatureKind::Sweep(second) = &document.features()[count - 2].kind else {
+        panic!("the second sweep");
+    };
+    let was = rmp_serde::to_vec_named(&FeatureKind::Sweep(second.clone())).unwrap();
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the sweep in the record");
+    let changed = |change: &dyn Fn(&mut Sweep)| {
+        let mut sweep = second.clone();
+        change(&mut sweep);
+        let now = rmp_serde::to_vec_named(&FeatureKind::Sweep(sweep.clone())).unwrap();
+        let mut changed = raw[..at].to_vec();
+        changed.extend_from_slice(&now);
+        changed.extend_from_slice(&raw[at + was.len()..]);
+        (sweep, from_msgpack::<Document>(&changed))
+    };
+    let refused = |change: &dyn Fn(&mut Sweep)| {
+        let (sweep, read) = changed(change);
+        assert!(read.is_err(), "taken: {sweep:?}");
+    };
+    let PathRef::Chain(stored) = &second.path else {
+        panic!("a chain");
+    };
+    let PathPart::Curves(chain) = stored[1].clone() else {
+        panic!("the line's part");
+    };
+    // An id as a file holds it.
+    let id = |n: u32| -> varde_sketch::Id {
+        rmp_serde::from_slice(&rmp_serde::to_vec(&n).unwrap()).unwrap()
+    };
+    let curves = |ids: Vec<u32>| {
+        PathPart::Curves(CurveChain {
+            sketch: chain.sketch,
+            curves: ids.into_iter().map(id).collect(),
+        })
+    };
+    let path = |parts: Vec<PathPart>| PathRef::Chain(parts);
+    // As many as it takes: 64 parts, 1 024 curves and edges.
+    let full: Vec<PathPart> = (0..64)
+        .map(|k| curves((16 * k..16 * (k + 1)).collect()))
+        .collect();
+    let (_, read) = changed(&|sweep| sweep.path = path(full.clone()));
+    assert!(read.is_ok(), "{:?}", read.err());
+    refused(&|sweep| {
+        let mut parts = full.clone();
+        parts.push(curves(vec![1]));
+        sweep.path = path(parts);
+    });
+    refused(&|sweep| {
+        let mut parts = full.clone();
+        parts[63] = curves((1008..1025).collect());
+        sweep.path = path(parts);
+    });
+    refused(&|sweep| {
+        let mut parts = full.clone();
+        parts.truncate(63);
+        parts.extend(stored.iter().cloned());
+        sweep.path = path(parts);
+    });
+    refused(&|sweep| sweep.path = path(vec![curves(Vec::new())]));
+    refused(&|sweep| sweep.path = path(vec![curves(vec![5, 3])]));
+    refused(&|sweep| sweep.path = path(vec![curves(vec![3, 3])]));
+    refused(&|sweep| {
+        let mut parts = stored.clone();
+        if let PathPart::Edges { edges, .. } = &mut parts[0] {
+            let other = varde_document::EdgeRef {
+                body: document.bodies()[1].id,
+                near: edges[0].near + glam::DVec3::Z,
+                ..edges[0]
+            };
+            edges.push(other);
+            edges.sort_by(varde_document::EdgeRef::order);
+        }
+        sweep.path = path(parts);
+    });
+    refused(&|sweep| {
+        sweep.path = path(vec![PathPart::Curves(CurveChain {
+            sketch: document.features()[1].id,
+            curves: chain.curves.clone(),
+        })]);
+    });
+    // A curve its sketch hasn't: read.
+    let (_, read) = changed(&|sweep| sweep.path = path(vec![curves(vec![999])]));
+    assert!(read.is_ok(), "{:?}", read.err());
 }

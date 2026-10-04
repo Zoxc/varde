@@ -218,7 +218,17 @@ impl Input {
     /// Whether the handles have the mouse: one is under the cursor or
     /// dragged, so the model isn't picked under them.
     pub(crate) fn holds(&self) -> bool {
-        self.hover.is_some() || self.drag.is_some() || self.face.hover || self.face.drag.is_some()
+        self.hover.is_some()
+            || self.drag.is_some()
+            || self.face.hover
+            || self.face.drag.is_some()
+            || self.sweep.curve.is_some()
+    }
+
+    /// Lets go of a sweep's region or path curve under the cursor:
+    /// whether there was one, to be drawn away.
+    pub(crate) fn leave_sketches(&mut self) -> bool {
+        self.sweep.regions.hover.take().is_some() | self.sweep.curve.take().is_some()
     }
 
     /// Lets go of what the other kind of handle held, for a session of
@@ -868,6 +878,11 @@ impl<'a> Moving<'a> {
         hovered: bool,
     ) -> Option<Action<Message>> {
         input.settle(self.state.kind);
+        // A sweep's sketches hovered no longer pick (another session, or
+        // picking the helix's axis).
+        if self.sweep_picking().is_none() {
+            input.leave_sketches();
+        }
         if let Some(mode) = self.split_picking() {
             return self.split_mouse(mode, &mut input.split, event, bounds, cursor, camera);
         }
@@ -933,7 +948,9 @@ impl<'a> Moving<'a> {
     /// the bodies, may have moved under a cursor that didn't, which would
     /// leave the model unpicked under a handle no longer there. While
     /// one's under it, what the model held hovered, if `hovered`, is let
-    /// go of. Not while one is dragged.
+    /// go of. Not while one is dragged. A sweep picking in its sketches
+    /// works out its region or path curve under the cursor likewise,
+    /// the model let go of under a curve.
     pub(crate) fn redraw(
         &self,
         input: &mut Input,
@@ -943,6 +960,51 @@ impl<'a> Moving<'a> {
         hovered: bool,
     ) -> Option<Action<Message>> {
         input.settle(self.state.kind);
+        let Some(picking) = self.sweep_picking() else {
+            input.leave_sketches();
+            return self.handles_redraw(input, bounds, cursor, camera, hovered);
+        };
+        let sweep = self.state.sweep.as_ref()?;
+        let at = cursor
+            .position_over(bounds)
+            .map(|p| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into()));
+        let (region, curve) = match picking {
+            MotionPick::Regions => (
+                at.and_then(|at| sweep_regions(sweep, None).region_under(at, camera, bounds)),
+                None,
+            ),
+            _ => (
+                None,
+                at.and_then(|at| curve_under(&sweep.lines, at, camera, bounds)),
+            ),
+        };
+        let (redraw, input) = (&mut input.redraw, &mut input.sweep);
+        let changed = std::mem::replace(&mut input.regions.hover, region) != region
+            || std::mem::replace(&mut input.curve, curve) != curve;
+        match curve {
+            // The model isn't hovered under a path curve.
+            Some(_) if hovered => Some(Action::publish(Message::Look(Look::Hover(None)))),
+            Some(_) if changed => Some(Action::request_redraw()),
+            // Off a path curve, the model under the cursor is picked
+            // again; the frame drawing the curve away is asked for after.
+            None if changed => {
+                *redraw = true;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// [`Moving::redraw`] for a session not picking a sweep's sketches:
+    /// a move's handles or an offset face's.
+    fn handles_redraw(
+        &self,
+        input: &mut Input,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+        hovered: bool,
+    ) -> Option<Action<Message>> {
         if input.drag.is_some() || input.face.drag.is_some() {
             return None;
         }

@@ -922,3 +922,116 @@ fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
         );
     }
 }
+
+/// A sweep picking its path in a sketch on XY holding a line from
+/// (-20, 0) to (20, 0), seen from the top over the plate, the cursor
+/// still while the camera moves: a line brought under it is hovered as
+/// the frame is drawn, the model let go of (never the model's edge or
+/// face hovered under a path curve, where a click takes the curve); the
+/// line moved away is let go of, the model under the cursor picked
+/// again; and while the camera's dragged, the line hovered is let go of.
+#[test]
+fn a_sweep_s_path_curve_and_the_model_hand_the_hover_over_as_the_camera_moves() {
+    use crate::motion::{BlendEdges, SweepPath, SweepView};
+    use varde_sketch::{Curve, Sketch};
+    let mut path = Sketch::default();
+    let a = path.add_point(DVec2::new(-20.0, 0.0)).unwrap();
+    let b = path.add_point(DVec2::new(20.0, 0.0)).unwrap();
+    let line = path
+        .add_curve(Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    let feature = varde_document::Document::example().features()[0].id;
+    let placement = OriginPlane::XY.placement();
+    let index = plate();
+    let state = || {
+        let mut state: MotionState<'_> = state(MotionKind::Sweep, MotionPick::Path, None);
+        state.sweep = Some(Box::new(SweepView {
+            path: SweepPath::Path,
+            candidates: Vec::new(),
+            source: None,
+            picked: SweepView::none_picked(),
+            missing: 0,
+            parts: Vec::new(),
+            edges: BlendEdges::default(),
+            lines: vec![crate::SketchLines {
+                feature,
+                placement,
+                sketch: &path,
+            }],
+            chains: Vec::new(),
+            keep_orientation: false,
+            left_handed: false,
+            operation: crate::OperationKind::NewBody,
+            targets: Vec::new(),
+            info: None,
+        }));
+        state
+    };
+    let off = camera(View::Top, Projection::Orthographic);
+    // Panned so (10, 0) shows where (10, 8) did.
+    let mut on = off;
+    on.set_target(off.target() - glam::Vec3::new(0.0, 8.0, 0.0));
+    let cursor = {
+        let p = shown(&off, DVec3::new(10.0, 8.0, 10.0));
+        Point::new(p.x as f32, p.y as f32)
+    };
+    let redraw = || {
+        Event::Window(iced::window::Event::RedrawRequested(
+            iced::time::Instant::now(),
+        ))
+    };
+    let hovering = |viewport: &mut Program<'_>, hovered: bool| {
+        if let Some(picking) = &mut viewport.picking {
+            picking.hovered = hovered.then_some(Picked::Face(0));
+        }
+    };
+    let mut input = Interaction::default();
+    let mut here = viewport(state(), &off, Some(&index));
+    let (messages, _) = feed(&here, &mut input, &[moved(cursor)]);
+    assert_eq!(input.motion.sweep.curve, None);
+    assert!(
+        matches!(messages[..], [Message::Look(Look::Hover(Some(_)))]),
+        "the plate: {messages:?}"
+    );
+    // The line brought under the cursor.
+    let mut there = viewport(state(), &on, Some(&index));
+    hovering(&mut there, true);
+    let (messages, _) = feed(&there, &mut input, &[(redraw(), cursor)]);
+    assert_eq!(input.motion.sweep.curve, Some((feature, line)));
+    assert!(
+        matches!(messages[..], [Message::Look(Look::Hover(None))]),
+        "{messages:?}"
+    );
+    hovering(&mut there, false);
+    let (messages, _) = feed(&there, &mut input, &[(redraw(), cursor)]);
+    assert!(messages.is_empty(), "{messages:?}");
+    assert_eq!(input.motion.sweep.curve, Some((feature, line)));
+    // Moved away again: let go of, the plate picked.
+    hovering(&mut here, false);
+    let (messages, _) = feed(&here, &mut input, &[(redraw(), cursor)]);
+    assert_eq!(input.motion.sweep.curve, None);
+    assert!(
+        matches!(messages[..], [Message::Look(Look::Hover(Some(_)))]),
+        "the plate again: {messages:?}"
+    );
+    // Hovered, then the camera dragged with the right button: let go of.
+    feed(&there, &mut input, &[(redraw(), cursor)]);
+    assert_eq!(input.motion.sweep.curve, Some((feature, line)));
+    let right = |pressed: bool| {
+        let button = mouse::Button::Right;
+        Event::Mouse(if pressed {
+            mouse::Event::ButtonPressed(button)
+        } else {
+            mouse::Event::ButtonReleased(button)
+        })
+    };
+    let far = Point::new(cursor.x + 40.0, cursor.y + 40.0);
+    feed(
+        &there,
+        &mut input,
+        &[(right(true), cursor), moved(far), (redraw(), far)],
+    );
+    assert!(input.drag.is_some(), "the camera's dragged");
+    assert_eq!(input.motion.sweep.curve, None);
+    feed(&there, &mut input, &[(right(false), far)]);
+}

@@ -915,3 +915,5 @@ fn a_piece_closed_on_itself_has_no_corner() {
     let failed = join(vec![two], start, || DVec3::ZERO, &tolerance).unwrap_err();
     assert_eq!(failed.message, message::PATH_CORNER);
 }
+
+mod fuzz;

@@ -4330,7 +4330,21 @@ Operation as tiles and the Bodies list.
   tick, lit, `MotionLook::DropEdge`), stored as one `PathPart::Edges`
   after the chains: so a session's edge parts are on one body (an
   edited sweep's other edge parts are kept as stored, listed as "Edges
-  of Body 2"). Rows: each chain "Sketch 3 · 2 curves" (`PanelHover::Part`
+  of Body 2", and the edited sweep's parts kept in the order it stored
+  them while they're the same parts, so OK on it unchanged writes
+  nothing). The path's limits hold while it's picked
+  (`MotionSession::sweep_room`): a chain or a first edge past 64 parts,
+  or a chain or an edge past 1 024 curves and edges in all, is refused
+  with a notice ("A sweep's path takes at most 64 parts", "... at most
+  1024 curves and edges in all"), nothing added. While the cursor is
+  still and the camera moves (a frame drawn, `Moving::redraw`), the
+  curve or region under it is worked out again: a curve brought under
+  it is hovered and the model let go of (never an edge lit under a
+  path curve, where a click takes the curve), one moved away let go of
+  and the model under the cursor picked again; while the camera's
+  dragged, the curve hovered is let go of (`Input::leave_sketches`);
+  a path curve under the cursor holds the model's picking as a move's
+  handle does (`Input::holds`). Rows: each chain "Sketch 3 · 2 curves" (`PanelHover::Part`
   lighting its curves), then "Edge 1" with its length; a cross on each.
   Then Tangent chain, Keep orientation and Twist (`MotionField::Twist`,
   "0°" to begin with; a twist of nothing is left out, unless the
@@ -4395,7 +4409,34 @@ chain, the corner's square up the plate's edge previewed; a helix
 about the toolbar's Z, its values, hand and flip drafted, never with
 the path's options; Keep orientation, twist and the operation drafted;
 editing from the Timeline, Cancel, undo; a path's curves taken away
-said to be gone, the profile's sketch removed and put back), `viewport/motion/tests.rs`
-(regions and path curves picked in their sketches, the model's edges
-left to the model, an edge hovered by the move off a curve onto it),
+said to be gone, the profile's sketch removed and put back; the
+path's 64 parts and 1 024 curves and edges held while picked; an
+edited sweep with an edge part first and two edge parts opening as
+stored, OK writing nothing; a helix's axis on a body an undo takes away
+gone through Path and Helix toggled, back on redo),
+`app/src/doc/motion/tests/sweep/fuzz.rs` (random sessions on two boxes
+with profile and path sketches: regions, curves (the profile's own,
+ids not curves'), edges and quick clicks, rows' crosses, Path and
+Helix, the axis from the toolbar or a click, pitch, turns and twist
+typed (out of range, overflowing, not numbers), the options, operation
+and bodies, units, hovers, overlap lists, undo and redo, a new profile
+sketch mid-session undone, sketches removed, merges, a chamfer being
+set up, commits, Add anyway, cancels, edits OK'd straight away: the
+path always within its limits, each ready session whole, checked and
+previewed as set up, committed as drafted, edges lit on their body's
+holder, and each body a working sweep makes its profile extruded from
+its plane; `VARDE_SWEEP_SEEDS`), `regen/src/history/tests/sweep/fuzz.rs`
+(random histories with sweeps along sketch chains, model edges and
+helices, edited, path sketches redrawn, upstream changes, combines,
+undo and redo: each failing alike whole and cut short, a failure
+changing nothing, one working only on a path worked out apart from
+regeneration to be one the stand-in sweeps and giving exactly an
+extrude's bodies, cache warm and cold, bytes and wire;
+`VARDE_SWEEP_SEEDS`), `io/src/vrdp/tests.rs` (also the path's limits,
+empty parts, curves out of order, edges on two bodies, a part's sketch
+not a sketch, a helix's axis named by the sweep, refused as read),
+`viewport/motion/tests.rs` (regions and path curves picked in their
+sketches, the model's edges left to the model, an edge hovered by the
+move off a curve onto it, the hover handed over between a curve and
+the model as the camera moves and let go of while it's dragged),
 `rail/tests.rs` (Sweep in the Create set, `P`).

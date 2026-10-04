@@ -448,6 +448,8 @@ impl shader::Program<Message> for Program<'_> {
                 (self.picking).is_some_and(|picking| picking.hovered.is_some()),
             )
         {
+            // The model let go of under it is picked again once it's off.
+            state.hover_seen = None;
             return Some(action);
         }
         // The operation's picking and handle come first, unless the
@@ -502,7 +504,15 @@ impl shader::Program<Message> for Program<'_> {
         }
         // While the camera's dragged (past a click), nothing's hovered:
         // what was moves away from the cursor. It's worked out again once
-        // the drag ends.
+        // the drag ends. A sweep's region or path curve likewise.
+        if state.drag.is_some()
+            && state.click.is_none()
+            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
+            && state.motion.leave_sketches()
+            && self.picking.is_none_or(|picking| picking.hovered.is_none())
+        {
+            return Some(Action::request_redraw());
+        }
         if let Some(picking) = &self.picking
             && state.drag.is_some()
             && state.click.is_none()

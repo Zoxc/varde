@@ -369,6 +369,15 @@ impl Doc {
             return Ok(());
         };
         let kind = session.kind;
+        // A sweep's edges are one part of its path, which has its limits.
+        let refs = &R::refs(session).refs;
+        if kind == MotionKind::Sweep
+            && refs
+                .binary_search_by(|picked| picked.order(&found))
+                .is_err()
+        {
+            session.sweep_room(usize::from(refs.is_empty()), 1)?;
+        }
         R::refs_mut(session).add(kind, found, pick.model, target)?;
         session.refs_body();
         Ok(())
