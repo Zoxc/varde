@@ -158,6 +158,7 @@ fn a_revolve_and_its_draft_round_trip() {
             uncut: Vec::new(),
             reference: None,
             datums: None,
+            scale: None,
         }
     );
     let revolve = editor.document().features().last().unwrap().id;
@@ -260,6 +261,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
             uncut: Vec::new(),
             reference: None,
             datums: None,
+            scale: None,
         }))
     );
     assert!(failed.is_empty(), "{failed:?}");
@@ -337,6 +339,7 @@ fn request_with_a_draft_round_trips() {
             uncut: Vec::new(),
             reference: None,
             datums: None,
+            scale: None,
         }))
     );
 
@@ -406,6 +409,7 @@ fn untested_and_touching_nothing_stay_apart() {
                 uncut: Vec::new(),
                 reference: None,
                 datums: None,
+                scale: None,
             });
         }
         let Head::Regenerated { draft, .. } = Head::decode(&head.encode()).unwrap() else {
@@ -502,6 +506,7 @@ fn draft_references_must_be_lines_within_bounds() {
                 uncut: Vec::new(),
                 reference: Some(Box::new(bad)),
                 datums: None,
+                scale: None,
             });
         }
         let Response::Failed { error, .. } =
@@ -523,6 +528,7 @@ fn draft_references_must_be_lines_within_bounds() {
             uncut: Vec::new(),
             reference: Some(Box::new(good)),
             datums: None,
+            scale: None,
         });
     }
     let Response::Regenerated { draft, .. } =
@@ -569,6 +575,7 @@ fn draft_datums_must_be_within_bounds() {
                 uncut: Vec::new(),
                 reference: None,
                 datums: Some(Box::new(datums)),
+                scale: None,
             });
         }
         decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
@@ -595,6 +602,87 @@ fn draft_datums_must_be_within_bounds() {
         panic!("good datums were refused");
     };
     assert_eq!(draft.unwrap().datums.as_deref(), Some(&good));
+}
+
+/// What a scale's draft found: a point within bounds, a length and
+/// factors finite, the factors above zero, at least one there; refused
+/// otherwise, and a good one goes as it was.
+#[test]
+fn a_scale_draft_s_findings_must_be_within_bounds() {
+    use crate::ScaleFound;
+    let good = ScaleFound {
+        centre: Some([1.0, 2.0, 3.0]),
+        length: Some(20.0),
+        factors: Some([1.0, 2.5, 1.0]),
+        fitted: 3,
+    };
+    let head_with = |found: ScaleFound| {
+        let mut head = regenerated(5);
+        if let Head::Regenerated { draft, .. } = &mut head {
+            *draft = Some(Drafted {
+                revision: 1,
+                geometry: None,
+                error: None,
+                touched: None,
+                uncut: Vec::new(),
+                reference: None,
+                datums: None,
+                scale: Some(Box::new(found)),
+            });
+        }
+        decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
+    };
+    let far = crate::MAX_REFERENCE * 2.0;
+    for bad in [
+        ScaleFound {
+            centre: Some([far, 0.0, 0.0]),
+            ..good
+        },
+        ScaleFound {
+            centre: Some([0.0, f64::NAN, 0.0]),
+            ..good
+        },
+        ScaleFound {
+            length: Some(-1.0),
+            ..good
+        },
+        ScaleFound {
+            length: Some(f64::INFINITY),
+            ..good
+        },
+        ScaleFound {
+            factors: Some([1.0, 0.0, 1.0]),
+            ..good
+        },
+        ScaleFound {
+            factors: Some([1.0, 1.0, f64::NAN]),
+            ..good
+        },
+        ScaleFound {
+            centre: None,
+            length: None,
+            factors: None,
+            fitted: 0,
+        },
+    ] {
+        let Response::Failed { error, .. } = head_with(bad) else {
+            panic!("a bad scale was taken: {bad:?}");
+        };
+        assert_eq!(error, Error::Reference.to_string());
+    }
+    for good in [
+        good,
+        ScaleFound {
+            centre: None,
+            factors: None,
+            ..good
+        },
+    ] {
+        let Response::Regenerated { draft, .. } = head_with(good) else {
+            panic!("a good scale was refused");
+        };
+        assert_eq!(draft.unwrap().scale.as_deref(), Some(&good));
+    }
 }
 
 #[test]
@@ -2841,7 +2929,8 @@ fn answer_with_failures() -> Response {
             uncut: Vec::new(),
             reference: None,
             datums: None,
-        }));
+            scale: None,
+        }))
     }
     response
 }

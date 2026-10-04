@@ -124,7 +124,7 @@ impl PointRef {
     }
 
     /// The features its keys name as its faces' makers.
-    fn makers(&self) -> Vec<FeatureId> {
+    pub(crate) fn makers(&self) -> Vec<FeatureId> {
         match self {
             PointRef::Origin => Vec::new(),
             PointRef::Corner { faces, .. } => faces.map(|key| FeatureId(key.feature)).to_vec(),

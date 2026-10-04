@@ -1,6 +1,6 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns and aligns), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns and scales), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -47,7 +47,8 @@ they share with the newer kinds is here. The kernel math of each is in
   distances by `Extent::ask` (angles' bare numbers are degrees whatever
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
-  `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6, `Align` 7): files store a kind by its variant name, and
+  `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6, `Align` 7,
+  `Scale` 8): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -205,7 +206,11 @@ message is worded from the kernel's `failure.error` as before
     or round show themselves, as above; see "Move and mirror"); an
     align's reference gone, on a body that's gone or merged into the
     moved body, or its point out of range (one of the wrong kind, and a
-    secondary parallel to its primary, show themselves: see "Align").
+    secondary parallel to its primary, show themselves: see "Align");
+    a scale's point or edge not found, its edge too short, its length
+    too far from the edge's, its edge not straight or not along an axis
+    for a scale along it, a factor out of range, a body scaled out of
+    range (see "Scale").
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s
   and the draft's `Drafted` (`MeshFeed::draft_geometry`, beside
   `draft_error`). The viewport draws the geometry of the draft's
@@ -2166,3 +2171,142 @@ as good as the arc's control point times `(2r/chord)²`: profiles build
 it from the ends' middle (see `Conic::arc_between` in
 `agents/kernel.md`) so it's the drawn centre within `1e-4` mm for a
 10 mm arc a 1e5 away (it was 0.01 off).
+
+## Scale
+
+`crates/document/src/scale.rs`.
+
+```rust
+pub struct Scale {
+    pub bodies: Vec<BodyId>,      // 1..=256, sorted, made before it (as a move's)
+    pub about: PointRef,          // the origin, or a point on a body made before (align's)
+    pub factor: ScaleFactor,
+}
+pub enum ScaleFactor {
+    Uniform(Value),               // Scale::factor_ask: Ask::factor, 1e-3 ..= 1e3
+    PerAxis([Value; 3]),          // X, Y, Z, each as Uniform's
+    EdgeLength { edge: EdgeRef, length: Value, axis_only: bool },  // edge on a scaled body; length: Extent::ask
+}
+```
+
+- **What it is**: a timeline step on bodies already made, the ninth
+  variant (`FeatureKind::Scale(Scale)`, "Scale N"; not boxed, it isn't
+  the largest). It makes no body; each body keeps its id and its faces
+  their names (instance 0), `x ↦ c + S·(x − c)` along the world axes
+  (`Motion::scale`, see "Transforms and assembly" in
+  `agents/kernel.md`). Positive
+  factors only (a negative one is a mirror, its own feature).
+- **To an edge's length**: the factor is worked out at every
+  regeneration as the typed length over the edge's measured one, so an
+  upstream edit changing the edge keeps the typed length. Uniform by
+  default (any edge, curved too); with `axis_only`, along the world
+  axis a straight edge runs along only, the others 1.
+- **`Ask::factor(units, max)`** (`varde_expr`, new): a plain number from
+  `1/max` to `max`; `Scale::factor_ask` passes `MAX_SCALE_FACTOR` (1e3),
+  so `1e-3 ..= 1e3` (both ends taken). `Scale::length_ask` is
+  `Extent::ask` (a length from a micrometre to `MAX_COORD`).
+- **Checks** (`CheckError::Scale(id, ScaleError)`): `Scale::check_own
+  (design)` (cheap, for a panel): the body count and order (`Bodies`,
+  `BodyOrder`), every factor as `factor_ask` takes it (`Factor`), the
+  edge length as `length_ask` (`Length`), the point's own check
+  (`About(AlignError)`: a corner's keys sorted and different, points
+  finite within `MAX_COORD`), the edge's own check (`Edge`) and its
+  body among the scaled ones (`EdgeBody`). `Document::check` then wants
+  the bodies made before it (`Body`), and the point's and the edge's
+  bodies and faces' makers before it (`RefBody`, `RefMaker`: as a
+  move's axis; one not there is allowed with ids no later body or
+  feature can take). `Document::check_scale_refs(index, scale)` checks
+  those last rules, for a panel. The point may be on one of the scaled
+  bodies (scaling about its own corner).
+- **Removal**: `FeatureKind::bodies()` is the scaled bodies, so
+  removing one (or its maker) removes the scale; the edge's body is one
+  of them, so it's covered. The point's body isn't listed (the scale
+  stays and fails until given another, as a move's axis).
+- `SetUnits` pins the edge length as an extrude's distance, and runs
+  `pin_units` on the factors too (as a pattern's count): a plain factor
+  ("2", "25.4") is left as typed, and only a bare number added to a
+  length inside one ("(3 + 1 mm) / 1 mm") gets the old units written in,
+  so the factor's value never changes (decided here: the plan said
+  factors are left alone, which they are, but a factor's expression
+  can still hold a bare length).
+
+### Regeneration
+
+`crates/regen/src/history/scale.rs`, in history order:
+
+- Every body needs a solid of its own (`own_solids`, as a move's).
+- **The point** is found as an align's (`align::Found::point`, shared:
+  `Found` now takes `message::Whose`, an align's reference on a side or
+  the scale's point, so the messages read "its point wasn't found", "its
+  point is on a body that's gone"; a point on a body merged into another
+  is found on that one). Cached as an align's (`Entry::Datum`).
+- **The edge** (an edge length's) is found on its body's topology by
+  its names and point and measured by the measure tool's lengths
+  (`measure::measure` with `Pick::Edge`: the whole chain's length, its
+  ends where it's a line), cached (`Entry::Length(EdgeLength { length,
+  line })`, keyed by the body's key, the names, the point and the fit
+  tolerance). Then: the length must be above the resolution before the
+  division ("its edge is too short to scale by: ..."), `f = L / ℓ` within
+  `1e-3 ..= 1e3` ("the length is too far from the edge's: it would
+  scale by more than a thousand times"); along its axis only, the edge
+  must be straight ("its edge isn't straight, so it can't scale along
+  its axis only") and along a world axis: the sum of the squares of its
+  direction's two smaller components at most `AXIS_SINE²` (`1e-18`) of
+  its length's square (`along_axis`, `+ − ×` only), else "its edge
+  isn't along an axis any more, so it can't scale along it only". The
+  edge's other components aren't scaled, so it gets `L` within about
+  `1e-12` relative.
+- **Every factor** is then checked within `1e-3 ..= 1e3` again (a typed
+  one past the document: `SCALE_FACTOR`).
+- **Noted** for the draft (`Evaluation::scaled`, `Drafted::scale`:
+  `ScaleFound { centre, length, factors, fitted }`), whether or not the
+  scale goes on to work: the point found, the edge's measured length
+  (before the scale), the factors, each `None` where not found or where
+  the wire wouldn't take it (`ScaleFound::fits`: the point within
+  `MAX_REFERENCE`, the length finite and not negative, the factors
+  finite and positive, at least one of the three there), and `fitted`,
+  how many faces (by key, per body) of the scaled bodies claim no
+  surface (`Surface::Free`), for the panel's note "3 fitted faces: their
+  error grows × 25.4" (impl b). Not in `.vrdp`.
+- **The motion**: `Motion::scale(centre, factors)`; the bodies are then
+  placed as a move's (`motion::place`): refused before the kernel if a
+  box's image leaves `MAX_COORD` ("scaling Body 2 takes it out of range
+  ..."), then `Solid::transformed` (which multiplies each face's
+  `slack` by the largest factor above 1) cached by `Motion::bits()`, so
+  an edge length giving the factor a typed one gave finds the same
+  solid. A result `check` refuses (a scale down taking detail under the
+  resolution, or rounding) is "scaling Body 1 leaves no clean solid:
+  parts of it come too close together, or get too small, for the
+  tolerance; try a finer tolerance". A scale up of fitted faces is kept
+  (their slack records it).
+
+### UI
+
+None yet: the app opens no panel for a scale (editing one does
+nothing). The Timeline shows the mock's `scale` icon (the tool icons'
+set), the note "×2", "×1 · 1 · 2" or "edge → 50 mm" (written as a
+pattern's "×4", where the plan had "× 2") and "Body 1 ×2" as the status
+info (`view/src/motion.rs`: `scale_note`, `scale_info`).
+
+Tests: `document/src/scale/tests.rs` (adding and undo, factors and
+lengths at and past their bounds and tampered, bodies, the point and
+the edge checked, removal, units, postcard and hostile bytes, the
+variant index), `regen/src/history/tests/scale.rs` (a block × 2 about
+the origin and about its top corner to the bit and × 1/2, undone; a
+cylinder × 2 along Y: twice the volume, its rim an ellipse of semi-axes
+10 and 5 whose length is the ellipse's perimeter to `1e-12`; a union
+flush with a scaled block; a revolved torus × 25.4: the volume × 25.4³,
+the fitted faces' slack × 25.4 and counted; a 10 × 20 × 5 block scaled
+so an edge is 50, uniform (volume × 2.5³) and along Y or X only; the
+example plate scaled so its hole's rim is 100 round (to `1e-12`) and
+refused along its axis only; an upright edge kept 50 tall through the
+plate extruded twice as far upstream and undo; refusals: faces that
+don't meet, lengths past a thousand times either way (the bounds
+themselves scale), out of range, a slanted edge along its axis only
+(uniform it scales); a plate a micrometre thick × 0.001 refused; the
+cache by the motion's bits; a draft answering what it found, a point on
+a merged body, a point not found), `regen/src/wire/tests.rs` (what's
+found on the wire, bad ones refused), `io/src/vrdp/tests.rs` (through a
+file after an align, tampered records refused),
+`expr/src/eval/tests.rs` (`Ask::factor`), `view/src/motion/tests.rs`
+(the notes).

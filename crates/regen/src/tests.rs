@@ -568,6 +568,7 @@ fn a_draft_is_answered_as_if_applied() {
             uncut: Vec::new(),
             reference: None,
             datums: None,
+            scale: None,
         })
     );
     assert!(answer.failed.is_empty());
@@ -662,6 +663,7 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
                 uncut: Vec::new(),
                 reference: None,
                 datums: None,
+                scale: None,
             })
         );
         assert_eq!(answer.mesh, committed.mesh);
@@ -797,6 +799,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
             uncut: Vec::new(),
             reference: None,
             datums: None,
+            scale: None,
         })
     );
     assert_ne!(cut.mesh, committed.mesh);

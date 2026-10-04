@@ -1,10 +1,12 @@
 //! Features: the steps a design is built from, sketches, extrudes,
-//! revolves, combines, moves, mirrors, patterns and aligns.
+//! revolves, combines, moves, mirrors, patterns, aligns and scales.
 
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
-use crate::{Align, BodyId, Combine, Extrude, Mirror, Move, Operation, Pattern, Plane, Revolve};
+use crate::{
+    Align, BodyId, Combine, Extrude, Mirror, Move, Operation, Pattern, Plane, Revolve, Scale,
+};
 
 /// A feature's handle in one document. It's opaque: ids come from the
 /// document's features, not from literals. Features and bodies take their
@@ -48,6 +50,7 @@ pub enum FeatureKind {
     Pattern(Pattern),
     /// Boxed: its two sides' references make it the largest kind by far.
     Align(Box<Align>),
+    Scale(Scale),
 }
 
 impl FeatureKind {
@@ -63,6 +66,7 @@ impl FeatureKind {
             FeatureKind::Mirror(_) => "Mirror",
             FeatureKind::Pattern(_) => "Pattern",
             FeatureKind::Align(_) => "Align",
+            FeatureKind::Scale(_) => "Scale",
         }
     }
 
@@ -83,13 +87,14 @@ impl FeatureKind {
 
     /// The bodies it names, which features before it make, and which it
     /// depends on: a combine's target and tools, the bodies a move, a
-    /// mirror or a pattern moves or copies, the body an align moves.
+    /// mirror or a pattern moves or copies, the body an align moves, the
+    /// bodies a scale scales (its edge length's edge among them).
     /// Removing one of them, or its maker, removes this too. Not the
     /// bodies an extrude or revolve takes out of its targets, which are
     /// dropped from its list instead, nor the body under a sketch's face
     /// plane, a revolve's axis edge, a move's or pattern's axis, a
-    /// mirror's plane or an align's target (the feature stays, and fails
-    /// until it's given another).
+    /// mirror's plane, an align's target or a scale's point (the feature
+    /// stays, and fails until it's given another).
     pub fn bodies(&self) -> Vec<BodyId> {
         match self {
             FeatureKind::Combine(combine) => combine.bodies().collect(),
@@ -97,6 +102,7 @@ impl FeatureKind {
             FeatureKind::Mirror(mirror) => mirror.bodies.clone(),
             FeatureKind::Pattern(pattern) => pattern.bodies.clone(),
             FeatureKind::Align(align) => vec![align.body],
+            FeatureKind::Scale(scale) => scale.bodies.clone(),
             FeatureKind::Sketch { .. } | FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
                 Vec::new()
             }
@@ -112,7 +118,8 @@ impl FeatureKind {
             | FeatureKind::Move(_)
             | FeatureKind::Mirror(_)
             | FeatureKind::Pattern(_)
-            | FeatureKind::Align(_) => None,
+            | FeatureKind::Align(_)
+            | FeatureKind::Scale(_) => None,
             FeatureKind::Extrude(extrude) => Some(extrude.sketch),
             FeatureKind::Revolve(revolve) => Some(revolve.sketch),
         }
@@ -127,7 +134,8 @@ impl FeatureKind {
             | FeatureKind::Move(_)
             | FeatureKind::Mirror(_)
             | FeatureKind::Pattern(_)
-            | FeatureKind::Align(_) => None,
+            | FeatureKind::Align(_)
+            | FeatureKind::Scale(_) => None,
             FeatureKind::Extrude(extrude) => Some(&extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&revolve.operation),
         }
@@ -141,7 +149,8 @@ impl FeatureKind {
             | FeatureKind::Move(_)
             | FeatureKind::Mirror(_)
             | FeatureKind::Pattern(_)
-            | FeatureKind::Align(_) => None,
+            | FeatureKind::Align(_)
+            | FeatureKind::Scale(_) => None,
             FeatureKind::Extrude(extrude) => Some(&mut extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&mut revolve.operation),
         }
@@ -192,5 +201,11 @@ impl From<Combine> for FeatureKind {
 impl From<Align> for FeatureKind {
     fn from(align: Align) -> Self {
         FeatureKind::Align(Box::new(align))
+    }
+}
+
+impl From<Scale> for FeatureKind {
+    fn from(scale: Scale) -> Self {
+        FeatureKind::Scale(scale)
     }
 }

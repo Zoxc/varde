@@ -574,6 +574,31 @@ pub fn align_info(document: &Document, align: &varde_document::Align) -> String 
     format!("{moved} {}", align_note(document, align))
 }
 
+/// A scale's Timeline note: "×2", "×1 · 1 · 2", "edge → 50 mm"
+/// (lengths in `units`), the factor written as a pattern's count is.
+pub(crate) fn scale_note(scale: &varde_document::Scale, units: LengthUnit) -> String {
+    use varde_document::ScaleFactor;
+    let factor = |value: &varde_expr::Value| varde_expr::format(value.value, None);
+    match &scale.factor {
+        ScaleFactor::Uniform(value) => format!("×{}", factor(value)),
+        ScaleFactor::PerAxis(values) => format!("×{}", values.each_ref().map(factor).join(" · ")),
+        ScaleFactor::EdgeLength { length, .. } => format!(
+            "edge → {}",
+            varde_expr::format(length.value, Some(units.into()))
+        ),
+    }
+}
+
+/// What the status bar says of a selected scale: "Body 1 ×2".
+pub(crate) fn scale_info(
+    document: &Document,
+    scale: &varde_document::Scale,
+    units: LengthUnit,
+) -> String {
+    let bodies = body_names(document, &scale.bodies);
+    format!("{bodies} {}", scale_note(scale, units))
+}
+
 /// The names of `bodies` of `document`, joined: "Body 1, Body 2".
 pub(crate) fn body_names(document: &Document, bodies: &[BodyId]) -> String {
     let names: Vec<&str> = (bodies.iter())

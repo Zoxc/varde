@@ -690,7 +690,7 @@ fn an_axis_is_found_beside_its_face() {
 }
 
 /// Draws the closed polygon through `points`.
-fn polygon(points: &'static [(f64, f64)]) -> impl FnOnce(&mut Sketch) {
+pub(super) fn polygon(points: &'static [(f64, f64)]) -> impl FnOnce(&mut Sketch) {
     move |sketch| {
         let ids: Vec<_> = (points.iter())
             .map(|&(x, y)| sketch.add_point(glam::DVec2::new(x, y)).unwrap())
@@ -706,7 +706,7 @@ fn polygon(points: &'static [(f64, f64)]) -> impl FnOnce(&mut Sketch) {
 
 /// Adds a sketch on XY drawn by `draw` and a whole turn of its regions
 /// about the sketch's Y axis, a new body: the body.
-fn revolved(editor: &mut Editor, draw: impl FnOnce(&mut Sketch)) -> BodyId {
+pub(super) fn revolved(editor: &mut Editor, draw: impl FnOnce(&mut Sketch)) -> BodyId {
     use varde_document::{AxisLine, Revolve, Turn};
     editor
         .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))

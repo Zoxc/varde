@@ -366,3 +366,39 @@ fn an_align_s_panel_has_its_sides_flip_and_offset() {
     state.need = Some("pick the point to align it to");
     assert_eq!(status_info(&state), "pick the point to align it to");
 }
+
+#[test]
+fn a_scale_s_notes() {
+    use varde_document::{EdgeRef, PointRef, Scale, ScaleFactor};
+    let example = Document::example();
+    let document = &example;
+    let plate = document.bodies()[0].id;
+    let design = document.design();
+    let factor = |text: &str| Value::new(text, &Scale::factor_ask(&design)).unwrap();
+    let mut scale = Scale {
+        bodies: vec![plate],
+        about: PointRef::Origin,
+        factor: ScaleFactor::Uniform(factor("2")),
+    };
+    let units = design.units;
+    assert_eq!(scale_note(&scale, units), "×2");
+    assert_eq!(scale_info(document, &scale, units), "Body 1 ×2");
+    scale.factor = ScaleFactor::PerAxis([factor("1"), factor("1"), factor("25.4")]);
+    assert_eq!(scale_note(&scale, units), "×1 · 1 · 25.4");
+    let key = FaceKey {
+        feature: 1,
+        part: PartKey::EndCap,
+        instance: 0,
+    };
+    scale.factor = ScaleFactor::EdgeLength {
+        edge: EdgeRef {
+            body: plate,
+            faces: [key, key],
+            near: glam::DVec3::ZERO,
+        },
+        length: Value::new("50", &Scale::length_ask(&design)).unwrap(),
+        axis_only: false,
+    };
+    assert_eq!(scale_note(&scale, units), "edge → 50 mm");
+    assert_eq!(scale_note(&scale, LengthUnit::In), "edge → 1.9685 in");
+}

@@ -36,7 +36,7 @@ use super::motion::{How, holding, place, reference_key};
 use super::{BodySolid, Evaluation, Failed, chain_curves, face_geometry, own_solids};
 use crate::cache::{Cache, Datum};
 use crate::error_geometry::ErrorGeometry;
-use crate::message::{self, AlignRef, Moving, Side};
+use crate::message::{self, AlignRef, Moving, Side, Whose};
 use crate::{AlignDatums, AlignFound};
 
 /// Changes the body of `evaluation` that the align `align`, the feature
@@ -61,7 +61,7 @@ pub(super) fn evaluate_align(
 ) -> Result<(), Failed> {
     own_solids(document, std::iter::once(align.body), evaluation)?;
     let found = Found {
-        moved: align.body,
+        moved: Some(align.body),
         evaluation,
         tolerance,
     };
@@ -83,7 +83,7 @@ pub(super) fn evaluate_align(
     };
     let motion = Motion::align(&moved.datum, &target.datum, &options).map_err(|why| {
         let found = Found {
-            moved: align.body,
+            moved: Some(align.body),
             evaluation,
             tolerance,
         };
@@ -138,13 +138,14 @@ fn note(
     }
 }
 
-/// Finds an align's references on the bodies as the features before it
-/// leave them.
-struct Found<'a> {
-    /// The body the align moves.
-    moved: BodyId,
-    evaluation: &'a Evaluation,
-    tolerance: &'a Tolerance,
+/// Finds an align's references, or a scale's point, on the bodies as
+/// the features before it leave them.
+pub(super) struct Found<'a> {
+    /// The body the align moves, which its target side can't be on;
+    /// `None` for a scale's point, which may be on a body it scales.
+    pub(super) moved: Option<BodyId>,
+    pub(super) evaluation: &'a Evaluation,
+    pub(super) tolerance: &'a Tolerance,
 }
 
 impl Found<'_> {
@@ -152,7 +153,7 @@ impl Found<'_> {
     /// isn't (the point's first, then the primary's, then the
     /// secondary's).
     fn side(&self, refs: &AlignRefs, side: Side, cache: &mut Cache) -> Result<Resolved, Failed> {
-        let point = self.point(&refs.point, side, cache)?;
+        let point = self.point(&refs.point, Whose::Align(AlignRef::Point, side), cache)?;
         let mut direction = |which, direction: &Option<DirRef>| {
             (direction.as_ref())
                 .map(|direction| self.direction(direction, which, side, cache))
@@ -170,25 +171,29 @@ impl Found<'_> {
         })
     }
 
-    /// The body holding `body`'s solid, for a reference `which` on
-    /// `side`: one with no solid is gone; on the target side, the moved
-    /// body can't hold it.
-    fn holding(&self, body: BodyId, which: AlignRef, side: Side) -> Result<&BodySolid, Failed> {
+    /// The body holding `body`'s solid, for the reference `whose`: one
+    /// with no solid is gone; on an align's target side, the moved body
+    /// can't hold it.
+    fn holding(&self, body: BodyId, whose: Whose) -> Result<&BodySolid, Failed> {
         let made = holding(body, self.evaluation)
-            .ok_or_else(|| message::align_ref(which, side, message::ALIGN_BODY_GONE))?;
-        if side == Side::Target && made.body == self.moved {
-            return Err(message::align_ref(which, side, message::ALIGN_ON_MOVED).into());
+            .ok_or_else(|| message::reference(whose, message::ALIGN_BODY_GONE))?;
+        if matches!(whose, Whose::Align(_, Side::Target)) && Some(made.body) == self.moved {
+            return Err(message::reference(whose, message::ALIGN_ON_MOVED).into());
         }
         Ok(made)
     }
 
-    /// The point `point` names on `side`.
-    fn point(&self, point: &PointRef, side: Side, cache: &mut Cache) -> Result<DVec3, Failed> {
-        let which = AlignRef::Point;
+    /// The point `point` names, the reference `whose`.
+    pub(super) fn point(
+        &self,
+        point: &PointRef,
+        whose: Whose,
+        cache: &mut Cache,
+    ) -> Result<DVec3, Failed> {
         let found = match point {
             PointRef::Origin => return Ok(DVec3::ZERO),
             PointRef::Corner { body, faces, near } => {
-                self.find(*body, "corner", faces, *near, which, side, cache, |t, s| {
+                self.find(*body, "corner", faces, *near, whose, cache, |t, s| {
                     t.corner_point(s, *faces, *near).map(Datum::point)
                 })
             }
@@ -197,8 +202,7 @@ impl Found<'_> {
                 "middle",
                 &edge.faces,
                 edge.near,
-                which,
-                side,
+                whose,
                 cache,
                 |t, s| t.middle(s, edge.faces, edge.near).map(Datum::point),
             ),
@@ -207,8 +211,7 @@ impl Found<'_> {
                 "centre",
                 &edge.faces,
                 edge.near,
-                which,
-                side,
+                whose,
                 cache,
                 |t, s| t.centre(s, edge.faces, edge.near).map(Datum::point),
             ),
@@ -224,6 +227,7 @@ impl Found<'_> {
         side: Side,
         cache: &mut Cache,
     ) -> Result<Datum, Failed> {
+        let whose = Whose::Align(which, side);
         match direction {
             DirRef::Origin(axis) | DirRef::Axis(AxisRef::Origin(axis)) => Ok(Datum {
                 at: axis.direction(),
@@ -231,37 +235,28 @@ impl Found<'_> {
             }),
             DirRef::Normal(face) => {
                 let FaceRef { body, key, near } = *face;
-                self.find(body, "normal", &key, near, which, side, cache, |t, s| {
+                self.find(body, "normal", &key, near, whose, cache, |t, s| {
                     let at = t.normal(s, &key, near)?;
                     Ok(Datum { at, outward: true })
                 })
             }
             DirRef::Axis(AxisRef::Face(face)) => {
                 let FaceRef { body, key, near } = *face;
-                self.find(body, "face axis", &key, near, which, side, cache, |t, s| {
+                self.find(body, "face axis", &key, near, whose, cache, |t, s| {
                     let [_, at] = t.face_axis(s, &key, near)?;
                     Ok(Datum { at, outward: false })
                 })
             }
             DirRef::Axis(AxisRef::Edge(edge)) => {
                 let EdgeRef { body, faces, near } = *edge;
-                self.find(
-                    body,
-                    "edge axis",
-                    &faces,
-                    near,
-                    which,
-                    side,
-                    cache,
-                    |t, s| {
-                        let chain = t.edge(s, faces, near).map_err(Unresolved::from)?;
-                        let shape = edge_shape(s, &t.chains()[chain as usize]);
-                        let round =
-                            matches!(shape, EdgeShape::Circle { .. } | EdgeShape::Ellipse { .. });
-                        let at = t.edge_direction(s, faces, near)?;
-                        Ok(Datum { at, outward: round })
-                    },
-                )
+                self.find(body, "edge axis", &faces, near, whose, cache, |t, s| {
+                    let chain = t.edge(s, faces, near).map_err(Unresolved::from)?;
+                    let shape = edge_shape(s, &t.chains()[chain as usize]);
+                    let round =
+                        matches!(shape, EdgeShape::Circle { .. } | EdgeShape::Ellipse { .. });
+                    let at = t.edge_direction(s, faces, near)?;
+                    Ok(Datum { at, outward: round })
+                })
             }
         }
     }
@@ -280,19 +275,18 @@ impl Found<'_> {
         kind: &str,
         names: &impl serde::Serialize,
         near: DVec3,
-        which: AlignRef,
-        side: Side,
+        whose: Whose,
         cache: &mut Cache,
         find: impl FnOnce(&Topology, &Solid) -> Result<Datum, Unresolved>,
     ) -> Result<Datum, Failed> {
-        let made = self.holding(body, which, side)?;
-        let kind = format!("align {kind} {which:?} {side:?}");
+        let made = self.holding(body, whose)?;
+        let kind = format!("datum {kind} {whose:?}");
         let key = reference_key(&kind, made.key, names, near, self.tolerance);
         cache.datum(key, || {
             let solid = &made.solid;
             let topology = solid.topology();
             find(&topology, solid)
-                .map_err(|why| unresolved(solid, &topology, why, which, side, self.tolerance))
+                .map_err(|why| unresolved(solid, &topology, why, whose, self.tolerance))
         })
     }
 
@@ -405,17 +399,16 @@ fn point_shown(point: &PointRef) -> Option<Shown<'_>> {
     }
 }
 
-/// Why the reference `which` on `side` isn't found on `solid` (whose
-/// topology is `topology`), as the kernel says (`why`), with the face or
-/// edge found where it's of the wrong kind: its triangles or curves, as
-/// a sketch's face that isn't flat or a revolve's edge that isn't
-/// straight shows itself.
+/// Why the reference `whose` isn't found on `solid` (whose topology is
+/// `topology`), as the kernel says (`why`), with the face or edge found
+/// where it's of the wrong kind: its triangles or curves, as a sketch's
+/// face that isn't flat or a revolve's edge that isn't straight shows
+/// itself.
 fn unresolved(
     solid: &Solid,
     topology: &Topology,
     why: Unresolved,
-    which: AlignRef,
-    side: Side,
+    whose: Whose,
     tolerance: &Tolerance,
 ) -> Failed {
     let region =
@@ -433,7 +426,7 @@ fn unresolved(
         }
     };
     Failed {
-        message: message::align_ref(which, side, why),
+        message: message::reference(whose, why),
         geometry,
     }
 }

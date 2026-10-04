@@ -178,7 +178,8 @@ pub(super) fn place(
 /// Whether `motion` keeps `solid` within [`MAX_COORD`]: every corner of
 /// its box taken there is (the image of the box holds the solid's).
 /// Every number is finite: the box is within the limit, and so are the
-/// motion's offsets and its matrix's entries (at most 1 each).
+/// motion's offsets and its matrix's entries (at most 1 each, or a
+/// scale's factors, at most 1e3).
 pub(super) fn within(solid: &Solid, motion: &Motion) -> bool {
     let Some(bounds) = solid.bounds3() else {
         return true;

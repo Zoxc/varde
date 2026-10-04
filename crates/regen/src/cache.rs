@@ -148,6 +148,15 @@ pub(crate) struct Datum {
     pub(crate) outward: bool,
 }
 
+/// An edge a scale names, as measured on its body: its length (the
+/// whole chain's), and its ends where it's straight.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct EdgeLength {
+    pub(crate) length: f64,
+    /// Where it starts and ends, for a straight edge.
+    pub(crate) line: Option<[DVec3; 2]>,
+}
+
 /// A result kept.
 #[derive(Clone)]
 enum Entry {
@@ -165,6 +174,8 @@ enum Entry {
     Reference(Result<[DVec3; 2], Failed>),
     /// A point or direction an align names, or why it isn't anywhere.
     Datum(Result<Datum, Failed>),
+    /// A scale's edge as measured, or why it isn't anywhere.
+    Length(Result<EdgeLength, Failed>),
     /// Whether a sketch solves.
     Solves(bool),
     /// A feature's tool solid, or why it has none (with what to draw of
@@ -205,7 +216,8 @@ impl Entry {
             | Entry::Placement(Err(failed))
             | Entry::Edge(Err(failed))
             | Entry::Reference(Err(failed))
-            | Entry::Datum(Err(failed)) => (failed.message.len())
+            | Entry::Datum(Err(failed))
+            | Entry::Length(Err(failed)) => (failed.message.len())
                 .saturating_add(failed.geometry.as_deref().map_or(0, ErrorGeometry::bytes)),
             Entry::Touches(Err(failure)) | Entry::Boolean(Err(failure)) => failure.bytes(),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
@@ -218,6 +230,7 @@ impl Entry {
             | Entry::Edge(Ok(_))
             | Entry::Reference(Ok(_))
             | Entry::Datum(Ok(_))
+            | Entry::Length(Ok(_))
             | Entry::Touches(Ok(_)) => 0,
         };
         data.saturating_add(OVERHEAD)
@@ -494,6 +507,17 @@ impl Cache {
     ) -> Result<Datum, Failed> {
         match self.entry(key, || Entry::Datum(make())) {
             Entry::Datum(found) => found,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn length(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<EdgeLength, Failed>,
+    ) -> Result<EdgeLength, Failed> {
+        match self.entry(key, || Entry::Length(make())) {
+            Entry::Length(found) => found,
             _ => unreachable!("keys of different kinds differ"),
         }
     }

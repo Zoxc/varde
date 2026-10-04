@@ -1669,3 +1669,4 @@ mod motion;
 mod pattern;
 mod profile_evidence;
 mod revolve;
+mod scale;

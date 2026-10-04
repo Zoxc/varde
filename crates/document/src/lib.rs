@@ -19,6 +19,7 @@ mod pattern;
 mod plane;
 mod removal;
 mod revolve;
+mod scale;
 #[cfg(test)]
 mod testing;
 
@@ -35,6 +36,7 @@ pub use pattern::{Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, Patter
 pub use plane::{FaceRef, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
+pub use scale::{MAX_SCALE_FACTOR, Scale, ScaleError, ScaleFactor};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -296,7 +298,10 @@ impl Document {
     /// revolve's edge is; and every align's body is one a feature before
     /// it makes, its sides shaped and its values as [`Align::check_own`]
     /// wants them, its moved side's references on that body, its target
-    /// side's on others, each named as a move's axis is. A
+    /// side's on others, each named as a move's axis is; and every scale's
+    /// bodies are bodies features before it make, its factors or edge
+    /// length as [`Scale::check_own`] wants them, its edge on one of
+    /// them, its point and edge named as a move's axis is. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
@@ -390,6 +395,13 @@ impl Document {
                         .map_err(|why| CheckError::Align(id, why))?;
                     self.check_align(index, align)
                         .map_err(|why| CheckError::Align(id, why))?;
+                }
+                FeatureKind::Scale(scale) => {
+                    scale
+                        .check_own(&design)
+                        .map_err(|why| CheckError::Scale(id, why))?;
+                    self.check_scale(index, scale)
+                        .map_err(|why| CheckError::Scale(id, why))?;
                 }
             }
         }
@@ -640,6 +652,34 @@ impl Document {
         Ok(())
     }
 
+    /// Checks what a scale, feature `index`, names: its bodies there and
+    /// made by features before it, as a move's, and its point and its
+    /// edge length's edge named as a move's axis is
+    /// ([`Document::check_motion`]).
+    fn check_scale(&self, index: usize, scale: &Scale) -> Result<(), ScaleError> {
+        if let Some(&body) = (scale.bodies.iter()).find(|&&body| !self.made_before(index, body)) {
+            return Err(ScaleError::Body(body));
+        }
+        self.check_scale_refs(index, scale)
+    }
+
+    /// Checks the point and the edge of `scale` as a scale at feature
+    /// `index` (at the end for a new one) would name them: each one's
+    /// body and its faces' makers before it, as [`Document::check`] has
+    /// them. For a panel keeping what it sets up one the document takes;
+    /// their own parts are [`Scale::check_own`]'s.
+    pub fn check_scale_refs(&self, index: usize, scale: &Scale) -> Result<(), ScaleError> {
+        for (body, makers) in scale.named() {
+            if !self.body_before(index, body) {
+                return Err(ScaleError::RefBody(body));
+            }
+            if let Some(&maker) = (makers.iter()).find(|&&m| !self.maker_before(index, m)) {
+                return Err(ScaleError::RefMaker(maker));
+            }
+        }
+        Ok(())
+    }
+
     /// Whether `body` is there and made by a feature before feature
     /// `index`.
     fn made_before(&self, index: usize, body: BodyId) -> bool {
@@ -738,6 +778,8 @@ pub enum CheckError {
     Pattern(FeatureId, MotionError),
     /// An align feature is wrong, see [`AlignError`].
     Align(FeatureId, AlignError),
+    /// A scale feature is wrong, see [`ScaleError`].
+    Scale(FeatureId, ScaleError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -786,6 +828,7 @@ impl fmt::Display for CheckError {
             | CheckError::Mirror(id, why)
             | CheckError::Pattern(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Align(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Scale(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -814,6 +857,7 @@ impl std::error::Error for CheckError {
                 Some(why)
             }
             CheckError::Align(_, why) => Some(why),
+            CheckError::Scale(_, why) => Some(why),
             _ => None,
         }
     }

@@ -351,3 +351,21 @@ fn a_count_is_a_whole_number_within_its_bounds() {
         "must be a whole number"
     );
 }
+
+#[test]
+fn a_factor_is_a_number_from_one_over_its_bound_to_it() {
+    let factor = Ask::factor(LengthUnit::Mm, 1e3);
+    assert_close("2", &factor, 2.0);
+    assert_close("25.4", &factor, 25.4);
+    assert_close("1000", &factor, 1e3);
+    assert_close("0.001", &factor, 1e-3);
+    assert_close("50 mm / 20 mm", &factor, 2.5);
+    assert!(matches!(kind("1001", &factor), ErrorKind::TooLarge { .. }));
+    assert!(matches!(
+        kind("0.0009", &factor),
+        ErrorKind::TooSmall { .. }
+    ));
+    assert!(evaluate("0", &factor).is_err());
+    assert!(evaluate("-2", &factor).is_err());
+    assert!(matches!(kind("2 mm", &factor), ErrorKind::Wrong { .. }));
+}

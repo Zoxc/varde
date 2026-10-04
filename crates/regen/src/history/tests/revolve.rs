@@ -775,6 +775,7 @@ fn a_revolve_draft_is_answered_from_the_cache() {
             uncut: Vec::new(),
             reference: None,
             datums: None,
+            scale: None,
         })
     );
     assert_ne!(first.mesh, committed.mesh);

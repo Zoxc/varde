@@ -2696,3 +2696,122 @@ fn a_damaged_align_is_refused_or_checked() {
         read(&changed);
     }
 }
+
+/// The example plate scaled about its top corner by 2.5, 1.25 and 1 per
+/// axis, then along the axis of its top edge on the side of curve 0 so
+/// that edge is 77.75 long: the document.
+fn scaled_plate() -> Document {
+    use glam::DVec3;
+    use varde_document::{EdgeRef, FaceKey, PartKey, PointRef, Scale, ScaleFactor};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let document = editor.document();
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let design = document.design();
+    let key = |part| FaceKey {
+        feature: maker,
+        part,
+        instance: 0,
+    };
+    let mut faces = [
+        key(PartKey::EndCap),
+        key(PartKey::Side { curve: 0 }),
+        key(PartKey::Side { curve: 1 }),
+    ];
+    faces.sort();
+    let factor = |text| Value::new(text, &Scale::factor_ask(&design)).unwrap();
+    let per_axis = Scale {
+        bodies: vec![plate],
+        about: PointRef::Corner {
+            body: plate,
+            faces,
+            near: DVec3::new(30.0, 17.25, 10.0),
+        },
+        factor: ScaleFactor::PerAxis([factor("2.5"), factor("1.25"), factor("1")]),
+    };
+    editor
+        .apply(editor.document().add_feature(per_axis.into()))
+        .unwrap();
+    let mut faces = [key(PartKey::EndCap), key(PartKey::Side { curve: 0 })];
+    faces.sort();
+    let to_edge = Scale {
+        bodies: vec![plate],
+        about: PointRef::Origin,
+        factor: ScaleFactor::EdgeLength {
+            edge: EdgeRef {
+                body: plate,
+                faces,
+                near: DVec3::new(0.0, 20.0, 10.0),
+            },
+            length: Value::new("77.75", &Scale::length_ask(&design)).unwrap(),
+            axis_only: true,
+        },
+    };
+    editor
+        .apply(editor.document().add_feature(to_edge.into()))
+        .unwrap();
+    editor.document().clone()
+}
+
+/// Scales go through a file after an align, each read back as a scale
+/// in its place.
+#[test]
+fn scales_round_trip_after_an_align() {
+    use varde_document::FeatureKind;
+    let mut document = scaled_plate();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    // After an align.
+    let aligned = aligned_plates();
+    let mut editor = Editor::new(aligned);
+    for feature in &document.features()[2..] {
+        editor
+            .apply(editor.document().add_feature(feature.kind.clone()))
+            .unwrap();
+    }
+    document = editor.document().clone();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    let n = read.features().len();
+    assert!(matches!(read.features()[n - 3].kind, FeatureKind::Align(_)));
+    assert!(matches!(read.features()[n - 1].kind, FeatureKind::Scale(_)));
+}
+
+/// A record whose scale was changed on disk to what the document refuses
+/// (a factor not what its text gives or out of range, an edge length out
+/// of bounds, a point out of bounds) is refused as it's read, never a
+/// panic; as written, it reads.
+#[test]
+fn a_tampered_scale_is_refused() {
+    let raw = record_msgpack(&scaled_plate());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let float = |x: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&x.to_bits().to_be_bytes());
+        bytes
+    };
+    let swap = |was: f64, now: f64| {
+        let (was, now) = (float(was), float(now));
+        let at = (raw.windows(was.len()))
+            .position(|window| window == was)
+            .unwrap_or_else(|| panic!("{was:?} isn't in the record"));
+        let mut changed = raw.clone();
+        changed[at..at + now.len()].copy_from_slice(&now);
+        changed
+    };
+    for (was, now) in [
+        (2.5, f64::NAN),
+        (2.5, 2.25),
+        (1.25, 2e3),
+        (77.75, 0.0),
+        (77.75, f64::INFINITY),
+        (17.25, f64::NAN),
+        (17.25, 3e6),
+    ] {
+        let decoded = from_msgpack::<Document>(&swap(was, now));
+        assert!(decoded.is_err(), "{was} as {now} was taken");
+    }
+}

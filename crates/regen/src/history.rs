@@ -50,7 +50,12 @@
 //! past the coordinate limit, fails it before anything is copied. An
 //! align moves its body as a move does, by the motion taking the point
 //! and directions picked on it onto those picked on the target, found
-//! as the features before it leave their bodies (see `align`).
+//! as the features before it leave their bodies (see `align`). A scale
+//! scales its bodies as a move moves them, about its point (found as an
+//! align's) by its factors, or by the factor that gives its edge (found
+//! and measured on its body) its typed length; a factor out of range, or
+//! a body the scale would take past the coordinate limit, fails it
+//! before anything is scaled (see `scale`).
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -68,7 +73,8 @@
 //! its secondary parallel to its primary, both of them); the others (a
 //! face or body gone, a face too far out, a sketch not placed or not
 //! there, an axis not found, a combine's or a move's body with no solid,
-//! a body moved out of range) have nothing to show.
+//! a body moved out of range, a scale's point or edge not found or its
+//! edge's length or direction refused) have nothing to show.
 //!
 //! Every result goes through the [`Cache`], keyed by what it depends on,
 //! so only what an edit changes runs again.
@@ -100,6 +106,7 @@ mod align;
 mod combine;
 mod motion;
 mod pattern;
+mod scale;
 
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.
@@ -150,6 +157,10 @@ pub struct Evaluation {
     /// found, in the document's order. For the app to draw a draft's
     /// points and directions where regenerating found them.
     pub aligned: Vec<(FeatureId, crate::AlignDatums)>,
+    /// Each scale that found its point or its edge, and what it found,
+    /// in the document's order. For the app to show a draft's edge's
+    /// length and fitted faces, and draw its point.
+    pub scaled: Vec<(FeatureId, crate::ScaleFound)>,
 }
 
 impl Evaluation {
@@ -344,7 +355,8 @@ pub(crate) fn evaluate_within(
                     | FeatureKind::Move(_)
                     | FeatureKind::Mirror(_)
                     | FeatureKind::Pattern(_)
-                    | FeatureKind::Align(_) => unreachable!("matched apart"),
+                    | FeatureKind::Align(_)
+                    | FeatureKind::Scale(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -414,6 +426,18 @@ pub(crate) fn evaluate_within(
                     document,
                     feature.id,
                     align,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::Scale(scale) => {
+                if let Err(failed) = scale::evaluate_scale(
+                    document,
+                    feature.id,
+                    scale,
                     &tolerance,
                     &mut evaluation,
                     cache,

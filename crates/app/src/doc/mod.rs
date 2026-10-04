@@ -770,6 +770,8 @@ impl Doc {
                     | FeatureKind::Pattern(_)
                     | FeatureKind::Align(_),
                 ) => self.edit_motion(id),
+                // No panel yet: scales are made by the document's commands.
+                Some(FeatureKind::Scale(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

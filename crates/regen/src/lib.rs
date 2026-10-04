@@ -187,6 +187,56 @@ pub struct Drafted {
     /// to work. Checked on the wire as [`Drafted::reference`] is
     /// ([`AlignDatums::fits`]).
     pub datums: Option<Box<AlignDatums>>,
+    /// For a scale, what it found, as [`Evaluation::scaled`] has it,
+    /// whether or not the draft goes on to work. Checked on the wire
+    /// ([`ScaleFound::fits`]).
+    pub scale: Option<Box<ScaleFound>>,
+}
+
+/// What a scale found, on its bodies as the features before it leave
+/// them: the point it scales about, its edge length's edge's length
+/// (before the scale, in millimetres), the factors along X, Y and Z
+/// it scales by, each `None` where it wasn't found (the factors also
+/// where they'd be out of range), and how many faces of the scaled bodies
+/// are fitted (stand for a surface they're only within the fit tolerance
+/// of): a scale up stretches their distance from it by its largest
+/// factor, which the panel says.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ScaleFound {
+    pub centre: Option<[f64; 3]>,
+    pub length: Option<f64>,
+    pub factors: Option<[f64; 3]>,
+    pub fitted: u32,
+}
+
+impl ScaleFound {
+    /// Whether the workers' wire takes it: at least one of its point,
+    /// length and factors there, its point within [`MAX_REFERENCE`] of
+    /// zero and finite, its length finite and not negative, its factors
+    /// finite and above zero.
+    pub fn fits(&self) -> bool {
+        (self.centre.is_some() || self.length.is_some() || self.factors.is_some())
+            && self.centre.is_none_or(ScaleFound::centre_fits)
+            && self.length.is_none_or(ScaleFound::length_fits)
+            && self.factors.is_none_or(ScaleFound::factors_fit)
+    }
+
+    /// Whether the wire takes `centre` as a scale's point.
+    pub(crate) fn centre_fits(centre: [f64; 3]) -> bool {
+        centre
+            .iter()
+            .all(|x| x.is_finite() && x.abs() <= MAX_REFERENCE)
+    }
+
+    /// Whether the wire takes `length` as a scale's edge's length.
+    pub(crate) fn length_fits(length: f64) -> bool {
+        length.is_finite() && length >= 0.0
+    }
+
+    /// Whether the wire takes `factors` as a scale's.
+    pub(crate) fn factors_fit(factors: [f64; 3]) -> bool {
+        factors.iter().all(|f| f.is_finite() && *f > 0.0)
+    }
 }
 
 /// One side of an align as regenerating found it, on the bodies as the
@@ -357,6 +407,10 @@ impl Request {
 
 /// The answer to a [`Request`].
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one answer a regeneration, moved whole: a model's is the one that matters"
+)]
 pub enum Response {
     Regenerated {
         generation: Generation,
@@ -496,53 +550,50 @@ impl Regenerator {
         let Some(draft) = draft else {
             return self.model(document, exclude, None, inspect);
         };
-        let (error, geometry, touched, reference, datums) = match applied(document, draft) {
-            Ok((drafted, feature)) => {
-                let mut evaluation = evaluate(&drafted, &mut self.cache);
-                let touched = (evaluation.touched.iter())
-                    .find(|(id, _)| *id == feature)
+        let mut drafted = Drafted {
+            revision: draft.revision,
+            error: None,
+            geometry: None,
+            touched: None,
+            uncut: Vec::new(),
+            reference: None,
+            datums: None,
+            scale: None,
+        };
+        match applied(document, draft) {
+            Ok((with_draft, feature)) => {
+                let mut evaluation = evaluate(&with_draft, &mut self.cache);
+                let of = |id: &FeatureId| *id == feature;
+                drafted.touched = (evaluation.touched.iter())
+                    .find(|(id, _)| of(id))
                     .map(|(_, touched)| touched.clone());
-                let reference = (evaluation.references.iter())
-                    .find(|(id, _)| *id == feature)
+                drafted.reference = (evaluation.references.iter())
+                    .find(|(id, _)| of(id))
                     .map(|(_, [point, along])| Box::new([point.to_array(), along.to_array()]));
-                let datums = (evaluation.aligned.iter())
-                    .find(|(id, _)| *id == feature)
+                drafted.datums = (evaluation.aligned.iter())
+                    .find(|(id, _)| of(id))
                     .map(|(_, datums)| Box::new(*datums));
+                drafted.scale = (evaluation.scaled.iter())
+                    .find(|(id, _)| of(id))
+                    .map(|(_, found)| Box::new(*found));
                 match (evaluation.failed.iter()).position(|failed| failed.feature == feature) {
                     Some(at) => {
                         let failed = evaluation.failed.swap_remove(at);
-                        (failed.message, failed.geometry, touched, reference, datums)
+                        drafted.error = Some(failed.message);
+                        drafted.geometry = failed.geometry;
                     }
                     None => {
-                        let uncut = (evaluation.uncut.iter())
+                        drafted.uncut = (evaluation.uncut.iter())
                             .find(|(id, _)| *id == feature)
                             .map(|(_, uncut)| uncut.clone())
                             .unwrap_or_default();
-                        let done = Drafted {
-                            revision: draft.revision,
-                            error: None,
-                            geometry: None,
-                            touched,
-                            uncut,
-                            reference,
-                            datums,
-                        };
-                        return self.draw(&drafted, evaluation, exclude, Some(done), inspect);
+                        return self.draw(&with_draft, evaluation, exclude, Some(drafted), inspect);
                     }
                 }
             }
-            Err(error) => (error, None, None, None, None),
-        };
-        let failed = Drafted {
-            revision: draft.revision,
-            error: Some(error),
-            geometry,
-            touched,
-            uncut: Vec::new(),
-            reference,
-            datums,
-        };
-        self.model(document, exclude, Some(failed), inspect)
+            Err(error) => drafted.error = Some(error),
+        }
+        self.model(document, exclude, Some(drafted), inspect)
     }
 
     /// The model of `document`.

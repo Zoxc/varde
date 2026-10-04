@@ -648,6 +648,14 @@ impl Editor {
                                 value.pin_units(&angle_ask);
                             }
                         }
+                        // Factors have no unit, but are pinned as a
+                        // pattern's count is: a bare number added to a
+                        // length inside one took the units.
+                        FeatureKind::Scale(scale) => {
+                            for (value, ask) in scale.values_mut(&before) {
+                                value.pin_units(&ask);
+                            }
+                        }
                         // No values.
                         FeatureKind::Combine(_) | FeatureKind::Mirror(_) => {}
                     }

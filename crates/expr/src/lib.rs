@@ -247,6 +247,13 @@ impl Ask {
         }
     }
 
+    /// A factor: a plain number from `1 / max` to `max` (`max` at least
+    /// 1), such as a scale's. It has no unit, but a bare number added to
+    /// a length inside it takes `units`, as any number's does.
+    pub fn factor(units: LengthUnit, max: f64) -> Ask {
+        Ask::number(units, max).positive().at_least(1.0 / max)
+    }
+
     /// The same, but the value must be above zero.
     pub fn positive(self) -> Ask {
         Ask {

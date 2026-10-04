@@ -443,6 +443,7 @@ pub fn decode_reply(
             let model = check_merged(&merged)
                 .and_then(|()| check_reference(draft.as_ref()))
                 .and_then(|()| check_datums(draft.as_ref()))
+                .and_then(|()| check_scale(draft.as_ref()))
                 .and_then(|()| decode_placements(&placements))
                 .and_then(|placements| Ok((placements, decode_bodies(&bodies)?)))
                 .and_then(|(placements, bodies)| {
@@ -581,6 +582,15 @@ fn check_reference(draft: Option<&Drafted>) -> Result<(), Error> {
 fn check_datums(draft: Option<&Drafted>) -> Result<(), Error> {
     match draft.and_then(|draft| draft.datums.as_deref()) {
         Some(datums) if !datums.fits() => Err(Error::Reference),
+        _ => Ok(()),
+    }
+}
+
+/// Checks what a scale's draft found, if it has it, as
+/// [`ScaleFound::fits`](crate::ScaleFound::fits) says.
+fn check_scale(draft: Option<&Drafted>) -> Result<(), Error> {
+    match draft.and_then(|draft| draft.scale.as_deref()) {
+        Some(found) if !found.fits() => Err(Error::Reference),
         _ => Ok(()),
     }
 }
@@ -778,8 +788,9 @@ pub enum Error {
     Picking(PickingError),
     /// A failure's geometry isn't one, see [`ErrorGeometry::from_parts`].
     Geometry(GeometryError),
-    /// A draft's axis or plane, or an align draft's points and
-    /// directions, aren't ones, see [`MAX_REFERENCE`](crate::MAX_REFERENCE).
+    /// A draft's axis or plane, an align draft's points and directions,
+    /// or what a scale's draft found, aren't ones, see
+    /// [`MAX_REFERENCE`](crate::MAX_REFERENCE).
     Reference,
     /// An export's bodies came in this many parts instead of one.
     ExportParts(usize),

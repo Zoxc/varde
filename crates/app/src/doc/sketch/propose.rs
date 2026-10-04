@@ -194,7 +194,8 @@ pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sket
         | FeatureKind::Move(_)
         | FeatureKind::Mirror(_)
         | FeatureKind::Pattern(_)
-        | FeatureKind::Align(_) => None,
+        | FeatureKind::Align(_)
+        | FeatureKind::Scale(_) => None,
     }
 }
 

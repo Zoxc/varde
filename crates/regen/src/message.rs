@@ -107,6 +107,7 @@ pub(crate) enum Moving {
     Mirror,
     Pattern,
     Align,
+    Scale,
 }
 
 impl Moving {
@@ -117,6 +118,7 @@ impl Moving {
             Moving::Mirror => "mirroring",
             Moving::Pattern => "patterning",
             Moving::Align => "aligning",
+            Moving::Scale => "scaling",
         }
     }
 }
@@ -136,6 +138,12 @@ pub(crate) fn moving(moving: Moving, body: &str, error: KernelError) -> String {
     let doing = moving.doing();
     match error {
         KernelError::TooComplex => format!("{doing} {body} is too complex to work out"),
+        // A scale down can take detail under the resolution, a scale up
+        // or down round coordinates as a move does.
+        KernelError::Invalid(_) if moving == Moving::Scale => format!(
+            "scaling {body} leaves no clean solid: parts of it come too close together, or \
+             get too small, for the tolerance; try a finer tolerance"
+        ),
         // Rounding brought patches a hair closer, within the resolution.
         KernelError::Invalid(_) => format!(
             "{doing} {body} leaves no clean solid: rounding brings parts of it too close \
@@ -206,6 +214,24 @@ pub(crate) fn align_ref(which: AlignRef, side: Side, why: &str) -> String {
     format!("{what} {} {why}", side.on())
 }
 
+/// Which reference of a feature a message is about: one of an align's,
+/// or a scale's point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Whose {
+    Align(AlignRef, Side),
+    ScaleCentre,
+}
+
+/// Why the reference `whose` isn't there, `why` saying what's wrong
+/// with it, as [`align_ref`] words an align's: "its point wasn't found"
+/// for a scale's.
+pub(crate) fn reference(whose: Whose, why: &str) -> String {
+    match whose {
+        Whose::Align(which, side) => align_ref(which, side, why),
+        Whose::ScaleCentre => format!("its point {why}"),
+    }
+}
+
 /// Why an align's reference on the target fails: its body was merged
 /// into the body the align moves.
 pub(crate) const ALIGN_ON_MOVED: &str =
@@ -232,6 +258,39 @@ pub(crate) fn align_too_far(side: Side) -> String {
 /// Why an align fails where the document should have refused it (its
 /// directions don't pair, or its offset or turn is out of range).
 pub(crate) const ALIGN_MALFORMED: &str = "its directions, offset or turn can't be used";
+
+/// Why a scale fails: its edge length's edge isn't on its body as the
+/// features before it leave it.
+pub(crate) const SCALE_EDGE_NOT_FOUND: &str = "its edge wasn't found";
+
+/// Why a scale fails: its edge is no longer than the resolution, so no
+/// factor can be told from it.
+pub(crate) const SCALE_EDGE_SHORT: &str =
+    "its edge is too short to scale by: no longer than the tolerance can tell";
+
+/// Why a scale fails: the typed length over the edge's is a factor out
+/// of range.
+pub(crate) const SCALE_TOO_FAR: &str =
+    "the length is too far from the edge's: it would scale by more than a thousand times";
+
+/// Why a scale along its edge's axis only fails: the edge isn't
+/// straight.
+pub(crate) const SCALE_EDGE_NOT_STRAIGHT: &str =
+    "its edge isn't straight, so it can't scale along its axis only";
+
+/// Why a scale along its edge's axis only fails: the edge is straight
+/// but not along a world axis (an edit before it tilted it).
+pub(crate) const SCALE_EDGE_SLANTED: &str =
+    "its edge isn't along an axis any more, so it can't scale along it only";
+
+/// Why a scale fails where the document should have refused it: a
+/// factor out of range.
+pub(crate) const SCALE_FACTOR: &str = "a factor is out of range";
+
+/// Why a scale fails: the kernel gave up measuring its edge.
+pub(crate) fn scale_measure(error: varde_kernel::measure::MeasureError) -> String {
+    format!("its edge can't be measured: {error}")
+}
 
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

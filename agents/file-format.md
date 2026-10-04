@@ -307,7 +307,12 @@ and a picked point, the middle of an edge or the centre of an edge as a
 revolve's; and an optional primary and secondary direction: an origin
 axis, a face's normal as a sketch's face, or an axis as a move's), the
 flip, and an optional offset (a typed length and its value in
-millimetres) and turn (an angle as a revolve's). A
+millimetres) and turn (an angle as a revolve's); or a scale,
+`crates/document/src/scale.rs`: the bodies' ids (sorted), the point it
+scales about (a point as an align's) and its factor: uniform (a typed
+number and its value), per axis (three, X, Y and Z) or an edge length
+(an edge as a revolve's, a typed length and its value in millimetres,
+and whether it scales along the edge's axis only). A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -356,6 +361,9 @@ and only with a primary), its flip, offset and turn only with
 primaries, its offset and turn as a move's, its corners' keys sorted
 and different, its moved side's references on the moved body and none
 the origin's, its target side's on other bodies, each named as a move's
+axis; a scale's bodies as a move's, its factors their expressions give
+from 0.001 to 1000, its edge length a length as an extrude's distance,
+its edge on one of its bodies, its point and edge named as a move's
 axis;
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
