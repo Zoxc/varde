@@ -172,7 +172,9 @@ pub(crate) fn viewport<'a>(
     let knobs = operating.as_ref().map(|operating| {
         let knobs = match operating {
             Operating::Extrude(extruding) => extruding.knobs(camera, mesh, &opacity),
-            Operating::Revolve(_) | Operating::Motion(_) => None,
+            Operating::Revolve(_) => None,
+            // A split's pieces' labels.
+            Operating::Motion(moving) => moving.labels(camera),
             // The distance's label, in the knobs' place.
             Operating::Measure(measuring) => measuring.label(camera),
         };

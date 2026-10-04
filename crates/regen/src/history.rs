@@ -108,6 +108,8 @@ mod motion;
 mod pattern;
 pub(crate) mod scale;
 mod split;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use split::split_by_booleans;
 
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.

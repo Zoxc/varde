@@ -13,7 +13,7 @@ use varde_view::{
     AlignRole, ModelHighlight, ModelPicking, MotionPick, PanelHover, Pick, Picked, Picks, Selection,
 };
 
-use super::Doc;
+use super::{Doc, MotionSession};
 
 /// What's hovered and selected in the model shown, and its highlight.
 #[derive(Debug, Default)]
@@ -300,6 +300,11 @@ impl Doc {
             MotionPick::Point => true,
             _ => false,
         });
+        // A split's regions or line are picked on its sketches, not on
+        // the model.
+        if (self.motion.as_ref()).is_some_and(MotionSession::picks_sketches) {
+            return None;
+        }
         self.picks().then(|| ModelPicking {
             index: self.feed.pick_index(),
             hovered: self.pick.hover().map(|pick| pick.target),

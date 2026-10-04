@@ -66,6 +66,11 @@ pub struct Naming {
     /// it touched, as they were then, or for a join only the first, which
     /// it merges the others into.
     touched: Vec<(u64, Vec<BodyId>)>,
+    /// The new body of each split at or after the feature keeping both
+    /// sides, and the body it splits, in the document's order: the model
+    /// shown has a face of that body on the new body, which at the
+    /// feature is still on the body.
+    split_from: Vec<(BodyId, BodyId)>,
 }
 
 /// A copy faces can be named as: its instance ([`FaceKey`]'s), and how
@@ -359,7 +364,14 @@ impl Naming {
             .map(|body| (body.created_by.get(), body.id))
             .collect();
         made.sort_unstable();
+        let split_from = (later.iter())
+            .filter_map(|feature| match &feature.kind {
+                FeatureKind::Split(split) => Some((split.new_body?, split.body)),
+                _ => None,
+            })
+            .collect();
         Self {
+            split_from,
             bodies,
             features,
             merged: shown.merged.to_vec(),
@@ -478,6 +490,7 @@ impl Naming {
     /// are more than one body where the history stops, so which it's on
     /// there can't be told.
     fn body_of(&self, shown: BodyId, key: &FaceKey) -> Option<BodyId> {
+        let shown = self.unsplit(shown);
         let maker = key.feature;
         let lookup = |list: &[(u64, BodyId)]| {
             (list.binary_search_by_key(&maker, |(feature, _)| *feature)).map(|at| list[at].1)
@@ -516,6 +529,21 @@ impl Naming {
             return None;
         }
         Some(first)
+    }
+
+    /// The body `body` is part of where the history stops: the body a
+    /// split at or after the feature cut it from, if it's that split's
+    /// new body (and so on back through splits of splits), else itself.
+    pub fn unsplit(&self, body: BodyId) -> BodyId {
+        let mut body = body;
+        // Each step goes to an earlier split: at most one per split.
+        for _ in 0..self.split_from.len() {
+            match self.split_from.iter().find(|(new, _)| *new == body) {
+                Some(&(_, split)) => body = split,
+                None => break,
+            }
+        }
+        body
     }
 
     /// The reference to edge `edge` of `index`'s model picked at `near`,

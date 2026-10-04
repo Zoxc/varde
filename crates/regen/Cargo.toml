@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# `testing`: other crates' tests split by two booleans in place of the
+# kernel's split, which isn't built yet.
+testing = []
+
 [dependencies]
 varde-document.workspace = true
 varde-lane.workspace = true

@@ -47,7 +47,7 @@ use crate::profile::{chain, profile};
 /// kernel's is built.
 type Splitter = fn(&Solid, &Solid, &Tolerance, &Budget) -> Result<(Solid, Solid), Failure>;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 thread_local! {
     /// The split a test asks for in place of the kernel's, on its own
     /// thread.
@@ -57,11 +57,33 @@ thread_local! {
 
 /// The split to run: the kernel's, or the one a test set.
 fn splitter() -> Splitter {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     if let Some(splitter) = SPLITTER.get() {
         return splitter;
     }
     varde_kernel::split
+}
+
+/// The kernel's split as two booleans, the front `body ∩ tool` and the
+/// back `body − tool`: what regeneration does with the pieces is tested
+/// with it until the kernel's is built.
+#[cfg(any(test, feature = "testing"))]
+pub(crate) fn by_booleans(
+    body: &Solid,
+    tool: &Solid,
+    tol: &Tolerance,
+    budget: &Budget,
+) -> Result<(Solid, Solid), Failure> {
+    use varde_kernel::Op;
+    let front = varde_kernel::boolean(body, tool, Op::Intersection, tol, budget)?;
+    let back = varde_kernel::boolean(body, tool, Op::Difference, tol, budget)?;
+    Ok((front, back))
+}
+
+/// Splits on this thread by [`by_booleans`] from now on.
+#[cfg(any(test, feature = "testing"))]
+pub(crate) fn split_by_booleans() {
+    SPLITTER.set(Some(by_booleans));
 }
 
 /// The profile curve id a chain tool's rectangle is named by: past every

@@ -721,6 +721,7 @@ impl Doc {
                 | Look::StartCircularPattern
                 | Look::StartAlign
                 | Look::StartScale
+                | Look::StartSplit
                 | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
@@ -740,6 +741,7 @@ impl Doc {
                 | Look::StartCircularPattern
                 | Look::StartAlign
                 | Look::StartScale
+                | Look::StartSplit
                 | Look::EditFeature(_)
         ) {
             self.measure = None;
@@ -772,10 +774,9 @@ impl Doc {
                     | FeatureKind::Mirror(_)
                     | FeatureKind::Pattern(_)
                     | FeatureKind::Align(_)
-                    | FeatureKind::Scale(_),
+                    | FeatureKind::Scale(_)
+                    | FeatureKind::Split(_),
                 ) => self.edit_motion(id),
-                // No panel yet: splits are made by the document's commands.
-                Some(FeatureKind::Split(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
@@ -792,6 +793,7 @@ impl Doc {
             }
             Look::StartAlign => self.start_motion(varde_view::MotionKind::Align),
             Look::StartScale => self.start_motion(varde_view::MotionKind::Scale),
+            Look::StartSplit => self.start_motion(varde_view::MotionKind::Split),
             Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),

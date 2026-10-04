@@ -73,8 +73,9 @@ pub use measure::{
 };
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, MotionField, MotionKind, MotionLook,
-    MotionPick, MotionState, PatternMode, ScaleMode, ScaleView, align_info, axis_name,
-    direction_name, pattern_copies, plane_name, point_name, scale_info,
+    MotionPick, MotionState, PatternMode, ScaleMode, ScaleView, SketchLines, SplitMode, SplitPiece,
+    SplitView, align_info, axis_name, direction_name, pattern_copies, plane_name, point_name,
+    scale_info, split_info,
 };
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
@@ -466,6 +467,9 @@ pub enum Look {
     /// Starts setting up a new scale, its bodies from what's selected in
     /// the model if anything is, as [`Look::StartMove`] a move.
     StartScale,
+    /// Starts setting up a new split, its body from what's selected in
+    /// the model if anything is, as [`Look::StartMove`] a move.
+    StartSplit,
     /// Changes the move, mirror, pattern, align or scale being set up, see [`MotionLook`]: it
     /// isn't in the document until [`Edit::CommitMotion`].
     Motion(MotionLook),

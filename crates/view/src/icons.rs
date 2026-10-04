@@ -193,6 +193,11 @@ icons! {
     ScUniform => r#"<rect class="r" x="3" y="3" width="18" height="18" rx="1.5" stroke-dasharray="2 1.8"/><rect x="3" y="12" width="9" height="9" rx="1"/><path class="a" d="M10 14l6.5-6.5M12.5 7.5h4v4"/>"#,
     ScAxes => r#"<rect class="r" x="3" y="10" width="18" height="9" rx="1.5" stroke-dasharray="2 1.8"/><rect x="3" y="10" width="9" height="9" rx="1"/><path class="a" d="M14 5.5h6.5M18 3l2.5 2.5L18 8"/>"#,
     ScEdge => r#"<rect x="3" y="10" width="12" height="11" rx="1"/><path class="r" d="M15 10h6" stroke-dasharray="1.6 1.6"/><path class="a" d="M3 5.5h18M3 3.5v4M21 3.5v4"/>"#,
+    // Not in the mock: a split's pieces, cut apart by a dashed line, the
+    // ones kept drawn and filled, one left out dashed.
+    SpBoth => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
+    SpFront => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="r" x="13.5" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
+    SpBack => r#"<rect class="r" x="3" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
     // The options' icons, drawn in one colour: flip, keep the tools.
     TkFlip => r#"<path d="M4 8h15M15.5 4.5L19 8l-3.5 3.5M20 16H5M8.5 12.5L5 16l3.5 3.5"/>"#,
     TkKeep => r#"<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
@@ -246,6 +251,9 @@ impl Icon {
             | Icon::ScUniform
             | Icon::ScAxes
             | Icon::ScEdge
+            | Icon::SpBoth
+            | Icon::SpFront
+            | Icon::SpBack
             | Icon::CatModify
             | Icon::CatSketchModify => IconCategory::Modify,
             Icon::Constrain

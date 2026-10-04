@@ -57,6 +57,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         hover: None,
         align: None,
         scale: None,
+        split: None,
     }
 }
 
@@ -515,4 +516,101 @@ fn a_scale_s_panel_has_its_point_modes_and_fields() {
         scale.info = Some("Body 1 ×2".to_owned());
     }
     assert_eq!(status_info(&state), "Body 1 ×2");
+}
+
+/// A split's view: the Body picked, its tool, both kept with the front
+/// keeping the id.
+fn split_view(tool: Option<(&str, Option<&str>)>) -> SplitView<'static> {
+    SplitView {
+        mode: SplitMode::Regions,
+        tool: tool.map(|(name, meta)| (name.to_owned(), meta.map(str::to_owned))),
+        body: Some("Body 1"),
+        original: Side::Front,
+        keep: Keep::Both,
+        later: None,
+        info: None,
+        candidates: Vec::new(),
+        source: None,
+        picked: SplitView::none_picked(),
+        lines: Vec::new(),
+        chain: None,
+        pieces: Vec::new(),
+    }
+}
+
+#[test]
+fn a_split_s_panel_has_its_body_tool_and_what_it_keeps() {
+    let mut state = state_of(MotionKind::Split, vec![body("Body 1")]);
+    state.reference = None;
+    state.split = Some(Box::new(split_view(Some(("Sketch 2", Some("2 regions"))))));
+    let shown = texts_of(&state);
+    let order = [
+        "New split",
+        "Body",
+        "Body 1",
+        "Split with",
+        "Face",
+        "Sketch 2",
+        "Keeps Body 1",
+        "Front",
+        "Keep",
+        "Both",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    for text in ["Body", "Region", "Line", "Back", "2 regions"] {
+        found(&shown, text);
+    }
+    // The tool's count beside its sketch.
+    let tool = found(&shown, "Sketch 2").bounds;
+    let count = found(&shown, "2 regions").bounds;
+    assert!((count.y - tool.y).abs() < 4.0 && count.x > tool.x);
+    assert!(!has(&shown, "Click regions of a sketch"));
+    assert!(!has(&shown, "Bodies") && !has(&shown, "Plane"));
+
+    // Picking its tool, with none yet: where to click.
+    state.picking = MotionPick::Tool;
+    state.split = Some(Box::new(split_view(None)));
+    found(&texts_of(&state), "Click regions of a sketch");
+
+    // The later features' warning, under which piece keeps the id.
+    if let Some(split) = &mut state.split {
+        split.later = Some("2 later features use Body 1: they'll get the back piece".to_owned());
+    }
+    let shown = texts_of(&state);
+    let warning = found(
+        &shown,
+        "2 later features use Body 1: they'll get the back piece",
+    );
+    assert!(warning.bounds.y > found(&shown, "Keeps Body 1").bounds.y);
+    assert!(warning.bounds.y < found(&shown, "Both").bounds.y);
+
+    assert_eq!(status_info(&state), "Body 1");
+    if let Some(split) = &mut state.split {
+        split.info = Some("Body 1 by XY".to_owned());
+    }
+    state.need = None;
+    assert_eq!(status_info(&state), "Body 1 by XY");
+    state.need = Some("pick the regions of a sketch to split with");
+    assert_eq!(
+        status_info(&state),
+        "pick the regions of a sketch to split with"
+    );
+}
+
+#[test]
+fn a_trim_s_kept_piece_keeps_the_id_whatever_the_original() {
+    let mut view = split_view(None);
+    view.original = Side::Front;
+    view.keep = Keep::Back;
+    assert_eq!(view.kept(), Side::Back);
+    view.keep = Keep::Both;
+    view.original = Side::Back;
+    assert_eq!(view.kept(), Side::Back);
+    view.original = Side::Front;
+    assert_eq!(view.kept(), Side::Front);
 }

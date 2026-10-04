@@ -23,28 +23,42 @@
 //! go to the panel's fields, so the preview and OK follow as for typed
 //! values. No handles while the axis is being picked, for a mirror, or
 //! in a document that can't be changed.
+//!
+//! A split's origin plane is drawn as a mirror's. While its tool is a
+//! sketch's regions, they're shaded as an extrude's (`regions.rs`), those
+//! picked filled; while it's a line, the sketches' curves are drawn (the
+//! line's curves picked in the selected colour). While its tool is
+//! picked, those take the left button: the region or curve under the
+//! cursor (hit tested on each sketch's plane, the nearest by depth) is
+//! hovered and a click picks or un-picks it, the model not picked
+//! meanwhile. The pieces the preview shows are labelled with their
+//! bodies' names ([`Moving::labels`]).
 
 use std::f64::consts::{PI, TAU};
 use std::sync::{Arc, LazyLock};
 
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
-use iced::{Point, Rectangle, mouse};
-use varde_document::{Axis3, MAX_COORD, OriginPlane};
+use iced::widget::{container, text};
+use iced::{Element, Point, Rectangle, mouse};
+use varde_document::{Axis3, FeatureId, MAX_COORD, OriginPlane, Placement};
 use varde_expr::Unit;
 use varde_kernel::Motion;
 use varde_render::{Camera, Colors, GridPlane, PointStyle, SketchLayer, Space as LayerSpace, Srgb};
-use varde_sketch::angle;
+use varde_sketch::{Id, angle};
 
+use super::regions::{self, Regions, grid_plane};
 use super::sketch::{line, srgba};
+use crate::anchors::Anchors;
 use crate::extrude::snap_step;
-use crate::hit::segment_distance;
+use crate::hit::{self, segment_distance};
 use crate::motion::{
-    AlignView, MotionField, MotionKind, MotionLook, MotionPick, MotionState, ScaleView,
+    AlignView, MotionField, MotionKind, MotionLook, MotionPick, MotionState, ScaleView, SplitMode,
+    SplitView,
 };
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
-use crate::theme::SketchColors;
+use crate::theme::{self, SketchColors};
 use crate::{Look, Message};
 
 /// How wide the axis and the plane's outline are drawn, in pixels.
@@ -62,6 +76,11 @@ const REACH_PAST: f64 = 1.25;
 const PLANE_FILL: f32 = 0.12;
 /// How wide an align's points are drawn, in pixels: the measure tool's.
 const ALIGN_POINT_RADIUS: f32 = 5.0;
+/// How wide a split's sketches' curves are drawn, the one hovered, and
+/// those picked for its line, in pixels: a revolve's lines'.
+const CURVE_WIDTH: f32 = 1.5;
+const HOVERED_CURVE_WIDTH: f32 = 3.0;
+const PICKED_CURVE_WIDTH: f32 = 2.5;
 
 /// How long the handles' arrows are, and the rings' radius, in pixels.
 const ARROW_PIXELS: f64 = 100.0;
@@ -130,6 +149,26 @@ pub(crate) struct Input {
     /// The handle under the cursor, if any.
     hover: Option<Grip>,
     drag: Option<Drag>,
+    /// A split's sketches' regions or curves.
+    split: SplitInput,
+}
+
+/// What the viewport keeps of a split's tool picked in its sketches: the
+/// region under the cursor and the base layer of the source's regions,
+/// and the curve under the cursor, with its sketch.
+#[derive(Default)]
+struct SplitInput {
+    regions: regions::Input,
+    curve: Option<(FeatureId, Id)>,
+}
+
+impl std::fmt::Debug for SplitInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SplitInput")
+            .field("region", &self.regions.hover)
+            .field("curve", &self.curve)
+            .finish()
+    }
 }
 
 impl Input {
@@ -354,7 +393,9 @@ impl<'a> Moving<'a> {
                 colors.selected
             };
             match self.state.kind {
-                MotionKind::Mirror => self.plane(&mut live, point, along, color),
+                MotionKind::Mirror | MotionKind::Split => {
+                    self.plane(&mut live, point, along, color);
+                }
                 _ => self.axis(&mut live, point, along, color, camera, bounds),
             }
         }
@@ -367,7 +408,156 @@ impl<'a> Moving<'a> {
         if let Some(scale) = &self.state.scale {
             scale_marks(&mut live, scale, scene, colors);
         }
+        if let Some(split) = &self.state.split {
+            let picking = self.split_picking();
+            if split.mode == SplitMode::Regions {
+                let regions = split_regions(split);
+                if picking == Some(SplitMode::Regions) {
+                    regions.live(input.split.regions.hover, colors, &mut live);
+                }
+                if regions.source().is_some() {
+                    let base = regions.base_layer(&input.split.regions, colors);
+                    return (base, live);
+                }
+            }
+            if split.mode == SplitMode::Line {
+                let hovered = input.split.curve.filter(|_| picking.is_some());
+                split_lines(&mut live, split, hovered, picking.is_some(), colors);
+            }
+        }
         (EMPTY.clone(), live)
+    }
+
+    /// The kind of a split's tool picked in its sketches, while one is:
+    /// regions or a line, which then take the left button.
+    fn split_picking(&self) -> Option<SplitMode> {
+        let split = self.state.split.as_ref()?;
+        let picking = self.state.picking == MotionPick::Tool && self.state.editable;
+        (picking && matches!(split.mode, SplitMode::Regions | SplitMode::Line))
+            .then_some(split.mode)
+    }
+
+    /// The curve of a split's sketches under the screen position `at`, and
+    /// its sketch: of those within [`HIT_PIXELS`] on each sketch's plane,
+    /// the nearest by depth.
+    fn curve_under(
+        &self,
+        split: &SplitView<'_>,
+        at: DVec2,
+        camera: &Camera,
+        bounds: Rectangle,
+    ) -> Option<(FeatureId, Id)> {
+        let mut nearest: Option<(f64, FeatureId, Id)> = None;
+        for candidate in &split.lines {
+            let Some(projector) =
+                Projector::new(camera, candidate.placement, bounds.width, bounds.height)
+            else {
+                continue;
+            };
+            let Some(cursor) = projector.cursor(at) else {
+                continue;
+            };
+            let tolerance = HIT_PIXELS * cursor.pixel;
+            let Some(curve) = hit::hit_curve(candidate.sketch, cursor.at, tolerance) else {
+                continue;
+            };
+            let depth = projector.depth(cursor.at);
+            if nearest.is_none_or(|(nearest, ..)| depth < nearest) {
+                nearest = Some((depth, candidate.feature, curve));
+            }
+        }
+        nearest.map(|(_, feature, curve)| (feature, curve))
+    }
+
+    /// Takes the mouse `event` while a split's tool is picked in its
+    /// sketches ([`Moving::split_picking`]): hovering and clicking the
+    /// region or curve under the cursor. `None` for what's left to the
+    /// camera: the left button pressed off them orbits.
+    fn split_mouse(
+        &self,
+        mode: SplitMode,
+        input: &mut SplitInput,
+        event: mouse::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+    ) -> Option<Action<Message>> {
+        let split = self.state.split.as_ref()?;
+        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
+        let regions = split_regions(split);
+        match event {
+            mouse::Event::CursorMoved { .. } => {
+                let over = cursor.position_over(bounds).map(local);
+                let (region, curve) = match mode {
+                    SplitMode::Regions => (
+                        over.and_then(|at| regions.region_under(at, camera, bounds)),
+                        None,
+                    ),
+                    _ => (
+                        None,
+                        over.and_then(|at| self.curve_under(split, at, camera, bounds)),
+                    ),
+                };
+                let changed = std::mem::replace(&mut input.regions.hover, region) != region
+                    || std::mem::replace(&mut input.curve, curve) != curve;
+                changed.then(Action::request_redraw)
+            }
+            mouse::Event::CursorLeft => {
+                let had = input.regions.hover.take().is_some() | input.curve.take().is_some();
+                had.then(Action::request_redraw)
+            }
+            mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                let at = local(cursor.position_over(bounds)?);
+                let look = match mode {
+                    SplitMode::Regions => {
+                        let (sketch, region) = regions.region_under(at, camera, bounds)?;
+                        MotionLook::SplitRegion { sketch, region }
+                    }
+                    _ => {
+                        let (sketch, curve) = self.curve_under(split, at, camera, bounds)?;
+                        MotionLook::SplitCurve { sketch, curve }
+                    }
+                };
+                Some(Action::publish(Message::Look(Look::Motion(look))).and_capture())
+            }
+            _ => None,
+        }
+    }
+
+    /// The labels of the pieces the preview of a split shows, each its
+    /// body's name in a chip at the middle of its box, seen by `camera`,
+    /// the one keeping the body's id in the accent: none while there are
+    /// none.
+    pub(crate) fn labels(&self, camera: &Camera) -> Option<Element<'a, Message>> {
+        let split = self.state.split.as_ref()?;
+        if split.pieces.is_empty() {
+            return None;
+        }
+        let layers = (split.pieces.iter())
+            .filter(|piece| piece.at.is_finite())
+            .map(|piece| {
+                let keeps = piece.keeps;
+                let chip = container(text(piece.name.clone()).size(12).style(
+                    move |theme: &iced::Theme| {
+                        let palette = theme::palette(theme);
+                        text::Style {
+                            color: Some(if keeps { palette.accent } else { palette.text }),
+                        }
+                    },
+                ))
+                .padding([1, 4])
+                .style(|theme| theme::glyph(theme, false));
+                let placement = Placement {
+                    origin: piece.at,
+                    ..OriginPlane::XY.placement()
+                };
+                Element::from(Anchors::new(
+                    *camera,
+                    placement,
+                    [(DVec2::ZERO, chip.into())],
+                ))
+            });
+        Some(iced::widget::stack(layers).into())
     }
 
     /// An align's points and directions, each side's: its point as a dot,
@@ -522,8 +712,12 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         hovered: bool,
     ) -> Option<Action<Message>> {
+        if let Some(mode) = self.split_picking() {
+            return self.split_mouse(mode, &mut input.split, event, bounds, cursor, camera);
+        }
         let Some(handles) = self.handles(input, camera, bounds) else {
-            *input = Input::default();
+            input.hover = None;
+            input.drag = None;
             return None;
         };
         let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
@@ -671,8 +865,13 @@ impl<'a> Moving<'a> {
         }
     }
 
-    /// The cursor over a handle, or dragging one.
+    /// The cursor over a handle, or dragging one; over a region or curve
+    /// a split's tool picks.
     pub(crate) fn mouse_interaction(&self, input: &Input) -> Option<mouse::Interaction> {
+        if self.split_picking().is_some() {
+            let over = input.split.regions.hover.is_some() || input.split.curve.is_some();
+            return over.then_some(mouse::Interaction::Pointer);
+        }
         if input.drag.is_some() {
             Some(mouse::Interaction::Grabbing)
         } else {
@@ -732,9 +931,67 @@ impl<'a> Moving<'a> {
     }
 
     /// Where its layers are drawn: the world's XY plane, as the measure
-    /// tool's, since it draws in the world.
+    /// tool's, since it draws in the world; a split's regions' source's
+    /// plane, whose regions its base layer draws.
     pub(crate) fn plane_of_layers(&self) -> GridPlane {
-        GridPlane::XY
+        (self.state.split.as_ref())
+            .filter(|split| split.mode == SplitMode::Regions)
+            .map_or(GridPlane::XY, |split| split_regions(split).plane())
+    }
+}
+
+/// A split's sketches whose regions show, and those picked.
+fn split_regions<'s, 'a>(split: &'s SplitView<'a>) -> Regions<'s, 'a> {
+    Regions {
+        candidates: &split.candidates,
+        source: split.source,
+        picked: split.picked,
+        panel: None,
+    }
+}
+
+/// Draws a split's line on `live`: while it's picked (`picking`), the
+/// curves of the sketches it may be of (construction ones dashed, the
+/// one `hovered` stronger), and the curves picked in the selected colour.
+fn split_lines(
+    live: &mut SketchLayer,
+    split: &SplitView<'_>,
+    hovered: Option<(FeatureId, Id)>,
+    picking: bool,
+    colors: SketchColors,
+) {
+    let picked = |feature: FeatureId, id: Id| {
+        split
+            .chain
+            .is_some_and(|(sketch, curves)| sketch == feature && curves.binary_search(&id).is_ok())
+    };
+    for candidate in &split.lines {
+        let Some(plane) = grid_plane(candidate.placement) else {
+            continue;
+        };
+        let space = LayerSpace::On(plane);
+        let sketch = candidate.sketch;
+        for entry in &sketch.curves {
+            let is_picked = picked(candidate.feature, entry.id);
+            let is_hovered = hovered == Some((candidate.feature, entry.id));
+            if !(picking || is_picked) {
+                continue;
+            }
+            let Some(points) = sketch.flatten(&entry.curve) else {
+                continue;
+            };
+            let (color, width) = if is_hovered {
+                (colors.hovered, HOVERED_CURVE_WIDTH)
+            } else if is_picked {
+                (colors.selected, PICKED_CURVE_WIDTH)
+            } else if entry.construction {
+                (colors.construction, CURVE_WIDTH)
+            } else {
+                (colors.curve, CURVE_WIDTH)
+            };
+            let dashed = entry.construction && !is_picked && !is_hovered;
+            live.polyline(space, &points, line(color, width, dashed));
+        }
     }
 }
 

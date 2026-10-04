@@ -14,29 +14,16 @@
 
 use glam::{DVec2, DVec3};
 use varde_document::{FaceRef, Keep, Mirror, Move, PlaneRef, Side, Split, SplitTool, Targets};
-use varde_kernel::{Budget, Failure, Op};
 use varde_sketch::Id;
 
 use super::motion::{add, block, failure, key_on, set};
 use super::*;
 use crate::Draft;
 
-/// The kernel's split as two booleans: what regeneration does with the
-/// pieces is tested with it until the kernel's is built.
-fn by_booleans(
-    body: &Solid,
-    tool: &Solid,
-    tol: &Tolerance,
-    budget: &Budget,
-) -> Result<(Solid, Solid), Failure> {
-    let front = varde_kernel::boolean(body, tool, Op::Intersection, tol, budget)?;
-    let back = varde_kernel::boolean(body, tool, Op::Difference, tol, budget)?;
-    Ok((front, back))
-}
-
-/// Splits on this test's thread by [`by_booleans`].
+/// Splits on this test's thread by two booleans (the front `a ∩ t`, the
+/// back `a − t`).
 fn with_booleans() {
-    super::super::split::SPLITTER.set(Some(by_booleans));
+    super::super::split::split_by_booleans();
 }
 
 /// `body` split by `tool`, both sides kept, the front keeping the id.

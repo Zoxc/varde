@@ -3,8 +3,10 @@
 //! Transform set), `Look::StartMirror` (the toolbar, the rail),
 //! `Look::StartPattern` (`P`, the toolbar, the rail),
 //! `Look::StartCircularPattern` (the rail), `Look::StartAlign` (the rail;
-//! an align's own parts are in `align`) or `Look::StartScale` (the rail's
-//! Modify set; a scale's own parts are in `scale`), or by editing one, picking its bodies as a
+//! an align's own parts are in `align`), `Look::StartScale` (the rail's
+//! Modify set; a scale's own parts are in `scale`) or `Look::StartSplit`
+//! (the rail's Modify set; a split's own parts are in `split`), or by
+//! editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
 //! one from the toolbar, or a model edge or face clicked, named as of the
@@ -34,12 +36,13 @@ use varde_kernel::Motion;
 use varde_regen::Summary;
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, CombineBody, ModelHighlight, MotionField, MotionKind,
-    MotionLook, MotionPick, MotionState, Naming, PanelHover, PatternMode, Pick, Picked, Unnamed,
-    axis_name, pattern_copies, plane_name,
+    MotionLook, MotionPick, MotionState, Naming, PanelHover, PatternMode, Pick, Picked, SplitMode,
+    Unnamed, axis_name, pattern_copies, plane_name,
 };
 
 use self::align::AlignSetup;
 use self::scale::ScaleSetup;
+use self::split::SplitSetup;
 use super::combine::pickable;
 use super::feed::Merges;
 use super::regions::TypedText;
@@ -87,6 +90,8 @@ pub(crate) struct MotionSession {
     pub(crate) align: AlignSetup,
     /// A scale's point, mode and edge.
     pub(crate) scale: ScaleSetup,
+    /// A split's tools and what it keeps.
+    pub(crate) split: SplitSetup,
     /// A pattern's Join to original: ticked to begin with, each body
     /// holding its copies, as the pattern stores by default (the UI
     /// mock's starts unticked; the user's decision is ticked); unticked,
@@ -133,13 +138,15 @@ struct Pivot {
 /// hovered and whether its row in the panel is, what clicks pick, and
 /// the bodies.
 /// An align's lit picks, the moved side's and the target's
-/// ([`Doc::align_lit`]), too.
+/// ([`Doc::align_lit`]), too; and whether a split's tool body is picked,
+/// which lights the body hovered whole.
 type Built = (
     u64,
     Option<(Picked, bool)>,
     MotionPick,
     Vec<BodyId>,
     [Vec<Picked>; 2],
+    bool,
 );
 
 /// An edited pattern's spacing or angle as stored, and the mode, Flip
@@ -263,9 +270,11 @@ impl MotionSession {
             MotionKind::Align if bodies.len() == 1 => {
                 MotionPick::Align(AlignSlot::new(AlignSide::Moved, AlignRole::Point))
             }
+            // A split splits one body, then picks its tool.
+            MotionKind::Split if !bodies.is_empty() => MotionPick::Tool,
             _ => MotionPick::Bodies,
         };
-        if kind == MotionKind::Align {
+        if matches!(kind, MotionKind::Align | MotionKind::Split) {
             bodies.truncate(1);
         }
         let (copies, spread_field, axis, mode) = match kind {
@@ -318,6 +327,7 @@ impl MotionSession {
             flip: false,
             align: AlignSetup::default(),
             scale: ScaleSetup::default(),
+            split: SplitSetup::default(),
             join: true,
             opened: None,
             mode,
@@ -416,6 +426,12 @@ impl MotionSession {
                 }
                 session
             }
+            FeatureKind::Split(split) => {
+                let mut session = Self::new(MotionKind::Split, document, vec![split.body]);
+                session.split = SplitSetup::of(document, split);
+                session.picking = MotionPick::Nothing;
+                session
+            }
             _ => return None,
         };
         session.feature = Some(feature);
@@ -509,6 +525,7 @@ impl MotionSession {
             })),
             MotionKind::Align => self.align().map(FeatureKind::from),
             MotionKind::Scale => self.scale().map(FeatureKind::Scale),
+            MotionKind::Split => self.split().map(FeatureKind::Split),
         }
     }
 
@@ -621,7 +638,11 @@ impl MotionSession {
                 };
                 circular(&angle).kind
             }
-            MotionKind::Move | MotionKind::Mirror | MotionKind::Align | MotionKind::Scale => {
+            MotionKind::Move
+            | MotionKind::Mirror
+            | MotionKind::Align
+            | MotionKind::Scale
+            | MotionKind::Split => {
                 return Ok(None);
             }
         };
@@ -664,6 +685,9 @@ impl MotionSession {
         if self.kind == MotionKind::Scale {
             return self.scale_need();
         }
+        if self.kind == MotionKind::Split {
+            return self.split_need();
+        }
         if self.bodies.is_empty() {
             return Some(match self.kind {
                 MotionKind::Move => "pick the bodies to move",
@@ -673,6 +697,7 @@ impl MotionSession {
                 }
                 MotionKind::Align => "pick the body to align",
                 MotionKind::Scale => "pick the bodies to scale",
+                MotionKind::Split => "pick the body to split",
             });
         }
         match self.kind {
@@ -686,7 +711,7 @@ impl MotionSession {
             MotionKind::Mirror if self.plane.is_none() => {
                 Some("pick a plane: an origin plane or a planar face")
             }
-            MotionKind::Mirror | MotionKind::Align | MotionKind::Scale => None,
+            MotionKind::Mirror | MotionKind::Align | MotionKind::Scale | MotionKind::Split => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -730,6 +755,9 @@ impl MotionSession {
         if self.kind == MotionKind::Scale {
             return self.scale_gone();
         }
+        if self.kind == MotionKind::Split {
+            return self.split_gone();
+        }
         match (self.kind, self.gone_reference) {
             (MotionKind::Move, Some(Reference::Axis(axis)))
                 if self.axis == Some(axis) && self.angle().is_some_and(|angle| angle != 0.0) =>
@@ -762,6 +790,7 @@ impl MotionSession {
             }
             FeatureKind::Align(align) => align.check_own(design).err().map(|why| why.to_string()),
             FeatureKind::Scale(scale) => scale.check_own(design).err().map(|why| why.to_string()),
+            FeatureKind::Split(split) => split.check_own().err().map(|why| why.to_string()),
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -775,7 +804,7 @@ impl MotionSession {
         let fine = |field: MotionField| self.field(field).error.is_none();
         let typed = match self.kind {
             MotionKind::Move => MotionField::ALL[..4].iter().all(|&field| fine(field)),
-            MotionKind::Mirror => true,
+            MotionKind::Mirror | MotionKind::Split => true,
             MotionKind::Align => fine(MotionField::Distance) && fine(MotionField::Angle),
             MotionKind::Scale => self.scale_fields().iter().all(|&field| fine(field)),
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
@@ -827,6 +856,7 @@ impl MotionSession {
         };
         self.prune_align(document, index);
         self.prune_scale(document, index);
+        self.prune_split(document, index);
         let held = |body: BodyId| document.body(body).is_some();
         self.gone_reference = match (self.axis, self.plane) {
             (Some(axis), _)
@@ -862,7 +892,9 @@ impl MotionSession {
             moved |= body != edge.body;
             edge.body = body;
         }
-        moved
+        // A split's tool body too.
+        let tool = self.kind == MotionKind::Split && self.follow_split(merges);
+        moved || tool
     }
 
     /// Keeps each value where the design's units changed since its field
@@ -888,6 +920,19 @@ impl MotionSession {
     /// shows), and a new one not at all: the model shown is the history
     /// as of the feature, which the edges and faces clicked are named as.
     fn draft(&self, design: &Design) -> Option<(Option<FeatureId>, FeatureKind)> {
+        // A split isn't previewed while a face or body is picked as its
+        // tool: the model shown is the document's, a new one's the history
+        // as of the feature, and an edited one's with its split as stored,
+        // whose pieces [`Naming`] names as the body split. Regions and
+        // curves are picked on its sketches, previewed meanwhile.
+        if self.kind == MotionKind::Split {
+            let model = self.picking == MotionPick::Tool
+                && matches!(self.split.mode, SplitMode::Face | SplitMode::Body);
+            if model || self.gone().is_some() || (self.feature.is_none() && self.need().is_some()) {
+                return None;
+            }
+            return Some((self.feature, self.kind()?));
+        }
         if matches!(self.picking, MotionPick::Bodies | MotionPick::Nothing) {
             // Nothing is previewed while something it names is gone, and
             // a new one that does nothing yet shows as the document does.
@@ -979,8 +1024,11 @@ impl Doc {
             bodies.extend(self.only_body());
         }
         self.motion = Some(MotionSession::new(kind, self.editor.document(), bodies));
-        // A mirror and an align start by picking in the viewport.
-        if !matches!(kind, MotionKind::Mirror | MotionKind::Align) {
+        // A mirror, an align and a split start by picking in the viewport.
+        if !matches!(
+            kind,
+            MotionKind::Mirror | MotionKind::Align | MotionKind::Split
+        ) {
             self.focus = Some(Focus::All);
         }
     }
@@ -1019,7 +1067,10 @@ impl Doc {
         self.revolve = None;
         self.combine = None;
         self.selected_feature = Some(id);
-        if !matches!(session.kind, MotionKind::Mirror | MotionKind::Align) {
+        if !matches!(
+            session.kind,
+            MotionKind::Mirror | MotionKind::Align | MotionKind::Split
+        ) {
             self.focus = Some(Focus::All);
         }
         self.motion = Some(session);
@@ -1041,7 +1092,16 @@ impl Doc {
             MotionLook::Picking(MotionPick::Point | MotionPick::Edge)
                 if session.kind != MotionKind::Scale => {}
             MotionLook::Picking(MotionPick::Reference)
-                if matches!(session.kind, MotionKind::Align | MotionKind::Scale) => {}
+                if matches!(
+                    session.kind,
+                    MotionKind::Align | MotionKind::Scale | MotionKind::Split
+                ) => {}
+            MotionLook::Picking(MotionPick::Tool) if session.kind != MotionKind::Split => {}
+            // A split's tool field clicked again while it picks stops
+            // picking, so the split shows as set up.
+            MotionLook::Picking(MotionPick::Tool) if session.picking == MotionPick::Tool => {
+                session.picking = MotionPick::Nothing;
+            }
             MotionLook::Picking(MotionPick::Edge)
                 if session.scale.mode != varde_view::ScaleMode::EdgeLength => {}
             // A scale's point or edge field clicked again while it picks
@@ -1069,6 +1129,29 @@ impl Doc {
                 session.scale.axis_only = !session.scale.axis_only;
             }
             MotionLook::ScaleMode(_) | MotionLook::AxisOnly => {}
+            MotionLook::SplitWith(mode) if session.kind == MotionKind::Split => {
+                session.split_mode(mode, document);
+            }
+            MotionLook::SplitRegion { sketch, region } if session.kind == MotionKind::Split => {
+                session.split_region(sketch, region, document);
+            }
+            MotionLook::SplitCurve { sketch, curve } if session.kind == MotionKind::Split => {
+                session.split_curve(sketch, curve, document);
+            }
+            MotionLook::Original(side) if session.kind == MotionKind::Split => {
+                session.split.original = side;
+            }
+            MotionLook::Keep(keep) if session.kind == MotionKind::Split => {
+                session.split.keep = keep;
+            }
+            MotionLook::OriginPlane(plane) if session.kind == MotionKind::Split => {
+                session.split_origin(plane);
+            }
+            MotionLook::SplitWith(_)
+            | MotionLook::SplitRegion { .. }
+            | MotionLook::SplitCurve { .. }
+            | MotionLook::Original(_)
+            | MotionLook::Keep(_) => {}
             MotionLook::Clear(slot) if session.kind == MotionKind::Align => {
                 session.align.clear(slot);
                 // Clicks go on to what's needed first now, or to nothing
@@ -1155,6 +1238,7 @@ impl Doc {
             MotionPick::Align(slot) => self.align_pick(slot, pick),
             MotionPick::Point => self.scale_point(pick),
             MotionPick::Edge => self.scale_edge(pick),
+            MotionPick::Tool => self.split_tool(pick),
             MotionPick::Nothing => Ok(()),
         };
         if let Err(why) = picked {
@@ -1170,20 +1254,20 @@ impl Doc {
         if !self.editable() {
             return;
         }
+        let body = self.named_body(body);
         let document = self.editor.document();
         let Some(session) = &mut self.motion else {
             return;
         };
-        let merged = self.feed.merged_before(document, session.feature);
-        let body = merged.holder(body).unwrap_or(body);
         if !pickable(document, body, session.feature) {
             return;
         }
-        // An align moves one body: another replaces it.
-        if session.kind == MotionKind::Align {
-            self.align_body(body);
-        } else {
-            session.toggle(body);
+        // An align moves one body, a split splits one: another replaces
+        // it.
+        match session.kind {
+            MotionKind::Align => self.align_body(body),
+            MotionKind::Split => self.split_body(body),
+            _ => session.toggle(body),
         }
     }
 
@@ -1290,6 +1374,9 @@ impl Doc {
     /// making the body a combine names.
     pub(crate) fn motion_held(&self) -> Option<String> {
         let session = self.motion.as_ref()?;
+        if session.kind == MotionKind::Split {
+            return self.split_held(session);
+        }
         let edited = session.feature?;
         let kind = session.kind()?;
         let document = self.editor.document();
@@ -1484,6 +1571,9 @@ impl Doc {
         {
             return None;
         }
+        if self.split_held(session).is_some() {
+            return None;
+        }
         Some((feature, kind))
     }
 
@@ -1511,6 +1601,7 @@ impl Doc {
                 MotionPick::Align(slot) => self.align_reference(slot, pick).is_ok(),
                 MotionPick::Point => self.scale_point_of(pick).is_ok(),
                 MotionPick::Edge => self.scale_edge_of(pick).is_ok(),
+                MotionPick::Tool => self.split_tool_of(pick).is_ok(),
                 _ => self.reference_of(pick.target, pick.at).is_ok(),
             }
     }
@@ -1546,21 +1637,26 @@ impl Doc {
                 MotionPick::Reference
                 | MotionPick::Align(_)
                 | MotionPick::Point
-                | MotionPick::Edge => self.takes_reference(pick).then_some((pick.target, false)),
+                | MotionPick::Edge
+                | MotionPick::Tool => self.takes_reference(pick).then_some((pick.target, false)),
                 MotionPick::Nothing => None,
             },
             (None, None) => None,
         };
         let lit = match session.kind {
             MotionKind::Scale => [Vec::new(), self.scale_lit()],
+            MotionKind::Split => [Vec::new(), self.split_lit()],
             _ => self.align_lit(),
         };
+        // A split's tool body lights whole while hovered.
+        let tool_body = session.kind == MotionKind::Split && session.split.mode == SplitMode::Body;
         let key = (
             self.feed.model(),
             hovered,
             session.picking,
             session.bodies.clone(),
             lit,
+            tool_body,
         );
         if session.built.as_ref() == Some(&key) {
             return;
@@ -1583,8 +1679,9 @@ impl Doc {
                     .filter(|&&body| Some(body) != lit)
                     .flat_map(|&body| faces(body))
                     .collect(),
-                // A scale's edge in the second colour, on its bodies.
-                if session.kind == MotionKind::Scale {
+                // A scale's edge in the second colour, on its bodies; a
+                // split's piece not keeping the body's id.
+                if matches!(session.kind, MotionKind::Scale | MotionKind::Split) {
                     key.4[1].clone()
                 } else {
                     Vec::new()
@@ -1596,9 +1693,17 @@ impl Doc {
                 .body(target)
                 .map(|body| faces(body).collect())
                 .unwrap_or_default(),
+            (Some((target, false)), MotionPick::Tool) if tool_body => index
+                .body(target)
+                .map(|body| faces(body).collect())
+                .unwrap_or_default(),
             (
                 Some((target, false)),
-                MotionPick::Reference | MotionPick::Align(_) | MotionPick::Point | MotionPick::Edge,
+                MotionPick::Reference
+                | MotionPick::Align(_)
+                | MotionPick::Point
+                | MotionPick::Edge
+                | MotionPick::Tool,
             ) => vec![target],
             (Some((_, false)), MotionPick::Nothing) | (None, _) => Vec::new(),
         };
@@ -1641,6 +1746,7 @@ impl Doc {
                 (axis.map(|axis| axis_name(document, axis)), origin)
             }
             MotionKind::Align | MotionKind::Scale => (None, None),
+            MotionKind::Split => self.split_reference(session),
             MotionKind::Mirror => {
                 let plane = session.plane.as_ref();
                 let origin = plane.and_then(|plane| match plane {
@@ -1714,6 +1820,7 @@ impl Doc {
             hover: self.panel_hover(),
             align: (session.kind == MotionKind::Align).then(|| Box::new(self.align_view(session))),
             scale: (session.kind == MotionKind::Scale).then(|| Box::new(self.scale_view(session))),
+            split: (session.kind == MotionKind::Split).then(|| Box::new(self.split_view(session))),
         })
     }
 }
@@ -1849,6 +1956,7 @@ fn unnamed(why: Unnamed, what: &str, kind: MotionKind) -> Cow<'static, str> {
 
 mod align;
 mod scale;
+mod split;
 
 #[cfg(test)]
 mod tests;

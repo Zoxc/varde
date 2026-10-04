@@ -704,7 +704,25 @@ impl Document {
         if !self.made_before(index, split.body) {
             return Err(SplitError::Body(split.body));
         }
-        match &split.tool {
+        self.check_split_tool(index, &split.tool)?;
+        let id = self.features[index].id;
+        if let Some(body) = split.new_body
+            && self.body(body).is_none_or(|body| body.created_by != id)
+        {
+            return Err(SplitError::NewBody(body));
+        }
+        Ok(())
+    }
+
+    /// Checks what `tool` names as the tool of a split at feature `index`
+    /// (at the end for a new one, the count of features), as
+    /// [`Document::check`] has it: a tool body, or a face tool's body,
+    /// there and made by a feature before it; a plane face's body and any
+    /// face's maker as a mirror's plane; a sketch tool's sketch a sketch
+    /// feature before it. For a panel keeping what it sets up one the
+    /// document takes; its own parts are [`Split::check_own`]'s.
+    pub fn check_split_tool(&self, index: usize, tool: &SplitTool) -> Result<(), SplitError> {
+        match tool {
             SplitTool::Body(tool) if !self.made_before(index, *tool) => {
                 return Err(SplitError::ToolBody(*tool));
             }
@@ -721,16 +739,10 @@ impl Document {
             }
             _ => {}
         }
-        if let Some(face) = split.face()
+        if let SplitTool::Plane(PlaneRef::Face(face)) | SplitTool::Face(face) = tool
             && !self.maker_before(index, face.maker())
         {
             return Err(SplitError::RefMaker(face.maker()));
-        }
-        let id = self.features[index].id;
-        if let Some(body) = split.new_body
-            && self.body(body).is_none_or(|body| body.created_by != id)
-        {
-            return Err(SplitError::NewBody(body));
         }
         Ok(())
     }

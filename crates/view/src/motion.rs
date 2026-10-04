@@ -13,9 +13,11 @@ use iced::Element;
 use iced::widget::text::Wrapping;
 use iced::widget::{column, text};
 use varde_document::{
-    Axis3, AxisRef, BodyId, Document, FeatureKind, OriginPlane, Pattern, PatternKind, PlaneRef,
+    Axis3, AxisRef, BodyId, Document, FeatureId, FeatureKind, Keep, OriginPlane, Pattern,
+    PatternKind, PlaneRef, Side,
 };
 use varde_expr::{AngleUnit, LengthUnit, Unit};
+use varde_sketch::Id;
 
 /// Angles are shown in degrees.
 const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
@@ -32,7 +34,7 @@ use crate::theme;
 use crate::{CombineBody, Edit, Look, Message, VALUE_FIELD};
 
 /// Which is set up: a move, a mirror, a linear or circular pattern, an
-/// align or a scale.
+/// align, a scale or a split.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionKind {
     Move,
@@ -41,6 +43,7 @@ pub enum MotionKind {
     CircularPattern,
     Align,
     Scale,
+    Split,
 }
 
 impl MotionKind {
@@ -52,11 +55,12 @@ impl MotionKind {
             MotionKind::LinearPattern | MotionKind::CircularPattern => "Pattern",
             MotionKind::Align => "Align",
             MotionKind::Scale => "Scale",
+            MotionKind::Split => "Split",
         }
     }
 
     /// Its icon, the UI mock's `move`, `bmirror`, `lpattern`, `cpattern`,
-    /// `align` and `scale`.
+    /// `align` and `scale`, and the icon mock's split body.
     pub fn icon(self) -> Icon {
         match self {
             MotionKind::Move => Icon::Move,
@@ -65,6 +69,7 @@ impl MotionKind {
             MotionKind::CircularPattern => Icon::CPattern,
             MotionKind::Align => Icon::Align,
             MotionKind::Scale => Icon::Scale,
+            MotionKind::Split => Icon::Split,
         }
     }
 
@@ -78,6 +83,7 @@ impl MotionKind {
             MotionKind::CircularPattern => "New circular pattern",
             MotionKind::Align => "New align",
             MotionKind::Scale => "New scale",
+            MotionKind::Split => "New split",
         }
     }
 
@@ -90,17 +96,17 @@ impl MotionKind {
     }
 
     /// Whether its reference is an axis (a move's, a pattern's), not a
-    /// plane (a mirror's), an align's points and directions or a scale's
-    /// point and edge.
+    /// plane (a mirror's), an align's points and directions, a scale's
+    /// point and edge or a split's tool.
     pub fn takes_axis(self) -> bool {
         !matches!(
             self,
-            MotionKind::Mirror | MotionKind::Align | MotionKind::Scale
+            MotionKind::Mirror | MotionKind::Align | MotionKind::Scale | MotionKind::Split
         )
     }
 
     /// The session that edits a feature of `kind`, if one does: a move, a
-    /// mirror, a linear or circular pattern, an align or a scale.
+    /// mirror, a linear or circular pattern, an align, a scale or a split.
     pub fn of(kind: &FeatureKind) -> Option<MotionKind> {
         Some(match kind {
             FeatureKind::Move(_) => MotionKind::Move,
@@ -111,6 +117,7 @@ impl MotionKind {
             },
             FeatureKind::Align(_) => MotionKind::Align,
             FeatureKind::Scale(_) => MotionKind::Scale,
+            FeatureKind::Split(_) => MotionKind::Split,
             _ => return None,
         })
     }
@@ -162,9 +169,9 @@ impl PatternMode {
 
 /// What a click in the viewport picks: bodies, the reference (a move's
 /// axis, a mirror's plane), one of an align's points or directions, a
-/// scale's point or its edge, or nothing (an align with all it asks for
-/// picked). A click on one of the panel's fields makes it the one
-/// picking.
+/// scale's point or its edge, a split's tool, or nothing (an align with
+/// all it asks for picked, a split with its tool). A click on one of the
+/// panel's fields makes it the one picking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MotionPick {
     #[default]
@@ -175,6 +182,9 @@ pub enum MotionPick {
     Point,
     /// A scale's edge, to scale to a length.
     Edge,
+    /// A split's tool, of the kind its "Split with" tiles choose: a plane
+    /// or face, a body, a sketch's regions or the curves of a line.
+    Tool,
     Nothing,
 }
 
@@ -377,6 +387,19 @@ pub enum MotionLook {
     /// A scale to an edge's length: along the world axis the edge runs
     /// along only, or not.
     AxisOnly,
+    /// What a split splits with: a plane or face, a body, a sketch's
+    /// regions or a line of its curves (its "Split with" tiles).
+    SplitWith(SplitMode),
+    /// Picks the region `region` of `sketch` for a split's tool, or takes
+    /// it out: clicked in the viewport.
+    SplitRegion { sketch: FeatureId, region: usize },
+    /// Picks the curve `curve` of `sketch` for a split's line, or takes
+    /// it out: clicked in the viewport.
+    SplitCurve { sketch: FeatureId, curve: Id },
+    /// Which piece of a split keeps the body's id.
+    Original(Side),
+    /// Which pieces of a split stay.
+    Keep(Keep),
     /// Drops the move or mirror being set up, changing nothing: Cancel,
     /// or `Esc`.
     Cancel,
@@ -468,6 +491,8 @@ pub struct MotionState<'a> {
     pub align: Option<Box<AlignView<'a>>>,
     /// A scale's own parts, for a scale.
     pub scale: Option<Box<ScaleView<'a>>>,
+    /// A split's own parts, for a split.
+    pub split: Option<Box<SplitView<'a>>>,
 }
 
 impl<'a> MotionState<'a> {
@@ -658,7 +683,7 @@ pub(crate) fn split_note(document: &Document, split: &varde_document::Split) -> 
 }
 
 /// What the status bar says of a selected split: "Body 1 by XY".
-pub(crate) fn split_info(document: &Document, split: &varde_document::Split) -> String {
+pub fn split_info(document: &Document, split: &varde_document::Split) -> String {
     let body = body_names(document, std::slice::from_ref(&split.body));
     format!("{body} {}", split_note(document, split))
 }
@@ -708,6 +733,9 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
         (MotionKind::Scale, _) => (state.scale.as_ref())
             .and_then(|scale| scale.info.clone())
             .unwrap_or(bodies),
+        (MotionKind::Split, _) => (state.split.as_ref())
+            .and_then(|split| split.info.clone())
+            .unwrap_or(bodies),
         _ => bodies,
     }
 }
@@ -737,9 +765,9 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             )
         })
         .collect();
-    // An align moves one body.
+    // An align moves one body; a split splits one.
     let (bodies_label, bodies_place) = match state.kind {
-        MotionKind::Align => ("Body", "Click a body"),
+        MotionKind::Align | MotionKind::Split => ("Body", "Click a body"),
         _ => ("Bodies", "Click bodies"),
     };
     let place = (rows.is_empty() || picking_bodies).then(|| bodies_place.to_owned());
@@ -756,7 +784,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         }
         MotionKind::LinearPattern => ("Direction", Icon::SeAxis, "Click an axis or edge"),
         // An align's references are its own fields: this one isn't shown.
-        MotionKind::Mirror | MotionKind::Align | MotionKind::Scale => {
+        MotionKind::Mirror | MotionKind::Align | MotionKind::Scale | MotionKind::Split => {
             ("Plane", Icon::SePlane, "Click a plane or face")
         }
     };
@@ -800,6 +828,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let body: Element<'a, Message> = match state.kind {
         MotionKind::Align => align::body(state, bodies, field_named),
         MotionKind::Scale => scale::body(state, bodies, field_named),
+        MotionKind::Split => split::body(state, bodies),
         MotionKind::Move => {
             let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
             column![
@@ -914,6 +943,8 @@ mod align;
 pub use align::{AlignMark, AlignView, direction_name, point_name};
 mod scale;
 pub use scale::{ScaleMode, ScaleView};
+mod split;
+pub use split::{SketchLines, SplitMode, SplitPiece, SplitView};
 
 #[cfg(test)]
 mod tests;

@@ -21,7 +21,8 @@ use crate::shortcut::{
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
     ActiveTool, AlignRole, AlignSide, ConstraintKind, DocumentState, Downloads, Edit, File,
-    Location, Look, Message, MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, Tool,
+    Location, Look, Message, MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, SplitMode,
+    Tool,
 };
 
 /// Includes the 1 px border.
@@ -558,6 +559,18 @@ fn ops<'a>(
                 .then_some(Message::Look(Look::Motion(MotionLook::OriginPoint)));
             vec![separator(), op(Icon::Point, "Origin", send)]
         }
+        // A split's tool may be an origin plane.
+        Some(motion)
+            if motion.picking == MotionPick::Tool
+                && (motion.split.as_ref()).is_some_and(|split| split.mode == SplitMode::Face) =>
+        {
+            let buttons = (OriginPlane::ALL.iter()).map(|&plane| {
+                let send = (editable && motion.editable)
+                    .then_some(Message::Look(Look::Motion(MotionLook::OriginPlane(plane))));
+                op(Icon::SePlane, plane_label(plane), send)
+            });
+            std::iter::once(separator()).chain(buttons).collect()
+        }
         Some(motion) if motion.picking == MotionPick::Reference => {
             let send = |look: MotionLook| {
                 (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
@@ -574,16 +587,17 @@ fn ops<'a>(
                         })
                         .collect()
                 }
-                MotionKind::Mirror | MotionKind::Align | MotionKind::Scale => (OriginPlane::ALL
-                    .iter())
-                .map(|&plane| {
-                    op(
-                        Icon::SePlane,
-                        plane_label(plane),
-                        send(MotionLook::OriginPlane(plane)),
-                    )
-                })
-                .collect(),
+                MotionKind::Mirror | MotionKind::Align | MotionKind::Scale | MotionKind::Split => {
+                    (OriginPlane::ALL.iter())
+                        .map(|&plane| {
+                            op(
+                                Icon::SePlane,
+                                plane_label(plane),
+                                send(MotionLook::OriginPlane(plane)),
+                            )
+                        })
+                        .collect()
+                }
             };
             std::iter::once(separator()).chain(buttons).collect()
         }

@@ -224,14 +224,6 @@ impl Split {
         }
         Ok(())
     }
-
-    /// The face a plane face or a face tool names.
-    pub(crate) fn face(&self) -> Option<&FaceRef> {
-        match &self.tool {
-            SplitTool::Plane(PlaneRef::Face(face)) | SplitTool::Face(face) => Some(face),
-            _ => None,
-        }
-    }
 }
 
 /// What's wrong with a split, see

@@ -28,7 +28,7 @@ pub(crate) const REFRESH_WORK: usize = 2 * MAX_WORK;
 /// source, the one the session started from (selected, or the edited
 /// feature's), or else the one the first region (or a revolve's axis) is
 /// picked in, which un-picking every region lets go of again.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct RegionPick {
     /// The sketch the regions are of, once there is one.
     pub(crate) source: Option<FeatureId>,
@@ -62,7 +62,7 @@ pub(crate) struct RegionPick {
 }
 
 /// A sketch's profiles, and the sketch they're of.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Found {
     pub(crate) feature: FeatureId,
     pub(crate) sketch: Sketch,

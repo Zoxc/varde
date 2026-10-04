@@ -2619,8 +2619,8 @@ pub enum SplitTool {
   its body is left whole and its new body has no solid (a feature naming
   it fails: "Body 3 has no solid: the feature making it failed"); the
   rest of the history goes on. The regen tests swap the kernel's split
-  for two booleans (`a ∩ t`, `a − t`; `split::SPLITTER`, a test-only
-  thread local) to test what's done with the pieces; the planned
+  for two booleans (`a ∩ t`, `a − t`; `split::SPLITTER`, a thread local
+  for tests, other crates' through the `testing` feature) to test what's done with the pieces; the planned
   analytic tests of the kernel's split are written out and
   `#[ignore = "kernel split not built"]`.
 - The draft's reply carries nothing new: a split draft applied by
@@ -2630,11 +2630,140 @@ pub enum SplitTool {
 
 ### UI
 
-None yet (next): editing a split from the Timeline does nothing. The
-Timeline shows its icon (the icon mock's split body, `Icon::Split`, in
-the Modify set) and note: "by XY", "by Body 3", "by Extrude 1's end",
+The move's session (`MotionSession`, above) with `MotionKind::Split`; a
+split's own parts are in `app/src/doc/motion/split.rs` (`SplitSetup`)
+and `view/src/motion/split.rs` (`SplitView`, `SplitMode`). **The UI mock
+has no Split panel**: the icon mock has only the tool, "Split body" in
+its Modify group (after Combine) with no key and its `splitbody` icon.
+The panel is built in the style of the mock's nearest ones, Combine's
+(one body as a picked field, choices as tiles) and Mirror's (a plane or
+face picked, the origin planes on the toolbar).
+
+- **Starting**: `Look::StartSplit` from the rail's Modify set ("Split
+  body", after Combine as the icon mock orders them; no key:
+  `split_binding`, `Shortcut::NONE`, the rail's list letter `P`), again
+  backing out; not on the toolbar (the mock's bar has none). Or editing
+  one (`Look::EditFeature`: double-click, `Enter`, "Edit split"), which
+  opens with its body, tool and options, picking nothing. A new one
+  takes its body from what's selected, else the model's only body, as
+  an align's (one body); with one it picks the tool next, else the body.
+  Nothing takes the focus: clicks pick in the viewport.
+- **The body** (the Body field, "Click a body") is picked as an align's:
+  a click on a body replaces it (`Doc::split_body`; the tool body if
+  it's that is let go of), clicks going on to the tool if there's none.
+  A body's click is named as the feature names it (`Doc::named_body`): a
+  join's merged body as its holder before the feature, and a piece an
+  edited split (or one after the feature) made as the body it split.
+- **Split with** (`MotionPick::Tool`): four tiles, `MotionLook::SplitWith`
+  (icons `SePlane`, `Body`, `SeRegion`, `Line`): **Face**, a plane or
+  face (the toolbar offers "XY plane", "XZ plane", "YZ plane" while it's
+  picked, `MotionLook::OriginPlane`; a face clicked is named as of the
+  feature, `Naming::checked_face_ref`, and is `SplitTool::Plane` of the
+  face where its summary is a plane, else `SplitTool::Face`, its surface
+  continued); **Body**, another body clicked (any made before the split
+  but the one split: "That's the body being split: pick another body to
+  split with"; the body hovered lights whole); **Region**, regions of a
+  sketch, picked as an extrude's (`RegionPick`, at most
+  `MAX_EXTRUDE_REGIONS`): the visible sketches' regions shaded on their
+  planes until one is picked, then the source's, those picked filled
+  (`viewport/regions.rs`), a click on one picking or un-picking it
+  (`MotionLook::SplitRegion`); **Line**, the curves of an open line:
+  the visible sketches' curves drawn (construction ones dashed), the
+  line's sketch's only once a curve is picked, a click within 6 px of
+  one (`hit::hit_curve` on each sketch's plane, the nearest by depth)
+  picking or un-picking it (`MotionLook::SplitCurve`, sorted, at most
+  `MAX_SPLIT_CURVES`, of one sketch), those picked in the selected
+  colour. Only sketches before the feature are offered. While regions
+  or curves are picked the model isn't (`MotionSession::picks_sketches`:
+  no `ModelPicking`), and the left button goes to them, off them to the
+  camera. Each tile keeps its own tool while another is shown. A face,
+  plane or body picked hands the clicks to nothing (the preview shows);
+  regions and curves keep picking until the field is clicked again. The
+  tool's row: "XY plane", "Extrude 1's end", "Body 2", or the sketch's
+  name with "2 regions" or "3 curves" beside it; no cross (picking
+  another replaces it, a region or curve is clicked again to take it
+  out). Refusals in the status bar, as a move's ("Only a face made
+  before the split can be picked", "Which body that face is on at the
+  split can't be told: pick another", an out of date model). Which faces
+  regeneration can't continue (`Summary::Other` holds both those it can,
+  spline walls and quadrics, and those it can't, canal fillets and
+  traced blends) isn't told here: such a face is taken and the preview
+  fails with regeneration's "its face can't be extended to split with".
+- **Keeps Body 1** (the body's name): tiles Front and Back
+  (`MotionLook::Original`, icons `SpFront`, `SpBack`, not in the mock),
+  which piece keeps the body's id; for a trim they're disabled, showing
+  the side kept, which keeps it. Under them, in the warning's colour,
+  **the later features' warning**: for an edited split, the features
+  after it naming the body (`FeatureKind::bodies`), "2 later features
+  use Body 1: they'll get the back piece" ("1 later feature uses Body 1:
+  it'll get the front piece"), following Keeps and Keep as they change.
+- **Keep**: tiles Both, Front, Back (`MotionLook::Keep`, `SpBoth`,
+  `SpFront`, `SpBack`). Keeping one side of an edited split whose new
+  body a later feature names is refused at once, as the document would
+  ("Move 2 uses Body 4, the piece this split would no longer keep: keep
+  both, or take Body 4 out of Move 2 or delete it first", the panel's
+  foot, `Doc::split_held`), and not previewed.
+- **Whole and ready**: a body and the tool of the tile shown
+  (`MotionSession::split`, its new body `BodyId::NEW` while both are
+  kept, which the commands fill in or keep), else what's next for the
+  status bar ("pick the body to split", "pick a plane or a face to split
+  with", "pick a body to split with", "pick the regions of a sketch to
+  split with", "pick the curves of a line to split with");
+  `Split::check_own` refuses as the panel's foot. A tool the document no
+  longer takes at the feature's place (`Document::check_split_tool`, its
+  body not held, its sketch gone, a curve of its line gone) is kept and
+  said to be gone ("The plane or face is gone: pick another", "The tool
+  body is gone: pick another", "The regions' sketch is gone: pick other
+  regions", "The line is gone: pick its curves again"), nothing
+  previewed or committed until another is picked or a redo brings it
+  back. A tool body merged into another before the split follows it.
+- **Preview**: the split as set up is the draft; none while a face or
+  body is picked as the tool (the model shown is then the document's: a
+  new split's is the history as of it, an edited one's with the split as
+  stored, its pieces named as the body split, below), nor while it isn't
+  whole or its tool is gone. Regions and curves are previewed as they're
+  picked. An origin plane is drawn as a mirror's (`MotionState::line`);
+  a face's plane isn't (regeneration doesn't answer where it found it).
+  **The kernel's split isn't built**, so every preview fails today with
+  regeneration's too-complex message ("Split fails" over "extending its
+  tool past Body 1 is too complex to work out", or "splitting Body 1 is
+  too complex to work out: ..." for a tool body or regions), OK waits,
+  and Add anyway keeps it, failing in the Timeline. Once the preview
+  splits, **the pieces are tinted apart and labelled**: the body's faces
+  as selected, the other piece's in the second colour
+  (`Doc::split_lit`), and a chip at the middle of each piece's box with
+  its body's name, the one keeping the id in the accent, the other "New
+  body" for a body the document doesn't hold yet (`SplitPiece`,
+  `Moving::labels`, in the knobs' layer). The new piece is the part of
+  the model shown whose body the document doesn't hold, or an edited
+  split's stored new body.
+- **Committing**: OK (`Enter`, Add anyway) adds "Split N" (and its new
+  body, "Body N") or sets the edited one, one undo step; Cancel or `Esc`
+  leaves no trace. The status bar says "New split · Body 1 by XY" once
+  whole (`split_info`), else what's next, with the hints "Pick the body",
+  "Pick the plane or face", "Pick the tool body", "Pick regions", "Pick
+  curves".
+
+**Naming after a split** (`Naming::before`, `Naming::unsplit`): the new
+body of each split at or after the feature named is noted with the body
+it split, and `Naming::body_of` takes a face shown on such a piece as on
+that body (through splits of splits), where it is at the feature: so a
+face of an edited split's new piece (or of a later split's) names the
+body split, not a body made after the feature, which was refused.
+
+The Timeline shows its icon (the icon mock's split body, `Icon::Split`,
+in the Modify set) and note: "by XY", "by Body 3", "by Extrude 1's end",
 "by Sketch 2", with " · front only" or " · back only" for a trim; the
 status bar "Body 1 by XY".
+
+Departures from the mock (which has no Split panel): Combine's and
+Mirror's style with this session's own fields; the rail only, not the
+toolbar; refusals in the status bar, as a move's. Known gaps: a face
+that can't be extended isn't told apart while picking (above); a split's
+plane on a face, and a face's surface, aren't drawn; a region or curve
+of a sketch on a face that isn't placed can't be picked; the line's
+curves aren't checked to join into one open line until regeneration
+says so.
 
 Tests: `document/src/split/tests.rs` (a new body made and undone, a
 trim making none, editing what's kept adding and removing the new body
@@ -2649,4 +2778,24 @@ sketch region through all, a side empty, a sketch on a face following
 into the new body while a mirror's face doesn't, a draft, the cache;
 ignored: a box by XY, by a cylinder face, an L by its own step's plane,
 by another body, by an open line, determinism),
-`io/src/vrdp/tests.rs` (through a file, a tampered face point refused).
+`io/src/vrdp/tests.rs` (through a file, a tampered face point refused),
+`view/src/motion/tests.rs` (the notes; the panel's order, the tool's
+count beside it, where to click, the later features' warning, the
+status text; a trim's kept side), `viewport/motion/tests.rs` (a line's
+curve and a region picked from the top in their sketch, off them left
+to the camera; the pieces' labels), `rail/tests.rs` (Split body's
+letter) and `app/src/doc/motion/tests/split.rs` (the rail's Split body
+on the example plate by XY from the toolbar, failing as too complex in
+the panel, OK waiting and Add anyway keeping it as one undo step; a
+flat face as its plane and the hole's wall as its surface, unpreviewed
+while picked; with the booleans, another body as the tool, the body
+itself refused, the pieces tinted and labelled, Back, a trim committed;
+a sketch's region through all and an open line; editing from the
+Timeline, Cancel, Back and OK, undo; the later features' warning and a
+named new body held; a tool body an undo takes away said to be gone,
+back on redo; an edited split's new piece's face named on the body
+split, and a click on it picking that body). The app's tests split by
+two booleans through regen's `testing` feature
+(`varde_regen::testing::split_by_booleans`, the thread local the regen
+tests use, behind a feature for other crates' tests), as the kernel's
+split isn't built.

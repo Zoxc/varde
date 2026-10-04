@@ -21,6 +21,17 @@
 mod cache;
 mod error_geometry;
 mod history;
+/// What other crates' tests set up of regeneration.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    /// Splits on this thread by two booleans from now on (the front, in
+    /// the tool, its intersection with the body, the back the body less
+    /// it) in place of the kernel's split, which isn't built yet: so
+    /// other crates' tests can see what's done with the pieces.
+    pub fn split_by_booleans() {
+        crate::history::split_by_booleans();
+    }
+}
 mod inspect;
 mod message;
 mod newest;

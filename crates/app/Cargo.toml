@@ -21,6 +21,8 @@ log.workspace = true
 
 [dev-dependencies]
 varde-view = { workspace = true, features = ["probe"] }
+# Splits by two booleans in tests, the kernel's not being built.
+varde-regen = { workspace = true, features = ["testing"] }
 iced_runtime.workspace = true
 png.workspace = true
 

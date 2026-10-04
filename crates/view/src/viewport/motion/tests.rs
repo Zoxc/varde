@@ -53,6 +53,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         hover: None,
         align: None,
         scale: None,
+        split: None,
     }
 }
 
@@ -490,4 +491,144 @@ fn a_handle_that_moves_away_is_let_go_of_as_a_frame_is_drawn() {
         matches!(messages[..], [Message::Look(Look::Hover(Some(_)))]),
         "{messages:?}"
     );
+}
+
+/// A split picking its tool in a sketch on XY holding a line from
+/// (-20, 0) to (20, 0) and a disc of radius 5 about (0, 10): seen from
+/// the top, a click on the line picks it while a line is picked, a click
+/// in the disc its region while regions are, the model isn't picked
+/// under them, and a click off them is left to the camera.
+#[test]
+fn a_split_s_line_and_regions_are_picked_in_their_sketch() {
+    use varde_sketch::{Curve, Sketch};
+    let mut sketch = Sketch::default();
+    let a = sketch.add_point(DVec2::new(-20.0, 0.0)).unwrap();
+    let b = sketch.add_point(DVec2::new(20.0, 0.0)).unwrap();
+    let line = sketch
+        .add_curve(Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    let center = sketch.add_point(DVec2::new(0.0, 10.0)).unwrap();
+    (sketch.add_curve(
+        Curve::Circle {
+            center,
+            radius: 5.0,
+        },
+        false,
+    ))
+    .unwrap();
+    let profiles = Arc::new(sketch.profiles().unwrap());
+    let feature = varde_document::Document::example().features()[0].id;
+    let placement = OriginPlane::XY.placement();
+    let camera = camera(View::Top, Projection::Orthographic);
+    let top = |at: DVec3| {
+        let p = shown(&camera, at);
+        Point::new(p.x as f32, p.y as f32)
+    };
+    let index = plate();
+    for mode in [SplitMode::Line, SplitMode::Regions] {
+        let mut state: MotionState<'_> = state(MotionKind::Split, MotionPick::Tool, None);
+        state.split = Some(Box::new(SplitView {
+            mode,
+            tool: None,
+            body: Some("Body 1"),
+            original: varde_document::Side::Front,
+            keep: varde_document::Keep::Both,
+            later: None,
+            info: None,
+            candidates: vec![crate::Candidate {
+                feature,
+                placement,
+                sketch: &sketch,
+                profiles: &profiles,
+            }],
+            source: None,
+            picked: SplitView::none_picked(),
+            lines: vec![crate::SketchLines {
+                feature,
+                placement,
+                sketch: &sketch,
+            }],
+            chain: None,
+            pieces: Vec::new(),
+        }));
+        let program = viewport(state, &camera, Some(&index));
+        let mut input = Interaction::default();
+        let (on, wanted) = match mode {
+            SplitMode::Line => (
+                DVec3::new(10.0, 0.0, 0.0),
+                MotionLook::SplitCurve {
+                    sketch: feature,
+                    curve: line,
+                },
+            ),
+            _ => (
+                DVec3::new(0.0, 10.0, 0.0),
+                MotionLook::SplitRegion {
+                    sketch: feature,
+                    region: 0,
+                },
+            ),
+        };
+        let (messages, _) = feed(&program, &mut input, &[moved(top(on))]);
+        assert!(
+            !messages
+                .iter()
+                .any(|m| matches!(m, Message::Look(Look::Hover(_)))),
+            "{mode:?}: the model isn't picked: {messages:?}"
+        );
+        let (messages, captured) = feed(&program, &mut input, &[press(top(on))]);
+        assert_eq!(looks(&messages), [Some(&wanted)], "{mode:?}");
+        assert!(captured);
+        // Off the sketch's curves and regions: the camera's.
+        let off = DVec3::new(25.0, -15.0, 0.0);
+        let (messages, _) = feed(&program, &mut input, &[moved(top(off)), press(top(off))]);
+        assert!(
+            looks(&messages).iter().all(Option::is_none),
+            "{mode:?}: {messages:?}"
+        );
+    }
+}
+
+/// A split's pieces, once the preview shows them, are labelled; none
+/// without.
+#[test]
+fn a_split_s_pieces_are_labelled() {
+    let camera = front();
+    let view = |pieces: Vec<crate::SplitPiece>| {
+        let mut state = state(MotionKind::Split, MotionPick::Nothing, None);
+        state.split = Some(Box::new(SplitView {
+            mode: SplitMode::Body,
+            tool: Some(("Body 2".to_owned(), None)),
+            body: Some("Body 1"),
+            original: varde_document::Side::Front,
+            keep: varde_document::Keep::Both,
+            later: None,
+            info: None,
+            candidates: Vec::new(),
+            source: None,
+            picked: SplitView::none_picked(),
+            lines: Vec::new(),
+            chain: None,
+            pieces,
+        }));
+        Moving::new(state)
+    };
+    assert!(view(Vec::new()).labels(&camera).is_none());
+    let pieces = vec![
+        crate::SplitPiece {
+            at: DVec3::new(20.0, 0.0, 5.0),
+            name: "Body 1".to_owned(),
+            keeps: true,
+        },
+        crate::SplitPiece {
+            at: DVec3::new(0.0, 0.0, 5.0),
+            name: "New body".to_owned(),
+            keeps: false,
+        },
+    ];
+    let moving = view(pieces);
+    let labels = moving.labels(&camera).expect("labels");
+    let texts = crate::testing::Laid::new(labels, iced::Size::new(SIZE[0], SIZE[1])).texts();
+    let names: Vec<&str> = texts.iter().map(|shown| shown.text.as_str()).collect();
+    assert_eq!(names, ["Body 1", "New body"]);
 }
