@@ -19,7 +19,7 @@ use varde_document::{
     MAX_SWEEP_REGIONS, Orientation, PathPart, PathRef, Sweep, SweepError,
 };
 use varde_expr::{AngleUnit, Unit, Value};
-use varde_sketch::Id;
+use varde_sketch::{Id, RegionRef};
 use varde_view::{
     MotionField, MotionKind, MotionPick, OperationKind, SketchLines, SweepPart, SweepPath,
     SweepView, sweep_info,
@@ -27,6 +27,7 @@ use varde_view::{
 
 use super::{Doc, MotionSession};
 use crate::doc::regions::{BodyTargets, RegionPick, TypedText};
+use crate::doc::revolve::sketch_of;
 
 /// A sweep's profile, path and options as picked; its model edges are
 /// the session's blend's ([`MotionSession::blend`]), its helix's axis
@@ -53,6 +54,11 @@ pub(crate) struct SweepSetup {
     /// Whether a part's sketch or curve is gone: the document no longer
     /// takes it at the feature's place.
     chains_gone: bool,
+    /// The profile's regions whose sketch an edit took away, and their
+    /// sketch: put by (said to be gone) while the visible sketches'
+    /// regions are offered in their place, and picked again if their
+    /// sketch comes back before others are picked, as a split's.
+    stale_regions: Option<(FeatureId, Vec<RegionRef>)>,
 }
 
 impl Default for SweepSetup {
@@ -68,6 +74,7 @@ impl Default for SweepSetup {
             targets: BodyTargets::default(),
             twist_stored: false,
             chains_gone: false,
+            stale_regions: None,
         }
     }
 }
@@ -90,14 +97,6 @@ pub(super) fn sweep_fields(design: &Design) -> [TypedText; 3] {
             &twist,
         ),
     ]
-}
-
-/// The sketch of the sketch feature `id` of `document`, if it's one.
-fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_sketch::Sketch> {
-    match &document.feature(id)?.kind {
-        FeatureKind::Sketch { sketch, .. } => Some(sketch),
-        _ => None,
-    }
 }
 
 impl MotionSession {
@@ -228,6 +227,9 @@ impl MotionSession {
     /// The words for what it names being gone, if anything is: a part's
     /// sketch or curve, its edges, or its helix's axis.
     pub(super) fn sweep_gone(&self) -> Option<&'static str> {
+        if self.sweep.stale_regions.is_some() {
+            return Some("The profile's sketch is gone: pick other regions");
+        }
         match self.sweep.path {
             SweepPath::Path if self.sweep.chains_gone => {
                 Some("A path's sketch or curve is gone: take its part out")
@@ -248,17 +250,27 @@ impl MotionSession {
         }
     }
 
-    /// Finds its profile's regions again where their sketch changed
-    /// (starting over where it's gone), and notes whether `document` no
-    /// longer takes its edges, its parts' sketches and curves at feature
-    /// `index` (an undo took them away).
+    /// Finds its profile's regions again where their sketch changed (put
+    /// by where it's gone, [`SweepSetup::stale_regions`], and picked again
+    /// where it's back), and notes whether `document` no longer takes its
+    /// edges, its parts' sketches and curves at feature `index` (an undo
+    /// took them away).
     pub(super) fn prune_sweep(&mut self, document: &Document, index: usize) {
         if self.kind != MotionKind::Sweep {
             return;
         }
         let setup = &mut self.sweep;
-        if (setup.regions.source).is_some_and(|source| sketch_of(document, source).is_none()) {
+        let is_sketch = |id: FeatureId| sketch_of(document, id).is_some();
+        if let Some(source) = setup.regions.source
+            && !is_sketch(source)
+        {
+            setup.stale_regions = Some((source, setup.regions.references().to_vec()));
             setup.regions = RegionPick::new(None, MAX_SWEEP_REGIONS);
+        } else if setup.regions.source.is_none()
+            && let Some((source, regions)) =
+                (setup.stale_regions).take_if(|(source, _)| is_sketch(*source))
+        {
+            setup.regions = RegionPick::editing(document, source, &regions, MAX_SWEEP_REGIONS);
         }
         setup.regions.refresh(document);
         setup.targets.prune(document);
@@ -278,11 +290,8 @@ impl MotionSession {
     /// Whether `sketch` is a sketch of `document` the sweep at its place
     /// can take: before the feature edited.
     fn sweep_takes(&self, document: &Document, sketch: FeatureId) -> bool {
-        let features = document.features();
-        let index = (self.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len());
-        (features[..index].iter()).any(|feature| {
+        let index = self.index_in(document);
+        (document.features()[..index].iter()).any(|feature| {
             feature.id == sketch && matches!(feature.kind, FeatureKind::Sketch { .. })
         })
     }
@@ -294,6 +303,9 @@ impl MotionSession {
             return;
         }
         self.sweep.regions.toggle(sketch, region, false, document);
+        if self.sweep.regions.source.is_some() {
+            self.sweep.stale_regions = None;
+        }
         if self.picking == MotionPick::Regions
             && !self.sweep.regions.picked.is_empty()
             && self.sweep_path().is_none()
@@ -330,7 +342,10 @@ impl MotionSession {
             chains.remove(at);
             return Ok(());
         }
-        if chains.len() + usize::from(!self.blend.edges.refs.is_empty()) >= MAX_PATH_PARTS {
+        let parts = (chains.len())
+            .saturating_add(self.sweep.stored_edges.len())
+            .saturating_add(usize::from(!self.blend.edges.refs.is_empty()));
+        if parts >= MAX_PATH_PARTS {
             return Err(format!("A sweep's path takes at most {MAX_PATH_PARTS} parts").into());
         }
         let mut curves = drawn.chain_of(curve);
@@ -375,10 +390,7 @@ impl Doc {
     pub(super) fn sweep_refused(&self, session: &MotionSession) -> Option<SweepError> {
         let sweep = session.sweep()?;
         let document = self.editor.document();
-        let features = document.features();
-        let index = (session.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len());
+        let index = session.index_in(document);
         (document.check_path(index, sweep.sketch, &sweep.path))
             .and_then(|()| sweep.check_curves(|id| sketch_of(document, id)))
             .err()

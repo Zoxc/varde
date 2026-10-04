@@ -595,7 +595,8 @@ fn editing_a_sweep_from_the_timeline_cancel_and_undo() {
 
 /// A path's curves an edit takes away are said to be gone, nothing
 /// previewed or committed until its part is taken out; the profile's
-/// sketch deleted lets go of its regions.
+/// sketch deleted puts its regions by, said to be gone, and an undo
+/// brings them back.
 #[test]
 fn a_path_an_edit_takes_away_is_said_to_be_gone() {
     let mut swept = swept();
@@ -618,10 +619,46 @@ fn a_path_an_edit_takes_away_is_said_to_be_gone() {
     assert!(plates.doc.motion_ready());
     plates.motion(MotionLook::DropPart(0));
     assert!(!plates.doc.motion_ready());
-    // The profile's sketch removed: its regions are let go of.
+    let curve = first_curve(plates, path);
+    plates.motion(MotionLook::SweepCurve {
+        sketch: path,
+        curve,
+    });
+    assert!(plates.doc.motion_ready());
+    // The profile's sketch removed: its regions are put by, said to be
+    // gone, nothing previewed meanwhile.
     plates.doc.apply(Command::RemoveFeature(profile));
     plates.doc.sync();
+    plates.answer();
     let session = plates.doc.motion.as_ref().expect("still set up");
     assert_eq!(session.sweep.regions.source, None);
     assert!(session.sweep.regions.picked.is_empty());
+    assert!(shows(plates, "The profile's sketch is gone"));
+    assert!(!plates.doc.motion_ready());
+    assert!(plates.doc.motion_draft().is_none());
+    // Back by an undo, before others are picked: picked again.
+    plates.doc.update(Edit::Undo);
+    plates.doc.sync();
+    plates.answer();
+    let session = plates.doc.motion.as_ref().expect("still set up");
+    assert_eq!(session.sweep.regions.source, Some(profile));
+    assert_eq!(session.sweep.regions.picked.len(), 1);
+    assert!(!shows(plates, "is gone"));
+    assert!(plates.doc.motion_ready());
+}
+
+/// A check's words are said of the feature: "it" before a verb, but not
+/// before "its" or "a".
+#[test]
+fn refusals_read_as_sentences() {
+    use crate::doc::motion::said;
+    assert_eq!(said("sweeps 0 regions"), "it sweeps 0 regions");
+    assert_eq!(
+        said("its path runs along feature 3"),
+        "its path runs along feature 3"
+    );
+    assert_eq!(
+        said("a face it opens is on another body"),
+        "a face it opens is on another body"
+    );
 }

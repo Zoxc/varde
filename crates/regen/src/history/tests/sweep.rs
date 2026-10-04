@@ -866,3 +866,52 @@ mod with_the_kernel {
         assert!(volume > the_plate() + 0.5 * coil && volume < the_plate() + coil);
     }
 }
+
+/// A piece closed on itself has no joint: a traced rim, its conics
+/// tangent only to its fit, isn't refused where its last conic meets
+/// its first, but two pieces closing a loop there at the same turn are.
+#[test]
+fn a_piece_closed_on_itself_has_no_corner() {
+    use crate::history::sweep::{Part, join};
+    use varde_kernel::patch::Conic3;
+    let tolerance = Tolerance::DEFAULT;
+    let v = DVec3::new;
+    // Four quarters round the origin on XY of radius 10, the last's
+    // control point off by 1e-4: where it meets the first, the tangents
+    // turn by 1e-5.
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let conic = |p0: DVec3, c: DVec3, p1: DVec3| Conic3 { p0, c, w, p1 };
+    let quarters = vec![
+        conic(v(10.0, 0.0, 0.0), v(10.0, 10.0, 0.0), v(0.0, 10.0, 0.0)),
+        conic(v(0.0, 10.0, 0.0), v(-10.0, 10.0, 0.0), v(-10.0, 0.0, 0.0)),
+        conic(v(-10.0, 0.0, 0.0), v(-10.0, -10.0, 0.0), v(0.0, -10.0, 0.0)),
+        conic(
+            v(0.0, -10.0, 0.0),
+            v(10.0 + 1e-4, -10.0, 0.0),
+            v(10.0, 0.0, 0.0),
+        ),
+    ];
+    let curve = |conics: &[Conic3]| Piece::Curve {
+        conics: conics.to_vec(),
+        normal: None,
+    };
+    let start = (DVec3::ZERO, DVec3::Y);
+    let one = Part {
+        pieces: vec![curve(&quarters)],
+        closed: true,
+    };
+    let path = join(vec![one], start, || DVec3::ZERO, &tolerance);
+    assert!(
+        matches!(&path, Ok(Path::Chain { closed: true, .. })),
+        "{:?}",
+        path.err().map(|failed| failed.message)
+    );
+    // Halves of it as two pieces: their joint where the loop closes is
+    // a corner past the sine.
+    let two = Part {
+        pieces: vec![curve(&quarters[..2]), curve(&quarters[2..])],
+        closed: true,
+    };
+    let failed = join(vec![two], start, || DVec3::ZERO, &tolerance).unwrap_err();
+    assert_eq!(failed.message, message::PATH_CORNER);
+}

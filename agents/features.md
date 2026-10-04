@@ -4223,11 +4223,14 @@ body", the uncut note).
   negated where the walk runs it backwards), anything else a curve of
   its conics with no plane.
 - **Joining**: a closed part must be the only one (its joints, the
-  closing one too, checked; the start where the profile's plane crosses
-  it is the kernel's to find). Otherwise the first part is the one with
-  an end within the resolution of the profile's plane, of several the
-  end nearest the middle of the profile's box (a choice by distance,
-  not a merge; none: "its path doesn't start on its profile's plane"),
+  closing one too where it's several pieces, checked: a piece closed on
+  itself, a circle, a closed spline or a rim, has none; the start where
+  the profile's plane crosses it is the kernel's to find). Otherwise the
+  first part is the one with an end within the resolution of the
+  profile's plane, of several the end nearest the middle of the
+  profile's box (a choice by distance, not a merge, the profile made
+  for it only then; none: "its path doesn't start on its profile's
+  plane"),
   run from that end; each next the only part with an end within the
   resolution of the chain's end (none or several: "its path's parts
   don't join into one chain: there's a gap or a branch between them"),
@@ -4241,8 +4244,9 @@ body", the uncut note).
   side of it apart and join them", the joint drawn as a point; and the
   start's tangent square to the profile's plane within a sine of
   `1e-6`, else "its profile isn't square to its path where the path
-  starts". These are regen's own refusals, before the kernel (the
-  kernel's sweep keeps the same checks as a guard).
+  starts". These are regen's own refusals, before the kernel, by the
+  kernel's rule (`varde_kernel::sweep::JOINT_SINE`, the sine both
+  use), which the kernel's sweep keeps as a guard.
 - **A helix**: its axis resolved as a move's turn's
   (`motion::resolve_axis`: its messages, "its axis edge wasn't found"
   and the rest), reversed with `flip`, noted in
@@ -4320,7 +4324,9 @@ Operation as tiles and the Bodies list.
   in (`Sketch::chain_of`, sorted) as a `CurveChain` part, or takes out
   the part holding it; the profile's own sketch is refused with a
   notice. Off the curves, the model's edges are picked as a blend's
-  (`refs`: named as of the sweep, all on one body, the Tangent chain
+  (the move leaving a curve is the model's picking's too, so an edge
+  there lights at once, the frame drawing the curve away asked for
+  after it, `Input::take_redraw`; `refs`: named as of the sweep, all on one body, the Tangent chain
   tick, lit, `MotionLook::DropEdge`), stored as one `PathPart::Edges`
   after the chains: so a session's edge parts are on one body (an
   edited sweep's other edge parts are kept as stored, listed as "Edges
@@ -4346,7 +4352,12 @@ Operation as tiles and the Bodies list.
   said to be gone ("A path's sketch or curve is gone: take its part
   out", "A picked edge is gone", "The axis is gone: pick another"),
   nothing previewed or committed meanwhile; the profile's sketch gone
-  lets go of its regions.
+  puts its regions by ("The profile's sketch is gone: pick other
+  regions"), the visible sketches' regions offered meanwhile, and picks
+  them again if it comes back before others are picked, as a split's.
+  What a path refused at its place says comes through `motion_held`,
+  as a split's tool's: "Its path runs along …", the check's words
+  starting "its" or "a" not given an "it".
 - **Preview**: the sweep as set up is the draft while it's whole,
   picking or not. **The kernel's sweep isn't built**, so today every
   preview fails with "Sweep fails" over "sweeping its regions along its
@@ -4384,6 +4395,7 @@ chain, the corner's square up the plate's edge previewed; a helix
 about the toolbar's Z, its values, hand and flip drafted, never with
 the path's options; Keep orientation, twist and the operation drafted;
 editing from the Timeline, Cancel, undo; a path's curves taken away
-said to be gone, the profile's sketch removed), `viewport/motion/tests.rs`
+said to be gone, the profile's sketch removed and put back), `viewport/motion/tests.rs`
 (regions and path curves picked in their sketches, the model's edges
-left to the model), `rail/tests.rs` (Sweep in the Create set, `P`).
+left to the model, an edge hovered by the move off a curve onto it),
+`rail/tests.rs` (Sweep in the Create set, `P`).

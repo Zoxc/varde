@@ -975,9 +975,6 @@ pub(crate) fn emptied(doing: Doing, body: &str) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests;
-
 /// Why a sweep fails: a part's sketch isn't a sketch before it (never,
 /// in a checked document).
 pub(crate) const PATH_SKETCH_GONE: &str = "its path's sketch isn't there";
@@ -1086,3 +1083,6 @@ pub(crate) fn sweep_refused(why: SweepRefusal) -> String {
         SweepRefusal::IntoItself => "the sweep runs into itself".to_owned(),
     }
 }
+
+#[cfg(test)]
+mod tests;

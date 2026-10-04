@@ -31,6 +31,14 @@ use glam::DVec3;
 use crate::patch::Conic3;
 use crate::{Budget, Failure, Frame, KernelError, Profile, Solid, Tolerance};
 
+/// How far apart the unit tangents at a joint between two pieces may be,
+/// and an open path's start from square to the profile's plane, as a
+/// sine: the solver holds tangent and smooth joints to `1e-10`, so a
+/// sketch's run past this is a corner (a decision on geometry, stated as
+/// one). Regeneration refuses past it before the sweep is asked, and the
+/// sweep guards with the same rule.
+pub const JOINT_SINE: f64 = 1e-6;
+
 /// One piece of a path, in the world, running from its start to its end.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Piece {
@@ -111,12 +119,17 @@ pub enum Orientation {
 /// path's chain.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SweepError {
-    /// Two pieces meet at `at` with tangents more than a sine of `1e-6`
-    /// apart, or one doesn't start where the one before ends.
+    /// Two pieces meet at `at` with tangents more than a sine of
+    /// [`JOINT_SINE`] apart (or turned back), or one doesn't start within
+    /// the resolution of where the one before ends. A piece's own conics
+    /// aren't joints (a traced edge's are tangent only to its fit), nor is
+    /// a closed path's start where it's one piece closed on itself.
     Corner { at: DVec3 },
-    /// The path doesn't start on the profile's plane.
+    /// An open path's start isn't within the resolution of the profile's
+    /// plane.
     OffStart,
-    /// The profile's plane isn't square to the path at its start.
+    /// The profile's plane isn't square to an open path at its start,
+    /// within a sine of [`JOINT_SINE`].
     NotSquare,
     /// Piece `piece` bends tighter than the profile: the section would
     /// reach its arc's axis or its curve's centre of curvature.

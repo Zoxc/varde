@@ -223,7 +223,7 @@ impl MotionSession {
     }
 
     /// The feature's place in `document`: the edited one's, or the end.
-    fn index_in(&self, document: &Document) -> usize {
+    pub(super) fn index_in(&self, document: &Document) -> usize {
         let features = document.features();
         (self.feature)
             .and_then(|id| features.iter().position(|feature| feature.id == id))

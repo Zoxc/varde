@@ -486,12 +486,19 @@ impl shader::Program<Message> for Program<'_> {
         }
         // Nothing's picked under a move's handles.
         let handled = matches!(self.operating, Some(Operating::Motion(_))) && state.motion.holds();
+        // A move the session saw without taking it that still wants a
+        // frame (the cursor off a sweep's path curve): after the model's
+        // picking has had it.
+        let redraw = state.motion.take_redraw();
         if let Some(picking) = &self.picking
             && state.drag.is_none()
             && !handled
             && let Some(action) = self.hover(state, picking, event, bounds, cursor)
         {
             return Some(action);
+        }
+        if redraw {
+            return Some(Action::request_redraw());
         }
         // While the camera's dragged (past a click), nothing's hovered:
         // what was moves away from the cursor. It's worked out again once

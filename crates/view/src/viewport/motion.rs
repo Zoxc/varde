@@ -166,6 +166,10 @@ pub(crate) struct Input {
     face: FaceInput,
     /// A sweep's profile's regions and its path sketches' curves.
     sweep: SplitInput,
+    /// Whether the cursor just left a sweep's path curve: the move is
+    /// the model's picking's too (an edge there hovered at once), and the
+    /// curve's lit chain is drawn away after it ([`Input::take_redraw`]).
+    redraw: bool,
 }
 
 /// What the viewport keeps of an offset face's handle: whether it's
@@ -228,6 +232,12 @@ impl Input {
         } else {
             self.face = FaceInput::default();
         }
+    }
+
+    /// Whether a frame is wanted for what the last event changed without
+    /// taking it (see [`Input::redraw`]): asked once.
+    pub(crate) fn take_redraw(&mut self) -> bool {
+        std::mem::take(&mut self.redraw)
     }
 }
 
@@ -538,7 +548,7 @@ impl<'a> Moving<'a> {
     fn sweep_mouse(
         &self,
         picking: MotionPick,
-        input: &mut SplitInput,
+        input: &mut Input,
         event: mouse::Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
@@ -547,6 +557,7 @@ impl<'a> Moving<'a> {
         let sweep = self.state.sweep.as_ref()?;
         let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         let regions = sweep_regions(sweep, None);
+        let (redraw, input) = (&mut input.redraw, &mut input.sweep);
         match event {
             mouse::Event::CursorMoved { .. } => {
                 let over = cursor.position_over(bounds).map(local);
@@ -568,6 +579,13 @@ impl<'a> Moving<'a> {
                         Some(Action::publish(Message::Look(Look::Hover(None))).and_capture())
                     }
                     Some(_) => Some(Action::capture()),
+                    // Off a path curve, the model's picking has the move
+                    // too, so an edge there is hovered at once; the frame
+                    // drawing the curve away is asked for after it.
+                    None if changed && picking == MotionPick::Path => {
+                        *redraw = true;
+                        None
+                    }
                     None if changed => Some(Action::request_redraw()),
                     None => None,
                 }
@@ -857,7 +875,7 @@ impl<'a> Moving<'a> {
             return self.face_mouse(&mut input.face, event, bounds, cursor, camera, hovered);
         }
         if let Some(picking) = self.sweep_picking() {
-            return self.sweep_mouse(picking, &mut input.sweep, event, bounds, cursor, camera);
+            return self.sweep_mouse(picking, input, event, bounds, cursor, camera);
         }
         let Some(handles) = self.handles(input, camera, bounds) else {
             input.hover = None;

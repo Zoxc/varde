@@ -899,6 +899,21 @@ fn a_sweep_s_regions_and_path_curves_are_picked_in_their_sketches() {
         let (messages, captured) = feed(&program, &mut input, &[press(top(on))]);
         assert_eq!(looks(&messages), [Some(&wanted)], "{picking:?}");
         assert!(captured);
+        if picking == MotionPick::Path {
+            // Straight off the line onto the plate's edge: hovered by
+            // the same move, the line's lit chain drawn away after it.
+            let edge = DVec3::new(30.0, 5.0, 10.0);
+            let (messages, _) = feed(&program, &mut input, &[moved(top(edge))]);
+            assert!(
+                (messages.iter()).any(|m| matches!(m, Message::Look(Look::Hover(Some(_))))),
+                "the model's edge hovered at once: {messages:?}"
+            );
+            let (messages, _) = feed(&program, &mut input, &[moved(top(on))]);
+            assert!(
+                (messages.iter()).any(|m| matches!(m, Message::Look(Look::Hover(None)))),
+                "back on the line, the model's let go of: {messages:?}"
+            );
+        }
         let off = DVec3::new(25.0, -15.0, 0.0);
         let (messages, _) = feed(&program, &mut input, &[moved(top(off)), press(top(off))]);
         assert!(

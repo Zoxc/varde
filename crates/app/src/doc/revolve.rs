@@ -268,7 +268,7 @@ impl RevolveSession {
 }
 
 /// The sketch of the sketch feature `id` of `document`, if it's one.
-fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_document::Sketch> {
+pub(super) fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_document::Sketch> {
     match &document.feature(id)?.kind {
         FeatureKind::Sketch { sketch, .. } => Some(sketch),
         _ => None,

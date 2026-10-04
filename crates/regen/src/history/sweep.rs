@@ -37,7 +37,9 @@
 //!   to its fit), must be tangent-continuous, the tangents within a sine
 //!   of `1e-6` of each other ("its path has a corner", the joint drawn);
 //!   an open path's start must be square to the profile's plane, a sine
-//!   within `1e-6` ("its profile isn't square to its path"). A closed
+//!   within `1e-6` ("its profile isn't square to its path"): the
+//!   kernel's rules ([`JOINT_SINE`]), which its sweep guards with too. A
+//!   piece closed on itself (a circle, a rim) has no joint. A closed
 //!   path's start, where the profile's plane crosses it, is the kernel's
 //!   to find.
 //! - **A helix**: its axis resolved as a move's turn's
@@ -59,6 +61,7 @@
 //! [`profile::path_chain`]: crate::profile::path_chain
 //! [`Topology::tangent_chains`]: varde_kernel::Topology::tangent_chains
 //! [`edge_shape`]: varde_kernel::measure::edge_shape
+//! [`JOINT_SINE`]: varde_kernel::sweep::JOINT_SINE
 
 use std::sync::Arc;
 
@@ -80,8 +83,9 @@ use crate::message::{self, SweepRefusal};
 use crate::profile::{ChainError, path_chain};
 
 /// How far apart two tangents at a joint may be, or the path's start
-/// from square to the profile's plane, as a sine.
-const TANGENT_SINE: f64 = 1e-6;
+/// from square to the profile's plane, as a sine: the kernel's own rule,
+/// which its sweep guards with.
+const TANGENT_SINE: f64 = path_sweep::JOINT_SINE;
 
 /// The kernel's sweep, which tests may replace with a stand-in to check
 /// what regeneration does with the result before the kernel's is built.
@@ -190,9 +194,9 @@ pub(crate) fn by_extrude(
 
 /// One part of a path as built: its pieces end to end, and whether they
 /// close on themselves.
-struct Part {
-    pieces: Vec<Piece>,
-    closed: bool,
+pub(super) struct Part {
+    pub(super) pieces: Vec<Piece>,
+    pub(super) closed: bool,
 }
 
 impl Run<'_> {
@@ -269,8 +273,12 @@ impl Run<'_> {
             });
         }
         let start = (placement.origin, placement.normal);
-        let middle = self.profile_middle(placement);
-        join(built, start, middle, &self.tolerance)
+        join(
+            built,
+            start,
+            || self.profile_middle(placement),
+            &self.tolerance,
+        )
     }
 
     /// The middle of the profile's box, in the world: where the start is
@@ -568,11 +576,12 @@ fn chain_piece(solid: &Solid, topology: &Topology, chain: u32, backwards: bool) 
 
 /// The path `parts` make, joined as the module's docs say, for a profile
 /// on the plane through `start.0` square to the unit `start.1`, whose
-/// box's middle is `middle`.
-fn join(
+/// box's middle `middle` gives (worked out only where several ends are
+/// on the plane: it takes the profile).
+pub(super) fn join(
     mut parts: Vec<Part>,
     (origin, normal): (DVec3, DVec3),
-    middle: DVec3,
+    middle: impl FnOnce() -> DVec3,
     tolerance: &Tolerance,
 ) -> Result<Path, Failed> {
     let resolution = tolerance.resolution();
@@ -590,23 +599,35 @@ fn join(
     let ends = |part: &Part| -> Option<[DVec3; 2]> {
         Some([part.pieces.first()?.start()?, part.pieces.last()?.end()?])
     };
-    // The ends on the profile's plane, nearest its middle first.
-    let mut first: Option<(usize, usize, f64)> = None;
+    // The ends on the profile's plane; of several, the nearest its
+    // middle (the first of equals).
+    let mut on_plane: Vec<(usize, usize, DVec3)> = Vec::new();
     for (i, part) in parts.iter().enumerate() {
         let Some(points) = ends(part) else {
             return Err(message::PATH_NOT_FOUND.into());
         };
         for (e, point) in points.into_iter().enumerate() {
-            if (point - origin).dot(normal).abs() > resolution {
-                continue;
-            }
-            let distance = point.distance_squared(middle);
-            if first.is_none_or(|(_, _, nearest)| distance < nearest) {
-                first = Some((i, e, distance));
+            if (point - origin).dot(normal).abs() <= resolution {
+                on_plane.push((i, e, point));
             }
         }
     }
-    let (i, e, _) = first.ok_or(message::PATH_OFF_START)?;
+    let (i, e) = match on_plane.as_slice() {
+        [] => return Err(message::PATH_OFF_START.into()),
+        &[(i, e, _)] => (i, e),
+        several => {
+            let middle = middle();
+            let mut first = (several[0].0, several[0].1);
+            let mut nearest = several[0].2.distance_squared(middle);
+            for &(i, e, point) in &several[1..] {
+                let distance = point.distance_squared(middle);
+                if distance < nearest {
+                    (first, nearest) = ((i, e), distance);
+                }
+            }
+            first
+        }
+    };
     let mut chain = Vec::new();
     let mut part = parts.remove(i);
     if e == 1 {
@@ -694,10 +715,14 @@ fn tangents(piece: &Piece) -> Option<[DVec3; 2]> {
 
 /// Checks that each of `pieces` runs on from the one before (and the
 /// first from the last, if `closed`) along the same tangent, within a
-/// sine of [`TANGENT_SINE`]; a corner fails with its joint drawn.
+/// sine of [`TANGENT_SINE`]; a corner fails with its joint drawn. A
+/// piece closed on itself (a circle, a closed spline, a rim) has no
+/// joint: where its last conic meets its first is inside the piece, as
+/// its other conics' joints are, which a traced chain's fit leaves
+/// tangent only to the tolerance.
 fn check_joints(pieces: &[Piece], closed: bool, tolerance: &Tolerance) -> Result<(), Failed> {
     let count = pieces.len();
-    let joints = if closed {
+    let joints = if closed && count > 1 {
         count
     } else {
         count.saturating_sub(1)

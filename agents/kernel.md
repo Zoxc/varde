@@ -10290,9 +10290,11 @@ see `agents/features.md`, "Failures and where they are").
   Departing from the plan, regeneration orders and joins the parts
   and checks the joints' tangents, an open path's start on the
   profile's plane and its squareness (the plan has the kernel check
-  those too; it still should, as a guard, with the same rules); a closed
-  path's start, where the profile's plane crosses it, stays the
-  kernel's. The planned analytic tests (paths in one plane, 3D paths,
+  those too; it still should, as a guard, with the same rules: the
+  sine is `sweep::JOINT_SINE`, which regeneration uses, the resolution
+  the gap at a joint and the start's distance from the plane, and a
+  piece closed on itself has no joint); a closed path's start, where
+  the profile's plane crosses it, stays the kernel's. The planned analytic tests (paths in one plane, 3D paths,
   helices, refusals, thread counts) are in `sweep/path/tests.rs`,
   `#[ignore = "kernel sweep not built"]`. See "Sweep" in
   `agents/features.md`.

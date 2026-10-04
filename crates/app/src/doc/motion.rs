@@ -991,7 +991,7 @@ impl MotionSession {
             FeatureKind::Sweep(sweep) => sweep.check_own(design).err().map(|why| why.to_string()),
             _ => None,
         };
-        refused.map(|why| format!("it {why}"))
+        refused.map(|why| said(&why))
     }
 
     /// Whether it can be committed to a document of `design`: whole,
@@ -1246,6 +1246,17 @@ fn spread_of_mut(kind: &mut PatternKind) -> &mut Value {
     match kind {
         PatternKind::Linear { spacing, .. } => spacing,
         PatternKind::Circular { angle, .. } => angle,
+    }
+}
+
+/// What a feature's check refuses, `why`, as the panel says it of the
+/// feature: "it moves …", but "its path …" and "a face it opens …" as
+/// they are.
+fn said(why: &str) -> String {
+    if why.starts_with("its ") || why.starts_with("a ") {
+        why.to_owned()
+    } else {
+        format!("it {why}")
     }
 }
 
@@ -1808,7 +1819,6 @@ impl Doc {
                 && !self.proposing()
                 && session.ready(&design)
                 && self.motion_held().is_none()
-                && (session.kind != MotionKind::Sweep || self.sweep_refused(session).is_none())
         })
     }
 
@@ -1817,14 +1827,20 @@ impl Doc {
     /// the original again) that a later feature names: the document
     /// refuses that rather than drop the feature, so the panel says so
     /// at once, and how to get past it, as an extrude's that would stop
-    /// making the body a combine names.
+    /// making the body a combine names. A split's tool or a sweep's path
+    /// the document refuses at its place likewise.
     pub(crate) fn motion_held(&self) -> Option<String> {
         let session = self.motion.as_ref()?;
         if session.kind == MotionKind::Split {
             return self.split_held(session);
         }
+        // A sweep naming what the document refuses at its place, or
+        // stopping making a body a combine names.
         if session.kind == MotionKind::Sweep {
-            return self.held(session.feature, session.sweep.operation);
+            return (self
+                .sweep_refused(session)
+                .map(|why| said(&why.to_string())))
+            .or_else(|| self.held(session.feature, session.sweep.operation));
         }
         let edited = session.feature?;
         let kind = session.kind()?;
@@ -2345,12 +2361,6 @@ impl Doc {
             need: session.need(),
             refused: (session.gone().map(str::to_owned))
                 .or_else(|| session.refused(&design))
-                .or_else(|| {
-                    (session.kind == MotionKind::Sweep)
-                        .then(|| self.sweep_refused(session))
-                        .flatten()
-                        .map(|why| format!("it {why}"))
-                })
                 .or_else(|| self.motion_held()),
             error: self.feed.draft_error(),
             show_error: self.draft_framed(),

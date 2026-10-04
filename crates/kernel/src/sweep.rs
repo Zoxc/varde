@@ -72,7 +72,7 @@ pub mod path;
 pub use fit::{Fitted, deviation, fitted_strip};
 pub use lathe::{Band, Cap, Lathe, Pole, fitted_band, pole_cap};
 pub(crate) use lathe::{fitted_band_with, pole_cap_with};
-pub use path::{Helix, Orientation, Path, Piece, SweepError, sweep};
+pub use path::{Helix, JOINT_SINE, Orientation, Path, Piece, SweepError, sweep};
 
 /// How far the diagonal's plane must keep from the apex, or two tangents
 /// from parallel, as a sine.
