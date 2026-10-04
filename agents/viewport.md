@@ -955,7 +955,10 @@ a body's volume, a face's area and a round one's radius, an edge's
 length and a round one's radius, a point's place, or two items'
 distance and angle. `Doc::look`, `Doc::sync` and each answer ask for the
 model after the selection is found again, so a selection that changed
-is measured anew.
+is measured anew. A request that differs only in what it measures asks
+for the same model, so `MeshFeed::answers_request` leaves the measures
+out: a move's or align's picks right after the selection changed (a body
+selected, then the tool started) aren't refused as out of date.
 
 What's selected is kept by name, as a reference would be: a face as its
 body, key and the point it was picked at (`Selected::Face`), an edge as

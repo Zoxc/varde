@@ -220,10 +220,14 @@ impl Doc {
     /// in the model, for the status bar: one or two items, while the
     /// cursor picks the model for the selection and the status bar shows
     /// it (no tool, operation or plane pick in use, no feature selected).
+    /// A combine or a move, mirror or align picks the model for itself:
+    /// a selection measured under it would ask the model again with
+    /// every draft, and leave the model shown not answering what was
+    /// asked last, which their picks wait for.
     pub(crate) fn selection_inspect(&self) -> Option<(InspectPick, Option<InspectPick>)> {
         if !self.picks()
             || self.measure.is_some()
-            || self.combine.is_some()
+            || self.operating()
             || self.picking_plane.is_some()
             || self.selected_feature.is_some()
         {

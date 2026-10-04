@@ -440,9 +440,13 @@ impl MeshFeed {
     }
 
     /// Whether the model shown answers what was asked last: picks on it
-    /// are of the document, and the draft, as they're set up now.
+    /// are of the document, and the draft, as they're set up now. What
+    /// was measured on it doesn't count: another measure asks for the
+    /// same model, so a selection changed just before doesn't hold picks
+    /// back until its measures come.
     pub(crate) fn answers_request(&self) -> bool {
-        self.requested.is_some() && self.shown == self.requested
+        let model = |asked: Asked| (asked.generation, asked.exclude, asked.draft);
+        self.requested.is_some() && self.shown.map(model) == self.requested.map(model)
     }
 
     /// The bodies the draft's solid touches, as the newest answer of the

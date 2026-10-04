@@ -1233,8 +1233,8 @@ on), its plane to pick, clicks picking the plane if it has bodies.
   axis", "Only a flat face can be the mirror plane", "Only a face made
   before the move can be picked", "Which body that face is on at the
   move can't be told: pick another", and a pick on a model that doesn't
-  answer what was asked last ("The model shown is out of date: ...",
-  `MeshFeed::answers_request`). Only what a click takes is lit while
+  answer what was asked last, what it measures aside ("The model shown
+  is out of date: ...", `MeshFeed::answers_request`). Only what a click takes is lit while
   hovered. A pick hands the clicks back to the bodies. While the axis or
   plane is picked the model shown is the history as of the feature, so
   what's clicked is where the feature finds it: a new one sends no
