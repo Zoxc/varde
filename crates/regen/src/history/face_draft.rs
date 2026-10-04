@@ -14,7 +14,9 @@
 //! the kernel sorted, each once, with a point of the neutral plane, the
 //! pull, the angle in radians and whether tangent faces are taken in.
 //! The plane found is noted for the answer (`Evaluation::references`,
-//! as a mirror's plane), its normal as found (not flipped).
+//! as a mirror's plane), its normal as found (not flipped), also when a
+//! face isn't found (that failure still comes first), so the session
+//! draws the plane while its faces are picked again.
 //!
 //! The result is cached by the body's key, the regions, the plane's
 //! point and the pull's bits, the angle's bits, the tangent flag, the
@@ -214,11 +216,15 @@ pub(super) fn evaluate_face_draft(
 ) -> Result<(), Failed> {
     let body = draft.body().expect("a checked draft has faces");
     let place = InPlace::of(document, body, evaluation, cache)?;
-    let faces = place.regions(&draft.faces, message::draft_face_not_found)?;
-    let [neutral, normal] =
-        resolve_plane(&draft.neutral, &NEUTRAL_PLANE, evaluation, tolerance, cache)?;
-    // The plane, as a mirror's is, for the session to draw.
-    super::motion::note_reference(evaluation, feature, [neutral, normal]);
+    let faces = place.regions(&draft.faces, message::draft_face_not_found);
+    let plane = resolve_plane(&draft.neutral, &NEUTRAL_PLANE, evaluation, tolerance, cache);
+    // The plane, as a mirror's is, for the session to draw: also while a
+    // face isn't found, whose failure comes first.
+    if let Ok(&plane) = plane.as_ref() {
+        super::motion::note_reference(evaluation, feature, plane);
+    }
+    let faces = faces?;
+    let [neutral, normal] = plane?;
     let normal = normal.normalize();
     let pull = if draft.flip { -normal } else { normal };
     let angle = draft.angle.value;

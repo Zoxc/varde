@@ -6,7 +6,9 @@
 //! face previewed, the neutral plane picked as a face or from the
 //! toolbar's origin planes, Flip, the angle typed and refused, Tangent
 //! faces, OK as one undo step; editing from the Timeline; the neutral
-//! face an undo takes away said to be gone.
+//! face an undo takes away said to be gone; the neutral face's body
+//! merged into another before the draft mid-session; the neutral face
+//! among the faces drafted; units changed mid-session.
 
 use glam::DVec3;
 use varde_document::{Document, Editor, FaceDraft, FeatureKind, OriginPlane, PlaneRef};
@@ -376,3 +378,134 @@ fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
     assert_eq!(faces(&plates).len(), 1);
     assert_eq!(plates.doc.overlap_ticks(), Some(vec![false]));
 }
+
+/// The neutral plane the top of another box, which a combine merges into
+/// a third before the draft while it's set up: still found (on the body
+/// holding it), the draft previewed about it and committed as set up.
+#[test]
+fn a_neutral_face_merged_before_the_draft_is_found_on_its_holder() {
+    varde_regen::testing::draft_by_boxes();
+    let mut editor = Editor::new(Document::default());
+    add_box(&mut editor, glam::DVec2::ZERO, glam::DVec2::new(40.0, 30.0));
+    add_box(
+        &mut editor,
+        glam::DVec2::new(60.0, 0.0),
+        glam::DVec2::new(80.0, 20.0),
+    );
+    add_box(
+        &mut editor,
+        glam::DVec2::new(70.0, 10.0),
+        glam::DVec2::new(90.0, 30.0),
+    );
+    let mut plates = held(editor.document().clone());
+    let [body, second, third] = plates.bodies;
+    plates.doc.look(Look::StartDraft);
+    plates.answer();
+    let pick = front(&plates, body);
+    click(&mut plates, pick);
+    plates.answer();
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    let other = face_pick(&plates, second, DVec3::Z, 10.0, DVec3::new(65.0, 5.0, 10.0));
+    click(&mut plates, other);
+    plates.answer();
+    let combine = varde_document::Combine {
+        target: third,
+        tools: vec![second],
+        op: varde_document::BodyOp::Union,
+        keep_tools: false,
+    };
+    let add = plates.doc.editor.document().add_feature(combine.into());
+    plates.doc.apply(add);
+    plates.doc.sync();
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    assert!(plates.doc.motion_ready());
+    let draft = (plates.doc.motion.as_ref())
+        .and_then(|session| session.face_draft())
+        .expect("a draft");
+    assert_eq!(
+        plates.doc.motion_draft().map(|draft| draft.1),
+        Some(FeatureKind::FaceDraft(draft.clone()))
+    );
+    assert!(matches!(draft.neutral, PlaneRef::Face(face) if face.body == second));
+    // The front leans out below the plane at the top: its foot moved
+    // out by 10 tan 3°.
+    let [low, _] = plates.bounds(body);
+    assert!(near(low, DVec3::new(0.0, -10.0 * tan(3.0), 0.0)), "{low}");
+    plates.doc.update(Edit::CommitMotion);
+    assert!(plates.doc.motion.is_none());
+    assert_eq!(
+        plates.last_feature().1,
+        FeatureKind::FaceDraft(draft),
+        "committed as set up"
+    );
+    plates.doc.editor.document().check().unwrap();
+}
+
+/// The neutral plane one of the faces drafted: it faces the pull, which
+/// regeneration refuses, never drafting anything.
+#[test]
+fn the_neutral_face_among_the_faces_drafted_is_refused() {
+    varde_regen::testing::draft_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartDraft);
+    plates.answer();
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    let pick = front(&plates, body);
+    click(&mut plates, pick);
+    assert_eq!(picking(&plates), MotionPick::Faces);
+    click(&mut plates, pick);
+    let draft = drafted(&plates).expect("a draft");
+    assert!(matches!(draft.neutral, PlaneRef::Face(face) if face.key == draft.faces[0].key));
+    plates.answer();
+    let error = plates.doc.feed.draft_error().expect("refused");
+    assert!(error.contains("faces the pull direction"), "{error}");
+    let [low, high] = plates.bounds(body);
+    assert!(near(low, DVec3::ZERO) && near(high, DVec3::new(40.0, 30.0, 10.0)));
+}
+
+/// The units changed while a draft is set up: the 3° it opens with, and
+/// an angle typed as a bare number, stay the same angle; one typed with
+/// a length's unit stays refused. A new draft in inches opens at 3°.
+#[test]
+fn units_changed_mid_session_keep_the_angle() {
+    varde_regen::testing::draft_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartDraft);
+    plates.answer();
+    let pick = front(&plates, body);
+    click(&mut plates, pick);
+    let angle = |plates: &Plates| {
+        let session = plates.doc.motion.as_ref()?;
+        session.face_draft().map(|draft| draft.angle.value)
+    };
+    plates
+        .doc
+        .update(Edit::SetUnits(varde_expr::LengthUnit::In));
+    plates.answer();
+    assert!((angle(&plates).unwrap() - 3f64.to_radians()).abs() < 1e-15);
+    assert!(plates.doc.motion_ready());
+    plates.input(MotionField::Angle, "5");
+    plates
+        .doc
+        .update(Edit::SetUnits(varde_expr::LengthUnit::Mm));
+    plates.answer();
+    assert!((angle(&plates).unwrap() - 5f64.to_radians()).abs() < 1e-15);
+    plates.input(MotionField::Angle, "3 mm");
+    assert!(!plates.doc.motion_ready());
+    plates
+        .doc
+        .update(Edit::SetUnits(varde_expr::LengthUnit::In));
+    assert!(!plates.doc.motion_ready());
+    plates.motion(MotionLook::Cancel);
+    plates.doc.look(Look::StartDraft);
+    plates.answer();
+    let pick = front(&plates, body);
+    click(&mut plates, pick);
+    assert!((angle(&plates).unwrap() - 3f64.to_radians()).abs() < 1e-15);
+    assert!(shows(&plates, "1 face · 3° from XY"));
+}
+
+mod fuzz;

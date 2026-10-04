@@ -3927,8 +3927,10 @@ pub struct FaceDraft {
   through the origin, a face found on its body (`holding`: its holder if
   merged) as the features before leave it, which must be flat; its
   failures "its neutral face's body is gone", "its neutral face wasn't
-  found", "its neutral face isn't flat" (the face drawn). The pull is
-  the plane's unit normal, negated by `flip`.
+  found", "its neutral face isn't flat" (the face drawn). The plane
+  found is noted for the session to draw even when a face isn't found
+  (that failure still comes first). The pull is the plane's unit
+  normal, negated by `flip`.
 - **The draft**: `varde_kernel::draft_faces(solid, topology, faces,
   neutral point, pull, angle in radians, tangent, feature, tol,
   budget)`, cached as an `Entry::Solid` by the body's key, the feature,
@@ -3977,7 +3979,8 @@ following both bodies and not the faces, units pinned, round trip,
 wrong ones refused when read, the fifteenth kind (the one test holding
 its index), errors), `regen/src/history/tests/face_draft.rs` (the stub
 failing as too complex with the history going on; a face gone after
-its maker is removed, named by its place; the neutral face gone ("its
+its maker is removed, named by its place, the plane still noted; the
+neutral face gone ("its
 neutral face wasn't found") and a round one not flat; with the box
 stand-in: a draft surviving an upstream height change, flip and a
 neutral face on top by their volumes and undo, four sides from the
@@ -3993,7 +3996,13 @@ names kept, the same bits twice; hinges inside the faces; a boss's
 wall an exact cone and a hole's widening; a rounded slot across its
 tangent faces and refused without them; a plate with holes drafted as a
 whole; an elliptic wall fitted; a sphere and a narrow slot closing
-refused), `io/src/vrdp/tests.rs` (through a file, tampered points and
+refused), `regen/src/history/tests/face_draft/fuzz.rs` (random
+histories with drafts about origin planes and faces (flat or not, a
+drafted one, another body's, one merged by a combine before it):
+failing alike in the whole history and the one ending with it, a
+failure changing nothing, every one that works of a box with its pull
+along an axis and of the volume its cross-sections give, names kept,
+cache warm and cold, bytes and wire; `VARDE_DRAFT_SEEDS`), `io/src/vrdp/tests.rs` (through a file, tampered points and
 angles refused, damaged 2 000 ways refused or checked, faces out of
 order, repeated, none, on two bodies, past the limit, named by the
 draft or later, the neutral face named by the draft or on a body not
@@ -4068,7 +4077,9 @@ Shell), so the panel is built in the style of the mock's shell panel.
 Departures from the plan and mock: the panel is in the shell panel's
 style (the mock has none); not on the toolbar; Flip and Tangent faces as
 ticks; the neutral plane starts as XY. Known gaps: the neutral plane is
-drawn only where its line is known (a face's once the preview answered).
+drawn only where its line is known (a face's once the preview answered);
+a plane picked goes back to picking faces even if their picking was
+turned off before.
 
 UI tests: `view/src/motion/tests.rs` (the panel's order, no Bodies or
 Direction, the status text), `rail/tests.rs` (Draft in the Modify set,
@@ -4086,5 +4097,15 @@ Tangent faces, OK and the Timeline's row, undo; editing from the
 Timeline, Cancel, another angle, undo; a neutral face on another body
 an undo takes away said to be gone, back on redo; the overlap list
 ticking the faces, not while the plane picks, a row then taken as the
-plane). What the face sessions' tests share (boxes, flat faces found
+plane; a neutral face on a body a combine merges into a third before
+the draft, mid-session, found on its holder, previewed and committed;
+the neutral face one of the faces drafted, refused as facing the pull;
+the units changed mid-session keeping the 3° and a typed angle) and
+`app/src/doc/motion/tests/face_draft/fuzz.rs` (random sessions in the
+offset face fuzz's style: picks, the plane's row and toolbar planes,
+angles, Flip, Tangent faces, units, undo and redo, merges of the
+session's or the neutral face's body, overlap lists while either
+picks; each ready session whole and checked, committed as set up, the
+plane drawn finite, and each draft that works by its volume;
+`VARDE_DRAFT_SEEDS`). What the face sessions' tests share (boxes, flat faces found
 and clicked, the screen's text) is `app/src/doc/motion/tests/face_session.rs`.

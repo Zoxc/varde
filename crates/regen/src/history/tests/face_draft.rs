@@ -212,8 +212,9 @@ fn notched(editor: &mut Editor, body: BodyId) -> (FeatureId, FaceRef) {
 
 /// A face whose maker is removed (the cut that made a notch's wall; the
 /// draft stays, as it names its body only) isn't found: the draft fails
-/// before the kernel, the body left as it was; among others, it's named
-/// by its place.
+/// before the kernel, the body left as it was, its neutral plane still
+/// noted for the session to draw; among others, it's named by its
+/// place.
 #[test]
 fn a_face_that_is_gone_is_not_found() {
     let (mut editor, body, solid) = cube();
@@ -232,6 +233,12 @@ fn a_face_that_is_gone_is_not_found() {
     assert_eq!(failed.message, "its face wasn't found");
     assert!(failed.geometry.is_none());
     assert_near(solid_of(&evaluation, body).volume(), 1000.0);
+    // The neutral plane is still noted, for the session to draw.
+    let noted = (evaluation.references.iter()).find(|(feature, _)| *feature == id);
+    assert_eq!(
+        noted.map(|(_, plane)| *plane),
+        Some([DVec3::ZERO, DVec3::Z])
+    );
     let kind = draft(
         editor.document(),
         vec![wall, front(&solid, body)],
@@ -1150,3 +1157,5 @@ fn the_kernel_refuses_a_sphere_and_a_slot_closing() {
         "the face turns past a neighbouring face of Body 1: try a smaller angle"
     );
 }
+
+mod fuzz;
