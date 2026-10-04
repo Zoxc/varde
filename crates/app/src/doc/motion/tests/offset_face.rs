@@ -507,3 +507,20 @@ fn a_handle_found_on_a_face_moved_far_out_stands_where_it_was_exactly() {
 }
 
 mod fuzz;
+
+/// An offset face of a box's top as its session made it, by the
+/// kernel's stand-in, and its id.
+pub(super) fn made() -> (Plates, varde_document::FeatureId) {
+    varde_regen::testing::offset_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartOffsetFace);
+    plates.answer();
+    let pick = top(&plates, body, 10.0);
+    click(&mut plates, pick);
+    plates.input(MotionField::Distance, "2");
+    plates.answer();
+    plates.doc.update(Edit::CommitMotion);
+    let (id, _) = plates.last_feature();
+    (plates, id)
+}

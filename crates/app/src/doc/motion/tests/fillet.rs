@@ -711,3 +711,8 @@ fn a_click_on_a_chain_takes_out_every_edge_picked_on_it() {
 }
 
 mod fuzz;
+
+/// A fillet as its session made it, [`filleted`], and its id.
+pub(super) fn made() -> (Plates, varde_document::FeatureId) {
+    filleted()
+}

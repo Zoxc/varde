@@ -428,56 +428,56 @@ fn ops<'a>(
     let editable = state.editable();
     let keys = state.keys();
     if let Some(sketch) = &state.sketch {
-        let active = sketch.tool.map(|tool| tool.tool);
-        let tools = Tool::ALL.map(|tool| {
-            let icon = tool_icon(tool);
-            bound_op(
-                icon,
-                tool.label(),
-                tool_binding(tool, keys),
-                active == Some(tool),
-            )
-        });
-        let constrain = bound_op(
+        let constrain = tipped_op(
             Icon::Constrain,
             "Constrain",
             constrain_binding(keys),
             sketch.constraining,
         );
         // The Constrain tool offers the constraints that fit the
-        // selection, the most likely first.
-        let constraints = sketch
-            .constraining
-            .then(|| {
-                let fitting = ConstraintKind::fitting(sketch.sketch, sketch.selection);
-                let bound = fitting.into_iter().filter_map(|kind| {
-                    let binding = constraint_binding(kind, keys)?;
-                    Some(bound_op(kind.icon(), kind.label(), binding, false))
-                });
-                std::iter::once(separator()).chain(bound)
-            })
-            .into_iter()
-            .flatten();
+        // selection, the most likely first, in place of the drawing
+        // tools: as the mock's model bar changes with what's selected,
+        // and there's no room for both at 1280 px wide. The tools are on
+        // the rail, their keys still work.
+        if sketch.constraining {
+            let fitting = ConstraintKind::fitting(sketch.sketch, sketch.selection);
+            let bound = fitting.into_iter().filter_map(|kind| {
+                let binding = constraint_binding(kind, keys)?;
+                Some(tipped_op(kind.icon(), kind.label(), binding, false))
+            });
+            return std::iter::once(constrain)
+                .chain(std::iter::once(separator()))
+                .chain(bound)
+                .collect();
+        }
         // With splines selected, and no drawing tool: switching them,
-        // handles and the curvature comb.
-        let spline_ops = keys
-            .splines_selected
-            .then(|| {
-                [
-                    separator(),
-                    bound_op(Icon::Convert, "Convert", switch_binding(keys), false),
-                    bound_op(Icon::Handles, "Handles", handles_binding(keys), false),
-                    bound_op(Icon::Comb, "Comb", comb_binding(keys), sketch.comb),
-                ]
-            })
+        // handles and the curvature comb, in place of the tools likewise.
+        if keys.splines_selected {
+            return [
+                tipped_op(Icon::Convert, "Convert", switch_binding(keys), false),
+                tipped_op(Icon::Handles, "Handles", handles_binding(keys), false),
+                tipped_op(Icon::Comb, "Comb", comb_binding(keys), sketch.comb),
+                constrain,
+            ]
             .into_iter()
-            .flatten();
-        return tools
-            .into_iter()
-            .chain([separator(), constrain])
-            .chain(constraints)
-            .chain(spline_ops)
             .collect();
+        }
+        // The tools the mock's sketch bar has, in its order; the rest are
+        // on the rail (all of them, with their keys), which left no room
+        // at 1280 px wide. Their keys are in their tooltips, as the
+        // mock's bar has them at that width, not beside them: with a
+        // tool's tag beside the sketch's name they'd run past the bar.
+        let active = sketch.tool.map(|tool| tool.tool);
+        let tools = Tool::BAR.map(|tool| {
+            tipped_op(
+                tool_icon(tool),
+                tool.label(),
+                tool_binding(tool, keys),
+                active == Some(tool),
+            )
+        });
+        // Constrain last, as the mock's bar has it.
+        return tools.into_iter().chain([constrain]).collect();
     }
     let sketch = bound_op(
         Icon::Sketch,
@@ -716,6 +716,33 @@ fn bound_op(
     let message = binding.sends();
     let key = Some(binding.shortcut).filter(|shortcut| !shortcut.is_none());
     op_button(icon, label, key, on, message)
+}
+
+/// A sketch toolbar's button for `binding`, highlighted while `on`, its
+/// key in its tooltip ("Line (L)") rather than beside it.
+fn tipped_op(
+    icon: Icon,
+    label: &'static str,
+    binding: Binding,
+    on: bool,
+) -> Element<'static, Message> {
+    let tip = if binding.shortcut.is_none() {
+        label.to_owned()
+    } else {
+        format!("{label} ({})", binding.shortcut.label())
+    };
+    let button = button(
+        row![icons::icon(icon, icons::INLINE), text(label)]
+            .spacing(6)
+            .height(Length::Fill)
+            .align_y(Alignment::Center),
+    )
+    .height(28)
+    // As the mock's narrower buttons, without their keys beside them.
+    .padding([0, 7])
+    .style(theme::flat_button(on, theme::Tone::Text))
+    .on_press_maybe(binding.sends());
+    crate::chrome::tip(button, text(tip))
 }
 
 fn op_button(

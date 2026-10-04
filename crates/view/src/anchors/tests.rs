@@ -9,17 +9,21 @@ use crate::projection::top_camera;
 /// origin in its middle, a unit 10 pixels.
 const SIZE: Size = Size::new(300.0, 200.0);
 
-type Layer<'a> = Anchors<'a, u8, iced::Theme, ()>;
+/// A real renderer: `()` is one only with debug assertions on.
+type Renderer = iced::Renderer;
+
+type Layer<'a> = Anchors<'a, u8, iced::Theme, Renderer>;
 
 /// A widget `size` pixels square.
-fn square(size: f32) -> Element<'static, u8, iced::Theme, ()> {
+fn square(size: f32) -> Element<'static, u8, iced::Theme, Renderer> {
     Space::new().width(size).height(size).into()
 }
 
 /// Lays `layer` out over [`SIZE`], and returns its tree and layout.
 fn lay_out(layer: &mut Layer<'_>) -> (Tree, layout::Node) {
-    let mut tree = Tree::new(&*layer as &dyn Widget<u8, iced::Theme, ()>);
-    let node = layer.layout(&mut tree, &(), &layout::Limits::new(Size::ZERO, SIZE));
+    let mut tree = Tree::new(&*layer as &dyn Widget<u8, iced::Theme, Renderer>);
+    let renderer = crate::probe::renderer();
+    let node = layer.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, SIZE));
     (tree, node)
 }
 
@@ -72,6 +76,7 @@ fn the_layer_takes_only_what_is_over_its_widgets() {
     )];
     let mut layer: Layer<'_> = Anchors::new(top_camera(), OriginPlane::XY.placement(), anchored);
     let (mut tree, node) = lay_out(&mut layer);
+    let renderer = crate::probe::renderer();
     let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
     let viewport = Rectangle::with_size(SIZE);
     let mut taken = |at: Point| {
@@ -83,14 +88,14 @@ fn the_layer_takes_only_what_is_over_its_widgets() {
             &press,
             Layout::new(&node),
             cursor,
-            &(),
+            &renderer,
             &mut clipboard::Null,
             &mut shell,
             &viewport,
         );
         let captured = shell.is_event_captured();
         let interaction =
-            layer.mouse_interaction(&tree, Layout::new(&node), cursor, &viewport, &());
+            layer.mouse_interaction(&tree, Layout::new(&node), cursor, &viewport, &renderer);
         (captured, interaction)
     };
     // On the button at the middle, and off it.

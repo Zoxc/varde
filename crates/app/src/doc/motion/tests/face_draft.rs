@@ -538,3 +538,20 @@ fn units_changed_mid_session_keep_the_angle() {
 }
 
 mod fuzz;
+
+/// A draft of a box's front, flipped, as its session made it, by the
+/// kernel's stand-in, and its id.
+pub(super) fn made() -> (Plates, varde_document::FeatureId) {
+    varde_regen::testing::draft_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartDraft);
+    plates.answer();
+    let pick = front(&plates, body);
+    click(&mut plates, pick);
+    plates.motion(MotionLook::Flip);
+    plates.answer();
+    plates.doc.update(Edit::CommitMotion);
+    let (id, _) = plates.last_feature();
+    (plates, id)
+}

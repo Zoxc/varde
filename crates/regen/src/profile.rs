@@ -285,6 +285,71 @@ pub(crate) fn path_chain(
     walk_chain(sketch, curves, join, fit, true)
 }
 
+/// Whether the curves `curves` of `sketch` close up, as regenerating a
+/// loft's rails (which must be open) finds it with ends joining within
+/// `join`: a curve with no ends (a circle, a closed spline), one whose
+/// own ends meet, or curves whose ends all join, two at a time. For
+/// refusing a closed rail as it's picked, as regenerating would ("rail
+/// 1 is closed"); the work is that of finding the joints, no conics are
+/// made.
+pub fn chain_closes(sketch: &Sketch, curves: &[Id], join: f64) -> bool {
+    let mut ends = Vec::with_capacity(curves.len());
+    for &id in curves {
+        let Some(entry) = sketch.curve(id) else {
+            return false;
+        };
+        let Some([a, b]) = entry.curve.ends() else {
+            return true;
+        };
+        let (Some(pa), Some(pb)) = (sketch.point(a), sketch.point(b)) else {
+            return false;
+        };
+        ends.push([(a, pa.at), (b, pb.at)]);
+    }
+    // Three ends at a point are branches, which `chain` says rather
+    // than closed.
+    let Ok(partner) = partners(&ends, join) else {
+        return false;
+    };
+    ends.iter().any(|&pair| own_loop(pair, join))
+        || (!ends.is_empty() && partner.iter().flatten().all(Option::is_some))
+}
+
+/// The end an end joins, as (curve, end), if it joins one.
+type Joint = Option<(usize, usize)>;
+
+/// The end each of the curves' ends `ends` joins, as (curve, end): the
+/// same point, or one within `join`, two at a time. Three or more ends
+/// joining are branches.
+fn partners(ends: &[[(Id, DVec2); 2]], join: f64) -> Result<Vec<[Joint; 2]>, ChainError> {
+    let n = ends.len();
+    let mut partner: Vec<[Joint; 2]> = vec![[None; 2]; n];
+    for i in 0..n {
+        for e in 0..2 {
+            for j in (i + 1)..n {
+                for f in 0..2 {
+                    let (p, q) = (ends[i][e], ends[j][f]);
+                    if p.0 != q.0 && p.1.distance(q.1) > join {
+                        continue;
+                    }
+                    if partner[i][e].is_some() || partner[j][f].is_some() {
+                        return Err(ChainError::Branches);
+                    }
+                    partner[i][e] = Some((j, f));
+                    partner[j][f] = Some((i, e));
+                }
+            }
+        }
+    }
+    Ok(partner)
+}
+
+/// Whether a curve's own two ends `ends` meet, within `join`: a loop of
+/// its own.
+fn own_loop([(a, pa), (b, pb)]: [(Id, DVec2); 2], join: f64) -> bool {
+    a == b || pa.distance(pb) <= join
+}
+
 /// [`chain`] and [`path_chain`]: a closed chain only with `closed`.
 fn walk_chain(
     sketch: &Sketch,
@@ -310,28 +375,9 @@ fn walk_chain(
         };
         ends.push([(a, pa), (b, pb)]);
     }
-    // The end each end joins, as (curve, end).
     let n = ends.len();
-    let mut partner: Vec<[Option<(usize, usize)>; 2]> = vec![[None; 2]; n];
-    for i in 0..n {
-        for e in 0..2 {
-            for j in (i + 1)..n {
-                for f in 0..2 {
-                    let (p, q) = (ends[i][e], ends[j][f]);
-                    if p.0 != q.0 && p.1.distance(q.1) > join {
-                        continue;
-                    }
-                    if partner[i][e].is_some() || partner[j][f].is_some() {
-                        return Err(ChainError::Branches);
-                    }
-                    partner[i][e] = Some((j, f));
-                    partner[j][f] = Some((i, e));
-                }
-            }
-        }
-    }
-    // A curve whose own two ends meet is a loop of its own.
-    if (0..n).any(|i| ends[i][0].0 == ends[i][1].0 || ends[i][0].1.distance(ends[i][1].1) <= join) {
+    let partner = partners(&ends, join)?;
+    if ends.iter().any(|&pair| own_loop(pair, join)) {
         return Err(ChainError::Closed);
     }
     let mut free = (0..n).flat_map(|i| (0..2).map(move |e| (i, e)));

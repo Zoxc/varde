@@ -593,3 +593,15 @@ fn an_edge_follows_its_body_a_redone_combine_merges() {
 }
 
 mod fuzz;
+
+/// A plate scaled by two about the origin as its session made it, and
+/// its id.
+pub(super) fn made() -> (Plates, varde_document::FeatureId) {
+    let (mut plates, _) = plate();
+    plates.doc.look(Look::StartScale);
+    plates.input(MotionField::Factor, "2");
+    plates.answer();
+    plates.doc.update(Edit::CommitMotion);
+    let (id, _) = plates.last_feature();
+    (plates, id)
+}

@@ -828,3 +828,17 @@ fn edges_dont_follow_their_body_into_a_combine_that_fails() {
 }
 
 pub(super) mod fuzz;
+
+/// A chamfer as its session made it, [`chamfered`], held as plates
+/// are, and its id.
+pub(super) fn made() -> (Plates, FeatureId) {
+    let (editor, id) = chamfered();
+    let plate = editor.document().bodies()[0].id;
+    let (doc, requests) = holding(editor.document().clone());
+    let plates = Plates {
+        doc,
+        requests,
+        bodies: [plate; 3],
+    };
+    (plates, id)
+}

@@ -358,6 +358,19 @@ fn picking_only_faces_or_only_edges_skips_the_other() {
 /// `(offset, 0)`, with `holes` × `holes` holes through it on a grid,
 /// made ready for picking as model 7.
 pub(crate) fn plate_of(scale: f64, offset: f64, holes: u32) -> PickIndex {
+    index_of(holed_plate(scale, offset, holes).document())
+}
+
+/// `document` made ready for picking as model 7.
+fn index_of(document: &Document) -> PickIndex {
+    let mut cache = Cache::default();
+    let evaluation = evaluate(document, &mut cache);
+    let (mesh, picking) = tessellate_picking(document, &evaluation, &mut cache).unwrap();
+    PickIndex::new(mesh, picking, 7)
+}
+
+/// The document of [`plate_of`]'s plate.
+fn holed_plate(scale: f64, offset: f64, holes: u32) -> varde_document::Editor {
     use varde_document::{Command, Editor, Extent, Extrude, Operation};
     use varde_expr::Value;
     use varde_sketch::{Curve, Sketch};
@@ -412,11 +425,77 @@ pub(crate) fn plate_of(scale: f64, offset: f64, holes: u32) -> PickIndex {
     editor
         .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
-    let document = editor.document().clone();
-    let mut cache = Cache::default();
-    let evaluation = evaluate(&document, &mut cache);
-    let (mesh, picking) = tessellate_picking(&document, &evaluation, &mut cache).unwrap();
-    PickIndex::new(mesh, picking, 7)
+    editor
+}
+
+/// [`plate_of`]'s plate with 20 × 20 holes, under a lid: a plate 100 × 80
+/// × 10 from z −10 to 0, a body of its own, hiding it from below.
+fn lidded_plate() -> PickIndex {
+    use varde_document::{Command, Extent, Extrude, Operation};
+    use varde_expr::Value;
+    use varde_sketch::{Curve, Sketch};
+
+    let mut editor = holed_plate(1.0, 0.0, 20);
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
+        .unwrap();
+    let feature = editor.document().features().last().unwrap().id;
+    let mut sketch = Sketch::default();
+    let corners = [(-50.0, -40.0), (50.0, -40.0), (50.0, 40.0), (-50.0, 40.0)]
+        .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+    for (k, &start) in corners.iter().enumerate() {
+        let end = corners[(k + 1) % 4];
+        sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+    }
+    let region = sketch.profiles().unwrap().reference(0).unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let design = editor.document().design();
+    let extrude = Extrude {
+        taper: None,
+        sketch: feature,
+        regions: vec![region],
+        extent: Extent::OneSide(Value::new("10", &Extent::ask(&design)).unwrap()),
+        flip: true,
+        operation: Operation::NewBody(varde_document::BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(extrude.into()))
+        .unwrap();
+    index_of(editor.document())
+}
+
+/// Seen from below, the lid hides the 400 holes' rims, hundreds of edge
+/// pieces nearer the cursor than the lid's edge a few pixels off: that
+/// edge is still picked, the hidden ones not searched for one by one.
+#[test]
+fn a_shown_edge_behind_many_hidden_ones_is_picked() {
+    let index = lidded_plate();
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        // 5 mm a pixel: the lid's edge at x 50 is 4 pixels from x 30,
+        // over the plate's edge and its last holes' rims.
+        let camera = camera_at(View::Bottom, projection, DVec3::ZERO, 1500.0);
+        let at = shown(&camera, DVec3::new(30.0, 0.0, -10.0));
+        let edge = shown(&camera, DVec3::new(50.0, 0.0, -10.0));
+        assert!(
+            (3.0..EDGE_REACH).contains(&at.distance(edge)),
+            "{at} {edge}"
+        );
+        let pick = index
+            .pick(&camera, SIZE, at, Picks::Edges)
+            .expect("an edge");
+        let mut sides = sides(&index, pick.target);
+        sides.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(
+            sides,
+            vec![([0.0, 0.0, -1.0], 10.0), ([1.0, 0.0, 0.0], 50.0)],
+            "{projection:?}"
+        );
+    }
 }
 
 #[test]

@@ -18,7 +18,7 @@ use varde_document::{
     BodyId, CurveChain, Document, FeatureId, Loft, LoftError, LoftMode, MAX_LOFT_RAILS,
     MAX_LOFT_SECTIONS, MAX_RAIL_CURVES, Section,
 };
-use varde_regen::{loft_corner, loft_corners};
+use varde_regen::{chain_closes, loft_corner, loft_corners};
 use varde_sketch::{Id, Profiles, Sketch};
 use varde_view::{
     LoftSection, LoftShape, LoftView, MotionKind, MotionLook, MotionPick, OperationKind,
@@ -286,13 +286,19 @@ impl MotionSession {
     }
 
     /// Adds the chain of `sketch`'s curves that `curve` is in as a rail,
-    /// or takes out the rail it's in. Refused, why, if not.
+    /// or takes out the rail it's in. Refused, why, if not: while it's
+    /// closed (its rails are left out, so one added wouldn't show), or a
+    /// chain that closes up, as regeneration refuses it ("rail 1 is
+    /// closed: ...").
     pub(super) fn loft_rail(
         &mut self,
         sketch: FeatureId,
         curve: Id,
         document: &Document,
     ) -> Result<(), Cow<'static, str>> {
+        if self.loft.closed {
+            return Err("A closed loft takes no rails: turn Closed off to pick them".into());
+        }
         let drawn = sketch_of(document, sketch)
             .filter(|drawn| drawn.curve(curve).is_some())
             .ok_or("That curve isn't in the sketch")?;
@@ -310,6 +316,12 @@ impl MotionSession {
         let rail = chain_through(drawn, sketch, curve);
         if rail.curves.len() > MAX_RAIL_CURVES {
             return Err(format!("A rail takes at most {MAX_RAIL_CURVES} curves").into());
+        }
+        let join = document.tolerance().resolution();
+        if chain_closes(drawn, &rail.curves, join) {
+            return Err(
+                "That line is closed: a rail runs from the first section to the last".into(),
+            );
         }
         rails.push(rail);
         Ok(())

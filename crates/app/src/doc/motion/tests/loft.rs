@@ -488,6 +488,55 @@ fn modes_closed_and_rails() {
     assert!(shows(plates, "Rails"));
 }
 
+/// A closed chain (a square's sides) isn't taken as a rail, with why in
+/// regeneration's words, nor is a rail picked while the loft is closed,
+/// where it wouldn't show: neither changes the rails.
+#[test]
+fn closed_chains_and_rails_while_closed_are_refused() {
+    let mut lofted = lofted();
+    let (low, top, side, rail) = (lofted.low, lofted.top, lofted.side, lofted.rail);
+    let plates = &mut lofted.plates;
+    plates.doc.look(Look::StartLoft);
+    pick(plates, low);
+    pick(plates, top);
+    plates.motion(MotionLook::Picking(MotionPick::Path));
+    let first =
+        |plates: &Plates, sketch| sketch_of(plates.doc.editor.document(), sketch).curves[0].id;
+    let square = first(plates, side);
+    plates.motion(MotionLook::LoftRail {
+        sketch: side,
+        curve: square,
+    });
+    assert!(drafted(plates).unwrap().rails.is_empty());
+    assert_eq!(
+        plates.doc.notice.as_deref(),
+        Some("That line is closed: a rail runs from the first section to the last")
+    );
+
+    plates.motion(MotionLook::Picking(MotionPick::Regions));
+    pick(plates, side);
+    plates.motion(MotionLook::Closed);
+    let line = first(plates, rail);
+    plates.motion(MotionLook::LoftRail {
+        sketch: rail,
+        curve: line,
+    });
+    assert!(
+        (plates.doc.notice.as_deref()).is_some_and(|notice| notice.contains("closed loft")),
+        "{:?}",
+        plates.doc.notice
+    );
+    plates.motion(MotionLook::Closed);
+    assert!(drafted(plates).unwrap().rails.is_empty(), "none hidden");
+    // Open, the same line is a rail.
+    plates.motion(MotionLook::Picking(MotionPick::Path));
+    plates.motion(MotionLook::LoftRail {
+        sketch: rail,
+        curve: line,
+    });
+    assert_eq!(drafted(plates).unwrap().rails.len(), 1);
+}
+
 /// With regeneration lofting two equal parallel squares by extruding: the
 /// square on XY to the one on the plate's top previews a 10 × 10 × 10
 /// box, OK adds it as one undo step.
@@ -922,3 +971,17 @@ fn a_start_at_a_corner_s_second_point_is_drawn() {
 }
 
 mod fuzz;
+
+/// A loft of two squares as its session made it, and its id.
+pub(super) fn made() -> (Plates, FeatureId) {
+    let mut lofted = lofted();
+    let (low, top) = (lofted.low, lofted.top);
+    let plates = &mut lofted.plates;
+    plates.doc.look(Look::StartLoft);
+    pick(plates, low);
+    pick(plates, top);
+    plates.answer();
+    plates.doc.update(Edit::AcceptError);
+    let (id, _) = plates.last_feature();
+    (lofted.plates, id)
+}

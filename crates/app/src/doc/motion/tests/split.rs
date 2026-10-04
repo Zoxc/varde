@@ -838,3 +838,10 @@ fn each_tile_s_tool_is_told_gone_on_its_own() {
     assert!(gone(&plates));
     assert!(!plates.doc.motion_ready());
 }
+
+/// A split keeping both sides, [`split_plates`], held as plates are,
+/// and its id.
+pub(super) fn made() -> (Plates, FeatureId) {
+    let (editor, id, _) = split_plates();
+    (held(&editor), id)
+}

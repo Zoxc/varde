@@ -163,7 +163,7 @@ pub use inspect::{
     At, Between, EdgeForm, Entity, Gap, Inspect, InspectPick, Inspected, Measure, Probed,
 };
 pub use picking::{PickCorner, PickFace, Picking, PickingError, Summary};
-pub use profile::{ProfileError, loft_corner, loft_corners, profile};
+pub use profile::{ProfileError, chain_closes, loft_corner, loft_corners, profile};
 
 use cache::Keyer;
 use picking::{Drawn, Scene};

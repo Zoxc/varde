@@ -936,11 +936,15 @@ if a segment of it shows within `EDGE_REACH` (6) pixels of the cursor
 and isn't hidden: the candidates, found through the edge tree with each
 node's box grown by 6 pixels at its deepest, are cut at the near plane,
 measured on screen, sorted by distance (to `SAME_PLACE`, half a pixel),
-depth and index, and the first of at most 64 whose point showing
-nearest the cursor (found back in the world with the perspective divide
-undone) no triangle hides wins: hidden means the ray from the eye to it
-meets a triangle nearer by more than 0.002 view heights (what the
-renderer pulls edges by) and the mesh's `f32` rounding. So an edge
+depth and index, and the first whose point showing nearest the cursor
+(found back in the world with the perspective divide undone) no
+triangle hides wins: hidden means the ray from the eye to it meets a
+triangle nearer by more than 0.002 view heights (what the renderer
+pulls edges by) and the mesh's `f32` rounding. The last 16 triangles
+found hiding a candidate are tried first on the next, so many edges
+hidden behind the same faces cost a few triangle tests each; past 1024
+searches of the triangle tree (`MAX_HIDDEN_SEARCHES`) the rest count as
+hidden. So an edge
 either side of a face shows, and one behind the plate isn't picked. A
 vertex wins over both, found the same way within `VERTEX_REACH` (6): a
 corner where three faces or more meet (those of the edges between two

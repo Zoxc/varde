@@ -1015,3 +1015,10 @@ fn two_arcs_with_the_same_keys() {
 }
 
 mod fuzz;
+
+/// An align face to face as its session made it, [`face_to_face`], and
+/// its id.
+pub(super) fn made() -> (Plates, varde_document::FeatureId) {
+    let (plates, _, id) = face_to_face();
+    (plates, id)
+}

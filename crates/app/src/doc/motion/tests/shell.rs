@@ -693,3 +693,9 @@ fn a_shell_takes_at_most_256_faces() {
 }
 
 pub(super) mod fuzz;
+
+/// A shell as its session made it, [`shelled`], and its id.
+pub(super) fn made() -> (Plates, FeatureId) {
+    let (editor, id) = shelled();
+    (held(editor.document().clone()), id)
+}

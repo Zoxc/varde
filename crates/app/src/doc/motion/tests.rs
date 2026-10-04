@@ -1109,6 +1109,7 @@ mod scale;
 mod shell;
 mod split;
 mod sweep;
+mod unchanged;
 
 /// `Esc` cancels a move once, though its four fields each send the
 /// cancel: the first takes the key.

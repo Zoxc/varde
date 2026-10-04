@@ -1145,3 +1145,116 @@ fn a_sketch_on_a_face_is_edited_once_placed() {
         OriginPlane::XZ.placement()
     );
 }
+
+/// At 1280 px wide everything on the sketch toolbar shows whole, apart
+/// and clear of Undo, Redo and the theme's button: the tools the mock's
+/// bar has (the rest are on the rail, all with their keys), with a tool
+/// in use, and while constraining or with splines selected.
+#[test]
+fn the_sketch_toolbar_fits_at_1280_px() {
+    use crate::tests::{shown as laid_out, texts};
+    use varde_view::Mode;
+    let fits = |doc: &Doc| {
+        let mut renderer = varde_view::probe::renderer();
+        let size = iced::Size::new(1280.0, 800.0);
+        let mut ui = laid_out(doc.view_in(Mode::Light), size, &mut renderer);
+        let mut on: Vec<_> = (texts(&mut ui, &renderer).into_iter())
+            .filter(|t| t.bounds.y < 40.0)
+            .collect();
+        on.sort_by(|a, b| a.bounds.x.total_cmp(&b.bounds.x));
+        let mut end = 0.0;
+        for t in &on {
+            assert!(t.bounds.width > 2.0, "{} squeezed: {on:?}", t.text);
+            assert!(t.bounds.x >= end, "{} overlaps: {on:?}", t.text);
+            end = t.bounds.x + t.bounds.width;
+        }
+        // Undo, Redo, a rule and the theme's button (28, 28, 9 and 28
+        // px, with the gaps) are right of them, all whole.
+        assert!(end < 1280.0 - 120.0, "{end}: {on:?}");
+        on.into_iter().map(|t| t.text).collect::<Vec<_>>()
+    };
+    let (mut doc, _, _) = sketching();
+    let idle = fits(&doc);
+    for label in ["Line", "Rectangle", "Dimension", "Constrain"] {
+        assert!(idle.iter().any(|t| t == label), "{label}: {idle:?}");
+    }
+    // Fillet is on the rail, with its key: in use, its tag says so.
+    assert!(!idle.iter().any(|t| t == "Fillet"));
+    // Any tool in use, its tag beside the sketch's name.
+    for tool in Tool::ALL {
+        doc.look(Look::SelectTool(tool));
+        let using = fits(&doc);
+        assert!(
+            using.iter().any(|t| t.starts_with(tool.label())),
+            "the tag: {using:?}"
+        );
+        doc.look(Look::Escape);
+    }
+
+    // Two lines and a point of each: the most constraints offered.
+    doc.look(Look::SelectTool(Tool::Line));
+    click(&mut doc, 0.0, 0.0);
+    click(&mut doc, 10.0, 1.0);
+    doc.look(Look::Escape);
+    click(&mut doc, 0.0, 5.0);
+    click(&mut doc, 10.0, 7.0);
+    doc.look(Look::Escape);
+    doc.look(Look::Escape);
+    let edited = sketch(&doc).clone();
+    let [(a, b), (c, d)] = lines(&edited)[..] else {
+        panic!("{edited:?}");
+    };
+    let [p, q] = (edited.curves.iter())
+        .filter(|entry| matches!(entry.curve, Curve::Line { .. }))
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("{edited:?}");
+    };
+    doc.look(Look::ToggleConstrain);
+    let mut most = 0;
+    for picked in [
+        vec![p],
+        vec![p, q],
+        vec![a, b],
+        vec![a, c],
+        vec![a, p],
+        vec![a, q],
+        vec![a, b, c],
+        vec![a, b, p],
+        vec![a, c, p],
+        vec![a, d, q],
+        vec![a, b, c, d],
+    ] {
+        doc.look(Look::SelectBox {
+            ids: picked,
+            add: false,
+        });
+        let shown = fits(&doc);
+        most = most.max(shown.len());
+    }
+    // The constraints that fit two lines' ends, and more, offered whole.
+    assert!(most >= 6, "{most}");
+    doc.look(Look::ToggleConstrain);
+
+    // With a spline selected: its switch, handles and comb.
+    doc.key(letter("n"));
+    for (x, y) in [(0.0, 20.0), (5.0, 24.0), (10.0, 21.0)] {
+        click(&mut doc, x, y);
+    }
+    doc.update(Edit::ToolClick(ToolClick {
+        double: true,
+        ..click_at(15.0, 20.0)
+    }));
+    doc.look(Look::Escape);
+    let spline = (sketch(&doc).curves.iter())
+        .find(|entry| matches!(entry.curve, Curve::Spline(_)))
+        .unwrap()
+        .id;
+    doc.look(Look::ClickGeometry {
+        hit: Some(spline),
+        add: false,
+    });
+    let splines = fits(&doc);
+    assert!(splines.iter().any(|t| t == "Convert"), "{splines:?}");
+}

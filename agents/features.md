@@ -2553,6 +2553,14 @@ pub enum SplitTool {
   `original` keeps the same body, now the other piece), removes it when
   one side is kept (refused while a later feature names it, as an
   extrude's new body is), and adds a new one when both are kept again.
+  Within one edit (one side, then both again before OK; an extrude's
+  New body, Join, New body likewise) the stored feature still names the
+  body, so `SetFeature` keeps its id and OK writes nothing. Across
+  edits (one side kept and committed, both again in a later edit) the
+  body gets a new id, and what named the old one (a sketch on its face)
+  stays broken: a split keeping a side stores no `new_body`, so the old
+  id isn't known, and keeping it would mean storing it there, a change
+  to the document's types (decided against here; ids are never reused).
 - **Checks** (`CheckError::Split(id, SplitError)`): `Split::check_own()`
   (cheap): the new body there exactly when both are kept
   (`NewBodyKept`), a tool body not the body (`ToolIsBody`), a face's
@@ -4641,12 +4649,18 @@ and the Bodies list.
   ruled whatever it says (the status bar says Ruled). **Closed**: the
   last section lofted back to the first; while it's on, the Rails field
   isn't shown, its rails aren't stored and aren't picked (kept for when
-  it's off: the document refuses rails on a closed loft).
+  it's off: the document refuses rails on a closed loft); a curve
+  clicked for a rail then is refused ("A closed loft takes no rails:
+  turn Closed off to pick them") rather than added out of sight.
 - **Rails** (`MotionPick::Path`): picked as a sweep's path's sketch
   parts: a click on a curve of a sketch before the loft (visible, or a
   section's or rail's own) adds the chain it's in (`Sketch::chain_of`,
   sorted), or takes out the rail holding it; at most 4 rails ("A loft
-  takes at most 4 rails") of at most 256 curves. Rows "Sketch 3 · 2
+  takes at most 4 rails") of at most 256 curves. A chain that closes
+  up (a circle, a closed spline, a loop of curves, as regen's `chain`
+  finds it: `varde_regen::chain_closes`) is refused as it's clicked, in
+  regen's words ("That line is closed: a rail runs from the first
+  section to the last"). Rows "Sketch 3 · 2
   curves" (`PanelHover::Part`) with a cross. Unlike a sweep's path, a
   section's own sketch may hold a rail.
 - **Operation and Bodies** as an extrude's (the cut's uncut note as the

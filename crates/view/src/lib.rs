@@ -781,7 +781,7 @@ pub enum Tool {
 }
 
 impl Tool {
-    /// In the order the toolbar shows them.
+    /// Every tool, drawing ones first.
     pub const ALL: [Tool; 14] = [
         Tool::Line,
         Tool::Rectangle,
@@ -797,6 +797,18 @@ impl Tool {
         Tool::Mirror,
         Tool::Fillet,
         Tool::Chamfer,
+    ];
+
+    /// Those the sketch toolbar shows, in its order, as the UI mock's
+    /// sketch bar: the rest are on the rail, as these are too.
+    pub const BAR: [Tool; 7] = [
+        Tool::Line,
+        Tool::Rectangle,
+        Tool::Circle,
+        Tool::Arc,
+        Tool::Trim,
+        Tool::Offset,
+        Tool::Dimension,
     ];
 
     /// The tool as the user sees it.

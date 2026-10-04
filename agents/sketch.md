@@ -971,7 +971,12 @@ bar says why (`EditError::Sketch`).
   "Fully constrained", "N degrees of freedom left", "Doesn't solve" or
   "Over-constrained", and marks conflicts red in the lists and viewport.
 - **Tools** (`Tool` in `varde-view`, keys `L`, `B`, `C`, `A`, `G`, `N`,
-  `P`, and `D` for the Dimension tool under Dimensions, or the toolbar): the
+  `P`, and `D` for the Dimension tool under Dimensions, the rail, or the
+  toolbar, which shows the UI mock's sketch bar, `Tool::BAR`: Line,
+  Rectangle, Circle, Arc, Trim, Offset and Dimension, then Constrain,
+  each button's key in its tooltip, so it fits at 1280 px wide with a
+  tool's tag beside the sketch's name; the other tools are on the rail
+  only): the
   viewport sends a `ToolClick` per press, with the sketch point snapped (see Snapping
   below) and what it snapped to (`target`, `inference`), the point or
   curve under the cursor if any (what the Dimension tool picks), a pixel's
@@ -1140,7 +1145,8 @@ bar says why (`EditError::Sketch`).
   proposes `InsertPoint` there. `U` (`Look::ToggleComb`,
   `SketchSession::comb`, `SketchState::comb`) shows the curvature comb of
   the splines selected, or hides it, in any sketch. With splines selected
-  and no drawing tool the toolbar offers Convert, Handles and Comb. The
+  and no drawing tool the toolbar offers Convert, Handles and Comb (and
+  Constrain) in place of the tools. The
   Dimension tool takes a handle's tip alone as its angle from the X axis
   (`Measure::Angle(Id::X_AXIS, tip)`); with its fit point, as two points,
   its length.
@@ -1179,7 +1185,8 @@ bar says why (`EditError::Sketch`).
   smooth join at an end (`Sketch::joint`) and a fix; with a spline
   selected nothing else is offered. The Constrain tool (`K`,
   `SketchSession::constraining`, never with a drawing tool) lists in the
-  toolbar the kinds that fit the selection (`ConstraintKind::fitting`),
+  toolbar, after its own button and in place of the tools, the kinds that
+  fit the selection (`ConstraintKind::fitting`),
   the most likely first: those tying items together first, and of
   horizontal or vertical, parallel or perpendicular, concentric or not,
   the one the geometry is nearer to; applying one clears the selection.

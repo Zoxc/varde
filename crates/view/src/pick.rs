@@ -44,9 +44,17 @@ pub const SNAP_REACH: f64 = 10.0;
 /// would hide but for that pull isn't hidden here either.
 const HIDDEN_PULL: f64 = 0.002;
 
-/// The most edges or vertices near the cursor looked at for one that
-/// isn't hidden, nearest first: the rest are as good as hidden.
-const MAX_EDGE_TESTS: usize = 64;
+/// The most searches of the mesh for what hides an edge or a vertex near
+/// the cursor, looking for one that isn't hidden, nearest first: past
+/// them the rest are as good as hidden. Those that a triangle found
+/// hiding one before hides as well cost no search ([`MAX_OCCLUDERS`]),
+/// so many edges hidden behind the same faces near the cursor don't use
+/// them up.
+const MAX_HIDDEN_SEARCHES: usize = 1024;
+
+/// The most triangles found hiding an edge or a vertex near the cursor
+/// that are tried first on the next: the latest ones.
+const MAX_OCCLUDERS: usize = 16;
 
 /// Within how many pixels of each other two edges or vertices count as
 /// equally near the cursor, the nearer the eye going first: a corner seen
@@ -957,11 +965,15 @@ impl PickIndex {
     /// Where along `ray` between `from` and `to` it first meets a
     /// triangle, and which, if it does.
     fn first_hit(&self, ray: &Ray, from: f64, to: f64) -> Option<(f64, u32)> {
-        self.triangles.nearest(ray, from, to, |triangle| {
-            let corners = self.corners(triangle)?;
-            let corners = corners.map(|i| position(&self.mesh, i).as_dvec3());
-            ray_hits(ray.origin, ray.direction, corners)
-        })
+        (self.triangles).nearest(ray, from, to, |triangle| self.triangle_hit(ray, triangle))
+    }
+
+    /// Where along `ray` it meets the triangle `triangle`, front or back,
+    /// if it does.
+    fn triangle_hit(&self, ray: &Ray, triangle: u32) -> Option<f64> {
+        let corners = self.corners(triangle)?;
+        let corners = corners.map(|i| position(&self.mesh, i).as_dvec3());
+        ray_hits(ray.origin, ray.direction, corners)
     }
 
     /// Where along `ray`, from its `from` on, it first meets the front of a
@@ -979,8 +991,8 @@ impl PickIndex {
     }
 
     /// The vertex showing nearest `at` within [`VERTEX_REACH`] that
-    /// nothing hides, of those [`MAX_EDGE_TESTS`] nearest: its corner and
-    /// where it is.
+    /// nothing hides ([`PickIndex::nearest_shown`]): its corner and where
+    /// it is.
     fn vertex_near(
         &self,
         camera: &Camera,
@@ -1004,7 +1016,7 @@ impl PickIndex {
     }
 
     /// The edge showing nearest `at` within [`EDGE_REACH`] that nothing
-    /// hides, of those [`MAX_EDGE_TESTS`] nearest, and its point showing
+    /// hides ([`PickIndex::nearest_shown`]), and its point showing
     /// nearest `at`: its chain and that point.
     fn edge_near(
         &self,
@@ -1043,9 +1055,10 @@ impl PickIndex {
     }
 
     /// Of the items `near` the cursor, as how far from it they show, how
-    /// deep, which and where, the nearest that nothing hides, of the
-    /// [`MAX_EDGE_TESTS`] nearest: sorted by distance (to [`SAME_PLACE`]),
-    /// depth and item.
+    /// deep, which and where, the nearest that nothing hides, sorted by
+    /// distance (to [`SAME_PLACE`]), depth and item: none once the mesh
+    /// has been searched [`MAX_HIDDEN_SEARCHES`] times for what hides
+    /// them.
     fn nearest_shown(
         &self,
         camera: &Camera,
@@ -1059,10 +1072,21 @@ impl PickIndex {
                 .then(a.2.cmp(&b.2))
         });
         let view_height = f64::from(camera.view_height());
-        near.into_iter()
-            .take(MAX_EDGE_TESTS)
-            .find(|&(_, _, _, point)| !self.hidden(projector, point, view_height))
-            .map(|(_, _, item, point)| (item, point))
+        let mut occluders = Vec::new();
+        let mut searches = 0;
+        for (_, _, item, point) in near {
+            match self.hidden(projector, point, view_height, &mut occluders) {
+                Hidden::No => return Some((item, point)),
+                Hidden::Known => {}
+                Hidden::Searched => {
+                    searches += 1;
+                    if searches >= MAX_HIDDEN_SEARCHES {
+                        return None;
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// The faces at `corner`, as `(corner, face)`, ascending.
@@ -1074,27 +1098,33 @@ impl PickIndex {
 
     /// Whether something of the mesh is in front of the world point
     /// `point`, nearer the eye by more than [`HIDDEN_PULL`] view heights
-    /// and the mesh's `f32` rounding.
-    fn hidden(&self, projector: &Projector, point: DVec3, view_height: f64) -> bool {
+    /// and the mesh's `f32` rounding: one of `occluders` (triangles found
+    /// hiding a point before), or one the mesh is searched for, which
+    /// joins them (the latest [`MAX_OCCLUDERS`]).
+    fn hidden(
+        &self,
+        projector: &Projector,
+        point: DVec3,
+        view_height: f64,
+        occluders: &mut Vec<u32>,
+    ) -> Hidden {
         let scale = self.mesh.bounds().map_or(0.0, |bounds| {
             f64::from(bounds.min.abs().max(bounds.max.abs()).max_element())
         });
         let slack = HIDDEN_PULL * view_height + 8.0 * f64::from(f32::EPSILON) * scale;
         let (eye, backward) = projector.eye();
-        if projector.perspective() {
+        let (ray, from, to) = if projector.perspective() {
             // At `point` `t` is 1, so a depth `t` times its depth.
             let depth = projector.world_depth(point);
             if depth.is_nan() || depth <= slack {
-                return false;
+                return Hidden::No;
             }
             let ray = Ray {
                 origin: eye,
                 direction: point - eye,
                 from: 0.0,
             };
-            let from = projector.near() / depth;
-            let to = 1.0 - slack / depth;
-            self.first_hit(&ray, from, to).is_some()
+            (ray, projector.near() / depth, 1.0 - slack / depth)
         } else {
             let back = self.back(point);
             let ray = Ray {
@@ -1102,9 +1132,34 @@ impl PickIndex {
                 direction: -backward,
                 from: 0.0,
             };
-            self.first_hit(&ray, 0.0, back - slack).is_some()
+            (ray, 0.0, back - slack)
+        };
+        let within = |t: f64| t >= from && t <= to;
+        if (occluders.iter()).any(|&triangle| self.triangle_hit(&ray, triangle).is_some_and(within))
+        {
+            return Hidden::Known;
         }
+        let Some((_, triangle)) = self.first_hit(&ray, from, to) else {
+            return Hidden::No;
+        };
+        if occluders.len() >= MAX_OCCLUDERS {
+            occluders.remove(0);
+        }
+        occluders.push(triangle);
+        Hidden::Searched
     }
+}
+
+/// Whether something hides a point, and how that was found
+/// ([`PickIndex::hidden`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hidden {
+    /// Nothing does.
+    No,
+    /// A triangle found hiding a point before does.
+    Known,
+    /// One the mesh was searched for does.
+    Searched,
 }
 
 /// A ray: the points `origin + direction * t`, those with `t` at least

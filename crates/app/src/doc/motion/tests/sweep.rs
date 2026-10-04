@@ -888,3 +888,14 @@ fn a_helix_s_axis_gone_stays_gone_through_path_and_helix() {
 }
 
 mod fuzz;
+
+/// A sweep as its session made it ([`set_up`]), and its id.
+pub(super) fn made() -> (Plates, FeatureId) {
+    let mut swept = swept();
+    set_up(&mut swept);
+    let plates = &mut swept.plates;
+    plates.answer();
+    plates.doc.update(Edit::AcceptError);
+    let (id, _) = plates.last_feature();
+    (swept.plates, id)
+}
