@@ -107,6 +107,29 @@ pub(crate) fn rectangle(min: (f64, f64), max: (f64, f64)) -> impl FnOnce(&mut Sk
     }
 }
 
+/// Draws the rectangle from `min` to `max` with its top a shallow arc,
+/// about a centre `reach` below the top's middle.
+pub(crate) fn domed(min: (f64, f64), max: (f64, f64), reach: f64) -> impl FnOnce(&mut Sketch) {
+    move |sketch| {
+        let corners = [
+            (min.0, min.1),
+            (max.0, min.1),
+            (max.0, max.1),
+            (min.0, max.1),
+        ]
+        .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+        let middle = DVec2::new((min.0 + max.0) / 2.0, max.1 - reach);
+        let center = sketch.add_point(middle).unwrap();
+        for k in [0, 1, 3] {
+            let (start, end) = (corners[k], corners[(k + 1) % 4]);
+            sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+        }
+        let (start, end) = (corners[2], corners[3]);
+        let arc = Curve::Arc { center, start, end };
+        sketch.add_curve(arc, false).unwrap();
+    }
+}
+
 /// Draws the circle about `center` of `radius`.
 pub(crate) fn disc(center: (f64, f64), radius: f64) -> impl FnOnce(&mut Sketch) {
     move |sketch| {

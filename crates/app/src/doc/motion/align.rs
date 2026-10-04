@@ -10,7 +10,8 @@
 //! ([`Naming`]). A round edge's centre picked for a point also gives
 //! that side its direction, the rim's axis, while it has none: a pin's
 //! rim and a hole's then align the pin into the hole in two clicks; that
-//! axis goes with the point when it's picked again or taken out. The
+//! axis (or the same rim picked by hand for the direction, named alike)
+//! goes with the point when it's picked again or taken out. The
 //! target side may be the origin and its axes, from the toolbar. A row's
 //! cross takes a reference out and clicks go on to what's needed first;
 //! a field clicked again while it picks stops picking. What's picked is
@@ -47,7 +48,7 @@ pub(crate) struct AlignSetup {
     /// it was picked, or where it's found again by its names on a model
     /// shown since ([`AlignSetup::follow`]); drawn and lit while that
     /// model is shown.
-    marks: [[Option<Mark>; 3]; 2],
+    pub(crate) marks: [[Option<Mark>; 3]; 2],
     /// The references the document no longer takes at the feature's place
     /// (an undo took their body or a face's maker away), or on a body it
     /// no longer holds: kept, said to be gone, until picked again or back.
@@ -138,10 +139,10 @@ impl Taken {
 /// Where a reference is on the model `model` shows: `target` (lit, for
 /// a direction) and the point (drawn, for a point), each where known.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Mark {
-    model: u64,
-    target: Option<Picked>,
-    at: Option<DVec3>,
+pub(crate) struct Mark {
+    pub(crate) model: u64,
+    pub(crate) target: Option<Picked>,
+    pub(crate) at: Option<DVec3>,
 }
 
 impl Side {
@@ -164,9 +165,12 @@ impl Side {
     }
 
     /// Whether its direction is the axis of the round edge whose centre
-    /// is its point: what picking that centre gave it (or the same
-    /// picked again), which goes with the point when it's replaced or
-    /// taken out.
+    /// is its point: what picking that centre gave it, or the same rim
+    /// picked by hand for the direction (an edge is named at the same
+    /// point on it either way: [`direction_of`], [`point_of`]), which goes
+    /// with the point when it's replaced or taken out. Deliberate: a
+    /// direction on the point's own rim is the point's axis however it
+    /// was picked.
     fn rim_axis(&self) -> bool {
         matches!(
             (self.point, self.primary),
@@ -303,7 +307,7 @@ impl AlignSetup {
     }
 
     /// What's picked for `slot`, if anything.
-    fn taken(&self, slot: AlignSlot) -> Option<Taken> {
+    pub(crate) fn taken(&self, slot: AlignSlot) -> Option<Taken> {
         let side = self.side(slot.side);
         match slot.role {
             AlignRole::Point => side.point.map(Taken::Point),
@@ -342,7 +346,7 @@ impl AlignSetup {
 
     /// What's still to be picked before it's whole, the words for the
     /// status bar, if anything: the points, and directions paired.
-    fn need(&self) -> Option<&'static str> {
+    pub(super) fn need(&self) -> Option<&'static str> {
         let [moved, target] = &self.sides;
         if moved.point.is_none() {
             return Some("pick a point on the body: a corner, an edge's middle or a rim's centre");
@@ -355,12 +359,17 @@ impl AlignSetup {
             (false, true) => return Some("pick a direction on the body"),
             _ => {}
         }
-        match (moved.secondary.is_some(), target.secondary.is_some()) {
+        // A second direction left without a first (its first taken out,
+        // or a rim's axis gone with its point): the first directions are
+        // what clicks go on to ([`AlignSetup::next`]), so they're asked
+        // for first.
+        let seconds = (moved.secondary.is_some(), target.secondary.is_some());
+        if moved.primary.is_none() && seconds != (false, false) {
+            return Some("pick a direction on each side before a second one");
+        }
+        match seconds {
             (true, false) => Some("pick the second direction to align it to"),
             (false, true) => Some("pick a second direction on the body"),
-            (true, true) if moved.primary.is_none() => {
-                Some("pick a direction on each side before a second one")
-            }
             _ => None,
         }
     }
@@ -847,8 +856,13 @@ fn direction_of(
             if !(straight || round) {
                 return Err(NOT_A_DIRECTION.into());
             }
+            // Named at the point on it a point on it is named at
+            // ([`point_of`]), wherever it's clicked: a rim picked by hand
+            // as the direction of the point at its centre is then that
+            // point's rim's axis ([`Side::rim_axis`]), going with it.
+            let near = index.chain_point(edge).unwrap_or(pick.at);
             let named = naming
-                .edge_ref(index, edge, pick.at)
+                .edge_ref(index, edge, near)
                 .map_err(|why| refused(why, "edge"))?;
             Ok(DirRef::Axis(AxisRef::Edge(named)))
         }

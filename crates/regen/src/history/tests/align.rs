@@ -14,7 +14,7 @@ use varde_kernel::Budget;
 use varde_kernel::mesh::{FaceKey, Form};
 use varde_kernel::topology::Topology;
 
-use super::motion::{add, block, boxed, cylinder, failure, key_on, set};
+use super::motion::{add, block, boxed, cylinder, failure, key_on, key_where, near_box, set};
 use super::*;
 
 fn offset(document: &Document, text: &str) -> Value {
@@ -628,4 +628,244 @@ fn a_draft_answers_with_its_datums() {
     let datums = drafted.datums.unwrap();
     assert!(!datums.opposed);
     assert!(datums.moved.is_some());
+}
+
+/// The example plate (Body 1), then discs of radius 5 standing 15 tall
+/// at (20, 0) and (−20, 0) (Bodies 2 and 3), the first combined into the
+/// plate, and the plate aligned by that disc's top rim (named on the
+/// plate, which holds it at the align) onto the other disc's, face to
+/// face: the editor, the bodies, the combine and the align's id.
+fn aligned_by_what_was_merged() -> (Editor, [BodyId; 3], FeatureId, FeatureId) {
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let right = add_body(&mut editor, disc((20.0, 0.0), 5.0), "15");
+    let left = add_body(&mut editor, disc((-20.0, 0.0), 5.0), "15");
+    let evaluation = evaluated(editor.document());
+    let (right_solid, left_solid) = (solid_of(&evaluation, right), solid_of(&evaluation, left));
+    let combine = Combine {
+        target: plate,
+        tools: vec![right],
+        op: BodyOp::Union,
+        keep_tools: false,
+    };
+    let combine = add(&mut editor, combine);
+    let from = rim(right_solid, plate, DVec3::Z, 15.0);
+    let to = rim(left_solid, left, DVec3::Z, 15.0);
+    let axis = |edge| Some(DirRef::Axis(AxisRef::Edge(edge)));
+    let align = Align {
+        body: plate,
+        from: refs(PointRef::Centre(from), axis(from), None),
+        to: refs(PointRef::Centre(to), axis(to), None),
+        flip: false,
+        offset: None,
+        turn: None,
+    };
+    let id = add(&mut editor, align);
+    (editor, [plate, right, left], combine, id)
+}
+
+/// References on the moved side picked on what a combine merged into the
+/// moved body are named on it: aligned, the plate turns over onto the
+/// other disc (`x − 40, −y, 30 − z`). The combine edited so the merge
+/// goes (its tool kept apart, its tool another body, the combine gone)
+/// or kept with its tool: either the same place, or not found (or on the
+/// moved body) and nothing moved, never placed by something else.
+#[test]
+fn references_on_the_holder_after_the_merge_goes() {
+    let (mut editor, [plate, right, left], combine, id) = aligned_by_what_was_merged();
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let moved = solid_of(&evaluation, plate);
+    assert!(
+        near_box(moved, [-70.0, -20.0, 15.0], [-10.0, 20.0, 30.0]),
+        "{:?}",
+        moved.bounds3()
+    );
+    let placed = moved.clone();
+    // Fails, the plate as the history before the align leaves it.
+    let unmoved = |editor: &Editor, why: &str| {
+        let evaluation = evaluated(editor.document());
+        assert_eq!(failure(&evaluation, id).unwrap().message, why);
+        let mut without = editor.clone();
+        without.apply(Command::RemoveFeature(id)).unwrap();
+        let before = evaluated(without.document());
+        assert_eq!(solid_of(&evaluation, plate), solid_of(&before, plate));
+    };
+    let not_found = "its point on the moved body wasn't found";
+    let combined = |tools: Vec<BodyId>, keep_tools: bool| Combine {
+        target: plate,
+        tools,
+        op: BodyOp::Union,
+        keep_tools,
+    };
+    // Its tool kept as a body of its own: the plate still holds a copy of
+    // it, by its names, so the align is the same.
+    set(&mut editor, combine, combined(vec![right], true));
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(*solid_of(&evaluation, plate), placed);
+    // The other disc combined instead: the right one's rim isn't on the
+    // plate, and the target is in it.
+    set(&mut editor, combine, combined(vec![left], false));
+    unmoved(&editor, not_found);
+    // Both: the target is in the moved body.
+    set(&mut editor, combine, combined(vec![right, left], false));
+    unmoved(
+        &editor,
+        "its point on the target is in the moved body now: a feature before this one merged \
+         them; pick it on another body",
+    );
+    // The combine gone.
+    editor.apply(Command::RemoveFeature(combine)).unwrap();
+    assert!(editor.document().feature(id).is_some());
+    unmoved(&editor, not_found);
+    // Undone back to the merge: the same place again.
+    for _ in 0..4 {
+        editor.undo();
+    }
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(*solid_of(&evaluation, plate), placed);
+}
+
+/// The same through a join: a block joined to the plate by a bridge,
+/// the plate aligned by the block's top corner (named on the plate) to
+/// the origin; the block taken out of the join, so the merge goes, its
+/// corner isn't found on the plate and nothing moves.
+#[test]
+fn references_on_the_holder_after_a_join_lets_go() {
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let block = block(&mut editor, 40.0, -5.0, 50.0, 5.0, "10");
+    let evaluation = evaluated(editor.document());
+    let block_solid = solid_of(&evaluation, block).clone();
+    let up = Extent::OneSide(length(editor.document(), "2"));
+    let join = add_extrude(
+        &mut editor,
+        rectangle((20.0, -3.0), (45.0, 3.0)),
+        up,
+        Operation::Join(Targets::default()),
+    );
+    let corner = corner(
+        &block_solid,
+        plate,
+        [(DVec3::X, 50.0), (DVec3::Y, 5.0), (DVec3::Z, 10.0)],
+        DVec3::new(50.0, 5.0, 10.0),
+    );
+    let align = Align {
+        body: plate,
+        from: refs(corner, None, None),
+        to: refs(PointRef::Origin, None, None),
+        flip: false,
+        offset: None,
+        turn: None,
+    };
+    let id = add(&mut editor, align);
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(evaluation.merged, [(block, plate)]);
+    let moved = solid_of(&evaluation, plate);
+    assert!(
+        near_box(moved, [-80.0, -25.0, -10.0], [0.0, 15.0, 0.0]),
+        "{:?}",
+        moved.bounds3()
+    );
+    set_extrude(&mut editor, join, |extrude| {
+        extrude.operation = Operation::Join(Targets {
+            excluded: vec![block],
+        });
+    });
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.merged.is_empty());
+    assert_eq!(
+        failure(&evaluation, id).unwrap().message,
+        "its point on the moved body wasn't found"
+    );
+    let mut without = editor.clone();
+    without.apply(Command::RemoveFeature(id)).unwrap();
+    let before = evaluated(without.document());
+    assert_eq!(solid_of(&evaluation, plate), solid_of(&before, plate));
+}
+
+/// A block 10 wide whose top is a shallow arc about a centre `reach`
+/// below it, aligned by that arc's centre (and its axis, the top's
+/// normal) to the origin (and Z, the same way): a nearly straight arc's
+/// centre far out. Where the centre is past the coordinate limit it's
+/// refused as too far out; where it's within but the body would go past,
+/// as out of range; else the body goes where the centre the sketch drew
+/// takes it, never elsewhere. (A sketch holds points within the
+/// coordinate limit, so the centre drawn is; the one found from the
+/// curve could only be past it by its rounding.)
+#[test]
+fn far_arc_centres_are_aligned_or_refused() {
+    for reach in [50.0, 1e3, 1e5, 9e5, 999_990.0, 1_000_010.0] {
+        let mut editor = Editor::new(Document::default());
+        let top = 10.0;
+        let extent = Extent::OneSide(length(editor.document(), "5"));
+        add_extrude(
+            &mut editor,
+            domed((0.0, 0.0), (10.0, top), reach),
+            extent,
+            Operation::NewBody(BodyId::NEW),
+        );
+        let body = editor.document().bodies()[0].id;
+        let evaluation = evaluated(editor.document());
+        assert!(
+            evaluation.failed.is_empty(),
+            "{reach}: {:?}",
+            evaluation.failed
+        );
+        let made = solid_of(&evaluation, body).clone();
+        let wall = key_where(&made, |form| matches!(form, Form::Cylinder { .. }));
+        let cap = key_on(&made, DVec3::Z, 5.0);
+        let arc = edge(body, wall, cap, DVec3::new(5.0, top, 5.0));
+        for primaries in [false, true] {
+            let axis = |d| primaries.then_some(d);
+            let align = Align {
+                body,
+                from: refs(
+                    PointRef::Centre(arc),
+                    axis(DirRef::Axis(AxisRef::Edge(arc))),
+                    None,
+                ),
+                to: refs(PointRef::Origin, axis(DirRef::Origin(Axis3::Z)), None),
+                flip: false,
+                offset: None,
+                turn: None,
+            };
+            let mut aligned = editor.clone();
+            let id = add(&mut aligned, align);
+            let evaluation = evaluated(aligned.document());
+            let centre = DVec3::new(5.0, top - reach, 5.0);
+            match failure(&evaluation, id) {
+                None => {
+                    // Moved by what takes the centre to the origin (the
+                    // top's normal is Z already: no turn).
+                    let solid = solid_of(&evaluation, body);
+                    let [low, high] = [made.bounds3().unwrap().min, made.bounds3().unwrap().max];
+                    let now = solid.bounds3().unwrap();
+                    let slack = 1e-9 * reach.max(1.0);
+                    assert!(
+                        (now.min - (low - centre)).abs().max_element() < slack
+                            && (now.max - (high - centre)).abs().max_element() < slack,
+                        "{reach} {primaries}: {now:?} not {:?} less {centre}",
+                        [low, high]
+                    );
+                }
+                Some(failed) => {
+                    let far = "its point on the moved body is too far out to align by";
+                    let out = failed
+                        .message
+                        .starts_with("aligning Body 1 takes it out of range");
+                    assert!(
+                        (failed.message == far && reach > 999_990.0) || (out && reach > 9e5),
+                        "{reach} {primaries}: {}",
+                        failed.message
+                    );
+                    let before = evaluated(editor.document());
+                    assert_eq!(solid_of(&evaluation, body), solid_of(&before, body));
+                }
+            }
+        }
+    }
 }

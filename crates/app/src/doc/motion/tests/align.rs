@@ -5,7 +5,8 @@
 
 use glam::DVec3;
 use varde_document::{
-    Align, AxisRef, BodyId, DirRef, Document, Editor, Extent, FeatureKind, Operation, PointRef,
+    Align, AlignRefs, AxisRef, BodyId, Command, DirRef, Document, Editor, Extent, FeatureKind,
+    Operation, PointRef,
 };
 use varde_regen::Summary;
 use varde_view::{
@@ -14,6 +15,7 @@ use varde_view::{
 };
 
 use super::{Plates, enter, near};
+use crate::doc::motion::align::Taken;
 use crate::tests::{add_disc_of, holding, key_in, length, screen_texts, two_plates};
 
 fn shows(plates: &Plates, wanted: &str) -> bool {
@@ -592,3 +594,291 @@ fn an_edited_aligns_references_are_found_on_the_model_shown() {
     assert!(near(point(0), DVec3::new(30.0, 20.0, -3.0)), "{}", point(0));
     assert!(near(point(1), DVec3::new(30.0, 20.0, 10.0)), "{}", point(1));
 }
+
+/// A pin's foot rim picked as its point, its axis taken out, then the
+/// same rim clicked by hand for the direction (anywhere along it): it's
+/// named as the point's rim, so it's that rim's axis and goes with the
+/// point, as the axis the point brought would. Deliberate: a direction on
+/// the point's own rim is the point's axis however it was picked, so the
+/// two never part (the point picked again elsewhere would leave an axis
+/// on a rim no longer picked).
+#[test]
+fn a_direction_picked_by_hand_on_the_points_rim_goes_with_it() {
+    let (mut plates, _, pin) = pin_and_plate();
+    plates.doc.look(Look::StartAlign);
+    plates.click(pin);
+    let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
+    plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
+    let primary = AlignSlot::new(AlignSide::Moved, AlignRole::Primary);
+    plates.motion(MotionLook::Clear(primary));
+    let moved = plates.doc.motion.as_ref().unwrap().align.sides[0];
+    assert!(moved.point.is_some() && moved.primary.is_none());
+    plates.motion(MotionLook::Picking(MotionPick::Align(primary)));
+    // Clicked across the rim from where the point was named.
+    plates.click_at(pin, Picked::Edge(foot), DVec3::new(92.0, 0.0, 0.0));
+    let moved = plates.doc.motion.as_ref().unwrap().align.sides[0];
+    let (Some(PointRef::Centre(point)), Some(DirRef::Axis(AxisRef::Edge(axis)))) =
+        (moved.point, moved.primary)
+    else {
+        panic!("{moved:?}");
+    };
+    assert_eq!(point, axis, "named alike");
+    // The point picked again on the top rim takes it, and brings the top
+    // rim's axis.
+    plates.motion(MotionLook::Picking(slot(
+        AlignSide::Moved,
+        AlignRole::Point,
+    )));
+    let top = rim(&plates, pin, DVec3::new(100.0, 0.0, 25.0));
+    plates.click_at(pin, Picked::Edge(top), DVec3::new(108.0, 0.0, 25.0));
+    let moved = plates.doc.motion.as_ref().unwrap().align.sides[0];
+    let (Some(PointRef::Centre(point)), Some(DirRef::Axis(AxisRef::Edge(axis)))) =
+        (moved.point, moved.primary)
+    else {
+        panic!("{moved:?}");
+    };
+    assert_eq!(point, axis);
+    assert!((point.near.z - 25.0).abs() < 1e-3, "{}", point.near);
+    // A direction picked by hand on another edge stays when the point
+    // goes.
+    plates.motion(MotionLook::Picking(MotionPick::Align(primary)));
+    plates.click_at(pin, Picked::Edge(foot), DVec3::new(92.0, 0.0, 0.0));
+    plates.motion(MotionLook::Clear(AlignSlot::new(
+        AlignSide::Moved,
+        AlignRole::Point,
+    )));
+    let moved = plates.doc.motion.as_ref().unwrap().align.sides[0];
+    assert!(moved.point.is_none());
+    assert!(
+        matches!(moved.primary, Some(DirRef::Axis(AxisRef::Edge(edge))) if edge.near.z.abs() < 1e-3)
+    );
+}
+
+/// The plates of [`two_plates`] with the align started on the lower one
+/// and both its corners at (30, 20) picked: what's picked next is the
+/// moved body's direction.
+fn corners_picked() -> (Plates, [BodyId; 2]) {
+    let (editor, [top, below]) = two_plates();
+    let mut plates = plates_of(&editor);
+    plates.click(below);
+    plates.doc.look(Look::StartAlign);
+    let at = DVec3::new(30.0, 20.0, -3.0);
+    let (moved_corner, face) = corner(&plates, below, at);
+    click_snapped(&mut plates, below, face, at, Snapped::Corner(moved_corner));
+    let at = DVec3::new(30.0, 20.0, 10.0);
+    let (target_corner, face) = corner(&plates, top, at);
+    click_snapped(&mut plates, top, face, at, Snapped::Corner(target_corner));
+    (plates, [top, below])
+}
+
+/// An align of points alone: picking stopped where it would go on to the
+/// directions, it's whole and previewed as the move between the points,
+/// stored with no flip even if Flip was clicked; a distance typed without
+/// directions holds it back, said why.
+#[test]
+fn an_align_of_points_alone() {
+    let (mut plates, [_, below]) = corners_picked();
+    let direction = slot(AlignSide::Moved, AlignRole::Primary);
+    assert_eq!(picking(&plates), direction);
+    // Whole already: the status bar names it.
+    assert!(plates.doc.motion_ready());
+    assert!(shows(&plates, "Body 2 to Body 1"));
+    plates.motion(MotionLook::Picking(direction));
+    assert_eq!(picking(&plates), MotionPick::Nothing);
+    plates.motion(MotionLook::Flip);
+    let align = drafted(&plates).expect("previewed");
+    assert_eq!((align.from.primary, align.to.primary), (None, None));
+    assert!(!align.flip && align.offset.is_none() && align.turn.is_none());
+    plates.input(MotionField::Distance, "4");
+    assert!(!plates.doc.motion_ready());
+    assert!(shows(
+        &plates,
+        "pick a direction on each side to offset or turn along"
+    ));
+    plates.input(MotionField::Distance, "0");
+    assert!(plates.doc.motion_ready());
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    key_in(&mut plates.doc, enter());
+    assert!(plates.doc.motion.is_none());
+    let (_, kind) = plates.last_feature();
+    assert_eq!(kind, FeatureKind::from(align));
+    plates.answer();
+    // Moved 13 up, corner onto corner: from z −3..0 to 10..13.
+    let [low, high] = plates.bounds(below);
+    assert!(near(low, DVec3::new(-30.0, -20.0, 10.0)), "{low}");
+    assert!(near(high, DVec3::new(30.0, 20.0, 13.0)), "{high}");
+}
+
+/// The directions are asked for in the order clicks go on to them: the
+/// moved body's first, then the target's, then a second direction where
+/// the other side has one; a second direction left without first ones
+/// (those taken out) asks for the first ones first, as clicks go.
+#[test]
+fn directions_are_asked_for_in_the_order_picked() {
+    let (mut plates, [top, below]) = corners_picked();
+    // The target's direction picked first: the body's is asked for next.
+    plates.motion(MotionLook::Picking(slot(
+        AlignSide::Target,
+        AlignRole::Primary,
+    )));
+    let top_face = flat(&plates, top, DVec3::Z);
+    plates.click_at(top, Picked::Face(top_face), DVec3::new(0.0, 15.0, 10.0));
+    assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Primary));
+    assert!(shows(&plates, "pick a direction on the body"));
+    let bottom = flat(&plates, below, DVec3::NEG_Z);
+    plates.click_at(below, Picked::Face(bottom), DVec3::new(0.0, 15.0, -3.0));
+    assert_eq!(picking(&plates), MotionPick::Nothing);
+    assert!(plates.doc.motion_ready());
+    // A second direction on the body: the target's is asked for next.
+    plates.motion(MotionLook::Picking(slot(
+        AlignSide::Moved,
+        AlignRole::Secondary,
+    )));
+    let side = flat(&plates, below, DVec3::X);
+    plates.click_at(below, Picked::Face(side), DVec3::new(30.0, 0.0, -1.5));
+    assert_eq!(
+        picking(&plates),
+        slot(AlignSide::Target, AlignRole::Secondary)
+    );
+    assert!(shows(&plates, "pick the second direction to align it to"));
+    assert!(!plates.doc.motion_ready());
+    // The first directions taken out: they're asked for first, where
+    // clicks go.
+    for side in [AlignSide::Moved, AlignSide::Target] {
+        plates.motion(MotionLook::Clear(AlignSlot::new(side, AlignRole::Primary)));
+    }
+    assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Primary));
+    assert!(shows(
+        &plates,
+        "pick a direction on each side before a second one"
+    ));
+    assert!(!plates.doc.motion_ready());
+}
+
+/// Adds a sketch on XY holding the rectangle from `a` to `b`, cut 15 up
+/// and 5 down through what it touches.
+fn cut_rectangle(editor: &mut Editor, a: (f64, f64), b: (f64, f64)) {
+    let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(plane)).unwrap();
+    let feature = editor.document().features().last().unwrap().id;
+    let mut sketch = varde_sketch::Sketch::default();
+    let corners = [(a.0, a.1), (b.0, a.1), (b.0, b.1), (a.0, b.1)]
+        .map(|(x, y)| sketch.add_point(glam::DVec2::new(x, y)).unwrap());
+    for k in 0..4 {
+        let line = varde_sketch::Curve::Line {
+            start: corners[k],
+            end: corners[(k + 1) % 4],
+        };
+        sketch.add_curve(line, false).unwrap();
+    }
+    let profiles = sketch.profiles().unwrap();
+    let regions = (0..profiles.regions.len())
+        .map(|index| profiles.reference(index).unwrap())
+        .collect();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let extrude = varde_document::Extrude {
+        sketch: feature,
+        regions,
+        extent: crate::tests::two_sides(editor.document(), "15", "5"),
+        flip: false,
+        operation: Operation::Cut(varde_document::Targets::default()),
+    };
+    editor
+        .apply(editor.document().add_feature(extrude.into()))
+        .unwrap();
+}
+
+/// The example plate's hole split by a slot across it: its top rim two
+/// arcs between the same two faces (the plate's top and the hole's
+/// wall). The far arc's centre picked lights that arc, named at a point
+/// on it so it's found again there (not on the other arc) on the next
+/// model; the align then finds the arcs' centre.
+#[test]
+fn two_arcs_with_the_same_keys() {
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    cut_rectangle(&mut editor, (-2.0, -12.0), (2.0, 12.0));
+    let tall = Extent::OneSide(length(editor.document(), "25"));
+    add_disc_of(
+        &mut editor,
+        (100.0, 0.0),
+        8.0,
+        tall,
+        Operation::NewBody(BodyId::NEW),
+    );
+    let pin = editor.document().bodies()[1].id;
+    let mut plates = plates_of(&editor);
+    // The hole's top arcs: two edges of the plate whose snap point is the
+    // hole's centre, on either side of the slot.
+    let index = plates.doc.feed.pick_index();
+    let snaps = index.picking().snaps();
+    let arcs: Vec<u32> = (0..snaps.len() as u32)
+        .filter(|&edge| {
+            index.body(Picked::Edge(edge)) == Some(plate)
+                && snaps[edge as usize]
+                    .is_some_and(|at| DVec3::from(at).distance(DVec3::new(0.0, 0.0, 10.0)) < 1e-9)
+        })
+        .collect();
+    let [a, b] = arcs[..] else {
+        panic!("two arcs: {arcs:?}");
+    };
+    assert_eq!(index.chain_keys(a), index.chain_keys(b), "the same keys");
+    // The one on the −x side.
+    let far = if index.chain_point(a).unwrap().x < 0.0 {
+        a
+    } else {
+        b
+    };
+    plates.doc.look(Look::StartAlign);
+    plates.click(pin);
+    let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
+    plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
+    click_snapped(
+        &mut plates,
+        plate,
+        Picked::Edge(far),
+        DVec3::new(0.0, 0.0, 10.0),
+        Snapped::EdgePoint(far),
+    );
+    let target = plates.doc.motion.as_ref().unwrap().align.sides[1];
+    let Some(PointRef::Centre(named)) = target.point else {
+        panic!("{target:?}");
+    };
+    assert!(named.near.x < -2.0, "named on the far arc: {}", named.near);
+    assert_eq!(plates.doc.align_lit()[1], [Picked::Edge(far)]);
+    // Previewed and answered: a new model, the arc found again.
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    plates.motion(MotionLook::Picking(slot(
+        AlignSide::Target,
+        AlignRole::Point,
+    )));
+    plates.answer();
+    let index = plates.doc.feed.pick_index();
+    let lit = plates.doc.align_lit()[1].clone();
+    let [Picked::Edge(found)] = lit[..] else {
+        panic!("{lit:?}");
+    };
+    assert!(
+        index.chain_point(found).unwrap().x < -2.0,
+        "the far arc lit"
+    );
+    let state = plates.doc.motion_state().unwrap();
+    let point = state.align.as_ref().unwrap().marks[1].point.expect("drawn");
+    assert!(near(point, DVec3::new(0.0, 0.0, 10.0)), "{point}");
+    // Done: the pin in the hole, its foot at the top.
+    plates.motion(MotionLook::Picking(MotionPick::Nothing));
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    let [low, high] = plates.bounds(pin);
+    assert!(near(low, DVec3::new(-8.0, -8.0, 10.0)), "{low}");
+    assert!(near(high, DVec3::new(8.0, 8.0, 35.0)), "{high}");
+}
+
+mod fuzz;

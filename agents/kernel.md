@@ -71,7 +71,16 @@ polynomial and de Casteljau and blossoming are exact. The blossom is
   r, a, b)` builds the same arc (under 180°) from its ends without them,
   by `+ − × ÷ √` only: with `m = a + b − 2·center`, `c = center + m·2r²/|m|²` and
   `w = |m|/2r`, in the plane or in space (the circle in the plane of
-  `center`, `a` and `b`). Profiles from sketches are built with it.
+  `center`, `a` and `b`). Profiles from sketches are built with it. For
+  an arc under about 14° (`64·|a − b|² < |m|²`) the control point is
+  worked out from the ends' middle, `(a + b)/2 + m·|a − b|²/2|m|²` (the
+  same point, as `|m|² + |a − b|² = 4r²`; wider arcs keep the centre's
+  form, exact for quarter circles about grid centres), so its rounding
+  is the ends', not the centre's: from the centre, a nearly
+  straight arc (a centre far off) carried the centre's rounding into
+  `c`, which the circle's centre found from the curve again (`circle_of`,
+  measure's and align's) multiplies by `(2r/|a − b|)²`: a 10 mm arc
+  about a centre 1e5 off was 2.6e-11 off in `c`, its centre 0.01 off.
 - Weights below 1 give ellipse arcs, 1 parabolas, above 1 hyperbolas.
   Reversing a curve keeps `c` and `w`, so an edge record needs no
   direction.
@@ -243,7 +252,8 @@ everywhere, so its bits are the same too (the sketch takes its angles the
 same way). Arcs whose ends are known as points can be built without
 them: for ends `a`, `b` at radius `r` from the centre (sweep under 180°),
 the control point is `centre + (a + b − 2·centre)·2r² / |a + b −
-2·centre|²` and the weight `|a + b − 2·centre| / 2r`.
+2·centre|²` (from the ends' middle for narrow arcs, see above) and the weight
+`|a + b − 2·centre| / 2r`.
 
 ### Exact cylinder strips
 

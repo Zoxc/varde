@@ -36,7 +36,7 @@
 
 use std::collections::BTreeMap;
 
-use glam::DQuat;
+use glam::{DMat3, DQuat};
 use varde_document::{Align, AlignRefs, DirRef, PointRef};
 use varde_document::{Copies, Pattern, PatternKind};
 use varde_kernel::measure::{EdgeShape, edge_shape};
@@ -620,6 +620,154 @@ fn frame(a: DVec3, b: DVec3) -> [DVec3; 3] {
     [f1, f2, f1.cross(f2)]
 }
 
+/// A side's point, primary and secondary as found.
+type Found = (DVec3, Option<DVec3>, Option<DVec3>);
+
+/// The rotation taking the unit `a` onto the unit `b` by the smallest
+/// turn, by `glam`'s axis and angle; where they're within `1e-8` (the
+/// sine) of opposite, the half turn about the direction square to `b`
+/// that `Motion::align` takes then (as a sketch placement chooses its x
+/// axis), where within that of the same way, none.
+fn rotation_arc(a: DVec3, b: DVec3) -> DMat3 {
+    let axis = a.cross(b);
+    let sine = axis.length();
+    if sine >= 1e-8 {
+        return DMat3::from_axis_angle(axis / sine, sine.atan2(a.dot(b)));
+    }
+    if a.dot(b) > 0.0 {
+        return DMat3::IDENTITY;
+    }
+    let square = if b.x * b.x + b.y * b.y <= 1e-18 {
+        DVec3::X
+    } else {
+        DVec3::Z.cross(b)
+    };
+    let square = (square - b * square.dot(b)).normalize();
+    DMat3::from_axis_angle(square, std::f64::consts::PI)
+}
+
+/// Holds what `align`'s references found on `before` (`sides`) to what
+/// the geometry says, told apart from the topology's own code: a flat
+/// face's normal square to its triangles and out of the body (their
+/// corners' turn); a round edge's centre the centre of the circle
+/// through three of its points, and its axis square to their plane;
+/// a straight edge's middle halfway along it and its direction along it.
+fn check_found(align: &Align, before: &Evaluation, sides: (Found, Found), what: &str) {
+    let on = |body| super::super::super::motion::holding(body, before).unwrap();
+    // A chain's shape, the solid's size, its curves' ends (two of them
+    // far apart if it's open) and a point inside its first curve.
+    let chain_of = |edge: &EdgeRef| -> (EdgeShape, f64, Vec<DVec3>, DVec3) {
+        let made = on(edge.body);
+        let topology = made.solid.topology();
+        let chain = topology.edge(&made.solid, edge.faces, edge.near).unwrap();
+        let chain = &topology.chains()[chain as usize];
+        let mesh = made.solid.mesh();
+        let curves: Vec<_> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
+        let ends = (curves.iter())
+            .flat_map(|curve| [curve.eval(0.0), curve.eval(1.0)])
+            .collect();
+        let shape = edge_shape(&made.solid, chain);
+        (shape, size(&made.solid).max(1.0), ends, curves[0].eval(0.5))
+    };
+    // The two of `points` furthest apart.
+    let extremes = |points: &[DVec3]| {
+        let mut best = (0.0, points[0], points[0]);
+        for &a in points {
+            for &b in points {
+                if a.distance(b) > best.0 {
+                    best = (a.distance(b), a, b);
+                }
+            }
+        }
+        [best.1, best.2]
+    };
+    let check_point = |point: &PointRef, found: DVec3| match point {
+        PointRef::Centre(edge) => {
+            let (_, size, ends, inside) = chain_of(edge);
+            let [a, c] = extremes(&ends);
+            let b = inside;
+            // The circumcentre, where the three points tell it well (a
+            // closed rim's ends are one point: its first curve's middle
+            // and an end stand in).
+            let (u, v) = (b - a, c - a);
+            let n = u.cross(v);
+            if n.length() > 1e-3 * u.length() * v.length() {
+                let centre = a
+                    + (n.cross(u) * v.length_squared() + v.cross(n) * u.length_squared())
+                        / (2.0 * n.length_squared());
+                let reach = size.max(centre.abs().max_element());
+                assert!(
+                    centre.distance(found) <= 1e-6 * reach,
+                    "{what}: centre {found}, three points give {centre}"
+                );
+            }
+        }
+        PointRef::Middle(edge) => {
+            let (_, size, ends, _) = chain_of(edge);
+            let [a, b] = extremes(&ends);
+            let middle = (a + b) / 2.0;
+            assert!(
+                middle.distance(found) <= 1e-9 * size,
+                "{what}: middle {found}, its ends give {middle}"
+            );
+        }
+        PointRef::Corner { .. } | PointRef::Origin => {}
+    };
+    let check_direction = |direction: &DirRef, found: DVec3| match direction {
+        DirRef::Normal(face) => {
+            let made = on(face.body);
+            let topology = made.solid.topology();
+            let region = topology.face(&made.solid, &face.key, face.near).unwrap();
+            let mesh = made.solid.mesh();
+            for &tri in &topology.regions()[region as usize].tris {
+                let corners =
+                    (mesh.tris()[tri as usize].halfedges).map(|h| mesh.verts()[h.start as usize]);
+                let (u, v) = (corners[1] - corners[0], corners[2] - corners[0]);
+                let turn = u.cross(v);
+                if turn.length() > 1e-6 * u.length() * v.length() {
+                    let off = turn.normalize().distance(found.normalize());
+                    assert!(
+                        off < 1e-6,
+                        "{what}: normal {found}, its triangle turns {turn}"
+                    );
+                }
+            }
+        }
+        DirRef::Axis(AxisRef::Edge(edge)) => {
+            let (shape, _, ends, inside) = chain_of(edge);
+            let [a, c] = extremes(&ends);
+            let found = found.normalize();
+            if is_round(&shape) {
+                // Square to its chord, and to its first curve's middle's
+                // way from an end (the circle's plane).
+                for way in [c - a, inside - a] {
+                    if way.length() > 0.0 {
+                        let off = way.normalize().dot(found).abs();
+                        assert!(off < 1e-6, "{what}: round edge's axis {found} along {way}");
+                    }
+                }
+            } else {
+                let off = (c - a).normalize().cross(found).length();
+                assert!(
+                    off < 1e-9,
+                    "{what}: straight edge's direction {found} across {}",
+                    c - a
+                );
+            }
+        }
+        _ => {}
+    };
+    let (moved, target) = sides;
+    for (refs, (point, primary, secondary)) in [(&align.from, moved), (&align.to, target)] {
+        check_point(&refs.point, point);
+        for (direction, found) in [(&refs.primary, primary), (&refs.secondary, secondary)] {
+            if let (Some(direction), Some(found)) = (direction, found) {
+                check_direction(direction, found);
+            }
+        }
+    }
+}
+
 /// Holds the align `align` (the feature `feature`, named `what`), which
 /// worked, to what it must do: what it noted is what the topology gives
 /// on `before` (the history before it); on `after` (with it), the moved
@@ -670,6 +818,26 @@ fn check_align(
     let Some(noted) = noted.filter(|n| n.moved.is_some() && n.target.is_some()) else {
         return;
     };
+    // The default way the primaries meet, told here from what they name:
+    // opposed where each is a flat face's normal or a round edge's axis.
+    if let (Some(from), Some(to)) = (&align.from.primary, &align.to.primary) {
+        let outward = |direction: &DirRef| match direction {
+            DirRef::Normal(_) => true,
+            DirRef::Axis(AxisRef::Edge(edge)) => {
+                let made = super::super::super::motion::holding(edge.body, before).unwrap();
+                let topology = made.solid.topology();
+                let chain = topology.edge(&made.solid, edge.faces, edge.near).unwrap();
+                is_round(&edge_shape(&made.solid, &topology.chains()[chain as usize]))
+            }
+            _ => false,
+        };
+        assert_eq!(
+            noted.opposed,
+            (outward(from) && outward(to)) != align.flip,
+            "{what}: opposed"
+        );
+    }
+    check_found(align, before, (moved, target), what);
     let (p, m, ms) = moved;
     let (q, t, ts) = target;
     let (Some(made), Some(now)) = (solid(before, align.body), solid(after, align.body)) else {
@@ -679,68 +847,65 @@ fn check_align(
         .max(size(now))
         .max(p.abs().max_element())
         .max(q.abs().max_element());
+    let offset = align.offset.as_ref().map_or(0.0, |v| v.value);
+    let radians = align.turn.as_ref().map_or(0.0, |v| v.value);
+    // The motion worked out here, by `glam`: the moved frame onto the
+    // target's (the smallest rotation without secondaries), turned about
+    // the target's primary, the point onto the target's point moved the
+    // offset along it.
+    let (rotation, lands) = match (m, t) {
+        (Some(m), Some(t)) => {
+            let along = t.normalize();
+            let toward = if noted.opposed { -along } else { along };
+            let tilt = match (ms, ts) {
+                (Some(ms), Some(ts)) => {
+                    let [a, b] = [frame(m, ms), frame(toward, ts)];
+                    DMat3::from_cols(b[0], b[1], b[2])
+                        * DMat3::from_cols(a[0], a[1], a[2]).transpose()
+                }
+                _ => rotation_arc(m.normalize(), toward),
+            };
+            let turn = DMat3::from_axis_angle(along, radians);
+            (turn * tilt, q + along * offset)
+        }
+        _ => (DMat3::IDENTITY, q),
+    };
+    let image = |x: DVec3| rotation * (x - p) + lands;
     let (volume, centre) = mass(made);
     let (volume_now, centre_now) = mass(now);
     assert!(close(volume_now, volume, volume), "{what}: volume");
-    let offset = align.offset.as_ref().map_or(0.0, |v| v.value);
-    let radians = align.turn.as_ref().map_or(0.0, |v| v.value);
-    let lands = match t {
-        Some(t) => q + t.normalize() * offset,
-        None => q,
-    };
-    let (r, r_now) = (centre - p, centre_now - lands);
     assert!(
-        close(r.length(), r_now.length(), scale),
-        "{what}: the centre's distance from the point"
+        close_at(centre_now, image(centre), scale),
+        "{what}: centre {centre_now} not at {}",
+        image(centre)
     );
-    if let (Some(m), Some(t)) = (m, t) {
-        let sign = if noted.opposed { -1.0 } else { 1.0 };
-        let toward = t.normalize() * sign;
-        assert!(
-            close(r.dot(m.normalize()), r_now.dot(toward), scale),
-            "{what}: along the primary"
-        );
-        // Found again on the moved body (where the name is the only one,
-        // so the stale point can't choose another).
-        if let Some(found) = point_on(after, &align.from.point, true) {
+    // Every vertex where the motion takes it (a move maps them in order).
+    let (verts, verts_now) = (made.mesh().verts(), now.mesh().verts());
+    if verts.len() == verts_now.len() {
+        for (&v, &w) in verts.iter().zip(verts_now) {
             assert!(
-                close_at(found, lands, scale),
-                "{what}: {found} not at {lands}"
+                close_at(w, image(v), scale),
+                "{what}: vertex {v} to {w}, not {}",
+                image(v)
             );
         }
-        if let Some(found) =
-            (align.from.primary.as_ref()).and_then(|d| direction_on(after, d, true))
-        {
-            assert!(
-                found.normalize().distance(toward) < 1e-9,
-                "{what}: primary {found} not along {toward}"
-            );
-        }
-        if let (Some(ms), Some(ts)) = (ms, ts) {
-            let from = frame(m, ms);
-            let to = frame(toward, ts);
-            let back = DQuat::from_axis_angle(t.normalize(), -radians) * r_now;
-            for (a, b) in from.iter().zip(&to) {
-                assert!(
-                    close(r.dot(*a), back.dot(*b), scale),
-                    "{what}: in the frames"
-                );
-            }
-        } else if radians == 0.0 {
-            // The smallest rotation leaves what's along its axis.
-            let axis = m.normalize().cross(toward);
-            if axis.length() > 1e-3 {
-                let axis = axis.normalize();
-                assert!(
-                    close(r.dot(axis), r_now.dot(axis), scale),
-                    "{what}: about the axis"
-                );
-            }
-        }
-    } else if let Some(found) = point_on(after, &align.from.point, true) {
+    }
+    // Found again on the moved body where the target's are (where the
+    // name is the only one, so the stale point can't choose another).
+    if let Some(found) = point_on(after, &align.from.point, true) {
         assert!(
             close_at(found, lands, scale),
             "{what}: {found} not at {lands}"
+        );
+    }
+    if let (Some(t), Some(found)) = (
+        t,
+        (align.from.primary.as_ref()).and_then(|d| direction_on(after, d, true)),
+    ) {
+        let toward = t.normalize() * if noted.opposed { -1.0 } else { 1.0 };
+        assert!(
+            found.normalize().distance(toward) < 1e-9,
+            "{what}: primary {found} not along {toward}"
         );
     }
     for made in &before.bodies {
@@ -1132,7 +1297,15 @@ fn run(seed: u64, steps: usize) {
             .collect();
         match roll {
             0 | 1 => {
-                let shape = random_shape(&mut rng);
+                // Now and then a block whose top is a shallow arc, its
+                // centre far below: up to the coordinate limit.
+                let shape: Box<dyn FnOnce(&mut Sketch)> = if rng.below(6) == 0 {
+                    let x = 5.0 * rng.below(7) as f64;
+                    let reach = [20.0, 500.0, 5e4, 999_990.0][rng.below(4)];
+                    Box::new(domed((x, 0.0), (x + 10.0, 10.0), reach))
+                } else {
+                    random_shape(&mut rng)
+                };
                 let height = ["5", "10", "7.5"][rng.below(3)];
                 let extent = Extent::OneSide(length(&document, height));
                 add_extrude(&mut editor, shape, extent, Operation::NewBody(BodyId::NEW));

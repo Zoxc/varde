@@ -191,10 +191,26 @@ impl<P: Point> Conic<P> {
     /// `center + m·2r²/|m|²`, where the end tangents meet, and its weight
     /// `|m|/2r`, the cosine of half the angle. In space the circle is the
     /// one in the plane of `center`, `a` and `b`.
+    ///
+    /// For an arc under about 14° (its chord under an eighth of `|m|`)
+    /// the control point is worked out from the ends' middle instead, as
+    /// `(a + b)/2 + m·|a − b|²/2|m|²` (the same point, as `|m|² + |a − b|²
+    /// = 4r²`), so it's as near the ends as their own rounding: from the
+    /// centre, a nearly straight arc's (a centre far off) would carry the
+    /// centre's rounding, which moves the circle's centre as found from
+    /// the curve again by that much times `(2r/|a − b|)²`. Wider arcs keep
+    /// the centre's form, exact for quarter circles about a centre on the
+    /// grid. Either is the same point; which is only a matter of rounding.
     pub fn arc_between(center: P, radius: f64, a: P, b: P) -> Result<Self, PatchError> {
         let m = a + b - center * 2.0;
         let square = m.dot(m);
-        let control = center + m * (2.0 * radius * radius / square);
+        let chord = a - b;
+        let chord = chord.dot(chord);
+        let control = if 64.0 * chord < square {
+            (a + b) * 0.5 + m * (chord / (2.0 * square))
+        } else {
+            center + m * (2.0 * radius * radius / square)
+        };
         Self::new(a, control, square.sqrt() / (2.0 * radius), b)
     }
 

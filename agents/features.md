@@ -1995,7 +1995,14 @@ a cross, an icon toggle and typed fields.
   both); a side's direction that is its point's rim's axis
   (`Side::rim_axis`, however it was picked) goes with the point: the
   point picked again replaces it (by the new rim's axis, or nothing),
-  the point taken out takes it out. Directions on faces and edges
+  the point taken out takes it out. An edge picked for a direction is
+  named at the same point on it as one picked for a point
+  (`PickIndex::chain_point`, wherever it's clicked), so a rim picked by
+  hand as the direction of the point at its centre is that point's rim's
+  axis and goes with it too. Deliberate: a direction on the point's own
+  rim is the point's axis however it was picked, so picking the point
+  again elsewhere never leaves an axis on a rim no longer picked; a
+  direction on any other edge or face stays. Directions on faces and edges
   (`Picks::EdgesAndFaces`): a flat face's normal (`DirRef::Normal`), a
   round face's axis (a cylinder's, cone's, torus's or revolved
   surface's, `DirRef::Axis(AxisRef::Face)`), a straight or round edge
@@ -2044,7 +2051,9 @@ a cross, an icon toggle and typed fields.
   next ("pick the body to align", "pick a point on the body: a corner,
   an edge's middle or a rim's centre", "pick the point to align it to",
   "pick the direction to align it to", "pick a direction on the body",
-  the second directions alike). A point alone is ready (a move between
+  the second directions alike; a second direction left without first
+  ones, theirs taken out, "pick a direction on each side before a second
+  one", as clicks go on to the first ones first). A point alone is ready (a move between
   the points). `Align::check_own` refuses as the panel's foot ("Align
   fails"); what the document checks of the references
   (`Document::check_align_refs`, each one alone at the feature's place)
@@ -2079,7 +2088,23 @@ undo; a reference an undo takes away said to be gone, back on redo; a
 rim picked again taking its axis along, cleared with it, and the dot and
 the edge naming the same; picks on what a combine merged into the moved
 body named on it, and a target merged into a body picked to move taken
-out; an edited align's references lit and drawn on the model as of it),
+out; an edited align's references lit and drawn on the model as of it;
+a direction picked by hand on the point's rim going with the point; an
+align of points alone, Flip and a distance left out of it; directions
+asked for in the order clicks go to them, first ones before a second
+one left alone; the example plate's hole split by a slot, its two top
+arcs between the same faces, the far one's centre lit and found again
+there on the next model), the session fuzz (`motion/tests/align/fuzz.rs`,
+`VARDE_ALIGN_SEEDS`: picks of faces, edges, vertices and snap dots on the
+model shown or one gone by, the body switched, fields picked into and
+clicked again, references taken out, the origin, Flip, distances and
+angles, units, undo and redo, joins and combines merging bodies before
+the align, bodies added and features removed, models answered at any
+point; after each step a ready session whole, its references passing
+the document's checks, the moved side's on its body and the target's
+off it, previewed as set up, committed as drafted; what's lit naming
+what's picked; the status bar asking for what clicks go to; an edited
+align opening to what it stores and OK writing nothing),
 `view/src/motion/tests.rs` (the panel's order, the status text),
 `viewport/motion/tests.rs` (the points and directions drawn).
 
@@ -2098,16 +2123,29 @@ on a merged body refused; a block aligned corner to corner face to face
 exact to the bit, with an offset, a quarter turn, a secondary pair, a
 flip and a point alone; each refusal with its geometry and no body
 changed; a consumed body; the cache by the motion's bits; what's noted
-against the topology), `regen/src/wire/tests.rs` (datums on the wire,
+against the topology; the moved side named on the plate holding a disc
+combined into it, then the combine changed so the merge goes (its tool
+kept, another tool, both, the combine gone: the same place, or not
+found or on the moved body with nothing moved) and undone, and the same
+through a join a block is taken out of; nearly straight arcs' centres
+up to the coordinate limit, placed where the drawn centre takes them or
+refused as out of range), `regen/src/wire/tests.rs` (datums on the wire,
 bad ones refused), `io/src/vrdp/tests.rs` (through a file, tampered
 records refused), and the motion fuzz (`VARDE_MOTION_SEEDS`): random
 aligns of corners, middles and centres, with normals, face axes and
 edge directions or none, onto other bodies or the origin, with
-secondaries (mostly across), flips, offsets and turns, each one that
-works held to what the topology gives before it (the noted datums to
-the bit), its centre of mass standing to the target's point, primary and
-frame as it stood to its own, and its point and primary found again on
-the target's where their names are unique; one failing changes nothing.
+secondaries (mostly across), flips, offsets and turns, blocks among the
+bodies with a shallow arc on top about a centre up to the coordinate
+limit away, each one that works held to what the topology gives before
+it (the noted datums to the bit), those datums to the geometry worked
+out apart (a flat face's normal along its triangles' turn, a rim's
+centre the circle through three of its points, its axis square to them,
+a straight edge's middle and direction from its ends), the default
+opposition told from what the primaries name, every vertex and the
+centre of mass where the motion worked out with `glam` takes them (the
+frames by Gram–Schmidt, else the smallest rotation by axis and angle,
+the turn, the offset), and its point and primary found again on the
+target's where their names are unique; one failing changes nothing.
 
 The Timeline shows the mock's `align` icon (the tool icons' set), "to
 Body 2" or "to the origin" as its note and "Body 2 to Body 1" as the
@@ -2116,4 +2154,9 @@ were before the align, not on the body as previewed; a direction is
 drawn only once the preview answers (while picking, only the face or
 edge lit). A far centre (a nearly straight arc's) is refused only when
 the motion is made, and noted for the draft only within the wire's
-bounds.
+bounds; a sketch holds its points within the coordinate limit, so only
+rounding takes a centre found from the curve past it. Such a centre is
+as good as the arc's control point times `(2r/chord)²`: profiles build
+it from the ends' middle (see `Conic::arc_between` in
+`agents/kernel.md`) so it's the drawn centre within `1e-4` mm for a
+10 mm arc a 1e5 away (it was 0.01 off).

@@ -2641,3 +2641,58 @@ fn a_tampered_align_is_refused() {
         assert!(decoded.is_err(), "{was} as {now} was taken");
     }
 }
+
+/// An align's part of a record damaged on disk, every float in it set to
+/// what's out of bounds or not a number and random bytes in it changed
+/// (2 000 ways): refused as it's read or read as a document that passes
+/// its check, never a panic.
+#[test]
+fn a_damaged_align_is_refused_or_checked() {
+    let raw = record_msgpack(&aligned_plates());
+    let from = (raw.windows(5))
+        .position(|window| window == b"Align")
+        .expect("the align's variant name");
+    let read = |bytes: &[u8]| {
+        if let Ok((document, _)) = from_msgpack::<Document>(bytes) {
+            document.check().unwrap();
+            for feature in document.features() {
+                if let varde_document::FeatureKind::Align(align) = &feature.kind {
+                    align.check_own(&document.design()).unwrap();
+                }
+            }
+        }
+    };
+    // Every float after it.
+    let floats: Vec<usize> = (from..raw.len().saturating_sub(8))
+        .filter(|&at| raw[at] == 0xcb)
+        .collect();
+    assert!(floats.len() > 10, "{}", floats.len());
+    for &at in &floats {
+        for x in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e300,
+            -1e300,
+            1.000_001e6,
+            1e6,
+            -0.0,
+            f64::MIN_POSITIVE,
+        ] {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&x.to_bits().to_be_bytes());
+            read(&changed);
+        }
+    }
+    // Random bytes.
+    let size = raw.len() - from;
+    for seed in 0..2_000u64 {
+        let picks = noise(8, seed.wrapping_mul(0x9e37_79b9) + 1);
+        let mut changed = raw.clone();
+        for pair in picks.chunks(2).take(1 + (seed % 3) as usize) {
+            let at = from + (usize::from(pair[0]) * 256 + usize::from(pair[1])) % size;
+            changed[at] = picks[(seed % 8) as usize] ^ pair[1];
+        }
+        read(&changed);
+    }
+}
