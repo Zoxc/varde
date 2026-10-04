@@ -858,6 +858,7 @@ fn cut_rectangle(editor: &mut Editor, a: (f64, f64), b: (f64, f64)) {
         })
         .unwrap();
     let extrude = varde_document::Extrude {
+        taper: None,
         sketch: feature,
         regions,
         extent: crate::tests::two_sides(editor.document(), "15", "5"),

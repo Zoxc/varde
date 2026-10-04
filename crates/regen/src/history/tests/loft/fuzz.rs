@@ -357,6 +357,7 @@ fn extruded_instead(document: &Document, index: usize, loft: &Loft, height: f64)
         extent: Extent::OneSide(length(editor.document(), &format!("{}", height.abs()))),
         flip: height < 0.0,
         operation,
+        taper: None,
     };
     editor
         .apply(editor.document().add_feature(extrude.into()))

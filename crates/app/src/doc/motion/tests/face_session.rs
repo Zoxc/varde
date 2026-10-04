@@ -72,6 +72,7 @@ pub(super) fn add_box(editor: &mut Editor, a: DVec2, b: DVec2) {
         })
         .unwrap();
     let extrude = Extrude {
+        taper: None,
         sketch,
         regions,
         extent: Extent::OneSide(crate::tests::length(editor.document(), "10")),

@@ -46,6 +46,7 @@ fn add_extrude_of(
         .map(|index| profiles.reference(index).unwrap())
         .collect();
     let extrude = Extrude {
+        taper: None,
         sketch,
         regions,
         extent,

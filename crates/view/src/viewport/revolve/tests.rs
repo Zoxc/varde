@@ -331,6 +331,7 @@ fn block() -> PickIndex {
     let design = editor.document().design();
     let depth = varde_expr::Value::new("5", &Extent::ask(&design)).unwrap();
     let extrude = Extrude {
+        taper: None,
         sketch: feature,
         regions: vec![region],
         extent: Extent::OneSide(depth),

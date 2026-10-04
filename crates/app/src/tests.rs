@@ -395,6 +395,7 @@ pub(crate) fn add_disc_of(
         })
         .unwrap();
     let extrude = varde_document::Extrude {
+        taper: None,
         sketch: feature,
         regions,
         extent,

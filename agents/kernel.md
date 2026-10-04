@@ -2498,7 +2498,33 @@ boolean has touched the body. Caps are tagged with their planes, straight
 walls with theirs, curved walls with the cylinder over their conic
 (below). Their forms are the planes, and for curved walls
 `Form::Cylinder` over a circle's arc (`circle_of`), `Form::ConicCylinder`
-over another conic, along the normal. The steps:
+over another conic, along the normal.
+
+**Tapered extrudes** (`src/extrude/taper.rs`, not built yet):
+`extrude_tapered(profile, frame, from, to, taper, feature, tol, budget)
+-> Result<Solid, TaperError>` is a stand-in with its planned signature:
+a zero taper is `extrude` exactly, any other fails with
+`TaperError::Failed(TooComplex)`. The plan: the walls the untapered
+extrude's, drafted with the neutral plane the profile's plane (height 0)
+and the pull along the normal on each side of it, so a positive taper
+(radians, under a right angle either way, its sine and cosine from
+`trig`) offsets the profile inward by `|h| tan taper` at height `h` on
+both sides of the plane, a negative one outward; lines give planes,
+circular arcs exact cones, other conics fitted walls; for a span across
+height 0 each wall in two pieces split there (the ones behind
+`BackSide { curve, segment }`, a face part not added yet); a span not
+reaching height 0 turns its walls about their hinge on the plane all
+the same. Refusals: `Closes` (narrowing, the walls meet before the
+span's end: a narrow slot, a circle shrunk to nothing), `TooSteep`
+(corners whose drafted walls don't meet in a point, a wall's form that
+can't lean that far), `OutOfRange` (widening past `MAX_COORD`),
+`Failed`. The planned analytic tests (pyramid and cone frustums, a
+tapered slot's planes and cones, a pocket and a cut through a plate,
+two sides and symmetric, a negative taper, the refusals, thread counts)
+are in `src/extrude/taper/tests.rs`, `#[ignore = "kernel taper not
+built"]`; see "Deviations".
+
+The steps:
 
 1. **Chain** (`Chain::new`). A segment whose control point is within the
    resolution of its chord (and between its ends) becomes
@@ -8079,7 +8105,7 @@ cube command, its toolbar button and `CUBE_SIZE` are gone.
 
 ### The extrude feature (`crates/document/src/extrude.rs`)
 
-`FeatureKind::Extrude(Extrude { sketch, regions, extent, flip,
+`FeatureKind::Extrude(Extrude { sketch, regions, extent, flip, taper,
 operation })`:
 
 - `sketch`: a sketch feature listed before it.
@@ -8097,6 +8123,16 @@ operation })`:
   through all ignore it. `Extrude::span()` gives the `(from, to)` along
   the sketch plane's normal that `kernel::extrude` takes (`None` for
   through all, which regen works out from the bodies).
+- `taper`: `Option<Value>`, the angle the walls lean by, checked
+  against `Extrude::taper_ask` (an angle under 90° either way, bare
+  numbers in degrees) and not zero (`ExtrudeError::Taper`; no taper is
+  `None`). Positive narrows the profile away from the sketch's plane, on
+  both sides of it for two sides and symmetric (each side drafted away
+  from the plane), negative widens it; the walls turn about where they
+  meet the sketch's plane, also for a span that doesn't reach it
+  (through all). `#[serde(default)]`: extrudes written before tapers
+  read untapered. `Extrude::taper_angle()` is its radians, zero for
+  none.
 - `operation`: `NewBody(BodyId)`, or `Join`, `Cut`, `Intersect` of
   `Targets { excluded }`, the bodies taken out (sorted without repeats,
   each made by an earlier feature).
@@ -8121,8 +8157,9 @@ Commands:
   sending the command to show what goes.
 - `SetTolerance(Tolerance)`: the document's fit tolerance
   (`Document::tolerance()`, stored as its `f64`, checked with
-  `Tolerance::new`, default 1 µm). `SetUnits` pins extrude distances as
-  it pins dimensions (`Value::pin_units`).
+  `Tolerance::new`, default 1 µm). `SetUnits` pins extrude distances
+  and the taper (`Extrude::values_mut`, each with its `Ask`) as it pins
+  dimensions (`Value::pin_units`).
 
 `Document::example()` is a 60 × 40 mm plate with a hole of radius 8 on
 XY, extruded 10 mm as "Body 1", made through the commands. New designs
@@ -8147,7 +8184,18 @@ failing feature changes no body, and the later ones still run.
   sketch's as regeneration placed it; one not placed fails it, see
   `agents/features.md`), over `Extrude::span()`,
   with the document's tolerance and `Budget::DEFAULT`, faces named by
-  `FeatureId::get()`: the tool solid. A `NewBody` body gets it. Through
+  `FeatureId::get()`: the tool solid. A tapered extrude calls
+  `kernel::extrude_tapered` instead (`src/history/taper.rs`), its key
+  the untapered one's plus `"taper"` and the angle's bits (an untapered
+  extrude keeps its key); its refusals read "the taper closes the
+  profile before its end: try a smaller taper or a shorter distance",
+  "the taper is too steep for this profile: try a smaller taper", "the
+  taper widens it out of range", its running out of budget "tapering
+  its walls is too complex to work out" (what the stand-in gives today:
+  the extrude makes no body and changes none, and the history goes on),
+  its other failures as an untapered tool's. Tests replace the kernel's
+  by `testing::taper_by_frustum` (a rectangle on one side of its plane
+  made a frustum of a pyramid by moving its box's corners). A `NewBody` body gets it. Through
   all's span is worked out first (`through_all`): the extent along the
   normal of the boxes (`bounds3`, the control points') of every body made
   before it, excluded or not (so taking one out or putting it back
@@ -10333,3 +10381,18 @@ see `agents/features.md`, "Failures and where they are").
   `loft/tests.rs`, `#[ignore = "kernel loft not built"]`; their
   references are checked against closed forms by a test that runs. See
   "Loft" in `agents/features.md`.
+- **Extrude taper built above a stand-in.** The taper's document,
+  regeneration and panel came before the kernel's (kernel work put off):
+  `extrude/taper.rs` holds `extrude_tapered(profile, frame, from, to,
+  taper, feature, tol, budget) -> Result<Solid, TaperError>`, a zero
+  taper the extrude exactly and any other `TaperError::Failed(TooComplex)`,
+  to be replaced by the extrude's walls (split at height 0 for a span
+  across it) drafted by the draft kernel. The plan has the extrude's
+  walls drafted by `draft_faces` after `extrude`; a separate entry
+  beside `extrude` keeps the untapered extrude untouched and lets the
+  kernel build the split walls and name them, and its own
+  `TaperError` (`Closes`, `TooSteep`, `OutOfRange`, `Failed`) words the
+  draft's refusals for the extrude ("the taper closes the profile
+  before its end", "the taper is too steep for this profile"). The
+  `BackSide { curve, segment }` face part for a two-sided taper's walls
+  behind the sketch isn't added yet: it comes with the kernel's taper.

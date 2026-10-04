@@ -525,3 +525,75 @@ fn the_region_is_found_after_its_sketch_is_edited() {
     let hole = 12.0 * 12.0 * std::f64::consts::PI;
     assert!((region.area - (60.0 * 40.0 - hole)).abs() < 1.0);
 }
+
+fn taper(text: &str) -> Value {
+    Value::new(text, &Extrude::taper_ask(&Document::default().design())).unwrap()
+}
+
+/// A taper is an angle under 90° either way, not zero; none is none.
+#[test]
+fn tapers_are_checked() {
+    let document = with_body();
+    let id = document.features[1].id;
+    let with = |taper: Option<Value>| changed(&document, id, |extrude| extrude.taper = taper);
+    for text in ["2", "-2", "89.999", "-89.999", "0.5 rad"] {
+        let tapered = with(Some(taper(text)));
+        assert_eq!(tapered.check(), Ok(()), "{text}");
+        assert_eq!(
+            Document::from_postcard(&tapered.to_postcard()),
+            Ok(tapered.clone())
+        );
+    }
+    assert_eq!(with(None).check(), Ok(()));
+    // Zero, a right angle or more, a value its text doesn't give, a
+    // length.
+    for text in ["0", "-0", "90", "-90", "100", "2 mm"] {
+        let value = Value {
+            text: text.to_owned(),
+            value: 0.0,
+        };
+        refused(&with(Some(value)), id, ExtrudeError::Taper);
+    }
+    let mut tampered = taper("3");
+    tampered.value = 0.1;
+    refused(&with(Some(tampered)), id, ExtrudeError::Taper);
+    let mut zero = taper("3 - 3");
+    assert_eq!(zero.value, 0.0);
+    refused(&with(Some(zero.clone())), id, ExtrudeError::Taper);
+    zero.value = -0.0;
+    refused(&with(Some(zero)), id, ExtrudeError::Taper);
+    let none = with(Some(taper("0")));
+    assert_eq!(
+        none.check().unwrap_err().to_string(),
+        format!(
+            "feature {}: its taper isn't an angle under 90° either way, other than 0",
+            id.0
+        )
+    );
+}
+
+/// Changing the units keeps a taper's angle as typed.
+#[test]
+fn set_units_pins_the_taper() {
+    let mut editor = Editor::new(with_body());
+    let id = editor.document().features[1].id;
+    let tapered = Extrude {
+        taper: Some(taper("-(1 + 2)")),
+        ..plate(Operation::NewBody(BodyId::NEW))
+    };
+    editor
+        .apply(Command::SetFeature {
+            feature: id,
+            kind: Box::new(tapered.into()),
+        })
+        .unwrap();
+    editor.apply(Command::SetUnits(LengthUnit::In)).unwrap();
+    let pinned = extrude_of(editor.document(), id).taper.clone().unwrap();
+    assert_eq!(pinned.value, -(3f64.to_radians()));
+    assert_eq!(editor.document().check(), Ok(()));
+    editor.undo();
+    assert_eq!(
+        extrude_of(editor.document(), id).taper,
+        Some(taper("-(1 + 2)"))
+    );
+}

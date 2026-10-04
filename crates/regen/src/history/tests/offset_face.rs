@@ -258,6 +258,7 @@ fn a_sketch_on_a_moved_face_follows_it() {
         })
         .unwrap();
     let join = Extrude {
+        taper: None,
         sketch,
         regions,
         extent: Extent::OneSide(length(editor.document(), "3")),

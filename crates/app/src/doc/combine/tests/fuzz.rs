@@ -69,6 +69,7 @@ pub(super) fn add_disc_in(doc: &mut Doc, center: (f64, f64), operation: Operatio
     let ask = Extent::ask(&doc.editor.document().design());
     let extent = Extent::OneSide(varde_expr::Value::new("4", &ask).unwrap());
     let extrude = Extrude {
+        taper: None,
         sketch,
         regions,
         extent,

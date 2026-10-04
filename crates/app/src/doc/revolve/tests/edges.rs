@@ -351,6 +351,7 @@ fn add_box(editor: &mut varde_document::Editor, sketch: FeatureId, distance: &st
         .map(|index| profiles.reference(index).unwrap())
         .collect();
     let extrude = varde_document::Extrude {
+        taper: None,
         sketch,
         regions,
         extent: varde_document::Extent::OneSide(crate::tests::length(editor.document(), distance)),

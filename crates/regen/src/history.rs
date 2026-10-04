@@ -11,7 +11,9 @@
 //! them ([`Profiles::merge`]) and turns the loops into a kernel profile
 //! ([`profile`]). An extrude sweeps it
 //! with [`varde_kernel::extrude`] on the sketch's plane, over
-//! [`Extrude::span`]; a revolve finds its axis in the sketch
+//! [`Extrude::span`] (a tapered one with
+//! [`varde_kernel::extrude_tapered`], a stand-in for now failing as too
+//! complex: see `taper`); a revolve finds its axis in the sketch
 //! ([`axis_line`]; a line that's gone is "axis not found") or, about a
 //! model edge, on the edge's body as the features before it leave it
 //! ([`edge_axis`]: straight and in the sketch's plane), moves the
@@ -142,6 +144,7 @@ pub(crate) mod scale;
 mod shell;
 mod split;
 mod sweep;
+mod taper;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use chamfer::chamfer_by_wedges;
 #[cfg(any(test, feature = "testing"))]
@@ -158,6 +161,8 @@ pub(crate) use shell::shell_by_boxes;
 pub(crate) use split::split_by_booleans;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use sweep::sweep_by_extrude;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use taper::taper_by_frustum;
 
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.
@@ -990,7 +995,8 @@ impl Run<'_> {
 
     /// An extrude's tool solid and the key it's filed under: the
     /// regions swept over its span (worked out from the bodies made
-    /// before it for through all) on its sketch's plane.
+    /// before it for through all) on its sketch's plane, its walls
+    /// leaning by its taper if it has one (see `taper`).
     fn extruded(
         &self,
         extrude: &Extrude,
@@ -1008,27 +1014,46 @@ impl Run<'_> {
             None => through_all(&frame, evaluation.bodies.iter().map(|made| &*made.solid))
                 .ok_or("there's no body to go through")?,
         };
-        let key = Keyer::new("extrude")
+        let mut keyer = Keyer::new("extrude");
+        keyer
             .number(self.feature.id.get())
             .value(&extrude.regions)
             .number(self.tolerance.fit().to_bits())
             .number(from.to_bits())
             .number(to.to_bits())
             .key(self.sketch.key)
-            .placement(&placement)
-            .finish();
+            .placement(&placement);
+        // An untapered extrude keeps the key it had before tapers.
+        if let Some(taper) = &extrude.taper {
+            keyer.bytes(b"taper").number(taper.value.to_bits());
+        }
+        let key = keyer.finish();
         let solid = cache.solid(key, || {
             let profile = self.profile()?;
-            varde_kernel::extrude(
-                &profile,
-                &frame,
-                from,
-                to,
-                self.feature.id.get(),
-                &self.tolerance,
-                &Budget::DEFAULT,
-            )
-            .map_err(|failure| self.kernel_error(failure))
+            let (feature, budget) = (self.feature.id.get(), &Budget::DEFAULT);
+            match &extrude.taper {
+                None => varde_kernel::extrude(
+                    &profile,
+                    &frame,
+                    from,
+                    to,
+                    feature,
+                    &self.tolerance,
+                    budget,
+                )
+                .map_err(|failure| self.kernel_error(failure)),
+                Some(taper) => taper::taperer()(
+                    &profile,
+                    &frame,
+                    from,
+                    to,
+                    taper.value,
+                    feature,
+                    &self.tolerance,
+                    budget,
+                )
+                .map_err(|error| self.taper_refused(error)),
+            }
         })?;
         Ok((solid, key))
     }

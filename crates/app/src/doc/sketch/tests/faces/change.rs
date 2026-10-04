@@ -400,6 +400,7 @@ fn a_cut_face_of_a_body_merged_after_the_sketch_is_named_by_the_body_it_was_cut_
         .unwrap();
     let ask = Extent::ask(&editor.document().design());
     let cut = Extrude {
+        taper: None,
         sketch: pocket,
         regions: vec![region],
         extent: Extent::OneSide(Value::new("2", &ask).unwrap()),
@@ -462,6 +463,7 @@ fn a_face_cut_through_two_bodies_merged_after_the_sketch_is_refused() {
         })
         .unwrap();
     let cut = Extrude {
+        taper: None,
         sketch: hole,
         regions: vec![region],
         extent: crate::tests::two_sides(editor.document(), "15", "5"),

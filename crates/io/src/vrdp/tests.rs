@@ -4837,3 +4837,80 @@ fn a_loft_s_parts_are_checked_as_read() {
         });
     });
 }
+
+/// An extrude written before tapers (no `taper` field) reads untapered;
+/// a tapered one goes through a file; a taper changed on disk, or zero,
+/// is refused.
+#[test]
+fn tapers_read_from_older_files_and_are_checked() {
+    use varde_document::{Extrude, FeatureKind};
+    use varde_expr::Value;
+    let plain = Document::example();
+    // The field taken out, as an older build wrote it: the extrude's map
+    // of six fields made five.
+    let raw = record_msgpack(&plain);
+    let mut header = vec![0x86, 0xa6];
+    header.extend_from_slice(b"sketch");
+    let at = (raw.windows(header.len()))
+        .position(|window| window == header)
+        .expect("the extrude's map");
+    let mut field = vec![0xa5];
+    field.extend_from_slice(b"taper");
+    field.push(0xc0);
+    let end = (raw.windows(field.len()))
+        .position(|window| window == field)
+        .expect("its taper");
+    let mut older = raw[..end].to_vec();
+    older.extend_from_slice(&raw[end + field.len()..]);
+    older[at] = 0x85;
+    let (read, _) = from_msgpack::<Document>(&older).unwrap();
+    assert_eq!(read, plain);
+
+    // Tapered, through a file.
+    let mut editor = Editor::new(plain.clone());
+    let id = plain.features()[1].id;
+    let FeatureKind::Extrude(extrude) = &plain.features()[1].kind else {
+        panic!("the example's extrude");
+    };
+    let ask = Extrude::taper_ask(&plain.design());
+    let tapered = Extrude {
+        taper: Some(Value::new("-2.5", &ask).unwrap()),
+        ..extrude.clone()
+    };
+    editor
+        .apply(Command::SetFeature {
+            feature: id,
+            kind: Box::new(tapered.into()),
+        })
+        .unwrap();
+    let document = editor.document();
+    let (bytes, _) = to_bytes(document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(&read, document);
+
+    // Its value changed on disk, or a taper of nothing, is refused.
+    let raw = record_msgpack(document);
+    let float = |value: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&value.to_be_bytes());
+        bytes
+    };
+    let was = float(-2.5f64.to_radians());
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the taper's value");
+    for now in [-3f64.to_radians(), 0.0, 1.6] {
+        let mut changed = raw.clone();
+        changed[at..at + was.len()].copy_from_slice(&float(now));
+        assert!(from_msgpack::<Document>(&changed).is_err(), "{now} taken");
+    }
+    let zero = Extrude {
+        taper: Some(Value::new("0", &ask).unwrap()),
+        ..extrude.clone()
+    };
+    let refused = editor.apply(Command::SetFeature {
+        feature: id,
+        kind: Box::new(zero.into()),
+    });
+    assert!(refused.is_err());
+}

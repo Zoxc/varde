@@ -90,6 +90,15 @@ pub mod testing {
     pub fn loft_by_extrude() {
         crate::history::loft_by_extrude();
     }
+
+    /// Tapers extrudes on this thread by a stand-in in place of the
+    /// kernel's tapered extrude, which isn't built yet: a rectangle along
+    /// the sketch's axes on one side of its plane, its box's corners
+    /// moved in (out for a negative taper) into a frustum of a pyramid;
+    /// anything else is too complex.
+    pub fn taper_by_frustum() {
+        crate::history::taper_by_frustum();
+    }
 }
 mod inspect;
 mod message;

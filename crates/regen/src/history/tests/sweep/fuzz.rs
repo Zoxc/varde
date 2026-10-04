@@ -443,6 +443,7 @@ fn extruded_instead(document: &Document, index: usize, sweep: &Sweep, length: f6
         other => other.clone(),
     };
     let extrude = Extrude {
+        taper: None,
         sketch: sweep.sketch,
         regions: sweep.regions.clone(),
         extent: Extent::OneSide(super::length(editor.document(), &text)),

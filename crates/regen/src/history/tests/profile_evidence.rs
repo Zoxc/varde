@@ -196,6 +196,7 @@ fn a_touching_extrude_on_a_face_is_placed_by_the_face() {
         })
         .unwrap();
     let extrude = Extrude {
+        taper: None,
         sketch,
         regions,
         extent: Extent::OneSide(length(editor.document(), "5")),

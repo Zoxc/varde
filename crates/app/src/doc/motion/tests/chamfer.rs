@@ -596,6 +596,7 @@ pub(super) fn slot() -> (Plates, BodyId) {
         .unwrap();
     let ask = Extent::ask(&editor.document().design());
     let extrude = Extrude {
+        taper: None,
         sketch: feature,
         regions,
         extent: Extent::OneSide(varde_expr::Value::new("5", &ask).unwrap()),

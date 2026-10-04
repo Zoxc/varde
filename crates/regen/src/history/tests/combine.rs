@@ -349,6 +349,7 @@ fn later_features_on_a_consumed_tool_follow_the_target() {
         })
         .unwrap();
     let boss = Extrude {
+        taper: None,
         sketch,
         regions,
         extent: Extent::OneSide(length(editor.document(), "2")),

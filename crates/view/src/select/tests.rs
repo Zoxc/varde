@@ -61,6 +61,7 @@ fn slot() -> PickIndex {
     let design = editor.document().design();
     let distance = Value::new("10", &Extent::ask(&design)).unwrap();
     let extrude = Extrude {
+        taper: None,
         sketch: feature,
         regions: vec![region],
         extent: Extent::OneSide(distance),

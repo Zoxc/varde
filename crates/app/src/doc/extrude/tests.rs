@@ -702,6 +702,7 @@ fn add_cut(doc: &mut Doc, min: (f64, f64), max: (f64, f64)) -> FeatureId {
     doc.apply(
         doc.editor.document().add_feature(
             varde_document::Extrude {
+                taper: None,
                 sketch,
                 regions: vec![region],
                 extent: varde_document::Extent::ThroughAll,

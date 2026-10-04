@@ -7,7 +7,7 @@ use varde_kernel::Tolerance;
 use varde_sketch::Sketch;
 
 use crate::{
-    Body, BodyId, CheckError, Copies, Document, EditError, Extent, FeatureId, FeatureKind,
+    Body, BodyId, CheckError, Copies, Document, EditError, FeatureId, FeatureKind,
     MAX_PATTERN_BODIES, Move, Opacity, Pattern, Plane, Removable, Snapshot, Turn,
 };
 
@@ -658,7 +658,6 @@ impl Editor {
                 }
                 let mut next = Document::clone(document);
                 let before = document.design();
-                let length = Extent::ask(&before);
                 let angle = Turn::ask(&before);
                 let offset = Move::offset_ask(&before);
                 let angle_ask = Move::angle_ask(&before);
@@ -666,8 +665,8 @@ impl Editor {
                     match &mut feature.kind {
                         FeatureKind::Sketch { sketch, .. } => sketch.pin_units(&before),
                         FeatureKind::Extrude(extrude) => {
-                            for value in extrude.extent.values_mut() {
-                                value.pin_units(&length);
+                            for (value, ask) in extrude.values_mut(&before) {
+                                value.pin_units(&ask);
                             }
                         }
                         FeatureKind::Revolve(revolve) => {

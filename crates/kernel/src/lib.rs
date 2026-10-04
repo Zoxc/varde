@@ -73,7 +73,7 @@ pub use boolean::{
 };
 pub use budget::Budget;
 pub use error::KernelError;
-pub use extrude::{Frame, extrude};
+pub use extrude::{Frame, TaperError, extrude, extrude_tapered};
 pub use failure::{EVIDENCE_WORK, Evidence, EvidenceCaps, Failure, MAX_EVIDENCE, Operand};
 pub use manifold::{ManifoldError, ManifoldMesh};
 pub use profile::{Loop, MAX_PROFILE_SEGMENTS, Profile, ProfileError, Segment};

@@ -700,6 +700,7 @@ fn turned_and_straight() -> (Editor, BodyId, Arc<Solid>) {
         let body = editor.document().bodies()[0].id;
         let turned = evaluated(editor.document()).bodies[0].solid.volume();
         let extrude = Extrude {
+            taper: None,
             sketch,
             regions: vec![region],
             extent: Extent::OneSide(length(editor.document(), "10")),

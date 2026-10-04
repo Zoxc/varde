@@ -402,6 +402,7 @@ pub(crate) fn plate_of(scale: f64, offset: f64, holes: u32) -> PickIndex {
     let design = editor.document().design();
     let thickness = Value::new(&(10.0 * scale).to_string(), &Extent::ask(&design)).unwrap();
     let extrude = Extrude {
+        taper: None,
         sketch: feature,
         regions: vec![region],
         extent: Extent::OneSide(thickness),

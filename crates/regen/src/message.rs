@@ -686,6 +686,37 @@ pub(crate) fn draft_refused(why: DraftRefusal, body: &str) -> String {
     }
 }
 
+/// What the kernel refuses of a tapered extrude.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TaperRefusal {
+    /// Narrowing, the walls meet before the end.
+    Closes,
+    /// A wall can't lean that far.
+    TooSteep,
+    /// Widening, the tool would reach out of range.
+    OutOfRange,
+}
+
+/// Why an extrude's taper is refused.
+pub(crate) fn taper_refused(why: TaperRefusal) -> String {
+    match why {
+        TaperRefusal::Closes => {
+            "the taper closes the profile before its end: try a smaller taper or a shorter \
+             distance"
+                .to_owned()
+        }
+        TaperRefusal::TooSteep => {
+            "the taper is too steep for this profile: try a smaller taper".to_owned()
+        }
+        TaperRefusal::OutOfRange => "the taper widens it out of range".to_owned(),
+    }
+}
+
+/// Why an extrude's tapered walls couldn't be worked out within the
+/// budget: the kernel's tapered extrude, a draft of its walls, is what
+/// it costs, more than its regions.
+pub(crate) const TAPER_TOO_COMPLEX: &str = "tapering its walls is too complex to work out";
+
 /// Why the kernel couldn't draft faces of the body named `body`.
 pub(crate) fn drafting(body: &str, error: KernelError) -> String {
     match error {

@@ -344,6 +344,7 @@ fn obtuse_and_acute_edges_are_rounded() {
         })
         .unwrap();
     let extrude = Extrude {
+        taper: None,
         sketch,
         regions: vec![region],
         extent: Extent::OneSide(length(editor.document(), "10")),

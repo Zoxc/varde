@@ -78,6 +78,7 @@ pub(crate) fn add_extrude_on(
         })
         .unwrap();
     let extrude = Extrude {
+        taper: None,
         sketch: feature,
         regions,
         extent,
@@ -1243,6 +1244,7 @@ fn a_spline_is_extruded_within_the_tolerance() {
         })
         .unwrap();
     let extrude = Extrude {
+        taper: None,
         sketch: feature,
         regions: vec![region],
         extent: Extent::OneSide(length(editor.document(), "2")),
@@ -1678,3 +1680,4 @@ mod scale;
 mod shell;
 mod split;
 mod sweep;
+mod taper;

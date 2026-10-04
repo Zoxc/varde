@@ -34,6 +34,8 @@ pub(crate) struct ExtrudeSession {
     /// nothing. False otherwise.
     ignored_flip: bool,
     pub(crate) operation: OperationKind,
+    /// The edited extrude's taper, kept as it was.
+    taper: Option<varde_expr::Value>,
     /// The bodies a join, cut or intersect leaves out: the edited
     /// extrude's to start with.
     pub(crate) targets: BodyTargets,
@@ -86,6 +88,7 @@ impl ExtrudeSession {
             flip: false,
             ignored_flip: false,
             operation: OperationKind::NewBody,
+            taper: None,
             targets: BodyTargets::default(),
             grabbed: None,
             hover: None,
@@ -128,6 +131,7 @@ impl ExtrudeSession {
         session.flip = extrude.flip;
         session.ignored_flip = extrude.flip && !session.extent.flips();
         session.operation = OperationKind::of(&extrude.operation);
+        session.taper = extrude.taper.clone();
         session.targets = BodyTargets::new(extrude.operation.excluded());
         session
     }
@@ -181,6 +185,7 @@ impl ExtrudeSession {
             regions: self.regions.references().to_vec(),
             extent,
             flip: self.stored_flip(),
+            taper: self.taper.clone(),
             operation: self.targets.operation(self.operation),
         })
     }

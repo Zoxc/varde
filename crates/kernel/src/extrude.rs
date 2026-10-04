@@ -31,6 +31,9 @@ use crate::{Failure, KernelError, MAX_COORD, Solid, Tolerance, in_range};
 
 pub(crate) mod cap;
 pub(crate) mod chain;
+mod taper;
+
+pub use taper::{TaperError, extrude_tapered};
 
 use cap::{Cap, Mode, Rounds};
 use chain::Chain;

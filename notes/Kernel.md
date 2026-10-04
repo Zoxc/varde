@@ -646,7 +646,9 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   failing operation runs for seconds, and on the web the regen worker is
   single-threaded and a running operation isn't interrupted.
 - **Not built yet**: the revolve feature's UI (the kernel's `revolve`
-  is built and the history evaluates revolves), taper, sketches on faces, fillets and other features the reserved
+  is built and the history evaluates revolves), the extrude's taper
+  (`extrude/taper.rs` is a stand-in failing as too complex for any taper,
+  which the taper option is built on), sketches on faces, fillets and other features the reserved
   face parts are for, path sweeps (`sweep/path.rs` is a stand-in with the
   planned signature, failing as too complex, which the sweep feature is
   built on), lofts (`loft.rs` is a stand-in with the planned

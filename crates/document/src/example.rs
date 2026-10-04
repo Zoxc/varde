@@ -66,6 +66,7 @@ impl Document {
         let distance = Value::new(&thickness.to_string(), &Extent::ask(&design))
             .expect("the thickness is a length");
         let extrude = Extrude {
+            taper: None,
             sketch,
             regions: vec![region],
             extent: Extent::OneSide(distance),

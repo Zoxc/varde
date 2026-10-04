@@ -2,6 +2,7 @@
 //! plane's normal into a solid, which makes a new body or, once booleans
 //! come, joins, cuts or intersects bodies already there.
 
+use std::f64::consts::FRAC_PI_2;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,15 @@ pub struct Extrude {
     /// Swaps the direction of [`Extent::OneSide`] and the two sides of
     /// [`Extent::TwoSides`]; the others ignore it.
     pub flip: bool,
+    /// The angle its walls lean by ([`Extrude::taper_ask`]: not zero,
+    /// under 90° either way), if they do: positive narrows the profile
+    /// away from the sketch's plane, on both sides of it for two sides
+    /// and symmetric, negative widens it. Each wall turns about where it
+    /// meets the sketch's plane, also where the extrude doesn't reach the
+    /// plane (through all). None: straight walls, as every extrude made
+    /// before tapers came reads (`#[serde(default)]`).
+    #[serde(default)]
+    pub taper: Option<Value>,
     pub operation: Operation,
 }
 
@@ -129,6 +139,33 @@ impl Extent {
 }
 
 impl Extrude {
+    /// What a taper is checked against in `design`: an angle under a
+    /// right angle either way, bare numbers in degrees. Zero is refused
+    /// apart ([`ExtrudeError::Taper`]): no taper is none.
+    pub fn taper_ask(design: &Design) -> Ask {
+        Ask::angle(design.units, FRAC_PI_2).under_max()
+    }
+
+    /// Its taper's angle in radians, zero for none.
+    pub fn taper_angle(&self) -> f64 {
+        self.taper.as_ref().map_or(0.0, |taper| taper.value)
+    }
+
+    /// Its typed values and what each is checked against in `design`:
+    /// its distances and its taper.
+    pub(crate) fn values_mut(&mut self, design: &Design) -> Vec<(&mut Value, Ask)> {
+        let length = Extent::ask(design);
+        let mut values: Vec<(&mut Value, Ask)> = self
+            .extent
+            .values_mut()
+            .map(|value| (value, length))
+            .collect();
+        if let Some(taper) = &mut self.taper {
+            values.push((taper, Extrude::taper_ask(design)));
+        }
+        values
+    }
+
     /// Where the extrude runs along its sketch plane's normal, as
     /// `(from, to)` with `from < to`, the plane at 0: flipped, one side
     /// runs back from the plane and two sides swap. None for
@@ -149,8 +186,8 @@ impl Extrude {
     }
 
     /// Checks what needs only the extrude and `design`: the region count
-    /// and each region, the distances and their sum, and that through all
-    /// only cuts. The references to other features and bodies are
+    /// and each region, the distances and their sum, the taper, and that
+    /// through all only cuts. The references to other features and bodies are
     /// [`Document::check`](crate::Document::check)'s.
     ///
     /// It's the part of [`Document::check`](crate::Document::check) that
@@ -178,6 +215,15 @@ impl Extrude {
         {
             return Err(ExtrudeError::Length);
         }
+        if let Some(taper) = &self.taper {
+            taper
+                .check(&Extrude::taper_ask(design))
+                .map_err(|_| ExtrudeError::Taper)?;
+            // Not NaN: checked above.
+            if taper.value == 0.0 {
+                return Err(ExtrudeError::Taper);
+            }
+        }
         if self.extent == Extent::ThroughAll && !matches!(self.operation, Operation::Cut(_)) {
             return Err(ExtrudeError::ThroughAll);
         }
@@ -200,6 +246,9 @@ pub enum ExtrudeError {
     Distance,
     /// Its two sides come to more than [`MAX_COORD`].
     Length,
+    /// Its taper's expression doesn't give its value, or the value isn't
+    /// an angle [`Extrude::taper_ask`] takes, or it's zero.
+    Taper,
     /// It goes through all, but doesn't cut.
     ThroughAll,
     /// The body it makes, this one, isn't there, or names another maker.
@@ -225,6 +274,9 @@ impl fmt::Display for ExtrudeError {
             ExtrudeError::Region(why) => why.fmt(f),
             ExtrudeError::Distance => f.write_str("a distance's expression doesn't give its value"),
             ExtrudeError::Length => write!(f, "its two sides come to over {MAX_COORD} mm"),
+            ExtrudeError::Taper => {
+                f.write_str("its taper isn't an angle under 90° either way, other than 0")
+            }
             ExtrudeError::ThroughAll => f.write_str("only a cut can go through all"),
             ExtrudeError::NewBody(body) => write!(
                 f,

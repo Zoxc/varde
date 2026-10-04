@@ -320,6 +320,7 @@ fn touching_extrude() -> Touching {
         })
         .unwrap();
     let extrude = varde_document::Extrude {
+        taper: None,
         sketch,
         regions,
         extent: varde_document::Extent::OneSide(crate::tests::length(editor.document(), "5")),

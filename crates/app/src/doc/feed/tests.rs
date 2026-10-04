@@ -699,6 +699,7 @@ fn add_block(editor: &mut Editor, x: f64, width: f64, height: &str, operation: O
     let ask = Extent::ask(&editor.document().design());
     let extent = Extent::OneSide(varde_expr::Value::new(height, &ask).unwrap());
     let extrude = varde_document::Extrude {
+        taper: None,
         sketch: feature,
         regions,
         extent,

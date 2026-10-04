@@ -829,6 +829,7 @@ fn a_draft_may_change_the_kind_of_its_feature() {
         unreachable!()
     };
     let extrude = Extrude {
+        taper: None,
         sketch: made.sketch,
         regions: made.regions.clone(),
         extent: Extent::OneSide(length(editor.document(), "3")),

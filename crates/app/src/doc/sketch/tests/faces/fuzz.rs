@@ -83,6 +83,7 @@ fn scene() -> Document {
     let square = [(-25.0, 5.0), (-15.0, 5.0), (-15.0, 15.0), (-25.0, 15.0)];
     let pocket = add_sketch(&mut editor, xy, polygon(&square));
     let cut = Extrude {
+        taper: None,
         sketch: pocket,
         regions: vec![first_region(&editor, pocket)],
         extent: Extent::OneSide(length(&editor, "5")),
@@ -96,6 +97,7 @@ fn scene() -> Document {
     let triangle = [(40.0, 0.0), (60.0, 0.0), (50.0, 10.0)];
     let end = add_sketch(&mut editor, xz, polygon(&triangle));
     let prism = Extrude {
+        taper: None,
         sketch: end,
         regions: vec![first_region(&editor, end)],
         extent: Extent::Symmetric(length(&editor, "20")),
@@ -504,6 +506,7 @@ fn run(seed: u64, steps: usize) {
                     sketch: Box::new(drawn),
                 });
                 let join = Extrude {
+                    taper: None,
                     sketch: disc,
                     regions: vec![region],
                     extent: crate::tests::two_sides(&document, "15", "5"),

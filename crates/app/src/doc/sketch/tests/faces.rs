@@ -447,6 +447,7 @@ fn prism() -> (Doc, Requests) {
         .unwrap();
     let ask = Extent::ask(&editor.document().design());
     let extrude = Extrude {
+        taper: None,
         sketch,
         regions: vec![region],
         extent: Extent::Symmetric(Value::new("20", &ask).unwrap()),
