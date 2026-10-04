@@ -37,7 +37,7 @@ use super::{BodySolid, Evaluation, Failed, chain_curves, face_geometry, own_soli
 use crate::cache::{Cache, Datum};
 use crate::error_geometry::ErrorGeometry;
 use crate::message::{self, AlignRef, Moving, Side};
-use crate::{AlignDatums, AlignSide};
+use crate::{AlignDatums, AlignFound};
 
 /// Changes the body of `evaluation` that the align `align`, the feature
 /// `feature`, moves, or says why it fails, changing nothing.
@@ -121,7 +121,7 @@ fn note(
 ) {
     let [moved, target] = sides.map(|side| {
         let datum = &side.as_ref().ok()?.datum;
-        let side = AlignSide {
+        let side = AlignFound {
             point: datum.point.to_array(),
             primary: datum.primary.map(|v| v.to_array()),
             secondary: datum.secondary.map(|v| v.to_array()),

@@ -984,6 +984,11 @@ impl Doc {
             MotionLook::Picking(MotionPick::Align(_) | MotionPick::Nothing)
                 if session.kind != MotionKind::Align => {}
             MotionLook::Picking(MotionPick::Reference) if session.kind == MotionKind::Align => {}
+            // An align's field clicked again while it picks stops picking,
+            // so the align shows as set up without picking all it can take.
+            MotionLook::Picking(picking @ MotionPick::Align(_)) if session.picking == picking => {
+                session.picking = MotionPick::Nothing;
+            }
             MotionLook::Picking(picking) => session.picking = picking,
             MotionLook::OriginAxis(axis) if session.kind == MotionKind::Align => {
                 self.align_origin(Some(axis));
@@ -991,8 +996,9 @@ impl Doc {
             MotionLook::OriginPoint => self.align_origin(None),
             MotionLook::Clear(slot) if session.kind == MotionKind::Align => {
                 session.align.clear(slot);
-                // With nothing picking, clicks go on to what's needed.
-                if session.picking == MotionPick::Nothing {
+                // Clicks go on to what's needed first now, or to nothing
+                // (and the preview) once it's whole; picking bodies stays.
+                if session.picking != MotionPick::Bodies {
                     session.picking = session.align.next();
                 }
             }
@@ -1445,6 +1451,7 @@ impl Doc {
         if !self.picks() {
             return;
         }
+        self.follow_align();
         let Some(session) = &self.motion else {
             return;
         };

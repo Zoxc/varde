@@ -65,10 +65,10 @@
 //! sketch's or a mirror's) or isn't round (a move's axis) shows the face,
 //! an axis line of no length its point, and an axis edge of the wrong
 //! shape its curves, as an align's references of the wrong kind do (and
-//! its secondary parallel to its primary, both of them); the others (a face or body gone, a face too far out,
-//! a sketch not placed or not there, an axis not found, a combine's or a
-//! move's body with no solid, a body moved out of range) have nothing to
-//! show.
+//! its secondary parallel to its primary, both of them); the others (a
+//! face or body gone, a face too far out, a sketch not placed or not
+//! there, an axis not found, a combine's or a move's body with no solid,
+//! a body moved out of range) have nothing to show.
 //!
 //! Every result goes through the [`Cache`], keyed by what it depends on,
 //! so only what an edit changes runs again.

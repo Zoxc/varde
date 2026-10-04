@@ -7,7 +7,7 @@ use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_kernel::mesh::FaceKey;
 
-use crate::{BodyId, FeatureId, MAX_COORD};
+use crate::{BodyId, FeatureId};
 
 /// An edge of a body, as picked: the body, the keys of the faces either
 /// side of it (the kernel's names for them, from the features that made
@@ -27,7 +27,7 @@ pub struct EdgeRef {
     pub body: BodyId,
     /// Sorted, and two different keys.
     pub faces: [FaceKey; 2],
-    /// Finite and within [`MAX_COORD`].
+    /// Finite and within [`MAX_COORD`](crate::MAX_COORD).
     pub near: DVec3,
 }
 
@@ -60,7 +60,7 @@ impl EdgeRef {
     }
 
     /// Checks what needs only the reference: its keys sorted and
-    /// different, its point finite and within [`MAX_COORD`]. What it
+    /// different, its point finite and within [`MAX_COORD`](crate::MAX_COORD). What it
     /// names is [`Document::check`](crate::Document::check)'s.
     pub fn check_own(&self) -> Result<(), EdgeError> {
         let [a, b] = &self.faces;
@@ -68,7 +68,7 @@ impl EdgeRef {
             return Err(EdgeError::Faces);
         }
         let near = self.near;
-        if near.is_finite() && near.abs().max_element() <= f64::from(MAX_COORD) {
+        if crate::in_bounds(near) {
             Ok(())
         } else {
             Err(EdgeError::Near(near))
@@ -82,7 +82,7 @@ pub enum EdgeError {
     /// Its faces' keys aren't sorted, or are the same.
     Faces,
     /// Its point isn't finite, or is further from zero than
-    /// [`MAX_COORD`].
+    /// [`MAX_COORD`](crate::MAX_COORD).
     Near(DVec3),
 }
 

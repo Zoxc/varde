@@ -10,9 +10,7 @@ use varde_expr::Value;
 use varde_kernel::mesh::FaceKey;
 
 use crate::motion::Referred;
-use crate::{
-    Axis3, AxisRef, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, MAX_COORD, Move,
-};
+use crate::{Axis3, AxisRef, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, Move};
 
 /// An align: `body` moved so `from`, picked on it, meets `to`, picked on
 /// bodies features before it make (not `body`) or the origin. The point
@@ -38,7 +36,7 @@ pub struct Align {
     /// otherwise. Only with primaries.
     pub flip: bool,
     /// A gap along the target's primary direction as it's found (not as
-    /// flipped): a length within [`MAX_COORD`] of zero
+    /// flipped): a length within [`MAX_COORD`](crate::MAX_COORD) of zero
     /// ([`Move::offset_ask`]). Only with primaries.
     pub offset: Option<Value>,
     /// A turn about the target's primary direction, right-handed, within a
@@ -69,7 +67,7 @@ pub enum PointRef {
     Corner {
         body: BodyId,
         faces: [FaceKey; 3],
-        /// Finite and within [`MAX_COORD`].
+        /// Finite and within [`MAX_COORD`](crate::MAX_COORD).
         near: DVec3,
     },
     /// The middle of a straight edge: the mean of its ends.
@@ -108,7 +106,7 @@ impl PointRef {
 
     /// Checks what needs only the reference: a corner's keys sorted and
     /// different, an edge's as [`EdgeRef::check_own`], its point finite
-    /// and within [`MAX_COORD`].
+    /// and within [`MAX_COORD`](crate::MAX_COORD).
     pub fn check_own(&self) -> Result<(), AlignError> {
         match self {
             PointRef::Origin => Ok(()),
@@ -154,15 +152,17 @@ impl DirRef {
     pub fn check_own(&self) -> Result<(), AlignError> {
         match self.refers() {
             Some(Referred::Edge(edge)) => edge.check_own().map_err(AlignError::Edge),
-            Some(Referred::Face(face)) => check_near(face.near),
+            Some(Referred::Face(face)) => {
+                (face.check_own()).map_err(|_| AlignError::Near(face.near))
+            }
             None => Ok(()),
         }
     }
 }
 
-/// Checks a reference's point: finite and within [`MAX_COORD`].
+/// Checks a reference's point: finite and within [`MAX_COORD`](crate::MAX_COORD).
 fn check_near(near: DVec3) -> Result<(), AlignError> {
-    if near.is_finite() && near.abs().max_element() <= f64::from(MAX_COORD) {
+    if crate::in_bounds(near) {
         Ok(())
     } else {
         Err(AlignError::Near(near))
@@ -275,7 +275,7 @@ pub enum AlignError {
     /// An edge fails its own check ([`EdgeRef::check_own`]).
     Edge(EdgeError),
     /// A corner's or face's point isn't finite, or is further from zero
-    /// than [`MAX_COORD`].
+    /// than [`MAX_COORD`](crate::MAX_COORD).
     Near(DVec3),
     /// A reference on the moved side is the origin's.
     FromOrigin,

@@ -58,11 +58,8 @@ const MIN_REACH: f64 = 10.0;
 const REACH_PAST: f64 = 1.25;
 /// How opaque the plane's fill is.
 const PLANE_FILL: f32 = 0.12;
-/// How wide an align's points are drawn, and the snap points while one
-/// is picked and the one the cursor takes, in pixels: the measure tool's.
+/// How wide an align's points are drawn, in pixels: the measure tool's.
 const ALIGN_POINT_RADIUS: f32 = 5.0;
-const SNAP_RADIUS: f32 = 3.5;
-const SNAPPED_RADIUS: f32 = 5.0;
 
 /// How long the handles' arrows are, and the rings' radius, in pixels.
 const ARROW_PIXELS: f64 = 100.0;
@@ -412,17 +409,8 @@ impl<'a> Moving<'a> {
             }
             live.world_point(point.as_vec3(), dot(ALIGN_POINT_RADIUS, color, true));
         }
-        if let Some((index, hover)) = align.snaps
-            && hover.model == index.model()
-        {
-            for (snapped, point) in index.snaps(hover.target) {
-                let style = if hover.snap == Some(snapped) {
-                    dot(SNAPPED_RADIUS, colors.hovered, true)
-                } else {
-                    dot(SNAP_RADIUS, colors.hovered, false)
-                };
-                live.world_point(point.as_vec3(), style);
-            }
+        if let Some((index, hover)) = align.snaps {
+            super::measure::snap_dots(live, index, hover, colors);
         }
     }
 

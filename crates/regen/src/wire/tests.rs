@@ -532,19 +532,19 @@ fn draft_references_must_be_lines_within_bounds() {
 /// goes as it was.
 #[test]
 fn draft_datums_must_be_within_bounds() {
-    use crate::{AlignDatums, AlignSide};
+    use crate::{AlignDatums, AlignFound};
     let far = crate::MAX_REFERENCE * 2.0;
-    let side = AlignSide {
+    let side = AlignFound {
         point: [1.0, 2.0, 3.0],
         primary: Some([0.0, 0.0, -1.0]),
         secondary: Some([1.0, 0.0, 0.0]),
     };
-    let with = |change: &dyn Fn(&mut AlignSide)| {
+    let with = |change: &dyn Fn(&mut AlignFound)| {
         let mut side = side;
         change(&mut side);
         AlignDatums {
             moved: Some(side),
-            target: Some(AlignSide {
+            target: Some(AlignFound {
                 point: [0.0; 3],
                 primary: Some([0.0, 0.0, 1.0]),
                 secondary: None,

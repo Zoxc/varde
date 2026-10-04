@@ -48,6 +48,12 @@ pub use varde_kernel::mesh::{FaceKey, PartKey};
 pub use varde_kernel::{MAX_COORD, Tolerance};
 pub use varde_sketch::{Design, Id, RegionRef, Sketch, SketchError};
 
+/// Whether `point` is a reference's point a file may hold: finite and
+/// within [`MAX_COORD`] of zero in each coordinate.
+pub(crate) fn in_bounds(point: glam::DVec3) -> bool {
+    point.is_finite() && point.abs().max_element() <= f64::from(MAX_COORD)
+}
+
 /// The application's name, as the user sees it.
 pub const APP_NAME: &str = "Varde CAD";
 

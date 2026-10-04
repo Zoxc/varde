@@ -9,20 +9,27 @@
 //! direction, a round edge's axis), each named as of the feature
 //! ([`Naming`]). A round edge's centre picked for a point also gives
 //! that side its direction, the rim's axis, while it has none: a pin's
-//! rim and a hole's then align the pin into the hole in two clicks. The
-//! target side may be the origin and its axes, from the toolbar.
+//! rim and a hole's then align the pin into the hole in two clicks; that
+//! axis goes with the point when it's picked again or taken out. The
+//! target side may be the origin and its axes, from the toolbar. A row's
+//! cross takes a reference out and clicks go on to what's needed first;
+//! a field clicked again while it picks stops picking. What's picked is
+//! lit and drawn on the model shown, found again by its names when that
+//! changes.
 
 use std::borrow::Cow;
 
 use glam::DVec3;
-use varde_document::{Align, AlignRefs, AxisRef, BodyId, DirRef, Document, PointRef};
+use varde_document::{
+    Align, AlignRefs, AxisRef, BodyId, DirRef, Document, EdgeRef, FaceRef, PointRef,
+};
 use varde_regen::{AlignDatums, Summary};
 use varde_view::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, MotionField, MotionKind, MotionPick,
     Naming, Pick, PickIndex, Picked, Snapped, Unnamed, align_info, direction_name, point_name,
 };
 
-use super::{Doc, MotionSession, OUT_OF_DATE};
+use super::{Doc, Merges, MotionSession, OUT_OF_DATE};
 
 /// Why a pick can't be an align's point or direction, in the words the
 /// status bar shows.
@@ -36,8 +43,10 @@ pub(super) const NOT_A_DIRECTION: &str =
 pub(crate) struct AlignSetup {
     /// The moved side's, then the target's ([`AlignSide::index`]).
     pub(crate) sides: [Side; 2],
-    /// Where each reference was picked on the model shown, by side and
-    /// role: drawn and lit while that model is shown.
+    /// Where each reference is on a model shown, by side and role: where
+    /// it was picked, or where it's found again by its names on a model
+    /// shown since ([`AlignSetup::follow`]); drawn and lit while that
+    /// model is shown.
     marks: [[Option<Mark>; 3]; 2],
     /// The references the document no longer takes at the feature's place
     /// (an undo took their body or a face's maker away), or on a body it
@@ -69,15 +78,70 @@ impl Taken {
             Taken::Direction(direction) => direction.body(),
         }
     }
+
+    /// The same reference named on `body`: a face made on a body that a
+    /// join or combine before the align merged into `body` is on `body`
+    /// there, which regenerating finds it on by its keys.
+    fn on(self, body: BodyId) -> Taken {
+        let edge = |edge: EdgeRef| EdgeRef { body, ..edge };
+        let face = |face: FaceRef| FaceRef { body, ..face };
+        match self {
+            Taken::Point(point) => Taken::Point(match point {
+                PointRef::Origin => PointRef::Origin,
+                PointRef::Corner { faces, near, .. } => PointRef::Corner { body, faces, near },
+                PointRef::Middle(on) => PointRef::Middle(edge(on)),
+                PointRef::Centre(on) => PointRef::Centre(edge(on)),
+            }),
+            Taken::Direction(direction) => Taken::Direction(match direction {
+                DirRef::Normal(on) => DirRef::Normal(face(on)),
+                DirRef::Axis(AxisRef::Face(on)) => DirRef::Axis(AxisRef::Face(face(on))),
+                DirRef::Axis(AxisRef::Edge(on)) => DirRef::Axis(AxisRef::Edge(edge(on))),
+                origin @ (DirRef::Origin(_) | DirRef::Axis(AxisRef::Origin(_))) => origin,
+            }),
+        }
+    }
+
+    /// Where it is in `index`'s model, found by its names on the body
+    /// `shown` says draws its body there: the face or edge to light, for
+    /// a direction, and the point to draw, for a point (the origin's at
+    /// zero). Nothing for what isn't found, or an origin axis.
+    fn found(&self, index: &PickIndex, shown: impl Fn(BodyId) -> BodyId) -> Mark {
+        let edge = |edge: &EdgeRef| index.find_edge(shown(edge.body), edge.faces, edge.near);
+        let face = |face: &FaceRef| index.find_face(shown(face.body), &face.key, face.near);
+        let (target, at) = match self {
+            Taken::Point(PointRef::Origin) => (None, Some(DVec3::ZERO)),
+            Taken::Point(PointRef::Corner { body, faces, near }) => {
+                let vertex = index.find_vertex(shown(*body), *faces, *near);
+                (None, vertex.and_then(|vertex| index.corner_point(vertex)))
+            }
+            Taken::Point(PointRef::Middle(on) | PointRef::Centre(on)) => {
+                let chain = edge(on);
+                (
+                    None,
+                    chain.and_then(|c| index.snap_point(Snapped::EdgePoint(c))),
+                )
+            }
+            Taken::Direction(DirRef::Normal(on) | DirRef::Axis(AxisRef::Face(on))) => {
+                (face(on).map(Picked::Face), None)
+            }
+            Taken::Direction(DirRef::Axis(AxisRef::Edge(on))) => (edge(on).map(Picked::Edge), None),
+            Taken::Direction(DirRef::Origin(_) | DirRef::Axis(AxisRef::Origin(_))) => (None, None),
+        };
+        Mark {
+            model: index.model(),
+            target,
+            at,
+        }
+    }
 }
 
-/// Where a reference was picked: on the model `model` shows, `target`
-/// (lit, for a direction) and the point (drawn, for a point).
+/// Where a reference is on the model `model` shows: `target` (lit, for
+/// a direction) and the point (drawn, for a point), each where known.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Mark {
     model: u64,
     target: Option<Picked>,
-    at: DVec3,
+    at: Option<DVec3>,
 }
 
 impl Side {
@@ -97,6 +161,17 @@ impl Side {
             AlignRole::Primary => self.primary.is_some(),
             AlignRole::Secondary => self.secondary.is_some(),
         }
+    }
+
+    /// Whether its direction is the axis of the round edge whose centre
+    /// is its point: what picking that centre gave it (or the same
+    /// picked again), which goes with the point when it's replaced or
+    /// taken out.
+    fn rim_axis(&self) -> bool {
+        matches!(
+            (self.point, self.primary),
+            (Some(PointRef::Centre(rim)), Some(DirRef::Axis(AxisRef::Edge(axis)))) if rim == axis
+        )
     }
 
     /// Takes `role` out.
@@ -152,8 +227,12 @@ impl AlignSetup {
         &self.sides[side.index()]
     }
 
-    /// Picks `taken` for `slot`, picked on `mark`.
+    /// Picks `taken` for `slot`, picked on `mark`. A point replaced
+    /// takes its rim's axis out with it ([`Side::rim_axis`]).
     fn set(&mut self, slot: AlignSlot, taken: Taken, mark: Option<Mark>) {
+        if slot.role == AlignRole::Point && self.side(slot.side).rim_axis() {
+            self.clear(AlignSlot::new(slot.side, AlignRole::Primary));
+        }
         let side = &mut self.sides[slot.side.index()];
         match (slot.role, taken) {
             (AlignRole::Point, Taken::Point(point)) => side.point = Some(point),
@@ -167,17 +246,23 @@ impl AlignSetup {
         self.gone.retain(|&gone| gone != slot);
     }
 
-    /// Takes `slot` out.
+    /// Takes `slot` out; a point, its rim's axis with it
+    /// ([`Side::rim_axis`]).
     pub(super) fn clear(&mut self, slot: AlignSlot) {
+        if slot.role == AlignRole::Point && self.side(slot.side).rim_axis() {
+            self.clear(AlignSlot::new(slot.side, AlignRole::Primary));
+        }
         self.sides[slot.side.index()].clear(slot.role);
         self.marks[slot.side.index()][slot.role.index()] = None;
         self.gone.retain(|&gone| gone != slot);
     }
 
     /// Takes out what's picked on the moved side on another body than
-    /// `body`, and on the target side on `body`: picking another body to
+    /// `body`, and on the target side on `body` or a body `merges` (the
+    /// merges before the align) merged into it: picking another body to
     /// move leaves neither side naming the wrong one.
-    fn moved_to(&mut self, body: BodyId) {
+    fn moved_to(&mut self, body: BodyId, merges: &Merges) {
+        let held = |on: BodyId| merges.holder(on).unwrap_or(on);
         for role in AlignRole::ALL {
             let moved = AlignSlot::new(AlignSide::Moved, role);
             if self
@@ -189,9 +274,30 @@ impl AlignSetup {
             let target = AlignSlot::new(AlignSide::Target, role);
             if self
                 .taken(target)
-                .is_some_and(|taken| taken.body() == Some(body))
+                .is_some_and(|taken| taken.body().map(held) == Some(body))
             {
                 self.clear(target);
+            }
+        }
+    }
+
+    /// Finds again, by their names, the references not picked or found
+    /// on `index`'s model ([`Taken::found`]), `shown` saying which body
+    /// draws a body there: so what's picked stays lit and drawn when the
+    /// model shown changes (an edited align's references the first time
+    /// they're picked again, a model answered since, an undo). Looked for
+    /// once per model.
+    fn follow(&mut self, index: &PickIndex, shown: impl Fn(BodyId) -> BodyId) {
+        let model = index.model();
+        for side in [AlignSide::Moved, AlignSide::Target] {
+            for role in AlignRole::ALL {
+                let slot = AlignSlot::new(side, role);
+                let mark = &self.marks[side.index()][role.index()];
+                if mark.is_some_and(|mark| mark.model == model) {
+                    continue;
+                }
+                let found = self.taken(slot).map(|taken| taken.found(index, &shown));
+                self.marks[side.index()][role.index()] = found;
             }
         }
     }
@@ -392,6 +498,8 @@ impl Doc {
     /// body, and on the target's on it, is taken out, and clicks go on to
     /// the next reference to pick.
     pub(super) fn align_body(&mut self, body: BodyId) {
+        let feature = self.motion.as_ref().and_then(|session| session.feature);
+        let merges = (self.feed).merged_before(self.editor.document(), feature);
         let Some(session) = &mut self.motion else {
             return;
         };
@@ -399,8 +507,27 @@ impl Doc {
             return;
         }
         session.bodies = vec![body];
-        session.align.moved_to(body);
+        session.align.moved_to(body, &merges);
         session.picking = session.align.next();
+    }
+
+    /// Finds the references of the align being set up again on the
+    /// model shown, where they aren't yet ([`AlignSetup::follow`]), each
+    /// on the body drawing its body there.
+    pub(super) fn follow_align(&mut self) {
+        let Some(session) = &mut self.motion else {
+            return;
+        };
+        if session.kind != MotionKind::Align {
+            return;
+        }
+        let merged = self.feed.merged_bodies();
+        let shown = |body: BodyId| {
+            (merged.iter())
+                .find(|(consumed, _)| *consumed == body)
+                .map_or(body, |&(_, holder)| holder)
+        };
+        session.align.follow(self.feed.pick_index(), shown);
     }
 
     /// Takes `pick` as `slot` of the align being set up
@@ -418,27 +545,24 @@ impl Doc {
         let taken = self.align_reference(slot, pick)?;
         let index = self.feed.pick_index();
         let model = index.model();
-        let at = match (pick.snap, pick.target) {
-            (Some(snapped), _) => index.snap_point(snapped).unwrap_or(pick.at),
-            (None, Picked::Edge(edge)) if slot.role == AlignRole::Point => {
-                (index.snap_point(Snapped::EdgePoint(edge))).unwrap_or(pick.at)
-            }
-            _ => pick.at,
+        let mark = match slot.role {
+            AlignRole::Point => Mark {
+                model,
+                target: None,
+                at: point_at(index, pick),
+            },
+            AlignRole::Primary | AlignRole::Secondary => Mark {
+                model,
+                target: Some(pick.target),
+                at: None,
+            },
         };
-        let lit = match pick.target {
-            Picked::Face(_) | Picked::Edge(_) if slot.role != AlignRole::Point => Some(pick.target),
-            _ => None,
-        };
-        let mark = Mark {
-            model,
-            target: lit,
-            at,
-        };
-        let rim = match (taken, pick.target, pick.snap) {
-            (Taken::Point(PointRef::Centre(edge)), Picked::Edge(shown), _)
-            | (Taken::Point(PointRef::Centre(edge)), _, Some(Snapped::EdgePoint(shown))) => {
-                Some((edge, shown))
-            }
+        let feature = self.motion.as_ref().and_then(|session| session.feature);
+        let merges = (self.feed).merged_before(self.editor.document(), feature);
+        // A point's edge is the one clicked: a snap point is only ever
+        // of the edge it's on ([`PickIndex::snaps`]).
+        let rim = match (taken, pick.target) {
+            (Taken::Point(PointRef::Centre(edge)), Picked::Edge(shown)) => Some((edge, shown)),
             _ => None,
         };
         let Some(session) = &mut self.motion else {
@@ -449,7 +573,7 @@ impl Doc {
             && let Some(body) = taken.body()
         {
             session.bodies = vec![body];
-            session.align.moved_to(body);
+            session.align.moved_to(body, &merges);
         }
         session.align.set(slot, taken, Some(mark));
         let primary = AlignSlot::new(slot.side, AlignRole::Primary);
@@ -459,7 +583,7 @@ impl Doc {
             let mark = Mark {
                 model,
                 target: Some(Picked::Edge(shown)),
-                at,
+                at: None,
             };
             let axis = Taken::Direction(DirRef::Axis(AxisRef::Edge(edge)));
             session.align.set(primary, axis, Some(mark));
@@ -494,11 +618,13 @@ impl Doc {
     /// `pick` of the model shown as `slot` of the align being set up,
     /// named as the feature stores it ([`Naming`], the history stopped at
     /// the feature): for a point, a corner, a straight edge's middle or a
-    /// round edge's centre (its snap point, or the edge clicked); for a
-    /// direction, a flat face's normal, a round face's axis, or a
-    /// straight or round edge. The moved side's must be on the body moved
-    /// (if there's one yet; one a join before the feature merged into
-    /// another can't be), the target's on another. Refused, why, if not.
+    /// round edge's centre (its snap point, or the edge or vertex
+    /// clicked, either naming the same); for a direction, a flat face's
+    /// normal, a round face's axis, or a straight or round edge. The
+    /// moved side's must be on the body moved (if there's one yet), and is
+    /// named on it: a face made on a body a join or combine merged into
+    /// it before the align is on it there. The target's must be on
+    /// another body than the moved one there. Refused, why, if not.
     pub(super) fn align_reference(
         &self,
         slot: AlignSlot,
@@ -539,21 +665,16 @@ impl Doc {
         let moved = session.bodies.first().copied();
         let name = |body: BodyId| (document.body(body)).map_or("the body", |body| &body.name);
         match slot.side {
+            // Named on the body holding it at the align, the one moved,
+            // as the document wants the moved side's references.
             AlignSide::Moved => {
-                if merged.holder(body).is_some() {
-                    return Err(format!(
-                        "{} is merged into {} before the align: pick on a body it's on",
-                        name(body),
-                        name(held)
-                    )
-                    .into());
-                }
-                if let Some(moved) = moved.filter(|&moved| moved != body) {
+                if let Some(moved) = moved.filter(|&moved| moved != held) {
                     return Err(format!("Pick it on {}, the body aligned", name(moved)).into());
                 }
-                if !super::super::combine::pickable(document, body, session.feature) {
+                if !super::super::combine::pickable(document, held, session.feature) {
                     return Err(refused(Unnamed::Later, "body"));
                 }
+                return Ok(taken.on(held));
             }
             AlignSide::Target => {
                 if moved.is_some_and(|moved| held == moved) {
@@ -584,7 +705,7 @@ impl Doc {
             None => session.align.marks.each_ref().map(|marks| AlignMark {
                 point: marks[0]
                     .filter(|mark| mark.model == model)
-                    .map(|mark| mark.at),
+                    .and_then(|mark| mark.at),
                 directions: [None, None],
             }),
         };
@@ -628,18 +749,33 @@ fn marks_of(datums: &AlignDatums) -> [AlignMark; 2] {
     })
 }
 
-/// The point `pick` names, see [`Doc::align_reference`].
+/// The point `pick` names, see [`Doc::align_reference`]: a snapped
+/// corner, or the corner of a vertex clicked; an edge's snap point or the
+/// edge clicked, its middle if straight, its centre if round, named at a
+/// point on the edge (not the centre, off it), so the two are the same
+/// reference.
 fn point_of(
     index: &PickIndex,
     naming: &Naming,
     pick: Pick,
     refused: &impl Fn(Unnamed, &str) -> Cow<'static, str>,
 ) -> Result<PointRef, Cow<'static, str>> {
+    let corner = |corner: u32| {
+        naming
+            .corner_ref(index, corner)
+            .map_err(|why| refused(why, "corner"))
+    };
     let edge = match (pick.snap, pick.target) {
-        (Some(Snapped::Corner(corner)), _) => {
-            return naming
-                .corner_ref(index, corner)
-                .map_err(|why| refused(why, "corner"));
+        (Some(Snapped::Corner(at)), _) => return corner(at),
+        (None, Picked::Vertex(_)) => {
+            let at = index
+                .snaps(pick.target)
+                .into_iter()
+                .find_map(|(snapped, _)| match snapped {
+                    Snapped::Corner(at) => Some(at),
+                    Snapped::EdgePoint(_) => None,
+                });
+            return at.map_or(Err(NOT_A_POINT.into()), corner);
         }
         (Some(Snapped::EdgePoint(edge)), _) | (None, Picked::Edge(edge)) => edge,
         _ => return Err(NOT_A_POINT.into()),
@@ -650,14 +786,26 @@ fn point_of(
     if !(straight || round) {
         return Err(NOT_A_POINT.into());
     }
+    let near = index.chain_point(edge).unwrap_or(pick.at);
     let named = naming
-        .edge_ref(index, edge, pick.at)
+        .edge_ref(index, edge, near)
         .map_err(|why| refused(why, "edge"))?;
     Ok(if straight {
         PointRef::Middle(named)
     } else {
         PointRef::Centre(named)
     })
+}
+
+/// Where the point `pick` names is drawn ([`point_of`]): its snap point,
+/// the snap point of the edge clicked, or the vertex clicked.
+fn point_at(index: &PickIndex, pick: Pick) -> Option<DVec3> {
+    match (pick.snap, pick.target) {
+        (Some(snapped), _) => index.snap_point(snapped),
+        (None, Picked::Edge(edge)) => index.snap_point(Snapped::EdgePoint(edge)),
+        (None, Picked::Vertex(vertex)) => index.corner_point(vertex),
+        (None, Picked::Face(_)) => None,
+    }
 }
 
 /// The direction `pick` names, see [`Doc::align_reference`].

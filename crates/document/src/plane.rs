@@ -74,7 +74,7 @@ impl FaceRef {
     /// [`Document::check`](crate::Document::check)'s.
     pub fn check_own(&self) -> Result<(), PlaneError> {
         let near = self.near;
-        if near.is_finite() && near.abs().max_element() <= f64::from(MAX_COORD) {
+        if crate::in_bounds(near) {
             Ok(())
         } else {
             Err(PlaneError::Near(near))

@@ -20,6 +20,7 @@ use super::sketch::srgba;
 use crate::Message;
 use crate::anchors::Anchors;
 use crate::measure::{MeasureSlot, MeasureState};
+use crate::pick::{Pick, PickIndex};
 use crate::theme::{self, SketchColors};
 
 /// How wide a snap dot is to its rim's outside, and the one the cursor
@@ -87,18 +88,8 @@ impl<'a> Measuring<'a> {
                 layer.world_point(point.as_vec3(), dot(POINT_RADIUS, colour(slot), true));
             }
         }
-        if let Some(hover) = self.state.hover
-            && hover.model == self.state.index.model()
-        {
-            let rim = srgba(sketch.hovered);
-            for (snapped, point) in self.state.index.snaps(hover.target) {
-                let style = if hover.snap == Some(snapped) {
-                    dot(SNAPPED_RADIUS, rim, true)
-                } else {
-                    dot(SNAP_RADIUS, rim, false)
-                };
-                layer.world_point(point.as_vec3(), style);
-            }
+        if let Some(hover) = self.state.hover {
+            snap_dots(&mut layer, self.state.index, hover, sketch);
         }
         layer
     }
@@ -129,5 +120,35 @@ impl<'a> Measuring<'a> {
         .style(|theme| theme::glyph(theme, false));
         let anchored = Anchors::new(*camera, placement, [(DVec2::ZERO, chip.into())]);
         Some(anchored.into())
+    }
+}
+
+/// The snap points of what `hover` is over in `index`'s model, if it's
+/// that model's, as dots in `sketch`'s hovered colour, the one the
+/// cursor takes bigger: the measure tool's, and an align's while its
+/// point is picked.
+pub(super) fn snap_dots(
+    layer: &mut SketchLayer,
+    index: &PickIndex,
+    hover: Pick,
+    sketch: SketchColors,
+) {
+    if hover.model != index.model() {
+        return;
+    }
+    for (snapped, point) in index.snaps(hover.target) {
+        let (radius, fixed) = if hover.snap == Some(snapped) {
+            (SNAPPED_RADIUS, true)
+        } else {
+            (SNAP_RADIUS, false)
+        };
+        let style = PointStyle {
+            radius,
+            rim_width: 1.5,
+            rim: srgba(sketch.hovered),
+            fill: srgba(sketch.point_fill),
+            fixed,
+        };
+        layer.world_point(point.as_vec3(), style);
     }
 }

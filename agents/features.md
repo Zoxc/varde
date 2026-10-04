@@ -1911,11 +1911,11 @@ pub enum DirRef { Origin(Axis3), Normal(FaceRef), Axis(AxisRef) }
   tolerance). A target reference whose body a join or combine merged
   into the moved body fails it: aligning a body onto itself.
 - **Noted** for the draft (`Evaluation::aligned`, `Drafted::datums`:
-  `AlignDatums { moved, target, opposed }`, each side an `AlignSide {
+  `AlignDatums { moved, target, opposed }`, each side an `AlignFound {
   point, primary, secondary }` of `[f64; 3]`s, the moved side where it
   is before the align), whether or not the align goes on to work, each
   side only if all its references were found and the wire takes it
-  (`AlignSide::fits`: finite, within `MAX_REFERENCE`, directions not
+  (`AlignFound::fits`: finite, within `MAX_REFERENCE`, directions not
   zero). `opposed` is the flip the motion takes (the default turned by
   `flip`; just `flip` while a side isn't found). Not in `.vrdp`.
 - **The motion**: `Motion::align(moved, target, AlignOptions { flip:
@@ -1969,34 +1969,46 @@ a cross, an icon toggle and typed fields.
   or its row in Objects, merged bodies as their holder, merges followed,
   only bodies made before it; "Missing body", "A picked body is gone"),
   but a click on another body replaces it: what's picked on the moved
-  side on another body, and on the target side on the new one, is taken
-  out (`AlignSetup::moved_to`).
+  side on another body, and on the target side on the new one or a body
+  merged into it before the align, is taken out (`AlignSetup::moved_to`).
 - **Picking the references** (`MotionPick::Align(AlignSlot { side,
   role })`; a field clicked picks into it): after each pick clicks go on
   to the next one still needed, in the order the moved body's point, the
   target's point, the moved body's direction, the target's direction,
   then a second direction where the other side has one, else nothing
   (`MotionPick::Nothing`: clicks pick nothing until a field is
-  clicked; `AlignSetup::next`). Points as the measure tool picks them
+  clicked; `AlignSetup::next`). The field picking, clicked again, stops
+  picking (`MotionPick::Nothing`), so an align with what it needs but
+  not all it can take (points alone) shows as set up. Points as the
+  measure tool picks them
   (`ModelPicking::snaps`, faces, edges and vertices): a snapped corner
   (`Naming::corner_ref`: the corner's three keys, sorted and different,
-  at its exact point, refused as `Naming::edge_ref` refuses an edge), an
-  edge's snap point or the edge itself, its middle if straight
-  (`PickIndex::edge_ends`), its centre if it has a snap point and isn't
-  (a circle or an ellipse). **A round edge's centre also gives its side
-  the rim's axis** as its direction while it has none, so a pin's rim
-  and a hole's align the pin in two clicks (beyond the plan, decided
-  here: the rim names both). Directions on faces and edges
+  at its exact point, refused as `Naming::edge_ref` refuses an edge) or
+  the corner of a vertex clicked, an edge's snap point or the edge
+  itself, its middle if straight (`PickIndex::edge_ends`), its centre if
+  it has a snap point and isn't (a circle or an ellipse); an edge's
+  point is named at a point on the edge (`PickIndex::chain_point`), never
+  at the centre the dot is held at, so the dot and the edge name the same
+  reference. **A round edge's centre also gives its side the rim's axis**
+  as its direction while it has none, so a pin's rim and a hole's align
+  the pin in two clicks (beyond the plan, decided here: the rim names
+  both); a side's direction that is its point's rim's axis
+  (`Side::rim_axis`, however it was picked) goes with the point: the
+  point picked again replaces it (by the new rim's axis, or nothing),
+  the point taken out takes it out. Directions on faces and edges
   (`Picks::EdgesAndFaces`): a flat face's normal (`DirRef::Normal`), a
   round face's axis (a cylinder's, cone's, torus's or revolved
   surface's, `DirRef::Axis(AxisRef::Face)`), a straight or round edge
   (`DirRef::Axis(AxisRef::Edge)`). Each named as of the feature
   (`Naming`, `checked_face_ref`, `edge_ref`). The moved side's must be
   on the body moved (a pick there with no body yet makes its body that
-  one); one on a body a join or combine merged into another before the
-  align is refused (the document wants the moved side's references on
-  the moved body's own id); the target's on another body than the moved
-  one or the body holding it there. The target may be the origin:
+  one), and is named on it (`Taken::on`): a face made on a body a join or
+  combine merged into it before the align is named on it, not on the body
+  it was made on as `Naming` names it, since the document wants the moved
+  side's references on the moved body's own id (regenerating finds the
+  face by its keys on that body's solid). The target's must be on another
+  body than the moved one there (the body holding it, `Merges::holder`).
+  The target may be the origin:
   while its point is picked the toolbar offers "Origin"
   (`MotionLook::OriginPoint`), while a direction is, the X, Y and Z
   axes (`MotionLook::OriginAxis`, `DirRef::Origin`). Refused with a
@@ -2004,15 +2016,23 @@ a cross, an icon toggle and typed fields.
   edge's middle or a round edge's centre can be the point", "Only a flat
   or round face, or a straight or round edge, can give the direction",
   "Pick it on Body 2, the body aligned", "Pick what it's aligned to on
-  another body than the one aligned", "Body 3 is merged into Body 1
-  before the align: pick on a body it's on", `Naming`'s refusals ("Only
-  an edge made before the align can be picked", ...), and an out of date
-  model. A row's cross takes a reference out (`MotionLook::Clear`).
+  another body than the one aligned", `Naming`'s refusals ("Only an edge
+  made before the align can be picked", ...), and an out of date model.
+  A row's cross takes a reference out (`MotionLook::Clear`), and clicks go
+  on to what's needed first (`AlignSetup::next`, nothing once it's whole)
+  unless bodies are being picked.
 - **Highlighting**: while bodies are picked, the body as a move's; while
   a reference is, what a click takes lit as hovered, and the faces and
   edges picked for directions on the model shown, the moved side's as
   selected and the target's in the second colour (`Colors::second`, the
-  measure tool's B; `PickIndex::highlight_with`'s third list).
+  measure tool's B; `PickIndex::highlight_with`'s third list); part of
+  the highlight's key. Each reference is marked on the model it was
+  picked on; on another model shown (an edited align's references the
+  first time they're picked again, a draft answered, an undo) it's found
+  again by its names on the body drawing its body there
+  (`AlignSetup::follow`, `PickIndex::find_face`, `find_edge`,
+  `find_vertex`; once per model, from `refresh_motion_highlight`), so
+  what's picked stays lit and its points drawn.
 - **Fields**: Flip (`MotionLook::Flip`, `Icon::TkFlip`, "The directions
   meet the other way round"), stored only with directions; Offset's
   Distance (`MotionField::Distance`, `Move::offset_ask`) and Angle (the
@@ -2042,7 +2062,8 @@ a cross, an icon toggle and typed fields.
   target's in the second colour, where the newest draft found them
   (`Drafted::datums`, `MeshFeed::draft_datums`; the moved side where it
   was picked, before the align); while picking, the points picked on
-  the model shown, and the snap dots of what the cursor's over.
+  the model shown, and the snap dots of what the cursor's over (drawn as
+  the measure tool's, `viewport::measure::snap_dots`).
 - **Committing**: OK (`Enter`, Add anyway) adds "Align N" or sets the
   edited one, one undo step, as a move's. The status bar says "New align
   · Body 2 to Body 1" once whole (`align_info`), else what's next, with
@@ -2054,7 +2075,11 @@ rim and the hole's top rim, 10 down, OK: its box in the hole, one undo
 step; a plate aligned face to face by corners and faces with an offset,
 the datums drawn; refused picks and the origin from the toolbar; edited
 from the Timeline, the neutral preview while picking, another distance,
-undo; a reference an undo takes away said to be gone, back on redo),
+undo; a reference an undo takes away said to be gone, back on redo; a
+rim picked again taking its axis along, cleared with it, and the dot and
+the edge naming the same; picks on what a combine merged into the moved
+body named on it, and a target merged into a body picked to move taken
+out; an edited align's references lit and drawn on the model as of it),
 `view/src/motion/tests.rs` (the panel's order, the status text),
 `viewport/motion/tests.rs` (the points and directions drawn).
 
@@ -2089,6 +2114,6 @@ Body 2" or "to the origin" as its note and "Body 2 to Body 1" as the
 status info. Known gaps: the moved side's datums are drawn where they
 were before the align, not on the body as previewed; a direction is
 drawn only once the preview answers (while picking, only the face or
-edge lit); a pick on a merged body's holder for the moved side is
-refused rather than followed. A far centre (a nearly straight arc's) is refused only when the motion
-is made, and noted for the draft only within the wire's bounds.
+edge lit). A far centre (a nearly straight arc's) is refused only when
+the motion is made, and noted for the draft only within the wire's
+bounds.

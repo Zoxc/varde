@@ -190,7 +190,7 @@ pub struct Drafted {
 /// (not unit; a flat face's normal out of its body, the others signed as
 /// the document's `DirRef` says).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct AlignSide {
+pub struct AlignFound {
     pub point: [f64; 3],
     pub primary: Option<[f64; 3]>,
     pub secondary: Option<[f64; 3]>,
@@ -204,12 +204,12 @@ pub struct AlignSide {
 /// far out), is `None`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AlignDatums {
-    pub moved: Option<AlignSide>,
-    pub target: Option<AlignSide>,
+    pub moved: Option<AlignFound>,
+    pub target: Option<AlignFound>,
     pub opposed: bool,
 }
 
-impl AlignSide {
+impl AlignFound {
     /// Whether the workers' wire takes it: its point and directions
     /// within [`MAX_REFERENCE`] of zero, finite, no direction zero.
     pub fn fits(&self) -> bool {
@@ -221,10 +221,10 @@ impl AlignSide {
 
 impl AlignDatums {
     /// Whether the workers' wire takes it: each side there
-    /// [`AlignSide::fits`], and at least one there.
+    /// [`AlignFound::fits`], and at least one there.
     pub fn fits(&self) -> bool {
         let sides = [self.moved, self.target];
-        sides.iter().any(Option::is_some) && sides.iter().flatten().all(AlignSide::fits)
+        sides.iter().any(Option::is_some) && sides.iter().flatten().all(AlignFound::fits)
     }
 }
 

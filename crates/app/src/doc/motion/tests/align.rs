@@ -328,12 +328,14 @@ fn a_refused_pick_is_shown() {
         picking(&plates),
         slot(AlignSide::Target, AlignRole::Primary)
     );
+    // Its field clicked again stops picking; once more, it picks again.
+    let direction = slot(AlignSide::Target, AlignRole::Primary);
+    plates.motion(MotionLook::Picking(direction));
+    assert_eq!(picking(&plates), MotionPick::Nothing);
+    plates.motion(MotionLook::Picking(direction));
+    assert_eq!(picking(&plates), direction);
     // A direction isn't a vertex: picking one now, a corner of the plate
     // is refused.
-    plates.motion(MotionLook::Picking(slot(
-        AlignSide::Target,
-        AlignRole::Primary,
-    )));
     let index = plates.doc.feed.pick_index();
     let vertex = (0..index.mesh().positions().len() as u32)
         .find(|&v| index.body(Picked::Vertex(v)) == Some(plate))
@@ -428,4 +430,165 @@ fn a_reference_an_undo_takes_away_is_said_to_be_gone() {
     assert!(drafted(&plates).is_some());
     plates.answer();
     assert!(plates.doc.motion_ready());
+}
+
+/// A pin's moved point picked again on its other rim takes that rim's
+/// axis along with it, and taken out takes the axis out too, clicks going
+/// back to it; a hole's rim picked at its centre's dot names what a click
+/// on the rim names.
+#[test]
+fn a_rim_picked_again_takes_its_axis_along() {
+    let (mut plates, plate, pin) = pin_and_plate();
+    plates.doc.look(Look::StartAlign);
+    plates.click(pin);
+    let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
+    plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
+    let rim_of = |plates: &Plates, side: usize| {
+        let side = plates.doc.motion.as_ref().unwrap().align.sides[side];
+        match (side.point, side.primary) {
+            (Some(PointRef::Centre(point)), Some(DirRef::Axis(AxisRef::Edge(axis)))) => {
+                assert_eq!(point, axis, "the point's rim gives the direction");
+                point
+            }
+            other => panic!("not a rim and its axis: {other:?}"),
+        }
+    };
+    let first = rim_of(&plates, 0);
+    // Named at a point on the rim, not at its centre.
+    let centre = DVec3::new(100.0, 0.0, 0.0);
+    assert!((first.near - centre).length() > 7.5, "{}", first.near);
+
+    plates.motion(MotionLook::Picking(slot(
+        AlignSide::Moved,
+        AlignRole::Point,
+    )));
+    let top = rim(&plates, pin, DVec3::new(100.0, 0.0, 25.0));
+    plates.click_at(pin, Picked::Edge(top), DVec3::new(108.0, 0.0, 25.0));
+    let second = rim_of(&plates, 0);
+    assert_ne!(second.faces, first.faces);
+    assert!((second.near.z - 25.0).abs() < 1e-3, "{}", second.near);
+    assert_eq!(picking(&plates), slot(AlignSide::Target, AlignRole::Point));
+
+    // The hole's top rim at its centre's dot, then clicked on the rim.
+    let hole = rim(&plates, plate, DVec3::new(0.0, 0.0, 10.0));
+    click_snapped(
+        &mut plates,
+        plate,
+        Picked::Edge(hole),
+        DVec3::new(0.0, 0.0, 10.0),
+        Snapped::EdgePoint(hole),
+    );
+    let at_dot = rim_of(&plates, 1);
+    plates.motion(MotionLook::Picking(slot(
+        AlignSide::Target,
+        AlignRole::Point,
+    )));
+    plates.click_at(plate, Picked::Edge(hole), DVec3::new(0.0, 8.0, 10.0));
+    assert_eq!(rim_of(&plates, 1), at_dot);
+
+    // Taken out, the point takes its axis with it; clicks go back to it.
+    plates.motion(MotionLook::Clear(AlignSlot::new(
+        AlignSide::Moved,
+        AlignRole::Point,
+    )));
+    let moved = plates.doc.motion.as_ref().unwrap().align.sides[0];
+    assert_eq!((moved.point, moved.primary), (None, None));
+    assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
+}
+
+/// The plates of [`super::plates`] with a combine consuming the right
+/// disc into the plate: the plates, the plate, the left disc and the
+/// right disc's top rim's centre.
+fn combined() -> (Plates, BodyId, BodyId, DVec3) {
+    let mut plates = super::plates();
+    let [plate, right, left] = plates.bodies;
+    let combine = varde_document::Combine {
+        target: plate,
+        tools: vec![right],
+        op: varde_document::BodyOp::Union,
+        keep_tools: false,
+    };
+    let add = plates.doc.editor.document().add_feature(combine.into());
+    plates.doc.apply(add);
+    plates.doc.sync();
+    plates.answer();
+    (plates, plate, left, DVec3::new(20.0, 0.0, 15.0))
+}
+
+/// The moved side picked on what a combine before the align merged into
+/// the moved body is named on that body, as the document wants, and the
+/// align works: the plate, holding the right disc, aligned by that disc's
+/// top rim onto the left disc's, face to face (turned over about X).
+#[test]
+fn a_pick_on_what_was_merged_into_the_moved_body_is_named_on_it() {
+    let (mut plates, plate, left, top) = combined();
+    plates.doc.look(Look::StartAlign);
+    plates.click(plate);
+    let moved_rim = rim(&plates, plate, top);
+    plates.click_at(plate, Picked::Edge(moved_rim), top + DVec3::X * 5.0);
+    assert_eq!(plates.doc.notice, None);
+    let other = DVec3::new(-20.0, 0.0, 15.0);
+    let target_rim = rim(&plates, left, other);
+    plates.click_at(left, Picked::Edge(target_rim), other + DVec3::X * 5.0);
+    assert_eq!(picking(&plates), MotionPick::Nothing);
+    let align = drafted(&plates).expect("the align previewed");
+    assert!(matches!(align.from.point, PointRef::Centre(edge) if edge.body == plate));
+    assert!(align.from.directions().all(|d| d.body() == Some(plate)));
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    // Turned over about X, (20, 0, 15) onto (−20, 0, 15): x − 40, −y,
+    // 30 − z; the plate from z 0 to 10, the disc from −5 to 15.
+    let [low, high] = plates.bounds(plate);
+    assert!(near(low, DVec3::new(-70.0, -20.0, 15.0)), "{low}");
+    assert!(near(high, DVec3::new(-10.0, 20.0, 35.0)), "{high}");
+}
+
+/// Another body picked to move takes out what's picked on the target
+/// side on a body a combine before the align merged into it.
+#[test]
+fn a_target_merged_into_the_body_picked_to_move_is_taken_out() {
+    let (mut plates, plate, left, top) = combined();
+    plates.doc.look(Look::StartAlign);
+    plates.click(left);
+    let other = DVec3::new(-20.0, 0.0, 15.0);
+    let moved_rim = rim(&plates, left, other);
+    plates.click_at(left, Picked::Edge(moved_rim), other + DVec3::X * 5.0);
+    let target_rim = rim(&plates, plate, top);
+    plates.click_at(plate, Picked::Edge(target_rim), top + DVec3::X * 5.0);
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert!(session.align.sides[1].point.is_some());
+    plates.motion(MotionLook::Picking(MotionPick::Bodies));
+    plates.click(plate);
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert_eq!(session.bodies, [plate]);
+    assert_eq!(
+        session.align.sides,
+        <[crate::doc::motion::align::Side; 2]>::default()
+    );
+    assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
+}
+
+/// An edited align's references, picked again, are lit and drawn on the
+/// model as of the align, found by their names: its faces in each
+/// side's colour, its corners as dots.
+#[test]
+fn an_edited_aligns_references_are_found_on_the_model_shown() {
+    let (mut plates, [top, below], id) = face_to_face();
+    plates.doc.look(Look::EditFeature(id));
+    plates.motion(MotionLook::Picking(slot(
+        AlignSide::Target,
+        AlignRole::Secondary,
+    )));
+    plates.answer();
+    let bottom = flat(&plates, below, DVec3::NEG_Z);
+    let top_face = flat(&plates, top, DVec3::Z);
+    assert_eq!(
+        plates.doc.align_lit(),
+        [vec![Picked::Face(bottom)], vec![Picked::Face(top_face)]]
+    );
+    let state = plates.doc.motion_state().unwrap();
+    let marks = state.align.as_ref().unwrap().marks;
+    let point = |k: usize| marks[k].point.expect("drawn");
+    assert!(near(point(0), DVec3::new(30.0, 20.0, -3.0)), "{}", point(0));
+    assert!(near(point(1), DVec3::new(30.0, 20.0, 10.0)), "{}", point(1));
 }
