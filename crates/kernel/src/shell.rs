@@ -7,7 +7,7 @@
 //! **Not built yet**: [`shell`], [`offset_faces`] and [`draft_faces`]
 //! are stand-ins with
 //! the planned signatures that fail with [`KernelError::TooComplex`], so
-//! the shell and offset face features above the kernel (their
+//! the shell, offset face and draft features above the kernel (their
 //! documents, regeneration and messages) are built against them. The real implementation replaces this file (and adds
 //! `shell/`, the **offset solid**: a solid with each of its regions
 //! offset by a distance of its own, zero keeping a face on its form, its

@@ -838,11 +838,11 @@ impl Document {
 
     /// Checks `neutral` as the neutral plane of a draft at feature
     /// `index` (at the end for a new one, the count of features) would
-    /// name it, as [`Document::check`] has it: a face's body there and
+    /// name it, as [`Document::check`] has it: a face's own parts (as
+    /// [`FaceDraft::check_own`] checks them too), its body there and
     /// made by a feature before it (the draft depends on it), its key's
     /// maker before it or not there with an id no later feature can
-    /// take. For a panel keeping what it sets up one the document takes;
-    /// the face's own parts are [`FaceDraft::check_own`]'s.
+    /// take. For a panel keeping what it sets up one the document takes.
     pub fn check_neutral_plane(
         &self,
         index: usize,
@@ -851,6 +851,7 @@ impl Document {
         let PlaneRef::Face(face) = neutral else {
             return Ok(());
         };
+        face.check_own().map_err(FaceDraftError::Neutral)?;
         if !self.made_before(index, face.body) {
             return Err(FaceDraftError::NeutralBody(face.body));
         }

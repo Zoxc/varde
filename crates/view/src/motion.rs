@@ -221,10 +221,10 @@ impl PatternMode {
 }
 
 /// What a click in the viewport picks: bodies, the reference (a move's
-/// axis, a mirror's plane, a draft's neutral plane), one of an align's points or directions, a
-/// scale's point or its edge, a split's tool, a chamfer's edges, a
-/// shell's faces, or nothing (an align with all it asks for picked, a split with its
-/// tool). A click on one of the panel's fields makes it the one picking.
+/// axis, a mirror's plane, a draft's neutral plane), one of an align's
+/// points or directions, a scale's point or its edge, a split's tool, a
+/// chamfer's edges, a face session's faces, or nothing (an align with
+/// all it asks for picked, a split with its tool). A click on one of the panel's fields makes it the one picking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MotionPick {
     #[default]
@@ -241,8 +241,7 @@ pub enum MotionPick {
     /// A chamfer's edges, each click picking an edge or taking it out.
     Edges,
     /// A face session's faces (a shell's, an offset face's, a draft's),
-    /// each click
-    /// picking a face or taking it out.
+    /// each click picking a face or taking it out.
     Faces,
     Nothing,
 }

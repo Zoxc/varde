@@ -6,8 +6,8 @@
 //! right-handed about, or a mirror's plane, a square across their box,
 //! outlined dashed and filled faintly, with its normal's short line; a
 //! draft's neutral plane as a mirror's, with the pull drawn through it
-//! as an axis. All in the selected colour, or the hovered one while the panel's
-//! row of it is hovered.
+//! as an axis. All in the selected colour, or the hovered one while the
+//! panel's row of it is hovered.
 //!
 //! A move has handles at its bodies' pivot ([`MotionState::centre`],
 //! else their box's centre), a fixed size on the screen: an arrow along

@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 
 use glam::DVec3;
 use varde_document::{BodyId, EdgeRef, FaceRef};
-use varde_view::{MotionKind, Naming, Pick, PickIndex, Picked, Selected, Unnamed};
+use varde_view::{MotionKind, MotionPick, Naming, Pick, PickIndex, Picked, Selected, Unnamed};
 
 use super::{Doc, MotionSession, OUT_OF_DATE, unnamed};
 use crate::doc::feed::Merges;
@@ -317,9 +317,14 @@ impl Doc {
 
     /// Whether the session being set up has `pick` among the edges or
     /// faces it picks, so a click would take it out: `None` for one that
-    /// picks neither (or no session).
+    /// picks neither (or no session), or a draft picking its neutral
+    /// plane, where a click takes the face as the plane.
     pub(crate) fn motion_has(&self, pick: Pick) -> Option<bool> {
-        let kind = self.motion.as_ref()?.kind;
+        let session = self.motion.as_ref()?;
+        if session.picking == MotionPick::Reference {
+            return None;
+        }
+        let kind = session.kind;
         if kind.blends() {
             Some(self.ref_picked::<EdgeRef>(pick).is_some())
         } else if kind.picks_faces() {

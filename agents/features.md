@@ -3900,7 +3900,8 @@ pub struct FaceDraft {
   own check (`Neutral`), the angle by its ask (`Angle`).
   `Document::check_face_set` as an offset face's (`Body`, `RefMaker`),
   and `Document::check_neutral_plane(index, neutral)` (public, for the
-  panel): a face's body there and made by a feature before the draft
+  panel): a face's own check as `check_own`'s, its body there and made
+  by a feature before the draft
   (`NeutralBody`), its key's maker before it or not there with an id no
   later feature can take (`NeutralMaker`). An origin plane needs
   nothing.
@@ -4083,4 +4084,7 @@ refused by regeneration (the front faces the pull), an origin plane
 taken only while the plane picks, another angle and 90° refused,
 Tangent faces, OK and the Timeline's row, undo; editing from the
 Timeline, Cancel, another angle, undo; a neutral face on another body
-an undo takes away said to be gone, back on redo).
+an undo takes away said to be gone, back on redo; the overlap list
+ticking the faces, not while the plane picks, a row then taken as the
+plane). What the face sessions' tests share (boxes, flat faces found
+and clicked, the screen's text) is `app/src/doc/motion/tests/face_session.rs`.

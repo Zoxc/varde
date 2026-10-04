@@ -11,29 +11,18 @@
 //! the toolbar fitting at 1280 px.
 
 use glam::{DVec2, DVec3};
-use varde_document::{
-    BodyId, Command, Document, Editor, Extent, Extrude, FeatureId, FeatureKind, Operation,
-    OriginPlane, Plane, Shell,
-};
+use varde_document::{BodyId, Command, Document, Editor, FeatureId, FeatureKind, Operation, Shell};
 use varde_regen::Summary;
-use varde_sketch::{Curve, Sketch};
 use varde_view::{
     Edit, Look, MotionField, MotionKind, MotionLook, MotionPick, PanelHover, Pick, Picked, Picks,
     Selection, SelectionMode, ShellDirection,
 };
 
+use super::face_session::{
+    add_box, boxes, click, face_pick, flat, held, picked_faces as faces, picking, shows,
+};
 use super::{Plates, enter, near};
-use crate::tests::{add_join, holding, key_in, screen_texts};
-
-fn shows(plates: &Plates, wanted: &str) -> bool {
-    screen_texts(&plates.doc)
-        .iter()
-        .any(|text| text.contains(wanted))
-}
-
-fn picking(plates: &Plates) -> MotionPick {
-    plates.doc.motion.as_ref().expect("a session").picking
-}
+use crate::tests::{add_join, key_in, screen_texts};
 
 /// The shell the last request previews, if it previews one.
 fn drafted(plates: &Plates) -> Option<Shell> {
@@ -43,111 +32,12 @@ fn drafted(plates: &Plates) -> Option<Shell> {
     }
 }
 
-/// The faces of the shell being set up.
-fn faces(plates: &Plates) -> Vec<varde_document::FaceRef> {
-    (plates.doc.motion.as_ref().expect("a session").faces.refs).clone()
-}
-
-/// The doc holding `document`, its bodies in order.
-fn held(document: Document) -> Plates {
-    let bodies = document.bodies();
-    let at = |i: usize| bodies.get(i).or(bodies.first()).expect("a body").id;
-    let bodies = [at(0), at(1), at(2)];
-    let (doc, requests) = holding(document);
-    Plates {
-        doc,
-        requests,
-        bodies,
-    }
-}
-
 /// The example's plate alone, "Body 1": 60 × 40 × 10 about the Z axis
 /// from z 0 up, a hole of radius 8 through it about the Z axis.
 fn plate() -> (Plates, BodyId) {
     let plates = held(Document::example());
     let plate = plates.bodies[0];
     (plates, plate)
-}
-
-/// Adds a sketch on XY holding the rectangle from `a` to `b`, extruded
-/// 10 up as a new body.
-fn add_box(editor: &mut Editor, a: DVec2, b: DVec2) {
-    editor
-        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
-        .unwrap();
-    let sketch = editor.document().features().last().unwrap().id;
-    let mut drawn = Sketch::default();
-    let corners = [(a.x, a.y), (b.x, a.y), (b.x, b.y), (a.x, b.y)]
-        .map(|(x, y)| drawn.add_point(DVec2::new(x, y)).unwrap());
-    for k in 0..4 {
-        let line = Curve::Line {
-            start: corners[k],
-            end: corners[(k + 1) % 4],
-        };
-        drawn.add_curve(line, false).unwrap();
-    }
-    let profiles = drawn.profiles().unwrap();
-    let regions = (0..profiles.regions.len())
-        .map(|index| profiles.reference(index).unwrap())
-        .collect();
-    editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
-        .unwrap();
-    let extrude = Extrude {
-        sketch,
-        regions,
-        extent: Extent::OneSide(crate::tests::length(editor.document(), "10")),
-        flip: false,
-        operation: Operation::NewBody(BodyId::NEW),
-    };
-    editor
-        .apply(editor.document().add_feature(extrude.into()))
-        .unwrap();
-}
-
-/// A box from (0, 0, 0) to (40, 30, 10), "Body 1", and with `two` another
-/// from (60, 0, 0) to (80, 20, 10), "Body 2".
-fn boxes(two: bool) -> Plates {
-    let mut editor = Editor::new(Document::default());
-    add_box(&mut editor, DVec2::ZERO, DVec2::new(40.0, 30.0));
-    if two {
-        add_box(&mut editor, DVec2::new(60.0, 0.0), DVec2::new(80.0, 20.0));
-    }
-    held(editor.document().clone())
-}
-
-/// The flat face of `body` in the model shown facing `normal` at `d`
-/// along it, if it's there.
-fn flat(plates: &Plates, body: BodyId, normal: DVec3, d: f64) -> Option<u32> {
-    let index = plates.doc.feed.pick_index();
-    (index.body_faces(body)).find(|&face| {
-        matches!(index.picking().faces()[face as usize].summary,
-            Summary::Plane { n, d: at } if DVec3::from(n).distance(normal) < 1e-9 && (at - d).abs() < 1e-9)
-    })
-}
-
-/// The pick of `body`'s flat face facing `normal` at `d`, at `at`.
-fn face_pick(plates: &Plates, body: BodyId, normal: DVec3, d: f64, at: DVec3) -> Pick {
-    let face = flat(plates, body, normal, d).expect("the face shown");
-    Pick {
-        model: plates.doc.feed.pick_index().model(),
-        target: Picked::Face(face),
-        body,
-        at,
-        snap: None,
-    }
-}
-
-/// A click on `pick`.
-fn click(plates: &mut Plates, pick: Pick) {
-    plates.doc.look(Look::ClickModel {
-        pick: Some(pick),
-        add: false,
-        double: false,
-    });
 }
 
 /// The box's top, at z 10.

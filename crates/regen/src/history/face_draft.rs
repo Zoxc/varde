@@ -130,8 +130,8 @@ pub(crate) fn by_boxes(
         }
         drafted[axis][end] = Some(region);
     }
-    // How far a side drafted moves inward at the height `t` above the
-    // neutral plane (along the pull).
+    // A point's height above the neutral plane, along the pull: a side
+    // drafted moves inward by `tan α` times it there.
     let height = |x: DVec3| sign * (x[up] - neutral[up]);
     // The sides meeting the ones opposite them, at either end of the box
     // along the pull (the width is linear in the height between).

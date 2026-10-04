@@ -1039,7 +1039,7 @@ impl MotionSession {
                 Some(Reference::Axis(axis))
             }
             (_, Some(plane))
-                if neutral_refused(self.kind, document, index, &plane)
+                if plane_refused(self.kind, document, index, &plane)
                     || plane_body(&plane).is_some_and(|body| !held(body)) =>
             {
                 Some(Reference::Plane(plane))
@@ -2300,21 +2300,10 @@ fn axis_body(axis: &AxisRef) -> Option<BodyId> {
 /// `kind` at feature `index`: a mirror's as a mirror's plane, a draft's
 /// as its neutral plane (whose face's body it depends on, so it must be
 /// made before it).
-fn neutral_refused(kind: MotionKind, document: &Document, index: usize, plane: &PlaneRef) -> bool {
+fn plane_refused(kind: MotionKind, document: &Document, index: usize, plane: &PlaneRef) -> bool {
     match kind {
-        MotionKind::Draft => {
-            let own = plane_face(plane).is_some_and(|face| face.check_own().is_err());
-            own || document.check_neutral_plane(index, plane).is_err()
-        }
+        MotionKind::Draft => document.check_neutral_plane(index, plane).is_err(),
         _ => document.check_plane_ref(index, plane).is_err(),
-    }
-}
-
-/// The face `plane` names, if it names one.
-fn plane_face(plane: &PlaneRef) -> Option<&FaceRef> {
-    match plane {
-        PlaneRef::Origin(_) => None,
-        PlaneRef::Face(face) => Some(face),
     }
 }
 

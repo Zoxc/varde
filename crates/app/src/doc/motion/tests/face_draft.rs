@@ -13,7 +13,9 @@ use varde_document::{Document, Editor, FaceDraft, FeatureKind, OriginPlane, Plan
 use varde_regen::Summary;
 use varde_view::{Edit, Look, MotionField, MotionKind, MotionLook, MotionPick, Picked, Picks};
 
-use super::offset_face::{add_box, boxes, click, face_pick, held, shows};
+use super::face_session::{
+    add_box, boxes, click, face_pick, held, picked_faces as faces, picking, shows,
+};
 use super::{Plates, enter, near};
 use crate::tests::key_in;
 
@@ -23,15 +25,6 @@ fn drafted(plates: &Plates) -> Option<FaceDraft> {
         FeatureKind::FaceDraft(draft) => Some(draft),
         _ => None,
     }
-}
-
-fn picking(plates: &Plates) -> MotionPick {
-    plates.doc.motion.as_ref().expect("a session").picking
-}
-
-/// The faces of the draft being set up.
-fn faces(plates: &Plates) -> Vec<varde_document::FaceRef> {
-    (plates.doc.motion.as_ref().expect("a session").faces.refs).clone()
 }
 
 /// The tangent of `degrees`.
@@ -343,4 +336,43 @@ fn a_neutral_face_an_undo_takes_away_is_gone() {
     plates.doc.update(Edit::Redo);
     assert!(!shows(&plates, "The neutral plane is gone"));
     assert!(drafted(&plates).is_some());
+}
+
+/// The list of the model's overlaps ticks the draft's faces while they
+/// pick, and nothing while the neutral plane does: a row chosen then
+/// takes its face as the plane, the faces drafted kept and ticked again.
+#[test]
+fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
+    varde_regen::testing::draft_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartDraft);
+    plates.answer();
+    let top =
+        |plates: &Plates| face_pick(plates, body, DVec3::Z, 10.0, DVec3::new(20.0, 15.0, 10.0));
+    let list = |picks| varde_view::Overlaps {
+        held: glam::DVec2::ZERO,
+        at: glam::DVec2::ZERO,
+        items: varde_view::OverlapItems::Model(picks),
+    };
+    let picks = vec![top(&plates), front(&plates, body)];
+    plates.doc.look(Look::OpenOverlaps(list(picks)));
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, false]));
+    plates.doc.look(Look::ToggleOverlap(1));
+    assert_eq!(faces(&plates).len(), 1);
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false, true]));
+    plates.answer();
+    // The plane's row clicked closes the list; opened again while the
+    // plane picks (the front drafted, the top as it was), nothing's
+    // ticked, and a row takes its face as the plane.
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    let picks = vec![top(&plates)];
+    plates.doc.look(Look::OpenOverlaps(list(picks)));
+    assert_eq!(plates.doc.overlap_ticks(), None);
+    plates.doc.look(Look::ToggleOverlap(0));
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert!(matches!(session.plane, Some(PlaneRef::Face(_))));
+    assert_eq!(picking(&plates), MotionPick::Faces);
+    assert_eq!(faces(&plates).len(), 1);
+    assert_eq!(plates.doc.overlap_ticks(), Some(vec![false]));
 }

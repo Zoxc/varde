@@ -1013,8 +1013,10 @@ meanwhile, and in the model drawn over what hides it (see "Through"
 under the highlight). Each row has a tick, checked while its item is
 selected (in the sketch's selection, or the model's targets, of its
 model); in a session picking edges or faces of its own (a chamfer's, a
-fillet's, a shell's) while the session has it, a click taking it out
-(`Doc::overlap_ticks`, `Doc::motion_has`; `DocumentState::overlap_ticks`).
+fillet's, a shell's, an offset face's, a draft's) while the session has
+it, a click taking it out, none ticked while a draft's neutral plane
+picks, a click then taking the face as the plane (`Doc::overlap_ticks`,
+`Doc::motion_has`; `DocumentState::overlap_ticks`).
 A row clicked (`ChooseOverlap`, the app filling in `add` from
 Ctrl/Cmd held) takes a `ClickGeometry` or `ClickModel` on that item, so
 a session (measure, combine, move) takes it as its click: alone it

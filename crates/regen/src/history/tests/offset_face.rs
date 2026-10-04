@@ -18,6 +18,7 @@ use varde_document::{FaceRef, OffsetFace, Placement};
 use varde_kernel::mesh::{FaceKey, Form};
 use varde_kernel::{OffsetError, Topology};
 
+use super::chamfer::slot;
 use super::motion::{add, block, cylinder, failure, key_on, key_where, near_box, polygon, set};
 use super::*;
 
@@ -808,33 +809,6 @@ fn the_kernel_refuses_past_a_neighbour_and_into_the_body() {
         failure(&evaluation, id).unwrap().message,
         "the face runs into another part of Body 1: try a smaller distance"
     );
-}
-
-/// Draws a slot: two lines 10 mm long, 6 mm apart, joined by half
-/// circles at each end, tangent to them.
-pub(super) fn slot(sketch: &mut Sketch) {
-    let at = |sketch: &mut Sketch, x: f64, y: f64| sketch.add_point(DVec2::new(x, y)).unwrap();
-    let [a, b, c, d] =
-        [(0.0, -3.0), (10.0, -3.0), (10.0, 3.0), (0.0, 3.0)].map(|(x, y)| at(sketch, x, y));
-    let [left, right] = [(0.0, 0.0), (10.0, 0.0)].map(|(x, y)| at(sketch, x, y));
-    sketch
-        .add_curve(Curve::Line { start: a, end: b }, false)
-        .unwrap();
-    let arc = Curve::Arc {
-        center: right,
-        start: b,
-        end: c,
-    };
-    sketch.add_curve(arc, false).unwrap();
-    sketch
-        .add_curve(Curve::Line { start: c, end: d }, false)
-        .unwrap();
-    let arc = Curve::Arc {
-        center: left,
-        start: d,
-        end: a,
-    };
-    sketch.add_curve(arc, false).unwrap();
 }
 
 /// A slot-shaped plate 10 high: its flat side moved out by 1 with

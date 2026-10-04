@@ -18,8 +18,8 @@ use varde_document::{FaceDraft, FaceRef, PlaneRef, Scale, ScaleFactor};
 use varde_kernel::mesh::{FaceKey, Form};
 use varde_kernel::{DraftError, Topology};
 
+use super::chamfer::slot;
 use super::motion::{add, block, cylinder, failure, key_on, key_where, revolved, set};
-use super::offset_face::slot;
 use super::scale::half_disc;
 use super::*;
 
