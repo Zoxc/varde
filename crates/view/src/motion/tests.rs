@@ -36,6 +36,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
             field("2 mm"),
             field("45°"),
             field("2 mm"),
+            field("2 mm"),
         ],
         reference: Some("Z axis".to_owned()),
         line: None,
@@ -64,6 +65,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         split: None,
         chamfer: None,
         shell: None,
+        fillet: None,
     }
 }
 
@@ -732,6 +734,57 @@ fn a_chamfer_s_panel_is_the_mock_s() {
         status_info(&state),
         "2 edges · Equal · 1 mm · Tangent chain"
     );
+}
+
+/// A fillet's panel is the mock's: Edges (each with its measure beside
+/// it), Radius and Tangent chain; no Bodies, no Type, no Flip sides.
+#[test]
+fn a_fillet_s_panel_is_the_mock_s() {
+    let mut state = state_of(MotionKind::Fillet, vec![body("Body 1")]);
+    state.reference = None;
+    state.picking = MotionPick::Edges;
+    let edges = [
+        ("Edge 1", Some("60 mm"), false),
+        ("Edge 2", Some("Ø16 mm"), true),
+    ];
+    let edges = chamfer_view(&edges, ChamferType::Equal).edges;
+    state.fillet = Some(Box::new(FilletView { edges, info: None }));
+    let shown = texts_of(&state);
+    let order = [
+        "New fillet",
+        "Edges",
+        "Edge 1",
+        "Edge 2",
+        "Click edges",
+        "Radius",
+        "Tangent chain",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    for text in ["60 mm", "Ø16 mm"] {
+        found(&shown, text);
+    }
+    for text in [
+        "Type",
+        "Equal",
+        "Flip sides",
+        "Distance",
+        "Bodies",
+        "Body 1",
+    ] {
+        assert!(!has(&shown, text), "{text}");
+    }
+    state.need = Some("pick the edges to fillet");
+    assert_eq!(status_info(&state), "pick the edges to fillet");
+    state.need = None;
+    if let Some(fillet) = &mut state.fillet {
+        fillet.info = Some("2 edges · R2 mm · Tangent chain".to_owned());
+    }
+    assert_eq!(status_info(&state), "2 edges · R2 mm · Tangent chain");
 }
 
 /// A shell's view: the faces `faces` (name, meta), `direction`.

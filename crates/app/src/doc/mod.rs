@@ -758,6 +758,7 @@ impl Doc {
                 | Look::StartScale
                 | Look::StartSplit
                 | Look::StartChamfer
+                | Look::StartFillet
                 | Look::StartShell
                 | Look::StartMeasure
                 | Look::EditFeature(_)
@@ -780,6 +781,7 @@ impl Doc {
                 | Look::StartScale
                 | Look::StartSplit
                 | Look::StartChamfer
+                | Look::StartFillet
                 | Look::StartShell
                 | Look::EditFeature(_)
         ) {
@@ -816,11 +818,9 @@ impl Doc {
                     | FeatureKind::Scale(_)
                     | FeatureKind::Split(_)
                     | FeatureKind::Chamfer(_)
-                    | FeatureKind::Shell(_),
+                    | FeatureKind::Shell(_)
+                    | FeatureKind::Fillet(_),
                 ) => self.edit_motion(id),
-                // No panel yet: fillets are made by the document's
-                // commands until their session is built.
-                Some(FeatureKind::Fillet(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
@@ -839,6 +839,7 @@ impl Doc {
             Look::StartScale => self.start_motion(varde_view::MotionKind::Scale),
             Look::StartSplit => self.start_motion(varde_view::MotionKind::Split),
             Look::StartChamfer => self.start_motion(varde_view::MotionKind::Chamfer),
+            Look::StartFillet => self.start_motion(varde_view::MotionKind::Fillet),
             Look::StartShell => self.start_motion(varde_view::MotionKind::Shell),
             Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),

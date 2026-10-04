@@ -78,6 +78,9 @@ impl Shortcut {
     /// Starts a new chamfer: outside sketches, where `C` takes up the
     /// Circle tool. The UI mock's key.
     pub const CHAMFER: Self = Self::plain('c');
+    /// Starts a new fillet: outside sketches, where `F` takes up the
+    /// Fillet tool. The UI mock's key.
+    pub const FILLET: Self = Self::plain('f');
     /// No key: what a tool the UI mock gives none is bound to, never
     /// pressed (the mirror's).
     pub const NONE: Self = Self::named(Key::None);
@@ -731,6 +734,16 @@ pub fn chamfer_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
+/// Starting a new fillet, or backing out of the one being set up, as
+/// [`move_binding`] does a move: `F`, the UI mock's key.
+pub fn fillet_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::FILLET,
+        Message::Look(Look::StartFillet),
+        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
+    )
+}
+
 /// Starting a new shell, or backing out of the one being set up, as
 /// [`move_binding`] does a move: with no key, as the UI mock has it.
 pub fn shell_binding(keys: DocumentKeys) -> Binding {
@@ -928,7 +941,8 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             )
     });
     // Outside a sketch, where `X` is construction's, `O` Offset's, `B`
-    // the Rectangle's, `C` the Circle's and `I` Coincident's.
+    // the Rectangle's, `F` the Fillet tool's, `C` the Circle's and `I`
+    // Coincident's.
     let extrude = (!keys.sketching).then(|| {
         [
             extrude_binding(keys),
@@ -936,6 +950,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             combine_binding(keys),
             move_binding(keys),
             pattern_binding(keys),
+            fillet_binding(keys),
             chamfer_binding(keys),
             measure_binding(keys),
         ]

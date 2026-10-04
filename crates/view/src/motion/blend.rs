@@ -1,5 +1,5 @@
-//! The edges a blend picks, shared by the edge sessions (a chamfer's,
-//! and a fillet's once there's one): what the app hands the panel of
+//! The edges a blend picks, shared by the edge sessions (a chamfer's
+//! and a fillet's): what the app hands the panel of
 //! them, their field (each edge a row, "Edge 2" by its place in the
 //! list, as regeneration's messages count them, with its length or
 //! diameter beside it and a cross taking it out) and the Tangent chain

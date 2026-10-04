@@ -19,13 +19,13 @@ use varde_view::{
 use super::{Plates, character, enter, later_disc, near, plates};
 use crate::tests::{holding, key_in, screen_texts};
 
-fn shows(plates: &Plates, wanted: &str) -> bool {
+pub(super) fn shows(plates: &Plates, wanted: &str) -> bool {
     screen_texts(&plates.doc)
         .iter()
         .any(|text| text.contains(wanted))
 }
 
-fn picking(plates: &Plates) -> MotionPick {
+pub(super) fn picking(plates: &Plates) -> MotionPick {
     plates.doc.motion.as_ref().expect("a session").picking
 }
 
@@ -52,7 +52,7 @@ fn edges(plates: &Plates) -> Vec<varde_document::EdgeRef> {
 
 /// The example's plate alone, "Body 1": 60 × 40 × 10 about the Z axis
 /// from z 0 up, a hole of radius 8 through it about the Z axis.
-fn plate() -> (Plates, BodyId) {
+pub(super) fn plate() -> (Plates, BodyId) {
     let document = Document::example();
     let plate = document.bodies()[0].id;
     let (doc, requests) = holding(document);
@@ -66,7 +66,7 @@ fn plate() -> (Plates, BodyId) {
 
 /// The straight edge of `body` in the model shown from `a` to `b`
 /// (either way round), if it's there.
-fn straight(plates: &Plates, body: BodyId, a: [f64; 3], b: [f64; 3]) -> Option<u32> {
+pub(super) fn straight(plates: &Plates, body: BodyId, a: [f64; 3], b: [f64; 3]) -> Option<u32> {
     let (a, b) = (DVec3::from(a), DVec3::from(b));
     let index = plates.doc.feed.pick_index();
     (0..index.mesh().edge_count() as u32).find(|&edge| {
@@ -80,14 +80,14 @@ fn straight(plates: &Plates, body: BodyId, a: [f64; 3], b: [f64; 3]) -> Option<u
 }
 
 /// The plate's top edge at the front, (-30, -20, 10) to (30, -20, 10).
-const FRONT: ([f64; 3], [f64; 3]) = ([-30.0, -20.0, 10.0], [30.0, -20.0, 10.0]);
+pub(super) const FRONT: ([f64; 3], [f64; 3]) = ([-30.0, -20.0, 10.0], [30.0, -20.0, 10.0]);
 /// The plate's top edge at the back.
-const BACK: ([f64; 3], [f64; 3]) = ([-30.0, 20.0, 10.0], [30.0, 20.0, 10.0]);
+pub(super) const BACK: ([f64; 3], [f64; 3]) = ([-30.0, 20.0, 10.0], [30.0, 20.0, 10.0]);
 /// The plate's top edge on the right, along Y.
-const RIGHT: ([f64; 3], [f64; 3]) = ([30.0, -20.0, 10.0], [30.0, 20.0, 10.0]);
+pub(super) const RIGHT: ([f64; 3], [f64; 3]) = ([30.0, -20.0, 10.0], [30.0, 20.0, 10.0]);
 
 /// The pick of the plate's edge `ends` at its middle, on the model shown.
-fn edge_pick(plates: &Plates, body: BodyId, (a, b): ([f64; 3], [f64; 3])) -> Pick {
+pub(super) fn edge_pick(plates: &Plates, body: BodyId, (a, b): ([f64; 3], [f64; 3])) -> Pick {
     let edge = straight(plates, body, a, b).expect("the edge shown");
     Pick {
         model: plates.doc.feed.pick_index().model(),
@@ -99,7 +99,7 @@ fn edge_pick(plates: &Plates, body: BodyId, (a, b): ([f64; 3], [f64; 3])) -> Pic
 }
 
 /// A click on the edge `ends` of `body`.
-fn click_edge(plates: &mut Plates, body: BodyId, ends: ([f64; 3], [f64; 3])) {
+pub(super) fn click_edge(plates: &mut Plates, body: BodyId, ends: ([f64; 3], [f64; 3])) {
     let pick = edge_pick(plates, body, ends);
     plates.doc.look(Look::ClickModel {
         pick: Some(pick),
@@ -109,7 +109,7 @@ fn click_edge(plates: &mut Plates, body: BodyId, ends: ([f64; 3], [f64; 3])) {
 }
 
 /// Whether the model shown has a flat face of `body` facing `normal`.
-fn faces_way(plates: &Plates, body: BodyId, normal: DVec3) -> bool {
+pub(super) fn faces_way(plates: &Plates, body: BodyId, normal: DVec3) -> bool {
     let index = plates.doc.feed.pick_index();
     (index.body_faces(body)).any(|face| {
         matches!(index.picking().faces()[face as usize].summary,
@@ -557,7 +557,7 @@ fn chamfer_takes_the_edges_selected_and_c_backs_out() {
 
 /// A slot 10 long and 6 wide (lines joined by half circles they run on
 /// into smoothly), 5 tall from z 0, as "Body 1".
-fn slot() -> (Plates, BodyId) {
+pub(super) fn slot() -> (Plates, BodyId) {
     use varde_document::{Command, Extent, Extrude, Operation, OriginPlane, Plane};
     use varde_sketch::Curve;
     let mut editor = Editor::new(Document::default());
@@ -745,6 +745,13 @@ fn the_toolbar_fits_at_1280_px() {
     let chamfering = fits(&plates);
     assert!(chamfering.iter().any(|t| t == "New chamfer"));
     assert!(!chamfering.iter().any(|t| t == "Combine"));
+    // Fillet isn't on the bar (it wouldn't fit): its session's bar is
+    // Cancel too.
+    assert!(!idle.iter().any(|t| t == "Fillet"));
+    plates.doc.look(Look::StartFillet);
+    let filleting = fits(&plates);
+    assert!(filleting.iter().any(|t| t == "New fillet"));
+    assert!(filleting.iter().any(|t| t == "Cancel"));
 
     // A chamfer with a long name (a file's: the app names them
     // "Chamfer 1") edited: its name in the pill is cut short to fit.

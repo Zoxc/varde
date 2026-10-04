@@ -1098,6 +1098,7 @@ fn a_move_follows_a_body_a_redone_combine_merges() {
 
 mod align;
 mod chamfer;
+mod fillet;
 mod pattern;
 mod scale;
 mod shell;

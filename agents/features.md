@@ -2989,9 +2989,10 @@ panel.
 - **Starting**: `Look::StartChamfer` from `C` (`Shortcut::CHAMFER`,
   `chamfer_binding`, the mock's key; in sketches `C` is the Circle
   tool's), the toolbar's Chamfer after Revolve (where the mock has it,
-  after Hole and Fillet, before Shell and Combine: those aren't built)
-  and the rail's Modify set (first, as the icon mock orders it:
-  Chamfer, Shell, Scale, Combine, Split body), again backing out; or editing
+  after Hole and Fillet, before Shell and Combine: Hole isn't built,
+  Fillet and Shell don't fit at 1280 px) and the rail's Modify set
+  (after Fillet, as the icon mock orders it: Fillet, Chamfer, Shell,
+  Scale, Combine, Split body), again backing out; or editing
   one (`Look::EditFeature`: double-click, `Enter`, "Edit chamfer"),
   which opens with its edges, type, values, Flip sides and Tangent
   chain. A new one takes the edges selected in the model shown that a
@@ -3481,12 +3482,73 @@ pub struct Fillet {
 
 ### UI
 
-Not built yet: a fillet is made by the document's commands, shown in
-the Timeline with the model mock's fillet icon (`Icon::BFillet`;
-`Icon::Fillet` is the sketch tool's) and note ("R2", `view/src/fillet.rs`),
-selected the status bar says `fillet_info` ("2 edges · R2 mm · Tangent
-chain", the mock's row info); "Edit fillet" does nothing until its
-session is built.
+The move's session (`MotionSession`, above) with `MotionKind::Fillet`,
+its edges picked by **the edge session** the chamfer's has (see
+"Chamfer": `BlendSetup`, `Refs<EdgeRef>`, `BlendEdges`, its Edges field
+and the Tangent chain tick; `MotionKind::blends()` is the chamfer's and
+the fillet's). The fillet's own parts are in `app/src/doc/motion/fillet.rs`
+and `view/src/motion/fillet.rs` (`FilletView`). The panel is the model
+mock's fillet panel: Edges, Radius, Tangent chain.
+
+- **Starting**: `Look::StartFillet` from `F` (`Shortcut::FILLET`,
+  `fillet_binding`, the mock's key; in sketches `F` is the Fillet
+  tool's) and the rail's Modify set (first, as the icon mock orders it:
+  Fillet, Chamfer, Shell, Scale, Combine, Split body), again backing
+  out; or editing one (`Look::EditFeature`: double-click, `Enter`,
+  "Edit fillet"), which opens with its edges, radius and Tangent chain.
+  **Not on the toolbar**: the mock's model bar has Fillet before
+  Chamfer, but with it the bar runs past its room at 1280 px (to 1210
+  px of 1160), as Shell would, so it waits for the toolbar's overflow
+  handling. A new one takes the edges selected that a click would
+  take, the first one's body deciding. Nothing takes the focus: clicks
+  pick edges.
+- **Edges**: as the chamfer's, in the fillet's words: a face clicked
+  says "Only an edge can be filleted", another body's edge "A fillet's
+  edges are all on one body: pick edges of Body 1"; rows "Edge 2" with
+  the length, diameter or radius beside them, a cross taking one out,
+  a row hovered lighting its edge, each with its tangent chain while
+  Tangent chain is on. Picks wait only for a model of the document as it
+  is with this session's draft (`Doc::refs_model_current`).
+- **Radius** (`MotionField::Radius`, read by `Fillet::radius_ask`: "2"
+  of the design's units to begin with, the mock's), and **Tangent chain**
+  (`MotionLook::Chain`, on to begin with, the mock's `tk-chain` with its
+  hint "Take in edges that run on smoothly"). No Type and no Flip sides
+  (`MotionLook::Flip` does nothing for a fillet). The mock's "Too big for
+  Edge 2: under 3 mm" under the field (its own estimate of the room
+  beside each edge) is regeneration's here: the kernel's refusal ("the
+  fillet doesn't fit along its edge 2: ..."), in the foot.
+- **Whole and ready**: edges and a radius ("pick the edges to fillet"
+  otherwise); `Fillet::check_own` refuses as the panel's foot ("Fillet
+  fails"); edges the document no longer takes at the feature's place
+  (`Document::check_blend_edges`, their body not held) kept and said to
+  be gone ("A picked edge is gone"), nothing previewed or committed
+  until taken out or a redo brings them back.
+- **Preview**: the fillet as set up is the draft while it's whole,
+  picking or not, so on a preview that rounds, the edges picked are gone
+  from the model shown (their rows stay, unmeasured). An edited one with
+  its edges all taken out is previewed as a move of nothing of its body.
+  **The kernel's fillet isn't built**, so today every preview fails with
+  "Fillet fails" over "filleting Body 1 is too complex to work out", the
+  body shown whole, OK waits, and Add anyway keeps it, failing in the
+  Timeline.
+- **Committing**: OK (`Enter`, Add anyway) adds "Fillet N" or sets the
+  edited one, one undo step; Cancel or `Esc` leaves no trace. The status
+  bar says the mock's row info once whole ("2 edges · R2 mm · Tangent
+  chain", `fillet_info`), else what's next, with the hint "Pick edges"
+  (the chamfer's: a shared `chrome::step_hint` for what a click picks
+  next isn't on this branch yet).
+
+The Timeline shows the model mock's fillet icon (`Icon::BFillet`;
+`Icon::Fillet` is the sketch tool's) and note ("R2", `view/src/fillet.rs`);
+selected, the status bar says `fillet_info`.
+
+Departures from the mock: no Fillet on the toolbar (above); edges named
+by their place; no bands drawn over the faces (the mock's preview draws
+each edge's round as a band; here the preview is the model regenerated
+with the fillet); the mock's own "too big" estimate left to the kernel.
+Known gaps: as the chamfer's (an edge rounded off in the preview can't
+be clicked to take it out, its row's cross does; the rows' measures are
+the model shown's; two picked edges of one tangent chain both kept).
 
 Tests: `document/src/fillet/tests.rs` (added and undone, edited, its own
 parts, bodies and makers, removal following the body and not the faces,
@@ -3508,4 +3570,23 @@ slot's rim by Pappus, determinism), `io/src/vrdp/tests.rs` (through a
 file, a tampered edge point and radius refused, a record's fillets
 damaged 2 000 ways refused or checked, edges out of order, repeated, on
 another body, none or past the limit, named by the fillet or later and
-a radius refused as read), `view/src/fillet/tests.rs` (the notes).
+a radius refused as read), `view/src/fillet/tests.rs` (the notes),
+`view/src/motion/tests.rs` (the fillet's panel: its order, the rows'
+measures, no Type or Flip sides, the status text), `rail/tests.rs`
+(Fillet's `F` first in the Modify set) and
+`app/src/doc/motion/tests/fillet.rs` (`F` on the example plate: the
+mock's panel, a face refused, edges picked, lit, listed sorted with
+their lengths and taken out again, a row hovered lighting its edge, the
+stand-in's too-complex failure in the panel, OK waiting and Add anyway
+keeping it as one undo step, failing in the Timeline; with the
+regeneration stand-in, the round previewed as a cylinder of the radius
+and the edge gone from the model shown, another radius, a radius of
+nothing refused under its field, Tangent chain off, Flip doing nothing,
+OK and undo; editing from the Timeline, Cancel, another radius, undo,
+its edges all taken out previewed as a move of nothing; an edge an undo
+takes away said to be gone, back on redo; the edges selected taken in,
+`F` again backing out; another body's edge refused in the fillet's
+words; a slot's rim lit whole and the line alone with Tangent chain
+off); the chamfer's toolbar test checks a fillet session's bar fits and
+that Fillet isn't on the idle bar. The app's tests fillet through
+regen's `testing` feature (`varde_regen::testing::fillet_by_arcs`).

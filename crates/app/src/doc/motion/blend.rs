@@ -1,6 +1,6 @@
 //! The edges a blend picks, in the move's session: a chamfer's
-//! ([`MotionKind::Chamfer`]), and a fillet's once there's one, which
-//! takes the same session with its own size. They're picked as `refs`
+//! ([`MotionKind::Chamfer`]) and a fillet's ([`MotionKind::Fillet`]),
+//! each with its own size. They're picked as `refs`
 //! has it (a click picks or takes out, named as of the feature, all on
 //! one body, sorted as [`EdgeRef::order`] keeps them, lit as selected),
 //! each with its tangent chain while the Tangent chain tick takes them
@@ -57,6 +57,7 @@ impl MotionSession {
     pub(super) fn blend_need(&self) -> Option<&'static str> {
         let words = match self.kind {
             MotionKind::Chamfer => "pick the edges to chamfer",
+            MotionKind::Fillet => "pick the edges to fillet",
             _ => "pick the edges",
         };
         self.blend.edges.refs.is_empty().then_some(words)

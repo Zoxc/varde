@@ -8,7 +8,9 @@
 //! (the rail's Modify set; a split's own parts are in `split`),
 //! `Look::StartChamfer` (`C`, the toolbar, the rail's Modify set; a
 //! chamfer's edges are picked as a blend's, in `blend`, its own parts in
-//! `chamfer`), `Look::StartShell` (the toolbar, the rail's Modify set;
+//! `chamfer`), `Look::StartFillet` (`F`, the toolbar, the rail's Modify
+//! set; a fillet's edges are picked as a chamfer's, its own parts in
+//! `fillet`), `Look::StartShell` (the toolbar, the rail's Modify set;
 //! a shell's faces are picked as a face session's, in `faces`, its own
 //! parts in `shell`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
@@ -72,8 +74,8 @@ pub(crate) struct MotionSession {
     /// total, a length or a circular one's angle, as its mode reads it),
     /// an align's distance (and its angle, the move's), a scale's
     /// factors and length, a chamfer's distances and angle, a shell's
-    /// thickness.
-    pub(crate) fields: [TypedText; 16],
+    /// thickness, a fillet's radius.
+    pub(crate) fields: [TypedText; 17],
     /// A move's or pattern's axis: the Z axis to begin with (a linear
     /// pattern's X), as the UI mock's. A move stores it only with an
     /// angle other than zero.
@@ -216,6 +218,7 @@ fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
             chamfer::chamfer_ask(field, design).expect("a chamfer's field")
         }
         MotionField::Thickness => varde_document::Shell::thickness_ask(design),
+        MotionField::Radius => varde_document::Fillet::radius_ask(design),
     }
 }
 
@@ -296,8 +299,8 @@ impl MotionSession {
             }
             // A split splits one body, then picks its tool.
             MotionKind::Split if !bodies.is_empty() => MotionPick::Tool,
-            // A chamfer picks edges, its body theirs.
-            MotionKind::Chamfer => MotionPick::Edges,
+            // A chamfer or a fillet picks edges, its body theirs.
+            kind if kind.blends() => MotionPick::Edges,
             // A face session picks faces, its body theirs (a shell's, or
             // the one it starts with).
             kind if kind.picks_faces() => MotionPick::Faces,
@@ -358,6 +361,7 @@ impl MotionSession {
                 chamfer_second,
                 chamfer_angle,
                 shell::thickness_field(&design),
+                fillet::radius_field(&design),
             ],
             axis,
             plane: None,
@@ -486,6 +490,11 @@ impl MotionSession {
                 session.open_shell(shell);
                 session
             }
+            FeatureKind::Fillet(fillet) => {
+                let mut session = Self::new(MotionKind::Fillet, document, Vec::new());
+                session.open_fillet(fillet);
+                session
+            }
             _ => return None,
         };
         session.feature = Some(feature);
@@ -582,6 +591,7 @@ impl MotionSession {
             MotionKind::Split => self.split().map(FeatureKind::Split),
             MotionKind::Chamfer => chamfer::chamfer_kind(self),
             MotionKind::Shell => shell::shell_kind(self),
+            MotionKind::Fillet => fillet::fillet_kind(self),
         }
     }
 
@@ -700,7 +710,8 @@ impl MotionSession {
             | MotionKind::Scale
             | MotionKind::Split
             | MotionKind::Chamfer
-            | MotionKind::Shell => {
+            | MotionKind::Shell
+            | MotionKind::Fillet => {
                 return Ok(None);
             }
         };
@@ -764,6 +775,7 @@ impl MotionSession {
                 MotionKind::Split => "pick the body to split",
                 MotionKind::Chamfer => "pick the edges to chamfer",
                 MotionKind::Shell => "pick faces to remove, or the body to hollow",
+                MotionKind::Fillet => "pick the edges to fillet",
             });
         }
         match self.kind {
@@ -782,7 +794,8 @@ impl MotionSession {
             | MotionKind::Scale
             | MotionKind::Split
             | MotionKind::Chamfer
-            | MotionKind::Shell => None,
+            | MotionKind::Shell
+            | MotionKind::Fillet => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -880,6 +893,9 @@ impl MotionSession {
                 chamfer.check_own(design).err().map(|why| why.to_string())
             }
             FeatureKind::Shell(shell) => shell.check_own(design).err().map(|why| why.to_string()),
+            FeatureKind::Fillet(fillet) => {
+                fillet.check_own(design).err().map(|why| why.to_string())
+            }
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -898,6 +914,7 @@ impl MotionSession {
             MotionKind::Scale => self.scale_fields().iter().all(|&field| fine(field)),
             MotionKind::Chamfer => self.chamfer_type.fields().iter().all(|&field| fine(field)),
             MotionKind::Shell => fine(MotionField::Thickness),
+            MotionKind::Fillet => fine(MotionField::Radius),
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
@@ -1991,9 +2008,11 @@ impl Doc {
                 });
                 (axis.map(|axis| axis_name(document, axis)), origin)
             }
-            MotionKind::Align | MotionKind::Scale | MotionKind::Chamfer | MotionKind::Shell => {
-                (None, None)
-            }
+            MotionKind::Align
+            | MotionKind::Scale
+            | MotionKind::Chamfer
+            | MotionKind::Shell
+            | MotionKind::Fillet => (None, None),
             MotionKind::Split => self.split_reference(session),
             MotionKind::Mirror => {
                 let plane = session.plane.as_ref();
@@ -2074,6 +2093,8 @@ impl Doc {
             chamfer: (session.kind == MotionKind::Chamfer)
                 .then(|| Box::new(self.chamfer_view(session))),
             shell: (session.kind == MotionKind::Shell).then(|| Box::new(self.shell_view(session))),
+            fillet: (session.kind == MotionKind::Fillet)
+                .then(|| Box::new(self.fillet_view(session))),
         })
     }
 }
@@ -2215,6 +2236,7 @@ mod align;
 mod blend;
 mod chamfer;
 mod faces;
+mod fillet;
 mod refs;
 mod scale;
 mod shell;

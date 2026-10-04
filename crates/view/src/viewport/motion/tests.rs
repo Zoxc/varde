@@ -28,7 +28,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         editing: None,
         bodies: Vec::new(),
         picking,
-        fields: [field(0.0); 16],
+        fields: [field(0.0); 17],
         reference: Some("Z axis".to_owned()),
         line,
         bounds: Some([DVec3::new(-30.0, -20.0, 0.0), DVec3::new(30.0, 20.0, 10.0)]),
@@ -56,6 +56,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         split: None,
         chamfer: None,
         shell: None,
+        fillet: None,
     }
 }
 
