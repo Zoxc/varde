@@ -723,7 +723,12 @@ fn square(dh: f64, m: DVec3) -> f64 {
 /// directions (normals at refined corners) and gradients (a patch's
 /// normal, `g′ × e′`) carry rounding in their zero components, and its
 /// product with the other vector's large component is a first order made
-/// of rounding alone. Where two crossing cylinders' seams meet on the cut,
+/// of rounding alone: each component's error is relative to its vector's
+/// length, so the first order's is about a rounding of `|d|·|∇f|`. As
+/// `Σ |d_i·∇f_i| ≤ |d|·|∇f|`, this only adds ties, and an order skipped
+/// is a part of `d` along the gradient under an angle `RHO`, too small to
+/// turn any first order that counts as real (see `agents/kernel.md`,
+/// "Ties"). Where two crossing cylinders' seams meet on the cut,
 /// every first order there is zero exactly, yet `δ = (−1, 2.1e-15,
 /// 3.7e-15)` against `∇f = (0, …, 0.009)`, or `δ = (1, 0, 0)` against
 /// `∇f = (−4.2e-17, 0, 0.077)`, passed the sum as real: a dozen decisions

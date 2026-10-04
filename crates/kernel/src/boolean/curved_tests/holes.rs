@@ -436,46 +436,6 @@ fn fitted_grooves_across_drilled_plates() {
     }
 }
 
-/// The volume two round holes through the 2 × 2 × 2 box `[−1, 1]² × [0,
-/// 2]` have in common: one along `y` about `(x, z) = (0, z1)` of radius
-/// `r1`, one along `x` about `(y, z) = (0, z2)` of radius `r2`. It is
-/// `∫ 2a(z)·2b(z) dz`, `a` and `b` their half-widths at height `z`, by
-/// Simpson's rule after `z = lo + (hi − lo)(1 − cos t)/2`, which makes the
-/// square roots at the ends smooth.
-fn holes_in_common(r1: f64, z1: f64, r2: f64, z2: f64) -> f64 {
-    let (lo, hi) = ((z1 - r1).max(z2 - r2), (z1 + r1).min(z2 + r2));
-    let f = |t: f64| {
-        let z = lo + (hi - lo) * (1.0 - t.cos()) / 2.0;
-        let a = (r1 * r1 - (z - z1).powi(2)).max(0.0).sqrt();
-        let b = (r2 * r2 - (z - z2).powi(2)).max(0.0).sqrt();
-        4.0 * a * b * (hi - lo) / 2.0 * t.sin()
-    };
-    let n = 20_000;
-    let h = PI / f64::from(n);
-    let inner: f64 = (1..n)
-        .map(|k| f(f64::from(k) * h) * if k % 2 == 1 { 4.0 } else { 2.0 })
-        .sum();
-    (f(0.0) + f(PI) + inner) * h / 3.0
-}
-
-/// The area of the patches of `solid` that claim no surface, by their
-/// corners' triangles.
-fn claim_free_area(solid: &Solid) -> f64 {
-    let mesh = solid.mesh();
-    (0..mesh.tris().len())
-        .filter(|&t| {
-            matches!(
-                mesh.faces()[mesh.tris()[t].face as usize].surface,
-                Surface::Free
-            )
-        })
-        .map(|t| {
-            let p = mesh.patch(t).p;
-            0.5 * (p[1] - p[0]).cross(p[2] - p[0]).length()
-        })
-        .sum()
-}
-
 #[test]
 fn a_cross_hole_near_another_holes_mouth() {
     // A user's design: a 2 × 2 × 2 box drilled through along `y` from its
@@ -518,7 +478,7 @@ fn a_cross_hole_near_another_holes_mouth() {
     let (va, vb) = (8.0 - 2.0 * PI * r1 * r1, 4.8 * PI * r2 * r2);
     assert!((drilled.volume() - va).abs() < 1e-9);
     // The tool's part inside the drilled box.
-    let inside = 2.0 * PI * r2 * r2 - holes_in_common(r1, z1, r2, z2);
+    let inside = 2.0 * PI * r2 * r2 - crossing_volume(r1, z1, r2, z2);
     let on = |p: DVec3| {
         let one = (DVec2::new(p.x, p.z - z1).length() - r1).abs();
         let two = (DVec2::new(p.y, p.z - z2).length() - r2).abs();
@@ -547,7 +507,7 @@ fn a_cross_hole_near_another_holes_mouth() {
             return None;
         };
         let got = solid.volume();
-        let within = 0.05 * TOL.fit() * claim_free_area(&solid) + 1e-9;
+        let within = 0.05 * TOL.fit() * free_area(&solid) + 1e-9;
         println!(
             "{op:?}: {got} vs {want}: {:+e}, within {within:e}",
             got - want

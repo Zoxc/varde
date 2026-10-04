@@ -4586,7 +4586,24 @@ no single motion's, and the counting built a zero-size handle (see
 and the intersection works (0.018 of the fit times its bands' area
 off). A real first order down to `2.3e-10` of the vectors' sizes still
 decides. Snapping the directions' tiny components to 0 instead wasn't
-enough: the gradients' rounding still decided. Where every order is 0, by
+enough: the gradients' rounding still decided. Why the sizes bound the
+rounding: computed directions and gradients (normals, tangents' cross
+products, a domain step's map) carry an error in each component
+relative to the vector's length, not to the component, so a computed
+first order is off by about `u·|d|·|∇f|` and more (`u` a double's
+rounding; Cauchy–Schwarz on `δ̃·∇̃f − δ·∇f`); `RHO` is some `2·10⁶` of
+`u`, room for a few operations' worth. And `Σ |d_i·∇f_i| ≤ |d|·|∇f|`,
+so the measure only adds ties: what was zero still is. The decisions
+stay one configuration's: an order taken as zero is `δ`'s part along
+that gradient, under `RHO·|δ|` (an angle), and the motion less that
+part (`δ′`) is zero there exactly while every other first order
+`δ·∇g` moves by at most `RHO·|δ|·|∇g|`, under what it must be to
+count as real, so it keeps its sign: the decisions are those of
+`ε·δ′ + ε²·T2`, the exact predicates' order after a zero first one
+(two tied gradients nearly parallel would widen that part, the same as
+for any threshold). The later orders' curvature terms (a vertex moving
+along a curved wall) are left out, as they always were: the primitives
+decide to first order in each power. Where every order is 0, by
 `δ·UP`, as for horizontal surfaces. So flush planar faces between a curved and a flat
 operand behave as between flat ones. Vertex directions of curved
 patches are their normals at the corner. Beyond heights:
@@ -5249,15 +5266,35 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   and the arc was `Inconsistent`. The chord's way is the arc's at its
   start unless the arc turns back by more than a right angle there
   (fitting halves arcs turning past 45°, and the rounds split long
-  ones); if it did, the trace would fail, an error. With this rule and
+  ones); if it did, the trace would fail, an error, but for ends within
+  a step of each other, which it joins at once: the short way, as
+  `chain` joins ends within the tie straight. In the sweeps below every
+  arc the chord rule started had its chord within 19° of the tangent
+  (cosine at least 0.95), and a thin cylinder grazing a big one with a
+  seam ruling touching it (the cut a closed oval touching that seam)
+  came out right or refused. `ALONG_SIDE` against the tangencies' noise
+  (sides' steps over the largest, measured over those sweeps): the
+  double roots read up to `4e-6` near the origin, `5e-6` at fit `1e-5`
+  and `2e-5` at `1e3`–`1e4` from it, where real crossings start at
+  `1.5e-5`; those over `1e-6` go by their sign, as the old rule took
+  them, and a share of `1e-4` decided the same operations there. So the
+  share is kept; it catches the double roots near the origin, the case
+  that needed it. With this rule and
   the first-order measure in "Ties", perpendicular cylinders drawn from
   circles on their frames' axis points with seams meeting on the cut (a
-  fuzz of 320 operations a group, release) went 115 → 294 on the world
-  frame, 137 → 276 turned and 118 → 286 turned a hair, the control
-  (seams elsewhere) 283 either way; cross holes through a box 103 → 140,
-  104 → 134 and 107 → 134 of 150; random perpendicular pairs 829 →
-  1 002 of 1 200; 755 operations won, 2 lost (thin triangles on hair
-  frames, `Invalid`), no wrong `Ok`. Marching then steps `h` along the tangent and corrects on
+  fuzz of 320 operations a group, release; before them, once one tie
+  measure and its exact retry had come in) went 133 → 294 on the world
+  frame, 187 → 276 turned and 161 → 286 turned a hair, the control
+  (seams elsewhere) 283 either way; cross holes through a box 109 → 140,
+  110 → 134 and 124 → 134 of 150; random perpendicular pairs 865 →
+  1 003 of 1 200; 591 operations won, 13 lost, no wrong `Ok`, every
+  identity within the fit times the operands' area over 5. The lost
+  are refusals on the cut's thin triangles (`Invalid`, `NotManifold`),
+  11 of them on turned or hair frames: 10 from the trace start (an arc
+  from the seams' meeting point that the trace now follows where it
+  failed before and the verified fallback was kept), 3 from the
+  first-order measure on hair frames (turned by about `RHO`, so some
+  first orders go to `T2`). Marching then steps `h` along the tangent and corrects on
   the plane square to it through the predicted point; a step is taken
   when the tangent turns by under about 20°, the point moved on and lies
   within half a step of the prediction, and within half a barycentric

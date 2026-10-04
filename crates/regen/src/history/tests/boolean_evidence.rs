@@ -158,14 +158,17 @@ fn rounded_rectangle(min: (f64, f64), max: (f64, f64), r: f64) -> impl FnOnce(&m
 #[test]
 fn an_intersect_that_cant_be_worked_out_shows_where() {
     // A slab 0.25 thick on the YZ plane with rounded corners, its side at
-    // y 0.25, and a disc of radius 0.5 round the origin's (0, −0.25) on
-    // XY, 0.25 thick, intersected with it: the slab's start cap runs
-    // through the disc's axis and its side touches the disc's wall at the
-    // seam there. A face of the slab, that side, is left with pieces of
-    // boundary that don't close into loops, refused as decisions that
-    // don't fit together. The failure shows those pieces as lines, the
-    // two vertices where they stop as points, and the slab's face,
-    // resolved to the body's faces in the model and drawn with the rest.
+    // y 0.25, and a disc of radius 0.75 round (0, −0.5) on XY, 0.25
+    // thick, intersected with it: the slab's start cap runs through the
+    // disc's axis and its side touches the disc's wall at the seam
+    // there. (With the disc of 0.5 round (0, −0.25), the kernel's case,
+    // the intersection works: decided again exactly where near ties
+    // don't fit together.) A face of the slab, that side, is left with
+    // pieces of boundary that don't close into loops, refused as
+    // decisions that don't fit together. The failure shows those pieces
+    // as lines, the two vertices where they stop as points, and the
+    // slab's face, resolved to the body's faces in the model and drawn
+    // with the rest.
     let mut editor = Editor::new(Document::default());
     let thin = Extent::OneSide(length(editor.document(), "0.25"));
     add_extrude_on(
@@ -179,7 +182,7 @@ fn an_intersect_that_cant_be_worked_out_shows_where() {
     let intersect = add_extrude_on(
         &mut editor,
         OriginPlane::XY,
-        disc((0.0, -0.25), 0.5),
+        disc((0.0, -0.5), 0.75),
         thin,
         Operation::Intersect(Targets::default()),
     );
@@ -196,13 +199,14 @@ fn an_intersect_that_cant_be_worked_out_shows_where() {
         failure.message
     );
     let geometry = failure.geometry.clone().expect("geometry");
-    // Where the pieces stop, on the slab's side at the disc's top.
+    // Where the pieces stop: on the slab's side, along its start cap's
+    // edge, between its rounded corner and the disc's foot.
     let points = geometry.points();
     assert_eq!(points.len(), 2, "{points:?}");
     for &[x, y, z] in points {
-        assert!((-1e-3..=0.25).contains(&x), "{x}");
+        assert!(x.abs() < 1e-3, "{x}");
         assert!(
-            (y - 0.25).abs() < 1e-3 && (z - 0.25).abs() < 1e-3,
+            (y - 0.25).abs() < 1e-3 && (-0.75 - 1e-3..=1e-3).contains(&z),
             "{y} {z}"
         );
     }

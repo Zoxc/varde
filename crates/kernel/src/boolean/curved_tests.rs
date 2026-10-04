@@ -218,31 +218,6 @@ fn a_tilted_bar_is_exact() {
     }
 }
 
-/// The volume of the upright unit cylinder crossed by one of radius `r`
-/// along `x` through `(·, y0, ·)`: `∫ 2√(1 − y²) · 2√(r² − (y − y0)²) dy`,
-/// with `y = y0 + r·sin φ`, by Simpson's rule.
-fn crossed(r: f64, y0: f64) -> f64 {
-    crossed_by(1.0, 0.0, r, y0)
-}
-
-/// [`crossed`] for a crossed cylinder of radius `big` round `c`: `∫ 2√(big²
-/// − (y − c)²) · 2√(r² − (y − y0)²) dy`. The thin one must stay within the
-/// big one's span (`|y0 − c| + r ≤ big`).
-fn crossed_by(big: f64, c: f64, r: f64, y0: f64) -> f64 {
-    let n = 20_000;
-    let f = |phi: f64| {
-        let y = y0 + r * phi.sin() - c;
-        4.0 * r * r * phi.cos().powi(2) * (big * big - y * y).sqrt()
-    };
-    let (a, b) = (-PI / 2.0, PI / 2.0);
-    let h = (b - a) / n as f64;
-    let mut sum = f(a) + f(b);
-    for k in 1..n {
-        sum += f(a + k as f64 * h) * if k % 2 == 1 { 4.0 } else { 2.0 };
-    }
-    sum * h / 3.0
-}
-
 /// The volume two perpendicular cylinders running past each other
 /// share, of radii `r1` and `r2` with their axes at heights `c1` and `c2`:
 /// `∫ 2√(r1² − (z − c1)²) · 2√(r2² − (z − c2)²) dz` over the heights
@@ -282,7 +257,7 @@ fn crossing_cylinders_are_traced_within_the_tolerance() {
         &upright,
         &across,
         &results,
-        crossed(0.7, 0.1),
+        crossing_volume(1.0, 0.0, 0.7, 0.1),
         TOL.fit() * area / 10.0,
     );
     let on = |p: DVec3| {
@@ -490,7 +465,7 @@ fn a_thin_bar_across_a_round_is_within_its_bands() {
     // fit tolerance times its bands' area, not to rounding. With the
     // bar's axis at z = 2.0 its seams meet the round's on the cut:
     // `crossing_cylinders_with_seams_meeting_on_the_cut`, the same checks.
-    let both = crossed_by(0.75, 1.75, 0.25, 2.05);
+    let both = crossing_volume(0.75, 1.75, 0.25, 2.05);
     assert!((both - 0.264_432_415_23).abs() <= 1e-10, "{both}");
     thin_bar_at(2.05).check("thin bar", both);
 }
@@ -509,7 +484,7 @@ fn crossing_cylinders_with_seams_meeting_on_the_cut() {
     // intersection, refused as `NotManifold`. Now the second order
     // decides them: all four work, within the fit (measured 0.018–0.020
     // of the fit times the bands' area off).
-    let both = crossed_by(0.75, 1.75, 0.25, 2.0);
+    let both = crossing_volume(0.75, 1.75, 0.25, 2.0);
     assert!((both - 0.272_664_837_106_370_9).abs() <= 1e-10, "{both}");
     thin_bar_at(2.0).check("seams on the cut", both);
 }
@@ -533,7 +508,7 @@ fn a_cut_tangent_to_a_seam_at_a_refined_corner() {
         r: 0.125,
         xs: [-0.125, 2.125],
     };
-    shapes.check("corner", crossed_by(0.625, 0.75, 0.125, 0.625));
+    shapes.check("corner", crossing_volume(0.625, 0.75, 0.125, 0.625));
 }
 
 #[test]
@@ -652,7 +627,7 @@ fn a_thin_bar_across_a_chained_round_on_hair_frames() {
     let vb = PI * 0.25 * 0.25 * 3.0;
     // The bar lies within the round's `y` span, the round within the
     // bar's `x` span, and the boxes are clear of the bar.
-    let both = crossed_by(0.75, 1.75, 0.25, 2.0);
+    let both = crossing_volume(0.75, 1.75, 0.25, 2.0);
     assert!((va - 2.979_317_031_1).abs() <= 1e-10, "{va}");
     assert!((both - 0.272_664_837_1).abs() <= 1e-10, "{both}");
     assert!((a.volume() - va).abs() <= 1e-8, "{}", a.volume());
@@ -4166,7 +4141,8 @@ fn a_cross_hole_through_a_round_boss() {
         // The cut faces' points are placed the same at 1 and 8 threads.
         let got = assert_deterministic(|| run(&boss, &hole, Op::Difference));
         // The hole's part inside the boss, scaled from the unit boss's.
-        let want = PI * big * big * 10.0 - big.powi(3) * crossed(r / big, s / big);
+        let want =
+            PI * big * big * 10.0 - big.powi(3) * crossing_volume(1.0, 0.0, r / big, s / big);
         let within = TOL.fit() * (boss.area() + hole.area()) / 5.0;
         assert!(
             (got.volume() - want).abs() <= within,

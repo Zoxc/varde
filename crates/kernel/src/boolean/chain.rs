@@ -517,7 +517,10 @@ fn end(pair: &Pair, job: &Job, k: usize) -> Option<Point> {
 /// step must go to leave or enter it rather than run along it: a
 /// tangency's double root is placed some `1e-8` of the size off the
 /// touching point, where the step across the side it touches reads as
-/// `7e-9` of its length.
+/// `7e-9` of its length. Double roots read up to `4e-6` near the origin
+/// and `2e-5` a thousand out, where real crossings start at `1.5e-5`;
+/// those over the share go by their sign, as before it, and `1e-4`
+/// decided the same operations in the sweeps.
 const ALONG_SIDE: f64 = 1e-6;
 
 /// Which way along `t` (`±1`) the arc goes into both patches from end
@@ -542,22 +545,20 @@ const ALONG_SIDE: f64 = 1e-6;
 /// rounds split long ones); if it does, the trace fails, an error.
 fn inward_sign(job: &Job, k: usize, t: DVec3) -> Option<f64> {
     let [u, v] = job.dom[k];
-    let mut across: Vec<(f64, f64)> = Vec::new();
-    for (patch, at) in [(job.p, u), (job.q, v)] {
-        let step = trace::domain_step(patch, at, t);
-        let size = ALONG_SIDE * step.abs().max_element();
-        across.extend(
-            (0..3)
-                .filter(|&i| at[i].abs() <= 1e-9)
-                .map(|i| (step[i], size)),
-        );
-    }
-    if across.is_empty() {
+    // Each patch's step and the end's place in it.
+    let steps = [(job.p, u), (job.q, v)].map(|(patch, at)| (trace::domain_step(patch, at, t), at));
+    let on = |at: DVec3, i: usize| at[i].abs() <= 1e-9;
+    if !steps.iter().any(|&(_, at)| (0..3).any(|i| on(at, i))) {
         return None;
     }
     // Entering a side one way is leaving it the other: where one way
     // leaves none and the other leaves one, the first enters it.
-    let leaves = |s: f64| across.iter().any(|&(c, size)| s * c < -size);
+    let leaves = |s: f64| {
+        steps.iter().any(|&(step, at)| {
+            let size = ALONG_SIDE * step.abs().max_element();
+            (0..3).any(|i| on(at, i) && s * step[i] < -size)
+        })
+    };
     match (leaves(1.0), leaves(-1.0)) {
         (false, true) => Some(1.0),
         (true, false) => Some(-1.0),
