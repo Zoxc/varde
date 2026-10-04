@@ -1,6 +1,7 @@
 //! References to the edges of bodies, as features that build on a model
 //! edge store them.
 
+use std::cmp::Ordering;
 use std::fmt;
 
 use glam::DVec3;
@@ -57,6 +58,18 @@ impl EdgeRef {
         right: (&FaceKey, &[FaceKey]),
     ) -> Option<bool> {
         varde_kernel::topology::runs_with(faces, left, right)
+    }
+
+    /// The order lists of references are kept in (a chamfer's edges): by
+    /// body, then the faces' keys, then the point's coordinates in turn
+    /// ([`f64::total_cmp`]). `Equal` only for the same reference to the
+    /// bit, which such a list doesn't repeat.
+    pub fn order(&self, other: &EdgeRef) -> Ordering {
+        (self.body, self.faces)
+            .cmp(&(other.body, other.faces))
+            .then_with(|| self.near.x.total_cmp(&other.near.x))
+            .then_with(|| self.near.y.total_cmp(&other.near.y))
+            .then_with(|| self.near.z.total_cmp(&other.near.z))
     }
 
     /// Checks what needs only the reference: its keys sorted and

@@ -9,6 +9,7 @@
 #![recursion_limit = "256"]
 
 mod anchors;
+mod chamfer;
 mod chrome;
 mod combine;
 mod constrain;

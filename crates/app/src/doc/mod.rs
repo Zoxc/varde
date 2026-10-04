@@ -777,6 +777,9 @@ impl Doc {
                     | FeatureKind::Scale(_)
                     | FeatureKind::Split(_),
                 ) => self.edit_motion(id),
+                // No panel yet: chamfers are made by the document's
+                // commands until their session is built.
+                Some(FeatureKind::Chamfer(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

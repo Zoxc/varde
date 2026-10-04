@@ -31,6 +31,14 @@ pub mod testing {
     pub fn split_by_booleans() {
         crate::history::split_by_booleans();
     }
+
+    /// Chamfers on this thread by a stand-in in place of the kernel's
+    /// chamfer, which isn't built yet: each edge a straight convex one
+    /// between two flat faces, cut off by a triangular prism past its
+    /// ends (right for a block's edges); anything else is too complex.
+    pub fn chamfer_by_wedges() {
+        crate::history::chamfer_by_wedges();
+    }
 }
 mod inspect;
 mod message;

@@ -55,7 +55,11 @@
 //! align's) by its factors, or by the factor that gives its edge (found
 //! and measured on its body) its typed length; a factor out of range, or
 //! a body the scale would take past the coordinate limit, fails it
-//! before anything is scaled (see `scale`).
+//! before anything is scaled (see `scale`). A split cuts its body in
+//! two by a tool (see `split`). A chamfer finds its edges on its body's
+//! topology (one not found: "its edge wasn't found"), grows them along
+//! tangent chains if asked, and cuts them off by the kernel's chamfer,
+//! the body keeping its id (see `chamfer`).
 //! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
@@ -103,11 +107,14 @@ use crate::picking::region_form;
 use crate::profile::profile;
 
 mod align;
+mod chamfer;
 mod combine;
 mod motion;
 mod pattern;
 pub(crate) mod scale;
 mod split;
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use chamfer::chamfer_by_wedges;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use split::split_by_booleans;
 
@@ -365,7 +372,8 @@ pub(crate) fn evaluate_within(
                     | FeatureKind::Pattern(_)
                     | FeatureKind::Align(_)
                     | FeatureKind::Scale(_)
-                    | FeatureKind::Split(_) => unreachable!("matched apart"),
+                    | FeatureKind::Split(_)
+                    | FeatureKind::Chamfer(_) => unreachable!("matched apart"),
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -447,6 +455,18 @@ pub(crate) fn evaluate_within(
                     document,
                     feature.id,
                     scale,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
+                    evaluation.failed.push(failed.of(feature.id));
+                }
+            }
+            FeatureKind::Chamfer(chamfer) => {
+                if let Err(failed) = chamfer::evaluate_chamfer(
+                    document,
+                    feature.id,
+                    chamfer,
                     &tolerance,
                     &mut evaluation,
                     cache,

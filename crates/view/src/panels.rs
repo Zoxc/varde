@@ -214,6 +214,7 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Align(_) => Icon::Align,
         FeatureKind::Scale(_) => Icon::Scale,
         FeatureKind::Split(_) => Icon::Split,
+        FeatureKind::Chamfer(_) => Icon::BChamfer,
     }
 }
 
@@ -247,6 +248,7 @@ fn feature_row<'a>(
         FeatureKind::Align(align) => crate::motion::align_note(document, align).into(),
         FeatureKind::Scale(scale) => crate::motion::scale_note(scale, units).into(),
         FeatureKind::Split(split) => crate::motion::split_note(document, split).into(),
+        FeatureKind::Chamfer(chamfer) => crate::chamfer::chamfer_note(chamfer, units).into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -343,6 +345,7 @@ fn edit_label(feature: &Feature) -> &'static str {
         FeatureKind::Align(_) => "Edit align",
         FeatureKind::Scale(_) => "Edit scale",
         FeatureKind::Split(_) => "Edit split",
+        FeatureKind::Chamfer(_) => "Edit chamfer",
     }
 }
 
@@ -399,7 +402,7 @@ pub(crate) fn turn_info(turn: &varde_document::Turn) -> String {
 }
 
 /// An angle of `radians`, in degrees: "90°".
-fn angle_note(radians: f64) -> String {
+pub(crate) fn angle_note(radians: f64) -> String {
     varde_expr::format(radians, Some(varde_expr::AngleUnit::Deg.into()))
 }
 

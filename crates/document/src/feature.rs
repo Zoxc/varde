@@ -1,11 +1,13 @@
 //! Features: the steps a design is built from, sketches, extrudes,
-//! revolves, combines, moves, mirrors, patterns, aligns, scales and splits.
+//! revolves, combines, moves, mirrors, patterns, aligns, scales, splits
+//! and chamfers.
 
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
 use crate::{
-    Align, BodyId, Combine, Extrude, Mirror, Move, Operation, Pattern, Plane, Revolve, Scale, Split,
+    Align, BodyId, Chamfer, Combine, Extrude, Mirror, Move, Operation, Pattern, Plane, Revolve,
+    Scale, Split,
 };
 
 /// A feature's handle in one document. It's opaque: ids come from the
@@ -52,6 +54,7 @@ pub enum FeatureKind {
     Align(Box<Align>),
     Scale(Scale),
     Split(Split),
+    Chamfer(Chamfer),
 }
 
 impl FeatureKind {
@@ -69,6 +72,7 @@ impl FeatureKind {
             FeatureKind::Align(_) => "Align",
             FeatureKind::Scale(_) => "Scale",
             FeatureKind::Split(_) => "Split",
+            FeatureKind::Chamfer(_) => "Chamfer",
         }
     }
 
@@ -92,7 +96,8 @@ impl FeatureKind {
     /// depends on: a combine's target and tools, the bodies a move, a
     /// mirror or a pattern moves or copies, the body an align moves, the
     /// bodies a scale scales (its edge length's edge among them), the
-    /// body a split splits, its tool body and its face tool's body.
+    /// body a split splits, its tool body and its face tool's body, the
+    /// body a chamfer's edges are on.
     /// Removing one of them, or its maker, removes this too. Not the
     /// bodies an extrude or revolve takes out of its targets, which are
     /// dropped from its list instead, nor the body under a sketch's face
@@ -108,6 +113,7 @@ impl FeatureKind {
             FeatureKind::Align(align) => vec![align.body],
             FeatureKind::Scale(scale) => scale.bodies.clone(),
             FeatureKind::Split(split) => split.bodies(),
+            FeatureKind::Chamfer(chamfer) => chamfer.bodies(),
             FeatureKind::Sketch { .. } | FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
                 Vec::new()
             }
@@ -124,7 +130,8 @@ impl FeatureKind {
             | FeatureKind::Mirror(_)
             | FeatureKind::Pattern(_)
             | FeatureKind::Align(_)
-            | FeatureKind::Scale(_) => None,
+            | FeatureKind::Scale(_)
+            | FeatureKind::Chamfer(_) => None,
             FeatureKind::Extrude(extrude) => Some(extrude.sketch),
             FeatureKind::Revolve(revolve) => Some(revolve.sketch),
             FeatureKind::Split(split) => split.tool.sketch(),
@@ -142,7 +149,8 @@ impl FeatureKind {
             | FeatureKind::Pattern(_)
             | FeatureKind::Align(_)
             | FeatureKind::Scale(_)
-            | FeatureKind::Split(_) => None,
+            | FeatureKind::Split(_)
+            | FeatureKind::Chamfer(_) => None,
             FeatureKind::Extrude(extrude) => Some(&extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&revolve.operation),
         }
@@ -158,7 +166,8 @@ impl FeatureKind {
             | FeatureKind::Pattern(_)
             | FeatureKind::Align(_)
             | FeatureKind::Scale(_)
-            | FeatureKind::Split(_) => None,
+            | FeatureKind::Split(_)
+            | FeatureKind::Chamfer(_) => None,
             FeatureKind::Extrude(extrude) => Some(&mut extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&mut revolve.operation),
         }
@@ -236,5 +245,11 @@ impl From<Scale> for FeatureKind {
 impl From<Split> for FeatureKind {
     fn from(split: Split) -> Self {
         FeatureKind::Split(split)
+    }
+}
+
+impl From<Chamfer> for FeatureKind {
+    fn from(chamfer: Chamfer) -> Self {
+        FeatureKind::Chamfer(chamfer)
     }
 }

@@ -38,6 +38,7 @@
 //! whose bits are the same on every platform.
 
 mod aabb;
+pub mod blend;
 mod boolean;
 mod budget;
 mod error;
@@ -64,6 +65,7 @@ pub mod transform;
 pub mod trig;
 
 pub use aabb::Aabb;
+pub use blend::{BlendError, ChamferChain, ChamferCut, chamfer};
 pub use boolean::{
     BooleanError, Op, ToolError, boolean, chain_tool, half_space, split, surface_tool, touches,
 };

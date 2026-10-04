@@ -1,6 +1,6 @@
 # Features
 
-The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales and splits), and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits and chamfers), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -53,7 +53,7 @@ they share with the newer kinds is here. The kernel math of each is in
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
   `Revolve` 2, `Combine` 3, `Move` 4, `Mirror` 5, `Pattern` 6, `Align` 7,
-  `Scale` 8, `Split` 9): files store a kind by its variant name, and
+  `Scale` 8, `Split` 9, `Chamfer` 10): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
 ## Failures and where they are
@@ -2834,3 +2834,133 @@ two booleans through regen's `testing` feature
 (`varde_regen::testing::split_by_booleans`, the thread local the regen
 tests use, behind a feature for other crates' tests), as the kernel's
 split isn't built.
+
+## Chamfer
+
+`crates/document/src/chamfer.rs`.
+
+```rust
+pub struct Chamfer {
+    pub edges: Vec<EdgeRef>,       // 1..=MAX_BLEND_EDGES (256), one body, EdgeRef::order, no repeats
+    pub distances: ChamferSize,
+    pub chains: bool,              // take in each edge's tangent chain
+    #[serde(default)] pub flip: bool,  // first faces are the second keys'
+}
+pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
+```
+
+- **What it is**: the eleventh variant (`FeatureKind::Chamfer`,
+  "Chamfer N"). Its edges are cut off on the body they're on, which
+  keeps its id; it makes no body. Sizes as the UI mock's choices:
+  Equal (one distance along both faces), Two distances, Distance and
+  angle (the cut's angle to the first face, above 0 and under 90°,
+  `Chamfer::angle_ask`). Distances are lengths as an extrude's
+  (`Chamfer::distance_ask` = `Extent::ask`). An edge's **first face**
+  is the face of its reference's first key (`EdgeRef::faces[0]`, the
+  lower), or the second's with `flip` (the mock's "Flip sides"): what
+  Two's first distance and Angle's distance and angle run along.
+  Edges are all on one body (decided here: as offset face's and draft's
+  faces; one kernel call); the plan's struct had no `flip`, the mock's
+  panel has it. The list is kept in `EdgeRef::order` (body, keys, the
+  point's coordinates by `total_cmp`) without repeats, so a set of
+  edges has one form; two picks of edges between the same two faces at
+  different points are two edges.
+- **Checks** (`CheckError::Chamfer(id, ChamferError)`):
+  `Chamfer::check_own(design)` (cheap): 1..=256 edges (`Edges`), each
+  edge's own check (`Edge(EdgeError)`), in order without repeats
+  (`EdgeOrder`), one body (`Bodies`), distances (`Distance`) and the
+  angle (`Angle`) by their asks. `Document::check_chamfer_edges(index,
+  edges)` (public, for the panel): the body there and made before
+  (`Body`: depended on, as a combine's bodies), and every key's feature
+  before it, or not there with an id below the next (`RefMaker`, as a
+  sketch's face's).
+- **Dependencies**: `FeatureKind::bodies()` is the edges' body, so
+  removing it or its maker removes the chamfer. The features that made
+  its edges' faces are **not** followed: removing a join whose wall an
+  edge ran along leaves the chamfer, which then fails ("its edge wasn't
+  found"), to be edited (decided, as every face and edge reference).
+- `SetUnits` pins its distances and angle by their asks.
+
+### Regeneration
+
+`crates/regen/src/history/chamfer.rs`, in history order:
+
+- The body needs a solid of its own (`own_solids`). Its topology is the
+  one drawing it keeps (`inspect::topology`), and each edge is found on
+  it by `Topology::edge(faces, near)`; one not found fails the chamfer
+  before the kernel: "its edge wasn't found", or with several "its edge
+  2 of 3 wasn't found" (its place in the list).
+- **Tangent chains** (with `chains`): each picked edge's chain takes in
+  every chain with the same root in `Topology::tangent_chains` (edges
+  running on into each other within 1°, from the curves' own end
+  tangents). That's purely the topology, so it's done in regen rather
+  than behind the kernel stub. A chain is chamfered once: the picked
+  edges first, in the list's order, then the grown ones, each taken by
+  the first edge reaching it.
+- **First faces and names**: a picked edge's first face is the region
+  its first key (second with `flip`) names (by the region's own key
+  where aliases name both by both keys, else the lower region); a grown
+  chain's is the region it shares with its picked edge's first face,
+  else the region across from one it shares with the picked edge's other
+  face, else its lower-keyed region. The kernel gets each chain as a
+  `ChamferChain { chain, name, cut }`: `cut` in the chain's region order
+  (`ChamferCut::Distances([d0, d1])`, or `Angle { on, distance, angle }`
+  with `on` the first face's side), `name` the
+  `FacePart::Blend { edge, .. }` edge, `blend_edge(pair, ordinal)` of a
+  picked edge's reference keys or a grown chain's regions' keys, the
+  ordinal counting chains before it with the same pair.
+- **The chamfer**: `varde_kernel::chamfer(solid, topology, chains,
+  feature, tol, budget)`, cached as an `Entry::Solid` by the body's key,
+  the feature, the fit tolerance and each chain's index, name and cut
+  bits; the result replaces the body's solid under that key (an empty
+  result: "chamfering Body 1 leaves nothing of it"). Its refusals
+  (`BlendError`) are worded by `message::chamfer_refused` with the edge
+  drawn (its curves, as a scale's refused edge): flat "its edge is between
+  faces that are nearly flat: there's nothing to chamfer", folded,
+  "... turns from convex to concave along its length: chamfer its parts
+  apart", too big "the chamfer doesn't fit along its edge 2: it runs past
+  a face beside it", an edge grown into "an edge in its edge 2's tangent
+  chain ...", a corner "edges of Body 1 meeting at a corner can't be
+  chamfered together: chamfer them apart"; its failures as a boolean's
+  ("chamfering Body 1 is too complex to work out" for `TooComplex`,
+  `message::chamfering`), the evidence's faces on the body.
+- **Kernel stand-in**: `varde_kernel::chamfer` (`kernel/src/blend.rs`,
+  with `ChamferChain`, `ChamferCut`, `BlendError`) isn't built yet: it
+  has its planned signature and fails with `TooComplex`. So every
+  chamfer that finds its edges fails today with "chamfering Body 1 is
+  too complex to work out", its body left whole; the rest of the history
+  goes on. The regen tests swap it (`chamfer::CHAMFERER`, a thread local;
+  other crates' tests through the `testing` feature,
+  `varde_regen::testing::chamfer_by_wedges`) for `by_wedges`: each chain
+  a straight, open, convex edge between two flat faces cut off by a
+  triangular prism past its ends, one boolean each (right for a block's
+  edges, too complex otherwise); and for recording and refusing
+  stand-ins. The planned analytic tests of the kernel's chamfer are
+  written out and `#[ignore = "kernel chamfer not built"]`.
+- The draft's reply carries nothing new.
+
+### UI
+
+Not built yet (the next stage: the edge session, `C`, the mock's
+panel: Edges, Type tiles Equal / Two distances / Distance and angle,
+Distance (1, 2), Angle, Flip sides). For now: the Timeline row with the
+model mock's chamfer icon (`Icon::BChamfer`; `Icon::Chamfer` is the
+sketch tool's), its note (`view/src/chamfer.rs`: "1 mm", "1 mm × 2 mm"
+the first face's first, "3 mm 30°"), the status bar's info ("2 edges ·
+Equal · 1 mm · Tangent chain") and "Edit chamfer", which does nothing
+yet (`Look::EditFeature`).
+
+Tests: `document/src/chamfer/tests.rs` (added and undone, edited, its
+own parts, bodies and makers, removal following the body and not the
+faces, units pinned, round trip, wrong chamfers refused when read, the
+eleventh kind, errors), `regen/src/history/tests/chamfer.rs` (the stub
+failing as too complex with the history going on; an edge gone after
+its face's maker is removed; an edge found again after an upstream
+dimension change, cut where it went; with the prism stand-in: two
+distances, flipped, an angle on the right faces, a block's top loop and
+all twelve edges by their volumes, the cache; recording: a slot's rim
+taken in as four chains named apart with the top the first face all
+round, only the one without chains; a refusal named and drawn; ignored:
+the kernel's on a block's edges, a hole's and a boss's rims by Pappus,
+determinism), `io/src/vrdp/tests.rs` (through a file, a tampered edge
+point refused), `view/src/chamfer/tests.rs` (the notes).

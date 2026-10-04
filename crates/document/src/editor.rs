@@ -687,6 +687,11 @@ impl Editor {
                                 value.pin_units(&ask);
                             }
                         }
+                        FeatureKind::Chamfer(chamfer) => {
+                            for (value, ask) in chamfer.values_mut(&before) {
+                                value.pin_units(&ask);
+                            }
+                        }
                         // No values.
                         FeatureKind::Combine(_)
                         | FeatureKind::Mirror(_)

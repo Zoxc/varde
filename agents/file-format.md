@@ -320,7 +320,15 @@ and the ids of its curves, sorted), which piece keeps the body's id
 (front or back), which pieces are kept (both, front or back) and the
 id of the body the other piece becomes, there exactly when both are
 kept. `original`, `keep` and `new_body` are `#[serde(default)]` (front,
-both, none); splits are new, so no older record holds one. A
+both, none); splits are new, so no older record holds one; or a
+chamfer, `crates/document/src/chamfer.rs`: its edges (each as a
+revolve's axis edge: a body's id, two face keys, sorted, and a picked
+point), sorted by body, keys and point, its size (equal: one typed
+length and its value in millimetres; two: two lengths, the first along
+each edge's first face; or a length and an angle, as a revolve's,
+`ChamferSize`), whether tangent chains are taken in and `flip` (the
+edges' first faces their second keys', `#[serde(default)]`, false).
+Chamfers are new, so no older record holds one. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -379,6 +387,12 @@ plane's, a sketch tool's sketch a sketch before it, 1 to 256 regions
 or 1 to 256 curves sorted without repeats, and its new body there
 exactly when it keeps both pieces, a body it makes (a body made by a
 split must be its new body);
+a chamfer's 1 to 256 edges on one body there and made by an earlier
+feature, sorted without repeats, each edge's keys sorted and different,
+its point finite and within the coordinate limit, and its keys'
+features (if there) before the chamfer, or with ids below the next id;
+its distances lengths as an extrude's, its angle above 0 and under
+90°;
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

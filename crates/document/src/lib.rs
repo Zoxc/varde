@@ -5,6 +5,7 @@
 //! checks their results and records history for undo/redo.
 
 mod align;
+mod chamfer;
 pub mod codec;
 mod combine;
 mod edge;
@@ -25,6 +26,7 @@ mod split;
 mod testing;
 
 pub use align::{Align, AlignError, AlignRefs, DirRef, PointRef};
+pub use chamfer::{Chamfer, ChamferError, ChamferSize, MAX_BLEND_EDGES};
 pub use codec::DecodeError;
 pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
 pub use edge::{EdgeError, EdgeRef};
@@ -308,7 +310,10 @@ impl Document {
     /// before it make, its plane face and faces' makers named as a
     /// mirror's plane is, its sketch a sketch before it, and its new body
     /// there exactly when it keeps both pieces, as [`Split::check_own`]
-    /// wants it. A
+    /// wants it; and every chamfer's edges are on one body a feature
+    /// before it makes, its faces' makers before it (or not there with
+    /// ids no later feature can take), its edges and values as
+    /// [`Chamfer::check_own`] wants them. A
     /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
@@ -416,6 +421,13 @@ impl Document {
                         .map_err(|why| CheckError::Split(id, why))?;
                     self.check_split(index, split)
                         .map_err(|why| CheckError::Split(id, why))?;
+                }
+                FeatureKind::Chamfer(chamfer) => {
+                    chamfer
+                        .check_own(&design)
+                        .map_err(|why| CheckError::Chamfer(id, why))?;
+                    self.check_chamfer_edges(index, &chamfer.edges)
+                        .map_err(|why| CheckError::Chamfer(id, why))?;
                 }
             }
         }
@@ -747,6 +759,26 @@ impl Document {
         Ok(())
     }
 
+    /// Checks what `edges` name as the edges of a chamfer at feature
+    /// `index` (at the end for a new one, the count of features), as
+    /// [`Document::check`] has it: each edge's body there and made by a
+    /// feature before it (depended on, as a combine's bodies), and its
+    /// faces' makers before it, or not there with ids no later feature
+    /// can take, as a sketch's face's. For a panel keeping what it sets
+    /// up one the document takes; their own parts are
+    /// [`Chamfer::check_own`]'s.
+    pub fn check_chamfer_edges(&self, index: usize, edges: &[EdgeRef]) -> Result<(), ChamferError> {
+        for edge in edges {
+            if !self.made_before(index, edge.body) {
+                return Err(ChamferError::Body(edge.body));
+            }
+            if let Some(&maker) = (edge.makers().iter()).find(|&&m| !self.maker_before(index, m)) {
+                return Err(ChamferError::RefMaker(maker));
+            }
+        }
+        Ok(())
+    }
+
     /// Whether `body` is there and made by a feature before feature
     /// `index`.
     fn made_before(&self, index: usize, body: BodyId) -> bool {
@@ -849,6 +881,8 @@ pub enum CheckError {
     Scale(FeatureId, ScaleError),
     /// A split feature is wrong, see [`SplitError`].
     Split(FeatureId, SplitError),
+    /// A chamfer feature is wrong, see [`ChamferError`].
+    Chamfer(FeatureId, ChamferError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -899,6 +933,7 @@ impl fmt::Display for CheckError {
             CheckError::Align(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Scale(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Split(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Chamfer(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -929,6 +964,7 @@ impl std::error::Error for CheckError {
             CheckError::Align(_, why) => Some(why),
             CheckError::Scale(_, why) => Some(why),
             CheckError::Split(_, why) => Some(why),
+            CheckError::Chamfer(_, why) => Some(why),
             _ => None,
         }
     }

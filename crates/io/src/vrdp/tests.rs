@@ -3043,3 +3043,70 @@ fn a_damaged_split_is_refused_or_checked() {
         read(&changed);
     }
 }
+
+/// The example plate with an edge of its top chamfered, 1 mm.
+fn chamfered_plate() -> Document {
+    use glam::DVec3;
+    use varde_document::{Chamfer, ChamferSize, EdgeRef, FaceKey, PartKey};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let document = editor.document();
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let key = |part| FaceKey {
+        feature: maker,
+        part,
+        instance: 0,
+    };
+    let edge = EdgeRef {
+        body: plate,
+        faces: [key(PartKey::EndCap), key(PartKey::Side { curve: 1 })],
+        near: DVec3::new(3.0, 7.25, 10.0),
+    };
+    let size = Value::new("1", &Chamfer::distance_ask(&document.design())).unwrap();
+    let chamfer = Chamfer {
+        edges: vec![edge],
+        distances: ChamferSize::Equal(size),
+        chains: true,
+        flip: false,
+    };
+    editor
+        .apply(editor.document().add_feature(chamfer.into()))
+        .unwrap();
+    editor.document().clone()
+}
+
+/// A chamfer goes through a file and is read back in its place.
+#[test]
+fn chamfers_round_trip() {
+    use varde_document::FeatureKind;
+    let document = chamfered_plate();
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+    assert!(matches!(read.features()[2].kind, FeatureKind::Chamfer(_)));
+}
+
+/// A record whose chamfer's edge point was changed on disk to what the
+/// document refuses is refused as it's read; as written, it reads.
+#[test]
+fn a_tampered_chamfer_is_refused() {
+    let raw = record_msgpack(&chamfered_plate());
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let was = {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&7.25f64.to_bits().to_be_bytes());
+        bytes
+    };
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the edge's point is in the record");
+    for now in [f64::NAN, f64::INFINITY, 3e6] {
+        let mut changed = raw.clone();
+        changed[at + 1..at + 9].copy_from_slice(&now.to_bits().to_be_bytes());
+        assert!(
+            from_msgpack::<Document>(&changed).is_err(),
+            "{now} was taken"
+        );
+    }
+}

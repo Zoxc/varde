@@ -1660,6 +1660,7 @@ fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
 
 mod align;
 mod boolean_evidence;
+mod chamfer;
 mod check_evidence;
 mod combine;
 mod edges;

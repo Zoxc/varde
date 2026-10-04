@@ -122,6 +122,9 @@ icons! {
     // A box grown from a smaller one, an arrow out of its corner.
     Scale => r#"<rect class="r" x="3" y="11" width="10" height="10" rx="1"/><path class="a" d="M10 14l10-10M14 4h6v6"/>"#,
     // The icon mock's split body: a box cut by a dashed plane.
+    // The model mock's chamfer: a block with its top edge cut off,
+    // the new face in the accent.
+    BChamfer => r#"<path d="M7.67 10L3.34 7.5v9L12 21.5v-4M3.34 7.5L12 2.5l4.33 2.5M12 21.5l8.66-5v-4"/><path class="a" d="M7.67 10L12 17.5M16.33 5l4.33 7.5M16.33 5L7.67 10M20.66 12.5L12 17.5"/>"#,
     Split => r#"<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M2 15L22 9" stroke-dasharray="2.5 2"/>"#,
     Align => r#"<path class="a" d="M4 3v18"/><rect class="t" x="7" y="5" width="13" height="5" rx="1"/><rect x="7" y="14" width="8" height="5" rx="1"/>"#,
     // Not in the icon mock: the offset constraint's nested squares, arrows
@@ -248,6 +251,7 @@ impl Icon {
             | Icon::Combine
             | Icon::Scale
             | Icon::Split
+            | Icon::BChamfer
             | Icon::ScUniform
             | Icon::ScAxes
             | Icon::ScEdge

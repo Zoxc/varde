@@ -10182,3 +10182,18 @@ see `agents/features.md`, "Failures and where they are").
   the extended surfaces and the open chain's tool from the body's box).
   Until then every split fails as too complex (see "Split" in
   `agents/features.md`).
+- **Chamfer built above a stand-in.** The chamfer feature's document
+  and regeneration came before the kernel's chains, spines, rails and
+  chamfer (kernel work put off): `blend.rs` holds `chamfer(solid,
+  topology, chains: &[ChamferChain], feature, tol, budget) ->
+  Result<Solid, BlendError>` with its planned signature, failing with
+  `BlendError::Failed(TooComplex)`, to be replaced by the real one (the
+  rest of `blend/`). The caller hands it chains of the solid's
+  `Topology`, each with the `FacePart::Blend` edge name its faces get
+  and a `ChamferCut` in the chain's region order (two distances, or a
+  distance and an angle on one side); the kernel checks the dihedrals
+  (`BlendError::Flat`, `Folded`, `Mixed`), the fit (`TooBig`) and
+  corners (`Corner`). Growing edges along tangent chains, planned with
+  the kernel's chains, is regeneration's instead, from the
+  existing `Topology::tangent_chains`: it needs only the topology and
+  the curves' end tangents. See "Chamfer" in `agents/features.md`.
