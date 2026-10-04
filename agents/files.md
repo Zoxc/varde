@@ -22,9 +22,10 @@ The lane owns the open `DocumentFile`s, the app refers to them by a
 shows an empty list until it arrives, and the settings
 (`varde_io::settings`, `settings.toml` next to `recent.toml`; on the web at
 the root of OPFS). They hold the theme: Auto (iced's system theme, light
-when the system doesn't say), Light or Dark, cycled by the theme button and
-written as chosen, though not before the stored settings have arrived; a
-theme chosen before then wins over them. Each key is read on its own, so
+when the system doesn't say), Light or Dark, cycled by the theme button,
+and whether the status bar shows the mouse's hints (the view options
+menu's Mouse hints). Each is written as chosen, though not before the
+stored settings have arrived; one chosen before then wins over them. Each key is read on its own, so
 one gone bad gets its default and costs no other. Each open is tagged, and only the
 answer to the open the welcome screen is waiting for is shown. When the
 user starts a new design or opens another file instead, the app tells the

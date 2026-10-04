@@ -863,6 +863,7 @@ fn the_theme_is_stored_and_auto_follows_the_system() {
     let _ = varde.update(Message::Io(IoResponse::SettingsLoaded {
         settings: Stored {
             theme: Theme::Light,
+            ..Stored::default()
         },
     }));
     assert_eq!(varde.options.theme, ThemeChoice::Light);
@@ -886,6 +887,32 @@ fn the_theme_is_stored_and_auto_follows_the_system() {
         })
         .collect();
     assert_eq!(themes, [Theme::Dark, Theme::Auto]);
+}
+
+/// The mouse's hints turned off are stored, and come back off.
+#[test]
+fn the_mouse_hints_are_stored() {
+    use varde_io::settings::Settings as Stored;
+
+    let (mut varde, requests) = with_files();
+    let _ = varde.update(Message::Io(IoResponse::SettingsLoaded {
+        settings: Stored {
+            mouse_hints: false,
+            ..Stored::default()
+        },
+    }));
+    assert!(!varde.options.mouse_hints);
+    let _ = sent(&requests);
+    let _ = varde.update(Message::Ui(Ui::ToggleMouseHints));
+    assert!(varde.options.mouse_hints);
+    let stored: Vec<_> = sent(&requests)
+        .into_iter()
+        .map(|request| match request {
+            IoRequest::WriteSettings { settings } => settings.mouse_hints,
+            request => panic!("not a settings write: {request:?}"),
+        })
+        .collect();
+    assert_eq!(stored, [true]);
 }
 
 #[test]

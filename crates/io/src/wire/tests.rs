@@ -130,7 +130,10 @@ fn requests() -> Vec<Request> {
         },
         Request::LoadSettings,
         Request::WriteSettings {
-            settings: Settings { theme: Theme::Dark },
+            settings: Settings {
+                theme: Theme::Dark,
+                mouse_hints: false,
+            },
         },
         Request::ListRecovered,
         Request::OpenRecovered {
@@ -355,6 +358,7 @@ fn responses() -> Vec<Response> {
         Response::SettingsLoaded {
             settings: Settings {
                 theme: Theme::Light,
+                mouse_hints: true,
             },
         },
         Response::SettingsWritten {

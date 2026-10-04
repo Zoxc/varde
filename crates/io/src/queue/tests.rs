@@ -293,7 +293,10 @@ fn settings_writes_replace_only_their_own() {
     use crate::settings::Theme;
 
     let settings = |theme| Request::WriteSettings {
-        settings: Settings { theme },
+        settings: Settings {
+            theme,
+            ..Settings::default()
+        },
     };
     let mut queue = Queue::default();
     assert!(queue.push(settings(Theme::Light)).is_none());
@@ -302,7 +305,8 @@ fn settings_writes_replace_only_their_own() {
         queue.push(settings(Theme::Dark)),
         Some(Request::WriteSettings {
             settings: Settings {
-                theme: Theme::Light
+                theme: Theme::Light,
+                ..
             }
         })
     ));

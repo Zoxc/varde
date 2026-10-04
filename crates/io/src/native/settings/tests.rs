@@ -7,7 +7,10 @@ fn write_and_load_through_a_file() {
     let dir = TempDir::new("settings");
     let store = dir.0.join("sub").join("settings.toml");
     assert_eq!(load(&store), Settings::default());
-    let settings = Settings { theme: Theme::Dark };
+    let settings = Settings {
+        theme: Theme::Dark,
+        mouse_hints: false,
+    };
     write(&store, &settings).unwrap();
     assert_eq!(load(&store), settings);
     // Written again over the first.

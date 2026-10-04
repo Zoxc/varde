@@ -217,6 +217,7 @@ fn settings_round_trip_through_the_store() {
     ));
     let settings = Settings {
         theme: crate::settings::Theme::Light,
+        mouse_hints: false,
     };
     assert!(matches!(
         files.handle(Request::WriteSettings { settings }),
@@ -233,6 +234,7 @@ fn settings_without_a_store_are_the_defaults() {
     let mut files = Files::new(Stores::default());
     let settings = Settings {
         theme: crate::settings::Theme::Dark,
+        mouse_hints: false,
     };
     assert!(matches!(
         files.handle(Request::WriteSettings { settings }),

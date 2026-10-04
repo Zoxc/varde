@@ -7,6 +7,7 @@
 //!
 //! ```toml
 //! theme = "auto" # or "light", "dark"
+//! mouse_hints = true # whether the status bar shows the mouse's hints
 //! ```
 //!
 //! The file is user data, edited by hand perhaps: each key is read on its
@@ -23,9 +24,21 @@ use serde::{Deserialize, Serialize};
 pub(crate) const MAX_BYTES: u64 = 64 * 1024;
 
 /// The settings, each defaulted when the file doesn't say.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub theme: Theme,
+    /// Whether the status bar shows the hints of the mouse, on unless
+    /// turned off.
+    pub mouse_hints: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            theme: Theme::default(),
+            mouse_hints: true,
+        }
+    }
 }
 
 /// Whether the UI is light or dark.
@@ -47,10 +60,14 @@ impl Settings {
             return Self::default();
         };
         let key = |name: &str| table.get(name).cloned();
+        let defaults = Self::default();
         Self {
             theme: key("theme")
                 .and_then(|value| value.try_into().ok())
-                .unwrap_or_default(),
+                .unwrap_or(defaults.theme),
+            mouse_hints: key("mouse_hints")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(defaults.mouse_hints),
         }
     }
 

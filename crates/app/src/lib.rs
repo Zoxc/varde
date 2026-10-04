@@ -472,7 +472,7 @@ impl Varde {
             }
             Message::Ui(Ui::CycleTheme) => {
                 self.options.theme = self.options.theme.cycled();
-                if let Some(write) = self.settings.chose(self.options.theme) {
+                if let Some(write) = self.settings.chose_theme(self.options) {
                     self.files.io.send(write);
                 }
             }
@@ -487,6 +487,9 @@ impl Varde {
             Message::Ui(Ui::ToggleMouseHints) => {
                 self.options.mouse_hints = !self.options.mouse_hints;
                 self.with_doc(|doc, _| doc.view_menu = false);
+                if let Some(write) = self.settings.chose_mouse_hints(self.options) {
+                    self.files.io.send(write);
+                }
             }
             Message::Ui(Ui::ToggleHiddenEdges) => {
                 self.options.hidden_edges = !self.options.hidden_edges;
@@ -725,9 +728,7 @@ impl Varde {
                 report_failure("save the recent files", result);
             }
             IoResponse::SettingsLoaded { settings } => {
-                let (theme, write) = self.settings.loaded(settings, self.options.theme);
-                self.options.theme = theme;
-                if let Some(write) = write {
+                if let Some(write) = self.settings.loaded(settings, &mut self.options) {
                     self.files.io.send(write);
                 }
             }
@@ -975,8 +976,8 @@ fn doc_lane<L, S: Stream>(
 /// Whether `message` still acts while the window waits for the IO lane to
 /// flush: the lane's own and those that only change the view, none of which
 /// can send the lane more work, see `Varde::quit`. Not an export's welded
-/// bodies, which would be sent to be written, nor a theme chosen, which
-/// would be stored.
+/// bodies, which would be sent to be written, nor a theme chosen or the
+/// mouse's hints turned on or off, which would be stored.
 fn while_quitting(message: &Message) -> bool {
     matches!(
         message,
@@ -1000,7 +1001,6 @@ fn while_quitting(message: &Message) -> bool {
             | Message::Persisted(_)
             | Message::Ui(
                 Ui::Look(_)
-                    | Ui::ToggleMouseHints
                     | Ui::ToggleHiddenEdges
                     | Ui::SetEdges(_)
                     | Ui::SetShading(_)

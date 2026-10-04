@@ -1,52 +1,70 @@
-//! The user's settings, as stored: the theme chosen.
+//! The user's settings, as stored: the theme chosen and whether the
+//! status bar shows the mouse's hints.
 //!
 //! The IO lane stores them (see [`varde_io::settings`]) and hands them over
-//! once read at startup; until then the theme is the default, the system's.
-//! The app keeps the theme in its [`ViewOptions`](varde_view::ViewOptions),
-//! and this what's stored of it.
+//! once read at startup; until then they're the defaults, the system's
+//! theme and the hints shown. The app keeps them in its
+//! [`ViewOptions`], and this what's stored of them.
 
 use varde_io::Request as IoRequest;
 use varde_io::settings::{Settings as Stored, Theme};
-use varde_view::ThemeChoice;
+use varde_view::{ThemeChoice, ViewOptions};
 
 #[derive(Debug, Default)]
 pub(crate) struct Settings {
     /// Whether the stored settings have arrived.
     loaded: bool,
     /// Whether the user chose a theme before they did: theirs wins.
-    chosen: bool,
+    theme_chosen: bool,
+    /// Whether the user turned the mouse's hints on or off before they
+    /// did: theirs wins.
+    hints_chosen: bool,
 }
 
 impl Settings {
-    /// Takes the stored settings, returning the theme to use, the stored
-    /// one unless the user chose another before they arrived, `current`,
-    /// and if so the write storing it.
+    /// Takes the stored settings into `options`, but for those the user
+    /// chose before they arrived, returning the write storing those if
+    /// there are any.
     #[must_use = "the write stores the settings"]
     pub(crate) fn loaded(
         &mut self,
         stored: Stored,
-        current: ThemeChoice,
-    ) -> (ThemeChoice, Option<IoRequest>) {
+        options: &mut ViewOptions,
+    ) -> Option<IoRequest> {
         self.loaded = true;
-        if self.chosen {
-            return (current, self.write(current));
+        if !self.theme_chosen {
+            options.theme = choice(stored.theme);
         }
-        (choice(stored.theme), None)
+        if !self.hints_chosen {
+            options.mouse_hints = stored.mouse_hints;
+        }
+        (self.theme_chosen || self.hints_chosen)
+            .then(|| self.write(*options))
+            .flatten()
     }
 
-    /// Records that the user chose `theme`, returning the write storing
-    /// it, once the stored settings have arrived: before, writing would
-    /// drop what else they hold.
+    /// Records that the user chose the theme of `options`, returning the
+    /// write storing it, once the stored settings have arrived: before,
+    /// writing would drop what else they hold.
     #[must_use = "the write stores the settings"]
-    pub(crate) fn chose(&mut self, theme: ThemeChoice) -> Option<IoRequest> {
-        self.chosen = true;
-        self.write(theme)
+    pub(crate) fn chose_theme(&mut self, options: ViewOptions) -> Option<IoRequest> {
+        self.theme_chosen = true;
+        self.write(options)
     }
 
-    fn write(&self, theme: ThemeChoice) -> Option<IoRequest> {
+    /// Records that the user turned the mouse's hints of `options` on or
+    /// off, as [`Settings::chose_theme`].
+    #[must_use = "the write stores the settings"]
+    pub(crate) fn chose_mouse_hints(&mut self, options: ViewOptions) -> Option<IoRequest> {
+        self.hints_chosen = true;
+        self.write(options)
+    }
+
+    fn write(&self, options: ViewOptions) -> Option<IoRequest> {
         self.loaded.then(|| IoRequest::WriteSettings {
             settings: Stored {
-                theme: stored(theme),
+                theme: stored(options.theme),
+                mouse_hints: options.mouse_hints,
             },
         })
     }
