@@ -4178,6 +4178,33 @@ fn a_feature_s_context_menu_edits_or_deletes_it() {
     assert_eq!(doc.selected_feature, None);
 }
 
+/// A sketch's menu in the Timeline hides it, and then shows it.
+#[test]
+fn a_sketch_s_timeline_menu_hides_and_shows_it() {
+    use iced_runtime::user_interface::UserInterface;
+    let (mut doc, feature, _) = with_sketch();
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    for (item, visible) in [("Hide", false), ("Show", true)] {
+        doc.look(Look::OpenMenu(RowMenu::Feature(feature)));
+        let cache = iced_runtime::user_interface::Cache::default();
+        let mut ui = UserInterface::build(doc.view_in(Mode::Light), size, cache, &mut renderer);
+        let shown = texts(&mut ui, &renderer);
+        let at = (shown.iter()).find(|t| t.text == item);
+        let at = at.unwrap_or_else(|| panic!("no {item}: {shown:?}"));
+        let sent = clicked(&mut ui, &mut renderer, at.bounds.center());
+        drop(ui);
+        let toggle = sent
+            .iter()
+            .find(|m| matches!(m, Ui::Edit(Edit::ToggleFeatureVisible(f)) if *f == feature));
+        assert!(toggle.is_some(), "{sent:?}");
+        doc.update(Edit::ToggleFeatureVisible(feature));
+        assert_eq!(sketches(&doc)[0].1, visible);
+        assert_eq!(doc.row_menu, None);
+    }
+}
+
 /// The context menu, headless: right-clicking the sketch's row opens it
 /// where it was clicked, and its Delete deletes the sketch.
 #[test]

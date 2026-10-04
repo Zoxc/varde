@@ -8792,8 +8792,9 @@ features. Double-clicking an extrude opens its session. Right-clicking
 a row selects its feature and opens its context menu (`Look::OpenMenu`
 with `RowMenu::Feature`, `Doc::row_menu`; the widget is
 `view/src/context_menu.rs`, an overlay at the click, the scrolled list's
-offset allowed for): Edit sketch or Edit extrude, and Delete if the
-document is editable. The rows of Objects have one too, selecting
+offset allowed for): Edit sketch or Edit extrude, for a sketch Hide or
+Show and Change plane, and Delete, all but the edit only if the document
+is editable. The rows of Objects have one too, selecting
 nothing (`RowMenu::Body`, `RowMenu::Sketch`): Edit sketch for a sketch,
 Hide or Show where the row has an eye, a body's Opacity (not a merged
 one's, drawn as its holder is), and Delete. Opacity is a slider from 10

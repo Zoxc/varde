@@ -270,9 +270,10 @@ fn feature_row<'a>(
     }
 }
 
-/// The context menu of `feature` in the Timeline: edit it, put a sketch
-/// on another plane, or delete it, those two if the document is
-/// `editable`, by the keys that do the same to the feature selected.
+/// The context menu of `feature` in the Timeline: edit it, show or hide
+/// a sketch or put it on another plane, or delete it, all but editing
+/// only if the document is `editable`, by the keys that do the same to
+/// the feature selected.
 fn feature_menu<'a>(feature: &Feature, editable: bool) -> Element<'a, Message> {
     let id = feature.id;
     let edit = menu_item(
@@ -281,7 +282,17 @@ fn feature_menu<'a>(feature: &Feature, editable: bool) -> Element<'a, Message> {
         Some(Shortcut::ENTER),
         Some(Message::Look(Look::EditFeature(id))),
     );
-    let change_plane = matches!(feature.kind, FeatureKind::Sketch { .. }).then(|| {
+    let sketch = matches!(feature.kind, FeatureKind::Sketch { .. });
+    let toggle = sketch.then(|| {
+        let (eye, label) = if feature.visible {
+            (Icon::EyeOff, "Hide")
+        } else {
+            (Icon::Eye, "Show")
+        };
+        let toggle = Message::Edit(Edit::ToggleFeatureVisible(id));
+        menu_item(eye, label.into(), None, editable.then_some(toggle)).into()
+    });
+    let change_plane = sketch.then(|| {
         menu_item(
             Icon::Plane,
             CHANGE_PLANE.into(),
@@ -293,6 +304,7 @@ fn feature_menu<'a>(feature: &Feature, editable: bool) -> Element<'a, Message> {
     row_menu(
         vec![
             Some(edit.into()),
+            toggle,
             change_plane,
             Some(menu_separator().into()),
             Some(
