@@ -26,6 +26,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
             field("0°"),
             field("3"),
             field("100 mm"),
+            field("0 mm"),
         ],
         reference: Some("Z axis".to_owned()),
         line: None,
@@ -49,6 +50,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         accept: false,
         editable: true,
         hover: None,
+        align: None,
     }
 }
 
@@ -311,4 +313,56 @@ fn a_pattern_s_infos_are_the_mock_s() {
         pattern_info(document, &pattern),
         "Body 1 · 4 × 90° about Z axis · joined"
     );
+}
+
+/// An align's panel: the mock's Move panel's style, Body, From and To
+/// with a Point, Direction and Second direction each, Flip, and Offset's
+/// Distance and Angle; the status bar's words for it whole.
+#[test]
+fn an_align_s_panel_has_its_sides_flip_and_offset() {
+    let mut state = state_of(MotionKind::Align, vec![body("Body 2")]);
+    state.reference = None;
+    state.picking = MotionPick::Align(AlignSlot::new(AlignSide::Target, AlignRole::Point));
+    state.align = Some(Box::new(AlignView {
+        names: [
+            [
+                Some("Centre of an edge of Body 2".to_owned()),
+                Some("Edge of Body 2".to_owned()),
+                None,
+            ],
+            [None, None, None],
+        ],
+        info: None,
+        marks: Default::default(),
+        snaps: None,
+    }));
+    let shown = texts_of(&state);
+    let order = [
+        "New align",
+        "Body",
+        "Body 2",
+        "From",
+        "Centre of an edge of Body 2",
+        "Edge of Body 2",
+        "To",
+        "Click a corner, middle, centre or origin",
+        "Flip",
+        "Offset",
+        "Distance",
+        "Angle",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    assert!(!has(&shown, "Translate") && !has(&shown, "Bodies"));
+    assert_eq!(status_info(&state), "Body 2");
+    if let Some(align) = &mut state.align {
+        align.info = Some("Body 2 to Body 1".to_owned());
+    }
+    assert_eq!(status_info(&state), "Body 2 to Body 1");
+    state.need = Some("pick the point to align it to");
+    assert_eq!(status_info(&state), "pick the point to align it to");
 }

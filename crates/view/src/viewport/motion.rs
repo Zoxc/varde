@@ -33,13 +33,13 @@ use iced::{Point, Rectangle, mouse};
 use varde_document::{Axis3, MAX_COORD, OriginPlane};
 use varde_expr::Unit;
 use varde_kernel::Motion;
-use varde_render::{Camera, Colors, GridPlane, PointStyle, SketchLayer, Space as LayerSpace};
+use varde_render::{Camera, Colors, GridPlane, PointStyle, SketchLayer, Space as LayerSpace, Srgb};
 use varde_sketch::angle;
 
 use super::sketch::{line, srgba};
 use crate::extrude::snap_step;
 use crate::hit::segment_distance;
-use crate::motion::{MotionField, MotionKind, MotionLook, MotionPick, MotionState};
+use crate::motion::{AlignView, MotionField, MotionKind, MotionLook, MotionPick, MotionState};
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
 use crate::theme::SketchColors;
@@ -58,6 +58,11 @@ const MIN_REACH: f64 = 10.0;
 const REACH_PAST: f64 = 1.25;
 /// How opaque the plane's fill is.
 const PLANE_FILL: f32 = 0.12;
+/// How wide an align's points are drawn, and the snap points while one
+/// is picked and the one the cursor takes, in pixels: the measure tool's.
+const ALIGN_POINT_RADIUS: f32 = 5.0;
+const SNAP_RADIUS: f32 = 3.5;
+const SNAPPED_RADIUS: f32 = 5.0;
 
 /// How long the handles' arrows are, and the rings' radius, in pixels.
 const ARROW_PIXELS: f64 = 100.0;
@@ -354,7 +359,100 @@ impl<'a> Moving<'a> {
         if let Some(handles) = self.handles(input, camera, bounds) {
             draw_handles(&mut live, &handles, input, scene, colors);
         }
+        if let Some(align) = &self.state.align {
+            self.align(&mut live, align, scene, colors, camera, bounds);
+        }
         (EMPTY.clone(), live)
+    }
+
+    /// An align's points and directions, each side's: its point as a dot,
+    /// its direction as an arrow from it across the bodies, its second
+    /// direction as a shorter dashed one; the moved side's in the accent,
+    /// the target's in the second colour. While a point is picked, the
+    /// snap points of what the cursor is over, as the measure tool's.
+    fn align(
+        &self,
+        live: &mut SketchLayer,
+        align: &AlignView<'_>,
+        scene: &Colors,
+        colors: SketchColors,
+        camera: &Camera,
+        bounds: Rectangle,
+    ) {
+        let opaque = |Srgb([r, g, b])| iced::Color::from_rgb(r, g, b);
+        let dot = |radius: f32, rim: iced::Color, fixed: bool| PointStyle {
+            radius,
+            rim_width: 1.5,
+            rim: srgba(rim),
+            fill: srgba(colors.point_fill),
+            fixed,
+        };
+        for (mark, color) in align.marks.iter().zip([scene.selected, scene.second]) {
+            let color = opaque(color);
+            let Some(point) = mark.point.filter(|point| point.is_finite()) else {
+                continue;
+            };
+            let (_, reach) = self.extent(point);
+            for (k, direction) in mark.directions.iter().enumerate() {
+                let Some(along) = direction.and_then(DVec3::try_normalize) else {
+                    continue;
+                };
+                // The second direction shorter and dashed.
+                let (length, dashed) = if k == 0 {
+                    (reach, false)
+                } else {
+                    (reach / 2.0, true)
+                };
+                let tip = point + along * length;
+                live.world_polyline(
+                    &[point.as_vec3(), tip.as_vec3()],
+                    line(color, LINE_WIDTH, dashed),
+                );
+                self.arrowhead(live, point, tip, color, camera, bounds);
+            }
+            live.world_point(point.as_vec3(), dot(ALIGN_POINT_RADIUS, color, true));
+        }
+        if let Some((index, hover)) = align.snaps
+            && hover.model == index.model()
+        {
+            for (snapped, point) in index.snaps(hover.target) {
+                let style = if hover.snap == Some(snapped) {
+                    dot(SNAPPED_RADIUS, colors.hovered, true)
+                } else {
+                    dot(SNAP_RADIUS, colors.hovered, false)
+                };
+                live.world_point(point.as_vec3(), style);
+            }
+        }
+    }
+
+    /// An arrowhead on the screen at `to`, the end of the line from
+    /// `from`.
+    fn arrowhead(
+        &self,
+        live: &mut SketchLayer,
+        from: DVec3,
+        to: DVec3,
+        color: iced::Color,
+        camera: &Camera,
+        bounds: Rectangle,
+    ) {
+        let placement = OriginPlane::XY.placement();
+        let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height) else {
+            return;
+        };
+        let (a, b) = (projector.show(from), projector.show(to));
+        let towards = (b - a).normalize_or_zero();
+        if towards == DVec2::ZERO || !b.is_finite() {
+            return;
+        }
+        let base = b - towards * ARROW_LENGTH;
+        let across = towards.perp() * ARROW_HALF_WIDTH;
+        live.triangle(
+            LayerSpace::Screen,
+            [b, base + across, base - across],
+            srgba(color),
+        );
     }
 
     /// The handles seen by `camera` over `bounds`, if there are any: a
@@ -604,22 +702,7 @@ impl<'a> Moving<'a> {
             &[from.as_vec3(), to.as_vec3()],
             line(color, LINE_WIDTH, false),
         );
-        let placement = OriginPlane::XY.placement();
-        let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height) else {
-            return;
-        };
-        let (a, b) = (projector.show(from), projector.show(to));
-        let towards = (b - a).normalize_or_zero();
-        if towards == DVec2::ZERO || !b.is_finite() {
-            return;
-        }
-        let base = b - towards * ARROW_LENGTH;
-        let across = towards.perp() * ARROW_HALF_WIDTH;
-        live.triangle(
-            LayerSpace::Screen,
-            [b, base + across, base - across],
-            srgba(color),
-        );
+        self.arrowhead(live, from, to, color, camera, bounds);
     }
 
     /// The plane through `point` square to the unit `normal`, as a square

@@ -857,6 +857,13 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     } else if let Some(motion) = &state.motion {
         let pick = motion.editable.then(|| {
             let what = match (motion.picking, motion.kind) {
+                (crate::MotionPick::Nothing, _) => return None,
+                (crate::MotionPick::Bodies, crate::MotionKind::Align) => "Pick the body",
+                (crate::MotionPick::Align(slot), _) => match slot.role {
+                    crate::AlignRole::Point => "Pick the point",
+                    crate::AlignRole::Primary => "Pick the direction",
+                    crate::AlignRole::Secondary => "Pick the second direction",
+                },
                 (crate::MotionPick::Bodies, _) => "Pick bodies",
                 (crate::MotionPick::Reference, crate::MotionKind::LinearPattern) => {
                     "Pick the direction"
@@ -864,8 +871,9 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                 (crate::MotionPick::Reference, crate::MotionKind::Mirror) => "Pick the plane",
                 (crate::MotionPick::Reference, _) => "Pick the axis",
             };
-            mouse_hint(MouseButton::Left, what)
+            Some(mouse_hint(MouseButton::Left, what))
         });
+        let pick = pick.flatten();
         let ok = motion.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
         [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
             .into_iter()

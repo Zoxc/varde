@@ -72,8 +72,9 @@ pub use measure::{
     between_values, face_kind, values as measure_values,
 };
 pub use motion::{
-    MotionField, MotionKind, MotionLook, MotionPick, MotionState, PatternMode, axis_name,
-    pattern_copies, plane_name,
+    AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, MotionField, MotionKind, MotionLook,
+    MotionPick, MotionState, PatternMode, align_info, axis_name, direction_name, pattern_copies,
+    plane_name, point_name,
 };
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
@@ -423,7 +424,7 @@ pub enum Look {
     /// left for it and entered again after.
     ChangePlane(FeatureId),
     /// Edits the feature: a sketch is entered, an extrude, a revolve, a
-    /// combine, a move, a mirror or a pattern opens its session (see
+    /// combine, a move, a mirror, a pattern or an align opens its session (see
     /// [`Look::StartExtrude`], [`Look::StartRevolve`],
     /// [`Look::StartCombine`], [`Look::StartMove`]) with its values.
     EditFeature(FeatureId),
@@ -457,7 +458,10 @@ pub enum Look {
     /// Starts setting up a new circular pattern, as [`Look::StartMove`]
     /// a move.
     StartCircularPattern,
-    /// Changes the move, mirror or pattern being set up, see [`MotionLook`]: it
+    /// Starts setting up a new align, its body from what's selected in
+    /// the model if anything is, as [`Look::StartMove`] a move.
+    StartAlign,
+    /// Changes the move, mirror, pattern or align being set up, see [`MotionLook`]: it
     /// isn't in the document until [`Edit::CommitMotion`].
     Motion(MotionLook),
     /// Starts the measure tool, outside sketches and operations being

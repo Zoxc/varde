@@ -20,8 +20,8 @@ use crate::shortcut::{
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
-    ActiveTool, ConstraintKind, DocumentState, Downloads, Edit, File, Location, Look, Message,
-    MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, Tool,
+    ActiveTool, AlignRole, AlignSide, ConstraintKind, DocumentState, Downloads, Edit, File,
+    Location, Look, Message, MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, Tool,
 };
 
 /// Includes the 1 px border.
@@ -530,6 +530,28 @@ fn ops<'a>(
     // origin ones here, as picking a sketch's plane does: the viewport
     // picks the model's edges and faces.
     let origins: Vec<Element<'a, Message>> = match &state.motion {
+        // An align's target may be the origin, or an origin axis.
+        Some(motion) if matches!(motion.picking, MotionPick::Align(slot) if slot.side == AlignSide::Target) =>
+        {
+            let send = |look: MotionLook| {
+                (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
+            };
+            let buttons: Vec<Element<'a, Message>> = match motion.picking {
+                MotionPick::Align(slot) if slot.role == AlignRole::Point => {
+                    vec![op(Icon::Point, "Origin", send(MotionLook::OriginPoint))]
+                }
+                _ => (Axis3::ALL.iter())
+                    .map(|&axis| {
+                        op(
+                            Icon::SeAxis,
+                            axis_label(axis),
+                            send(MotionLook::OriginAxis(axis)),
+                        )
+                    })
+                    .collect(),
+            };
+            std::iter::once(separator()).chain(buttons).collect()
+        }
         Some(motion) if motion.picking == MotionPick::Reference => {
             let send = |look: MotionLook| {
                 (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
@@ -546,7 +568,7 @@ fn ops<'a>(
                         })
                         .collect()
                 }
-                MotionKind::Mirror => (OriginPlane::ALL.iter())
+                MotionKind::Mirror | MotionKind::Align => (OriginPlane::ALL.iter())
                     .map(|&plane| {
                         op(
                             Icon::SePlane,

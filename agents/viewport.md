@@ -778,6 +778,14 @@ does). After an edit regen resolves the same picks in the new model; one
 it doesn't find shows its reason under its row ("Face not found") and is
 kept, so an undo finds it again.
 
+An align's point is picked the same way (`Doc::model_picking`: while
+the session picks a point, faces, edges and vertices with
+`ModelPicking::snaps`), its snap dots drawn as the measure tool's by
+`Moving` (`AlignView::snaps`); its directions are picked on faces and
+edges (`Picks::EdgesAndFaces`), lit while picked as A's and B's are, the
+moved side's as selected and the target's in the second colour (see
+`agents/features.md`, Align).
+
 The highlight while measuring is the session's own (the selection's
 isn't drawn and stays as it was), a `ModelHighlight` as the
 selection's is (`PickIndex::highlight_with`): what's hovered, drawn as

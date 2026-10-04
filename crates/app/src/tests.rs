@@ -260,15 +260,23 @@ pub(crate) fn add_disc(
     extent: varde_document::Extent,
     operation: varde_document::Operation,
 ) -> FeatureId {
+    add_disc_of(editor, center, 5.0, extent, operation)
+}
+
+/// [`add_disc`] of a disc of `radius`.
+pub(crate) fn add_disc_of(
+    editor: &mut Editor,
+    center: (f64, f64),
+    radius: f64,
+    extent: varde_document::Extent,
+    operation: varde_document::Operation,
+) -> FeatureId {
     let plane = Plane::Origin(OriginPlane::XY);
     editor.apply(editor.document().add_sketch(plane)).unwrap();
     let feature = editor.document().features().last().unwrap().id;
     let mut sketch = varde_sketch::Sketch::default();
     let center = (sketch.add_point(glam::DVec2::new(center.0, center.1))).unwrap();
-    let circle = varde_sketch::Curve::Circle {
-        center,
-        radius: 5.0,
-    };
+    let circle = varde_sketch::Curve::Circle { center, radius };
     sketch.add_curve(circle, false).unwrap();
     let profiles = sketch.profiles().unwrap();
     let regions = (0..profiles.regions.len())

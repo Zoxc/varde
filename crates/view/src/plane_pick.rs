@@ -6,7 +6,7 @@ use std::borrow::Cow;
 
 use glam::DVec3;
 use varde_document::{
-    BodyId, Document, EdgeRef, FaceRef, FeatureId, FeatureKind, Operation, Plane,
+    BodyId, Document, EdgeRef, FaceRef, FeatureId, FeatureKind, Operation, Plane, PointRef,
 };
 use varde_kernel::mesh::{FaceKey, PartKey};
 
@@ -548,6 +548,47 @@ impl Naming {
             body: a,
             faces: keys,
             near,
+        })
+    }
+}
+
+impl Naming {
+    /// The reference to corner `corner` of `index`'s model (an index into
+    /// its [`varde_regen::Picking::corners`]) as an align stores it: the
+    /// keys of three faces meeting there, sorted, the body the first is
+    /// on where the history stops (`Naming::body_of`), and the corner's
+    /// point. Refused as [`Naming::edge_ref`] refuses an edge, and as
+    /// [`Unnamed::Missing`] where two of the keys are the same, which
+    /// doesn't name one corner.
+    pub fn corner_ref(&self, index: &PickIndex, corner: u32) -> Result<PointRef, Unnamed> {
+        let picking = index.picking();
+        let found = picking
+            .corners()
+            .get(corner as usize)
+            .ok_or(Unnamed::Missing)?;
+        let shown = index.face_body(found.faces[0]).ok_or(Unnamed::Missing)?;
+        let keys = picking.corner_keys(corner);
+        if keys[0] == keys[1] || keys[1] == keys[2] {
+            return Err(Unnamed::Missing);
+        }
+        if !keys.iter().all(|key| self.takes_key(key)) {
+            return Err(Unnamed::Later);
+        }
+        let bodies = keys.map(|key| self.body_of(shown, &key));
+        let [Some(body), Some(b), Some(c)] = bodies else {
+            return Err(Unnamed::Unclear);
+        };
+        let there = holder(&self.merged_before, body);
+        if holder(&self.merged_before, b) != there || holder(&self.merged_before, c) != there {
+            return Err(Unnamed::Unclear);
+        }
+        if !self.takes_body(body) {
+            return Err(Unnamed::Later);
+        }
+        Ok(PointRef::Corner {
+            body,
+            faces: keys,
+            near: DVec3::from(found.point),
         })
     }
 }

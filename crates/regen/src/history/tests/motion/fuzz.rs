@@ -37,8 +37,8 @@
 use std::collections::BTreeMap;
 
 use glam::DQuat;
-use varde_document::{Copies, Pattern, PatternKind};
 use varde_document::{Align, AlignRefs, DirRef, PointRef};
+use varde_document::{Copies, Pattern, PatternKind};
 use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::topology::Topology;
 use varde_kernel::{Budget, Instance, Motion, Op};
@@ -1124,9 +1124,9 @@ fn run(seed: u64, steps: usize) {
                 matches!(
                     document.features()[i].kind,
                     FeatureKind::Move(_)
-                    | FeatureKind::Mirror(_)
-                    | FeatureKind::Pattern(_)
-                    | FeatureKind::Align(_)
+                        | FeatureKind::Mirror(_)
+                        | FeatureKind::Pattern(_)
+                        | FeatureKind::Align(_)
                 )
             })
             .collect();

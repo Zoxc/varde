@@ -1,8 +1,9 @@
-//! Setting up a move, a mirror or a pattern: its session, started by
-//! `Look::StartMove` (`M`, the toolbar, the rail's Transform set),
-//! `Look::StartMirror` (the toolbar, the rail), `Look::StartPattern`
-//! (`P`, the toolbar, the rail) or `Look::StartCircularPattern` (the
-//! toolbar, the rail), or by editing one, picking its bodies as a
+//! Setting up a move, a mirror, a pattern or an align: its session,
+//! started by `Look::StartMove` (`M`, the toolbar, the rail's Transform
+//! set), `Look::StartMirror` (the toolbar, the rail), `Look::StartPattern`
+//! (`P`, the toolbar, the rail), `Look::StartCircularPattern` (the
+//! rail) or `Look::StartAlign` (the rail; an align's own parts are in
+//! `align`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
 //! one from the toolbar, or a model edge or face clicked, named as of the
@@ -31,10 +32,12 @@ use varde_expr::{AngleUnit, Ask, ErrorKind, Unit, Value};
 use varde_kernel::Motion;
 use varde_regen::Summary;
 use varde_view::{
-    CombineBody, ModelHighlight, MotionField, MotionKind, MotionLook, MotionPick, MotionState,
-    Naming, PanelHover, PatternMode, Pick, Picked, Unnamed, axis_name, pattern_copies, plane_name,
+    AlignRole, AlignSide, AlignSlot, CombineBody, ModelHighlight, MotionField, MotionKind,
+    MotionLook, MotionPick, MotionState, Naming, PanelHover, PatternMode, Pick, Picked, Unnamed,
+    axis_name, pattern_copies, plane_name,
 };
 
+use self::align::AlignSetup;
 use super::combine::pickable;
 use super::feed::Merges;
 use super::regions::TypedText;
@@ -54,8 +57,9 @@ pub(crate) struct MotionSession {
     pub(crate) picking: MotionPick,
     /// Its fields ([`MotionField::index`]): a move's offsets along X, Y
     /// and Z and its angle, a pattern's count and spread (its spacing or
-    /// total, a length or a circular one's angle, as its mode reads it).
-    pub(crate) fields: [TypedText; 6],
+    /// total, a length or a circular one's angle, as its mode reads it),
+    /// an align's distance (and its angle, the move's).
+    pub(crate) fields: [TypedText; 7],
     /// A move's or pattern's axis: the Z axis to begin with (a linear
     /// pattern's X), as the UI mock's. A move stores it only with an
     /// angle other than zero.
@@ -73,8 +77,11 @@ pub(crate) struct MotionSession {
     gone_reference: Option<Reference>,
     /// A mirror's Create copy: on to begin with, as the UI mock's.
     pub(crate) keep_original: bool,
-    /// A linear pattern's Flip direction, stored as a negative spacing.
+    /// A linear pattern's Flip direction, stored as a negative spacing;
+    /// an align's Flip.
     pub(crate) flip: bool,
+    /// An align's references, as picked.
+    pub(crate) align: AlignSetup,
     /// A pattern's Join to original: ticked to begin with, each body
     /// holding its copies, as the pattern stores by default (the UI
     /// mock's starts unticked; the user's decision is ticked); unticked,
@@ -120,7 +127,15 @@ struct Pivot {
 /// What a move's, mirror's or pattern's highlight is built of: the model, what's
 /// hovered and whether its row in the panel is, what clicks pick, and
 /// the bodies.
-type Built = (u64, Option<(Picked, bool)>, MotionPick, Vec<BodyId>);
+/// An align's lit picks, the moved side's and the target's
+/// ([`Doc::align_lit`]), too.
+type Built = (
+    u64,
+    Option<(Picked, bool)>,
+    MotionPick,
+    Vec<BodyId>,
+    [Vec<Picked>; 2],
+);
 
 /// An edited pattern's spacing or angle as stored, and the mode, Flip
 /// and spread field the session opened it with: while those are as they
@@ -159,7 +174,7 @@ fn spread_ask(kind: MotionKind, design: &Design) -> Ask {
 /// What `field` of a session of `kind` is read with in `design`.
 fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
     match field {
-        MotionField::Offset(_) => Move::offset_ask(design),
+        MotionField::Offset(_) | MotionField::Distance => Move::offset_ask(design),
         MotionField::Angle => Move::angle_ask(design),
         MotionField::Count => Pattern::count_ask(design),
         MotionField::Spread => spread_ask(kind, design),
@@ -236,8 +251,15 @@ impl MotionSession {
         let zero = length(&design);
         let picking = match kind {
             MotionKind::Mirror if !bodies.is_empty() => MotionPick::Reference,
+            // An align moves one body, then picks its point on it.
+            MotionKind::Align if bodies.len() == 1 => {
+                MotionPick::Align(AlignSlot::new(AlignSide::Moved, AlignRole::Point))
+            }
             _ => MotionPick::Bodies,
         };
+        if kind == MotionKind::Align {
+            bodies.truncate(1);
+        }
         let (copies, spread_field, axis, mode) = match kind {
             MotionKind::CircularPattern => (
                 read("4", &count),
@@ -273,6 +295,7 @@ impl MotionSession {
                 read(&varde_expr::format(0.0, Some(DEGREES)), &angle),
                 copies,
                 spread_field,
+                read(&zero, &offset),
             ],
             axis,
             plane: None,
@@ -280,6 +303,7 @@ impl MotionSession {
             gone_reference: None,
             keep_original: true,
             flip: false,
+            align: AlignSetup::default(),
             join: true,
             opened: None,
             mode,
@@ -339,6 +363,21 @@ impl MotionSession {
                     spread: session.field(MotionField::Spread).clone(),
                     stored: spread_of(&pattern.kind).clone(),
                 });
+                session
+            }
+            FeatureKind::Align(align) => {
+                let mut session = Self::new(MotionKind::Align, document, vec![align.body]);
+                session.align = AlignSetup::of(align);
+                session.flip = align.flip;
+                let ask = Move::offset_ask(&design);
+                if let Some(offset) = &align.offset {
+                    session.fields[MotionField::Distance.index()] = TypedText::of(offset, &ask);
+                }
+                if let Some(turn) = &align.turn {
+                    session.fields[MotionField::Angle.index()] =
+                        TypedText::of(turn, &Move::angle_ask(&design));
+                }
+                session.picking = MotionPick::Nothing;
                 session
             }
             _ => return None,
@@ -432,6 +471,7 @@ impl MotionSession {
                 plane: self.plane?,
                 keep_original: self.keep_original,
             })),
+            MotionKind::Align => self.align().map(FeatureKind::from),
         }
     }
 
@@ -544,7 +584,7 @@ impl MotionSession {
                 };
                 circular(&angle).kind
             }
-            MotionKind::Move | MotionKind::Mirror => return Ok(None),
+            MotionKind::Move | MotionKind::Mirror | MotionKind::Align => return Ok(None),
         };
         let mut kind = kind;
         if let Some(opened) = &self.opened
@@ -579,6 +619,9 @@ impl MotionSession {
     /// What's still to be done before it can be committed, the UI mock's
     /// words, if anything.
     fn need(&self) -> Option<&'static str> {
+        if self.kind == MotionKind::Align {
+            return self.align_need();
+        }
         if self.bodies.is_empty() {
             return Some(match self.kind {
                 MotionKind::Move => "pick the bodies to move",
@@ -586,6 +629,7 @@ impl MotionSession {
                 MotionKind::LinearPattern | MotionKind::CircularPattern => {
                     "pick the bodies to pattern"
                 }
+                MotionKind::Align => "pick the body to align",
             });
         }
         match self.kind {
@@ -599,7 +643,7 @@ impl MotionSession {
             MotionKind::Mirror if self.plane.is_none() => {
                 Some("pick a plane: an origin plane or a planar face")
             }
-            MotionKind::Mirror => None,
+            MotionKind::Mirror | MotionKind::Align => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -637,6 +681,9 @@ impl MotionSession {
         if (self.bodies.iter()).any(|body| self.gone_bodies.contains(body)) {
             return Some("A picked body is gone");
         }
+        if self.kind == MotionKind::Align {
+            return self.align_gone();
+        }
         match (self.kind, self.gone_reference) {
             (MotionKind::Move, Some(Reference::Axis(axis)))
                 if self.axis == Some(axis) && self.angle().is_some_and(|angle| angle != 0.0) =>
@@ -662,9 +709,12 @@ impl MotionSession {
     /// its own check refuses it. None while it isn't whole.
     fn refused(&self, design: &Design) -> Option<String> {
         let refused = match self.kind()? {
-            FeatureKind::Move(moved) => moved.check_own(design).err(),
-            FeatureKind::Mirror(mirror) => mirror.check_own().err(),
-            FeatureKind::Pattern(pattern) => pattern.check_own(design).err(),
+            FeatureKind::Move(moved) => moved.check_own(design).err().map(|why| why.to_string()),
+            FeatureKind::Mirror(mirror) => mirror.check_own().err().map(|why| why.to_string()),
+            FeatureKind::Pattern(pattern) => {
+                pattern.check_own(design).err().map(|why| why.to_string())
+            }
+            FeatureKind::Align(align) => align.check_own(design).err().map(|why| why.to_string()),
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -679,6 +729,7 @@ impl MotionSession {
         let typed = match self.kind {
             MotionKind::Move => MotionField::ALL[..4].iter().all(|&field| fine(field)),
             MotionKind::Mirror => true,
+            MotionKind::Align => fine(MotionField::Distance) && fine(MotionField::Angle),
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
@@ -726,6 +777,7 @@ impl MotionSession {
         }) else {
             return;
         };
+        self.prune_align(document, index);
         let held = |body: BodyId| document.body(body).is_some();
         self.gone_reference = match (self.axis, self.plane) {
             (Some(axis), _)
@@ -781,7 +833,7 @@ impl MotionSession {
     /// shows), and a new one not at all: the model shown is the history
     /// as of the feature, which the edges and faces clicked are named as.
     fn draft(&self, design: &Design) -> Option<(Option<FeatureId>, FeatureKind)> {
-        if self.picking == MotionPick::Bodies {
+        if matches!(self.picking, MotionPick::Bodies | MotionPick::Nothing) {
             // Nothing is previewed while something it names is gone, and
             // a new one that does nothing yet shows as the document does.
             if self.gone().is_some() || (self.feature.is_none() && self.need().is_some()) {
@@ -872,7 +924,8 @@ impl Doc {
             bodies.extend(self.only_body());
         }
         self.motion = Some(MotionSession::new(kind, self.editor.document(), bodies));
-        if kind != MotionKind::Mirror {
+        // A mirror and an align start by picking in the viewport.
+        if !matches!(kind, MotionKind::Mirror | MotionKind::Align) {
             self.focus = Some(Focus::All);
         }
     }
@@ -911,7 +964,7 @@ impl Doc {
         self.revolve = None;
         self.combine = None;
         self.selected_feature = Some(id);
-        if session.kind != MotionKind::Mirror {
+        if !matches!(session.kind, MotionKind::Mirror | MotionKind::Align) {
             self.focus = Some(Focus::All);
         }
         self.motion = Some(session);
@@ -927,7 +980,23 @@ impl Doc {
         match message {
             MotionLook::Cancel => self.motion = None,
             _ if !editable => {}
+            // An align's references are its own; others pick none.
+            MotionLook::Picking(MotionPick::Align(_) | MotionPick::Nothing)
+                if session.kind != MotionKind::Align => {}
+            MotionLook::Picking(MotionPick::Reference) if session.kind == MotionKind::Align => {}
             MotionLook::Picking(picking) => session.picking = picking,
+            MotionLook::OriginAxis(axis) if session.kind == MotionKind::Align => {
+                self.align_origin(Some(axis));
+            }
+            MotionLook::OriginPoint => self.align_origin(None),
+            MotionLook::Clear(slot) if session.kind == MotionKind::Align => {
+                session.align.clear(slot);
+                // With nothing picking, clicks go on to what's needed.
+                if session.picking == MotionPick::Nothing {
+                    session.picking = session.align.next();
+                }
+            }
+            MotionLook::Clear(_) => {}
             MotionLook::Drop(body) => {
                 session.bodies.retain(|&picked| picked != body);
             }
@@ -968,7 +1037,9 @@ impl Doc {
             }
             MotionLook::OriginAxis(_) | MotionLook::OriginPlane(_) => {}
             MotionLook::Copy => session.keep_original = !session.keep_original,
-            MotionLook::Flip if session.kind == MotionKind::LinearPattern => {
+            MotionLook::Flip
+                if matches!(session.kind, MotionKind::LinearPattern | MotionKind::Align) =>
+            {
                 session.flip = !session.flip;
             }
             MotionLook::Mode(mode) if PatternMode::of(session.kind).contains(&mode) => {
@@ -994,12 +1065,17 @@ impl Doc {
         if !self.picks() || !self.editable() {
             return;
         }
-        match session.picking {
-            MotionPick::Bodies => self.motion_body(pick.body),
-            MotionPick::Reference => match self.motion_reference(pick) {
-                Ok(()) => {}
-                Err(why) => self.notice = Some(why.into_owned()),
-            },
+        let picked = match session.picking {
+            MotionPick::Bodies => {
+                self.motion_body(pick.body);
+                Ok(())
+            }
+            MotionPick::Reference => self.motion_reference(pick),
+            MotionPick::Align(slot) => self.align_pick(slot, pick),
+            MotionPick::Nothing => Ok(()),
+        };
+        if let Err(why) = picked {
+            self.notice = Some(why.into_owned());
         }
     }
 
@@ -1017,7 +1093,13 @@ impl Doc {
         };
         let merged = self.feed.merged_before(document, session.feature);
         let body = merged.holder(body).unwrap_or(body);
-        if pickable(document, body, session.feature) {
+        if !pickable(document, body, session.feature) {
+            return;
+        }
+        // An align moves one body: another replaces it.
+        if session.kind == MotionKind::Align {
+            self.align_body(body);
+        } else {
             session.toggle(body);
         }
     }
@@ -1343,8 +1425,14 @@ impl Doc {
     /// The edge or face hovered, if it's one a click takes as the axis or
     /// plane: lit as the cursor's over it.
     fn takes_reference(&self, pick: Pick) -> bool {
+        let Some(session) = &self.motion else {
+            return false;
+        };
         (self.feed.answers_request() && !self.feed.predates_replacement())
-            && self.reference_of(pick.target, pick.at).is_ok()
+            && match session.picking {
+                MotionPick::Align(slot) => self.align_reference(slot, pick).is_ok(),
+                _ => self.reference_of(pick.target, pick.at).is_ok(),
+            }
     }
 
     /// Rebuilds the move's or mirror's highlight if what it's of changed:
@@ -1373,15 +1461,20 @@ impl Doc {
                 MotionPick::Bodies => {
                     (!session.bodies.contains(&pick.body)).then_some((pick.target, false))
                 }
-                MotionPick::Reference => self.takes_reference(pick).then_some((pick.target, false)),
+                MotionPick::Reference | MotionPick::Align(_) => {
+                    self.takes_reference(pick).then_some((pick.target, false))
+                }
+                MotionPick::Nothing => None,
             },
             (None, None) => None,
         };
+        let lit = self.align_lit();
         let key = (
             self.feed.model(),
             hovered,
             session.picking,
             session.bodies.clone(),
+            lit,
         );
         if session.built.as_ref() == Some(&key) {
             return;
@@ -1391,19 +1484,33 @@ impl Doc {
         let lit = hovered
             .filter(|&(_, panel)| panel)
             .and_then(|(target, _)| index.body(target));
-        let picked: Vec<Picked> = (session.bodies.iter())
-            .filter(|&&body| Some(body) != lit)
-            .flat_map(|&body| faces(body))
-            .collect();
+        // While an align's references are picked, those picked for its
+        // directions are lit, the moved side's as selected, the target's
+        // in the second colour, rather than its body.
+        let (picked, second): (Vec<Picked>, Vec<Picked>) = match session.picking {
+            MotionPick::Align(_) => {
+                let [moved, target] = key.4.clone();
+                (moved, target)
+            }
+            _ => (
+                (session.bodies.iter())
+                    .filter(|&&body| Some(body) != lit)
+                    .flat_map(|&body| faces(body))
+                    .collect(),
+                Vec::new(),
+            ),
+        };
         let hover: Vec<Picked> = match (hovered, session.picking) {
             (Some((target, true)), _) | (Some((target, false)), MotionPick::Bodies) => index
                 .body(target)
                 .map(|body| faces(body).collect())
                 .unwrap_or_default(),
-            (Some((target, false)), MotionPick::Reference) => vec![target],
-            (None, _) => Vec::new(),
+            (Some((target, false)), MotionPick::Reference | MotionPick::Align(_)) => {
+                vec![target]
+            }
+            (Some((_, false)), MotionPick::Nothing) | (None, _) => Vec::new(),
         };
-        let highlight = Arc::new(index.highlight_with(&hover, &picked, &[]));
+        let highlight = Arc::new(index.highlight_with(&hover, &picked, &second));
         if let Some(session) = &mut self.motion {
             session.highlight = highlight;
             session.built = Some(key);
@@ -1441,6 +1548,7 @@ impl Doc {
                 });
                 (axis.map(|axis| axis_name(document, axis)), origin)
             }
+            MotionKind::Align => (None, None),
             MotionKind::Mirror => {
                 let plane = session.plane.as_ref();
                 let origin = plane.and_then(|plane| match plane {
@@ -1512,6 +1620,7 @@ impl Doc {
             accept: self.commit_by(self.motion_ready(), true),
             editable: self.editable(),
             hover: self.panel_hover(),
+            align: (session.kind == MotionKind::Align).then(|| Box::new(self.align_view(session))),
         })
     }
 }
@@ -1627,6 +1736,8 @@ fn copy_user<'a>(
         Some((feature, document.body(*body)?))
     })
 }
+
+mod align;
 
 #[cfg(test)]
 mod tests;

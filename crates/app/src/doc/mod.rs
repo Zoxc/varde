@@ -708,6 +708,7 @@ impl Doc {
                 | Look::StartMirror
                 | Look::StartPattern
                 | Look::StartCircularPattern
+                | Look::StartAlign
                 | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
@@ -725,6 +726,7 @@ impl Doc {
                 | Look::StartMirror
                 | Look::StartPattern
                 | Look::StartCircularPattern
+                | Look::StartAlign
                 | Look::EditFeature(_)
         ) {
             self.measure = None;
@@ -752,11 +754,12 @@ impl Doc {
                 Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
                 Some(FeatureKind::Revolve(_)) => self.edit_revolve(id),
                 Some(FeatureKind::Combine(_)) => self.edit_combine(id),
-                Some(FeatureKind::Move(_) | FeatureKind::Mirror(_) | FeatureKind::Pattern(_)) => {
-                    self.edit_motion(id)
-                }
-                // No panel yet: aligns are made by the document's commands.
-                Some(FeatureKind::Align(_)) => {}
+                Some(
+                    FeatureKind::Move(_)
+                    | FeatureKind::Mirror(_)
+                    | FeatureKind::Pattern(_)
+                    | FeatureKind::Align(_),
+                ) => self.edit_motion(id),
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
@@ -771,6 +774,7 @@ impl Doc {
             Look::StartCircularPattern => {
                 self.start_motion(varde_view::MotionKind::CircularPattern)
             }
+            Look::StartAlign => self.start_motion(varde_view::MotionKind::Align),
             Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),

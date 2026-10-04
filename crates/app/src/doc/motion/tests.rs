@@ -1096,4 +1096,5 @@ fn a_move_follows_a_body_a_redone_combine_merges() {
     assert_eq!(moved.bodies, [plate]);
 }
 
+mod align;
 mod pattern;

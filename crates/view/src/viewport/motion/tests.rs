@@ -28,7 +28,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         editing: None,
         bodies: Vec::new(),
         picking,
-        fields: [field(0.0); 6],
+        fields: [field(0.0); 7],
         reference: Some("Z axis".to_owned()),
         line,
         bounds: Some([DVec3::new(-30.0, -20.0, 0.0), DVec3::new(30.0, 20.0, 10.0)]),
@@ -51,6 +51,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         accept: false,
         editable: true,
         hover: None,
+        align: None,
     }
 }
 
@@ -170,6 +171,40 @@ fn the_axis_and_the_plane_are_drawn_where_they_re_found() {
             "{kind:?}"
         );
     }
+}
+
+/// An align draws each side's point and directions where they're
+/// known, and nothing else: no handles, no axis.
+#[test]
+fn an_align_draws_its_points_and_directions() {
+    let colors = Mode::Light.palette().sketching;
+    let scene = Mode::Light.palette().scene;
+    let camera = front();
+    let input = Input::default();
+    let layers = |marks: [crate::AlignMark; 2]| {
+        let mut state = state(MotionKind::Align, MotionPick::Nothing, None);
+        state.reference = None;
+        state.align = Some(Box::new(crate::AlignView {
+            names: Default::default(),
+            info: None,
+            marks,
+            snaps: None,
+        }));
+        let moving = Moving::new(state);
+        moving.layers(&input, &scene, colors, &camera, bounds()).1
+    };
+    assert!(layers(Default::default()).is_empty());
+    let mark = crate::AlignMark {
+        point: Some(DVec3::new(30.0, 20.0, 10.0)),
+        directions: [Some(DVec3::Z), None],
+    };
+    assert!(!layers([Default::default(), mark]).is_empty());
+    // A point that isn't finite isn't drawn.
+    let far = crate::AlignMark {
+        point: Some(DVec3::NAN),
+        directions: [Some(DVec3::Z), None],
+    };
+    assert!(layers([far, Default::default()]).is_empty());
 }
 
 #[test]

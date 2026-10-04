@@ -31,7 +31,8 @@ sketches and editable features. It runs natively and in the browser.
   editable in a timeline.
 - Sketches on flat faces that follow the face as earlier features change.
 - Combining bodies: one body united with, less, or intersected with others.
-- Moving, mirroring and patterning bodies, in a row or round an axis.
+- Moving, mirroring and patterning bodies, in a row or round an axis, and
+  aligning one onto another by points and directions.
 - Faces, edges, vertices and bodies selected by clicking them with no tool
   open (a double-click takes the body); `Shift`- or `Ctrl`-click (`Cmd` on
   macOS) adds or removes one, `Space` or a click on an empty part of the

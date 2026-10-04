@@ -31,13 +31,15 @@ use crate::revolve::edge_axis_name;
 use crate::theme;
 use crate::{CombineBody, Edit, Look, Message, VALUE_FIELD};
 
-/// Which is set up: a move, a mirror, or a linear or circular pattern.
+/// Which is set up: a move, a mirror, a linear or circular pattern, or
+/// an align.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionKind {
     Move,
     Mirror,
     LinearPattern,
     CircularPattern,
+    Align,
 }
 
 impl MotionKind {
@@ -47,17 +49,19 @@ impl MotionKind {
             MotionKind::Move => "Move",
             MotionKind::Mirror => "Mirror",
             MotionKind::LinearPattern | MotionKind::CircularPattern => "Pattern",
+            MotionKind::Align => "Align",
         }
     }
 
-    /// Its icon, the UI mock's `move`, `bmirror`, `lpattern` and
-    /// `cpattern`.
+    /// Its icon, the UI mock's `move`, `bmirror`, `lpattern`, `cpattern`
+    /// and `align`.
     pub fn icon(self) -> Icon {
         match self {
             MotionKind::Move => Icon::Move,
             MotionKind::Mirror => Icon::BMirror,
             MotionKind::LinearPattern => Icon::LPattern,
             MotionKind::CircularPattern => Icon::CPattern,
+            MotionKind::Align => Icon::Align,
         }
     }
 
@@ -69,6 +73,7 @@ impl MotionKind {
             MotionKind::Mirror => "New mirror",
             MotionKind::LinearPattern => "New linear pattern",
             MotionKind::CircularPattern => "New circular pattern",
+            MotionKind::Align => "New align",
         }
     }
 
@@ -81,13 +86,13 @@ impl MotionKind {
     }
 
     /// Whether its reference is an axis (a move's, a pattern's), not a
-    /// plane (a mirror's).
+    /// plane (a mirror's) or an align's points and directions.
     pub fn takes_axis(self) -> bool {
-        self != MotionKind::Mirror
+        !matches!(self, MotionKind::Mirror | MotionKind::Align)
     }
 
     /// The session that edits a feature of `kind`, if one does: a move, a
-    /// mirror, or a linear or circular pattern.
+    /// mirror, a linear or circular pattern, or an align.
     pub fn of(kind: &FeatureKind) -> Option<MotionKind> {
         Some(match kind {
             FeatureKind::Move(_) => MotionKind::Move,
@@ -96,6 +101,7 @@ impl MotionKind {
                 PatternKind::Linear { .. } => MotionKind::LinearPattern,
                 PatternKind::Circular { .. } => MotionKind::CircularPattern,
             },
+            FeatureKind::Align(_) => MotionKind::Align,
             _ => return None,
         })
     }
@@ -145,36 +151,108 @@ impl PatternMode {
     }
 }
 
-/// What a click in the viewport picks: bodies, or the reference (a
-/// move's axis, a mirror's plane). A click on one of the panel's fields
-/// makes it the one picking.
+/// What a click in the viewport picks: bodies, the reference (a move's
+/// axis, a mirror's plane), one of an align's points or directions, or
+/// nothing (an align with all it asks for picked). A click on one of the
+/// panel's fields makes it the one picking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MotionPick {
     #[default]
     Bodies,
     Reference,
+    Align(AlignSlot),
+    Nothing,
 }
 
-/// A typed field: a move's offset along a world axis or its angle, or a
+/// Which side of an align a point or direction is on: the body moved, or
+/// what it's aligned to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AlignSide {
+    Moved,
+    Target,
+}
+
+impl AlignSide {
+    /// Where it's kept in a pair: the moved side first.
+    pub fn index(self) -> usize {
+        match self {
+            AlignSide::Moved => 0,
+            AlignSide::Target => 1,
+        }
+    }
+}
+
+/// Which of a side's references: its point, its direction or its second
+/// direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AlignRole {
+    Point,
+    Primary,
+    Secondary,
+}
+
+impl AlignRole {
+    /// The three in the panel's order.
+    pub const ALL: [AlignRole; 3] = [AlignRole::Point, AlignRole::Primary, AlignRole::Secondary];
+
+    /// Where it's kept in a side's three.
+    pub fn index(self) -> usize {
+        match self {
+            AlignRole::Point => 0,
+            AlignRole::Primary => 1,
+            AlignRole::Secondary => 2,
+        }
+    }
+
+    /// Its field's label in the panel: "Point", "Direction", "Second
+    /// direction".
+    pub fn label(self) -> &'static str {
+        match self {
+            AlignRole::Point => "Point",
+            AlignRole::Primary => "Direction",
+            AlignRole::Secondary => "Second direction",
+        }
+    }
+}
+
+/// One of an align's six references: a side's point, direction or
+/// second direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AlignSlot {
+    pub side: AlignSide,
+    pub role: AlignRole,
+}
+
+impl AlignSlot {
+    pub const fn new(side: AlignSide, role: AlignRole) -> Self {
+        Self { side, role }
+    }
+}
+
+/// A typed field: a move's offset along a world axis or its angle, a
 /// pattern's count or its spacing or total (a length, or a circular
-/// one's angle).
+/// one's angle), or an align's distance along the target's direction
+/// (its turn about it is the angle's field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionField {
     Offset(Axis3),
     Angle,
     Count,
     Spread,
+    Distance,
 }
 
 impl MotionField {
-    /// The six, a move's in the panel's order, then a pattern's.
-    pub const ALL: [MotionField; 6] = [
+    /// The seven, a move's in the panel's order, then a pattern's, then
+    /// an align's distance.
+    pub const ALL: [MotionField; 7] = [
         MotionField::Offset(Axis3::X),
         MotionField::Offset(Axis3::Y),
         MotionField::Offset(Axis3::Z),
         MotionField::Angle,
         MotionField::Count,
         MotionField::Spread,
+        MotionField::Distance,
     ];
 
     /// Where it's kept in an array of the six.
@@ -186,6 +264,7 @@ impl MotionField {
             MotionField::Angle => 3,
             MotionField::Count => 4,
             MotionField::Spread => 5,
+            MotionField::Distance => 6,
         }
     }
 
@@ -199,6 +278,7 @@ impl MotionField {
             MotionField::Offset(Axis3::Z) => iced::widget::Id::new("move-z"),
             MotionField::Angle => iced::widget::Id::new("move-angle"),
             MotionField::Spread => iced::widget::Id::new("pattern-spread"),
+            MotionField::Distance => iced::widget::Id::new("align-distance"),
         }
     }
 
@@ -210,6 +290,7 @@ impl MotionField {
             MotionField::Angle => "Angle",
             MotionField::Count => "Count",
             MotionField::Spread => "Spacing",
+            MotionField::Distance => "Distance",
         }
     }
 }
@@ -225,9 +306,14 @@ pub enum MotionLook {
     Drop(BodyId),
     /// The text in a move's field, as typed.
     Input { field: MotionField, text: String },
-    /// An origin axis as a move's axis: the toolbar's, while the axis is
-    /// picked.
+    /// An origin axis as a move's axis, or an align's direction on the
+    /// target: the toolbar's, while the axis or direction is picked.
     OriginAxis(Axis3),
+    /// The origin as an align's point on the target: the toolbar's, while
+    /// that point is picked.
+    OriginPoint,
+    /// Takes an align's reference out: its row's cross.
+    Clear(AlignSlot),
     /// An origin plane as a mirror's plane: the toolbar's, while the
     /// plane is picked.
     OriginPlane(OriginPlane),
@@ -243,7 +329,8 @@ pub enum MotionLook {
     },
     /// A mirror's Create copy: keeps the original, or not.
     Copy,
-    /// A linear pattern's Flip direction: runs the other way, or not.
+    /// A linear pattern's Flip direction: runs the other way, or not; an
+    /// align's Flip: its directions meet the other way round.
     Flip,
     /// A pattern's Join to original: its copies in their bodies, or each
     /// a body of its own.
@@ -266,8 +353,9 @@ pub struct MotionState<'a> {
     /// What a click picks.
     pub picking: MotionPick,
     /// Its fields ([`MotionField::index`]): a move's offsets along X, Y
-    /// and Z and its angle, a pattern's count and spread.
-    pub fields: [TypedField<'a>; 6],
+    /// and Z and its angle, a pattern's count and spread, an align's
+    /// distance.
+    pub fields: [TypedField<'a>; 7],
     /// The reference's name, "Z axis", "Edge of Body 1", "XY plane",
     /// "Extrude 1's end", if there's one.
     pub reference: Option<String>,
@@ -336,6 +424,8 @@ pub struct MotionState<'a> {
     /// The row of the panel the cursor is over, if any: the viewport
     /// lights it up too.
     pub hover: Option<PanelHover>,
+    /// An align's own parts, for an align.
+    pub align: Option<Box<AlignView<'a>>>,
 }
 
 impl<'a> MotionState<'a> {
@@ -479,7 +569,7 @@ pub(crate) fn align_note(document: &Document, align: &varde_document::Align) -> 
 }
 
 /// What the status bar says of a selected align: "Body 1 to Body 2".
-pub(crate) fn align_info(document: &Document, align: &varde_document::Align) -> String {
+pub fn align_info(document: &Document, align: &varde_document::Align) -> String {
     let moved = body_names(document, &[align.body]);
     format!("{moved} {}", align_note(document, align))
 }
@@ -523,6 +613,9 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
             Some(copies) => format!("{bodies} · {copies}"),
             None => bodies,
         },
+        (MotionKind::Align, _) => (state.align.as_ref())
+            .and_then(|align| align.info.clone())
+            .unwrap_or(bodies),
         _ => bodies,
     }
 }
@@ -552,9 +645,14 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             )
         })
         .collect();
-    let place = (rows.is_empty() || picking_bodies).then(|| "Click bodies".to_owned());
+    // An align moves one body.
+    let (bodies_label, bodies_place) = match state.kind {
+        MotionKind::Align => ("Body", "Click a body"),
+        _ => ("Bodies", "Click bodies"),
+    };
+    let place = (rows.is_empty() || picking_bodies).then(|| bodies_place.to_owned());
     let bodies = field(
-        "Bodies",
+        bodies_label,
         pick_field(rows, place, picking_bodies, pick_bodies),
     );
 
@@ -565,7 +663,8 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             ("Axis", Icon::SeAxis, "Click an axis or edge")
         }
         MotionKind::LinearPattern => ("Direction", Icon::SeAxis, "Click an axis or edge"),
-        MotionKind::Mirror => ("Plane", Icon::SePlane, "Click a plane or face"),
+        // An align's references are its own fields: this one isn't shown.
+        MotionKind::Mirror | MotionKind::Align => ("Plane", Icon::SePlane, "Click a plane or face"),
     };
     let reference_row = state.reference.clone().map(|name| {
         picked_row(
@@ -605,6 +704,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     };
     let field_of = |which: MotionField| field_named(which, which.label());
     let body: Element<'a, Message> = match state.kind {
+        MotionKind::Align => align::body(state, bodies, field_named),
         MotionKind::Move => {
             let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
             column![
@@ -714,6 +814,9 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
 fn section(name: &str) -> iced::widget::Text<'_> {
     label(name)
 }
+
+mod align;
+pub use align::{AlignMark, AlignView, direction_name, point_name};
 
 #[cfg(test)]
 mod tests;

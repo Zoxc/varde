@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use varde_document::BodyId;
 use varde_view::{
-    ModelHighlight, ModelPicking, MotionPick, PanelHover, Pick, Picked, Picks, Selection,
+    AlignRole, ModelHighlight, ModelPicking, MotionPick, PanelHover, Pick, Picked, Picks, Selection,
 };
 
 use super::Doc;
@@ -293,15 +293,21 @@ impl Doc {
     /// what the selection's mode takes.
     pub(crate) fn model_picking(&self) -> Option<ModelPicking<'_>> {
         let measuring = self.measure.is_some();
+        // An align's point is picked as the measure tool picks points: on
+        // what the cursor is over, at its snap points.
+        let pointing = (self.motion.as_ref()).is_some_and(|session| {
+            matches!(session.picking, MotionPick::Align(slot) if slot.role == AlignRole::Point)
+        });
         self.picks().then(|| ModelPicking {
             index: self.feed.pick_index(),
             hovered: self.pick.hover().map(|pick| pick.target),
             hovered_snap: self.pick.hover().and_then(|pick| pick.snap),
-            picks: if measuring {
+            picks: if measuring || pointing {
                 Picks::All
             } else if let Some(session) = &self.motion {
                 match session.picking {
                     MotionPick::Reference if session.kind.takes_axis() => Picks::EdgesAndFaces,
+                    MotionPick::Align(_) => Picks::EdgesAndFaces,
                     _ => Picks::Faces,
                 }
             } else if self.picking_plane.is_some() || self.combine.is_some() {
@@ -309,7 +315,7 @@ impl Doc {
             } else {
                 self.pick.selection.mode().picks()
             },
-            snaps: measuring,
+            snaps: measuring || pointing,
             planes: (self.picking_plane.as_ref())
                 .filter(|_| !measuring)
                 .map(|picking| &picking.pick),

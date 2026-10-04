@@ -2599,7 +2599,10 @@ fn a_pattern_and_an_align_round_trip_together() {
     assert_eq!(&read, document);
     let n = read.features().len();
     assert!(matches!(read.features()[n - 2].kind, FeatureKind::Align(_)));
-    assert!(matches!(read.features()[n - 1].kind, FeatureKind::Pattern(_)));
+    assert!(matches!(
+        read.features()[n - 1].kind,
+        FeatureKind::Pattern(_)
+    ));
 }
 
 /// A record whose align was changed on disk to what the document refuses
