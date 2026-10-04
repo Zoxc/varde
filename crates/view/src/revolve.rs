@@ -553,7 +553,7 @@ fn angle_field<'a>(
         field,
         input,
         Message::Edit(Edit::CommitRevolve),
-        Message::Look(Look::Revolve(RevolveLook::Cancel)),
+        Some(Message::Look(Look::Revolve(RevolveLook::Cancel))),
     )
 }
 

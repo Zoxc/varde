@@ -27,6 +27,9 @@ use crate::{Edit, Look, Message, VALUE_FIELD};
 /// is [`VALUE_FIELD`], which takes the focus as the session opens.
 const SECOND_FIELD: iced::widget::Id = iced::widget::Id::new("extrude-second");
 
+/// The field of an extrude's taper.
+const TAPER_FIELD: iced::widget::Id = iced::widget::Id::new("extrude-taper");
+
 /// How far the handle's snapping steps are apart at least, in pixels at
 /// the target: a step is the roundest length in the design's units at
 /// least this many pixels long.
@@ -120,6 +123,9 @@ pub enum ExtrudeLook {
     },
     /// Turns the direction round, for one side and two sides.
     Flip,
+    /// The text in the taper's field, as typed: an angle the walls lean
+    /// by, 0° for none.
+    Taper(String),
     /// Chooses the operation. Leaving a cut, through all goes back to
     /// one side.
     Operation(OperationKind),
@@ -160,6 +166,8 @@ pub struct ExtrudeState<'a> {
     /// The first distance's field, and two sides' second.
     pub fields: [TypedField<'a>; 2],
     pub flip: bool,
+    /// The taper's field: an angle, 0° for none.
+    pub taper: TypedField<'a>,
     pub operation: OperationKind,
     /// For a join, cut or intersect, the bodies its preview touches and
     /// those taken out of it, in the order they were made.
@@ -418,6 +426,16 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
             None,
         )
     });
+    let taper = value_field(
+        "Taper",
+        TAPER_FIELD,
+        state.taper,
+        editable.then_some(|text| Message::Look(Look::Extrude(ExtrudeLook::Taper(text)))),
+        Message::Edit(Edit::CommitExtrude),
+        // The distance's field sends it, where there is one.
+        (state.extent.distances().is_empty())
+            .then_some(Message::Look(Look::Extrude(ExtrudeLook::Cancel))),
+    );
     let operations = OperationKind::ALL.map(|kind| {
         tile(
             kind.icon(),
@@ -454,6 +472,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         field("Extent", tiles(extents)),
         column(fields).spacing(8),
         flip,
+        taper,
         field("Operation", tiles(operations)),
         targets,
     ]
@@ -495,7 +514,8 @@ fn distance_field<'a>(
         field,
         input,
         Message::Edit(Edit::CommitExtrude),
-        Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
+        // One field sends it, so `Esc` cancels once.
+        (distance == Distance::First).then_some(Message::Look(Look::Extrude(ExtrudeLook::Cancel))),
     )
 }
 

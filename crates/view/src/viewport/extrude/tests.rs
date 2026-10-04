@@ -72,6 +72,11 @@ fn state<'a>(
         extent: ExtentKind::OneSide,
         fields: [field; 2],
         flip: false,
+        taper: TypedField {
+            text: "0°",
+            error: None,
+            value: Some(0.0),
+        },
         operation: OperationKind::NewBody,
         targets: Vec::new(),
         grabbed,

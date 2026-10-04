@@ -7,7 +7,7 @@
 use varde_document::{
     Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind, MAX_EXTRUDE_REGIONS,
 };
-use varde_expr::{LengthUnit, Unit};
+use varde_expr::{AngleUnit, LengthUnit, Unit};
 use varde_render::Camera;
 use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind, PanelHover};
 
@@ -34,8 +34,9 @@ pub(crate) struct ExtrudeSession {
     /// nothing. False otherwise.
     ignored_flip: bool,
     pub(crate) operation: OperationKind,
-    /// The edited extrude's taper, kept as it was.
-    taper: Option<varde_expr::Value>,
+    /// The taper's field: an angle, 0° (stored as none) to begin with
+    /// or the edited extrude's.
+    pub(crate) taper: TypedText,
     /// The bodies a join, cut or intersect leaves out: the edited
     /// extrude's to start with.
     pub(crate) targets: BodyTargets,
@@ -80,6 +81,8 @@ impl ExtrudeSession {
         let units = document.units();
         let text = varde_expr::format(default_distance(camera, units), Some(Unit::Length(units)));
         let distance = TypedText::read(text, &Extent::ask(&document.design()));
+        let none = varde_expr::format(0.0, Some(Unit::Angle(AngleUnit::Deg)));
+        let taper = TypedText::read(none, &Extrude::taper_ask(&document.design()));
         Self {
             feature: None,
             regions: RegionPick::new(source, MAX_EXTRUDE_REGIONS),
@@ -88,7 +91,7 @@ impl ExtrudeSession {
             flip: false,
             ignored_flip: false,
             operation: OperationKind::NewBody,
-            taper: None,
+            taper,
             targets: BodyTargets::default(),
             grabbed: None,
             hover: None,
@@ -131,7 +134,9 @@ impl ExtrudeSession {
         session.flip = extrude.flip;
         session.ignored_flip = extrude.flip && !session.extent.flips();
         session.operation = OperationKind::of(&extrude.operation);
-        session.taper = extrude.taper.clone();
+        if let Some(taper) = &extrude.taper {
+            session.taper = TypedText::of(taper, &Extrude::taper_ask(&document.design()));
+        }
         session.targets = BodyTargets::new(extrude.operation.excluded());
         session
     }
@@ -149,6 +154,7 @@ impl ExtrudeSession {
         for field in &mut self.fields {
             field.follow_units(&ask);
         }
+        self.taper.follow_units(&Extrude::taper_ask(&self.design));
         self.design = design;
     }
 
@@ -165,7 +171,8 @@ impl ExtrudeSession {
     }
 
     /// The extrude as set up, if it's whole: a source, regions picked, and
-    /// the distances its extent takes, as they last read.
+    /// the distances its extent takes and the taper, as they last read (a
+    /// taper of nothing is none).
     fn extrude(&self) -> Option<Extrude> {
         let sketch = self.regions.source?;
         if self.regions.picked.is_empty() {
@@ -180,12 +187,13 @@ impl ExtrudeSession {
             }
             ExtentKind::ThroughAll => Extent::ThroughAll,
         };
+        let taper = self.taper.value.clone()?;
         Some(Extrude {
             sketch,
             regions: self.regions.references().to_vec(),
             extent,
             flip: self.stored_flip(),
-            taper: self.taper.clone(),
+            taper: (taper.value != 0.0).then_some(taper),
             operation: self.targets.operation(self.operation),
         })
     }
@@ -199,7 +207,8 @@ impl ExtrudeSession {
     }
 
     /// Whether it can be committed to a document of `design`: it's whole,
-    /// none of the distances its extent takes is refused, and it passes
+    /// none of the distances its extent takes nor the taper is refused,
+    /// and it passes
     /// its own check ([`ExtrudeSession::refused`]). What's left to the
     /// document are the references to other features and bodies, which
     /// the session keeps valid.
@@ -208,7 +217,8 @@ impl ExtrudeSession {
             .extent
             .distances()
             .iter()
-            .all(|distance| self.fields[distance.index()].error.is_none());
+            .all(|distance| self.fields[distance.index()].error.is_none())
+            && self.taper.error.is_none();
         typed
             && self
                 .extrude()
@@ -329,6 +339,11 @@ impl Doc {
                 session.fields[distance.index()].input(text, &ask);
             }
             ExtrudeLook::Flip => session.flip = !session.flip,
+            ExtrudeLook::Taper(text) => {
+                session
+                    .taper
+                    .input(text, &Extrude::taper_ask(&document.design()));
+            }
             ExtrudeLook::Operation(kind) => {
                 session.operation = kind;
                 if kind != OperationKind::Cut && session.extent == ExtentKind::ThroughAll {
@@ -441,6 +456,7 @@ impl Doc {
             extent: session.extent,
             fields: [session.fields[0].field(), session.fields[1].field()],
             flip: session.flip,
+            taper: session.taper.field(),
             operation: session.operation,
             targets: self.body_targets(session.operation, session.feature, &session.targets),
             grabbed: session.grabbed,

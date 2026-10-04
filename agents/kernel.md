@@ -8676,6 +8676,8 @@ the regions picked, as indices and as
 `Profiles::reference`s made as they're picked (a region too thin for a
 reference can't be picked); the extent kind, the two distance fields
 (text, last good `Value`, error, read with `Extent::ask`), flip, the
+taper's field (the same, read with `Extrude::taper_ask`; the edited
+extrude's taper shown as typed, units followed as the distances'), the
 operation and the excluded bodies (kept from the edited extrude). When
 the source sketch changes under it (undo), the picked regions are found
 again by their references (`Profiles::resolve`); while its regions can't
@@ -8757,8 +8759,14 @@ Profile, a field of the regions picked as rows (`Icon::SeRegion`,
 extrude"), always the one picking; the extents (Through all only while Cut is
 chosen, else disabled with "Only a cut goes through all"; choosing
 another operation while through all goes back to one side), the distance fields (the first is `VALUE_FIELD`, which
-takes the focus as the session opens, all selected; `Esc` in it cancels),
-Flip for one side and two sides, the operations, for Join, Cut and
+takes the focus as the session opens, all selected; `Esc` in it cancels,
+the one field sending it, so `Esc` cancels once: `value_field`'s
+`cancel` is optional), Flip for one side and two sides, Taper (a typed
+angle, `ExtrudeLook::Taper`, read with `Extrude::taper_ask`, 0° to begin
+with and stored as none, refused at 90° or more either way; the mock has
+no taper, so it's a field in the style of the distances, after Flip;
+`Esc` in it cancels only for through all, which has no distance field;
+the handle still drags only the distance), the operations, for Join, Cut and
 Intersect a "Bodies" list with a checkbox per body (`BodyTarget`: the
 draft's touched bodies as the newest answer of the current run of drafts
 that ran the touch test gave them, `MeshFeed::draft_touched`: kept while a
@@ -8837,7 +8845,11 @@ typed.
 **The Timeline** (`view/src/panels.rs`) shows an extrude with the extrude
 icon and its distances as the note, in the design's units
 (`extent_note`: "10 mm", "10 mm symmetric", "10 mm + 5 mm", "Through
-all"). A feature in the answer's `failed` (which `MeshFeed` keeps with
+all"), a taper after it (`extrude_note`: "10 mm · 2°"; the status bar
+"Distance 10 mm · Taper 2° · New body"). A tapered extrude's preview
+fails as too complex until the kernel's taper is built ("tapering its
+walls is too complex to work out"): OK waits and Add anyway keeps it,
+failing in the Timeline. A feature in the answer's `failed` (which `MeshFeed` keeps with
 the model shown, `failed_features`) has its name in the danger colour
 and tells why in a tooltip; a sketch that doesn't solve is marked as
 before. Neither is given out from a model of before a replacement of

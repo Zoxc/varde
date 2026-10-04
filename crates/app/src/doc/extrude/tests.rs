@@ -2643,7 +2643,7 @@ fn the_wheel_over_the_panel_scrolls_it_not_the_camera_and_keeps_the_focus() {
     // Over the panel's body, it scrolls the body and nothing else.
     let before = texts(&mut ui, &varde_view::probe::renderer());
     let (panel, _) = panel_texts(&before);
-    let first = panel.iter().find(|text| text.text == "Operation").unwrap();
+    let first = panel.iter().find(|text| text.text == "Taper").unwrap();
     let at = first.bounds.center();
     let sent: Vec<_> = wheel(at)
         .into_iter()
@@ -2652,7 +2652,7 @@ fn the_wheel_over_the_panel_scrolls_it_not_the_camera_and_keeps_the_focus() {
     assert!(sent.is_empty(), "{sent:?}");
     let after = texts(&mut ui, &varde_view::probe::renderer());
     let (panel, _) = panel_texts(&after);
-    let moved = panel.iter().find(|text| text.text == "Operation").unwrap();
+    let moved = panel.iter().find(|text| text.text == "Taper").unwrap();
     assert!(
         moved.bounds.y < first.bounds.y - 10.0,
         "{first:?} {moved:?}"
@@ -3045,6 +3045,9 @@ fn dragging_the_panel_s_scrollbar_over_the_scene_only_scrolls() {
     let after = body_1(&mut ui, &renderer);
     assert!(after.y < before.y - 100.0, "{before:?} {after:?}");
 }
+
+/// The Taper field, previewed, refused, committed and edited.
+mod taper;
 
 /// Screenshots of the extrude session and the screens around it, to look
 /// at: `#[ignore]`d, and written only where `VARDE_SHOTS` says.

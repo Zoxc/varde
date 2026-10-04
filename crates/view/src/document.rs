@@ -2004,7 +2004,13 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
                 Extent::ThroughAll => note,
             };
             let operation = OperationKind::of(&extrude.operation).label();
-            format!("{extent} · {operation}")
+            match &extrude.taper {
+                Some(taper) => {
+                    let taper = panels::angle_note(taper.value);
+                    format!("{extent} · Taper {taper} · {operation}")
+                }
+                None => format!("{extent} · {operation}"),
+            }
         }
         FeatureKind::Revolve(revolve) => {
             let operation = OperationKind::of(&revolve.operation).label();
@@ -2403,7 +2409,21 @@ mod tests {
             info(Extent::TwoSides(distance.clone(), distance), cut.clone()),
             "Two sides 10 mm + 10 mm · Cut"
         );
-        assert_eq!(info(Extent::ThroughAll, cut), "Through all · Cut");
+        assert_eq!(info(Extent::ThroughAll, cut.clone()), "Through all · Cut");
+        changed.extent = Extent::ThroughAll;
+        changed.operation = cut;
+        changed.taper = Some(varde_expr::Value {
+            text: "1.5".to_owned(),
+            value: 1.5f64.to_radians(),
+        });
+        let tapered = Feature {
+            kind: FeatureKind::Extrude(changed),
+            ..extrude.clone()
+        };
+        assert_eq!(
+            feature_info(&tapered, &document),
+            "Through all · Taper 1.5° · Cut"
+        );
     }
 
     #[test]

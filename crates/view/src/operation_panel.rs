@@ -917,14 +917,15 @@ pub(crate) fn ordered_row<'a>(
 /// A typed value's field, named `label`, with the id `id`, showing why its
 /// text is refused under it. It sends `input` of the text typed, if the
 /// document can be changed; `Enter` in it sends `submit` (OK), `Esc`
-/// `cancel`.
+/// `cancel`, if given, whatever has the focus: a panel gives it to one
+/// field, so `Esc` sends it once.
 pub(crate) fn value_field<'a>(
     label_text: &'a str,
     id: iced::widget::Id,
     field_text: TypedField<'a>,
     input: Option<impl Fn(String) -> Message + 'a>,
     submit: Message,
-    cancel: Message,
+    cancel: Option<Message>,
 ) -> Element<'a, Message> {
     let field_input = text_input(label_text, field_text.text)
         .id(id)
@@ -938,7 +939,10 @@ pub(crate) fn value_field<'a>(
         Some(input) => field_input.on_input(input).on_submit(submit),
         None => field_input,
     };
-    let field_input = OnEscape::new(field_input, cancel);
+    let field_input: Element<'a, Message> = match cancel {
+        Some(cancel) => OnEscape::new(field_input, cancel).into(),
+        None => field_input.into(),
+    };
     let error = field_text.error.map(|error| {
         text(sentence(&error.to_string()).into_owned())
             .size(11.5)

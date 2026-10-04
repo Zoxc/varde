@@ -245,7 +245,7 @@ fn feature_row<'a>(
     let note = match &feature.kind {
         FeatureKind::Sketch { .. } if unsolved => "Doesn't solve".into(),
         FeatureKind::Sketch { plane, .. } => crate::plane_note(document, plane).into(),
-        FeatureKind::Extrude(extrude) => extent_note(&extrude.extent, units).into(),
+        FeatureKind::Extrude(extrude) => extrude_note(extrude, units).into(),
         FeatureKind::Revolve(revolve) => turn_note(&revolve.extent).into(),
         FeatureKind::Combine(combine) => combine.op.label().into(),
         FeatureKind::Move(moved) => crate::motion::move_note(moved, units).into(),
@@ -384,6 +384,16 @@ pub(crate) fn extent_note(extent: &Extent, units: LengthUnit) -> String {
         Extent::Symmetric(d) => format!("{} symmetric", length(d)),
         Extent::TwoSides(a, b) => format!("{} + {}", length(a), length(b)),
         Extent::ThroughAll => "Through all".to_owned(),
+    }
+}
+
+/// An extrude's Timeline note: its extent, and its taper if it has
+/// one, "10 mm · 2°".
+pub(crate) fn extrude_note(extrude: &varde_document::Extrude, units: LengthUnit) -> String {
+    let extent = extent_note(&extrude.extent, units);
+    match &extrude.taper {
+        Some(taper) => format!("{extent} · {}", angle_note(taper.value)),
+        None => extent,
     }
 }
 
@@ -1171,6 +1181,24 @@ mod tests {
             "10 mm + 2.5 mm"
         );
         assert_eq!(extent_note(&Extent::ThroughAll, mm), "Through all");
+    }
+
+    #[test]
+    fn a_tapered_extrude_is_noted_with_its_taper() {
+        let document = Document::example();
+        let FeatureKind::Extrude(extrude) = &document.features()[1].kind else {
+            panic!("the example's second feature is its extrude");
+        };
+        let mm = LengthUnit::Mm;
+        assert_eq!(extrude_note(extrude, mm), "10 mm");
+        let tapered = varde_document::Extrude {
+            taper: Some(varde_expr::Value {
+                text: "-2".to_owned(),
+                value: -(2f64.to_radians()),
+            }),
+            ..extrude.clone()
+        };
+        assert_eq!(extrude_note(&tapered, mm), "10 mm · -2°");
     }
 
     #[test]

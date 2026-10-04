@@ -27,8 +27,8 @@ sketches and editable features. It runs natively and in the browser.
 - Constraints and dimensions, solved as you edit; dimensions take
   expressions with units (`1 in + 3 mm`).
 - Trim, extend, offset, mirror, fillet and chamfer.
-- Extrudes and revolves that make bodies or join, cut or intersect them,
-  editable in a timeline.
+- Extrudes (tapered or straight) and revolves that make bodies or join,
+  cut or intersect them, editable in a timeline.
 - Sketches on flat faces that follow the face as earlier features change.
 - Combining bodies: one body united with, less, or intersected with others.
 - Filleting and chamfering a body's edges, shelling a body to thin
