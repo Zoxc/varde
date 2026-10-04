@@ -112,6 +112,7 @@ fn frame<'a>(
         hovered_faces: &[],
         selected_faces: &[],
         second_faces: &[],
+        hover_through: false,
         highlights: &NO_HIGHLIGHTS,
         errors: &[],
         sketch: None,

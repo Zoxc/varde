@@ -29,6 +29,7 @@ use varde_sketch::{
 
 use crate::document::tied_items;
 use crate::hit::{self, BoxMode, ScreenBox};
+use crate::overlaps::{self, OverlapItems, Overlaps};
 use crate::projection::{Cursor, Projector};
 use crate::shortcut::Held;
 use crate::snap::{self, Snap};
@@ -246,6 +247,11 @@ struct Press {
     moved: bool,
     /// Whether it drags `hit`.
     grab: bool,
+    /// When it went down.
+    when: Instant,
+    /// Whether it was held still long enough to list what overlaps
+    /// where it went down, listed or not.
+    held: bool,
 }
 
 /// A dimension's label grabbed, followed by the viewport.
@@ -268,6 +274,12 @@ impl Press {
     /// Whether it drags geometry.
     fn drags_geometry(&self) -> bool {
         self.moved && self.grab
+    }
+
+    /// When what overlaps where it went down is listed if it's held still
+    /// till then, unless it has moved or that's been looked at.
+    fn lists_at(&self) -> Option<Instant> {
+        (!self.moved && !self.held).then(|| self.when + overlaps::HOLD_DELAY)
     }
 }
 
@@ -379,8 +391,43 @@ impl<'a> Sketching<'a> {
                     Projector::new(camera, self.placement(), bounds.width, bounds.height)?;
                 self.mouse(input, *event, bounds, cursor, &projector, modifiers)
             }
+            Event::Window(iced::window::Event::RedrawRequested(now)) => {
+                self.hold(input, *now, bounds, camera)
+            }
             _ => None,
         }
+    }
+
+    /// Takes a frame drawn at `now` while the button may be held: held
+    /// still for [`overlaps::HOLD_DELAY`] over more than one item, it lets
+    /// go and lists them ([`Look::OpenOverlaps`]); over one or none it goes
+    /// on as it was.
+    fn hold(
+        &self,
+        input: &mut Input,
+        now: Instant,
+        bounds: Rectangle,
+        camera: &Camera,
+    ) -> Option<Action<Message>> {
+        let press = input.press.as_mut()?;
+        let due = press.lists_at()?;
+        if now < due {
+            // Asked again: a redraw asked for sooner lets go of it.
+            return Some(Action::request_redraw_at(due));
+        }
+        press.held = true;
+        let projector = Projector::new(camera, self.placement(), bounds.width, bounds.height)?;
+        let cursor = projector.cursor(press.from)?;
+        let tolerance = overlaps::OVERLAP_REACH * cursor.pixel;
+        let mut ids = hit::overlaps(self.sketch, cursor.at, tolerance);
+        if ids.len() < 2 {
+            return None;
+        }
+        ids.truncate(overlaps::MAX_OVERLAPS);
+        let size = [bounds.width, bounds.height];
+        let list = Overlaps::new(press.from, size, OverlapItems::Sketch(ids));
+        input.press = None;
+        Some(Action::publish(Message::Look(Look::OpenOverlaps(list))))
     }
 
     /// Takes the mouse `event`, with the `cursor` over `bounds`.
@@ -456,8 +503,11 @@ impl<'a> Sketching<'a> {
                     moved: false,
                     // The origin and axes stay where they are.
                     grab: self.editable && hit.is_some_and(|id| !id.is_builtin()),
+                    when: Instant::now(),
+                    held: false,
                 });
-                Some(Action::capture())
+                let due = input.press.as_ref().and_then(Press::lists_at)?;
+                Some(Action::request_redraw_at(due).and_capture())
             }
             mouse::Event::ButtonReleased(mouse::Button::Left) => {
                 if std::mem::take(&mut input.releasing) {

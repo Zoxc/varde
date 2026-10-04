@@ -1219,7 +1219,9 @@ bar says why (`EditError::Sketch`).
 - **Selection**: a click selects what it hits alone, or nothing;
   `Ctrl`-click (`Cmd` on macOS) adds or takes out. A box selects what's
   inside it dragged left to right, what it touches right to left, `Ctrl`
-  adding to the selection. `Space` clears the selection everywhere: the
+  adding to the selection. The button held still over items that
+  overlap lists them to choose one from ("Overlaps" in
+  `agents/viewport.md`). `Space` clears the selection everywhere: the
   sketch's in a sketch, else the model's and the Timeline's (see
   "Selecting" in `agents/viewport.md`). A row of the Geometry or
   Constraints list, or a glyph, sends `Look::ClickRow`, which the app
@@ -1400,7 +1402,10 @@ spline in an editable sketch, soon and near, sends
 whether the button's held with a tool that clicks
 where it's let go (`releasing`: Offset, Fillet or Chamfer placing); the
 modifiers are the widget's. A press on an item of an editable sketch drags
-it once it moves; elsewhere, or read-only, it drags a box. `Esc` lets go
+it once it moves; elsewhere, or read-only, it drags a box. Held still for
+`HOLD_DELAY` over more than one item (`Press::lists_at`,
+`Sketching::hold`), it ends and lists them (see "Overlaps" in
+`agents/viewport.md`). `Esc` lets go
 of what the button holds and keeps the key from the
 app: a box is only the viewport's, and a drag of geometry sends
 `Look::CancelDrag` for the app to put it back, which does nothing else,
@@ -1500,6 +1505,9 @@ Pure functions, tested headless:
   pixels (`hit_corner`); Offset, Fillet and Chamfer placing hit nothing.
   Pressing the origin or an axis without a tool selects it but never
   drags it.
+- `overlaps` finds everything within the tolerance, as `hit` would
+  each: points, the origin included, then curves, then axes, each
+  nearest first. A press held still lists them.
 - `in_box` projects points and flattened curves and tests them against the
   box on the screen: wholly inside, or touching (any segment meeting it).
   What's behind the eye is never inside.

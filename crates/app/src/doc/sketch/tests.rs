@@ -552,6 +552,75 @@ fn clicks_and_boxes_select_and_ctrl_adds() {
 }
 
 #[test]
+fn a_row_of_the_overlaps_listed_is_hovered_and_chosen() {
+    let (mut doc, [a, _, line, ..]) = with_shapes();
+    let list = |ids| varde_view::Overlaps {
+        held: DVec2::ZERO,
+        at: DVec2::ZERO,
+        items: varde_view::OverlapItems::Sketch(ids),
+    };
+    let hovered = |doc: &Doc| doc.sketch.as_ref().unwrap().hovered;
+    doc.look(Look::ClickGeometry {
+        hit: Some(line),
+        add: false,
+    });
+    doc.look(Look::OpenOverlaps(list(vec![a, line])));
+    doc.look(Look::HoverOverlap(Some(1)));
+    assert_eq!(hovered(&doc), Some(line));
+    // Moving up a row, the one entered tells it first.
+    doc.look(Look::HoverOverlap(Some(0)));
+    doc.look(Look::LeaveOverlap(1));
+    assert_eq!(hovered(&doc), Some(a));
+    doc.look(Look::ChooseOverlap {
+        index: 0,
+        add: false,
+    });
+    assert_eq!(selection(&doc), [a]);
+    assert_eq!(hovered(&doc), None);
+    assert!(doc.overlaps.is_none());
+
+    // Closed by a click away, or `Esc`, the selection as it was; `Esc`
+    // doesn't leave the sketch too.
+    doc.look(Look::OpenOverlaps(list(vec![a, line])));
+    doc.look(Look::HoverOverlap(Some(1)));
+    doc.look(Look::CloseOverlaps);
+    assert!(doc.overlaps.is_none());
+    assert_eq!((selection(&doc), hovered(&doc)), (vec![a], None));
+    doc.look(Look::OpenOverlaps(list(vec![a, line])));
+    doc.look(Look::Escape);
+    assert!(doc.overlaps.is_none() && doc.sketch.is_some());
+    assert_eq!(selection(&doc), [a]);
+    // With `Ctrl` held, chosen adds, the list kept open and its row
+    // hovered; again it takes it out; its tick does the same.
+    doc.look(Look::OpenOverlaps(list(vec![a, line])));
+    doc.look(Look::HoverOverlap(Some(1)));
+    doc.look(Look::ChooseOverlap {
+        index: 1,
+        add: true,
+    });
+    assert_eq!(selection(&doc), [a, line]);
+    assert!(doc.overlaps.is_some());
+    assert_eq!(hovered(&doc), Some(line));
+    doc.look(Look::ChooseOverlap {
+        index: 1,
+        add: true,
+    });
+    assert_eq!(selection(&doc), [a]);
+    doc.look(Look::ToggleOverlap(1));
+    assert_eq!(selection(&doc), [a, line]);
+    doc.look(Look::ToggleOverlap(0));
+    assert_eq!(selection(&doc), [line]);
+    assert!(doc.overlaps.is_some());
+    // A click without it closes the list.
+    doc.look(Look::ChooseOverlap {
+        index: 0,
+        add: false,
+    });
+    assert_eq!(selection(&doc), [a]);
+    assert!(doc.overlaps.is_none());
+}
+
+#[test]
 fn space_clears_the_selection_in_a_sketch_and_the_timeline_s_outside() {
     let (mut doc, [_, _, line, ..]) = with_shapes();
     let space = || keyboard::Key::Named(key::Named::Space);

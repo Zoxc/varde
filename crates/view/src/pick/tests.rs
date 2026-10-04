@@ -674,3 +674,78 @@ fn the_cursor_takes_the_nearest_snap_point_within_reach() {
         );
     }
 }
+
+#[test]
+fn overlaps_are_vertices_then_edges_then_faces_nearest_first() {
+    let index = plate();
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let top = camera(View::Top, projection);
+        // On the top, clear of its edges and the hole: the top, then the
+        // bottom under it, its back turned.
+        let at = shown(&top, DVec3::new(20.0, 5.0, 10.0));
+        let found = index.overlaps(&top, SIZE, at, Picks::All, 8.0, 12);
+        let planes: Vec<_> = found.iter().map(|p| plane(&index, p.target)).collect();
+        assert_eq!(planes, [TOP, BOTTOM], "{projection:?}");
+        assert!(found.iter().all(|pick| pick.model == 7));
+        assert!(
+            (index.overlaps(&top, SIZE, at, Picks::Edges, 8.0, 12)).is_empty(),
+            "{projection:?}"
+        );
+        // 2 pixels in from the top's front edge: it first, then the
+        // faces, the top first.
+        let edge = shown(&top, DVec3::new(10.0, -20.0, 10.0)) - DVec2::new(0.0, 2.0);
+        let found = index.overlaps(&top, SIZE, edge, Picks::All, 8.0, 12);
+        assert_eq!(
+            sides(&index, found[0].target),
+            [FRONT, TOP],
+            "{projection:?}"
+        );
+        let first_face = found
+            .iter()
+            .position(|pick| matches!(pick.target, Picked::Face(_)))
+            .unwrap();
+        assert_eq!(plane(&index, found[first_face].target), TOP);
+        assert!(
+            found[first_face..]
+                .iter()
+                .all(|pick| matches!(pick.target, Picked::Face(_)))
+        );
+        assert_eq!(
+            index.overlaps(&top, SIZE, edge, Picks::All, 8.0, 1).len(),
+            1
+        );
+    }
+    // Straight down, the bottom's front edge shows where the top's does,
+    // hidden behind it: listed after it.
+    let top = camera(View::Top, Projection::Orthographic);
+    let edge = shown(&top, DVec3::new(10.0, -20.0, 10.0)) - DVec2::new(0.0, 2.0);
+    let found = index.overlaps(&top, SIZE, edge, Picks::All, 8.0, 12);
+    assert_eq!(sides(&index, found[1].target), [FRONT, BOTTOM]);
+    assert!(matches!(found[2].target, Picked::Face(_)), "{found:?}");
+}
+
+#[test]
+fn overlaps_at_a_corner_are_its_vertex_edges_and_faces() {
+    let index = plate();
+    const LEFT: ([f64; 3], f64) = ([-1.0, 0.0, 0.0], 30.0);
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let top = camera(View::Top, projection);
+        // 3 pixels in from the top's front left corner, on the top.
+        let corner = shown(&top, DVec3::new(-30.0, -20.0, 10.0)) + DVec2::new(3.0, -3.0);
+        let found = index.overlaps(&top, SIZE, corner, Picks::All, 8.0, 12);
+        assert!(matches!(found[0].target, Picked::Vertex(_)), "{found:?}");
+        let edges = (found.iter())
+            .filter(|pick| matches!(pick.target, Picked::Edge(_)))
+            .count();
+        assert!(edges >= 3, "{found:?}");
+        let faces: Vec<_> = (found.iter())
+            .filter(|pick| matches!(pick.target, Picked::Face(_)))
+            .map(|pick| plane(&index, pick.target))
+            .collect();
+        // The top under the cursor first, the sides beside it.
+        assert_eq!(faces[0], TOP, "{projection:?}");
+        for side in [FRONT, LEFT] {
+            assert!(faces.contains(&side), "{projection:?}: {faces:?}");
+        }
+    }
+}

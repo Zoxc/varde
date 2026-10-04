@@ -110,6 +110,7 @@ fn render_to(
             hovered_faces: &[],
             selected_faces: &[],
             second_faces: &[],
+            hover_through: false,
             highlights: &Arc::default(),
             errors: &[],
             sketch: None,
@@ -152,6 +153,8 @@ struct Extras {
     hovered_faces: Vec<u32>,
     selected_faces: Vec<u32>,
     second_faces: Vec<u32>,
+    /// Whether the hover is drawn over what hides it too.
+    hover_through: bool,
     highlights: Highlights,
 }
 
@@ -199,6 +202,7 @@ fn render_scaled(
             hovered_faces: &extras.hovered_faces,
             selected_faces: &extras.selected_faces,
             second_faces: &extras.second_faces,
+            hover_through: extras.hover_through,
             highlights: &Arc::new(extras.highlights),
             errors: &[],
             sketch,
@@ -2637,6 +2641,45 @@ fn a_hovered_face_is_brighter_and_only_where_it_shows() {
 }
 
 #[test]
+fn a_hovered_face_drawn_through_shows_behind_what_hides_it() {
+    // The near cube's back face, hidden behind its front: drawn through,
+    // it lightens the middle, though less than the front hovered does.
+    let (camera, near, _) = cube_behind_cube();
+    let front = face_facing(&near, -Vec3::Y);
+    let back = face_facing(&near, Vec3::Y);
+    let hovering = |face: u32, through: bool| Extras {
+        hovered_faces: vec![face],
+        hover_through: through,
+        ..Extras::default()
+    };
+    let (Some(plain), Some(behind), Some(through), Some(hovered)) = (
+        render_with(&camera, &near, Extras::default()),
+        render_with(&camera, &near, hovering(back, false)),
+        render_with(&camera, &near, hovering(back, true)),
+        render_with(&camera, &near, hovering(front, false)),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let [plain_at, through_at, hovered_at] = [&plain, &through, &hovered].map(|p| pixel(p, cx, cy));
+    assert!(behind == plain);
+    assert!(
+        brighter(through_at, plain_at) > 30,
+        "{through_at:?} through, {plain_at:?} not"
+    );
+    assert!(
+        brighter(hovered_at, through_at) > 0,
+        "{hovered_at:?} hovered, {through_at:?} through"
+    );
+    // The background around the cube is as it was.
+    assert_eq!(
+        pixel(&through, CLIP.x + 2, CLIP.y + 2),
+        pixel(&plain, CLIP.x + 2, CLIP.y + 2)
+    );
+}
+
+#[test]
 fn a_selected_face_is_tinted_with_the_selection_colour() {
     // Hovered too, it's tinted over the hover, brighter still.
     let (camera, near, _) = cube_behind_cube();
@@ -3034,6 +3077,7 @@ fn faces_and_edges_in_the_second_colour_are_drawn_in_it() {
     let faces = |selected: Vec<u32>, second: Vec<u32>| Extras {
         selected_faces: selected,
         second_faces: second,
+        hover_through: false,
         ..Extras::default()
     };
     let (Some(plain), Some(second), Some(over)) = (

@@ -983,6 +983,43 @@ viewport. `Esc` (once nothing else is open) and `Space` clear it with
 the Timeline's feature; selecting a feature in the Timeline clears it,
 and selecting in the model lets go of the feature.
 
+**Overlaps** (`view/src/overlaps.rs`, `app/src/doc/overlaps.rs`). The
+left button held still for `HOLD_DELAY` (500 ms), in a sketch without a
+tool or on the model while the cursor picks it (not picking a plane),
+lists what's there to choose from, when that's more than one item: the
+press asks for a redraw when it's due (`Action::request_redraw_at`,
+asked again by an earlier frame, as one sooner lets go of it) and that
+frame looks (`Program::hold` for the model, `Sketching::hold` in a
+sketch). A sketch lists its points, the origin included, then curves,
+then axes within `OVERLAP_REACH` (8) pixels, each nearest first
+(`hit::overlaps`); the model its vertices and edges showing that near
+and faces showing that near, hidden or not, either side: vertices and
+edges nearest the eye first, then faces, those under the cursor nearest
+the eye first and the rest nearest the cursor (`PickIndex::overlaps`);
+at most `MAX_OVERLAPS` (16). While the list is open, a ring of that
+radius marks where the button was held (`Overlaps::held`,
+`theme::pick_ring`). Over one item or none the press goes on as it was (a click, a
+drag). Over more it ends (no click, drag or orbit; letting go does
+nothing) and sends `Look::OpenOverlaps` with the items and where the
+list goes (`Overlaps::new`: beside the press, flipped to stay in the
+viewport). The app keeps it (`Doc::overlaps`) and the viewport shows it
+as a menu over everything (`DocumentState::overlaps`), named by
+`Sketch::name` or "Face of Body 1", over a layer filling the viewport
+whose presses close it (`Look::CloseOverlaps`), the selection as it was.
+A row hovered (`HoverOverlap`, `LeaveOverlap` by row, as the panel's
+rows) hovers its item as a list's row or the cursor would
+(`hover_item`, `Doc::hover`), the viewport's own `Look::Hover` ignored
+meanwhile, and in the model drawn over what hides it (see "Through"
+under the highlight). Each row has a tick, checked while its item is
+selected (in the sketch's selection, or the model's targets, of its
+model). A row clicked (`ChooseOverlap`, the app filling in `add` from
+Ctrl/Cmd held) takes a `ClickGeometry` or `ClickModel` on that item, so
+a session (measure, combine, move) takes it as its click: alone it
+closes the list; with `add` it adds or takes out, the list kept open
+(taken out of `Doc` meanwhile, so the click doesn't close it), as does
+the tick (`ToggleOverlap`). `Esc` closes it alone; anything else done but hovering and
+scrolling closes it too.
+
 One or two items selected, with no tool, operation or plane pick in use
 and no feature selected, are measured for the status bar's selection box
 as the measure tool's picks are: the regen request carries them as its
@@ -1133,6 +1170,15 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   edges' colour, within the selected edges' faint rim (`hover_outline`
   at half opacity), or the
   hover's if it's hovered too.
+- Through (`Frame::hover_through`, while a row of the list of the
+  model's overlaps is hovered, `Doc::hovers_through`, as what's listed
+  is often hidden): after everything of the model, the hovered faces
+  again with no depth test and no culling, at `HOVER_THROUGH_ALPHA`
+  (0.6) of their hover (`fs_hover_face_through`), then the outlined
+  edges and the hovered vertices as they are, untested
+  (`vs_outline_through`, `vs_hovered_edge_through`, `vs_vertex_through`,
+  which drops the vertices not hovered): entry points of their own
+  sharing the others' bodies.
 
 **Error geometry** (`Frame::errors`, a slice of `ErrorParts`: a failure's
 patches as a `RenderMesh` of triangles only, its curves as `RenderLines`,

@@ -174,6 +174,49 @@ fn a_click_selects_what_it_hits_and_ctrl_adds() {
     assert_eq!(hits(click(&viewport, &mut state, near_a)), (Some(a), true));
 }
 
+/// A frame drawn well after the button went down.
+fn later() -> Event {
+    Event::Window(iced::window::Event::RedrawRequested(
+        Instant::now() + overlaps::HOLD_DELAY * 2,
+    ))
+}
+
+#[test]
+fn a_press_held_still_over_overlapping_items_lists_them() {
+    let (sketch, [a, _, line]) = drawn();
+    let selection = BTreeSet::new();
+    let viewport = viewport(&sketch, &selection, None, true);
+    let mut state = Interaction::default();
+
+    // On `a`, where the line ends, on the X axis: the point, then the
+    // line, then the axis.
+    let on_a = screen_at(-5.0, 0.0);
+    let (messages, captured) = feed(&viewport, &mut state, on_a, &[moved(on_a), press()]);
+    assert!(messages.is_empty() && captured);
+    let messages = feed(&viewport, &mut state, on_a, &[later()]).0;
+    let [Message::Look(Look::OpenOverlaps(list))] = &messages[..] else {
+        panic!("{messages:?}");
+    };
+    assert_eq!(list.items, OverlapItems::Sketch(vec![a, line, Id::X_AXIS]));
+    // Let go of: nothing more, no drag.
+    assert!(feed(&viewport, &mut state, on_a, &[release()]).0.is_empty());
+
+    // Over nothing, held still it's still a click.
+    let off = screen_at(1.0, 5.0);
+    let events = [moved(off), press(), later(), release()];
+    let messages = feed(&viewport, &mut state, off, &events).0;
+    assert!(
+        matches!(
+            messages.as_slice(),
+            [Message::Look(Look::ClickGeometry {
+                hit: None,
+                add: false
+            })]
+        ),
+        "{messages:?}"
+    );
+}
+
 #[test]
 fn a_box_selects_inside_to_the_right_and_touching_to_the_left() {
     let (sketch, [a, b, line]) = drawn();

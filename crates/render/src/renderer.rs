@@ -70,6 +70,10 @@ pub const HOVERED_EDGE_WIDTH: f32 = 2.5;
 /// [`Highlights::outlined`].
 pub const HOVER_RIM: f32 = 1.5;
 
+/// How opaque a hovered face drawn over what hides it is, of its hover:
+/// see [`Frame::hover_through`].
+pub const HOVER_THROUGH_ALPHA: f32 = 0.6;
+
 /// How wide the faint rim around the selected edges and vertices is, in
 /// logical pixels, for contrast with what's behind them: in
 /// [`Colors::hover_outline`], translucent.
@@ -208,6 +212,12 @@ pub struct Frame<'a> {
     /// Only re-uploaded when it's another `Arc` than the last one
     /// prepared, or the mesh is. Not drawn while [`Self::faded`].
     pub highlights: &'a Arc<Highlights>,
+    /// Whether the hovered faces, outlined edges and hovered vertices are
+    /// drawn again over everything, what hides them included: a face at
+    /// [`HOVER_THROUGH_ALPHA`] of its hover, the edges and vertices as
+    /// they are. For an item hovered in a list of what overlaps, often
+    /// hidden. Not while [`Self::faded`].
+    pub hover_through: bool,
     /// The sketch being edited, or the extrude being set up, if one is:
     /// drawn over everything else, or hidden by the model in front of it
     /// ([`SketchScene::depth_tested`]).
@@ -901,6 +911,12 @@ pub struct Renderer {
     second_outline: wgpu::RenderPipeline,
     second_edges: wgpu::RenderPipeline,
     vertices: wgpu::RenderPipeline,
+    /// The hovered faces, outlined edges and hovered vertices again over
+    /// everything: [`Frame::hover_through`].
+    hover_face_through: wgpu::RenderPipeline,
+    outline_through: wgpu::RenderPipeline,
+    hovered_edges_through: wgpu::RenderPipeline,
+    vertices_through: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     /// The edges of the mesh's triangles: [`Frame::tessellation`].
     triangle_edges: wgpu::RenderPipeline,
@@ -948,6 +964,8 @@ pub struct Slot {
     depth: Option<DepthTarget>,
     viewport: Viewport,
     faded: bool,
+    /// [`Frame::hover_through`], never while faded.
+    hover_through: bool,
     /// How the mesh's parts are drawn, by [`Frame::opacity`].
     draws: PartDraws,
     /// Whether the edges the model hides are drawn: [`Frame::hidden_edges`]
@@ -1077,6 +1095,7 @@ impl Renderer {
                 ("HIDDEN_GAP", f64::from(HIDDEN_DASH[1])),
                 ("HOVERED_EDGE_WIDTH", f64::from(HOVERED_EDGE_WIDTH)),
                 ("HOVER_RIM", f64::from(HOVER_RIM)),
+                ("HOVER_THROUGH_ALPHA", f64::from(HOVER_THROUGH_ALPHA)),
                 ("SELECTED_RIM", f64::from(SELECTED_RIM)),
                 ("SELECTED_EDGE_WIDTH", f64::from(SELECTED_EDGE_WIDTH)),
                 ("VERTEX_RADIUS", f64::from(VERTEX_RADIUS)),
@@ -1334,6 +1353,16 @@ impl Renderer {
             hover_face: redrawn("varde hovered face", "fs_hover_face"),
             selected_face: redrawn("varde selected face", "fs_selected_face"),
             second_face: redrawn("varde second face", "fs_second_face"),
+            // Over everything, either side: entry points of their own.
+            hover_face_through: pipeline(Pass {
+                label: "varde hovered face through",
+                fs: "fs_hover_face_through",
+                blend: wgpu::BlendState::ALPHA_BLENDING,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                cull_mode: None,
+                ..mesh.clone()
+            }),
             mesh: pipeline(mesh),
             // Entry points of their own, which wgpu's GL backend keys
             // programs by.
@@ -1349,6 +1378,23 @@ impl Renderer {
             vertices: pipeline(Pass {
                 buffers: std::slice::from_ref(&vertices),
                 ..Pass::overlay("varde vertices", "vs_vertex", "fs_highlight_point")
+            }),
+            outline_through: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Always,
+                ..highlight_pass("varde hover outline through", "vs_outline_through")
+            }),
+            hovered_edges_through: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Always,
+                ..highlight_pass("varde hovered edges through", "vs_hovered_edge_through")
+            }),
+            vertices_through: pipeline(Pass {
+                buffers: std::slice::from_ref(&vertices),
+                depth_compare: wgpu::CompareFunction::Always,
+                ..Pass::overlay(
+                    "varde hovered vertices through",
+                    "vs_vertex_through",
+                    "fs_highlight_point",
+                )
             }),
             edges: pipeline(edge_pass("varde edges", "vs_edge")),
             // Exactly the pixels the visible edges didn't draw: the same
@@ -1545,6 +1591,7 @@ impl Renderer {
             depth: None,
             viewport: Viewport::default(),
             faded: false,
+            hover_through: false,
             draws: PartDraws::default(),
             hidden_edges: false,
             faces: Vec::new(),
@@ -1579,6 +1626,7 @@ impl Renderer {
     ) -> Result<(), PrepareError> {
         slot.viewport = frame.viewport;
         slot.faded = frame.faded;
+        slot.hover_through = frame.hover_through && !frame.faded;
         slot.hidden_edges = frame.hidden_edges && !frame.faded;
 
         let mut result = Ok(());
@@ -2123,6 +2171,9 @@ impl Renderer {
         if !slot.faded && mesh.is_some() {
             self.draw_highlights(pass, slot);
         }
+        if let Some(mesh) = mesh.filter(|_| slot.hover_through) {
+            self.draw_hover_through(pass, slot, mesh);
+        }
 
         if backdrop {
             pass.set_pipeline(&self.origin);
@@ -2218,6 +2269,31 @@ impl Renderer {
         }
         if let Some(vertices) = highlights.vertices.drawn() {
             pass.set_pipeline(&self.vertices);
+            pass.set_vertex_buffer(0, vertices);
+            pass.draw(0..POINT_VERTICES, 0..highlights.vertices.count);
+        }
+    }
+
+    /// Records drawing `slot`'s hovered faces, outlined edges and hovered
+    /// vertices again over everything: [`Frame::hover_through`].
+    fn draw_hover_through(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot, mesh: &GpuMesh) {
+        bind_faces(pass, mesh);
+        pass.set_pipeline(&self.hover_face_through);
+        for face in &slot.faces {
+            if face.tint == Tint::Hovered && !face.indices.is_empty() {
+                self.alphas.set(pass, face.step);
+                pass.draw_indexed(face.indices.clone(), 0, 0..1);
+            }
+        }
+        let highlights = &slot.highlights;
+        self.alphas.set(pass, self.alphas.opaque);
+        if let Some(edges) = highlights.edges.held() {
+            let outlined = highlights.outlined.clone();
+            draw_stream(pass, &self.outline_through, edges, outlined.clone());
+            draw_stream(pass, &self.hovered_edges_through, edges, outlined);
+        }
+        if let Some(vertices) = highlights.vertices.drawn() {
+            pass.set_pipeline(&self.vertices_through);
             pass.set_vertex_buffer(0, vertices);
             pass.draw(0..POINT_VERTICES, 0..highlights.vertices.count);
         }

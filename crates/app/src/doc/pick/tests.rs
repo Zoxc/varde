@@ -135,6 +135,54 @@ fn a_vertex_hovered_and_clicked_is_drawn_and_told_of() {
 }
 
 #[test]
+fn a_face_listed_where_faces_overlap_is_hovered_and_chosen() {
+    let (mut doc, _requests) = example();
+    let index = doc.feed.pick_index();
+    let picks = index.overlaps(&top(), SIZE, DVec2::new(250.0, 125.0), Picks::All, 8.0, 12);
+    // The top, then the bottom under it.
+    assert_eq!(picks.len(), 2);
+    let list = varde_view::Overlaps {
+        held: DVec2::ZERO,
+        at: DVec2::ZERO,
+        items: varde_view::OverlapItems::Model(picks.clone()),
+    };
+    doc.look(Look::OpenOverlaps(list.clone()));
+    assert!(!doc.hovers_through());
+    // Hovered, the bottom shows through the top.
+    doc.look(Look::HoverOverlap(Some(1)));
+    assert_eq!(doc.pick.hover(), Some(picks[1]));
+    assert!(doc.hovers_through());
+    // The viewport's hover waits while the list is open.
+    doc.look(Look::Hover(None));
+    assert_eq!(doc.pick.hover(), Some(picks[1]));
+    doc.look(Look::ChooseOverlap {
+        index: 1,
+        add: false,
+    });
+    assert_eq!(
+        doc.pick.selection.targets().collect::<Vec<_>>(),
+        [picks[1].target]
+    );
+    assert_eq!(doc.pick.hover(), None);
+    assert!(!doc.hovers_through());
+    // Its tick adds the top, the list kept open.
+    doc.look(Look::OpenOverlaps(list.clone()));
+    doc.look(Look::ToggleOverlap(0));
+    assert!(doc.overlaps.is_some());
+    assert_eq!(
+        doc.pick.selection.targets().collect::<Vec<_>>(),
+        [picks[1].target, picks[0].target]
+    );
+    doc.look(Look::ToggleOverlap(0));
+    // A click away keeps it.
+    doc.look(Look::CloseOverlaps);
+    assert_eq!(
+        doc.pick.selection.targets().collect::<Vec<_>>(),
+        [picks[1].target]
+    );
+}
+
+#[test]
 fn the_cursor_doesnt_pick_in_a_sketch() {
     let (mut doc, _requests) = example();
     let pick = on_top(&doc);

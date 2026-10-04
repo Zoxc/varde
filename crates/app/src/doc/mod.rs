@@ -10,6 +10,7 @@ mod extrude;
 mod feed;
 mod measure;
 mod motion;
+mod overlaps;
 mod pick;
 mod rail;
 mod regions;
@@ -131,6 +132,9 @@ pub(crate) struct Doc {
     /// The row of the side panel whose context menu is open, if one is:
     /// a feature of the Timeline's only while it's selected.
     pub(crate) row_menu: Option<RowMenu>,
+    /// What overlaps where the left button was held still in the
+    /// viewport, listed to choose from, and the row hovered.
+    overlaps: Option<overlaps::Listed>,
     /// A body's opacity previewed while its context menu's slider is
     /// dragged: only while that menu is open ([`Doc::preview_opacity`]).
     pub(crate) opacity_preview: Option<(BodyId, Opacity)>,
@@ -356,6 +360,7 @@ impl Doc {
             hovered_feature: None,
             errors: Arc::default(),
             row_menu: None,
+            overlaps: None,
             opacity_preview: None,
             sketch: None,
             extrude: None,
@@ -632,6 +637,35 @@ impl Doc {
 
     /// Takes `message`, see [`Doc::look`].
     fn look_at(&mut self, message: Look) {
+        // The list of what overlaps where the button was held takes `Esc`
+        // alone, and anything else done but hovering closes it.
+        if self.overlaps.is_some() {
+            if matches!(message, Look::Escape) {
+                self.close_overlaps();
+                return;
+            }
+            if !matches!(
+                message,
+                Look::OpenOverlaps(_)
+                    | Look::HoverOverlap(_)
+                    | Look::LeaveOverlap(_)
+                    | Look::ChooseOverlap { .. }
+                    | Look::ToggleOverlap(_)
+                    | Look::Hover(_)
+                    | Look::HoverItem(_)
+                    | Look::HoverFeature(_)
+                    | Look::LeaveFeature(_)
+                    | Look::HoverPanel(_)
+                    | Look::LeavePanel(_)
+                    | Look::HoverCube(_)
+                    | Look::Snap(_)
+                    | Look::Aim(_)
+                    | Look::ScrollGeometry(_)
+                    | Look::ScrollConstraints(_)
+            ) {
+                self.close_overlaps();
+            }
+        }
         if matches!(
             message,
             Look::Escape
@@ -829,7 +863,15 @@ impl Doc {
             Look::BackFromFailure => self.back_from_failure(),
             Look::HoverPanel(hover) => self.hover_panel(hover),
             Look::LeavePanel(left) => self.leave_panel(left),
+            // While the list is open, its row hovered is.
+            Look::Hover(_) if self.overlaps.is_some() => {}
             Look::Hover(pick) => self.hover(pick),
+            Look::OpenOverlaps(list) => self.open_overlaps(list),
+            Look::HoverOverlap(row) => self.hover_overlap(row),
+            Look::LeaveOverlap(row) => self.leave_overlap(row),
+            Look::ChooseOverlap { index, add } => self.choose_overlap(index, add),
+            Look::ToggleOverlap(index) => self.choose_overlap(index, true),
+            Look::CloseOverlaps => self.close_overlaps(),
             Look::ClickModel { pick, .. } if self.combine.is_some() => self.combine_click(pick),
             Look::ClickModel { pick, .. } if self.motion.is_some() => self.motion_click(pick),
             Look::ClickModel { pick, add, double } if self.measure.is_some() => {
@@ -1137,6 +1179,7 @@ impl Doc {
             regenerating: self.feed.slow(&self.editor),
             picking: self.model_picking(),
             highlight: self.highlight(),
+            hover_through: self.hovers_through(),
             errors: self.shown_errors(),
             model_selection: &self.pick.selection,
             selection_measured: self.selection_measured(),
@@ -1184,6 +1227,7 @@ impl Doc {
             thumbnail: self.thumbnail_request(),
             selected_feature: self.selected_feature,
             row_menu: self.row_menu,
+            overlaps: self.overlaps.as_ref().map(|listed| &listed.list),
             sketch: self.sketch_state(),
             extrude: self.extrude_state(),
             revolve: self.revolve_state(),

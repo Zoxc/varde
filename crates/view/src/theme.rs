@@ -1421,6 +1421,21 @@ pub fn menu(theme: &Theme) -> container::Style {
     }
 }
 
+/// The ring around where the button was held while what overlaps there
+/// is listed: how far it picks, in the accent, faintly filled.
+pub fn pick_ring(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        background: Some(Background::Color(p.accent.scale_alpha(0.12))),
+        border: Border {
+            color: p.accent,
+            width: 1.5,
+            radius: f32::INFINITY.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
 /// A recessed box of text in a dialog, like a panic's report.
 pub fn text_well(theme: &Theme) -> container::Style {
     let p = palette(theme);

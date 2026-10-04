@@ -31,6 +31,31 @@ pub(crate) fn hit(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id> {
         .or_else(|| nearest(axes.into_iter(), tolerance))
 }
 
+/// Everything under the cursor at `at` within `tolerance` sketch units,
+/// as [`hit`] would find each on its own: the points, the origin
+/// included, then the curves, then the axes, each nearest first.
+pub(crate) fn overlaps(sketch: &Sketch, at: DVec2, tolerance: f64) -> Vec<Id> {
+    if !at.is_finite() {
+        return Vec::new();
+    }
+    let points: Vec<_> = (sketch.points.iter())
+        .map(|point| (point.id, point.at.distance(at)))
+        .chain([(Id::ORIGIN, at.length())])
+        .collect();
+    let curves: Vec<_> = (sketch.curves.iter())
+        .filter_map(|entry| Some((entry.id, curve_distance(sketch, &entry.curve, at)?)))
+        .collect();
+    let axes = vec![(Id::X_AXIS, at.y.abs()), (Id::Y_AXIS, at.x.abs())];
+    [points, curves, axes]
+        .into_iter()
+        .flat_map(|mut kind| {
+            kind.retain(|&(_, distance)| distance <= tolerance);
+            kind.sort_by(|a, b| a.1.total_cmp(&b.1));
+            kind.into_iter().map(|(id, _)| id)
+        })
+        .collect()
+}
+
 /// The curve under the cursor at `at`, as [`hit`] finds one, points and
 /// axes aside: what Trim and Extend take.
 pub(crate) fn hit_curve(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id> {

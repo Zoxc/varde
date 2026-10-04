@@ -1012,3 +1012,48 @@ fn measuring_the_dots_of_what_s_hovered_stay_to_be_taken_off_it() {
         }
     }
 }
+
+/// A frame drawn well after the left button went down.
+fn later() -> Event {
+    Event::Window(iced::window::Event::RedrawRequested(
+        iced::time::Instant::now() + crate::overlaps::HOLD_DELAY * 2,
+    ))
+}
+
+#[test]
+fn a_left_press_held_still_on_the_model_lists_what_overlaps_there() {
+    let plate = Plate::new();
+    let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
+    let camera = plate.camera;
+    let mut state = Interaction::default();
+    // A frame before it's due lists nothing.
+    let events = [left(true), redraw(), later(), left(false)];
+    let sent = plate.send(&mut state, &camera, None, &events, at);
+    let [Message::Look(Look::OpenOverlaps(list))] = &sent[..] else {
+        panic!("{sent:?}");
+    };
+    let crate::OverlapItems::Model(picks) = &list.items else {
+        panic!("{list:?}");
+    };
+    // The top and the bottom under it.
+    assert_eq!(picks.len(), 2);
+    assert!((picks.iter()).all(|pick| matches!(pick.target, Picked::Face(_))));
+    // Below the press, and to its left, as to its right it would run off
+    // the viewport.
+    assert_eq!(
+        list.at,
+        glam::DVec2::new(f64::from(at.x) - 10.0 - 180.0, f64::from(at.y) + 10.0)
+    );
+    // Off the model, over nothing, it stays a click.
+    let off = plate.at(glam::DVec3::new(0.0, 26.0, 10.0));
+    let mut state = Interaction::default();
+    let events = [left(true), later(), left(false)];
+    let sent = plate.send(&mut state, &camera, None, &events, off);
+    assert!(
+        matches!(
+            sent[..],
+            [Message::Look(Look::ClickModel { pick: None, .. })]
+        ),
+        "{sent:?}"
+    );
+}

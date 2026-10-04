@@ -335,6 +335,104 @@ impl PickIndex {
         Some(pick)
     }
 
+    /// Everything at the screen position `at`, as [`PickIndex::pick`]
+    /// takes it, hidden or not, that `picks` takes: the vertices, edges
+    /// and faces showing within `pixels` of it, either side of them;
+    /// vertices, then edges, each nearest the eye first, then faces, those
+    /// the cursor's ray meets first, nearest the eye first, then the rest
+    /// nearest the cursor first; each once, at most `most`. What
+    /// overlaps there, for a list to choose from.
+    pub fn overlaps(
+        &self,
+        camera: &Camera,
+        size: [f32; 2],
+        at: DVec2,
+        picks: Picks,
+        pixels: f64,
+        most: usize,
+    ) -> Vec<Pick> {
+        let placement = OriginPlane::XY.placement();
+        let Some(projector) = Projector::new(camera, placement, size[0], size[1]) else {
+            return Vec::new();
+        };
+        let Some(ray) = self.ray(camera, &projector, at) else {
+            return Vec::new();
+        };
+        // Each item once, where it's nearest the cursor (to
+        // [`SAME_PLACE`]), then the eye; by that, then the item.
+        let order = |a: &(f64, f64, Picked, DVec3), b: &(f64, f64, Picked, DVec3)| {
+            (a.0.total_cmp(&b.0)).then(a.1.total_cmp(&b.1))
+        };
+        let nearest = |mut found: Vec<(f64, f64, Picked, DVec3)>| {
+            found.sort_by(|a, b| a.2.cmp(&b.2).then(order(a, b)));
+            found.dedup_by(|later, first| later.2 == first.2);
+            found.sort_by(|a, b| order(a, b).then(a.2.cmp(&b.2)));
+            found
+        };
+        let place = |distance: f64| (distance / SAME_PLACE).round();
+        let mut vertices = Vec::new();
+        if picks == Picks::All {
+            let grown = reach(&projector, pixels);
+            self.vertices.near(&ray, grown, |corner| {
+                let point = self.corner_point(corner)?;
+                let (point, _) = projector.in_front(point, point)?;
+                let distance = projector.show(point).distance(at);
+                if distance.is_nan() || distance > pixels {
+                    return None;
+                }
+                let depth = projector.world_depth(point);
+                vertices.push((0.0, depth, Picked::Vertex(corner), point));
+                Some(())
+            });
+        }
+        let mut edges = Vec::new();
+        if picks != Picks::Faces {
+            let grown = reach(&projector, pixels);
+            self.segments.near(&ray, grown, |start| {
+                let (_, point) = self.segment_near(&projector, start, at, pixels)?;
+                let edge = Picked::Edge(self.segment_edge(start));
+                edges.push((0.0, projector.world_depth(point), edge, point));
+                Some(())
+            });
+        }
+        let mut faces = Vec::new();
+        if picks != Picks::Edges {
+            let grown = reach(&projector, pixels);
+            self.triangles.near(&ray, grown, |triangle| {
+                let corners = self.corners(triangle)?;
+                let [a, b, c] = corners.map(|i| position(&self.mesh, i).as_dvec3());
+                // Under the cursor, else showing within reach of it.
+                let hit = ray_hits(ray.origin, ray.direction, [a, b, c])
+                    .filter(|&t| t >= ray.from)
+                    .map(|t| (0.0, ray.at(t)));
+                let (distance, point) = hit.or_else(|| {
+                    [(a, b), (b, c), (c, a)]
+                        .into_iter()
+                        .filter_map(|(u, v)| shown_near(&projector, u, v, at, pixels))
+                        .min_by(|x, y| x.0.total_cmp(&y.0))
+                })?;
+                let face = Picked::Face(self.triangle_face(triangle)?);
+                let depth = projector.world_depth(point);
+                faces.push((place(distance), depth, face, point));
+                Some(())
+            });
+        }
+        [vertices, edges, faces]
+            .into_iter()
+            .flat_map(nearest)
+            .filter_map(|(_, _, target, at)| {
+                Some(Pick {
+                    model: self.model,
+                    target,
+                    body: self.body(target)?,
+                    at,
+                    snap: None,
+                })
+            })
+            .take(most)
+            .collect()
+    }
+
     /// The snap points of `target`, where the measure tool picks points:
     /// a face's corners (those naming it among their three faces), an
     /// edge's ends (the corners naming both its faces) and its own point,
@@ -875,34 +973,30 @@ impl PickIndex {
         let mut near = Vec::new();
         self.segments
             .near(ray, reach(projector, EDGE_REACH), |start| {
-                let [a, b] = segment(&self.mesh, start)?;
-                let (a, b) = projector.in_front(a.as_dvec3(), b.as_dvec3())?;
-                let (pa, pb) = (projector.show(a), projector.show(b));
-                let (distance, s) = segment_distance(at, pa, pb);
-                if distance.is_nan() || distance > EDGE_REACH {
-                    return None;
-                }
-                // Perspective divides by depth, so the point showing `s` of
-                // the way along isn't `s` of the way along in the world.
-                let u = if projector.perspective() {
-                    let (da, db) = (projector.world_depth(a), projector.world_depth(b));
-                    let denominator = (1.0 - s) * db + s * da;
-                    if denominator > 0.0 {
-                        s * da / denominator
-                    } else {
-                        s
-                    }
-                } else {
-                    s
-                };
-                let point = a + (b - a) * u.clamp(0.0, 1.0);
+                let (distance, point) = self.segment_near(projector, start, at, EDGE_REACH)?;
                 near.push((distance, projector.world_depth(point), start, point));
                 Some(())
             });
         let (start, point) = self.nearest_shown(camera, projector, near)?;
-        // The edge whose vertices the segment starts among.
-        let edge = (self.mesh.edge_ends()).partition_point(|&end| end <= start);
-        Some((edge as u32, point))
+        Some((self.segment_edge(start), point))
+    }
+
+    /// How far from `at` the edge segment starting at `start` shows, and
+    /// its point showing nearest `at`, if it shows within `reach` pixels.
+    fn segment_near(
+        &self,
+        projector: &Projector,
+        start: u32,
+        at: DVec2,
+        reach: f64,
+    ) -> Option<(f64, DVec3)> {
+        let [a, b] = segment(&self.mesh, start)?;
+        shown_near(projector, a.as_dvec3(), b.as_dvec3(), at, reach)
+    }
+
+    /// The edge whose vertices the segment starting at `start` is among.
+    fn segment_edge(&self, start: u32) -> u32 {
+        (self.mesh.edge_ends()).partition_point(|&end| end <= start) as u32
     }
 
     /// Of the items `near` the cursor, as how far from it they show, how
@@ -1062,6 +1156,38 @@ fn triangle_distance(p: DVec3, [a, b, c]: [DVec3; 3]) -> f64 {
 fn bounds(points: &[Vec3]) -> [Vec3; 2] {
     let first = points.first().copied().unwrap_or_default();
     (points.iter()).fold([first; 2], |[min, max], &p| [min.min(p), max.max(p)])
+}
+
+/// How far from `at` the world segment from `a` to `b` shows, the part of
+/// it in front of the eye, and its point showing nearest `at`, if it shows
+/// within `reach` pixels.
+fn shown_near(
+    projector: &Projector,
+    a: DVec3,
+    b: DVec3,
+    at: DVec2,
+    reach: f64,
+) -> Option<(f64, DVec3)> {
+    let (a, b) = projector.in_front(a, b)?;
+    let (pa, pb) = (projector.show(a), projector.show(b));
+    let (distance, s) = segment_distance(at, pa, pb);
+    if distance.is_nan() || distance > reach {
+        return None;
+    }
+    // Perspective divides by depth, so the point showing `s` of the way
+    // along isn't `s` of the way along in the world.
+    let u = if projector.perspective() {
+        let (da, db) = (projector.world_depth(a), projector.world_depth(b));
+        let denominator = (1.0 - s) * db + s * da;
+        if denominator > 0.0 {
+            s * da / denominator
+        } else {
+            s
+        }
+    } else {
+        s
+    };
+    Some((distance, a + (b - a) * u.clamp(0.0, 1.0)))
 }
 
 /// How far `p` is from the segment from `a` to `b`, and where along it

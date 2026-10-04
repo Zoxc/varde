@@ -454,6 +454,10 @@ impl Varde {
                         hit: Some(id),
                         add: self.command,
                     },
+                    Look::ChooseOverlap { index, .. } => Look::ChooseOverlap {
+                        index,
+                        add: self.command,
+                    },
                     Look::PressLabel { id, .. } => Look::PressLabel {
                         id,
                         add: self.command,

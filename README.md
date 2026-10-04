@@ -38,7 +38,9 @@ sketches and editable features. It runs natively and in the browser.
 - Faces, edges, vertices and bodies selected by clicking them with no tool
   open (a double-click takes the body); `Shift`- or `Ctrl`-click (`Cmd` on
   macOS) adds or removes one, `Space` or a click on an empty part of the
-  side panel or toolbar clears.
+  side panel or toolbar clears. Holding the button still where faces,
+  edges or vertices overlap (or a sketch's points and curves) lists
+  them to pick the right one.
 - A body's opacity, set in its context menu in the side panel, to see
   what's behind it.
 - Edges hidden behind bodies shown dashed; "Hidden edges" in the view

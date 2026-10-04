@@ -28,6 +28,7 @@ use crate::chrome::{Hint, chord_hint, mouse_hint};
 use crate::errors::ShownErrors;
 use crate::icons::MouseButton;
 use crate::operation_panel::placed;
+use crate::overlaps::{self, OverlapItems, Overlaps};
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
@@ -119,9 +120,10 @@ impl ModelPicking<'_> {
 /// setting up an operation, an extrude's regions and handle or a
 /// revolve's regions and axis, and `panel`, floating
 /// over the viewport's right under the controls, and the tool `rail`
-/// over its left. `pivot`, the point the camera orbits if one was picked,
-/// is marked, and `highlight` and the failures' `errors` drawn over the
-/// model. With `picking`, the cursor picks the model, drawn as the view
+/// over its left, and the list of what `overlaps` where the left button
+/// was held, over all of them. `pivot`, the point the camera orbits if one was picked,
+/// is marked, and `highlight` (its hover over what hides it too if
+/// `hover_through`) and the failures' `errors` drawn over the model. With `picking`, the cursor picks the model, drawn as the view
 /// `options` say: the edges the model hides dashed if asked for, outside
 /// a sketch, every patch's edges and every triangle's faint if asked
 /// for, and lit with their shading. Each of the mesh's parts is drawn as
@@ -135,6 +137,7 @@ pub(crate) fn viewport<'a>(
     pivot: Option<Pivot>,
     picking: Option<ModelPicking<'a>>,
     highlight: Option<&Arc<ModelHighlight>>,
+    hover_through: bool,
     errors: &Arc<ShownErrors>,
     options: ViewOptions,
     palette: &Palette,
@@ -142,6 +145,7 @@ pub(crate) fn viewport<'a>(
     operating: Option<Operating<'a>>,
     panel: Option<Element<'a, Message>>,
     rail: Element<'a, Message>,
+    overlaps: Option<Element<'a, Message>>,
     thumbnail: Option<&Arc<ThumbnailRequest>>,
 ) -> Element<'a, Message> {
     // Constraint glyphs, nudged apart; dimensions' labels, where they're
@@ -192,6 +196,7 @@ pub(crate) fn viewport<'a>(
     program.scene.opacity = opacity;
     program.scene.thumbnail = thumbnail.cloned();
     program.scene.errors = errors.clone();
+    program.scene.hover_through = hover_through;
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -209,6 +214,7 @@ pub(crate) fn viewport<'a>(
         .push(rail)
         .push(controls)
         .extend(panel)
+        .extend(overlaps)
         .into()
 }
 
@@ -240,6 +246,7 @@ fn program<'a>(
             shading: Shading::Regular,
             thumbnail: None,
             errors: NO_ERRORS.clone(),
+            hover_through: false,
         },
         sketching,
         operating,
@@ -302,6 +309,9 @@ struct Scene {
     thumbnail: Option<Arc<ThumbnailRequest>>,
     /// The failures' geometry drawn over the model.
     errors: Arc<ShownErrors>,
+    /// Whether the hover is drawn over what hides it too: see
+    /// [`Frame::hover_through`].
+    hover_through: bool,
 }
 
 /// What dragging in the viewport does.
@@ -359,6 +369,10 @@ struct Interaction {
     /// the point the camera orbits, or (the left one) selects, and until
     /// then it doesn't orbit.
     click: Option<Point>,
+    /// When the left button went down on the model, while it's a click
+    /// that hasn't been held long enough to list what overlaps there
+    /// (see [`Program::hold`]).
+    held: Option<iced::time::Instant>,
     /// The last left click on the model, when and where, to tell a
     /// double-click by.
     last_click: Option<(iced::time::Instant, DVec2)>,
@@ -406,6 +420,11 @@ impl shader::Program<Message> for Program<'_> {
                 &self.scene.camera,
                 *modifiers,
             );
+        }
+        if let Event::Window(iced::window::Event::RedrawRequested(now)) = event
+            && let Some(action) = self.hold(state, *now, bounds)
+        {
+            return Some(action);
         }
         // A move's handles under a cursor that stayed put as the frame
         // changed.
@@ -682,6 +701,43 @@ impl Program<'_> {
         pick
     }
 
+    /// Takes a frame drawn at `now` while the left button may be held
+    /// on the model: held still for [`overlaps::HOLD_DELAY`] over more
+    /// than one face, edge or vertex, it lets go and lists them
+    /// ([`Look::OpenOverlaps`]); over one or none it goes on as a click.
+    fn hold(
+        &self,
+        state: &mut Interaction,
+        now: iced::time::Instant,
+        bounds: Rectangle,
+    ) -> Option<Action<Message>> {
+        let due = state.held? + overlaps::HOLD_DELAY;
+        if now < due {
+            // Asked again: a redraw asked for sooner lets go of it.
+            return Some(Action::request_redraw_at(due));
+        }
+        state.held = None;
+        let picking = self.picking.as_ref()?;
+        let at = state.click?;
+        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let size = [bounds.width, bounds.height];
+        let picks = picking.index.overlaps(
+            &self.scene.camera,
+            size,
+            at,
+            picking.picks,
+            overlaps::OVERLAP_REACH,
+            overlaps::MAX_OVERLAPS,
+        );
+        if picks.len() < 2 {
+            return None;
+        }
+        state.click = None;
+        state.drag = None;
+        let list = Overlaps::new(at, size, OverlapItems::Model(picks));
+        Some(Action::publish(Message::Look(Look::OpenOverlaps(list))))
+    }
+
     /// Whether a sketch is being edited, where the left button is for its
     /// geometry.
     fn sketching(&self) -> bool {
@@ -708,9 +764,20 @@ impl Program<'_> {
                     _ => false,
                 };
                 state.click = clicks.then_some(position);
-                Some(Action::capture())
+                // Held still on the model, it lists what overlaps there,
+                // unless a plane is picked.
+                let lists = button == mouse::Button::Left
+                    && self.picking.is_some_and(|picking| picking.planes.is_none());
+                state.held = lists.then(iced::time::Instant::now);
+                Some(match state.held {
+                    Some(when) => {
+                        Action::request_redraw_at(when + overlaps::HOLD_DELAY).and_capture()
+                    }
+                    None => Action::capture(),
+                })
             }
             mouse::Event::ButtonReleased(button) => {
+                state.held = None;
                 state.drag.take()?;
                 // A left click on the model selects.
                 if button == mouse::Button::Left
@@ -766,6 +833,7 @@ impl Program<'_> {
                         return Some(Action::capture());
                     }
                     state.click = None;
+                    state.held = None;
                 }
                 // Uses the raw position so drags continue over UI panels.
                 let (kind, last) = state.drag.as_mut()?;
@@ -890,6 +958,7 @@ impl shader::Primitive for Primitive {
                 hovered_faces: &self.highlight.hovered_faces,
                 selected_faces: &self.highlight.selected_faces,
                 second_faces: &self.highlight.second_faces,
+                hover_through: scene.hover_through,
                 highlights: &self.highlight.highlights,
                 errors: &errors,
                 sketch: self.sketch.as_ref().map(|sketch| SketchScene {

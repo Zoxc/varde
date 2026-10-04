@@ -63,6 +63,8 @@ override HIDDEN_GAP: f32;
 // disc within its rim, in logical pixels.
 override HOVERED_EDGE_WIDTH: f32;
 override HOVER_RIM: f32;
+// How opaque a hovered face drawn over what hides it is, of its hover.
+override HOVER_THROUGH_ALPHA: f32;
 override SELECTED_EDGE_WIDTH: f32;
 override SELECTED_RIM: f32;
 override VERTEX_RADIUS: f32;
@@ -395,6 +397,14 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4
 @fragment
 fn fs_hover_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     return output(vec4<f32>(shaded(in, front, u.hover_face.rgb), part.alpha.x));
+}
+
+// A hovered face drawn again over everything, what hides it included,
+// HOVER_THROUGH_ALPHA as opaque.
+@fragment
+fn fs_hover_face_through(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let alpha = HOVER_THROUGH_ALPHA * part.alpha.x;
+    return output(vec4<f32>(shaded(in, front, u.hover_face.rgb), alpha));
 }
 
 // A selected face, likewise, tinted `u.hover_face.w` of the way towards
@@ -891,6 +901,10 @@ fn highlight_point(in: PointOut) -> HighlightOut {
 // other.
 @vertex
 fn vs_outline(in: EdgeIn) -> LineOut {
+    return outline(in);
+}
+
+fn outline(in: EdgeIn) -> LineOut {
     let core = HOVERED_EDGE_WIDTH * 0.5 * u.viewport.z;
     let half = core + HOVER_RIM * u.viewport.z;
     var out = highlight_segment(in, half, vec4<f32>(u.hover_outline.rgb, 1.0));
@@ -928,8 +942,24 @@ fn vs_second_outline(in: EdgeIn) -> LineOut {
 // their rim.
 @vertex
 fn vs_hovered_edge(in: EdgeIn) -> LineOut {
+    return hovered_edge(in);
+}
+
+fn hovered_edge(in: EdgeIn) -> LineOut {
     let half = HOVERED_EDGE_WIDTH * 0.5 * u.viewport.z;
     return highlight_segment(in, half, vec4<f32>(u.edge.rgb, 1.0));
+}
+
+// The same two drawn again over everything: entry points of their own,
+// which wgpu's GL backend keys programs by.
+@vertex
+fn vs_outline_through(in: EdgeIn) -> LineOut {
+    return outline(in);
+}
+
+@vertex
+fn vs_hovered_edge_through(in: EdgeIn) -> LineOut {
+    return hovered_edge(in);
 }
 
 // The selected edges' and vertices' colour: the selection's, shaded by
@@ -1347,6 +1377,25 @@ fn vs_vertex(
     @location(0) at: vec3<f32>,
     @location(1) flags: u32,
 ) -> PointOut {
+    return vertex(index, at, flags);
+}
+
+// The hovered vertices alone, drawn again over everything.
+@vertex
+fn vs_vertex_through(
+    @builtin(vertex_index) index: u32,
+    @location(0) at: vec3<f32>,
+    @location(1) flags: u32,
+) -> PointOut {
+    if (flags & HOVERED) == 0u {
+        var out: PointOut;
+        out.position = vec4<f32>(0.0, 0.0, -1.0, 1.0);
+        return out;
+    }
+    return vertex(index, at, flags);
+}
+
+fn vertex(index: u32, at: vec3<f32>, flags: u32) -> PointOut {
     var out: PointOut;
     let clip = pulled(at);
     let center = to_pixels(clip);

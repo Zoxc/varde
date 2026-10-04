@@ -65,6 +65,9 @@ pub struct DocumentState<'a> {
     pub picking: Option<crate::ModelPicking<'a>>,
     /// What's hovered and selected in `mesh`, drawn over it, if anything.
     pub highlight: Option<&'a Arc<crate::ModelHighlight>>,
+    /// Whether what's hovered is drawn over what hides it too: hovered in
+    /// the list of what overlaps.
+    pub hover_through: bool,
     /// The failures' geometry drawn over the model, in red.
     pub errors: &'a Arc<crate::ShownErrors>,
     /// What's selected in the model: Objects marks the bodies selected,
@@ -150,6 +153,9 @@ pub struct DocumentState<'a> {
     pub selected_feature: Option<FeatureId>,
     /// The row of the side panel whose context menu is open, if one is.
     pub row_menu: Option<RowMenu>,
+    /// What overlaps where the left button was held still in the
+    /// viewport, listed to choose from, if it's open.
+    pub overlaps: Option<&'a crate::Overlaps>,
     /// The sketch being edited, if one is.
     pub sketch: Option<SketchState<'a>>,
     /// The extrude being set up, if one is: never with a sketch.
@@ -715,6 +721,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.pivot,
                         state.picking,
                         state.highlight,
+                        state.hover_through,
                         state.errors,
                         state.options,
                         state.mode.palette(),
@@ -728,6 +735,12 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                             .or_else(|| state.motion.as_ref().map(crate::motion::panel))
                             .or_else(|| state.measure.as_ref().map(crate::measure::panel)),
                         crate::rail::rail(&state),
+                        state.overlaps.map(|overlaps| crate::overlaps::view(
+                            overlaps,
+                            (state.sketch.as_ref()).map(|sketch| (sketch.sketch, sketch.selection)),
+                            state.model_selection,
+                            state.editor.document(),
+                        )),
                         state.thumbnail,
                     ),
                     status::status_bar(status(&state)),

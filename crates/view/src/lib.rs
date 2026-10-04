@@ -26,6 +26,7 @@ mod measure;
 mod motion;
 mod mouse_only;
 mod operation_panel;
+mod overlaps;
 mod panels;
 mod pick;
 mod plane_pick;
@@ -85,6 +86,7 @@ pub use motion::{
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
 };
+pub use overlaps::{OverlapItems, Overlaps};
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
@@ -572,6 +574,28 @@ pub enum Look {
         body: BodyId,
         add: bool,
     },
+    /// The left button held still in a sketch or on the model, over more
+    /// than one item: lists them there to choose from.
+    OpenOverlaps(Overlaps),
+    /// A row of that list hovered: its item is highlighted.
+    HoverOverlap(Option<usize>),
+    /// The cursor left that row: nothing's hovered, unless another row
+    /// already is.
+    LeaveOverlap(usize),
+    /// A row of that list clicked: selects its item as a click on it
+    /// would, alone, closing the list, or with `add` (`Ctrl`, `Cmd` on
+    /// macOS, held, which the app knows) added or taken out, the list kept
+    /// open to pick more.
+    ChooseOverlap {
+        index: usize,
+        add: bool,
+    },
+    /// A row's tick of that list clicked: adds its item to the selection
+    /// or takes it out, as a click on it with `Ctrl` would, the list kept
+    /// open.
+    ToggleOverlap(usize),
+    /// Closes that list, the selection as it was: a press anywhere else.
+    CloseOverlaps,
     /// Clears the selection: the sketch's in a sketch, else the
     /// Timeline's and the model's.
     ClearSelection,

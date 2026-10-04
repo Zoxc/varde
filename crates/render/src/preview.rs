@@ -185,6 +185,7 @@ pub fn render_preview(
             hovered_faces: &[],
             selected_faces: &[],
             second_faces: &[],
+            hover_through: false,
             highlights: &Arc::new(Highlights::default()),
             errors: &[],
             sketch: None,
