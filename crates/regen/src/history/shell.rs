@@ -65,8 +65,9 @@ pub(crate) fn shell_by_boxes() {
 /// inward, the body less its box shrunk by the thickness (pushed out
 /// past the open faces); outward, its box grown by the thickness (but
 /// at the open faces) less the body's box pushed out past the open
-/// faces. Anything else is [`KernelError::TooComplex`]; walls meeting
-/// inside is [`ShellError::TooThick`].
+/// faces. Anything else is [`KernelError::TooComplex`]; inward walls
+/// meeting inside, or one as thick as the body is across (no hollow
+/// left), is [`ShellError::TooThick`].
 ///
 /// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
 #[cfg(any(test, feature = "testing"))]
@@ -172,7 +173,11 @@ pub(crate) fn by_boxes(
         varde_kernel::boolean(&outer, &block(in_lo, in_hi)?, Op::Difference, tol, budget)?
     } else {
         let (lo, hi) = moved(-thickness);
-        if (0..3).any(|axis| lo[axis] >= hi[axis]) {
+        // The hollow must reach into the body on every axis: a wall as
+        // thick as the body along one (a floor under an open top as
+        // thick as the box is high) leaves no hollow, the walls run
+        // into the open face.
+        if (0..3).any(|axis| lo[axis].max(min[axis]) >= hi[axis].min(max[axis])) {
             return Err(ShellError::TooThick);
         }
         varde_kernel::boolean(solid, &block(lo, hi)?, Op::Difference, tol, budget)?

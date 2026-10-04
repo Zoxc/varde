@@ -530,3 +530,96 @@ fn the_kernel_shells_alike_every_time() {
     assert_eq!(a.volume().to_bits(), b.volume().to_bits());
     assert_eq!(a.mesh().tris().len(), b.mesh().tris().len());
 }
+
+/// The stand-in against the volumes it should give, on a 10 × 6 × 4
+/// box: every set of faces opened (opposite ones among them), inward
+/// and outward, at thicknesses about half a side and past a side. Each
+/// shell that works has its volume; one that can't (walls meeting, a
+/// floor as thick as the body, nothing left) fails, never leaving the
+/// body as it was. Only within a hair of meeting may either be.
+#[test]
+fn the_stand_in_shells_boxes_by_their_volumes() {
+    with_boxes();
+    let mut editor = Editor::new(Document::default());
+    let body = block(&mut editor, 0.0, 0.0, 10.0, 6.0, "4");
+    let evaluation = evaluated(editor.document());
+    let solid = solid_of(&evaluation, body).clone();
+    let size = [10.0, 6.0, 4.0];
+    // Each face: its axis and end, and a point on it.
+    let mut sides = Vec::new();
+    for axis in 0..3 {
+        for end in 0..2 {
+            let mut n = DVec3::ZERO;
+            n[axis] = if end == 0 { -1.0 } else { 1.0 };
+            let d = if end == 0 { 0.0 } else { size[axis] };
+            let mut near = DVec3::from(size) / 2.0;
+            near[axis] = if end == 0 { 0.0 } else { size[axis] };
+            sides.push((axis, face(body, key_on(&solid, n, d), near.into())));
+        }
+    }
+    let mm = editor.document().clone();
+    let id = add(&mut editor, shell(&mm, body, Vec::new(), "1"));
+    let whole: f64 = size.iter().product();
+    for mask in 0..64u32 {
+        let open: Vec<FaceRef> = (0..6)
+            .filter(|k| mask & (1 << k) != 0)
+            .map(|k| sides[k].1)
+            .collect();
+        let mut closed = [2.0f64; 3];
+        for k in (0..6).filter(|k| mask & (1 << k) != 0) {
+            closed[sides[k].0] -= 1.0;
+        }
+        for text in [
+            "0.5",
+            "1.9999999",
+            "2",
+            "2.9999999",
+            "3.0000001",
+            "4",
+            "4.9999999",
+            "6",
+            "10",
+        ] {
+            for outward in [false, true] {
+                let t: f64 = text.parse().unwrap();
+                let kind = Shell {
+                    outward,
+                    ..shell(&mm, body, open.clone(), text)
+                };
+                set(&mut editor, id, kind);
+                let evaluation = evaluated(editor.document());
+                let (wanted, slack) = if outward {
+                    let grown: f64 = (0..3).map(|a| size[a] + t * closed[a]).product();
+                    (grown - whole, f64::INFINITY)
+                } else {
+                    let inner: Vec<f64> = (0..3).map(|a| size[a] - t * closed[a]).collect();
+                    let slack = inner.iter().copied().fold(f64::INFINITY, f64::min);
+                    let hollow = if slack > 0.0 {
+                        inner.iter().product()
+                    } else {
+                        0.0
+                    };
+                    (whole - hollow, slack)
+                };
+                let what = format!("open {mask:06b} {text} outward {outward}");
+                match failure(&evaluation, id) {
+                    None => {
+                        let got = solid_of(&evaluation, body).volume();
+                        assert!(slack > 0.0, "{what}: worked, giving {got}");
+                        assert!(
+                            (got - wanted).abs() <= 1e-6 * whole,
+                            "{what}: {got} vs {wanted}"
+                        );
+                        assert!(got < whole || outward, "{what}: nothing taken");
+                    }
+                    Some(failed) => {
+                        let can = slack <= 1e-6 || wanted <= 1e-6;
+                        assert!(can, "{what}: {}", failed.message);
+                    }
+                }
+            }
+        }
+    }
+}
+
+mod fuzz;

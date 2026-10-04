@@ -696,3 +696,110 @@ fn a_shell_s_toolbar_fits_at_1280_px() {
     assert!(on.iter().any(|t| t.text == "New shell"));
     assert!(on.iter().any(|t| t.text == "Cancel"));
 }
+
+/// The box's top opened with its left and right: what's left of the top
+/// on the preview is two strips, front and back, both lit as the top;
+/// a click on either takes the top out, and again puts it back once.
+#[test]
+fn a_removed_face_left_in_pieces_is_lit_and_taken_out_from_any() {
+    varde_regen::testing::shell_by_boxes();
+    let mut plates = boxes(false);
+    let body = plates.bodies[0];
+    plates.doc.look(Look::StartShell);
+    let up = top(&plates, body);
+    let picks = [
+        up,
+        face_pick(&plates, body, -DVec3::X, 0.0, DVec3::new(0.0, 15.0, 5.0)),
+        face_pick(&plates, body, DVec3::X, 40.0, DVec3::new(40.0, 15.0, 5.0)),
+    ];
+    for pick in picks {
+        click(&mut plates, pick);
+    }
+    let key = (faces(&plates).into_iter())
+        .find(|face| face.near.z == 10.0)
+        .expect("the top")
+        .key;
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    for y in [1.0, 29.0, 1.0, 29.0] {
+        let index = plates.doc.feed.pick_index();
+        let at = DVec3::new(20.0, y, 10.0);
+        let strip = index.find_face(body, &key, at).expect("a strip");
+        let other = index
+            .find_face(body, &key, DVec3::new(20.0, 30.0 - y, 10.0))
+            .expect("a strip");
+        assert_ne!(strip, other, "the top in two strips");
+        let lit = plates.doc.faces_lit();
+        assert!(lit.contains(&Picked::Face(strip)), "{lit:?}");
+        assert!(lit.contains(&Picked::Face(other)), "{lit:?}");
+        let pick = Pick {
+            model: index.model(),
+            target: Picked::Face(strip),
+            body,
+            at,
+            snap: None,
+        };
+        assert!(plates.doc.takes_reference(pick));
+        click(&mut plates, pick);
+        assert_eq!(faces(&plates).len(), 2, "the top out");
+        assert!(plates.doc.takes_reference(pick));
+        click(&mut plates, pick);
+        assert_eq!(faces(&plates).len(), 3, "the top back");
+        plates.answer();
+    }
+}
+
+/// A shell at the limit of faces (one face named at 256 points, as a
+/// file may hold): edited, another face clicked is refused with why,
+/// the panel lists them all; one taken out, the other is taken.
+#[test]
+fn a_shell_takes_at_most_256_faces() {
+    use varde_document::MAX_SHELL_FACES;
+    let (mut editor, id) = shelled();
+    let FeatureKind::Shell(mut shell) = editor.document().feature(id).unwrap().kind.clone() else {
+        panic!("a shell");
+    };
+    let up = shell.open[0];
+    shell.open = (0..MAX_SHELL_FACES)
+        .map(|k| varde_document::FaceRef {
+            near: DVec3::new(0.5 + k as f64 * 0.15, 15.0, 10.0),
+            ..up
+        })
+        .collect();
+    shell.open.sort_by(varde_document::FaceRef::order);
+    editor
+        .apply(Command::SetFeature {
+            feature: id,
+            kind: Box::new(shell.clone().into()),
+        })
+        .unwrap();
+    let mut plates = held(editor.document().clone());
+    let body = plates.bodies[0];
+    plates.doc.look(Look::EditFeature(id));
+    plates.answer();
+    assert_eq!(faces(&plates).len(), MAX_SHELL_FACES);
+    assert!(shows(&plates, "Face 256"));
+    let pick = front(&plates, body);
+    click(&mut plates, pick);
+    assert_eq!(
+        plates.doc.notice.as_deref(),
+        Some("A shell takes at most 256 faces")
+    );
+    assert_eq!(faces(&plates).len(), MAX_SHELL_FACES);
+    plates.motion(MotionLook::DropFace(shell.open[7]));
+    click(&mut plates, pick);
+    assert_eq!(faces(&plates).len(), MAX_SHELL_FACES);
+    assert!(plates.doc.motion_ready());
+    let mut over = shell.clone();
+    over.open.push(varde_document::FaceRef {
+        near: DVec3::new(39.9, 29.9, 10.0),
+        ..up
+    });
+    let design = plates.doc.editor.document().design();
+    assert_eq!(
+        over.check_own(&design).unwrap_err().to_string(),
+        "opens 257 faces, more than 256"
+    );
+}
+
+mod fuzz;

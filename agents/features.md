@@ -3206,8 +3206,10 @@ pub struct Shell {
   them, its volume its box's) hollowed by one boolean with another box
   (inward: less its box shrunk by the thickness and pushed out past the
   open faces; outward: its box grown but at the open faces, less its
-  box pushed out past them), too thick where the inner box would be
-  empty, too complex otherwise; and for recording and refusing
+  box pushed out past them), too thick where the inner box would
+  reach no way into the body (walls meeting, or a floor under an open
+  face as thick as the body is across: never the body left whole as
+  if shelled), too complex otherwise; and for recording and refusing
   stand-ins. The planned analytic tests of the kernel's shell are
   written out and `#[ignore = "kernel shell not built"]`.
 - The draft's reply carries nothing new.
@@ -3281,6 +3283,13 @@ panel.
   takes the face out: it's the face the shell names, as regeneration
   finds it on the body before the shell, so lighting it is kept (the
   chamfer's cut-off edges, which leave nothing, can't be clicked out).
+  Left in pieces (the top opened with two opposite sides is two
+  strips), every piece on the shell's own preview lights as the face
+  and a click on any takes it out (`Ref::grown`,
+  `PickIndex::faces_keyed_as`), rather than the one found nearest
+  lighting and a click on another naming the face again. A face already
+  in pieces before the shell, one of them removed, lights there with
+  its other pieces too (the model shown can't tell them apart).
 - **Thickness** (`MotionField::Thickness`, read by
   `Shell::thickness_ask`: "2" of the design's units to begin with, the
   mock's), and **Direction**: two tiles (`MotionLook::ShellDirection`,
@@ -3336,10 +3345,19 @@ it went; with the box stand-in: closed, open at one and two faces and
 outward by their volumes, too thick refused and just under it, the
 cache; recording: a face named twice handed over once, the thickness
 and direction as stored; refusals worded and drawn; a consumed body;
+the stand-in against the volumes it should give for every set of a
+box's faces opened, inward and outward, at thicknesses about half a side
+and past one; `shell/fuzz.rs`, random histories with shells,
+`VARDE_SHELL_SEEDS`: each that works was of a box and has the volume
+its open sides, thickness and direction give, each failing changes
+nothing, warm and cold caches alike, bytes and wire;
 ignored: the kernel's on a box open, closed and outward, a slot-shaped
 plate's round ends offset exactly, a boss on a plate open underneath,
 too thick, determinism), `io/src/vrdp/tests.rs` (through a file, a
-tampered face point and thickness refused), `view/src/shell/tests.rs`
+tampered face point and thickness refused, a record's shells damaged
+2 000 ways refused or checked, faces out of order, repeated, on another
+body, past the limit, named by the shell or later, a body made later
+and a thickness refused as read), `view/src/shell/tests.rs`
 (the notes), `view/src/motion/tests.rs` (the shell's panel: its order,
 the rows' kinds beside them, the place to click, the closed warning in
 the foot, the status text), `rail/tests.rs` (Shell in the Modify set)
@@ -3361,5 +3379,9 @@ takes away said to be gone, back on redo; the face selected taken in,
 Shell again backing out; faces selected on two bodies, the first one's
 body taking them; a face and a body picked following their body a
 redone combine merges; the toolbar fitting at 1280 px in a shell
-session). The app's tests shell by boxes through
+session; the top left in two strips by its opposite sides opened, both
+lit and either clicked taking it out; 256 faces, the next refused
+with why; `shell/fuzz.rs`, random shell sessions, `VARDE_SHELL_SEEDS`,
+each shell the model shows working holding to its volume). The app's
+tests shell by boxes through
 regen's `testing` feature (`varde_regen::testing::shell_by_boxes`).

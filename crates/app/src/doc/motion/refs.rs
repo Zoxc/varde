@@ -50,8 +50,10 @@ pub(crate) trait Ref: Copy + PartialEq {
     fn refs(session: &MotionSession) -> &Refs<Self>;
     fn refs_mut(session: &mut MotionSession) -> &mut Refs<Self>;
     /// The mesh's ones a click on `target` lights and matches: a blend's
-    /// edge with its tangent chain while it takes them in.
-    fn grown(session: &MotionSession, index: &PickIndex, target: u32) -> Vec<u32>;
+    /// edge with its tangent chain while it takes them in; on a shell's
+    /// own preview, a face with the other pieces of the face it's part
+    /// of. `doc` is the doc showing `index`.
+    fn grown(doc: &Doc, session: &MotionSession, index: &PickIndex, target: u32) -> Vec<u32>;
 }
 
 /// Several references picked, all on one body, and where they are on a
@@ -288,7 +290,7 @@ impl Doc {
         if pick.model != index.model() {
             return None;
         }
-        let grown = R::grown(session, index, target);
+        let grown = R::grown(self, session, index, target);
         R::refs(session).picked(pick.model, &grown)
     }
 
@@ -379,7 +381,7 @@ impl Doc {
         let index = self.feed.pick_index();
         let mut lit: Vec<u32> = (R::refs(session).found(index.model()))
             .filter_map(|(_, at)| at)
-            .flat_map(|at| R::grown(session, index, at))
+            .flat_map(|at| R::grown(self, session, index, at))
             .collect();
         lit.sort_unstable();
         lit.dedup();
@@ -456,7 +458,7 @@ impl Ref for EdgeRef {
         &mut session.blend.edges
     }
 
-    fn grown(session: &MotionSession, index: &PickIndex, target: u32) -> Vec<u32> {
+    fn grown(_: &Doc, session: &MotionSession, index: &PickIndex, target: u32) -> Vec<u32> {
         super::blend::chain_of(index, target, session.blend.chains)
     }
 }
@@ -522,7 +524,17 @@ impl Ref for FaceRef {
         &mut session.faces
     }
 
-    fn grown(_: &MotionSession, _: &PickIndex, target: u32) -> Vec<u32> {
-        vec![target]
+    /// On a shell's own preview, what's left of a face it removes may be
+    /// in several pieces (its top, opened with two opposite sides, is
+    /// two strips), each keyed as the face: they light, and a click on
+    /// any takes the face out, as one. (A face of the body already in
+    /// pieces before the shell, one of them removed, lights with the
+    /// others there too.)
+    fn grown(doc: &Doc, session: &MotionSession, index: &PickIndex, target: u32) -> Vec<u32> {
+        if session.kind == MotionKind::Shell && doc.feed.shows_draft_of_run() {
+            index.faces_keyed_as(target)
+        } else {
+            vec![target]
+        }
     }
 }

@@ -3341,3 +3341,162 @@ fn a_tampered_shell_is_refused() {
         }
     }
 }
+
+/// [`shelled_plate`] with a second shell opening two faces of the
+/// plate inward: its underside and the hole's wall.
+fn shelled_twice() -> Document {
+    use glam::DVec3;
+    use varde_document::{FaceKey, FaceRef, PartKey, Shell};
+    use varde_expr::Value;
+    let mut editor = Editor::new(shelled_plate());
+    let document = editor.document();
+    let plate = document.bodies()[0].id;
+    let maker = document.features()[1].id.get();
+    let face = |part, near: [f64; 3]| FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: maker,
+            part,
+            instance: 0,
+        },
+        near: DVec3::from(near),
+    };
+    let mut open = vec![
+        face(PartKey::StartCap, [10.5, -12.25, 0.0]),
+        face(PartKey::Side { curve: 4 }, [8.0, 0.0, 4.5]),
+    ];
+    open.sort_by(FaceRef::order);
+    let shell = Shell {
+        body: plate,
+        open,
+        thickness: Value::new("0.625", &Shell::thickness_ask(&document.design())).unwrap(),
+        outward: false,
+    };
+    editor
+        .apply(editor.document().add_feature(shell.into()))
+        .unwrap();
+    editor.document().clone()
+}
+
+/// The shells' part of a record damaged on disk, every float in it set
+/// to what's out of bounds or not a number and random bytes in it
+/// changed (2 000 ways): refused as it's read or read as a document that
+/// passes its check, its shells their own, never a panic.
+#[test]
+fn a_damaged_shell_is_refused_or_checked() {
+    let document = shelled_twice();
+    let raw = record_msgpack(&document);
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let from = (raw.windows(5))
+        .position(|window| window == b"Shell")
+        .expect("a shell's variant name");
+    let read = |bytes: &[u8]| {
+        if let Ok((document, _)) = from_msgpack::<Document>(bytes) {
+            document.check().unwrap();
+            for (index, feature) in document.features().iter().enumerate() {
+                if let varde_document::FeatureKind::Shell(shell) = &feature.kind {
+                    shell.check_own(&document.design()).unwrap();
+                    document
+                        .check_shell_faces(index, shell.body, &shell.open)
+                        .unwrap();
+                }
+            }
+        }
+    };
+    let floats: Vec<usize> = (from..raw.len().saturating_sub(8))
+        .filter(|&at| raw[at] == 0xcb)
+        .collect();
+    assert!(floats.len() > 6, "{}", floats.len());
+    for &at in &floats {
+        for x in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e300,
+            -1e300,
+            1.000_001e6,
+            1e6,
+            -0.0,
+            0.0,
+            f64::MIN_POSITIVE,
+            -1.0,
+        ] {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&x.to_bits().to_be_bytes());
+            read(&changed);
+        }
+    }
+    let size = raw.len() - from;
+    for seed in 0..2_000u64 {
+        let picks = noise(8, seed.wrapping_mul(0x9e37_79b9) + 7);
+        let mut changed = raw.clone();
+        for pair in picks.chunks(2).take(1 + (seed % 3) as usize) {
+            let at = from + (usize::from(pair[0]) * 256 + usize::from(pair[1])) % size;
+            changed[at] = picks[(seed % 8) as usize] ^ pair[1];
+        }
+        read(&changed);
+    }
+}
+
+/// A shell's faces out of order, repeated, on another body, or past the
+/// limit in a record, its body one no feature before it makes, a face
+/// named by itself or a later feature, or its thickness changed to what
+/// its ask refuses: each refused as it's
+/// read. With no faces (closed), it reads.
+#[test]
+fn a_shell_s_faces_and_values_are_checked_as_read() {
+    use varde_document::{FeatureKind, MAX_SHELL_FACES, Shell};
+    let document = shelled_twice();
+    let raw = record_msgpack(&document);
+    let FeatureKind::Shell(two) = &document.features()[3].kind else {
+        panic!("the two-face shell");
+    };
+    let was = rmp_serde::to_vec_named(&FeatureKind::Shell(two.clone())).unwrap();
+    let at = (raw.windows(was.len()))
+        .position(|window| window == was)
+        .expect("the shell in the record");
+    let changed = |change: &dyn Fn(&mut Shell)| {
+        let mut shell = two.clone();
+        change(&mut shell);
+        let now = rmp_serde::to_vec_named(&FeatureKind::Shell(shell.clone())).unwrap();
+        let mut changed = raw[..at].to_vec();
+        changed.extend_from_slice(&now);
+        changed.extend_from_slice(&raw[at + was.len()..]);
+        (shell, from_msgpack::<Document>(&changed))
+    };
+    let refused = |change: &dyn Fn(&mut Shell)| {
+        let (shell, read) = changed(change);
+        assert!(read.is_err(), "taken: {shell:?}");
+    };
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    refused(&|shell| shell.open.reverse());
+    refused(&|shell| shell.open[1] = shell.open[0]);
+    refused(&|shell| shell.open[1].body = varde_document::BodyId::NEW);
+    refused(&|shell| {
+        let body = varde_document::BodyId::NEW;
+        shell.body = body;
+        for face in &mut shell.open {
+            face.body = body;
+        }
+    });
+    refused(&|shell| {
+        let face = shell.open[0];
+        shell.open = (0..=MAX_SHELL_FACES)
+            .map(|k| varde_document::FaceRef {
+                near: face.near + glam::DVec3::X * k as f64 * 1e-3,
+                ..face
+            })
+            .collect();
+    });
+    refused(&|shell| {
+        shell.thickness.value = 0.0;
+        shell.thickness.text = "0".to_owned();
+    });
+    refused(&|shell| shell.thickness.value = 3.0);
+    // A face named by the shell itself, or by a feature after it.
+    let own = document.features()[3].id.get();
+    refused(&|shell| shell.open[0].key.feature = own);
+    refused(&|shell| shell.open[0].key.feature = own + 1);
+    let (_, closed) = changed(&|shell| shell.open.clear());
+    assert!(closed.is_ok());
+}

@@ -492,6 +492,22 @@ impl PickIndex {
             .flat_map(|(_, (start, &[end, _, _, _]))| start..end)
     }
 
+    /// The faces of the body `face` is on keyed as it is, ascending, it
+    /// among them: the pieces a face named once is left in.
+    pub fn faces_keyed_as(&self, face: u32) -> Vec<u32> {
+        let (Some(body), Some(key)) = (
+            self.face_body(face),
+            (self.picking.faces().get(face as usize)).map(|face| face.key),
+        ) else {
+            return Vec::new();
+        };
+        (self.body_faces(body))
+            .filter(|&other| {
+                (self.picking.faces().get(other as usize)).is_some_and(|f| f.key == key)
+            })
+            .collect()
+    }
+
     /// The keys of the faces either side of `chain`, sorted, as an edge
     /// reference keeps them, if it's an edge between two faces.
     pub fn chain_keys(&self, chain: u32) -> Option<[FaceKey; 2]> {
