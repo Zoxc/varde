@@ -13,6 +13,8 @@
 //! plane's axis), reversed by the draft's flip. The regions found go to
 //! the kernel sorted, each once, with a point of the neutral plane, the
 //! pull, the angle in radians and whether tangent faces are taken in.
+//! The plane found is noted for the answer (`Evaluation::references`,
+//! as a mirror's plane), its normal as found (not flipped).
 //!
 //! The result is cached by the body's key, the regions, the plane's
 //! point and the pull's bits, the angle's bits, the tangent flag, the
@@ -215,6 +217,8 @@ pub(super) fn evaluate_face_draft(
     let faces = place.regions(&draft.faces, message::draft_face_not_found)?;
     let [neutral, normal] =
         resolve_plane(&draft.neutral, &NEUTRAL_PLANE, evaluation, tolerance, cache)?;
+    // The plane, as a mirror's is, for the session to draw.
+    super::motion::note_reference(evaluation, feature, [neutral, normal]);
     let normal = normal.normalize();
     let pull = if draft.flip { -normal } else { normal };
     let angle = draft.angle.value;

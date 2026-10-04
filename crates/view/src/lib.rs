@@ -83,10 +83,11 @@ pub use measure::{
 };
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, ChamferType,
-    ChamferView, FaceHandle, FilletView, MotionField, MotionKind, MotionLook, MotionPick,
-    MotionState, OffsetFaceView, PatternMode, PickedFace, PickedFaces, ScaleMode, ScaleView,
-    ShellDirection, ShellView, SketchLines, SplitMode, SplitPiece, SplitView, align_info,
-    axis_name, direction_name, pattern_copies, plane_name, point_name, scale_info, split_info,
+    ChamferView, DraftView, FaceHandle, FilletView, MotionField, MotionKind, MotionLook,
+    MotionPick, MotionState, OffsetFaceView, PatternMode, PickedFace, PickedFaces, ScaleMode,
+    ScaleView, ShellDirection, ShellView, SketchLines, SplitMode, SplitPiece, SplitView,
+    align_info, axis_name, direction_name, pattern_copies, plane_name, point_name, scale_info,
+    split_info,
 };
 pub use offset_face::offset_info;
 pub use operation_panel::{
@@ -497,6 +498,9 @@ pub enum Look {
     /// Starts setting up a new offset face, its faces those selected in
     /// the model if any are, or backs out of the one being set up.
     StartOffsetFace,
+    /// Starts setting up a new draft, its faces those selected in the
+    /// model if any are, or backs out of the one being set up.
+    StartDraft,
     /// Changes the move, mirror, pattern, align or scale being set up, see [`MotionLook`]: it
     /// isn't in the document until [`Edit::CommitMotion`].
     Motion(MotionLook),

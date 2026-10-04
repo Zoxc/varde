@@ -623,7 +623,8 @@ fn ops<'a>(
                 | MotionKind::Chamfer
                 | MotionKind::Shell
                 | MotionKind::Fillet
-                | MotionKind::OffsetFace => (OriginPlane::ALL.iter())
+                | MotionKind::OffsetFace
+                | MotionKind::Draft => (OriginPlane::ALL.iter())
                     .map(|&plane| {
                         op(
                             Icon::SePlane,

@@ -14,7 +14,9 @@
 //! a shell's faces are picked as a face session's, in `faces`, its own
 //! parts in `shell`), `Look::StartOffsetFace` (the rail's Modify set; its
 //! faces picked as a shell's, its own parts and handle in
-//! `offset_face`), or by editing one, picking its bodies as a
+//! `offset_face`), `Look::StartDraft` (the rail's Modify set; its faces
+//! picked as a shell's, its neutral plane as a mirror's plane, its own
+//! parts in `face_draft`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
 //! one from the toolbar, or a model edge or face clicked, named as of the
@@ -82,7 +84,8 @@ pub(crate) struct MotionSession {
     /// pattern's X), as the UI mock's. A move stores it only with an
     /// angle other than zero.
     pub(crate) axis: Option<AxisRef>,
-    /// A mirror's plane, once picked.
+    /// A mirror's plane, once picked; a draft's neutral plane (XY to
+    /// begin with).
     pub(crate) plane: Option<PlaneRef>,
     /// The bodies picked that the document no longer holds, or that
     /// aren't made before the feature edited any more (an undo took them
@@ -96,7 +99,7 @@ pub(crate) struct MotionSession {
     /// A mirror's Create copy: on to begin with, as the UI mock's.
     pub(crate) keep_original: bool,
     /// A linear pattern's Flip direction, stored as a negative spacing;
-    /// an align's Flip; an offset face's Inward.
+    /// an align's Flip; an offset face's Inward; a draft's Flip.
     pub(crate) flip: bool,
     /// An align's references, as picked.
     pub(crate) align: AlignSetup,
@@ -114,8 +117,8 @@ pub(crate) struct MotionSession {
     /// Which way a shell's walls grow: Inward to begin with, as the UI
     /// mock's.
     pub(crate) direction: ShellDirection,
-    /// An offset face's Tangent faces: on to begin with, as the plan
-    /// has it.
+    /// An offset face's or a draft's Tangent faces: on to begin with, as
+    /// the plan has it.
     pub(crate) tangent: bool,
     /// Where an offset face's handle stands, once the model shown has
     /// told: [`offset_face::Anchor`].
@@ -221,6 +224,9 @@ fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
             varde_document::OffsetFace::distance_ask(design)
         }
         MotionField::Offset(_) | MotionField::Distance => Move::offset_ask(design),
+        MotionField::Angle if kind == MotionKind::Draft => {
+            varde_document::FaceDraft::angle_ask(design)
+        }
         MotionField::Angle => Move::angle_ask(design),
         MotionField::Count => Pattern::count_ask(design),
         MotionField::Spread => spread_ask(kind, design),
@@ -360,7 +366,11 @@ impl MotionSession {
                 read(&zero, &offset),
                 read(&zero, &offset),
                 read(&zero, &offset),
-                read(&varde_expr::format(0.0, Some(DEGREES)), &angle),
+                if kind == MotionKind::Draft {
+                    face_draft::angle_field(&design)
+                } else {
+                    read(&varde_expr::format(0.0, Some(DEGREES)), &angle)
+                },
                 copies,
                 spread_field,
                 if kind == MotionKind::OffsetFace {
@@ -380,7 +390,7 @@ impl MotionSession {
                 fillet::radius_field(&design),
             ],
             axis,
-            plane: None,
+            plane: (kind == MotionKind::Draft).then_some(face_draft::NEUTRAL),
             gone_bodies: Vec::new(),
             gone_reference: None,
             keep_original: true,
@@ -518,6 +528,11 @@ impl MotionSession {
                 session.open_offset_face(offset);
                 session
             }
+            FeatureKind::FaceDraft(draft) => {
+                let mut session = Self::new(MotionKind::Draft, document, Vec::new());
+                session.open_face_draft(draft);
+                session
+            }
             _ => return None,
         };
         session.feature = Some(feature);
@@ -616,6 +631,7 @@ impl MotionSession {
             MotionKind::Shell => shell::shell_kind(self),
             MotionKind::Fillet => fillet::fillet_kind(self),
             MotionKind::OffsetFace => offset_face::offset_face_kind(self),
+            MotionKind::Draft => face_draft::face_draft_kind(self),
         }
     }
 
@@ -736,7 +752,8 @@ impl MotionSession {
             | MotionKind::Chamfer
             | MotionKind::Shell
             | MotionKind::Fillet
-            | MotionKind::OffsetFace => {
+            | MotionKind::OffsetFace
+            | MotionKind::Draft => {
                 return Ok(None);
             }
         };
@@ -802,6 +819,7 @@ impl MotionSession {
                 MotionKind::Shell => "pick faces to remove, or the body to hollow",
                 MotionKind::Fillet => "pick the edges to fillet",
                 MotionKind::OffsetFace => "pick the faces to move",
+                MotionKind::Draft => "pick the faces to draft",
             });
         }
         match self.kind {
@@ -822,7 +840,8 @@ impl MotionSession {
             | MotionKind::Chamfer
             | MotionKind::Shell
             | MotionKind::Fillet
-            | MotionKind::OffsetFace => None,
+            | MotionKind::OffsetFace
+            | MotionKind::Draft => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -869,7 +888,12 @@ impl MotionSession {
         // A face session's faces go with their body; with none, it's a
         // shell's body picked that's gone.
         if self.kind.picks_faces() {
-            return self.faces_gone();
+            return self.faces_gone().or_else(|| match self.gone_reference {
+                Some(Reference::Plane(plane)) if self.plane == Some(plane) => {
+                    Some("The neutral plane is gone: pick another")
+                }
+                _ => None,
+            });
         }
         if (self.bodies.iter()).any(|body| self.gone_bodies.contains(body)) {
             return Some("A picked body is gone");
@@ -926,6 +950,9 @@ impl MotionSession {
             FeatureKind::OffsetFace(offset) => {
                 offset.check_own(design).err().map(|why| why.to_string())
             }
+            FeatureKind::FaceDraft(draft) => {
+                draft.check_own(design).err().map(|why| why.to_string())
+            }
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -946,6 +973,7 @@ impl MotionSession {
             MotionKind::Shell => fine(MotionField::Thickness),
             MotionKind::Fillet => fine(MotionField::Radius),
             MotionKind::OffsetFace => fine(MotionField::Distance),
+            MotionKind::Draft => fine(MotionField::Angle),
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
@@ -1011,7 +1039,7 @@ impl MotionSession {
                 Some(Reference::Axis(axis))
             }
             (_, Some(plane))
-                if document.check_plane_ref(index, &plane).is_err()
+                if neutral_refused(self.kind, document, index, &plane)
                     || plane_body(&plane).is_some_and(|body| !held(body)) =>
             {
                 Some(Reference::Plane(plane))
@@ -1191,6 +1219,7 @@ const NOT_AN_AXIS: &str = "Only a straight or round edge, or a round face, can b
 const NOT_A_DIRECTION: &str =
     "Only a straight or round edge, or a round face, can give the direction";
 const NOT_A_PLANE: &str = "Only a flat face can be the mirror plane";
+const NOT_A_NEUTRAL_PLANE: &str = "Only a flat face can be the neutral plane";
 const OUT_OF_DATE: &str = "The model shown is out of date: try again once it's regenerated";
 
 impl Doc {
@@ -1308,6 +1337,14 @@ impl Doc {
                     _ => MotionPick::Faces,
                 };
             }
+            // A draft's neutral plane row toggles picking it and its
+            // faces.
+            MotionLook::Picking(MotionPick::Reference) if session.kind == MotionKind::Draft => {
+                session.picking = match session.picking {
+                    MotionPick::Reference => MotionPick::Faces,
+                    _ => MotionPick::Reference,
+                };
+            }
             MotionLook::Picking(_) if session.kind.picks_faces() => {}
             MotionLook::Picking(MotionPick::Faces) => {}
             // A split's tool field clicked again while it picks stops
@@ -1392,7 +1429,9 @@ impl Doc {
             MotionLook::ShellDirection(direction) if session.kind == MotionKind::Shell => {
                 session.direction = direction;
             }
-            MotionLook::TangentFaces if session.kind == MotionKind::OffsetFace => {
+            MotionLook::TangentFaces
+                if matches!(session.kind, MotionKind::OffsetFace | MotionKind::Draft) =>
+            {
                 session.tangent = !session.tangent;
             }
             // Only as the handle offers it: a distance and a side.
@@ -1446,6 +1485,13 @@ impl Doc {
                 session.plane = Some(PlaneRef::Origin(plane));
                 session.picking = MotionPick::Bodies;
             }
+            MotionLook::OriginPlane(plane)
+                if session.kind == MotionKind::Draft
+                    && session.picking == MotionPick::Reference =>
+            {
+                session.plane = Some(PlaneRef::Origin(plane));
+                session.picking = MotionPick::Faces;
+            }
             MotionLook::OriginAxis(_) | MotionLook::OriginPlane(_) => {}
             MotionLook::Copy => session.keep_original = !session.keep_original,
             MotionLook::Flip
@@ -1455,6 +1501,7 @@ impl Doc {
                         | MotionKind::Align
                         | MotionKind::Chamfer
                         | MotionKind::OffsetFace
+                        | MotionKind::Draft
                 ) =>
             {
                 session.flip = !session.flip;
@@ -1554,7 +1601,12 @@ impl Doc {
             Reference::Axis(axis) => session.axis = Some(axis),
             Reference::Plane(plane) => session.plane = Some(plane),
         }
-        session.picking = MotionPick::Bodies;
+        // A draft goes back to picking its faces.
+        session.picking = if session.kind.picks_faces() {
+            MotionPick::Faces
+        } else {
+            MotionPick::Bodies
+        };
         Ok(())
     }
 
@@ -1575,6 +1627,10 @@ impl Doc {
         let not_an_axis = match session.kind {
             MotionKind::LinearPattern => NOT_A_DIRECTION,
             _ => NOT_AN_AXIS,
+        };
+        let not_a_plane = match session.kind {
+            MotionKind::Draft => NOT_A_NEUTRAL_PLANE,
+            _ => NOT_A_PLANE,
         };
         match (session.kind.takes_axis(), target) {
             (true, Picked::Edge(edge)) => {
@@ -1609,7 +1665,7 @@ impl Doc {
             }
             (false, Picked::Face(face)) => {
                 if !matches!(summary(face), Some(Summary::Plane { .. })) {
-                    return Err(NOT_A_PLANE.into());
+                    return Err(not_a_plane.into());
                 }
                 let face = naming
                     .checked_face_ref(index, face, at)
@@ -1617,7 +1673,7 @@ impl Doc {
                 Ok(Reference::Plane(PlaneRef::Face(face)))
             }
             (true, _) => Err(not_an_axis.into()),
-            (false, _) => Err(NOT_A_PLANE.into()),
+            (false, _) => Err(not_a_plane.into()),
         }
     }
 
@@ -2063,7 +2119,7 @@ impl Doc {
             | MotionKind::Fillet
             | MotionKind::OffsetFace => (None, None),
             MotionKind::Split => self.split_reference(session),
-            MotionKind::Mirror => {
+            MotionKind::Mirror | MotionKind::Draft => {
                 let plane = session.plane.as_ref();
                 let origin = plane.and_then(|plane| match plane {
                     PlaneRef::Origin(plane) => Some([DVec3::ZERO, plane.placement().normal]),
@@ -2087,6 +2143,13 @@ impl Doc {
         // holder.
         let shown = self.shown_bodies(&session.bodies);
         let bounds = self.feed.pick_index().bodies_bounds(&shown);
+        // A draft's neutral plane is drawn by the body, along the pull.
+        let line = match session.kind {
+            MotionKind::Draft => {
+                line.and_then(|line| face_draft::neutral_line(line, bounds, session.flip))
+            }
+            _ => line,
+        };
         let generation = self.editor.generation();
         let centre = (session.pivot.as_ref())
             .filter(|pivot| pivot.bodies == session.bodies && pivot.generation == generation)
@@ -2146,6 +2209,8 @@ impl Doc {
                 .then(|| Box::new(self.fillet_view(session))),
             offset_face: (session.kind == MotionKind::OffsetFace)
                 .then(|| Box::new(self.offset_face_view(session))),
+            draft: (session.kind == MotionKind::Draft)
+                .then(|| Box::new(self.face_draft_view(session))),
         })
     }
 }
@@ -2231,6 +2296,28 @@ fn axis_body(axis: &AxisRef) -> Option<BodyId> {
     }
 }
 
+/// Whether `document` refuses `plane` as the plane of a session of
+/// `kind` at feature `index`: a mirror's as a mirror's plane, a draft's
+/// as its neutral plane (whose face's body it depends on, so it must be
+/// made before it).
+fn neutral_refused(kind: MotionKind, document: &Document, index: usize, plane: &PlaneRef) -> bool {
+    match kind {
+        MotionKind::Draft => {
+            let own = plane_face(plane).is_some_and(|face| face.check_own().is_err());
+            own || document.check_neutral_plane(index, plane).is_err()
+        }
+        _ => document.check_plane_ref(index, plane).is_err(),
+    }
+}
+
+/// The face `plane` names, if it names one.
+fn plane_face(plane: &PlaneRef) -> Option<&FaceRef> {
+    match plane {
+        PlaneRef::Origin(_) => None,
+        PlaneRef::Face(face) => Some(face),
+    }
+}
+
 /// The body `plane`'s face is on, if it names one.
 fn plane_body(plane: &PlaneRef) -> Option<BodyId> {
     match plane {
@@ -2286,6 +2373,7 @@ fn unnamed(why: Unnamed, what: &str, kind: MotionKind) -> Cow<'static, str> {
 mod align;
 mod blend;
 mod chamfer;
+mod face_draft;
 mod faces;
 mod fillet;
 mod offset_face;

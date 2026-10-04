@@ -4,8 +4,9 @@
 //! bodies it runs through: a move's axis, a line across the bodies' box
 //! with an arrowhead (on the screen) at the end positive angles turn
 //! right-handed about, or a mirror's plane, a square across their box,
-//! outlined dashed and filled faintly, with its normal's short line.
-//! Both in the selected colour, or the hovered one while the panel's
+//! outlined dashed and filled faintly, with its normal's short line; a
+//! draft's neutral plane as a mirror's, with the pull drawn through it
+//! as an axis. All in the selected colour, or the hovered one while the panel's
 //! row of it is hovered.
 //!
 //! A move has handles at its bodies' pivot ([`MotionState::centre`],
@@ -444,6 +445,11 @@ impl<'a> Moving<'a> {
             match self.state.kind {
                 MotionKind::Mirror | MotionKind::Split => {
                     self.plane(&mut live, point, along, color);
+                }
+                // A draft's neutral plane, and the pull's arrow through it.
+                MotionKind::Draft => {
+                    self.plane(&mut live, point, along, color);
+                    self.axis(&mut live, point, along, color, camera, bounds);
                 }
                 _ => self.axis(&mut live, point, along, color, camera, bounds),
             }

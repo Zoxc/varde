@@ -22,7 +22,7 @@ use varde_view::{
 use super::{Plates, enter, near};
 use crate::tests::{holding, key_in, screen_texts};
 
-fn shows(plates: &Plates, wanted: &str) -> bool {
+pub(super) fn shows(plates: &Plates, wanted: &str) -> bool {
     screen_texts(&plates.doc)
         .iter()
         .any(|text| text.contains(wanted))
@@ -48,7 +48,7 @@ fn handle(plates: &Plates) -> Option<varde_view::FaceHandle> {
 }
 
 /// The doc holding `document`, its bodies in order.
-fn held(document: Document) -> Plates {
+pub(super) fn held(document: Document) -> Plates {
     let bodies = document.bodies();
     let at = |i: usize| bodies.get(i).or(bodies.first()).expect("a body").id;
     let bodies = [at(0), at(1), at(2)];
@@ -62,7 +62,7 @@ fn held(document: Document) -> Plates {
 
 /// Adds a sketch on XY holding the rectangle from `a` to `b`, extruded
 /// 10 up as a new body.
-fn add_box(editor: &mut Editor, a: DVec2, b: DVec2) {
+pub(super) fn add_box(editor: &mut Editor, a: DVec2, b: DVec2) {
     editor
         .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
         .unwrap();
@@ -101,7 +101,7 @@ fn add_box(editor: &mut Editor, a: DVec2, b: DVec2) {
 
 /// A box from (0, 0, 0) to (40, 30, 10), "Body 1", and with `two` another
 /// from (60, 0, 0) to (80, 20, 10), "Body 2".
-fn boxes(two: bool) -> Plates {
+pub(super) fn boxes(two: bool) -> Plates {
     let mut editor = Editor::new(Document::default());
     add_box(&mut editor, DVec2::ZERO, DVec2::new(40.0, 30.0));
     if two {
@@ -111,7 +111,7 @@ fn boxes(two: bool) -> Plates {
 }
 
 /// The pick of `body`'s flat face facing `normal` at `d`, at `at`.
-fn face_pick(plates: &Plates, body: BodyId, normal: DVec3, d: f64, at: DVec3) -> Pick {
+pub(super) fn face_pick(plates: &Plates, body: BodyId, normal: DVec3, d: f64, at: DVec3) -> Pick {
     let index = plates.doc.feed.pick_index();
     let face = (index.body_faces(body))
         .find(|&face| {
@@ -129,7 +129,7 @@ fn face_pick(plates: &Plates, body: BodyId, normal: DVec3, d: f64, at: DVec3) ->
 }
 
 /// A click on `pick`.
-fn click(plates: &mut Plates, pick: Pick) {
+pub(super) fn click(plates: &mut Plates, pick: Pick) {
     plates.doc.look(Look::ClickModel {
         pick: Some(pick),
         add: false,

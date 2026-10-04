@@ -34,8 +34,8 @@ use crate::theme;
 use crate::{CombineBody, Edit, Look, Message, VALUE_FIELD};
 
 /// Which is set up: a move, a mirror, a linear or circular pattern, an
-/// align, a scale, a split, a chamfer, a shell, a fillet or an offset
-/// face.
+/// align, a scale, a split, a chamfer, a shell, a fillet, an offset face
+/// or a draft.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionKind {
     Move,
@@ -49,6 +49,7 @@ pub enum MotionKind {
     Shell,
     Fillet,
     OffsetFace,
+    Draft,
 }
 
 impl MotionKind {
@@ -65,6 +66,7 @@ impl MotionKind {
             MotionKind::Shell => "Shell",
             MotionKind::Fillet => "Fillet",
             MotionKind::OffsetFace => "Offset face",
+            MotionKind::Draft => "Draft",
         }
     }
 
@@ -84,6 +86,7 @@ impl MotionKind {
             MotionKind::Shell => Icon::Shell,
             MotionKind::Fillet => Icon::BFillet,
             MotionKind::OffsetFace => Icon::OffsetFace,
+            MotionKind::Draft => Icon::Draft,
         }
     }
 
@@ -102,6 +105,7 @@ impl MotionKind {
             MotionKind::Shell => "New shell",
             MotionKind::Fillet => "New fillet",
             MotionKind::OffsetFace => "New offset face",
+            MotionKind::Draft => "New draft",
         }
     }
 
@@ -128,6 +132,7 @@ impl MotionKind {
                 | MotionKind::Shell
                 | MotionKind::Fillet
                 | MotionKind::OffsetFace
+                | MotionKind::Draft
         )
     }
 
@@ -137,16 +142,19 @@ impl MotionKind {
         matches!(self, MotionKind::Chamfer | MotionKind::Fillet)
     }
 
-    /// Whether it picks faces of one body, a shell's or an offset face's
-    /// (a draft's, once there's one): its body is its faces', or a
-    /// shell's picked itself while it has none.
+    /// Whether it picks faces of one body, a shell's, an offset face's or
+    /// a draft's: its body is its faces', or a shell's picked itself
+    /// while it has none.
     pub fn picks_faces(self) -> bool {
-        matches!(self, MotionKind::Shell | MotionKind::OffsetFace)
+        matches!(
+            self,
+            MotionKind::Shell | MotionKind::OffsetFace | MotionKind::Draft
+        )
     }
 
     /// The session that edits a feature of `kind`, if one does: a move, a
     /// mirror, a linear or circular pattern, an align, a scale, a split, a
-    /// chamfer, a shell or an offset face.
+    /// chamfer, a shell, an offset face or a draft.
     pub fn of(kind: &FeatureKind) -> Option<MotionKind> {
         Some(match kind {
             FeatureKind::Move(_) => MotionKind::Move,
@@ -162,6 +170,7 @@ impl MotionKind {
             FeatureKind::Shell(_) => MotionKind::Shell,
             FeatureKind::Fillet(_) => MotionKind::Fillet,
             FeatureKind::OffsetFace(_) => MotionKind::OffsetFace,
+            FeatureKind::FaceDraft(_) => MotionKind::Draft,
             _ => return None,
         })
     }
@@ -212,7 +221,7 @@ impl PatternMode {
 }
 
 /// What a click in the viewport picks: bodies, the reference (a move's
-/// axis, a mirror's plane), one of an align's points or directions, a
+/// axis, a mirror's plane, a draft's neutral plane), one of an align's points or directions, a
 /// scale's point or its edge, a split's tool, a chamfer's edges, a
 /// shell's faces, or nothing (an align with all it asks for picked, a split with its
 /// tool). A click on one of the panel's fields makes it the one picking.
@@ -231,7 +240,8 @@ pub enum MotionPick {
     Tool,
     /// A chamfer's edges, each click picking an edge or taking it out.
     Edges,
-    /// A face session's faces (a shell's, an offset face's), each click
+    /// A face session's faces (a shell's, an offset face's, a draft's),
+    /// each click
     /// picking a face or taking it out.
     Faces,
     Nothing,
@@ -434,8 +444,8 @@ pub enum MotionLook {
     OriginPoint,
     /// Takes an align's reference out: its row's cross.
     Clear(AlignSlot),
-    /// An origin plane as a mirror's plane: the toolbar's, while the
-    /// plane is picked.
+    /// An origin plane as a mirror's plane or a draft's neutral plane:
+    /// the toolbar's, while the plane is picked.
     OriginPlane(OriginPlane),
     /// A ring of a move's handles dragged: turns the bodies about the
     /// world axis `axis` by `angle` and shifts them by `offset`, so they
@@ -452,7 +462,7 @@ pub enum MotionLook {
     /// A linear pattern's Flip direction: runs the other way, or not; an
     /// align's Flip: its directions meet the other way round; a chamfer's
     /// Flip sides: its first distance (and angle) on the other face; an
-    /// offset face's Inward.
+    /// offset face's Inward; a draft's Flip pull.
     Flip,
     /// A pattern's Join to original: its copies in their bodies, or each
     /// a body of its own.
@@ -490,8 +500,8 @@ pub enum MotionLook {
     /// Which way a shell's walls grow from the body's faces: its
     /// Direction tiles.
     ShellDirection(ShellDirection),
-    /// An offset face's Tangent faces: its faces take in those running
-    /// on smoothly from them, or not.
+    /// An offset face's or a draft's Tangent faces: its faces take in
+    /// those running on smoothly from them, or not.
     TangentFaces,
     /// An offset face's handle dragged: the distance, as typed in its
     /// field, and whether it's inward (past zero).
@@ -598,6 +608,8 @@ pub struct MotionState<'a> {
     pub fillet: Option<Box<FilletView>>,
     /// An offset face's own parts, for an offset face.
     pub offset_face: Option<Box<OffsetFaceView>>,
+    /// A draft's own parts, for a draft.
+    pub draft: Option<Box<DraftView>>,
 }
 
 impl<'a> MotionState<'a> {
@@ -853,6 +865,9 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
         (MotionKind::OffsetFace, _) => (state.offset_face.as_ref())
             .and_then(|offset| offset.info.clone())
             .unwrap_or(bodies),
+        (MotionKind::Draft, _) => (state.draft.as_ref())
+            .and_then(|draft| draft.info.clone())
+            .unwrap_or(bodies),
         _ => bodies,
     }
 }
@@ -900,6 +915,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             ("Axis", Icon::SeAxis, "Click an axis or edge")
         }
         MotionKind::LinearPattern => ("Direction", Icon::SeAxis, "Click an axis or edge"),
+        MotionKind::Draft => ("Neutral plane", Icon::SePlane, "Click a plane or face"),
         // An align's references are its own fields: this one isn't shown.
         MotionKind::Mirror
         | MotionKind::Align
@@ -955,6 +971,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         MotionKind::Shell => shell::body(state, field_named),
         MotionKind::Fillet => fillet::body(state, field_named),
         MotionKind::OffsetFace => offset_face::body(state, field_named),
+        MotionKind::Draft => draft::body(state, reference, field_named),
         MotionKind::Move => {
             let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
             column![
@@ -1125,6 +1142,8 @@ mod shell;
 pub use shell::{ShellDirection, ShellView};
 mod offset_face;
 pub use offset_face::{FaceHandle, OffsetFaceView};
+mod draft;
+pub use draft::DraftView;
 
 #[cfg(test)]
 mod tests;

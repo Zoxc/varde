@@ -58,6 +58,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         shell: None,
         fillet: None,
         offset_face: None,
+        draft: None,
     }
 }
 

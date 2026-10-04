@@ -3245,8 +3245,8 @@ The move's session (`MotionSession`, above) with `MotionKind::Shell`;
 (`app/src/doc/motion/faces.rs`; `view/src/motion/faces.rs`,
 `PickedFaces` and its field), its faces a `Refs<FaceRef>` picked as the
 edge session's edges are (`refs.rs`), shared by every kind that
-`MotionKind::picks_faces()` (an offset face's, and a draft's once
-there's one, take it with their own values: each adds itself to
+`MotionKind::picks_faces()` (an offset face's and a draft's take it
+with their own values: each adds itself to
 `picks_faces`, `faces::limit` and `verb`, `MotionSession::faces_need`
 and `prune_faces`; `faces::takes_body` is the shell's alone, so theirs
 start with no body and have only their faces'); the shell's own parts are in
@@ -4002,3 +4002,85 @@ there, angles of 0 and 90° refused as read), `view/src/face_draft/tests.rs`
 The Timeline shows the icon mock's draft icon (`Icon::Draft`) and note
 (`view/src/face_draft.rs`: "3° · 4 faces"); selected, the status bar
 says `draft_info` ("4 faces · 3° from XY", ", flipped").
+
+### UI
+
+The move's session (`MotionSession`) with `MotionKind::Draft`, its faces
+picked by the face session (see the shell's UI: `faces.rs`, `refs.rs`,
+`PickedFaces`) and its neutral plane in the session's `plane`, picked as
+a mirror's; its own parts in `app/src/doc/motion/face_draft.rs` and
+`view/src/motion/draft.rs` (`DraftView`). **The model mock has no draft
+panel** (only the icon mock's `draft` icon, in the Modify group after
+Shell), so the panel is built in the style of the mock's shell panel.
+
+- **Starting**: `Look::StartDraft` from the rail's Modify set (after
+  Shell, before Scale, as the icon mock's Modify group orders it; its
+  letter D), again backing out; no key, as the mocks have none. **Not
+  on the toolbar**, as Shell and Offset face aren't. Or editing one
+  (`Look::EditFeature`: double-click, `Enter`, "Edit draft"), which
+  opens with its faces, neutral plane, angle, Flip and Tangent faces. A
+  new one takes the faces selected in the model shown that a click
+  would take, the first one's body deciding.
+- **Faces**: as an offset face's (`MotionPick::Faces`): a click picks or
+  takes out, all on the first face's body ("A draft's faces are all on
+  one body: pick faces of Body 1"), an edge "Only a face can be
+  drafted", at most `MAX_DRAFT_FACES`, sorted, lit, a row hovered
+  lighting its face; with none the status bar says "pick the faces to
+  draft". Faces whose maker an undo took away are said to be gone.
+- **The neutral plane**: XY to begin with (the plan names none; the pull
+  then up, so the part narrows upwards), shown as the panel's "Neutral
+  plane" row (a mirror's plane row: "XY plane", "Extrude 1's end").
+  Clicking the row makes clicks pick it (`MotionPick::Reference`, the
+  hint "Pick the neutral plane"), and again hands them back to the
+  faces; while it picks, the toolbar offers the origin planes
+  (`MotionLook::OriginPlane`, taken only then) and a flat face clicked
+  is taken (`Doc::reference_of`, named as of the feature; anything else
+  "Only a flat face can be the neutral plane"), the clicks going back to
+  the faces either way. A face neutral plane an undo takes away (its
+  body or its maker, checked by `Document::check_neutral_plane`) is kept
+  and said to be gone, "The neutral plane is gone: pick another",
+  nothing previewed or committed until another is picked or a redo
+  brings it back.
+- **The panel**: "New draft" or its name; **Faces** (rows "Face 2" with
+  the face's kind), **Neutral plane**, **Angle** (`MotionField::Angle`,
+  read by `FaceDraft::angle_ask`: "3" (degrees) to begin with; 90° or
+  more, or nothing, refused under the field), **Flip** (a tick, the
+  session's `flip`, `Icon::TkFlip`, "Pull against the plane's normal")
+  and **Tangent faces** (a tick, on to begin with). The failure in the
+  foot ("Draft fails").
+- **In the viewport**: the neutral plane drawn as a mirror's, through
+  the point of the plane nearest the middle of the body's box, with the
+  pull as an axis's arrow through it (`face_draft::neutral_line`; an
+  origin plane's from its axis, a face's from regeneration's answer,
+  which notes the plane found as a mirror's, unflipped). No handle (the
+  plan has none).
+- **Preview**: the draft as set up is the draft while it's whole, picking
+  faces or the plane. **The kernel's draft isn't built**, so today
+  every preview fails with "Draft fails" over "drafting faces of Body 1
+  is too complex to work out", OK waits, and Add anyway keeps it,
+  failing in the Timeline.
+- **Committing**: OK (`Enter`, Add anyway) adds "Draft N" or sets the
+  edited one, one undo step; Cancel or `Esc` leaves no trace. The
+  status bar says `draft_info` once whole ("1 face · 3° from XY"), else
+  what's next; the hint "Pick faces to draft" (`chrome::step_hint`).
+
+Departures from the plan and mock: the panel is in the shell panel's
+style (the mock has none); not on the toolbar; Flip and Tangent faces as
+ticks; the neutral plane starts as XY. Known gaps: the neutral plane is
+drawn only where its line is known (a face's once the preview answered).
+
+UI tests: `view/src/motion/tests.rs` (the panel's order, no Bodies or
+Direction, the status text), `rail/tests.rs` (Draft in the Modify set,
+its letter) and `app/src/doc/motion/tests/face_draft.rs` (the rail's
+Draft on the example plate: no body until a face, XY to begin with, the
+panel, an edge refused, a side picked, lit and listed, the stand-in's
+too-complex failure in the panel, OK waiting and Add anyway keeping it,
+failing in the Timeline, undo; with the boxes: the front drafted and
+previewed, the plane drawn by the body along the pull, the neutral
+plane's row toggling the picking, an edge refused as the plane, the top
+picked as the plane and previewed leaning out, Flip, XZ from the toolbar
+refused by regeneration (the front faces the pull), an origin plane
+taken only while the plane picks, another angle and 90° refused,
+Tangent faces, OK and the Timeline's row, undo; editing from the
+Timeline, Cancel, another angle, undo; a neutral face on another body
+an undo takes away said to be gone, back on redo).

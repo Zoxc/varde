@@ -19,9 +19,10 @@ use crate::chrome::{ChipSize, key_chip, scrolled, side_tip};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, DocumentKeys, Shortcut, align_binding, chamfer_binding, circular_pattern_binding,
-    combine_binding, constrain_binding, constraint_binding, extrude_binding, fillet_binding,
-    measure_binding, mirror_binding, move_binding, offset_face_binding, pattern_binding,
-    revolve_binding, scale_binding, shell_binding, sketch_binding, split_binding, tool_binding,
+    combine_binding, constrain_binding, constraint_binding, draft_binding, extrude_binding,
+    fillet_binding, measure_binding, mirror_binding, move_binding, offset_face_binding,
+    pattern_binding, revolve_binding, scale_binding, shell_binding, sketch_binding, split_binding,
+    tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
@@ -132,6 +133,7 @@ pub(crate) enum Entry {
     Chamfer,
     Shell,
     OffsetFace,
+    Draft,
     Measure,
     /// A sketch's tool.
     Tool(Tool),
@@ -159,6 +161,7 @@ impl Entry {
             Entry::Chamfer => Icon::BChamfer,
             Entry::Shell => Icon::Shell,
             Entry::OffsetFace => Icon::OffsetFace,
+            Entry::Draft => Icon::Draft,
             Entry::Measure => Icon::Measure,
             Entry::Tool(tool) => tool_icon(tool),
             Entry::Constrain => Icon::Constrain,
@@ -183,6 +186,7 @@ impl Entry {
             Entry::Chamfer => "Chamfer",
             Entry::Shell => "Shell",
             Entry::OffsetFace => "Offset face",
+            Entry::Draft => "Draft",
             Entry::Measure => "Measure",
             Entry::Tool(tool) => tool.label(),
             Entry::Constrain => "Constrain",
@@ -218,6 +222,7 @@ impl Entry {
             Entry::Chamfer => chamfer_binding(keys),
             Entry::Shell => shell_binding(keys),
             Entry::OffsetFace => offset_face_binding(keys),
+            Entry::Draft => draft_binding(keys),
             Entry::Measure => measure_binding(keys),
             Entry::Tool(tool) => tool_binding(tool, keys),
             Entry::Constrain => constrain_binding(keys),
@@ -245,6 +250,7 @@ impl Entry {
             Entry::Chamfer => using.motion == Some(crate::MotionKind::Chamfer),
             Entry::Shell => using.motion == Some(crate::MotionKind::Shell),
             Entry::OffsetFace => using.motion == Some(crate::MotionKind::OffsetFace),
+            Entry::Draft => using.motion == Some(crate::MotionKind::Draft),
             Entry::Measure => using.measuring,
             Entry::Tool(tool) => using.tool == Some(tool),
             Entry::Constrain => using.constraining,
@@ -309,13 +315,14 @@ const MODEL: [ToolSet; 4] = [
     ToolSet {
         name: "Modify",
         icon: Icon::CatModify,
-        // Fillet, Chamfer and Shell, then Scale before Combine, Offset
-        // face after it and Split body last, as the icon mock's Modify
-        // group orders them.
+        // Fillet, Chamfer, Shell and Draft, then Scale before Combine,
+        // Offset face after it and Split body last, as the icon mock's
+        // Modify group orders them.
         entries: &[
             Entry::Fillet,
             Entry::Chamfer,
             Entry::Shell,
+            Entry::Draft,
             Entry::Scale,
             Entry::Combine,
             Entry::OffsetFace,

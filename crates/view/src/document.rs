@@ -909,6 +909,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                 (crate::MotionPick::Edges, _) => "Pick edges",
                 (crate::MotionPick::Faces, crate::MotionKind::Shell) => "Pick faces to remove",
                 (crate::MotionPick::Faces, crate::MotionKind::OffsetFace) => "Pick faces to move",
+                (crate::MotionPick::Faces, crate::MotionKind::Draft) => "Pick faces to draft",
                 (crate::MotionPick::Faces, _) => "Pick faces",
                 (crate::MotionPick::Tool, _) => {
                     (motion.split.as_ref()).map_or("Pick the tool", |split| split.mode.hint())
@@ -919,6 +920,9 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                     "Pick the direction"
                 }
                 (crate::MotionPick::Reference, crate::MotionKind::Mirror) => "Pick the plane",
+                (crate::MotionPick::Reference, crate::MotionKind::Draft) => {
+                    "Pick the neutral plane"
+                }
                 (crate::MotionPick::Reference, _) => "Pick the axis",
             };
             Some(step_hint(MouseButton::Left, what))

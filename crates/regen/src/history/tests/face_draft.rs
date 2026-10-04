@@ -354,6 +354,10 @@ fn flip_reverses_the_pull() {
     let evaluation = evaluated(editor.document());
     let bounds = solid_of(&evaluation, body).bounds3().unwrap();
     assert_near(bounds.min.y, -10.0 * tan(5.0));
+    // The neutral plane noted for the session to draw, as found.
+    let noted = (evaluation.references.iter()).find(|(feature, _)| *feature == id);
+    let [point, normal] = noted.expect("the plane noted").1;
+    assert!(point.abs_diff_eq(DVec3::new(0.0, 0.0, 10.0), 1e-9) && normal == DVec3::Z);
     set(
         &mut editor,
         id,

@@ -67,6 +67,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         shell: None,
         fillet: None,
         offset_face: None,
+        draft: None,
     }
 }
 
@@ -913,4 +914,46 @@ fn an_offset_face_s_panel() {
     assert_eq!(status_info(&state), "1 face · 1 mm outward");
     state.need = Some("pick the faces to move");
     assert_eq!(status_info(&state), "pick the faces to move");
+}
+
+/// A draft's panel, in the style of the mock's shell panel: Faces (each
+/// with its kind, and where to click), Neutral plane (the plane's row),
+/// Angle, Flip and Tangent faces; no Bodies, no Direction tiles. The
+/// status bar says its info once whole, else what's needed.
+#[test]
+fn a_draft_s_panel() {
+    let mut state = state_of(MotionKind::Draft, Vec::new());
+    state.reference = Some("XY plane".to_owned());
+    state.picking = MotionPick::Faces;
+    let faces = shell_view(&[("Face 1", Some("Planar face"))], ShellDirection::Inward).faces;
+    state.draft = Some(Box::new(crate::DraftView {
+        faces,
+        flip: false,
+        tangent: true,
+        info: Some("1 face · 3° from XY".to_owned()),
+    }));
+    let shown = texts_of(&state);
+    let order = [
+        "New draft",
+        "Faces",
+        "Face 1",
+        "Click faces",
+        "Neutral plane",
+        "XY plane",
+        "Angle",
+        "Flip",
+        "Tangent faces",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    for text in ["Bodies", "Direction", "Inward", "Remove", "Distance"] {
+        assert!(!has(&shown, text), "{text}");
+    }
+    assert_eq!(status_info(&state), "1 face · 3° from XY");
+    state.need = Some("pick the faces to draft");
+    assert_eq!(status_info(&state), "pick the faces to draft");
 }

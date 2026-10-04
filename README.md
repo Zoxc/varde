@@ -32,9 +32,9 @@ sketches and editable features. It runs natively and in the browser.
 - Sketches on flat faces that follow the face as earlier features change.
 - Combining bodies: one body united with, less, or intersected with others.
 - Filleting and chamfering a body's edges, shelling a body to thin
-  walls and moving a body's faces in or out (offset face, by a handle or
-  a typed distance), set up and kept in the timeline (their geometry
-  isn't built yet).
+  walls, moving a body's faces in or out (offset face, by a handle or a
+  typed distance) and drafting faces by an angle from a neutral plane,
+  set up and kept in the timeline (their geometry isn't built yet).
 - Moving, mirroring and patterning bodies, in a row or round an axis,
   aligning one onto another by points and directions, and scaling them.
 - Faces, edges, vertices and bodies selected by clicking them with no tool
