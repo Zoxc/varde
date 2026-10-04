@@ -20,7 +20,7 @@ use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, DocumentKeys, Shortcut, align_binding, circular_pattern_binding, combine_binding,
     constrain_binding, constraint_binding, extrude_binding, measure_binding, mirror_binding,
-    move_binding, pattern_binding, revolve_binding, sketch_binding, tool_binding,
+    move_binding, pattern_binding, revolve_binding, scale_binding, sketch_binding, tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
@@ -125,6 +125,7 @@ pub(crate) enum Entry {
     LinearPattern,
     CircularPattern,
     Align,
+    Scale,
     Measure,
     /// A sketch's tool.
     Tool(Tool),
@@ -146,6 +147,7 @@ impl Entry {
             Entry::LinearPattern => Icon::LPattern,
             Entry::CircularPattern => Icon::CPattern,
             Entry::Align => Icon::Align,
+            Entry::Scale => Icon::Scale,
             Entry::Measure => Icon::Measure,
             Entry::Tool(tool) => tool_icon(tool),
             Entry::Constrain => Icon::Constrain,
@@ -164,6 +166,7 @@ impl Entry {
             Entry::LinearPattern => "Linear pattern",
             Entry::CircularPattern => "Circular pattern",
             Entry::Align => "Align",
+            Entry::Scale => "Scale",
             Entry::Measure => "Measure",
             Entry::Tool(tool) => tool.label(),
             Entry::Constrain => "Constrain",
@@ -193,6 +196,7 @@ impl Entry {
             Entry::LinearPattern => pattern_binding(keys),
             Entry::CircularPattern => circular_pattern_binding(keys),
             Entry::Align => align_binding(keys),
+            Entry::Scale => scale_binding(keys),
             Entry::Measure => measure_binding(keys),
             Entry::Tool(tool) => tool_binding(tool, keys),
             Entry::Constrain => constrain_binding(keys),
@@ -214,6 +218,7 @@ impl Entry {
             Entry::LinearPattern => using.motion == Some(crate::MotionKind::LinearPattern),
             Entry::CircularPattern => using.motion == Some(crate::MotionKind::CircularPattern),
             Entry::Align => using.motion == Some(crate::MotionKind::Align),
+            Entry::Scale => using.motion == Some(crate::MotionKind::Scale),
             Entry::Measure => using.measuring,
             Entry::Tool(tool) => using.tool == Some(tool),
             Entry::Constrain => using.constraining,
@@ -278,7 +283,8 @@ const MODEL: [ToolSet; 4] = [
     ToolSet {
         name: "Modify",
         icon: Icon::CatModify,
-        entries: &[Entry::Combine],
+        // Scale before Combine, as the mock's Modify group orders them.
+        entries: &[Entry::Scale, Entry::Combine],
     },
     ToolSet {
         name: "Transform",

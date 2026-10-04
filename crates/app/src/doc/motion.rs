@@ -1,9 +1,10 @@
-//! Setting up a move, a mirror, a pattern or an align: its session,
-//! started by `Look::StartMove` (`M`, the toolbar, the rail's Transform
-//! set), `Look::StartMirror` (the toolbar, the rail), `Look::StartPattern`
-//! (`P`, the toolbar, the rail), `Look::StartCircularPattern` (the
-//! rail) or `Look::StartAlign` (the rail; an align's own parts are in
-//! `align`), or by editing one, picking its bodies as a
+//! Setting up a move, a mirror, a pattern, an align or a scale: its
+//! session, started by `Look::StartMove` (`M`, the toolbar, the rail's
+//! Transform set), `Look::StartMirror` (the toolbar, the rail),
+//! `Look::StartPattern` (`P`, the toolbar, the rail),
+//! `Look::StartCircularPattern` (the rail), `Look::StartAlign` (the rail;
+//! an align's own parts are in `align`) or `Look::StartScale` (the rail's
+//! Modify set; a scale's own parts are in `scale`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
 //! one from the toolbar, or a model edge or face clicked, named as of the
@@ -26,7 +27,7 @@ use std::f64::consts::{PI, TAU};
 use glam::DVec3;
 use varde_document::{
     Axis3, AxisRef, BodyId, Copies, Design, Document, FeatureId, FeatureKind, Generation,
-    MAX_FEATURE_BODIES, MAX_PATTERN_COUNT, Mirror, Move, Pattern, PatternKind, PlaneRef,
+    MAX_FEATURE_BODIES, MAX_PATTERN_COUNT, Mirror, Move, Pattern, PatternKind, PlaneRef, Scale,
 };
 use varde_expr::{AngleUnit, Ask, ErrorKind, Unit, Value};
 use varde_kernel::Motion;
@@ -38,6 +39,7 @@ use varde_view::{
 };
 
 use self::align::AlignSetup;
+use self::scale::ScaleSetup;
 use super::combine::pickable;
 use super::feed::Merges;
 use super::regions::TypedText;
@@ -58,8 +60,9 @@ pub(crate) struct MotionSession {
     /// Its fields ([`MotionField::index`]): a move's offsets along X, Y
     /// and Z and its angle, a pattern's count and spread (its spacing or
     /// total, a length or a circular one's angle, as its mode reads it),
-    /// an align's distance (and its angle, the move's).
-    pub(crate) fields: [TypedText; 7],
+    /// an align's distance (and its angle, the move's), a scale's
+    /// factors and length.
+    pub(crate) fields: [TypedText; 12],
     /// A move's or pattern's axis: the Z axis to begin with (a linear
     /// pattern's X), as the UI mock's. A move stores it only with an
     /// angle other than zero.
@@ -82,6 +85,8 @@ pub(crate) struct MotionSession {
     pub(crate) flip: bool,
     /// An align's references, as picked.
     pub(crate) align: AlignSetup,
+    /// A scale's point, mode and edge.
+    pub(crate) scale: ScaleSetup,
     /// A pattern's Join to original: ticked to begin with, each body
     /// holding its copies, as the pattern stores by default (the UI
     /// mock's starts unticked; the user's decision is ticked); unticked,
@@ -178,6 +183,8 @@ fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
         MotionField::Angle => Move::angle_ask(design),
         MotionField::Count => Pattern::count_ask(design),
         MotionField::Spread => spread_ask(kind, design),
+        MotionField::Factor | MotionField::AxisFactor(_) => Scale::factor_ask(design),
+        MotionField::Length => Scale::length_ask(design),
     }
 }
 
@@ -249,6 +256,7 @@ impl MotionSession {
         let spread = spread_ask(kind, &design);
         let length = |design: &Design| varde_expr::format(0.0, Some(Unit::Length(design.units)));
         let zero = length(&design);
+        let factor = Scale::factor_ask(&design);
         let picking = match kind {
             MotionKind::Mirror if !bodies.is_empty() => MotionPick::Reference,
             // An align moves one body, then picks its point on it.
@@ -296,6 +304,11 @@ impl MotionSession {
                 copies,
                 spread_field,
                 read(&zero, &offset),
+                read("1", &factor),
+                read("1", &factor),
+                read("1", &factor),
+                read("1", &factor),
+                scale::empty_length(),
             ],
             axis,
             plane: None,
@@ -304,6 +317,7 @@ impl MotionSession {
             keep_original: true,
             flip: false,
             align: AlignSetup::default(),
+            scale: ScaleSetup::default(),
             join: true,
             opened: None,
             mode,
@@ -378,6 +392,28 @@ impl MotionSession {
                         TypedText::of(turn, &Move::angle_ask(&design));
                 }
                 session.picking = MotionPick::Nothing;
+                session
+            }
+            FeatureKind::Scale(scale) => {
+                let mut session = Self::new(MotionKind::Scale, document, scale.bodies.clone());
+                session.scale = ScaleSetup::of(scale);
+                let factor = Scale::factor_ask(&design);
+                let mut set = |field: MotionField, value: &Value, ask: &Ask| {
+                    session.fields[field.index()] = TypedText::of(value, ask);
+                };
+                match &scale.factor {
+                    varde_document::ScaleFactor::Uniform(value) => {
+                        set(MotionField::Factor, value, &factor);
+                    }
+                    varde_document::ScaleFactor::PerAxis(values) => {
+                        for (axis, value) in Axis3::ALL.into_iter().zip(values) {
+                            set(MotionField::AxisFactor(axis), value, &factor);
+                        }
+                    }
+                    varde_document::ScaleFactor::EdgeLength { length, .. } => {
+                        set(MotionField::Length, length, &Scale::length_ask(&design));
+                    }
+                }
                 session
             }
             _ => return None,
@@ -472,6 +508,7 @@ impl MotionSession {
                 keep_original: self.keep_original,
             })),
             MotionKind::Align => self.align().map(FeatureKind::from),
+            MotionKind::Scale => self.scale().map(FeatureKind::Scale),
         }
     }
 
@@ -584,7 +621,9 @@ impl MotionSession {
                 };
                 circular(&angle).kind
             }
-            MotionKind::Move | MotionKind::Mirror | MotionKind::Align => return Ok(None),
+            MotionKind::Move | MotionKind::Mirror | MotionKind::Align | MotionKind::Scale => {
+                return Ok(None);
+            }
         };
         let mut kind = kind;
         if let Some(opened) = &self.opened
@@ -622,6 +661,9 @@ impl MotionSession {
         if self.kind == MotionKind::Align {
             return self.align_need();
         }
+        if self.kind == MotionKind::Scale {
+            return self.scale_need();
+        }
         if self.bodies.is_empty() {
             return Some(match self.kind {
                 MotionKind::Move => "pick the bodies to move",
@@ -630,6 +672,7 @@ impl MotionSession {
                     "pick the bodies to pattern"
                 }
                 MotionKind::Align => "pick the body to align",
+                MotionKind::Scale => "pick the bodies to scale",
             });
         }
         match self.kind {
@@ -643,7 +686,7 @@ impl MotionSession {
             MotionKind::Mirror if self.plane.is_none() => {
                 Some("pick a plane: an origin plane or a planar face")
             }
-            MotionKind::Mirror | MotionKind::Align => None,
+            MotionKind::Mirror | MotionKind::Align | MotionKind::Scale => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -684,6 +727,9 @@ impl MotionSession {
         if self.kind == MotionKind::Align {
             return self.align_gone();
         }
+        if self.kind == MotionKind::Scale {
+            return self.scale_gone();
+        }
         match (self.kind, self.gone_reference) {
             (MotionKind::Move, Some(Reference::Axis(axis)))
                 if self.axis == Some(axis) && self.angle().is_some_and(|angle| angle != 0.0) =>
@@ -715,6 +761,7 @@ impl MotionSession {
                 pattern.check_own(design).err().map(|why| why.to_string())
             }
             FeatureKind::Align(align) => align.check_own(design).err().map(|why| why.to_string()),
+            FeatureKind::Scale(scale) => scale.check_own(design).err().map(|why| why.to_string()),
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -730,6 +777,7 @@ impl MotionSession {
             MotionKind::Move => MotionField::ALL[..4].iter().all(|&field| fine(field)),
             MotionKind::Mirror => true,
             MotionKind::Align => fine(MotionField::Distance) && fine(MotionField::Angle),
+            MotionKind::Scale => self.scale_fields().iter().all(|&field| fine(field)),
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
@@ -778,6 +826,7 @@ impl MotionSession {
             return;
         };
         self.prune_align(document, index);
+        self.prune_scale(document, index);
         let held = |body: BodyId| document.body(body).is_some();
         self.gone_reference = match (self.axis, self.plane) {
             (Some(axis), _)
@@ -983,7 +1032,19 @@ impl Doc {
             // An align's references are its own; others pick none.
             MotionLook::Picking(MotionPick::Align(_) | MotionPick::Nothing)
                 if session.kind != MotionKind::Align => {}
-            MotionLook::Picking(MotionPick::Reference) if session.kind == MotionKind::Align => {}
+            MotionLook::Picking(MotionPick::Point | MotionPick::Edge)
+                if session.kind != MotionKind::Scale => {}
+            MotionLook::Picking(MotionPick::Reference)
+                if matches!(session.kind, MotionKind::Align | MotionKind::Scale) => {}
+            MotionLook::Picking(MotionPick::Edge)
+                if session.scale.mode != varde_view::ScaleMode::EdgeLength => {}
+            // A scale's point or edge field clicked again while it picks
+            // hands the clicks back to the bodies.
+            MotionLook::Picking(picking @ (MotionPick::Point | MotionPick::Edge))
+                if session.picking == picking =>
+            {
+                session.picking = MotionPick::Bodies;
+            }
             // An align's field clicked again while it picks stops picking,
             // so the align shows as set up without picking all it can take.
             MotionLook::Picking(picking @ MotionPick::Align(_)) if session.picking == picking => {
@@ -993,7 +1054,15 @@ impl Doc {
             MotionLook::OriginAxis(axis) if session.kind == MotionKind::Align => {
                 self.align_origin(Some(axis));
             }
+            MotionLook::OriginPoint if session.kind == MotionKind::Scale => session.scale_origin(),
             MotionLook::OriginPoint => self.align_origin(None),
+            MotionLook::ScaleMode(mode) if session.kind == MotionKind::Scale => {
+                session.scale_mode(mode);
+            }
+            MotionLook::AxisOnly if session.kind == MotionKind::Scale => {
+                session.scale.axis_only = !session.scale.axis_only;
+            }
+            MotionLook::ScaleMode(_) | MotionLook::AxisOnly => {}
             MotionLook::Clear(slot) if session.kind == MotionKind::Align => {
                 session.align.clear(slot);
                 // Clicks go on to what's needed first now, or to nothing
@@ -1078,6 +1147,8 @@ impl Doc {
             }
             MotionPick::Reference => self.motion_reference(pick),
             MotionPick::Align(slot) => self.align_pick(slot, pick),
+            MotionPick::Point => self.scale_point(pick),
+            MotionPick::Edge => self.scale_edge(pick),
             MotionPick::Nothing => Ok(()),
         };
         if let Err(why) = picked {
@@ -1437,6 +1508,8 @@ impl Doc {
         (self.feed.answers_request() && !self.feed.predates_replacement())
             && match session.picking {
                 MotionPick::Align(slot) => self.align_reference(slot, pick).is_ok(),
+                MotionPick::Point => self.scale_point_of(pick).is_ok(),
+                MotionPick::Edge => self.scale_edge_of(pick).is_ok(),
                 _ => self.reference_of(pick.target, pick.at).is_ok(),
             }
     }
@@ -1452,6 +1525,7 @@ impl Doc {
             return;
         }
         self.follow_align();
+        self.follow_scale();
         let Some(session) = &self.motion else {
             return;
         };
@@ -1468,14 +1542,18 @@ impl Doc {
                 MotionPick::Bodies => {
                     (!session.bodies.contains(&pick.body)).then_some((pick.target, false))
                 }
-                MotionPick::Reference | MotionPick::Align(_) => {
-                    self.takes_reference(pick).then_some((pick.target, false))
-                }
+                MotionPick::Reference
+                | MotionPick::Align(_)
+                | MotionPick::Point
+                | MotionPick::Edge => self.takes_reference(pick).then_some((pick.target, false)),
                 MotionPick::Nothing => None,
             },
             (None, None) => None,
         };
-        let lit = self.align_lit();
+        let lit = match session.kind {
+            MotionKind::Scale => [Vec::new(), self.scale_lit()],
+            _ => self.align_lit(),
+        };
         let key = (
             self.feed.model(),
             hovered,
@@ -1504,7 +1582,12 @@ impl Doc {
                     .filter(|&&body| Some(body) != lit)
                     .flat_map(|&body| faces(body))
                     .collect(),
-                Vec::new(),
+                // A scale's edge in the second colour, on its bodies.
+                if session.kind == MotionKind::Scale {
+                    key.4[1].clone()
+                } else {
+                    Vec::new()
+                },
             ),
         };
         let hover: Vec<Picked> = match (hovered, session.picking) {
@@ -1512,9 +1595,10 @@ impl Doc {
                 .body(target)
                 .map(|body| faces(body).collect())
                 .unwrap_or_default(),
-            (Some((target, false)), MotionPick::Reference | MotionPick::Align(_)) => {
-                vec![target]
-            }
+            (
+                Some((target, false)),
+                MotionPick::Reference | MotionPick::Align(_) | MotionPick::Point | MotionPick::Edge,
+            ) => vec![target],
             (Some((_, false)), MotionPick::Nothing) | (None, _) => Vec::new(),
         };
         let highlight = Arc::new(index.highlight_with(&hover, &picked, &second));
@@ -1555,7 +1639,7 @@ impl Doc {
                 });
                 (axis.map(|axis| axis_name(document, axis)), origin)
             }
-            MotionKind::Align => (None, None),
+            MotionKind::Align | MotionKind::Scale => (None, None),
             MotionKind::Mirror => {
                 let plane = session.plane.as_ref();
                 let origin = plane.and_then(|plane| match plane {
@@ -1609,7 +1693,7 @@ impl Doc {
             keep_original: session.keep_original,
             flip: session.flip,
             join: session.join,
-            warning: self.motion_warning(session),
+            warning: (self.motion_warning(session)).or_else(|| self.scale_note(session)),
             mode: session.mode,
             spread_error: session.spread_error(),
             copies: match session.kind() {
@@ -1628,6 +1712,7 @@ impl Doc {
             editable: self.editable(),
             hover: self.panel_hover(),
             align: (session.kind == MotionKind::Align).then(|| Box::new(self.align_view(session))),
+            scale: (session.kind == MotionKind::Scale).then(|| Box::new(self.scale_view(session))),
         })
     }
 }
@@ -1745,6 +1830,7 @@ fn copy_user<'a>(
 }
 
 mod align;
+mod scale;
 
 #[cfg(test)]
 mod tests;

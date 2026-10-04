@@ -410,6 +410,9 @@ fn refusals() {
     );
     let id = add(&mut editor, to_length(&mm(), &[a], apart, "20", false));
     unmoved(&editor, id, "its edge wasn't found");
+    // An edge not found shows nothing.
+    let evaluation = evaluated(editor.document());
+    assert!(failure(&evaluation, id).unwrap().geometry.is_none());
     let top = flat_edge(
         &solid,
         a,
@@ -422,6 +425,17 @@ fn refusals() {
     for text in ["10001", "0.009"] {
         set(&mut editor, id, to_length(&mm(), &[a], top, text, false));
         unmoved(&editor, id, too_far);
+        // The edge found is drawn where it fails: the 10 long top edge
+        // along Y at x 10.
+        let evaluation = evaluated(editor.document());
+        let failed = failure(&evaluation, id).unwrap();
+        let geometry = failed.geometry.as_ref().expect("the edge drawn");
+        let points = geometry.lines().points();
+        assert!(!points.is_empty());
+        assert!(
+            (points.iter()).all(|p| p[0] == 10.0 && p[2] == 10.0 && (0.0..=10.0).contains(&p[1])),
+            "{points:?}"
+        );
     }
     // The bounds themselves scale.
     for (text, f) in [("10000", 1e3), ("0.01", 1e-3)] {
@@ -489,6 +503,7 @@ fn refusals() {
         failure(&evaluation, id).unwrap().message,
         "its edge isn't along an axis any more, so it can't scale along it only"
     );
+    assert!(failure(&evaluation, id).unwrap().geometry.is_some());
     // Uniform, it scales by 20 over its length.
     set(
         &mut editor,

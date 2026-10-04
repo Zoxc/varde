@@ -61,7 +61,8 @@ fn every_entry_has_a_letter_of_its_own_and_its_key_s_where_it_s_a_letter_alone()
         .into_iter()
         .flatten()
         .collect();
-    assert_eq!(modify, "b");
+    // Scale, with no key, takes the first free letter of its name.
+    assert_eq!(modify, "sb");
     // Move is M, Linear pattern P; Mirror, Circular pattern and Align,
     // with no key, take the first free letter of their names.
     let transform: String = letters(MODEL[2].entries, false)
@@ -103,6 +104,7 @@ fn the_sets_hold_every_tool_the_app_has_and_only_those() {
             Entry::Sketch,
             Entry::Extrude,
             Entry::Revolve,
+            Entry::Scale,
             Entry::Combine,
             Entry::Move,
             Entry::Mirror,

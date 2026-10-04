@@ -73,8 +73,8 @@ pub use measure::{
 };
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, MotionField, MotionKind, MotionLook,
-    MotionPick, MotionState, PatternMode, align_info, axis_name, direction_name, pattern_copies,
-    plane_name, point_name,
+    MotionPick, MotionState, PatternMode, ScaleMode, ScaleView, align_info, axis_name,
+    direction_name, pattern_copies, plane_name, point_name, scale_info,
 };
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
@@ -463,7 +463,10 @@ pub enum Look {
     /// Starts setting up a new align, its body from what's selected in
     /// the model if anything is, as [`Look::StartMove`] a move.
     StartAlign,
-    /// Changes the move, mirror, pattern or align being set up, see [`MotionLook`]: it
+    /// Starts setting up a new scale, its bodies from what's selected in
+    /// the model if anything is, as [`Look::StartMove`] a move.
+    StartScale,
+    /// Changes the move, mirror, pattern, align or scale being set up, see [`MotionLook`]: it
     /// isn't in the document until [`Edit::CommitMotion`].
     Motion(MotionLook),
     /// Starts the measure tool, outside sketches and operations being

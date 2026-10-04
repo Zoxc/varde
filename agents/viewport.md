@@ -799,7 +799,10 @@ the session picks a point, faces, edges and vertices with
 `Moving` (`AlignView::snaps`); its directions are picked on faces and
 edges (`Picks::EdgesAndFaces`), lit while picked as A's and B's are, the
 moved side's as selected and the target's in the second colour (see
-`agents/features.md`, Align).
+`agents/features.md`, Align). A scale's point is picked the same way
+(`MotionPick::Point`, its snap dots drawn from `ScaleView::snaps`), and
+its edge on edges alone (`MotionPick::Edge`, `Picks::Edges`), lit in the
+second colour once picked (see `agents/features.md`, Scale).
 
 The highlight while measuring is the session's own (the selection's
 isn't drawn and stays as it was), a `ModelHighlight` as the

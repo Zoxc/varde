@@ -431,6 +431,7 @@ impl Doc {
             .or_else(|| self.motion_draft());
         let inspect = (self.measure.as_ref())
             .and_then(MeasureSession::inspect)
+            .or_else(|| self.scale_inspect())
             .or_else(|| self.selection_inspect());
         self.feed
             .request_with(&self.editor, exclude, draft, inspect);
@@ -719,6 +720,7 @@ impl Doc {
                 | Look::StartPattern
                 | Look::StartCircularPattern
                 | Look::StartAlign
+                | Look::StartScale
                 | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
@@ -737,6 +739,7 @@ impl Doc {
                 | Look::StartPattern
                 | Look::StartCircularPattern
                 | Look::StartAlign
+                | Look::StartScale
                 | Look::EditFeature(_)
         ) {
             self.measure = None;
@@ -768,10 +771,9 @@ impl Doc {
                     FeatureKind::Move(_)
                     | FeatureKind::Mirror(_)
                     | FeatureKind::Pattern(_)
-                    | FeatureKind::Align(_),
+                    | FeatureKind::Align(_)
+                    | FeatureKind::Scale(_),
                 ) => self.edit_motion(id),
-                // No panel yet: scales are made by the document's commands.
-                Some(FeatureKind::Scale(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
@@ -787,6 +789,7 @@ impl Doc {
                 self.start_motion(varde_view::MotionKind::CircularPattern)
             }
             Look::StartAlign => self.start_motion(varde_view::MotionKind::Align),
+            Look::StartScale => self.start_motion(varde_view::MotionKind::Scale),
             Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),

@@ -106,7 +106,7 @@ impl Taken {
     /// `shown` says draws its body there: the face or edge to light, for
     /// a direction, and the point to draw, for a point (the origin's at
     /// zero). Nothing for what isn't found, or an origin axis.
-    fn found(&self, index: &PickIndex, shown: impl Fn(BodyId) -> BodyId) -> Mark {
+    pub(super) fn found(&self, index: &PickIndex, shown: impl Fn(BodyId) -> BodyId) -> Mark {
         let edge = |edge: &EdgeRef| index.find_edge(shown(edge.body), edge.faces, edge.near);
         let face = |face: &FaceRef| index.find_face(shown(face.body), &face.key, face.near);
         let (target, at) = match self {
@@ -763,7 +763,7 @@ fn marks_of(datums: &AlignDatums) -> [AlignMark; 2] {
 /// edge clicked, its middle if straight, its centre if round, named at a
 /// point on the edge (not the centre, off it), so the two are the same
 /// reference.
-fn point_of(
+pub(super) fn point_of(
     index: &PickIndex,
     naming: &Naming,
     pick: Pick,
@@ -808,7 +808,7 @@ fn point_of(
 
 /// Where the point `pick` names is drawn ([`point_of`]): its snap point,
 /// the snap point of the edge clicked, or the vertex clicked.
-fn point_at(index: &PickIndex, pick: Pick) -> Option<DVec3> {
+pub(super) fn point_at(index: &PickIndex, pick: Pick) -> Option<DVec3> {
     match (pick.snap, pick.target) {
         (Some(snapped), _) => index.snap_point(snapped),
         (None, Picked::Edge(edge)) => index.snap_point(Snapped::EdgePoint(edge)),

@@ -20,19 +20,20 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use glam::DVec3;
 use varde_document::{BodyId, Document, EdgeRef, FeatureId, MAX_SCALE_FACTOR, Scale, ScaleFactor};
 use varde_kernel::measure::{EdgeShape, Measured, Pick, Target, measure};
 use varde_kernel::mesh::Surface;
-use varde_kernel::{Budget, Motion, Tolerance};
+use varde_kernel::{Budget, Evidence, Motion, Tolerance};
 
 use super::align::Found;
 use super::motion::{How, place, reference_key};
 use super::{Evaluation, Failed, own_solids};
-use crate::ScaleFound;
 use crate::cache::{Cache, EdgeLength};
 use crate::message::{self, Moving, Whose};
+use crate::{ErrorGeometry, ScaleFound};
 
 /// How near a world axis an edge must run for a scale along its axis
 /// only: the sine of the angle between them at most this. It names the
@@ -40,7 +41,7 @@ use crate::message::{self, Moving, Whose};
 /// components, at most this much of it, aren't scaled, so the edge gets
 /// its typed length to within about `1e-12` relative over the factors
 /// allowed.
-pub(crate) const AXIS_SINE: f64 = 1e-9;
+pub const AXIS_SINE: f64 = 1e-9;
 
 /// Changes the bodies of `evaluation` that the scale `scale`, the feature
 /// `feature`, scales, or says why it fails, changing nothing.
@@ -77,10 +78,18 @@ pub(super) fn evaluate_scale(
         fitted,
     );
     let centre = centre?;
+    // An edge length refused once its edge is found shows the edge.
+    let shown = |failed: Failed| match scale.factor.edge() {
+        Some(on) if failed.geometry.is_none() => Failed {
+            geometry: edge_geometry(on, evaluation, tolerance),
+            ..failed
+        },
+        _ => failed,
+    };
     if let Some(edge) = edge {
-        edge?;
+        edge.map_err(shown)?;
     }
-    let factors = factors?;
+    let factors = factors.map_err(shown)?;
     let motion = Motion::scale(centre, factors).ok_or(message::SCALE_FACTOR)?;
     let how = How {
         moving: Moving::Scale,
@@ -133,6 +142,30 @@ fn measured(
             Err(error) => Err(message::scale_measure(error).into()),
         }
     })
+}
+
+/// What a refused edge length shows: the curves of `edge` on its body's
+/// solid in `evaluation`, if it's found there, drawn at the display of
+/// `tolerance` as an align's refused references are.
+fn edge_geometry(
+    edge: &EdgeRef,
+    evaluation: &Evaluation,
+    tolerance: &Tolerance,
+) -> Option<Arc<ErrorGeometry>> {
+    let made = (evaluation.bodies.iter()).find(|made| made.body == edge.body)?;
+    let solid = &made.solid;
+    let topology = solid.topology();
+    let chain = topology.edge(solid, edge.faces, edge.near).ok()?;
+    let chain = topology.chains().get(chain as usize)?;
+    let mesh = solid.mesh();
+    let tris = mesh.tris().len();
+    let mut evidence = Evidence::default();
+    evidence.add_curves(
+        (chain.halfedges.iter())
+            .filter(|&&h| (h as usize) / 3 < tris)
+            .map(|&h| mesh.curve(h)),
+    );
+    ErrorGeometry::of_evidence(&evidence, tolerance)
 }
 
 /// The factors along X, Y and Z that `factor` gives, its edge measured
@@ -189,8 +222,9 @@ fn in_range(f: f64) -> bool {
 /// within a sine of [`AXIS_SINE`] of one: the sum of the squares of its
 /// other two components at most `AXIS_SINE²` of its length's square. A
 /// decision by `+ −  ×` alone. `d` is a difference of points within the
-/// coordinate limit, so its squares are finite.
-pub(crate) fn along_axis(d: DVec3) -> Option<usize> {
+/// coordinate limit, so its squares are finite. The panel offers "Along
+/// its axis only" by it too.
+pub fn along_axis(d: DVec3) -> Option<usize> {
     let squares = d * d;
     let axis = if squares.x >= squares.y && squares.x >= squares.z {
         0

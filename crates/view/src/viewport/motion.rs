@@ -39,7 +39,9 @@ use varde_sketch::angle;
 use super::sketch::{line, srgba};
 use crate::extrude::snap_step;
 use crate::hit::segment_distance;
-use crate::motion::{AlignView, MotionField, MotionKind, MotionLook, MotionPick, MotionState};
+use crate::motion::{
+    AlignView, MotionField, MotionKind, MotionLook, MotionPick, MotionState, ScaleView,
+};
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
 use crate::theme::SketchColors;
@@ -302,12 +304,15 @@ fn degrees(radians: f64) -> f64 {
 /// The move or mirror being set up, as the viewport shows it.
 #[derive(Debug, Clone)]
 pub(crate) struct Moving<'a> {
-    state: MotionState<'a>,
+    /// Boxed: it's the largest of what the viewport operates.
+    state: Box<MotionState<'a>>,
 }
 
 impl<'a> Moving<'a> {
     pub(crate) fn new(state: MotionState<'a>) -> Self {
-        Self { state }
+        Self {
+            state: Box::new(state),
+        }
     }
 
     /// The bodies' centre and how far the axis or plane reaches either
@@ -358,6 +363,9 @@ impl<'a> Moving<'a> {
         }
         if let Some(align) = &self.state.align {
             self.align(&mut live, align, scene, colors, camera, bounds);
+        }
+        if let Some(scale) = &self.state.scale {
+            scale_marks(&mut live, scale, scene, colors);
         }
         (EMPTY.clone(), live)
     }
@@ -727,6 +735,32 @@ impl<'a> Moving<'a> {
     /// tool's, since it draws in the world.
     pub(crate) fn plane_of_layers(&self) -> GridPlane {
         GridPlane::XY
+    }
+}
+
+/// Draws a scale's point on `live`, a dot in the accent as an align's
+/// moved point is (its edge is lit in the model's highlight), and while
+/// the point is picked the snap points of what the cursor is over, as the
+/// measure tool's.
+fn scale_marks(
+    live: &mut SketchLayer,
+    scale: &ScaleView<'_>,
+    scene: &Colors,
+    colors: SketchColors,
+) {
+    if let Some(point) = scale.at.filter(|point| point.is_finite()) {
+        let Srgb([r, g, b]) = scene.selected;
+        let style = PointStyle {
+            radius: ALIGN_POINT_RADIUS,
+            rim_width: 1.5,
+            rim: srgba(iced::Color::from_rgb(r, g, b)),
+            fill: srgba(colors.point_fill),
+            fixed: true,
+        };
+        live.world_point(point.as_vec3(), style);
+    }
+    if let Some((index, hover)) = scale.snaps {
+        super::measure::snap_dots(live, index, hover, colors);
     }
 }
 

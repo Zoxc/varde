@@ -31,8 +31,8 @@ use crate::revolve::edge_axis_name;
 use crate::theme;
 use crate::{CombineBody, Edit, Look, Message, VALUE_FIELD};
 
-/// Which is set up: a move, a mirror, a linear or circular pattern, or
-/// an align.
+/// Which is set up: a move, a mirror, a linear or circular pattern, an
+/// align or a scale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionKind {
     Move,
@@ -40,6 +40,7 @@ pub enum MotionKind {
     LinearPattern,
     CircularPattern,
     Align,
+    Scale,
 }
 
 impl MotionKind {
@@ -50,11 +51,12 @@ impl MotionKind {
             MotionKind::Mirror => "Mirror",
             MotionKind::LinearPattern | MotionKind::CircularPattern => "Pattern",
             MotionKind::Align => "Align",
+            MotionKind::Scale => "Scale",
         }
     }
 
-    /// Its icon, the UI mock's `move`, `bmirror`, `lpattern`, `cpattern`
-    /// and `align`.
+    /// Its icon, the UI mock's `move`, `bmirror`, `lpattern`, `cpattern`,
+    /// `align` and `scale`.
     pub fn icon(self) -> Icon {
         match self {
             MotionKind::Move => Icon::Move,
@@ -62,6 +64,7 @@ impl MotionKind {
             MotionKind::LinearPattern => Icon::LPattern,
             MotionKind::CircularPattern => Icon::CPattern,
             MotionKind::Align => Icon::Align,
+            MotionKind::Scale => Icon::Scale,
         }
     }
 
@@ -74,6 +77,7 @@ impl MotionKind {
             MotionKind::LinearPattern => "New linear pattern",
             MotionKind::CircularPattern => "New circular pattern",
             MotionKind::Align => "New align",
+            MotionKind::Scale => "New scale",
         }
     }
 
@@ -86,13 +90,17 @@ impl MotionKind {
     }
 
     /// Whether its reference is an axis (a move's, a pattern's), not a
-    /// plane (a mirror's) or an align's points and directions.
+    /// plane (a mirror's), an align's points and directions or a scale's
+    /// point and edge.
     pub fn takes_axis(self) -> bool {
-        !matches!(self, MotionKind::Mirror | MotionKind::Align)
+        !matches!(
+            self,
+            MotionKind::Mirror | MotionKind::Align | MotionKind::Scale
+        )
     }
 
     /// The session that edits a feature of `kind`, if one does: a move, a
-    /// mirror, a linear or circular pattern, or an align.
+    /// mirror, a linear or circular pattern, an align or a scale.
     pub fn of(kind: &FeatureKind) -> Option<MotionKind> {
         Some(match kind {
             FeatureKind::Move(_) => MotionKind::Move,
@@ -102,6 +110,7 @@ impl MotionKind {
                 PatternKind::Circular { .. } => MotionKind::CircularPattern,
             },
             FeatureKind::Align(_) => MotionKind::Align,
+            FeatureKind::Scale(_) => MotionKind::Scale,
             _ => return None,
         })
     }
@@ -152,15 +161,20 @@ impl PatternMode {
 }
 
 /// What a click in the viewport picks: bodies, the reference (a move's
-/// axis, a mirror's plane), one of an align's points or directions, or
-/// nothing (an align with all it asks for picked). A click on one of the
-/// panel's fields makes it the one picking.
+/// axis, a mirror's plane), one of an align's points or directions, a
+/// scale's point or its edge, or nothing (an align with all it asks for
+/// picked). A click on one of the panel's fields makes it the one
+/// picking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MotionPick {
     #[default]
     Bodies,
     Reference,
     Align(AlignSlot),
+    /// A scale's point, picked as an align's.
+    Point,
+    /// A scale's edge, to scale to a length.
+    Edge,
     Nothing,
 }
 
@@ -231,8 +245,9 @@ impl AlignSlot {
 
 /// A typed field: a move's offset along a world axis or its angle, a
 /// pattern's count or its spacing or total (a length, or a circular
-/// one's angle), or an align's distance along the target's direction
-/// (its turn about it is the angle's field).
+/// one's angle), an align's distance along the target's direction (its
+/// turn about it is the angle's field), or a scale's factor, its factor
+/// along a world axis, or the length its edge is to have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionField {
     Offset(Axis3),
@@ -240,12 +255,15 @@ pub enum MotionField {
     Count,
     Spread,
     Distance,
+    Factor,
+    AxisFactor(Axis3),
+    Length,
 }
 
 impl MotionField {
-    /// The seven, a move's in the panel's order, then a pattern's, then
-    /// an align's distance.
-    pub const ALL: [MotionField; 7] = [
+    /// The twelve, a move's in the panel's order, then a pattern's, an
+    /// align's distance, then a scale's.
+    pub const ALL: [MotionField; 12] = [
         MotionField::Offset(Axis3::X),
         MotionField::Offset(Axis3::Y),
         MotionField::Offset(Axis3::Z),
@@ -253,9 +271,14 @@ impl MotionField {
         MotionField::Count,
         MotionField::Spread,
         MotionField::Distance,
+        MotionField::Factor,
+        MotionField::AxisFactor(Axis3::X),
+        MotionField::AxisFactor(Axis3::Y),
+        MotionField::AxisFactor(Axis3::Z),
+        MotionField::Length,
     ];
 
-    /// Where it's kept in an array of the six.
+    /// Where it's kept in an array of them all.
     pub fn index(self) -> usize {
         match self {
             MotionField::Offset(Axis3::X) => 0,
@@ -265,20 +288,29 @@ impl MotionField {
             MotionField::Count => 4,
             MotionField::Spread => 5,
             MotionField::Distance => 6,
+            MotionField::Factor => 7,
+            MotionField::AxisFactor(Axis3::X) => 8,
+            MotionField::AxisFactor(Axis3::Y) => 9,
+            MotionField::AxisFactor(Axis3::Z) => 10,
+            MotionField::Length => 11,
         }
     }
 
     /// Its text field's id: the first one of a panel's, a move's first
-    /// offset or a pattern's count, is [`VALUE_FIELD`], which takes the
-    /// focus as the session opens.
+    /// offset, a pattern's count or a scale's factor, is
+    /// [`VALUE_FIELD`], which takes the focus as the session opens.
     fn id(self) -> iced::widget::Id {
         match self {
-            MotionField::Offset(Axis3::X) | MotionField::Count => VALUE_FIELD,
+            MotionField::Offset(Axis3::X) | MotionField::Count | MotionField::Factor => VALUE_FIELD,
             MotionField::Offset(Axis3::Y) => iced::widget::Id::new("move-y"),
             MotionField::Offset(Axis3::Z) => iced::widget::Id::new("move-z"),
             MotionField::Angle => iced::widget::Id::new("move-angle"),
             MotionField::Spread => iced::widget::Id::new("pattern-spread"),
             MotionField::Distance => iced::widget::Id::new("align-distance"),
+            MotionField::AxisFactor(Axis3::X) => iced::widget::Id::new("scale-x"),
+            MotionField::AxisFactor(Axis3::Y) => iced::widget::Id::new("scale-y"),
+            MotionField::AxisFactor(Axis3::Z) => iced::widget::Id::new("scale-z"),
+            MotionField::Length => iced::widget::Id::new("scale-length"),
         }
     }
 
@@ -286,11 +318,13 @@ impl MotionField {
     /// pattern's spread is labelled by its mode.
     fn label(self) -> &'static str {
         match self {
-            MotionField::Offset(axis) => axis.name(),
+            MotionField::Offset(axis) | MotionField::AxisFactor(axis) => axis.name(),
             MotionField::Angle => "Angle",
             MotionField::Count => "Count",
             MotionField::Spread => "Spacing",
             MotionField::Distance => "Distance",
+            MotionField::Factor => "Factor",
+            MotionField::Length => "Length",
         }
     }
 }
@@ -309,8 +343,8 @@ pub enum MotionLook {
     /// An origin axis as a move's axis, or an align's direction on the
     /// target: the toolbar's, while the axis or direction is picked.
     OriginAxis(Axis3),
-    /// The origin as an align's point on the target: the toolbar's, while
-    /// that point is picked.
+    /// The origin as an align's point on the target, or a scale's point:
+    /// the toolbar's, while that point is picked.
     OriginPoint,
     /// Takes an align's reference out: its row's cross.
     Clear(AlignSlot),
@@ -337,6 +371,12 @@ pub enum MotionLook {
     Join,
     /// How a pattern's copies are spread.
     Mode(PatternMode),
+    /// How a scale scales: by one factor, one per axis, or to an edge's
+    /// length.
+    ScaleMode(ScaleMode),
+    /// A scale to an edge's length: along the world axis the edge runs
+    /// along only, or not.
+    AxisOnly,
     /// Drops the move or mirror being set up, changing nothing: Cancel,
     /// or `Esc`.
     Cancel,
@@ -354,8 +394,8 @@ pub struct MotionState<'a> {
     pub picking: MotionPick,
     /// Its fields ([`MotionField::index`]): a move's offsets along X, Y
     /// and Z and its angle, a pattern's count and spread, an align's
-    /// distance.
-    pub fields: [TypedField<'a>; 7],
+    /// distance, a scale's factors and length.
+    pub fields: [TypedField<'a>; 12],
     /// The reference's name, "Z axis", "Edge of Body 1", "XY plane",
     /// "Extrude 1's end", if there's one.
     pub reference: Option<String>,
@@ -426,6 +466,8 @@ pub struct MotionState<'a> {
     pub hover: Option<PanelHover>,
     /// An align's own parts, for an align.
     pub align: Option<Box<AlignView<'a>>>,
+    /// A scale's own parts, for a scale.
+    pub scale: Option<Box<ScaleView<'a>>>,
 }
 
 impl<'a> MotionState<'a> {
@@ -590,11 +632,7 @@ pub(crate) fn scale_note(scale: &varde_document::Scale, units: LengthUnit) -> St
 }
 
 /// What the status bar says of a selected scale: "Body 1 ×2".
-pub(crate) fn scale_info(
-    document: &Document,
-    scale: &varde_document::Scale,
-    units: LengthUnit,
-) -> String {
+pub fn scale_info(document: &Document, scale: &varde_document::Scale, units: LengthUnit) -> String {
     let bodies = body_names(document, &scale.bodies);
     format!("{bodies} {}", scale_note(scale, units))
 }
@@ -640,6 +678,9 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
         },
         (MotionKind::Align, _) => (state.align.as_ref())
             .and_then(|align| align.info.clone())
+            .unwrap_or(bodies),
+        (MotionKind::Scale, _) => (state.scale.as_ref())
+            .and_then(|scale| scale.info.clone())
             .unwrap_or(bodies),
         _ => bodies,
     }
@@ -689,7 +730,9 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         }
         MotionKind::LinearPattern => ("Direction", Icon::SeAxis, "Click an axis or edge"),
         // An align's references are its own fields: this one isn't shown.
-        MotionKind::Mirror | MotionKind::Align => ("Plane", Icon::SePlane, "Click a plane or face"),
+        MotionKind::Mirror | MotionKind::Align | MotionKind::Scale => {
+            ("Plane", Icon::SePlane, "Click a plane or face")
+        }
     };
     let reference_row = state.reference.clone().map(|name| {
         picked_row(
@@ -730,6 +773,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let field_of = |which: MotionField| field_named(which, which.label());
     let body: Element<'a, Message> = match state.kind {
         MotionKind::Align => align::body(state, bodies, field_named),
+        MotionKind::Scale => scale::body(state, bodies, field_named),
         MotionKind::Move => {
             let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
             column![
@@ -842,6 +886,8 @@ fn section(name: &str) -> iced::widget::Text<'_> {
 
 mod align;
 pub use align::{AlignMark, AlignView, direction_name, point_name};
+mod scale;
+pub use scale::{ScaleMode, ScaleView};
 
 #[cfg(test)]
 mod tests;

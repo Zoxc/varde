@@ -27,6 +27,11 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
             field("3"),
             field("100 mm"),
             field("0 mm"),
+            field("1"),
+            field("1"),
+            field("1"),
+            field("1"),
+            field(""),
         ],
         reference: Some("Z axis".to_owned()),
         line: None,
@@ -51,6 +56,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         editable: true,
         hover: None,
         align: None,
+        scale: None,
     }
 }
 
@@ -401,4 +407,72 @@ fn a_scale_s_notes() {
     };
     assert_eq!(scale_note(&scale, units), "edge → 50 mm");
     assert_eq!(scale_note(&scale, LengthUnit::In), "edge → 1.9685 in");
+}
+
+/// A scale's panel, built in the mock's Move panel's style: Bodies, the
+/// Point, Scale's three tiles and the mode's fields; to an edge's
+/// length, the edge with its length now, Length and Along its axis only
+/// where offered; the status bar's words for it whole.
+#[test]
+fn a_scale_s_panel_has_its_point_modes_and_fields() {
+    let mut state = state_of(MotionKind::Scale, vec![body("Body 1")]);
+    state.reference = None;
+    let view = |mode, offered| ScaleView {
+        mode,
+        point: "Origin".to_owned(),
+        at: Some(DVec3::ZERO),
+        edge: Some("Edge of Body 1".to_owned()),
+        length: Some("60 mm".to_owned()),
+        offered,
+        axis_only: false,
+        info: None,
+        snaps: None,
+    };
+    state.scale = Some(Box::new(view(ScaleMode::Uniform, true)));
+    let shown = texts_of(&state);
+    let order = [
+        "New scale",
+        "Bodies",
+        "Body 1",
+        "Point",
+        "Origin",
+        "Scale",
+        "Uniform",
+        "Factor",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    assert!(has(&shown, "Per axis") && has(&shown, "Edge length"));
+    assert!(!has(&shown, "Translate") && !has(&shown, "Edge of Body 1"));
+
+    state.scale = Some(Box::new(view(ScaleMode::PerAxis, true)));
+    let shown = texts_of(&state);
+    assert!(["X", "Y", "Z"].iter().all(|axis| has(&shown, axis)));
+    assert!(!has(&shown, "Factor"));
+
+    state.scale = Some(Box::new(view(ScaleMode::EdgeLength, true)));
+    let shown = texts_of(&state);
+    let order = ["Edge", "Edge of Body 1", "Length", "Along its axis only"];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    // The edge's length now beside it.
+    let edge = found(&shown, "Edge of Body 1").bounds;
+    let length = found(&shown, "60 mm").bounds;
+    assert!((length.y - edge.y).abs() < 4.0 && length.x > edge.x);
+    state.scale = Some(Box::new(view(ScaleMode::EdgeLength, false)));
+    assert!(!has(&texts_of(&state), "Along its axis only"));
+
+    assert_eq!(status_info(&state), "Body 1");
+    if let Some(scale) = &mut state.scale {
+        scale.info = Some("Body 1 ×2".to_owned());
+    }
+    assert_eq!(status_info(&state), "Body 1 ×2");
 }

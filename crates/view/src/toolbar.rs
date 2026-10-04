@@ -552,6 +552,12 @@ fn ops<'a>(
             };
             std::iter::once(separator()).chain(buttons).collect()
         }
+        // A scale's point may be the origin.
+        Some(motion) if motion.picking == MotionPick::Point => {
+            let send = (editable && motion.editable)
+                .then_some(Message::Look(Look::Motion(MotionLook::OriginPoint)));
+            vec![separator(), op(Icon::Point, "Origin", send)]
+        }
         Some(motion) if motion.picking == MotionPick::Reference => {
             let send = |look: MotionLook| {
                 (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
@@ -568,15 +574,16 @@ fn ops<'a>(
                         })
                         .collect()
                 }
-                MotionKind::Mirror | MotionKind::Align => (OriginPlane::ALL.iter())
-                    .map(|&plane| {
-                        op(
-                            Icon::SePlane,
-                            plane_label(plane),
-                            send(MotionLook::OriginPlane(plane)),
-                        )
-                    })
-                    .collect(),
+                MotionKind::Mirror | MotionKind::Align | MotionKind::Scale => (OriginPlane::ALL
+                    .iter())
+                .map(|&plane| {
+                    op(
+                        Icon::SePlane,
+                        plane_label(plane),
+                        send(MotionLook::OriginPlane(plane)),
+                    )
+                })
+                .collect(),
             };
             std::iter::once(separator()).chain(buttons).collect()
         }

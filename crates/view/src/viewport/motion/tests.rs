@@ -28,7 +28,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         editing: None,
         bodies: Vec::new(),
         picking,
-        fields: [field(0.0); 7],
+        fields: [field(0.0); 12],
         reference: Some("Z axis".to_owned()),
         line,
         bounds: Some([DVec3::new(-30.0, -20.0, 0.0), DVec3::new(30.0, 20.0, 10.0)]),
@@ -52,6 +52,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         editable: true,
         hover: None,
         align: None,
+        scale: None,
     }
 }
 
@@ -205,6 +206,36 @@ fn an_align_draws_its_points_and_directions() {
         directions: [Some(DVec3::Z), None],
     };
     assert!(layers([far, Default::default()]).is_empty());
+}
+
+/// A scale's point is drawn where it's known, and nothing else (no
+/// handles, no axis); a point that isn't finite isn't.
+#[test]
+fn a_scale_draws_its_point() {
+    let colors = Mode::Light.palette().sketching;
+    let scene = Mode::Light.palette().scene;
+    let camera = front();
+    let input = Input::default();
+    let layers = |at: Option<DVec3>| {
+        let mut state = state(MotionKind::Scale, MotionPick::Bodies, None);
+        state.reference = None;
+        state.scale = Some(Box::new(crate::ScaleView {
+            mode: crate::ScaleMode::Uniform,
+            point: "Origin".to_owned(),
+            at,
+            edge: None,
+            length: None,
+            offered: false,
+            axis_only: false,
+            info: None,
+            snaps: None,
+        }));
+        let moving = Moving::new(state);
+        moving.layers(&input, &scene, colors, &camera, bounds()).1
+    };
+    assert!(layers(None).is_empty());
+    assert!(!layers(Some(DVec3::new(-30.0, -20.0, 0.0))).is_empty());
+    assert!(layers(Some(DVec3::NAN)).is_empty());
 }
 
 #[test]

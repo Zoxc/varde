@@ -1098,3 +1098,4 @@ fn a_move_follows_a_body_a_redone_combine_merges() {
 
 mod align;
 mod pattern;
+mod scale;

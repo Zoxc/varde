@@ -106,7 +106,7 @@ mod align;
 mod combine;
 mod motion;
 mod pattern;
-mod scale;
+pub(crate) mod scale;
 
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.

@@ -295,8 +295,10 @@ impl Doc {
         let measuring = self.measure.is_some();
         // An align's point is picked as the measure tool picks points: on
         // what the cursor is over, at its snap points.
-        let pointing = (self.motion.as_ref()).is_some_and(|session| {
-            matches!(session.picking, MotionPick::Align(slot) if slot.role == AlignRole::Point)
+        let pointing = (self.motion.as_ref()).is_some_and(|session| match session.picking {
+            MotionPick::Align(slot) => slot.role == AlignRole::Point,
+            MotionPick::Point => true,
+            _ => false,
         });
         self.picks().then(|| ModelPicking {
             index: self.feed.pick_index(),
@@ -308,6 +310,7 @@ impl Doc {
                 match session.picking {
                     MotionPick::Reference if session.kind.takes_axis() => Picks::EdgesAndFaces,
                     MotionPick::Align(_) => Picks::EdgesAndFaces,
+                    MotionPick::Edge => Picks::Edges,
                     _ => Picks::Faces,
                 }
             } else if self.picking_plane.is_some() || self.combine.is_some() {

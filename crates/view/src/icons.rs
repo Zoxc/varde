@@ -185,6 +185,12 @@ icons! {
     CpFull => r#"<circle cx="12" cy="12" r=".9"/><circle cx="12" cy="4.5" r="2"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="19.5" r="2"/><circle cx="4.5" cy="12" r="2"/><circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="1.6 1.8"/>"#,
     CpSpacing => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle class="r" cx="4.5" cy="12" r="2"/><path class="a" d="M17.3 8.3A7.5 7.5 0 0 0 15.7 6.7"/><path class="a" d="M12 12L19.5 12M12 12L12 4.5" stroke-width="1"/>"#,
     CpTotal => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle cx="4.5" cy="12" r="2"/><path class="a" d="M19.5 9A7.5 7.5 0 0 0 7.5 7.5"/>"#,
+    // Not in the mocks: a scale's modes, drawn as the patterns' are: a
+    // box grown into a dashed larger one every way, stretched along one
+    // axis, and measured along an edge (the length in the accent).
+    ScUniform => r#"<rect class="r" x="3" y="3" width="18" height="18" rx="1.5" stroke-dasharray="2 1.8"/><rect x="3" y="12" width="9" height="9" rx="1"/><path class="a" d="M10 14l6.5-6.5M12.5 7.5h4v4"/>"#,
+    ScAxes => r#"<rect class="r" x="3" y="10" width="18" height="9" rx="1.5" stroke-dasharray="2 1.8"/><rect x="3" y="10" width="9" height="9" rx="1"/><path class="a" d="M14 5.5h6.5M18 3l2.5 2.5L18 8"/>"#,
+    ScEdge => r#"<rect x="3" y="10" width="12" height="11" rx="1"/><path class="r" d="M15 10h6" stroke-dasharray="1.6 1.6"/><path class="a" d="M3 5.5h18M3 3.5v4M21 3.5v4"/>"#,
     // The options' icons, drawn in one colour: flip, keep the tools.
     TkFlip => r#"<path d="M4 8h15M15.5 4.5L19 8l-3.5 3.5M20 16H5M8.5 12.5L5 16l3.5 3.5"/>"#,
     TkKeep => r#"<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
@@ -233,6 +239,10 @@ impl Icon {
             | Icon::Mirror
             | Icon::Offset
             | Icon::Combine
+            | Icon::Scale
+            | Icon::ScUniform
+            | Icon::ScAxes
+            | Icon::ScEdge
             | Icon::CatModify
             | Icon::CatSketchModify => IconCategory::Modify,
             Icon::Constrain
@@ -259,7 +269,6 @@ impl Icon {
             | Icon::LPattern
             | Icon::CPattern
             | Icon::Align
-            | Icon::Scale
             | Icon::CatCreate
             | Icon::CatTransform
             | Icon::RvFull

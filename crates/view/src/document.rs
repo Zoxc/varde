@@ -868,6 +868,8 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                     crate::AlignRole::Primary => "Pick the direction",
                     crate::AlignRole::Secondary => "Pick the second direction",
                 },
+                (crate::MotionPick::Point, _) => "Pick the point",
+                (crate::MotionPick::Edge, _) => "Pick the edge",
                 (crate::MotionPick::Bodies, _) => "Pick bodies",
                 (crate::MotionPick::Reference, crate::MotionKind::LinearPattern) => {
                     "Pick the direction"
