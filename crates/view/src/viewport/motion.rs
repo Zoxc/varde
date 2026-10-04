@@ -254,10 +254,23 @@ impl Input {
             || self.sweep.curve.is_some()
     }
 
-    /// Lets go of a sweep's region or path curve under the cursor:
-    /// whether there was one, to be drawn away.
+    /// Lets go of a sweep's, a split's or a loft's region, curve, point
+    /// or corner under the cursor: whether there was one, to be drawn
+    /// away.
     pub(crate) fn leave_sketches(&mut self) -> bool {
+        self.leave_sweep() | self.leave_split() | std::mem::take(&mut self.loft).over()
+    }
+
+    /// Lets go of a sweep's region or path curve under the cursor:
+    /// whether there was one.
+    fn leave_sweep(&mut self) -> bool {
         self.sweep.regions.hover.take().is_some() | self.sweep.curve.take().is_some()
+    }
+
+    /// Lets go of a split's region or curve under the cursor: whether
+    /// there was one.
+    fn leave_split(&mut self) -> bool {
+        self.split.regions.hover.take().is_some() | self.split.curve.take().is_some()
     }
 
     /// Lets go of what the other kind of handle held, for a session of
@@ -675,6 +688,49 @@ impl<'a> Moving<'a> {
         curve_under(&split.lines, at, camera, bounds)
     }
 
+    /// Works out the region or curve of a split picking in `mode` under
+    /// the screen position `at` (none off the viewport) into `input`:
+    /// whether it changed.
+    fn split_hover(
+        &self,
+        mode: SplitMode,
+        input: &mut SplitInput,
+        at: Option<DVec2>,
+        camera: &Camera,
+        bounds: Rectangle,
+    ) -> bool {
+        let Some(split) = self.state.split.as_ref() else {
+            return false;
+        };
+        let (region, curve) = match mode {
+            SplitMode::Regions => (
+                at.and_then(|at| split_regions(split).region_under(at, camera, bounds)),
+                None,
+            ),
+            _ => (
+                None,
+                at.and_then(|at| self.curve_under(split, at, camera, bounds)),
+            ),
+        };
+        std::mem::replace(&mut input.regions.hover, region) != region
+            || std::mem::replace(&mut input.curve, curve) != curve
+    }
+
+    /// Lets go of what's under the cursor of the kinds of picking in
+    /// sketches this session doesn't do now: a sweep's, a split's or a
+    /// loft's (another session, or picking something else).
+    fn leave_unpicked(&self, input: &mut Input) {
+        if self.sweep_picking().is_none() {
+            input.leave_sweep();
+        }
+        if self.split_picking().is_none() {
+            input.leave_split();
+        }
+        if self.loft_picking().is_none() {
+            input.loft = LoftInput::default();
+        }
+    }
+
     /// Takes the mouse `event` while a split's tool is picked in its
     /// sketches ([`Moving::split_picking`]): hovering and clicking the
     /// region or curve under the cursor. `None` for what's left to the
@@ -694,19 +750,8 @@ impl<'a> Moving<'a> {
         match event {
             mouse::Event::CursorMoved { .. } => {
                 let over = cursor.position_over(bounds).map(local);
-                let (region, curve) = match mode {
-                    SplitMode::Regions => (
-                        over.and_then(|at| regions.region_under(at, camera, bounds)),
-                        None,
-                    ),
-                    _ => (
-                        None,
-                        over.and_then(|at| self.curve_under(split, at, camera, bounds)),
-                    ),
-                };
-                let changed = std::mem::replace(&mut input.regions.hover, region) != region
-                    || std::mem::replace(&mut input.curve, curve) != curve;
-                changed.then(Action::request_redraw)
+                self.split_hover(mode, input, over, camera, bounds)
+                    .then(Action::request_redraw)
             }
             mouse::Event::CursorLeft => {
                 let had = input.regions.hover.take().is_some() | input.curve.take().is_some();
@@ -922,11 +967,7 @@ impl<'a> Moving<'a> {
         hovered: bool,
     ) -> Option<Action<Message>> {
         input.settle(self.state.kind);
-        // A sweep's sketches hovered no longer pick (another session, or
-        // picking the helix's axis).
-        if self.sweep_picking().is_none() {
-            input.leave_sketches();
-        }
+        self.leave_unpicked(input);
         if let Some(mode) = self.split_picking() {
             return self.split_mouse(mode, &mut input.split, event, bounds, cursor, camera);
         }
@@ -937,7 +978,6 @@ impl<'a> Moving<'a> {
             return self.sweep_mouse(picking, input, event, bounds, cursor, camera);
         }
         let Some(picking) = self.loft_picking() else {
-            input.loft = LoftInput::default();
             return self.handles_mouse(input, event, bounds, cursor, camera, hovered);
         };
         self.loft_mouse(picking, &mut input.loft, event, bounds, cursor, camera)
@@ -1012,7 +1052,9 @@ impl<'a> Moving<'a> {
     /// one's under it, what the model held hovered, if `hovered`, is let
     /// go of. Not while one is dragged. A sweep picking in its sketches
     /// works out its region or path curve under the cursor likewise,
-    /// the model let go of under a curve.
+    /// the model let go of under a curve; a split or a loft picking in
+    /// theirs, what's under it of them (the model isn't picked
+    /// meanwhile).
     pub(crate) fn redraw(
         &self,
         input: &mut Input,
@@ -1022,14 +1064,27 @@ impl<'a> Moving<'a> {
         hovered: bool,
     ) -> Option<Action<Message>> {
         input.settle(self.state.kind);
-        let Some(picking) = self.sweep_picking() else {
-            input.leave_sketches();
-            return self.handles_redraw(input, bounds, cursor, camera, hovered);
-        };
-        let sweep = self.state.sweep.as_ref()?;
+        self.leave_unpicked(input);
         let at = cursor
             .position_over(bounds)
             .map(|p| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into()));
+        if let Some(mode) = self.split_picking() {
+            return (self.split_hover(mode, &mut input.split, at, camera, bounds))
+                .then(Action::request_redraw);
+        }
+        if let Some(picking) = self.loft_picking()
+            && let Some(loft) = &self.state.loft
+        {
+            let under = at.map_or_else(LoftInput::default, |at| {
+                self.loft_under(loft, picking, at, camera, bounds)
+            });
+            return (std::mem::replace(&mut input.loft, under) != under)
+                .then(Action::request_redraw);
+        }
+        let Some(picking) = self.sweep_picking() else {
+            return self.handles_redraw(input, bounds, cursor, camera, hovered);
+        };
+        let sweep = self.state.sweep.as_ref()?;
         let (region, curve) = match picking {
             MotionPick::Regions => (
                 at.and_then(|at| sweep_regions(sweep, None).region_under(at, camera, bounds)),

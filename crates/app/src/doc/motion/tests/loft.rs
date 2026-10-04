@@ -600,7 +600,10 @@ fn a_section_s_region_gone_is_said_to_be_gone() {
     });
     plates.doc.sync();
     plates.answer();
-    assert!(shows(plates, "A section's sketch, region or point is gone"));
+    assert!(shows(
+        plates,
+        "A section's sketch, region, point or start is gone"
+    ));
     assert!(shows(plates, "gone"));
     assert!(!plates.doc.motion_ready());
     assert!(plates.doc.motion_draft().is_none());
@@ -692,4 +695,110 @@ fn regions_with_holes_and_later_sketches_are_refused() {
         plates.doc.notice.as_deref(),
         Some("Only a sketch made before the loft can hold its sections")
     );
+}
+
+/// A start point no longer at one of its section's corners (the
+/// square's corner given a point of its own, the start moved off) shows
+/// its section's row as gone, not only the foot.
+#[test]
+fn a_start_off_its_corners_shows_in_its_row() {
+    let mut lofted = lofted();
+    let (low, top) = (lofted.low, lofted.top);
+    let plates = &mut lofted.plates;
+    plates.doc.look(Look::StartLoft);
+    pick(plates, low);
+    pick(plates, top);
+    let start = start(plates, 1).expect("a start");
+    let mut redrawn = sketch_of(plates.doc.editor.document(), top).clone();
+    let at = redrawn.point(start).unwrap().at;
+    let fresh = redrawn.add_point(at).unwrap();
+    for entry in &mut redrawn.curves {
+        if let Curve::Line { start: a, end: b } = &mut entry.curve {
+            for end in [a, b] {
+                if *end == start {
+                    *end = fresh;
+                }
+            }
+        }
+    }
+    let moved = (redrawn.points.iter_mut()).find(|point| point.id == start);
+    moved.unwrap().at = DVec2::new(20.0, 2.0);
+    plates.doc.apply(Command::SetSketch {
+        feature: top,
+        sketch: Box::new(redrawn),
+    });
+    plates.doc.sync();
+    plates.answer();
+    let state = plates.doc.motion_state().unwrap();
+    let view = state.loft.as_ref().unwrap();
+    assert!(!view.sections[0].gone);
+    assert!(view.sections[1].gone, "the start's section");
+    assert!(shows(
+        plates,
+        "A section's sketch, region, point or start is gone"
+    ));
+    // Its corner there again is its start: whole.
+    plates.motion(MotionLook::LoftStart {
+        section: 1,
+        point: fresh,
+    });
+    assert!(!shows(plates, "is gone"));
+}
+
+/// Draws `count` circles about one centre: a sketch whose profiles take
+/// a good share of what one may.
+fn concentric(count: usize) -> Sketch {
+    let mut drawn = Sketch::default();
+    let center = drawn.add_point(DVec2::new(-40.0, 0.0)).unwrap();
+    for k in (1..=count).rev() {
+        let radius = k as f64 * 0.01;
+        drawn
+            .add_curve(Curve::Circle { center, radius }, false)
+            .unwrap();
+    }
+    drawn
+}
+
+/// A loft's hidden section sketches share their own budget for their
+/// profiles ([`ALSO_WORK`]), apart from the visible ones': those past it
+/// are worked out on later refreshes, each kept once found.
+///
+/// [`ALSO_WORK`]: crate::doc::regions::ALSO_WORK
+#[test]
+fn hidden_section_sketches_share_their_own_work() {
+    use crate::doc::regions::{ALSO_WORK, RegionPick};
+    let drawn = concentric(1500);
+    let mut left = usize::MAX;
+    drawn.profiles_spending(&mut left).unwrap();
+    let each = usize::MAX - left;
+    let fit = ALSO_WORK / each;
+    assert!((2..=12).contains(&fit), "{each}");
+    let mut editor = Editor::new(Document::default());
+    let sketches: Vec<FeatureId> = (0..fit + 2)
+        .map(|_| {
+            let feature = sketch_on(&mut editor, Plane::Origin(OriginPlane::XY), |sketch| {
+                *sketch = drawn.clone();
+            });
+            editor
+                .apply(Command::SetFeatureVisible(feature, false))
+                .unwrap();
+            feature
+        })
+        .collect();
+    let document = editor.document();
+    let mut pick = RegionPick::new(None, 64);
+    pick.also.clone_from(&sketches);
+    pick.refresh(document);
+    let found = pick.found.len();
+    assert!((fit - 1..=fit).contains(&found), "{found} of {fit}");
+    assert!(pick.skipped.is_empty(), "none for good");
+    // One more past the share is tried, the rest not at all.
+    assert_eq!(pick.worked_out, found + 1);
+    let mut rounds = 0;
+    while pick.found.len() < sketches.len() {
+        rounds += 1;
+        assert!(rounds <= sketches.len(), "{rounds}");
+        pick.refresh(document);
+    }
+    assert!(pick.skipped.is_empty());
 }

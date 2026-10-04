@@ -79,21 +79,95 @@ pub fn profile(
     loops: &[Vec<Piece>],
     fit: f64,
 ) -> Result<Profile, ProfileError> {
+    profile_marked(sketch, profiles, loops, fit).map(|(profile, _)| profile)
+}
+
+/// [`profile`], and for each loop, each piece's first segment's index in
+/// the loop's segments: where the piece starts, at its start vertex.
+pub(crate) fn profile_marked(
+    sketch: &Sketch,
+    profiles: &Profiles,
+    loops: &[Vec<Piece>],
+    fit: f64,
+) -> Result<(Profile, Vec<Vec<usize>>), ProfileError> {
     let mut out = Segments {
         count: 0,
         fit,
         segments: Vec::new(),
     };
     let mut profile = Profile::default();
+    let mut starts = Vec::with_capacity(loops.len());
     for pieces in loops {
+        let mut firsts = Vec::with_capacity(pieces.len());
         for piece in pieces {
+            firsts.push(out.segments.len());
             piece_segments(sketch, profiles, piece, &mut out)?;
         }
         profile.loops.push(Loop {
             segments: std::mem::take(&mut out.segments),
         });
+        starts.push(firsts);
     }
-    Ok(profile)
+    Ok((profile, starts))
+}
+
+/// The corner of the loop `pieces` (of `profiles`, found from `sketch`)
+/// that the sketch point `point` is at, by the piece starting there: the
+/// first piece whose start vertex is within `resolution` of the point (a
+/// decision on where the point is, stated as one). `None` if the sketch
+/// hasn't the point or it's at none. What a loft's section's start is,
+/// in regeneration and in the session picking it alike
+/// ([`loft_corners`]).
+pub fn loft_corner(
+    sketch: &Sketch,
+    profiles: &Profiles,
+    pieces: &[Piece],
+    point: Id,
+    resolution: f64,
+) -> Option<usize> {
+    let at = sketch.point(point)?.at;
+    (pieces.iter()).position(|piece| {
+        (profiles.vertices.get(piece.start)).is_some_and(|vertex| vertex.distance(at) <= resolution)
+    })
+}
+
+/// The corners of the loop `pieces` (of `profiles`, found from `sketch`)
+/// a loft's section can start at, in the loop's order: for each piece
+/// that's some sketch point's corner ([`loft_corner`]), the first such
+/// point in the sketch's order, and where the piece's start vertex is.
+/// The vertices are sorted by `x` once, so it's `O((points + pieces) log
+/// pieces)` but for vertices crowding within `resolution` of a point's
+/// `x`.
+pub fn loft_corners(
+    sketch: &Sketch,
+    profiles: &Profiles,
+    pieces: &[Piece],
+    resolution: f64,
+) -> Vec<(Id, DVec2)> {
+    // The pieces' start vertices by `x`, each with its piece.
+    let mut vertices: Vec<(DVec2, usize)> = (pieces.iter().enumerate())
+        .filter_map(|(index, piece)| Some((*profiles.vertices.get(piece.start)?, index)))
+        .collect();
+    vertices.sort_by(|a, b| a.0.x.total_cmp(&b.0.x).then(a.1.cmp(&b.1)));
+    // Each piece's first point, as (piece, point).
+    let mut firsts: Vec<Option<Id>> = vec![None; pieces.len()];
+    for point in &sketch.points {
+        let at = point.at;
+        let from = vertices.partition_point(|(vertex, _)| vertex.x < at.x - resolution);
+        // Its corner: the first piece within `resolution`, as
+        // `loft_corner` finds it.
+        let corner = (vertices[from..].iter())
+            .take_while(|(vertex, _)| vertex.x <= at.x + resolution)
+            .filter(|(vertex, _)| vertex.distance(at) <= resolution)
+            .map(|&(_, index)| index)
+            .min();
+        if let Some(index) = corner {
+            firsts[index].get_or_insert(point.id);
+        }
+    }
+    (firsts.into_iter().zip(pieces))
+        .filter_map(|(first, piece)| Some((first?, *profiles.vertices.get(piece.start)?)))
+        .collect()
 }
 
 /// Where segments go, counted against [`MAX_PROFILE_SEGMENTS`] as

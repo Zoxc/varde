@@ -1172,3 +1172,124 @@ fn a_sweep_s_path_curve_and_the_model_hand_the_hover_over_as_the_camera_moves() 
     assert_eq!(input.motion.sweep.curve, None);
     feed(&there, &mut input, &[(right(false), far)]);
 }
+
+/// A loft picking its rails and a split picking its line, each in a
+/// sketch on XY holding a line from (-20, 0) to (20, 0), seen from the
+/// top, the cursor still while the camera moves: the line brought under
+/// it is hovered as the frame is drawn, moved away let go of, and let go
+/// of while the camera's dragged.
+#[test]
+fn a_loft_s_and_a_split_s_curves_are_hovered_again_as_the_camera_moves() {
+    use crate::motion::LoftView;
+    use varde_sketch::{Curve, Sketch};
+    let mut path = Sketch::default();
+    let a = path.add_point(DVec2::new(-20.0, 0.0)).unwrap();
+    let b = path.add_point(DVec2::new(20.0, 0.0)).unwrap();
+    let line = path
+        .add_curve(Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    let profiles = Arc::new(path.profiles().unwrap());
+    let feature = varde_document::Document::example().features()[0].id;
+    let placement = OriginPlane::XY.placement();
+    let lines = || {
+        vec![crate::SketchLines {
+            feature,
+            placement,
+            sketch: &path,
+        }]
+    };
+    let loft = || {
+        let mut state: MotionState<'_> = state(MotionKind::Loft, MotionPick::Path, None);
+        state.loft = Some(Box::new(LoftView {
+            candidates: Vec::new(),
+            lines: lines(),
+            sections: Vec::new(),
+            rails: Vec::new(),
+            chains: Vec::new(),
+            mode: varde_document::LoftMode::Smooth,
+            closed: false,
+            operation: crate::OperationKind::NewBody,
+            targets: Vec::new(),
+            info: None,
+        }));
+        state
+    };
+    let split = || {
+        let mut state: MotionState<'_> = state(MotionKind::Split, MotionPick::Tool, None);
+        state.split = Some(Box::new(SplitView {
+            mode: SplitMode::Line,
+            tool: None,
+            body: Some("Body 1"),
+            original: varde_document::Side::Front,
+            keep: varde_document::Keep::Both,
+            later: None,
+            info: None,
+            candidates: vec![crate::Candidate {
+                feature,
+                placement,
+                sketch: &path,
+                profiles: &profiles,
+            }],
+            source: None,
+            picked: SplitView::none_picked(),
+            lines: lines(),
+            chain: None,
+            pieces: Vec::new(),
+        }));
+        state
+    };
+    let off = camera(View::Top, Projection::Orthographic);
+    // Panned so (10, 0) shows where (10, 8) did.
+    let mut on = off;
+    on.set_target(off.target() - glam::Vec3::new(0.0, 8.0, 0.0));
+    let cursor = {
+        let p = shown(&off, DVec3::new(10.0, 8.0, 0.0));
+        Point::new(p.x as f32, p.y as f32)
+    };
+    let redraw = || {
+        Event::Window(iced::window::Event::RedrawRequested(
+            iced::time::Instant::now(),
+        ))
+    };
+    let right = |pressed: bool| {
+        let button = mouse::Button::Right;
+        Event::Mouse(if pressed {
+            mouse::Event::ButtonPressed(button)
+        } else {
+            mouse::Event::ButtonReleased(button)
+        })
+    };
+    let hovered = |input: &Interaction, lofting: bool| {
+        if lofting {
+            input.motion.loft.curve
+        } else {
+            input.motion.split.curve
+        }
+    };
+    for lofting in [true, false] {
+        let state = || if lofting { loft() } else { split() };
+        let here = viewport(state(), &off, None);
+        let there = viewport(state(), &on, None);
+        let mut input = Interaction::default();
+        feed(&here, &mut input, &[moved(cursor)]);
+        assert_eq!(hovered(&input, lofting), None, "{lofting}");
+        // The line brought under the cursor.
+        feed(&there, &mut input, &[(redraw(), cursor)]);
+        assert_eq!(hovered(&input, lofting), Some((feature, line)), "{lofting}");
+        // Moved away again: let go of.
+        feed(&here, &mut input, &[(redraw(), cursor)]);
+        assert_eq!(hovered(&input, lofting), None, "{lofting}");
+        // Hovered, then the camera dragged: let go of.
+        feed(&there, &mut input, &[(redraw(), cursor)]);
+        assert_eq!(hovered(&input, lofting), Some((feature, line)), "{lofting}");
+        let far = Point::new(cursor.x + 40.0, cursor.y + 40.0);
+        feed(
+            &there,
+            &mut input,
+            &[(right(true), cursor), moved(far), (redraw(), far)],
+        );
+        assert!(input.drag.is_some(), "the camera's dragged");
+        assert_eq!(hovered(&input, lofting), None, "{lofting}");
+        feed(&there, &mut input, &[(right(false), far)]);
+    }
+}

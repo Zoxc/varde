@@ -2703,7 +2703,10 @@ face picked, the origin planes on the toolbar).
   colour. Only sketches before the feature are offered. While regions
   or curves are picked the model isn't (`MotionSession::picks_sketches`:
   no `ModelPicking`), and the left button goes to them, off them to the
-  camera. Each tile keeps its own tool while another is shown. A face,
+  camera. The region or curve under a still cursor is worked out again
+  as a frame is drawn (`Moving::redraw`: the camera moved) and let go
+  of while the camera's dragged. Each tile keeps its own tool while
+  another is shown. A face,
   plane or body picked hands the clicks to nothing (the preview shows);
   regions and curves keep picking until the field is clicked again. The
   tool's row: "XY plane", "Extrude 1's end", "Body 2", or the sketch's
@@ -4512,9 +4515,12 @@ before it in `Run::sketches`), in history order:
   the sketch too complex or the region unusable: "section 2 can't be
   used: ...") and made into a kernel profile (`profile`), one loop or
   "section 2 has holes: only sections with one loop can be lofted"; its
-  start the outline's segment starting within the resolution of the
-  sketch point ("section 2's start point wasn't found", "section 2's
-  start point isn't one of its corners"); its frame its sketch's
+  start the first segment of the outline's piece whose start vertex is
+  within the resolution of the sketch point (`varde_regen::loft_corner`,
+  the rule the session's corners follow too, `loft_corners`: an arc's
+  split or a spline's fitted joint is no corner; `profile_marked` gives
+  each piece's first segment) ("section 2's start point wasn't found",
+  "section 2's start point isn't one of its corners"); its frame its sketch's
   placement. A point section is the sketch point placed in the world
   ("section 1 not found" when gone). A section whose sketch isn't
   placed: "section 2's sketch isn't placed".
@@ -4582,12 +4588,16 @@ and the Bodies list.
   to the sketches, and off them the left button orbits.
 - **Sections** (`MotionPick::Regions`): while they're picked, every
   visible sketch before the loft (and each section's own, shown or not:
-  adding the loft hid them; `RegionPick::also`, each worked out within
-  the whole of `MAX_WORK`, with no source) shows its regions on its
+  adding the loft hid them; `RegionPick::also`, with no source, kept
+  even with no regions, worked out within a share of their own,
+  `ALSO_WORK`, four times `MAX_WORK` in all, apart from the visible
+  ones' `REFRESH_WORK`: those past it are worked out on a later change,
+  and meanwhile their sections aren't said to be gone) shows its regions on its
   plane, and every visible sketch's points on their own (no curve's) as
   dots. Under the cursor, in this order: a corner of a region section
-  (a sketch point at one of its outer loop's vertices, drawn as a small
-  dot), a point on its own, a region. A click on a region adds it as
+  (a sketch point within the resolution of one of its outer loop's
+  pieces' start vertices, by regeneration's own rule,
+  `varde_regen::loft_corners`; drawn as a small dot), a point on its own, a region. A click on a region adds it as
   the last section (before a last point section), or takes out the
   section that is that region; a region with holes is refused ("A
   section is one loop: pick a region without holes"), as are one too
@@ -4629,9 +4639,15 @@ and the Bodies list.
   `Loft::check_own` refuses as the foot ("Loft fails"); `check_names`
   (start points, point sections, rail curves in their sketches) through
   `motion_held`. What an edit or undo takes away is kept and said to be
-  gone ("A section's sketch, region or point is gone: take it out", "A
-  rail's sketch or curve is gone: take it out"), nothing previewed or
-  committed meanwhile; its row says "gone".
+  gone ("A section's sketch, region, point or start is gone: take it
+  out or move its start", "A rail's sketch or curve is gone: take it
+  out"), nothing previewed or committed meanwhile; the section's row
+  says "gone" (`MotionSession::section_gone`: its start too, gone or no
+  longer at a corner).
+- **Hover**: the corner, point, region or curve under a still cursor
+  is worked out again as a frame is drawn (`Moving::redraw`: the camera
+  moved), and let go of while the camera's dragged; a split picking in
+  its sketches likewise.
 - **Preview**: the loft as set up is the draft while it's whole,
   picking or not. **The kernel's loft isn't built**, so today every
   preview fails with "Loft fails" over "lofting its sections is too
@@ -4653,8 +4669,7 @@ sections · Smooth · Closed · 2 rails · New body" (`loft_info`).
 Known gaps: no handle; the start dots follow sketch points only (a
 corner where curves cross without a point can't be a start); a section
 sketch hidden by the user is still offered (its regions are found to
-draw the section); the camera moving under a still cursor doesn't work
-out what's under it again until it moves.
+draw the section).
 
 ### Tests
 

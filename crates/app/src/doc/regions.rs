@@ -24,6 +24,12 @@ use super::extrude::is_sketch;
 /// Those past it have no regions to pick.
 pub(crate) const REFRESH_WORK: usize = 2 * MAX_WORK;
 
+/// The most work finding the profiles of [`RegionPick::also`]'s sketches
+/// may take in all, apart from [`REFRESH_WORK`]: a loft's up to 64
+/// sections may each be of a sketch of its own, hidden. Those past it
+/// are worked out on a later change, as the visible ones past theirs.
+pub(crate) const ALSO_WORK: usize = 4 * MAX_WORK;
+
 /// The regions an operation takes, of the sketch it takes them of: the
 /// source, the one the session started from (selected, or the edited
 /// feature's), or else the one the first region (or a revolve's axis) is
@@ -60,8 +66,9 @@ pub(crate) struct RegionPick {
     /// The most regions that can be picked: the feature's limit.
     most: usize,
     /// Sketches whose profiles are found too while there's no source,
-    /// whether shown or not, each within the whole of [`MAX_WORK`] as a
-    /// source's: a loft's sections' sketches, which adding it hid.
+    /// whether shown or not, within [`ALSO_WORK`] in all (not
+    /// [`REFRESH_WORK`]), kept even with no regions: a loft's sections'
+    /// sketches, which adding it hid.
     pub(crate) also: Vec<FeatureId>,
 }
 
@@ -190,7 +197,8 @@ impl RegionPick {
     /// be picked again where their sketch changed, and those picked in
     /// the source again by their references. False if the source is gone.
     /// The source's within [`MAX_WORK`], or before there is one the
-    /// visible sketches' within [`REFRESH_WORK`] in all.
+    /// visible sketches' within [`REFRESH_WORK`] in all, and
+    /// [`RegionPick::also`]'s within [`ALSO_WORK`].
     pub(crate) fn refresh(&mut self, document: &Document) -> bool {
         let wanted: Vec<FeatureId> = match self.source {
             Some(source) => vec![source],
@@ -204,6 +212,7 @@ impl RegionPick {
         let mut old = std::mem::take(&mut self.found);
         let mut old_skipped = std::mem::take(&mut self.skipped);
         let mut left = REFRESH_WORK;
+        let mut also_left = ALSO_WORK;
         let mut remap = false;
         for id in wanted {
             let Some(FeatureKind::Sketch { sketch, .. }) = document.feature(id).map(|f| &f.kind)
@@ -215,7 +224,7 @@ impl RegionPick {
             };
             let kept = old.iter().position(|found| found.feature == id);
             let is_source = Some(id) == self.source;
-            let worked_whole = is_source || (self.source.is_none() && self.also.contains(&id));
+            let also = !is_source && self.source.is_none() && self.also.contains(&id);
             if let Some(at) = kept.filter(|&at| old[at].sketch == *sketch) {
                 self.found.push(old.swap_remove(at));
                 continue;
@@ -234,7 +243,8 @@ impl RegionPick {
             // skipped, as it's no more complex than those that took the
             // work: tried again on a later change, when those found are
             // kept and spend none.
-            if !worked_whole && left == 0 {
+            let left = if also { &mut also_left } else { &mut left };
+            if !is_source && *left == 0 {
                 continue;
             }
             #[cfg(test)]
@@ -245,14 +255,14 @@ impl RegionPick {
             // to pick; too complex for less than the whole of
             // [`MAX_WORK`], as with that left of the budget, it may not
             // be, and it's tried again on a later change.
-            let whole = worked_whole || left >= MAX_WORK;
-            let found = if worked_whole {
+            let whole = is_source || *left >= MAX_WORK;
+            let found = if is_source {
                 sketch.profiles()
             } else {
-                sketch.profiles_spending(&mut left)
+                sketch.profiles_spending(left)
             };
             match found {
-                Ok(profiles) if worked_whole || !profiles.regions.is_empty() => {
+                Ok(profiles) if is_source || also || !profiles.regions.is_empty() => {
                     self.found.push(Found {
                         feature: id,
                         sketch: sketch.clone(),

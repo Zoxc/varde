@@ -15,23 +15,20 @@ use std::borrow::Cow;
 
 use glam::DVec2;
 use varde_document::{
-    BodyId, CurveChain, Document, FeatureId, FeatureKind, Loft, LoftError, LoftMode,
-    MAX_LOFT_RAILS, MAX_LOFT_SECTIONS, MAX_RAIL_CURVES, Section,
+    BodyId, CurveChain, Document, FeatureId, Loft, LoftError, LoftMode, MAX_LOFT_RAILS,
+    MAX_LOFT_SECTIONS, MAX_RAIL_CURVES, Section,
 };
+use varde_regen::{loft_corner, loft_corners};
 use varde_sketch::{Id, Profiles, Sketch};
 use varde_view::{
     LoftSection, LoftShape, LoftView, MotionKind, MotionLook, MotionPick, OperationKind,
     SketchLines, SweepPart, loft_info,
 };
 
+use super::sweep::{chain_at, chain_through, chains_gone, count};
 use super::{Doc, MotionSession};
 use crate::doc::regions::{BodyTargets, RegionPick};
 use crate::doc::revolve::sketch_of;
-
-/// How near a sketch point is to a region's vertex to be its corner,
-/// relative to how far out it is: the vertices are the curves' ends'
-/// places, so the points there are on them but for rounding.
-const CORNER_SLACK: f64 = 1e-9;
 
 /// A loft's sections, rails and options as picked.
 #[derive(Debug, Clone)]
@@ -71,24 +68,19 @@ impl Default for LoftSetup {
     }
 }
 
-/// The corners of region `region` of `profiles` (of `sketch`) that are
-/// sketch points: the outer loop's pieces' starts with a point there, in
-/// the loop's order, each with where it is.
-fn corners(sketch: &Sketch, profiles: &Profiles, region: usize) -> Vec<(Id, DVec2)> {
-    let Some(region) = profiles.regions.get(region) else {
-        return Vec::new();
-    };
-    let mut corners: Vec<(Id, DVec2)> = (region.outer.iter())
-        .filter_map(|piece| {
-            let vertex = *profiles.vertices.get(piece.start)?;
-            let slack = CORNER_SLACK * (1.0 + vertex.abs().max_element());
-            (sketch.points.iter())
-                .find(|point| point.at.distance(vertex) <= slack)
-                .map(|point| (point.id, point.at))
-        })
-        .collect();
-    corners.dedup_by_key(|(id, _)| *id);
-    corners
+/// The corners of region `region` of `profiles` (of `sketch`) a start
+/// can be at, in its outer loop's order, each a sketch point and where
+/// the corner is: by regeneration's rule, a point within `resolution` of
+/// a piece's start vertex ([`loft_corners`]).
+fn corners(
+    sketch: &Sketch,
+    profiles: &Profiles,
+    region: usize,
+    resolution: f64,
+) -> Vec<(Id, DVec2)> {
+    (profiles.regions.get(region))
+        .map(|region| loft_corners(sketch, profiles, &region.outer, resolution))
+        .unwrap_or_default()
 }
 
 impl MotionSession {
@@ -139,19 +131,12 @@ impl MotionSession {
     /// curve (not while it's closed, which leaves them out).
     pub(super) fn loft_gone(&self) -> Option<&'static str> {
         if self.loft.sections_gone {
-            return Some("A section's sketch, region or point is gone: take it out");
+            return Some(
+                "A section's sketch, region, point or start is gone: take it out or move its start",
+            );
         }
         (self.loft.rails_gone && !self.loft.closed)
             .then_some("A rail's sketch or curve is gone: take it out")
-    }
-
-    /// Whether `sketch` is a sketch of `document` the loft at its place
-    /// can take: before the feature edited.
-    fn loft_takes(&self, document: &Document, sketch: FeatureId) -> bool {
-        let index = self.index_in(document);
-        (document.features()[..index].iter()).any(|feature| {
-            feature.id == sketch && matches!(feature.kind, FeatureKind::Sketch { .. })
-        })
     }
 
     /// Finds the sketches' profiles again where they changed, and notes
@@ -168,31 +153,44 @@ impl MotionSession {
         setup.regions.also.dedup();
         setup.regions.refresh(document);
         setup.targets.prune(document);
-        let features = document.features();
-        let before = |sketch: FeatureId| {
-            (features[..index.min(features.len())].iter()).any(|feature| feature.id == sketch)
+        setup.rails_gone = chains_gone(document, index, &setup.rails);
+        let gone = (self.loft.sections.iter()).any(|section| self.section_gone(document, section));
+        self.loft.sections_gone = gone;
+    }
+
+    /// Whether what `section` names is gone from `document` at the
+    /// feature's place: its sketch (or it's no sketch before it), its
+    /// point, its region, or its start, or the start is no longer at
+    /// one of its corners ([`loft_corner`]). A region whose sketch's
+    /// profiles are still to be worked out ([`RegionPick::refresh`]'s
+    /// budget) isn't; one whose sketch is too complex to find them is.
+    fn section_gone(&self, document: &Document, section: &Section) -> bool {
+        let sketch = section.sketch();
+        let Some(drawn) = sketch_of(document, sketch) else {
+            return true;
         };
-        let regions = &setup.regions;
-        setup.sections_gone = (setup.sections.iter()).any(|section| {
-            let sketch = section.sketch();
-            let Some(drawn) = sketch_of(document, sketch).filter(|_| before(sketch)) else {
-                return true;
-            };
-            match section {
-                Section::Point { point, .. } => drawn.point(*point).is_none(),
-                Section::Region { region, start, .. } => {
-                    let found = (regions.found(sketch))
-                        .and_then(|found| found.profiles.resolve(std::slice::from_ref(region))[0]);
-                    found.is_none() || start.is_some_and(|start| drawn.point(start).is_none())
-                }
-            }
-        });
-        setup.rails_gone = (setup.rails.iter()).any(|rail| {
-            !before(rail.sketch)
-                || sketch_of(document, rail.sketch).is_none_or(|sketch| {
-                    (rail.curves.iter()).any(|&curve| sketch.curve(curve).is_none())
+        if !self.takes_sketch(document, sketch) {
+            return true;
+        }
+        let regions = &self.loft.regions;
+        match section {
+            Section::Point { point, .. } => drawn.point(*point).is_none(),
+            Section::Region { start, .. } => {
+                let Some(found) = regions.found(sketch) else {
+                    return (regions.skipped.iter()).any(|(skipped, _)| *skipped == sketch);
+                };
+                let Some((profiles, index)) = self.section_region(section) else {
+                    return true;
+                };
+                let resolution = document.tolerance().resolution();
+                start.is_some_and(|start| {
+                    (profiles.regions.get(index)).is_none_or(|region| {
+                        loft_corner(&found.sketch, profiles, &region.outer, start, resolution)
+                            .is_none()
+                    })
                 })
-        });
+            }
+        }
     }
 
     /// The region of the section `section` of `document`, as its sketch's
@@ -214,7 +212,7 @@ impl MotionSession {
         point: Id,
         document: &Document,
     ) -> Result<(), Cow<'static, str>> {
-        if !self.loft_takes(document, sketch) {
+        if !self.takes_sketch(document, sketch) {
             return Err("Only a sketch made before the loft can hold its sections".into());
         }
         let has = sketch_of(document, sketch).is_some_and(|drawn| drawn.point(point).is_some());
@@ -241,15 +239,22 @@ impl MotionSession {
         Ok(())
     }
 
-    /// Moves the start of section `section` to its corner at `point`.
-    pub(super) fn loft_start(&mut self, section: usize, point: Id) {
-        let is_corner = (self.loft.sections.get(section))
-            .and_then(|section| {
-                let (profiles, region) = self.section_region(section)?;
-                let found = self.loft.regions.found(section.sketch())?;
-                Some(corners(&found.sketch, profiles, region))
+    /// Moves the start of section `section` to its corner at `point`,
+    /// if `point` is at one by regeneration's rule ([`loft_corner`]) in
+    /// `document`.
+    pub(super) fn loft_start(&mut self, section: usize, point: Id, document: &Document) {
+        let resolution = document.tolerance().resolution();
+        let is_corner = (self.loft.sections.get(section)).is_some_and(|section| {
+            let (Some((profiles, region)), Some(found)) = (
+                self.section_region(section),
+                self.loft.regions.found(section.sketch()),
+            ) else {
+                return false;
+            };
+            (profiles.regions.get(region)).is_some_and(|region| {
+                loft_corner(&found.sketch, profiles, &region.outer, point, resolution).is_some()
             })
-            .is_some_and(|corners| corners.iter().any(|&(id, _)| id == point));
+        });
         if !is_corner {
             return;
         }
@@ -269,26 +274,22 @@ impl MotionSession {
         let drawn = sketch_of(document, sketch)
             .filter(|drawn| drawn.curve(curve).is_some())
             .ok_or("That curve isn't in the sketch")?;
-        if !self.loft_takes(document, sketch) {
+        if !self.takes_sketch(document, sketch) {
             return Err("Only a sketch made before the loft can hold its rails".into());
         }
         let rails = &mut self.loft.rails;
-        if let Some(at) = (rails.iter())
-            .position(|rail| rail.sketch == sketch && rail.curves.binary_search(&curve).is_ok())
-        {
+        if let Some(at) = chain_at(rails, sketch, curve) {
             rails.remove(at);
             return Ok(());
         }
         if rails.len() >= MAX_LOFT_RAILS {
             return Err(format!("A loft takes at most {MAX_LOFT_RAILS} rails").into());
         }
-        let mut curves = drawn.chain_of(curve);
-        curves.sort_unstable();
-        curves.dedup();
-        if curves.len() > MAX_RAIL_CURVES {
+        let rail = chain_through(drawn, sketch, curve);
+        if rail.curves.len() > MAX_RAIL_CURVES {
             return Err(format!("A rail takes at most {MAX_RAIL_CURVES} curves").into());
         }
-        rails.push(CurveChain { sketch, curves });
+        rails.push(rail);
         Ok(())
     }
 
@@ -375,7 +376,7 @@ impl Doc {
             }
             MotionLook::LoftPoint { sketch, point } => session.loft_point(sketch, point, document),
             MotionLook::LoftStart { section, point } => {
-                session.loft_start(section, point);
+                session.loft_start(section, point, document);
                 Ok(())
             }
             MotionLook::SectionUp(at) => {
@@ -435,7 +436,7 @@ impl Doc {
         let Some(session) = &self.motion else {
             return;
         };
-        if !session.loft_takes(document, sketch) {
+        if !session.takes_sketch(document, sketch) {
             self.notice = Some("Only a sketch made before the loft can hold its sections".into());
             return;
         }
@@ -473,7 +474,8 @@ impl Doc {
         }
         // The start: the corner nearest the previous section's start in
         // the world, or the first corner.
-        let corners = corners(&found.sketch, &found.profiles, region);
+        let resolution = document.tolerance().resolution();
+        let corners = corners(&found.sketch, &found.profiles, region, resolution);
         let placement = self.placement(sketch);
         let insert_at = match sections.last() {
             Some(last) if last.is_point() && sections.len() >= 2 => sections.len() - 1,
@@ -539,26 +541,12 @@ impl Doc {
     /// where they're placed: every visible sketch before the feature, and
     /// each section's and rail's own.
     fn loft_lines<'s>(&'s self, session: &MotionSession) -> Vec<SketchLines<'s>> {
-        let document = self.editor.document();
         let setup = &session.loft;
-        (document.features().iter())
-            .filter(|feature| {
-                feature.visible
-                    || (setup.sections.iter()).any(|section| section.sketch() == feature.id)
-                    || (setup.rails.iter()).any(|rail| rail.sketch == feature.id)
-            })
-            .filter(|feature| session.loft_takes(document, feature.id))
-            .filter_map(|feature| {
-                let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
-                    return None;
-                };
-                Some(SketchLines {
-                    feature: feature.id,
-                    placement: self.placement(feature.id)?,
-                    sketch,
-                })
-            })
-            .collect()
+        self.sketch_lines(session, |feature| {
+            feature.visible
+                || (setup.sections.iter()).any(|section| section.sketch() == feature.id)
+                || (setup.rails.iter()).any(|rail| rail.sketch == feature.id)
+        })
     }
 
     /// What's drawn of the loft being set up, and named in its panel.
@@ -569,8 +557,9 @@ impl Doc {
             .regions
             .candidates(|id| self.placement(id))
             .into_iter())
-        .filter(|candidate| session.loft_takes(document, candidate.feature))
+        .filter(|candidate| session.takes_sketch(document, candidate.feature))
         .collect();
+        let resolution = document.tolerance().resolution();
         let name = |sketch: FeatureId| {
             (document.feature(sketch)).map_or_else(|| "A sketch".to_owned(), |f| f.name.clone())
         };
@@ -585,7 +574,7 @@ impl Doc {
                         let (region, corners) = match (found, resolved) {
                             (Some(found), Some((profiles, index))) => (
                                 profiles.regions.get(index),
-                                corners(&found.sketch, profiles, index),
+                                corners(&found.sketch, profiles, index, resolution),
                             ),
                             _ => (None, Vec::new()),
                         };
@@ -599,26 +588,15 @@ impl Doc {
                         LoftShape::Point(drawn.and_then(|drawn| drawn.point(*point)).map(|p| p.at))
                     }
                 };
-                let gone = match &shape {
-                    LoftShape::Region { region, .. } => region.is_none(),
-                    LoftShape::Point(at) => at.is_none(),
-                } || !session.loft_takes(document, sketch);
                 LoftSection {
                     name: name(sketch),
-                    gone,
+                    gone: session.section_gone(document, section),
                     sketch,
                     placement: self.placement(sketch),
                     shape,
                 }
             })
             .collect();
-        let count = |n: usize| {
-            if n == 1 {
-                "1 curve".to_owned()
-            } else {
-                format!("{n} curves")
-            }
-        };
         LoftView {
             candidates,
             lines: self.loft_lines(session),
@@ -626,7 +604,7 @@ impl Doc {
             rails: (setup.rails.iter())
                 .map(|rail| SweepPart {
                     name: name(rail.sketch),
-                    meta: Some(count(rail.curves.len())),
+                    meta: Some(count(rail.curves.len(), "curve", "curves")),
                 })
                 .collect(),
             chains: if setup.closed {

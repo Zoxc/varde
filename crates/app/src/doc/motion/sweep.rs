@@ -15,11 +15,11 @@
 use std::borrow::Cow;
 
 use varde_document::{
-    BodyId, CurveChain, Design, Document, FeatureId, FeatureKind, Helix, MAX_PATH_CURVES,
-    MAX_PATH_PARTS, MAX_SWEEP_REGIONS, Orientation, PathPart, PathRef, Sweep, SweepError,
+    BodyId, CurveChain, Design, Document, FeatureId, Helix, MAX_PATH_CURVES, MAX_PATH_PARTS,
+    MAX_SWEEP_REGIONS, Orientation, PathPart, PathRef, Sweep, SweepError,
 };
 use varde_expr::{AngleUnit, Unit, Value};
-use varde_sketch::{Id, RegionRef};
+use varde_sketch::{Id, RegionRef, Sketch};
 use varde_view::{
     MotionField, MotionKind, MotionPick, OperationKind, SketchLines, SweepPart, SweepPath,
     SweepView, sweep_info,
@@ -284,32 +284,14 @@ impl MotionSession {
         }
         setup.regions.refresh(document);
         setup.targets.prune(document);
-        let features = document.features();
-        let before = |sketch: FeatureId| {
-            (features[..index.min(features.len())].iter()).any(|feature| feature.id == sketch)
-        };
-        setup.chains_gone = (setup.chains.iter()).any(|chain| {
-            !before(chain.sketch)
-                || sketch_of(document, chain.sketch).is_none_or(|sketch| {
-                    (chain.curves.iter()).any(|&curve| sketch.curve(curve).is_none())
-                })
-        });
+        setup.chains_gone = chains_gone(document, index, &setup.chains);
         self.prune_blend(document, index);
-    }
-
-    /// Whether `sketch` is a sketch of `document` the sweep at its place
-    /// can take: before the feature edited.
-    fn sweep_takes(&self, document: &Document, sketch: FeatureId) -> bool {
-        let index = self.index_in(document);
-        (document.features()[..index].iter()).any(|feature| {
-            feature.id == sketch && matches!(feature.kind, FeatureKind::Sketch { .. })
-        })
     }
 
     /// Picks the region `region` of `sketch` for its profile, or takes it
     /// out: once one is picked with no path yet, clicks go on to the path.
     pub(super) fn sweep_region(&mut self, sketch: FeatureId, region: usize, document: &Document) {
-        if !self.sweep_takes(document, sketch) {
+        if !self.takes_sketch(document, sketch) {
             return;
         }
         self.sweep.regions.toggle(sketch, region, false, document);
@@ -342,21 +324,16 @@ impl MotionSession {
         let drawn = sketch_of(document, sketch)
             .filter(|drawn| drawn.curve(curve).is_some())
             .ok_or("That curve isn't in the sketch")?;
-        if !self.sweep_takes(document, sketch) {
+        if !self.takes_sketch(document, sketch) {
             return Err("Only a sketch made before the sweep can be its path".into());
         }
-        let chains = &mut self.sweep.chains;
-        if let Some(at) = (chains.iter())
-            .position(|chain| chain.sketch == sketch && chain.curves.binary_search(&curve).is_ok())
-        {
-            chains.remove(at);
+        if let Some(at) = chain_at(&self.sweep.chains, sketch, curve) {
+            self.sweep.chains.remove(at);
             return Ok(());
         }
-        let mut curves = drawn.chain_of(curve);
-        curves.sort_unstable();
-        curves.dedup();
-        self.sweep_room(1, curves.len())?;
-        self.sweep.chains.push(CurveChain { sketch, curves });
+        let chain = chain_through(drawn, sketch, curve);
+        self.sweep_room(1, chain.curves.len())?;
+        self.sweep.chains.push(chain);
         Ok(())
     }
 
@@ -418,6 +395,47 @@ impl MotionSession {
     }
 }
 
+/// Where in `chains` the one of `sketch`'s holding `curve` is, if one
+/// does: a click on it takes it out.
+pub(super) fn chain_at(chains: &[CurveChain], sketch: FeatureId, curve: Id) -> Option<usize> {
+    (chains.iter())
+        .position(|chain| chain.sketch == sketch && chain.curves.binary_search(&curve).is_ok())
+}
+
+/// The chain of curves `curve` is in, of `drawn`, the sketch `sketch`'s
+/// ([`varde_sketch::Sketch::chain_of`]), sorted: a sweep's path's part or
+/// a loft's rail.
+pub(super) fn chain_through(drawn: &Sketch, sketch: FeatureId, curve: Id) -> CurveChain {
+    let mut curves = drawn.chain_of(curve);
+    curves.sort_unstable();
+    curves.dedup();
+    CurveChain { sketch, curves }
+}
+
+/// Whether a chain of `chains` names what `document` no longer takes at
+/// feature `index`: a sketch not before it, or a curve its sketch hasn't.
+pub(super) fn chains_gone(document: &Document, index: usize, chains: &[CurveChain]) -> bool {
+    let features = document.features();
+    let before = |sketch: FeatureId| {
+        (features[..index.min(features.len())].iter()).any(|feature| feature.id == sketch)
+    };
+    (chains.iter()).any(|chain| {
+        !before(chain.sketch)
+            || sketch_of(document, chain.sketch).is_none_or(|sketch| {
+                (chain.curves.iter()).any(|&curve| sketch.curve(curve).is_none())
+            })
+    })
+}
+
+/// "1 curve", "3 curves": `n` of `one`, or of `many` if not one.
+pub(super) fn count(n: usize, one: &str, many: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{n} {many}")
+    }
+}
+
 /// Whether `a` and `b` hold the same parts, each as many times, in
 /// whatever order.
 fn same_parts(a: &[PathPart], b: &[PathPart]) -> bool {
@@ -449,25 +467,11 @@ impl Doc {
     /// they're placed: every visible sketch before the feature but the
     /// profile's, and each part's own.
     fn sweep_lines<'s>(&'s self, session: &MotionSession) -> Vec<SketchLines<'s>> {
-        let document = self.editor.document();
         let setup = &session.sweep;
-        (document.features().iter())
-            .filter(|feature| {
-                feature.visible || (setup.chains.iter()).any(|chain| chain.sketch == feature.id)
-            })
-            .filter(|feature| Some(feature.id) != setup.regions.source)
-            .filter(|feature| session.sweep_takes(document, feature.id))
-            .filter_map(|feature| {
-                let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
-                    return None;
-                };
-                Some(SketchLines {
-                    feature: feature.id,
-                    placement: self.placement(feature.id)?,
-                    sketch,
-                })
-            })
-            .collect()
+        self.sketch_lines(session, |feature| {
+            (feature.visible || (setup.chains.iter()).any(|chain| chain.sketch == feature.id))
+                && Some(feature.id) != setup.regions.source
+        })
     }
 
     /// What's drawn of the sweep being set up, and named in its panel.
@@ -478,17 +482,10 @@ impl Doc {
             .regions
             .candidates(|id| self.placement(id))
             .into_iter())
-        .filter(|candidate| session.sweep_takes(document, candidate.feature))
+        .filter(|candidate| session.takes_sketch(document, candidate.feature))
         .collect();
         let name = |sketch: FeatureId| {
             (document.feature(sketch)).map_or_else(|| "A sketch".to_owned(), |f| f.name.clone())
-        };
-        let count = |n: usize, one: &str, many: &str| {
-            if n == 1 {
-                format!("1 {one}")
-            } else {
-                format!("{n} {many}")
-            }
         };
         let chains = (setup.chains.iter()).map(|chain| SweepPart {
             name: name(chain.sketch),

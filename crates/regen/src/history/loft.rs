@@ -10,11 +10,13 @@
 //!   regions are ([`Profiles::resolve`]; gone: "section 2 not found"),
 //!   made into a kernel profile ([`profile`]); one with holes fails
 //!   ("section 2 has holes: only sections with one loop can be
-//!   lofted"). Its start, a sketch point, is the segment of the outline
-//!   starting within the resolution of the point (gone: "section 2's
-//!   start point wasn't found"; on no corner: "section 2's start point
-//!   isn't one of its corners"); with none, the kernel's default. Its
-//!   frame is its sketch's placement.
+//!   lofted"). Its start, a sketch point, is the first segment of the
+//!   outline's piece whose start vertex is within the resolution of the
+//!   point ([`loft_corner`], the rule the session picks starts by; an
+//!   arc's split or a spline's fitted joint is no corner) (gone:
+//!   "section 2's start point wasn't found"; on no corner: "section 2's
+//!   start point isn't one of its corners"); with none, the kernel's
+//!   default. Its frame is its sketch's placement.
 //! - **A point**: the sketch point placed by its sketch's placement
 //!   (gone: "section 1 not found").
 //!
@@ -44,6 +46,8 @@
 //!
 //! [`Profiles::resolve`]: varde_sketch::Profiles::resolve
 //! [`on_one_plane`]: varde_kernel::loft::on_one_plane
+//! [`loft_corner`]: crate::loft_corner
+//! [`profile`]: crate::profile()
 
 use std::sync::Arc;
 
@@ -56,7 +60,7 @@ use super::{Failed, Run, SketchOutput};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
 use crate::message::{self, LoftRefusal};
-use crate::profile::{chain, profile};
+use crate::profile::{chain, loft_corner, profile_marked};
 
 /// The kernel's loft, which tests may replace with a stand-in to check
 /// what regeneration does with the result before the kernel's is built.
@@ -327,22 +331,23 @@ impl Run<'_> {
                 let loops = profiles
                     .merge(&found)
                     .map_err(|e| message::section_unusable(index, e))?;
-                let made = profile(sketch, profiles, &loops, self.tolerance.fit())
+                let (made, firsts) = profile_marked(sketch, profiles, &loops, self.tolerance.fit())
                     .map_err(|e| message::section_unusable(index, e))?;
                 let [outline] =
                     <[_; 1]>::try_from(made.loops).map_err(|_| message::section_holes(index))?;
                 let start = match start {
                     None => None,
                     Some(id) => {
-                        let at = sketch
-                            .point(*id)
-                            .ok_or_else(|| message::start_not_found(index))?
-                            .at;
+                        if sketch.point(*id).is_none() {
+                            return Err(message::start_not_found(index).into());
+                        }
+                        // The piece starting at the point, by the rule
+                        // the session picks starts by, and its first
+                        // segment.
                         let resolution = self.tolerance.resolution();
-                        let corner = (outline.segments.iter())
-                            .position(|segment| segment.conic.p0.distance(at) <= resolution)
+                        let piece = loft_corner(sketch, profiles, &loops[0], *id, resolution)
                             .ok_or_else(|| message::start_not_corner(index))?;
-                        Some(corner)
+                        Some(firsts[0][piece])
                     }
                 };
                 Ok(kernel_loft::Section::Loop {

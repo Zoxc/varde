@@ -900,3 +900,98 @@ fn a_loft_is_cached_by_its_sections() {
     evaluate(editor.document(), &mut cache);
     assert_eq!(asked().len(), 1);
 }
+
+/// A start is a piece's start vertex with a sketch point within the
+/// resolution, by the rule the session picks starts by
+/// ([`crate::loft_corners`]): on a "D" (a line, and a half circle the
+/// profile splits into two quarters), the arc's far end is a corner and
+/// starts at its piece's first segment, as does a point a hair off the
+/// line's start; a point at the arc's middle, where the profile splits
+/// it, is no corner.
+#[test]
+fn starts_are_the_pieces_corners() {
+    with_recording(None);
+    let mut editor = Editor::new(Document::default());
+    let (d, [left, right, middle, near]) =
+        add_sketch(&mut editor, Plane::Origin(OriginPlane::XY), |sketch| {
+            let left = sketch.add_point(DVec2::new(-5.0, 0.0)).unwrap();
+            let right = sketch.add_point(DVec2::new(5.0, 0.0)).unwrap();
+            let center = sketch.add_point(DVec2::ZERO).unwrap();
+            sketch
+                .add_curve(
+                    Curve::Line {
+                        start: left,
+                        end: right,
+                    },
+                    false,
+                )
+                .unwrap();
+            let arc = Curve::Arc {
+                center,
+                start: right,
+                end: left,
+            };
+            sketch.add_curve(arc, false).unwrap();
+            let middle = sketch.add_point(DVec2::new(0.0, 5.0)).unwrap();
+            let near = sketch.add_point(DVec2::new(5.0 + 1e-9, 0.0)).unwrap();
+            [left, right, middle, near]
+        });
+    let (apex_sketch, apex) = add_sketch(&mut editor, Plane::Origin(OriginPlane::XZ), |sketch| {
+        sketch.add_point(DVec2::new(0.0, 20.0)).unwrap()
+    });
+    let FeatureKind::Sketch { sketch, .. } = &editor.document().feature(d).unwrap().kind else {
+        unreachable!()
+    };
+    let profiles = sketch.profiles().unwrap();
+    let resolution = editor.document().tolerance().resolution();
+    let outer = &profiles.regions[0].outer;
+    let corners: Vec<_> = crate::loft_corners(sketch, &profiles, outer, resolution)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(corners.len(), 2, "the line's ends: {corners:?}");
+    assert!(corners.contains(&left) && corners.contains(&right));
+    for (point, corner) in [(left, true), (right, true), (near, true), (middle, false)] {
+        let found = crate::loft_corner(sketch, &profiles, outer, point, resolution);
+        assert_eq!(found.is_some(), corner, "point {point:?}");
+    }
+    let document = editor.document().clone();
+    let apex = Section::Point {
+        sketch: apex_sketch,
+        point: apex,
+    };
+    let lofts = [left, near, middle].map(|start| {
+        add(
+            &mut editor,
+            loft(
+                vec![region(&document, d, Some(start)), apex.clone()],
+                new_body(),
+            ),
+        )
+    });
+    let evaluation = evaluated(editor.document());
+    let failed = |id: FeatureId| {
+        (evaluation.failed.iter())
+            .find(|failed| failed.feature == id)
+            .map(|failed| failed.message.clone())
+    };
+    assert_eq!(failed(lofts[0]).as_deref(), Some(TOO_COMPLEX));
+    assert_eq!(failed(lofts[1]).as_deref(), Some(TOO_COMPLEX));
+    assert_eq!(
+        failed(lofts[2]).as_deref(),
+        Some("section 1's start point isn't one of its corners")
+    );
+    let asked = asked();
+    assert_eq!(asked.len(), 2, "the two with corners reach the kernel");
+    for ((sections, ..), want) in asked
+        .iter()
+        .zip([DVec2::new(-5.0, 0.0), DVec2::new(5.0, 0.0)])
+    {
+        let varde_kernel::loft::Section::Loop { outline, start, .. } = &sections[0] else {
+            panic!("a loop first");
+        };
+        assert_eq!(outline.segments.len(), 3, "a line and two quarters");
+        let start = start.expect("a start");
+        assert_eq!(outline.segments[start].conic.p0, want);
+    }
+}

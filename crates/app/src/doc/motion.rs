@@ -1412,13 +1412,6 @@ impl Doc {
     /// Takes `message`, changing the move, mirror or pattern being set up.
     pub(crate) fn motion_look(&mut self, message: MotionLook) {
         let editable = self.editable();
-        if editable
-            && (self.motion.as_ref()).is_some_and(|session| session.kind == MotionKind::Loft)
-            && loft::loft_message(&message)
-        {
-            self.loft_look(message);
-            return;
-        }
         let document = self.editor.document();
         let Some(session) = &mut self.motion else {
             return;
@@ -1426,6 +1419,11 @@ impl Doc {
         match message {
             MotionLook::Cancel => self.motion = None,
             _ if !editable => {}
+            // A loft's own, and what it shares with others (picking, the
+            // operation and bodies), all its own way.
+            message if session.kind == MotionKind::Loft && loft::loft_message(&message) => {
+                self.loft_look(message);
+            }
             // An align's references are its own; others pick none.
             MotionLook::Picking(MotionPick::Align(_) | MotionPick::Nothing)
                 if session.kind != MotionKind::Align => {}

@@ -15,7 +15,7 @@ use std::borrow::Cow;
 
 use glam::DVec3;
 use varde_document::{
-    BodyId, Document, FeatureId, FeatureKind, Keep, MAX_EXTRUDE_REGIONS, MAX_SPLIT_CURVES,
+    BodyId, Document, Feature, FeatureId, FeatureKind, Keep, MAX_EXTRUDE_REGIONS, MAX_SPLIT_CURVES,
     PlaneRef, Side, Split, SplitTool,
 };
 use varde_regen::Summary;
@@ -316,14 +316,12 @@ impl MotionSession {
         self.picking = MotionPick::Nothing;
     }
 
-    /// Whether `sketch` is a sketch of `document` a split at its place
-    /// can take: before the feature edited.
-    fn takes_sketch(&self, document: &Document, sketch: FeatureId) -> bool {
-        let features = document.features();
-        let index = (self.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len());
-        (features[..index].iter()).any(|feature| {
+    /// Whether `sketch` is a sketch of `document` the feature at its
+    /// place (a split's, a sweep's, a loft's) can take: before the
+    /// feature edited.
+    pub(super) fn takes_sketch(&self, document: &Document, sketch: FeatureId) -> bool {
+        let index = self.index_in(document);
+        (document.features()[..index].iter()).any(|feature| {
             feature.id == sketch && matches!(feature.kind, FeatureKind::Sketch { .. })
         })
     }
@@ -681,16 +679,28 @@ impl Doc {
     /// placed: the line's own once a curve is picked, else every visible
     /// sketch before the feature.
     fn split_lines<'s>(&'s self, session: &MotionSession) -> Vec<SketchLines<'s>> {
-        let document = self.editor.document();
         // A line gone is picked again from any.
         let chosen = (session.split.chain.as_ref())
             .filter(|_| !session.split.gone)
             .map(|(sketch, _)| *sketch);
+        self.sketch_lines(session, |feature| match chosen {
+            Some(sketch) => feature.id == sketch,
+            None => feature.visible,
+        })
+    }
+
+    /// The sketches of the features `wanted` takes whose curves or points
+    /// the feature being set up in `session` (a split, a sweep, a loft)
+    /// picks, where they're placed: each a sketch it can take at its
+    /// place ([`MotionSession::takes_sketch`]) that's placed.
+    pub(super) fn sketch_lines<'s>(
+        &'s self,
+        session: &MotionSession,
+        wanted: impl Fn(&Feature) -> bool,
+    ) -> Vec<SketchLines<'s>> {
+        let document = self.editor.document();
         (document.features().iter())
-            .filter(|feature| match chosen {
-                Some(sketch) => feature.id == sketch,
-                None => feature.visible,
-            })
+            .filter(|feature| wanted(feature))
             .filter(|feature| session.takes_sketch(document, feature.id))
             .filter_map(|feature| {
                 let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
