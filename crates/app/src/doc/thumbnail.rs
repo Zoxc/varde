@@ -1,7 +1,7 @@
 //! The thumbnail each save writes with the design, for the welcome
 //! screen: the bodies of the last model the committed document
 //! regenerated to (see [`MeshFeed::committed`]), from where Home looks,
-//! framed to fit and cropped, on nothing. Only the viewport has the GPU,
+//! framed to fit and cropped, on nothing, in each theme's colours. Only the viewport has the GPU,
 //! so it's rendered there on the next frame (see
 //! [`varde_view::ThumbnailRequest`]) and comes back as a message, and a
 //! save waits for it as it waits for the edits waiting on the solver (see
@@ -17,10 +17,10 @@ use std::time::Duration;
 
 use iced::futures::channel::oneshot;
 use iced::time::Instant;
-use varde_io::thumbnail::Image;
+use varde_io::thumbnail::Thumbnail;
 use varde_kernel::RenderMesh;
-use varde_render::{Camera, PreviewImage};
-use varde_view::ThumbnailRequest;
+use varde_render::Camera;
+use varde_view::{ThumbnailImages, ThumbnailRequest};
 
 use super::Doc;
 use crate::{Files, Next};
@@ -39,7 +39,7 @@ pub(crate) struct Thumbnails {
     next: u64,
     /// The answer to the thumbnail asked for last, until the app takes it
     /// to wait for, see [`Doc::take_thumbnail`].
-    answer: Option<(u64, oneshot::Receiver<Option<PreviewImage>>)>,
+    answer: Option<(u64, oneshot::Receiver<Option<ThumbnailImages>>)>,
 }
 
 /// A thumbnail being rendered.
@@ -53,7 +53,7 @@ struct Rendering {
 /// A thumbnail rendered, or given up on.
 struct Rendered {
     of: Of,
-    image: Option<Image>,
+    image: Option<Thumbnail>,
 }
 
 /// What a thumbnail shows: a mesh, its parts as opaque as `opacity` says.
@@ -131,7 +131,7 @@ impl Doc {
 
     /// The thumbnail the next save writes: the one rendered last, if it
     /// rendered, once [`Doc::thumbnail_waits`] doesn't wait.
-    pub(super) fn thumbnail(&self) -> Option<Image> {
+    pub(super) fn thumbnail(&self) -> Option<Thumbnail> {
         (self.thumbnails.rendered.as_ref())?.image.clone()
     }
 
@@ -163,7 +163,7 @@ impl Doc {
     /// wait for and hand back to [`Doc::thumbnail_rendered`]. Once.
     pub(crate) fn take_thumbnail(
         &mut self,
-    ) -> Option<(u64, oneshot::Receiver<Option<PreviewImage>>)> {
+    ) -> Option<(u64, oneshot::Receiver<Option<ThumbnailImages>>)> {
         self.thumbnails.answer.take()
     }
 
@@ -175,7 +175,7 @@ impl Doc {
         &mut self,
         cx: &mut Files,
         tag: u64,
-        image: Option<Image>,
+        image: Option<Thumbnail>,
     ) -> Next {
         match self
             .thumbnails
@@ -202,7 +202,7 @@ impl Doc {
 
     /// The thumbnail of `of` is `image`, or none: the saves waiting go.
     /// One that failed isn't kept, so the next save tries again.
-    fn thumbnail_settled(&mut self, cx: &mut Files, of: Of, image: Option<Image>) -> Next {
+    fn thumbnail_settled(&mut self, cx: &mut Files, of: Of, image: Option<Thumbnail>) -> Next {
         let failed = image.is_none();
         self.thumbnails.rendered = Some(Rendered { of, image });
         let next = self.proposals_settled(cx);

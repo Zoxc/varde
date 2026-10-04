@@ -1319,11 +1319,14 @@ parts' opacities, and the `varde_render::PreviewShot` that
 targeting the middle of the mesh's extent across the view, zoomed so it
 fills the room less the margin, and the image cropped to it). The first
 frame prepared with it takes its callback (once) and calls
-`varde_render::render_preview` beside the frame: a slot and a texture of
-its own, in the pipeline's format, cleared transparent, the model drawn
-by `Renderer::record` without the backdrop (background, grid, finished
-sketches, origin and pivot markers), lines at a scale of two, then
-copied to a buffer and mapped. Natively it waits for the GPU there, a
+`varde_render::render_preview` beside the frame with
+`ThumbnailRequest::COLORS`, the light and the dark palette's scene
+colours: for each, a slot and a texture of its own, in the pipeline's
+format, cleared transparent, the model drawn by `Renderer::record`
+without the backdrop (background, grid, finished sketches, origin and
+pivot markers), lines at a scale of two, then copied into one buffer,
+an image after another, and mapped once; the callback gets the images
+in order (`ThumbnailImages`). Natively it waits for the GPU there, a
 small image's worth; on the web the buffer maps on a later submit, which
 the frames drawn while a thumbnail waits bring. The pixels are read back
 as straight alpha sRGB RGBA (`Layout::straight`: drawn over transparent
@@ -1411,7 +1414,8 @@ auto-save (`shots_25`); the welcome screen's prompt about a file damaged
 past the save opened, with a save found and with it failing to open
 (`shots_26`, drawn with `Shooter::take_view`, from a `Varde`); a
 save's thumbnail of the example's plate, rendered by the viewport's
-frame and written as `27-thumbnail.png`, then the welcome screen showing
+frame and written as `27-thumbnail-light.png` and
+`27-thumbnail-dark.png`, then the welcome screen showing
 it in a recent file's card beside one without, light, dark and at scale
 2, and the web's page of what's in browser storage (`shots_27`); the view options menu with its Shading submenu open, a
 choice hovered, and its Edges submenu, dark at scale 2 (`shots_28`);

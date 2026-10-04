@@ -911,8 +911,8 @@ impl shader::Primitive for Primitive {
         if let Err(error) = prepared {
             log::error!("Couldn't draw the design: {error}");
         }
-        // Its own slot and target, the colours the model is drawn in; on
-        // failure, what waits for it is dropped, so it saves without.
+        // Its own slots and targets, in each theme's colours; on failure,
+        // what waits for it is dropped, so it saves without.
         if let Some(thumbnail) = &scene.thumbnail
             && let Some(done) = thumbnail.take()
             && let Err(error) = varde_render::render_preview(
@@ -922,7 +922,7 @@ impl shader::Primitive for Primitive {
                 &thumbnail.mesh,
                 &thumbnail.opacity,
                 &thumbnail.shot,
-                scene.colors,
+                &ThumbnailRequest::COLORS,
                 THUMBNAIL_SCALE as f32,
                 done,
             )

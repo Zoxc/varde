@@ -193,9 +193,13 @@ fn requests() -> Vec<Request> {
 }
 
 /// Every response, one of each kind and result.
-/// A thumbnail of three pixels.
-fn thumbnail() -> crate::thumbnail::Image {
-    crate::thumbnail::Image::new(3, 1, (0..12).collect()).unwrap()
+/// A thumbnail of three pixels in either theme.
+fn thumbnail() -> crate::thumbnail::Thumbnail {
+    use crate::thumbnail::{Image, Thumbnail};
+    Thumbnail {
+        light: Image::new(3, 1, (0..12).collect()).unwrap(),
+        dark: Image::new(1, 3, (12..24).collect()).unwrap(),
+    }
 }
 
 fn responses() -> Vec<Response> {

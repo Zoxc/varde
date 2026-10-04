@@ -186,7 +186,7 @@ does nothing), but can be saved as a copy, which is editable if its lock
 could be taken. The new file joins the recent files.
 
 **Thumbnails.** A Save or Save As writes the design's thumbnail with
-it, as the record's `PREVIEW` block (see `file-format.md`), for the
+it, as the record's two `PREVIEW` blocks (see `file-format.md`), for the
 welcome screen's recent file cards: the bodies of the last model the
 committed document regenerated to (`MeshFeed::committed`: the newest
 answer without a draft, so a regeneration still on its way, or one that
@@ -194,8 +194,10 @@ failed, leaves the one before), from where Home looks, orthographic,
 framed as large as fits `varde_view::THUMBNAIL_ROOM` (what a card has
 inside its padding) at twice that in pixels and cropped to the model,
 with a margin for the edges, on nothing: no background, grid, sketches,
-markers, hover or selection, each body as opaque as it is, in the
-theme's colours. Only the viewport has the GPU, so the app asks for it
+markers, hover or selection, each body as opaque as it is, once in
+each theme's colours (the light palette's scene colours, then the
+dark's, whatever the theme now), so a card shows the one of the theme
+it's in. Only the viewport has the GPU, so the app asks for it
 (`doc/thumbnail.rs`, a `varde_view::ThumbnailRequest` in the document
 state), the viewport's next frame renders it offscreen and reads it back
 (see "Thumbnails" in `viewport.md`), and the pixels come back as a
@@ -206,9 +208,11 @@ ticks while it waits. One that doesn't come within two seconds (a window
 that isn't drawn), or fails, is saved without; the next save asks again.
 One rendered is kept while the model and its opacities are the same
 (the mesh by its `Arc`), so saving again goes at once; no model, or none
-with a body, is saved without at once. The IO lane encodes the pixels as
-a PNG (`thumbnail::encode`, `png`; the wire checks an `Image`'s size)
-and writes it after the record, so a save without one drops the old one.
+with a body, is saved without at once. The IO lane encodes each image as
+a PNG (`thumbnail::encode`, `png`; the wire checks an `Image`'s size),
+`image/png; theme=light` then `image/png; theme=dark`
+(`thumbnail::previews`), and writes them after the record, so a save
+without one drops the old one.
 A download on the web writes none: it's encoded on the page as the user
 clicks, and isn't a save (see `web-files.md`). On the web the welcome
 screen shows the thumbnails of the designs in browser storage, which the
@@ -217,12 +221,14 @@ lane reads with the list.
 The welcome screen asks the lane for the recent files' thumbnails
 (`Request::LoadThumbnails`) as the list arrives and whenever it shows
 again, a design maybe saved since. The lane reads each from the end of
-the file (`DocumentFile::read_preview`, taking no lock that's held) and
-decodes the PNG (`thumbnail::decode`: any colour type made 8 bit RGBA,
+the file (`DocumentFile::read_previews`, taking no lock that's held) and
+decodes the PNGs (`thumbnail::decode`: any colour type made 8 bit RGBA,
 sides at most `thumbnail::MAX_SIDE`, refused before its pixels are
-allocated), all off the UI thread; the app makes each an iced image
-handle once, shown in its card fitted inside the padding, or the body
-icon for a design without one. The web has no recent files, so it reads
+allocated; a theme without its own image takes a plain `image/png`'s,
+as saves wrote before, else the other theme's), all off the UI thread;
+the app makes each image an iced image handle once
+(`ThumbnailHandles`), the card showing the one of the theme it's in,
+fitted inside the padding, or the body icon for a design without one. The web has no recent files, so it reads
 none of those.
 
 **Closing and quitting.** Closing the document, or the window, waits for

@@ -371,7 +371,7 @@ fn a_save_shows_on_reopening() {
 }
 
 /// The thumbnails `files` finds for `paths`.
-fn thumbnails(files: &mut Files, paths: &[PathBuf]) -> Vec<(PathBuf, Image)> {
+fn thumbnails(files: &mut Files, paths: &[PathBuf]) -> Vec<(PathBuf, Thumbnail)> {
     match files.handle(Request::LoadThumbnails {
         paths: paths.to_vec(),
     }) {
@@ -391,7 +391,13 @@ fn saves_write_their_thumbnail_for_the_list_to_read() {
     // Written as the example, with no thumbnail.
     assert_eq!(thumbnails(&mut files, &paths), []);
 
-    let image = |shade| Image::new(2, 1, vec![shade, 2, 3, 255, 4, 5, 6, 128]).unwrap();
+    let image = |shade| {
+        let image = |shade| thumbnail::Image::new(2, 1, vec![shade, 2, 3, 255, 4, 5, 6, 128]);
+        Thumbnail {
+            light: image(shade).unwrap(),
+            dark: image(shade + 1).unwrap(),
+        }
+    };
     let opened = open(&mut files, &design).unwrap();
     let saved = files.handle(Request::Save {
         file: opened.file,

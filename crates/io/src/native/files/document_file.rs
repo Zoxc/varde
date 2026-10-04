@@ -248,19 +248,20 @@ impl DocumentFile {
         Ok(())
     }
 
-    /// The first preview `supported` accepts of the design file at `path`,
-    /// see [`vrdp::read_preview`], which reads no record's payload. It
+    /// The previews `supported` accepts of the design file at `path`, see
+    /// [`vrdp::read_previews`], which reads no record's payload. It
     /// takes the shared lock without waiting, as it's for listing files
     /// on the one IO lane: a lock it can't get, as while another program
     /// saves where locks are mandatory, is no preview this time, as is any
     /// other failure.
-    pub(crate) fn read_preview(
-        path: &Path,
-        supported: impl Fn(&Preview) -> bool,
-    ) -> Option<Preview> {
-        let file = File::open(path).ok()?;
-        file.try_lock_shared().ok()?;
-        vrdp::read_preview(&file, supported)
+    pub(crate) fn read_previews(path: &Path, supported: impl Fn(&Preview) -> bool) -> Vec<Preview> {
+        let Ok(file) = File::open(path) else {
+            return Vec::new();
+        };
+        if file.try_lock_shared().is_err() {
+            return Vec::new();
+        }
+        vrdp::read_previews(&file, supported)
     }
 }
 

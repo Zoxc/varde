@@ -27,11 +27,11 @@
 //! the file to its tail first, it replaces the previews of the save
 //! before. Held files never get any. Opening a file steps over them as
 //! over any kind it doesn't know, and they're never needed to open or save
-//! it: damaged, missing or stale, they're ignored. `read_preview` reads
+//! it: damaged, missing or stale, they're ignored. `read_previews` reads
 //! them from the end of the file, walking back to the newest record and
-//! reading no record's payload. Saves write one, the design's thumbnail
-//! as a PNG (see [`thumbnail`](crate::thumbnail)), when the app rendered
-//! it.
+//! reading no record's payload. Saves write two, the design's thumbnail
+//! as a PNG in each theme's colours (see [`thumbnail`](crate::thumbnail)),
+//! when the app rendered it.
 //!
 //! `len` is the length of `tag_len`, `tag` and `payload`, written before
 //! and after them, so a block is 64 + `len` bytes and `kind` ends it.
@@ -144,7 +144,7 @@ use crate::UnixSeconds;
 use chain::Chain;
 pub(crate) use check::check_unchanged;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use preview::read_preview;
+pub(crate) use preview::read_previews;
 #[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use preview::{FileEnd, end};

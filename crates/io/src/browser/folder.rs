@@ -782,9 +782,7 @@ async fn listed<D: Dir>(dir: &D, name: &str, downloads: &Downloads, held: bool) 
             Ok(FileEnd::NotADesign) => design.damage = Some(ListedDamage::Unreadable),
             Ok(FileEnd::Design { newest, previews }) => {
                 design.sum = newest;
-                design.thumbnail = (previews.iter())
-                    .find(|preview| preview.is(thumbnail::MEDIA_TYPE))
-                    .and_then(thumbnail::decode);
+                design.thumbnail = thumbnail::decode(&previews);
             }
             Err(_) => {}
         }

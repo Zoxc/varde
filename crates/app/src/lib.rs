@@ -85,7 +85,7 @@ struct Files {
     ask_persist: bool,
     /// The recent files' thumbnails, by path, as last read: see
     /// [`Files::load_thumbnails`].
-    thumbnails: Vec<(PathBuf, iced::widget::image::Handle)>,
+    thumbnails: Vec<(PathBuf, ThumbnailHandles)>,
     /// The panic a session recorded, see [`varde_io::panicked`], till the
     /// user discards it.
     panic: Option<Panic>,
@@ -97,7 +97,36 @@ struct Files {
 struct BrowserThumbnail {
     name: String,
     sum: u128,
-    handle: iced::widget::image::Handle,
+    handles: ThumbnailHandles,
+}
+
+/// A design's thumbnail as iced handles, one for each theme's image, made
+/// once: a handle is uploaded once per id, the first time it's shown.
+#[derive(Clone)]
+struct ThumbnailHandles {
+    light: iced::widget::image::Handle,
+    dark: iced::widget::image::Handle,
+}
+
+impl ThumbnailHandles {
+    fn new(thumbnail: varde_io::thumbnail::Thumbnail) -> ThumbnailHandles {
+        let handle = |image: varde_io::thumbnail::Image| {
+            let (width, height) = (image.width(), image.height());
+            iced::widget::image::Handle::from_rgba(width, height, image.into_rgba())
+        };
+        ThumbnailHandles {
+            light: handle(thumbnail.light),
+            dark: handle(thumbnail.dark),
+        }
+    }
+
+    /// The handle of the image in `mode`'s colours.
+    fn of(&self, mode: Mode) -> iced::widget::image::Handle {
+        match mode {
+            Mode::Light => self.light.clone(),
+            Mode::Dark => self.dark.clone(),
+        }
+    }
 }
 
 /// What the platform offers the document screen, as [`Files`] knows it:
@@ -146,33 +175,34 @@ impl Files {
         let mut kept = std::mem::take(&mut self.browser_thumbnails);
         self.browser_thumbnails = (designs.iter())
             .filter_map(|design| {
-                let (image, sum) = (design.thumbnail.as_ref()?, design.sum?);
+                let (thumbnail, sum) = (design.thumbnail.as_ref()?, design.sum?);
                 let same = |thumbnail: &BrowserThumbnail| {
                     thumbnail.name == design.name && thumbnail.sum == sum
                 };
-                let handle = match kept.iter().position(same) {
-                    Some(at) => kept.swap_remove(at).handle,
-                    None => iced::widget::image::Handle::from_rgba(
-                        image.width(),
-                        image.height(),
-                        image.rgba().to_vec(),
-                    ),
+                let handles = match kept.iter().position(same) {
+                    Some(at) => kept.swap_remove(at).handles,
+                    None => ThumbnailHandles::new(thumbnail.clone()),
                 };
                 Some(BrowserThumbnail {
                     name: design.name.clone(),
                     sum,
-                    handle,
+                    handles,
                 })
             })
             .collect();
         self.browser = designs;
     }
 
-    /// The thumbnail of `design`, listed in browser storage, if it has one.
-    fn browser_thumbnail(&self, design: &BrowserDesign) -> Option<iced::widget::image::Handle> {
+    /// The thumbnail of `design`, listed in browser storage, if it has
+    /// one, in `mode`'s colours.
+    fn browser_thumbnail(
+        &self,
+        design: &BrowserDesign,
+        mode: Mode,
+    ) -> Option<iced::widget::image::Handle> {
         (self.browser_thumbnails.iter())
             .find(|thumbnail| Some(thumbnail.sum) == design.sum && thumbnail.name == design.name)
-            .map(|thumbnail| thumbnail.handle.clone())
+            .map(|thumbnail| thumbnail.handles.of(mode))
     }
 
     /// What the platform offers the document screen.
@@ -687,17 +717,8 @@ impl Varde {
                 self.files.load_thumbnails();
             }
             IoResponse::ThumbnailsLoaded { thumbnails } => {
-                // Made once here: a handle is uploaded once per id.
                 self.files.thumbnails = (thumbnails.into_iter())
-                    .map(|(path, image)| {
-                        let (width, height) = (image.width(), image.height());
-                        let handle = iced::widget::image::Handle::from_rgba(
-                            width,
-                            height,
-                            image.into_rgba(),
-                        );
-                        (path, handle)
-                    })
+                    .map(|(path, thumbnail)| (path, ThumbnailHandles::new(thumbnail)))
                     .collect();
             }
             IoResponse::RecentWritten { result } => {
@@ -976,13 +997,19 @@ fn while_quitting(message: &Message) -> bool {
 fn thumbnail(
     id: DocId,
     tag: u64,
-    answer: iced::futures::channel::oneshot::Receiver<Option<varde_render::PreviewImage>>,
+    answer: iced::futures::channel::oneshot::Receiver<Option<varde_view::ThumbnailImages>>,
 ) -> Task<Message> {
-    Task::perform(answer, move |image| {
-        let image = image.ok().flatten().and_then(|image| {
-            varde_io::thumbnail::Image::new(image.width, image.height, image.rgba)
+    use varde_io::thumbnail::{Image, Thumbnail};
+    Task::perform(answer, move |images| {
+        let image =
+            |image: varde_render::PreviewImage| Image::new(image.width, image.height, image.rgba);
+        let thumbnail = images.ok().flatten().and_then(|images| {
+            Some(Thumbnail {
+                light: image(images.light)?,
+                dark: image(images.dark)?,
+            })
         });
-        Message::Doc(id, ForDoc::Thumbnail(tag, image))
+        Message::Doc(id, ForDoc::Thumbnail(tag, thumbnail))
     })
 }
 

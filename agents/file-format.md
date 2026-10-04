@@ -140,7 +140,7 @@ which couldn't be read: the block at it has a header, intact or not,
 holding its `sum`.
 
 **Previews** are read from the end, reading no record's payload
-(`read_preview`): the header must be a design file's; from the end,
+(`read_previews`): the header must be a design file's; from the end,
 blocks are walked back over by their trailing `len` while their two
 lengths agree within bounds, at most `MAX_PREVIEWS` (8) of them of any
 kind, to a block whose kind is `RECORD`, of which only the header is
@@ -148,11 +148,13 @@ read, for its `sum` (so a preview may show for a file whose newest record
 turns out damaged); then going forward each block must be intact and
 follow on, and the previews among them are taken until one isn't. A
 preview whose media type isn't UTF-8 or that's out of bounds is stepped
-over. Natively `DocumentFile::read_preview` takes the shared lock without
-waiting, no lock being no preview. The app's saves write one, the
-design's thumbnail, `image/png` (`crates/io/src/thumbnail.rs`), when it
-was rendered, and the welcome screen reads it back (see "Thumbnails" in
-`files.md`); a download on the web writes none.
+over. Natively `DocumentFile::read_previews` takes the shared lock
+without waiting, no lock being no preview. The app's saves write two,
+the design's thumbnail in each theme's colours, `image/png;
+theme=light` then `image/png; theme=dark` (`crates/io/src/thumbnail.rs`,
+`Preview::is` ignores the parameter, the thumbnail module reads it),
+when it was rendered, and the welcome screen reads them back (see
+"Thumbnails" in `files.md`); a download on the web writes none.
 
 ## Saving
 

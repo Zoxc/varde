@@ -12,7 +12,7 @@ use crate::autosave::{Ending, to_open};
 use crate::lock::{self, READ_ONLY};
 use crate::open::{KEPT, NOT_FOUND, OpenFiles};
 use crate::store::{NO_RECOVERED, NO_STORE, entry_in};
-use crate::thumbnail::{self, Image, previews};
+use crate::thumbnail::{self, Thumbnail, previews};
 use crate::vrdp::{self, Preview};
 use crate::{
     Chosen, Closing, Damage, FileId, OpenId, Opened, ReadOnly, RecentFile, Request, Response,
@@ -659,9 +659,9 @@ fn write(
 }
 
 /// The thumbnail of the design at `path`, if it has one that decodes.
-fn thumbnail(path: &Path) -> Option<Image> {
-    let preview = DocumentFile::read_preview(path, |preview| preview.is(thumbnail::MEDIA_TYPE))?;
-    thumbnail::decode(&preview)
+fn thumbnail(path: &Path) -> Option<Thumbnail> {
+    let previews = DocumentFile::read_previews(path, |preview| preview.is(thumbnail::MEDIA_TYPE));
+    thumbnail::decode(&previews)
 }
 
 /// The file name of `path`, for messages.

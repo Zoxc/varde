@@ -337,25 +337,25 @@ fn a_preview_is_read_without_waiting_for_the_lock() {
     let mut file =
         DocumentFile::create(doc_path(&dir), &edited(0), std::slice::from_ref(&png)).unwrap();
     let any = |_: &Preview| true;
-    assert_eq!(DocumentFile::read_preview(&doc_path(&dir), any), Some(png));
+    assert_eq!(DocumentFile::read_previews(&doc_path(&dir), any), [png]);
 
     let writer = File::open(doc_path(&dir)).unwrap();
     writer.try_lock().unwrap();
     let start = Instant::now();
-    assert_eq!(DocumentFile::read_preview(&doc_path(&dir), any), None);
+    assert_eq!(DocumentFile::read_previews(&doc_path(&dir), any), []);
     assert!(start.elapsed() < LOCK_WAIT);
     writer.unlock().unwrap();
 
     file.save(&edited(1), std::slice::from_ref(&jpeg)).unwrap();
-    assert_eq!(DocumentFile::read_preview(&doc_path(&dir), any), Some(jpeg));
+    assert_eq!(DocumentFile::read_previews(&doc_path(&dir), any), [jpeg]);
     let replaced = DocumentFile::replace(doc_path(&dir), &edited(2), &[]).unwrap();
-    assert_eq!(DocumentFile::read_preview(&doc_path(&dir), any), None);
+    assert_eq!(DocumentFile::read_previews(&doc_path(&dir), any), []);
     assert_eq!(
         replaced.tail(),
         DocumentFile::open(doc_path(&dir)).unwrap().0.tail()
     );
     assert_eq!(
-        DocumentFile::read_preview(&dir.0.join("missing.vrdp"), any),
-        None
+        DocumentFile::read_previews(&dir.0.join("missing.vrdp"), any),
+        []
     );
 }

@@ -50,7 +50,7 @@ pub struct BrowserDesign {
     /// of the design, its thumbnail say, is kept till it changes.
     pub sum: Option<u128>,
     /// The thumbnail its last save wrote, if it has one.
-    pub thumbnail: Option<thumbnail::Image>,
+    pub thumbnail: Option<thumbnail::Thumbnail>,
     /// Where it stands against its downloads.
     pub download: DownloadStatus,
     /// Whether its sidecar holds changes not saved, left by a tab closed

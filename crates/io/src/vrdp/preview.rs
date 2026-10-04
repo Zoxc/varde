@@ -1,6 +1,6 @@
 //! A design file's previews: `PREVIEW` blocks after its last record,
 //! written with each save, and read from the end of the file without
-//! reading any record's payload, see [`read_preview`].
+//! reading any record's payload, see [`read_previews`].
 
 use std::io;
 
@@ -95,18 +95,17 @@ pub(super) fn append_previews(
     Ok(())
 }
 
-/// The first preview of the design file `file` that `supported` accepts,
-/// see [`previews`]. Any failure, of reading the file included, is no
-/// preview.
+/// The previews of the design file `file` that `supported` accepts, in
+/// their order, see [`previews`]. Any failure, of reading the file
+/// included, is none.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn read_preview(
+pub(crate) fn read_previews(
     file: &(impl ReadAt + ?Sized),
     supported: impl Fn(&Preview) -> bool,
-) -> Option<Preview> {
-    previews(file)
-        .ok()?
-        .into_iter()
-        .find(|preview| supported(preview))
+) -> Vec<Preview> {
+    let mut previews = previews(file).unwrap_or_default();
+    previews.retain(|preview| supported(preview));
+    previews
 }
 
 /// What the end of a design file says, read without any record's payload,

@@ -728,7 +728,10 @@ fn written_at(dir: &FsDir, name: &str, seconds: u64) {
 #[test]
 fn designs_are_listed_newest_first() {
     let (_temp, dir) = dir("saved-list");
-    let image = thumbnail::Image::new(2, 1, vec![9; 8]).unwrap();
+    let image = thumbnail::Thumbnail {
+        light: thumbnail::Image::new(2, 1, vec![9; 8]).unwrap(),
+        dark: thumbnail::Image::new(1, 2, vec![3; 8]).unwrap(),
+    };
     let previews = thumbnail::previews(Some(&image));
     let old = block_on(save_as(&dir, "old.vrdp", false, &named("old"), &[])).unwrap();
     block_on(close(&dir, old, Ending::Close)).unwrap();

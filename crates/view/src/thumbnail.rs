@@ -1,13 +1,16 @@
 //! A design's thumbnail, rendered as it's saved for the welcome screen's
-//! cards: the viewport draws it on its next frame, offscreen, with the
-//! renderer it draws the model with (see `varde_render::render_preview`),
-//! since only it has the GPU.
+//! cards, once in each theme's colours, so a card shows the one of the
+//! theme it's in: the viewport draws them on its next frame, offscreen,
+//! with the renderer it draws the model with (see
+//! `varde_render::render_preview`), since only it has the GPU.
 
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use varde_kernel::RenderMesh;
-use varde_render::{Camera, PreviewImage, PreviewShot};
+use varde_render::{Camera, Colors, PreviewImage, PreviewShot};
+
+use crate::theme::Mode;
 
 /// How large a thumbnail is shown at most, in logical pixels: what a
 /// recent file's card has inside its padding at its widest.
@@ -23,9 +26,9 @@ const MARGIN: u32 = 6;
 
 /// A thumbnail for the viewport to render, taken by its first frame
 /// drawn: `mesh`, its parts as opaque as `opacity` says, as `shot`
-/// frames it. What it's handed to is called with the pixels read back,
-/// or with `None` should that fail, and dropped uncalled should it not
-/// be drawn at all.
+/// frames it, in each theme's colours. What it's handed to is called with
+/// the pixels read back, or with `None` should that fail, and dropped
+/// uncalled should it not be drawn at all.
 pub struct ThumbnailRequest {
     pub mesh: Arc<RenderMesh>,
     pub opacity: Arc<[f32]>,
@@ -33,8 +36,15 @@ pub struct ThumbnailRequest {
     done: Mutex<Option<Done>>,
 }
 
+/// A thumbnail's pixels as read back, in each theme's colours.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThumbnailImages {
+    pub light: PreviewImage,
+    pub dark: PreviewImage,
+}
+
 /// What takes a thumbnail's pixels.
-type Done = Box<dyn FnOnce(Option<PreviewImage>) + Send>;
+type Done = Box<dyn FnOnce(Option<ThumbnailImages>) + Send>;
 
 impl ThumbnailRequest {
     /// The thumbnail of `mesh`, its parts as opaque as `opacity` says,
@@ -46,7 +56,7 @@ impl ThumbnailRequest {
         mesh: Arc<RenderMesh>,
         opacity: Arc<[f32]>,
         home: &Camera,
-        done: impl FnOnce(Option<PreviewImage>) + Send + 'static,
+        done: impl FnOnce(Option<ThumbnailImages>) + Send + 'static,
     ) -> Option<Arc<ThumbnailRequest>> {
         let room = THUMBNAIL_ROOM.map(|side| side * THUMBNAIL_SCALE);
         let shot = varde_render::frame(&mesh, home, room, MARGIN)?;
@@ -58,10 +68,22 @@ impl ThumbnailRequest {
         }))
     }
 
-    /// What takes its pixels, the first time it's asked for: it's
-    /// rendered once.
-    pub(crate) fn take(&self) -> Option<Done> {
-        self.done.lock().ok()?.take()
+    /// The colours it's rendered in, one image each: the light theme's
+    /// model, then the dark's.
+    pub(crate) const COLORS: [Colors; 2] =
+        [Mode::Light.palette().scene, Mode::Dark.palette().scene];
+
+    /// What takes its pixels, one image for each of [`Self::COLORS`], the
+    /// first time it's asked for: it's rendered once.
+    pub(crate) fn take(&self) -> Option<impl FnOnce(Option<Vec<PreviewImage>>) + Send + 'static> {
+        let done = self.done.lock().ok()?.take()?;
+        Some(move |images: Option<Vec<PreviewImage>>| {
+            let images = images.and_then(|images| {
+                let [light, dark] = <[PreviewImage; 2]>::try_from(images).ok()?;
+                Some(ThumbnailImages { light, dark })
+            });
+            done(images);
+        })
     }
 }
 

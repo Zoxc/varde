@@ -59,7 +59,7 @@ fn a_recovered_card_says_nothing_of_downloads() {
 fn a_saved_card_says_where_its_design_stands() {
     let files = Files::new(None);
     let card = |design: &BrowserDesign| {
-        let card = browser_card(&files, design, NOW);
+        let card = browser_card(&files, design, Mode::Light, NOW);
         (card.name, card.downloads, card.note)
     };
     let never = saved("lid.vrdp", DownloadStatus::Never);
@@ -97,7 +97,7 @@ fn a_saved_card_says_where_its_design_stands() {
         damage: Some(ListedDamage::Unreadable),
         ..never
     };
-    let shown = browser_card(&files, &unreadable, NOW);
+    let shown = browser_card(&files, &unreadable, Mode::Light, NOW);
     assert!(shown.damaged && !shown.opens && shown.downloads.is_none());
     assert_eq!(shown.key, CardKey::Browser("lid.vrdp"));
 }

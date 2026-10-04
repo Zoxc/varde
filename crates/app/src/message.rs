@@ -97,5 +97,5 @@ pub(crate) enum ForDoc {
     Solved(SolveResponse),
     /// The thumbnail tagged `.0` was rendered, or `None` if it couldn't
     /// be: see `doc/thumbnail.rs`.
-    Thumbnail(u64, Option<varde_io::thumbnail::Image>),
+    Thumbnail(u64, Option<varde_io::thumbnail::Thumbnail>),
 }

@@ -20,7 +20,7 @@ pub enum Mode {
 }
 
 impl Mode {
-    pub fn palette(self) -> &'static Palette {
+    pub const fn palette(self) -> &'static Palette {
         match self {
             Mode::Light => &LIGHT,
             Mode::Dark => &DARK,
@@ -79,9 +79,8 @@ pub struct Palette {
     pub line: Color,
     /// Outlines drawn over the viewport, like the view cube's.
     pub edge: Color,
-    /// Behind a design's thumbnail on its card: in dark mode a mid tone,
-    /// so the dark edges of one saved in light mode show as well as the
-    /// light ones of one saved in dark mode.
+    /// Behind a design's thumbnail on its card, which is drawn in the
+    /// theme's own colours.
     pub thumbnail: Color,
     /// Key chip background.
     pub chip: Color,
@@ -1136,11 +1135,7 @@ pub fn tick(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
         p.faint
     };
     let style = checkbox::Style {
-        background: Background::Color(if checked {
-            p.fill
-        } else {
-            Color::TRANSPARENT
-        }),
+        background: Background::Color(if checked { p.fill } else { Color::TRANSPARENT }),
         icon_color: Color::WHITE,
         border: outline(edge, TICK_RADIUS),
         text_color: Some(p.text),

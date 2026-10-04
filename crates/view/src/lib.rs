@@ -93,7 +93,7 @@ pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welc
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
-pub use thumbnail::{THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailRequest};
+pub use thumbnail::{THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailImages, ThumbnailRequest};
 pub use viewport::ModelPicking;
 pub use welcome::{
     CardKey, DamagedPrompt, DeleteFromBrowserPrompt, DesignCard, Downloads, PanicNote, RecentCard,

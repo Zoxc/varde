@@ -210,7 +210,7 @@ pub enum Request {
     /// of the user's. Answered with [`Response::Created`].
     New { id: OpenId },
     /// Appends `document`, the editor's state at `revision`, to `file`,
-    /// with its `thumbnail`, if it has one, as the save's preview (see
+    /// with its `thumbnail`, if it has one, as the save's previews (see
     /// [`thumbnail`]). Encoding, locking and writing all happen in the
     /// lane. Replaces a `Save` of the same file still waiting, see the
     /// crate docs.
@@ -219,7 +219,7 @@ pub enum Request {
         revision: Revision,
         #[serde(with = "varde_document::codec::snapshot")]
         document: Snapshot,
-        thumbnail: Option<thumbnail::Image>,
+        thumbnail: Option<thumbnail::Thumbnail>,
     },
     /// Writes `document` as a new file where `to` says, and makes `file`
     /// refer to it from then on, letting go of the old file. Without a
@@ -236,7 +236,7 @@ pub enum Request {
         revision: Revision,
         #[serde(with = "varde_document::codec::snapshot")]
         document: Snapshot,
-        thumbnail: Option<thumbnail::Image>,
+        thumbnail: Option<thumbnail::Thumbnail>,
     },
     /// Appends `document`, the editor's state at `revision`, to the
     /// sidecar of `file`, or its store entry if it's a new design. Never to
@@ -399,7 +399,7 @@ pub enum Response {
     /// the order asked, each with its path as asked. A design without one,
     /// or that couldn't be read, isn't listed.
     ThumbnailsLoaded {
-        thumbnails: Vec<(PathBuf, thumbnail::Image)>,
+        thumbnails: Vec<(PathBuf, thumbnail::Thumbnail)>,
     },
     /// Answers [`Request::ListRecovered`], newest first. Also follows the
     /// answer to a request that may have changed which there are: an

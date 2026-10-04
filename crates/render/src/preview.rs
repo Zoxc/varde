@@ -1,6 +1,7 @@
 //! A design's preview: its model alone, drawn offscreen on nothing
-//! (transparent), framed to fit, and read back as straight alpha sRGB
-//! RGBA, for a thumbnail such as the welcome screen's.
+//! (transparent), framed to fit, in one or more sets of colours (a theme's
+//! each), and read back as straight alpha sRGB RGBA, for a thumbnail such
+//! as the welcome screen's.
 
 use std::sync::Arc;
 
@@ -100,18 +101,18 @@ pub fn frame(mesh: &RenderMesh, from: &Camera, max: [u32; 2], margin: u32) -> Op
 }
 
 /// Draws `mesh` as `shot` frames it, its parts as opaque as `opacity` says
-/// (see [`Frame::opacity`]), in `colors`, with nothing behind it: no
-/// background, grid, sketches or markers, nothing hovered or selected.
-/// Lines are as wide as `scale_factor` physical pixels to a logical one
-/// make them.
+/// (see [`Frame::opacity`]), once in each of `colors`, with nothing behind
+/// it: no background, grid, sketches or markers, nothing hovered or
+/// selected. Lines are as wide as `scale_factor` physical pixels to a
+/// logical one make them.
 ///
-/// The image is read back once the GPU is done: `done` is called with it,
-/// or with `None` should mapping it fail, on the thread that polls the
-/// device then. Natively this waits for the GPU before it returns, so
-/// unless another thread polls the device too, `done` has been called by
-/// then; on the web the browser maps it later, on a later submit of the
-/// device's queue. On an error returned, nothing is drawn and `done` is
-/// dropped uncalled.
+/// The images are read back once the GPU is done: `done` is called with
+/// them, one for each of `colors` in their order, or with `None` should
+/// mapping them fail, on the thread that polls the device then. Natively
+/// this waits for the GPU before it returns, so unless another thread
+/// polls the device too, `done` has been called by then; on the web the
+/// browser maps them later, on a later submit of the device's queue. On
+/// an error returned, nothing is drawn and `done` is dropped uncalled.
 #[expect(clippy::too_many_arguments, reason = "one frame's worth, as `Frame`")]
 pub fn render_preview(
     renderer: &Renderer,
@@ -120,9 +121,9 @@ pub fn render_preview(
     mesh: &Arc<RenderMesh>,
     opacity: &[f32],
     shot: &PreviewShot,
-    colors: Colors,
+    colors: &[Colors],
     scale_factor: f32,
-    done: impl FnOnce(Option<PreviewImage>) + Send + 'static,
+    done: impl FnOnce(Option<Vec<PreviewImage>>) + Send + 'static,
 ) -> Result<(), PreviewError> {
     let format = renderer.format();
     let Some(layout) = Layout::of(format) else {
@@ -136,121 +137,131 @@ pub fn render_preview(
             limit,
         });
     }
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("varde preview"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&Default::default());
-
-    let mut slot = renderer.slot(device);
-    let frame = Frame {
-        camera: &shot.camera,
-        mesh,
-        opacity,
-        sketches: &Arc::new(RenderLines::default()),
-        grid: GridPlane::XY,
-        faded: false,
-        wireframe: false,
-        tessellation: false,
-        shading: Shading::Regular,
-        hidden_edges: false,
-        hovered_faces: &[],
-        selected_faces: &[],
-        second_faces: &[],
-        highlights: &Arc::new(Highlights::default()),
-        errors: &[],
-        sketch: None,
-        pivot: None,
-        viewport: Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: width as f32,
-            height: height as f32,
-        },
-        target_size: shot.size,
-        scale_factor,
-        colors,
-    };
-    renderer
-        .prepare(&mut slot, device, queue, &frame)
-        .map_err(PreviewError::Prepare)?;
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("varde preview"),
-    });
-    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("varde preview, cleared"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: &view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        ..Default::default()
-    });
-    let clip = ClipRect {
-        x: 0,
-        y: 0,
-        width,
-        height,
-    };
-    renderer.record(&slot, &mut encoder, &view, clip, false);
-
-    // At most 4 × 2^16 bytes a row by the texture limit, well within u32.
+    // At most 4 × 2^16 bytes a row by the texture limit, well within u32;
+    // the images follow one another in the buffer, each a multiple of the
+    // row alignment, as the copies' offsets must be.
     let row = width * 4;
     let padded = row.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let image_bytes = u64::from(padded) * u64::from(height);
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("varde preview, read back"),
-        size: u64::from(padded) * u64::from(height),
+        size: image_bytes * colors.len().max(1) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    encoder.copy_texture_to_buffer(
-        texture.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded),
-                rows_per_image: None,
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("varde preview"),
+    });
+    for (i, &colors) in colors.iter().enumerate() {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("varde preview"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
             },
-        },
-        texture.size(),
-    );
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+
+        // A slot each, as the uniforms are written before the one submit.
+        let mut slot = renderer.slot(device);
+        let frame = Frame {
+            camera: &shot.camera,
+            mesh,
+            opacity,
+            sketches: &Arc::new(RenderLines::default()),
+            grid: GridPlane::XY,
+            faded: false,
+            wireframe: false,
+            tessellation: false,
+            shading: Shading::Regular,
+            hidden_edges: false,
+            hovered_faces: &[],
+            selected_faces: &[],
+            second_faces: &[],
+            highlights: &Arc::new(Highlights::default()),
+            errors: &[],
+            sketch: None,
+            pivot: None,
+            viewport: Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: width as f32,
+                height: height as f32,
+            },
+            target_size: shot.size,
+            scale_factor,
+            colors,
+        };
+        renderer
+            .prepare(&mut slot, device, queue, &frame)
+            .map_err(PreviewError::Prepare)?;
+
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("varde preview, cleared"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        let clip = ClipRect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+        renderer.record(&slot, &mut encoder, &view, clip, false);
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: image_bytes * i as u64,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: None,
+                },
+            },
+            texture.size(),
+        );
+    }
     queue.submit([encoder.finish()]);
 
+    let count = colors.len();
     let mapped = buffer.clone();
     buffer
         .slice(..)
         .map_async(wgpu::MapMode::Read, move |result| {
-            let image = result.ok().map(|()| {
+            let images = result.ok().map(|()| {
                 let data = mapped.slice(..).get_mapped_range();
-                let mut rgba = Vec::with_capacity(row as usize * height as usize);
-                for line in data.chunks_exact(padded as usize) {
-                    for pixel in line[..row as usize].as_chunks::<4>().0 {
-                        rgba.extend(layout.straight(*pixel));
-                    }
-                }
-                PreviewImage {
-                    width,
-                    height,
-                    rgba,
-                }
+                (data.chunks_exact(image_bytes as usize).take(count))
+                    .map(|image| {
+                        let mut rgba = Vec::with_capacity(row as usize * height as usize);
+                        for line in image.chunks_exact(padded as usize) {
+                            for pixel in line[..row as usize].as_chunks::<4>().0 {
+                                rgba.extend(layout.straight(*pixel));
+                            }
+                        }
+                        PreviewImage {
+                            width,
+                            height,
+                            rgba,
+                        }
+                    })
+                    .collect()
             });
-            done(image);
+            done(images);
         });
     // Natively the GPU is waited for here, a small image's worth; the
     // browser can't wait, and maps the buffer on a later submit.

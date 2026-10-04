@@ -501,7 +501,7 @@ impl Welcome {
                     dir: files.recent.display_dir(&listed.entry.path),
                     opened: when::ago(listed.entry.opened, now),
                     available: listed.available,
-                    thumbnail: files.thumbnail(&listed.entry.path),
+                    thumbnail: files.thumbnail(&listed.entry.path, mode),
                 })
                 .collect()
         });
@@ -512,7 +512,8 @@ impl Welcome {
                 .map(|design| (design.modified, recovered_card(design, now)))
                 .collect();
         stored.extend(
-            (files.browser.iter()).map(|design| (design.saved, browser_card(files, design, now))),
+            (files.browser.iter())
+                .map(|design| (design.saved, browser_card(files, design, mode, now))),
         );
         stored.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
         let stored = stored.into_iter().map(|(_, design)| design).collect();
@@ -742,11 +743,12 @@ impl Files {
         }
     }
 
-    /// The thumbnail of the recent file at `path`, if it has one.
-    fn thumbnail(&self, path: &Path) -> Option<iced::widget::image::Handle> {
+    /// The thumbnail of the recent file at `path`, if it has one, in
+    /// `mode`'s colours.
+    pub(crate) fn thumbnail(&self, path: &Path, mode: Mode) -> Option<iced::widget::image::Handle> {
         (self.thumbnails.iter())
             .find(|(at, _)| at == path)
-            .map(|(_, handle)| handle.clone())
+            .map(|(_, handles)| handles.of(mode))
     }
 
     /// The name the recovered design at `path` is known by, see
@@ -785,12 +787,13 @@ fn recovered_card(design: &Recovered, now: UnixSeconds) -> varde_view::DesignCar
     }
 }
 
-/// The welcome screen's card for `design`, saved in browser storage, with
-/// times relative to `now`: where it stands against its downloads, and
+/// The welcome screen's card for `design`, saved in browser storage, its
+/// thumbnail in `mode`'s colours, with times relative to `now`: where it stands against its downloads, and
 /// whether a closed tab left changes in it or another tab has it open.
 fn browser_card<'a>(
     files: &'a Files,
     design: &'a BrowserDesign,
+    mode: Mode,
     now: UnixSeconds,
 ) -> varde_view::DesignCard<'a> {
     let readable = design.damage != Some(ListedDamage::Unreadable);
@@ -809,7 +812,7 @@ fn browser_card<'a>(
         downloads: readable.then(|| downloads(design.download, now)),
         damaged: design.damage.is_some(),
         opens: readable,
-        thumbnail: files.browser_thumbnail(design),
+        thumbnail: files.browser_thumbnail(design, mode),
         note,
         deletable: !design.in_use,
     }

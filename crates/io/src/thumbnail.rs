@@ -1,8 +1,16 @@
 //! A design's thumbnail: the picture of its model the app renders as it
-//! saves, written into the file as a PNG [`Preview`] after the record
-//! (see [`vrdp`](crate::vrdp)), and read back for the welcome screen.
-//! Encoding and decoding happen in the lane, off the UI thread, which
-//! only sends and takes plain pixels, an [`Image`].
+//! saves, once in each theme's colours, written into the file as two PNG
+//! [`Preview`]s after the record (see [`vrdp`](crate::vrdp)), told apart
+//! by their media type's `theme` parameter, and read back for the welcome
+//! screen, which shows the one of its theme. Encoding and decoding happen
+//! in the lane, off the UI thread, which only sends and takes plain
+//! pixels, a [`Thumbnail`] of two [`Image`]s.
+//!
+//! The media types are `image/png; theme=light` and `image/png;
+//! theme=dark`. Reading, a theme without its own image takes a plain
+//! `image/png` (a thumbnail of one image, as saves wrote before), else
+//! the other theme's; a parameter it doesn't know, or a theme it doesn't,
+//! is no image of either.
 
 use std::fmt;
 
@@ -10,8 +18,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::vrdp::Preview;
 
-/// The media type thumbnails are written as.
+/// The media type thumbnails are written as, with a `theme` parameter
+/// (see [`LIGHT`] and [`DARK`]).
 pub const MEDIA_TYPE: &str = "image/png";
+
+/// The media type of the light theme's image.
+pub const LIGHT: &str = "image/png; theme=light";
+
+/// The media type of the dark theme's image.
+pub const DARK: &str = "image/png; theme=dark";
 
 /// The widest and tallest an [`Image`] may be, in pixels: far more than a
 /// thumbnail needs, and small enough that its pixels, at most 16 MiB, are
@@ -80,6 +95,14 @@ impl Image {
     }
 }
 
+/// A design's thumbnail: its picture in the light theme's colours and in
+/// the dark's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Thumbnail {
+    pub light: Image,
+    pub dark: Image,
+}
+
 /// Its size, not its pixels.
 impl fmt::Debug for Image {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -87,9 +110,10 @@ impl fmt::Debug for Image {
     }
 }
 
-/// `image` as a PNG preview, or `None` if it won't encode or is larger
-/// than a preview may be, which is logged: the design is saved without.
-pub(crate) fn encode(image: &Image) -> Option<Preview> {
+/// `image` as a PNG preview of `media_type`, or `None` if it won't encode
+/// or is larger than a preview may be, which is logged: the design is
+/// saved without.
+pub(crate) fn encode(image: &Image, media_type: &str) -> Option<Preview> {
     let mut bytes = Vec::new();
     let encoded = (|| {
         let mut encoder = png::Encoder::new(&mut bytes, image.width, image.height);
@@ -103,17 +127,85 @@ pub(crate) fn encode(image: &Image) -> Option<Preview> {
         log::error!("Couldn't encode the thumbnail: {error}");
         return None;
     }
-    let preview = Preview::new(MEDIA_TYPE, bytes);
+    let preview = Preview::new(media_type, bytes);
     if preview.is_none() {
         log::error!("The thumbnail is too large to save");
     }
     preview
 }
 
-/// The previews a save writes: `thumbnail` as a PNG, if there's one and
-/// it encodes.
-pub(crate) fn previews(thumbnail: Option<&Image>) -> Vec<Preview> {
-    thumbnail.and_then(encode).into_iter().collect()
+/// The previews a save writes: `thumbnail`'s images as PNGs, the light
+/// one first, if there's one, each that encodes.
+pub(crate) fn previews(thumbnail: Option<&Thumbnail>) -> Vec<Preview> {
+    let Some(thumbnail) = thumbnail else {
+        return Vec::new();
+    };
+    [(&thumbnail.light, LIGHT), (&thumbnail.dark, DARK)]
+        .into_iter()
+        .filter_map(|(image, media_type)| encode(image, media_type))
+        .collect()
+}
+
+/// Which theme a thumbnail's image is for, by its media type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Theme {
+    /// Plain `image/png`: either.
+    Either,
+    Light,
+    Dark,
+}
+
+/// The theme `preview` is an image for, if it's a PNG whose parameters,
+/// if any, are a `theme` this knows (names compared without case).
+fn theme(preview: &Preview) -> Option<Theme> {
+    if !preview.is(MEDIA_TYPE) {
+        return None;
+    }
+    let mut parameters = preview.media_type().split(';').skip(1);
+    let Some(parameter) = parameters.next() else {
+        return Some(Theme::Either);
+    };
+    if parameters.next().is_some() {
+        return None;
+    }
+    let (name, value) = parameter.split_once('=')?;
+    if !name.trim().eq_ignore_ascii_case("theme") {
+        return None;
+    }
+    let value = value.trim();
+    let value = (value.strip_prefix('"'))
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(value);
+    if value.eq_ignore_ascii_case("light") {
+        Some(Theme::Light)
+    } else if value.eq_ignore_ascii_case("dark") {
+        Some(Theme::Dark)
+    } else {
+        None
+    }
+}
+
+/// The thumbnail `previews` hold, or `None` if they hold no image of one
+/// that decodes: each theme's the first of its own that does, else a
+/// plain one's, else the other theme's, see the module docs.
+// The web has no recent files to read them from.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) fn decode(previews: &[Preview]) -> Option<Thumbnail> {
+    let first = |wanted| {
+        (previews.iter())
+            .filter(|preview| theme(preview) == Some(wanted))
+            .find_map(decode_png)
+    };
+    let (light, dark, either) = (
+        first(Theme::Light),
+        first(Theme::Dark),
+        first(Theme::Either),
+    );
+    let fallback = either.or_else(|| light.clone()).or_else(|| dark.clone())?;
+    Some(Thumbnail {
+        light: light.unwrap_or_else(|| fallback.clone()),
+        dark: dark.unwrap_or(fallback),
+    })
 }
 
 /// The pixels of the PNG `preview`, or `None` if it isn't one this
@@ -121,9 +213,7 @@ pub(crate) fn previews(thumbnail: Option<&Image>) -> Vec<Preview> {
 /// 8 bit RGBA. A side past it is refused before its pixels are
 /// allocated, and the decoder allocates at most a little more than they
 /// take.
-// The web has no recent files to read them from.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub(crate) fn decode(preview: &Preview) -> Option<Image> {
+fn decode_png(preview: &Preview) -> Option<Image> {
     if !preview.is(MEDIA_TYPE) {
         return None;
     }

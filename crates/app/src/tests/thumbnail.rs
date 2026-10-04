@@ -1,19 +1,22 @@
 //! The thumbnail a save writes, rendered by the viewport's next frame
 //! first, which the save waits for, though never for long.
 
-use varde_io::thumbnail::Image;
+use varde_io::thumbnail::{Image, Thumbnail};
 
 use super::export::with_plate;
 use super::*;
 
 /// A thumbnail standing in for one rendered, told apart by `shade`.
-fn image(shade: u8) -> Image {
-    Image::new(2, 1, vec![shade; 8]).unwrap()
+fn image(shade: u8) -> Thumbnail {
+    Thumbnail {
+        light: Image::new(2, 1, vec![shade; 8]).unwrap(),
+        dark: Image::new(1, 2, vec![shade; 8]).unwrap(),
+    }
 }
 
 /// Answers the thumbnail being rendered with `image`, as the viewport's
 /// frame and the task waiting for it would.
-fn render(varde: &mut Varde, image: Option<Image>) {
+fn render(varde: &mut Varde, image: Option<Thumbnail>) {
     let doc = document(varde);
     let tag = doc.thumbnail_tag().expect("a thumbnail is being rendered");
     let _ = varde.update(Message::Doc(doc.id, ForDoc::Thumbnail(tag, image)));
@@ -26,7 +29,7 @@ fn edit_and_save(varde: &mut Varde) {
 }
 
 /// The thumbnail of the only request in `sent`, a Save.
-fn thumbnail(sent: &[IoRequest]) -> Option<Image> {
+fn thumbnail(sent: &[IoRequest]) -> Option<Thumbnail> {
     match sent {
         [IoRequest::Save { thumbnail, .. }] => thumbnail.clone(),
         sent => panic!("expected a save, not {sent:?}"),
@@ -189,4 +192,8 @@ fn the_welcome_screen_shows_the_thumbnails_the_lane_reads() {
     }));
     assert_eq!(varde.files.thumbnails.len(), 1);
     assert_eq!(varde.files.thumbnails[0].0, paths[1]);
+    // A handle for each theme's image, shown in its mode.
+    let shown = |mode| varde.files.thumbnail(&paths[1], mode).unwrap().id();
+    assert_ne!(shown(Mode::Light), shown(Mode::Dark));
+    assert_eq!(shown(Mode::Dark), varde.files.thumbnails[0].1.dark.id());
 }

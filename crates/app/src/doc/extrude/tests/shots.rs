@@ -1696,9 +1696,10 @@ fn shots_26_damaged_prompt() {
 
 /// Scenario 27: a save's thumbnail, the example's plate, rendered by the
 /// viewport's frame as the app's is (beside the document screen, which
-/// is shot too), written as `27-thumbnail.png` as the save would write
-/// it; then the welcome screen showing it in a recent file's card beside
-/// a design without one, light and dark.
+/// is shot too), written as `27-thumbnail-light.png` and
+/// `27-thumbnail-dark.png` as the save would write them; then the welcome
+/// screen showing it in a recent file's card beside a design without one,
+/// light and dark.
 #[test]
 #[ignore = "writes screenshots, see the module"]
 fn shots_27_thumbnail() {
@@ -1713,16 +1714,25 @@ fn shots_27_thumbnail() {
         assert!(doc.thumbnail_waits());
         let (_, mut answer) = doc.take_thumbnail().unwrap();
         camera.take(&doc, "27-thumbnail-asked", Shot::new());
-        let image = answer
+        let images = answer
             .try_recv()
             .expect("not dropped")
             .expect("drawn with the frame")
             .expect("read back");
-        let size = Size::new(image.width, image.height);
-        write_png(&camera.dir.join("27-thumbnail.png"), size, &image.rgba);
-        // As the lane reads it back.
-        let image = varde_io::thumbnail::Image::new(image.width, image.height, image.rgba);
-        let image = image.unwrap();
+        // As the lane reads them back.
+        let image = |image: varde_render::PreviewImage, name: &str| {
+            let size = Size::new(image.width, image.height);
+            write_png(
+                &camera.dir.join(format!("27-thumbnail-{name}.png")),
+                size,
+                &image.rgba,
+            );
+            varde_io::thumbnail::Image::new(image.width, image.height, image.rgba).unwrap()
+        };
+        let thumbnail = varde_io::thumbnail::Thumbnail {
+            light: image(images.light, "light"),
+            dark: image(images.dark, "dark"),
+        };
 
         let mut files = Files::new(None);
         let path = |name: &str| PathBuf::from(format!("/home/user/designs/{name}.vrdp"));
@@ -1734,12 +1744,10 @@ fn shots_27_thumbnail() {
             available: true,
         });
         let _ = files.recent.loaded(entries.into(), None);
-        let handle = iced::widget::image::Handle::from_rgba(
-            image.width(),
-            image.height(),
-            image.clone().into_rgba(),
-        );
-        files.thumbnails = vec![(path("plate"), handle)];
+        files.thumbnails = vec![(
+            path("plate"),
+            crate::ThumbnailHandles::new(thumbnail.clone()),
+        )];
         let welcome = Welcome::default();
         let view = |mode| welcome.view(&files, mode, varde_view::ThemeChoice::Auto);
         camera.take_view(view, "27-welcome", Shot::new());
@@ -1755,7 +1763,7 @@ fn shots_27_thumbnail() {
                 name: format!("{name}.vrdp"),
                 saved: Some(UnixSeconds(crate::when::now().0 - 3600)),
                 sum: None,
-                thumbnail: (name == "plate").then(|| image.clone()),
+                thumbnail: (name == "plate").then(|| thumbnail.clone()),
                 download: varde_io::DownloadStatus::Never,
                 unsaved: false,
                 in_use: false,

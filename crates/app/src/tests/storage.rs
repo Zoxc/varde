@@ -968,18 +968,37 @@ fn a_design_open_elsewhere_is_not_deleted() {
 #[test]
 fn thumbnails_are_made_once_per_save() {
     let (mut varde, _requests) = with_files();
-    let image = varde_io::thumbnail::Image::new(2, 1, vec![9; 8]).unwrap();
+    let image = |shade| varde_io::thumbnail::Image::new(2, 1, vec![shade; 8]).unwrap();
+    let image = varde_io::thumbnail::Thumbnail {
+        light: image(9),
+        dark: image(3),
+    };
     let design = |sum| BrowserDesign {
         sum: Some(sum),
         thumbnail: Some(image.clone()),
         ..listed("a.vrdp", DownloadStatus::Never)
     };
-    let handle = |varde: &Varde, sum| (varde.files.browser_thumbnail(&design(sum))).unwrap().id();
+    let handle = |varde: &Varde, sum| {
+        (varde.files.browser_thumbnail(&design(sum), Mode::Light))
+            .unwrap()
+            .id()
+    };
     varde.files.browser_listed(vec![design(1)]);
     let first = handle(&varde, 1);
     varde.files.browser_listed(vec![design(1)]);
     assert_eq!(handle(&varde, 1), first);
     varde.files.browser_listed(vec![design(2)]);
     assert_ne!(handle(&varde, 2), first);
-    assert!(varde.files.browser_thumbnail(&design(1)).is_none());
+    assert!(
+        varde
+            .files
+            .browser_thumbnail(&design(1), Mode::Light)
+            .is_none()
+    );
+    // The dark theme's is its own.
+    let dark = varde
+        .files
+        .browser_thumbnail(&design(2), Mode::Dark)
+        .unwrap();
+    assert_ne!(dark.id(), handle(&varde, 2));
 }
