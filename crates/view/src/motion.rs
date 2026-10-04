@@ -13,8 +13,8 @@ use iced::Element;
 use iced::widget::text::Wrapping;
 use iced::widget::{column, text};
 use varde_document::{
-    Axis3, AxisRef, BodyId, Document, EdgeRef, FeatureId, FeatureKind, Keep, OriginPlane, Pattern,
-    PatternKind, PlaneRef, Side,
+    Axis3, AxisRef, BodyId, Document, EdgeRef, FaceRef, FeatureId, FeatureKind, Keep, OriginPlane,
+    Pattern, PatternKind, PlaneRef, Side,
 };
 use varde_expr::{AngleUnit, LengthUnit, Unit};
 use varde_sketch::Id;
@@ -34,7 +34,7 @@ use crate::theme;
 use crate::{CombineBody, Edit, Look, Message, VALUE_FIELD};
 
 /// Which is set up: a move, a mirror, a linear or circular pattern, an
-/// align, a scale, a split or a chamfer.
+/// align, a scale, a split, a chamfer or a shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionKind {
     Move,
@@ -45,6 +45,7 @@ pub enum MotionKind {
     Scale,
     Split,
     Chamfer,
+    Shell,
 }
 
 impl MotionKind {
@@ -58,11 +59,13 @@ impl MotionKind {
             MotionKind::Scale => "Scale",
             MotionKind::Split => "Split",
             MotionKind::Chamfer => "Chamfer",
+            MotionKind::Shell => "Shell",
         }
     }
 
     /// Its icon, the UI mock's `move`, `bmirror`, `lpattern`, `cpattern`,
-    /// `align`, `scale` and `chamfer`, and the icon mock's split body.
+    /// `align`, `scale`, `chamfer` and `shell`, and the icon mock's split
+    /// body.
     pub fn icon(self) -> Icon {
         match self {
             MotionKind::Move => Icon::Move,
@@ -73,6 +76,7 @@ impl MotionKind {
             MotionKind::Scale => Icon::Scale,
             MotionKind::Split => Icon::Split,
             MotionKind::Chamfer => Icon::BChamfer,
+            MotionKind::Shell => Icon::Shell,
         }
     }
 
@@ -88,6 +92,7 @@ impl MotionKind {
             MotionKind::Scale => "New scale",
             MotionKind::Split => "New split",
             MotionKind::Chamfer => "New chamfer",
+            MotionKind::Shell => "New shell",
         }
     }
 
@@ -101,7 +106,8 @@ impl MotionKind {
 
     /// Whether its reference is an axis (a move's, a pattern's), not a
     /// plane (a mirror's), an align's points and directions, a scale's
-    /// point and edge, a split's tool or a chamfer's edges.
+    /// point and edge, a split's tool, a chamfer's edges or a shell's
+    /// faces.
     pub fn takes_axis(self) -> bool {
         !matches!(
             self,
@@ -110,6 +116,7 @@ impl MotionKind {
                 | MotionKind::Scale
                 | MotionKind::Split
                 | MotionKind::Chamfer
+                | MotionKind::Shell
         )
     }
 
@@ -119,9 +126,16 @@ impl MotionKind {
         self == MotionKind::Chamfer
     }
 
+    /// Whether it picks faces of one body, a shell's (an offset face's and
+    /// a draft's, once there are those): its body is its faces', or picked
+    /// itself while it has none.
+    pub fn picks_faces(self) -> bool {
+        self == MotionKind::Shell
+    }
+
     /// The session that edits a feature of `kind`, if one does: a move, a
-    /// mirror, a linear or circular pattern, an align, a scale, a split or
-    /// a chamfer.
+    /// mirror, a linear or circular pattern, an align, a scale, a split, a
+    /// chamfer or a shell.
     pub fn of(kind: &FeatureKind) -> Option<MotionKind> {
         Some(match kind {
             FeatureKind::Move(_) => MotionKind::Move,
@@ -134,6 +148,7 @@ impl MotionKind {
             FeatureKind::Scale(_) => MotionKind::Scale,
             FeatureKind::Split(_) => MotionKind::Split,
             FeatureKind::Chamfer(_) => MotionKind::Chamfer,
+            FeatureKind::Shell(_) => MotionKind::Shell,
             _ => return None,
         })
     }
@@ -185,8 +200,8 @@ impl PatternMode {
 
 /// What a click in the viewport picks: bodies, the reference (a move's
 /// axis, a mirror's plane), one of an align's points or directions, a
-/// scale's point or its edge, a split's tool, a chamfer's edges, or
-/// nothing (an align with all it asks for picked, a split with its
+/// scale's point or its edge, a split's tool, a chamfer's edges, a
+/// shell's faces, or nothing (an align with all it asks for picked, a split with its
 /// tool). A click on one of the panel's fields makes it the one picking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MotionPick {
@@ -203,6 +218,8 @@ pub enum MotionPick {
     Tool,
     /// A chamfer's edges, each click picking an edge or taking it out.
     Edges,
+    /// A shell's faces, each click picking a face or taking it out.
+    Faces,
     Nothing,
 }
 
@@ -277,7 +294,7 @@ impl AlignSlot {
 /// turn about it is the angle's field), a scale's factor, its factor
 /// along a world axis, or the length its edge is to have, or a
 /// chamfer's distance (the first of two), its second distance, or the
-/// angle of its cut.
+/// angle of its cut, or a shell's thickness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionField {
     Offset(Axis3),
@@ -291,12 +308,13 @@ pub enum MotionField {
     ChamferDistance,
     ChamferSecond,
     ChamferAngle,
+    Thickness,
 }
 
 impl MotionField {
-    /// The fifteen, a move's in the panel's order, then a pattern's, an
-    /// align's distance, a scale's, then a chamfer's.
-    pub const ALL: [MotionField; 15] = [
+    /// The sixteen, a move's in the panel's order, then a pattern's, an
+    /// align's distance, a scale's, a chamfer's, then a shell's.
+    pub const ALL: [MotionField; 16] = [
         MotionField::Offset(Axis3::X),
         MotionField::Offset(Axis3::Y),
         MotionField::Offset(Axis3::Z),
@@ -312,6 +330,7 @@ impl MotionField {
         MotionField::ChamferDistance,
         MotionField::ChamferSecond,
         MotionField::ChamferAngle,
+        MotionField::Thickness,
     ];
 
     /// Where it's kept in an array of them all.
@@ -332,6 +351,7 @@ impl MotionField {
             MotionField::ChamferDistance => 12,
             MotionField::ChamferSecond => 13,
             MotionField::ChamferAngle => 14,
+            MotionField::Thickness => 15,
         }
     }
 
@@ -353,6 +373,7 @@ impl MotionField {
             MotionField::ChamferDistance => iced::widget::Id::new("chamfer-distance"),
             MotionField::ChamferSecond => iced::widget::Id::new("chamfer-second"),
             MotionField::ChamferAngle => iced::widget::Id::new("chamfer-angle"),
+            MotionField::Thickness => iced::widget::Id::new("shell-thickness"),
         }
     }
 
@@ -369,6 +390,7 @@ impl MotionField {
             MotionField::Length => "Length",
             MotionField::ChamferSecond => "Distance 2",
             MotionField::ChamferAngle => "Angle",
+            MotionField::Thickness => "Thickness",
         }
     }
 }
@@ -442,6 +464,11 @@ pub enum MotionLook {
     Chain,
     /// Takes a chamfer's edge out: its row's cross.
     DropEdge(EdgeRef),
+    /// Takes a shell's face out: its row's cross.
+    DropFace(FaceRef),
+    /// Which way a shell's walls grow from the body's faces: its
+    /// Direction tiles.
+    ShellDirection(ShellDirection),
     /// Drops the move or mirror being set up, changing nothing: Cancel,
     /// or `Esc`.
     Cancel,
@@ -459,8 +486,9 @@ pub struct MotionState<'a> {
     pub picking: MotionPick,
     /// Its fields ([`MotionField::index`]): a move's offsets along X, Y
     /// and Z and its angle, a pattern's count and spread, an align's
-    /// distance, a scale's factors and length.
-    pub fields: [TypedField<'a>; 15],
+    /// distance, a scale's factors and length, a chamfer's distances
+    /// and angle, a shell's thickness.
+    pub fields: [TypedField<'a>; 16],
     /// The reference's name, "Z axis", "Edge of Body 1", "XY plane",
     /// "Extrude 1's end", if there's one.
     pub reference: Option<String>,
@@ -537,6 +565,8 @@ pub struct MotionState<'a> {
     pub split: Option<Box<SplitView<'a>>>,
     /// A chamfer's own parts, for a chamfer.
     pub chamfer: Option<Box<ChamferView>>,
+    /// A shell's own parts, for a shell.
+    pub shell: Option<Box<ShellView>>,
 }
 
 impl<'a> MotionState<'a> {
@@ -783,6 +813,9 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
         (MotionKind::Chamfer, _) => (state.chamfer.as_ref())
             .and_then(|chamfer| chamfer.info.clone())
             .unwrap_or(bodies),
+        (MotionKind::Shell, _) => (state.shell.as_ref())
+            .and_then(|shell| shell.info.clone())
+            .unwrap_or(bodies),
         _ => bodies,
     }
 }
@@ -835,7 +868,8 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         | MotionKind::Align
         | MotionKind::Scale
         | MotionKind::Split
-        | MotionKind::Chamfer => ("Plane", Icon::SePlane, "Click a plane or face"),
+        | MotionKind::Chamfer
+        | MotionKind::Shell => ("Plane", Icon::SePlane, "Click a plane or face"),
     };
     let reference_row = state.reference.clone().map(|name| {
         picked_row(
@@ -879,6 +913,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         MotionKind::Scale => scale::body(state, bodies, field_named),
         MotionKind::Split => split::body(state, bodies),
         MotionKind::Chamfer => chamfer::body(state, field_named),
+        MotionKind::Shell => shell::body(state, field_named),
         MotionKind::Move => {
             let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
             column![
@@ -999,6 +1034,10 @@ mod blend;
 pub use blend::{BlendEdge, BlendEdges};
 mod chamfer;
 pub use chamfer::{ChamferType, ChamferView};
+mod faces;
+pub use faces::{PickedFace, PickedFaces};
+mod shell;
+pub use shell::{ShellDirection, ShellView};
 
 #[cfg(test)]
 mod tests;

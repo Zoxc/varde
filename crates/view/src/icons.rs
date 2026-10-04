@@ -172,6 +172,7 @@ icons! {
     // `se-edge` and `se-rim`, a chamfer's edges' rows.
     SeEdge => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><path class="a" d="M3.5 9.5h11" stroke-width="2.6"/>"#,
     SeRim => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><ellipse class="a" cx="11.5" cy="7" rx="3.6" ry="1.5" stroke-width="2"/>"#,
+    SeFace => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><path class="a fl" d="M3.5 9.5h11v11h-11z"/>"#,
     // The operation panel's choices, the model mock's `CHOICE_ICONS`:
     // a revolve's extents seen down its axis (the dot), the profile the
     // line out to the right; an extrude's, the profile as a slab and where
@@ -203,6 +204,10 @@ icons! {
     ChEqual => r#"<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3M3.5 7v8M2 7h3M2 15h3"/>"#,
     ChTwo => r#"<path class="r" d="M7 11V7h12" stroke-dasharray="1.6 1.8"/><path d="M7 22V11l12-4h3"/><path class="a" d="M7 3.5h12M7 2v3M19 2v3M3.5 7v4M2 7h3M2 11h3"/>"#,
     ChAngle => r#"<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3"/><path class="a" d="M8.5 7A6.5 6.5 0 0 0 10.4 11.6" stroke-width="2"/>"#,
+    // A shell's directions: a wall left of the body (filled), inward or
+    // outward of its face.
+    ShIn => r#"<path class="r" d="M4 4h16v16H4z"/><path class="fl" d="M4 4h16v16H4zM8 8v12h8V8z" fill-rule="evenodd"/><path class="a" d="M12 6v6M10 10l2 2 2-2"/>"#,
+    ShOut => r#"<path class="r" d="M8 8h8v12H8z"/><path class="fl" d="M4 4h16v16H4zM8 8v12h8V8z" fill-rule="evenodd"/><path class="a" d="M12 13V3M10 5l2-2 2 2"/>"#,
     // Not in the mocks: a scale's modes, drawn as the patterns' are: a
     // box grown into a dashed larger one every way, stretched along one
     // axis, and measured along an edge (the length in the accent).
@@ -323,8 +328,11 @@ impl Icon {
             | Icon::ChEqual
             | Icon::ChTwo
             | Icon::ChAngle
+            | Icon::ShIn
+            | Icon::ShOut
             | Icon::SeEdge
-            | Icon::SeRim => IconCategory::Solid,
+            | Icon::SeRim
+            | Icon::SeFace => IconCategory::Solid,
             Icon::Plane | Icon::SeAxis | Icon::SePlane => IconCategory::Construction,
             Icon::Measure | Icon::CatInspect => IconCategory::Inspect,
             Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,

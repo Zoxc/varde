@@ -2972,7 +2972,7 @@ panel.
   tool's), the toolbar's Chamfer after Revolve (where the mock has it,
   after Hole and Fillet, before Shell and Combine: those aren't built)
   and the rail's Modify set (first, as the icon mock orders it:
-  Chamfer, Scale, Combine, Split body), again backing out; or editing
+  Chamfer, Shell, Scale, Combine, Split body), again backing out; or editing
   one (`Look::EditFeature`: double-click, `Enter`, "Edit chamfer"),
   which opens with its edges, type, values, Flip sides and Tangent
   chain. A new one takes the edges selected in the model shown that a
@@ -3209,14 +3209,105 @@ pub struct Shell {
 
 ### UI
 
-Not built yet (the next stage: the face session, the mock's panel:
-Remove (faces picked, rows with a cross), Thickness, Direction tiles
-Inward / Outward `sh-in` / `sh-out`, the closed-body warning). For now:
-the Timeline row with the model mock's shell icon (`Icon::Shell`), its
-note (`view/src/shell.rs`: the thickness, "2 mm"), the status bar's
-info as the mock's row ("2 faces removed · 2 mm inward", "Closed · 1 mm
-outward") and "Edit shell", which does nothing yet
-(`Look::EditFeature`).
+The move's session (`MotionSession`, above) with `MotionKind::Shell`;
+**the face session**, picking faces of one body, is its own part
+(`app/src/doc/motion/faces.rs`, `FaceSetup`; `view/src/motion/faces.rs`,
+`PickedFaces` and its field), shared by every kind that
+`MotionKind::picks_faces()` (an offset face's and a draft's, once there
+are those, take it with their own values); the shell's own parts are in
+`app/src/doc/motion/shell.rs` and `view/src/motion/shell.rs`
+(`ShellView`, `ShellDirection`). The panel is the model mock's shell
+panel.
+
+- **Starting**: `Look::StartShell` from the rail's Modify set (after
+  Chamfer, as the icon mock orders it), again backing out; no key, as
+  the mocks have none. **Not on the toolbar**: the model mock's bar has
+  Shell after Chamfer, but with it the bar runs past its room at 1280
+  px wide (to 1199 px of 1160), so it waits for the toolbar's overflow
+  handling. Or editing one (`Look::EditFeature`: double-click, `Enter`,
+  "Edit shell"), which opens with its body, faces, thickness and
+  direction. A new one takes the faces selected in the model shown that
+  a click would take (as the mock's takes the face selected), the first
+  one's body deciding; else its body is the body selected, or the
+  model's only one. Nothing takes the focus: clicks pick faces.
+- **The body**: the faces' body while there are faces; with none, the
+  body picked: as it starts (above), by a row in Objects
+  (`Doc::motion_body`, only while no face is picked), or the body of
+  the first face clicked. Taking every face out leaves the body, a
+  closed shell of it. With no body (a new one in a model of several,
+  nothing selected) the status bar says "pick faces to remove, or the
+  body to hollow". The panel has no Body row, as the mock's.
+- **Faces** (`MotionPick::Faces`, the viewport picking faces only): a
+  click on a face picks it, named as of the feature
+  (`Naming::checked_face_ref`) on the body holding it there
+  (`Merges::holder`), made before it; a click on a face picked (found
+  again on the model shown by its names, `PickIndex::find_face`) takes
+  it out. Once one is picked, the others must be on its body: another
+  body's faces don't light under the cursor and a click says "A shell's
+  faces are all on one body: pick faces of Body 1"; an edge says "Only
+  a face can be removed". At most `MAX_SHELL_FACES`. Kept in
+  `FaceRef::order`, so the list is sorted as stored. Picked faces are
+  lit as selected, the one under the cursor as hovered; a row hovered
+  in the panel lights its face (`PanelHover::Face`). Picks wait only for
+  a model of the document as it is with a draft of this session's run,
+  or for a new shell none (`Doc::blend_model_current`, the edge
+  session's rule), so faces can be clicked one after another. Faces the
+  shell itself makes (on its preview, the hollow's) are refused by
+  their names, as made later. The Remove field clicked turns picking off
+  (`MotionPick::Nothing`) and on.
+- **The rows**: "Face 2" by the face's place in the list (as
+  regeneration's messages count them, "its open face 2 of 3 wasn't
+  found"), the mock's `se-face` icon (`Icon::SeFace`); beside it what
+  kind of face it is on the model shown where it's found there
+  (`face_kind`: "Planar face", "Cylindrical face"); a cross takes it out
+  (`MotionLook::DropFace`). The mock names faces ("Upright top") with
+  their area beside them; numbering by place was taken here, as for the
+  chamfer's edges, and the kind rather than the area, which the picking
+  tables have at hand (an area is the regeneration lane's to measure).
+  On a preview that opens it, what's left of a face removed (the walls'
+  ends, which keep its name) is found and lit as it.
+- **Thickness** (`MotionField::Thickness`, read by
+  `Shell::thickness_ask`: "2" of the design's units to begin with, the
+  mock's), and **Direction**: two tiles (`MotionLook::ShellDirection`,
+  the mock's icons `sh-in` and `sh-out`: `Icon::ShIn`, `ShOut`), Inward
+  to begin with.
+- **Whole and ready**: a body and the thickness; `Shell::check_own`
+  refuses as the panel's foot ("Shell fails"). No faces is whole (a
+  closed hollow body), with the mock's warning in the foot, "No faces
+  removed: the body becomes closed and hollow", where no failure is
+  shown. Faces the document no longer takes at the feature's place
+  (`Document::check_shell_faces`: an undo took a face's maker away) are
+  kept and said to be gone ("A picked face is gone", the mock's; with no
+  faces, the body gone is "A picked body is gone"), nothing previewed or
+  committed until taken out or a redo brings them back. The mock's "Too
+  thick" under the field (from the mock's own walls) is regeneration's
+  here: the kernel's refusal, "the shell is too thick for Body 1: its
+  walls would run into each other", in the foot.
+- **Preview**: the shell as set up is the draft while it's whole,
+  picking or not (a new one with its body found starts previewed,
+  closed). An edited one with nothing it names there is previewed as a
+  move of nothing of its body. **The kernel's shell isn't built**, so
+  today every preview fails with "Shell fails" over "shelling Body 1 is
+  too complex to work out", the body shown whole (its faces there to
+  pick), OK waits, and Add anyway keeps it, failing in the Timeline.
+  Regeneration's own refusals show in the panel the same way.
+- **Committing**: OK (`Enter`, Add anyway) adds "Shell N" or sets the
+  edited one, one undo step; Cancel or `Esc` leaves no trace. The status
+  bar says the mock's row info once whole ("2 faces removed · 2 mm
+  inward", "Closed · 1 mm outward", `shell_info`), else what's next,
+  with the hint "Pick faces".
+
+The Timeline shows the model mock's shell icon (`Icon::Shell`) and note
+(`view/src/shell.rs`: the thickness, "2 mm"); selected, the status bar
+says `shell_info`.
+
+Departures from the mock: no Shell on the toolbar (above); faces named
+by their place with their kind; no bands drawn over the faces (the
+mock's preview draws each face's wall as a band; here the preview is
+the model regenerated with the shell). Known gaps: the rows' kinds are
+the model shown's (an edited shell's preview holds the features after
+it); with no body picked nothing in the panel says so (the status bar
+does).
 
 Tests: `document/src/shell/tests.rs` (added and undone, a closed one,
 edited, its own parts, bodies and makers, removal following the body
@@ -3233,4 +3324,23 @@ ignored: the kernel's on a box open, closed and outward, a slot-shaped
 plate's round ends offset exactly, a boss on a plate open underneath,
 too thick, determinism), `io/src/vrdp/tests.rs` (through a file, a
 tampered face point and thickness refused), `view/src/shell/tests.rs`
-(the notes).
+(the notes), `view/src/motion/tests.rs` (the shell's panel: its order,
+the rows' kinds beside them, the place to click, the closed warning in
+the foot, the status text), `rail/tests.rs` (Shell in the Modify set)
+and `app/src/doc/motion/tests/shell.rs` (the rail's Shell on the
+example plate: the only body taken, closed and previewed with the
+warning, an edge refused, faces hovered and lit, picked and listed
+sorted with their kinds, clicked again taken out, the row hovered
+lighting its face, the stand-in's too-complex failure in the panel, OK
+waiting and Add anyway keeping it as one undo step; with the boxes, the
+closed hollow and the top opened previewed (the walls' ends lit as the
+face removed, the hollow's faces refused), another face opened and its
+row's cross, another thickness, Outward grown but at the open face, too
+thick refused, a thickness of nothing refused, OK and undo; another
+body's faces neither lit nor taken, a body's row picking the body only
+while no face is, the face taken out leaving a closed shell; editing
+from the Timeline, Cancel, another thickness and Outward, undo, its
+faces all taken out drafting a closed one; a face whose maker an undo
+takes away said to be gone, back on redo; the face selected taken in,
+Shell again backing out). The app's tests shell by boxes through
+regen's `testing` feature (`varde_regen::testing::shell_by_boxes`).

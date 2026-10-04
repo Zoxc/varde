@@ -519,7 +519,9 @@ fn ops<'a>(
             .collect();
     }
     // Chamfer after the solids, before Combine, as the mock's model bar
-    // orders them (its Hole, Fillet and Shell aren't built).
+    // orders them (its Hole and Fillet aren't built). The mock's Shell,
+    // after Chamfer, would leave the bar too wide at 1280 px: the rail's
+    // Modify set has it.
     let moving = state.motion.as_ref().map(|motion| motion.kind);
     let chamfer = bound_op(
         Icon::BChamfer,
@@ -617,7 +619,8 @@ fn ops<'a>(
                 | MotionKind::Align
                 | MotionKind::Scale
                 | MotionKind::Split
-                | MotionKind::Chamfer => (OriginPlane::ALL.iter())
+                | MotionKind::Chamfer
+                | MotionKind::Shell => (OriginPlane::ALL.iter())
                     .map(|&plane| {
                         op(
                             Icon::SePlane,

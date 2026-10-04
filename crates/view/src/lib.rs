@@ -77,8 +77,9 @@ pub use measure::{
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, ChamferType,
     ChamferView, MotionField, MotionKind, MotionLook, MotionPick, MotionState, PatternMode,
-    ScaleMode, ScaleView, SketchLines, SplitMode, SplitPiece, SplitView, align_info, axis_name,
-    direction_name, pattern_copies, plane_name, point_name, scale_info, split_info,
+    PickedFace, PickedFaces, ScaleMode, ScaleView, ShellDirection, ShellView, SketchLines,
+    SplitMode, SplitPiece, SplitView, align_info, axis_name, direction_name, pattern_copies,
+    plane_name, point_name, scale_info, split_info,
 };
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
@@ -93,6 +94,7 @@ pub use revolve::{
     axis_edge,
 };
 pub use select::{Selected, Selection, SelectionMode};
+pub use shell::shell_info;
 pub use shortcut::{
     Binding, DocumentKeys, Held, claimed, document_bindings, escapes, pressed, welcome_bindings,
 };
@@ -476,6 +478,10 @@ pub enum Look {
     /// Starts setting up a new chamfer, its edges those selected in the
     /// model if any are, or backs out of the one being set up.
     StartChamfer,
+    /// Starts setting up a new shell, its faces those selected in the
+    /// model if any are (else its body the one selected, or the model's
+    /// only one), or backs out of the one being set up.
+    StartShell,
     /// Changes the move, mirror, pattern, align or scale being set up, see [`MotionLook`]: it
     /// isn't in the document until [`Edit::CommitMotion`].
     Motion(MotionLook),

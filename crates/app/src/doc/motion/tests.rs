@@ -1100,4 +1100,5 @@ mod align;
 mod chamfer;
 mod pattern;
 mod scale;
+mod shell;
 mod split;

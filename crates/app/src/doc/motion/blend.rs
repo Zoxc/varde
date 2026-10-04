@@ -244,7 +244,8 @@ impl Doc {
     /// after another while the preview of the last comes. The edges the
     /// feature itself makes (on its preview, or as stored) are refused
     /// by their names ([`Naming::before`](varde_view::Naming::before)).
-    fn blend_model_current(&self) -> bool {
+    /// A shell's faces are picked the same way (see `faces`).
+    pub(super) fn blend_model_current(&self) -> bool {
         let new = self.motion.as_ref().is_some_and(|s| s.feature.is_none());
         self.feed.generation() == Some(self.editor.generation())
             && !self.feed.predates_replacement()

@@ -8,7 +8,9 @@
 //! (the rail's Modify set; a split's own parts are in `split`),
 //! `Look::StartChamfer` (`C`, the toolbar, the rail's Modify set; a
 //! chamfer's edges are picked as a blend's, in `blend`, its own parts in
-//! `chamfer`), or by editing one, picking its bodies as a
+//! `chamfer`), `Look::StartShell` (the toolbar, the rail's Modify set;
+//! a shell's faces are picked as a face session's, in `faces`, its own
+//! parts in `shell`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
 //! one from the toolbar, or a model edge or face clicked, named as of the
@@ -39,11 +41,12 @@ use varde_regen::Summary;
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, ModelHighlight, MotionField,
     MotionKind, MotionLook, MotionPick, MotionState, Naming, PanelHover, PatternMode, Pick, Picked,
-    SplitMode, Unnamed, axis_name, pattern_copies, plane_name,
+    ShellDirection, SplitMode, Unnamed, axis_name, pattern_copies, plane_name,
 };
 
 use self::align::AlignSetup;
 use self::blend::BlendSetup;
+use self::faces::FaceSetup;
 use self::scale::ScaleSetup;
 use self::split::SplitSetup;
 use super::combine::pickable;
@@ -67,8 +70,9 @@ pub(crate) struct MotionSession {
     /// and Z and its angle, a pattern's count and spread (its spacing or
     /// total, a length or a circular one's angle, as its mode reads it),
     /// an align's distance (and its angle, the move's), a scale's
-    /// factors and length, a chamfer's distances and angle.
-    pub(crate) fields: [TypedText; 15],
+    /// factors and length, a chamfer's distances and angle, a shell's
+    /// thickness.
+    pub(crate) fields: [TypedText; 16],
     /// A move's or pattern's axis: the Z axis to begin with (a linear
     /// pattern's X), as the UI mock's. A move stores it only with an
     /// angle other than zero.
@@ -99,6 +103,11 @@ pub(crate) struct MotionSession {
     pub(crate) blend: BlendSetup,
     /// How a chamfer is sized: Equal to begin with, as the UI mock's.
     pub(crate) chamfer_type: ChamferType,
+    /// A shell's faces to remove.
+    pub(crate) faces: FaceSetup,
+    /// Which way a shell's walls grow: Inward to begin with, as the UI
+    /// mock's.
+    pub(crate) direction: ShellDirection,
     /// A pattern's Join to original: ticked to begin with, each body
     /// holding its copies, as the pattern stores by default (the UI
     /// mock's starts unticked; the user's decision is ticked); unticked,
@@ -147,7 +156,8 @@ struct Pivot {
 /// An align's lit picks, the moved side's and the target's
 /// ([`Doc::align_lit`]), too; whether a split's tool body is picked,
 /// which lights the body hovered whole; and whether a chamfer's edges
-/// take in their tangent chains, which light with the edge hovered.
+/// take in their tangent chains, which light with the edge hovered. A
+/// shell's faces are lit as an align's moved side.
 type Built = (
     u64,
     Option<(Picked, bool)>,
@@ -204,6 +214,7 @@ fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
         MotionField::ChamferDistance | MotionField::ChamferSecond | MotionField::ChamferAngle => {
             chamfer::chamfer_ask(field, design).expect("a chamfer's field")
         }
+        MotionField::Thickness => varde_document::Shell::thickness_ask(design),
     }
 }
 
@@ -286,9 +297,15 @@ impl MotionSession {
             MotionKind::Split if !bodies.is_empty() => MotionPick::Tool,
             // A chamfer picks edges, its body theirs.
             MotionKind::Chamfer => MotionPick::Edges,
+            // A shell picks faces, its body theirs or the one it starts
+            // with.
+            MotionKind::Shell => MotionPick::Faces,
             _ => MotionPick::Bodies,
         };
-        if matches!(kind, MotionKind::Align | MotionKind::Split) {
+        if matches!(
+            kind,
+            MotionKind::Align | MotionKind::Split | MotionKind::Shell
+        ) {
             bodies.truncate(1);
         }
         if kind.blends() {
@@ -339,6 +356,7 @@ impl MotionSession {
                 chamfer_distance,
                 chamfer_second,
                 chamfer_angle,
+                shell::thickness_field(&design),
             ],
             axis,
             plane: None,
@@ -351,6 +369,8 @@ impl MotionSession {
             split: SplitSetup::default(),
             blend: BlendSetup::default(),
             chamfer_type: ChamferType::Equal,
+            faces: FaceSetup::default(),
+            direction: ShellDirection::Inward,
             join: true,
             opened: None,
             mode,
@@ -460,6 +480,11 @@ impl MotionSession {
                 session.open_chamfer(chamfer);
                 session
             }
+            FeatureKind::Shell(shell) => {
+                let mut session = Self::new(MotionKind::Shell, document, vec![shell.body]);
+                session.open_shell(shell);
+                session
+            }
             _ => return None,
         };
         session.feature = Some(feature);
@@ -555,6 +580,7 @@ impl MotionSession {
             MotionKind::Scale => self.scale().map(FeatureKind::Scale),
             MotionKind::Split => self.split().map(FeatureKind::Split),
             MotionKind::Chamfer => chamfer::chamfer_kind(self),
+            MotionKind::Shell => shell::shell_kind(self),
         }
     }
 
@@ -672,7 +698,8 @@ impl MotionSession {
             | MotionKind::Align
             | MotionKind::Scale
             | MotionKind::Split
-            | MotionKind::Chamfer => {
+            | MotionKind::Chamfer
+            | MotionKind::Shell => {
                 return Ok(None);
             }
         };
@@ -721,6 +748,9 @@ impl MotionSession {
         if self.kind.blends() {
             return self.blend_need();
         }
+        if self.kind.picks_faces() {
+            return self.faces_need();
+        }
         if self.bodies.is_empty() {
             return Some(match self.kind {
                 MotionKind::Move => "pick the bodies to move",
@@ -732,6 +762,7 @@ impl MotionSession {
                 MotionKind::Scale => "pick the bodies to scale",
                 MotionKind::Split => "pick the body to split",
                 MotionKind::Chamfer => "pick the edges to chamfer",
+                MotionKind::Shell => "pick faces to remove, or the body to hollow",
             });
         }
         match self.kind {
@@ -749,7 +780,8 @@ impl MotionSession {
             | MotionKind::Align
             | MotionKind::Scale
             | MotionKind::Split
-            | MotionKind::Chamfer => None,
+            | MotionKind::Chamfer
+            | MotionKind::Shell => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -791,6 +823,16 @@ impl MotionSession {
                 Some("A picked edge is gone")
             } else {
                 self.blend_gone()
+            };
+        }
+        // A shell's faces go with their body; with none, it's the body
+        // picked that's gone.
+        if self.kind.picks_faces() {
+            let body = (self.bodies.iter()).any(|body| self.gone_bodies.contains(body));
+            return match (body, self.faces.faces.is_empty()) {
+                (true, true) => Some("A picked body is gone"),
+                (true, false) => Some("A picked face is gone"),
+                (false, _) => self.faces_gone(),
             };
         }
         if (self.bodies.iter()).any(|body| self.gone_bodies.contains(body)) {
@@ -841,6 +883,7 @@ impl MotionSession {
             FeatureKind::Chamfer(chamfer) => {
                 chamfer.check_own(design).err().map(|why| why.to_string())
             }
+            FeatureKind::Shell(shell) => shell.check_own(design).err().map(|why| why.to_string()),
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -858,6 +901,7 @@ impl MotionSession {
             MotionKind::Align => fine(MotionField::Distance) && fine(MotionField::Angle),
             MotionKind::Scale => self.scale_fields().iter().all(|&field| fine(field)),
             MotionKind::Chamfer => self.chamfer_type.fields().iter().all(|&field| fine(field)),
+            MotionKind::Shell => fine(MotionField::Thickness),
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
@@ -911,6 +955,9 @@ impl MotionSession {
         if self.kind.blends() {
             self.prune_blend(document, index);
         }
+        if self.kind.picks_faces() {
+            self.prune_faces(document, index);
+        }
         let held = |body: BodyId| document.body(body).is_some();
         self.gone_reference = match (self.axis, self.plane) {
             (Some(axis), _)
@@ -938,6 +985,10 @@ impl MotionSession {
         // A chamfer's body is its edges'.
         if self.kind.blends() {
             return self.follow_blend(merges);
+        }
+        // A shell's body is its faces', or the one picked.
+        if self.kind.picks_faces() {
+            return self.follow_faces(merges);
         }
         let held = |body: BodyId| merges.holder(body).unwrap_or(body);
         let mut bodies: Vec<BodyId> = self.bodies.iter().map(|&body| held(body)).collect();
@@ -983,7 +1034,10 @@ impl MotionSession {
         // go, as they're cut off: a row's cross takes one out). Not whole,
         // an edited one shows its body as of the feature, by a move of
         // nothing, so its edges are there to pick.
-        if self.kind.blends() {
+        // A shell too, its faces picked meanwhile (on the preview those
+        // removed go: a row's cross takes one out); with no body, an
+        // edited one shows its body as of the feature.
+        if self.kind.blends() || self.kind.picks_faces() {
             if self.gone().is_none()
                 && let Some(kind) = self.kind()
             {
@@ -1106,11 +1160,19 @@ impl Doc {
         if kind.blends() {
             self.blend_selected();
         }
-        // A mirror, an align, a split and a chamfer start by picking in the
-        // viewport.
+        // A shell's faces are those selected that it takes.
+        if kind.picks_faces() {
+            self.faces_selected();
+        }
+        // A mirror, an align, a split, a chamfer and a shell start by
+        // picking in the viewport.
         if !matches!(
             kind,
-            MotionKind::Mirror | MotionKind::Align | MotionKind::Split | MotionKind::Chamfer
+            MotionKind::Mirror
+                | MotionKind::Align
+                | MotionKind::Split
+                | MotionKind::Chamfer
+                | MotionKind::Shell
         ) {
             self.focus = Some(Focus::All);
         }
@@ -1152,7 +1214,11 @@ impl Doc {
         self.selected_feature = Some(id);
         if !matches!(
             session.kind,
-            MotionKind::Mirror | MotionKind::Align | MotionKind::Split | MotionKind::Chamfer
+            MotionKind::Mirror
+                | MotionKind::Align
+                | MotionKind::Split
+                | MotionKind::Chamfer
+                | MotionKind::Shell
         ) {
             self.focus = Some(Focus::All);
         }
@@ -1190,6 +1256,15 @@ impl Doc {
             }
             MotionLook::Picking(_) if session.kind.blends() => {}
             MotionLook::Picking(MotionPick::Edges) => {}
+            // A shell picks only its faces, the same way.
+            MotionLook::Picking(MotionPick::Faces) if session.kind.picks_faces() => {
+                session.picking = match session.picking {
+                    MotionPick::Faces => MotionPick::Nothing,
+                    _ => MotionPick::Faces,
+                };
+            }
+            MotionLook::Picking(_) if session.kind.picks_faces() => {}
+            MotionLook::Picking(MotionPick::Faces) => {}
             // A split's tool field clicked again while it picks stops
             // picking, so the split shows as set up.
             MotionLook::Picking(MotionPick::Tool) if session.picking == MotionPick::Tool => {
@@ -1265,8 +1340,17 @@ impl Doc {
                 session.blend_body();
             }
             MotionLook::ChamferType(_) | MotionLook::Chain | MotionLook::DropEdge(_) => {}
-            // A chamfer's body is its edges'.
-            MotionLook::Drop(_) if session.kind.blends() => {}
+            MotionLook::DropFace(face) if session.kind.picks_faces() => {
+                session.faces.drop_face(&face);
+                session.faces_body();
+            }
+            MotionLook::ShellDirection(direction) if session.kind == MotionKind::Shell => {
+                session.direction = direction;
+            }
+            MotionLook::DropFace(_) | MotionLook::ShellDirection(_) => {}
+            // A chamfer's body is its edges', a shell's its faces' (it
+            // has no body rows).
+            MotionLook::Drop(_) if session.kind.blends() || session.kind.picks_faces() => {}
             MotionLook::Drop(body) => {
                 session.bodies.retain(|&picked| picked != body);
             }
@@ -1349,6 +1433,7 @@ impl Doc {
             MotionPick::Edge => self.scale_edge(pick),
             MotionPick::Tool => self.split_tool(pick),
             MotionPick::Edges => self.blend_click(pick),
+            MotionPick::Faces => self.faces_click(pick),
             MotionPick::Nothing => Ok(()),
         };
         if let Err(why) = picked {
@@ -1374,10 +1459,13 @@ impl Doc {
             return;
         }
         // An align moves one body, a split splits one: another replaces
-        // it.
+        // it. A shell takes one while it has no faces (a closed one),
+        // which are then all on it.
         match session.kind {
             MotionKind::Align => self.align_body(body),
             MotionKind::Split => self.split_body(body),
+            MotionKind::Shell if session.faces.faces.is_empty() => session.bodies = vec![body],
+            MotionKind::Shell => {}
             _ => session.toggle(body),
         }
     }
@@ -1711,6 +1799,9 @@ impl Doc {
         if session.picking == MotionPick::Edges {
             return self.blend_takes(pick);
         }
+        if session.picking == MotionPick::Faces {
+            return self.faces_takes(pick);
+        }
         (self.feed.answers_request() && !self.feed.predates_replacement())
             && match session.picking {
                 MotionPick::Align(slot) => self.align_reference(slot, pick).is_ok(),
@@ -1734,11 +1825,14 @@ impl Doc {
         self.follow_align();
         self.follow_scale();
         self.follow_blend_marks();
+        self.follow_face_marks();
         let Some(session) = &self.motion else {
             return;
         };
+        // A chamfer's edge or a shell's face whose row is hovered.
         let panel_edge = match self.panel_hover() {
             Some(PanelHover::Edge(at)) => self.blend_hovered(at),
+            Some(PanelHover::Face(at)) => self.face_hovered(at),
             _ => None,
         };
         let panel = self.panel_hover().and_then(PanelHover::body);
@@ -1761,7 +1855,8 @@ impl Doc {
                 | MotionPick::Point
                 | MotionPick::Edge
                 | MotionPick::Tool
-                | MotionPick::Edges => self.takes_reference(pick).then_some((pick.target, false)),
+                | MotionPick::Edges
+                | MotionPick::Faces => self.takes_reference(pick).then_some((pick.target, false)),
                 MotionPick::Nothing => None,
             },
             (None, None) => None,
@@ -1770,6 +1865,7 @@ impl Doc {
             MotionKind::Scale => [Vec::new(), self.scale_lit()],
             MotionKind::Split => [Vec::new(), self.split_lit()],
             _ if session.kind.blends() => [self.blend_lit(), Vec::new()],
+            _ if session.kind.picks_faces() => [self.faces_lit(), Vec::new()],
             _ => self.align_lit(),
         };
         // A split's tool body lights whole while hovered.
@@ -1799,8 +1895,11 @@ impl Doc {
                 let [moved, target] = key.4.clone();
                 (moved, target)
             }
-            // A chamfer's edges lit as selected, its body as it is.
-            _ if session.kind.blends() => (key.4[0].clone(), Vec::new()),
+            // A chamfer's edges and a shell's faces lit as selected, its
+            // body as it is.
+            _ if session.kind.blends() || session.kind.picks_faces() => {
+                (key.4[0].clone(), Vec::new())
+            }
             _ => (
                 (session.bodies.iter())
                     .filter(|&&body| Some(body) != lit)
@@ -1835,7 +1934,8 @@ impl Doc {
                 | MotionPick::Align(_)
                 | MotionPick::Point
                 | MotionPick::Edge
-                | MotionPick::Tool,
+                | MotionPick::Tool
+                | MotionPick::Faces,
             ) => vec![target],
             // A chamfer's edge hovered in its panel, while its edges
             // aren't picked.
@@ -1880,7 +1980,9 @@ impl Doc {
                 });
                 (axis.map(|axis| axis_name(document, axis)), origin)
             }
-            MotionKind::Align | MotionKind::Scale | MotionKind::Chamfer => (None, None),
+            MotionKind::Align | MotionKind::Scale | MotionKind::Chamfer | MotionKind::Shell => {
+                (None, None)
+            }
             MotionKind::Split => self.split_reference(session),
             MotionKind::Mirror => {
                 let plane = session.plane.as_ref();
@@ -1935,7 +2037,9 @@ impl Doc {
             keep_original: session.keep_original,
             flip: session.flip,
             join: session.join,
-            warning: (self.motion_warning(session)).or_else(|| self.scale_note(session)),
+            warning: (self.motion_warning(session))
+                .or_else(|| self.scale_note(session))
+                .or_else(|| session.shell_warning()),
             mode: session.mode,
             spread_error: session.spread_error(),
             copies: match session.kind() {
@@ -1958,6 +2062,7 @@ impl Doc {
             split: (session.kind == MotionKind::Split).then(|| Box::new(self.split_view(session))),
             chamfer: (session.kind == MotionKind::Chamfer)
                 .then(|| Box::new(self.chamfer_view(session))),
+            shell: (session.kind == MotionKind::Shell).then(|| Box::new(self.shell_view(session))),
         })
     }
 }
@@ -2098,7 +2203,9 @@ fn unnamed(why: Unnamed, what: &str, kind: MotionKind) -> Cow<'static, str> {
 mod align;
 mod blend;
 mod chamfer;
+mod faces;
 mod scale;
+mod shell;
 mod split;
 
 #[cfg(test)]

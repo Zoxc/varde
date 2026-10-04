@@ -35,6 +35,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
             field("1 mm"),
             field("2 mm"),
             field("45°"),
+            field("2 mm"),
         ],
         reference: Some("Z axis".to_owned()),
         line: None,
@@ -62,6 +63,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         scale: None,
         split: None,
         chamfer: None,
+        shell: None,
     }
 }
 
@@ -730,4 +732,90 @@ fn a_chamfer_s_panel_is_the_mock_s() {
         status_info(&state),
         "2 edges · Equal · 1 mm · Tangent chain"
     );
+}
+
+/// A shell's view: the faces `faces` (name, meta), `direction`.
+fn shell_view(faces: &[(&str, Option<&str>)], direction: ShellDirection) -> ShellView {
+    let example = Document::example();
+    let body = example.bodies()[0].id;
+    let faces = (faces.iter().enumerate())
+        .map(|(at, &(name, meta))| PickedFace {
+            face: FaceRef {
+                body,
+                key: FaceKey {
+                    feature: 1,
+                    part: PartKey::Side { curve: 0 },
+                    instance: 0,
+                },
+                near: glam::DVec3::new(at as f64, 0.0, 0.0),
+            },
+            name: name.to_owned(),
+            meta: meta.map(str::to_owned),
+        })
+        .collect();
+    ShellView {
+        faces: PickedFaces { faces },
+        direction,
+        info: None,
+    }
+}
+
+/// A shell's panel is the mock's: Remove (each face with its kind beside
+/// it, and where to click while picking or with none), Thickness, and
+/// Direction's Inward and Outward tiles; no Bodies. Its warning for no
+/// faces shows in the foot, and the status bar says it as the mock's row.
+#[test]
+fn a_shell_s_panel_is_the_mock_s() {
+    let mut state = state_of(MotionKind::Shell, vec![body("Body 1")]);
+    state.reference = None;
+    state.picking = MotionPick::Faces;
+    let faces = [("Face 1", Some("Planar face")), ("Face 2", None)];
+    state.shell = Some(Box::new(shell_view(&faces, ShellDirection::Inward)));
+    let shown = texts_of(&state);
+    let order = [
+        "New shell",
+        "Remove",
+        "Face 1",
+        "Face 2",
+        "Click faces",
+        "Thickness",
+        "Direction",
+        "Inward",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    let inward = found(&shown, "Inward").bounds;
+    let outward = found(&shown, "Outward").bounds;
+    assert!((inward.y - outward.y).abs() < 1.0 && outward.x > inward.x);
+    let face = found(&shown, "Face 1").bounds;
+    let meta = found(&shown, "Planar face").bounds;
+    assert!((meta.y - face.y).abs() < 4.0 && meta.x > face.x);
+    for text in ["Bodies", "Body 1", "Plane", "Tangent chain"] {
+        assert!(!has(&shown, text), "{text}");
+    }
+    // Not picking, with faces: no place to click.
+    state.picking = MotionPick::Nothing;
+    assert!(!has(&texts_of(&state), "Click faces"));
+    // None: where to click, and the mock's warning in the foot.
+    state.shell = Some(Box::new(shell_view(&[], ShellDirection::Outward)));
+    let warning = "No faces removed: the body becomes closed and hollow";
+    state.warning = Some(warning.to_owned());
+    let shown = texts_of(&state);
+    found(&shown, "Click faces");
+    assert!(found(&shown, warning).bounds.y > found(&shown, "Outward").bounds.y);
+
+    state.need = Some("pick faces to remove, or the body to hollow");
+    assert_eq!(
+        status_info(&state),
+        "pick faces to remove, or the body to hollow"
+    );
+    state.need = None;
+    if let Some(shell) = &mut state.shell {
+        shell.info = Some("Closed · 2 mm outward".to_owned());
+    }
+    assert_eq!(status_info(&state), "Closed · 2 mm outward");
 }

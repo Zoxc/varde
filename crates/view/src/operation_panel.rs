@@ -196,6 +196,8 @@ pub enum PanelHover {
     Body(BodyId),
     /// A chamfer's edge, by its place in the list.
     Edge(usize),
+    /// A shell's face, by its place in the list.
+    Face(usize),
 }
 
 impl PanelHover {
@@ -203,7 +205,9 @@ impl PanelHover {
     pub fn region(self) -> Option<(FeatureId, usize)> {
         match self {
             PanelHover::Region { sketch, region } => Some((sketch, region)),
-            PanelHover::Axis | PanelHover::Body(_) | PanelHover::Edge(_) => None,
+            PanelHover::Axis | PanelHover::Body(_) | PanelHover::Edge(_) | PanelHover::Face(_) => {
+                None
+            }
         }
     }
 
@@ -211,7 +215,10 @@ impl PanelHover {
     pub fn body(self) -> Option<BodyId> {
         match self {
             PanelHover::Body(body) => Some(body),
-            PanelHover::Region { .. } | PanelHover::Axis | PanelHover::Edge(_) => None,
+            PanelHover::Region { .. }
+            | PanelHover::Axis
+            | PanelHover::Edge(_)
+            | PanelHover::Face(_) => None,
         }
     }
 }

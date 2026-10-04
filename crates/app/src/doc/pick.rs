@@ -82,6 +82,7 @@ impl Doc {
                 PanelHover::Body(body) => session.bodies.contains(&body),
                 PanelHover::Axis => true,
                 PanelHover::Edge(at) => at < session.blend.edges.len(),
+                PanelHover::Face(at) => at < session.faces.faces.len(),
                 PanelHover::Region { .. } => false,
             });
         }

@@ -1,5 +1,5 @@
-//! A shell's notes in the Timeline and the status bar. Its panel and
-//! face picking come with its session.
+//! A shell's notes in the Timeline and the status bar. Its panel is in
+//! `motion/shell.rs`, its faces' field in `motion/faces.rs`.
 
 use varde_document::{LengthUnit, Shell};
 
@@ -12,7 +12,7 @@ pub(crate) fn shell_note(shell: &Shell, units: LengthUnit) -> String {
 
 /// What the status bar says of a selected shell, as the UI mock's row:
 /// "2 faces removed · 2 mm inward", "Closed · 1 mm outward".
-pub(crate) fn shell_info(shell: &Shell, units: LengthUnit) -> String {
+pub fn shell_info(shell: &Shell, units: LengthUnit) -> String {
     let faces = match shell.open.len() {
         0 => "Closed".to_owned(),
         1 => "1 face removed".to_owned(),
