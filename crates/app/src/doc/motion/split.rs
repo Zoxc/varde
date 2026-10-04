@@ -19,7 +19,7 @@ use varde_document::{
     PlaneRef, Side, Split, SplitTool,
 };
 use varde_regen::Summary;
-use varde_sketch::Id;
+use varde_sketch::{Id, RegionRef};
 use varde_view::{
     MotionKind, MotionPick, Pick, Picked, SketchLines, SplitMode, SplitPiece, SplitView, Unnamed,
     plane_name, split_info,
@@ -51,6 +51,11 @@ pub(crate) struct SplitSetup {
     /// sketch away, or a curve of its line), as of the last change. Kept,
     /// said to be gone, until another is picked or it's back.
     gone: bool,
+    /// Regions picked whose sketch is gone (an undo took it away), by
+    /// their sketch: put by while the visible sketches' regions are
+    /// offered in their place, and picked again if their sketch comes
+    /// back before others are picked.
+    stale_regions: Option<(FeatureId, Vec<RegionRef>)>,
 }
 
 impl Default for SplitSetup {
@@ -64,6 +69,7 @@ impl Default for SplitSetup {
             original: Side::Front,
             keep: Keep::Both,
             gone: false,
+            stale_regions: None,
         }
     }
 }
@@ -116,6 +122,37 @@ impl SplitSetup {
                 (!curves.is_empty()).then_some(SplitTool::Chain { sketch, curves })
             }
         }
+    }
+
+    /// Whether `document` no longer takes the tool of its mode at feature
+    /// `index`: its body, face's maker or sketch gone or not before the
+    /// feature, a curve of its line gone, or its regions' sketch gone.
+    fn tool_gone(&self, document: &Document, index: usize) -> bool {
+        if self.mode == SplitMode::Regions && self.stale_regions.is_some() {
+            return true;
+        }
+        let held = |body: BodyId| document.body(body).is_some();
+        self.tool().is_some_and(|tool| {
+            let body = match &tool {
+                SplitTool::Plane(PlaneRef::Face(face)) | SplitTool::Face(face) => Some(face.body),
+                SplitTool::Body(body) => Some(*body),
+                _ => None,
+            };
+            let curves = match &tool {
+                SplitTool::Chain { sketch, curves } => {
+                    match document.feature(*sketch).map(|feature| &feature.kind) {
+                        Some(FeatureKind::Sketch { sketch, .. }) => {
+                            curves.iter().all(|&curve| sketch.curve(curve).is_some())
+                        }
+                        _ => false,
+                    }
+                }
+                _ => true,
+            };
+            document.check_split_tool(index, &tool).is_err()
+                || body.is_some_and(|body| !held(body))
+                || !curves
+        })
     }
 
     /// Picks the curve `curve` of `sketch` for its line, or takes it out:
@@ -173,7 +210,8 @@ impl MotionSession {
 
     /// The words for its tool being gone, if it is.
     pub(super) fn split_gone(&self) -> Option<&'static str> {
-        if !self.split.gone || self.split.tool().is_none() {
+        let stale = self.split.mode == SplitMode::Regions && self.split.stale_regions.is_some();
+        if !self.split.gone || (self.split.tool().is_none() && !stale) {
             return None;
         }
         Some(match self.split.mode {
@@ -184,50 +222,66 @@ impl MotionSession {
         })
     }
 
+    /// The feature's place in `document`: the edited one's, or the end.
+    fn index_in(&self, document: &Document) -> usize {
+        let features = document.features();
+        (self.feature)
+            .and_then(|id| features.iter().position(|feature| feature.id == id))
+            .unwrap_or(features.len())
+    }
+
     /// Notes whether `document` no longer takes its tool at feature
     /// `index` ([`SplitSetup::gone`]), finding its sketch's regions
-    /// again where they changed.
+    /// again where they changed. Regions whose sketch is gone are put by
+    /// ([`SplitSetup::stale_regions`]), the visible sketches' regions
+    /// offered meanwhile, and picked again if their sketch comes back
+    /// before others are picked.
     pub(super) fn prune_split(&mut self, document: &Document, index: usize) {
         if self.kind != MotionKind::Split {
             return;
         }
         let setup = &mut self.split;
-        let found = setup.mode != SplitMode::Regions || setup.regions.refresh(document);
-        let held = |body: BodyId| document.body(body).is_some();
-        setup.gone = !found
-            || setup.tool().is_some_and(|tool| {
-                let body = match &tool {
-                    SplitTool::Plane(PlaneRef::Face(face)) | SplitTool::Face(face) => {
-                        Some(face.body)
-                    }
-                    SplitTool::Body(body) => Some(*body),
-                    _ => None,
-                };
-                let curves = match &tool {
-                    SplitTool::Chain { sketch, curves } => {
-                        match document.feature(*sketch).map(|feature| &feature.kind) {
-                            Some(FeatureKind::Sketch { sketch, .. }) => {
-                                curves.iter().all(|&curve| sketch.curve(curve).is_some())
-                            }
-                            _ => false,
-                        }
-                    }
-                    _ => true,
-                };
-                document.check_split_tool(index, &tool).is_err()
-                    || body.is_some_and(|body| !held(body))
-                    || !curves
-            });
+        let is_sketch = |id: FeatureId| {
+            matches!(
+                document.feature(id).map(|feature| &feature.kind),
+                Some(FeatureKind::Sketch { .. })
+            )
+        };
+        if let Some(source) = setup.regions.source
+            && !is_sketch(source)
+        {
+            setup.stale_regions = Some((source, setup.regions.references().to_vec()));
+            setup.regions = RegionPick::new(None, MAX_EXTRUDE_REGIONS);
+        } else if setup.regions.source.is_none()
+            && let Some((source, regions)) = setup
+                .stale_regions
+                .take_if(|(source, _)| is_sketch(*source))
+        {
+            setup.regions = RegionPick::editing(document, source, &regions, MAX_EXTRUDE_REGIONS);
+        }
+        if setup.mode == SplitMode::Regions {
+            setup.regions.refresh(document);
+        }
+        setup.gone = setup.tool_gone(document, index);
     }
 
     /// Moves its tool body on to the body holding it where `merges` (the
-    /// merges before the feature) have it merged into another: whether
-    /// it moved.
+    /// merges before the feature) have it merged into another, its body
+    /// already followed: whether it moved. One merged with the body split
+    /// (either into the other, or both into a third) is let go of, to be
+    /// picked again: a body can't split itself.
     pub(super) fn follow_split(&mut self, merges: &Merges) -> bool {
         let Some(body) = self.split.body else {
             return false;
         };
         let held = merges.holder(body).unwrap_or(body);
+        if self.bodies.first() == Some(&held) {
+            self.split.body = None;
+            if self.split.mode == SplitMode::Body && self.picking == MotionPick::Nothing {
+                self.picking = MotionPick::Tool;
+            }
+            return true;
+        }
         self.split.body = Some(held);
         held != body
     }
@@ -239,6 +293,9 @@ impl MotionSession {
         if mode == SplitMode::Regions {
             self.split.regions.refresh(document);
         }
+        // Whether the tile's own tool is gone, not the last one's.
+        let index = self.index_in(document);
+        self.split.gone = self.split.tool_gone(document, index);
         self.picking = if self.bodies.is_empty() {
             MotionPick::Bodies
         } else if self.split.tool().is_none() {
@@ -281,7 +338,10 @@ impl MotionSession {
             return;
         }
         self.split.regions.toggle(sketch, region, false, document);
-        self.split.gone = false;
+        if self.split.regions.source.is_some() {
+            self.split.stale_regions = None;
+            self.split.gone = false;
+        }
     }
 
     /// Picks the curve `curve` of `sketch` for its line, or takes it out,
@@ -298,8 +358,24 @@ impl MotionSession {
         {
             return;
         }
+        if self.split.gone {
+            // A line gone is picked again: of the curves still there,
+            // or afresh where its sketch is gone.
+            self.split.chain = (self.split.chain.take())
+                .filter(|(of, _)| self.takes_sketch(document, *of))
+                .and_then(|(of, mut curves)| {
+                    let Some(FeatureKind::Sketch { sketch, .. }) =
+                        document.feature(of).map(|feature| &feature.kind)
+                    else {
+                        return None;
+                    };
+                    curves.retain(|&curve| sketch.curve(curve).is_some());
+                    (!curves.is_empty()).then_some((of, curves))
+                });
+        }
         self.split.toggle_curve(sketch, curve);
-        self.split.gone = false;
+        let index = self.index_in(document);
+        self.split.gone = self.split.tool_gone(document, index);
     }
 
     /// Whether its tool is picked in the viewport in its sketches, where
@@ -601,7 +677,10 @@ impl Doc {
     /// sketch before the feature.
     fn split_lines<'s>(&'s self, session: &MotionSession) -> Vec<SketchLines<'s>> {
         let document = self.editor.document();
-        let chosen = session.split.chain.as_ref().map(|(sketch, _)| *sketch);
+        // A line gone is picked again from any.
+        let chosen = (session.split.chain.as_ref())
+            .filter(|_| !session.split.gone)
+            .map(|(sketch, _)| *sketch);
         (document.features().iter())
             .filter(|feature| match chosen {
                 Some(sketch) => feature.id == sketch,

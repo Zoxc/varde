@@ -537,6 +537,71 @@ fn a_sketch_on_a_face_follows_it_into_the_new_body() {
     );
 }
 
+/// A sketch on a face follows it through a chain of splits and merges:
+/// the cube's face at x = 0 goes to the first split's new body, which a
+/// combine merges into another block, which a second split cuts, its
+/// new body (the front, `original` Back) getting the face; the sketch,
+/// naming the cube, is placed on it there.
+#[test]
+fn a_sketch_on_a_face_follows_it_through_splits_and_merges() {
+    with_booleans();
+    let (mut editor, cube, tool) = cube_and_tool();
+    let solid = Arc::clone(&evaluated(editor.document()).bodies[0].solid);
+    let left = FaceRef {
+        body: cube,
+        key: key_on(&solid, DVec3::NEG_X, 0.0),
+        near: DVec3::new(0.0, 5.0, 5.0),
+    };
+    let first = add(&mut editor, split(cube, SplitTool::Body(tool)));
+    let piece = new_body(&editor, first);
+    let post = block(&mut editor, 2.0, 2.0, 4.0, 4.0, "15");
+    add(
+        &mut editor,
+        varde_document::Combine {
+            target: post,
+            tools: vec![piece],
+            op: varde_document::BodyOp::Union,
+            keep_tools: false,
+        },
+    );
+    let extent = two_sides(editor.document(), "20", "1");
+    add_extrude(
+        &mut editor,
+        rectangle((-1.0, -1.0), (3.0, 11.0)),
+        extent,
+        Operation::NewBody(BodyId::NEW),
+    );
+    let cutter = editor.document().bodies().last().unwrap().id;
+    let second = add(
+        &mut editor,
+        Split {
+            original: Side::Back,
+            ..split(post, SplitTool::Body(cutter))
+        },
+    );
+    let last = new_body(&editor, second);
+    editor
+        .apply(editor.document().add_sketch(Plane::Face(left)))
+        .unwrap();
+    let sketch = editor.document().features().last().unwrap().id;
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(evaluation.splits, [(cube, piece), (post, last)]);
+    assert_eq!(evaluation.holder(piece), Some(post));
+    let placed = (evaluation.placements.iter())
+        .find(|(id, _)| *id == sketch)
+        .map(|(_, placement)| *placement)
+        .expect("placed");
+    assert_eq!(placed.origin.x, 0.0);
+    assert_eq!(placed.normal, DVec3::NEG_X);
+    // The face is on the second split's new body, and only there.
+    for (body, there) in [(cube, false), (post, false), (last, true)] {
+        let solid = solid_of(&evaluation, body);
+        let found = solid.topology().face(solid, &left.key, left.near).is_ok();
+        assert_eq!(found, there, "{body:?}");
+    }
+}
+
 /// A split drafted is answered with both pieces drawn; with the kernel's
 /// split, with the too-complex message.
 #[test]
@@ -577,6 +642,123 @@ fn an_unchanged_split_is_found_in_the_cache() {
     let evaluation = evaluate(editor.document(), &mut cache);
     assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
     assert_eq!(cache.counts().1, misses, "nothing worked out again");
+}
+
+/// A line of the most curves a split takes, 256 lines zigzagging, every
+/// other one drawn backwards, joins end to end at once (the joints
+/// found by pairs of ends, 130 000 or so), its conics meeting to the bit
+/// and running as the lowest curve does; and arcs run against their
+/// way round stay on their circles.
+#[test]
+fn a_line_of_the_most_curves_joins_at_once() {
+    use varde_document::MAX_SPLIT_CURVES;
+    let mut editor = Editor::new(Document::default());
+    let sketch = add_sketch(&mut editor, |sketch| {
+        let points: Vec<Id> = (0..=MAX_SPLIT_CURVES)
+            .map(|k| {
+                let at = DVec2::new(k as f64, (k % 2) as f64);
+                sketch.add_point(at).unwrap()
+            })
+            .collect();
+        for (k, pair) in points.windows(2).enumerate() {
+            let (start, end) = if k % 2 == 0 {
+                (pair[0], pair[1])
+            } else {
+                (pair[1], pair[0])
+            };
+            sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+        }
+    });
+    let drawn = sketch_of(&editor, sketch);
+    let mut ids: Vec<Id> = drawn.curves.iter().map(|entry| entry.id).collect();
+    ids.sort_unstable();
+    assert_eq!(ids.len(), MAX_SPLIT_CURVES);
+    let started = std::time::Instant::now();
+    let segments = crate::profile::chain(drawn, &ids, 1e-9, 1e-3).unwrap();
+    assert!(
+        started.elapsed().as_secs_f64() < 1.0,
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(segments.len(), MAX_SPLIT_CURVES);
+    assert_eq!(segments[0].conic.p0, DVec2::ZERO);
+    for pair in segments.windows(2) {
+        assert_eq!(pair[0].conic.p1, pair[1].conic.p0);
+    }
+    let last = MAX_SPLIT_CURVES as f64;
+    assert_eq!(segments.last().unwrap().conic.p1, DVec2::new(last, 0.0));
+    // One more is refused.
+    let tool = SplitTool::Chain {
+        sketch,
+        curves: (0..=MAX_SPLIT_CURVES).map(|_| ids[0]).collect(),
+    };
+    let over = split(BodyId::NEW, tool).check_own();
+    assert_eq!(over, Err(varde_document::SplitError::Curves(257)));
+
+    // A line first by id, then a half circle about (10, 0) drawn
+    // counter-clockwise from (20, 0) to (0, 0), so run backwards.
+    let bent = add_sketch(&mut editor, |sketch| {
+        let p = [(30.0, 0.0), (20.0, 0.0), (0.0, 0.0)]
+            .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+        let center = sketch.add_point(DVec2::new(10.0, 0.0)).unwrap();
+        let line = Curve::Line {
+            start: p[0],
+            end: p[1],
+        };
+        sketch.add_curve(line, false).unwrap();
+        let arc = Curve::Arc {
+            center,
+            start: p[2],
+            end: p[1],
+        };
+        sketch.add_curve(arc, false).unwrap();
+    });
+    let drawn = sketch_of(&editor, bent);
+    let mut ids: Vec<Id> = drawn.curves.iter().map(|entry| entry.id).collect();
+    ids.sort_unstable();
+    let segments = crate::profile::chain(drawn, &ids, 1e-9, 1e-3).unwrap();
+    // The line, then the half circle in two quarters, run clockwise
+    // from (20, 0) through (10, -10) back along the way it's drawn.
+    assert_eq!(segments.len(), 3);
+    assert_eq!(segments[2].conic.p1, DVec2::ZERO);
+    for segment in &segments[1..] {
+        for t in [0.25, 0.5, 0.75] {
+            let at = segment.conic.eval(t);
+            assert!(
+                (at.distance(DVec2::new(10.0, 0.0)) - 10.0).abs() < 1e-9,
+                "{at}"
+            );
+        }
+    }
+    assert!(segments[1].conic.p1.y < -9.0, "{:?}", segments[1].conic);
+}
+
+/// Ends join where they're one point or within the resolution, and not
+/// past it: two lines whose ends are a little apart join below it and
+/// are in pieces above it.
+#[test]
+fn a_line_s_ends_join_within_the_resolution_only() {
+    let mut editor = Editor::new(Document::default());
+    for (gap, joins) in [(0.5e-6, true), (2e-6, false)] {
+        let sketch = add_sketch(&mut editor, move |sketch| {
+            let p = [(0.0, 0.0), (10.0, 0.0), (10.0, gap), (10.0, 10.0)]
+                .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+            for (start, end) in [(p[0], p[1]), (p[2], p[3])] {
+                sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+            }
+        });
+        let drawn = sketch_of(&editor, sketch);
+        let mut ids: Vec<Id> = drawn.curves.iter().map(|entry| entry.id).collect();
+        ids.sort_unstable();
+        let joined = crate::profile::chain(drawn, &ids, 1e-6, 1e-3);
+        if joins {
+            let segments = joined.unwrap();
+            assert_eq!(segments[0].conic.p1, segments[1].conic.p0);
+            assert_eq!(segments[1].conic.p0, DVec2::new(10.0, 0.0));
+        } else {
+            assert_eq!(joined.err(), Some(crate::profile::ChainError::Branches));
+        }
+    }
 }
 
 // The planned tests of the kernel's split, with analytic volumes: ignored
@@ -721,3 +903,5 @@ fn kernel_splits_are_deterministic() {
         assert_eq!(x.solid.mesh().verts(), y.solid.mesh().verts());
     }
 }
+
+mod fuzz;

@@ -2898,3 +2898,148 @@ fn a_tampered_split_is_refused() {
         );
     }
 }
+
+/// [`split_plate`] with a second plate under it and a sketch of a
+/// rectangle and an open line of two lines, then splits of the plate by
+/// the second plate, by the rectangle's region, by the line and by its
+/// hole's wall.
+fn split_every_way() -> Document {
+    use glam::{DVec2, DVec3};
+    use varde_document::{
+        BodyId, FaceKey, FaceRef, FeatureKind, Keep, Operation, PartKey, Side, Split, SplitTool,
+    };
+    use varde_sketch::{Curve, Sketch};
+    let mut editor = Editor::new(split_plate());
+    let FeatureKind::Extrude(extrude) = editor.document().features()[1].kind.clone() else {
+        panic!("the example's extrude");
+    };
+    let below = varde_document::Extrude {
+        flip: true,
+        operation: Operation::NewBody(BodyId::NEW),
+        ..extrude
+    };
+    editor
+        .apply(editor.document().add_feature(below.into()))
+        .unwrap();
+    let plate = editor.document().bodies()[0].id;
+    let other = editor.document().bodies().last().unwrap().id;
+    let maker = editor.document().features()[1].id.get();
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
+        .unwrap();
+    let sketch = editor.document().features().last().unwrap().id;
+    let mut drawn = Sketch::default();
+    let corners = [(-40.0, -5.0), (0.0, -5.0), (0.0, 5.0), (-40.0, 5.0)]
+        .map(|(x, y)| drawn.add_point(DVec2::new(x, y)).unwrap());
+    for k in 0..4 {
+        let line = Curve::Line {
+            start: corners[k],
+            end: corners[(k + 1) % 4],
+        };
+        drawn.add_curve(line, false).unwrap();
+    }
+    let bend = [(-40.0, 12.0), (12.0, 12.0), (12.0, 30.0)]
+        .map(|(x, y)| drawn.add_point(DVec2::new(x, y)).unwrap());
+    let mut curves = Vec::new();
+    for pair in bend.windows(2) {
+        let line = Curve::Line {
+            start: pair[0],
+            end: pair[1],
+        };
+        curves.push(drawn.add_curve(line, false).unwrap());
+    }
+    let region = drawn.profiles().unwrap().reference(0).unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let wall = FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: maker,
+            part: PartKey::Side { curve: 4 },
+            instance: 0,
+        },
+        near: DVec3::new(8.0, 0.0, 5.0),
+    };
+    let tools = [
+        SplitTool::Body(other),
+        SplitTool::Regions {
+            sketch,
+            regions: vec![region],
+        },
+        SplitTool::Chain { sketch, curves },
+        SplitTool::Face(wall),
+    ];
+    for (k, tool) in tools.into_iter().enumerate() {
+        let split = Split {
+            body: plate,
+            tool,
+            original: [Side::Front, Side::Back][k % 2],
+            keep: [Keep::Both, Keep::Front, Keep::Back][k % 3],
+            new_body: None,
+        };
+        editor
+            .apply(editor.document().add_feature(split.into()))
+            .unwrap();
+    }
+    editor.document().clone()
+}
+
+/// The splits' part of a record damaged on disk, every float in it set
+/// to what's out of bounds or not a number and random bytes in it
+/// changed (2 000 ways): refused as it's read or read as a document that
+/// passes its check, never a panic.
+#[test]
+fn a_damaged_split_is_refused_or_checked() {
+    let document = split_every_way();
+    let raw = record_msgpack(&document);
+    assert!(from_msgpack::<Document>(&raw).is_ok());
+    let from = (raw.windows(5))
+        .position(|window| window == b"Split")
+        .expect("a split's variant name");
+    let read = |bytes: &[u8]| {
+        if let Ok((document, _)) = from_msgpack::<Document>(bytes) {
+            document.check().unwrap();
+            for feature in document.features() {
+                if let varde_document::FeatureKind::Split(split) = &feature.kind {
+                    split.check_own().unwrap();
+                    assert_eq!(split.new_body.is_some(), split.keeps_both());
+                }
+            }
+        }
+    };
+    let floats: Vec<usize> = (from..raw.len().saturating_sub(8))
+        .filter(|&at| raw[at] == 0xcb)
+        .collect();
+    assert!(floats.len() > 10, "{}", floats.len());
+    for &at in &floats {
+        for x in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e300,
+            -1e300,
+            1.000_001e6,
+            1e6,
+            -0.0,
+            f64::MIN_POSITIVE,
+        ] {
+            let mut changed = raw.clone();
+            changed[at + 1..at + 9].copy_from_slice(&x.to_bits().to_be_bytes());
+            read(&changed);
+        }
+    }
+    let size = raw.len() - from;
+    for seed in 0..2_000u64 {
+        let picks = noise(8, seed.wrapping_mul(0x9e37_79b9) + 1);
+        let mut changed = raw.clone();
+        for pair in picks.chunks(2).take(1 + (seed % 3) as usize) {
+            let at = from + (usize::from(pair[0]) * 256 + usize::from(pair[1])) % size;
+            changed[at] = picks[(seed % 8) as usize] ^ pair[1];
+        }
+        read(&changed);
+    }
+}

@@ -605,3 +605,236 @@ fn a_face_joined_into_a_split_s_new_body_later_is_named_on_its_own_body() {
     };
     assert_eq!(face.body, disc);
 }
+
+mod fuzz;
+
+/// A tool body a combine merges into the body being split before the
+/// split is let go of, to be picked again, rather than followed into
+/// the body split (which can't split itself); and the same for the body
+/// split merged into its tool body.
+#[test]
+fn a_tool_body_merged_into_the_body_split_is_let_go_of() {
+    for into_tool in [false, true] {
+        let mut plates = plates();
+        let [plate, disc, _] = plates.bodies;
+        plates.doc.look(Look::StartSplit);
+        plates.click(plate);
+        plates.motion(MotionLook::SplitWith(SplitMode::Body));
+        plates.click(disc);
+        assert_eq!(tool(&plates), Some(SplitTool::Body(disc)));
+        let (target, merged) = if into_tool {
+            (disc, plate)
+        } else {
+            (plate, disc)
+        };
+        let combine = Combine {
+            target,
+            tools: vec![merged],
+            op: BodyOp::Union,
+            keep_tools: false,
+        };
+        let add = plates.doc.editor.document().add_feature(combine.into());
+        plates.doc.apply(add);
+        plates.doc.sync();
+        plates.answer();
+        let session = plates.doc.motion.as_ref().expect("still set up");
+        assert_eq!(session.bodies, [target]);
+        assert_eq!(tool(&plates), None, "{into_tool}");
+        assert_eq!(picking(&plates), MotionPick::Tool);
+        assert!(shows(&plates, "pick a body to split with"));
+        assert!(!plates.doc.motion_ready());
+    }
+}
+
+/// Two tools sketches on the example plate, each with a disc's region
+/// and a line: the plates, the sketches and their lines.
+fn two_tools_sketches() -> (Plates, [(FeatureId, Id); 2]) {
+    let (plates, _) = plate();
+    let mut editor = Editor::new(plates.doc.editor.document().clone());
+    let first = add_tools_sketch(&mut editor);
+    let second = add_tools_sketch(&mut editor);
+    (held(&editor), [first, second])
+}
+
+/// Whether the split being set up says its tool is gone.
+fn gone(plates: &Plates) -> bool {
+    (plates.doc.motion.as_ref()).is_some_and(|session| session.split_gone().is_some())
+}
+
+/// A line whose sketch is removed is said to be gone, and the other
+/// sketches' curves are offered and picked in its place; one whose
+/// curve is deleted from its sketch keeps the curves still there when
+/// another is picked, the one gone left out.
+#[test]
+fn a_line_gone_is_picked_again_from_any_sketch() {
+    let (mut plates, [(first, line), (second, other)]) = two_tools_sketches();
+    plates.doc.look(Look::StartSplit);
+    plates.motion(MotionLook::SplitWith(SplitMode::Line));
+    plates.motion(MotionLook::SplitCurve {
+        sketch: first,
+        curve: line,
+    });
+    plates.doc.apply(Command::RemoveFeature(first));
+    plates.doc.sync();
+    plates.answer();
+    assert!(gone(&plates));
+    assert!(shows(&plates, "The line is gone: pick its curves again"));
+    let state = plates.doc.motion_state().unwrap();
+    let view = state.split.as_ref().unwrap();
+    assert!(
+        (view.lines.iter()).any(|lines| lines.feature == second),
+        "the other sketch's curves are offered"
+    );
+    plates.motion(MotionLook::SplitCurve {
+        sketch: second,
+        curve: other,
+    });
+    assert_eq!(
+        tool(&plates),
+        Some(SplitTool::Chain {
+            sketch: second,
+            curves: vec![other]
+        })
+    );
+    assert!(!gone(&plates));
+
+    // The second sketch's line taken out of it, a curve of its own added.
+    let FeatureKind::Sketch { sketch: drawn, .. } =
+        &plates.doc.editor.document().feature(second).unwrap().kind
+    else {
+        unreachable!()
+    };
+    let mut drawn = drawn.clone();
+    let Curve::Line { end, .. } = drawn.curve(other).unwrap().curve else {
+        unreachable!()
+    };
+    let top = drawn.add_point(glam::DVec2::new(40.0, 30.0)).unwrap();
+    let up = (drawn.add_curve(
+        Curve::Line {
+            start: end,
+            end: top,
+        },
+        false,
+    ))
+    .unwrap();
+    plates.doc.apply(Command::SetSketch {
+        feature: second,
+        sketch: Box::new(drawn.clone()),
+    });
+    plates.motion(MotionLook::SplitCurve {
+        sketch: second,
+        curve: up,
+    });
+    let mut both = vec![other, up];
+    both.sort_unstable();
+    assert_eq!(
+        tool(&plates),
+        Some(SplitTool::Chain {
+            sketch: second,
+            curves: both
+        })
+    );
+    drawn.delete(&[other]);
+    plates.doc.apply(Command::SetSketch {
+        feature: second,
+        sketch: Box::new(drawn),
+    });
+    plates.doc.sync();
+    assert!(gone(&plates));
+    // Picking it again: the curve gone is left out.
+    plates.motion(MotionLook::SplitCurve {
+        sketch: second,
+        curve: up,
+    });
+    assert_eq!(tool(&plates), None, "up taken out, nothing left");
+    plates.motion(MotionLook::SplitCurve {
+        sketch: second,
+        curve: up,
+    });
+    assert_eq!(
+        tool(&plates),
+        Some(SplitTool::Chain {
+            sketch: second,
+            curves: vec![up]
+        })
+    );
+    assert!(!gone(&plates));
+}
+
+/// Regions whose sketch is removed are said to be gone, and the other
+/// sketches' regions are offered and picked in their place; an undo
+/// bringing the sketch back brings them back.
+#[test]
+fn regions_gone_are_picked_again_from_any_sketch() {
+    let (mut plates, [(first, _), (second, _)]) = two_tools_sketches();
+    plates.doc.look(Look::StartSplit);
+    plates.motion(MotionLook::SplitWith(SplitMode::Regions));
+    plates.motion(MotionLook::SplitRegion {
+        sketch: first,
+        region: 0,
+    });
+    let picked = tool(&plates).expect("a region");
+    plates.doc.apply(Command::RemoveFeature(first));
+    plates.doc.sync();
+    plates.answer();
+    assert!(gone(&plates));
+    assert!(shows(
+        &plates,
+        "The regions' sketch is gone: pick other regions"
+    ));
+    assert!(plates.last_draft().is_none());
+    plates.doc.update(Edit::Undo);
+    plates.answer();
+    assert!(!gone(&plates));
+    assert_eq!(tool(&plates), Some(picked.clone()));
+
+    plates.doc.update(Edit::Redo);
+    plates.answer();
+    assert!(gone(&plates));
+    let state = plates.doc.motion_state().unwrap();
+    let view = state.split.as_ref().unwrap();
+    assert!(
+        (view.candidates.iter()).any(|candidate| candidate.feature == second),
+        "the other sketch's regions are offered"
+    );
+    plates.motion(MotionLook::SplitRegion {
+        sketch: second,
+        region: 0,
+    });
+    let Some(SplitTool::Regions { sketch, regions }) = tool(&plates) else {
+        panic!("regions: {:?}", tool(&plates));
+    };
+    assert_eq!((sketch, regions.len()), (second, 1));
+    assert!(!gone(&plates));
+}
+
+/// Each tile's tool is told gone on its own: a face on a body an undo
+/// took away is gone while Face is shown, and switching to Body, whose
+/// tool body is there, is ready at once (and back to Face, gone again).
+#[test]
+fn each_tile_s_tool_is_told_gone_on_its_own() {
+    let mut plates = plates();
+    let [plate, disc, _] = plates.bodies;
+    let last = later_disc(&mut plates);
+    plates.doc.look(Look::StartSplit);
+    plates.click(plate);
+    let top = |summary: &Summary| matches!(summary, Summary::Plane { n, .. } if n[2] > 0.5);
+    click_face(&mut plates, last, top, DVec3::new(0.0, 30.0, 5.0));
+    assert!(matches!(tool(&plates), Some(SplitTool::Plane(_))));
+    plates.motion(MotionLook::SplitWith(SplitMode::Body));
+    plates.click(disc);
+    assert_eq!(tool(&plates), Some(SplitTool::Body(disc)));
+    plates.motion(MotionLook::SplitWith(SplitMode::Face));
+    // The last disc's extrude undone: its face is gone.
+    plates.doc.update(Edit::Undo);
+    assert!(plates.doc.editor.document().body(last).is_none());
+    assert!(gone(&plates));
+    assert!(!plates.doc.motion_ready());
+    plates.motion(MotionLook::SplitWith(SplitMode::Body));
+    assert!(!gone(&plates));
+    assert!(plates.doc.motion_ready());
+    assert!(drafted(&plates).is_some());
+    plates.motion(MotionLook::SplitWith(SplitMode::Face));
+    assert!(gone(&plates));
+    assert!(!plates.doc.motion_ready());
+}

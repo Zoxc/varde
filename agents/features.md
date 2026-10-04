@@ -2718,7 +2718,16 @@ face picked, the origin planes on the toolbar).
   body is gone: pick another", "The regions' sketch is gone: pick other
   regions", "The line is gone: pick its curves again"), nothing
   previewed or committed until another is picked or a redo brings it
-  back. A tool body merged into another before the split follows it.
+  back (`SplitSetup::gone`, worked out again as the document changes
+  and as the tiles are switched, each tile's own). While a line is
+  gone, every visible sketch's curves are offered again, and a click
+  picks afresh, keeping the line's curves still in its sketch. Regions
+  whose sketch is gone are put by (`SplitSetup::stale_regions`) and the
+  visible sketches' regions offered in their place; the regions come
+  back if their sketch does before others are picked. A tool body
+  merged into another before the split follows it; one merged with the
+  body split (into it, or it into the tool body) is let go of, to be
+  picked again, as a body can't split itself.
 - **Preview**: the split as set up is the draft; none while a face or
   body is picked as the tool (the model shown is then the document's: a
   new split's is the history as of it, an edited one's with the split as
@@ -2778,13 +2787,25 @@ sketch, every check, removal along the bodies named, units, postcard
 round trip, wrong splits refused when read, the tenth kind),
 `regen/src/history/tests/split.rs` (the stand-in failing as too complex
 with the history going on, every tool reaching the kernel, regen's
-refusals before it, the chain joined end to end; with the booleans: the
+refusals before it, the chain joined end to end, a line of 256 curves
+joined at once, an arc run against its way round, ends joined within
+the resolution only; with the booleans: the
 pieces to the body and the new body with `original` and `keep`, a
 sketch region through all, a side empty, a sketch on a face following
-into the new body while a mirror's face doesn't, a draft, the cache;
+into the new body while a mirror's face doesn't, and on through a
+merge and a second split, a draft, the cache;
 ignored: a box by XY, by a cylinder face, an L by its own step's plane,
 by another body, by an open line, determinism),
-`io/src/vrdp/tests.rs` (through a file, a tampered face point refused),
+`regen/src/history/tests/split/fuzz.rs` (random histories of blocks,
+joins, cuts, combines, sketches on faces and splits by every tool,
+earlier splits edited, removals, undo and redo: each split that works
+gives its body and new body the booleans' pieces as `original` and
+`keep` say and leaves the rest alone, one that fails changes nothing,
+each sketch on a face placed on that face where it followed it, the
+cache warm and cold alike, later edits possible, flipped bytes;
+`VARDE_SPLIT_SEEDS` runs more),
+`io/src/vrdp/tests.rs` (through a file, a tampered face point refused,
+every tool's split damaged on disk refused or checked),
 `view/src/motion/tests.rs` (the notes; the panel's order, the tool's
 count beside it, where to click, the later features' warning, the
 status text; a trim's kept side), `viewport/motion/tests.rs` (a line's
@@ -2800,7 +2821,15 @@ a sketch's region through all and an open line; editing from the
 Timeline, Cancel, Back and OK, undo; the later features' warning and a
 named new body held; a tool body an undo takes away said to be gone,
 back on redo; an edited split's new piece's face named on the body
-split, and a click on it picking that body). The app's tests split by
+split, and a click on it picking that body; a tool body merged with the
+body split let go of; a line or regions whose sketch is gone picked
+again from any sketch, the regions back on undo; each tile's tool told
+gone on its own) and `app/src/doc/motion/tests/split/fuzz.rs` (a
+split session fuzz: tiles switched, picks on the model shown and on one
+gone by, regions and curves, Keeps and Keep, undo and redo, merges,
+removals, commits and edits held to what they set up, and each split
+working at the end cutting its body's volume in two; `VARDE_SPLIT_SEEDS`
+runs more). The app's tests split by
 two booleans through regen's `testing` feature
 (`varde_regen::testing::split_by_booleans`, the thread local the regen
 tests use, behind a feature for other crates' tests), as the kernel's
