@@ -24,6 +24,16 @@
 //! values. No handles while the axis is being picked, for a mirror, or
 //! in a document that can't be changed.
 //!
+//! An offset face has the extrude's handle: an arrow from its first
+//! face's point along the face's outward normal, as the face is before
+//! the offset, its knob at the distance (behind the face inward). Dragged
+//! (knob or shaft), the knob follows the cursor's ray where it passes
+//! nearest the arrow's line, snapped as the extrude's handle, through
+//! zero to the other side: the distance and Inward go to the panel
+//! ([`MotionLook::OffsetBy`]), so the preview and OK follow as for a
+//! typed distance, and a typed one moves the knob. It takes the mouse
+//! ahead of picking the model's faces.
+//!
 //! A split's origin plane is drawn as a mirror's. While its tool is a
 //! sketch's regions, they're shaded as an extrude's (`regions.rs`), those
 //! picked filled; while it's a line, the sketches' curves are drawn (the
@@ -53,8 +63,8 @@ use crate::anchors::Anchors;
 use crate::extrude::snap_step;
 use crate::hit::{self, segment_distance};
 use crate::motion::{
-    AlignView, MotionField, MotionKind, MotionLook, MotionPick, MotionState, ScaleView, SplitMode,
-    SplitView,
+    AlignView, FaceHandle, MotionField, MotionKind, MotionLook, MotionPick, MotionState, ScaleView,
+    SplitMode, SplitView,
 };
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
@@ -151,6 +161,32 @@ pub(crate) struct Input {
     drag: Option<Drag>,
     /// A split's sketches' regions or curves.
     split: SplitInput,
+    /// An offset face's handle.
+    face: FaceInput,
+}
+
+/// What the viewport keeps of an offset face's handle: whether it's
+/// under the cursor, and the drag.
+#[derive(Debug, Default)]
+struct FaceInput {
+    hover: bool,
+    drag: Option<FaceDrag>,
+}
+
+/// An offset face's handle being dragged, as it was grabbed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct FaceDrag {
+    /// The handle's origin and normal, kept while it's dragged.
+    origin: DVec3,
+    normal: DVec3,
+    /// A pixel's size at the origin, in millimetres, which the distance
+    /// snaps by.
+    pixel: f64,
+    /// Where the knob was, and how far along the line the cursor was.
+    from: f64,
+    grabbed: f64,
+    /// The distance last sent, negative inward.
+    sent: f64,
 }
 
 /// What the viewport keeps of a split's tool picked in its sketches: the
@@ -175,7 +211,7 @@ impl Input {
     /// Whether the handles have the mouse: one is under the cursor or
     /// dragged, so the model isn't picked under them.
     pub(crate) fn holds(&self) -> bool {
-        self.hover.is_some() || self.drag.is_some()
+        self.hover.is_some() || self.drag.is_some() || self.face.hover || self.face.drag.is_some()
     }
 }
 
@@ -401,6 +437,10 @@ impl<'a> Moving<'a> {
         }
         if let Some(handles) = self.handles(input, camera, bounds) {
             draw_handles(&mut live, &handles, input, scene, colors);
+        }
+        if let Some(handle) = self.face_handle(input.face.drag) {
+            let active = input.face.hover || input.face.drag.is_some();
+            draw_face_handle(&mut live, &handle, active, scene, colors);
         }
         if let Some(align) = &self.state.align {
             self.align(&mut live, align, scene, colors, camera, bounds);
@@ -715,6 +755,9 @@ impl<'a> Moving<'a> {
         if let Some(mode) = self.split_picking() {
             return self.split_mouse(mode, &mut input.split, event, bounds, cursor, camera);
         }
+        if self.state.kind == MotionKind::OffsetFace {
+            return self.face_mouse(&mut input.face, event, bounds, cursor, camera, hovered);
+        }
         let Some(handles) = self.handles(input, camera, bounds) else {
             input.hover = None;
             input.drag = None;
@@ -780,8 +823,17 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         hovered: bool,
     ) -> Option<Action<Message>> {
-        if input.drag.is_some() {
+        if input.drag.is_some() || input.face.drag.is_some() {
             return None;
+        }
+        if self.state.kind == MotionKind::OffsetFace {
+            let over = cursor.position_over(bounds).is_some_and(|at| {
+                let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+                self.face_handle(input.face.drag)
+                    .is_some_and(|handle| face_handle_at(&handle, camera, bounds, at))
+            });
+            input.face.hover = over;
+            return (over && hovered).then(|| Action::publish(Message::Look(Look::Hover(None))));
         }
         let at = cursor.position_over(bounds);
         let grip = (self.handles(input, camera, bounds)).and_then(|handles| {
@@ -872,11 +924,136 @@ impl<'a> Moving<'a> {
             let over = input.split.regions.hover.is_some() || input.split.curve.is_some();
             return over.then_some(mouse::Interaction::Pointer);
         }
-        if input.drag.is_some() {
+        if input.drag.is_some() || input.face.drag.is_some() {
             Some(mouse::Interaction::Grabbing)
+        } else if input.face.hover {
+            Some(mouse::Interaction::Grab)
         } else {
             input.hover.map(|_| mouse::Interaction::Grab)
         }
+    }
+
+    /// An offset face's handle, if it has one and the document can be
+    /// changed: kept where it was grabbed while it's dragged, the knob at
+    /// the distance as it last read.
+    fn face_handle(&self, drag: Option<FaceDrag>) -> Option<FaceHandle> {
+        let state = &self.state;
+        if state.kind != MotionKind::OffsetFace || !state.editable {
+            return None;
+        }
+        let mut handle = state.offset_face.as_ref()?.handle?;
+        if let Some(drag) = drag {
+            handle.origin = drag.origin;
+            handle.normal = drag.normal;
+        }
+        (handle.origin.is_finite() && handle.normal.is_finite() && handle.at.is_finite())
+            .then_some(handle)
+    }
+
+    /// Takes the mouse `event` for an offset face's handle: hovering,
+    /// grabbing and dragging it. `None` for what's left to picking the
+    /// model's faces and the camera: anything off the handle. While the
+    /// cursor is over it, what the model held hovered, if `hovered`, is
+    /// let go of.
+    fn face_mouse(
+        &self,
+        input: &mut FaceInput,
+        event: mouse::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+        hovered: bool,
+    ) -> Option<Action<Message>> {
+        let Some(handle) = self.face_handle(input.drag) else {
+            input.hover = false;
+            input.drag = None;
+            return None;
+        };
+        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
+        let placement = OriginPlane::XY.placement();
+        let projector = Projector::new(camera, placement, bounds.width, bounds.height)?;
+        match event {
+            mouse::Event::CursorMoved { position } => {
+                if let Some(drag) = &mut input.drag {
+                    let look = self.face_drag(drag, &projector, local(position));
+                    return Some(
+                        match look {
+                            Some(look) => Action::publish(Message::Look(Look::Motion(look))),
+                            None => Action::capture(),
+                        }
+                        .and_capture(),
+                    );
+                }
+                let over = cursor
+                    .position_over(bounds)
+                    .is_some_and(|at| face_handle_at(&handle, camera, bounds, local(at)));
+                let changed = std::mem::replace(&mut input.hover, over) != over;
+                match (over, changed) {
+                    (true, _) if hovered => {
+                        Some(Action::publish(Message::Look(Look::Hover(None))).and_capture())
+                    }
+                    (true, true) => Some(Action::request_redraw().and_capture()),
+                    (true, false) => Some(Action::capture()),
+                    (false, true) => Some(Action::request_redraw()),
+                    (false, false) => None,
+                }
+            }
+            mouse::Event::CursorLeft => {
+                std::mem::take(&mut input.hover).then(Action::request_redraw)
+            }
+            mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                let at = local(cursor.position_over(bounds)?);
+                if !face_handle_at(&handle, camera, bounds, at) {
+                    return None;
+                }
+                let grabbed = projector.along_line(handle.origin, handle.normal, at)?;
+                let depth = projector.world_depth(handle.origin);
+                let pixel = projector.pixel_at(depth);
+                if !(pixel > 0.0 && pixel.is_finite()) {
+                    return None;
+                }
+                input.drag = Some(FaceDrag {
+                    origin: handle.origin,
+                    normal: handle.normal,
+                    pixel,
+                    from: handle.at,
+                    grabbed,
+                    sent: handle.at,
+                });
+                input.hover = true;
+                Some(Action::request_redraw().and_capture())
+            }
+            mouse::Event::ButtonReleased(mouse::Button::Left) => {
+                input.drag.take()?;
+                Some(Action::request_redraw().and_capture())
+            }
+            _ => None,
+        }
+    }
+
+    /// An offset face's handle `drag` dragged to the screen position
+    /// `at`: the message setting the distance and side there, if that's
+    /// changed since it was last sent, within the coordinate limit and
+    /// not zero (which no distance is: the knob passes it).
+    fn face_drag(
+        &self,
+        drag: &mut FaceDrag,
+        projector: &Projector,
+        at: DVec2,
+    ) -> Option<MotionLook> {
+        let along = projector.along_line(drag.origin, drag.normal, at)?;
+        let step = snap_step(drag.pixel, self.state.units)?;
+        let to = drag.from + (along - drag.grabbed);
+        let to = (to / step).round() * step + 0.0;
+        if !(to.is_finite() && to.abs() <= f64::from(MAX_COORD)) || to == 0.0 || to == drag.sent {
+            return None;
+        }
+        drag.sent = to;
+        let units = Unit::Length(self.state.units);
+        Some(MotionLook::OffsetBy {
+            distance: varde_expr::format(to.abs(), Some(units)),
+            inward: to < 0.0,
+        })
     }
 
     /// The axis through `point` along the unit `along`, across the bodies,
@@ -1069,6 +1246,51 @@ fn draw_handles(
         };
         live.world_point(tip.as_vec3(), knob);
     }
+}
+
+/// Whether the screen position `at` is on an offset face's `handle`
+/// seen by `camera` over `bounds`: within [`HIT_PIXELS`] of its shaft,
+/// or on its knob.
+fn face_handle_at(handle: &FaceHandle, camera: &Camera, bounds: Rectangle, at: DVec2) -> bool {
+    let placement = OriginPlane::XY.placement();
+    let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height) else {
+        return false;
+    };
+    let tip = handle.origin + handle.normal * handle.at;
+    let Some((a, b)) = projector.in_front(handle.origin, tip) else {
+        return false;
+    };
+    let (a, b) = (projector.show(a), projector.show(b));
+    let knob = (at.distance(b) - f64::from(KNOB_RADIUS)).max(0.0);
+    segment_distance(at, a, b).min(knob) <= HIT_PIXELS
+}
+
+/// Draws an offset face's `handle` on `live`: its shaft and its knob, as
+/// a move's arrows are, in the selected colour, or the hovered one while
+/// it's under the cursor or dragged (`active`).
+fn draw_face_handle(
+    live: &mut SketchLayer,
+    handle: &FaceHandle,
+    active: bool,
+    scene: &Colors,
+    colors: SketchColors,
+) {
+    let [r, g, b] = scene.selected.0;
+    let accent = iced::Color::from_rgb(r, g, b);
+    let color = if active { colors.hovered } else { accent };
+    let tip = handle.origin + handle.normal * handle.at;
+    live.world_polyline(
+        &[handle.origin.as_vec3(), tip.as_vec3()],
+        line(color, SHAFT_WIDTH, false),
+    );
+    let knob = PointStyle {
+        radius: KNOB_RADIUS,
+        rim_width: KNOB_RIM,
+        rim: srgba(colors.point_fill),
+        fill: srgba(color),
+        fixed: false,
+    };
+    live.world_point(tip.as_vec3(), knob);
 }
 
 #[cfg(test)]

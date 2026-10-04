@@ -754,6 +754,16 @@ pub fn shell_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
+/// Starting a new offset face, or backing out of the one being set up,
+/// as [`move_binding`] does a move: with no key, as the UI mock has it.
+pub fn offset_face_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::NONE,
+        Message::Look(Look::StartOffsetFace),
+        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
+    )
+}
+
 /// Starting the measure tool, or leaving it: outside a sketch and the
 /// operations being set up. Measuring changes nothing, so a read-only
 /// document is measured too.

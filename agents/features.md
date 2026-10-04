@@ -3239,8 +3239,8 @@ The move's session (`MotionSession`, above) with `MotionKind::Shell`;
 (`app/src/doc/motion/faces.rs`; `view/src/motion/faces.rs`,
 `PickedFaces` and its field), its faces a `Refs<FaceRef>` picked as the
 edge session's edges are (`refs.rs`), shared by every kind that
-`MotionKind::picks_faces()` (an offset face's and a draft's, once there
-are those, take it with their own values: each adds itself to
+`MotionKind::picks_faces()` (an offset face's, and a draft's once
+there's one, take it with their own values: each adds itself to
 `picks_faces`, `faces::limit` and `verb`, `MotionSession::faces_need`
 and `prune_faces`; `faces::takes_body` is the shell's alone, so theirs
 start with no body and have only their faces'); the shell's own parts are in
@@ -3699,12 +3699,89 @@ pub struct OffsetFace {
 
 ### UI
 
-The UI is next: until it's built, an offset face is made by the
-document's commands only, and editing one from the Timeline does
-nothing. The Timeline shows the mock's offset face icon
-(`Icon::OffsetFace`, the model mock's `offset`) and note
-(`view/src/offset_face.rs`: "2 mm · 3 faces", "0.5 mm in · 1 face");
-selected, the status bar says `offset_info` ("2 faces · 2 mm outward").
+The move's session (`MotionSession`) with `MotionKind::OffsetFace`, its
+faces picked by the face session (see the shell's UI: `faces.rs`,
+`refs.rs`, `PickedFaces`); its own parts in
+`app/src/doc/motion/offset_face.rs` and `view/src/motion/offset_face.rs`
+(`OffsetFaceView`, `FaceHandle`), its handle in
+`view/src/viewport/motion.rs`. **The model mock has no offset face
+panel** (only the `offset` icon and "Offset face" in a face's context
+menu), so the panel is built in the style of the mock's shell panel.
+
+- **Starting**: `Look::StartOffsetFace` from the rail's Modify set
+  (after Combine, before Split body, as the icon mock's Modify group
+  orders `offset` after `combine`), again backing out; no key, as the
+  mocks have none. **Not on the toolbar**, as Shell isn't: the bar
+  already runs past its room at 1280 px with Shell. Or editing one
+  (`Look::EditFeature`: double-click, `Enter`, "Edit offset face"),
+  which opens with its faces, distance, side and Tangent faces. A new
+  one takes the faces selected in the model shown that a click would
+  take, the first one's body deciding. Nothing takes the focus: clicks
+  pick faces.
+- **Faces**: as a shell's (`MotionPick::Faces`): a click picks or takes
+  out, named as of the feature, all on the first face's body
+  ("An offset's faces are all on one body: pick faces of Body 1"; the
+  messages' article follows the noun, `refs::article`), an edge "Only a
+  face can be moved", at most `MAX_OFFSET_FACES`, sorted, lit as
+  selected, a row hovered lighting its face. Its body is only its
+  faces' (`faces::takes_body` is the shell's alone): with none it has
+  none, a body's row picks nothing ("... take them out to pick
+  another" once it has faces), and the status bar says "pick the faces
+  to move". Faces whose maker an undo took away are said to be gone ("A
+  picked face is gone"), as a shell's.
+- **The panel**: "New offset face" or its name; **Faces** (rows "Face
+  2" with the face's kind, a cross taking it out, `Icon::SeFace`;
+  "Click faces" while picking or with none), **Distance**
+  (`MotionField::Distance`, read by `OffsetFace::distance_ask`: "1" of
+  the design's units to begin with; the plan gives none), **Inward**
+  (a tick, the session's `flip`, `MotionLook::Flip`, `Icon::TkFlip`,
+  "Into the body, shrinking it") and **Tangent faces** (a tick, on to
+  begin with, `MotionLook::TangentFaces`, `Icon::TkChain`, "Take in
+  faces that run on smoothly"). The failure in the foot ("Offset
+  fails").
+- **The handle** (question 21, decided: the extrude's arrow and knob
+  *and* the typed distance): an arrow from the first face's point
+  along its outward normal, its knob at the distance (negative
+  inward), drawn over the model as a move's arrows are (selected
+  colour, hovered while under the cursor or dragged). Where it stands
+  (`offset_face::Anchor`) is found once on the model shown, once it
+  answers what was asked last: the first face found there, the point
+  nearest its stored point on the face's nearest triangle and the
+  outward normal there (`PickIndex::face_point`: the mesh's corner
+  normals, or the triangle's own), taken back by the distance the
+  preview moved it when the model shows a working preview of this
+  session. It's kept while the first face and the document's
+  generation stay, so dragging moves only the knob. Dragged (knob or
+  shaft, within 6 pixels), the knob follows the cursor's ray where it
+  passes nearest the arrow's line, snapped as the extrude's handle
+  (`snap_step` of a pixel at the origin), **through zero to the other
+  side**: `MotionLook::OffsetBy { distance, inward }` sets the field to
+  the size and Inward to the side; zero itself is never sent (no
+  distance is zero). A typed distance, or Inward ticked, moves the
+  knob. It takes the mouse ahead of picking faces (`Input::holds`).
+  With the kernel's stand-in the preview fails, the body shown as it
+  is, and the handle stands on the face as it is.
+- **Whole and ready**: at least one face and a distance;
+  `OffsetFace::check_own` refuses in the foot. **Preview**: the offset
+  as set up is the draft while it's whole (as a shell's). **The
+  kernel's offset face isn't built**, so today every preview fails with
+  "Offset fails" over "offsetting faces of Body 1 is too complex to work
+  out", OK waits, and Add anyway keeps it, failing in the Timeline.
+- **Committing**: OK (`Enter`, Add anyway) adds "Offset N" or sets the
+  edited one, one undo step; Cancel or `Esc` leaves no trace. The
+  status bar says `offset_info` once whole ("1 face · 2 mm inward"),
+  else what's next; the hint "Pick faces".
+
+The Timeline shows the mock's offset face icon (`Icon::OffsetFace`, the
+model mock's `offset`) and note (`view/src/offset_face.rs`: "2 mm · 3
+faces", "0.5 mm in · 1 face"); selected, the status bar says
+`offset_info` ("2 faces · 2 mm outward").
+
+Departures from the plan and mock: the panel is in the shell panel's
+style (the mock has none); not on the toolbar; Inward and Tangent faces
+as ticks. Known gaps: the handle stands on the first face only (as the
+plan has it); on a curved first face the normal is the drawn mesh's
+there, which for a cylinder is radial as the kernel's offset is.
 
 Tests: `document/src/offset_face/tests.rs` (added and undone, edited,
 its own parts, bodies and makers, removal following the body and not
@@ -3730,4 +3807,22 @@ refused without them, the same bits twice), `io/src/vrdp/tests.rs`
 (through a file, tampered points and distances refused, damaged 2 000
 ways refused or checked, faces out of order, repeated, none, on two
 bodies, past the limit, named by the offset or later, and a distance
-refused as read), `view/src/offset_face/tests.rs` (the notes).
+refused as read), `view/src/offset_face/tests.rs` (the notes),
+`view/src/motion/tests.rs` (the panel's order, no Bodies or Direction,
+the status text), `view/src/viewport/motion/tests.rs` (the handle drawn
+only while there's one and the document can be changed; the knob
+dragged out, past zero (not sent) and inward, snapped, holding the
+cursor ahead of the model), `rail/tests.rs` (Offset face in the Modify
+set) and `app/src/doc/motion/tests/offset_face.rs` (the rail's Offset
+face on the example plate: no body until a face, the panel, an edge
+refused, the top picked, lit and listed, the stand-in's too-complex
+failure in the panel with the handle on the face, OK waiting and Add
+anyway keeping it, failing in the Timeline, undo; with the boxes: the
+moved top previewed, the handle on the face as it was, a typed distance
+moving the knob and the preview, the handle's drag inward, Inward and
+Tangent faces drafted, a distance of nothing refused, OK and the
+Timeline's row, undo; editing from the Timeline, the handle where the
+face was, Cancel, another distance, undo; another body's face and
+row refused with why, the face taken out leaving nothing to commit).
+The app's tests offset by boxes through regen's `testing` feature
+(`varde_regen::testing::offset_by_boxes`).

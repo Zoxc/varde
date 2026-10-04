@@ -704,6 +704,38 @@ impl PickIndex {
         })
     }
 
+    /// Where face `face` is nearest `near` as drawn, and its outward
+    /// normal there (unit): `near` taken onto the plane of the face's
+    /// triangle nearest it, the normal that triangle's corners' (the
+    /// mesh's analytic ones), or its own where those cancel. `None` for
+    /// no such face, or one with no triangle that isn't degenerate.
+    pub fn face_point(&self, face: u32, near: DVec3) -> Option<(DVec3, DVec3)> {
+        let mut best: Option<(f64, [u32; 3], [DVec3; 3])> = None;
+        for triangle in self.face_triangles(face) {
+            let Some(corners) = self.corners(triangle) else {
+                continue;
+            };
+            let points = corners.map(|i| position(&self.mesh, i).as_dvec3());
+            let distance = triangle_distance(near, points);
+            if distance.is_finite() && best.is_none_or(|(nearest, ..)| distance < nearest) {
+                best = Some((distance, corners, points));
+            }
+        }
+        let (_, corners, [a, b, c]) = best?;
+        let own = (b - a).cross(c - a).try_normalize()?;
+        let normals = self.mesh.normals();
+        let summed = (corners.iter())
+            .filter_map(|&i| normals.get(i as usize))
+            .map(|&n| Vec3::from(n).as_dvec3())
+            .fold(DVec3::ZERO, |sum, n| sum + n);
+        let normal = summed
+            .try_normalize()
+            .filter(|n| n.dot(own) > 0.0)
+            .unwrap_or(own);
+        let point = near - own * (near - a).dot(own);
+        point.is_finite().then_some((point, normal))
+    }
+
     /// The edge of `body` between faces that `faces` name (either way
     /// round, by key or alias), the nearest to `near` among several, as
     /// [`PickIndex::find_face`] finds faces.

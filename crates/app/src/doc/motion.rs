@@ -12,7 +12,9 @@
 //! fillet's edges are picked as a chamfer's, its own parts in
 //! `fillet`), `Look::StartShell` (the rail's Modify set;
 //! a shell's faces are picked as a face session's, in `faces`, its own
-//! parts in `shell`), or by editing one, picking its bodies as a
+//! parts in `shell`), `Look::StartOffsetFace` (the rail's Modify set; its
+//! faces picked as a shell's, its own parts and handle in
+//! `offset_face`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
 //! one from the toolbar, or a model edge or face clicked, named as of the
@@ -94,7 +96,7 @@ pub(crate) struct MotionSession {
     /// A mirror's Create copy: on to begin with, as the UI mock's.
     pub(crate) keep_original: bool,
     /// A linear pattern's Flip direction, stored as a negative spacing;
-    /// an align's Flip.
+    /// an align's Flip; an offset face's Inward.
     pub(crate) flip: bool,
     /// An align's references, as picked.
     pub(crate) align: AlignSetup,
@@ -106,11 +108,18 @@ pub(crate) struct MotionSession {
     pub(crate) blend: BlendSetup,
     /// How a chamfer is sized: Equal to begin with, as the UI mock's.
     pub(crate) chamfer_type: ChamferType,
-    /// A face session's faces: a shell's to remove.
+    /// A face session's faces: a shell's to remove, an offset face's to
+    /// move.
     pub(crate) faces: Refs<FaceRef>,
     /// Which way a shell's walls grow: Inward to begin with, as the UI
     /// mock's.
     pub(crate) direction: ShellDirection,
+    /// An offset face's Tangent faces: on to begin with, as the plan
+    /// has it.
+    pub(crate) tangent: bool,
+    /// Where an offset face's handle stands, once the model shown has
+    /// told: [`offset_face::Anchor`].
+    anchor: Option<offset_face::Anchor>,
     /// A pattern's Join to original: ticked to begin with, each body
     /// holding its copies, as the pattern stores by default (the UI
     /// mock's starts unticked; the user's decision is ticked); unticked,
@@ -208,6 +217,9 @@ fn spread_ask(kind: MotionKind, design: &Design) -> Ask {
 /// What `field` of a session of `kind` is read with in `design`.
 fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
     match field {
+        MotionField::Distance if kind == MotionKind::OffsetFace => {
+            varde_document::OffsetFace::distance_ask(design)
+        }
         MotionField::Offset(_) | MotionField::Distance => Move::offset_ask(design),
         MotionField::Angle => Move::angle_ask(design),
         MotionField::Count => Pattern::count_ask(design),
@@ -351,7 +363,11 @@ impl MotionSession {
                 read(&varde_expr::format(0.0, Some(DEGREES)), &angle),
                 copies,
                 spread_field,
-                read(&zero, &offset),
+                if kind == MotionKind::OffsetFace {
+                    offset_face::distance_field(&design)
+                } else {
+                    read(&zero, &offset)
+                },
                 read("1", &factor),
                 read("1", &factor),
                 read("1", &factor),
@@ -376,6 +392,8 @@ impl MotionSession {
             chamfer_type: ChamferType::Equal,
             faces: Refs::default(),
             direction: ShellDirection::Inward,
+            tangent: true,
+            anchor: None,
             join: true,
             opened: None,
             mode,
@@ -495,6 +513,11 @@ impl MotionSession {
                 session.open_fillet(fillet);
                 session
             }
+            FeatureKind::OffsetFace(offset) => {
+                let mut session = Self::new(MotionKind::OffsetFace, document, Vec::new());
+                session.open_offset_face(offset);
+                session
+            }
             _ => return None,
         };
         session.feature = Some(feature);
@@ -592,6 +615,7 @@ impl MotionSession {
             MotionKind::Chamfer => chamfer::chamfer_kind(self),
             MotionKind::Shell => shell::shell_kind(self),
             MotionKind::Fillet => fillet::fillet_kind(self),
+            MotionKind::OffsetFace => offset_face::offset_face_kind(self),
         }
     }
 
@@ -711,7 +735,8 @@ impl MotionSession {
             | MotionKind::Split
             | MotionKind::Chamfer
             | MotionKind::Shell
-            | MotionKind::Fillet => {
+            | MotionKind::Fillet
+            | MotionKind::OffsetFace => {
                 return Ok(None);
             }
         };
@@ -776,6 +801,7 @@ impl MotionSession {
                 MotionKind::Chamfer => "pick the edges to chamfer",
                 MotionKind::Shell => "pick faces to remove, or the body to hollow",
                 MotionKind::Fillet => "pick the edges to fillet",
+                MotionKind::OffsetFace => "pick the faces to move",
             });
         }
         match self.kind {
@@ -795,7 +821,8 @@ impl MotionSession {
             | MotionKind::Split
             | MotionKind::Chamfer
             | MotionKind::Shell
-            | MotionKind::Fillet => None,
+            | MotionKind::Fillet
+            | MotionKind::OffsetFace => None,
             MotionKind::Move => {
                 let angle = self.angle().unwrap_or(0.0);
                 if angle != 0.0 && self.axis.is_none() {
@@ -896,6 +923,9 @@ impl MotionSession {
             FeatureKind::Fillet(fillet) => {
                 fillet.check_own(design).err().map(|why| why.to_string())
             }
+            FeatureKind::OffsetFace(offset) => {
+                offset.check_own(design).err().map(|why| why.to_string())
+            }
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -915,6 +945,7 @@ impl MotionSession {
             MotionKind::Chamfer => self.chamfer_type.fields().iter().all(|&field| fine(field)),
             MotionKind::Shell => fine(MotionField::Thickness),
             MotionKind::Fillet => fine(MotionField::Radius),
+            MotionKind::OffsetFace => fine(MotionField::Distance),
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
@@ -1361,7 +1392,19 @@ impl Doc {
             MotionLook::ShellDirection(direction) if session.kind == MotionKind::Shell => {
                 session.direction = direction;
             }
-            MotionLook::DropFace(_) | MotionLook::ShellDirection(_) => {}
+            MotionLook::TangentFaces if session.kind == MotionKind::OffsetFace => {
+                session.tangent = !session.tangent;
+            }
+            // Only as the handle offers it: a distance and a side.
+            MotionLook::OffsetBy { distance, inward } if session.kind == MotionKind::OffsetFace => {
+                let ask = field_ask(session.kind, MotionField::Distance, &document.design());
+                session.fields[MotionField::Distance.index()].input(distance, &ask);
+                session.flip = inward;
+            }
+            MotionLook::DropFace(_)
+            | MotionLook::ShellDirection(_)
+            | MotionLook::TangentFaces
+            | MotionLook::OffsetBy { .. } => {}
             // A chamfer's body is its edges', a shell's its faces' (it
             // has no body rows).
             MotionLook::Drop(_) if session.kind.blends() || session.kind.picks_faces() => {}
@@ -1408,7 +1451,10 @@ impl Doc {
             MotionLook::Flip
                 if matches!(
                     session.kind,
-                    MotionKind::LinearPattern | MotionKind::Align | MotionKind::Chamfer
+                    MotionKind::LinearPattern
+                        | MotionKind::Align
+                        | MotionKind::Chamfer
+                        | MotionKind::OffsetFace
                 ) =>
             {
                 session.flip = !session.flip;
@@ -1483,8 +1529,9 @@ impl Doc {
                     session.bodies = vec![body];
                 } else if session.faces.body() != Some(body) {
                     let noun = refs::noun(kind);
+                    let a = refs::article(&noun);
                     self.notice = Some(format!(
-                        "A {noun}'s faces are all on one body: take them out to pick another"
+                        "{a} {noun}'s faces are all on one body: take them out to pick another"
                     ));
                 }
             }
@@ -1725,6 +1772,7 @@ impl Doc {
     /// for a new one not previewed yet); not while that preview failed,
     /// when the model shows the bodies where the document has them.
     pub(crate) fn follow_motion_pivot(&mut self) {
+        self.follow_offset_anchor();
         let generation = self.editor.generation();
         let Some(session) = &self.motion else {
             return;
@@ -2012,7 +2060,8 @@ impl Doc {
             | MotionKind::Scale
             | MotionKind::Chamfer
             | MotionKind::Shell
-            | MotionKind::Fillet => (None, None),
+            | MotionKind::Fillet
+            | MotionKind::OffsetFace => (None, None),
             MotionKind::Split => self.split_reference(session),
             MotionKind::Mirror => {
                 let plane = session.plane.as_ref();
@@ -2095,6 +2144,8 @@ impl Doc {
             shell: (session.kind == MotionKind::Shell).then(|| Box::new(self.shell_view(session))),
             fillet: (session.kind == MotionKind::Fillet)
                 .then(|| Box::new(self.fillet_view(session))),
+            offset_face: (session.kind == MotionKind::OffsetFace)
+                .then(|| Box::new(self.offset_face_view(session))),
         })
     }
 }
@@ -2237,6 +2288,7 @@ mod blend;
 mod chamfer;
 mod faces;
 mod fillet;
+mod offset_face;
 mod refs;
 mod scale;
 mod shell;

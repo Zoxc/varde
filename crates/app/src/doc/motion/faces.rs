@@ -1,6 +1,7 @@
 //! The faces a face session picks, in the move's session: a shell's
-//! ([`MotionKind::Shell`]), and an offset face's and a draft's once there
-//! are those, which take the same session with their own values (each
+//! ([`MotionKind::Shell`]) and an offset face's
+//! ([`MotionKind::OffsetFace`]), and a draft's once there's one, which
+//! take the same session with their own values (each
 //! kind adds itself to [`MotionKind::picks_faces`], [`limit`], [`verb`],
 //! [`MotionSession::faces_need`] and [`MotionSession::prune_faces`]).
 //! They're picked as `refs` has it: a click on a face of the model shown
@@ -16,7 +17,7 @@
 //! body merged into another before the feature takes the faces with it
 //! on to the holder.
 
-use varde_document::{Document, FaceRef, MAX_SHELL_FACES};
+use varde_document::{Document, FaceRef, MAX_OFFSET_FACES, MAX_SHELL_FACES};
 use varde_view::{MotionKind, Picked, PickedFace, PickedFaces};
 
 use super::{Doc, MotionSession};
@@ -26,6 +27,7 @@ use crate::doc::feed::Merges;
 pub(super) fn limit(kind: MotionKind) -> usize {
     match kind {
         MotionKind::Shell => MAX_SHELL_FACES,
+        MotionKind::OffsetFace => MAX_OFFSET_FACES,
         _ => 0,
     }
 }
@@ -34,6 +36,7 @@ pub(super) fn limit(kind: MotionKind) -> usize {
 pub(super) fn verb(kind: MotionKind) -> &'static str {
     match kind {
         MotionKind::Shell => "removed",
+        MotionKind::OffsetFace => "moved",
         _ => "picked",
     }
 }
@@ -63,6 +66,9 @@ impl MotionSession {
             MotionKind::Shell => {
                 (self.bodies.is_empty()).then_some("pick faces to remove, or the body to hollow")
             }
+            MotionKind::OffsetFace => {
+                (self.faces.refs.is_empty()).then_some("pick the faces to move")
+            }
             _ => self.faces.refs.is_empty().then_some("pick the faces"),
         }
     }
@@ -87,7 +93,9 @@ impl MotionSession {
             return;
         };
         let taken = match self.kind {
-            MotionKind::Shell => document.check_face_set(index, body, faces).is_ok(),
+            MotionKind::Shell | MotionKind::OffsetFace => {
+                document.check_face_set(index, body, faces).is_ok()
+            }
             _ => true,
         };
         self.faces.gone = document.body(body).is_none() || !taken;

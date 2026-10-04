@@ -522,7 +522,7 @@ fn ops<'a>(
     // orders them (its Hole isn't built). The mock's Fillet, before
     // Chamfer, and Shell, after it, would each leave the bar too wide at
     // 1280 px (Fillet to 1210 px of 1160): the rail's Modify set has
-    // them, and Fillet has its key.
+    // them, and Offset face too, and Fillet has its key.
     let moving = state.motion.as_ref().map(|motion| motion.kind);
     let chamfer = bound_op(
         Icon::BChamfer,
@@ -622,7 +622,8 @@ fn ops<'a>(
                 | MotionKind::Split
                 | MotionKind::Chamfer
                 | MotionKind::Shell
-                | MotionKind::Fillet => (OriginPlane::ALL.iter())
+                | MotionKind::Fillet
+                | MotionKind::OffsetFace => (OriginPlane::ALL.iter())
                     .map(|&plane| {
                         op(
                             Icon::SePlane,

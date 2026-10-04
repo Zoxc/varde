@@ -57,6 +57,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         chamfer: None,
         shell: None,
         fillet: None,
+        offset_face: None,
     }
 }
 
@@ -634,4 +635,103 @@ fn a_split_s_pieces_are_labelled() {
     let texts = crate::testing::Laid::new(labels, iced::Size::new(SIZE[0], SIZE[1])).texts();
     let names: Vec<&str> = texts.iter().map(|shown| shown.text.as_str()).collect();
     assert_eq!(names, ["Body 1", "New body"]);
+}
+
+/// An offset face of the plate's top, its handle from (0, 0, 10) up,
+/// the knob at `at` (negative inward).
+fn offset_face(at: f64) -> MotionState<'static> {
+    let mut state = state(MotionKind::OffsetFace, MotionPick::Faces, None);
+    state.reference = None;
+    state.offset_face = Some(Box::new(crate::OffsetFaceView {
+        faces: crate::PickedFaces::default(),
+        inward: at < 0.0,
+        tangent: true,
+        handle: Some(crate::FaceHandle {
+            origin: DVec3::new(0.0, 0.0, 10.0),
+            normal: DVec3::Z,
+            at,
+        }),
+        info: None,
+    }));
+    state
+}
+
+/// An offset face's handle is drawn while there's one and the document
+/// can be changed; a move's handles aren't.
+#[test]
+fn an_offset_face_draws_its_handle() {
+    let colors = Mode::Light.palette().sketching;
+    let scene = Mode::Light.palette().scene;
+    let camera = front();
+    let input = Input::default();
+    let layers = |state: MotionState<'static>| {
+        let moving = Moving::new(state);
+        moving.layers(&input, &scene, colors, &camera, bounds()).1
+    };
+    assert!(!layers(offset_face(4.0)).is_empty());
+    let mut none = offset_face(4.0);
+    none.offset_face.as_mut().unwrap().handle = None;
+    assert!(layers(none).is_empty());
+    let mut locked = offset_face(4.0);
+    locked.editable = false;
+    assert!(layers(locked).is_empty());
+}
+
+/// The knob dragged: the distance snapped as the extrude's handle's, up
+/// out of the body, then down through zero, inward; zero itself is
+/// never sent; the handle holds the cursor ahead of the model.
+#[test]
+fn the_offset_face_handle_drags_through_zero_turning_inward() {
+    let camera = front();
+    let viewport = viewport(offset_face(4.0), &camera, None);
+    let mut input = Interaction::default();
+    let knob = at(DVec3::new(0.0, 0.0, 14.0));
+    let (messages, captured) = feed(&viewport, &mut input, &[moved(knob)]);
+    assert!(captured && messages.is_empty(), "{messages:?}");
+    assert!(input.motion.holds());
+    let (_, captured) = feed(&viewport, &mut input, &[press(knob)]);
+    assert!(captured);
+    assert_eq!(
+        viewport.mouse_interaction(&input, bounds(), mouse::Cursor::Available(knob)),
+        mouse::Interaction::Grabbing
+    );
+    // 2.3 mm above the face snaps to 2 mm out.
+    let (messages, _) = feed(
+        &viewport,
+        &mut input,
+        &[moved(at(DVec3::new(0.0, 0.0, 12.3)))],
+    );
+    let out = MotionLook::OffsetBy {
+        distance: "2 mm".to_owned(),
+        inward: false,
+    };
+    assert_eq!(looks(&messages), [Some(&out)]);
+    // At the face: zero, which isn't sent.
+    let (messages, _) = feed(
+        &viewport,
+        &mut input,
+        &[moved(at(DVec3::new(0.0, 0.0, 10.2)))],
+    );
+    assert!(messages.is_empty(), "{messages:?}");
+    // 3.7 mm into the body: 4 mm inward.
+    let (messages, _) = feed(
+        &viewport,
+        &mut input,
+        &[moved(at(DVec3::new(0.0, 0.0, 6.3)))],
+    );
+    let inward = MotionLook::OffsetBy {
+        distance: "4 mm".to_owned(),
+        inward: true,
+    };
+    assert_eq!(looks(&messages), [Some(&inward)]);
+    let (messages, captured) = feed(&viewport, &mut input, &[release(knob)]);
+    assert!(captured && messages.is_empty());
+    assert!(input.motion.face.drag.is_none());
+    // Off the handle, nothing's held.
+    let (_, captured) = feed(
+        &viewport,
+        &mut input,
+        &[moved(at(DVec3::new(25.0, 0.0, 2.0)))],
+    );
+    assert!(!captured && !input.motion.holds());
 }

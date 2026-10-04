@@ -25,7 +25,7 @@ pub(crate) fn offset_note(offset: &OffsetFace, units: LengthUnit) -> String {
 /// What the status bar says of a selected offset face, in the style of
 /// the UI mock's shell rows: "2 faces · 2 mm outward", "1 face · 0.5 mm
 /// inward".
-pub(crate) fn offset_info(offset: &OffsetFace, units: LengthUnit) -> String {
+pub fn offset_info(offset: &OffsetFace, units: LengthUnit) -> String {
     let side = if offset.inward { "inward" } else { "outward" };
     format!(
         "{} · {} {side}",

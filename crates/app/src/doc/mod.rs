@@ -760,6 +760,7 @@ impl Doc {
                 | Look::StartChamfer
                 | Look::StartFillet
                 | Look::StartShell
+                | Look::StartOffsetFace
                 | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
@@ -783,6 +784,7 @@ impl Doc {
                 | Look::StartChamfer
                 | Look::StartFillet
                 | Look::StartShell
+                | Look::StartOffsetFace
                 | Look::EditFeature(_)
         ) {
             self.measure = None;
@@ -819,11 +821,9 @@ impl Doc {
                     | FeatureKind::Split(_)
                     | FeatureKind::Chamfer(_)
                     | FeatureKind::Shell(_)
-                    | FeatureKind::Fillet(_),
+                    | FeatureKind::Fillet(_)
+                    | FeatureKind::OffsetFace(_),
                 ) => self.edit_motion(id),
-                // No panel yet: offset faces are made by the document's
-                // commands until their session is built.
-                Some(FeatureKind::OffsetFace(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
@@ -844,6 +844,7 @@ impl Doc {
             Look::StartChamfer => self.start_motion(varde_view::MotionKind::Chamfer),
             Look::StartFillet => self.start_motion(varde_view::MotionKind::Fillet),
             Look::StartShell => self.start_motion(varde_view::MotionKind::Shell),
+            Look::StartOffsetFace => self.start_motion(varde_view::MotionKind::OffsetFace),
             Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),

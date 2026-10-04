@@ -66,6 +66,7 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         chamfer: None,
         shell: None,
         fillet: None,
+        offset_face: None,
     }
 }
 
@@ -871,4 +872,45 @@ fn a_shell_s_panel_is_the_mock_s() {
         shell.info = Some("Closed · 2 mm outward".to_owned());
     }
     assert_eq!(status_info(&state), "Closed · 2 mm outward");
+}
+
+/// An offset face's panel, in the style of the mock's shell panel:
+/// Faces (each with its kind, and where to click), Distance, Inward and
+/// Tangent faces; no Bodies, no Direction tiles. The status bar says
+/// its info once whole, else what's needed.
+#[test]
+fn an_offset_face_s_panel() {
+    let mut state = state_of(MotionKind::OffsetFace, Vec::new());
+    state.reference = None;
+    state.picking = MotionPick::Faces;
+    let faces = shell_view(&[("Face 1", Some("Planar face"))], ShellDirection::Inward).faces;
+    state.offset_face = Some(Box::new(crate::OffsetFaceView {
+        faces,
+        inward: false,
+        tangent: true,
+        handle: None,
+        info: Some("1 face · 1 mm outward".to_owned()),
+    }));
+    let shown = texts_of(&state);
+    let order = [
+        "New offset face",
+        "Faces",
+        "Face 1",
+        "Click faces",
+        "Distance",
+        "Inward",
+        "Tangent faces",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    for text in ["Bodies", "Plane", "Direction", "Outward", "Remove"] {
+        assert!(!has(&shown, text), "{text}");
+    }
+    assert_eq!(status_info(&state), "1 face · 1 mm outward");
+    state.need = Some("pick the faces to move");
+    assert_eq!(status_info(&state), "pick the faces to move");
 }

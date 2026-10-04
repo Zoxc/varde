@@ -20,8 +20,8 @@ use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, DocumentKeys, Shortcut, align_binding, chamfer_binding, circular_pattern_binding,
     combine_binding, constrain_binding, constraint_binding, extrude_binding, fillet_binding,
-    measure_binding, mirror_binding, move_binding, pattern_binding, revolve_binding, scale_binding,
-    shell_binding, sketch_binding, split_binding, tool_binding,
+    measure_binding, mirror_binding, move_binding, offset_face_binding, pattern_binding,
+    revolve_binding, scale_binding, shell_binding, sketch_binding, split_binding, tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
@@ -131,6 +131,7 @@ pub(crate) enum Entry {
     Fillet,
     Chamfer,
     Shell,
+    OffsetFace,
     Measure,
     /// A sketch's tool.
     Tool(Tool),
@@ -157,6 +158,7 @@ impl Entry {
             Entry::Fillet => Icon::BFillet,
             Entry::Chamfer => Icon::BChamfer,
             Entry::Shell => Icon::Shell,
+            Entry::OffsetFace => Icon::OffsetFace,
             Entry::Measure => Icon::Measure,
             Entry::Tool(tool) => tool_icon(tool),
             Entry::Constrain => Icon::Constrain,
@@ -180,6 +182,7 @@ impl Entry {
             Entry::Fillet => "Fillet",
             Entry::Chamfer => "Chamfer",
             Entry::Shell => "Shell",
+            Entry::OffsetFace => "Offset face",
             Entry::Measure => "Measure",
             Entry::Tool(tool) => tool.label(),
             Entry::Constrain => "Constrain",
@@ -214,6 +217,7 @@ impl Entry {
             Entry::Fillet => fillet_binding(keys),
             Entry::Chamfer => chamfer_binding(keys),
             Entry::Shell => shell_binding(keys),
+            Entry::OffsetFace => offset_face_binding(keys),
             Entry::Measure => measure_binding(keys),
             Entry::Tool(tool) => tool_binding(tool, keys),
             Entry::Constrain => constrain_binding(keys),
@@ -240,6 +244,7 @@ impl Entry {
             Entry::Fillet => using.motion == Some(crate::MotionKind::Fillet),
             Entry::Chamfer => using.motion == Some(crate::MotionKind::Chamfer),
             Entry::Shell => using.motion == Some(crate::MotionKind::Shell),
+            Entry::OffsetFace => using.motion == Some(crate::MotionKind::OffsetFace),
             Entry::Measure => using.measuring,
             Entry::Tool(tool) => using.tool == Some(tool),
             Entry::Constrain => using.constraining,
@@ -304,14 +309,16 @@ const MODEL: [ToolSet; 4] = [
     ToolSet {
         name: "Modify",
         icon: Icon::CatModify,
-        // Fillet, Chamfer and Shell, then Scale before Combine and Split
-        // body after it, as the icon mock's Modify group orders them.
+        // Fillet, Chamfer and Shell, then Scale before Combine, Offset
+        // face after it and Split body last, as the icon mock's Modify
+        // group orders them.
         entries: &[
             Entry::Fillet,
             Entry::Chamfer,
             Entry::Shell,
             Entry::Scale,
             Entry::Combine,
+            Entry::OffsetFace,
             Entry::Split,
         ],
     },

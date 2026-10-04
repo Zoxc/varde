@@ -1,6 +1,6 @@
 //! The faces a face session picks, shared by the sessions picking faces
-//! of one body (a shell's; an offset face's and a draft's once there are
-//! those): what the app hands the panel of them and their field, each
+//! of one body (a shell's, an offset face's; a draft's once there's
+//! one): what the app hands the panel of them and their field, each
 //! face a row, "Face 2" by its place in the list (as regeneration's
 //! messages count them, "its open face 2 of 3 wasn't found"), with what
 //! kind of face it is beside it and a cross taking it out.

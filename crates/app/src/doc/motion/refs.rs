@@ -132,7 +132,8 @@ impl<R: Ref> Refs<R> {
         let limit = R::limit(kind);
         if self.refs.len() >= limit {
             let (noun, what) = (noun(kind), R::NOUN);
-            return Err(format!("A {noun} takes at most {limit} {what}s").into());
+            let a = article(&noun);
+            return Err(format!("{a} {noun} takes at most {limit} {what}s").into());
         }
         self.refs.insert(at, found);
         let mark = Mark {
@@ -218,6 +219,16 @@ pub(super) fn noun(kind: MotionKind) -> String {
     kind.noun().to_lowercase()
 }
 
+/// The article starting a sentence about a `noun`: "A shell", "An
+/// offset".
+pub(super) fn article(noun: &str) -> &'static str {
+    if noun.starts_with(['a', 'e', 'i', 'o', 'u']) {
+        "An"
+    } else {
+        "A"
+    }
+}
+
 impl MotionSession {
     /// Keeps its bodies those its references are on (a blend's, a face
     /// session's) as the session's own rules have it.
@@ -278,7 +289,8 @@ impl Doc {
             let name = (document.body(body)).map_or("one body", |body| body.name.as_str());
             let what = R::NOUN;
             return Err(format!(
-                "A {}'s {what}s are all on one body: pick {what}s of {name}",
+                "{} {}'s {what}s are all on one body: pick {what}s of {name}",
+                article(&noun(kind)),
                 noun(kind)
             )
             .into());
