@@ -227,3 +227,33 @@ fn world_points_keep_their_z_and_count_in_the_bounds() {
     let bounds = layer.bounds(&GridPlane::XY).unwrap();
     assert_eq!(bounds.max, Vec3::new(1.0, 2.0, 30.0));
 }
+
+#[test]
+fn a_fading_polyline_is_joined_with_each_segment_as_opaque_as_its_share() {
+    let mut layer = SketchLayer::default();
+    let style = LineStyle {
+        color: Srgba([1.0, 1.0, 1.0, 0.5]),
+        width: 2.0,
+        dash: None,
+    };
+    let points = [
+        at(0.0, 0.0),
+        at(1.0, 0.0),
+        at(1.0, 0.0),
+        at(2.0, 0.0),
+        at(3.0, 0.0),
+    ];
+    // The repeated point drops the segment it ends; the last has no share.
+    layer.polyline_fading(Space::Screen, &points, &[1.0, 0.2, 0.5], style);
+    let alphas: Vec<f32> = layer.lines.iter().map(|line| line.color[3]).collect();
+    assert_eq!(alphas, [0.5, 0.25, 0.5]);
+    let flags: Vec<u32> = layer.lines.iter().map(|line| line.flags).collect();
+    assert_eq!(
+        flags,
+        [
+            SCREEN | HAS_NEXT,
+            SCREEN | HAS_PREV | HAS_NEXT,
+            SCREEN | HAS_PREV
+        ]
+    );
+}

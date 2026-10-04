@@ -8757,7 +8757,7 @@ case to follow a colon, as in the status bar's "Couldn't regenerate: …".
 The Bodies list has no scrollable of its own: the body scrolls as a
 whole, keeping its offset while rows come and go (clamped to what's left,
 so no empty stretch shows) and while the handle's knobs come and go (the
-knobs' layer stays, empty, so the panel's keeps its place in the
+labels' layer stays, empty, so the panel's keeps its place in the
 viewport's stack and its state), and the wheel over it scrolls it rather
 than the camera. Giving the first field the focus (a session started, or
 another extrude edited while a panel is open) also scrolls the body back

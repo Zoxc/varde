@@ -167,16 +167,15 @@ pub(crate) fn viewport<'a>(
             fields.beside(sketch::FIELDS_OFFSET).into(),
         ]
     });
-    // An extrude's handle's knobs, on its axis, those the model doesn't
-    // hide. A layer even without them (and for a revolve, which has
-    // none, and a move, whose handles the renderer draws), so the
+    // Labels anchored over the scene: a split's pieces' and the measured
+    // distance's. A layer even without them (and for an extrude, a
+    // revolve and a move, whose handles the renderer draws), so the
     // panel's layer above keeps its place in the stack, and with it its
-    // widgets' state (the field's focus, the body's scroll), as the last
-    // region is unpicked or the first picked.
+    // widgets' state (the field's focus, the body's scroll), as an
+    // operation's labels come and go.
     let knobs = operating.as_ref().map(|operating| {
         let knobs = match operating {
-            Operating::Extrude(extruding) => extruding.knobs(camera, mesh, &opacity),
-            Operating::Revolve(_) => None,
+            Operating::Extrude(_) | Operating::Revolve(_) => None,
             // A split's pieces' labels.
             Operating::Motion(moving) => moving.labels(camera),
             // The distance's label, in the knobs' place.
@@ -253,6 +252,16 @@ fn program<'a>(
         picking: None,
         highlight: NO_HIGHLIGHT.clone(),
         sketch_colors: palette.sketching,
+    }
+}
+
+impl Scene {
+    /// The model it shows, for what it hides of an operation's handles.
+    fn model(&self) -> extrude::Model<'_> {
+        extrude::Model {
+            mesh: &self.mesh,
+            opacity: &self.opacity,
+        }
     }
 }
 
@@ -449,9 +458,15 @@ impl shader::Program<Message> for Program<'_> {
         {
             let camera = &self.scene.camera;
             let action = match operating {
-                Operating::Extrude(extruding) => {
-                    extruding.mouse(&mut state.extrude, *event, bounds, cursor, camera)
-                }
+                // Its knobs, ahead of its regions.
+                Operating::Extrude(extruding) => extruding.mouse(
+                    &mut state.extrude,
+                    *event,
+                    bounds,
+                    cursor,
+                    camera,
+                    self.scene.model(),
+                ),
                 Operating::Revolve(revolving) => {
                     revolving.mouse(&mut state.revolve, *event, bounds, cursor, camera)
                 }
@@ -528,7 +543,13 @@ impl shader::Program<Message> for Program<'_> {
             let (plane, (base, live)) = match operating {
                 Operating::Extrude(extruding) => (
                     extruding.plane(),
-                    extruding.layers(&state.extrude, colors, &self.scene.camera, bounds),
+                    extruding.layers(
+                        &state.extrude,
+                        colors,
+                        &self.scene.camera,
+                        bounds,
+                        self.scene.model(),
+                    ),
                 ),
                 Operating::Revolve(revolving) => (
                     revolving.plane(),

@@ -149,6 +149,17 @@ pub struct SketchColors {
     pub region_hovered: Color,
     /// The rings marking open ends that almost meet.
     pub near_miss: Color,
+    /// An extrude's handle: its shaft
+    /// and pucks in the Create tools' icon colour, the arrows out of them
+    /// in its accent, as the Extrude icon's slab and arrow; both lighter
+    /// while hovered or dragged.
+    pub handle: Color,
+    pub handle_accent: Color,
+    pub handle_hovered: Color,
+    pub handle_accent_hovered: Color,
+    /// The rail along a handle's axis while it's hovered or dragged: ink,
+    /// the text mixed 80% into the panel.
+    pub rail: Color,
 }
 
 // Scene colours the same in both palettes.
@@ -319,6 +330,10 @@ const DARK_ICONS: IconColors = {
     }
 };
 
+/// How much of a handle's colours is kept, mixed into white, while it's
+/// hovered or dragged.
+const HANDLE_HOVERED: f32 = 0.72;
+
 // The mock's colours for sketches and for construction, used by the
 // renderer and the sketch being edited alike.
 const LIGHT_SKETCH: Color = color!(0x0a95ad);
@@ -401,6 +416,11 @@ const LIGHT: Palette = Palette {
         region: alpha(LIGHT_SKETCH, 0.1),
         region_hovered: color!(0x3d9b35, 0.18),
         near_miss: color!(0xe0564b),
+        handle: LIGHT_ICONS.solid.line,
+        handle_accent: LIGHT_ICONS.solid.accent,
+        handle_hovered: mix(LIGHT_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
+        handle_accent_hovered: mix(LIGHT_ICONS.solid.accent, Color::WHITE, HANDLE_HOVERED),
+        rail: mix(LIGHT_TEXT, LIGHT_PANEL, 0.8),
     },
 };
 
@@ -480,6 +500,11 @@ const DARK: Palette = Palette {
         region: alpha(DARK_SKETCH, 0.12),
         region_hovered: color!(0x76cc60, 0.2),
         near_miss: color!(0xe0564b),
+        handle: DARK_ICONS.solid.line,
+        handle_accent: DARK_ICONS.solid.accent,
+        handle_hovered: mix(DARK_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
+        handle_accent_hovered: mix(DARK_ICONS.solid.accent, Color::WHITE, HANDLE_HOVERED),
+        rail: mix(DARK_TEXT, DARK_PANEL, 0.8),
     },
 };
 
@@ -1611,20 +1636,6 @@ pub fn rail_list_band(category: IconCategory) -> impl Fn(&Theme) -> container::S
             shadow: menu(theme).shadow,
             ..filled(p.icons.tone(category).line, p.text)
         }
-    }
-}
-
-/// A knob of the extrude handle over the viewport: an accent dot with a
-/// rim in the panel's colour, to show on any face.
-pub fn knob(theme: &Theme) -> container::Style {
-    let p = palette(theme);
-    container::Style {
-        border: Border {
-            color: p.panel,
-            width: 2.0,
-            radius: 999.0.into(),
-        },
-        ..container::background(p.accent)
     }
 }
 

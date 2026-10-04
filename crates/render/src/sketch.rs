@@ -252,7 +252,14 @@ impl SketchLayer {
         };
         let closed = points.len() > 3 && points.first() == points.last();
         let lengths = points.windows(2).map(|pair| pair[0].distance(pair[1]));
-        self.push_lines(space.flags() | flags, &placed, lengths, closed, style);
+        self.push_lines(
+            space.flags() | flags,
+            &placed,
+            lengths,
+            closed,
+            style,
+            |_| 1.0,
+        );
     }
 
     /// Adds the polyline through the world `points`, as [`Self::polyline`]
@@ -272,13 +279,57 @@ impl SketchLayer {
             .collect();
         let closed = points.len() > 3 && points.first() == points.last();
         let lengths = (points.windows(2)).map(|pair| f64::from(pair[0].distance(pair[1])));
-        self.push_lines(WORLD, &placed, lengths, closed, style);
+        self.push_lines(WORLD, &placed, lengths, closed, style, |_| 1.0);
+    }
+
+    /// Adds the polyline through `points` in `space`, as
+    /// [`Self::polyline`] does but never closed, each segment's colour as
+    /// opaque as `style`'s times its share in `alpha` (opaque past its
+    /// end): a line fading along its length, joined where its segments
+    /// meet rather than overlapping there as polylines of their own would.
+    /// A point repeating the one before it is dropped with the segment it
+    /// ends.
+    pub fn polyline_fading(
+        &mut self,
+        space: Space,
+        points: &[DVec2],
+        alpha: &[f32],
+        style: LineStyle,
+    ) {
+        if !(visible(style.width) && points.iter().all(|p| p.is_finite())) {
+            return;
+        }
+        let mut kept = Vec::with_capacity(points.len());
+        let mut shares = Vec::with_capacity(alpha.len());
+        for (i, &p) in points.iter().enumerate() {
+            if kept.last() == Some(&p) {
+                continue;
+            }
+            if i > 0 {
+                shares.push(alpha.get(i - 1).copied().unwrap_or(1.0));
+            }
+            kept.push(p);
+        }
+        if kept.len() < 2 {
+            return;
+        }
+        let Some(placed) = kept
+            .iter()
+            .map(|&p| space.place(p))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return;
+        };
+        let lengths = kept.windows(2).map(|pair| pair[0].distance(pair[1]));
+        let share = |i: usize| shares.get(i).copied().unwrap_or(1.0);
+        self.push_lines(space.flags(), &placed, lengths, false, style, share);
     }
 
     /// Adds the segments between the `placed` points, as the GPU takes
     /// them, flagged `space`, each as long as `lengths` says in turn,
-    /// joined at the ends if `closed`: two or more points, the last the
-    /// first again if `closed`.
+    /// joined at the ends if `closed`, the `i`th as opaque as `style`'s
+    /// colour times `alpha(i)`: two or more points, the last the first
+    /// again if `closed`.
     fn push_lines(
         &mut self,
         space: u32,
@@ -286,9 +337,10 @@ impl SketchLayer {
         lengths: impl Iterator<Item = f64>,
         closed: bool,
         style: LineStyle,
+        alpha: impl Fn(usize) -> f32,
     ) {
         let last = placed.len() - 2;
-        let color = style.color.linear();
+        let [red, green, blue, opacity] = style.color.linear();
         let [on, off] = style.dash.unwrap_or([0.0; 2]);
         let dash = if on > 0.0 && off > 0.0 {
             [on, off]
@@ -317,7 +369,7 @@ impl SketchLayer {
                 ends: pair(a.0, b.0),
                 neighbours: pair(p.0, n.0),
                 z: [a.1, b.1, p.1, n.1],
-                color,
+                color: [red, green, blue, opacity * alpha(i)],
                 style: [style.width, dash[0], dash[1], 0.0],
                 along: [along as f32, (along + length) as f32],
                 flags,

@@ -314,7 +314,8 @@ fn shots_01_candidates() {
 
 /// Scenario 2, with #34's 3.2: a region picked before the answer
 /// ("Regenerating…"), then answered: the new body's preview, the picked
-/// fill and outline, the shaft and the knob.
+/// fill and outline, the shaft and the knob's puck; then at 30 mm, and the
+/// knob grabbed, with its rail.
 #[test]
 #[ignore = "writes screenshots, see the module"]
 fn shots_02_picked() {
@@ -343,6 +344,15 @@ fn shots_02_picked() {
         type_in(&mut doc, Distance::First, "30");
         answer(&mut doc, &requests);
         camera.take(&doc, "02-picked-30", Shot::new());
+        // The knob grabbed: its puck lighter, with its rail.
+        extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::First));
+        camera.take(&doc, "02-grabbed", Shot::new());
+        camera.take(
+            &doc,
+            "02-grabbed-dark-scale2",
+            Shot::new().dark().scale(2.0),
+        );
+        extrude(&mut doc, ExtrudeLook::DropHandle);
     });
 }
 

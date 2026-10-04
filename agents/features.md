@@ -763,7 +763,7 @@ colour with an arrowhead (screen space) at the end positive angles turn
 right-handed about: the line's end, a built-in axis's +x / +y end, or a
 model edge's end as its reference runs (its ends mapped onto the
 source's plane), and the other end when flipped for one side or two
-sides (as the revolve's `span` does). The knobs' layer under the panel is an empty
+sides (as the revolve's `span` does). The labels' layer under the panel is an empty
 placeholder for a revolve, so the panel's state keeps its place. A test
 checks the turn against regeneration's: a quarter turn's preview lies
 on the side right-handed about the line from its start to its end (or
@@ -1329,7 +1329,7 @@ screen at the end positive angles turn right-handed about) or the plane
 short line along its normal). An origin axis or plane is drawn as
 known; an edge or face where the newest draft answered found it. A move
 whose angle is zero shows its axis only while it's being picked. The
-knobs' layer is an empty placeholder: the handles are drawn by the
+labels' layer is an empty placeholder: the handles are drawn by the
 renderer with the rest.
 
 **A move's handles** (`viewport/motion.rs`, question 13's decision: typed
@@ -1345,9 +1345,9 @@ would jump as a ring is let go of and the next turn would be about
 another point; these stay where a ring turned the bodies about, move
 with typed or dragged offsets at once, and a ring turned back undoes its
 turn. Before the pivot is known, the box's centre. A fixed size on
-the screen, an arrow along each world axis (100 px, the extrude handle's
-2 px shaft in the axis's scene colour, `Colors::axes`, with its knob at
-the end, a 7 px accent disc in a 2 px rim of the points' fill) and a ring
+the screen, an arrow along each world axis (100 px, a 2 px shaft as the
+extrude handle's, in the axis's scene colour, `Colors::axes`, with a knob
+at the end, a 7 px accent disc in a 2 px rim of the points' fill) and a ring
 square to each (70 px across, 64 segments, the axis's colour); the one
 under the cursor or dragged in the hovered colour. Not for a mirror,
 while the axis is picked, without the bodies' box, or in a document
@@ -2762,7 +2762,7 @@ face picked, the origin planes on the toolbar).
   (`Doc::split_lit`), and a chip at the middle of each piece's box with
   its body's name, the one keeping the id in the accent, the other "New
   body" for a body the document doesn't hold yet (`SplitPiece`,
-  `Moving::labels`, in the knobs' layer). The new piece is the part of
+  `Moving::labels`, in the labels' layer). The new piece is the part of
   the model shown whose body the document doesn't hold, or an edited
   split's stored new body.
 - **Committing**: OK (`Enter`, Add anyway) adds "Split N" (and its new

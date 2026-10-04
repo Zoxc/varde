@@ -276,19 +276,21 @@ fn the_regions_and_the_shaft_are_drawn() {
 #[test]
 fn an_extrude_its_own_check_refuses_draws_no_shaft() {
     // Two sides together over the limit: no preview for the shaft to
-    // stand on, which would be a line on its own.
+    // stand on, which would be a line on its own. The knob's puck stays.
     let (profiles, feature) = plate();
     let picked = BTreeSet::from([ring(&profiles)]);
     let input = Interaction::default();
     let mut state = state(&profiles, feature, OriginPlane::XY, true, &picked, None);
-    let shaft = |state: ExtrudeState<'_>| {
+    let live = |state: ExtrudeState<'_>| {
         let viewport = shown(state);
         let frame = viewport.draw(&input, mouse::Cursor::Unavailable, bounds());
-        !frame.sketch.expect("drawn").live.is_empty()
+        frame.sketch.expect("drawn").live
     };
-    assert!(shaft(state.clone()));
+    let whole = live(state.clone());
     state.refused = Some(ExtrudeError::Length);
-    assert!(!shaft(state));
+    let refused = live(state);
+    assert!(!refused.is_empty());
+    assert_ne!(whole, refused);
 }
 
 /// A box from the origin to (2, 2, 2), tessellated.
@@ -392,4 +394,113 @@ fn a_knob_on_a_face_far_out_shows_from_any_angle() {
             }
         }
     }
+}
+
+/// One side, 5 mm along -Y from the plate's ring on XZ: seen from the top,
+/// the knob 50 pixels below the middle, its ring edge on across the
+/// screen and its arrow on down it.
+fn knob_state<'a>(
+    profiles: &'a Arc<Profiles>,
+    feature: FeatureId,
+    picked: &'a BTreeSet<usize>,
+) -> ExtrudeState<'a> {
+    let mut state = state(profiles, feature, OriginPlane::XZ, true, picked, None);
+    state.fields[0].value = Some(5.0);
+    state
+}
+
+#[test]
+fn a_knob_is_hovered_and_grabbed_ahead_of_the_regions() {
+    let (profiles, feature) = plate();
+    let picked = BTreeSet::from([ring(&profiles)]);
+    let viewport = shown(knob_state(&profiles, feature, &picked));
+    let mut input = Interaction::default();
+    // On its ring, its arrow, and the ring's edge: hovered and captured,
+    // with the grab hand; a press grabs it.
+    for at in [(100.0, 150.0), (100.0, 166.0), (112.0, 150.0)] {
+        let at = Point::new(at.0, at.1);
+        let (messages, captured) = feed(&viewport, &mut input, at, &[moved(at)]);
+        assert!(captured, "{at:?}");
+        assert!(messages.is_empty(), "{messages:?}");
+        let cursor = mouse::Cursor::Available(at);
+        assert_eq!(
+            viewport.mouse_interaction(&input, bounds(), cursor),
+            mouse::Interaction::Grab
+        );
+        let (messages, captured) = feed(&viewport, &mut input, at, &[press()]);
+        assert!(captured);
+        assert!(
+            matches!(
+                messages[..],
+                [Message::Look(Look::Extrude(ExtrudeLook::GrabHandle(
+                    Distance::First
+                )))]
+            ),
+            "{messages:?}"
+        );
+    }
+    // Off it, nothing's hovered.
+    let at = Point::new(140.0, 150.0);
+    let (_, captured) = feed(&viewport, &mut input, at, &[moved(at)]);
+    assert!(!captured);
+    assert_ne!(
+        viewport.mouse_interaction(&input, bounds(), mouse::Cursor::Available(at)),
+        mouse::Interaction::Grab
+    );
+}
+
+#[test]
+fn a_knob_is_drawn_lighter_with_its_rail_while_hovered() {
+    let (profiles, feature) = plate();
+    let picked = BTreeSet::from([ring(&profiles)]);
+    let viewport = shown(knob_state(&profiles, feature, &picked));
+    let mut input = Interaction::default();
+    let draw = |input: &Interaction| {
+        let frame = viewport.draw(input, mouse::Cursor::Unavailable, bounds());
+        frame.sketch.expect("drawn").live
+    };
+    let idle = draw(&input);
+    let at = Point::new(100.0, 150.0);
+    feed(&viewport, &mut input, at, &[moved(at)]);
+    assert_ne!(draw(&input), idle);
+    let at = Point::new(160.0, 20.0);
+    feed(&viewport, &mut input, at, &[moved(at)]);
+    assert_eq!(draw(&input), idle);
+}
+
+#[test]
+fn a_knob_is_not_grabbed_read_only_or_behind_the_model() {
+    let (profiles, feature) = plate();
+    let picked = BTreeSet::from([ring(&profiles)]);
+    let at = Point::new(100.0, 150.0);
+    let grabs = |viewport: &Program<'_>| {
+        let mut input = Interaction::default();
+        let (messages, _) = feed(viewport, &mut input, at, &[moved(at), press()]);
+        matches!(
+            messages[..],
+            [Message::Look(Look::Extrude(ExtrudeLook::GrabHandle(_)))]
+        )
+    };
+    assert!(grabs(&shown(knob_state(&profiles, feature, &picked))));
+
+    let mut state = knob_state(&profiles, feature, &picked);
+    state.editable = false;
+    assert!(!grabs(&shown(state)));
+
+    // Inside a box around it, seen from the top.
+    let tol = varde_kernel::Tolerance::DEFAULT;
+    let solid = varde_kernel::Solid::cuboid(DVec3::splat(-20.0), DVec3::splat(40.0), 0, &tol);
+    let display = varde_kernel::Display::new(&tol);
+    let mesh = Arc::new(solid.unwrap().tessellate(&display).unwrap());
+    let state = knob_state(&profiles, feature, &picked);
+    let viewport = program(
+        &mesh,
+        &Arc::default(),
+        &top_camera(),
+        None,
+        Mode::Light.palette(),
+        None,
+        Some(crate::viewport::Operating::Extrude(Extruding::new(state))),
+    );
+    assert!(!grabs(&viewport));
 }

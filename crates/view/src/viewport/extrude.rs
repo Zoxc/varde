@@ -1,38 +1,64 @@
 //! The extrude being set up, in the viewport: its sketches' regions
 //! shaded, hovering and picking them with the left button (`regions.rs`),
-//! and its handle, the shaft drawn by the renderer and the knobs widgets
-//! over it (`crate::extrude`) that the viewport follows while one is
-//! dragged. The model hides what's behind it: the renderer depth tests
-//! the regions and the shaft, and a knob the model's mesh is in front of
-//! isn't shown ([`hidden_by`]), its parts less than opaque hiding nothing,
-//! as the renderer draws what's behind them through them.
+//! and its handle: a shaft along the axis and at each knob a puck, all
+//! drawn by the renderer and hit tested here, which the viewport follows
+//! while one is dragged. The model hides what's behind it: the renderer
+//! depth tests the regions and the pucks (but not the shaft and the rail,
+//! drawn on the screen over it), and a knob the model's mesh is in front
+//! of isn't drawn or grabbed ([`hidden_by`]), its parts less than opaque
+//! hiding nothing, as the renderer draws what's behind them through them.
 
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
-use iced::widget::{Space, container, mouse_area};
-use iced::{Element, Point, Rectangle, mouse};
-use varde_document::MAX_COORD;
+use iced::{Color, Point, Rectangle, mouse};
+use varde_document::{MAX_COORD, Placement};
 use varde_kernel::RenderMesh;
-use varde_render::{Camera, GridPlane, Projection, SketchLayer, Space as LayerSpace};
+use varde_render::{Camera, GridPlane, PointStyle, Projection, SketchLayer, Space as LayerSpace};
+use varde_sketch::angle;
 
 use super::regions::{self, Regions, grid_plane};
-use super::sketch::line;
-use crate::anchors::Anchors;
+use super::sketch::{line, srgba};
 use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle, snap_step};
+use crate::hit::segment_distance;
 use crate::operation_panel::PanelHover;
 use crate::pick::{aabb, ray_hits, through_box};
 use crate::projection::Projector;
-use crate::theme::{self, SketchColors};
+use crate::theme::SketchColors;
 use crate::{Look, Message};
 
 /// How wide the handle's shaft is, in pixels.
 const SHAFT_WIDTH: f32 = 2.0;
-/// The side of a knob of the handle, in pixels.
-const KNOB: f32 = 14.0;
+/// A knob's puck, in pixels: a ring square to the axis, filled faintly,
+/// with a dot at its middle, and an arrow out of the cap with an open
+/// head, the same size on the screen wherever it is.
+const RING_RADIUS: f64 = 11.0;
+const RING_WIDTH: f32 = 2.0;
+const RING_SEGMENTS: usize = 48;
+/// How opaque the ring's fill is.
+const RING_FILL: f32 = 0.2;
+const DOT_RADIUS: f32 = 2.6;
+const ARROW_LENGTH: f64 = 20.0;
+const ARROW_WIDTH: f32 = 2.0;
+/// The arrow's head: how far back from its tip, and how wide either side.
+const HEAD_LENGTH: f64 = 6.0;
+const HEAD_HALF_WIDTH: f64 = 4.5;
+/// The arrow's head is left out shorter than this on the screen, in
+/// pixels, looking along the axis.
+const MIN_HEAD: f64 = 1.5;
+/// The rail along the axis while a knob is hovered or dragged: how far it
+/// reaches either way, in pixels, how wide it is, and in how many steps
+/// either way it fades out, from opaque at the knob to clear.
+const RAIL_REACH: f64 = 170.0;
+const RAIL_WIDTH: f32 = 1.5;
+const RAIL_STEPS: usize = 16;
+/// How near the cursor a knob is grabbed, in pixels: within its ring or
+/// a little past it, or near its arrow (a sketch's hit tolerance).
+const RING_HIT: f64 = RING_RADIUS + 2.0;
+const ARROW_HIT: f64 = 6.0;
 /// How near in front of a knob, in view heights, the model may be and
-/// not hide it: as far as the renderer pulls the regions and the shaft
+/// not hide it: as far as the renderer pulls the regions and the handle
 /// towards the camera, so a knob on a face shows like a region on it.
 const KNOB_PULL: f64 = 0.002;
 /// The most triangles the model is looked through for what hides a knob;
@@ -48,7 +74,52 @@ pub(crate) struct Extruding<'a> {
 }
 
 /// What the viewport keeps of the extrude between events and frames.
-pub(crate) type Input = regions::Input;
+#[derive(Default)]
+pub(crate) struct Input {
+    regions: regions::Input,
+    /// The knob under the cursor as it last moved, if one is: then no
+    /// region is.
+    knob: Option<Distance>,
+}
+
+/// The model shown, which hides the knobs behind it ([`hidden_by`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Model<'m> {
+    pub(crate) mesh: &'m RenderMesh,
+    /// How opaque each of its parts is.
+    pub(crate) opacity: &'m [f32],
+}
+
+/// A knob's puck as it's seen: where, which way out of the cap, how big
+/// a pixel is there, and where it and its arrow's tip show.
+#[derive(Debug, Clone, Copy)]
+struct Puck {
+    distance: Distance,
+    at: DVec3,
+    /// The axis out of the cap: the normal, or against it for a knob on
+    /// the other side.
+    out: DVec3,
+    /// A pixel's size at `at`, in millimetres.
+    pixel: f64,
+    /// Towards the eye from `at`.
+    to_eye: DVec3,
+    screen: DVec2,
+    tip: DVec2,
+}
+
+impl Puck {
+    /// The world point `pixels` along its axis, out of the cap.
+    fn along(&self, pixels: f64) -> DVec3 {
+        self.at + self.out * (pixels * self.pixel)
+    }
+
+    /// The screen position `at`'s distance from it, if it's within reach
+    /// of the cursor: its ring's, or its arrow's.
+    fn reach(&self, at: DVec2) -> Option<f64> {
+        let arrow = segment_distance(at, self.screen, self.tip);
+        (at.distance(self.screen) <= RING_HIT || arrow <= ARROW_HIT).then_some(arrow)
+    }
+}
 
 impl<'a> Extruding<'a> {
     pub(crate) fn new(state: ExtrudeState<'a>) -> Self {
@@ -71,23 +142,6 @@ impl<'a> Extruding<'a> {
         self.regions().plane()
     }
 
-    /// The handle's knobs, anchored over the viewport seen by `camera`
-    /// on its axis, if there's a handle: those `mesh`, the model shown,
-    /// doesn't hide, its parts as opaque as `opacity` says ([`hidden_by`]).
-    pub(crate) fn knobs(
-        &self,
-        camera: &Camera,
-        mesh: &RenderMesh,
-        opacity: &[f32],
-    ) -> Option<Element<'a, Message>> {
-        let handle = self.handle.as_ref()?;
-        let editable = self.state.editable;
-        let knobs = self
-            .shown_knobs(camera, mesh, opacity)
-            .map(|(distance, at)| (DVec2::new(at, 0.0), knob(distance, editable)));
-        Some(Anchors::new(*camera, handle.placement(), knobs).into())
-    }
-
     /// The handle's knobs `mesh`'s opaque parts don't hide from `camera`.
     fn shown_knobs<'s>(
         &'s self,
@@ -102,10 +156,75 @@ impl<'a> Extruding<'a> {
         })
     }
 
+    /// The pucks of the knobs `model` doesn't hide ([`Self::shown_knobs`]),
+    /// seen by `camera` over `bounds`, those behind the eye left out.
+    fn pucks(&self, camera: &Camera, bounds: Rectangle, model: Model<'_>) -> Vec<Puck> {
+        let Some(handle) = &self.handle else {
+            return Vec::new();
+        };
+        let Some(projector) =
+            Projector::new(camera, handle.placement(), bounds.width, bounds.height)
+        else {
+            return Vec::new();
+        };
+        let (eye, backward) = projector.eye();
+        let puck = |(distance, t): (Distance, f64)| {
+            let at = handle.origin + handle.normal * t;
+            let depth = projector.world_depth(at);
+            if projector.perspective() && (depth.is_nan() || depth <= projector.near()) {
+                return None;
+            }
+            let pixel = projector.pixel_at(depth);
+            if !(pixel > 0.0 && pixel.is_finite() && at.is_finite()) {
+                return None;
+            }
+            let out = handle.normal * outward(distance, t);
+            let to_eye = if projector.perspective() {
+                (eye - at).normalize_or_zero()
+            } else {
+                backward
+            };
+            let tip = at + out * (ARROW_LENGTH * pixel);
+            let (screen, tip) = (projector.show(at), projector.show(tip));
+            Some(Puck {
+                distance,
+                at,
+                out,
+                pixel,
+                to_eye,
+                screen,
+                tip,
+            })
+        };
+        self.shown_knobs(camera, model.mesh, model.opacity)
+            .filter_map(puck)
+            .collect()
+    }
+
+    /// The knob under the screen position `at`, if the extrude can be
+    /// changed: of those in reach ([`Puck::reach`]), the one whose arrow
+    /// is nearest.
+    fn knob_at(
+        &self,
+        at: DVec2,
+        camera: &Camera,
+        bounds: Rectangle,
+        model: Model<'_>,
+    ) -> Option<Distance> {
+        if !self.state.editable {
+            return None;
+        }
+        (self.pucks(camera, bounds, model).into_iter())
+            .filter_map(|puck| Some((puck.distance, puck.reach(at)?)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(distance, _)| distance)
+    }
+
     /// Takes the mouse `event` with the `cursor` over `bounds` seen by
-    /// `camera`: hovering and picking regions, and dragging the knob
-    /// grabbed. `None` for what's left to the camera: the left button
-    /// pressed off the regions orbits, as outside a session.
+    /// `camera`, `model` the model shown: hovering and grabbing the knobs, ahead of hovering
+    /// and picking regions, and dragging the knob grabbed. `None` for
+    /// what's left to the camera: the left button pressed off the knobs
+    /// and regions orbits, as outside a session.
     pub(crate) fn mouse(
         &self,
         input: &mut Input,
@@ -113,6 +232,7 @@ impl<'a> Extruding<'a> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
         camera: &Camera,
+        model: Model<'_>,
     ) -> Option<Action<Message>> {
         let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
         match event {
@@ -125,12 +245,30 @@ impl<'a> Extruding<'a> {
                     return Some(Action::publish(Message::Look(Look::Extrude(look))).and_capture());
                 }
                 let over = cursor.position_over(bounds).map(local);
-                let hover = over.and_then(|at| self.regions().region_under(at, camera, bounds));
-                (std::mem::replace(&mut input.hover, hover) != hover).then(Action::request_redraw)
+                let knob = over.and_then(|at| self.knob_at(at, camera, bounds, model));
+                let hover = over
+                    .filter(|_| knob.is_none())
+                    .and_then(|at| self.regions().region_under(at, camera, bounds));
+                let knob_changed = std::mem::replace(&mut input.knob, knob) != knob;
+                let region_changed = std::mem::replace(&mut input.regions.hover, hover) != hover;
+                let changed = knob_changed || region_changed;
+                match (changed, knob) {
+                    (true, Some(_)) => Some(Action::request_redraw().and_capture()),
+                    (false, Some(_)) => Some(Action::capture()),
+                    (true, None) => Some(Action::request_redraw()),
+                    (false, None) => None,
+                }
             }
-            mouse::Event::CursorLeft => input.hover.take().map(|_| Action::request_redraw()),
+            mouse::Event::CursorLeft => {
+                let had = input.knob.take().is_some() | input.regions.hover.take().is_some();
+                had.then(Action::request_redraw)
+            }
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
                 let at = local(cursor.position_over(bounds)?);
+                if let Some(distance) = self.knob_at(at, camera, bounds, model) {
+                    let look = ExtrudeLook::GrabHandle(distance);
+                    return Some(Action::publish(Message::Look(Look::Extrude(look))).and_capture());
+                }
                 let (sketch, region) = self.regions().region_under(at, camera, bounds)?;
                 if !self.state.editable {
                     return None;
@@ -147,7 +285,7 @@ impl<'a> Extruding<'a> {
         }
     }
 
-    /// The cursor over a region, or dragging a knob.
+    /// The cursor dragging a knob, over one, or over a region.
     pub(crate) fn mouse_interaction(
         &self,
         input: &Input,
@@ -158,7 +296,11 @@ impl<'a> Extruding<'a> {
             return Some(mouse::Interaction::Grabbing);
         }
         cursor.position_over(bounds)?;
-        (input.hover.is_some() && self.state.editable).then_some(mouse::Interaction::Pointer)
+        if input.knob.is_some() {
+            return Some(mouse::Interaction::Grab);
+        }
+        (input.regions.hover.is_some() && self.state.editable)
+            .then_some(mouse::Interaction::Pointer)
     }
 
     /// Where on the handle's axis the screen position `at` drags a knob:
@@ -180,33 +322,137 @@ impl<'a> Extruding<'a> {
     /// source sketch's regions shaded and those picked marked, built again
     /// only when they change; and the live layer, the region hovered,
     /// before there's a source every candidate's regions, each on its own
-    /// plane, and the handle's shaft, unless the extrude's own check
-    /// refuses it, when there's no preview for it to stand on.
+    /// plane, and the handle: its shaft, on the screen over the model,
+    /// unless the extrude's own check refuses it, when there's no preview
+    /// for it to stand on, and the
+    /// pucks of the knobs `model` doesn't hide, the one hovered or dragged
+    /// lighter, with its rail, which is on the screen, over the model.
     pub(crate) fn layers(
         &self,
         input: &Input,
         colors: SketchColors,
         camera: &Camera,
         bounds: Rectangle,
+        model: Model<'_>,
     ) -> (Arc<SketchLayer>, SketchLayer) {
         let regions = self.regions();
-        let base = regions.base_layer(input, colors);
+        let base = regions.base_layer(&input.regions, colors);
         let mut live = SketchLayer::default();
-        regions.live(input.hover, colors, &mut live);
+        regions.live(input.regions.hover, colors, &mut live);
         regions.panel_region(camera, bounds, colors, &mut live);
+        let projector = (self.handle.as_ref()).and_then(|handle| {
+            Projector::new(camera, handle.placement(), bounds.width, bounds.height)
+        });
         if let Some(handle) = &self.handle
             && self.state.refused.is_none()
-            && let Some(plane) = grid_plane(handle.placement())
+            && let Some(projector) = &projector
         {
+            // On the screen, so it shows through the model.
             for &(_, at) in &handle.knobs {
-                live.polyline(
-                    LayerSpace::On(plane),
-                    &[DVec2::ZERO, DVec2::new(at, 0.0)],
-                    line(colors.selected, SHAFT_WIDTH, false),
-                );
+                let end = handle.origin + handle.normal * at;
+                if let Some((a, b)) = projector.in_front(handle.origin, end) {
+                    live.polyline(
+                        LayerSpace::Screen,
+                        &[projector.show(a), projector.show(b)],
+                        line(colors.handle, SHAFT_WIDTH, false),
+                    );
+                }
             }
         }
+        let active = self.state.grabbed.or(input.knob);
+        for puck in self.pucks(camera, bounds, model) {
+            let hot = active == Some(puck.distance) && self.state.editable;
+            if hot && let Some(projector) = &projector {
+                draw_rail(&mut live, &puck, projector, colors.rail);
+            }
+            draw_puck(&mut live, &puck, colors, hot);
+        }
         (base, live)
+    }
+}
+
+/// Which way out of the cap the knob of `distance` at `t` along the
+/// normal points: along the normal (1) or against it (-1), as its sign
+/// says, or at the sketch plane, as its side does.
+fn outward(distance: Distance, t: f64) -> f64 {
+    if t < 0.0 || (t == 0.0 && distance == Distance::Second) {
+        -1.0
+    } else {
+        1.0
+    }
+}
+
+/// The ring of `puck`, square to its axis, filled faintly, with a dot at
+/// its middle, and its arrow out of the cap, in the handle's colours, the
+/// hovered ones if `hot`. The arrow's head is open, across the axis in
+/// the plane through it facing the eye, left out looking along the axis.
+fn draw_puck(live: &mut SketchLayer, puck: &Puck, colors: SketchColors, hot: bool) {
+    let (color, accent) = if hot {
+        (colors.handle_hovered, colors.handle_accent_hovered)
+    } else {
+        (colors.handle, colors.handle_accent)
+    };
+    let (x, y) = puck.out.any_orthonormal_pair();
+    let placement = Placement {
+        origin: puck.at,
+        x,
+        y,
+        normal: puck.out,
+    };
+    if let Some(plane) = grid_plane(placement) {
+        let radius = RING_RADIUS * puck.pixel;
+        let ring: Vec<DVec2> = (0..=RING_SEGMENTS)
+            .map(|k| {
+                let turn = std::f64::consts::TAU * k as f64 / RING_SEGMENTS as f64;
+                DVec2::new(angle::cos(turn), angle::sin(turn)) * radius
+            })
+            .collect();
+        let fill = Color {
+            a: color.a * RING_FILL,
+            ..color
+        };
+        live.fill(LayerSpace::On(plane), [&ring[..]], srgba(fill));
+        live.polyline(LayerSpace::On(plane), &ring, line(color, RING_WIDTH, false));
+    }
+    live.world_point(
+        puck.at.as_vec3(),
+        PointStyle {
+            radius: DOT_RADIUS,
+            rim_width: DOT_RADIUS,
+            rim: srgba(color),
+            fill: srgba(color),
+            fixed: true,
+        },
+    );
+    let tip = puck.along(ARROW_LENGTH);
+    let style = line(accent, ARROW_WIDTH, false);
+    live.world_polyline(&[puck.at.as_vec3(), tip.as_vec3()], style);
+    let across = puck.out.cross(puck.to_eye).normalize_or_zero() * (HEAD_HALF_WIDTH * puck.pixel);
+    let back = puck.along(ARROW_LENGTH - HEAD_LENGTH);
+    let shown = puck.tip.distance(puck.screen) * HEAD_LENGTH / ARROW_LENGTH;
+    if across != DVec3::ZERO && shown >= MIN_HEAD {
+        let head = [back + across, tip, back - across].map(|p| p.as_vec3());
+        live.world_polyline(&head, style);
+    }
+}
+
+/// The rail along `puck`'s axis, in `color`, on the screen as
+/// `projector` shows it, so it's drawn over the model: [`RAIL_REACH`]
+/// either way of it, fading out in [`RAIL_STEPS`] from opaque at the knob
+/// to clear, cut where it passes behind the eye of a perspective view.
+fn draw_rail(live: &mut SketchLayer, puck: &Puck, projector: &Projector, color: Color) {
+    let alpha: Vec<f32> = (0..RAIL_STEPS)
+        .map(|k| 1.0 - (k as f32 + 0.5) / RAIL_STEPS as f32)
+        .collect();
+    for way in [1.0, -1.0] {
+        let Some((from, to)) = projector.in_front(puck.at, puck.along(RAIL_REACH * way)) else {
+            continue;
+        };
+        let points: Vec<_> = (0..=RAIL_STEPS)
+            .map(|k| projector.show(from.lerp(to, k as f64 / RAIL_STEPS as f64)))
+            .collect();
+        let style = line(color, RAIL_WIDTH, false);
+        live.polyline_fading(LayerSpace::Screen, &points, &alpha, style);
     }
 }
 
@@ -285,24 +531,6 @@ pub(crate) fn hidden_by(mesh: &RenderMesh, opacity: &[f32], camera: &Camera, at:
         };
         ray_hits(at, direction, [a, b, c]).is_some_and(|t| t > pull && t < end) && off_its_plane()
     })
-}
-
-/// The knob of `distance`, grabbed by pressing it if `editable`.
-fn knob<'a>(distance: Distance, editable: bool) -> Element<'a, Message> {
-    let dot = container(Space::new().width(KNOB).height(KNOB)).style(theme::knob);
-    let area = mouse_area(dot).interaction(if editable {
-        mouse::Interaction::Grab
-    } else {
-        mouse::Interaction::Idle
-    });
-    if editable {
-        area.on_press(Message::Look(Look::Extrude(ExtrudeLook::GrabHandle(
-            distance,
-        ))))
-        .into()
-    } else {
-        area.into()
-    }
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ colour, the set's category's, shows as a 3 px band along its top) is
 6 px right of the cards, its top level with its card's, moved up as far
 as it must to stay clear of the status bar (`STATUS_BAR_ROOM` and 6 px),
 and scrolled if it's taller than the room. Both are one layer of the
-viewport's stack, above the anchored widgets and the knobs and under the
+viewport's stack, above the anchored widgets and the labels and under the
 controls and the operation panel (the tooltips are overlays, over all
 of them), a `Rail` widget that places them like `operation_panel::placed`
 and takes only what's over them: each card and the list are a
@@ -206,23 +206,41 @@ cursor's ray onto each candidate's plane (`Projector::cursor`), asks
 anywhere else the left button orbits as outside a sketch, and the camera
 keeps the other buttons. The handle is an arrow from the picked regions'
 area-weighted centre (holes taking theirs away) along the plane's
-normal: its shaft is drawn in the live layer on the plane of that
-placement (`Space::On`), and each
-knob is a widget in an `Anchors` layer whose placement has the axis as
-its x axis, so the knob at `t` mm is the "sketch point" `(t, 0)`. One
-side has a knob at its distance (negative when flipped), symmetric at
-half of it, two sides one per side. A knob the model's mesh hides isn't
-laid out (`viewport/extrude.rs`'s `hidden_by`: a ray from the knob
-towards the eye meets a triangle of an opaque part (glass hides nothing,
-as the shaft shows through it) more than 0.002 view heights in front of
-it, as far as the renderer pulls the layers, so a knob on the cap it ends on
-shows; a triangle whose plane passes within the mesh's `f32` rounding of
-the knob doesn't count either, or far from the origin, seen at a grazing
-angle, the cap's rounded corners would hide its own knob; past 2¹⁸
-triangles the knobs always show, rather than slow every frame). An extrude its own check refuses (`ExtrudeState::refused`, two
-sides over the limit) has no preview, and draws no shaft, which would
-be a line on its own; its knobs stay. Pressing a knob sends
-`GrabHandle`; while the app says one is grabbed the `Program` follows
+normal: its shaft is drawn in the live layer projected to the screen
+(`Space::Screen`, cut where it passes behind the eye), so it shows over
+the model, and at each knob a puck, drawn in the live layer in the world, so the renderer depth
+tests it as the regions: a ring square to the axis, 11 px in radius, filled at 0.2,
+with a 2.6 px dot at its middle, and a 20 px arrow out of the cap (along
+the knob's side of the axis) whose open head lies across the axis in the
+plane through it facing the eye (left out looking along the axis). Its
+sizes are pixels at the knob, so it keeps its size on the screen and
+turns with the camera. The shaft and ring are in `SketchColors::handle`
+(the Create icon colour), the arrow in `handle_accent` (its accent), the
+knob hovered or grabbed in their `_hovered` versions (mixed 72% into
+white) with its rail: a line along the axis 170 px either way in
+`SketchColors::rail` (ink), fading from opaque at the knob to clear in
+16 steps, on the screen over the model as the shaft is, each way one
+joined polyline whose segments' alphas fall
+(`SketchLayer::polyline_fading`; separate segments would overlap at
+their round ends and dot the line). One side has a knob at its distance (negative when flipped),
+symmetric at half of it, two sides one per side. A knob the model's
+mesh hides isn't drawn or grabbed (`viewport/extrude.rs`'s `hidden_by`:
+a ray from the knob towards the eye meets a triangle of an opaque part
+(glass hides nothing, as the shaft shows through it) more than 0.002
+view heights in front of it, as far as the renderer pulls the layers,
+so a knob on the cap it ends on shows; a triangle whose plane passes
+within the mesh's `f32` rounding of the knob doesn't count either, or
+far from the origin, seen at a grazing angle, the cap's rounded corners
+would hide its own knob; past 2¹⁸ triangles the knobs always show,
+rather than slow every frame). An extrude its own check refuses
+(`ExtrudeState::refused`, two sides over the limit) has no preview, and
+draws no shaft, which would be a line on its own; its pucks stay. The
+knobs take the mouse ahead of the regions (`Extruding::mouse`, with the
+`Model` the scene shows): within 13 px of a knob or 6 px of its arrow
+on the screen (the nearest arrow first) one is hovered, captured, the
+cursor a grab hand, no region hovered meanwhile; not in an extrude that
+can't be changed. Pressing one sends `GrabHandle`; while the app says
+one is grabbed the `Program` follows
 the cursor (the raw position, over the rest of the window too): the
 distance is the point of the axis nearest the cursor's ray
 (`Projector::ray`), snapped to the roundest 1, 2 or 5 × 10ⁿ of the
@@ -232,10 +250,9 @@ panel is the viewport's last layer, at its right under the camera
 controls (over them in a short viewport, `operation_panel::placed`) and
 12 px clear of the status bar (its body scrolls rather than run past
 it), `opaque` so clicks and the wheel on it don't reach the scene;
-the knobs' layer under it stays, empty, without knobs (and always for
-a revolve, which has none, and a move, whose handles the renderer
-draws), so the panel's widget state survives the handle coming and
-going.
+the labels' layer under it (a split's pieces' and the measured
+distance's) stays, empty, for the others, so the panel's widget state
+survives labels coming and going.
 
 A move's handles (`viewport/motion.rs`, `Moving`; their look and
 what they set in `agents/features.md`, Move and mirror) are drawn in the
@@ -845,7 +862,7 @@ layer the hovered target's snap dots (the one taken bigger and filled),
 A's and B's points as dots in their colours, and the minimum distance
 between its two points, dashed, with its ends (none for picks that
 touch, at 0); the distance's label is a widget anchored at the
-segment's middle, in the knobs' layer. World points are
+segment's middle, in the labels' layer. World points are
 `SketchLayer::world_point` (a `PointInstance` flagged `WORLD` with its
 z, as lines and fills are).
 
@@ -1467,7 +1484,7 @@ back on the origin at the default camera's 7.5 mm (`old_home`, as Home
 was before it framed the model), so shots zoom out to frame the 60 mm
 plate. Each shot draws
 twice: the first frame, cleared to magenta, lays out the scene's caches
-and the anchored knobs and checks that less than 2 % of the window is left
+and the anchored widgets and checks that less than 2 % of the window is left
 undrawn (the translucent 1 px separators show the clear colour; a viewport
 that didn't draw would be most of it); the second is cleared to the
 theme's background, as the app clears its window, and written out.
