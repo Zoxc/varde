@@ -113,7 +113,7 @@ fn natively_the_start_buttons_are_in_a_column_beside_the_designs() {
         ],
     ));
     let shown = Laid::new(screen, WINDOW).texts();
-    for text in [APP_NAME, "Start", "New design", "Open…", "Shortcuts"] {
+    for text in [APP_NAME, "Start", "New design", "Open…", "Theme: System"] {
         let shown = find(&shown, text);
         assert!(shown.bounds.x < COLUMN_WIDTH, "{shown:?}");
     }
@@ -371,7 +371,7 @@ fn a_saved_card_says_what_holds_it() {
 
 /// Where the browser may clear what's kept in it, a note says so over
 /// the designs, and to download them; the foot says how much is used,
-/// beside the theme chosen, with no Shortcuts.
+/// beside the theme chosen.
 #[test]
 fn the_page_says_the_browser_may_clear_its_storage() {
     let note = "This browser may clear what's kept in it";
@@ -393,7 +393,6 @@ fn the_page_says_the_browser_may_clear_its_storage() {
     assert!(find(&shown, note).bounds.y < find(&shown, "In browser storage").bounds.y);
     assert!(shows(&shown, "1.2 MB of 2 GB used"));
     assert!(shows(&shown, "Theme: System"));
-    assert!(!shows(&shown, "Shortcuts"));
     // Nothing to lose, or kept for good: nothing said.
     assert!(!shows(&page(true, Vec::new()), note));
     assert!(!shows(

@@ -217,8 +217,8 @@ pub fn welcome<'a>(mut state: WelcomeState<'a>) -> Element<'a, Message> {
 /// The width of the native screen's column.
 const COLUMN_WIDTH: f32 = 320.0;
 
-/// Natively: the column, with the logo, the Start buttons and the help at
-/// its foot, beside the panic recorded, the recovered designs and the
+/// Natively: the column, with the logo, the Start buttons and the theme
+/// at its foot, beside the panic recorded, the recovered designs and the
 /// `recent` files, each under a band of its own.
 fn desktop<'a>(state: WelcomeState<'a>, recent: Vec<RecentCard<'a>>) -> Element<'a, Message> {
     let [new, open] = welcome_bindings();
@@ -230,7 +230,7 @@ fn desktop<'a>(state: WelcomeState<'a>, recent: Vec<RecentCard<'a>>) -> Element<
     let error = state.error.map(|error| {
         container(text(error).style(theme::danger_text)).padding(Padding::from([6, 8]))
     });
-    let foot = column![shortcuts_button(), theme_button(state.theme),].spacing(2);
+    let foot = theme_button(state.theme);
     let logo = container(lockup(false))
         .center_x(Length::Fill)
         .padding(Padding::from([22, 16]).bottom(18))
@@ -522,13 +522,6 @@ fn foot_button<'a>(icon: Icon, label: &'a str, message: Option<Message>) -> Elem
         .style(theme::flat_button(false, Tone::Muted))
         .on_press_maybe(message)
         .into()
-}
-
-/// The shortcut sheet's button, inert till there is one, as the
-/// toolbar's help button is.
-fn shortcuts_button<'a>() -> Element<'a, Message> {
-    // TODO: open the shortcut sheet.
-    foot_button(Icon::Help, "Shortcuts", None)
 }
 
 /// The theme's button, cycling through the themes, saying which is
