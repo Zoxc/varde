@@ -326,14 +326,71 @@ pub(crate) fn reference_fits([point, along]: &[[f64; 3]; 2]) -> bool {
     point.iter().chain(along).all(within) && along.iter().any(|&x| x != 0.0)
 }
 
+/// How far a [`Request::Regenerate`] has got, sent ahead of its answer
+/// as [`Response::Progress`] at the start of each of its steps: each
+/// feature of the history in turn, then drawing the model. A draft that
+/// fails has the history gone over again without it, counted from the
+/// start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Progress {
+    /// The step started, counted from 0: as many steps are done.
+    pub step: u32,
+    /// How many steps there are, more than `step`.
+    pub steps: u32,
+    pub stage: Stage,
+}
+
+/// What a [`Progress`] step works on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Stage {
+    /// The feature of this name.
+    Feature(String),
+    /// The model: tessellating the bodies, flattening the sketches' lines
+    /// and solving the sketches.
+    Drawing,
+}
+
+impl Progress {
+    /// Starting the feature at `index` of `count` in the history, of
+    /// this `name`.
+    fn feature(index: usize, count: usize, name: &str) -> Self {
+        Self {
+            step: saturating_u32(index),
+            steps: Self::steps(count),
+            stage: Stage::Feature(name.to_owned()),
+        }
+    }
+
+    /// Starting to draw the model of a history of `count` features.
+    fn drawing(count: usize) -> Self {
+        let steps = Self::steps(count);
+        Self {
+            step: steps - 1,
+            steps,
+            stage: Stage::Drawing,
+        }
+    }
+
+    /// The steps of a history of `count` features, drawing the model
+    /// last.
+    fn steps(count: usize) -> u32 {
+        saturating_u32(count).saturating_add(1)
+    }
+}
+
+fn saturating_u32(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
 impl Response {
-    /// The editor generation the response is of: `None` for an export's.
+    /// The editor generation the response is of: `None` for an export's
+    /// or a [`Response::Progress`].
     pub fn generation(&self) -> Option<Generation> {
         match self {
             Response::Regenerated { generation, .. } | Response::Failed { generation, .. } => {
                 Some(*generation)
             }
-            Response::Exported { .. } => None,
+            Response::Exported { .. } | Response::Progress(_) => None,
         }
     }
 
@@ -341,7 +398,7 @@ impl Response {
     pub fn exclude(&self) -> Option<FeatureId> {
         match self {
             Response::Regenerated { exclude, .. } | Response::Failed { exclude, .. } => *exclude,
-            Response::Exported { .. } => None,
+            Response::Exported { .. } | Response::Progress(_) => None,
         }
     }
 
@@ -350,7 +407,7 @@ impl Response {
         match self {
             Response::Regenerated { draft, .. } => draft.as_ref().map(|draft| draft.revision),
             Response::Failed { draft, .. } => *draft,
-            Response::Exported { .. } => None,
+            Response::Exported { .. } | Response::Progress(_) => None,
         }
     }
 
@@ -359,7 +416,7 @@ impl Response {
         match self {
             Response::Regenerated { inspected, .. } => inspected.as_ref().map(|i| i.revision),
             Response::Failed { inspect, .. } => *inspect,
-            Response::Exported { .. } => None,
+            Response::Exported { .. } | Response::Progress(_) => None,
         }
     }
 }
@@ -496,6 +553,10 @@ pub enum Response {
         export: u64,
         result: Result<Vec<ExportedBody>, String>,
     },
+    /// How far the [`Request::Regenerate`] being worked on has got, sent
+    /// while it's worked on, before its answer. Not an answer: every
+    /// regeneration started is still answered.
+    Progress(Progress),
 }
 
 /// Answers requests, keeping what it worked out for the next ones (see
@@ -516,6 +577,16 @@ impl Regenerator {
 
     /// Does the work of `request`.
     pub fn handle(&mut self, request: Request) -> Response {
+        self.handle_reporting(request, &mut |_| {})
+    }
+
+    /// [`Regenerator::handle`], telling `report` of a regeneration's
+    /// [`Progress`] as it goes.
+    pub fn handle_reporting(
+        &mut self,
+        request: Request,
+        report: &mut dyn FnMut(Progress),
+    ) -> Response {
         match request {
             Request::Regenerate {
                 generation,
@@ -525,7 +596,8 @@ impl Regenerator {
                 inspect,
             } => {
                 self.cache.begin();
-                match self.regenerate(&document, exclude, draft.as_deref(), inspect.as_deref()) {
+                let asked = (draft.as_deref(), inspect.as_deref());
+                match self.regenerate(&document, exclude, asked, report) {
                     Ok(model) => Response::Regenerated {
                         generation,
                         exclude,
@@ -563,16 +635,16 @@ impl Regenerator {
 
     /// The model of `document` with `draft` applied, or without it if it
     /// fails, leaving out the lines of the sketch `exclude`, with
-    /// `inspect` measured on it.
+    /// `inspect` measured on it, telling `report` how far it has got.
     fn regenerate(
         &mut self,
         document: &Document,
         exclude: Option<FeatureId>,
-        draft: Option<&Draft>,
-        inspect: Option<&Inspect>,
+        (draft, inspect): (Option<&Draft>, Option<&Inspect>),
+        report: &mut dyn FnMut(Progress),
     ) -> Result<Model, String> {
         let Some(draft) = draft else {
-            return self.model(document, exclude, None, inspect);
+            return self.model(document, exclude, None, inspect, report);
         };
         let mut drafted = Drafted {
             revision: draft.revision,
@@ -586,7 +658,7 @@ impl Regenerator {
         };
         match applied(document, draft) {
             Ok((with_draft, feature)) => {
-                let mut evaluation = evaluate(&with_draft, &mut self.cache);
+                let mut evaluation = self.evaluate(&with_draft, report);
                 let of = |id: &FeatureId| *id == feature;
                 drafted.touched = (evaluation.touched.iter())
                     .find(|(id, _)| of(id))
@@ -611,25 +683,37 @@ impl Regenerator {
                             .find(|(id, _)| *id == feature)
                             .map(|(_, uncut)| uncut.clone())
                             .unwrap_or_default();
+                        report(Progress::drawing(with_draft.features().len()));
                         return self.draw(&with_draft, evaluation, exclude, Some(drafted), inspect);
                     }
                 }
             }
             Err(error) => drafted.error = Some(error),
         }
-        self.model(document, exclude, Some(drafted), inspect)
+        self.model(document, exclude, Some(drafted), inspect, report)
     }
 
-    /// The model of `document`.
+    /// The model of `document`, telling `report` how far it has got.
     fn model(
         &mut self,
         document: &Document,
         exclude: Option<FeatureId>,
         draft: Option<Drafted>,
         inspect: Option<&Inspect>,
+        report: &mut dyn FnMut(Progress),
     ) -> Result<Model, String> {
-        let evaluation = evaluate(document, &mut self.cache);
+        let evaluation = self.evaluate(document, report);
+        report(Progress::drawing(document.features().len()));
         self.draw(document, evaluation, exclude, draft, inspect)
+    }
+
+    /// The history of `document` evaluated, telling `report` of each
+    /// feature as it starts on it.
+    fn evaluate(&mut self, document: &Document, report: &mut dyn FnMut(Progress)) -> Evaluation {
+        let count = document.features().len();
+        history::evaluate_reporting(document, &mut self.cache, &mut |index, feature| {
+            report(Progress::feature(index, count, &feature.name));
+        })
     }
 
     /// The model of `document`, whose history gave `evaluation`, with

@@ -1627,7 +1627,7 @@ fn huge_lengths_are_refused_without_allocating_them() {
 fn refused(head: &Head, parts: &[Vec<u8>]) -> String {
     match decode_reply(&head.encode()[..], &slices(parts)).unwrap() {
         Response::Failed { error, .. } => error,
-        Response::Regenerated { .. } | Response::Exported { .. } => {
+        Response::Regenerated { .. } | Response::Exported { .. } | Response::Progress(_) => {
             panic!("a hostile reply was taken")
         }
     }
@@ -1900,7 +1900,9 @@ fn cut_short_parts_the_tables_go_by_are_refused() {
             short[part].truncate(len);
             match decode_reply(&head[..], &slices(&short)).unwrap() {
                 Response::Failed { .. } => {}
-                Response::Regenerated { .. } | Response::Exported { .. } => {
+                Response::Regenerated { .. }
+                | Response::Exported { .. }
+                | Response::Progress(_) => {
                     panic!("part {part} cut by {cut} was taken")
                 }
             }
@@ -2055,7 +2057,7 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
     ));
     match round_trip(&response(MAX_FACES + 1)) {
         Response::Failed { generation, .. } => assert_eq!(generation, 4.into()),
-        Response::Regenerated { .. } | Response::Exported { .. } => {
+        Response::Regenerated { .. } | Response::Exported { .. } | Response::Progress(_) => {
             panic!("too many faces were sent")
         }
     }
@@ -3251,4 +3253,20 @@ fn a_draft_s_list_of_copy_bodies_is_laid_out_again_or_refused() {
     tampered.extend_from_slice(&bytes[at + 1..]);
     assert!(decode_request(&tampered).is_err());
     assert!(decode_request(&bytes).is_ok());
+}
+
+#[test]
+fn progress_round_trips() {
+    let progress = crate::Progress {
+        step: 2,
+        steps: 5,
+        stage: crate::Stage::Feature("Extrude 1".to_owned()),
+    };
+    let response = Response::Progress(progress.clone());
+    let (head, parts) = encode_reply(&response);
+    assert!(parts.is_empty());
+    match decode_reply(&head[..], &slices(&[])) {
+        Ok(Response::Progress(decoded)) => assert_eq!(decoded, progress),
+        other => panic!("not progress: {other:?}"),
+    }
 }

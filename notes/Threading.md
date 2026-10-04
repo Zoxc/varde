@@ -139,9 +139,10 @@ on each other.
   Out of order or superseded results are dropped.
 - Camera messages (`Orbit`, `Pan`, `Zoom`, `AnimationFrame`) never touch the
   compute path, so they stay smooth whatever the worker is doing.
-- Status bar shows "Regenerating…" while shown generation < editor
-  generation, and the error if the last result failed (keep showing the
-  last good mesh).
+- A card over the viewport shows "Regenerating", with the lane's
+  progress (`Response::Progress`, sent ahead of the answer), once shown
+  generation < editor generation for 250 ms; the status bar shows the
+  error if the last result failed (keep showing the last good mesh).
 - Undo/redo and further edits during a run just send a newer request.
 - Things that need the *current* geometry (picking, triangle count, fit to
   view) use the shown mesh and accept it may be one generation behind.

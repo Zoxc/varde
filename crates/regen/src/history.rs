@@ -331,10 +331,32 @@ pub(crate) fn evaluate_within(
     cache: &mut Cache,
     touching: Budget,
 ) -> Evaluation {
+    walk(document, cache, touching, &mut |_, _| {})
+}
+
+/// [`evaluate`], telling `starting` of each feature, and its index in the
+/// document's order, as it starts on it: how far it has got.
+pub(crate) fn evaluate_reporting(
+    document: &Document,
+    cache: &mut Cache,
+    starting: &mut dyn FnMut(usize, &Feature),
+) -> Evaluation {
+    walk(document, cache, Budget::DEFAULT, starting)
+}
+
+/// [`evaluate_within`], telling `starting` of each feature as it starts
+/// on it.
+fn walk(
+    document: &Document,
+    cache: &mut Cache,
+    touching: Budget,
+    starting: &mut dyn FnMut(usize, &Feature),
+) -> Evaluation {
     let tolerance = document.tolerance();
     let mut sketches: Vec<SketchOutput> = Vec::new();
     let mut evaluation = Evaluation::default();
-    for feature in document.features() {
+    for (index, feature) in document.features().iter().enumerate() {
+        starting(index, feature);
         match &feature.kind {
             FeatureKind::Sketch { plane, sketch } => {
                 // Its profiles are 2D: they don't depend on where it is.

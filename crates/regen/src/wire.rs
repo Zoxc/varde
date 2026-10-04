@@ -15,6 +15,9 @@
 //!         | postcard(Head)
 //! ```
 //!
+//! A regeneration's [`Response::Progress`] replies cross as a lone
+//! [`Head::Progress`], ahead of its answer.
+//!
 //! The document in a request is its [`Document::to_postcard`] bytes,
 //! checked as it's decoded (see [`codec`]). A request is posted as one
 //! `ArrayBuffer`, a reply as an array of them, one per part; both are
@@ -81,7 +84,7 @@ use varde_lane::bytes::Buffer;
 
 use crate::{
     Drafted, ErrorGeometry, ExportedBody, FeatureFailure, GeometryError, GeometryParts, Inspected,
-    PickCorner, PickFace, Picking, PickingError, Request, Response,
+    PickCorner, PickFace, Picking, PickingError, Progress, Request, Response,
 };
 
 /// The most bytes a reply's head may have. A head is a generation, a few
@@ -251,6 +254,8 @@ pub enum Head {
         export: u64,
         result: Result<(), String>,
     },
+    /// A [`Response::Progress`]: only words and counts, so not checked.
+    Progress(Progress),
 }
 
 impl Head {
@@ -407,6 +412,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             };
             (head.encode(), bodies.into_iter().map(Cow::Owned).collect())
         }
+        Response::Progress(progress) => (Head::Progress(progress.clone()).encode(), Vec::new()),
     }
 }
 
@@ -537,6 +543,7 @@ pub fn decode_reply(
             export,
             result: result.and_then(|()| decode_export(parts).map_err(|e| e.to_string())),
         },
+        Head::Progress(progress) => Response::Progress(progress),
     })
 }
 

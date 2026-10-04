@@ -2281,7 +2281,7 @@ fn picking_tables_are_deterministic_and_the_same_from_the_cache() {
     let tables = |response: Response| match response {
         Response::Regenerated { mesh, picking, .. } => (mesh, picking),
         Response::Failed { error, .. } => panic!("{error}"),
-        Response::Exported { .. } => panic!("not a regeneration"),
+        Response::Exported { .. } | Response::Progress(_) => panic!("not a regeneration"),
     };
     let first = tables(handle(regenerate(&editor, None)));
     let second = tables(handle(regenerate(&editor, None)));

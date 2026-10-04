@@ -60,13 +60,27 @@ impl Wire for Regenerate {
         Ok(Some(wire::decode_reply(head, model)?))
     }
 
+    /// A regeneration's progress comes ahead of its answer.
+    fn finishes(&self, response: &Response) -> bool {
+        !matches!(response, Response::Progress(_))
+    }
+
     fn failed(&self, request: &Request, error: String) -> Response {
         request.failure()(error)
     }
 }
 
+/// Posts `response` to the page.
+fn post(response: &Response) {
+    let (head, body) = wire::encode_reply(response);
+    let mut parts = vec![&head[..]];
+    parts.extend(body.iter().map(|part| &**part));
+    worker::post(&parts);
+}
+
 /// Runs the worker's side: answers each request posted to it, one at a
-/// time. Called by the worker's `main`, in the worker.
+/// time, its progress ahead of each regeneration's answer. Called by the
+/// worker's `main`, in the worker.
 pub fn serve() {
     let mut regenerator = Regenerator::default();
     worker::serve("the regeneration worker", move |message| {
@@ -75,11 +89,10 @@ pub fn serve() {
         };
         let bytes = bytes::copy(part, wire::MAX_REQUEST_BYTES)?;
         let request = wire::decode_request(&bytes)?;
-        let response = regenerator.handle(request);
-        let (head, body) = wire::encode_reply(&response);
-        let mut parts = vec![&head[..]];
-        parts.extend(body.iter().map(|part| &**part));
-        worker::post(&parts);
+        let response = regenerator.handle_reporting(request, &mut |progress| {
+            post(&Response::Progress(progress));
+        });
+        post(&response);
         Ok(())
     });
 }

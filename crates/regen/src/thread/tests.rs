@@ -1,8 +1,18 @@
 use varde_document::{Command, Document, Editor, FeatureId, FeatureKind, OriginPlane, Plane};
-use varde_lane::thread::testing::{join_in_time, next};
+use varde_lane::thread::testing::join_in_time;
 
 use super::*;
 use crate::{Transport, handle};
+
+/// The next response that isn't a [`Response::Progress`].
+fn next(responses: &mut Responses) -> Response {
+    loop {
+        match varde_lane::thread::testing::next(responses) {
+            Response::Progress(_) => {}
+            response => return response,
+        }
+    }
+}
 
 fn regenerate(editor: &Editor) -> Request {
     Request::Regenerate {
@@ -181,7 +191,38 @@ fn an_export_is_answered_though_regenerations_follow_it() {
             }
             Response::Regenerated { .. } => {}
             Response::Failed { error, .. } => panic!("{error}"),
+            Response::Progress(_) => unreachable!("skipped by next"),
         }
     }
     assert!(exported);
+}
+
+#[test]
+fn progress_comes_ahead_of_the_answer() {
+    let (editor, _) = crate::tests::sketched();
+    let features = editor.document().features();
+    let (mut lane, mut responses) = spawn();
+    lane.send(regenerate(&editor));
+    let mut told = Vec::new();
+    let answer = loop {
+        match varde_lane::thread::testing::next(&mut responses) {
+            Response::Progress(progress) => told.push(progress),
+            answer => break answer,
+        }
+    };
+    assert!(matches!(answer, Response::Regenerated { .. }));
+    let steps = u32::try_from(features.len()).unwrap() + 1;
+    let mut expected: Vec<_> = (features.iter().zip(0..))
+        .map(|(feature, step)| crate::Progress {
+            step,
+            steps,
+            stage: crate::Stage::Feature(feature.name.clone()),
+        })
+        .collect();
+    expected.push(crate::Progress {
+        step: steps - 1,
+        steps,
+        stage: crate::Stage::Drawing,
+    });
+    assert_eq!(told, expected);
 }

@@ -71,6 +71,60 @@ where
     A: IntoIterator<Item = S>,
     F: FnOnce(String) -> S,
 {
+    spawn_sending(
+        name,
+        pending,
+        on_close,
+        move |request, send: &mut dyn FnMut(S)| {
+            // All made before any goes, so a panic sends none of them.
+            let responses: Vec<S> = handle(request).into_iter().collect();
+            responses.into_iter().for_each(send);
+        },
+        failed,
+    )
+}
+
+/// [`spawn`], with `handle` given a way to send responses while it works,
+/// ahead of its answer, such as how far it has got. Those it sent before
+/// panicking stay sent, and `failed`'s answer follows them.
+pub fn spawn_reporting<R, S, F>(
+    name: &str,
+    pending: impl Pending<R> + Send + 'static,
+    on_close: OnClose,
+    mut handle: impl FnMut(R, &mut dyn FnMut(S)) -> S + Send + 'static,
+    failed: impl Fn(&R) -> F + Send + 'static,
+) -> (Lane<R>, Responses<R, S>)
+where
+    R: Send + 'static,
+    S: Send + 'static,
+    F: FnOnce(String) -> S,
+{
+    spawn_sending(
+        name,
+        pending,
+        on_close,
+        move |request, send: &mut dyn FnMut(S)| {
+            let answer = handle(request, &mut *send);
+            send(answer);
+        },
+        failed,
+    )
+}
+
+/// Starts the lane's thread, `handle` sending each request's responses
+/// as it makes them, `failed`'s answer after them on a panic.
+fn spawn_sending<R, S, F>(
+    name: &str,
+    pending: impl Pending<R> + Send + 'static,
+    on_close: OnClose,
+    mut handle: impl FnMut(R, &mut dyn FnMut(S)) + Send + 'static,
+    failed: impl Fn(&R) -> F + Send + 'static,
+) -> (Lane<R>, Responses<R, S>)
+where
+    R: Send + 'static,
+    S: Send + 'static,
+    F: FnOnce(String) -> S,
+{
     let shared = Arc::new(Shared {
         state: Mutex::new(State {
             pending: Box::new(pending),
@@ -83,17 +137,22 @@ where
     let thread = thread::Builder::new()
         .name(name.to_owned())
         .spawn(move || {
+            // Nobody may be listening any more, but the work is still
+            // done.
+            let mut send = |response| {
+                let _ = sender.unbounded_send(response);
+            };
             while let Some(request) = worker.next(on_close) {
                 let failed = failed(&request);
-                let responses = panic::catch(
-                    |request| handle(request).into_iter().collect(),
+                if let Some(answer) = panic::catch(
+                    |request| {
+                        handle(request, &mut send);
+                        None
+                    },
                     request,
-                    |error| vec![failed(error)],
-                );
-                // Nobody may be listening any more, but the work is still
-                // done.
-                for response in responses {
-                    let _ = sender.unbounded_send(response);
+                    |error| Some(failed(error)),
+                ) {
+                    send(answer);
                 }
             }
         })

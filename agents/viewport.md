@@ -63,7 +63,7 @@ feature selected in the Timeline, or what's selected in the model (see
 "Selecting" below), is in a box of its own, with the key clearing it
 (`Space`);
 then a bar with what's going on (picking a plane, the sketch's or the
-extrude's status, regenerating, a failed edit, saving: nothing with
+extrude's status, a failed regeneration, a failed edit, saving: nothing with
 nothing selected), the hints, and the button of the view options menu,
 which opens above it: the Shading and Edges submenus, then Orthographic
 or Perspective, then Mouse hints, without which the bar leaves out the
@@ -602,8 +602,26 @@ handed. The renderer's GPU copies are keyed by their `Arc`s instead, since
 iced shares one pipeline between documents whose generations each start at
 0. The feed asks the regeneration lane for them with a cheap `Arc` snapshot
 of the document and takes the answer when it arrives, dropping answers
-older than the model shown. Until then it keeps the last one and the status
-bar says "Regenerating…". A request leaves the sketch being edited out of
+older than the model shown. Until then it keeps the last one, and once
+that has lagged the editor for `feed::SLOW` (250 ms, timed by frames
+while it lags: `MeshFeed::tick`, `MeshFeed::timing`) a card floats
+centred at the top of the viewport, 10 px under the toolbar
+(`regenerating.rs`, `DocumentState::regenerating`, the last layer of the
+viewport's stack, taking no events): "Regenerating", the feature the lane
+is working on (or "Drawing the model") and "2 of 3", over a bar of the
+steps done. It goes as the model is current again; one quicker than
+`SLOW` never shows. The lane tells how far it has got as
+`Response::Progress` (`regen::Progress`: the step started, counted from
+0, of the history's features then drawing the model, and its `Stage`,
+the feature by name or `Drawing`) at the start of each step, ahead of
+the answer, never of an export; natively through
+`varde_lane::thread::spawn_reporting`, on the web posted by the worker
+as a lone `Head::Progress`, which the page's mailbox passes on without
+taking it for the answer (`Wire::finishes`). The feed keeps the newest
+until the next answer, model or failure, wanted or not, and the
+document takes it apart from other answers (`ForDoc::Computed`), so it
+changes nothing else. A draft that fails has the history gone over
+again without it, counted from the start. A request leaves the sketch being edited out of
 the lines (`exclude`), which the viewport draws over everything instead. Entering or
 leaving a sketch asks again for the same generation with the new
 `exclude`; the answer, a model or a failure, says which sketch it left
@@ -655,8 +673,8 @@ taken only if it's for what was asked last, sketch and draft revision
 both, so a late answer for an older draft never replaces a newer one;
 the draft's error shows in the panel only while it's for the draft asked
 for last. While the draft asked for last (or its absence) isn't the one
-the model shown has, a preview changed or cancelled, the status bar says
-"Regenerating…" too. The feed keeps the answer's `failed` with the model shown, and
+the model shown has, a preview changed or cancelled, it's regenerating
+too (`MeshStatus::Regenerating`). The feed keeps the answer's `failed` with the model shown, and
 the Timeline marks those features (see "The extrude UI" in
 `agents/kernel.md`).
 
@@ -1336,7 +1354,8 @@ boxes finite and in order, the picking tables checked by
 `Picking::from_parts` against the mesh and naming only bodies the head
 lists; see `regen::wire`). An export's answer is a head and one part,
 the bodies' postcard, copied within 1 GiB and decoded with every
-`ManifoldMesh` checked again. The worker keeps
+`ManifoldMesh` checked again. A regeneration's progress is a lone
+`Head::Progress`, posted ahead of its answer. The worker keeps
 its cache between requests, as the thread does. The worker can't see new messages while it works, so
 the page keeps latest-wins itself: one request is with the worker at a
 time, and newer ones replace each other until it answers. A job that has
@@ -1465,13 +1484,17 @@ left of Add anyway (light, dark), then Go back once shown (also scale
 saved" on its pill, its path shown as it's pointed at, and as on the web
 the bar under it in browser storage (also dark at scale 2) and on the
 computer, each also pointed at, and the file menu starting with the
-downloads (light, dark), drawn from `Doc::state` with the location set.
+downloads (light, dark), drawn from `Doc::state` with the location set;
+a slow regeneration's card (`shots_32`) before the lane has said how far
+it has got, on the example's extrude (light, dark) and drawing the model
+at scale 2, `DocumentState::regenerating` set on `Doc::state`.
 Shots are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it
 asks for before its shots, unless the shot is of the wait (`-waiting`):
-an unanswered one shows "Regenerating…" with the last answer's preview and
-Bodies list, which reads like a fault and isn't one.
+an unanswered one shows the last answer's preview and Bodies list (no
+frames tick in a shot, so no card), which reads like a fault and isn't
+one.
 
 Reading shots: a finding names the shot, what's wrong and the code
 behind it. First drop what the harness made (an unanswered request, a

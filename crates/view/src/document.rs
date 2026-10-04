@@ -1,5 +1,6 @@
 //! The document screen: its layout, the banners over it, the prompt about
-//! unsaved changes and what the status bar says.
+//! unsaved changes, what the status bar says and the card telling of a
+//! slow regeneration.
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -55,6 +56,10 @@ pub struct DocumentState<'a> {
     pub sketches: &'a Arc<RenderLines>,
     /// How `mesh` and `sketches` stand against the document.
     pub mesh_status: MeshStatus<'a>,
+    /// A regeneration that's slow, shown over the top of the viewport,
+    /// with how far it has got, if the lane has said: `None` while
+    /// there's none, or it's quick enough not to show.
+    pub regenerating: Option<Option<&'a varde_regen::Progress>>,
     /// Picking `mesh` with the cursor, if the cursor does: outside
     /// sketches and sessions.
     pub picking: Option<crate::ModelPicking<'a>>,
@@ -726,6 +731,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.thumbnail,
                     ),
                     status::status_bar(status(&state)),
+                    state.regenerating.map(crate::regenerating::regenerating),
                 ],
             ],
         ]
@@ -2121,8 +2127,8 @@ pub(crate) fn counted(n: usize, one: &str, many: &str) -> String {
 /// it says: regenerating, why the last edit failed, saving, exporting.
 fn status_notes(state: &DocumentState<'_>) -> Vec<String> {
     let regenerating = match state.mesh_status {
-        MeshStatus::Current => None,
-        MeshStatus::Regenerating => Some("Regenerating…".to_owned()),
+        // Shown over the viewport once it's slow, see `regenerating`.
+        MeshStatus::Current | MeshStatus::Regenerating => None,
         MeshStatus::Failed(error) => Some(format!("Couldn't regenerate: {error}")),
     };
     let edit_error = state

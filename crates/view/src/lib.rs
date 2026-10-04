@@ -33,6 +33,7 @@ mod plane_pick;
 pub mod probe;
 mod projection;
 mod rail;
+mod regenerating;
 mod revolve;
 mod select;
 mod shell;

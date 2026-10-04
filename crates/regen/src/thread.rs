@@ -20,15 +20,28 @@ use crate::newest::Newest;
 use crate::{Regenerator, Request, Response};
 
 /// Starts a lane on a new thread. Send requests through the [`Lane`], read
-/// responses from [`Responses`]; dropping the latter ends the thread.
+/// responses from [`Responses`]; dropping the latter ends the thread. A
+/// regeneration's [`Response::Progress`] comes ahead of its answer. A job
+/// that panics is answered with [`Response::Failed`], so the UI hears
+/// back either way, and the lane goes on.
 pub fn spawn() -> (Lane, Responses) {
     let mut regenerator = Regenerator::default();
-    spawn_on(move |request| regenerator.handle(request))
+    thread::spawn_reporting(
+        "regenerate",
+        Newest::default(),
+        OnClose::Stop,
+        move |request, send| {
+            regenerator.handle_reporting(request, &mut |progress| {
+                send(Response::Progress(progress));
+            })
+        },
+        Request::failure,
+    )
 }
 
-/// Starts a lane doing its work with `handle`, which tests can swap for one
-/// that fails. A job that panics is answered with [`Response::Failed`], so
-/// the UI hears back either way, and the lane goes on.
+/// Starts a lane doing its work with `handle`, which tests swap for one
+/// that fails, without progress.
+#[cfg(test)]
 fn spawn_on(handle: impl FnMut(Request) -> Response + Send + 'static) -> (Lane, Responses) {
     thread::spawn(
         "regenerate",

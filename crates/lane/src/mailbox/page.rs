@@ -35,6 +35,14 @@ pub trait Wire: 'static {
         asked: Option<&Self::Request>,
     ) -> Result<Option<Self::Response>, Refused>;
 
+    /// Whether `response` ends the job of the request the worker has, and
+    /// so the next may go: all do but news the worker sends while it
+    /// works, such as how far it has got.
+    fn finishes(&self, response: &Self::Response) -> bool {
+        let _ = response;
+        true
+    }
+
     /// The answer to `request`, which the worker failed on for the reason
     /// `error` gives.
     fn failed(&self, request: &Self::Request, error: String) -> Self::Response;
@@ -88,14 +96,19 @@ impl<W: Wire> Page<W::Request> for Posting<W> {
     }
 
     /// Handles a reply from the worker to the request it had, and posts
-    /// the next.
+    /// the next unless the worker is still working on it (see
+    /// [`Wire::finishes`]).
     fn receive(&self, parts: Vec<Uint8Array>) -> Result<(), Refused> {
         let response = {
             let mailbox = self.mailbox.borrow();
             self.wire.receive(parts, mailbox.busy())?
         };
         if let Some(response) = response {
+            let finishes = self.wire.finishes(&response);
             let _ = self.sender.unbounded_send(response);
+            if !finishes {
+                return Ok(());
+            }
         }
         let next = self.mailbox.borrow_mut().done();
         self.act(next);

@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 use iced::theme::palette::Extended;
 use iced::widget::slider::{self as slide, HandleShape};
-use iced::widget::{button, checkbox, container, rule, scrollable, text, text_input};
+use iced::widget::{button, checkbox, container, progress_bar, rule, scrollable, text, text_input};
 use iced::{Background, Border, Color, Font, Shadow, Theme, Vector, border, color, font};
 use varde_render::{Colors, Srgb, Srgba};
 
@@ -1441,6 +1441,26 @@ pub fn float_panel(theme: &Theme) -> container::Style {
     container::Style {
         border: outline(p.line, FLOAT_RADIUS),
         ..filled(p.panel, p.muted)
+    }
+}
+
+/// The card floating under the toolbar while a regeneration is slow: a
+/// [`float_panel`] with the operation panel's card's shadow.
+pub fn regenerating_card(theme: &Theme) -> container::Style {
+    container::Style {
+        shadow: CARD_SHADOW,
+        ..float_panel(theme)
+    }
+}
+
+/// The bar in a [`regenerating_card`]: the share of the steps done in the
+/// accent, on the well.
+pub fn regenerating_bar(theme: &Theme) -> progress_bar::Style {
+    let p = palette(theme);
+    progress_bar::Style {
+        background: Background::Color(well(p)),
+        bar: Background::Color(p.accent),
+        border: border::rounded(2),
     }
 }
 

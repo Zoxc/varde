@@ -526,6 +526,7 @@ impl Varde {
             Message::AnimationFrame(now) => self.with_doc(|doc, _| {
                 doc.animation_frame(now);
                 doc.tick(now);
+                doc.feed.tick(&doc.editor, now);
                 doc.rail.tick(now);
             }),
         }
@@ -865,12 +866,18 @@ impl Varde {
             // The browser asks before the page goes, while it would lose
             // changes.
             only_if(self.at_stake(), platform::guard),
-            // While the camera turns, and edits wait on the solver until
-            // they've waited long enough to say so; and while a thumbnail
-            // is rendered, by the viewport's next frame, and on the web
-            // read back on a later one.
+            // While the camera turns, and edits wait on the solver or the
+            // model on regeneration until they've waited long enough to
+            // say so; and while a thumbnail is rendered, by the
+            // viewport's next frame, and on the web read back on a later
+            // one.
             only_if(
-                doc.is_some_and(|doc| doc.animating() || doc.timing() || doc.rendering_thumbnail()),
+                doc.is_some_and(|doc| {
+                    doc.animating()
+                        || doc.timing()
+                        || doc.feed.timing(&doc.editor)
+                        || doc.rendering_thumbnail()
+                }),
                 || window::frames().map(Message::AnimationFrame),
             ),
             iced::system::theme_changes().map(Message::SystemTheme),

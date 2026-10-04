@@ -4,6 +4,9 @@
 use std::cell::OnceCell;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
+
+use iced::time::Instant;
 
 use varde_document::{
     BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Operation, Placement, Plane,
@@ -12,7 +15,7 @@ use varde_document::{
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{
     Draft, Drafted, ErrorGeometry, FeatureFailure, Inspect, InspectPick, Inspected, Picking,
-    Request, Response, Transport,
+    Progress, Request, Response, Transport,
 };
 use varde_view::{MeshStatus, PickIndex};
 
@@ -111,7 +114,18 @@ pub(crate) struct MeshFeed {
     /// The newest model shown without a draft, if there's been one: what
     /// a save's thumbnail shows, see [`MeshFeed::committed`].
     committed: Option<Committed>,
+    /// How far the regeneration the lane is working on has got, as it
+    /// last said, until it's answered.
+    progress: Option<Progress>,
+    /// Since when the model shown has lagged the editor, as frames saw it,
+    /// see [`MeshFeed::tick`], and whether for [`SLOW`] or longer: then
+    /// the regeneration shows over the viewport.
+    lagging: Option<(Instant, bool)>,
 }
+
+/// How long the model shown lags the editor before the regeneration
+/// shows over the viewport: one that's quicker never flickers there.
+pub(crate) const SLOW: Duration = Duration::from_millis(250);
 
 /// A model shown without a draft: its mesh, its picking tables for the
 /// bodies of its parts, and what it's of.
@@ -278,8 +292,13 @@ impl MeshFeed {
     /// which are the document's to take (see `Doc::computed`).
     pub(crate) fn apply(&mut self, response: Response) {
         let Some(asked) = Asked::of(&response) else {
+            if let Response::Progress(progress) = response {
+                self.progress = Some(progress);
+            }
             return;
         };
+        // The regeneration the progress was of is done, wanted or not.
+        self.progress = None;
         if !self.wanted(asked) {
             return;
         }
@@ -349,7 +368,7 @@ impl MeshFeed {
                 self.failed = None;
             }
             Response::Failed { error, .. } => self.failed = Some((asked, error)),
-            Response::Exported { .. } => {}
+            Response::Exported { .. } | Response::Progress(_) => {}
         }
     }
 
@@ -549,6 +568,36 @@ impl MeshFeed {
         match &self.failed {
             Some((.., error)) => MeshStatus::Failed(error),
             None => MeshStatus::Current,
+        }
+    }
+
+    /// The regeneration to show over the viewport: while the model shown
+    /// has lagged the editor for [`SLOW`] or longer, with how far the
+    /// lane has got, if it has said.
+    pub(crate) fn slow(&self, editor: &Editor) -> Option<Option<&Progress>> {
+        let slow = self.lagging.is_some_and(|(_, slow)| slow);
+        (slow && self.status(editor) == MeshStatus::Regenerating).then_some(self.progress.as_ref())
+    }
+
+    /// Notes the time `now`, telling whether the model shown has lagged
+    /// the editor for [`SLOW`] or longer.
+    pub(crate) fn tick(&mut self, editor: &Editor, now: Instant) {
+        if self.status(editor) != MeshStatus::Regenerating {
+            self.lagging = None;
+            return;
+        }
+        let (since, slow) = self.lagging.get_or_insert((now, false));
+        *slow = now.saturating_duration_since(*since) >= SLOW;
+    }
+
+    /// Whether frames are wanted for [`MeshFeed::tick`]: while the model
+    /// shown lags and that's not been long enough to show, and once more
+    /// after, to start again.
+    pub(crate) fn timing(&self, editor: &Editor) -> bool {
+        let regenerating = self.status(editor) == MeshStatus::Regenerating;
+        match self.lagging {
+            Some((_, slow)) => !(regenerating && slow),
+            None => regenerating,
         }
     }
 

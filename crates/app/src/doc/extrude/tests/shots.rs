@@ -1,6 +1,7 @@
 //! Screenshots of the document screen, to look at: the extrude, revolve
 //! and combine sessions, their panels and the extrude's handle, the measure
-//! tool, the Timeline, the delete prompt and the file menu, drawn offscreen by iced's headless wgpu renderer, which draws the
+//! tool, the Timeline, the delete prompt, the file menu and a slow
+//! regeneration's card, drawn offscreen by iced's headless wgpu renderer, which draws the
 //! viewport's scene too. Every test is `#[ignore]`d and writes nothing
 //! unless `VARDE_SHOTS` names the directory for the PNGs, see
 //! `agents/viewport.md`. Pixels differ by GPU and driver, so nothing is
@@ -1912,6 +1913,48 @@ fn shots_31_save_as_dialog() {
         );
         let computer = varde_view::SavePlace::Computer;
         camera.take_view(dialog(computer), "31-save-as-computer", Shot::new());
+    });
+}
+
+/// Scenario 32: a slow regeneration's card under the toolbar: before
+/// the lane has said how far it has got, then on the example's extrude,
+/// then drawing the model.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_32_regenerating() {
+    shooting(|camera| {
+        let (mut doc, _) = example();
+        framed(&mut doc);
+        let doc = &doc;
+        let features = doc.editor.document().features();
+        let steps = u32::try_from(features.len()).unwrap() + 1;
+        let extrude = varde_regen::Progress {
+            step: 1,
+            steps,
+            stage: varde_regen::Stage::Feature(features[1].name.clone()),
+        };
+        let drawing = varde_regen::Progress {
+            step: steps - 1,
+            steps,
+            stage: varde_regen::Stage::Drawing,
+        };
+        let card = |progress| {
+            move |mode| {
+                let mut state = doc.state(false, mode, Default::default(), Default::default());
+                state.regenerating = Some(progress);
+                varde_view::document(state)
+            }
+        };
+        camera.take_view(card(None), "32-regenerating-unsaid", Shot::new());
+        camera.take_view(card(Some(&extrude)), "32-regenerating", Shot::new());
+        let dark = Shot::new().dark();
+        camera.take_view(card(Some(&extrude)), "32-regenerating-dark", dark);
+        let scale2 = Shot::new().scale(2.0);
+        camera.take_view(
+            card(Some(&drawing)),
+            "32-regenerating-drawing-scale2",
+            scale2,
+        );
     });
 }
 

@@ -610,14 +610,21 @@ fn nothing_is_requested_until_the_lane_is_ready() {
 
     let (lane, mut responses) = lane::spawn();
     doc.lane_ready(lane);
-    let response = block_on(responses.next()).unwrap();
-    doc.computed(response);
+    // Through the regeneration's progress, to its answer.
+    let mut answered = |doc: &mut Doc| loop {
+        let response = block_on(responses.next()).unwrap();
+        let progress = matches!(response, varde_regen::Response::Progress(_));
+        doc.computed(response);
+        if !progress {
+            break;
+        }
+    };
+    answered(&mut doc);
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
     assert_eq!(doc.feed.sketches().segment_count(), 1);
 
     doc.update(Edit::Undo);
-    let response = block_on(responses.next()).unwrap();
-    doc.computed(response);
+    answered(&mut doc);
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
     assert_eq!(doc.feed.sketches().segment_count(), 0);
 }

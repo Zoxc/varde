@@ -859,3 +859,45 @@ fn merged_before_agrees_with_regen_on_random_histories() {
         }
     }
 }
+
+#[test]
+fn a_slow_regeneration_shows_with_its_progress_until_answered() {
+    let mut editor = one_line();
+    let (mut feed, regen) = connected();
+    feed.request(&editor, None);
+    feed.apply(handle(regen.borrow_mut().remove(0)));
+    let start = Instant::now();
+    feed.tick(&editor, start);
+    assert!(!feed.timing(&editor), "nothing to time while current");
+
+    add_line(&mut editor);
+    feed.request(&editor, None);
+    assert!(feed.timing(&editor));
+    feed.tick(&editor, start);
+    assert_eq!(feed.slow(&editor), None, "not shown at once");
+    assert!(feed.timing(&editor));
+
+    feed.tick(&editor, start + SLOW);
+    assert_eq!(feed.slow(&editor), Some(None), "shown before any progress");
+    assert!(!feed.timing(&editor), "no frames while it shows");
+    let progress = Progress {
+        step: 0,
+        steps: 2,
+        stage: varde_regen::Stage::Feature("Sketch 1".to_owned()),
+    };
+    feed.apply(Response::Progress(progress.clone()));
+    assert_eq!(feed.slow(&editor), Some(Some(&progress)));
+    assert_eq!(feed.status(&editor), MeshStatus::Regenerating);
+
+    // Answered: gone at once, and one more frame starts the clock again.
+    feed.apply(handle(regen.borrow_mut().remove(0)));
+    assert_eq!(feed.slow(&editor), None);
+    assert!(feed.timing(&editor));
+    feed.tick(&editor, start + SLOW * 2);
+    assert!(!feed.timing(&editor));
+
+    add_line(&mut editor);
+    feed.request(&editor, None);
+    feed.tick(&editor, start + SLOW * 3);
+    assert_eq!(feed.slow(&editor), None, "the next waits its turn too");
+}

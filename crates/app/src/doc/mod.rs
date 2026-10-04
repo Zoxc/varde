@@ -1075,6 +1075,11 @@ impl Doc {
                 self.export_welded(cx, export, result);
                 Next::Stay
             }
+            // Only news: nothing shown changes but the progress.
+            ForDoc::Computed(response @ varde_regen::Response::Progress(_)) => {
+                self.feed.apply(response);
+                Next::Stay
+            }
             ForDoc::Computed(response) => {
                 self.computed(response);
                 Next::Stay
@@ -1129,6 +1134,7 @@ impl Doc {
             opacity_preview: self.opacity_preview,
             sketches: self.feed.sketches(),
             mesh_status: self.feed.status(&self.editor),
+            regenerating: self.feed.slow(&self.editor),
             picking: self.model_picking(),
             highlight: self.highlight(),
             errors: self.shown_errors(),
