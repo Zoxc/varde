@@ -271,7 +271,7 @@ pub(crate) const SCALE_EDGE_SHORT: &str =
 /// Why a scale fails: the typed length over the edge's is a factor out
 /// of range.
 pub(crate) const SCALE_TOO_FAR: &str =
-    "the length is too far from the edge's: it would scale by more than a thousand times";
+    "the length is too far from the edge's: more than a thousand times longer or shorter";
 
 /// Why a scale along its edge's axis only fails: the edge isn't
 /// straight.

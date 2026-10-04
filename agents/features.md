@@ -2245,10 +2245,12 @@ pub enum ScaleFactor {
   (`measure::measure` with `Pick::Edge`: the whole chain's length, its
   ends where it's a line), cached (`Entry::Length(EdgeLength { length,
   line })`, keyed by the body's key, the names, the point and the fit
-  tolerance). Then: the length must be above the resolution before the
+  tolerance), on the body's topology as drawing it keeps it
+  (`inspect::topology`: the edge is picked on the model as of the
+  scale, which drew that body). Then: the length must be above the resolution before the
   division ("its edge is too short to scale by: ..."), `f = L / ℓ` within
-  `1e-3 ..= 1e3` ("the length is too far from the edge's: it would
-  scale by more than a thousand times"); along its axis only, the edge
+  `1e-3 ..= 1e3` ("the length is too far from the edge's: more than
+  a thousand times longer or shorter"); along its axis only, the edge
   must be straight ("its edge isn't straight, so it can't scale along
   its axis only") and along a world axis: the sum of the squares of its
   direction's two smaller components at most `AXIS_SINE²` (`1e-18`) of
@@ -2284,7 +2286,10 @@ pub enum ScaleFactor {
   not along an axis, not measured) carries the edge's curves on its
   body as the failure's geometry (`edge_geometry`, as an align draws a
   refused reference), so the panel's error and the viewport show which
-  edge; an edge not found shows nothing.
+  edge; an edge not found shows nothing. Its topology is the cached one
+  drawing keeps (a refused scale leaves its bodies as they were, which
+  the model draws), so a length refused at every keystroke doesn't work
+  out the body's topology each time.
 - `along_axis` and `AXIS_SINE` are public (`varde_regen::along_axis`):
   the panel offers "Along its axis only" by the same test.
 
@@ -2339,15 +2344,23 @@ built in the style of the mock's nearest one, Move's.
   failed, the edge measured on the model shown: the session asks the
   regeneration lane to measure it with every request
   (`Doc::scale_inspect`, an `InspectPick` of the edge's keys on the body
-  drawing its body, through the measure tool's `Inspect`, which the two
-  never share: they're never open together). The Length field
+  drawing its body, through the measure tool's `Inspect`; the request
+  takes the measure tool's picks first, then the scale's, then what's
+  selected, and the three are never wanted together: the tool closes
+  the session, and the selection is measured only with no operation
+  open). The length is read only from an answer to the scale's own
+  request (`MeshFeed::inspected_of`), never another edge's. The Length field
   (`Scale::length_ask`) starts empty, asking for nothing yet.
   "Along its axis only" (an icon toggle, `MotionLook::AxisOnly`) shows
   where the edge measured is a straight line along a world axis
   (`varde_regen::along_axis`, regenerating's own test), or while it's on
   (so an edge an upstream edit tilted can be turned back to uniform).
   The edge picked is lit in the second colour on its selected bodies,
-  found again by its names on each model shown.
+  found again by its names on each model shown. A body merged into
+  another once the model shows the merge (a join or combine redone, a
+  pick made before the model knew it) takes the edge with it on to the
+  holder, as the bodies follow (`MotionSession::follow`), so the scale
+  stays whole.
 - **Whole and ready**: bodies, the point, and the mode's values: a
   factor other than 1 ("enter a factor other than 1"), or an edge on a
   scaled body ("pick the edge to give a length", "pick an edge of a
@@ -2423,4 +2436,5 @@ length a thousand times too far refused with the edge drawn; a revolved
 ring × 25.4 noting its fitted face, none scaled down; editing from the
 Timeline, a move by nothing while the point is picked, Esc, another
 factor and undo; a point an undo takes away said to be gone, back on
-redo).
+redo; an edge picked on a disc a redone combine then merges into the
+plate following it there, still whole and measured).

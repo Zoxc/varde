@@ -539,3 +539,55 @@ fn a_point_an_undo_takes_away_is_gone() {
     plates.motion(MotionLook::OriginPoint);
     assert!(plates.doc.motion_ready());
 }
+
+/// An edge picked on a body that a combine, brought back by a redo,
+/// merges into another: the edge follows its body on to the body
+/// holding it, as the bodies do, so the scale stays whole and scales to
+/// the edge's length there.
+#[test]
+fn an_edge_follows_its_body_a_redone_combine_merges() {
+    let mut plates = super::plates();
+    let [plate, right, _] = plates.bodies;
+    let combine = varde_document::Combine {
+        target: plate,
+        tools: vec![right],
+        op: varde_document::BodyOp::Union,
+        keep_tools: false,
+    };
+    let add = plates.doc.editor.document().add_feature(combine.into());
+    plates.doc.apply(add);
+    plates.doc.sync();
+    plates.answer();
+    plates.doc.update(Edit::Undo);
+    plates.answer();
+
+    plates.doc.look(Look::StartScale);
+    plates.motion(MotionLook::ScaleMode(ScaleMode::EdgeLength));
+    // The disc's top rim, 2π·5 round; its body is the one scaled.
+    let top = rim(&plates, right, DVec3::new(20.0, 0.0, 15.0));
+    plates.click_at(right, Picked::Edge(top), DVec3::new(25.0, 0.0, 15.0));
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert_eq!(session.bodies, [right]);
+    assert!(matches!(session.scale.edge, Some(EdgeRef { body, .. }) if body == right));
+    plates.input(MotionField::Length, "20");
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+
+    plates.doc.update(Edit::Redo);
+    plates.answer();
+    let session = plates.doc.motion.as_ref().expect("still set up");
+    assert_eq!(session.bodies, [plate], "the disc followed on to the plate");
+    assert!(
+        matches!(session.scale.edge, Some(EdgeRef { body, .. }) if body == plate),
+        "the edge with it"
+    );
+    assert!(plates.doc.motion_ready());
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    let found = plates.doc.feed.draft_scale().expect("found");
+    let length = found.length.expect("the rim measured");
+    assert!(
+        (length - 10.0 * std::f64::consts::PI).abs() < 1e-9,
+        "{length}"
+    );
+    assert_eq!(plates.doc.scale_lit().len(), 1, "the rim lit on the plate");
+}

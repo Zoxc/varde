@@ -408,10 +408,6 @@ impl Request {
 
 /// The answer to a [`Request`].
 #[derive(Debug, Clone)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "one answer a regeneration, moved whole: a model's is the one that matters"
-)]
 pub enum Response {
     Regenerated {
         generation: Generation,

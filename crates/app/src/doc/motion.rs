@@ -847,15 +847,21 @@ impl MotionSession {
 
     /// Moves the bodies `merges` (the merges before the feature) have
     /// merged into others on to the bodies holding them, as a click on
-    /// one picks, as a combine's ([`super::CombineSession`]): whether any
-    /// moved.
+    /// one picks, as a combine's ([`super::CombineSession`]), and a
+    /// scale's edge with them (it must be on one it scales; its names
+    /// find it on the holder): whether any moved.
     fn follow(&mut self, merges: &Merges) -> bool {
         let held = |body: BodyId| merges.holder(body).unwrap_or(body);
         let mut bodies: Vec<BodyId> = self.bodies.iter().map(|&body| held(body)).collect();
         bodies.sort_unstable();
         bodies.dedup();
-        let moved = bodies != self.bodies;
+        let mut moved = bodies != self.bodies;
         self.bodies = bodies;
+        if let Some(edge) = &mut self.scale.edge {
+            let body = held(edge.body);
+            moved |= body != edge.body;
+            edge.body = body;
+        }
         moved
     }
 
@@ -1210,26 +1216,8 @@ impl Doc {
     fn reference_of(&self, target: Picked, at: DVec3) -> Result<Reference, Cow<'static, str>> {
         let session = self.motion.as_ref().ok_or("Nothing is set up")?;
         let index = self.feed.pick_index();
-        let document = self.editor.document();
-        let features = document.features();
-        let before = (session.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len());
-        let naming = Naming::before(document, before, self.shown());
-        let noun = session.kind.noun().to_lowercase();
-        let refused = |why: Unnamed, what: &str| -> Cow<'static, str> {
-            match why {
-                Unnamed::Missing => format!("That {what} isn't in the model").into(),
-                Unnamed::Later => {
-                    let article = if what.starts_with('e') { "an" } else { "a" };
-                    format!("Only {article} {what} made before the {noun} can be picked").into()
-                }
-                Unnamed::Unclear => format!(
-                    "Which body that {what} is on at the {noun} can't be told: pick another"
-                )
-                .into(),
-            }
-        };
+        let naming = self.motion_naming().ok_or("Nothing is set up")?;
+        let refused = |why: Unnamed, what: &str| unnamed(why, what, session.kind);
         let summary =
             |face: u32| (index.picking().faces().get(face as usize)).map(|face| face.summary);
         let not_an_axis = match session.kind {
@@ -1497,6 +1485,19 @@ impl Doc {
             return None;
         }
         Some((feature, kind))
+    }
+
+    /// The naming of picks as of the move, mirror, pattern, align or
+    /// scale being set up ([`Naming`]): the history stopped at its
+    /// feature, all of it for a new one.
+    fn motion_naming(&self) -> Option<Naming> {
+        let session = self.motion.as_ref()?;
+        let document = self.editor.document();
+        let features = document.features();
+        let before = (session.feature)
+            .and_then(|id| features.iter().position(|feature| feature.id == id))
+            .unwrap_or(features.len());
+        Some(Naming::before(document, before, self.shown()))
     }
 
     /// The edge or face hovered, if it's one a click takes as the axis or
@@ -1827,6 +1828,23 @@ fn copy_user<'a>(
         let body = dropped.iter().find(|body| named.contains(body))?;
         Some((feature, document.body(*body)?))
     })
+}
+
+/// `Naming`'s refusal `why` of a pick of `what` ("corner", "edge",
+/// "face", "body") for the `kind` being set up, as words for the status
+/// bar: "Only an edge made before the scale can be picked".
+fn unnamed(why: Unnamed, what: &str, kind: MotionKind) -> Cow<'static, str> {
+    let noun = kind.noun().to_lowercase();
+    match why {
+        Unnamed::Missing => format!("That {what} isn't in the model").into(),
+        Unnamed::Later => {
+            let article = if what.starts_with('e') { "an" } else { "a" };
+            format!("Only {article} {what} made before the {noun} can be picked").into()
+        }
+        Unnamed::Unclear => {
+            format!("Which body that {what} is on at the {noun} can't be told: pick another").into()
+        }
+    }
 }
 
 mod align;

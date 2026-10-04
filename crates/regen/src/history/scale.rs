@@ -33,7 +33,7 @@ use super::motion::{How, place, reference_key};
 use super::{Evaluation, Failed, own_solids};
 use crate::cache::{Cache, EdgeLength};
 use crate::message::{self, Moving, Whose};
-use crate::{ErrorGeometry, ScaleFound};
+use crate::{ErrorGeometry, ScaleFound, inspect};
 
 /// How near a world axis an edge must run for a scale along its axis
 /// only: the sine of the angle between them at most this. It names the
@@ -78,18 +78,15 @@ pub(super) fn evaluate_scale(
         fitted,
     );
     let centre = centre?;
-    // An edge length refused once its edge is found shows the edge.
-    let shown = |failed: Failed| match scale.factor.edge() {
+    // An edge length refused (its edge's failure comes through the
+    // factors) shows the edge, once it's found.
+    let factors = factors.map_err(|failed| match scale.factor.edge() {
         Some(on) if failed.geometry.is_none() => Failed {
-            geometry: edge_geometry(on, evaluation, tolerance),
+            geometry: edge_geometry(on, evaluation, tolerance, cache),
             ..failed
         },
         _ => failed,
-    };
-    if let Some(edge) = edge {
-        edge.map_err(shown)?;
-    }
-    let factors = factors.map_err(shown)?;
+    })?;
     let motion = Motion::scale(centre, factors).ok_or(message::SCALE_FACTOR)?;
     let how = How {
         moving: Moving::Scale,
@@ -109,7 +106,9 @@ pub(super) fn evaluate_scale(
 /// The edge `edge` as measured on its body, one of the scale's (each of
 /// which has a solid of its own in `evaluation`), cached by the body's
 /// key, the edge's names and point and the fit tolerance; or why it
-/// isn't found or measured.
+/// isn't found or measured. The body's topology is the one drawing it
+/// keeps ([`inspect::topology`]): the edge is picked on the body as the
+/// features before the scale leave it, which the model then draws.
 fn measured(
     edge: &EdgeRef,
     evaluation: &Evaluation,
@@ -120,9 +119,10 @@ fn measured(
         .find(|made| made.body == edge.body)
         .ok_or(message::SCALE_EDGE_NOT_FOUND)?;
     let key = reference_key("scale edge", made.key, &edge.faces, edge.near, tolerance);
+    let topology = (!cache.holds(key)).then(|| inspect::topology(made, cache));
     cache.length(key, || {
         let solid = &made.solid;
-        let topology = solid.topology();
+        let topology = topology.unwrap_or_else(|| Arc::new(solid.topology()));
         let chain = (topology.edge(solid, edge.faces, edge.near))
             .map_err(|_| message::SCALE_EDGE_NOT_FOUND)?;
         let target = Target {
@@ -146,15 +146,19 @@ fn measured(
 
 /// What a refused edge length shows: the curves of `edge` on its body's
 /// solid in `evaluation`, if it's found there, drawn at the display of
-/// `tolerance` as an align's refused references are.
+/// `tolerance` as an align's refused references are. The topology is
+/// the one drawing the body keeps ([`inspect::topology`]): a refused
+/// scale leaves its bodies as they were, so the model draws them, and a
+/// length typed again and again refused doesn't work it out each time.
 fn edge_geometry(
     edge: &EdgeRef,
     evaluation: &Evaluation,
     tolerance: &Tolerance,
+    cache: &mut Cache,
 ) -> Option<Arc<ErrorGeometry>> {
     let made = (evaluation.bodies.iter()).find(|made| made.body == edge.body)?;
     let solid = &made.solid;
-    let topology = solid.topology();
+    let topology = inspect::topology(made, cache);
     let chain = topology.edge(solid, edge.faces, edge.near).ok()?;
     let chain = topology.chains().get(chain as usize)?;
     let mesh = solid.mesh();

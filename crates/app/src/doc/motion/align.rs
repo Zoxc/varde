@@ -30,7 +30,7 @@ use varde_view::{
     Naming, Pick, PickIndex, Picked, Snapped, Unnamed, align_info, direction_name, point_name,
 };
 
-use super::{Doc, Merges, MotionSession, OUT_OF_DATE};
+use super::{Doc, Merges, MotionSession, OUT_OF_DATE, unnamed};
 
 /// Why a pick can't be an align's point or direction, in the words the
 /// status bar shows.
@@ -642,24 +642,8 @@ impl Doc {
         let session = self.motion.as_ref().ok_or("Nothing is set up")?;
         let index = self.feed.pick_index();
         let document = self.editor.document();
-        let features = document.features();
-        let before = (session.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len());
-        let naming = Naming::before(document, before, self.shown());
-        let refused = |why: Unnamed, what: &str| -> Cow<'static, str> {
-            match why {
-                Unnamed::Missing => format!("That {what} isn't in the model").into(),
-                Unnamed::Later => {
-                    let article = if what.starts_with('e') { "an" } else { "a" };
-                    format!("Only {article} {what} made before the align can be picked").into()
-                }
-                Unnamed::Unclear => {
-                    format!("Which body that {what} is on at the align can't be told: pick another")
-                        .into()
-                }
-            }
-        };
+        let naming = self.motion_naming().ok_or("Nothing is set up")?;
+        let refused = |why: Unnamed, what: &str| unnamed(why, what, session.kind);
         let taken = match slot.role {
             AlignRole::Point => Taken::Point(point_of(index, &naming, pick, &refused)?),
             AlignRole::Primary | AlignRole::Secondary => {

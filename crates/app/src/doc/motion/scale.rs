@@ -7,8 +7,8 @@
 //! length (the edge picked on the model, its length now shown beside it,
 //! measured by the regeneration lane, and "Along its axis only" offered
 //! for a straight edge along a world axis). Each is named as of the
-//! feature ([`Naming`]); what's picked is lit and drawn on the model
-//! shown, found again by its names when that changes.
+//! feature ([`Naming`](varde_view::Naming)); what's picked is lit and
+//! drawn on the model shown, found again by its names when that changes.
 
 use std::borrow::Cow;
 
@@ -17,12 +17,12 @@ use varde_document::{AxisRef, BodyId, Document, EdgeRef, PointRef, Scale, ScaleF
 use varde_expr::{Unit, Value};
 use varde_regen::{EdgeForm, Entity, InspectPick, Measure};
 use varde_view::{
-    MotionField, MotionKind, MotionPick, Naming, Pick, PickIndex, Picked, ScaleMode, ScaleView,
-    Unnamed, axis_name, point_name, scale_info,
+    MotionField, MotionKind, MotionPick, Pick, PickIndex, Picked, ScaleMode, ScaleView, Unnamed,
+    axis_name, point_name, scale_info,
 };
 
 use super::align::{Mark, Taken, point_at, point_of};
-use super::{Doc, MotionSession, OUT_OF_DATE};
+use super::{Doc, MotionSession, OUT_OF_DATE, unnamed};
 use crate::doc::regions::TypedText;
 
 /// A scale's point and edge as picked, and where they were picked.
@@ -248,39 +248,14 @@ impl MotionSession {
 const NOT_AN_EDGE: &str = "Only an edge can be scaled to a length";
 
 impl Doc {
-    /// `Naming`'s refusal of `what` as words for the status bar.
-    fn scale_refused(why: Unnamed, what: &str) -> Cow<'static, str> {
-        match why {
-            Unnamed::Missing => format!("That {what} isn't in the model").into(),
-            Unnamed::Later => {
-                let article = if what.starts_with('e') { "an" } else { "a" };
-                format!("Only {article} {what} made before the scale can be picked").into()
-            }
-            Unnamed::Unclear => {
-                format!("Which body that {what} is on at the scale can't be told: pick another")
-                    .into()
-            }
-        }
-    }
-
-    /// The naming of picks as of the scale being set up.
-    fn scale_naming(&self) -> Option<Naming> {
-        let session = self.motion.as_ref()?;
-        let document = self.editor.document();
-        let features = document.features();
-        let before = (session.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len());
-        Some(Naming::before(document, before, self.shown()))
-    }
-
     /// `pick` of the model shown as the point of the scale being set up,
     /// named as the feature stores it, as an align's point is: a corner,
     /// a straight edge's middle or a round edge's centre, on any body
     /// made before the scale. Refused, why, if not.
     pub(super) fn scale_point_of(&self, pick: Pick) -> Result<PointRef, Cow<'static, str>> {
-        let naming = self.scale_naming().ok_or("Nothing is set up")?;
-        point_of(self.feed.pick_index(), &naming, pick, &Self::scale_refused)
+        let naming = self.motion_naming().ok_or("Nothing is set up")?;
+        let refused = |why: Unnamed, what: &str| unnamed(why, what, MotionKind::Scale);
+        point_of(self.feed.pick_index(), &naming, pick, &refused)
     }
 
     /// `pick` of the model shown as the edge of the scale being set up:
@@ -292,11 +267,11 @@ impl Doc {
         let Picked::Edge(edge) = pick.target else {
             return Err(NOT_AN_EDGE.into());
         };
-        let naming = self.scale_naming().ok_or("Nothing is set up")?;
+        let naming = self.motion_naming().ok_or("Nothing is set up")?;
         let index = self.feed.pick_index();
         let named = naming
             .edge_ref(index, edge, pick.at)
-            .map_err(|why| Self::scale_refused(why, "edge"))?;
+            .map_err(|why| unnamed(why, "edge", MotionKind::Scale))?;
         let document = self.editor.document();
         let merged = self.feed.merged_before(document, session.feature);
         let held = merged.holder(named.body).unwrap_or(named.body);
@@ -304,7 +279,7 @@ impl Doc {
             return Err("Pick an edge of a body it scales".into());
         }
         if !super::super::combine::pickable(document, held, session.feature) {
-            return Err(Self::scale_refused(Unnamed::Later, "body"));
+            return Err(unnamed(Unnamed::Later, "body", MotionKind::Scale));
         }
         Ok(EdgeRef {
             body: held,
@@ -411,9 +386,11 @@ impl Doc {
     }
 
     /// The edge measured for the scale being set up, if the lane has
-    /// answered: its length and, for a straight one, its ends.
+    /// answered for it (not for another edge picked before, or what's
+    /// selected): its length and, for a straight one, its ends.
     fn scale_measured(&self) -> Option<(f64, Option<[DVec3; 2]>)> {
-        let probed = self.feed.inspected()?.first.as_ref().ok()?;
+        let asked = self.scale_inspect()?;
+        let probed = self.feed.inspected_of(asked)?.first.as_ref().ok()?;
         match probed.measure.as_ref().ok()? {
             Measure::Edge { length, shape, .. } => {
                 let line = match shape {

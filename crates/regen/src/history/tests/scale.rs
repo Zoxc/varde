@@ -421,7 +421,7 @@ fn refusals() {
         DVec3::new(10.0, 5.0, 10.0),
     );
     let too_far =
-        "the length is too far from the edge's: it would scale by more than a thousand times";
+        "the length is too far from the edge's: more than a thousand times longer or shorter";
     for text in ["10001", "0.009"] {
         set(&mut editor, id, to_length(&mm(), &[a], top, text, false));
         unmoved(&editor, id, too_far);
@@ -603,7 +603,7 @@ fn a_draft_answers_what_the_scale_found() {
     let drafted = answer.draft.unwrap();
     assert_eq!(
         drafted.error.as_deref(),
-        Some("the length is too far from the edge's: it would scale by more than a thousand times")
+        Some("the length is too far from the edge's: more than a thousand times longer or shorter")
     );
     let found = *drafted.scale.unwrap();
     assert_eq!(found.centre, Some([0.0; 3]));
