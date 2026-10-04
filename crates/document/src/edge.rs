@@ -67,9 +67,7 @@ impl EdgeRef {
     pub fn order(&self, other: &EdgeRef) -> Ordering {
         (self.body, self.faces)
             .cmp(&(other.body, other.faces))
-            .then_with(|| self.near.x.total_cmp(&other.near.x))
-            .then_with(|| self.near.y.total_cmp(&other.near.y))
-            .then_with(|| self.near.z.total_cmp(&other.near.z))
+            .then_with(|| point_order(self.near, other.near))
     }
 
     /// Checks what needs only the reference: its keys sorted and
@@ -109,6 +107,15 @@ impl fmt::Display for EdgeError {
 }
 
 impl std::error::Error for EdgeError {}
+
+/// Points in the order references keep them in: their coordinates in
+/// turn ([`f64::total_cmp`]), `Equal` only for the same point to the
+/// bit.
+pub(crate) fn point_order(a: DVec3, b: DVec3) -> Ordering {
+    (a.x.total_cmp(&b.x))
+        .then_with(|| a.y.total_cmp(&b.y))
+        .then_with(|| a.z.total_cmp(&b.z))
+}
 
 #[cfg(test)]
 mod tests;

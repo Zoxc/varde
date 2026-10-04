@@ -46,7 +46,7 @@ impl MotionSession {
     /// values as they last read. Equal is the same either way round, so
     /// it's stored unflipped.
     pub(super) fn chamfer(&self) -> Option<Chamfer> {
-        if self.blend.edges.is_empty() {
+        if self.blend.edges.refs.is_empty() {
             return None;
         }
         let value = |field: MotionField| self.field(field).value.clone();
@@ -57,7 +57,7 @@ impl MotionSession {
             ChamferType::Angle => ChamferSize::Angle(distance, value(MotionField::ChamferAngle)?),
         };
         Some(Chamfer {
-            edges: self.blend.edges.clone(),
+            edges: self.blend.edges.refs.clone(),
             distances,
             chains: self.blend.chains,
             flip: self.flip && self.chamfer_type != ChamferType::Equal,

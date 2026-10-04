@@ -140,7 +140,7 @@ fn check_session(plates: &Plates, what: &str) {
         let kind = document.feature(id).map(|feature| &feature.kind);
         assert!(matches!(kind, Some(FeatureKind::Chamfer(_))), "{what}");
     }
-    let edges = &session.blend.edges;
+    let edges = &session.blend.edges.refs;
     assert!(
         edges.windows(2).all(|pair| pair[0].order(&pair[1]).is_lt()),
         "{what}: {edges:?}"
@@ -202,6 +202,7 @@ fn check_lit(plates: &Plates, what: &str) {
     }
     let body = session
         .blend
+        .edges
         .body()
         .unwrap_or_else(|| panic!("{what}: lit {lit:?} with no edges"));
     let merged = plates.doc.feed.merged_bodies();
@@ -254,7 +255,7 @@ fn merge(plates: &mut Plates, rng: &mut Rng) {
         let mut target = *rng.pick(&all);
         let mut tool = *rng.pick(&all);
         let session = plates.doc.motion.as_ref();
-        if let Some(body) = session.and_then(|session| session.blend.body())
+        if let Some(body) = session.and_then(|session| session.blend.edges.body())
             && rng.below(2) == 0
         {
             if rng.below(2) == 0 {
@@ -343,7 +344,7 @@ fn run(seed: u64, steps: usize) {
             }
             12 => {
                 let edges = (plates.doc.motion.as_ref())
-                    .map(|session| session.blend.edges.clone())
+                    .map(|session| session.blend.edges.refs.clone())
                     .unwrap_or_default();
                 if !edges.is_empty() {
                     plates.motion(MotionLook::DropEdge(*rng.pick(&edges)));
@@ -428,7 +429,7 @@ fn run(seed: u64, steps: usize) {
                 if !ids.is_empty() && plates.doc.motion.is_none() {
                     plates.doc.look(Look::EditFeature(*rng.pick(&ids)));
                     let edges = (plates.doc.motion.as_ref())
-                        .map(|session| session.blend.edges.clone())
+                        .map(|session| session.blend.edges.refs.clone())
                         .unwrap_or_default();
                     for edge in edges {
                         plates.motion(MotionLook::DropEdge(edge));

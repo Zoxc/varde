@@ -2960,7 +2960,12 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
 The move's session (`MotionSession`, above) with `MotionKind::Chamfer`;
 **the edge session**, picking the edges a blend cuts, is its own part
 (`app/src/doc/motion/blend.rs`, `BlendSetup`; `view/src/motion/blend.rs`,
-`BlendEdges`, its Edges field and the Tangent chain tick), shared by
+`BlendEdges`, its Edges field and the Tangent chain tick), its picking
+the part it shares with the face session below
+(`app/src/doc/motion/refs.rs`: `Refs<R>`, the references picked and
+where each is on the model shown, and the `Doc` methods clicking,
+lighting, following and taking the selection, generic over `Ref`, which
+`EdgeRef` and `FaceRef` implement), shared by
 every kind that `MotionKind::blends()` (a fillet's, once there's one,
 takes it with its own size); the chamfer's own parts are in
 `app/src/doc/motion/chamfer.rs` and `view/src/motion/chamfer.rs`
@@ -2995,7 +3000,7 @@ panel.
   a row hovered in the panel lights its edge (`PanelHover::Edge`). The session's bodies are the edges' body, never
   picked itself (Objects' rows pick nothing); a body merged into another
   before the chamfer takes the edges on to its holder. Picks wait only
-  for a model of the document as it is (`Doc::blend_model_current`)
+  for a model of the document as it is (`Doc::refs_model_current`)
   with a draft of this session's run, or for a new chamfer none (not
   another session's preview just ended, whose bodies may be elsewhere),
   not for the preview of the last pick, so edges can be clicked one
@@ -3211,10 +3216,14 @@ pub struct Shell {
 
 The move's session (`MotionSession`, above) with `MotionKind::Shell`;
 **the face session**, picking faces of one body, is its own part
-(`app/src/doc/motion/faces.rs`, `FaceSetup`; `view/src/motion/faces.rs`,
-`PickedFaces` and its field), shared by every kind that
+(`app/src/doc/motion/faces.rs`; `view/src/motion/faces.rs`,
+`PickedFaces` and its field), its faces a `Refs<FaceRef>` picked as the
+edge session's edges are (`refs.rs`), shared by every kind that
 `MotionKind::picks_faces()` (an offset face's and a draft's, once there
-are those, take it with their own values); the shell's own parts are in
+are those, take it with their own values: each adds itself to
+`picks_faces`, `faces::limit` and `verb`, `MotionSession::faces_need`
+and `prune_faces`; `faces::takes_body` is the shell's alone, so theirs
+start with no body and have only their faces'); the shell's own parts are in
 `app/src/doc/motion/shell.rs` and `view/src/motion/shell.rs`
 (`ShellView`, `ShellDirection`). The panel is the model mock's shell
 panel.
@@ -3232,8 +3241,11 @@ panel.
   model's only one. Nothing takes the focus: clicks pick faces.
 - **The body**: the faces' body while there are faces; with none, the
   body picked: as it starts (above), by a row in Objects
-  (`Doc::motion_body`, only while no face is picked), or the body of
-  the first face clicked. Taking every face out leaves the body, a
+  (`Doc::motion_body`, only while no face is picked; with faces another
+  body's row says "A shell's faces are all on one body: take them out to
+  pick another"), or the body of the first face clicked. A body picked
+  that a join or combine before the shell merges (a redo bringing it
+  back) moves on to its holder, as the faces do. Taking every face out leaves the body, a
   closed shell of it. With no body (a new one in a model of several,
   nothing selected) the status bar says "pick faces to remove, or the
   body to hollow". The panel has no Body row, as the mock's.
@@ -3250,7 +3262,7 @@ panel.
   lit as selected, the one under the cursor as hovered; a row hovered
   in the panel lights its face (`PanelHover::Face`). Picks wait only for
   a model of the document as it is with a draft of this session's run,
-  or for a new shell none (`Doc::blend_model_current`, the edge
+  or for a new shell none (`Doc::refs_model_current`, the edge
   session's rule), so faces can be clicked one after another. Faces the
   shell itself makes (on its preview, the hollow's) are refused by
   their names, as made later. The Remove field clicked turns picking off
@@ -3265,7 +3277,10 @@ panel.
   chamfer's edges, and the kind rather than the area, which the picking
   tables have at hand (an area is the regeneration lane's to measure).
   On a preview that opens it, what's left of a face removed (the walls'
-  ends, which keep its name) is found and lit as it.
+  ends, which keep its name) is found and lit as it, and a click there
+  takes the face out: it's the face the shell names, as regeneration
+  finds it on the body before the shell, so lighting it is kept (the
+  chamfer's cut-off edges, which leave nothing, can't be clicked out).
 - **Thickness** (`MotionField::Thickness`, read by
   `Shell::thickness_ask`: "2" of the design's units to begin with, the
   mock's), and **Direction**: two tiles (`MotionLook::ShellDirection`,
@@ -3295,7 +3310,8 @@ panel.
   edited one, one undo step; Cancel or `Esc` leaves no trace. The status
   bar says the mock's row info once whole ("2 faces removed · 2 mm
   inward", "Closed · 1 mm outward", `shell_info`), else what's next,
-  with the hint "Pick faces".
+  with the hint "Pick faces to remove" (the mock's; mouse hints show
+  only while the bar has nothing else to say).
 
 The Timeline shows the model mock's shell icon (`Icon::Shell`) and note
 (`view/src/shell.rs`: the thickness, "2 mm"); selected, the status bar
@@ -3342,5 +3358,8 @@ while no face is, the face taken out leaving a closed shell; editing
 from the Timeline, Cancel, another thickness and Outward, undo, its
 faces all taken out drafting a closed one; a face whose maker an undo
 takes away said to be gone, back on redo; the face selected taken in,
-Shell again backing out). The app's tests shell by boxes through
+Shell again backing out; faces selected on two bodies, the first one's
+body taking them; a face and a body picked following their body a
+redone combine merges; the toolbar fitting at 1280 px in a shell
+session). The app's tests shell by boxes through
 regen's `testing` feature (`varde_regen::testing::shell_by_boxes`).

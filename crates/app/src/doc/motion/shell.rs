@@ -7,7 +7,7 @@ use varde_document::{Design, FeatureKind, Shell};
 use varde_expr::Value;
 use varde_view::{MotionField, MotionKind, ShellDirection, ShellView};
 
-use super::faces::FaceSetup;
+use super::refs::Refs;
 use super::{Doc, MotionSession};
 use crate::doc::regions::TypedText;
 
@@ -30,7 +30,7 @@ impl MotionSession {
         };
         Some(Shell {
             body,
-            open: self.faces.faces.clone(),
+            open: self.faces.refs.clone(),
             thickness: self.field(MotionField::Thickness).value.clone()?,
             outward: self.direction.outward(),
         })
@@ -42,7 +42,7 @@ impl MotionSession {
         let ask = Shell::thickness_ask(&self.design);
         self.fields[MotionField::Thickness.index()] = TypedText::of(&shell.thickness, &ask);
         self.direction = ShellDirection::of(shell.outward);
-        self.faces = FaceSetup::of(&shell.open);
+        self.faces = Refs::of(&shell.open);
         self.bodies = vec![shell.body];
         self.faces_body();
     }
@@ -51,7 +51,7 @@ impl MotionSession {
     /// mock's, once nothing else is still to do or gone.
     pub(super) fn shell_warning(&self) -> Option<String> {
         (self.kind == MotionKind::Shell
-            && self.faces.faces.is_empty()
+            && self.faces.refs.is_empty()
             && self.need().is_none()
             && self.gone().is_none())
         .then(|| "No faces removed: the body becomes closed and hollow".to_owned())

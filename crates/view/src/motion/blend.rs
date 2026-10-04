@@ -8,9 +8,9 @@
 use iced::Element;
 use varde_document::EdgeRef;
 
-use super::{MotionLook, MotionPick, MotionState};
+use super::{MotionLook, MotionPick, MotionState, PickedRow, picks_field};
 use crate::icons::Icon;
-use crate::operation_panel::{PanelHover, field, pick_field, picked_row, toggle};
+use crate::operation_panel::{PanelHover, toggle};
 use crate::{Look, Message};
 
 /// An edge picked, as its row shows it.
@@ -44,29 +44,18 @@ pub(super) fn edges_field<'a>(
     edges: &BlendEdges,
     place: &str,
 ) -> Element<'a, Message> {
-    let editable = state.editable;
-    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
-    let on = state.picking == MotionPick::Edges;
-    let press = send(MotionLook::Picking(MotionPick::Edges));
-    let rows: Vec<_> = (edges.edges.iter().enumerate())
-        .map(|(at, edge)| {
-            picked_row(
-                if edge.round {
-                    Icon::SeRim
-                } else {
-                    Icon::SeEdge
-                },
-                edge.name.clone(),
-                edge.meta.clone(),
-                send(MotionLook::DropEdge(edge.edge)),
-                press.clone(),
-                PanelHover::Edge(at),
-                state.hover,
-            )
-        })
-        .collect();
-    let place = (rows.is_empty() || on).then(|| place.to_owned());
-    field("Edges", pick_field(rows, place, on, press))
+    let rows = (edges.edges.iter().enumerate()).map(|(at, edge)| PickedRow {
+        icon: if edge.round {
+            Icon::SeRim
+        } else {
+            Icon::SeEdge
+        },
+        name: edge.name.clone(),
+        meta: edge.meta.clone(),
+        drop: MotionLook::DropEdge(edge.edge),
+        hover: PanelHover::Edge(at),
+    });
+    picks_field(state, MotionPick::Edges, "Edges", place, rows)
 }
 
 /// The Tangent chain tick, on to begin with: the model mock has it on

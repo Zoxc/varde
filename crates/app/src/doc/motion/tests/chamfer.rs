@@ -46,6 +46,7 @@ fn edges(plates: &Plates) -> Vec<varde_document::EdgeRef> {
         .expect("a session")
         .blend
         .edges
+        .refs
         .clone()
 }
 
@@ -382,7 +383,10 @@ fn a_chamfer_s_edges_are_all_on_one_body() {
         at: DVec3::new(25.0, 0.0, 15.0),
         snap: None,
     };
-    assert!(!plates.doc.blend_takes(pick), "not lit");
+    assert!(
+        !plates.doc.refs_take::<varde_document::EdgeRef>(pick),
+        "not lit"
+    );
     plates.doc.look(Look::ClickModel {
         pick: Some(pick),
         add: false,
@@ -402,7 +406,7 @@ fn a_chamfer_s_edges_are_all_on_one_body() {
     // With the plate's edge out, the disc's rim is taken, Ø10 beside it.
     let edge = edges(&plates)[0];
     plates.motion(MotionLook::DropEdge(edge));
-    assert!(plates.doc.blend_takes(pick));
+    assert!(plates.doc.refs_take::<varde_document::EdgeRef>(pick));
     plates.doc.look(Look::ClickModel {
         pick: Some(pick),
         add: false,
@@ -453,7 +457,7 @@ fn editing_a_chamfer_from_the_timeline_cancel_and_undo() {
     let session = plates.doc.motion.as_ref().expect("a session");
     assert_eq!(session.kind, MotionKind::Chamfer);
     assert_eq!(session.feature, Some(id));
-    assert_eq!(session.blend.edges, stored.edges);
+    assert_eq!(session.blend.edges.refs, stored.edges);
     assert_eq!(session.bodies, [plate]);
     assert_eq!(picking(&plates), MotionPick::Edges);
     assert!(shows(&plates, "Chamfer 1"));

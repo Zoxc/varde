@@ -6,7 +6,9 @@
 //! ([`varde_regen::testing`]), the hollow previewed open and closed, the
 //! thickness and direction drafted, too thick refused, OK as one undo
 //! step; editing from the Timeline, Cancel and undo; a face an undo takes
-//! away said to be gone; the face selected taken in.
+//! away said to be gone; the face selected taken in (on two bodies, the
+//! first one's); faces and the body following a merge before the shell;
+//! the toolbar fitting at 1280 px.
 
 use glam::{DVec2, DVec3};
 use varde_document::{
@@ -43,7 +45,7 @@ fn drafted(plates: &Plates) -> Option<Shell> {
 
 /// The faces of the shell being set up.
 fn faces(plates: &Plates) -> Vec<varde_document::FaceRef> {
-    (plates.doc.motion.as_ref().expect("a session").faces.faces).clone()
+    (plates.doc.motion.as_ref().expect("a session").faces.refs).clone()
 }
 
 /// The doc holding `document`, its bodies in order.
@@ -432,6 +434,10 @@ fn a_shell_s_faces_are_all_on_one_body() {
         add: false,
     });
     assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [first]);
+    assert_eq!(
+        plates.doc.notice.as_deref(),
+        Some("A shell's faces are all on one body: take them out to pick another")
+    );
     // Its face out, the body stays: a closed shell of it.
     let face = faces(&plates)[0];
     plates.motion(MotionLook::DropFace(face));
@@ -481,7 +487,7 @@ fn editing_a_shell_from_the_timeline_cancel_and_undo() {
     let session = plates.doc.motion.as_ref().expect("a session");
     assert_eq!(session.kind, MotionKind::Shell);
     assert_eq!(session.feature, Some(id));
-    assert_eq!(session.faces.faces, stored.open);
+    assert_eq!(session.faces.refs, stored.open);
     assert_eq!(session.bodies, [body]);
     assert_eq!(picking(&plates), MotionPick::Faces);
     assert!(shows(&plates, "Shell 1") && shows(&plates, "Face 1"));
@@ -582,4 +588,111 @@ fn shell_takes_the_face_selected_and_backs_out() {
     assert!(drafted(&plates).is_some());
     plates.doc.look(Look::StartShell);
     assert!(plates.doc.motion.is_none());
+}
+
+/// Faces selected on two bodies: the shell takes those on the first
+/// one's body, leaving the other's out.
+#[test]
+fn faces_selected_on_two_bodies_give_the_first_one_s_body() {
+    let mut plates = boxes(true);
+    let [first, second, _] = plates.bodies;
+    plates.doc.pick.selection = Selection::new(SelectionMode::Faces);
+    let theirs = face_pick(
+        &plates,
+        second,
+        DVec3::Z,
+        10.0,
+        DVec3::new(70.0, 10.0, 10.0),
+    );
+    for pick in [theirs, top(&plates, first), front(&plates, second)] {
+        plates.doc.look(Look::ClickModel {
+            pick: Some(pick),
+            add: true,
+            double: false,
+        });
+    }
+    plates.doc.look(Look::StartShell);
+    let picked = faces(&plates);
+    assert_eq!(picked.len(), 2);
+    assert!(picked.iter().all(|face| face.body == second));
+    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [second]);
+    assert_eq!(plates.doc.faces_lit().len(), 2);
+}
+
+/// A face picked on a body that a combine, brought back by a redo,
+/// merges into another follows its body on to the holder, as does the
+/// body picked for a closed shell; the faces stay lit there.
+#[test]
+fn faces_follow_their_body_a_redone_combine_merges() {
+    let mut plates = boxes(true);
+    let [first, second, _] = plates.bodies;
+    let combine = varde_document::Combine {
+        target: first,
+        tools: vec![second],
+        op: varde_document::BodyOp::Union,
+        keep_tools: false,
+    };
+    let add = plates.doc.editor.document().add_feature(combine.into());
+    plates.doc.apply(add);
+    plates.doc.sync();
+    plates.answer();
+    plates.doc.update(Edit::Undo);
+    plates.answer();
+
+    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::ClickBody {
+        body: second,
+        add: false,
+    });
+    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [second]);
+    plates.doc.update(Edit::Redo);
+    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [first]);
+    assert_eq!(drafted(&plates).expect("a closed shell").body, first);
+    plates.answer();
+    plates.doc.update(Edit::Undo);
+    plates.answer();
+
+    let theirs = face_pick(
+        &plates,
+        second,
+        DVec3::Z,
+        10.0,
+        DVec3::new(70.0, 10.0, 10.0),
+    );
+    click(&mut plates, theirs);
+    assert!(faces(&plates).iter().all(|face| face.body == second));
+    plates.doc.update(Edit::Redo);
+    let session = plates.doc.motion.as_ref().expect("still set up");
+    assert_eq!(session.bodies, [first], "the box followed on to the other");
+    assert!(faces(&plates).iter().all(|face| face.body == first));
+    assert!(plates.doc.motion_ready());
+    assert_eq!(drafted(&plates).expect("a draft").open, faces(&plates));
+    plates.answer();
+    assert_eq!(plates.doc.faces_lit().len(), 1, "lit on the holder");
+}
+
+/// At 1280 px wide the toolbar in a shell session shows whole: Cancel
+/// and the origins, as a chamfer's.
+#[test]
+fn a_shell_s_toolbar_fits_at_1280_px() {
+    use crate::tests::{shown, texts};
+    use varde_view::Mode;
+    let (mut plates, _) = plate();
+    plates.doc.look(Look::StartShell);
+    let mut renderer = varde_view::probe::renderer();
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut ui = shown(plates.doc.view_in(Mode::Light), size, &mut renderer);
+    let mut on: Vec<_> = (texts(&mut ui, &renderer).into_iter())
+        .filter(|t| t.bounds.y < 40.0)
+        .collect();
+    on.sort_by(|a, b| a.bounds.x.total_cmp(&b.bounds.x));
+    let mut end = 0.0;
+    for t in &on {
+        assert!(t.bounds.width > 2.0, "{} squeezed: {on:?}", t.text);
+        assert!(t.bounds.x >= end, "{} overlaps: {on:?}", t.text);
+        end = t.bounds.x + t.bounds.width;
+    }
+    assert!(end < 1280.0 - 120.0, "{on:?}");
+    assert!(on.iter().any(|t| t.text == "New shell"));
+    assert!(on.iter().any(|t| t.text == "Cancel"));
 }

@@ -1024,6 +1024,48 @@ fn section(name: &str) -> iced::widget::Text<'_> {
     label(name)
 }
 
+/// A row of a list of references picked ([`picks_field`]): its icon,
+/// name and what's beside it, what its cross sends, and what hovering it
+/// lights.
+struct PickedRow {
+    icon: Icon,
+    name: String,
+    meta: Option<String>,
+    drop: MotionLook,
+    hover: PanelHover,
+}
+
+/// The panel's field `label` of references picked by `pick` (a blend's
+/// edges, a face session's faces): a row each, pressing one picking
+/// them, and while picking, or with none, where to click (`place`).
+fn picks_field<'a>(
+    state: &MotionState<'a>,
+    pick: MotionPick,
+    label: &'a str,
+    place: &str,
+    rows: impl Iterator<Item = PickedRow>,
+) -> Element<'a, Message> {
+    let editable = state.editable;
+    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
+    let on = state.picking == pick;
+    let press = send(MotionLook::Picking(pick));
+    let rows: Vec<_> = rows
+        .map(|row| {
+            picked_row(
+                row.icon,
+                row.name,
+                row.meta,
+                send(row.drop),
+                press.clone(),
+                row.hover,
+                state.hover,
+            )
+        })
+        .collect();
+    let place = (rows.is_empty() || on).then(|| place.to_owned());
+    field(label, pick_field(rows, place, on, press))
+}
+
 mod align;
 pub use align::{AlignMark, AlignView, direction_name, point_name};
 mod scale;

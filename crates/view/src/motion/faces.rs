@@ -8,10 +8,10 @@
 use iced::Element;
 use varde_document::FaceRef;
 
-use super::{MotionLook, MotionPick, MotionState};
+use super::{MotionLook, MotionPick, MotionState, PickedRow, picks_field};
+use crate::Message;
 use crate::icons::Icon;
-use crate::operation_panel::{PanelHover, field, pick_field, picked_row};
-use crate::{Look, Message};
+use crate::operation_panel::PanelHover;
 
 /// A face picked, as its row shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,23 +39,12 @@ pub(super) fn faces_field<'a>(
     label: &'a str,
     place: &str,
 ) -> Element<'a, Message> {
-    let editable = state.editable;
-    let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
-    let on = state.picking == MotionPick::Faces;
-    let press = send(MotionLook::Picking(MotionPick::Faces));
-    let rows: Vec<_> = (faces.faces.iter().enumerate())
-        .map(|(at, face)| {
-            picked_row(
-                Icon::SeFace,
-                face.name.clone(),
-                face.meta.clone(),
-                send(MotionLook::DropFace(face.face)),
-                press.clone(),
-                PanelHover::Face(at),
-                state.hover,
-            )
-        })
-        .collect();
-    let place = (rows.is_empty() || on).then(|| place.to_owned());
-    field(label, pick_field(rows, place, on, press))
+    let rows = (faces.faces.iter().enumerate()).map(|(at, face)| PickedRow {
+        icon: Icon::SeFace,
+        name: face.name.clone(),
+        meta: face.meta.clone(),
+        drop: MotionLook::DropFace(face.face),
+        hover: PanelHover::Face(at),
+    });
+    picks_field(state, MotionPick::Faces, label, place, rows)
 }

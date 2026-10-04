@@ -77,9 +77,7 @@ impl FaceRef {
     pub fn order(&self, other: &FaceRef) -> Ordering {
         (self.body, self.key)
             .cmp(&(other.body, other.key))
-            .then_with(|| self.near.x.total_cmp(&other.near.x))
-            .then_with(|| self.near.y.total_cmp(&other.near.y))
-            .then_with(|| self.near.z.total_cmp(&other.near.z))
+            .then_with(|| crate::edge::point_order(self.near, other.near))
     }
 
     /// Checks what needs only the reference: its point is finite and

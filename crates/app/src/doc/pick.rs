@@ -81,8 +81,8 @@ impl Doc {
             return session.hover.filter(|&hover| match hover {
                 PanelHover::Body(body) => session.bodies.contains(&body),
                 PanelHover::Axis => true,
-                PanelHover::Edge(at) => at < session.blend.edges.len(),
-                PanelHover::Face(at) => at < session.faces.faces.len(),
+                PanelHover::Edge(at) => at < session.blend.edges.refs.len(),
+                PanelHover::Face(at) => at < session.faces.refs.len(),
                 PanelHover::Region { .. } => false,
             });
         }
