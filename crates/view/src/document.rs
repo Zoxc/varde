@@ -322,6 +322,9 @@ pub struct SketchState<'a> {
     pub links: &'a [LinkRow],
     /// The link whose row's context menu is open, if one's is.
     pub link_menu: Option<Id>,
+    /// The point or curve whose Geometry row's context menu is open, if
+    /// one's is.
+    pub item_menu: Option<Id>,
     /// The Geometry list's groups folded.
     pub folded: &'a BTreeSet<crate::GeometryGroup>,
     /// The curves whose Geometry rows are unfolded, listing their points.
@@ -419,6 +422,7 @@ impl<'a> SketchState<'a> {
             failing: &NONE,
             links: &[],
             link_menu: None,
+            item_menu: None,
             folded: &NO_GROUPS,
             expanded: &NONE,
             editable: true,

@@ -729,6 +729,29 @@ fn a_constraint_applied_again_toggles_off() {
 }
 
 #[test]
+fn a_row_s_menu_deletes_it_or_the_selection_it_is_in() {
+    let (mut doc, [a, b, line, _, circle]) = with_shapes();
+    doc.look(Look::OpenMenu(varde_view::RowMenu::Item(circle)));
+    assert_eq!(doc.row_menu, Some(varde_view::RowMenu::Item(circle)));
+    // Not selected: it alone.
+    doc.look(Look::ClickGeometry {
+        hit: Some(line),
+        add: false,
+    });
+    doc.update(Edit::DeleteItem(circle));
+    assert!(sketch(&doc).kind(circle).is_none());
+    assert!(sketch(&doc).kind(line).is_some());
+    // Selected: the selection, the line and the point added to it.
+    doc.look(Look::ClickGeometry {
+        hit: Some(a),
+        add: true,
+    });
+    doc.update(Edit::DeleteItem(a));
+    assert!(sketch(&doc).kind(line).is_none() && sketch(&doc).kind(a).is_none());
+    assert!(sketch(&doc).kind(b).is_none());
+}
+
+#[test]
 fn the_geometry_list_folds_and_unfolds() {
     let (mut doc, [_, _, line, _, circle]) = with_shapes();
     doc.look(Look::ToggleExpanded(line));

@@ -218,9 +218,27 @@ impl Doc {
         let Some(session) = &self.sketch else {
             return;
         };
+        let selected: Vec<_> = session.selection.iter().copied().collect();
+        self.delete_items(selected);
+    }
+
+    /// Deletes the point or curve `id` from its row's context menu: the
+    /// whole selection if it's among it, as `Delete` would, else it alone.
+    pub(crate) fn delete_item(&mut self, id: Id) {
+        let Some(session) = &self.sketch else {
+            return;
+        };
+        if session.selection.contains(&id) {
+            self.delete_selection();
+        } else {
+            self.delete_items(vec![id]);
+        }
+    }
+
+    /// Deletes `items` and what depends on them.
+    fn delete_items(&mut self, items: Vec<Id>) {
         // The origin and axes are always there.
-        let selected = session.selection.iter().copied();
-        let mut ids: Vec<_> = selected.filter(|id| !id.is_builtin()).collect();
+        let mut ids: Vec<_> = items.into_iter().filter(|id| !id.is_builtin()).collect();
         if ids.is_empty() {
             return;
         }

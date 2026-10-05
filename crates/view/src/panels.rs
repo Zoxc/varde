@@ -1109,7 +1109,8 @@ struct Item {
 
 /// `item`'s row of the Geometry list, `indent` in with `expander` before
 /// its icon, selected on a click (`Ctrl` adds it), highlighting it in the
-/// viewport while hovered.
+/// viewport while hovered, with a context menu deleting it (the
+/// selection, if it's among it).
 fn geometry_item<'a>(
     sketch: SketchState<'a>,
     item: Item,
@@ -1150,13 +1151,31 @@ fn geometry_item<'a>(
         .padding(Padding::from([0, 8]).left(indent - EXPANDER_SIZE))
         .style(theme::list_row(selected, hovered))
     };
-    mouse_area(hover(
+    let row = mouse_area(hover(
         content(false, expander.clone().view()),
         content(true, expander.view()),
     ))
     .on_press(Message::Look(Look::ClickRow(id)))
     .on_enter(Message::Look(Look::HoverItem(Some(id))))
-    .on_exit(Message::Look(Look::HoverItem(None)))
+    .on_exit(Message::Look(Look::HoverItem(None)));
+    let menu = (sketch.item_menu == Some(id)).then(|| {
+        let editable = sketch.editable && !id.is_builtin();
+        row_menu(vec![
+            menu_item(
+                Icon::Trash,
+                "Delete".into(),
+                selected.then_some(Shortcut::DELETE),
+                editable.then_some(Message::Edit(Edit::DeleteItem(id))),
+            )
+            .into(),
+        ])
+    });
+    ContextMenu::new(
+        row,
+        menu,
+        Message::Look(Look::OpenMenu(RowMenu::Item(id))),
+        Message::Look(Look::CloseMenu),
+    )
     .into()
 }
 

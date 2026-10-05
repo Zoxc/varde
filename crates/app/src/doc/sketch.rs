@@ -875,7 +875,7 @@ impl Doc {
     }
 
     /// Whether the sketch being edited, as it's worked on, holds `id`.
-    fn holds(&self, id: Id) -> bool {
+    pub(crate) fn holds(&self, id: Id) -> bool {
         self.working_sketch()
             .is_some_and(|sketch| sketch.kind(id).is_some())
     }
@@ -1025,6 +1025,10 @@ impl Doc {
             RowMenu::Feature(id) => self.selected_feature == Some(id),
             RowMenu::Sketch(id) => !replaced && document.feature(id).is_some(),
             RowMenu::Body(id) => !replaced && document.body(id).is_some(),
+            RowMenu::Item(id) => {
+                !replaced
+                    && (self.edited_sketch()).is_some_and(|(_, sketch)| sketch.kind(id).is_some())
+            }
             RowMenu::Link(id) => {
                 !replaced
                     && (self.edited_sketch()).is_some_and(|(_, sketch)| sketch.link(id).is_some())
@@ -1198,6 +1202,10 @@ impl Doc {
             links: &session.links,
             link_menu: match self.row_menu {
                 Some(RowMenu::Link(link)) => Some(link),
+                _ => None,
+            },
+            item_menu: match self.row_menu {
+                Some(RowMenu::Item(item)) => Some(item),
                 _ => None,
             },
             folded: &session.folded,

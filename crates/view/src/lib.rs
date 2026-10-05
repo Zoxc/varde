@@ -350,6 +350,9 @@ pub enum Edit {
     /// Deletes what's selected in the sketch being edited, and what
     /// depends on it.
     DeleteSelection,
+    /// Deletes a point or curve of the sketch being edited from its row's
+    /// context menu: the selection if it's among it, else it alone.
+    DeleteItem(Id),
     /// Turns the curves selected in the sketch being edited between normal
     /// and construction geometry, or while a tool is in use, the shapes it
     /// draws next.
@@ -1015,6 +1018,8 @@ pub enum RowMenu {
     Sketch(FeatureId),
     /// A link in the Sketch tab of the sketch being edited.
     Link(Id),
+    /// A point or curve in the Sketch tab's Geometry list.
+    Item(Id),
 }
 
 /// A group of the Sketch tab's Geometry list, which can be folded.

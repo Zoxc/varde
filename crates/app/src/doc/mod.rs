@@ -540,6 +540,7 @@ impl Doc {
             Edit::ToolClick(click) => self.tool_click(click),
             Edit::DropGeometry => self.drop_geometry(),
             Edit::DeleteSelection => self.delete_selection(),
+            Edit::DeleteItem(id) => self.delete_item(id),
             Edit::ToggleConstruction => self.toggle_construction(),
             Edit::Constrain(kind) => self.constrain(kind),
             Edit::ToggleConstraint(kind) => self.toggle_constraint(kind),
@@ -1052,8 +1053,11 @@ impl Doc {
                     .map_or(&[][..], |session| &session.links[..]);
                 links.iter().any(|row| row.link == id)
             }
+            // So does a point's or curve's.
+            RowMenu::Item(id) => self.holds(id),
         };
-        if self.sketch.is_some() != matches!(menu, RowMenu::Link(_)) || !exists {
+        let in_sketch = matches!(menu, RowMenu::Link(_) | RowMenu::Item(_));
+        if self.sketch.is_some() != in_sketch || !exists {
             return;
         }
         if let RowMenu::Feature(id) = menu {

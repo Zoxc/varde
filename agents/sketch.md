@@ -1384,7 +1384,9 @@ bar says why (`EditError::Sketch`).
   line's length, a circle's diameter, an arc's radius, or the other of
   the two a driving dimension measures), in the Dimension icons' accent
   where a driving dimension sets it, else faint, with "Construction"
-  after it; a point's is where it is. The Objects tab folds its Bodies
+  after it; a point's is where it is. Its context menu
+  (`RowMenu::Item`) deletes it (`Edit::DeleteItem`), or the selection if
+  it's among it. The Objects tab folds its Bodies
   and Sketches groups the same way (`Look::ToggleObjectGroup`,
   `Doc::objects_folded`). After Geometry come Projected and Intersected,
   the links
