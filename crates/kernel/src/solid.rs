@@ -536,7 +536,21 @@ fn quartered(patch: &Patch, depth: u32) -> Option<[Patch; 4]> {
 /// volume a closed surface of patches encloses (see [`Solid::volume`]);
 /// and the same of its absolute value, the scale of the quadrature's
 /// error however the integrand cancels.
+///
+/// A flat patch (straight edges: weight 1, control points the edges'
+/// midpoints) is its tetrahedron with `o`, in closed form: the rule is
+/// exact there too, to rounding, and 256 evaluations dearer. Over a
+/// plane `(P − o)·n` keeps one sign, so the two parts are the value and
+/// its size.
 fn flux(patch: &Patch, o: glam::DVec3) -> glam::DVec2 {
+    if let Some(volume) = flat_flux(patch, o) {
+        return glam::DVec2::new(volume, volume.abs());
+    }
+    rule_flux(patch, o)
+}
+
+/// [`flux`] by the rule, whatever the patch.
+fn rule_flux(patch: &Patch, o: glam::DVec3) -> glam::DVec2 {
     triangle_rule()
         .map(|(u, w)| {
             let [p, pu, pv] = patch.eval_derivs(u);
@@ -545,6 +559,18 @@ fn flux(patch: &Patch, o: glam::DVec3) -> glam::DVec2 {
         })
         .sum::<glam::DVec2>()
         / 3.0
+}
+
+/// [`flux`] of a flat patch: the signed volume of the tetrahedron on `o`
+/// and its corners. `None` unless every edge is straight.
+fn flat_flux(patch: &Patch, o: glam::DVec3) -> Option<f64> {
+    let p = patch.p;
+    let straight =
+        (0..3).all(|i| patch.w[i] == 1.0 && patch.c[i] == (p[i] + p[(i + 1) % 3]) * 0.5);
+    straight.then(|| {
+        let [a, b, c] = p.map(|q| q - o);
+        a.dot(b.cross(c)) / 6.0
+    })
 }
 
 /// [`flux`] for a patch, split where its weights ask as

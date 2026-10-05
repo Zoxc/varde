@@ -322,18 +322,16 @@ fn scaled(patch: &Patch, origin: DVec3, scale: f64) -> Patch {
 /// The six control points of the piece of `patch` over the barycentric
 /// triangle `d`, as points (their homogeneous weights are positive).
 fn piece_points(patch: &Patch, d: [DVec3; 3]) -> [DVec3; 6] {
-    let point = |a: DVec3, b: DVec3| {
-        let h = patch.blossom(a, b);
-        h.truncate() / h.w
-    };
-    [
-        point(d[0], d[0]),
-        point(d[1], d[1]),
-        point(d[2], d[2]),
-        point(d[0], d[1]),
-        point(d[1], d[2]),
-        point(d[2], d[0]),
-    ]
+    patch
+        .blossoms([
+            (d[0], d[0]),
+            (d[1], d[1]),
+            (d[2], d[2]),
+            (d[0], d[1]),
+            (d[1], d[2]),
+            (d[2], d[0]),
+        ])
+        .map(|h| h.truncate() / h.w)
 }
 
 /// The four pieces of the barycentric triangle `d`, split at its sides'
@@ -517,23 +515,37 @@ struct CrossSearch<'a> {
 
 impl CrossSearch<'_> {
     fn visit(&mut self, t: [f64; 2], d: [DVec3; 3], depth: u32) {
+        self.visit_with(t, d, None, None, depth);
+    }
+
+    /// [`Self::visit`], given the edge's piece's control points where the
+    /// caller has them (its piece over `t`, the same) and the patch's
+    /// piece's (over `d`): halving one piece visits the other's again.
+    fn visit_with(
+        &mut self,
+        t: [f64; 2],
+        d: [DVec3; 3],
+        edge_points: Option<[DVec3; 3]>,
+        points: Option<[DVec3; 6]>,
+        depth: u32,
+    ) {
         self.nodes += 1;
         if self.nodes > MAX_NODES {
             return;
         }
         // The edge's piece's control points (its weights are positive, so
         // the piece lies in their hull).
-        let edge_points = {
+        let edge_points = edge_points.unwrap_or_else(|| {
             let point = |a: f64, b: f64| {
                 let h = self.edge.blossom(a, b);
                 h.truncate() / h.w
             };
             [point(t[0], t[0]), point(t[0], t[1]), point(t[1], t[1])]
-        };
+        });
         let edge_box = Bounds3::point(edge_points[0])
             .include(edge_points[1])
             .include(edge_points[2]);
-        let points = piece_points(self.patch, d);
+        let points = points.unwrap_or_else(|| piece_points(self.patch, d));
         let patch_box = Bounds3::around(&points).expect("six points");
         let gap = (edge_box.min - patch_box.max)
             .max(patch_box.min - edge_box.max)
@@ -577,10 +589,10 @@ impl CrossSearch<'_> {
                 let gap = AROUND * (t[1] - t[0]);
                 if !deep {
                     if tt - gap > t[0] {
-                        self.visit([t[0], tt - gap], d, depth + 1);
+                        self.visit_with([t[0], tt - gap], d, None, Some(points), depth + 1);
                     }
                     if tt + gap < t[1] {
-                        self.visit([tt + gap, t[1]], d, depth + 1);
+                        self.visit_with([tt + gap, t[1]], d, None, Some(points), depth + 1);
                     }
                 }
                 return;
@@ -590,15 +602,15 @@ impl CrossSearch<'_> {
             }
         }
         if se >= sp {
-            self.visit([t[0], mid], d, depth + 1);
-            self.visit([mid, t[1]], d, depth + 1);
+            self.visit_with([t[0], mid], d, None, Some(points), depth + 1);
+            self.visit_with([mid, t[1]], d, None, Some(points), depth + 1);
         } else if let Some(halves) = halves(d, &points).filter(|_| self.tall_walls) {
             for h in halves {
-                self.visit(t, h, depth + 1);
+                self.visit_with(t, h, Some(edge_points), None, depth + 1);
             }
         } else {
             for q in quarters(d) {
-                self.visit(t, q, depth + 1);
+                self.visit_with(t, q, Some(edge_points), None, depth + 1);
             }
         }
     }

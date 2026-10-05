@@ -12,6 +12,13 @@
 /// `items.map(f)`, collected in the order of `items`: on rayon's pool
 /// natively, sequentially on the web. `f` must be a pure function of its
 /// item, so the result can't depend on scheduling.
+///
+/// Handing a map to the pool means waking its threads, tens of
+/// microseconds and far more on a loaded machine, which most maps (a few
+/// dozen cheap items) never make up: a small boolean's thousands of them
+/// spent most of its time waiting on hand-offs. So the items run here, in
+/// order, until they have taken [`HAND_OFF`], and only the rest go to the
+/// pool.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn par_map<T, R, F>(items: &[T], f: F) -> Vec<R>
 where
@@ -20,8 +27,22 @@ where
     F: Fn(&T) -> R + Sync + Send,
 {
     use rayon::prelude::*;
-    items.par_iter().map(f).collect()
+    let start = std::time::Instant::now();
+    let mut out = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        if start.elapsed() > HAND_OFF {
+            out.par_extend(items[i..].par_iter().map(&f));
+            break;
+        }
+        out.push(f(item));
+    }
+    out
 }
+
+/// How long [`par_map`] works through its items alone before handing the
+/// rest to the pool: past what waking the pool costs.
+#[cfg(not(target_arch = "wasm32"))]
+const HAND_OFF: std::time::Duration = std::time::Duration::from_micros(100);
 
 /// `items.map(f)`, collected in the order of `items`: on rayon's pool
 /// natively, sequentially on the web. `f` must be a pure function of its
@@ -74,6 +95,20 @@ mod tests {
         let items: Vec<u32> = (0..10_000).collect();
         let doubled = on_threads(8, || par_map(&items, |&x| x * 2));
         assert!(doubled.iter().enumerate().all(|(i, &x)| x == 2 * i as u32));
+    }
+
+    #[test]
+    fn slow_items_are_handed_to_the_pool_in_order() {
+        // Items of 20 µs each: the first few run on the calling thread,
+        // the rest on the pool's, collected in order all the same.
+        let items: Vec<u32> = (0..64).collect();
+        let ran = par_map(&items, |&x| {
+            let start = std::time::Instant::now();
+            while start.elapsed() < std::time::Duration::from_micros(20) {}
+            (x, rayon::current_thread_index().is_some())
+        });
+        assert!(ran.iter().enumerate().all(|(i, &(x, _))| x == i as u32));
+        assert!(!ran[0].1 && ran[63].1, "{ran:?}");
     }
 
     #[test]

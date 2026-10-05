@@ -234,7 +234,16 @@ impl ManifoldMesh {
     /// `(b − a) × (c − a)` exactly zero.
     fn degenerate(&self, tri: &[u32; 3]) -> bool {
         let p = tri.map(|v| self.point(v));
-        (0..3).all(|axis| sign(&CrossComponent { p, axis }) == 0)
+        let (u, v) = (p[1] - p[0], p[2] - p[0]);
+        (0..3).all(|axis| {
+            // `u[i]·v[j] − u[j]·v[i]` is zero outright where a factor of
+            // each product is: a difference is zero exactly when the two
+            // coordinates are equal, as along a flat face square to an
+            // axis. Only the rest need the exact sign.
+            let (i, j) = ((axis + 1) % 3, (axis + 2) % 3);
+            let plainly_zero = (u[i] == 0.0 || v[j] == 0.0) && (u[j] == 0.0 || v[i] == 0.0);
+            plainly_zero || sign(&CrossComponent { p, axis }) == 0
+        })
     }
 }
 

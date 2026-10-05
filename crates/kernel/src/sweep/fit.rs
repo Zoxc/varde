@@ -264,12 +264,19 @@ const MEASURE_MOVES: usize = 400;
 pub fn deviation(patch: &Patch, form: &Form) -> f64 {
     let net = patch.net();
     let at = |u: [f64; 3]| {
+        // Summed row by row, written out rather than looped: the dev
+        // profile leaves the iterators as calls, and this is the inner
+        // loop of every fit.
         let mut x = DVec4::ZERO;
-        for (r, row) in net.iter().enumerate() {
-            for (c, h) in row.iter().enumerate() {
-                x += *h * (u[r] * u[c]);
-            }
-        }
+        x += net[0][0] * (u[0] * u[0]);
+        x += net[0][1] * (u[0] * u[1]);
+        x += net[0][2] * (u[0] * u[2]);
+        x += net[1][0] * (u[1] * u[0]);
+        x += net[1][1] * (u[1] * u[1]);
+        x += net[1][2] * (u[1] * u[2]);
+        x += net[2][0] * (u[2] * u[0]);
+        x += net[2][1] * (u[2] * u[1]);
+        x += net[2][2] * (u[2] * u[2]);
         let d = form.distance(x.truncate() / x.w);
         if d.is_nan() { f64::INFINITY } else { d }
     };
@@ -277,12 +284,25 @@ pub fn deviation(patch: &Patch, form: &Form) -> f64 {
     // Peaks first, then the rest; each farthest first, ties in grid
     // order.
     let peak = peaks(&points, MEASURE_GRID);
-    let mut order: Vec<usize> = (0..points.len()).collect();
-    order.sort_by(|&a, &b| {
+    let ahead = |a: usize, b: usize| {
         peak[b]
             .cmp(&peak[a])
             .then(points[b].1.total_cmp(&points[a].1))
-    });
+    };
+    // The first `MEASURE_STARTS` in that order, as a stable sort by
+    // `ahead` would put them, picked in one pass: the points come in grid
+    // order, so a tie stays behind those before it.
+    let mut order: Vec<usize> = Vec::with_capacity(MEASURE_STARTS + 1);
+    for i in 0..points.len() {
+        let mut place = order.len();
+        while place > 0 && ahead(order[place - 1], i) == std::cmp::Ordering::Greater {
+            place -= 1;
+        }
+        if place < MEASURE_STARTS {
+            order.insert(place, i);
+            order.truncate(MEASURE_STARTS);
+        }
+    }
     let mut worst = points[order[0]].1;
     if worst == f64::INFINITY {
         return worst;
@@ -295,15 +315,15 @@ pub fn deviation(patch: &Patch, form: &Form) -> f64 {
         [0.0, 1.0, -1.0],
         [0.0, -1.0, 1.0],
     ];
-    for &(start, value) in order.iter().take(MEASURE_STARTS).map(|&i| &points[i]) {
+    for &(start, value) in order.iter().map(|&i| &points[i]) {
         let (mut u, mut best) = (start, value);
         let mut step = 1.0 / MEASURE_GRID as f64;
         let (mut halvings, mut moves) = (0, 0);
         while halvings < MEASURE_HALVINGS && moves < MEASURE_MOVES {
             let mut moved = false;
-            for d in DIRECTIONS {
-                let v = [0, 1, 2].map(|i| u[i] + d[i] * step);
-                if v.iter().any(|&x| x < 0.0) {
+            for d in &DIRECTIONS {
+                let v = [u[0] + d[0] * step, u[1] + d[1] * step, u[2] + d[2] * step];
+                if v[0] < 0.0 || v[1] < 0.0 || v[2] < 0.0 {
                     continue;
                 }
                 let value = at(v);
@@ -334,14 +354,16 @@ fn peaks(points: &[([f64; 3], f64)], n: usize) -> Vec<bool> {
             let (u, value) = points[index(i, j)];
             debug_assert_eq!(u[..2], [i as f64 / n as f64, j as f64 / n as f64]);
             // (i, j) moved by whole steps, staying on the triangle.
-            let steps: [(isize, isize); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
-            let higher = steps.iter().any(|&(di, dj)| {
-                let (Some(a), Some(b)) = (i.checked_add_signed(di), j.checked_add_signed(dj))
-                else {
-                    return false;
-                };
-                a + b <= n && points[index(a, b)].1 > value
-            });
+            const STEPS: [(isize, isize); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
+            let mut higher = false;
+            for &(di, dj) in &STEPS {
+                let (a, b) = (i as isize + di, j as isize + dj);
+                let on = a >= 0 && b >= 0 && a + b <= n as isize;
+                if on && points[index(a as usize, b as usize)].1 > value {
+                    higher = true;
+                    break;
+                }
+            }
             peak.push(!higher);
         }
     }

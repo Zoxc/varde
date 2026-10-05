@@ -122,6 +122,13 @@ impl Patch {
         blossom(&self.net(), a, b)
     }
 
+    /// [`Self::blossom`] of each pair, the same to the bit, building the
+    /// net once rather than for each.
+    pub(crate) fn blossoms<const N: usize>(&self, pairs: [(DVec3, DVec3); N]) -> [DVec4; N] {
+        let net = self.net();
+        pairs.map(|(a, b)| blossom(&net, a, b))
+    }
+
     /// The patch's own curve over the straight domain segment from `a` to
     /// `b` (barycentric), in the standard form: ends `B(a, a)` and
     /// `B(b, b)`, control point `B(a, b)`, exact. Fails as
@@ -328,7 +335,13 @@ pub(super) fn blossom(net: &[[DVec4; 3]; 3], a: DVec3, b: DVec3) -> DVec4 {
 /// `G_i(u) = Σ uj·net[i][j]`: half the partial derivative of the
 /// homogeneous point along `ui`.
 fn rows(net: &[[DVec4; 3]; 3], u: DVec3) -> [DVec4; 3] {
-    [0, 1, 2].map(|i| net[i][0] * u.x + net[i][1] * u.y + net[i][2] * u.z)
+    // Written out rather than by `[0, 1, 2].map`, which the dev profile
+    // leaves as calls: this is the inner loop of every patch evaluation.
+    [
+        net[0][0] * u.x + net[0][1] * u.y + net[0][2] * u.z,
+        net[1][0] * u.x + net[1][1] * u.y + net[1][2] * u.z,
+        net[2][0] * u.x + net[2][1] * u.y + net[2][2] * u.z,
+    ]
 }
 
 /// The spatial part of the 4D cross product of homogeneous points: the

@@ -109,3 +109,24 @@ fn volumes_and_areas_are_analytic() {
     assert_eq!(Solid::empty().volume(), 0.0);
     assert_eq!(Solid::empty().area(), 0.0);
 }
+
+#[test]
+fn flat_patches_take_the_rules_flux_in_closed_form() {
+    // The closed form for flat patches against the rule, which is exact
+    // on them to rounding: random triangles, either turn, about random
+    // origins.
+    let mut rng = crate::test_rng::Rng::new(5);
+    for _ in 0..200 {
+        let patch = crate::patch::Patch::flat([0, 1, 2].map(|_| rng.point(10.0))).unwrap();
+        let o = rng.point(10.0);
+        let closed = flux(&patch, o);
+        let rule = rule_flux(&patch, o);
+        assert!(flat_flux(&patch, o).is_some());
+        let scale = rule.y.max(1.0);
+        assert!((closed - rule).abs().max_element() <= 1e-12 * scale, "{closed} {rule}");
+    }
+    // A curved edge takes the rule.
+    let mut bent = crate::patch::Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap();
+    bent.c[0].z = 0.25;
+    assert_eq!(flat_flux(&bent, DVec3::ZERO), None);
+}

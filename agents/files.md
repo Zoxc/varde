@@ -148,14 +148,15 @@ As asked for while sketch edits wait on the solver waits for them too (it
 counts as in flight) and is sent once they're answered or undone, so what's
 on screen is saved; auto-saves don't wait (see `agents/sketch.md`). Saving
 takes the
-`.vrdp`'s own lock like opening does, waiting at most two seconds for
-another program to let go of it. If the file was changed by someone else
-since it was opened or last saved, the save is refused; a banner says so
-and offers Save As. So is a save to a file damaged since
-(`SaveError::Damaged`), and to one opened damaged past a save that
-couldn't be read (`SaveError::OpenedDamaged`, see `DamageKind::Damaged`):
-that one is only saved as another file. A save that fails partway cuts
-the file back; should that fail too, the next save takes what landed for
+`.vrdp`'s own lock like opening does, waiting at most two seconds (a
+tenth of that in `varde-io`'s tests) for another program to let go of
+it. If the file was changed by someone else since it was opened or last
+saved, the save is refused; a banner says so and offers Save As. So
+is a save to a file damaged since (`SaveError::Damaged`), and to one
+opened damaged past a save that couldn't be read
+(`SaveError::OpenedDamaged`, see `DamageKind::Damaged`): that one
+is only saved as another file. A save that fails partway cuts the file
+back; should that fail too, the next save takes what landed for
 its own (see `file-format.md`). Each save writes the design's thumbnail
 too (see "Thumbnails" below). Other errors
 show in the same banner, and the document stays as it is. Only the newest

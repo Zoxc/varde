@@ -270,7 +270,15 @@ impl DocumentFile {
 /// a file kept locked, like the lock file of a design open for editing or a
 /// file another program holds on to, is refused rather than waited on for
 /// good, which would stall whatever is opening or saving it.
-const LOCK_WAIT: Duration = Duration::from_secs(2);
+///
+/// Tests wait a tenth of that, so the ones that hold a lock for good (here
+/// and in the lane's) don't each sit out two seconds; what they check, that
+/// the wait ends in a refusal, is the same at any length.
+const LOCK_WAIT: Duration = if cfg!(test) {
+    Duration::from_millis(200)
+} else {
+    Duration::from_secs(2)
+};
 
 #[derive(Debug, Clone, Copy)]
 enum Lock {

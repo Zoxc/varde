@@ -575,6 +575,14 @@ impl Cleaner<'_> {
         out
     }
 
+    /// Whether an edge joins `v` to `w` (not `v`): [`Self::neighbours`]
+    /// holding `w`, without gathering them all.
+    fn joined(&self, v: u32, w: u32) -> bool {
+        self.around[v as usize]
+            .iter()
+            .any(|&t| self.soup.tris[t as usize].contains(&w))
+    }
+
     /// Collapses the edge `u`–`v` onto `u`, if allowed: every vertex round
     /// it keeps one fan (the surface stays a manifold), and no triangle
     /// turns over that `turn` doesn't allow. Two triangles the collapse
@@ -947,7 +955,7 @@ impl Cleaner<'_> {
             .find(|&&w| w != a && w != b)
             .expect("a third corner");
         let flat = self.straight_sides(other) || self.planar[self.soup.faces[s as usize] as usize];
-        if d == c || self.neighbours(c).contains(&d) {
+        if d == c || self.joined(c, d) {
             return false;
         }
         // Into a curved neighbour only one of zero height, whose far corner
@@ -1070,7 +1078,7 @@ impl Cleaner<'_> {
                 .iter()
                 .find(|&&w| w != u && w != v)
                 .expect("a third corner");
-            if a == b || self.neighbours(a).contains(&b) {
+            if a == b || self.joined(a, b) {
                 continue;
             }
             if self.narrowest(tri).min(self.narrowest(other)) > SLIVER {
@@ -1126,7 +1134,7 @@ impl Cleaner<'_> {
                 .iter()
                 .find(|&&w| w != u && w != v)
                 .expect("a third corner");
-            if a == b || self.neighbours(a).contains(&b) {
+            if a == b || self.joined(a, b) {
                 continue;
             }
             // No triangle has the edge `a`–`b`: a record of it is one left

@@ -172,6 +172,9 @@ pub struct PickIndex {
     corner_faces: Vec<(u32, u32)>,
     /// Each tangent chain's edges, by its first.
     tangent_chains: Groups,
+    /// The mesh's bounds, kept: working them out walks every position,
+    /// and each point tested for being hidden needs them.
+    bounds: Option<varde_kernel::Aabb>,
 }
 
 /// An index of no model, for tests that pick nothing in the model.
@@ -237,6 +240,7 @@ impl PickIndex {
             Default::default()
         };
         Self {
+            bounds: mesh.bounds(),
             mesh,
             picking,
             model,
@@ -977,7 +981,7 @@ impl PickIndex {
     /// How far back from `origin` a ray must start to have the whole mesh
     /// ahead of it, whichever way it goes.
     fn back(&self, origin: DVec3) -> f64 {
-        self.mesh.bounds().map_or(0.0, |bounds| {
+        self.bounds.map_or(0.0, |bounds| {
             let (min, max) = (bounds.min.as_dvec3(), bounds.max.as_dvec3());
             (max - min).length() + (origin - (min + max) / 2.0).length()
         })
@@ -1129,7 +1133,7 @@ impl PickIndex {
         view_height: f64,
         occluders: &mut Vec<u32>,
     ) -> Hidden {
-        let scale = self.mesh.bounds().map_or(0.0, |bounds| {
+        let scale = self.bounds.map_or(0.0, |bounds| {
             f64::from(bounds.min.abs().max(bounds.max.abs()).max_element())
         });
         let slack = HIDDEN_PULL * view_height + 8.0 * f64::from(f32::EPSILON) * scale;

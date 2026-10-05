@@ -397,11 +397,13 @@ impl Sketch {
     /// across undo and sessions. A file could hold the highest number
     /// there is, which is then reused: a repeated name is harmless.
     fn next_number(&self, noun: &str) -> u32 {
-        let points = self
-            .points
-            .iter()
-            .filter(|_| noun == Kind::Point.name())
-            .map(|point| point.number);
+        // The noun compared once rather than for every point: a test
+        // building a sketch of thousands of points calls this for each.
+        let points: &[Point] = match noun == Kind::Point.name() {
+            true => &self.points,
+            false => &[],
+        };
+        let points = points.iter().map(|point| point.number);
         let curves = self
             .curves
             .iter()

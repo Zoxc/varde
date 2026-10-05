@@ -599,6 +599,13 @@ pub(super) fn ratio(num: &impl Pred, den: &impl Pred) -> f64 {
 const CLOSE: f64 = 1e-12;
 
 /// The sign of `(b − a) × (c − a)` in the plane, exactly.
+///
+/// Ear clipping asks this millions of times a face, so it takes two
+/// shortcuts that leave every answer, and what [`exact_count`] counts,
+/// as they were: a plain floating-point filter deciding only where
+/// [`Approx`] would (its value is `Approx`'s, its bound at least twice
+/// `Approx`'s), and the exact value in [`Exp16`], [`Exp`]'s operations
+/// without allocating.
 pub(super) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
     fn eval<N: Num>(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> N {
         let (ax, ay) = (N::lit(a.x), N::lit(a.y));
@@ -606,11 +613,176 @@ pub(super) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
         let (cx, cy) = (N::lit(c.x).sub(&ax), N::lit(c.y).sub(&ay));
         bx.mul(&cy).sub(&by.mul(&cx))
     }
+    if let Some(s) = orient2d_filter(a, b, c) {
+        return s;
+    }
     if let Some(s) = eval::<Approx>(a, b, c).sign() {
         return s;
     }
     worked_out();
-    eval::<Exp>(a, b, c).sign()
+    eval::<Exp16>(a, b, c).sign()
+}
+
+/// [`orient2d`]'s sign where plain floating point clearly decides it,
+/// else `None`.
+///
+/// The value is the one [`Approx`] works out, the same operations in the
+/// same order. `Approx`'s bound on its error comes to some
+/// `2ε(|l| + |r|) + m(Σ + 3)`, for the products `l` and `r`, `Σ` the
+/// differences' sizes and `m` the smallest normal number (each term
+/// grown by a few ulps); this one is twice that and more, so it decides
+/// only where `Approx` does, the same way.
+fn orient2d_filter(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> Option<i8> {
+    let (bx, by) = (b.x - a.x, b.y - a.y);
+    let (cx, cy) = (c.x - a.x, c.y - a.y);
+    let (l, r) = (bx * cy, by * cx);
+    let det = l - r;
+    let bound = 4.0 * f64::EPSILON * (l.abs() + r.abs())
+        + 8.0 * f64::MIN_POSITIVE * (bx.abs() + by.abs() + cx.abs() + cy.abs() + 1.0);
+    if !det.is_finite() || det.abs() <= bound {
+        None
+    } else if det > 0.0 {
+        Some(1)
+    } else {
+        Some(-1)
+    }
+}
+
+/// [`Exp`] in a fixed array, for [`orient2d`]: the very same operations
+/// in the same order, so the same components, without allocating. Its
+/// sums there are at most 16 long: differences of two, products of
+/// four, and their sums of eight.
+#[derive(Debug, Clone, Copy)]
+struct Exp16 {
+    c: [f64; 16],
+    len: usize,
+}
+
+impl Exp16 {
+    const EMPTY: Exp16 = Exp16 {
+        c: [0.0; 16],
+        len: 0,
+    };
+
+    fn parts(&self) -> &[f64] {
+        &self.c[..self.len]
+    }
+
+    fn push(&mut self, x: f64) {
+        self.c[self.len] = x;
+        self.len += 1;
+    }
+
+    /// [`Exp::sign`].
+    fn sign(&self) -> i8 {
+        match self.parts().last() {
+            Some(&x) if x > 0.0 => 1,
+            Some(&x) if x < 0.0 => -1,
+            _ => 0,
+        }
+    }
+
+    /// [`Exp::grow`], in place: each component is written at or before
+    /// the one it was worked out from.
+    fn grow(&mut self, b: f64) {
+        let mut q = b;
+        let mut len = 0;
+        for i in 0..self.len {
+            let (s, err) = two_sum(q, self.c[i]);
+            q = s;
+            if err != 0.0 {
+                self.c[len] = err;
+                len += 1;
+            }
+        }
+        if q != 0.0 {
+            self.c[len] = q;
+            len += 1;
+        }
+        self.len = len;
+    }
+
+    /// [`Exp::scale`].
+    fn scale(e: &[f64], b: f64) -> Exp16 {
+        let mut out = Exp16::EMPTY;
+        let Some((&first, rest)) = e.split_first() else {
+            return out;
+        };
+        if b == 0.0 {
+            return out;
+        }
+        let (mut q, low) = two_product(first, b);
+        if low != 0.0 {
+            out.push(low);
+        }
+        for &x in rest {
+            let (hi, lo) = two_product(x, b);
+            let (sum, err) = two_sum(q, lo);
+            if err != 0.0 {
+                out.push(err);
+            }
+            let (s, err) = fast_two_sum(hi, sum);
+            q = s;
+            if err != 0.0 {
+                out.push(err);
+            }
+        }
+        if q != 0.0 {
+            out.push(q);
+        }
+        out
+    }
+
+    /// [`Exp::sum`].
+    fn sum(a: &[f64], b: &[f64]) -> Exp16 {
+        let (long, short) = if a.len() >= b.len() { (a, b) } else { (b, a) };
+        let mut out = Exp16::EMPTY;
+        out.c[..long.len()].copy_from_slice(long);
+        out.len = long.len();
+        for &x in short {
+            out.grow(x);
+        }
+        out
+    }
+}
+
+impl Num for Exp16 {
+    fn lit(x: f64) -> Self {
+        let mut out = Exp16::EMPTY;
+        if x != 0.0 {
+            out.push(x);
+        }
+        out
+    }
+
+    fn perturbed(c: [f64; 4]) -> Self {
+        Self::lit(c[0])
+    }
+
+    fn add(&self, o: &Self) -> Self {
+        Exp16::sum(self.parts(), o.parts())
+    }
+
+    fn sub(&self, o: &Self) -> Self {
+        let mut neg = Exp16::EMPTY;
+        for &x in o.parts() {
+            neg.push(-x);
+        }
+        Exp16::sum(self.parts(), neg.parts())
+    }
+
+    fn mul(&self, o: &Self) -> Self {
+        let (long, short) = if self.len >= o.len {
+            (self, o)
+        } else {
+            (o, self)
+        };
+        let mut out = Exp16::EMPTY;
+        for &x in short.parts() {
+            out = Exp16::sum(out.parts(), Exp16::scale(long.parts(), x).parts());
+        }
+        out
+    }
 }
 
 /// The sign of `(b − a) × (c − a)` in the plane, exactly, for points
@@ -792,6 +964,73 @@ mod tests {
                     .mul(&Exp::lit(r.x).sub(&Exp::lit(p.x))),
             );
         assert_eq!(orient2d(p, q, r), exact.sign());
+    }
+
+    #[test]
+    fn orientation_shortcuts_answer_as_the_general_evaluation() {
+        // `orient2d`'s filter decides only where `Approx` does, the same
+        // way, and `Exp16` has `Exp`'s very components: on points spread
+        // out, near a line (where the exact value decides), on a grid
+        // (exact zeros and differences), tiny (underflowing products) and
+        // huge (overflowing ones).
+        fn general<N: Num>(p: [glam::DVec2; 3]) -> N {
+            let [a, b, c] = p;
+            let (ax, ay) = (N::lit(a.x), N::lit(a.y));
+            let (bx, by) = (N::lit(b.x).sub(&ax), N::lit(b.y).sub(&ay));
+            let (cx, cy) = (N::lit(c.x).sub(&ax), N::lit(c.y).sub(&ay));
+            bx.mul(&cy).sub(&by.mul(&cx))
+        }
+        let mut rng = Rng::new(11);
+        let v = glam::DVec2::new;
+        let (mut decided, mut exact) = (0, 0);
+        for k in 0..60_000 {
+            let scale = [1.0, 1e-3, 1e6, 1e-160, 1e160, 1e300, 3e-308][k % 7];
+            let mut point = || v(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)) * scale;
+            let p = match k / 7 % 4 {
+                0 => [point(), point(), point()],
+                // On a line through two points, rounded, nudged an ulp or
+                // so.
+                1 => {
+                    let (a, b) = (point(), point());
+                    let t = rng.range(-2.0, 2.0);
+                    let c = a + (b - a) * t;
+                    let nudge = [0.0, f64::EPSILON, -f64::EPSILON][k % 3];
+                    [a, b, v(c.x * (1.0 + nudge), c.y)]
+                }
+                2 => {
+                    let mut grid = || {
+                        v(
+                            (rng.range(-4.0, 4.0) * 4.0).round(),
+                            (rng.range(-4.0, 4.0) * 4.0).round(),
+                        ) * scale
+                    };
+                    [grid(), grid(), grid()]
+                }
+                _ => {
+                    let a = point();
+                    let d = point() * 1e-12;
+                    [a, a + d, a + d * rng.range(-3.0, 3.0)]
+                }
+            };
+            let approx = general::<Approx>(p).sign();
+            if let Some(s) = orient2d_filter(p[0], p[1], p[2]) {
+                assert_eq!(approx, Some(s), "{p:?}");
+                decided += 1;
+            }
+            let (want, got) = (general::<Exp>(p), general::<Exp16>(p));
+            assert_eq!(
+                want.0.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                got.parts().iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+                "{p:?}"
+            );
+            if approx.is_none() {
+                exact += 1;
+            }
+            let s = orient2d(p[0], p[1], p[2]);
+            assert_eq!(s, approx.unwrap_or_else(|| want.sign()), "{p:?}");
+        }
+        // Both shortcuts were taken, often.
+        assert!(decided > 20_000 && exact > 5_000, "{decided} {exact}");
     }
 
     /// The side of the plane `z = 0` a point is on: its height.

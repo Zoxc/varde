@@ -1174,7 +1174,9 @@ impl shader::Primitive for Primitive {
 /// prepares all of a frame's primitives before rendering any, so each
 /// widget draws from its own [`Slot`].
 struct Pipeline {
-    renderer: Renderer,
+    /// Shared: it holds only pipelines, so tests reuse one rather than
+    /// build its pipelines again (about 0.5 s each in a debug build).
+    renderer: Arc<Renderer>,
     /// Each widget's slot, by its [`Interaction::slot`].
     slots: Vec<Keyed>,
 }
@@ -1233,7 +1235,7 @@ impl Pipeline {
 impl shader::Pipeline for Pipeline {
     fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         Pipeline {
-            renderer: Renderer::new(device, format),
+            renderer: Arc::new(Renderer::new(device, format)),
             slots: Vec::new(),
         }
     }

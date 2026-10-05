@@ -674,8 +674,12 @@ vertex or edge.
 
 `par_map(items, f)` is `items.iter().map(f).collect()`, on rayon's pool
 natively (`par_iter`, an indexed collect, so in input order) and plain
-sequential on wasm (rayon is a native-only dependency). It is the only code
-that knows about rayon. The rules every parallel step follows:
+sequential on wasm (rayon is a native-only dependency). Natively it works
+through the items on the calling thread until they have taken `HAND_OFF`
+(100 µs), and only then hands the rest to the pool: waking the pool costs
+tens of microseconds and far more on a loaded machine, which most maps
+never made up (a small boolean's thousands of them waited on hand-offs
+for most of its time). It is the only code that knows about rayon. The rules every parallel step follows:
 
 - A pure map over input sorted by stable keys, collected in that order;
   never `for_each` into a shared sink.
@@ -3383,7 +3387,11 @@ patch integrated over its parameter triangle cut into its four half-edge
 pieces, each by the 8 × 8 Gauss–Legendre rule through the collapsed
 square (`u0 = s`, `u1 = (1 − s)t`, Jacobian `1 − s`): 256 points. A patch
 with a weight outside `0.7..=1.4` is split (`split4`, up to five times)
-first. The tests hold it to `1e-12` relative on boxes, cylinders and
+first. A flat patch (every weight 1, every control point its edge's
+midpoint, to the bit) skips the rule for its tetrahedron with `o`,
+`a·(b × c)/6`, which the rule gives too, to rounding (`flat_flux`; the
+integrand keeps one sign over a plane, so its size is the value's).
+The tests hold it to `1e-12` relative on boxes, cylinders and
 extrudes. Patch sums are added sequentially in patch order.
 The Gauss nodes and weights are written out, not computed, so no
 platform's `cos` decides them.
