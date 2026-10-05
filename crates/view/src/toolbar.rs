@@ -441,28 +441,35 @@ fn ops<'a>(
         // tools: as the mock's model bar changes with what's selected,
         // and there's no room for both at 1280 px wide. The tools are on
         // the rail, their keys still work.
-        if sketch.constraining {
+        let fitting = || {
             let fitting = ConstraintKind::fitting(sketch.sketch, sketch.selection);
-            let bound = fitting.into_iter().filter_map(|kind| {
+            fitting.into_iter().filter_map(move |kind| {
                 let binding = constraint_binding(kind, keys)?;
                 Some(tipped_op(kind.icon(), kind.label(), binding, false))
-            });
+            })
+        };
+        if sketch.constraining {
             return std::iter::once(constrain)
                 .chain(std::iter::once(separator()))
-                .chain(bound)
+                .chain(fitting())
                 .collect();
         }
-        // With splines selected, and no drawing tool: switching them,
-        // handles and the curvature comb, in place of the tools likewise.
-        if keys.splines_selected {
-            return [
-                tipped_op(Icon::Convert, "Convert", switch_binding(keys), false),
-                tipped_op(Icon::Handles, "Handles", handles_binding(keys), false),
-                tipped_op(Icon::Comb, "Comb", comb_binding(keys), sketch.comb),
-                constrain,
-            ]
-            .into_iter()
-            .collect();
+        // With anything selected, and no drawing tool, likewise the
+        // constraints that fit it, and with splines among it switching
+        // them, handles and the curvature comb before them.
+        if keys.geometry_selected && !keys.drawing {
+            let splines = keys.splines_selected.then(|| {
+                [
+                    tipped_op(Icon::Convert, "Convert", switch_binding(keys), false),
+                    tipped_op(Icon::Handles, "Handles", handles_binding(keys), false),
+                    tipped_op(Icon::Comb, "Comb", comb_binding(keys), sketch.comb),
+                    separator(),
+                ]
+            });
+            return (splines.into_iter().flatten())
+                .chain([constrain, separator()])
+                .chain(fitting())
+                .collect();
         }
         // The tools the mock's sketch bar has, in its order; the rest are
         // on the rail (all of them, with their keys), which left no room

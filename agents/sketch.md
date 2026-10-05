@@ -1316,7 +1316,10 @@ bar says why (`EditError::Sketch`).
   the one the geometry is nearer to; applying one clears the selection.
   `Esc` puts it down, as `Space` does it and any drawing tool
   (`Look::PutDownTool`, `DocumentKeys::tool`; a focused value field takes
-  `Space` as text).
+  `Space` as text). Without the tool and with no drawing tool, anything
+  selected has the toolbar list the same kinds after the Constrain
+  button, in place of the tools (with splines among it, Convert, Handles
+  and Comb before them), but the selection stays as one is applied.
 - **The tool rail** (`varde-view`'s `rail.rs`, the app's `doc/rail.rs`):
   the same tools in sets, over the viewport's left (see
   `agents/viewport.md`). In a sketch: Draw (the drawing tools), Modify
