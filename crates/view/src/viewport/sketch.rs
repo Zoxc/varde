@@ -1034,7 +1034,11 @@ impl<'a> Sketching<'a> {
                 let rim = if linked.contains(&point.id) && !red(point.id) {
                     colors.link
                 } else {
-                    state_color(point.id)
+                    if red(point.id) || states.fixed.contains(&point.id) {
+                        state_color(point.id)
+                    } else {
+                        colors.point
+                    }
                 };
                 let mut style = dot(POINT_RADIUS, faded(point.id, fill), faded(point.id, rim));
                 style.fixed = !selected && states.fixed.contains(&point.id);

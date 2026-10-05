@@ -597,7 +597,7 @@ fn construction_is_dashed_and_the_selection_drawn_over_the_rest() {
         (c, colors.point_fill),
         (a, colors.selected),
     ] {
-        expected.point(at(id), dot(POINT_RADIUS, fill, colors.curve));
+        expected.point(at(id), dot(POINT_RADIUS, fill, colors.point));
     }
     assert_eq!(*base, expected);
 }
@@ -682,12 +682,12 @@ fn geometry_is_coloured_by_its_state() {
     let mut fixed = dot(POINT_RADIUS, colors.point_fill, colors.fixed);
     fixed.fixed = true;
     expected.point(at(a), fixed);
-    expected.point(at(b), dot(POINT_RADIUS, colors.point_fill, colors.curve));
+    expected.point(at(b), dot(POINT_RADIUS, colors.point_fill, colors.point));
     let faded = |color: Color| Color {
         a: color.a * PENDING_ALPHA,
         ..color
     };
-    let waiting = dot(POINT_RADIUS, faded(colors.point_fill), faded(colors.curve));
+    let waiting = dot(POINT_RADIUS, faded(colors.point_fill), faded(colors.point));
     expected.point(at(lone), waiting);
     assert_eq!(*base, expected);
 }
@@ -726,7 +726,7 @@ fn a_failing_curve_is_red_within_the_errors_halo() {
     let free = line_style(colors.curve, CURVE_WIDTH, false);
     expected.polyline(Space::Sketch, &[at(b), at(c)], free);
     for id in [a, b, c] {
-        expected.point(at(id), dot(POINT_RADIUS, colors.point_fill, colors.curve));
+        expected.point(at(id), dot(POINT_RADIUS, colors.point_fill, colors.point));
     }
     assert_eq!(*base, expected);
     // The red is the errors' own.
@@ -1237,7 +1237,7 @@ fn each_region_is_shaded_on_its_own_under_the_rest() {
         expected.polyline(Space::Sketch, &polyline, style);
     }
     for point in &sketch.points {
-        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.curve));
+        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.point));
     }
     assert_eq!(*base, expected);
     assert!(*unshaded != *base);
@@ -1668,7 +1668,7 @@ fn the_ends_of_lines_a_fillet_cuts_off_are_dashed() {
         .unwrap();
     expected.polyline(Space::Sketch, &arc, solid);
     for point in &sketch.points {
-        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.curve));
+        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.point));
     }
     assert_eq!(*base, expected);
 }
@@ -1839,7 +1839,7 @@ fn a_spline_s_handles_show_and_selected_its_ends_and_control_polygon() {
     let handle = line_style(colors.curve, HANDLE_WIDTH, false);
     expected.polyline(Space::Sketch, &[at(middle), at(tip)], handle);
     for point in &sketch.points {
-        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.curve));
+        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.point));
     }
     assert_eq!(*base(&BTreeSet::new()), expected);
 
@@ -1858,7 +1858,7 @@ fn a_spline_s_handles_show_and_selected_its_ends_and_control_polygon() {
         expected.point(would, dot(POINT_RADIUS, colors.point_fill, colors.preview));
     }
     for point in &sketch.points {
-        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.curve));
+        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.point));
     }
     assert_eq!(*base(&selection), expected);
 
@@ -1882,7 +1882,7 @@ fn a_spline_s_handles_show_and_selected_its_ends_and_control_polygon() {
     let dashed = line_style(colors.construction, HANDLE_WIDTH, true);
     expected.polyline(Space::Sketch, &polygon, dashed);
     for point in &sketch.points {
-        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.curve));
+        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.point));
     }
     assert_eq!(*layer, expected);
 }

@@ -1382,7 +1382,9 @@ refused what it found, `MeshFeed::broken`). An
   in a sketch) has "Use in profiles" or "Leave out of profiles"
   (`Edit::SetLinkProfiles`) and "Remove" (`Edit::RemoveLink`, deleting
   the link with what it made), both proposed, acting only while the
-  document can be changed. In the viewport a link's curves and points'
+  document can be changed. In the viewport points the constraints leave
+  free have their rims in `SketchColors::point`, the orange the drawing
+  tools' icons draw points in; a link's curves and points'
   rims are in `SketchColors::link`, the Modify tools' reference tone,
   curves dashed unless they count for profiles, as construction ones.
 - **The Constraints list** (lower half of the Sketch tab) shows the

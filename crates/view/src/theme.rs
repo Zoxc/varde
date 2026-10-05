@@ -134,6 +134,9 @@ pub struct SketchColors {
     pub hovered: Color,
     /// Inside the points' rims: the mock's halo.
     pub point_fill: Color,
+    /// The rims of points the constraints leave free: the accent the
+    /// drawing tools' icons draw their points in.
+    pub point: Color,
     /// The shape a tool is drawing, before it's placed.
     pub preview: Color,
     /// The box dragged to select, filled and outlined.
@@ -425,6 +428,7 @@ const LIGHT: Palette = Palette {
         selected: color!(0x2f5fd8),
         hovered: color!(0x3d9b35),
         point_fill: color!(0xf4f4f7),
+        point: LIGHT_ORANGE,
         preview: alpha(LIGHT_SKETCH, 0.75),
         box_fill: alpha(LIGHT_SKETCH, 0.08),
         box_line: alpha(LIGHT_SKETCH, 0.7),
@@ -516,6 +520,7 @@ const DARK: Palette = Palette {
         selected: color!(0x7ea2ff),
         hovered: color!(0x76cc60),
         point_fill: color!(0x24252b),
+        point: DARK_ORANGE,
         preview: alpha(DARK_SKETCH, 0.75),
         box_fill: alpha(DARK_SKETCH, 0.1),
         box_line: alpha(DARK_SKETCH, 0.7),
