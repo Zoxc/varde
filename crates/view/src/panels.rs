@@ -6,8 +6,10 @@ use iced::widget::{
     space, stack, text, text_input,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
+use std::collections::BTreeSet;
 use varde_document::{BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Opacity};
 use varde_expr::LengthUnit;
+
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, LinkKind, Sketch};
 
 use crate::chrome::{self, ChipSize, Edge, edged, icon_button, key_chip};
@@ -22,8 +24,8 @@ use crate::theme::{
 };
 use crate::toolbar::{menu_item, menu_separator};
 use crate::{
-    ConstraintKind, DocumentState, Edit, LinkRow, Look, Message, Panel, RowMenu, SketchState,
-    VALUE_FIELD, ValueTarget, dimension, split,
+    ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup, Panel,
+    RowMenu, SketchState, VALUE_FIELD, ValueTarget, dimension, split,
 };
 
 pub(crate) const ROW_HEIGHT: f32 = 28.0;
@@ -115,6 +117,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             state.row_menu,
             state.model_selection,
             state.opacity_preview,
+            state.objects_folded,
         )),
         _ => scrolled(timeline(
             document,
@@ -513,7 +516,9 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
 /// row asks for its context menu, shown on the one `menu` is on, with a
 /// body's opacity as `preview` has it while its slider is dragged.
 /// Clicking a body's row selects it where bodies are selected, as
-/// `selection`, which marks the rows of the bodies it holds, says.
+/// `selection`, which marks the rows of the bodies it holds, says. Each
+/// group's header folds it, as the Sketch tab's do, those `folded`
+/// listing nothing under it.
 fn objects<'a>(
     document: &'a Document,
     merged: &[(BodyId, BodyId)],
@@ -521,6 +526,7 @@ fn objects<'a>(
     menu: Option<RowMenu>,
     selection: &crate::Selection,
     preview: Option<(BodyId, Opacity)>,
+    folded: &BTreeSet<ObjectGroup>,
 ) -> Element<'a, Message> {
     let selected: Vec<BodyId> = selection.bodies().collect();
     let takes_bodies = selection.mode().takes_bodies();
@@ -576,11 +582,20 @@ fn objects<'a>(
             },
         })
     });
+    let header = |label, count, group| {
+        let toggle = Message::Look(Look::ToggleObjectGroup(group));
+        container(tree_header(label, count, folded.contains(&group), toggle))
+            .padding([0, 8])
+            .into()
+    };
+    let bodies_folded = folded.contains(&ObjectGroup::Bodies);
+    let sketches_folded = folded.contains(&ObjectGroup::Sketches);
+    let bodies_count = bodies_after_joins(document, merged);
     column(
-        std::iter::once(group("Bodies", bodies_after_joins(document, merged)))
-            .chain(bodies)
-            .chain([group("Sketches", count)])
-            .chain(sketches),
+        std::iter::once(header("Bodies", bodies_count, ObjectGroup::Bodies))
+            .chain(bodies.filter(|_| !bodies_folded))
+            .chain([header("Sketches", count, ObjectGroup::Sketches)])
+            .chain(sketches.filter(|_| !sketches_folded)),
     )
     .into()
 }
@@ -847,36 +862,62 @@ fn sketch_tab<'a>(
 /// A row of the Sketch tab's Geometry list, see [`geometry_rows`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GeometryRow {
-    /// A group's header: its name and how many rows it has.
-    Header(&'static str, usize),
+    /// A group's header: which, and how many rows it has unfolded.
+    Header(GeometryGroup, usize),
     /// A curve of the sketch's own, by its place in its curves.
     Curve(usize),
-    /// A point of the sketch's own, by its place in its points.
-    Point(usize),
+    /// A point of the sketch's own, by its place in its points: under the
+    /// curve it makes if `child`, else one no curve has.
+    Point { at: usize, child: bool },
     /// A link, by its place among `links`.
     Link(usize),
 }
 
-/// The rows of the Sketch tab's Geometry list, groups with a header row
-/// each: Geometry, the sketch's own curves then points (what no link
-/// made), then Projected and Intersected, its links of each kind, a
-/// link a row. A group with nothing in it isn't listed, but for
-/// Geometry while there's no link either, which says nothing's drawn.
-pub(crate) fn geometry_rows(sketch: &Sketch, links: &[LinkRow]) -> Vec<GeometryRow> {
+/// The rows of the Sketch tab's Geometry list as a tree, groups with a
+/// header row each: Geometry, the sketch's own curves (what no link
+/// made), each followed by its points while it's `expanded`, then the
+/// points no curve has; then Projected and Intersected, its links of each
+/// kind, a link a row. A point a few curves share is under each. A group
+/// `folded` lists its header alone. A group with nothing in it isn't
+/// listed, but for Geometry while there's no link either, which says
+/// nothing's drawn.
+pub(crate) fn geometry_rows(
+    sketch: &Sketch,
+    links: &[LinkRow],
+    folded: &BTreeSet<GeometryGroup>,
+    expanded: &BTreeSet<Id>,
+) -> Vec<GeometryRow> {
     let linked = sketch.linked();
     let own = |id: &Id| !linked.contains(id);
-    let curves = (sketch.curves.iter().enumerate())
-        .filter(|(_, entry)| own(&entry.id))
-        .map(|(i, _)| GeometryRow::Curve(i));
-    let points = (sketch.points.iter().enumerate())
-        .filter(|(_, point)| own(&point.id))
-        .map(|(i, _)| GeometryRow::Point(i));
-    let mut rows = vec![GeometryRow::Header("Geometry", 0)];
-    rows.extend(curves.chain(points));
-    let count = rows.len() - 1;
-    rows[0] = GeometryRow::Header("Geometry", count);
-    if count == 0 && !links.is_empty() {
-        rows.clear();
+    let place = |id: Id| {
+        sketch
+            .points
+            .binary_search_by_key(&id, |point| point.id)
+            .ok()
+    };
+    let mut on_curves = BTreeSet::new();
+    let mut tree = Vec::new();
+    for (i, entry) in sketch.curves.iter().enumerate() {
+        if !own(&entry.id) {
+            continue;
+        }
+        on_curves.extend(entry.curve.points());
+        tree.push(GeometryRow::Curve(i));
+        if expanded.contains(&entry.id) {
+            let points = entry.curve.points().filter_map(place);
+            tree.extend(points.map(|at| GeometryRow::Point { at, child: true }));
+        }
+    }
+    let loose = (sketch.points.iter().enumerate())
+        .filter(|(_, point)| own(&point.id) && !on_curves.contains(&point.id))
+        .map(|(at, _)| GeometryRow::Point { at, child: false });
+    tree.extend(loose);
+    let mut rows = Vec::new();
+    if !tree.is_empty() || links.is_empty() {
+        rows.push(GeometryRow::Header(GeometryGroup::Own, tree.len()));
+        if !folded.contains(&GeometryGroup::Own) {
+            rows.extend(tree);
+        }
     }
     for kind in [LinkKind::Project, LinkKind::Intersect] {
         let of: Vec<GeometryRow> = (links.iter().enumerate())
@@ -884,45 +925,101 @@ pub(crate) fn geometry_rows(sketch: &Sketch, links: &[LinkRow]) -> Vec<GeometryR
             .map(|(i, _)| GeometryRow::Link(i))
             .collect();
         if !of.is_empty() {
-            rows.push(GeometryRow::Header(kind.name(), of.len()));
-            rows.extend(of);
+            let group = GeometryGroup::of_links(kind);
+            rows.push(GeometryRow::Header(group, of.len()));
+            if !folded.contains(&group) {
+                rows.extend(of);
+            }
         }
     }
     rows
 }
 
-/// The sketch's curves, then its points, by name, each selected on a
-/// click, under a Geometry header, then its links under Projected and
-/// Intersected, as [`geometry_rows`] has them, headers as rows. Only the
-/// rows in view of the list's `height` are laid out, since a sketch can
-/// hold tens of thousands of items: the rest are room.
+/// What a group of the Geometry list is headed.
+fn group_label(group: GeometryGroup) -> &'static str {
+    match group {
+        GeometryGroup::Own => "Geometry",
+        GeometryGroup::Projected => LinkKind::Project.name(),
+        GeometryGroup::Intersected => LinkKind::Intersect.name(),
+    }
+}
+
+/// The icon of the curve `entry`.
+fn curve_icon(entry: &varde_sketch::CurveEntry) -> Icon {
+    match (entry.corner, &entry.curve) {
+        (Some(_), Curve::Arc { .. }) => Icon::Fillet,
+        (Some(_), _) => Icon::Chamfer,
+        (None, Curve::Line { .. }) => Icon::Line,
+        (None, Curve::Circle { .. }) => Icon::Circle,
+        (None, Curve::Arc { .. }) => Icon::Arc,
+        (None, Curve::Spline(_)) => Icon::Spline,
+    }
+}
+
+/// The sketch's geometry as a tree ([`geometry_rows`]): headers that fold
+/// their groups on a click, curves that unfold to their points on their
+/// chevron's, each noted with its size or where it is, as the Timeline
+/// notes features. Only the rows in view of the list's `height` are laid
+/// out, since a sketch can hold tens of thousands of items: the rest are
+/// room.
 fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
-    let rows = geometry_rows(sketch.sketch, sketch.links);
+    let rows = geometry_rows(sketch.sketch, sketch.links, sketch.folded, sketch.expanded);
     let conflicts = sketch.conflicting_items();
     let row_at = |i: usize| match rows[i] {
-        GeometryRow::Header(label, count) => group_row(label, count).into(),
+        GeometryRow::Header(group, count) => {
+            let folded = sketch.folded.contains(&group);
+            tree_header(
+                group_label(group),
+                count,
+                folded,
+                Message::Look(Look::ToggleGroup(group)),
+            )
+        }
         GeometryRow::Curve(at) => {
             let entry = &sketch.sketch.curves[at];
-            let icon = match (entry.corner, &entry.curve) {
-                (Some(_), Curve::Arc { .. }) => Icon::Fillet,
-                (Some(_), _) => Icon::Chamfer,
-                (None, Curve::Line { .. }) => Icon::Line,
-                (None, Curve::Circle { .. }) => Icon::Circle,
-                (None, Curve::Arc { .. }) => Icon::Arc,
-                (None, Curve::Spline(_)) => Icon::Spline,
+            let size = dimension::size_note(sketch.sketch, entry, sketch.units);
+            let (note, driven) = match size {
+                Some((size, driven)) if entry.construction => {
+                    (Some(format!("{size} · Construction")), driven)
+                }
+                Some((size, driven)) => (Some(size), driven),
+                None => (entry.construction.then(|| "Construction".to_owned()), false),
             };
-            let note = entry.construction.then_some("Construction");
             let danger = conflicts.contains(&entry.id);
-            item_row(sketch, entry.id, icon, entry.name(), note, danger).into()
+            let expander = Expander::Toggle {
+                open: sketch.expanded.contains(&entry.id),
+                on_press: Message::Look(Look::ToggleExpanded(entry.id)),
+            };
+            let item = Item {
+                id: entry.id,
+                icon: curve_icon(entry),
+                name: entry.name(),
+                note,
+                driven,
+                danger,
+            };
+            geometry_item(sketch, item, expander, TREE_INDENT)
         }
-        GeometryRow::Point(at) => {
+        GeometryRow::Point { at, child } => {
             let point = &sketch.sketch.points[at];
-            let danger = conflicts.contains(&point.id);
-            item_row(sketch, point.id, Icon::Point, point.name(), None, danger).into()
+            let item = Item {
+                id: point.id,
+                icon: Icon::Point,
+                name: point.name(),
+                note: Some(dimension::point_note(point.at, sketch.units)),
+                driven: false,
+                danger: conflicts.contains(&point.id),
+            };
+            let indent = if child {
+                2.0 * TREE_INDENT
+            } else {
+                TREE_INDENT
+            };
+            geometry_item(sketch, item, Expander::Leaf, indent)
         }
         GeometryRow::Link(at) => link_row(sketch, &sketch.links[at]),
     };
-    let list = if rows == [GeometryRow::Header("Geometry", 0)] {
+    let list = if rows == [GeometryRow::Header(GeometryGroup::Own, 0)] {
         column![
             container(group("Geometry", 0)).padding([0, 8]),
             empty_note("Nothing drawn yet.")
@@ -934,6 +1031,133 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
         })
     };
     container(list).padding(Padding::ZERO.top(6)).into()
+}
+
+/// How far each level of a tree is indented, in pixels.
+const TREE_INDENT: f32 = 16.0;
+
+/// What's left of a row's icon in a tree.
+#[derive(Clone)]
+enum Expander {
+    /// A chevron, pointing down if `open`, sending `on_press` on a click.
+    Toggle { open: bool, on_press: Message },
+    /// Room for one, on a row with nothing under it.
+    Leaf,
+}
+
+impl Expander {
+    fn view<'a>(self) -> Element<'a, Message> {
+        match self {
+            Expander::Toggle { open, on_press } => {
+                let chevron = icons::tinted(
+                    if open { Icon::Chev } else { Icon::ChevRight },
+                    EXPANDER_SIZE,
+                    |p| p.muted,
+                );
+                mouse_area(chevron)
+                    .on_press(on_press)
+                    .interaction(iced::mouse::Interaction::Pointer)
+                    .into()
+            }
+            Expander::Leaf => Space::new().width(EXPANDER_SIZE).into(),
+        }
+    }
+}
+
+/// The side of a tree's chevron, in pixels.
+const EXPANDER_SIZE: f32 = 14.0;
+
+/// A tree's group header, `label` and how many it holds, behind a
+/// chevron pointing right while it's `folded`: a click anywhere on it
+/// sends `on_press`.
+fn tree_header<'a>(
+    label: &'a str,
+    count: usize,
+    folded: bool,
+    on_press: Message,
+) -> Element<'a, Message> {
+    let header = row![
+        icons::tinted(
+            if folded { Icon::ChevRight } else { Icon::Chev },
+            icons::INLINE,
+            |p| p.muted
+        ),
+        chrome::heading(label),
+        text(count).size(11.5).style(theme::faint_text),
+    ]
+    .spacing(8)
+    .height(ROW_HEIGHT)
+    .width(Length::Fill)
+    .align_y(Alignment::Center);
+    mouse_area(header)
+        .on_press(on_press)
+        .interaction(iced::mouse::Interaction::Pointer)
+        .into()
+}
+
+/// A point or curve as a row of the Geometry list.
+struct Item {
+    id: Id,
+    icon: Icon,
+    name: String,
+    note: Option<String>,
+    /// Whether a driving dimension sets the size in the note: it's shown
+    /// in the dimension colour, not faint.
+    driven: bool,
+    danger: bool,
+}
+
+/// `item`'s row of the Geometry list, `indent` in with `expander` before
+/// its icon, selected on a click (`Ctrl` adds it), highlighting it in the
+/// viewport while hovered.
+fn geometry_item<'a>(
+    sketch: SketchState<'a>,
+    item: Item,
+    expander: Expander,
+    indent: f32,
+) -> Element<'a, Message> {
+    let id = item.id;
+    let selected = sketch.selection.contains(&id);
+    let faint = sketch.pending.contains(&id);
+    let content = move |hovered: bool, expander: Element<'a, Message>| {
+        let name: Element<'a, Message> = if item.danger {
+            text(item.name.clone()).style(theme::danger_text).into()
+        } else {
+            name(item.name.clone(), !faint).into()
+        };
+        let note = item.note.clone().map(|note| {
+            let note = text(note).size(11.5);
+            if item.driven {
+                note.style(|theme| text::Style {
+                    color: Some(theme::palette(theme).icons.dimension.accent),
+                })
+            } else {
+                note.style(theme::faint_text)
+            }
+        });
+        container(
+            row![
+                expander,
+                icons::icon(item.icon, icons::INLINE),
+                name,
+                space::horizontal(),
+                note,
+            ]
+            .spacing(6)
+            .height(ROW_HEIGHT)
+            .align_y(Alignment::Center),
+        )
+        .padding(Padding::from([0, 8]).left(indent - EXPANDER_SIZE))
+        .style(theme::list_row(selected, hovered))
+    };
+    mouse_area(hover(
+        content(false, expander.clone().view()),
+        content(true, expander.view()),
+    ))
+    .on_press(Message::Look(Look::ClickRow(id)))
+    .on_enter(Message::Look(Look::HoverItem(Some(id))))
+    .on_exit(Message::Look(Look::HoverItem(None)))
+    .into()
 }
 
 /// A group's header as a row of a list: as [`group`], within the list's
@@ -1336,7 +1560,15 @@ mod tests {
         assert_eq!(consumed_note(document, &[], below), None);
 
         let texts = |merged: &[(BodyId, BodyId)]| -> Vec<String> {
-            let objects = objects(document, merged, true, None, &Default::default(), None);
+            let objects = objects(
+                document,
+                merged,
+                true,
+                None,
+                &Default::default(),
+                None,
+                &BTreeSet::new(),
+            );
             let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
             laid.texts().into_iter().map(|shown| shown.text).collect()
         };
@@ -1350,7 +1582,15 @@ mod tests {
         // The row hovered is drawn over the plain one, which shows through
         // a translucent highlight: its note is laid out in the same place
         // in both, though the hovered one has its bin.
-        let objects = objects(document, &merged, true, None, &Default::default(), None);
+        let objects = objects(
+            document,
+            &merged,
+            true,
+            None,
+            &Default::default(),
+            None,
+            &BTreeSet::new(),
+        );
         let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
         let notes: Vec<_> = (laid.texts().into_iter())
             .filter(|shown| shown.text == "in Body 1")
@@ -1410,7 +1650,7 @@ mod tests {
 
     /// The Geometry list groups the sketch's own items, then its
     /// projected and intersected links, under a header row each, empty
-    /// groups left out.
+    /// groups left out, a curve's points under it while it's unfolded.
     #[test]
     fn the_geometry_list_groups_own_geometry_and_links() {
         use glam::DVec2;
@@ -1427,11 +1667,12 @@ mod tests {
             broken: None,
             profiles: false,
         };
+        let none = BTreeSet::new();
         // Nothing yet: Geometry alone, empty.
         let empty = Sketch::default();
         assert_eq!(
-            geometry_rows(&empty, &[]),
-            [GeometryRow::Header("Geometry", 0)]
+            geometry_rows(&empty, &[], &none, &BTreeSet::new()),
+            [GeometryRow::Header(GeometryGroup::Own, 0)]
         );
 
         // A link only: no Geometry group.
@@ -1450,17 +1691,23 @@ mod tests {
             .unwrap();
         let links = [row(intersected, LinkKind::Intersect)];
         assert_eq!(
-            geometry_rows(&sketch, &links),
-            [GeometryRow::Header("Intersected", 1), GeometryRow::Link(0)]
+            geometry_rows(&sketch, &links, &none, &BTreeSet::new()),
+            [
+                GeometryRow::Header(GeometryGroup::Intersected, 1),
+                GeometryRow::Link(0)
+            ]
         );
 
-        // A line of its own and a projected link too: its own first, the
-        // link's line and points not among them.
+        // A line of its own, a point of its own and a projected link too:
+        // its own first, the link's line and points not among them, the
+        // line's points under it while it's unfolded, the loose point
+        // after the curves.
         let a = sketch.add_point(DVec2::new(0.0, 5.0)).unwrap();
         let b = sketch.add_point(DVec2::new(5.0, 5.0)).unwrap();
-        sketch
+        let line = sketch
             .add_curve(Curve::Line { start: a, end: b }, false)
             .unwrap();
+        sketch.add_point(DVec2::new(9.0, 9.0)).unwrap();
         sketch = SketchEdit::AddLink {
             kind: LinkKind::Project,
         }
@@ -1472,17 +1719,47 @@ mod tests {
             row(projected, LinkKind::Project),
         ];
         let own_line = sketch.curves.len() - 1;
+        let rows = |folded: &BTreeSet<GeometryGroup>, expanded: &BTreeSet<Id>| {
+            geometry_rows(&sketch, &links, folded, expanded)
+        };
         assert_eq!(
-            geometry_rows(&sketch, &links),
+            rows(&none, &BTreeSet::new()),
             [
-                GeometryRow::Header("Geometry", 3),
+                GeometryRow::Header(GeometryGroup::Own, 2),
                 GeometryRow::Curve(own_line),
-                GeometryRow::Point(2),
-                GeometryRow::Point(3),
-                GeometryRow::Header("Projected", 1),
+                GeometryRow::Point {
+                    at: 4,
+                    child: false
+                },
+                GeometryRow::Header(GeometryGroup::Projected, 1),
                 GeometryRow::Link(1),
-                GeometryRow::Header("Intersected", 1),
+                GeometryRow::Header(GeometryGroup::Intersected, 1),
                 GeometryRow::Link(0),
+            ]
+        );
+        let expanded = BTreeSet::from([line]);
+        assert_eq!(
+            rows(&none, &expanded)[..5],
+            [
+                GeometryRow::Header(GeometryGroup::Own, 4),
+                GeometryRow::Curve(own_line),
+                GeometryRow::Point { at: 2, child: true },
+                GeometryRow::Point { at: 3, child: true },
+                GeometryRow::Point {
+                    at: 4,
+                    child: false
+                },
+            ]
+        );
+        // A folded group lists its header alone.
+        let folded = BTreeSet::from([GeometryGroup::Own, GeometryGroup::Intersected]);
+        assert_eq!(
+            rows(&folded, &expanded),
+            [
+                GeometryRow::Header(GeometryGroup::Own, 4),
+                GeometryRow::Header(GeometryGroup::Projected, 1),
+                GeometryRow::Link(1),
+                GeometryRow::Header(GeometryGroup::Intersected, 1),
             ]
         );
     }

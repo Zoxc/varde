@@ -308,6 +308,48 @@ fn shown_value(measure: &Measure, value: f64, units: LengthUnit) -> String {
     }
 }
 
+/// The size of the curve `entry` of `sketch` as its row in the Geometry
+/// list notes it, in `units`: a line's length, a circle's diameter, an
+/// arc's radius (or the other of the two where a driving dimension
+/// measures it), and whether a driving dimension sets it. `None` for a
+/// spline, or what doesn't measure.
+pub fn size_note(
+    sketch: &Sketch,
+    entry: &varde_sketch::CurveEntry,
+    units: LengthUnit,
+) -> Option<(String, bool)> {
+    let id = entry.id;
+    let driving = |measure: &Measure| {
+        (sketch.dimensions.iter())
+            .any(|dimension| dimension.dimension.driving && dimension.dimension.measure == *measure)
+    };
+    let measure = match entry.curve {
+        Curve::Line { .. } => Measure::Length(id),
+        Curve::Circle { .. } | Curve::Arc { .. } => {
+            let [usual, other] = match entry.curve {
+                Curve::Circle { .. } => [Measure::Diameter(id), Measure::Radius(id)],
+                _ => [Measure::Radius(id), Measure::Diameter(id)],
+            };
+            if !driving(&usual) && driving(&other) {
+                other
+            } else {
+                usual
+            }
+        }
+        Curve::Spline(_) => return None,
+    };
+    let value = sketch.measure(&measure, Side::Positive)?.abs();
+    let driven = driving(&measure);
+    Some((shown_value(&measure, value, units), driven))
+}
+
+/// Where the point `at` is, in `units`, as its row in the Geometry list
+/// notes it: "10 mm, -5 mm".
+pub fn point_note(at: DVec2, units: LengthUnit) -> String {
+    let unit = Some(units.into());
+    format!("{}, {}", format(at.x, unit), format(at.y, unit))
+}
+
 /// What `dimension` shows on its label in `sketch` in a design in
 /// `units`: its value, or a reference's measure of the sketch as it is,
 /// in brackets.

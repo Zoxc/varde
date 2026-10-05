@@ -689,6 +689,13 @@ pub enum Look {
     /// Puts down the tool in use in the sketch being edited, the
     /// Constrain tool too: `Space` while one is.
     PutDownTool,
+    /// Folds a group of the Sketch tab's Geometry list, or unfolds it.
+    ToggleGroup(GeometryGroup),
+    /// Unfolds a curve's row of the Geometry list to list its points under
+    /// it, or folds it.
+    ToggleExpanded(Id),
+    /// Folds a group of the Objects tab, or unfolds it.
+    ToggleObjectGroup(ObjectGroup),
     /// Drags the item `id` of the sketch being edited, grabbed at `from`,
     /// to `to`, in sketch coordinates. Shown until it's dropped
     /// ([`Edit::DropGeometry`]) or `Esc` puts it back.
@@ -1008,6 +1015,34 @@ pub enum RowMenu {
     Sketch(FeatureId),
     /// A link in the Sketch tab of the sketch being edited.
     Link(Id),
+}
+
+/// A group of the Sketch tab's Geometry list, which can be folded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GeometryGroup {
+    /// The sketch's own points and curves.
+    Own,
+    /// Its links projecting outside geometry.
+    Projected,
+    /// Its links intersecting outside geometry with its plane.
+    Intersected,
+}
+
+/// A group of the Objects tab, which can be folded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ObjectGroup {
+    Bodies,
+    Sketches,
+}
+
+impl GeometryGroup {
+    /// The group of the links of `kind`.
+    pub fn of_links(kind: varde_sketch::LinkKind) -> Self {
+        match kind {
+            varde_sketch::LinkKind::Project => GeometryGroup::Projected,
+            varde_sketch::LinkKind::Intersect => GeometryGroup::Intersected,
+        }
+    }
 }
 
 /// A tab of the side panel. Two show at a time: Timeline and Objects, or

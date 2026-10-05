@@ -729,6 +729,26 @@ fn a_constraint_applied_again_toggles_off() {
 }
 
 #[test]
+fn the_geometry_list_folds_and_unfolds() {
+    let (mut doc, [_, _, line, _, circle]) = with_shapes();
+    doc.look(Look::ToggleExpanded(line));
+    doc.look(Look::ToggleGroup(varde_view::GeometryGroup::Own));
+    let state = doc.sketch_state().unwrap();
+    assert!(state.expanded.contains(&line));
+    assert!(state.folded.contains(&varde_view::GeometryGroup::Own));
+    doc.look(Look::ToggleGroup(varde_view::GeometryGroup::Own));
+    assert!(doc.sketch_state().unwrap().folded.is_empty());
+    // A curve deleted is folded away with it.
+    doc.look(Look::ToggleExpanded(circle));
+    doc.look(Look::ClickGeometry {
+        hit: Some(circle),
+        add: false,
+    });
+    doc.update(Edit::DeleteSelection);
+    assert!(!doc.sketch.as_ref().unwrap().expanded.contains(&circle));
+}
+
+#[test]
 fn delete_removes_the_selection_and_what_depends_on_it() {
     let (mut doc, [a, b, line, c, circle]) = with_shapes();
     let before = sketch(&doc).clone();

@@ -153,6 +153,8 @@ pub struct DocumentState<'a> {
     pub selected_feature: Option<FeatureId>,
     /// The row of the side panel whose context menu is open, if one is.
     pub row_menu: Option<RowMenu>,
+    /// The Objects tab's groups folded.
+    pub objects_folded: &'a std::collections::BTreeSet<crate::ObjectGroup>,
     /// What overlaps where the left button was held still in the
     /// viewport, listed to choose from, if it's open.
     pub overlaps: Option<&'a crate::Overlaps>,
@@ -320,6 +322,10 @@ pub struct SketchState<'a> {
     pub links: &'a [LinkRow],
     /// The link whose row's context menu is open, if one's is.
     pub link_menu: Option<Id>,
+    /// The Geometry list's groups folded.
+    pub folded: &'a BTreeSet<crate::GeometryGroup>,
+    /// The curves whose Geometry rows are unfolded, listing their points.
+    pub expanded: &'a BTreeSet<Id>,
     /// Whether the document can be changed: a link's menu acts only then.
     pub editable: bool,
 }
@@ -382,6 +388,7 @@ impl<'a> SketchState<'a> {
         tool: Option<ActiveTool<'a>>,
     ) -> Self {
         static NONE: BTreeSet<Id> = BTreeSet::new();
+        static NO_GROUPS: BTreeSet<crate::GeometryGroup> = BTreeSet::new();
         SketchState {
             name: "Sketch",
             plane: Plane::Origin(varde_document::OriginPlane::XY),
@@ -412,6 +419,8 @@ impl<'a> SketchState<'a> {
             failing: &NONE,
             links: &[],
             link_menu: None,
+            folded: &NO_GROUPS,
+            expanded: &NONE,
             editable: true,
         }
     }

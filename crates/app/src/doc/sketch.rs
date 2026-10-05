@@ -25,8 +25,8 @@ use varde_render::{Camera, Projection};
 use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, SketchEdit, TooComplex};
 use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{
-    ActiveTool, CURVED_FACE, LinkRow, Naming, PlanePick, RowMenu, Shown, SketchLines, SketchState,
-    Snap, Target, Tool, ToolClick, ValueField, ValueTarget,
+    ActiveTool, CURVED_FACE, GeometryGroup, LinkRow, Naming, PlanePick, RowMenu, Shown,
+    SketchLines, SketchState, Snap, Target, Tool, ToolClick, ValueField, ValueTarget,
 };
 
 use super::camera::FRAME_MARGIN;
@@ -69,6 +69,11 @@ pub(crate) struct SketchSession {
     pub(crate) constraining: bool,
     /// Whether the constraints' glyphs are shown in the viewport.
     pub(crate) glyphs: bool,
+    /// The Geometry list's groups folded.
+    pub(crate) folded: BTreeSet<GeometryGroup>,
+    /// The curves whose Geometry rows are unfolded, listing their points.
+    /// Ids gone drop out, see [`Doc::prune`].
+    pub(crate) expanded: BTreeSet<Id>,
     /// Whether the curvature comb of the splines selected shows.
     pub(crate) comb: bool,
     /// The item hovered in a list or by its glyph, if any.
@@ -120,6 +125,8 @@ impl SketchSession {
             constraint_scroll: 0.0,
             constraining: false,
             glyphs: true,
+            folded: BTreeSet::new(),
+            expanded: BTreeSet::new(),
             comb: false,
             hovered: None,
             waiting: None,
@@ -903,6 +910,27 @@ impl Doc {
         }
     }
 
+    /// Folds a group of the Geometry list, or unfolds it.
+    pub(crate) fn toggle_group(&mut self, group: GeometryGroup) {
+        if let Some(session) = &mut self.sketch
+            && !session.folded.remove(&group)
+        {
+            session.folded.insert(group);
+        }
+    }
+
+    /// Unfolds a curve's row of the Geometry list to show its points
+    /// under it, or folds it.
+    pub(crate) fn toggle_expanded(&mut self, id: Id) {
+        let held = self.holds(id);
+        if let Some(session) = &mut self.sketch
+            && !session.expanded.remove(&id)
+            && held
+        {
+            session.expanded.insert(id);
+        }
+    }
+
     /// Shows the constraints' glyphs, or hides them.
     pub(crate) fn toggle_glyphs(&mut self) {
         if let Some(session) = &mut self.sketch {
@@ -1044,6 +1072,7 @@ impl Doc {
                 let waiting = session.waiting.take();
                 let sketch = waiting.as_ref().map_or(sketch, |waiting| &waiting.sketch);
                 session.selection.retain(|&id| sketch.kind(id).is_some());
+                session.expanded.retain(|&id| sketch.curve(id).is_some());
                 follow_selection(&session.selection, &mut session.listed_on, sketch);
                 session.hovered = session.hovered.filter(|&id| sketch.kind(id).is_some());
                 // What's measured or edited may be gone, by undo, say.
@@ -1171,6 +1200,8 @@ impl Doc {
                 Some(RowMenu::Link(link)) => Some(link),
                 _ => None,
             },
+            folded: &session.folded,
+            expanded: &session.expanded,
             editable: self.editable(),
         })
     }

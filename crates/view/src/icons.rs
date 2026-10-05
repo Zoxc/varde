@@ -259,6 +259,8 @@ icons! {
     EdgesTessellation => r#"<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/><path d="M4 16.5l8-4.5M20 16.5l-8-4.5M8 5.25l8 4.5" stroke-width="0.9"/>"#,
     // A menu item opening a submenu to its left.
     ChevLeft => r#"<path d="M14 7l-5 5 5 5"/>"#,
+    // A folded row of a tree, which unfolds below.
+    ChevRight => r#"<path d="M10 7l5 5-5 5"/>"#,
     // Nothing: room for an icon, beside items that have one.
     Blank => "",
 }

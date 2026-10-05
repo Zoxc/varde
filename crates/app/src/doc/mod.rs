@@ -133,6 +133,8 @@ pub(crate) struct Doc {
     /// The row of the side panel whose context menu is open, if one is:
     /// a feature of the Timeline's only while it's selected.
     pub(crate) row_menu: Option<RowMenu>,
+    /// The Objects tab's groups folded.
+    pub(crate) objects_folded: std::collections::BTreeSet<varde_view::ObjectGroup>,
     /// What overlaps where the left button was held still in the
     /// viewport, listed to choose from, and the row hovered.
     overlaps: Option<overlaps::Listed>,
@@ -365,6 +367,7 @@ impl Doc {
             hovered_feature: None,
             errors: Arc::default(),
             row_menu: None,
+            objects_folded: Default::default(),
             overlaps: None,
             opacity_preview: None,
             sketch: None,
@@ -951,6 +954,13 @@ impl Doc {
             Look::ToggleConstrain => self.toggle_constrain(),
             Look::ToggleGlyphs => self.toggle_glyphs(),
             Look::PutDownTool => self.put_down_tool(),
+            Look::ToggleGroup(group) => self.toggle_group(group),
+            Look::ToggleObjectGroup(group) => {
+                if !self.objects_folded.remove(&group) {
+                    self.objects_folded.insert(group);
+                }
+            }
+            Look::ToggleExpanded(id) => self.toggle_expanded(id),
             Look::SelectBox { ids, add } => self.select_box(ids, add),
             // While measuring, the selection is hidden, and kept for
             // after: Space doesn't clear what can't be seen.
@@ -1288,6 +1298,7 @@ impl Doc {
             thumbnail: self.thumbnail_request(),
             selected_feature: self.selected_feature,
             row_menu: self.row_menu,
+            objects_folded: &self.objects_folded,
             overlaps: self.overlaps.as_ref().map(|listed| &listed.list),
             overlap_ticks: self.overlap_ticks(),
             sketch: self.sketch_state(),

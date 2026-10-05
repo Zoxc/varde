@@ -1373,9 +1373,21 @@ bar says why (`EditError::Sketch`).
   highlights: geometry itself, a constraint by what it ties together. The
   selection and hover may name items still waiting on the solver.
 - **The Geometry list** (upper half of the Sketch tab, `panels.rs`,
-  `geometry_rows`) is groups, a header row each, in one virtual list
-  (only the rows in view laid out): Geometry, the sketch's own curves
-  then points (what no link made); Projected and Intersected, the links
+  `geometry_rows`) is a tree of groups, a header row each, in one
+  virtual list (only the rows in view laid out). A header click folds
+  its group (`Look::ToggleGroup`, `SketchSession::folded`). Geometry
+  holds the sketch's own curves (what no link made), each unfolding on
+  its chevron (`Look::ToggleExpanded`, `SketchSession::expanded`, pruned
+  to curves the sketch holds) to the points it's made of
+  (`Curve::points`; a point shared is under each), then the points no
+  curve has. A curve's note is its size (`dimension::size_note`: a
+  line's length, a circle's diameter, an arc's radius, or the other of
+  the two a driving dimension measures), in the Dimension icons' accent
+  where a driving dimension sets it, else faint, with "Construction"
+  after it; a point's is where it is. The Objects tab folds its Bodies
+  and Sketches groups the same way (`Look::ToggleObjectGroup`,
+  `Doc::objects_folded`). After Geometry come Projected and Intersected,
+  the links
   of each kind, a row each (`LinkRow`, made by `Doc::refresh_links` on
   every sync and model answered: its kind's icon, what it comes from by
   name, `links::source_name`: "Line 3 of Sketch 2", "Edge of Body 1",
