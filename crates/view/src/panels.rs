@@ -1110,7 +1110,7 @@ struct Item {
 /// `item`'s row of the Geometry list, `indent` in with `expander` before
 /// its icon, selected on a click (`Ctrl` adds it), highlighting it in the
 /// viewport while hovered, with a context menu deleting it (the
-/// selection, if it's among it).
+/// selection, if it's among it), and detaching a point curves share.
 fn geometry_item<'a>(
     sketch: SketchState<'a>,
     item: Item,
@@ -1160,15 +1160,29 @@ fn geometry_item<'a>(
     .on_exit(Message::Look(Look::HoverItem(None)));
     let menu = (sketch.item_menu == Some(id)).then(|| {
         let editable = sketch.editable && !id.is_builtin();
-        row_menu(vec![
-            menu_item(
-                Icon::Trash,
-                "Delete".into(),
-                selected.then_some(Shortcut::DELETE),
-                editable.then_some(Message::Edit(Edit::DeleteItem(id))),
-            )
-            .into(),
-        ])
+        let detach = sketch.sketch.detachable(id).then(|| {
+            let message = Message::Edit(Edit::DetachPoint(id));
+            let item = menu_item(
+                Icon::Split,
+                "Detach".into(),
+                None,
+                sketch.editable.then_some(message),
+            );
+            [item.into(), menu_separator().into()]
+        });
+        row_menu(
+            detach
+                .into_iter()
+                .flatten()
+                .chain([menu_item(
+                    Icon::Trash,
+                    "Delete".into(),
+                    selected.then_some(Shortcut::DELETE),
+                    editable.then_some(Message::Edit(Edit::DeleteItem(id))),
+                )
+                .into()])
+                .collect(),
+        )
     });
     ContextMenu::new(
         row,

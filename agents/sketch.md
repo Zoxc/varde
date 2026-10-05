@@ -1392,7 +1392,13 @@ bar says why (`EditError::Sketch`).
   where a driving dimension sets it, else faint, with "Construction"
   after it; a point's is where it is. Its context menu
   (`RowMenu::Item`) deletes it (`Edit::DeleteItem`), or the selection if
-  it's among it. The Objects tab folds its Bodies
+  it's among it; a point two curves or more are made from
+  (`Sketch::detachable`: not the origin's nor a link's) has Detach
+  above (`Edit::DetachPoint`, `SketchEdit::Detach`, `Sketch::detach`):
+  each curve but the first gets a point of its own at its place, tied
+  back by a real `Coincident`, so the joint shows in the Constraints list
+  and comes apart once that's deleted; its constraints and dimensions
+  stay with the first curve. The Objects tab folds its Bodies
   and Sketches groups the same way (`Look::ToggleObjectGroup`,
   `Doc::objects_folded`). After Geometry come Projected and Intersected,
   the links

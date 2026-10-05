@@ -729,6 +729,64 @@ fn a_constraint_applied_again_toggles_off() {
 }
 
 #[test]
+fn a_shared_point_is_detached_from_its_row_s_menu() {
+    let (mut doc, feature, _) = sketching();
+    let mut drawn = Sketch::default();
+    let [a, corner, b] =
+        [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)].map(|(x, y)| drawn.add_point(at(x, y)).unwrap());
+    let first = drawn
+        .add_curve(
+            Curve::Line {
+                start: a,
+                end: corner,
+            },
+            false,
+        )
+        .unwrap();
+    let second = drawn
+        .add_curve(
+            Curve::Line {
+                start: corner,
+                end: b,
+            },
+            false,
+        )
+        .unwrap();
+    doc.editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    doc.sync();
+    doc.lane.answer(&mut doc.doc);
+    // Not a shared point: nothing.
+    doc.update(Edit::DetachPoint(a));
+    assert_eq!(sketch(&doc).points.len(), 3);
+    doc.update(Edit::DetachPoint(corner));
+    let detached = sketch(&doc);
+    assert_eq!(detached.points.len(), 4);
+    assert!(
+        detached
+            .curve(first)
+            .unwrap()
+            .curve
+            .points()
+            .any(|id| id == corner)
+    );
+    assert!(
+        !detached
+            .curve(second)
+            .unwrap()
+            .curve
+            .points()
+            .any(|id| id == corner)
+    );
+    assert_eq!(detached.constraints.len(), 1);
+    assert!(!detached.detachable(corner));
+}
+
+#[test]
 fn a_row_s_menu_deletes_it_or_the_selection_it_is_in() {
     let (mut doc, [a, b, line, _, circle]) = with_shapes();
     doc.look(Look::OpenMenu(varde_view::RowMenu::Item(circle)));

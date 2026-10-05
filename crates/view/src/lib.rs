@@ -353,6 +353,9 @@ pub enum Edit {
     /// Deletes a point or curve of the sketch being edited from its row's
     /// context menu: the selection if it's among it, else it alone.
     DeleteItem(Id),
+    /// Gives each curve made from a point the curves share a point of its
+    /// own, coincident with it, from the point's row's context menu.
+    DetachPoint(Id),
     /// Turns the curves selected in the sketch being edited between normal
     /// and construction geometry, or while a tool is in use, the shapes it
     /// draws next.

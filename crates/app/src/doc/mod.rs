@@ -541,6 +541,7 @@ impl Doc {
             Edit::DropGeometry => self.drop_geometry(),
             Edit::DeleteSelection => self.delete_selection(),
             Edit::DeleteItem(id) => self.delete_item(id),
+            Edit::DetachPoint(id) => self.detach_point(id),
             Edit::ToggleConstruction => self.toggle_construction(),
             Edit::Constrain(kind) => self.constrain(kind),
             Edit::ToggleConstraint(kind) => self.toggle_constraint(kind),

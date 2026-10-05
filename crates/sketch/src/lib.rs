@@ -25,6 +25,7 @@ pub mod angle;
 mod check;
 mod constraint;
 mod corner;
+mod detach;
 mod dimension;
 mod edit;
 mod flatten;

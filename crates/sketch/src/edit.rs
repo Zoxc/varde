@@ -160,6 +160,8 @@ pub enum SketchEdit {
     /// A link's curves made to count for profiles, or not (construction
     /// geometry).
     SetLinkProfiles { link: Id, profiles: bool },
+    /// The point curves share made one of each, see [`Sketch::detach`].
+    Detach(Id),
 }
 
 impl SketchEdit {
@@ -266,6 +268,7 @@ impl SketchEdit {
             SketchEdit::SetLinkProfiles { link, profiles } => {
                 next.set_link_profiles(*link, *profiles)?;
             }
+            SketchEdit::Detach(point) => next.detach(*point)?,
         }
         // Only a link's own edits change what it made; deleting a link
         // takes it whole.

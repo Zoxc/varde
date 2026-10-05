@@ -235,6 +235,17 @@ impl Doc {
         }
     }
 
+    /// Detaches the point `id` the curves share, if it can be, see
+    /// [`Sketch::detach`](varde_sketch::Sketch::detachable).
+    pub(crate) fn detach_point(&mut self, id: Id) {
+        if self
+            .editable_sketch()
+            .is_some_and(|sketch| sketch.detachable(id))
+        {
+            self.propose(SketchEdit::Detach(id));
+        }
+    }
+
     /// Deletes `items` and what depends on them.
     fn delete_items(&mut self, items: Vec<Id>) {
         // The origin and axes are always there.
