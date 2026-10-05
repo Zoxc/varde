@@ -18,8 +18,9 @@ use varde_regen::Summary;
 use varde_sketch::{Curve, Id};
 use varde_view::{Edit, Look, MotionKind, MotionLook, MotionPick, Picked, SplitMode};
 
+use super::holding;
 use super::{Plates, enter, later_disc, near, plates};
-use crate::tests::{holding, key_in, screen_texts};
+use crate::tests::{key_in, screen_texts};
 
 fn shows(plates: &Plates, wanted: &str) -> bool {
     screen_texts(&plates.doc)

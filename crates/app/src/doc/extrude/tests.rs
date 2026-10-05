@@ -3266,3 +3266,41 @@ fn a_new_extrude_starts_at_a_round_quarter_of_the_view() {
     camera.zoom(1e-9);
     assert_eq!(default_distance(&camera, LengthUnit::Mm), 0.001);
 }
+
+/// A new extrude's distance follows the camera, zoomed far out or in,
+/// and the camera stays as it is; an extrude edited keeps its own.
+#[test]
+fn a_new_extrude_fits_the_camera_and_an_edited_one_keeps_its_distance() {
+    let (mut doc, sketch, _requests) = plate();
+    let distance = |doc: &Doc| {
+        let session = doc.extrude.as_ref().expect("a session");
+        session.fields[0].value.as_ref().expect("a distance").value
+    };
+    for (height, wanted) in [(40_000.0, 10_000.0), (40.0, 10.0), (0.3, 0.05)] {
+        doc.camera.set_view_height(height);
+        let camera = doc.camera;
+        doc.look(Look::SelectFeature(sketch));
+        doc.look(Look::StartExtrude);
+        assert_eq!(distance(&doc), wanted, "seen {height} mm tall");
+        assert_eq!(doc.camera, camera, "the camera stays");
+        doc.look(Look::StartExtrude);
+        assert!(doc.extrude.is_none());
+    }
+
+    let (mut doc, _) = example();
+    let feature = doc.editor.document().features()[1].id;
+    let Some(FeatureKind::Extrude(stored)) = doc
+        .editor
+        .document()
+        .feature(feature)
+        .map(|f| f.kind.clone())
+    else {
+        panic!("an extrude");
+    };
+    let Extent::OneSide(stored) = stored.extent else {
+        panic!("one side");
+    };
+    doc.camera.set_view_height(40_000.0);
+    doc.look(Look::EditFeature(feature));
+    assert_eq!(distance(&doc), stored.value, "its own, not the view's");
+}

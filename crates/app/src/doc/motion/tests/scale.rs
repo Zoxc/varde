@@ -15,8 +15,9 @@ use varde_view::{
     Edit, Look, MotionField, MotionKind, MotionLook, MotionPick, Pick, Picked, ScaleMode, Snapped,
 };
 
+use super::holding;
 use super::{Plates, enter, near};
-use crate::tests::{holding, key_in, screen_texts};
+use crate::tests::{key_in, screen_texts};
 
 fn shows(plates: &Plates, wanted: &str) -> bool {
     screen_texts(&plates.doc)

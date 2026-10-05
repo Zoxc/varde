@@ -19,13 +19,15 @@ use varde_document::{
     MAX_SWEEP_REGIONS, Orientation, PathPart, PathRef, Sweep, SweepError,
 };
 use varde_expr::{AngleUnit, Unit, Value};
+use varde_render::Camera;
 use varde_sketch::{Id, RegionRef, Sketch};
 use varde_view::{
     MotionField, MotionKind, MotionPick, OperationKind, SketchLines, SweepPart, SweepPath,
     SweepView, sweep_info,
 };
 
-use super::{Doc, MotionSession};
+use super::{Doc, MotionSession, length_field};
+use crate::doc::camera::fitting_length;
 use crate::doc::regions::{BodyTargets, RegionPick, TypedText};
 use crate::doc::revolve::sketch_of;
 
@@ -85,9 +87,14 @@ impl Default for SweepSetup {
     }
 }
 
-/// The fields a new sweep opens with: a helix's pitch 10 of the design's
-/// units and 5 turns, and no twist.
-pub(super) fn sweep_fields(design: &Design) -> [TypedText; 3] {
+/// The part of the view's height a new helix's pitch starts at, at most:
+/// its 5 turns then rise at most half of it.
+const PITCH_SHARE: f64 = 0.1;
+
+/// The fields a new sweep opens with, seen by `camera`: a helix's pitch
+/// of [`PITCH_SHARE`] of the view's height made nice ([`fitting_length`])
+/// and 5 turns, and no twist.
+pub(super) fn sweep_fields(design: &Design, camera: &Camera) -> [TypedText; 3] {
     let read = |text: &str, ask: &varde_expr::Ask| {
         Value::new(text, ask).map_or_else(
             |_| TypedText::read(text.to_owned(), ask),
@@ -96,7 +103,11 @@ pub(super) fn sweep_fields(design: &Design) -> [TypedText; 3] {
     };
     let twist = Sweep::twist_ask(design);
     [
-        read("10", &Sweep::pitch_ask(design)),
+        length_field(
+            fitting_length(camera, design.units, PITCH_SHARE),
+            &Sweep::pitch_ask(design),
+            design,
+        ),
         read("5", &Sweep::turns_ask(design)),
         TypedText::read(
             varde_expr::format(0.0, Some(Unit::Angle(AngleUnit::Deg))),

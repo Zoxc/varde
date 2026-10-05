@@ -12,7 +12,8 @@ use varde_sketch::{Curve, Sketch};
 use varde_view::{Look, MotionPick, Pick, Picked};
 
 use super::Plates;
-use crate::tests::{holding, screen_texts};
+use super::holding;
+use crate::tests::screen_texts;
 
 /// Whether some text on the screen holds `wanted`.
 pub(super) fn shows(plates: &Plates, wanted: &str) -> bool {

@@ -3,21 +3,20 @@
 //! tick, the model mock's fillet panel.
 
 use varde_document::{Design, FeatureKind, Fillet};
-use varde_expr::Value;
+use varde_render::Camera;
 use varde_view::{FilletView, MotionField, MotionKind};
 
 use super::blend::BlendSetup;
-use super::{Doc, MotionSession};
+use super::{BLEND_SHARE, Doc, MotionSession, length_field};
+use crate::doc::camera::fitting_length;
 use crate::doc::regions::TypedText;
 
-/// The fillet's radius field as a new one opens it, the UI mock's: 2 of
-/// the design's units, with their symbol.
-pub(super) fn radius_field(design: &Design) -> TypedText {
-    let ask = Fillet::radius_ask(design);
-    Value::new("2", &ask).map_or_else(
-        |_| TypedText::read("2".to_owned(), &ask),
-        |value| TypedText::of(&value, &ask),
-    )
+/// The fillet's radius field as a new one opens it, seen by `camera`:
+/// [`BLEND_SHARE`] of the view's height made nice ([`fitting_length`]),
+/// in the design's units with their symbol.
+pub(super) fn radius_field(design: &Design, camera: &Camera) -> TypedText {
+    let length = fitting_length(camera, design.units, BLEND_SHARE);
+    length_field(length, &Fillet::radius_ask(design), design)
 }
 
 impl MotionSession {

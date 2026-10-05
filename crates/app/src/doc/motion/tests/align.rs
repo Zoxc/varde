@@ -14,9 +14,10 @@ use varde_view::{
     Pick, Picked, Snapped,
 };
 
+use super::holding;
 use super::{Plates, enter, near};
 use crate::doc::motion::align::Taken;
-use crate::tests::{add_disc_of, holding, key_in, length, screen_texts, two_plates};
+use crate::tests::{add_disc_of, key_in, length, screen_texts, two_plates};
 
 fn shows(plates: &Plates, wanted: &str) -> bool {
     screen_texts(&plates.doc)

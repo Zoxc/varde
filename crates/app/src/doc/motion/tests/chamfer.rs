@@ -16,8 +16,9 @@ use varde_view::{
     Picked, Picks, Selection, SelectionMode,
 };
 
+use super::holding;
 use super::{Plates, character, enter, later_disc, near, plates};
-use crate::tests::{holding, key_in, screen_texts};
+use crate::tests::{key_in, screen_texts};
 
 pub(super) fn shows(plates: &Plates, wanted: &str) -> bool {
     screen_texts(&plates.doc)

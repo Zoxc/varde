@@ -146,7 +146,9 @@ times its diagonal, at least 1 mm tall), or on the origin when it shows
 nothing; a document opened jumps there once its first model shows,
 unless the camera was moved meanwhile (`Doc::fit_first_model`), while a
 new design starts on the origin, from `HOME_DISTANCE` (1 m) away, as Home
-with nothing shown does. A view cube face looks from its side
+with nothing shown does. Tools opening never move the camera: their
+fresh lengths fit it instead (`fitting_length`, "Fresh lengths fit the
+camera" in `agents/features.md`). A view cube face looks from its side
 at what Home looks at (the model's middle, or the sketch's in a sketch),
 keeping the zoom. Panning, zooming and the view
 cube's faces leave the pivot. Its marker (below) shows whole for

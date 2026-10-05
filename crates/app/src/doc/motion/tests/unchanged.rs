@@ -4,8 +4,8 @@
 use varde_document::{AxisLine, BodyOp, Combine, FeatureId, FeatureKind, OriginPlane};
 use varde_view::{Angle, Edit, Look, MotionField, MotionLook, MotionPick, RevolveLook, TurnKind};
 
+use super::holding;
 use super::{Plates, plates};
-use crate::tests::holding;
 
 /// [`plates`] with, as their sessions make them: Body 2 moved and turned
 /// about the Z axis, then mirrored across YZ, Body 3 in a linear pattern

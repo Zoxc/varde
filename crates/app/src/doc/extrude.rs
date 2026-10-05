@@ -55,22 +55,9 @@ const DEFAULT_SHARE: f64 = 0.25;
 
 /// The distance a new extrude starts with, in millimetres, seen by
 /// `camera` in a design of `units`: [`DEFAULT_SHARE`] of the view's
-/// height at the target, rounded down to 1, 2 or 5 times a power of ten
-/// of `units`, and no less than a thousandth of one. Made as
-/// [`snap_step`](varde_view::snap_step) makes its step, so it's the same
-/// natively and on the web.
+/// height, made nice by [`fitting_length`](super::camera::fitting_length).
 fn default_distance(camera: &Camera, units: LengthUnit) -> f64 {
-    let most = f64::from(camera.view_height()) * DEFAULT_SHARE / units.mm();
-    // The view's height is positive and within the camera's extent, so
-    // the decade is within ±324. Should the logarithm round down across
-    // a power of ten, the 10 still finds that power.
-    let decade = (varde_sketch::angle::log10(most).floor() as i32).max(-3);
-    let distance = [(1, 1), (5, 0), (2, 0), (1, 0)]
-        .into_iter()
-        .filter_map(|(m, up)| format!("{m}e{}", decade + up).parse::<f64>().ok())
-        .find(|&distance| distance <= most)
-        .unwrap_or(0.001);
-    distance * units.mm()
+    super::camera::fitting_length(camera, units, DEFAULT_SHARE)
 }
 
 impl ExtrudeSession {

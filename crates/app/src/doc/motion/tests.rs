@@ -8,9 +8,19 @@ use varde_regen::{Request, Summary};
 use varde_view::{Edit, Look, MotionField, MotionLook, MotionPick, Picked};
 
 use super::*;
-use crate::tests::{add_disc, answer, holding, key_in, press_in, screen_texts, two_sides};
+use crate::tests::{add_disc, answer, key_in, press_in, screen_texts, two_sides};
 
 type Requests = Rc<RefCell<Vec<Request>>>;
+
+/// [`crate::tests::holding`] with the camera's view 100 mm tall, one the
+/// example's plates fit in, which the tools' fresh lengths are picked to
+/// fit: a 2 mm fillet or shell, a 1 mm chamfer or offset, a helix's
+/// pitch of 10.
+pub(super) fn holding(document: Document) -> (Doc, Requests) {
+    let (mut doc, requests) = crate::tests::holding(document);
+    doc.camera.set_view_height(100.0);
+    (doc, requests)
+}
 
 /// The example's plate, "Body 1" (60 × 40 × 10 about the origin, from z 0
 /// to 10), and two discs of radius 5 made as new bodies, 15 mm up and 5
@@ -1100,6 +1110,69 @@ fn a_move_follows_a_body_a_redone_combine_merges() {
         panic!("a move");
     };
     assert_eq!(moved.bodies, [plate]);
+}
+
+/// Each tool's fresh lengths fit the camera as it is, nice numbers bigger
+/// zoomed out and smaller zoomed in, and the camera never moves; the
+/// lengths that aren't sizes (a move's offsets) stay nothing.
+#[test]
+fn fresh_lengths_fit_the_camera_and_it_stays() {
+    use MotionField::*;
+    let mut plates = plates();
+    let starts = [
+        (Look::StartPattern, Spread, 0.25),
+        (Look::StartFillet, Radius, 0.02),
+        (Look::StartShell, Thickness, 0.02),
+        (Look::StartChamfer, ChamferDistance, 0.01),
+        (Look::StartChamfer, ChamferSecond, 0.02),
+        (Look::StartOffsetFace, Distance, 0.01),
+        (Look::StartSweep, Pitch, 0.1),
+        (Look::StartMove, Offset(Axis3::Z), 0.0),
+    ];
+    for height in [100.0, 1e5, 0.5] {
+        plates.doc.camera.set_view_height(height);
+        let camera = plates.doc.camera;
+        for (start, field, share) in starts.clone() {
+            plates.doc.look(start.clone());
+            let session = plates.doc.motion.as_ref().expect("a session");
+            let length = session.field(field).value.as_ref().expect("a length").value;
+            let most = f64::from(height) * share;
+            assert!(
+                length <= most && (share == 0.0 || length > most / 5.0),
+                "{field:?} {length} at {height}"
+            );
+            // 1, 2 or 5 times a power of ten (a chamfer's second distance
+            // twice its first).
+            let decade = 10f64.powf(length.log10().floor());
+            let nice = [1.0, 2.0, 5.0, 10.0]
+                .iter()
+                .any(|m| (length / decade - m).abs() < 1e-9);
+            assert!(
+                share == 0.0 || field == ChamferSecond || nice,
+                "{field:?} {length} is round"
+            );
+            assert_eq!(plates.doc.camera, camera, "{start:?} keeps the camera");
+            plates.doc.motion = None;
+        }
+    }
+}
+
+/// A fillet edited keeps its radius however far the camera is zoomed.
+#[test]
+fn an_edited_fillet_keeps_its_radius_zoomed_out() {
+    let (mut plates, id) = fillet::made();
+    plates.doc.camera.set_view_height(1e5);
+    plates.doc.look(Look::EditFeature(id));
+    let session = plates.doc.motion.as_ref().expect("a session");
+    assert_eq!(
+        session
+            .field(MotionField::Radius)
+            .value
+            .as_ref()
+            .unwrap()
+            .value,
+        2.0
+    );
 }
 
 mod align;

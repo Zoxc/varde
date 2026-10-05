@@ -6,6 +6,8 @@ use glam::Vec3;
 use iced::time::Instant;
 use varde_render::Camera;
 
+use varde_expr::LengthUnit;
+
 use super::{Doc, home_camera};
 
 /// How long the camera takes to turn to a new view, every turn alike, as
@@ -21,6 +23,30 @@ pub(crate) const PIVOT_FADE: Duration = Duration::from_millis(400);
 /// this many times as tall as it (a sketch's points on entering it, a
 /// failure's box's diagonal on Show).
 pub(super) const FRAME_MARGIN: f32 = 1.5;
+
+/// A length that fits the view of `camera`, in millimetres, for a fresh
+/// default of a tool in a design of `units`: `share` (positive, up to
+/// one) of the view's height at the target, kept within that share of
+/// [`MAX_COORD`](varde_kernel::MAX_COORD), rounded down to 1, 2 or 5
+/// times a power of ten of `units`, and no less than a thousandth of
+/// one. Tools pick their defaults with it so what they make fits the view
+/// as it is: the camera never moves for them. Made as
+/// [`snap_step`](varde_view::snap_step) makes its step, so it's the same
+/// natively and on the web.
+pub(crate) fn fitting_length(camera: &Camera, units: LengthUnit, share: f64) -> f64 {
+    let height = f64::from(camera.view_height()).min(f64::from(varde_kernel::MAX_COORD));
+    let most = height * share / units.mm();
+    // The view's height is positive and bounded, so the decade is within
+    // ±324. Should the logarithm round down across a power of ten, the 10
+    // still finds that power.
+    let decade = (varde_sketch::angle::log10(most).floor() as i32).max(-3);
+    let length = [(1, 1), (5, 0), (2, 0), (1, 0)]
+        .into_iter()
+        .filter_map(|(m, up)| format!("{m}e{}", decade + up).parse::<f64>().ok())
+        .find(|&length| length <= most)
+        .unwrap_or(0.001);
+    length * units.mm()
+}
 
 /// The point picked for the camera to orbit, with a middle click, and how
 /// its marker shows: for [`PIVOT_SHOWN`] once picked, then fading, and
@@ -192,6 +218,46 @@ impl Doc {
                 }
                 None => self.camera = animation.to,
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The default camera made `height` mm tall at its target.
+    fn holding(height: f32) -> Camera {
+        let mut camera = Camera::default();
+        camera.set_view_height(height);
+        camera
+    }
+
+    #[test]
+    fn a_fitting_length_is_a_round_share_of_the_view_in_its_units() {
+        let mm = |height, share| fitting_length(&holding(height), LengthUnit::Mm, share);
+        assert_eq!(mm(100.0, 0.25), 20.0);
+        assert_eq!(mm(100.0, 0.02), 2.0);
+        assert_eq!(mm(40.0, 0.25), 10.0);
+        assert_eq!(mm(30.0, 0.25), 5.0);
+        // In inches, a round number of them: a 100 mm view's quarter is
+        // just under an inch, so half of one.
+        let inches = fitting_length(&holding(100.0), LengthUnit::In, 0.25);
+        assert!((inches - 0.5 * 25.4).abs() < 1e-9);
+        let metres = fitting_length(&holding(10_000.0), LengthUnit::M, 0.25);
+        assert!((metres - 2000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_fitting_length_stays_bounded_at_the_zoom_limits() {
+        for unit in LengthUnit::ALL {
+            // Zoomed in as far as the camera goes: a thousandth of a unit.
+            let tiny = fitting_length(&holding(1e-6), unit, 0.01);
+            assert!((tiny - 0.001 * unit.mm()).abs() < 1e-12);
+            // Zoomed out past the coordinate limit: within its share.
+            let huge = fitting_length(&holding(f32::MAX), unit, 0.25);
+            assert!(huge.is_finite() && huge > 0.0);
+            assert!(huge <= 0.25 * f64::from(varde_kernel::MAX_COORD));
         }
     }
 }

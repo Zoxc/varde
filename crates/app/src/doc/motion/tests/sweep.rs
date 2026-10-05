@@ -23,7 +23,8 @@ use varde_view::{
 
 use super::Plates;
 use super::chamfer::{click_edge, picking, shows};
-use crate::tests::{holding, key_in};
+use super::holding;
+use crate::tests::key_in;
 
 /// The plate's upright edge at its back right corner, from z 0 to 10.
 const CORNER: ([f64; 3], [f64; 3]) = ([30.0, 20.0, 0.0], [30.0, 20.0, 10.0]);

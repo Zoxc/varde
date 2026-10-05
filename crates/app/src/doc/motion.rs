@@ -48,6 +48,7 @@ use varde_document::{
 use varde_expr::{AngleUnit, Ask, ErrorKind, Unit, Value};
 use varde_kernel::Motion;
 use varde_regen::Summary;
+use varde_render::Camera;
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, ModelHighlight, MotionField,
     MotionKind, MotionLook, MotionPick, MotionState, Naming, OperationKind, PanelHover,
@@ -63,6 +64,7 @@ use self::refs::Refs;
 use self::scale::ScaleSetup;
 use self::split::SplitSetup;
 use self::sweep::SweepSetup;
+use super::camera::fitting_length;
 use super::combine::pickable;
 use super::feed::Merges;
 use super::regions::TypedText;
@@ -307,14 +309,41 @@ fn negated(value: &Value, ask: &Ask) -> Option<Value> {
         .filter(|turned| turned.value == -value.value)
 }
 
+/// The part of the view's height a new fillet's radius or shell's
+/// thickness starts at, at most; a chamfer's distance and an offset
+/// face's start at half of it.
+const BLEND_SHARE: f64 = 0.02;
+
+/// The part of the view's height a new linear pattern's spacing starts
+/// at, at most: its 3 copies then span half of it.
+const SPACING_SHARE: f64 = 0.25;
+
+/// A field for `ask` reading `length`, in millimetres, written in
+/// `design`'s units with their symbol.
+fn length_field(length: f64, ask: &Ask, design: &Design) -> TypedText {
+    TypedText::read(
+        varde_expr::format(length, Some(Unit::Length(design.units))),
+        ask,
+    )
+}
+
 impl MotionSession {
     /// A session setting up a new `kind` of `document`, of `bodies`: a
     /// move by nothing yet about the Z axis, a mirror keeping the
     /// original with its plane to pick, or a pattern as the UI mock's
-    /// begins: a linear one 3 copies 100 (of the design's units) apart
-    /// along the X axis, a circular one 4 round a full turn about the Z
-    /// axis. Clicks pick bodies, or a mirror's plane once it has bodies.
-    fn new(kind: MotionKind, document: &Document, mut bodies: Vec<BodyId>) -> Self {
+    /// begins: a linear one 3 copies apart along the X axis, a circular
+    /// one 4 round a full turn about the Z axis. Lengths (a linear
+    /// pattern's spacing, a blend's, shell's, offset face's and helix's
+    /// sizes) are fresh ones fitting the view of `camera`
+    /// ([`fitting_length`]), so what the session makes shows without the
+    /// camera moving. Clicks pick bodies, or a mirror's plane once it has
+    /// bodies.
+    fn new(
+        kind: MotionKind,
+        document: &Document,
+        camera: &Camera,
+        mut bodies: Vec<BodyId>,
+    ) -> Self {
         bodies.sort_unstable();
         bodies.dedup();
         bodies.truncate(MAX_FEATURE_BODIES);
@@ -354,8 +383,9 @@ impl MotionSession {
         if kind.blends() || matches!(kind, MotionKind::Sweep | MotionKind::Loft) {
             bodies.clear();
         }
-        let [chamfer_distance, chamfer_second, chamfer_angle] = chamfer::chamfer_fields(&design);
-        let [pitch, turns, twist] = sweep::sweep_fields(&design);
+        let [chamfer_distance, chamfer_second, chamfer_angle] =
+            chamfer::chamfer_fields(&design, camera);
+        let [pitch, turns, twist] = sweep::sweep_fields(&design, camera);
         let (copies, spread_field, axis, mode) = match kind {
             MotionKind::CircularPattern => (
                 read("4", &count),
@@ -364,12 +394,10 @@ impl MotionSession {
                 PatternMode::Full,
             ),
             _ => {
-                // A hundred of the design's units, with their symbol.
-                let hundred =
-                    Value::new("100", &spread).map(|value| TypedText::of(&value, &spread));
+                let spacing = fitting_length(camera, design.units, SPACING_SHARE);
                 (
                     read("3", &count),
-                    hundred.unwrap_or_else(|_| read("100", &spread)),
+                    length_field(spacing, &spread, &design),
                     match kind {
                         MotionKind::Move => Some(AxisRef::Origin(Axis3::Z)),
                         MotionKind::LinearPattern => Some(AxisRef::Origin(Axis3::X)),
@@ -396,7 +424,7 @@ impl MotionSession {
                 copies,
                 spread_field,
                 if kind == MotionKind::OffsetFace {
-                    offset_face::distance_field(&design)
+                    offset_face::distance_field(&design, camera)
                 } else {
                     read(&zero, &offset)
                 },
@@ -408,8 +436,8 @@ impl MotionSession {
                 chamfer_distance,
                 chamfer_second,
                 chamfer_angle,
-                shell::thickness_field(&design),
-                fillet::radius_field(&design),
+                shell::thickness_field(&design, camera),
+                fillet::radius_field(&design, camera),
                 pitch,
                 turns,
                 twist,
@@ -452,13 +480,15 @@ impl MotionSession {
     /// as Full 360° for a whole turn, else as the Total it stores.
     fn editing(
         document: &Document,
+        camera: &Camera,
         feature: FeatureId,
         shape: Option<&PatternShape>,
     ) -> Option<Self> {
         let design = document.design();
         let mut session = match &document.feature(feature)?.kind {
             FeatureKind::Move(moved) => {
-                let mut session = Self::new(MotionKind::Move, document, moved.bodies.clone());
+                let mut session =
+                    Self::new(MotionKind::Move, document, camera, moved.bodies.clone());
                 let offset = Move::offset_ask(&design);
                 for (field, value) in session.fields.iter_mut().zip(&moved.offset) {
                     *field = TypedText::of(value, &offset);
@@ -471,7 +501,8 @@ impl MotionSession {
                 session
             }
             FeatureKind::Mirror(mirror) => {
-                let mut session = Self::new(MotionKind::Mirror, document, mirror.bodies.clone());
+                let mut session =
+                    Self::new(MotionKind::Mirror, document, camera, mirror.bodies.clone());
                 session.plane = Some(mirror.plane);
                 session.keep_original = mirror.keep_original;
                 session.picking = MotionPick::Bodies;
@@ -479,7 +510,7 @@ impl MotionSession {
             }
             kind @ FeatureKind::Pattern(pattern) => {
                 let kind = MotionKind::of(kind)?;
-                let mut session = Self::new(kind, document, pattern.bodies.clone());
+                let mut session = Self::new(kind, document, camera, pattern.bodies.clone());
                 session.axis = Some(*pattern.kind.axis());
                 session.join = pattern.joins();
                 session.fields[MotionField::Count.index()] =
@@ -494,7 +525,7 @@ impl MotionSession {
                 session
             }
             FeatureKind::Align(align) => {
-                let mut session = Self::new(MotionKind::Align, document, vec![align.body]);
+                let mut session = Self::new(MotionKind::Align, document, camera, vec![align.body]);
                 session.align = AlignSetup::of(align);
                 session.flip = align.flip;
                 let ask = Move::offset_ask(&design);
@@ -509,7 +540,8 @@ impl MotionSession {
                 session
             }
             FeatureKind::Scale(scale) => {
-                let mut session = Self::new(MotionKind::Scale, document, scale.bodies.clone());
+                let mut session =
+                    Self::new(MotionKind::Scale, document, camera, scale.bodies.clone());
                 session.scale = ScaleSetup::of(scale);
                 let factor = Scale::factor_ask(&design);
                 let mut set = |field: MotionField, value: &Value, ask: &Ask| {
@@ -531,43 +563,43 @@ impl MotionSession {
                 session
             }
             FeatureKind::Split(split) => {
-                let mut session = Self::new(MotionKind::Split, document, vec![split.body]);
+                let mut session = Self::new(MotionKind::Split, document, camera, vec![split.body]);
                 session.split = SplitSetup::of(document, split);
                 session.picking = MotionPick::Nothing;
                 session
             }
             FeatureKind::Chamfer(chamfer) => {
-                let mut session = Self::new(MotionKind::Chamfer, document, Vec::new());
+                let mut session = Self::new(MotionKind::Chamfer, document, camera, Vec::new());
                 session.open_chamfer(chamfer);
                 session
             }
             FeatureKind::Shell(shell) => {
-                let mut session = Self::new(MotionKind::Shell, document, vec![shell.body]);
+                let mut session = Self::new(MotionKind::Shell, document, camera, vec![shell.body]);
                 session.open_shell(shell);
                 session
             }
             FeatureKind::Fillet(fillet) => {
-                let mut session = Self::new(MotionKind::Fillet, document, Vec::new());
+                let mut session = Self::new(MotionKind::Fillet, document, camera, Vec::new());
                 session.open_fillet(fillet);
                 session
             }
             FeatureKind::OffsetFace(offset) => {
-                let mut session = Self::new(MotionKind::OffsetFace, document, Vec::new());
+                let mut session = Self::new(MotionKind::OffsetFace, document, camera, Vec::new());
                 session.open_offset_face(offset);
                 session
             }
             FeatureKind::FaceDraft(draft) => {
-                let mut session = Self::new(MotionKind::Draft, document, Vec::new());
+                let mut session = Self::new(MotionKind::Draft, document, camera, Vec::new());
                 session.open_face_draft(draft);
                 session
             }
             FeatureKind::Sweep(sweep) => {
-                let mut session = Self::new(MotionKind::Sweep, document, Vec::new());
+                let mut session = Self::new(MotionKind::Sweep, document, camera, Vec::new());
                 session.open_sweep(document, sweep);
                 session
             }
             FeatureKind::Loft(loft) => {
-                let mut session = Self::new(MotionKind::Loft, document, Vec::new());
+                let mut session = Self::new(MotionKind::Loft, document, camera, Vec::new());
                 session.open_loft(document, loft);
                 session
             }
@@ -1341,7 +1373,12 @@ impl Doc {
         if bodies.is_empty() {
             bodies.extend(self.only_body());
         }
-        self.motion = Some(MotionSession::new(kind, self.editor.document(), bodies));
+        self.motion = Some(MotionSession::new(
+            kind,
+            self.editor.document(),
+            &self.camera,
+            bodies,
+        ));
         // A chamfer's edges are those selected that it takes.
         if kind.blends() {
             self.refs_selected::<EdgeRef>();
@@ -1397,7 +1434,7 @@ impl Doc {
         }
         let shape = self.pattern_shapes.get(&id);
         let document = self.editor.document();
-        let Some(mut session) = MotionSession::editing(document, id, shape) else {
+        let Some(mut session) = MotionSession::editing(document, &self.camera, id, shape) else {
             return;
         };
         // An axis or plane already gone (its body removed) is said to be

@@ -216,7 +216,7 @@ fn filleted() -> (Plates, varde_document::FeatureId) {
     plates.answer();
     plates.doc.update(Edit::AcceptError);
     let (id, _) = plates.last_feature();
-    let (doc, requests) = crate::tests::holding(plates.doc.editor.document().clone());
+    let (doc, requests) = super::holding(plates.doc.editor.document().clone());
     let plates = Plates {
         doc,
         requests,

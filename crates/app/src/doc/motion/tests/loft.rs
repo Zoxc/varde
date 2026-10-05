@@ -19,7 +19,8 @@ use varde_view::{Edit, Look, MotionKind, MotionLook, MotionPick, PanelHover};
 
 use super::Plates;
 use super::chamfer::{picking, shows};
-use crate::tests::{holding, key_in};
+use super::holding;
+use crate::tests::key_in;
 
 /// Adds a sketch on `plane` drawn by `draw`: its id.
 fn sketch_on(editor: &mut Editor, plane: Plane, draw: impl FnOnce(&mut Sketch)) -> FeatureId {

@@ -75,6 +75,22 @@ they share with the newer kinds is here. The kernel math of each is in
   `Scale` 8, `Split` 9, `Chamfer` 10, `Shell` 11, `Fillet` 12, `OffsetFace` 13,
   `FaceDraft` 14, `Sweep` 15, `Loft` 16): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
+- **Fresh lengths fit the camera.** A session opening a new feature
+  picks its length defaults from the view as it is, and no tool moves the
+  camera to show what it makes (the user's rule): `doc::camera::
+  fitting_length(camera, units, share)` takes `share` of
+  `Camera::view_height` (capped at that share of `MAX_COORD`), rounded
+  down to 1, 2 or 5 × 10ⁿ of the design's units, at least 0.001 of one.
+  Shares: an extrude's distance 0.25 (`extrude::DEFAULT_SHARE`), a
+  linear pattern's spacing 0.25 (its 3 copies span half the view), a
+  helix's pitch 0.1 (5 turns rise half of it), a fillet's radius and a
+  shell's thickness 0.02 (`motion::BLEND_SHARE`), a chamfer's distance and
+  an offset face's half that (a chamfer's second distance twice its
+  first). A move's offsets stay 0, angles, counts and factors are fixed,
+  and a sketch tool has no default size (only `DEFAULT_SIDES`, a count).
+  The camera is the only input: the bodies are mostly picked after the
+  session opens, and a size from them could land off screen. Editing a
+  feature opens with its stored values, and a value typed stays.
 
 ## Failures and where they are
 

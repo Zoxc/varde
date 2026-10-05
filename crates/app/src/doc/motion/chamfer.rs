@@ -5,10 +5,12 @@
 
 use varde_document::{Chamfer, ChamferSize, Design, FeatureKind};
 use varde_expr::Value;
+use varde_render::Camera;
 use varde_view::{ChamferType, ChamferView, MotionField, MotionKind};
 
 use super::blend::BlendSetup;
-use super::{Doc, MotionSession};
+use super::{BLEND_SHARE, Doc, MotionSession, length_field};
+use crate::doc::camera::fitting_length;
 use crate::doc::regions::TypedText;
 
 /// What `field` of a chamfer is read with in `design`, if it's one of
@@ -23,20 +25,17 @@ pub(super) fn chamfer_ask(field: MotionField, design: &Design) -> Option<varde_e
     }
 }
 
-/// The chamfer's fields as a new one opens them, the UI mock's: 1 and 2
-/// of the design's units, with their symbol, and 45°.
-pub(super) fn chamfer_fields(design: &Design) -> [TypedText; 3] {
+/// The chamfer's fields as a new one opens them, seen by `camera`: a
+/// distance of half [`BLEND_SHARE`] of the view's height made nice
+/// ([`fitting_length`]) and twice it, in the design's units with their
+/// symbol, and 45°.
+pub(super) fn chamfer_fields(design: &Design, camera: &Camera) -> [TypedText; 3] {
     let distance = Chamfer::distance_ask(design);
     let angle = Chamfer::angle_ask(design);
-    let length = |text: &str| {
-        Value::new(text, &distance).map_or_else(
-            |_| TypedText::read(text.to_owned(), &distance),
-            |value| TypedText::of(&value, &distance),
-        )
-    };
+    let first = fitting_length(camera, design.units, BLEND_SHARE / 2.0);
     [
-        length("1"),
-        length("2"),
+        length_field(first, &distance, design),
+        length_field(2.0 * first, &distance, design),
         TypedText::read("45°".to_owned(), &angle),
     ]
 }
