@@ -66,11 +66,13 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 const PENDING_ALPHA: f32 = 0.45;
 /// The side of a constraint's glyph's icon, and the room around it on its
 /// chip, in pixels.
-const GLYPH_ICON: f32 = 12.0;
+const GLYPH_ICON: f32 = 16.0;
 const GLYPH_PADDING: f32 = 2.0;
+/// The side of a snap's glyph's icon, in pixels.
+const SNAP_ICON: f32 = 12.0;
 /// Where a glyph is centred from where its anchor shows: up and to the
 /// right, beside what it's on rather than over it. In pixels.
-pub(crate) const GLYPH_OFFSET: Vector = Vector::new(11.0, -11.0);
+pub(crate) const GLYPH_OFFSET: Vector = Vector::new(13.0, -13.0);
 /// How wide dimensions' lines are, in pixels.
 const DIMENSION_WIDTH: f32 = 1.0;
 /// How long a dimension's arrowhead is, and how wide either side of its
@@ -1134,7 +1136,7 @@ impl<'a> Sketching<'a> {
             return None;
         }
         let icons = snap.kinds().into_iter().map(|kind| {
-            icons::tinted(kind.icon(), GLYPH_ICON, |palette| palette.sketching.guide).into()
+            icons::tinted(kind.icon(), SNAP_ICON, |palette| palette.sketching.guide).into()
         });
         let chip = container(iced::widget::Row::with_children(icons).spacing(2))
             .padding(GLYPH_PADDING)
@@ -1655,12 +1657,18 @@ impl GlyphLook {
 }
 
 /// The glyph of the constraint `id`, of `kind`, looking `look`: its icon on
-/// a chip, which selects it when clicked and highlights what it ties
+/// a chip, in its category's colours while free, else in one colour by
+/// its look, which selects it when clicked and highlights what it ties
 /// together while hovered.
 fn glyph<'a>(id: Id, kind: ConstraintKind, look: GlyphLook) -> Element<'a, Message> {
-    let icon = icons::tinted(kind.icon(), GLYPH_ICON, move |palette| {
-        look.color(palette.sketching, false)
-    });
+    let icon: Element<'a, Message> = if look == GlyphLook::Free {
+        icons::icon(kind.icon(), GLYPH_ICON)
+    } else {
+        icons::tinted(kind.icon(), GLYPH_ICON, move |palette| {
+            look.color(palette.sketching, false)
+        })
+        .into()
+    };
     chip(id, icon, GLYPH_PADDING, look)
         .on_press(Message::Look(Look::ClickRow(id)))
         .interaction(mouse::Interaction::Pointer)
