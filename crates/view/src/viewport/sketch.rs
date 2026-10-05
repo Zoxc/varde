@@ -244,6 +244,9 @@ struct Press {
     at: Option<DVec2>,
     /// What it went down on.
     hit: Option<Id>,
+    /// Where the point it went down on was then, if a point: dragged, it
+    /// snaps ([`snap::snap_drag`]).
+    point: Option<DVec2>,
     /// Whether it went farther than [`DRAG_DISTANCE`]: a drag rather than
     /// a click, of `hit` if it can be dragged, else a box.
     moved: bool,
@@ -454,7 +457,7 @@ impl<'a> Sketching<'a> {
                 if let Some(press) = &mut input.press {
                     // The raw position, so a drag goes on over the rest of
                     // the window.
-                    return self.drag(press, local(position), projector);
+                    return self.drag(press, local(position), projector, modifiers);
                 }
                 let under = over.and_then(|at| projector.cursor(at));
                 let hover = under.and_then(|cursor| self.hit(cursor));
@@ -506,6 +509,9 @@ impl<'a> Sketching<'a> {
                     to: from,
                     at: under.map(|cursor| cursor.at),
                     hit,
+                    point: hit
+                        .and_then(|id| self.sketch.point(id))
+                        .map(|point| point.at),
                     moved: false,
                     // The origin and axes stay where they are, and so does
                     // what a link made.
@@ -561,8 +567,15 @@ impl<'a> Sketching<'a> {
     }
 
     /// Moves the button held down, `press`, to `to`: past
-    /// [`DRAG_DISTANCE`] it drags what it went down on, or a box.
-    fn drag(&self, press: &mut Press, to: DVec2, projector: &Projector) -> Option<Action<Message>> {
+    /// [`DRAG_DISTANCE`] it drags what it went down on, or a box. A point
+    /// dragged snaps unless [`Held::FREE`] is among `modifiers`.
+    fn drag(
+        &self,
+        press: &mut Press,
+        to: DVec2,
+        projector: &Projector,
+        modifiers: Modifiers,
+    ) -> Option<Action<Message>> {
         press.to = to;
         if !press.moved && press.from.distance(to) < DRAG_DISTANCE {
             return Some(Action::capture());
@@ -578,11 +591,23 @@ impl<'a> Sketching<'a> {
                 .zip(press.at)
                 .zip(projector.cursor(to))
                 .map(|((id, from), cursor)| {
-                    Message::Look(Look::DragGeometry {
-                        id,
-                        from,
-                        to: cursor.at,
-                    })
+                    let snapped = press
+                        .point
+                        .filter(|_| !Held::FREE.is_held(modifiers))
+                        .map(|point| {
+                            (
+                                point,
+                                snap::snap_drag(self.sketch, id, cursor.at, cursor.pixel),
+                            )
+                        })
+                        .filter(|(_, snap)| snap.snapped());
+                    // Snapped, the point goes where it snapped rather than
+                    // keep the offset it was grabbed at.
+                    let (from, to) = match snapped {
+                        Some((point, snap)) => (point, snap.at),
+                        None => (from, cursor.at),
+                    };
+                    Message::Look(Look::DragGeometry { id, from, to })
                 });
         Some(capture(message))
     }

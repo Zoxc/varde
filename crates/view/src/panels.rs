@@ -986,8 +986,12 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
                 None => (entry.construction.then(|| "Construction".to_owned()), false),
             };
             let danger = conflicts.contains(&entry.id);
+            let open = sketch.expanded.contains(&entry.id);
+            // Folded, its points' rows don't show their selection.
+            let holds_selected =
+                !open && (entry.curve.points()).any(|point| sketch.selection.contains(&point));
             let expander = Expander::Toggle {
-                open: sketch.expanded.contains(&entry.id),
+                open,
                 on_press: Message::Look(Look::ToggleExpanded(entry.id)),
             };
             let item = Item {
@@ -997,6 +1001,7 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
                 note,
                 driven,
                 danger,
+                holds_selected,
             };
             geometry_item(sketch, item, expander, TREE_INDENT)
         }
@@ -1009,6 +1014,7 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
                 note: Some(dimension::point_note(point.at, sketch.units)),
                 driven: false,
                 danger: conflicts.contains(&point.id),
+                holds_selected: false,
             };
             let indent = if child {
                 2.0 * TREE_INDENT
@@ -1105,7 +1111,13 @@ struct Item {
     /// in the dimension colour, not faint.
     driven: bool,
     danger: bool,
+    /// Whether a point of the curve's is selected while its rows are
+    /// folded away: a round dot in a selected row's colour follows the name.
+    holds_selected: bool,
 }
+
+/// The side of the dot on a folded curve's row with a point selected.
+const SELECTED_POINT_SIZE: f32 = 7.0;
 
 /// `item`'s row of the Geometry list, `indent` in with `expander` before
 /// its icon, selected on a click (`Ctrl` adds it), highlighting it in the
@@ -1126,6 +1138,16 @@ fn geometry_item<'a>(
         } else {
             name(item.name.clone(), !faint).into()
         };
+        let holds_selected = item.holds_selected.then(|| {
+            container(Space::new())
+                .width(SELECTED_POINT_SIZE)
+                .height(SELECTED_POINT_SIZE)
+                .style(|theme| container::Style {
+                    background: Some(theme::palette(theme).accent_soft.into()),
+                    border: iced::border::rounded(SELECTED_POINT_SIZE / 2.0),
+                    ..container::Style::default()
+                })
+        });
         let note = item.note.clone().map(|note| {
             let note = text(note).size(11.5);
             if item.driven {
@@ -1141,6 +1163,7 @@ fn geometry_item<'a>(
                 expander,
                 icons::icon(item.icon, icons::INLINE),
                 name,
+                holds_selected,
                 space::horizontal(),
                 note,
             ]

@@ -857,6 +857,10 @@ has the details.
 
 ## Editing
 
+Entering a sketch shows the Sketch tab, and leaving it shows the tab
+shown before (`Doc::panel_before_sketch`), unless Objects was picked in
+the sketch, which stays.
+
 The sketch being edited is `Doc::sketch`, a `SketchSession`
 (`crates/app/src/doc/sketch.rs`): the feature, the tool in use (`Drawing`)
 or the Constrain tool, the selection (a `BTreeSet<Id>` shared by the
@@ -1300,6 +1304,11 @@ bar says why (`EditError::Sketch`).
   the grabbed item is moved; the rest follows as the constraints demand. A
   drag doesn't start while proposals wait. Solving drag steps inline was
   measured and not taken, see "Dragging" in `notes/Threading.md`.
+  A point dragged snaps, unless `Held::FREE` (`Shift`) is held
+  (`snap::snap_drag`, in the viewport): to another point or the origin,
+  a midpoint or quadrant, then a curve, then an axis, leaving out what's
+  on its own curves; snapped, it goes to the snap rather than keep the
+  offset it was grabbed at. No constraint is added.
 - **Constraints**: the selection's geometry is constrained by a
   `ConstraintKind` (`varde-view`, `constrain.rs`): `make` builds the
   constraints it makes of the selection (several items tie the first to
@@ -1386,7 +1395,8 @@ bar says why (`EditError::Sketch`).
   its chevron (`Look::ToggleExpanded`, `SketchSession::expanded`, pruned
   to curves the sketch holds) to the points it's made of
   (`Curve::points`; a point shared is under each), then the points no
-  curve has. A curve's note is its size (`dimension::size_note`: a
+  curve has. A folded curve with one of its points selected shows a round
+  dot in a selected row's colour after its name. A curve's note is its size (`dimension::size_note`: a
   line's length, a circle's diameter, an arc's radius, or the other of
   the two a driving dimension measures), in the Dimension icons' accent
   where a driving dimension sets it, else faint, with "Construction"

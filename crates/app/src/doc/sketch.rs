@@ -25,7 +25,7 @@ use varde_render::{Camera, Projection};
 use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, SketchEdit, TooComplex};
 use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{
-    ActiveTool, CURVED_FACE, GeometryGroup, LinkRow, Naming, PlanePick, RowMenu, Shown,
+    ActiveTool, CURVED_FACE, GeometryGroup, LinkRow, Naming, Panel, PlanePick, RowMenu, Shown,
     SketchLines, SketchState, Snap, Target, Tool, ToolClick, ValueField, ValueTarget,
 };
 
@@ -701,7 +701,7 @@ impl Doc {
 
     /// Edits the sketch feature `id`, if the document holds it and it's
     /// placed: the camera turns to face it, the model fades behind it,
-    /// and the Sketch tab takes the Timeline's place. It stays selected
+    /// and the Sketch tab takes the Timeline's place and shows. It stays selected
     /// in the Timeline for after, and leaving it turns the camera back to
     /// the view before. A sketch on a face that failed to be placed (its
     /// face is gone, or isn't flat) is put on another plane first, in a
@@ -757,9 +757,10 @@ impl Doc {
         // from one sketch to another, the one before the first.
         if self.sketch.is_none() {
             self.before_sketch = Some(self.animation.as_ref().map_or(self.camera, |a| a.to));
+            self.panel_before_sketch = Some(self.panel);
         }
         self.sketch = Some(SketchSession::new(id, placement));
-        self.panel = self.panel.for_sketching(true);
+        self.panel = Panel::Sketch;
         // The rail's sets are the sketch's now.
         self.rail.close();
         if let Some(to) = self.sketch_camera() {
@@ -786,7 +787,13 @@ impl Doc {
             self.animate_camera(to);
         }
         self.sketch = None;
-        self.panel = self.panel.for_sketching(false);
+        // The tab shown before, unless Objects was picked in the sketch.
+        let before = self.panel_before_sketch.take().unwrap_or(self.panel);
+        self.panel = match self.panel {
+            Panel::Sketch => before,
+            panel => panel,
+        }
+        .for_sketching(false);
         self.rail.close();
     }
 

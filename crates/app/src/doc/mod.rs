@@ -176,6 +176,9 @@ pub(crate) struct Doc {
     /// The view the camera had before turning to the sketch being edited,
     /// which it turns back to on leaving it.
     before_sketch: Option<Camera>,
+    /// The side panel tab shown before the sketch was entered, shown
+    /// again on leaving it: entering one shows the Sketch tab.
+    panel_before_sketch: Option<Panel>,
     /// The view the camera had, and the point it orbited, before Show
     /// framed it on where the draft fails, which Go back turns it back
     /// to: kept while the draft fails with geometry to frame.
@@ -382,6 +385,7 @@ impl Doc {
             animation: None,
             fit_on_model,
             before_sketch: None,
+            panel_before_sketch: None,
             before_show: None,
             pivot: None,
             cube_hovered: false,

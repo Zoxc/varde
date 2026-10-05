@@ -284,3 +284,32 @@ fn the_dimension_tool_snaps_to_nothing() {
     let dimension = tool(Tool::Dimension, &[], &[]);
     assert!(!snapped(&d.sketch, &dimension, 8.0, 1.0).snapped());
 }
+
+#[test]
+fn a_dragged_point_snaps_but_not_to_its_own_curves() {
+    let d = drawn();
+    // The line's end, by the lone point, takes it.
+    let lone = snap_drag(&d.sketch, d.end, at(-9.6, -10.2), PIXEL);
+    assert_eq!(
+        (lone.at, target(lone)),
+        (at(-10.0, -10.0), Some(Target::Point(d.lone)))
+    );
+    // By its own line's other end or middle, it stays free...
+    assert!(!snap_drag(&d.sketch, d.end, at(2.3, 1.2), PIXEL).snapped());
+    assert!(!snap_drag(&d.sketch, d.end, at(5.0, 1.3), PIXEL).snapped());
+    // ...but another point by them snaps to them.
+    let other = snap_drag(&d.sketch, d.lone, at(5.2, 1.3), PIXEL);
+    assert_eq!(target(other), Some(Target::Midpoint(d.line)));
+    // A circle's quadrant, then its rim, then an axis.
+    let top = snap_drag(&d.sketch, d.lone, at(20.3, 1.8), PIXEL);
+    assert_eq!(top.at, at(20.0, 2.0));
+    let rim = snap_drag(&d.sketch, d.lone, at(21.5, 1.5), PIXEL);
+    assert_eq!(target(rim), Some(Target::On(d.circle)));
+    let axis = snap_drag(&d.sketch, d.lone, at(-5.0, 0.3), PIXEL);
+    assert_eq!(
+        (axis.at, target(axis)),
+        (at(-5.0, 0.0), Some(Target::On(Id::X_AXIS)))
+    );
+    // The arc's start isn't snapped onto its own arc.
+    assert!(!snap_drag(&d.sketch, d.arc_start, at(2.6, 21.6), PIXEL).snapped());
+}

@@ -228,6 +228,66 @@ pub(crate) fn snap(sketch: &Sketch, tool: &ActiveTool, cursor: DVec2, pixel: f64
     snapped.filter(|snap| snap.at.is_finite()).unwrap_or(free)
 }
 
+/// Where the point `dragged` of `sketch` snaps with the cursor at
+/// `cursor`, a pixel being `pixel`: as a drawing tool's click would,
+/// without directions, to another point or the origin, then a midpoint or
+/// a quadrant, then the nearest place on a curve, then on an axis. What's on a
+/// curve the point is on is left out, so it isn't snapped to its own
+/// curves nor to any of their points: a line's other end, an arc's
+/// centre or other end. Free where nothing's near.
+pub(crate) fn snap_drag(sketch: &Sketch, dragged: Id, cursor: DVec2, pixel: f64) -> Snap {
+    let tolerance = SNAP_TOLERANCE * pixel;
+    let own: Vec<Id> = (sketch.curves.iter())
+        .filter(|entry| entry.curve.points().any(|point| point == dragged))
+        .map(|entry| entry.id)
+        .collect();
+    let neighbours: Vec<Id> = (own.iter())
+        .filter_map(|&curve| sketch.curve(curve))
+        .flat_map(|entry| entry.curve.points())
+        .collect();
+    let near = |candidates: Vec<Snap>| {
+        candidates
+            .into_iter()
+            .filter(|snap| snap.at.is_finite())
+            .map(|snap| (snap.at.distance(cursor), snap))
+            .filter(|&(distance, _)| distance <= tolerance)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, snap)| snap)
+    };
+    let points = (sketch.points.iter())
+        .filter(|point| point.id != dragged && !neighbours.contains(&point.id))
+        .map(|point| (point.at, point.id))
+        .chain([(DVec2::ZERO, Id::ORIGIN)])
+        .filter(|&(_, id)| id != dragged)
+        .map(|(at, id)| Snap::on(at, Target::Point(id)))
+        .collect();
+    let special = || {
+        (special_points(sketch).into_iter())
+            .filter(|snap| {
+                snap.target
+                    .is_none_or(|target| !own.contains(&target.item()))
+            })
+            .collect()
+    };
+    let on = |ids: &mut dyn Iterator<Item = Id>| {
+        near(
+            ids.filter_map(|id| Some(Snap::on(foot(sketch, id, cursor)?, Target::On(id))))
+                .collect(),
+        )
+    };
+    near(points)
+        .or_else(|| near(special()))
+        .or_else(|| {
+            on(&mut sketch
+                .curves
+                .iter()
+                .map(|entry| entry.id)
+                .filter(|id| !own.contains(id)))
+        })
+        .or_else(|| on(&mut [Id::X_AXIS, Id::Y_AXIS].into_iter()))
+        .unwrap_or(Snap::free(cursor))
+}
+
 /// Where the click of `tool`, placing `placing`, snaps with the cursor at
 /// `cursor`, within `tolerance` sketch units, a pixel being `pixel`, if
 /// anywhere.
