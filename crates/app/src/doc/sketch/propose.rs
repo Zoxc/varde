@@ -22,9 +22,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::time::Instant;
-use varde_document::{Command, Document, FeatureId, FeatureKind, Revision, Sketch};
+use varde_document::{
+    Command, Document, FeatureId, FeatureKind, LinkSource, OutsideRef, Revision, Sketch,
+};
 use varde_expr::LengthUnit;
-use varde_sketch::{Analysis, Design, Id, Rejected, SketchEdit};
+use varde_sketch::{Analysis, Design, Id, LinkKind, Rejected, SketchEdit};
 use varde_solve::{Request, Response, Tag};
 use varde_view::RefusedEdit;
 
@@ -87,6 +89,10 @@ struct Proposal {
     /// read in and shown in: new units waiting before it may be set by
     /// the time it's proposed.
     units: LengthUnit,
+    /// What the link the edit adds comes from, for a
+    /// [`SketchEdit::AddLink`]: committed with it by
+    /// [`Command::AddLink`].
+    source: Option<OutsideRef>,
 }
 
 impl Proposals {
@@ -229,12 +235,29 @@ impl Doc {
         self.propose_from(edit, None)
     }
 
+    /// Proposes a new link of `kind` from `source`, as [`Doc::propose`]
+    /// does an edit, committed with its source.
+    pub(crate) fn propose_link(&mut self, kind: LinkKind, source: OutsideRef) -> bool {
+        self.propose_with(SketchEdit::AddLink { kind }, None, Some(source))
+    }
+
     /// Proposes `edit` as [`Doc::propose`] does, on `from` in place of the
     /// sketch committed while the document is at the revision given.
     pub(super) fn propose_from(
         &mut self,
         edit: SketchEdit,
         from: Option<(Revision, Arc<Sketch>)>,
+    ) -> bool {
+        self.propose_with(edit, from, None)
+    }
+
+    /// Proposes `edit` as [`Doc::propose_from`] does, a new link's
+    /// `source` with it.
+    fn propose_with(
+        &mut self,
+        edit: SketchEdit,
+        from: Option<(Revision, Arc<Sketch>)>,
+        source: Option<OutsideRef>,
     ) -> bool {
         let Some(sketch) = self.editable_sketch() else {
             return false;
@@ -260,6 +283,7 @@ impl Doc {
             edit,
             from,
             units,
+            source,
         }));
         self.send_proposal();
         self.refresh_waiting();
@@ -423,10 +447,23 @@ impl Doc {
                         ..design
                     });
                 }
-                self.apply(Command::SetSketch {
-                    feature,
-                    sketch: Box::new(sketch),
-                });
+                // A new link is committed with what it comes from: the
+                // link the committed sketch hasn't.
+                let committed = sketch_of(self.editor.document(), feature);
+                let link = (sketch.links.iter())
+                    .map(|link| link.id)
+                    .find(|&id| committed.is_some_and(|committed| committed.link(id).is_none()));
+                match (proposal.source, link) {
+                    (Some(source), Some(link)) => self.apply(Command::AddLink {
+                        feature,
+                        sketch: Box::new(sketch),
+                        source: LinkSource { link, source },
+                    }),
+                    _ => self.apply(Command::SetSketch {
+                        feature,
+                        sketch: Box::new(sketch),
+                    }),
+                }
                 // Not committed (read-only since, say), the analysis isn't
                 // of what's committed.
                 let revision = self.editor.revision();
@@ -569,6 +606,7 @@ impl Doc {
                 .peekable();
             edits.peek()?;
             let mut sketch = committed.clone();
+            let mut sources = Vec::new();
             for proposal in edits {
                 // A drop's move goes on from the drag's last solution.
                 let on = match &proposal.from {
@@ -580,6 +618,10 @@ impl Doc {
                     ..design
                 };
                 if let Ok(next) = proposal.edit.apply(on, &design) {
+                    // An added link goes last, with the highest id.
+                    if let (Some(source), Some(link)) = (proposal.source, next.links.last()) {
+                        sources.push((link.id, source));
+                    }
                     sketch = next;
                 }
             }
@@ -591,7 +633,11 @@ impl Doc {
             let added = ids
                 .filter(|&id: &Id| committed.kind(id).is_none())
                 .collect();
-            Some(Waiting { sketch, added })
+            Some(Waiting {
+                sketch,
+                added,
+                sources,
+            })
         });
         if let Some(session) = &mut self.sketch {
             session.waiting = waiting;

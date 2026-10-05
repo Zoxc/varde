@@ -24,7 +24,7 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
 use iced::{Point, Rectangle, mouse};
-use varde_document::{AxisLine, FeatureId, OriginPlane};
+use varde_document::{AxisLine, FeatureId};
 use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
 use varde_sketch::{Curve, Sketch, angle};
 
@@ -32,6 +32,7 @@ use super::handle::{self, Puck};
 use super::motion::{angle_step, wrapped};
 use super::regions::{self, Regions, grid_plane};
 use super::sketch::{line, srgba};
+use super::sketch_pick::HIT_PIXELS;
 use crate::hit;
 use crate::motion::KnobTone;
 use crate::operation_panel::{Candidate, PanelHover};
@@ -39,14 +40,11 @@ use crate::pick::{Picked, Picks};
 use crate::projection::Projector;
 use crate::revolve::{
     Angle, RevolveHandle, RevolveLook, RevolvePick, RevolveState, axis_edge, axis_line, axis_of,
-    axis_reach, on_sketch,
+    axis_reach,
 };
 use crate::theme::SketchColors;
 use crate::{Look, Message};
 
-/// How near the cursor a line or an axis is picked, in pixels: a
-/// sketch's own hit tolerance.
-const HIT_PIXELS: f64 = 6.0;
 /// How wide the sketches' lines and axes are drawn while the axis is
 /// picked, the one hovered, and the axis picked, in pixels.
 const LINE_WIDTH: f32 = 1.5;
@@ -230,8 +228,7 @@ impl<'a> Revolving<'a> {
     /// A projector for what's in the world, seen by `camera` over
     /// `bounds`.
     fn projector(camera: &Camera, bounds: Rectangle) -> Option<Projector> {
-        let placement = OriginPlane::XY.placement();
-        Projector::new(camera, placement, bounds.width, bounds.height)
+        Projector::world(camera, bounds.width, bounds.height)
     }
 
     /// The pucks of the handle's knobs, seen by `camera` over `bounds`,
@@ -399,7 +396,7 @@ impl<'a> Revolving<'a> {
         let [start, end] = match self.state.axis? {
             AxisLine::Edge(_) => {
                 let ends = self.state.edge_ends?;
-                ends.map(|at| on_sketch(&source.placement, at))
+                ends.map(|at| source.placement.to_sketch(at))
             }
             axis => drawn(source.sketch, axis)?,
         };

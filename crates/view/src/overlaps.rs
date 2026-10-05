@@ -1,6 +1,7 @@
 //! The list of what overlaps where the left button was held still, to
 //! choose one from: in a sketch its points and curves there, in the model
-//! its vertices, edges and faces there. Hovering a row highlights its
+//! its vertices, edges and faces there, with the curves and points of the
+//! finished sketches picked with it (or by Project and Intersect). Hovering a row highlights its
 //! item, clicking it selects that one as a click on it would, and a click
 //! anywhere else closes it, the selection as it was.
 
@@ -13,7 +14,7 @@ use varde_document::Document;
 use varde_sketch::{Id, Sketch};
 
 use crate::pick::{Pick, Picked};
-use crate::select::Selection;
+use crate::select::{Selection, SketchItem};
 use crate::theme;
 use crate::{Look, Message};
 
@@ -52,6 +53,19 @@ pub enum OverlapItems {
     Sketch(Vec<Id>),
     /// Of the model shown.
     Model(Vec<Pick>),
+    /// Of the model shown and of the finished sketches picked with it
+    /// ([`ModelPicking::sketches`](crate::ModelPicking::sketches)): listed
+    /// so only where one of those sketches has something there.
+    Mixed(Vec<OverlapItem>),
+}
+
+/// A row of a list of the model's overlaps with sketches' items.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OverlapItem {
+    /// A face, edge or vertex of the model shown.
+    Model(Pick),
+    /// A finished sketch's curve or point.
+    Sketch(SketchItem),
 }
 
 impl Overlaps {
@@ -109,6 +123,7 @@ impl OverlapItems {
         match self {
             OverlapItems::Sketch(ids) => ids.len(),
             OverlapItems::Model(picks) => picks.len(),
+            OverlapItems::Mixed(items) => items.len(),
         }
     }
 
@@ -136,16 +151,29 @@ pub(crate) fn view<'a>(
     ticks: Option<&[OverlapTick]>,
     document: &Document,
 ) -> Element<'a, Message> {
+    let selected = |pick: &Pick, targets: &[Picked]| {
+        model_selection.model() == Some(pick.model) && targets.contains(&pick.target)
+    };
     let checked: Vec<bool> = match (&overlaps.items, ticks) {
-        (OverlapItems::Model(_), Some(ticks)) => ticks.iter().map(|tick| tick.ticked).collect(),
+        (OverlapItems::Model(_) | OverlapItems::Mixed(_), Some(ticks)) => {
+            ticks.iter().map(|tick| tick.ticked).collect()
+        }
         (OverlapItems::Sketch(ids), _) => (ids.iter())
             .map(|id| sketch.is_some_and(|(_, selection)| selection.contains(id)))
             .collect(),
         (OverlapItems::Model(picks), None) => {
             let targets: Vec<Picked> = model_selection.targets().collect();
             (picks.iter())
-                .map(|pick| {
-                    model_selection.model() == Some(pick.model) && targets.contains(&pick.target)
+                .map(|pick| selected(pick, &targets))
+                .collect()
+        }
+        (OverlapItems::Mixed(items), None) => {
+            let targets: Vec<Picked> = model_selection.targets().collect();
+            let items_selected: Vec<SketchItem> = model_selection.sketch_items().collect();
+            (items.iter())
+                .map(|item| match item {
+                    OverlapItem::Model(pick) => selected(pick, &targets),
+                    OverlapItem::Sketch(item) => items_selected.contains(item),
                 })
                 .collect()
         }
@@ -165,6 +193,15 @@ pub(crate) fn view<'a>(
                 let tick = ticks.and_then(|ticks| ticks.get(row));
                 let note = tick.map_or(OverlapNote::None, |tick| tick.note);
                 model_name(pick.target, body, note)
+            })
+            .collect(),
+        OverlapItems::Mixed(items) => (items.iter())
+            .map(|item| match *item {
+                OverlapItem::Model(pick) => {
+                    let body = document.body(pick.body).map(|body| body.name.as_str());
+                    model_name(pick.target, body, OverlapNote::None)
+                }
+                OverlapItem::Sketch(item) => sketch_item_name(document, item),
             })
             .collect(),
     };
@@ -226,9 +263,41 @@ fn model_name(target: Picked, body: Option<&str>, note: OverlapNote) -> String {
     }
 }
 
+/// A finished sketch's curve or point as a row names it: "Line 3 of
+/// Sketch 2", as the status bar names the one selected.
+fn sketch_item_name(document: &Document, item: SketchItem) -> String {
+    let Some(feature) = document.feature(item.sketch) else {
+        return String::new();
+    };
+    let name = match &feature.kind {
+        varde_document::FeatureKind::Sketch { sketch, .. } => sketch.name(item.item),
+        _ => None,
+    };
+    match name {
+        Some(name) => format!("{name} of {}", feature.name),
+        None => feature.name.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sketch_s_item_is_named_with_its_sketch() {
+        let document = Document::example();
+        let feature = &document.features()[0];
+        let varde_document::FeatureKind::Sketch { sketch, .. } = &feature.kind else {
+            panic!("the example's first feature is its sketch");
+        };
+        let curve = sketch.curves[0].id;
+        let item = SketchItem {
+            sketch: feature.id,
+            item: curve,
+        };
+        let wanted = format!("{} of {}", sketch.name(curve).unwrap(), feature.name);
+        assert_eq!(sketch_item_name(&document, item), wanted);
+    }
 
     #[test]
     fn the_list_goes_beside_the_cursor_or_back_inside_the_viewport() {

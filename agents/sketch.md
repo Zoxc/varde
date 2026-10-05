@@ -230,6 +230,79 @@ plane's, or for a sketch on a flat face of a body the one regenerating
 finds for it (`agents/features.md`; the app reads either through
 `Doc::placement`).
 
+**Links** (`link.rs`, `Link`, `Sketch::links`) are geometry a sketch
+takes from outside it: projected square onto its plane (`LinkKind::Project`)
+or where its plane cuts something (`LinkKind::Intersect`). A link's points
+and curves are ordinary items in the sketch's lists, with ids from its
+counter, so constraints, dimensions, snapping, hit testing and drawing
+take them as any; the `Link` (its own id from the same counter, naming
+no item, so `Sketch::kind` knows nothing of it) lists them in the order
+its `LinkShape` has them, and says whether its curves count for profiles
+(`profiles`; they're construction geometry where they don't, which
+`check` holds). What a link comes from isn't the sketch's: the document
+keeps it beside the sketch (`FeatureKind::Sketch::sources`, a
+`LinkSource` per link, see `agents/features.md`). A `LinkShape` is the
+geometry without ids (points, and curves naming them by placeholders
+numbering them from 0); `Sketch::link_shape` gives what a link holds,
+`same_form` says whether two have as many points and the same curves
+made from them alike, `close_to` whether they're the same within a
+distance, `fits` whether a lane's shape is one a sketch could take.
+`SketchEdit::AddLink` adds an empty link, `SketchEdit::Relink` gives
+links the shapes found for them (`Sketch::relink`), keeping what ids it
+can (`Sketch::follow`): each curve found keeps the id of the one held of
+its kind as many before it of that kind (the third line found the third
+line held; a spline found with more points is the same spline
+reshaped), each point that of the point in the same role on a curve so
+kept (an end, a center, a spline's point by its place), the points left
+those of the points held left, the nearest pairs first. What's kept is
+moved in place, keeping what's on it; what's held and not kept is
+deleted, with the constraints and dimensions on it; what's new is added.
+The same form keeps every id. The link lists the ids kept first,
+increasing, then the new ones in the order found, so its shape is the
+one found reordered, and `Sketch::link_follows` (whether relinking would
+change nothing, to a distance) tells a stale link rather than comparing
+shapes in order. What names an id that went shows it: a revolve's axis,
+a region, a path's curve fail their feature with why, another sketch's
+link of it is broken ("it isn't in its sketch any more"), and the app
+says the constraints and dimensions that went in the status bar
+(`agents/features.md`, Following the model). `SketchEdit::SetLinkProfiles`
+sets `profiles` and its curves' construction flag, and deleting a link's
+id deletes it with what it made. Every other edit leaving a link's items
+as they were is checked after it's applied (`Sketch::links_kept`):
+moving, trimming, extending, filleting, converting a link's geometry or
+making it construction or not is `EditError::Linked`, and so is deleting
+a link's item but by deleting the link. The solver takes a link's points
+and radii as constants whatever `Fixing` (as the origin's), with no
+equation for a link arc's radii, so the analysis has them fixed and a
+drag never moves them. `check` holds links in id order, at most
+`MAX_LINKS`, each naming points and curves of its own (at most
+`MAX_LINK_POINTS` and `MAX_LINK_CURVES`), in order, its curves made of
+its points alone, no fillet, chamfer or spline with handles among them,
+and no curve of the user's made from a link's point (a shape drawn
+snapping to one gets a point of its own, coincident with it, as at the
+origin; a trim or extend ending at one likewise, and Mirror gives a
+link's point on the mirror line an image of its own, held symmetric,
+rather than sharing it): `SketchError::Link`.
+
+Links' geometry is made here from what regenerating finds
+(`agents/features.md`): `Sketch::project_item` projects another sketch's
+point or curve through the affine map from its plane into this one's,
+exactly where it can be (a point, a line, what fillets and chamfers
+leave of it (`cut_back`), or a point where the line is square to this
+plane; a circle or an arc where the map keeps lengths, the
+planes parallel, an arc reversed where the map reflects; a spline by its
+control points mapped, with its knots, which an affine map keeps exact),
+else by `LinkShape::fit` on places along it; `LinkShape::fit` tells what
+exact places along a curve (`SampledChain`) make, within `exact` (the
+resolution): a point, a line (between the two places farthest apart,
+from the one nearer the chain's first place, so a circle seen edge on is
+the line it covers), a circle or an arc (Kåsa's
+least squares circle, counter-clockwise, its ends on it), else a spline
+through fit points among the places, doubling them until it passes
+within `fit` (the fit tolerance) of every place (each measured from
+the nearest place on it, `Path::closest`), at most `MAX_SPLINE_POINTS`
+(`FitError::TooComplex`).
+
 **The origin and axes** (`origin.rs`) are built into every sketch rather
 than stored: reserved ids at the top of the counter (`Id::ORIGIN`,
 `Id::X_AXIS`, `Id::Y_AXIS`, `Id::is_builtin`), which `next_id` never
@@ -256,7 +329,8 @@ and `analyse(&Sketch)`. `notes/SketchImpl.md` ("Built so far (step 2a)",
 
 - **The system** (`system.rs`): the variables are the points' coordinates,
   circles' radii and a parameter per point on a spline, in `Slot`s; the
-  origin and axes are constants. What
+  origin and axes are constants, and so are a link's points and radii
+  (with no equation of a link arc's own; see Links). What
   a `Fix` pins is a constant when solving (`Fixing::Constants`) and a
   variable held by equations of the `Fix`'s own when analysing
   (`Fixing::Equations`), so the analysis can name it. Each constraint
@@ -592,7 +666,8 @@ to `propose` as it does an `Add`'s).
   id, numbered as an arc. With no cuts there (a circle cut once, by a
   tangent), the whole curve is deleted as `Delete` would. A new end is the
   cutting curve's end where that's there (the two share it, as a T's stem
-  and bar), else a new point with a `PointOnCurve` on each curve cutting
+  and bar; a link's end gets a new point `Coincident` with it instead,
+  as no curve of the user's is made of a link's point), else a new point with a `PointOnCurve` on each curve cutting
   there. A line cut in two gets the second part's points on the first
   (one line), an arc `Equal` radii (one circle), and the tangents at the
   end that moved to the new curve go with it (`hand_over`). An end no
@@ -1066,6 +1141,53 @@ bar says why (`EditError::Sketch`).
     starts afresh. `Shift B` for Chamfer (bevel): `C` is the Circle tool's, `B` the
     Rectangle tool's (a box: `R` opens the rail's fourth set).
 
+  - Project and Intersect (`Tool::picks_outside`, on the rail's Modify
+    set after Chamfer, no key: `P` is the Point tool's, `I`
+    Coincident's, `Shift P` Parallel's; `doc/sketch/outside.rs`) pick
+    outside the sketch: while one is in use the cursor picks the model
+    (`Doc::picks` holds then, `ModelPicking` with `Picks::All`), and the
+    curves and points of the other visible sketches with it
+    (`Doc::outside_sketches`, later ones too), and the sketch's own
+    geometry isn't hit (`Sketching::hit`), so its selection and box
+    don't take the left button: the viewport sends `Look::ClickModel`
+    and `Look::ClickSketch` as on the model (see "Sketches picked with
+    the model" in `agents/viewport.md`), which the app turns into
+    `Doc::outside_click`. Project takes edges, corners (a vertex as the
+    `PointRef::Corner` of its picking corner) and other sketches' curves
+    and points; Intersect faces and edges. What it takes is named as a
+    feature at the sketch's place names it (`Naming::before`:
+    `edge_ref`, `checked_face_ref`, `corner_ref`) into an
+    `OutsideRef`, and proposed as a new link of the tool's kind from it
+    (`Doc::propose_link`: `SketchEdit::AddLink`, whose proposal carries
+    the source, committed by `Command::AddLink` with the new link's id,
+    one undoable change); a click on what a link of the tool's kind
+    already comes from (a model pick by the item it finds on the model
+    shown, a sketch's by its id) proposes deleting that link. The link
+    holds nothing until the next model answers it, its geometry then
+    folded into the change that added it (`agents/features.md`, Sketch
+    links). Anything else is refused with why in the status bar (`Doc::notice`):
+    "Project takes edges, corners and other sketches' curves and
+    points", "Intersect takes faces and edges, cut with the sketch's
+    plane", "Only what's made before Sketch 3 can be projected" (a later
+    sketch, or a body or face made later). What's picked is drawn: the
+    model's as selected (`Doc::outside_highlight`, found on each model
+    shown; the hover only where the tool takes its kind), drawn over
+    the faded model, and sketches' items in the selected colour on the
+    sketch's live layer (`ModelPicking::marked`): the sources of the
+    sketch's links of the tool's kind (`Doc::outside_links`), as it's
+    worked on: a link waiting on the solver to be added counts
+    (`Waiting::sources`), so a second click on its source before it's
+    committed proposes deleting it, after the add, as the other tools'
+    edits go on from those waiting, rather than adding it twice. `Esc` lets
+    go of the tool; the links stay. A shape drawn snapping to a link's
+    point gets a point of its own, coincident with it (`place`), the
+    viewport grabs no link geometry to drag, and deleting a selection
+    (`Delete`/`Backspace`, `Doc::delete_selection`) holding any of a
+    link's geometry (a curve or point of it, or all of it, its row in
+    the Sketch tab selected) deletes the whole link with the rest of
+    the selection, one undoable change, as only the link can go
+    (deleting a link's item alone is `EditError::Linked` to the edit).
+
   The shapes are worked out by `varde_view::typed::outline`, which the
   viewport's preview draws too, so what's shown is what's placed.
 
@@ -1194,12 +1316,12 @@ bar says why (`EditError::Sketch`).
 - **The tool rail** (`varde-view`'s `rail.rs`, the app's `doc/rail.rs`):
   the same tools in sets, over the viewport's left (see
   `agents/viewport.md`). In a sketch: Draw (the drawing tools), Modify
-  (Trim to Chamfer), Constraints (the Constrain tool, then every kind with
-  a key) and Dimension; outside one: Create (Sketch, Extrude, Revolve),
-  Modify (Combine), Transform (Move, Mirror, Linear pattern, Circular
-  pattern) and Inspect (Measure); a
-  set with nothing the app has yet isn't shown. An entry sends what the
-  toolbar's button does (its binding, `Entry::binding`), enabled where
+  (Trim to Chamfer, then Project and Intersect), Constraints (the
+  Constrain tool, then every kind with a key) and Dimension; outside
+  one: Create (Sketch, Extrude, Revolve), Modify (Combine), Transform
+  (Move, Mirror, Linear pattern, Circular pattern) and Inspect
+  (Measure); a set with nothing the app has yet isn't shown. An entry
+  sends what the toolbar's button does (its binding, `Entry::binding`), enabled where
   that is. The top row's letters, `Q`, `W`, `E`, `R`, ... (`rail::SET_KEYS`),
   open the mode's sets' lists, or close the one open (`RailLook::Toggle`,
   last in `document_bindings`): no tool has one of them (so the Rectangle
@@ -1237,6 +1359,30 @@ bar says why (`EditError::Sketch`).
   `Look::HoverItem`, kept in the session (`hovered`), which the viewport
   highlights: geometry itself, a constraint by what it ties together. The
   selection and hover may name items still waiting on the solver.
+- **The Geometry list** (upper half of the Sketch tab, `panels.rs`,
+  `geometry_rows`) is groups, a header row each, in one virtual list
+  (only the rows in view laid out): Geometry, the sketch's own curves
+  then points (what no link made); Projected and Intersected, the links
+  of each kind, a row each (`LinkRow`, made by `Doc::refresh_links` on
+  every sync and model answered: its kind's icon, what it comes from by
+  name, `links::source_name`: "Line 3 of Sketch 2", "Edge of Body 1",
+  "Face of Body 1", "Corner of Body 1", what's gone said so; "In
+  profiles" where its curves count for them; broken, in the danger
+  colour with why as the model shown found, or why the document
+refused what it found, `MeshFeed::broken`). An
+  empty group isn't listed, but Geometry with "Nothing drawn yet."
+  while there's nothing at all. A link's row selects what it made
+  (`Look::ClickLink`; it shows selected while all of that is), lights
+  what it comes from on the model shown while hovered
+  (`Look::HoverLink`, `SketchSession::link_hover`,
+  `ModelPick::link_highlight`, drawn over whatever else is lit; a
+  sketch's item isn't lit), and its context menu (`RowMenu::Link`, only
+  in a sketch) has "Use in profiles" or "Leave out of profiles"
+  (`Edit::SetLinkProfiles`) and "Remove" (`Edit::RemoveLink`, deleting
+  the link with what it made), both proposed, acting only while the
+  document can be changed. In the viewport a link's curves and points'
+  rims are in `SketchColors::link`, the Modify tools' reference tone,
+  curves dashed unless they count for profiles, as construction ones.
 - **The Constraints list** (lower half of the Sketch tab) shows the
   constraints and dimensions on the points and curves selected, or
   selected themselves, or all when no point or curve is; while only
@@ -1408,7 +1554,10 @@ spline in an editable sketch, soon and near, sends
 `Edit::InsertSplinePoint` at the place pressed rather than a click), and
 whether the button's held with a tool that clicks
 where it's let go (`releasing`: Offset, Fillet or Chamfer placing); the
-modifiers are the widget's. A press on an item of an editable sketch drags
+modifiers are the widget's. With Project or Intersect in use the left
+button isn't the sketch's: it orbits when dragged and clicks the model
+or another sketch as outside a sketch (`Program::picks_outside`), and
+no overlaps are listed. A press on an item of an editable sketch drags
 it once it moves; elsewhere, or read-only, it drags a box. Held still for
 `HOLD_DELAY` over more than one item (`Press::lists_at`,
 `Sketching::hold`), it ends and lists them (see "Overlaps" in

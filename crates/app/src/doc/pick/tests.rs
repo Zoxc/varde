@@ -785,3 +785,131 @@ fn objects_and_the_viewport_agree_on_many_bodies() {
         Some(Selected::Body(_))
     ));
 }
+
+/// The example and a sketch on XY after it holding a line from
+/// (-25, 30) to (25, 30), off the plate: the sketch and the line.
+fn example_and_a_line() -> (
+    Doc,
+    varde_document::FeatureId,
+    varde_sketch::Id,
+    std::rc::Rc<std::cell::RefCell<Vec<varde_regen::Request>>>,
+) {
+    let (mut doc, requests) = example();
+    let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+    doc.apply(doc.editor.document().add_sketch(plane));
+    let sketch = doc.editor.document().features().last().unwrap().id;
+    let mut drawn = varde_sketch::Sketch::default();
+    let a = drawn.add_point(DVec2::new(-25.0, 30.0)).unwrap();
+    let b = drawn.add_point(DVec2::new(25.0, 30.0)).unwrap();
+    let line = drawn
+        .add_curve(varde_sketch::Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    doc.apply(varde_document::Command::SetSketch {
+        feature: sketch,
+        sketch: Box::new(drawn),
+    });
+    doc.sync();
+    answer(&mut doc, &requests);
+    (doc, sketch, line, requests)
+}
+
+/// Outside the sessions a sketch's curve is hovered and selected with the
+/// model, drawn as selected, kept across a new model, and dropped once
+/// it's hidden or its sketch is deleted; a click on the model alone
+/// selects that instead.
+#[test]
+fn a_sketch_s_curve_is_selected_in_the_model_until_its_sketch_goes() {
+    use varde_view::{Edit, Selected, SketchItem};
+
+    let (mut doc, sketch, line, requests) = example_and_a_line();
+    let item = SketchItem { sketch, item: line };
+    let picking = doc.model_picking().unwrap();
+    assert!(picking.sketches.iter().any(|lines| lines.feature == sketch));
+    doc.look(Look::Hover(Some(on_top(&doc))));
+    doc.look(Look::HoverSketch(Some(item)));
+    assert_eq!(doc.pick.sketch_hover(), Some(item));
+    assert_eq!(doc.pick.hover(), None, "one or the other is hovered");
+    doc.look(Look::ClickSketch { item, add: false });
+    let items = |doc: &Doc| doc.pick.selection.items().copied().collect::<Vec<_>>();
+    assert_eq!(items(&doc), [Selected::SketchItem { sketch, item: line }]);
+    assert_eq!(doc.model_picking().unwrap().marked, [item]);
+    // A click on the model with Shift adds to it; alone, it's that.
+    let face = on_top(&doc);
+    doc.look(Look::ClickModel {
+        pick: Some(face),
+        add: true,
+        double: false,
+    });
+    assert_eq!(items(&doc).len(), 2);
+    assert!(doc.selection_inspect().is_none(), "a curve isn't measured");
+    doc.look(Look::ClickSketch { item, add: true });
+    assert!(matches!(items(&doc)[..], [Selected::Face { .. }]));
+    doc.look(Look::ClickSketch { item, add: false });
+    // Another model keeps it.
+    thicken(&mut doc);
+    answer(&mut doc, &requests);
+    assert_eq!(doc.model_picking().unwrap().marked, [item]);
+    // Hidden, it goes; shown again, it's not back.
+    doc.update(Edit::ToggleFeatureVisible(sketch));
+    doc.sync();
+    assert!(items(&doc).is_empty());
+    assert!(
+        doc.model_picking()
+            .unwrap()
+            .sketches
+            .iter()
+            .all(|l| l.feature != sketch)
+    );
+    doc.update(Edit::ToggleFeatureVisible(sketch));
+    doc.sync();
+    doc.look(Look::ClickSketch { item, add: false });
+    assert_eq!(items(&doc).len(), 1);
+    // Deleted, it goes, and a hover of it is dropped.
+    doc.update(Edit::RemoveFeature(sketch));
+    doc.sync();
+    answer(&mut doc, &requests);
+    assert!(doc.editor.document().feature(sketch).is_none());
+    assert!(items(&doc).is_empty());
+    doc.look(Look::HoverSketch(Some(item)));
+    assert_eq!(doc.pick.sketch_hover(), None);
+}
+
+/// A sketch's curve listed with the model where the button was held:
+/// hovered from its row, ticked as it's selected, its tick adding it as
+/// a click with Ctrl would, and another row chosen selecting that alone.
+#[test]
+fn a_sketch_s_curve_listed_with_the_model_is_hovered_ticked_and_chosen() {
+    use varde_view::{OverlapItem, OverlapItems, Overlaps, Selected, SketchItem};
+
+    let (mut doc, sketch, line, _requests) = example_and_a_line();
+    let item = SketchItem { sketch, item: line };
+    let face = on_top(&doc);
+    let list = Overlaps {
+        held: DVec2::ZERO,
+        at: DVec2::ZERO,
+        items: OverlapItems::Mixed(vec![OverlapItem::Sketch(item), OverlapItem::Model(face)]),
+    };
+    doc.look(Look::OpenOverlaps(list));
+    assert!(doc.overlaps.is_some());
+    doc.look(Look::HoverOverlap(Some(0)));
+    assert_eq!(doc.pick.sketch_hover(), Some(item));
+    doc.look(Look::HoverOverlap(Some(1)));
+    assert_eq!(doc.pick.hover(), Some(face));
+    assert_eq!(doc.pick.sketch_hover(), None);
+    assert_eq!(doc.overlap_ticked(), Some(vec![false, false]));
+    doc.look(Look::ToggleOverlap(0));
+    assert!(doc.overlaps.is_some());
+    let items = |doc: &Doc| doc.pick.selection.items().copied().collect::<Vec<_>>();
+    assert_eq!(items(&doc), [Selected::SketchItem { sketch, item: line }]);
+    assert_eq!(doc.overlap_ticked(), Some(vec![true, false]));
+    doc.look(Look::ChooseOverlap {
+        index: 1,
+        add: false,
+    });
+    assert!(doc.overlaps.is_none());
+    assert_eq!(
+        doc.pick.selection.targets().collect::<Vec<_>>(),
+        [face.target]
+    );
+    assert!(items(&doc).len() == 1);
+}

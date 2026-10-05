@@ -224,10 +224,9 @@ impl MotionSession {
 
     /// The feature's place in `document`: the edited one's, or the end.
     pub(super) fn index_in(&self, document: &Document) -> usize {
-        let features = document.features();
         (self.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len())
+            .and_then(|id| document.feature_index(id))
+            .unwrap_or(document.features().len())
     }
 
     /// Notes whether `document` no longer takes its tool at feature
@@ -589,7 +588,7 @@ impl Doc {
         let body = *session.bodies.first()?;
         let document = self.editor.document();
         let features = document.features();
-        let index = features.iter().position(|feature| feature.id == edited)?;
+        let index = document.feature_index(edited)?;
         let later = (features[index + 1..].iter())
             .filter(|feature| feature.kind.bodies().contains(&body))
             .count();
@@ -717,20 +716,9 @@ impl Doc {
         wanted: impl Fn(&Feature) -> bool,
     ) -> Vec<SketchLines<'s>> {
         let document = self.editor.document();
-        (document.features().iter())
-            .filter(|feature| wanted(feature))
-            .filter(|feature| session.takes_sketch(document, feature.id))
-            .filter_map(|feature| {
-                let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
-                    return None;
-                };
-                Some(SketchLines {
-                    feature: feature.id,
-                    placement: self.placement(feature.id)?,
-                    sketch,
-                })
-            })
-            .collect()
+        self.placed_sketches(|feature| {
+            wanted(feature) && session.takes_sketch(document, feature.id)
+        })
     }
 
     /// The split being set up's origin plane, if its tool is one: its name

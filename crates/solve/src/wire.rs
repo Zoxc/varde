@@ -256,6 +256,14 @@ fn check_edit(edit: &SketchEdit) -> Result<(), Error> {
         SketchEdit::Convert { .. } => Ok(()),
         SketchEdit::AddHandles(points) => check_count(points.len(), MAX_POINTS),
         SketchEdit::InsertPoint { near, .. } => check_place(*near),
+        SketchEdit::AddLink { .. } | SketchEdit::SetLinkProfiles { .. } => Ok(()),
+        SketchEdit::Relink(found) => {
+            check_count(found.len(), varde_sketch::MAX_LINKS)?;
+            match (found.iter()).find(|(_, shape)| !shape.fits(MAX)) {
+                Some(&(link, _)) => Err(Error::Sketch(SketchError::Link(link))),
+                None => Ok(()),
+            }
+        }
     }
 }
 

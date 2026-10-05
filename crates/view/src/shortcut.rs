@@ -320,6 +320,9 @@ impl Tool {
             // Bevel, with Shift: `C` is the Circle tool's, `B` the
             // Rectangle tool's.
             Tool::Chamfer => Shortcut::shifted('b'),
+            // No free letter of theirs: `P` is the Point tool's, `I`
+            // Coincident's, and `Shift P` Parallel's.
+            Tool::Project | Tool::Intersect => Shortcut::NONE,
         }
     }
 }
@@ -1359,7 +1362,10 @@ mod tests {
             sketching: true,
             ..keys(true)
         };
-        for tool in Tool::ALL {
+        for tool in Tool::ALL
+            .into_iter()
+            .filter(|tool| !tool.shortcut().is_none())
+        {
             let label = tool.shortcut().label().to_lowercase();
             // Mirror and Chamfer take Shift.
             let (letter, held) = match label.strip_prefix("shift ") {
@@ -1465,9 +1471,11 @@ mod tests {
             constraints: ConstraintKind::ALL.into_iter().collect(),
             ..keys(true)
         };
+        // Project and Intersect have no key.
         let shortcuts: Vec<_> = document_bindings(all)
             .into_iter()
             .map(|binding| binding.shortcut)
+            .filter(|shortcut| !shortcut.is_none())
             .collect();
         for (i, shortcut) in shortcuts.iter().enumerate() {
             assert!(

@@ -139,6 +139,7 @@ fn adding_a_revolve_hides_its_sketch_and_adds_its_body_in_one_step() {
     let sketch = FeatureKind::Sketch {
         plane,
         sketch: Sketch::default(),
+        sources: Vec::new(),
     };
     let revision = editor.revision();
     assert_eq!(

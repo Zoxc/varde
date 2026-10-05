@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
 use crate::{
-    Align, BodyId, Chamfer, Combine, Extrude, FaceDraft, Fillet, Loft, Mirror, Move, OffsetFace,
-    Operation, Pattern, Plane, Revolve, Scale, Shell, Split, Sweep,
+    Align, BodyId, Chamfer, Combine, Extrude, FaceDraft, Fillet, LinkSource, Loft, Mirror, Move,
+    OffsetFace, Operation, Pattern, Plane, Revolve, Scale, Shell, Split, Sweep,
 };
 
 /// A feature's handle in one document. It's opaque: ids come from the
@@ -43,6 +43,11 @@ pub enum FeatureKind {
     Sketch {
         plane: Plane,
         sketch: Sketch,
+        /// What each of the sketch's links comes from, in the order of
+        /// its links, one each (see [`LinkSource`]). Defaulted: a sketch
+        /// from before links has none.
+        #[serde(default)]
+        sources: Vec<LinkSource>,
     },
     Extrude(Extrude),
     Revolve(Revolve),

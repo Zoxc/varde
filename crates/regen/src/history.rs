@@ -136,6 +136,7 @@ mod combine;
 mod face_draft;
 mod fillet;
 mod in_place;
+mod link;
 mod loft;
 mod motion;
 mod offset_face;
@@ -226,6 +227,14 @@ pub struct Evaluation {
     /// it there, and one on a face of the new body that went to the body
     /// (with the pieces swapped) follows it back.
     pub splits: Vec<(BodyId, BodyId)>,
+    /// Each sketch whose links found other geometry than they hold, as
+    /// it is with what they found, solved (see `link`), in the
+    /// document's order. For the app to fold into the change that moved
+    /// their sources.
+    pub relinked: Vec<(FeatureId, Arc<Sketch>)>,
+    /// Each link that found nothing, with why: its sketch, its id, in
+    /// the document's order. It keeps what it holds.
+    pub broken: Vec<(FeatureId, varde_sketch::Id, String)>,
 }
 
 impl Evaluation {
@@ -402,7 +411,11 @@ fn walk(
     for (index, feature) in document.features().iter().enumerate() {
         starting(index, feature);
         match &feature.kind {
-            FeatureKind::Sketch { plane, sketch } => {
+            FeatureKind::Sketch {
+                plane,
+                sketch,
+                sources,
+            } => {
                 // Its profiles are 2D: they don't depend on where it is.
                 let key = Keyer::new("sketch").value(sketch).finish();
                 let profiles = cache.profiles(key, || sketch.profiles());
@@ -421,6 +434,27 @@ fn walk(
                         }
                     }
                 };
+                if !sources.is_empty() {
+                    let found = link::find(
+                        document,
+                        sketch,
+                        sources,
+                        placement,
+                        &sketches,
+                        &evaluation,
+                        tolerance,
+                        cache,
+                    );
+                    link::relink(
+                        feature.id,
+                        sketch,
+                        key,
+                        found,
+                        document,
+                        &mut evaluation,
+                        cache,
+                    );
+                }
                 sketches.push(SketchOutput {
                     id: feature.id,
                     sketch,
@@ -1429,9 +1463,8 @@ pub(crate) fn edge_axis(
     let key = motion::reference_key("edge", made.key, &edge.faces, edge.near, &tolerance);
     let [from, to] = cache.edge(key, || edge_ends(&made.solid, edge, &tolerance))?;
     let local = |p: DVec3| {
-        let q = p - placement.origin;
-        let height = q.dot(placement.normal);
-        (DVec2::new(q.dot(placement.x), q.dot(placement.y)), height)
+        let height = (p - placement.origin).dot(placement.normal);
+        (placement.to_sketch(p), height)
     };
     let ((at, a), (end, b)) = (local(from), local(to));
     let resolution = tolerance.resolution();

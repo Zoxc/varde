@@ -480,6 +480,10 @@ impl<'a> Sketching<'a> {
                     input.releasing = true;
                     return Some(Action::capture());
                 }
+                // The model's picking's: see [`Sketching::picks_outside`].
+                if self.picks_outside() {
+                    return None;
+                }
                 if self.tool.is_some() {
                     let double = double_click(&mut input.last_click, from);
                     // The app lets go of the snap it shows as it takes the
@@ -501,8 +505,10 @@ impl<'a> Sketching<'a> {
                     at: under.map(|cursor| cursor.at),
                     hit,
                     moved: false,
-                    // The origin and axes stay where they are.
-                    grab: self.editable && hit.is_some_and(|id| !id.is_builtin()),
+                    // The origin and axes stay where they are, and so does
+                    // what a link made.
+                    grab: self.editable
+                        && hit.is_some_and(|id| !id.is_builtin() && !self.sketch.is_linked(id)),
                     when: Instant::now(),
                     held: false,
                 });
@@ -617,17 +623,25 @@ impl<'a> Sketching<'a> {
         Some(capture(message))
     }
 
+    /// Whether its tool picks outside the sketch, in the model and other
+    /// sketches ([`Tool::picks_outside`]): then the left button is the
+    /// model's picking's, and nothing of the sketch is hit.
+    pub(crate) fn picks_outside(&self) -> bool {
+        self.tool.is_some_and(|tool| tool.tool.picks_outside())
+    }
+
     /// The item under `cursor`, see [`hit::hit`]: with Trim or Extend,
     /// or Offset picking its chain, the curve ([`hit::hit_curve`]), with
     /// Mirror choosing its line the line ([`hit::hit_line`]), with Fillet
     /// or Chamfer picking their corner the point where lines make one, a
     /// little farther off ([`hit::hit_corner`]), and nothing with Offset
     /// placing its copy, or Fillet or Chamfer theirs, which go where the
-    /// cursor is.
+    /// cursor is, nor with Project or Intersect, which pick outside the
+    /// sketch.
     fn hit(&self, cursor: Cursor) -> Option<Id> {
         let tolerance = HIT_TOLERANCE * cursor.pixel;
         match self.tool {
-            _ if self.releases() => None,
+            _ if self.releases() || self.picks_outside() => None,
             Some(tool) if tool.tool.corners() => {
                 hit::hit_corner(self.sketch, cursor.at, CORNER_TOLERANCE * cursor.pixel)
             }
@@ -950,6 +964,9 @@ impl<'a> Sketching<'a> {
                 layer.axis_polyline(Space::Sketch, &half, style);
             }
         }
+        // What links made is in their own tone, a link's curves dashed
+        // unless they count for profiles, as construction curves are.
+        let linked = sketch.linked();
         // The ends of lines fillets and chamfers cut off are dashed.
         let cut_back = sketch.cut_back();
         for selected in [false, true] {
@@ -963,6 +980,7 @@ impl<'a> Sketching<'a> {
                 };
                 let (color, width) = match (selected, entry.construction && !red(entry.id)) {
                     (true, _) => (colors.selected, SELECTED_WIDTH),
+                    _ if linked.contains(&entry.id) && !red(entry.id) => (colors.link, CURVE_WIDTH),
                     (false, true) => (colors.construction, CURVE_WIDTH),
                     (false, false) => (state_color(entry.id), CURVE_WIDTH),
                 };
@@ -1011,11 +1029,12 @@ impl<'a> Sketching<'a> {
                 } else {
                     colors.point_fill
                 };
-                let mut style = dot(
-                    POINT_RADIUS,
-                    faded(point.id, fill),
-                    faded(point.id, state_color(point.id)),
-                );
+                let rim = if linked.contains(&point.id) && !red(point.id) {
+                    colors.link
+                } else {
+                    state_color(point.id)
+                };
+                let mut style = dot(POINT_RADIUS, faded(point.id, fill), faded(point.id, rim));
                 style.fixed = !selected && states.fixed.contains(&point.id);
                 layer.point(point.at, style);
             }

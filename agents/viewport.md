@@ -111,9 +111,10 @@ geometry is, and over the viewport a crosshair with a sketch tool or a
 pointer over an item to select. Drags map to camera moves in
 `DragKind::for_button`, from the button, the modifiers the widget tracks
 from `ModifiersChanged` and whether a sketch is open: middle and `Shift` +
-right orbit, right pans, left orbits outside a sketch; `viewport::hints`
-and `README.md` follow it. The wheel zooms towards the cursor, as the
-mock does: `Look::Zoom` carries the cursor's offset from the viewport's
+right orbit, right pans, left orbits outside a sketch and while its
+Project or Intersect picks outside it; `viewport::hints` (given
+`document::left_orbits`) and `README.md` follow it. The wheel zooms
+towards the cursor, as the mock does: `Look::Zoom` carries the cursor's offset from the viewport's
 middle in fractions of its height, and `Camera::zoom_at` moves the
 target towards the point at the target's depth there by the proportion
 the distance changes, so that point stays under the cursor in either
@@ -971,6 +972,51 @@ or `Picked::Vertex`, the mesh's ids, a vertex by its corner), the body
 (the face's part's, or the first face's at the edge or the vertex) and
 the point (the ray's hit, the edge's point, or the vertex).
 
+**Picking finished sketches** (`view/src/viewport/sketch_pick.rs`):
+their curves and points are picked where they're placed in the world,
+each sketch hit tested on its own plane (`SketchLines`): `curve_under`
+(`hit::hit_curve` within `HIT_PIXELS`, 6, on each plane, the nearest by
+depth of the sketches with one), `point_under` (every point, or only
+those on their own, `Points`; the nearest on the screen within 6
+pixels) and `item_under` (a point first, else a curve, as a click in a
+sketch hits), each a `SketchHit` (the sketch, the item, its point in the
+world and its depth). Given the model shown (`hidden_by`), what it hides
+isn't picked: `PickIndex::hides`, the edges' hidden test, so a sketch
+on a face isn't hidden by it. Without, what's behind the model is
+picked too. A split's line, a sweep's path and a loft's rails and
+points are picked this way, without the model.
+
+**Sketches picked with the model.** Outside the sessions, with the
+selection's mode `Any` and not picking a plane
+(`Doc::picks_sketch_items`), `ModelPicking::sketches` holds the visible
+sketches that are placed (`Doc::selectable_sketches`), and the viewport
+picks their items with the model (`Program::sketch_point`): a point or a
+curve (`item_under`) the model doesn't hide wins over a face under it,
+and over an edge or a vertex no nearer the eye, to 0.002 view heights
+(`sketch_pick::wins`). Then `Look::HoverSketch(item)` is sent in place
+of `Look::Hover`, each saying what alone is hovered (the app holds one
+or the other, `ModelPick::sketch_hover`), and the click
+`Look::ClickSketch { item, add }`. The item hovered
+(`ModelPicking::hovered_sketch`) and those selected
+(`ModelPicking::marked`) are drawn on their sketches' planes
+(`sketch_pick::draw_items`) in the hovered and selected colours, in a
+frame of their own over the model, depth tested as the sketches are.
+
+In a sketch, Project and Intersect pick the model and the other visible
+sketches the same way (see `agents/sketch.md`): `ModelPicking` is given
+then, with `Picks::All` and every other visible sketch, the left button
+goes to the model's picking rather than the sketch's
+(`Program::picks_outside`; its release goes where its press went,
+`Interaction::left_camera`, as `Esc` may drop the tool while it's
+held), and nothing the faded model hides is left
+out (`hidden_by` is none). The items hovered and picked are drawn on the
+sketch's live layer, over everything. The renderer draws the model's
+highlight (hovered and selected faces, edges and vertices) over the
+faded model too, so what the tool picks of it shows, and so is what
+the link whose row of the Sketch tab is hovered comes from, whatever
+tool is in use (`Doc::hovered_link_highlight`); outside sketches the app
+gives none while the model is faded.
+
 Outside sketches and the extrude session, and not over a draft's preview
 (`Doc::picks`; they pick what they need themselves) the viewport is given `ModelPicking` (the index,
 the target the app holds hovered, and what the cursor picks, `Picks`:
@@ -1019,11 +1065,20 @@ as bodies, so a body double-clicked in the viewport shows selected in
 Objects and one clicked there shows all its faces selected in the
 viewport. `Esc` (once nothing else is open) and `Space` clear it with
 the Timeline's feature; selecting a feature in the Timeline clears it,
-and selecting in the model lets go of the feature.
+and selecting in the model lets go of the feature. A sketch's curve or point
+clicked in the model (`Look::ClickSketch`, `Selection::click_sketch`,
+in `Any` only) is `Selected::SketchItem`, kept by its sketch and id
+whatever model shows, alone or with what's selected of the model; it's
+dropped once its sketch or the item is gone or the sketch hidden
+(`Selection::retain_sketch_items`, in `Doc::prune_picks`). It names no
+body (`Selected::body` is `None`), so a combine, move or mirror takes
+nothing from it, nothing is measured while one is selected, and the
+status bar names it ("Line 3", "Sketch 2").
 
 **Overlaps** (`view/src/overlaps.rs`, `app/src/doc/overlaps.rs`). The
 left button held still for `HOLD_DELAY` (500 ms), in a sketch without a
-tool or on the model while the cursor picks it (not picking a plane),
+tool or on the model while the cursor picks it (not picking a plane;
+in a sketch with Project or Intersect too),
 lists what's there to choose from, when that's more than one item: the
 press asks for a redraw when it's due (`Action::request_redraw_at`,
 asked again by an earlier frame, as one sooner lets go of it) and that
@@ -1034,7 +1089,15 @@ then axes within `OVERLAP_REACH` (8) pixels, each nearest first
 and faces showing that near, hidden or not, either side: vertices and
 edges nearest the eye first, then faces, those under the cursor nearest
 the eye first and the rest nearest the cursor (`PickIndex::overlaps`);
-at most `MAX_OVERLAPS` (16). While the list is open, a ring of that
+at most `MAX_OVERLAPS` (16). With them, the curves and points of the
+sketches picked with the model (`ModelPicking::sketches`) showing within
+that reach, where they're nearest the cursor, those the model hides
+left out as the cursor leaves them (none in a sketch, behind the faded
+model; `sketch_pick::items_near`), each before the faces and before the
+first vertex or edge it wins over by depth (`sketch_pick::listed_with`,
+as `sketch_pick::wins`): then the list is `OverlapItems::Mixed`, of
+`OverlapItem`s, its sketch rows named "Line 3 of Sketch 2"; without any
+it's `OverlapItems::Model` as before. While the list is open, a ring of that
 radius marks where the button was held (`Overlaps::held`,
 `theme::pick_ring`). Over one item or none the press goes on as it was (a click, a
 drag). Over more it ends (no click, drag or orbit; letting go does
@@ -1050,7 +1113,10 @@ rows) hovers its item as a list's row or the cursor would
 meanwhile, and in the model drawn over what hides it (see "Through"
 under the highlight). Each row has a tick, checked while its item is
 selected (in the sketch's selection, or the model's targets, of its
-model). In a session picking the model for itself (a combine, a move
+model, and its sketches' items, `Doc::overlap_ticks` for a mixed list).
+In a sketch with Project or Intersect a row is ticked as a link of the
+tool's kind comes from its item (`Doc::outside_links`,
+`Doc::outside_has`), and hovering a sketch's row hovers it (`Doc::hover_sketch`). In a session picking the model for itself (a combine, a move
 or any other motion session, the measure tool, picking a plane) the
 selection ticks nothing: a row is ticked as the session a click goes to
 has its item, in the role a click on it gives it, so the click leaves
@@ -1066,15 +1132,16 @@ vertex) nor a face while a plane is picked for a sketch
 "Chain of Body 1" (`OverlapNote::Chain`): a click on any of its edges
 takes the chain out.
 A row clicked (`ChooseOverlap`, the app filling in `add` from
-Ctrl/Cmd held) takes a `ClickGeometry` or `ClickModel` on that item, so
-a session (measure, combine, move) takes it as its click: alone it
+Ctrl/Cmd held) takes a `ClickGeometry`, `ClickModel` or `ClickSketch`
+on that item, so a session (measure, combine, move) or Project and
+Intersect (refusals included) take it as their click: alone it
 closes the list; with `add` it adds or takes out, the list kept open
 (taken out of `Doc` meanwhile, so the click doesn't close it), as does
 the tick (`ToggleOverlap`). `Esc` closes it alone; anything else done but hovering and
 scrolling closes it too. A list of the model's is found again on each
 new model shown while it's open (`Doc::follow_overlaps`, from
 `prune_picks`), as a session's preview of each tick brings one: its
-rows by their names (`Selected`, named when it opened), each on the
+rows by their names (a sketch's item kept while its sketch holds it) (`Selected`, named when it opened), each on the
 body drawing its body there; a row not found is dropped, and the list
 closes once none is left, so no row stays of a model gone by, where a
 click would do nothing. The one exception is a row of the session's own

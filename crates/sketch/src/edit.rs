@@ -12,8 +12,8 @@ use varde_expr::{AngleUnit, LengthUnit, Unit, Value, format};
 
 use crate::origin::FIRST_BUILTIN;
 use crate::{
-    Constraint, Curve, CurveEntry, Design, Dimension, Id, Kind, OutOfIds, Point, Setback, Side,
-    Sketch, SketchError, SplineKind,
+    Constraint, Curve, CurveEntry, Design, Dimension, Id, Kind, LinkKind, LinkShape, OutOfIds,
+    Point, Setback, Side, Sketch, SketchError, SplineKind,
 };
 
 /// A change to a sketch as the user asks for it, not its result: applied
@@ -55,8 +55,8 @@ pub enum SketchEdit {
     /// (its points on the first) or one circle (equal radii); a spline's
     /// parts keep its shape, by control points exactly, through fit points
     /// with a handle at each new end. New ends are the end of a curve
-    /// cutting there if one is, or else new points on the curves cutting
-    /// there. Those ties are `auto`, kept only where they hold with the
+    /// cutting there if one is (a new point coincident with it if it's a
+    /// link's), or else new points on the curves cutting there. Those ties are `auto`, kept only where they hold with the
     /// rest (see [`Add::auto`]). Constraints and dimensions stay where
     /// they still mean something: those on an end taken away go with it,
     /// and a line's length, equal length, midpoint and distance from its
@@ -76,8 +76,8 @@ pub enum SketchEdit {
     /// `about`, each new point [`Constraint::Symmetric`] with its
     /// original and each circle's copy [`Constraint::Equal`] to it, arcs
     /// running the other way so they stay counter-clockwise. Points on
-    /// the line are shared with the copies (but an arc's) and held on it
-    /// (`auto`); curves there are their own images. Constraints among
+    /// the line are shared with the copies (but an arc's or a link's) and
+    /// held on it (`auto`); curves there are their own images. Constraints among
     /// what's mirrored aren't copied: the symmetry holds the copies
     /// already, so they'd be redundant. Constraints and dimensions among
     /// `ids`, and `about`, are left out; nothing else to mirror is
@@ -147,6 +147,19 @@ pub enum SketchEdit {
     /// side moving to make room.
     /// [`EditError::Target`] where it has a point there already.
     InsertPoint { spline: Id, near: DVec2 },
+    /// A new link of `kind`, making nothing yet: its geometry comes once
+    /// what it comes from is found ([`SketchEdit::Relink`]). Its id is
+    /// the sketch's `next_id`.
+    AddLink { kind: LinkKind },
+    /// Links given the geometry found for them, each as
+    /// `Sketch::relink` does: moved in place, keeping the ids of what
+    /// goes on (every id with the same form), deleting what doesn't and
+    /// adding what's new. Proposed, the rest of the
+    /// sketch follows, the links' geometry fixed.
+    Relink(Vec<(Id, LinkShape)>),
+    /// A link's curves made to count for profiles, or not (construction
+    /// geometry).
+    SetLinkProfiles { link: Id, profiles: bool },
 }
 
 impl SketchEdit {
@@ -242,6 +255,26 @@ impl SketchEdit {
             SketchEdit::Convert { spline, to } => next.convert_spline(*spline, *to)?,
             SketchEdit::AddHandles(points) => next.add_handles(points)?,
             SketchEdit::InsertPoint { spline, near } => next.insert_spline_point(*spline, *near)?,
+            SketchEdit::AddLink { kind } => {
+                next.add_link(*kind)?;
+            }
+            SketchEdit::Relink(found) => {
+                for (link, shape) in found {
+                    next.relink(*link, shape)?;
+                }
+            }
+            SketchEdit::SetLinkProfiles { link, profiles } => {
+                next.set_link_profiles(*link, *profiles)?;
+            }
+        }
+        // Only a link's own edits change what it made; deleting a link
+        // takes it whole.
+        match self {
+            SketchEdit::AddLink { .. }
+            | SketchEdit::Relink(_)
+            | SketchEdit::SetLinkProfiles { .. } => {}
+            SketchEdit::Delete(ids) => next.links_kept(sketch, ids)?,
+            _ => next.links_kept(sketch, &[])?,
         }
         next.check(design)?;
         Ok((next, auto))
@@ -512,6 +545,9 @@ pub enum EditError {
     /// A fillet or chamfer doesn't fit on its corner: it would reach past
     /// the end of a line, or a chamfer's angle wouldn't reach across.
     NoRoom,
+    /// The edit would change a link's point or curve (`id`), or the link
+    /// itself, which only follows what it comes from: it's removed whole.
+    Linked(Id),
 }
 
 impl From<OutOfIds> for EditError {
@@ -552,6 +588,9 @@ impl fmt::Display for EditError {
             EditError::TooComplex => f.write_str("that's too complex to work out"),
             EditError::NoCorner => f.write_str("only two lines ending at a point make a corner"),
             EditError::NoRoom => f.write_str("that's too large for the corner's lines"),
+            EditError::Linked(_) => f.write_str(
+                "projected and intersected geometry follows what it comes from: remove its link instead",
+            ),
             &EditError::OutOfRange {
                 measured,
                 min,

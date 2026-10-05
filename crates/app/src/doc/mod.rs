@@ -14,6 +14,7 @@ mod overlaps;
 mod pick;
 mod rail;
 mod regions;
+mod relink;
 mod revolve;
 mod save;
 mod sketch;
@@ -303,6 +304,10 @@ impl Origin {
 /// shown: the origin.
 const HOME_TARGET: Vec3 = Vec3::ZERO;
 
+/// Why a click on the model can't be taken while a newer one is on its
+/// way, in the words the status bar shows.
+const OUT_OF_DATE: &str = "The model shown is out of date: try again once it's regenerated";
+
 /// The camera Home turns to, framed on the origin.
 fn home_camera(projection: Projection) -> Camera {
     let mut camera = Camera::default();
@@ -421,6 +426,7 @@ impl Doc {
         self.refresh_errors();
         self.prune_preview();
         self.follow_placement();
+        self.refresh_links();
     }
 
     /// Asks for the model if the document changed, the sketch left out of
@@ -559,6 +565,8 @@ impl Doc {
             Edit::SetTolerance(tolerance) => self.change(Change::SetTolerance(tolerance)),
             // What waits on the solver, and what waits behind it, is newer
             // than anything committed: undo takes back the newest of it.
+            Edit::RemoveLink(link) => self.remove_link(link),
+            Edit::SetLinkProfiles(link, profiles) => self.set_link_profiles(link, profiles),
             Edit::Undo if self.proposing() => self.drop_newest(),
             Edit::Undo => self.edit_surely(Editor::undo),
             // What waits comes after what's undone, as a new edit does,
@@ -652,7 +660,9 @@ impl Doc {
                     | Look::ChooseOverlap { .. }
                     | Look::ToggleOverlap(_)
                     | Look::Hover(_)
+                    | Look::HoverSketch(_)
                     | Look::HoverItem(_)
+                    | Look::HoverLink(_)
                     | Look::HoverFeature(_)
                     | Look::LeaveFeature(_)
                     | Look::HoverPanel(_)
@@ -671,6 +681,7 @@ impl Doc {
             Look::Escape
                 | Look::ClickGeometry { .. }
                 | Look::ClickRow(_)
+                | Look::ClickLink(_)
                 | Look::SelectBox { .. }
                 | Look::ClearSelection
                 | Look::SelectTool(_)
@@ -685,6 +696,7 @@ impl Doc {
             message,
             Look::ClickGeometry { .. }
                 | Look::ClickRow(_)
+                | Look::ClickLink(_)
                 | Look::SelectBox { .. }
                 | Look::SelectTool(_)
                 | Look::ToggleConstrain
@@ -701,7 +713,9 @@ impl Doc {
         if !matches!(
             message,
             Look::Hover(_)
+                | Look::HoverSketch(_)
                 | Look::HoverItem(_)
+                | Look::HoverLink(_)
                 | Look::HoverFeature(_)
                 | Look::LeaveFeature(_)
                 | Look::HoverPanel(_)
@@ -727,11 +741,13 @@ impl Doc {
                 | Look::PreviewOpacity(..)
                 | Look::Escape
                 | Look::HoverItem(_)
+                | Look::HoverLink(_)
                 | Look::HoverFeature(_)
                 | Look::LeaveFeature(_)
                 | Look::HoverPanel(_)
                 | Look::LeavePanel(_)
                 | Look::Hover(_)
+                | Look::HoverSketch(_)
                 | Look::HoverCube(_)
                 | Look::Snap(_)
                 | Look::Aim(_)
@@ -875,6 +891,8 @@ impl Doc {
             // held; alone, it selects.
             Look::ClickRow(id) => self.click_geometry(Some(id), false),
             Look::HoverItem(id) => self.hover_item(id),
+            Look::ClickLink(link) => self.click_link(link),
+            Look::HoverLink(link) => self.hover_link(link),
             Look::HoverFeature(feature) => self.hovered_feature = feature,
             Look::LeaveFeature(feature) => {
                 (self.hovered_feature).take_if(|&mut hovered| hovered == feature);
@@ -886,12 +904,21 @@ impl Doc {
             // While the list is open, its row hovered is.
             Look::Hover(_) if self.overlaps.is_some() => {}
             Look::Hover(pick) => self.hover(pick),
+            Look::HoverSketch(_) if self.overlaps.is_some() => {}
+            Look::HoverSketch(item) => self.hover_sketch(item),
+            Look::ClickSketch { item, .. } if self.picks_outside() => {
+                self.outside_click(sketch::OutsideClick::Sketch(item));
+            }
+            Look::ClickSketch { item, add } => self.click_sketch(item, add),
             Look::OpenOverlaps(list) => self.open_overlaps(list),
             Look::HoverOverlap(row) => self.hover_overlap(row),
             Look::LeaveOverlap(row) => self.leave_overlap(row),
             Look::ChooseOverlap { index, add } => self.choose_overlap(index, add),
             Look::ToggleOverlap(index) => self.choose_overlap(index, true),
             Look::CloseOverlaps => self.close_overlaps(),
+            Look::ClickModel { pick, .. } if self.picks_outside() => {
+                self.outside_click(sketch::OutsideClick::Model(pick));
+            }
             Look::ClickModel { pick, .. } if self.combine.is_some() => self.combine_click(pick),
             Look::ClickModel { pick, .. } if self.motion.is_some() => self.motion_click(pick),
             Look::ClickModel { pick, add, double } if self.measure.is_some() => {
@@ -1003,8 +1030,16 @@ impl Doc {
         let exists = match menu {
             RowMenu::Feature(id) | RowMenu::Sketch(id) => document.feature(id).is_some(),
             RowMenu::Body(id) => document.body(id).is_some(),
+            // A link's row shows in a sketch alone.
+            RowMenu::Link(id) => {
+                let links = self
+                    .sketch
+                    .as_ref()
+                    .map_or(&[][..], |session| &session.links[..]);
+                links.iter().any(|row| row.link == id)
+            }
         };
-        if self.sketch.is_some() || !exists {
+        if self.sketch.is_some() != matches!(menu, RowMenu::Link(_)) || !exists {
             return;
         }
         if let RowMenu::Feature(id) = menu {
@@ -1043,6 +1078,7 @@ impl Doc {
     /// goes to [`Doc::export_welded`] instead.
     pub(crate) fn computed(&mut self, response: varde_regen::Response) {
         self.feed.apply(response);
+        self.relink();
         self.fit_first_model();
         // Which bodies are merged, which faces show as whose, may change.
         self.prune_plane_pick(false);
@@ -1056,6 +1092,7 @@ impl Doc {
         self.follow_edge_axis();
         self.refresh_errors();
         self.follow_placement();
+        self.refresh_links();
     }
 
     /// Starts sending requests to `lane`, the document's solver lane:

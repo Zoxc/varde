@@ -3,6 +3,7 @@ use std::sync::Arc;
 use varde_document::{Command, Document, Editor, FeatureKind};
 use varde_kernel::MeshPart;
 use varde_kernel::mesh::{FaceKey, PartKey};
+use varde_sketch::{MAX_LINKS, MAX_POINTS};
 
 use super::*;
 use crate::tests::sketched;
@@ -39,6 +40,8 @@ fn regenerated(generation: u64) -> Head {
         snaps: vec![None],
         corners: Vec::new(),
         inspected: None,
+        broken: Vec::new(),
+        relinked: Vec::new(),
     }
 }
 
@@ -459,6 +462,7 @@ fn regenerated_round_trips() {
         placements,
         bodies,
         inspected,
+        ..
     } = round_trip(&response)
     else {
         panic!("regeneration failed");
@@ -1273,6 +1277,8 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
         placements: Vec::new(),
         bodies: boxes,
         inspected: None,
+        broken: Vec::new(),
+        relinked: Vec::new(),
     }
 }
 
@@ -2023,8 +2029,8 @@ fn too_many_parts_faces_aliases_or_flags_are_refused_as_the_head_is_decoded() {
     let alias = postcard::to_stdvec(&faces[0].aliases[0]).unwrap();
     // [.. parts: 1, body, faces: 1, face [.., aliases: 1, alias,
     // summary], closed: 1, false, tangents: 1, 0, snaps: 1, None,
-    // corners: 0, inspected: None]
-    let snaps_at = head.len() - 4;
+    // corners: 0, inspected: None, relinked: 0, broken: 0]
+    let snaps_at = head.len() - 6;
     let tangents_at = snaps_at - 2;
     let closed_at = tangents_at - 2;
     let faces_at = closed_at - face.len() - 1;
@@ -2110,6 +2116,8 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
                 },
             )],
             inspected: None,
+            broken: Vec::new(),
+            relinked: Vec::new(),
         }
     };
     assert!(matches!(
@@ -2691,8 +2699,8 @@ fn too_many_corners_are_refused_as_the_head_is_decoded() {
         point: [0.0; 3],
     })
     .unwrap();
-    // [.., corners: 1, corner, inspected: None]
-    let at = head.len() - corner.len() - 1 - 1;
+    // [.., corners: 1, corner, inspected: None, relinked: 0, broken: 0]
+    let at = head.len() - corner.len() - 1 - 1 - 2;
     assert_eq!(head[at], 1);
     for claim in [MAX_CORNERS as u64 + 1, u64::MAX] {
         let mut claimed = head[..at].to_vec();
@@ -2913,14 +2921,17 @@ fn damaged_measures_never_panic_and_what_is_taken_holds() {
         };
         assert_sound_measure(&sent, &mesh, &picking);
         let bytes = postcard::to_stdvec(&*sent).unwrap();
-        // The measure is at the end of the head.
-        assert!(head.ends_with(&bytes));
-        let at = head.len() - bytes.len();
+        // The measure ends the head but for no sketches relinked and no
+        // links broken.
+        let tail = [0, 0];
+        assert!(head.ends_with(&[&bytes[..], &tail].concat()));
+        let at = head.len() - tail.len() - bytes.len();
         for _ in 0..3000 {
             // Damage only the measure's bytes, so most heads still
             // decode: the measure's checks are what's tried.
             let mut damaged = head[..at].to_vec();
             damaged.extend(rng.mutate(&bytes));
+            damaged.extend(tail);
             if let Ok(Response::Regenerated {
                 inspected: Some(inspected),
                 mesh,
@@ -3577,4 +3588,148 @@ fn a_tapered_draft_crosses_the_wire() {
     };
     let error = draft.unwrap().error.expect("refused");
     assert!(error.contains("taper"), "{error}");
+}
+
+/// A sketch's links relinked and broken cross the wire as they were.
+#[test]
+fn relinked_and_broken_links_round_trip() {
+    use varde_document::{LinkSource, OriginPlane, OutsideRef, Plane};
+    use varde_sketch::{LinkKind, SketchEdit};
+    let mut editor = Editor::new(Document::example());
+    let first = editor.document().features()[0].id;
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
+        .unwrap();
+    let feature = editor.document().features()[2].id;
+    let design = editor.document().design();
+    let mut sketch = varde_document::Sketch::default();
+    for _ in 0..2 {
+        sketch = SketchEdit::AddLink {
+            kind: LinkKind::Project,
+        }
+        .apply(&sketch, &design)
+        .unwrap();
+    }
+    let [kept, gone] = [sketch.links[0].id, sketch.links[1].id];
+    let FeatureKind::Sketch { sketch: plate, .. } = &editor.document().features()[0].kind else {
+        panic!("the plate's sketch");
+    };
+    let corner = plate.points[0].id;
+    let source = |item| OutsideRef::Sketch {
+        sketch: first,
+        item,
+    };
+    let mut only = sketch.clone();
+    only.links.pop();
+    editor
+        .apply(Command::AddLink {
+            feature,
+            sketch: Box::new(only),
+            source: LinkSource {
+                link: kept,
+                source: source(corner),
+            },
+        })
+        .unwrap();
+    editor
+        .apply(Command::AddLink {
+            feature,
+            sketch: Box::new(sketch),
+            source: LinkSource {
+                link: gone,
+                // No point or curve of the plate's sketch.
+                source: source(varde_document::Id::X_AXIS),
+            },
+        })
+        .unwrap();
+    let response = handle(decode_request(&encode_request(&regenerate(&editor))).unwrap());
+    let Response::Regenerated {
+        relinked: sent,
+        broken: marked,
+        ..
+    } = &response
+    else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(sent.len(), 1);
+    assert_eq!(marked.len(), 1);
+    assert_eq!(marked[0].1, gone);
+    let Response::Regenerated {
+        relinked, broken, ..
+    } = round_trip(&response)
+    else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(relinked, *sent);
+    assert_eq!(broken, *marked);
+}
+
+/// A sketch feature's id.
+fn a_sketch() -> FeatureId {
+    Document::example().features()[0].id
+}
+
+/// `regenerated(1)` relinking `sketches` and with `broken` links.
+fn relinking(sketches: Vec<Sketch>, broken: usize) -> Head {
+    let feature = a_sketch();
+    let link = Sketch::default()
+        .add_link(varde_sketch::LinkKind::Project)
+        .unwrap();
+    let mut head = regenerated(1);
+    if let Head::Regenerated {
+        relinked,
+        broken: marks,
+        ..
+    } = &mut head
+    {
+        *relinked = (sketches.into_iter())
+            .map(|sketch| (feature, sketch))
+            .collect();
+        *marks = (0..broken)
+            .map(|_| (feature, link, String::new()))
+            .collect();
+    }
+    head
+}
+
+/// A relinked sketch, a few bytes an item in the head and far more on
+/// the page, is decoded within the limits a sketch's check holds, and
+/// the relinked sketches all together within [`MAX_RELINKED_ITEMS`];
+/// the broken links within [`MAX_BROKEN`].
+#[test]
+fn relinked_sketches_and_broken_links_are_bounded_as_the_head_is_decoded() {
+    let with = |points: usize, links: usize| {
+        // One point many times over: its decoding is what's bounded,
+        // not its check.
+        let mut sketch = Sketch::default();
+        sketch.add_point(glam::DVec2::ZERO).unwrap();
+        sketch.points = vec![sketch.points[0].clone(); points];
+        for _ in 0..links {
+            sketch.add_link(varde_sketch::LinkKind::Project).unwrap();
+        }
+        sketch
+    };
+    let decodes = |head: Head| Head::decode(&head.encode()).is_ok();
+    assert!(decodes(relinking(vec![with(MAX_POINTS, 0)], 0)));
+    assert!(!decodes(relinking(vec![with(MAX_POINTS + 1, 0)], 0)));
+    assert!(decodes(relinking(vec![with(0, MAX_LINKS)], 0)));
+    assert!(!decodes(relinking(vec![with(0, MAX_LINKS + 1)], 0)));
+    assert!(decodes(relinking(Vec::new(), MAX_BROKEN)));
+    assert!(!decodes(relinking(Vec::new(), MAX_BROKEN + 1)));
+    // Each sketch weighs one and its items, all together within the
+    // budget.
+    let full = with(MAX_POINTS, 0);
+    let fit = MAX_RELINKED_ITEMS / (MAX_POINTS + 1);
+    assert!(decodes(relinking(vec![full.clone(); fit], 0)));
+    assert!(!decodes(relinking(vec![full.clone(); fit + 1], 0)));
+    // Relinked sketches past the budget aren't sent: the model goes
+    // without them.
+    let mut response = answer(triangle_mesh(), vec![BodyId::NEW]);
+    if let Response::Regenerated { relinked, .. } = &mut response {
+        *relinked = vec![(a_sketch(), Arc::new(full)); fit + 1];
+    }
+    let Response::Regenerated { relinked, .. } = round_trip(&response) else {
+        panic!("the model wasn't sent");
+    };
+    assert!(relinked.is_empty());
 }

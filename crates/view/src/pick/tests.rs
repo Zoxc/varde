@@ -1,4 +1,4 @@
-use varde_document::{Document, Plane};
+use varde_document::{Document, OriginPlane, Plane};
 use varde_regen::{Cache, Summary, evaluate, tessellate_picking};
 use varde_render::{Projection, View};
 
@@ -30,10 +30,7 @@ pub(crate) fn camera(view: View, projection: Projection) -> Camera {
 
 /// Where `camera` shows the world point `at` in [`SIZE`].
 pub(crate) fn shown(camera: &Camera, at: DVec3) -> DVec2 {
-    let placement = OriginPlane::XY.placement();
-    Projector::new(camera, placement, SIZE[0], SIZE[1])
-        .unwrap()
-        .show(at)
+    Projector::world(camera, SIZE[0], SIZE[1]).unwrap().show(at)
 }
 
 /// The plane face `target` is on, as its outward normal and offset.

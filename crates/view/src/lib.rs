@@ -72,7 +72,7 @@ pub use chamfer::chamfer_info;
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
-    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, MeshStatus,
+    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, LinkRow, MeshStatus,
     NamePrompt, Overlay, RecoveredChanges, RefusedEdit, SketchState, ValueField, ValueTarget,
     document,
 };
@@ -98,7 +98,7 @@ pub use offset_face::offset_info;
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
 };
-pub use overlaps::{OverlapItems, OverlapNote, OverlapTick, Overlaps};
+pub use overlaps::{OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps};
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
@@ -108,7 +108,7 @@ pub use revolve::{
     Angle, EDGE_NOT_STRAIGHT, EDGE_OFF_PLANE, RevolveLook, RevolvePick, RevolveState, TurnKind,
     axis_edge,
 };
-pub use select::{Selected, Selection, SelectionMode};
+pub use select::{Selected, Selection, SelectionMode, SketchItem};
 pub use shell::shell_info;
 pub use shortcut::{
     Binding, DocumentKeys, Held, claimed, document_bindings, escapes, pressed, welcome_bindings,
@@ -411,6 +411,11 @@ pub enum Edit {
     SetUnits(LengthUnit),
     /// Changes the design's tolerance, which regenerates everything.
     SetTolerance(Tolerance),
+    /// Deletes the link of the sketch being edited with what it made.
+    RemoveLink(Id),
+    /// Makes the curves of the link of the sketch being edited count for
+    /// profiles, or not.
+    SetLinkProfiles(Id, bool),
     Undo,
     Redo,
 }
@@ -556,6 +561,12 @@ pub enum Look {
     /// glyph, or none: the viewport highlights it, or what a constraint
     /// ties together.
     HoverItem(Option<Id>),
+    /// A link's row of the Sketch tab clicked: selects what it made, as
+    /// [`Look::ClickRow`] selects an item.
+    ClickLink(Id),
+    /// A link's row of the Sketch tab hovered, or none: what it comes
+    /// from is lit in the model.
+    HoverLink(Option<Id>),
     /// A feature's row in the Timeline hovered, or none: a failed
     /// feature's error geometry shows in the viewport while it is.
     HoverFeature(Option<FeatureId>),
@@ -583,6 +594,11 @@ pub enum Look {
     /// model does under a cursor that stays, see [`PickIndex::pick`]. The
     /// viewport highlights it.
     Hover(Option<Pick>),
+    /// A curve or point of a finished sketch the cursor is over in the
+    /// model, outside sketches and sessions, nearer than the model under
+    /// it, or nothing: sent in place of [`Look::Hover`] while it is, so
+    /// either says what alone is hovered. The viewport highlights it.
+    HoverSketch(Option<SketchItem>),
     /// A click on the model, outside sketches and the extrude being set
     /// up, on `pick` or on nothing: selects it, or with `add` (`Shift`
     /// or `Ctrl` held, see [`Held::TOGGLE`]) adds it or takes it out;
@@ -593,6 +609,13 @@ pub enum Look {
         pick: Option<Pick>,
         add: bool,
         double: bool,
+    },
+    /// A click on a finished sketch's curve or point in the model: selects
+    /// it, or with `add` adds it or takes it out, as [`Look::ClickModel`]
+    /// does; see [`Selection::click_sketch`].
+    ClickSketch {
+        item: SketchItem,
+        add: bool,
     },
     /// A body's row in Objects clicked: selects the body alone, or with
     /// `Ctrl` (`Cmd` on macOS) held, which the app knows, adds it or takes
@@ -779,11 +802,18 @@ pub enum Tool {
     /// Cuts the corner clicked with a line across it, as far back as the
     /// cursor's, or the distances or the distance and the angle typed.
     Chamfer,
+    /// Picks what to project onto the sketch's plane, outside it: the
+    /// model's edges and corners, and other sketches' curves and points,
+    /// made before the sketch.
+    Project,
+    /// Picks what to cut with the sketch's plane, outside it: the model's
+    /// faces and edges, made before the sketch.
+    Intersect,
 }
 
 impl Tool {
     /// Every tool, drawing ones first.
-    pub const ALL: [Tool; 14] = [
+    pub const ALL: [Tool; 16] = [
         Tool::Line,
         Tool::Rectangle,
         Tool::Circle,
@@ -798,6 +828,8 @@ impl Tool {
         Tool::Mirror,
         Tool::Fillet,
         Tool::Chamfer,
+        Tool::Project,
+        Tool::Intersect,
     ];
 
     /// Those the sketch toolbar shows, in its order, as the UI mock's
@@ -829,6 +861,8 @@ impl Tool {
             Tool::Mirror => "Mirror",
             Tool::Fillet => "Fillet",
             Tool::Chamfer => "Chamfer",
+            Tool::Project => "Project",
+            Tool::Intersect => "Intersect",
         }
     }
 
@@ -844,7 +878,16 @@ impl Tool {
                 | Tool::Mirror
                 | Tool::Fillet
                 | Tool::Chamfer
+                | Tool::Project
+                | Tool::Intersect
         )
+    }
+
+    /// Whether it picks outside the sketch, in the model and other
+    /// sketches, rather than in it: Project and Intersect. While it's in
+    /// use the sketch's own geometry isn't hit.
+    pub fn picks_outside(self) -> bool {
+        matches!(self, Tool::Project | Tool::Intersect)
     }
 
     /// Whether it works on a corner where two lines end: Fillet and
@@ -956,6 +999,8 @@ pub enum RowMenu {
     Body(BodyId),
     /// A sketch in Objects.
     Sketch(FeatureId),
+    /// A link in the Sketch tab of the sketch being edited.
+    Link(Id),
 }
 
 /// A tab of the side panel. Two show at a time: Timeline and Objects, or

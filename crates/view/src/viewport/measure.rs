@@ -8,7 +8,7 @@
 //! between its two points, and its label, a widget anchored at its
 //! middle.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use glam::DVec2;
 use iced::Element;
@@ -53,8 +53,7 @@ impl<'a> Measuring<'a> {
         colors: &Colors,
         sketch: SketchColors,
     ) -> (Arc<SketchLayer>, SketchLayer) {
-        static EMPTY: LazyLock<Arc<SketchLayer>> = LazyLock::new(Arc::default);
-        (EMPTY.clone(), self.live(colors, sketch))
+        (super::NO_LAYER.clone(), self.live(colors, sketch))
     }
 
     fn live(&self, colors: &Colors, sketch: SketchColors) -> SketchLayer {

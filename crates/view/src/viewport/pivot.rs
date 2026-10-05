@@ -42,8 +42,7 @@ fn on_grid(
     at: DVec2,
 ) -> Option<DVec3> {
     let hit = projector.cursor(at)?.at;
-    let target = camera.target().as_dvec3() - placement.origin;
-    let target = DVec2::new(target.dot(placement.x), target.dot(placement.y));
+    let target = placement.to_sketch(camera.target().as_dvec3());
     let reach = f64::from(GRID_FADE_HEIGHTS) * f64::from(camera.view_height());
     (hit.distance(target) <= reach).then(|| placement.to_world(hit))
 }

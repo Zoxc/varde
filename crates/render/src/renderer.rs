@@ -198,8 +198,9 @@ pub struct Frame<'a> {
     /// The faces hovered, by their ids in the mesh (their runs of
     /// [`RenderMesh::face_ends`]): the one the cursor is over, or all of
     /// what it would select (a body's). Each is drawn again over itself
-    /// towards [`Colors::hover_face`], as opaque as its part. Not drawn
-    /// while [`Self::faded`], nor a face the mesh hasn't.
+    /// towards [`Colors::hover_face`], as opaque as its part (opaque
+    /// over the faded model, [`Self::faded`]). Not a face the mesh
+    /// hasn't.
     pub hovered_faces: &'a [u32],
     /// The faces selected, by their ids likewise: drawn again over
     /// themselves, tinted with [`Colors::selected`], over the hover.
@@ -210,7 +211,8 @@ pub struct Frame<'a> {
     pub second_faces: &'a [u32],
     /// The edges and vertices hovered and selected, drawn over the model.
     /// Only re-uploaded when it's another `Arc` than the last one
-    /// prepared, or the mesh is. Not drawn while [`Self::faded`].
+    /// prepared, or the mesh is. Drawn over the faded model too
+    /// ([`Self::faded`]): what a sketch's tool picks of it.
     pub highlights: &'a Arc<Highlights>,
     /// Whether the hovered faces, outlined edges and hovered vertices are
     /// drawn again over everything, what hides them included: a face at
@@ -1694,9 +1696,7 @@ impl Renderer {
         }
 
         slot.faces.clear();
-        if !frame.faded
-            && let Some(gpu) = &slot.mesh
-        {
+        if let Some(gpu) = &slot.mesh {
             let tinted = [
                 (frame.hovered_faces, Tint::Hovered),
                 (frame.selected_faces, Tint::Selected),
@@ -2076,6 +2076,8 @@ impl Renderer {
                 draw_faces(pass, mesh, all.clone());
                 pass.set_pipeline(&self.mesh_faded);
                 draw_faces(pass, mesh, all.clone());
+                // What a sketch's tool picks of the model, over it.
+                self.draw_picked_faces(pass, &slot.faces, false);
                 draw_edges(pass, &self.edges, mesh, all.clone());
                 self.draw_triangle_edges(pass, mesh, all);
             } else {
@@ -2167,8 +2169,9 @@ impl Renderer {
             }
         }
 
-        // The hover and the selection over everything of the model.
-        if !slot.faded && mesh.is_some() {
+        // The hover and the selection over everything of the model,
+        // faded or not.
+        if mesh.is_some() {
             self.draw_highlights(pass, slot);
         }
         if let Some(mesh) = mesh.filter(|_| slot.hover_through) {

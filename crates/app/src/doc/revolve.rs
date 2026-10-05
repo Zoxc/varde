@@ -17,13 +17,13 @@ use varde_document::{
 };
 use varde_expr::{AngleUnit, Unit};
 use varde_view::{
-    Angle, Naming, OperationKind, PanelHover, RevolveLook, RevolvePick, RevolveState, TurnKind,
-    Unnamed, axis_edge,
+    Angle, OperationKind, PanelHover, RevolveLook, RevolvePick, RevolveState, TurnKind, Unnamed,
+    axis_edge,
 };
 
 use super::extrude::is_sketch;
 use super::regions::{BodyTargets, RegionPick, TypedText};
-use super::{Doc, Focus};
+use super::{Doc, Focus, OUT_OF_DATE};
 
 /// The revolve being set up, while one is: [`Doc::revolve`].
 #[derive(Debug)]
@@ -179,10 +179,9 @@ impl RevolveSession {
         let Some(AxisLine::Edge(edge)) = &self.axis else {
             return;
         };
-        let features = document.features();
         let index = match self.feature {
-            Some(id) => features.iter().position(|feature| feature.id == id),
-            None => Some(features.len()),
+            Some(id) => document.feature_index(id),
+            None => Some(document.features().len()),
         };
         if index.is_some_and(|index| document.check_edge(index, edge).is_ok()) {
             return;
@@ -415,10 +414,7 @@ impl Doc {
     /// history, which the model shows.
     fn shown_edge(&self, edge: &EdgeRef) -> Option<[DVec3; 2]> {
         let index = self.feed.pick_index();
-        let shown = (self.feed.merged_bodies().iter())
-            .find(|(merged, _)| *merged == edge.body)
-            .map_or(edge.body, |&(_, holder)| holder);
-        let found = index.find_edge(shown, edge.faces, edge.near)?;
+        let found = index.find_edge(self.feed.shown_body(edge.body), edge.faces, edge.near)?;
         index.edge_ends(found, &edge.faces)
     }
 
@@ -447,7 +443,8 @@ impl Doc {
 
     /// Edge `edge` of the model shown, of the index `model` names, clicked
     /// at `at`, as the axis of the revolve `session` sets up: the
-    /// reference the revolve stores ([`Naming::edge_ref`], with the
+    /// reference the revolve stores
+    /// ([`Naming::edge_ref`](varde_view::Naming::edge_ref), with the
     /// history stopped at the revolve) and the edge's ends. Refused, why,
     /// if the model shown isn't the one clicked or the cursor doesn't pick
     /// it, there's no source to take the plane of yet, or the edge isn't
@@ -461,7 +458,7 @@ impl Doc {
         at: DVec3,
     ) -> Result<(EdgeRef, [DVec3; 2]), Cow<'static, str>> {
         if model != self.feed.model() || self.feed.predates_replacement() {
-            return Err("The model shown is out of date: try again once it's regenerated".into());
+            return Err(OUT_OF_DATE.into());
         }
         let source = (session.regions.source).ok_or("Pick the profile first, then its axis")?;
         let placement = self
@@ -471,11 +468,7 @@ impl Doc {
         let document = self.editor.document();
         let resolution = document.tolerance().resolution();
         let ends = axis_edge(index, edge, &placement, resolution)?;
-        let features = document.features();
-        let before = (session.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len());
-        let naming = Naming::before(document, before, self.shown());
+        let naming = self.naming_at(session.feature);
         let reference = naming.edge_ref(index, edge, at).map_err(|why| match why {
             Unnamed::Missing => "That edge isn't in the model",
             Unnamed::Later => "Only an edge made before the revolve can be its axis",

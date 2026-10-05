@@ -11,6 +11,7 @@ mod pivot;
 mod regions;
 mod revolve;
 mod sketch;
+mod sketch_pick;
 
 use std::any::Any;
 use std::sync::{Arc, Weak};
@@ -35,7 +36,9 @@ use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::thumbnail::{THUMBNAIL_SCALE, ThumbnailRequest};
-use crate::{Edges, Edit, Look, Message, PlanePick, ViewOptions, controls};
+use crate::{
+    Edges, Edit, Look, Message, PlanePick, SketchItem, SketchLines, ViewOptions, controls,
+};
 
 pub(crate) use extrude::Extruding;
 pub(crate) use measure::Measuring;
@@ -80,8 +83,10 @@ const CLICK_SLOP: f32 = 3.0;
 /// Picking the model shown with the cursor, outside sketches and
 /// sessions: the viewport says what's under the cursor as it moves, or as
 /// the camera or the model changes under it ([`Look::Hover`]), and what a
-/// left click is on ([`Look::ClickModel`]).
-#[derive(Debug, Clone, Copy)]
+/// left click is on ([`Look::ClickModel`]); and with them the curves and
+/// points of the finished sketches given ([`Look::HoverSketch`],
+/// [`Look::ClickSketch`]).
+#[derive(Debug, Clone)]
 pub struct ModelPicking<'a> {
     /// The model shown, ready for picking.
     pub index: &'a PickIndex,
@@ -101,9 +106,25 @@ pub struct ModelPicking<'a> {
     /// that can take the sketch picks it ([`Edit::FacePicked`]) rather
     /// than selecting, and a click elsewhere does nothing.
     pub planes: Option<&'a PlanePick>,
+    /// The finished sketches whose curves and points are picked with
+    /// the model, where they're placed: those shown, outside the
+    /// sessions. Where one is under the cursor nearer than the model
+    /// (`sketch_pick::wins`), it's picked instead.
+    pub sketches: Vec<SketchLines<'a>>,
+    /// What the app holds hovered of `sketches`, if anything: then
+    /// nothing of the model is.
+    pub hovered_sketch: Option<SketchItem>,
+    /// The items of `sketches` drawn as selected.
+    pub marked: Vec<SketchItem>,
 }
 
 impl ModelPicking<'_> {
+    /// Whether the app holds anything hovered: of the model or of the
+    /// sketches.
+    pub fn hovers(&self) -> bool {
+        self.hovered.is_some() || self.hovered_sketch.is_some()
+    }
+
     /// Whether `target`, hovered, is what a click acts on: anything
     /// picked, or while picking a plane only a face that can take the
     /// sketch ([`PlanePick::takes`]).
@@ -265,6 +286,10 @@ static NO_HIGHLIGHT: std::sync::LazyLock<Arc<ModelHighlight>> =
 /// The patches of a sketch's failing curves: none.
 static NO_MESH: std::sync::LazyLock<RenderMesh> = std::sync::LazyLock::new(RenderMesh::default);
 
+/// A sketch frame's base layer where it has none, only a live one: one
+/// for all frames, so the renderer uploads nothing again for it.
+static NO_LAYER: std::sync::LazyLock<Arc<SketchLayer>> = std::sync::LazyLock::new(Arc::default);
+
 /// What's drawn of failures while none show: one for all frames.
 static NO_ERRORS: std::sync::LazyLock<Arc<ShownErrors>> = std::sync::LazyLock::new(Arc::default);
 
@@ -374,6 +399,10 @@ struct Interaction {
     /// that hasn't been held long enough to list what overlaps there
     /// (see [`Program::hold`]).
     held: Option<iced::time::Instant>,
+    /// Whether the left button held went down as the camera's (outside a
+    /// sketch, or picking outside one), so its release is the camera's
+    /// too, even if the sketch's tool changed meanwhile.
+    left_camera: bool,
     /// The last left click on the model, when and where, to tell a
     /// double-click by.
     last_click: Option<(iced::time::Instant, DVec2)>,
@@ -437,7 +466,7 @@ impl shader::Program<Message> for Program<'_> {
                 bounds,
                 cursor,
                 &self.scene.camera,
-                (self.picking).is_some_and(|picking| picking.hovered.is_some()),
+                (self.picking.as_ref()).is_some_and(|picking| picking.hovered.is_some()),
             )
         {
             // The model let go of under it is picked again once it's off.
@@ -464,6 +493,7 @@ impl shader::Program<Message> for Program<'_> {
                 Operating::Motion(moving) => {
                     let hovered = self
                         .picking
+                        .as_ref()
                         .is_some_and(|picking| picking.hovered.is_some());
                     moving.mouse(&mut state.motion, *event, bounds, cursor, camera, hovered)
                 }
@@ -497,7 +527,7 @@ impl shader::Program<Message> for Program<'_> {
             && state.click.is_none()
             && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
             && state.motion.leave_sketches()
-            && self.picking.is_none_or(|picking| picking.hovered.is_none())
+            && (self.picking.as_ref()).is_none_or(|picking| !picking.hovers())
         {
             return Some(Action::request_redraw());
         }
@@ -507,17 +537,24 @@ impl shader::Program<Message> for Program<'_> {
             && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
         {
             state.hover_seen = None;
-            if picking.hovered.is_some() {
+            if picking.hovers() {
                 return Some(Action::publish(Message::Look(Look::Hover(None))));
             }
         }
         let camera = match event {
             // The left button is the sketch's in a sketch, and moving the
-            // cursor while the camera isn't dragged.
-            Event::Mouse(
-                mouse::Event::ButtonPressed(mouse::Button::Left)
-                | mouse::Event::ButtonReleased(mouse::Button::Left),
-            ) => self.sketching.is_none(),
+            // cursor while the camera isn't dragged. Its release goes where
+            // its press went: `Esc` may have let go of a tool picking
+            // outside the sketch while it was held.
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                state.left_camera = self.sketching.is_none() || self.picks_outside();
+                state.left_camera
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                std::mem::take(&mut state.left_camera)
+                    || self.sketching.is_none()
+                    || self.picks_outside()
+            }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => state.drag.is_some(),
             Event::Mouse(_) => true,
             _ => false,
@@ -582,13 +619,14 @@ impl shader::Program<Message> for Program<'_> {
         });
         let sketch = self.sketching.as_ref().map(|sketching| {
             let camera = &self.scene.camera;
-            let (base, live) = sketching.layers(
+            let (base, mut live) = sketching.layers(
                 &state.sketch,
                 camera,
                 bounds,
                 self.sketch_colors,
                 state.modifiers,
             );
+            self.draw_sketch_items(&mut live);
             SketchFrame {
                 plane: sketching.grid(),
                 depth_tested: false,
@@ -597,9 +635,24 @@ impl shader::Program<Message> for Program<'_> {
                 failing: sketching.failing(&state.sketch),
             }
         });
+        // The sketches' items hovered and selected with the model, over
+        // it: hidden by what's in front of them, as the sketches are.
+        let marks = (self.picking.as_ref())
+            .filter(|picking| picking.hovered_sketch.is_some() || !picking.marked.is_empty())
+            .map(|_| {
+                let mut live = SketchLayer::default();
+                self.draw_sketch_items(&mut live);
+                SketchFrame {
+                    plane: GridPlane::XY,
+                    depth_tested: true,
+                    base: NO_LAYER.clone(),
+                    live,
+                    failing: None,
+                }
+            });
         Primitive {
             scene: self.scene.clone(),
-            sketch: sketch.or(operation),
+            sketch: sketch.or(operation).or(marks),
             highlight: self.highlight.clone(),
             slot: state.slot.clone(),
         }
@@ -632,9 +685,9 @@ impl shader::Program<Message> for Program<'_> {
                     // Over what a click would select.
                     let picking = self.picking.as_ref()?;
                     cursor.position_over(bounds)?;
-                    (picking.hovered)
-                        .filter(|&target| picking.takes(target))
-                        .map(|_| mouse::Interaction::Pointer)
+                    let model = (picking.hovered).filter(|&target| picking.takes(target));
+                    (model.is_some() || picking.hovered_sketch.is_some())
+                        .then_some(mouse::Interaction::Pointer)
                 })
                 .unwrap_or_default(),
         }
@@ -654,7 +707,7 @@ impl Program<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<Action<Message>> {
-        let pick = match event {
+        let (pick, sketch) = match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => self.pick_at(picking, bounds, cursor),
             Event::Window(iced::window::Event::RedrawRequested(_)) => {
                 let at = cursor.position_over(bounds)?;
@@ -665,26 +718,64 @@ impl Program<'_> {
                 state.hover_seen = Some(seen);
                 self.pick_at(picking, bounds, cursor)
             }
-            Event::Mouse(mouse::Event::CursorLeft) => None,
+            Event::Mouse(mouse::Event::CursorLeft) => (None, None),
             _ => return None,
         };
         if let Some(at) = cursor.position_over(bounds) {
             state.hover_seen = Some((self.scene.camera, picking.index.model(), at));
         }
-        let seen = |pick: Option<Pick>| pick.map(|pick| (pick.target, pick.snap));
-        let held = picking.hovered.map(|target| (target, picking.hovered_snap));
-        (seen(pick) != held).then(|| Action::publish(Message::Look(Look::Hover(pick))))
+        let held = (
+            picking.hovered.map(|target| (target, picking.hovered_snap)),
+            picking.hovered_sketch,
+        );
+        let message = match sketch {
+            Some(item) if held != (None, Some(item)) => Look::HoverSketch(Some(item)),
+            Some(_) => return None,
+            None if held != (pick.map(|pick| (pick.target, pick.snap)), None) => Look::Hover(pick),
+            None => return None,
+        };
+        Some(Action::publish(Message::Look(message)))
     }
 
-    /// What of the model the cursor is over, if it's over the viewport.
+    /// What of the model the cursor is over, if it's over the viewport,
+    /// and the sketch's item over it there, if one is and wins over it
+    /// ([`Program::sketch_point`]).
     fn pick_at(
         &self,
         picking: &ModelPicking<'_>,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> Option<Pick> {
-        let at = cursor.position_over(bounds)?;
-        self.pick_point(picking, bounds, at)
+    ) -> (Option<Pick>, Option<SketchItem>) {
+        let Some(at) = cursor.position_over(bounds) else {
+            return (None, None);
+        };
+        let pick = self.pick_point(picking, bounds, at);
+        (pick, self.sketch_point(picking, bounds, at, pick))
+    }
+
+    /// The curve or point of `picking`'s sketches at `at`, in the
+    /// window's pixels, if one is there and wins over `pick`, what of the
+    /// model is ([`sketch_pick::wins`]). What the model hides isn't
+    /// picked, but behind the faded model of a sketch being edited it is.
+    fn sketch_point(
+        &self,
+        picking: &ModelPicking<'_>,
+        bounds: Rectangle,
+        at: Point,
+        pick: Option<Pick>,
+    ) -> Option<SketchItem> {
+        if picking.sketches.is_empty() {
+            return None;
+        }
+        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let camera = &self.scene.camera;
+        let hidden_by = self.sketching.is_none().then_some(picking.index);
+        let hit = sketch_pick::item_under(&picking.sketches, at, camera, bounds, hidden_by)?;
+        let size = [bounds.width, bounds.height];
+        sketch_pick::wins(&hit, pick, camera, size).then_some(SketchItem {
+            sketch: hit.sketch,
+            item: hit.item,
+        })
     }
 
     /// What of the model shows at `at`, in the window's pixels.
@@ -721,6 +812,20 @@ impl Program<'_> {
         pick
     }
 
+    /// Draws on `live` the curves and points of the sketches picked with
+    /// the model that are hovered or selected ([`sketch_pick::draw_items`]).
+    fn draw_sketch_items(&self, live: &mut SketchLayer) {
+        if let Some(picking) = &self.picking {
+            sketch_pick::draw_items(
+                live,
+                &picking.sketches,
+                picking.hovered_sketch,
+                &picking.marked,
+                self.sketch_colors,
+            );
+        }
+    }
+
     /// Takes a frame drawn at `now` while the left button may be held
     /// on the model: held still for [`overlaps::HOLD_DELAY`] over more
     /// than one face, edge or vertex, it lets go and lists them
@@ -749,19 +854,38 @@ impl Program<'_> {
             overlaps::OVERLAP_REACH,
             overlaps::MAX_OVERLAPS,
         );
-        if picks.len() < 2 {
+        // The sketches' items there with them, as the cursor picks them
+        // ([`Program::sketch_point`]).
+        let hidden_by = self.sketching.is_none().then_some(picking.index);
+        let camera = &self.scene.camera;
+        let reach = overlaps::OVERLAP_REACH;
+        let hits = sketch_pick::items_near(&picking.sketches, at, camera, bounds, reach, hidden_by);
+        let items = if hits.is_empty() {
+            OverlapItems::Model(picks)
+        } else {
+            let most = overlaps::MAX_OVERLAPS;
+            OverlapItems::Mixed(sketch_pick::listed_with(hits, picks, camera, size, most))
+        };
+        if items.len() < 2 {
             return None;
         }
         state.click = None;
         state.drag = None;
-        let list = Overlaps::new(at, size, OverlapItems::Model(picks));
+        let list = Overlaps::new(at, size, items);
         Some(Action::publish(Message::Look(Look::OpenOverlaps(list))))
     }
 
     /// Whether a sketch is being edited, where the left button is for its
-    /// geometry.
+    /// geometry: not while its tool picks outside it, where the left
+    /// button picks as on the model.
     fn sketching(&self) -> bool {
-        self.sketching.is_some()
+        self.sketching.is_some() && !self.picks_outside()
+    }
+
+    /// Whether the sketch being edited has a tool picking outside it, in
+    /// the model and other sketches ([`Sketching::picks_outside`]).
+    fn picks_outside(&self) -> bool {
+        (self.sketching.as_ref()).is_some_and(Sketching::picks_outside)
     }
 
     /// Takes the mouse `event` as a move of the camera: orbiting, panning
@@ -787,7 +911,7 @@ impl Program<'_> {
                 // Held still on the model, it lists what overlaps there,
                 // unless a plane is picked.
                 let lists = button == mouse::Button::Left
-                    && self.picking.is_some_and(|picking| picking.planes.is_none());
+                    && (self.picking.as_ref()).is_some_and(|picking| picking.planes.is_none());
                 state.held = lists.then(iced::time::Instant::now);
                 Some(match state.held {
                     Some(when) => {
@@ -826,7 +950,10 @@ impl Program<'_> {
                     let local = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
                     let double = sketch::double_click(&mut state.last_click, local);
                     let add = Held::TOGGLE.is_held(state.modifiers);
-                    let message = Look::ClickModel { pick, add, double };
+                    let message = match self.sketch_point(picking, bounds, at, pick) {
+                        Some(item) => Look::ClickSketch { item, add },
+                        None => Look::ClickModel { pick, add, double },
+                    };
                     return Some(Action::publish(Message::Look(message)).and_capture());
                 }
                 let click = state

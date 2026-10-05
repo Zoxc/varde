@@ -701,6 +701,9 @@ impl Plate {
             picks: Picks::All,
             snaps: false,
             planes: None,
+            sketches: Vec::new(),
+            hovered_sketch: None,
+            marked: Vec::new(),
         });
         program
     }
@@ -1058,5 +1061,333 @@ fn a_left_press_held_still_on_the_model_lists_what_overlaps_there() {
             [Message::Look(Look::ClickModel { pick: None, .. })]
         ),
         "{sent:?}"
+    );
+}
+
+/// Seen from the top, a sketch's line over the plate and one under it:
+/// the one over it is hovered and clicked in place of the plate's face
+/// under it, and drawn when hovered; the one under it isn't picked, the
+/// plate's face is.
+#[test]
+fn a_sketch_s_curve_over_the_model_is_picked_and_one_behind_it_not() {
+    use glam::{DVec2, DVec3};
+    use varde_sketch::{Curve, Sketch};
+
+    let plate = Plate::new();
+    let mut sketch = Sketch::default();
+    let a = sketch.add_point(DVec2::new(-25.0, 10.0)).unwrap();
+    let b = sketch.add_point(DVec2::new(25.0, 10.0)).unwrap();
+    let line = sketch
+        .add_curve(Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    let document = varde_document::Document::example();
+    let (over, under) = (document.features()[0].id, document.features()[1].id);
+    let lines = |feature, z: f64| SketchLines {
+        feature,
+        placement: varde_document::Placement::on_plane(DVec3::Z, z).unwrap(),
+        sketch: &sketch,
+    };
+    let camera = plate.camera;
+    let picking = |hovered_sketch| {
+        let mut program = plate.program(&camera, None);
+        let picking = program.picking.as_mut().unwrap();
+        picking.sketches = vec![lines(over, 20.0), lines(under, -5.0)];
+        picking.hovered_sketch = hovered_sketch;
+        program
+    };
+    let send = |program: &Program<'_>, state: &mut Interaction, events: &[Event], at| {
+        use iced::widget::shader::Program as _;
+        let cursor = mouse::Cursor::Available(at);
+        (events.iter())
+            .filter_map(|event| program.update(state, event, Plate::bounds(), cursor))
+            .filter_map(|action| action.into_inner().0)
+            .collect::<Vec<_>>()
+    };
+    let item = SketchItem {
+        sketch: over,
+        item: line,
+    };
+    let at = plate.at(DVec3::new(20.0, 10.0, 20.0));
+    let moved = Event::Mouse(mouse::Event::CursorMoved { position: at });
+    let mut state = Interaction::default();
+    let sent = send(&picking(None), &mut state, std::slice::from_ref(&moved), at);
+    assert!(
+        matches!(sent[..], [Message::Look(Look::HoverSketch(Some(hovered)))] if hovered == item),
+        "{sent:?}"
+    );
+    // Held hovered, nothing more is said, and it's drawn.
+    let program = picking(Some(item));
+    assert!(send(&program, &mut state, std::slice::from_ref(&moved), at).is_empty());
+    let drawn = {
+        use iced::widget::shader::Program as _;
+        program.draw(&state, mouse::Cursor::Available(at), Plate::bounds())
+    };
+    assert!(drawn.sketch.is_some_and(|frame| frame.depth_tested));
+    let sent = send(&program, &mut state, &[left(true), left(false)], at);
+    assert!(
+        matches!(sent[..], [Message::Look(Look::ClickSketch { item: clicked, add: false })] if clicked == item),
+        "{sent:?}"
+    );
+    // The lower sketch alone: the plate hides it.
+    let mut program = picking(None);
+    program.picking.as_mut().unwrap().sketches = vec![lines(under, -5.0)];
+    let mut state = Interaction::default();
+    let sent = send(&program, &mut state, std::slice::from_ref(&moved), at);
+    let [Message::Look(Look::Hover(Some(pick)))] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    assert!(matches!(pick.target, Picked::Face(_)));
+}
+
+/// In a sketch with the Project tool, seen from the top: a click on the
+/// sketch's own line hits nothing of it (no tool click), only the model
+/// there (nothing); one on another sketch's line under the plate picks
+/// it, the faded model hiding nothing.
+#[test]
+fn project_picks_outside_the_sketch_and_through_the_faded_model() {
+    use glam::{DVec2, DVec3};
+    use varde_sketch::{Curve, Sketch};
+
+    let plate = Plate::new();
+    let line_along = |y: f64| {
+        let mut sketch = Sketch::default();
+        let a = sketch.add_point(DVec2::new(-25.0, y)).unwrap();
+        let b = sketch.add_point(DVec2::new(25.0, y)).unwrap();
+        let line = sketch
+            .add_curve(Curve::Line { start: a, end: b }, false)
+            .unwrap();
+        (sketch, line)
+    };
+    let (own, _) = line_along(27.0);
+    let (other, line) = line_along(10.0);
+    let under = varde_document::Document::example().features()[0].id;
+    let selection = Default::default();
+    let tool = crate::testing::tool(crate::Tool::Project, &[], &[]);
+    let camera = plate.camera;
+    let mut program = plate.program(&camera, None);
+    program.sketching = Some(Sketching::new(
+        crate::SketchState::plain(&own, &selection, Some(tool)),
+        true,
+    ));
+    let picking = program.picking.as_mut().unwrap();
+    picking.sketches = vec![SketchLines {
+        feature: under,
+        placement: varde_document::Placement::on_plane(DVec3::Z, -5.0).unwrap(),
+        sketch: &other,
+    }];
+    let send = |state: &mut Interaction, events: &[Event], at| {
+        use iced::widget::shader::Program as _;
+        let cursor = mouse::Cursor::Available(at);
+        (events.iter())
+            .filter_map(|event| program.update(state, event, Plate::bounds(), cursor))
+            .filter_map(|action| action.into_inner().0)
+            .collect::<Vec<_>>()
+    };
+    let on_own = plate.at(DVec3::new(20.0, 27.0, 0.0));
+    let mut state = Interaction::default();
+    let sent = send(&mut state, &[left(true), left(false)], on_own);
+    assert!(
+        matches!(
+            sent[..],
+            [Message::Look(Look::ClickModel { pick: None, .. })]
+        ),
+        "{sent:?}"
+    );
+    let on_other = plate.at(DVec3::new(20.0, 10.0, -5.0));
+    let mut state = Interaction::default();
+    let sent = send(&mut state, &[left(true), left(false)], on_other);
+    let wanted = SketchItem {
+        sketch: under,
+        item: line,
+    };
+    assert!(
+        matches!(sent[..], [Message::Look(Look::ClickSketch { item, .. })] if item == wanted),
+        "{sent:?}"
+    );
+}
+
+/// In a sketch with the Project tool, the left button pressed on the
+/// model and the tool let go of (`Esc`) before it's released: the release
+/// still ends the orbit it started, so moving the cursor afterwards turns
+/// no camera.
+#[test]
+fn a_left_drag_started_picking_outside_ends_once_the_tool_is_gone() {
+    use iced::widget::shader::Program as _;
+
+    let plate = Plate::new();
+    let sketch = varde_sketch::Sketch::default();
+    let selection = Default::default();
+    let camera = plate.camera;
+    let with = |tool: Option<crate::Tool>| {
+        let mut program = plate.program(&camera, None);
+        let tool = tool.map(|tool| crate::testing::tool(tool, &[], &[]));
+        program.sketching = Some(Sketching::new(
+            crate::SketchState::plain(&sketch, &selection, tool),
+            true,
+        ));
+        // The cursor picks the model only while the tool picks outside.
+        if tool.is_none() {
+            program.picking = None;
+        }
+        program
+    };
+    let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
+    let send = |program: &Program<'_>, state: &mut Interaction, event: Event, at: Point| {
+        let cursor = mouse::Cursor::Available(at);
+        (program.update(state, &event, Plate::bounds(), cursor))
+            .and_then(|action| action.into_inner().0)
+    };
+    let mut state = Interaction::default();
+    send(
+        &with(Some(crate::Tool::Project)),
+        &mut state,
+        left(true),
+        at,
+    );
+    assert!(state.drag.is_some());
+    let program = with(None);
+    send(&program, &mut state, left(false), at);
+    assert!(state.drag.is_none(), "the release ends the drag");
+    let away = Point::new(at.x + 40.0, at.y + 30.0);
+    let moved = Event::Mouse(mouse::Event::CursorMoved { position: away });
+    let sent = send(&program, &mut state, moved, away);
+    assert!(
+        !matches!(sent, Some(Message::Look(Look::Orbit { .. }))),
+        "{sent:?}"
+    );
+}
+
+/// A sketch's line along y = 10 on the plane z = `z`.
+fn line_at(
+    z: f64,
+) -> (
+    varde_sketch::Sketch,
+    varde_sketch::Id,
+    varde_document::Placement,
+) {
+    use glam::{DVec2, DVec3};
+    let mut sketch = varde_sketch::Sketch::default();
+    let a = sketch.add_point(DVec2::new(-25.0, 10.0)).unwrap();
+    let b = sketch.add_point(DVec2::new(25.0, 10.0)).unwrap();
+    let line = sketch
+        .add_curve(varde_sketch::Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    let placement = varde_document::Placement::on_plane(DVec3::Z, z).unwrap();
+    (sketch, line, placement)
+}
+
+/// Held still on a sketch's line over the plate, the list has the line
+/// first, nearer than the plate's faces under it; a sketch's line under
+/// the plate, hidden by it, isn't listed.
+#[test]
+fn a_press_held_on_a_sketch_s_curve_over_the_model_lists_it_with_the_model() {
+    use crate::{OverlapItem, OverlapItems};
+    use iced::widget::shader::Program as _;
+
+    let plate = Plate::new();
+    let document = varde_document::Document::example();
+    let (over, under) = (document.features()[0].id, document.features()[1].id);
+    let (high, high_line, high_at) = line_at(20.0);
+    let (low, low_line, low_at) = line_at(-5.0);
+    let camera = plate.camera;
+    let mut program = plate.program(&camera, None);
+    program.picking.as_mut().unwrap().sketches = vec![
+        SketchLines {
+            feature: over,
+            placement: high_at,
+            sketch: &high,
+        },
+        SketchLines {
+            feature: under,
+            placement: low_at,
+            sketch: &low,
+        },
+    ];
+    let at = plate.at(glam::DVec3::new(20.0, 10.0, 20.0));
+    let cursor = mouse::Cursor::Available(at);
+    let mut state = Interaction::default();
+    let sent: Vec<Message> = [left(true), later()]
+        .iter()
+        .filter_map(|event| program.update(&mut state, event, Plate::bounds(), cursor))
+        .filter_map(|action| action.into_inner().0)
+        .collect();
+    let [Message::Look(Look::OpenOverlaps(list))] = &sent[..] else {
+        panic!("{sent:?}");
+    };
+    let OverlapItems::Mixed(items) = &list.items else {
+        panic!("{list:?}");
+    };
+    let high_item = SketchItem {
+        sketch: over,
+        item: high_line,
+    };
+    assert_eq!(
+        items.first(),
+        Some(&OverlapItem::Sketch(high_item)),
+        "{items:?}"
+    );
+    assert!(
+        !items.contains(&OverlapItem::Sketch(SketchItem {
+            sketch: under,
+            item: low_line,
+        })),
+        "{items:?}"
+    );
+    let faces = (items.iter())
+        .filter(|item| matches!(item, OverlapItem::Model(pick) if matches!(pick.target, Picked::Face(_))))
+        .count();
+    assert_eq!(faces, 2, "{items:?}");
+}
+
+/// With Project in a sketch, a press held lists what it picks outside the
+/// sketch: another sketch's line under the plate (the faded model hides
+/// nothing) with the plate's faces.
+#[test]
+fn a_press_held_picking_outside_a_sketch_lists_the_model_and_other_sketches() {
+    use crate::{OverlapItem, OverlapItems};
+    use iced::widget::shader::Program as _;
+
+    let plate = Plate::new();
+    let under = varde_document::Document::example().features()[0].id;
+    let (low, low_line, low_at) = line_at(-5.0);
+    let own = varde_sketch::Sketch::default();
+    let selection = Default::default();
+    let tool = crate::testing::tool(crate::Tool::Project, &[], &[]);
+    let camera = plate.camera;
+    let mut program = plate.program(&camera, None);
+    program.sketching = Some(Sketching::new(
+        crate::SketchState::plain(&own, &selection, Some(tool)),
+        true,
+    ));
+    program.picking.as_mut().unwrap().sketches = vec![SketchLines {
+        feature: under,
+        placement: low_at,
+        sketch: &low,
+    }];
+    let at = plate.at(glam::DVec3::new(20.0, 10.0, -5.0));
+    let cursor = mouse::Cursor::Available(at);
+    let mut state = Interaction::default();
+    let sent: Vec<Message> = [left(true), later()]
+        .iter()
+        .filter_map(|event| program.update(&mut state, event, Plate::bounds(), cursor))
+        .filter_map(|action| action.into_inner().0)
+        .collect();
+    let [Message::Look(Look::OpenOverlaps(list))] = &sent[..] else {
+        panic!("{sent:?}");
+    };
+    let OverlapItems::Mixed(items) = &list.items else {
+        panic!("{list:?}");
+    };
+    assert!(
+        items.contains(&OverlapItem::Sketch(SketchItem {
+            sketch: under,
+            item: low_line,
+        })),
+        "{items:?}"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|item| matches!(item, OverlapItem::Model(_)))
     );
 }

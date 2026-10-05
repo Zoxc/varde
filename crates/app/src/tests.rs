@@ -2797,6 +2797,8 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     placements: Vec::new(),
                     bodies,
                     inspected: None,
+                    broken: Vec::new(),
+                    relinked: Vec::new(),
                 },
                 failed => failed,
             };

@@ -14,6 +14,7 @@ use crate::doc::{Origin, Target};
 use crate::tests::{SolveLane, answer, key_in, press_in, with_sketch};
 
 mod faces;
+mod outside;
 
 /// A pixel's size in sketch units in the clicks here.
 pub(super) const PIXEL: f64 = 0.1;
@@ -663,6 +664,42 @@ fn delete_removes_the_selection_and_what_depends_on_it() {
     doc.update(Edit::DeleteSelection);
     assert!(sketch(&doc).curves.is_empty());
     assert_eq!(undo_to(&mut doc, &before), 2);
+}
+
+/// What pressing Delete, then Backspace, in `doc` shown headless sends:
+/// what its widgets send and the shortcuts for what they leave.
+fn delete_keys(doc: &Doc) -> Vec<crate::Message> {
+    let event = |named| {
+        iced::Event::Keyboard(crate::tests::press(
+            keyboard::Key::Named(named),
+            keyboard::Modifiers::default(),
+        ))
+    };
+    let keys = [event(key::Named::Delete), event(key::Named::Backspace)];
+    let (sent, shortcuts) = crate::tests::pressed(doc, &keys, false);
+    assert!(sent.is_empty(), "{sent:?}");
+    shortcuts
+}
+
+#[test]
+fn delete_and_backspace_reach_the_app_with_geometry_selected() {
+    let (mut doc, [_, _, line, _, _]) = with_shapes();
+    assert!(delete_keys(&doc).is_empty());
+    doc.look(Look::ClickGeometry {
+        hit: Some(line),
+        add: false,
+    });
+    let sent = delete_keys(&doc);
+    assert!(
+        matches!(
+            &sent[..],
+            [
+                crate::Message::Ui(varde_view::Message::Edit(Edit::DeleteSelection)),
+                crate::Message::Ui(varde_view::Message::Edit(Edit::DeleteSelection)),
+            ]
+        ),
+        "{sent:?}"
+    );
 }
 
 #[test]

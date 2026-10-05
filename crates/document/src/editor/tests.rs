@@ -394,7 +394,8 @@ fn a_sketch_is_added_visible_and_empty_and_removed() {
         feature.kind,
         FeatureKind::Sketch {
             plane: XY,
-            sketch: Sketch::default()
+            sketch: Sketch::default(),
+            sources: Vec::new(),
         }
     );
     assert_eq!(editor.document().next_id, id.0 + 1);
@@ -607,10 +608,15 @@ fn check_refuses_features_a_file_could_get_wrong() {
     far.features[1].kind = FeatureKind::Sketch {
         plane: XY,
         sketch: line_to(glam::DVec2::new(max, -max)),
+        sources: Vec::new(),
     };
     assert_eq!(far.check(), Ok(()));
     let sketch = line_to(glam::DVec2::new(max.next_up(), 0.0));
-    far.features[1].kind = FeatureKind::Sketch { plane: XY, sketch };
+    far.features[1].kind = FeatureKind::Sketch {
+        plane: XY,
+        sketch,
+        sources: Vec::new(),
+    };
     assert!(matches!(
         far.check(),
         Err(CheckError::Sketch(id, crate::SketchError::Coordinate { .. })) if id == second
@@ -725,4 +731,157 @@ fn set_units_pins_bare_numbers_and_changes_no_value() {
     editor.undo();
     assert_eq!(*editor.document(), before);
     assert_eq!(editor.revision(), revision);
+}
+
+/// The sources of `id`'s links.
+fn sources_of(editor: &Editor, id: FeatureId) -> &[crate::LinkSource] {
+    match &editor.document().feature(id).unwrap().kind {
+        FeatureKind::Sketch { sources, .. } => sources,
+        _ => panic!("not a sketch"),
+    }
+}
+
+#[test]
+fn a_link_is_added_with_its_source_and_goes_with_its_link() {
+    use crate::{LinkSource, OutsideRef};
+    use varde_sketch::{LinkKind, SketchEdit};
+    let (mut editor, first) = sketched();
+    editor
+        .apply(Command::SetSketch {
+            feature: first,
+            sketch: Box::new(line_to(glam::DVec2::new(5.0, 0.0))),
+        })
+        .unwrap();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let second = editor.document().features()[1].id;
+    let design = editor.document().design();
+    let linked = SketchEdit::AddLink {
+        kind: LinkKind::Project,
+    }
+    .apply(sketch_of(&editor, second), &design)
+    .unwrap();
+    let link = linked.links[0].id;
+    let line = sketch_of(&editor, first).curves[0].id;
+    let source = LinkSource {
+        link,
+        source: OutsideRef::Sketch {
+            sketch: first,
+            item: line,
+        },
+    };
+    // A link with no source is refused.
+    assert!(matches!(
+        editor.apply(Command::SetSketch {
+            feature: second,
+            sketch: Box::new(linked.clone()),
+        }),
+        Err(EditError::Invalid(CheckError::SketchLink(_, _)))
+    ));
+    editor
+        .apply(Command::AddLink {
+            feature: second,
+            sketch: Box::new(linked.clone()),
+            source,
+        })
+        .unwrap();
+    assert_eq!(sources_of(&editor, second), [source]);
+
+    // Undone and redone as one change.
+    editor.undo();
+    assert!(sources_of(&editor, second).is_empty());
+    editor.redo();
+    assert_eq!(sources_of(&editor, second), [source]);
+
+    // Deleting the link drops its source.
+    let unlinked = SketchEdit::Delete(vec![link])
+        .apply(&linked, &design)
+        .unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: second,
+            sketch: Box::new(unlinked),
+        })
+        .unwrap();
+    assert!(sources_of(&editor, second).is_empty());
+
+    // A link may only come from what's before its sketch: the first
+    // sketch can't project the second's.
+    let design = editor.document().design();
+    let backwards = SketchEdit::AddLink {
+        kind: LinkKind::Project,
+    }
+    .apply(sketch_of(&editor, first), &design)
+    .unwrap();
+    let link = backwards.links[0].id;
+    assert!(matches!(
+        editor.apply(Command::AddLink {
+            feature: first,
+            sketch: Box::new(backwards.clone()),
+            source: LinkSource {
+                link,
+                source: OutsideRef::Sketch {
+                    sketch: second,
+                    item: line,
+                },
+            },
+        }),
+        Err(EditError::Invalid(CheckError::SketchLink(
+            _,
+            crate::LinkError::Later(_)
+        )))
+    ));
+    // Nor can Intersect take a sketch's item.
+    let mut intersect = backwards;
+    intersect.links[0].kind = LinkKind::Intersect;
+    assert!(matches!(
+        editor.apply(Command::AddLink {
+            feature: second,
+            sketch: Box::new(intersect),
+            source: LinkSource {
+                link,
+                source: OutsideRef::Sketch {
+                    sketch: first,
+                    item: line,
+                },
+            },
+        }),
+        Err(EditError::Invalid(CheckError::SketchLink(_, _)))
+    ));
+}
+
+#[test]
+fn an_amended_change_is_undone_with_the_one_before() {
+    let (mut editor, id) = sketched();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let before = editor.document().clone();
+    editor
+        .apply(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(line_to(glam::DVec2::new(5.0, 0.0))),
+        })
+        .unwrap();
+    let generation = editor.generation();
+    let revision = editor.revision();
+    editor
+        .amend(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(line_to(glam::DVec2::new(6.0, 0.0))),
+        })
+        .unwrap();
+    assert!(editor.generation() > generation);
+    assert_ne!(editor.revision(), revision);
+    assert_eq!(sketch_of(&editor, id), &line_to(glam::DVec2::new(6.0, 0.0)));
+    editor.undo();
+    assert_eq!(editor.document(), &before);
+    editor.redo();
+    assert_eq!(sketch_of(&editor, id), &line_to(glam::DVec2::new(6.0, 0.0)));
+    // The redo history stays through an amend.
+    editor.undo();
+    editor
+        .amend(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(line_to(glam::DVec2::new(7.0, 0.0))),
+        })
+        .unwrap();
+    assert!(editor.can_redo());
 }

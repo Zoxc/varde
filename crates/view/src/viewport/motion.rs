@@ -50,7 +50,7 @@
 //! bodies' names ([`Moving::labels`]).
 
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
@@ -66,9 +66,12 @@ use super::handle::{self, Puck};
 use super::knobs;
 use super::regions::{self, Regions, grid_plane};
 use super::sketch::{fill_region_in, line, srgba};
+use super::sketch_pick::{
+    HOVERED_WIDTH, Points, SELECTED_WIDTH, SketchHit, curve_under, loose, point_under,
+};
 use crate::anchors::Anchors;
 use crate::extrude::snap_step;
-use crate::hit::{self, segment_distance};
+use crate::hit::segment_distance;
 use crate::motion::{
     AlignView, KnobTone, LoftShape, LoftView, MotionField, MotionKind, MotionLook, MotionPick,
     MotionState, ScaleView, SketchLines, SplitMode, SplitView, SweepView,
@@ -93,11 +96,11 @@ const REACH_PAST: f64 = 1.25;
 const PLANE_FILL: f32 = 0.12;
 /// How wide an align's points are drawn, in pixels: the measure tool's.
 const ALIGN_POINT_RADIUS: f32 = 5.0;
-/// How wide a split's sketches' curves are drawn, the one hovered, and
-/// those picked for its line, in pixels: a revolve's lines'.
+/// How wide a split's sketches' curves are drawn, in pixels: a
+/// revolve's lines'. The one hovered and those picked are drawn as the
+/// sketches' items picked with the model ([`HOVERED_WIDTH`],
+/// [`SELECTED_WIDTH`]).
 const CURVE_WIDTH: f32 = 1.5;
-const HOVERED_CURVE_WIDTH: f32 = 3.0;
-const PICKED_CURVE_WIDTH: f32 = 2.5;
 /// How opaque a loft's sections are filled.
 const PICKED_FILL: f32 = 0.35;
 /// How wide a loft's sections' corners and its points on their own are
@@ -787,7 +790,6 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         bounds: Rectangle,
     ) -> (Arc<SketchLayer>, SketchLayer) {
-        static EMPTY: LazyLock<Arc<SketchLayer>> = LazyLock::new(Arc::default);
         let mut live = SketchLayer::default();
         if let Some([point, along]) = self.state.line
             && point.is_finite()
@@ -855,11 +857,11 @@ impl<'a> Moving<'a> {
                 let base = regions.base_layer(&input.sweep.regions, colors);
                 return (base, live);
             }
-            return (EMPTY.clone(), live);
+            return (super::NO_LAYER.clone(), live);
         }
         if let Some(loft) = &self.state.loft {
             self.loft_layers(&mut live, loft, input, scene, colors, (camera, bounds));
-            return (EMPTY.clone(), live);
+            return (super::NO_LAYER.clone(), live);
         }
         if let Some(split) = &self.state.split {
             let picking = self.split_picking();
@@ -878,7 +880,7 @@ impl<'a> Moving<'a> {
                 split_lines(&mut live, split, hovered, picking.is_some(), colors);
             }
         }
-        (EMPTY.clone(), live)
+        (super::NO_LAYER.clone(), live)
     }
 
     /// The kind of a split's tool picked in its sketches, while one is:
@@ -928,7 +930,9 @@ impl<'a> Moving<'a> {
                     ),
                     _ => (
                         None,
-                        over.and_then(|at| curve_under(&sweep.lines, at, camera, bounds)),
+                        over.and_then(|at| {
+                            curve_under(&sweep.lines, at, camera, bounds, None).map(SketchHit::of)
+                        }),
                     ),
                 };
                 let changed = std::mem::replace(&mut input.regions.hover, region) != region
@@ -962,7 +966,8 @@ impl<'a> Moving<'a> {
                         MotionLook::SweepRegion { sketch, region }
                     }
                     _ => {
-                        let (sketch, curve) = curve_under(&sweep.lines, at, camera, bounds)?;
+                        let (sketch, curve) = curve_under(&sweep.lines, at, camera, bounds, None)
+                            .map(SketchHit::of)?;
                         MotionLook::SweepCurve { sketch, curve }
                     }
                 };
@@ -981,7 +986,7 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         bounds: Rectangle,
     ) -> Option<(FeatureId, Id)> {
-        curve_under(&split.lines, at, camera, bounds)
+        curve_under(&split.lines, at, camera, bounds, None).map(SketchHit::of)
     }
 
     /// Works out the region or curve of a split picking in `mode` under
@@ -1173,8 +1178,7 @@ impl<'a> Moving<'a> {
         camera: &Camera,
         bounds: Rectangle,
     ) {
-        let placement = OriginPlane::XY.placement();
-        let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height) else {
+        let Some(projector) = Projector::world(camera, bounds.width, bounds.height) else {
             return;
         };
         let (a, b) = (projector.show(from), projector.show(to));
@@ -1217,8 +1221,7 @@ impl<'a> Moving<'a> {
         if !centre.is_finite() {
             return None;
         }
-        let placement = OriginPlane::XY.placement();
-        let projector = Projector::new(camera, placement, bounds.width, bounds.height)?;
+        let projector = Projector::world(camera, bounds.width, bounds.height)?;
         let depth = projector.world_depth(centre);
         if projector.perspective() && (depth.is_nan() || depth <= projector.near()) {
             return None;
@@ -1405,7 +1408,9 @@ impl<'a> Moving<'a> {
             ),
             _ => (
                 None,
-                at.and_then(|at| curve_under(&sweep.lines, at, camera, bounds)),
+                at.and_then(|at| {
+                    curve_under(&sweep.lines, at, camera, bounds, None).map(SketchHit::of)
+                }),
             ),
         };
         let (redraw, input) = (&mut input.redraw, &mut input.sweep);
@@ -1617,7 +1622,7 @@ impl<'a> Moving<'a> {
         if !self.state.editable {
             return None;
         }
-        let projector = world_projector(camera, bounds)?;
+        let projector = Projector::world(camera, bounds.width, bounds.height)?;
         handle::knob_at(&seam_pucks(loft, &projector), at)
     }
 
@@ -1710,7 +1715,7 @@ impl<'a> Moving<'a> {
     ) -> LoftInput {
         if picking == MotionPick::Path {
             return LoftInput {
-                curve: curve_under(&loft.lines, at, camera, bounds),
+                curve: curve_under(&loft.lines, at, camera, bounds, None).map(SketchHit::of),
                 ..LoftInput::default()
             };
         }
@@ -1720,7 +1725,9 @@ impl<'a> Moving<'a> {
                 ..LoftInput::default()
             };
         }
-        if let Some(point) = point_under(&loft.lines, at, camera, bounds) {
+        if let Some(point) =
+            point_under(&loft.lines, at, camera, bounds, Points::Loose, None).map(SketchHit::of)
+        {
             return LoftInput {
                 point: Some(point),
                 ..LoftInput::default()
@@ -1836,7 +1843,7 @@ impl<'a> Moving<'a> {
                 for polyline in &region.outline {
                     let mut closed = polyline.clone();
                     closed.extend(polyline.first().copied());
-                    live.polyline(space, &closed, line(color, PICKED_CURVE_WIDTH, false));
+                    live.polyline(space, &closed, line(color, SELECTED_WIDTH, false));
                 }
                 if sections || held == Some(at) {
                     for &(id, corner) in corners {
@@ -1864,7 +1871,7 @@ impl<'a> Moving<'a> {
                 live.world_point(placement.to_world(start).as_vec3(), style);
             }
         }
-        if let Some(projector) = world_projector(camera, bounds) {
+        if let Some(projector) = Projector::world(camera, bounds.width, bounds.height) {
             for puck in seam_pucks(loft, &projector) {
                 let hot = held == Some(puck.knob);
                 let tone = handle::tone(colors, KnobTone::Count, hot);
@@ -1901,37 +1908,6 @@ impl<'a> Moving<'a> {
             .filter(|split| split.mode == SplitMode::Regions)
             .map_or(GridPlane::XY, |split| split_regions(split).plane())
     }
-}
-
-/// The curve of `lines`' sketches under the screen position `at`, and
-/// its sketch: of those within [`HIT_PIXELS`] on each sketch's plane,
-/// the nearest by depth.
-fn curve_under(
-    lines: &[SketchLines<'_>],
-    at: DVec2,
-    camera: &Camera,
-    bounds: Rectangle,
-) -> Option<(FeatureId, Id)> {
-    let mut nearest: Option<(f64, FeatureId, Id)> = None;
-    for candidate in lines {
-        let Some(projector) =
-            Projector::new(camera, candidate.placement, bounds.width, bounds.height)
-        else {
-            continue;
-        };
-        let Some(cursor) = projector.cursor(at) else {
-            continue;
-        };
-        let tolerance = HIT_PIXELS * cursor.pixel;
-        let Some(curve) = hit::hit_curve(candidate.sketch, cursor.at, tolerance) else {
-            continue;
-        };
-        let depth = projector.depth(cursor.at);
-        if nearest.is_none_or(|(nearest, ..)| depth < nearest) {
-            nearest = Some((depth, candidate.feature, curve));
-        }
-    }
-    nearest.map(|(_, feature, curve)| (feature, curve))
 }
 
 /// A sweep's sketches whose regions show, those picked, and the one
@@ -1986,9 +1962,9 @@ fn sweep_lines(
                 continue;
             };
             let (color, width) = if is_hovered {
-                (colors.hovered, HOVERED_CURVE_WIDTH)
+                (colors.hovered, HOVERED_WIDTH)
             } else if is_picked {
-                (colors.selected, PICKED_CURVE_WIDTH)
+                (colors.selected, SELECTED_WIDTH)
             } else if entry.construction {
                 (colors.construction, CURVE_WIDTH)
             } else {
@@ -2044,17 +2020,6 @@ fn corner_under(
     nearest.map(|(_, index, id)| (index, id))
 }
 
-/// The projector for what's in the world, seen by `camera` over
-/// `bounds`.
-fn world_projector(camera: &Camera, bounds: Rectangle) -> Option<Projector> {
-    Projector::new(
-        camera,
-        OriginPlane::XY.placement(),
-        bounds.width,
-        bounds.height,
-    )
-}
-
 /// The start of `loft`'s section `section`, if it's a region's with one.
 fn loft_start(loft: &LoftView<'_>, section: usize) -> Option<Id> {
     match &loft.sections.get(section)?.shape {
@@ -2105,45 +2070,6 @@ fn nearest_corner(
         .filter_map(|&(id, corner)| Some((id, projector.project(corner)?.distance(at))))
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id)
-}
-
-/// The points on their own (no curve's) of `sketch`, with where they are.
-fn loose(sketch: &varde_sketch::Sketch) -> impl Iterator<Item = (Id, DVec2)> + '_ {
-    let used: std::collections::BTreeSet<Id> = (sketch.curves.iter())
-        .flat_map(|entry| entry.curve.points())
-        .collect();
-    (sketch.points.iter())
-        .filter(move |point| !used.contains(&point.id))
-        .map(|point| (point.id, point.at))
-}
-
-/// The point on its own of `lines`' sketches under the screen position
-/// `at`, and its sketch: of those within [`HIT_PIXELS`] on the screen, the
-/// nearest.
-fn point_under(
-    lines: &[SketchLines<'_>],
-    at: DVec2,
-    camera: &Camera,
-    bounds: Rectangle,
-) -> Option<(FeatureId, Id)> {
-    let mut nearest: Option<(f64, FeatureId, Id)> = None;
-    for candidate in lines {
-        let Some(projector) =
-            Projector::new(camera, candidate.placement, bounds.width, bounds.height)
-        else {
-            continue;
-        };
-        for (id, point) in loose(candidate.sketch) {
-            let Some(shown) = projector.project(point) else {
-                continue;
-            };
-            let distance = shown.distance(at);
-            if distance <= HIT_PIXELS && nearest.is_none_or(|(nearest, ..)| distance < nearest) {
-                nearest = Some((distance, candidate.feature, id));
-            }
-        }
-    }
-    nearest.map(|(_, feature, id)| (feature, id))
 }
 
 /// Draws the points on their own of `lines`' sketches on `live`, as a
@@ -2245,9 +2171,9 @@ fn split_lines(
                 continue;
             };
             let (color, width) = if is_hovered {
-                (colors.hovered, HOVERED_CURVE_WIDTH)
+                (colors.hovered, HOVERED_WIDTH)
             } else if is_picked {
-                (colors.selected, PICKED_CURVE_WIDTH)
+                (colors.selected, SELECTED_WIDTH)
             } else if entry.construction {
                 (colors.construction, CURVE_WIDTH)
             } else {

@@ -434,12 +434,6 @@ pub fn axis_edge(
     }
 }
 
-/// The sketch coordinates of the world point `at` on `placement`.
-pub(crate) fn on_sketch(placement: &Placement, at: DVec3) -> DVec2 {
-    let offset = at - placement.origin;
-    DVec2::new(offset.dot(placement.x), offset.dot(placement.y))
-}
-
 /// The axis line the sketch's id `id` names, if it names a line of
 /// `sketch` or one of its axes: what a click on it picks.
 pub(crate) fn axis_of(sketch: &Sketch, id: Id) -> Option<AxisLine> {

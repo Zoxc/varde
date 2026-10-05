@@ -74,6 +74,7 @@ fn regenerate_tessellates_the_snapshot() {
         placements,
         bodies,
         inspected,
+        ..
     } = handle(regenerate(&editor, None))
     else {
         panic!("regeneration failed");
@@ -749,6 +750,7 @@ fn drafted(add: impl FnOnce(&mut Editor) -> FeatureId) -> (Editor, Draft, BodyId
         FeatureKind::Sketch {
             plane,
             sketch: drawn,
+            ..
         },
         FeatureKind::Extrude(extrude),
     ) = (&sketch.kind, &cut.kind)
@@ -1935,6 +1937,7 @@ fn a_join_draft_merging_two_bodies(regenerator: &mut Regenerator, remeshed: usiz
         FeatureKind::Sketch {
             plane,
             sketch: drawn,
+            ..
         },
         FeatureKind::Extrude(extrude),
     ) = (&sketch.kind, &joined.kind)

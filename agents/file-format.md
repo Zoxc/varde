@@ -392,7 +392,14 @@ join, naming the spline's end they're at) and dimensions carry ids from the
 sketch's own `next_id`,
 below the three kept for the origin and axes, which aren't stored but
 which constraints and dimensions may name, a dimension its expression as
-typed and its value), the design's units (a
+typed and its value, and its links, `links`, defaulted to none: each a
+`Link` with an id from the same counter, its kind, `Project` or
+`Intersect`, the ids of the points and curves it made, which are in the
+lists with the rest, and whether they count for profiles), with
+`sources`, defaulted to none too, beside it in the feature: each link's id
+and what it comes from (`OutsideRef`: another sketch's feature id and
+item id, or an edge, face or corner of a body named as a revolve's axis
+edge, a sketch's face or an align's corner are), the design's units (a
 `varde_expr::LengthUnit`, millimetres by default), its fit tolerance (an
 `f64` in millimetres, `1e-5 ..= 1e-1`, 1 µm by default) and the next id
 bodies and features take. A document read from a file is checked
@@ -409,7 +416,12 @@ document's units from 1 µm to the coordinate limit (two sides together
 too), through all only for a cut, revolve angles their expressions give
 above zero and at most a turn (two sides together too; a revolve's axis
 line isn't required to exist, as a region isn't: regeneration reports
-it), excluded bodies sorted and made by earlier features, a sketch's face
+it), excluded bodies sorted and made by earlier features, a sketch's
+links (`Sketch::check`: in id order, each naming points and curves of its
+own, its curves construction unless it counts for profiles, no other
+curve made from its points) with one source each, in their order, of a
+kind the link takes, naming what's made before the sketch or, as a
+sketch's face, what isn't there with an id below the next id, a sketch's face
 point finite and within the coordinate limit, its body (if there) made
 and its key's feature (if there) placed before the sketch, and either
 id, if nothing has it, below the next id; the same of a revolve's axis

@@ -55,6 +55,7 @@ mod quadrature;
 mod render_lines;
 mod render_mesh;
 mod revolve;
+pub mod section;
 pub mod shell;
 mod solid;
 pub mod sweep;

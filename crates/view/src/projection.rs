@@ -4,7 +4,7 @@
 //! the renderer draws for the same camera.
 
 use glam::{DVec2, DVec3};
-use varde_document::{MAX_COORD, Placement};
+use varde_document::{MAX_COORD, OriginPlane, Placement};
 use varde_render::{Camera, Projection};
 
 /// How far from along the plane, as the cosine of the angle between a
@@ -51,6 +51,13 @@ pub(crate) struct Cursor {
 }
 
 impl Projector {
+    /// The projector for what's in the world, seen by `camera` in a
+    /// viewport `width` by `height` logical pixels: [`Projector::new`] on
+    /// the XY plane, whose sketch coordinates are the world's.
+    pub(crate) fn world(camera: &Camera, width: f32, height: f32) -> Option<Self> {
+        Projector::new(camera, OriginPlane::XY.placement(), width, height)
+    }
+
     /// The projector for a sketch on `placement` seen by `camera` in a
     /// viewport `width` by `height` logical pixels. `None` for a viewport
     /// too small to show anything.

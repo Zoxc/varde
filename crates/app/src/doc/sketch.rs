@@ -4,6 +4,8 @@
 
 mod dimension;
 mod edit;
+mod links;
+mod outside;
 mod propose;
 mod shape;
 mod spline;
@@ -15,22 +17,23 @@ use std::sync::Arc;
 
 use glam::DVec2;
 use varde_document::{
-    Command, FaceRef, Feature, FeatureId, FeatureKind, Generation, Placement, Plane, Revision,
-    Sketch,
+    Command, FaceRef, Feature, FeatureId, FeatureKind, Generation, LinkSource, Placement, Plane,
+    Revision, Sketch,
 };
 use varde_expr::Value;
 use varde_render::{Camera, Projection};
 use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, SketchEdit, TooComplex};
 use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{
-    ActiveTool, CURVED_FACE, PlanePick, RowMenu, Shown, SketchState, Snap, Target, Tool, ToolClick,
-    ValueField, ValueTarget,
+    ActiveTool, CURVED_FACE, LinkRow, Naming, PlanePick, RowMenu, Shown, SketchLines, SketchState,
+    Snap, Target, Tool, ToolClick, ValueField, ValueTarget,
 };
 
 use super::camera::FRAME_MARGIN;
 use super::extrude::is_sketch;
-use super::{Change, Doc, HOME_TARGET, home_camera};
+use super::{Change, Doc, HOME_TARGET, OUT_OF_DATE, home_camera};
 pub(crate) use dimension::Focus;
+pub(crate) use outside::OutsideClick;
 #[cfg(test)]
 pub(crate) use propose::CHECKING;
 use propose::sketch_of;
@@ -96,6 +99,12 @@ pub(crate) struct SketchSession {
     /// as the model shown found them, marked in red within the errors'
     /// halo: see [`Doc::refresh_errors`].
     pub(crate) failing: BTreeSet<Id>,
+    /// The sketch's links as its Sketch tab lists them: see
+    /// [`Doc::refresh_links`].
+    pub(crate) links: Vec<LinkRow>,
+    /// The link whose row is hovered, if one's is: what it comes from is
+    /// lit in the model.
+    pub(crate) link_hover: Option<Id>,
 }
 
 impl SketchSession {
@@ -122,6 +131,8 @@ impl SketchSession {
             aim: None,
             profiles: None,
             failing: BTreeSet::new(),
+            links: Vec::new(),
+            link_hover: None,
         }
     }
 
@@ -146,6 +157,9 @@ pub(crate) struct Waiting {
     pub(crate) sketch: Sketch,
     /// The items the edits add, which the sketch committed doesn't hold.
     pub(crate) added: BTreeSet<Id>,
+    /// The links the edits add, by their ids in `sketch`, and what each
+    /// comes from: committed with it.
+    pub(crate) sources: Vec<(Id, varde_document::OutsideRef)>,
 }
 
 /// The value field open on a dimension, or on a field of the drawing
@@ -529,7 +543,7 @@ impl Doc {
     /// picks the model, outside picking a plane: what `S` puts a new
     /// sketch on.
     pub(crate) fn selected_face(&self) -> Option<FaceRef> {
-        (self.picks() && self.picking_plane.is_none())
+        (self.picks() && self.sketch.is_none() && self.picking_plane.is_none())
             .then(|| self.pick.selection.single_face())
             .flatten()
     }
@@ -563,6 +577,15 @@ impl Doc {
         }
     }
 
+    /// The naming of picks as of `feature` ([`Naming::before`]): the
+    /// history stopped there, all of it for a new feature (`None`).
+    pub(crate) fn naming_at(&self, feature: Option<FeatureId>) -> Naming {
+        let document = self.editor.document();
+        let before = (feature.and_then(|id| document.feature_index(id)))
+            .unwrap_or(document.features().len());
+        Naming::before(document, before, self.shown())
+    }
+
     /// The face a sketch on `face` goes on and where, as the model shown
     /// has the face (a merged body's on the body holding it): the face as
     /// `pick` names it ([`PlanePick::face_ref`]), and
@@ -576,14 +599,11 @@ impl Doc {
         pick: &PlanePick,
     ) -> Result<(FaceRef, Placement), Cow<'static, str>> {
         if !self.picks() {
-            return Err("The model shown is out of date: try again once it's regenerated".into());
+            return Err(OUT_OF_DATE.into());
         }
         let index = self.feed.pick_index();
-        let shown = (self.feed.merged_bodies().iter())
-            .find(|(merged, _)| *merged == face.body)
-            .map_or(face.body, |&(_, holder)| holder);
         let found = index
-            .find_face(shown, &face.key, face.near)
+            .find_face(self.feed.shown_body(face.body), &face.key, face.near)
             .ok_or("That face isn't in the model shown")?;
         if let Some(why) = pick.refusal(index, found) {
             return Err(why);
@@ -622,6 +642,28 @@ impl Doc {
                 }
             }
         }
+    }
+
+    /// The sketches of the features `wanted` takes that are placed
+    /// ([`Doc::placement`]), for the viewport to pick their curves and
+    /// points where they are.
+    pub(crate) fn placed_sketches(
+        &self,
+        wanted: impl Fn(&Feature) -> bool,
+    ) -> Vec<SketchLines<'_>> {
+        (self.editor.document().features().iter())
+            .filter(|feature| wanted(feature))
+            .filter_map(|feature| {
+                let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
+                    return None;
+                };
+                Some(SketchLines {
+                    feature: feature.id,
+                    placement: self.placement(feature.id)?,
+                    sketch,
+                })
+            })
+            .collect()
     }
 
     /// Keeps the placement of the sketch being edited in step with
@@ -945,6 +987,10 @@ impl Doc {
             RowMenu::Feature(id) => self.selected_feature == Some(id),
             RowMenu::Sketch(id) => !replaced && document.feature(id).is_some(),
             RowMenu::Body(id) => !replaced && document.body(id).is_some(),
+            RowMenu::Link(id) => {
+                !replaced
+                    && (self.edited_sketch()).is_some_and(|(_, sketch)| sketch.link(id).is_some())
+            }
         });
         // An edit refused after its sketch was left goes with the sketch,
         // and across a replacement its id may name another.
@@ -1110,6 +1156,12 @@ impl Doc {
             profiles: session.profiles.as_ref().map(|found| &found.profiles),
             comb: session.comb,
             failing: &session.failing,
+            links: &session.links,
+            link_menu: match self.row_menu {
+                Some(RowMenu::Link(link)) => Some(link),
+                _ => None,
+            },
+            editable: self.editable(),
         })
     }
 
@@ -1188,10 +1240,24 @@ impl Doc {
     pub(crate) fn edited_sketch(&self) -> Option<(Plane, &Sketch)> {
         let session = self.sketch.as_ref()?;
         let feature = self.editor.document().feature(session.feature)?;
-        let FeatureKind::Sketch { plane, sketch } = &feature.kind else {
+        let FeatureKind::Sketch { plane, sketch, .. } = &feature.kind else {
             return None;
         };
         Some((*plane, sketch))
+    }
+
+    /// The sketch being edited as the document holds it, if one is, and
+    /// what its links come from, one for each in their order.
+    pub(crate) fn edited_links(&self) -> Option<(&Sketch, &[LinkSource])> {
+        let session = self.sketch.as_ref()?;
+        let feature = self.editor.document().feature(session.feature)?;
+        let FeatureKind::Sketch {
+            sketch, sources, ..
+        } = &feature.kind
+        else {
+            return None;
+        };
+        Some((sketch, sources))
     }
 
     /// The camera looking straight at the sketch being edited, if one is,

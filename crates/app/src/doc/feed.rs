@@ -9,8 +9,8 @@ use std::time::Duration;
 use iced::time::Instant;
 
 use varde_document::{
-    BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Operation, Placement, Plane,
-    Snapshot,
+    BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Id, Operation, Placement, Plane,
+    Sketch, Snapshot,
 };
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{
@@ -60,6 +60,13 @@ pub(crate) struct MeshFeed {
     /// generation as `mesh`, in the document's order: those that failed
     /// aren't listed.
     placements: Vec<(FeatureId, Placement)>,
+    /// The links that found nothing, their sketches and why, of the same
+    /// generation as `mesh`, in the document's order.
+    broken: Vec<(FeatureId, Id, String)>,
+    /// The sketches whose links found other geometry than they hold,
+    /// relinked, and the generation they're of: taken once, by
+    /// [`MeshFeed::take_relinked`].
+    relinked: Option<(Generation, Relinked)>,
     /// The document `mesh` is of, if it's known (see `asked`): a
     /// placement is given out only for a sketch on the plane it had
     /// there, so one an undo has put on another face since isn't drawn
@@ -122,6 +129,9 @@ pub(crate) struct MeshFeed {
     /// the regeneration shows over the viewport.
     lagging: Option<(Instant, bool)>,
 }
+
+/// Sketches whose links were given what they found, by feature.
+type Relinked = Vec<(FeatureId, Arc<Sketch>)>;
 
 /// How long the model shown lags the editor before the regeneration
 /// shows over the viewport: one that's quicker never flickers there.
@@ -315,6 +325,8 @@ impl MeshFeed {
                 placements,
                 bodies,
                 inspected,
+                relinked,
+                broken,
                 ..
             } => {
                 // The lane hands an unchanged model back as the same
@@ -338,6 +350,8 @@ impl MeshFeed {
                 self.touched_features = touched;
                 self.merged_bodies = merged;
                 self.placements = placements;
+                self.broken = broken;
+                self.relinked = Some((asked.generation, relinked));
                 // Older documents' models won't be shown any more.
                 (self.asked).retain(|&(generation, _)| generation >= asked.generation);
                 self.shown_document = (self.asked.front())
@@ -743,6 +757,38 @@ impl MeshFeed {
         if self.marks() { &self.unsolved } else { &[] }
     }
 
+    /// Why the link `link` of the sketch `feature` found nothing, as the
+    /// model shown found, if it did. None if the document was replaced
+    /// since.
+    pub(crate) fn broken(&self, feature: FeatureId, link: Id) -> Option<&str> {
+        if !self.marks() {
+            return None;
+        }
+        (self.broken.iter())
+            .find(|(sketch, id, _)| *sketch == feature && *id == link)
+            .map(|(_, _, why)| why.as_str())
+    }
+
+    /// Shows the link `link` of the sketch `feature` broken with `why`, as
+    /// though the model shown had found so: one whose relinked sketch the
+    /// document refused. Until the next answer, which says afresh.
+    pub(crate) fn mark_broken(&mut self, feature: FeatureId, link: Id, why: String) {
+        self.broken
+            .retain(|(sketch, id, _)| (*sketch, *id) != (feature, link));
+        self.broken.push((feature, link, why));
+    }
+
+    /// The sketches the answer shown relinked, if it's of the editor's
+    /// generation `now`: each sketch's links given what they found, to
+    /// fold into the change it's of. Given once; nothing for an answer of
+    /// another generation, whose document is gone.
+    pub(crate) fn take_relinked(&mut self, now: Generation) -> Relinked {
+        match self.relinked.take() {
+            Some((generation, relinked)) if generation == now => relinked,
+            _ => Vec::new(),
+        }
+    }
+
     /// The features that failed and why, as the model shown found: with
     /// a draft, those of the document with the draft applied. None if the
     /// document was replaced since.
@@ -777,6 +823,16 @@ impl MeshFeed {
             &[]
         }
     }
+
+    /// The body the model shown draws `body` as: the one holding it if a
+    /// join merged it into another ([`MeshFeed::merged_bodies`]), else
+    /// itself.
+    pub(crate) fn shown_body(&self, body: BodyId) -> BodyId {
+        (self.merged_bodies().iter())
+            .find(|(merged, _)| *merged == body)
+            .map_or(body, |&(_, holder)| holder)
+    }
+
     /// The bodies the joins and combines of `document` before `until`
     /// (all of them without one) merged into others, in the document's
     /// order, as the model shown found them: what

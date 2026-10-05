@@ -19,7 +19,7 @@ use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::Camera;
 use varde_sketch::{
-    Analysis, Failure, Id, Kind, Measure, Profiles, Rejected, Side, Sketch, TooComplex,
+    Analysis, Failure, Id, Kind, LinkKind, Measure, Profiles, Rejected, Side, Sketch, TooComplex,
 };
 
 use crate::chrome::{
@@ -315,6 +315,28 @@ pub struct SketchState<'a> {
     /// has in the model. Ids the sketch doesn't hold as curves are
     /// ignored.
     pub failing: &'a BTreeSet<Id>,
+    /// The sketch's links as its Sketch tab lists them, in the links'
+    /// order.
+    pub links: &'a [LinkRow],
+    /// The link whose row's context menu is open, if one's is.
+    pub link_menu: Option<Id>,
+    /// Whether the document can be changed: a link's menu acts only then.
+    pub editable: bool,
+}
+
+/// A link of the sketch being edited, as its Sketch tab lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkRow {
+    pub link: Id,
+    pub kind: LinkKind,
+    /// What it comes from, by name: "Edge of Body 1", "Line 3 of Sketch
+    /// 2".
+    pub source: String,
+    /// Why it found nothing, as the model shown found, if it didn't: its
+    /// row in the danger colour with why.
+    pub broken: Option<String>,
+    /// Whether its curves count for profiles.
+    pub profiles: bool,
 }
 
 /// The value field of a dimension: placing one with the Dimension tool,
@@ -388,6 +410,9 @@ impl<'a> SketchState<'a> {
             profiles: None,
             comb: false,
             failing: &NONE,
+            links: &[],
+            link_menu: None,
+            editable: true,
         }
     }
 }
@@ -513,6 +538,8 @@ impl ActiveTool<'_> {
             }
             (Tool::Fillet, _) => "Click to round it this far",
             (Tool::Chamfer, _) => "Click to cut it this far",
+            (Tool::Project, _) => "Click edges, corners or other sketches' geometry to project",
+            (Tool::Intersect, _) => "Click faces or edges to cut with the sketch's plane",
         }
     }
 }
@@ -724,7 +751,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.sketches,
                         state.camera,
                         state.pivot,
-                        state.picking,
+                        state.picking.clone(),
                         state.highlight,
                         state.hover_through,
                         state.errors,
@@ -857,7 +884,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             .chain([key_hint(Shortcut::ESCAPE, "Cancel")])
             .collect();
     }
-    let sketching = state.sketch.is_some();
+    let sketching = !left_orbits(state.sketch.as_ref());
     let keys: Vec<_> = if state.picking_plane.is_some() {
         vec![key_hint(Shortcut::ESCAPE, "Cancel")]
     } else if let Some(extrude) = &state.extrude {
@@ -958,6 +985,13 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
         Vec::new()
     };
     keys.into_iter().chain(viewport::hints(sketching)).collect()
+}
+
+/// Whether the left button orbits the camera, as outside a sketch: not
+/// in `sketch`, where it's the sketch's, but while its tool picks outside
+/// it ([`Tool::picks_outside`]).
+fn left_orbits(sketch: Option<&SketchState<'_>>) -> bool {
+    sketch.is_none_or(|sketch| (sketch.tool).is_some_and(|tool| tool.tool.picks_outside()))
 }
 
 /// The status bar's hints for the measure tool: a click picks A, then B,
@@ -1916,6 +1950,16 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
         [Selected::Edge { body, .. }] => ("Edge".into(), String::new(), drawn_in(*body)),
         [Selected::Vertex { body, .. }] => ("Vertex".into(), String::new(), drawn_in(*body)),
         [Selected::Body(body)] => (body_name(*body).into(), String::new(), "Body"),
+        // "Line 3" of "Sketch 2".
+        [Selected::SketchItem { sketch, item }] => {
+            let feature = document.feature(*sketch);
+            let name = feature.and_then(|feature| match &feature.kind {
+                FeatureKind::Sketch { sketch, .. } => sketch.name(*item),
+                _ => None,
+            });
+            let of = feature.map_or("", |feature| feature.name.as_str());
+            (name.unwrap_or_default(), String::new(), of)
+        }
         _ => {
             let count =
                 |kind: fn(&Selected) -> bool| items.iter().filter(|item| kind(item)).count();
@@ -1923,11 +1967,13 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
             let edges = count(|item| matches!(item, Selected::Edge { .. }));
             let vertices = count(|item| matches!(item, Selected::Vertex { .. }));
             let bodies = count(|item| matches!(item, Selected::Body(_)));
+            let sketch_items = count(|item| matches!(item, Selected::SketchItem { .. }));
             let parts: Vec<String> = [
                 (faces, "face", "faces"),
                 (edges, "edge", "edges"),
                 (vertices, "vertex", "vertices"),
                 (bodies, "body", "bodies"),
+                (sketch_items, "sketch item", "sketch items"),
             ]
             .into_iter()
             .filter(|&(n, _, _)| n > 0)
@@ -1992,7 +2038,7 @@ fn surface_name(summary: &varde_regen::Summary) -> &'static str {
 fn feature_info(feature: &Feature, document: &Document) -> String {
     let units = document.units();
     match &feature.kind {
-        FeatureKind::Sketch { plane, sketch } => {
+        FeatureKind::Sketch { plane, sketch, .. } => {
             let on = crate::plane_pick::on_plane(document, plane);
             format!("{} · {on}", sketch_summary(sketch))
         }
@@ -2215,6 +2261,24 @@ mod tests {
         // The slider's preview stands in for its body's, and only its.
         let preview = Some((body, Opacity::new(55).unwrap()));
         assert_eq!(*part_opacity(document, &parts, preview), [0.55, 1.0, 0.55]);
+    }
+
+    /// The status bar's mouse hints say the left button orbits outside a
+    /// sketch and in one while Project or Intersect picks outside it.
+    #[test]
+    fn the_left_button_orbits_outside_a_sketch_and_picking_outside_it() {
+        let sketch = Sketch::default();
+        let none = BTreeSet::new();
+        let with = |tool: Option<Tool>| {
+            let tool = tool.map(|tool| crate::testing::tool(tool, &[], &[]));
+            left_orbits(Some(&SketchState::plain(&sketch, &none, tool)))
+        };
+        assert!(left_orbits(None));
+        assert!(!with(None));
+        assert!(!with(Some(Tool::Line)));
+        assert!(!with(Some(Tool::Trim)));
+        assert!(with(Some(Tool::Project)));
+        assert!(with(Some(Tool::Intersect)));
     }
 
     #[test]

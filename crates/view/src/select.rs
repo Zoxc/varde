@@ -1,5 +1,6 @@
 //! What's selected in the model shown: faces, edges, vertices and bodies,
-//! picked with the cursor or (bodies) in Objects.
+//! picked with the cursor or (bodies) in Objects, and the curves and
+//! points of the finished sketches shown.
 //!
 //! A [`Selection`] keeps what's selected by name, as a reference would: a
 //! face by its body and key, an edge by its body and the keys of the
@@ -23,10 +24,17 @@
 //! session bodies, whatever of them is clicked. A click alone selects
 //! what it's on, or nothing; with `add` (Shift or Ctrl held) it adds that
 //! or, if it's all selected already, takes it out.
+//!
+//! A sketch's curve or point ([`Selected::SketchItem`]) is selected by
+//! its sketch and id, outside the sessions only ([`SelectionMode::Any`]).
+//! It doesn't depend on the model, so a new model keeps it; the app drops
+//! it once its sketch or the item is gone, or hidden
+//! ([`Selection::retain_sketch_items`]).
 
 use glam::DVec3;
-use varde_document::{BodyId, FaceRef};
+use varde_document::{BodyId, FaceRef, FeatureId};
 use varde_kernel::mesh::FaceKey;
+use varde_sketch::Id;
 
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks};
 
@@ -60,6 +68,20 @@ impl SelectionMode {
     pub fn takes_bodies(self) -> bool {
         matches!(self, SelectionMode::Any | SelectionMode::Bodies)
     }
+
+    /// Whether the curves and points of the sketches shown are selected
+    /// in it: outside the sessions.
+    pub fn takes_sketch_items(self) -> bool {
+        self == SelectionMode::Any
+    }
+}
+
+/// A curve or point of a finished sketch, as the viewport picks it in the
+/// model: the sketch feature and the item's id in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SketchItem {
+    pub sketch: FeatureId,
+    pub item: Id,
 }
 
 /// Something selected, by name.
@@ -86,16 +108,30 @@ pub enum Selected {
         near: DVec3,
     },
     Body(BodyId),
+    /// The curve or point `item` of the sketch `sketch`.
+    SketchItem {
+        sketch: FeatureId,
+        item: Id,
+    },
 }
 
 impl Selected {
-    /// The body it's of, or is.
-    pub fn body(&self) -> BodyId {
+    /// The body it's of, or is: none for a sketch's item.
+    pub fn body(&self) -> Option<BodyId> {
         match *self {
             Selected::Face { body, .. }
             | Selected::Edge { body, .. }
             | Selected::Vertex { body, .. }
-            | Selected::Body(body) => body,
+            | Selected::Body(body) => Some(body),
+            Selected::SketchItem { .. } => None,
+        }
+    }
+
+    /// The sketch's item it is, if it's one.
+    pub fn sketch_item(&self) -> Option<SketchItem> {
+        match *self {
+            Selected::SketchItem { sketch, item } => Some(SketchItem { sketch, item }),
+            _ => None,
         }
     }
 }
@@ -108,9 +144,10 @@ impl Selected {
 pub struct Selection {
     mode: SelectionMode,
     /// Each item, in the order selected, with its face or edge in the
-    /// model `model` (none for a body), no two found of one target or
-    /// body; and what was selected but isn't found there, looked for
-    /// again in each later model until the selection changes.
+    /// model `model` (none for a body or a sketch's item), no two found
+    /// of one target, body or sketch item; and what was selected but
+    /// isn't found there, looked for again in each later model until the
+    /// selection changes.
     items: Vec<Entry>,
     /// The model the items' targets are of, see [`Pick::model`].
     model: Option<u64>,
@@ -120,7 +157,7 @@ pub struct Selection {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Entry {
     item: Selected,
-    /// Its face or edge, none for a body.
+    /// Its face or edge, none for a body or a sketch's item.
     target: Option<Picked>,
     /// Whether it was found in the model last looked in: selected, or
     /// only looked for.
@@ -180,6 +217,17 @@ impl Selection {
         })
     }
 
+    /// The curves and points of sketches selected.
+    pub fn sketch_items(&self) -> impl Iterator<Item = SketchItem> + '_ {
+        self.found().filter_map(|entry| entry.item.sketch_item())
+    }
+
+    /// Keeps only the sketches' items `keep` says are still there to
+    /// select: the app's, by the document.
+    pub fn retain_sketch_items(&mut self, keep: impl Fn(SketchItem) -> bool) {
+        (self.items).retain(|entry| entry.item.sketch_item().is_none_or(&keep));
+    }
+
     /// The entries selected, not those only looked for.
     fn found(&self) -> impl Iterator<Item = &Entry> {
         self.items.iter().filter(|entry| entry.found)
@@ -223,6 +271,8 @@ impl Selection {
         {
             let found = match item {
                 Selected::Body(body) => (drawn(body) == Some(body)).then_some(None),
+                // Not the model's: kept as it is.
+                Selected::SketchItem { .. } => Some(None),
                 _ if fresh && found => Some(target),
                 // Not found in this model before, so not now either.
                 _ if fresh => None,
@@ -250,11 +300,11 @@ impl Selection {
     }
 
     /// Adds `item`, whose target is `target`, unless something of that
-    /// target or body is selected.
+    /// target, or that body or sketch item, is selected.
     fn push(&mut self, item: Selected, target: Option<Picked>) {
         let taken = self.found().any(|other| match target {
             Some(_) => other.target == target,
-            None => matches!(other.item, Selected::Body(body) if body == item.body()),
+            None => other.item == item,
         });
         if !taken {
             self.items.push(Entry {
@@ -327,6 +377,25 @@ impl Selection {
         }
         let before = std::mem::take(&mut self.items);
         self.push(Selected::Body(body), None);
+        self.items != before
+    }
+
+    /// Takes a click on a sketch's curve or point `item` in the model:
+    /// selects it alone, or with `add` adds it or takes it out. Only where
+    /// they're selected ([`SelectionMode::takes_sketch_items`]). Whether
+    /// anything changed.
+    pub fn click_sketch(&mut self, item: SketchItem, add: bool) -> bool {
+        if !self.mode.takes_sketch_items() {
+            return false;
+        }
+        self.forget_missing();
+        let SketchItem { sketch, item } = item;
+        let item = Selected::SketchItem { sketch, item };
+        if add {
+            return self.toggle(vec![(item, None)]);
+        }
+        let before = std::mem::take(&mut self.items);
+        self.push(item, None);
         self.items != before
     }
 

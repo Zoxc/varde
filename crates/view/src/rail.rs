@@ -388,6 +388,8 @@ const SKETCH: [ToolSet; 4] = [
             Entry::Tool(Tool::Mirror),
             Entry::Tool(Tool::Fillet),
             Entry::Tool(Tool::Chamfer),
+            Entry::Tool(Tool::Project),
+            Entry::Tool(Tool::Intersect),
         ],
     },
     ToolSet {

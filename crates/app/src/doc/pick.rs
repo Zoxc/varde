@@ -4,14 +4,16 @@
 //! for a model (see [`MeshFeed::pick_index`](super::feed::MeshFeed::pick_index)).
 //! The selection keeps faces and edges by name and finds them again in
 //! each new model (see [`Selection`]); Objects shows the bodies selected
-//! and selects them too.
+//! and selects them too. Outside the sessions the curves and points of
+//! the sketches shown are hovered and selected with the model
+//! ([`Doc::selectable_sketches`]).
 
 use std::sync::Arc;
 
-use varde_document::BodyId;
+use varde_document::{BodyId, Document, FeatureKind};
 use varde_view::{
     AlignRole, ModelHighlight, ModelPicking, MotionKind, MotionPick, PanelHover, Pick, Picked,
-    Picks, Selection,
+    Picks, Selection, SketchItem, SketchLines,
 };
 
 use super::{Doc, MotionSession};
@@ -21,6 +23,8 @@ use super::{Doc, MotionSession};
 pub(crate) struct ModelPick {
     /// Of the model [`Pick::model`] names.
     hover: Option<Pick>,
+    /// The curve or point of a sketch shown hovered, in place of `hover`.
+    sketch_hover: Option<SketchItem>,
     pub(crate) selection: Selection,
     /// Built when what it's of changes, so the renderer uploads it only
     /// then.
@@ -33,6 +37,13 @@ pub(crate) struct ModelPick {
     panel_highlight: Arc<ModelHighlight>,
     /// What `panel_highlight` was built of: the model and the body.
     panel_built: Option<(u64, BodyId)>,
+    /// While Project or Intersect picks outside the sketch being edited,
+    /// what it has picked of the model and what's hovered, built for the
+    /// model shown ([`Doc::outside_highlight`]).
+    outside_highlight: Arc<ModelHighlight>,
+    /// What the link whose row in the Sketch tab is hovered comes from,
+    /// lit on the model shown ([`Doc::refresh_links`]).
+    pub(crate) link_highlight: Arc<ModelHighlight>,
 }
 
 impl ModelPick {
@@ -40,21 +51,29 @@ impl ModelPick {
     pub(crate) fn hover(&self) -> Option<Pick> {
         self.hover
     }
+
+    /// The curve or point of a sketch hovered, if any.
+    pub(crate) fn sketch_hover(&self) -> Option<SketchItem> {
+        self.sketch_hover
+    }
 }
 
 impl Doc {
-    /// Whether the cursor picks the model: outside sketches and the
-    /// extrude or revolve being set up, which pick what they need themselves, and
-    /// not while a draft's preview is still shown after it, where what's
-    /// selected would be looked for in a model that isn't the document's,
-    /// nor while the model shown is of a document since replaced whole,
-    /// whose bodies' ids may name others now. While a combine is set up
-    /// it picks bodies, its preview's too: a combine's draft makes no
-    /// body, so the bodies its model has are the document's.
+    /// Whether the cursor picks the model: in a sketch only for its
+    /// Project or Intersect tool ([`Doc::picks_outside`]), else outside
+    /// sketches and the extrude or revolve being set up, which pick what
+    /// they need themselves, and not while a draft's preview is still
+    /// shown after it, where what's selected would be looked for in a
+    /// model that isn't the document's, nor while the model shown is of a
+    /// document since replaced whole, whose bodies' ids may name others
+    /// now. While a combine is set up it picks bodies, its preview's too:
+    /// a combine's draft makes no body, so the bodies its model has are
+    /// the document's.
     pub(crate) fn picks(&self) -> bool {
         let combining = self.combine.is_some() || self.motion.is_some();
-        self.sketch.is_none()
-            && (combining || (!self.operating() && !self.feed.shows_draft()))
+        (self.picks_outside()
+            || (self.sketch.is_none()
+                && (combining || (!self.operating() && !self.feed.shows_draft()))))
             && !self.feed.predates_replacement()
     }
 
@@ -140,7 +159,65 @@ impl Doc {
     pub(crate) fn hover(&mut self, pick: Option<Pick>) {
         let pick = pick.filter(|pick| pick.model == self.feed.model() && self.picks());
         self.pick.hover = pick;
+        self.pick.sketch_hover = None;
         self.refresh_highlight();
+    }
+
+    /// Hovers `item`, a sketch's curve or point, from the viewport as the
+    /// cursor moves, or nothing: nothing of the model is then. One the
+    /// cursor doesn't pick ([`Doc::selectable_sketch_item`]) is dropped.
+    pub(crate) fn hover_sketch(&mut self, item: Option<SketchItem>) {
+        self.pick.hover = None;
+        self.pick.sketch_hover = item.filter(|&item| self.selectable_sketch_item(item));
+        self.refresh_highlight();
+    }
+
+    /// Takes a click on a sketch's curve or point `item` in the model,
+    /// see [`Selection::click_sketch`], letting go of the feature
+    /// selected in the Timeline as a click on the model does. One the
+    /// cursor doesn't pick is ignored.
+    pub(crate) fn click_sketch(&mut self, item: SketchItem, add: bool) {
+        if !self.selectable_sketch_item(item) || self.sketch.is_some() {
+            return;
+        }
+        self.pick.selection.click_sketch(item, add);
+        if !add || !self.pick.selection.is_empty() {
+            self.selected_feature = None;
+        }
+        self.refresh_highlight();
+    }
+
+    /// Whether the curves and points of the sketches shown are picked
+    /// with the model: while the cursor picks it outside the sessions,
+    /// and not picking a plane.
+    fn picks_sketch_items(&self) -> bool {
+        self.picks()
+            && self.sketch.is_none()
+            && !self.operating()
+            && self.measure.is_none()
+            && self.combine.is_none()
+            && self.motion.is_none()
+            && self.picking_plane.is_none()
+            && self.pick.selection.mode().takes_sketch_items()
+    }
+
+    /// The sketches whose curves and points the cursor picks with the
+    /// model, where they're placed: the visible ones, while it picks
+    /// them ([`Doc::picks_sketch_items`]).
+    pub(crate) fn selectable_sketches(&self) -> Vec<SketchLines<'_>> {
+        if !self.picks_sketch_items() {
+            return Vec::new();
+        }
+        self.placed_sketches(|feature| feature.visible)
+    }
+
+    /// Whether `item` is a curve or point the cursor picks with the model
+    /// now.
+    fn selectable_sketch_item(&self, item: SketchItem) -> bool {
+        let edited = self.sketch.as_ref().map(|session| session.feature);
+        (self.picks_sketch_items() || self.picks_outside())
+            && Some(item.sketch) != edited
+            && shown_sketch_item(self.editor.document(), item)
     }
 
     /// Takes a click on the model, on `pick` or on nothing, see
@@ -149,7 +226,9 @@ impl Doc {
     pub(crate) fn click_model(&mut self, pick: Option<Pick>, add: bool, double: bool) {
         // Picking a plane, a click on a flat face asks for a sketch on it
         // instead (`Edit::FacePicked`), and one elsewhere does nothing.
+        // In a sketch, the tool picking outside it has the click.
         if !self.picks()
+            || self.sketch.is_some()
             || self.picking_plane.is_some()
             || pick.is_some_and(|pick| pick.model != self.feed.model())
         {
@@ -172,9 +251,7 @@ impl Doc {
         if self.sketch.is_some() || self.editor.document().body(body).is_none() {
             return;
         }
-        let body = (self.feed.merged_bodies().iter())
-            .find(|(merged, _)| *merged == body)
-            .map_or(body, |&(_, holder)| holder);
+        let body = self.feed.shown_body(body);
         self.pick.selection.click_body(body, add);
         self.selected_feature = None;
         self.refresh_highlight();
@@ -208,19 +285,21 @@ impl Doc {
         if self.pick.hover.is_some_and(stale) {
             self.pick.hover = None;
         }
+        if (self.pick.sketch_hover).is_some_and(|item| !self.selectable_sketch_item(item)) {
+            self.pick.sketch_hover = None;
+        }
+        // A sketch's item selected goes with its sketch, or once hidden.
+        let document = self.editor.document();
+        (self.pick.selection).retain_sketch_items(|item| shown_sketch_item(document, item));
         // Not in a combine's preview, which isn't the document's model.
         if self.picks()
+            && self.sketch.is_none()
             && self.combine.is_none()
             && self.motion.is_none()
             && !self.pick.selection.holds_nothing()
         {
             let document = self.editor.document();
-            let merged = self.feed.merged_bodies();
-            let drawn = |body| {
-                document.body(body)?;
-                let holder = merged.iter().find(|(merged, _)| *merged == body);
-                Some(holder.map_or(body, |&(_, holder)| holder))
-            };
+            let drawn = |body| document.body(body).map(|_| self.feed.shown_body(body));
             self.pick.selection.resolve(self.feed.pick_index(), drawn);
         }
         self.refresh_highlight();
@@ -229,9 +308,14 @@ impl Doc {
     /// Rebuilds the highlight if the model, the target hovered or the
     /// selection changed since it was built. Nothing is drawn while the
     /// cursor doesn't pick, so it isn't built then.
-    fn refresh_highlight(&mut self) {
+    pub(crate) fn refresh_highlight(&mut self) {
         self.refresh_panel_highlight();
         if !self.picks() {
+            return;
+        }
+        // The tool picking outside the sketch has its own.
+        if self.picks_outside() {
+            self.pick.outside_highlight = self.outside_highlight();
             return;
         }
         // The measure tool's own, leaving the selection's as it was, and
@@ -323,7 +407,20 @@ impl Doc {
             index: self.feed.pick_index(),
             hovered: self.pick.hover().map(|pick| pick.target),
             hovered_snap: self.pick.hover().and_then(|pick| pick.snap),
-            picks: if measuring || pointing {
+            sketches: if self.picks_outside() {
+                self.outside_sketches()
+            } else {
+                self.selectable_sketches()
+            },
+            hovered_sketch: self.pick.sketch_hover(),
+            marked: if self.picks_outside() {
+                self.outside_marked()
+            } else if self.picks_sketch_items() {
+                self.pick.selection.sketch_items().collect()
+            } else {
+                Vec::new()
+            },
+            picks: if measuring || pointing || self.picks_outside() {
                 Picks::All
             } else if let Some(session) = &self.motion {
                 match session.picking {
@@ -347,6 +444,14 @@ impl Doc {
     /// What the viewport draws over the model, if anything: nothing while
     /// the cursor doesn't pick it.
     pub(crate) fn highlight(&self) -> Option<&Arc<ModelHighlight>> {
+        // A link's row hovered lights what it comes from, whatever's
+        // picked.
+        if let Some(highlight) = self.hovered_link_highlight() {
+            return Some(highlight);
+        }
+        if self.picks_outside() {
+            return Some(&self.pick.outside_highlight).filter(|highlight| !highlight.is_empty());
+        }
         // While measuring, the measure tool's, and not the selection's.
         if self.measure.is_some() {
             return self.measure_highlight().filter(|_| self.picks());
@@ -369,6 +474,24 @@ impl Doc {
         Some(&self.pick.highlight)
             .filter(|highlight| self.picks() && current && !highlight.is_empty())
     }
+}
+
+/// Whether `item` is a curve or point of a sketch `document` shows, one
+/// the cursor may hover or keep selected.
+fn shown_sketch_item(document: &Document, item: SketchItem) -> bool {
+    document
+        .feature(item.sketch)
+        .is_some_and(|feature| feature.visible)
+        && sketch_holds(document, item)
+}
+
+/// Whether `item.sketch` is a sketch of `document` holding the curve or
+/// point `item.item`.
+pub(crate) fn sketch_holds(document: &Document, item: SketchItem) -> bool {
+    document.feature(item.sketch).is_some_and(|feature| {
+        matches!(&feature.kind, FeatureKind::Sketch { sketch, .. }
+            if sketch.point(item.item).is_some() || sketch.curve(item.item).is_some())
+    })
 }
 
 #[cfg(test)]

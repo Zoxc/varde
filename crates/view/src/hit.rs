@@ -135,7 +135,7 @@ pub(crate) fn nearest(items: impl Iterator<Item = (Id, f64)>, tolerance: f64) ->
 /// How far `at` is from `curve` of `sketch`, as it's drawn: exactly for a
 /// line and a circle, from the polyline for an arc, whose radius may
 /// change along it (see [`Sketch::flatten`]).
-fn curve_distance(sketch: &Sketch, curve: &Curve, at: DVec2) -> Option<f64> {
+pub(crate) fn curve_distance(sketch: &Sketch, curve: &Curve, at: DVec2) -> Option<f64> {
     let point = |id| sketch.point(id).map(|point| point.at);
     Some(match *curve {
         Curve::Line { start, end } => segment_distance(at, point(start)?, point(end)?),

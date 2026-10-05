@@ -5161,3 +5161,101 @@ fn a_tampered_taper_is_refused() {
     let read = from_msgpack::<Document>(&with(&array));
     assert_eq!(read.map(|(read, _)| read).ok(), Some(document));
 }
+
+/// A sketch's links, and what each comes from, go through a file; a
+/// sketch written before links (no `links` in the sketch, no `sources` in
+/// its feature) reads with none.
+#[test]
+fn links_round_trip_and_read_from_older_files() {
+    use glam::DVec3;
+    use varde_document::{EdgeRef, FaceKey, FeatureKind, LinkSource, OutsideRef, PartKey};
+    use varde_sketch::{LinkKind, SketchEdit};
+
+    let plain = Document::example();
+    // Written as an older build wrote it: both fields taken out, each map
+    // one field shorter.
+    let raw = record_msgpack(&plain);
+    let take = |raw: &[u8], header: &[u8], field: &[u8]| -> Vec<u8> {
+        let end = (raw.windows(field.len()))
+            .position(|window| window == field)
+            .expect("the field");
+        let at = (raw[..end].windows(header.len()))
+            .rposition(|window| window == header)
+            .expect("its map");
+        let mut older = raw[..end].to_vec();
+        older.extend_from_slice(&raw[end + field.len()..]);
+        older[at] -= 1;
+        older
+    };
+    let string = |s: &str| {
+        let mut bytes = vec![0xa0 | u8::try_from(s.len()).unwrap()];
+        bytes.extend_from_slice(s.as_bytes());
+        bytes
+    };
+    let field = |name: &str| {
+        let mut bytes = string(name);
+        bytes.push(0x90);
+        bytes
+    };
+    let mut sketch_map = vec![0x86];
+    sketch_map.extend(string("points"));
+    let mut kind_map = vec![0x83];
+    kind_map.extend(string("plane"));
+    let older = take(&raw, &sketch_map, &field("links"));
+    let older = take(&older, &kind_map, &field("sources"));
+    assert!(older.len() < raw.len());
+    let (read, _) = from_msgpack::<Document>(&older).unwrap();
+    assert_eq!(read, plain);
+
+    // A sketch projecting the plate's top edge, through a file.
+    let mut editor = Editor::new(plain.clone());
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XZ)))
+        .unwrap();
+    let feature = editor.document().features()[2].id;
+    let maker = plain.features()[1].id.get();
+    let key = |part| FaceKey {
+        feature: maker,
+        part,
+        instance: 0,
+    };
+    let mut faces = [key(PartKey::EndCap), key(PartKey::Side { curve: 1 })];
+    faces.sort();
+    let edge = EdgeRef {
+        body: plain.bodies()[0].id,
+        faces,
+        near: DVec3::new(0.0, -20.0, 10.0),
+    };
+    let FeatureKind::Sketch { sketch, .. } = &editor.document().features()[2].kind else {
+        panic!("the new sketch");
+    };
+    let design = editor.document().design();
+    let linked = SketchEdit::AddLink {
+        kind: LinkKind::Project,
+    }
+    .apply(sketch, &design)
+    .unwrap();
+    let link = linked.links[0].id;
+    editor
+        .apply(Command::AddLink {
+            feature,
+            sketch: Box::new(linked),
+            source: LinkSource {
+                link,
+                source: OutsideRef::Edge(edge),
+            },
+        })
+        .unwrap();
+    let document = editor.document();
+    let (bytes, _) = to_bytes(document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(&read, document);
+    let FeatureKind::Sketch {
+        sketch, sources, ..
+    } = &read.features()[2].kind
+    else {
+        panic!("the linked sketch");
+    };
+    assert_eq!(sketch.links.len(), 1);
+    assert_eq!(sources[0].source, OutsideRef::Edge(edge));
+}

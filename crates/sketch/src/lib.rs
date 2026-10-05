@@ -16,7 +16,8 @@
 //! [`Sketch::extension`], [`Sketch::offset_preview`],
 //! [`Sketch::fillet_preview`], [`Sketch::chamfer_preview`]), and
 //! the regions the curves enclose, ready to extrude
-//! ([`Sketch::profiles`]). Everything is in
+//! ([`Sketch::profiles`]), and links, geometry taken from outside the
+//! sketch that follows it ([`Link`]). Everything is in
 //! model units, millimetres. A [`Sketch`] read from a file is trusted only
 //! after [`Sketch::check`].
 
@@ -30,6 +31,7 @@ mod flatten;
 mod geometry;
 mod intersect;
 mod joint;
+mod link;
 mod offset;
 mod origin;
 mod profile;
@@ -49,6 +51,10 @@ pub use edit::{Add, EditError, NewCurve, SketchEdit};
 pub use flatten::{CIRCLE_SEGMENTS, cut_line, flatten_arc, flatten_circle};
 pub use geometry::{ArcPoints, arc_sweep, arc_through, crossing, foot};
 pub use joint::Joint;
+pub use link::{
+    FitError, Link, LinkKind, LinkShape, MAX_LINK_CURVES, MAX_LINK_POINTS, MAX_LINKS, ProjectError,
+    SampledChain,
+};
 pub use offset::{MAX_OFFSET_WORK, MITER_TURN, OffsetPair};
 pub use profile::{
     MAX_NEAR_MISSES, MAX_NEAR_PAIRS, MAX_REGION_CURVES, MAX_SPLITS, MAX_WORK, MergeError, NearMiss,
@@ -280,6 +286,11 @@ pub struct Sketch {
     pub dimensions: Vec<DimensionEntry>,
     /// The id the next item gets.
     pub next_id: u32,
+    /// Geometry it takes from outside it, by id, see [`Link`]: their
+    /// points and curves are among the lists above. Defaulted, so a
+    /// sketch from before links reads with none.
+    #[serde(default)]
+    pub links: Vec<Link>,
 }
 
 /// Every id of a sketch has been used, so nothing more can be added to it.
@@ -372,7 +383,7 @@ impl Sketch {
     /// A new id. Fails, leaving the sketch as it was, once the ids have
     /// run out, into those of the origin and axes: `next_id` may come from
     /// a file, so it can be anything.
-    fn new_id(&mut self) -> Result<Id, OutOfIds> {
+    pub(crate) fn new_id(&mut self) -> Result<Id, OutOfIds> {
         if self.next_id >= origin::FIRST_BUILTIN {
             return Err(OutOfIds);
         }
@@ -443,7 +454,9 @@ impl Sketch {
         Ok(id)
     }
 
-    /// Deletes the items `ids` names and what depends on them: curves made
+    /// Deletes the items `ids` names and what depends on them: a link's
+    /// points and curves with the link (and a point or curve of a link's
+    /// leaves it, as relinking does), curves made
     /// from a deleted point, the fillets and chamfers on a deleted line,
     /// points no curve is made from any more that a deleted curve was (a
     /// lone point stays), and constraints and dimensions on anything
@@ -456,6 +469,14 @@ impl Sketch {
     pub fn delete(&mut self, ids: &[Id]) {
         let own = ids.iter().copied().filter(|id| !id.is_builtin());
         let mut deleted: HashSet<Id> = own.collect();
+        // A link goes with what it made.
+        self.links.retain(|link| {
+            let gone = deleted.contains(&link.id);
+            if gone {
+                deleted.extend(link.items());
+            }
+            !gone
+        });
         let at = |id| self.point(id).map(|point| point.at);
         let mut kept_splines = Vec::new();
         for (index, entry) in self.curves.iter().enumerate() {
@@ -501,6 +522,10 @@ impl Sketch {
                 .filter(|id| !used.contains(id)),
         );
         self.points.retain(|point| !deleted.contains(&point.id));
+        for link in &mut self.links {
+            link.points.retain(|id| !deleted.contains(id));
+            link.curves.retain(|id| !deleted.contains(id));
+        }
         /// Whether `id`, on `items`, is neither deleted nor on anything
         /// deleted.
         fn stays(

@@ -294,7 +294,9 @@ impl Sketch {
 
     /// The point a curve cut at `cut` of `geom` ends at: the end of a
     /// curve cutting it that's there, unless it's one of `own`, or else a
-    /// new one, tied to the curves cutting it there by `ties`.
+    /// new one, tied to the curves cutting it there by `ties`. A link's
+    /// end is never the user's curve's own (see [`Link`](crate::Link)): a
+    /// new point is tied coincident with it.
     fn cut_point(
         &mut self,
         geom: &Geom,
@@ -303,7 +305,12 @@ impl Sketch {
         ties: &mut Vec<Constraint>,
     ) -> Result<Id, OutOfIds> {
         if let Some(end) = cut.end.filter(|end| !own.contains(end)) {
-            return Ok(end);
+            if !self.is_linked(end) {
+                return Ok(end);
+            }
+            let point = self.add_point(geom.at(cut.u))?;
+            ties.push(Constraint::Coincident(point, end));
+            return Ok(point);
         }
         let point = self.add_point(geom.at(cut.u))?;
         ties.extend(
@@ -755,15 +762,18 @@ impl Sketch {
         // A point on the line is its own mirror image, and a curve's there
         // is shared with its copy, but for an arc's, whose copy's radius
         // follows from the symmetry of all three of its points (see the
-        // solver's system). A curve all of whose points are so is its own
-        // mirror image, and isn't copied.
-        let shared = |id: Id| !arc_points.contains(&id) && at(id).is_some_and(on_line);
+        // solver's system), and a link's, which no curve of the user's
+        // may be made of: those get images, held symmetric. A curve all of
+        // whose points are on the line is its own mirror image, and isn't
+        // copied.
+        let on_axis = |id: Id| !arc_points.contains(&id) && at(id).is_some_and(on_line);
+        let shared = |id: Id| on_axis(id) && !self.is_linked(id);
         let (curves, own_images): (Vec<_>, Vec<_>) = self
             .curves
             .iter()
             .filter(|entry| ids.contains(&entry.id))
             .cloned()
-            .partition(|entry| !entry.curve.points().all(shared));
+            .partition(|entry| !entry.curve.points().all(on_axis));
         let own_images: BTreeSet<Id> = own_images.iter().map(|entry| entry.id).collect();
         let used: BTreeSet<Id> = curves
             .iter()

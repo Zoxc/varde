@@ -17,7 +17,6 @@
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
 use iced::{Point, Rectangle, mouse};
-use varde_document::OriginPlane;
 use varde_expr::LengthUnit;
 use varde_render::{Camera, SketchLayer};
 use varde_sketch::angle;
@@ -94,12 +93,7 @@ struct Shown {
 /// The projector for what's in the world, seen by `camera` over
 /// `bounds`.
 fn projector(camera: &Camera, bounds: Rectangle) -> Option<Projector> {
-    Projector::new(
-        camera,
-        OriginPlane::XY.placement(),
-        bounds.width,
-        bounds.height,
-    )
+    Projector::world(camera, bounds.width, bounds.height)
 }
 
 /// A pixel's size at `at`, in millimetres, if there's one: not behind the

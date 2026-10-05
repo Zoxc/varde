@@ -225,6 +225,12 @@ impl Placement {
         self.origin + self.x * at.x + self.y * at.y
     }
 
+    /// The sketch point the world position `at` projects square onto.
+    pub fn to_sketch(&self, at: DVec3) -> DVec2 {
+        let offset = at - self.origin;
+        DVec2::new(offset.dot(self.x), offset.dot(self.y))
+    }
+
     /// Whether it's a placement a sketch can be drawn and built on: every
     /// number finite, `x` and `y` unit and square to each other within
     /// [`Placement::SLACK`], `normal` equal to `x × y` within it, and the

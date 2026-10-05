@@ -560,12 +560,7 @@ impl Doc {
         let Some(session) = &mut self.motion else {
             return;
         };
-        let merged = self.feed.merged_bodies();
-        let shown = |body: BodyId| {
-            (merged.iter())
-                .find(|(consumed, _)| *consumed == body)
-                .map_or(body, |&(_, holder)| holder)
-        };
+        let shown = |body| self.feed.shown_body(body);
         R::refs_mut(session).follow(self.feed.pick_index(), shown);
     }
 

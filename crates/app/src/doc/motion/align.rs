@@ -617,12 +617,7 @@ impl Doc {
         if session.kind != MotionKind::Align {
             return;
         }
-        let merged = self.feed.merged_bodies();
-        let shown = |body: BodyId| {
-            (merged.iter())
-                .find(|(consumed, _)| *consumed == body)
-                .map_or(body, |&(_, holder)| holder)
-        };
+        let shown = |body| self.feed.shown_body(body);
         session.align.follow(self.feed.pick_index(), shown);
     }
 
@@ -850,15 +845,10 @@ pub(super) fn point_of(
     };
     let edge = match (pick.snap, pick.target) {
         (Some(Snapped::Corner(at)), _) => return corner(at),
-        (None, Picked::Vertex(_)) => {
-            let at = index
-                .snaps(pick.target)
-                .into_iter()
-                .find_map(|(snapped, _)| match snapped {
-                    Snapped::Corner(at) => Some(at),
-                    Snapped::EdgePoint(_) => None,
-                });
-            return at.map_or(Err(NOT_A_POINT.into()), corner);
+        (None, Picked::Vertex(vertex)) => {
+            return index
+                .vertex_corner(vertex)
+                .map_or(Err(NOT_A_POINT.into()), corner);
         }
         (Some(Snapped::EdgePoint(edge)), _) | (None, Picked::Edge(edge)) => edge,
         _ => return Err(NOT_A_POINT.into()),

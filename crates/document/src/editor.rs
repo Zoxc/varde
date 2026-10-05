@@ -7,7 +7,7 @@ use varde_kernel::Tolerance;
 use varde_sketch::Sketch;
 
 use crate::{
-    Body, BodyId, CheckError, Copies, Document, EditError, FeatureId, FeatureKind,
+    Body, BodyId, CheckError, Copies, Document, EditError, FeatureId, FeatureKind, LinkSource,
     MAX_PATTERN_BODIES, Move, Opacity, Operation, Pattern, Plane, Removable, Snapshot, Turn,
 };
 
@@ -27,10 +27,22 @@ pub enum Command {
         plane: Plane,
     },
     /// Replaces a sketch feature's sketch whole: how every edit inside a
-    /// sketch is committed, as one undoable change.
+    /// sketch is committed, as one undoable change. The sources of links
+    /// it no longer has go with them; a link it has that the feature has
+    /// no source for is refused (a new one comes with
+    /// [`Command::AddLink`]).
     SetSketch {
         feature: FeatureId,
         sketch: Box<Sketch>,
+    },
+    /// Replaces a sketch feature's sketch whole, as
+    /// [`Command::SetSketch`] does, giving the link `source.link` of the
+    /// new sketch, one the feature has no source for, what it comes
+    /// from: how a link the Project or Intersect tool adds is committed.
+    AddLink {
+        feature: FeatureId,
+        sketch: Box<Sketch>,
+        source: LinkSource,
     },
     /// Puts a sketch feature on another plane, an origin plane or a face,
     /// keeping its drawing as it is in its own coordinates. Not a sketch,
@@ -142,6 +154,27 @@ impl Document {
             next.bodies[index] = body;
             next
         })
+    }
+
+    /// Gives the sketch feature at `index` `sketch`, keeping the sources
+    /// of the links it still has, and adding `source` for its link, in
+    /// its place by link (one there for the link already is replaced).
+    /// The check is the caller's.
+    fn set_sketch(&mut self, index: usize, sketch: Sketch, source: Option<LinkSource>) {
+        if let FeatureKind::Sketch {
+            sketch: old,
+            sources,
+            ..
+        } = &mut self.features[index].kind
+        {
+            sources.retain(|kept| sketch.link(kept.link).is_some());
+            if let Some(source) = source {
+                sources.retain(|kept| kept.link != source.link);
+                let at = sources.partition_point(|kept| kept.link < source.link);
+                sources.insert(at, source);
+            }
+            *old = sketch;
+        }
     }
 
     /// Adds a visible, opaque body made by `feature` with a new id, "Body
@@ -517,6 +550,22 @@ impl Editor {
     /// leaving the document, its history, revision and generation as they
     /// were. One that would change nothing leaves them as they were too.
     pub fn apply(&mut self, command: Command) -> Result<(), EditError> {
+        self.change(command, true)
+    }
+
+    /// Applies `command` as [`Editor::apply`] does, but folded into the
+    /// change before it rather than as one of its own: undo takes both
+    /// back at once, and the redo history stays. For what follows from a
+    /// change rather than being one: a sketch's links found again on the
+    /// model the change made. The document gets a new revision and
+    /// generation as with any change. Refused as [`Editor::apply`]
+    /// refuses, leaving everything as it was.
+    pub fn amend(&mut self, command: Command) -> Result<(), EditError> {
+        self.change(command, false)
+    }
+
+    /// [`Editor::apply`], or, unless `own_step`, [`Editor::amend`].
+    fn change(&mut self, command: Command, own_step: bool) -> Result<(), EditError> {
         // Each edit works on a private copy, so a refused one leaves `self`
         // as it was, and one that would change nothing returns before
         // copying.
@@ -547,35 +596,51 @@ impl Editor {
             Command::AddSketch { name, plane } => {
                 let mut next = Document::clone(document);
                 let sketch = Sketch::default();
-                next.push_feature(name, FeatureKind::Sketch { plane, sketch })?;
+                next.push_feature(
+                    name,
+                    FeatureKind::Sketch {
+                        plane,
+                        sketch,
+                        sources: Vec::new(),
+                    },
+                )?;
                 next
             }
             Command::SetSketch { feature, sketch } => {
-                let Some(index) = document
-                    .feature_index(feature)
-                    .filter(|&index| match &document.features[index].kind {
-                        FeatureKind::Sketch { sketch: old, .. } => *old != *sketch,
-                        _ => false,
-                    })
-                else {
+                let Some(index) = document.feature_index(feature) else {
                     return Ok(());
                 };
-                let mut next = Document::clone(document);
-                if let FeatureKind::Sketch { sketch: old, .. } = &mut next.features[index].kind {
-                    *old = *sketch;
+                match &document.features[index].kind {
+                    FeatureKind::Sketch { sketch: old, .. } if *old != *sketch => {}
+                    _ => return Ok(()),
                 }
+                let mut next = Document::clone(document);
+                next.set_sketch(index, *sketch, None);
+                next
+            }
+            Command::AddLink {
+                feature,
+                sketch,
+                source,
+            } => {
+                let Some(index) = document.feature_index(feature) else {
+                    return Ok(());
+                };
+                if !matches!(document.features[index].kind, FeatureKind::Sketch { .. }) {
+                    return Ok(());
+                }
+                let mut next = Document::clone(document);
+                next.set_sketch(index, *sketch, Some(source));
                 next
             }
             Command::SetSketchPlane { feature, plane } => {
-                let Some(index) = document
-                    .feature_index(feature)
-                    .filter(|&index| match &document.features[index].kind {
-                        FeatureKind::Sketch { plane: old, .. } => *old != plane,
-                        _ => false,
-                    })
-                else {
+                let Some(index) = document.feature_index(feature) else {
                     return Ok(());
                 };
+                match &document.features[index].kind {
+                    FeatureKind::Sketch { plane: old, .. } if *old != plane => {}
+                    _ => return Ok(()),
+                }
                 let mut next = Document::clone(document);
                 if let FeatureKind::Sketch { plane: old, .. } = &mut next.features[index].kind {
                     *old = plane;
@@ -818,8 +883,11 @@ impl Editor {
                 lineage,
             },
         );
-        self.push_undo(before);
-        self.redo.clear();
+        // Amended, the state replaced is dropped: undo goes back past it.
+        if own_step {
+            self.push_undo(before);
+            self.redo.clear();
+        }
         self.changed();
         Ok(())
     }

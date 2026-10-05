@@ -170,6 +170,10 @@ pub struct SketchColors {
     /// The rail along a handle's axis while it's hovered or dragged: ink,
     /// the text mixed 80% into the panel.
     pub rail: Color,
+    /// What a link made (projected or intersected geometry): the Modify
+    /// tools' reference tone, as Project's and Intersect's icons draw
+    /// what they work from.
+    pub link: Color,
 }
 
 // Scene colours the same in both palettes.
@@ -440,6 +444,7 @@ const LIGHT: Palette = Palette {
         count_handle: LIGHT_COUNT,
         count_handle_hovered: mix(LIGHT_COUNT, Color::WHITE, HANDLE_HOVERED),
         rail: mix(LIGHT_TEXT, LIGHT_PANEL, 0.8),
+        link: LIGHT_ICONS.modify.reference,
     },
 };
 
@@ -530,6 +535,7 @@ const DARK: Palette = Palette {
         count_handle: DARK_COUNT,
         count_handle_hovered: mix(DARK_COUNT, Color::WHITE, HANDLE_HOVERED),
         rail: mix(DARK_TEXT, DARK_PANEL, 0.8),
+        link: DARK_ICONS.modify.reference,
     },
 };
 

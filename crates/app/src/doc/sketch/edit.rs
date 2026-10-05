@@ -212,16 +212,27 @@ impl Doc {
     }
 
     /// Deletes what's selected in the sketch and what depends on it, see
-    /// [`Sketch::delete`].
+    /// [`Sketch::delete`], with every link any of whose geometry is
+    /// selected, whole.
     pub(crate) fn delete_selection(&mut self) {
         let Some(session) = &self.sketch else {
             return;
         };
         // The origin and axes are always there.
         let selected = session.selection.iter().copied();
-        let ids: Vec<_> = selected.filter(|id| !id.is_builtin()).collect();
+        let mut ids: Vec<_> = selected.filter(|id| !id.is_builtin()).collect();
         if ids.is_empty() {
             return;
+        }
+        // A link any of whose geometry is selected goes whole, as only the
+        // link can go: its row picked, or one curve of it.
+        if let Some(sketch) = self.editable_sketch() {
+            for link in &sketch.links {
+                if link.items().any(|item| ids.contains(&item)) {
+                    ids.retain(|&id| link.items().all(|item| item != id));
+                    ids.push(link.id);
+                }
+            }
         }
         self.propose(SketchEdit::Delete(ids));
     }
@@ -308,7 +319,13 @@ fn step(
     let gap = LABEL_GAP * click.pixel;
     Ok(match (drawing.tool, drawing.placed.as_slice()) {
         // A point where the sketch has one is that point again.
-        (Tool::Point, _) if click.point().is_some_and(|id| !id.is_builtin()) => Step::Refused,
+        (Tool::Point, _)
+            if click
+                .point()
+                .is_some_and(|id| !id.is_builtin() && !sketch.is_linked(id)) =>
+        {
+            Step::Refused
+        }
         (Tool::Point, _) => {
             place(sketch, &mut add, click.at, click.target)?;
             Step::Added(add, None)
@@ -638,7 +655,9 @@ fn typed_dimensions(
 /// The point of a shape placed at `at` by `add`, made on `sketch`, having
 /// snapped to `target`: a point of the sketch's itself, taken as the
 /// shape's own, or else a new point, tied to what it snapped to by `auto`
-/// constraints, which the solver drops where they restate the rest.
+/// constraints, which the solver drops where they restate the rest. The
+/// origin and a link's points are never a shape's own: a point snapped
+/// there is a new one, coincident with it.
 pub(super) fn place(
     sketch: &Sketch,
     add: &mut Add,
@@ -647,14 +666,15 @@ pub(super) fn place(
 ) -> Result<Id, OutOfIds> {
     if let Some(Target::Point(id)) = target
         && !id.is_builtin()
+        && !sketch.is_linked(id)
     {
         return Ok(id);
     }
     let point = add.point(at)?;
     let ties = match target {
         None => Vec::new(),
-        // The origin.
-        Some(Target::Point(origin)) => vec![Constraint::Coincident(point, origin)],
+        // The origin, or a link's point.
+        Some(Target::Point(fixed)) => vec![Constraint::Coincident(point, fixed)],
         Some(Target::Midpoint(line)) => vec![Constraint::Midpoint { point, line }],
         Some(Target::On(curve)) => vec![Constraint::PointOnCurve { point, curve }],
         Some(Target::Quadrant { round, level }) => {

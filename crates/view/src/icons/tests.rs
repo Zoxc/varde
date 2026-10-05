@@ -7,7 +7,7 @@ use crate::toolbar::tool_icon;
 use crate::{ConstraintKind, Message, Mode, Tool};
 
 /// The icons drawn from the icon mock, with accents.
-const FROM_MOCK: [Icon; 36] = [
+const FROM_MOCK: [Icon; 38] = [
     Icon::Sketch,
     Icon::Extrude,
     Icon::Plane,
@@ -38,6 +38,8 @@ const FROM_MOCK: [Icon; 36] = [
     Icon::Offset,
     Icon::Fillet,
     Icon::Chamfer,
+    Icon::Project,
+    Icon::Intersect,
     Icon::CatCreate,
     Icon::CatDraw,
     Icon::CatModify,
@@ -84,7 +86,12 @@ fn every_toolbar_tool_has_an_icon() {
         assert!(FROM_MOCK.contains(&icon), "{tool:?}: {icon:?}");
         let category = icon.category().unwrap();
         let expected = match tool {
-            Tool::Trim | Tool::Extend | Tool::Mirror | Tool::Offset => IconCategory::Modify,
+            Tool::Trim
+            | Tool::Extend
+            | Tool::Mirror
+            | Tool::Offset
+            | Tool::Project
+            | Tool::Intersect => IconCategory::Modify,
             Tool::Dimension => IconCategory::Dimension,
             _ => IconCategory::Sketch,
         };

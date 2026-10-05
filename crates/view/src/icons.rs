@@ -113,6 +113,8 @@ icons! {
     Offset => r#"<path class="r" d="M4 20c2-7 7-12 16-13"/><path d="M3 13c2-4 6-7 11-7.8"/><path class="a" d="M10.5 14.5L8 11M7.5 13.3L8 11l2.4.2"/>"#,
     Fillet => r#"<path d="M5 20v-8M12 5h7"/><path class="r" d="M5 12V5h7" stroke-dasharray="1.6 2"/><path class="a" d="M5 12a7 7 0 0 1 7-7"/>"#,
     Chamfer => r#"<path d="M5 20v-9M13 5h6"/><path class="r" d="M5 11V5h8" stroke-dasharray="1.6 2"/><path class="a" d="M5 11l8-6"/>"#,
+    Project => r#"<path class="r" d="M4 7l8-4 8 4-8 4z"/><path class="a" d="M12 11v6" stroke-dasharray="2 2"/><path class="a" d="M10 15l2 2 2-2"/><path d="M5 20h14"/>"#,
+    Intersect => r#"<path d="M3 18C8 8 13 6 21 5"/><path d="M3 6c6 1 11 5 18 13"/><circle class="af" cx="11" cy="9.3" r="2"/>"#,
     Measure => r#"<path class="t" d="M3 17L17 3l4 4L7 21z"/><path class="a" d="M7 13l2 2M10 10l2 2M13 7l2 2"/>"#,
     // Two overlapping boxes; the mock's tinted overlap is a fill, which
     // the line-only set leaves out.
@@ -285,6 +287,8 @@ impl Icon {
             | Icon::Extend
             | Icon::Mirror
             | Icon::Offset
+            | Icon::Project
+            | Icon::Intersect
             | Icon::Combine
             | Icon::Scale
             | Icon::Split

@@ -105,6 +105,9 @@ fn viewport<'a>(
         picks: Picks::All,
         snaps: false,
         planes: None,
+        sketches: Vec::new(),
+        hovered_sketch: None,
+        marked: Vec::new(),
     });
     program
 }

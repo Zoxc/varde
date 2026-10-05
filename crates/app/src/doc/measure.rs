@@ -112,19 +112,21 @@ fn body(body: BodyId) -> InspectPick {
 }
 
 /// What the selected `item` names, as the measure keeps a pick: a vertex
-/// as its corner.
-fn selected_pick(item: &Selected) -> InspectPick {
+/// as its corner. None for a sketch's curve or point, which isn't
+/// measured.
+fn selected_pick(item: &Selected) -> Option<InspectPick> {
     let (entity, near) = match *item {
-        Selected::Body(body) => return self::body(body),
+        Selected::Body(body) => return Some(self::body(body)),
+        Selected::SketchItem { .. } => return None,
         Selected::Face { key, near, .. } => (Entity::Face(key), near),
         Selected::Edge { faces, near, .. } => (Entity::Edge(faces), near),
         Selected::Vertex { faces, near, .. } => (Entity::Corner(faces), near),
     };
-    InspectPick {
-        body: item.body(),
+    Some(InspectPick {
+        body: item.body()?,
         entity,
         near: near.to_array(),
-    }
+    })
 }
 
 /// What `pick` of `index`'s model names, as the measure keeps it: the
@@ -226,6 +228,7 @@ impl Doc {
     /// asked last, which their picks wait for.
     pub(crate) fn selection_inspect(&self) -> Option<(InspectPick, Option<InspectPick>)> {
         if !self.picks()
+            || self.sketch.is_some()
             || self.measure.is_some()
             || self.operating()
             || self.picking_plane.is_some()
@@ -233,10 +236,14 @@ impl Doc {
         {
             return None;
         }
-        let mut picks = self.pick.selection.items().map(selected_pick);
-        let first = picks.next()?;
-        let second = picks.next();
-        picks.next().is_none().then_some((first, second))
+        // Nothing's measured with a sketch's curve or point selected.
+        let picks: Option<Vec<InspectPick>> =
+            self.pick.selection.items().map(selected_pick).collect();
+        match picks?[..] {
+            [first] => Some((first, None)),
+            [first, second] => Some((first, Some(second))),
+            _ => None,
+        }
     }
 
     /// The newest answer's measures of what's selected in the model, see
@@ -277,10 +284,7 @@ impl Doc {
                 (None, Entity::Body) => {
                     // A body a join merged into another is measured, and
                     // drawn, as the body holding it.
-                    let merged = self.feed.merged_bodies();
-                    let holder = (merged.iter())
-                        .find(|(merged, _)| *merged == pick.body)
-                        .map_or(pick.body, |&(_, holder)| holder);
+                    let holder = self.feed.shown_body(pick.body);
                     targets.extend(index.body_faces(holder).map(Picked::Face));
                 }
                 _ => {}
@@ -303,12 +307,7 @@ impl Doc {
             return false;
         };
         let index = self.feed.pick_index();
-        let merged = self.feed.merged_bodies();
-        let holder = |body: BodyId| {
-            (merged.iter())
-                .find(|(merged, _)| *merged == body)
-                .map_or(body, |&(_, holder)| holder)
-        };
+        let holder = |body| self.feed.shown_body(body);
         (session.picks.iter().flatten()).any(|picked| match picked.entity {
             Entity::Corner(faces) => {
                 let near = glam::DVec3::from(picked.near);

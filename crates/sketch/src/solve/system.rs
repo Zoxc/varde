@@ -275,9 +275,13 @@ impl System {
             }
         }
         let constant = fixing == Fixing::Constants;
+        // A link's points and radii are constants however a fix is
+        // modelled, as the origin's are: nothing in the sketch moves them.
+        let linked = sketch.linked();
+        let held = |id: &Id| (constant && fixed.contains(id)) || linked.contains(id);
         let mut values = Vec::new();
-        let mut slot = |value: f64, fixed: bool| {
-            if fixed && constant {
+        let mut slot = |value: f64, held: bool| {
+            if held {
                 Slot::Const(value)
             } else {
                 values.push(value);
@@ -288,15 +292,15 @@ impl System {
             .points
             .iter()
             .map(|point| {
-                let fixed = fixed.contains(&point.id);
-                [slot(point.at.x, fixed), slot(point.at.y, fixed)]
+                let held = held(&point.id);
+                [slot(point.at.x, held), slot(point.at.y, held)]
             })
             .collect();
         let radii: Vec<Option<Slot>> = sketch
             .curves
             .iter()
             .map(|entry| match entry.curve {
-                Curve::Circle { radius, .. } => Some(slot(radius, fixed.contains(&entry.id))),
+                Curve::Circle { radius, .. } => Some(slot(radius, held(&entry.id))),
                 _ => None,
             })
             .collect();
@@ -312,8 +316,11 @@ impl System {
         let images = images(sketch);
         let mirrored = mirrored_arcs(sketch, &images);
         for entry in &sketch.curves {
+            // A link's arc is held as found: its radii are constants,
+            // equal to rounding, so no equation of its own.
             if let Curve::Arc { center, start, end } = entry.curve
                 && !mirrored.contains(&entry.id)
+                && !linked.contains(&entry.id)
                 && let (Some(center), Some(start), Some(end)) = (
                     system.point(sketch, center),
                     system.point(sketch, start),

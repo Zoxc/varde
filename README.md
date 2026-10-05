@@ -27,6 +27,9 @@ sketches and editable features. It runs natively and in the browser.
 - Constraints and dimensions, solved as you edit; dimensions take
   expressions with units (`1 in + 3 mm`).
 - Trim, extend, offset, mirror, fillet and chamfer.
+- Projecting model edges, corners and other sketches' geometry into a
+  sketch, and cutting faces and edges with its plane, kept in step as
+  the model changes.
 - Extrudes (tapered or straight) and revolves that make bodies or join,
   cut or intersect them, editable in a timeline.
 - Sketches on flat faces that follow the face as earlier features change.

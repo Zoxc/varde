@@ -346,12 +346,7 @@ impl Doc {
         if session.kind != MotionKind::Scale {
             return;
         }
-        let merged = self.feed.merged_bodies();
-        let shown = |body: BodyId| {
-            (merged.iter())
-                .find(|(consumed, _)| *consumed == body)
-                .map_or(body, |&(_, holder)| holder)
-        };
+        let shown = |body| self.feed.shown_body(body);
         session.scale.follow(self.feed.pick_index(), shown);
     }
 

@@ -148,12 +148,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use varde_document::{
     BodyId, Command, Document, Editor, FeatureId, FeatureKind, Generation, Placement, Plane,
-    Snapshot,
+    Sketch, Snapshot,
 };
 use varde_kernel::{
     Aabb, Display, LinesError, ManifoldError, ManifoldMesh, MeshError, RenderLines, RenderMesh,
 };
-use varde_sketch::{Budget, Goal};
+use varde_sketch::{Budget, Goal, Id};
 
 pub use cache::Cache;
 pub use error_geometry::{ErrorGeometry, FeatureFailure, GeometryError, GeometryParts};
@@ -628,6 +628,15 @@ pub enum Response {
         /// The answer to the request's measure, if it had one, measured
         /// on this model.
         inspected: Option<Box<Inspected>>,
+        /// Each sketch whose links found other geometry than they hold,
+        /// relinked and solved, in the document's order (see
+        /// [`Evaluation::relinked`]): for the app to fold into the change
+        /// it's of. None with a draft: only the committed document's
+        /// links are followed.
+        relinked: Vec<(FeatureId, Arc<Sketch>)>,
+        /// Each link that found nothing, its sketch, its id and why, in
+        /// the document's order (see [`Evaluation::broken`]).
+        broken: Vec<(FeatureId, Id, String)>,
     },
     /// The work for `generation` failed, e.g. the kernel panicked. The
     /// request leaving out `exclude` did: one of the same generation
@@ -707,6 +716,8 @@ impl Regenerator {
                         placements: model.placements,
                         bodies: model.bodies,
                         inspected: model.inspected.map(Box::new),
+                        relinked: model.relinked,
+                        broken: model.broken,
                     },
                     Err(error) => Response::Failed {
                         generation,
@@ -855,7 +866,16 @@ impl Regenerator {
                 &mut self.cache,
             )
         });
+        // A draft's links aren't followed: only the committed
+        // document's are the app's to fold in.
+        let relinked = if draft.is_some() {
+            Vec::new()
+        } else {
+            std::mem::take(&mut evaluation.relinked)
+        };
         Ok(Model {
+            relinked,
+            broken: std::mem::take(&mut evaluation.broken),
             draft,
             scene,
             sketches,
@@ -887,6 +907,8 @@ struct Model {
     placements: Vec<(FeatureId, Placement)>,
     bodies: Vec<(BodyId, Aabb)>,
     inspected: Option<Inspected>,
+    relinked: Vec<(FeatureId, Arc<Sketch>)>,
+    broken: Vec<(FeatureId, Id, String)>,
 }
 
 /// `document` with `draft` applied, and the draft's feature, or why it
@@ -1088,7 +1110,7 @@ pub fn flatten_sketches(
         .iter()
         .filter(|feature| feature.visible && Some(feature.id) != exclude);
     for feature in shown {
-        let FeatureKind::Sketch { plane, sketch } = &feature.kind else {
+        let FeatureKind::Sketch { plane, sketch, .. } = &feature.kind else {
             continue;
         };
         let placement = match plane {

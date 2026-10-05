@@ -19,7 +19,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
-use varde_document::{BodyId, EdgeRef, FaceRef, OriginPlane, Placement};
+use varde_document::{BodyId, EdgeRef, FaceRef, Placement};
 use varde_kernel::RenderMesh;
 use varde_kernel::mesh::FaceKey;
 use varde_regen::{Picking, Summary};
@@ -311,8 +311,7 @@ impl PickIndex {
     /// face the cursor's ray first meets the front of; of those only what
     /// `picks` takes.
     pub fn pick(&self, camera: &Camera, size: [f32; 2], at: DVec2, picks: Picks) -> Option<Pick> {
-        let placement = OriginPlane::XY.placement();
-        let projector = Projector::new(camera, placement, size[0], size[1])?;
+        let projector = Projector::world(camera, size[0], size[1])?;
         let ray = self.ray(camera, &projector, at)?;
         let vertex = || {
             (picks == Picks::All)
@@ -343,6 +342,21 @@ impl PickIndex {
         Some(pick)
     }
 
+    /// Whether the model hides the world point `point` from `camera` in
+    /// a viewport `size` big: something of it is in front of the point,
+    /// nearer the eye by more than the edges are pulled towards it, as
+    /// an edge is hidden from [`PickIndex::pick`]. So what lies on a face
+    /// (a sketch on it) isn't hidden by it. A point behind the near
+    /// plane of a perspective view, or no viewport, hides nothing.
+    pub fn hides(&self, camera: &Camera, size: [f32; 2], point: DVec3) -> bool {
+        let Some(projector) = Projector::world(camera, size[0], size[1]) else {
+            return false;
+        };
+        let view_height = f64::from(camera.view_height());
+        let hidden = self.hidden(&projector, point, view_height, &mut Vec::new());
+        hidden != Hidden::No
+    }
+
     /// Everything at the screen position `at`, as [`PickIndex::pick`]
     /// takes it, hidden or not, that `picks` takes: the vertices, edges
     /// and faces showing within `pixels` of it, either side of them;
@@ -359,8 +373,7 @@ impl PickIndex {
         pixels: f64,
         most: usize,
     ) -> Vec<Pick> {
-        let placement = OriginPlane::XY.placement();
-        let Some(projector) = Projector::new(camera, placement, size[0], size[1]) else {
+        let Some(projector) = Projector::world(camera, size[0], size[1]) else {
             return Vec::new();
         };
         let Some(ray) = self.ray(camera, &projector, at) else {
@@ -441,6 +454,15 @@ impl PickIndex {
             .collect()
     }
 
+    /// The picking corner at vertex `vertex`, its snap point
+    /// ([`PickIndex::snaps`]), if it's in the tables.
+    pub fn vertex_corner(&self, vertex: u32) -> Option<u32> {
+        (self.snaps(Picked::Vertex(vertex)).into_iter()).find_map(|(snapped, _)| match snapped {
+            Snapped::Corner(corner) => Some(corner),
+            Snapped::EdgePoint(_) => None,
+        })
+    }
+
     /// The snap points of `target`, where the measure tool picks points:
     /// a face's corners (those naming it among their three faces), an
     /// edge's ends (the corners naming both its faces) and its own point,
@@ -511,8 +533,7 @@ impl PickIndex {
         at: DVec2,
         target: Picked,
     ) -> Option<(Snapped, DVec3)> {
-        let placement = OriginPlane::XY.placement();
-        let projector = Projector::new(camera, placement, size[0], size[1])?;
+        let projector = Projector::world(camera, size[0], size[1])?;
         let mut best: Option<(f64, Snapped, DVec3)> = None;
         for (snapped, point) in self.snaps(target) {
             if projector.perspective() && projector.world_depth(point) < projector.near() {

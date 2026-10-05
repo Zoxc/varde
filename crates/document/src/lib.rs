@@ -21,6 +21,7 @@ mod motion;
 pub mod name;
 mod offset_face;
 mod opacity;
+mod outside;
 mod pattern;
 mod plane;
 mod removal;
@@ -49,6 +50,7 @@ pub use loft::{
 pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
 pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
+pub use outside::{LinkError, LinkSource, OutsideRef};
 pub use pattern::{Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternKind};
 pub use plane::{FaceRef, FaceSetError, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
@@ -252,9 +254,9 @@ impl Document {
         self.feature_index(id).map(|index| &self.features[index])
     }
 
-    /// Where feature `id` is in [`features`](Document::features), like
-    /// [`body_index`](Document::body_index).
-    pub(crate) fn feature_index(&self, id: FeatureId) -> Option<usize> {
+    /// Where feature `id` is in [`features`](Document::features), found
+    /// by binary search, as the features are in increasing id order.
+    pub fn feature_index(&self, id: FeatureId) -> Option<usize> {
         self.features
             .binary_search_by_key(&id, |feature| feature.id)
             .ok()
@@ -402,12 +404,18 @@ impl Document {
                 return Err(CheckError::FeatureNameLength(id, feature.name.len()));
             }
             match &feature.kind {
-                FeatureKind::Sketch { plane, sketch } => {
+                FeatureKind::Sketch {
+                    plane,
+                    sketch,
+                    sources,
+                } => {
                     sketch
                         .check(&design)
                         .map_err(|why| CheckError::Sketch(id, why))?;
                     self.check_plane(index, plane)
                         .map_err(|why| CheckError::SketchPlane(id, why))?;
+                    self.check_sources(index, sketch, sources)
+                        .map_err(|why| CheckError::SketchLink(id, why))?;
                 }
                 FeatureKind::Extrude(extrude) => self
                     .check_extrude(index, extrude)
@@ -549,6 +557,76 @@ impl Document {
         }
         if !self.maker_before(index, face.maker()) {
             return Err(PlaneError::Maker(face.maker()));
+        }
+        Ok(())
+    }
+
+    /// Checks the sources of the links of `sketch`, feature `index`: one
+    /// for each link, in its order, each of a kind the link takes
+    /// ([`OutsideRef::takes`]), its own parts right, and what it names
+    /// made before the sketch, or not there with ids no later feature or
+    /// body can take, as a sketch's face's: a removed source leaves the
+    /// link, which then doesn't find it. Another sketch's item is a
+    /// sketch's before it; whether it has the item is regenerating's to
+    /// find.
+    fn check_sources(
+        &self,
+        index: usize,
+        sketch: &Sketch,
+        sources: &[LinkSource],
+    ) -> Result<(), LinkError> {
+        if let Some(extra) = sources.get(sketch.links.len()) {
+            return Err(LinkError::Sources(extra.link));
+        }
+        for (at, link) in sketch.links.iter().enumerate() {
+            let id = link.id;
+            let from = sources.get(at).ok_or(LinkError::Sources(id))?;
+            if from.link != id {
+                return Err(LinkError::Sources(from.link));
+            }
+            if !from.source.takes(link.kind) {
+                return Err(LinkError::Kind(id));
+            }
+            match &from.source {
+                OutsideRef::Sketch { sketch: other, .. } => {
+                    let before = match self.feature_index(*other) {
+                        Some(at) => {
+                            at < index
+                                && matches!(self.features[at].kind, FeatureKind::Sketch { .. })
+                        }
+                        None => other.0 < self.next_id,
+                    };
+                    if !before {
+                        return Err(LinkError::Later(id));
+                    }
+                }
+                OutsideRef::Edge(edge) => {
+                    edge.check_own().map_err(|why| LinkError::Edge(id, why))?;
+                    let makers_before = edge.makers().iter().all(|&m| self.maker_before(index, m));
+                    if !self.body_before(index, edge.body) || !makers_before {
+                        return Err(LinkError::Later(id));
+                    }
+                }
+                OutsideRef::Face(face) => {
+                    face.check_own().map_err(|why| LinkError::Face(id, why))?;
+                    if !self.body_before(index, face.body)
+                        || !self.maker_before(index, face.maker())
+                    {
+                        return Err(LinkError::Later(id));
+                    }
+                }
+                OutsideRef::Corner(corner) => {
+                    let (PointRef::Corner { body, .. }, Ok(())) = (corner, corner.check_own())
+                    else {
+                        return Err(LinkError::Corner(id));
+                    };
+                    let makers_before =
+                        (corner.makers().iter()).all(|&m| self.maker_before(index, m));
+                    if !self.body_before(index, *body) || !makers_before {
+                        return Err(LinkError::Later(id));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1085,6 +1163,8 @@ pub enum CheckError {
     Sketch(FeatureId, SketchError),
     /// A sketch feature's plane is wrong, see [`PlaneError`].
     SketchPlane(FeatureId, PlaneError),
+    /// A sketch feature's links' sources are wrong, see [`LinkError`].
+    SketchLink(FeatureId, LinkError),
     /// An extrude feature is wrong, see [`ExtrudeError`].
     Extrude(FeatureId, ExtrudeError),
     /// A revolve feature is wrong, see [`RevolveError`].
@@ -1163,6 +1243,7 @@ impl fmt::Display for CheckError {
             ),
             CheckError::Sketch(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::SketchPlane(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::SketchLink(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Extrude(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Revolve(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Combine(id, why) => write!(f, "feature {}: {why}", id.0),

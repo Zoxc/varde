@@ -211,7 +211,7 @@ impl PlanePick {
         failed: Option<String>,
         shown: Shown,
     ) -> Option<Self> {
-        let index = (document.features().iter()).position(|feature| feature.id == sketch)?;
+        let index = document.feature_index(sketch)?;
         let feature = &document.features()[index];
         if !matches!(feature.kind, varde_document::FeatureKind::Sketch { .. }) {
             return None;

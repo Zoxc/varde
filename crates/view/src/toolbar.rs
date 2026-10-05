@@ -415,6 +415,8 @@ pub(crate) fn tool_icon(tool: Tool) -> Icon {
         Tool::Offset => Icon::Offset,
         Tool::Fillet => Icon::Fillet,
         Tool::Chamfer => Icon::Chamfer,
+        Tool::Project => Icon::Project,
+        Tool::Intersect => Icon::Intersect,
     }
 }
 

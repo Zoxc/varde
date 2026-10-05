@@ -207,7 +207,10 @@ impl Doc {
         let merged = self.feed.merged_before(document, None);
         let mut bodies: Vec<BodyId> = Vec::new();
         for item in self.pick.selection.items() {
-            let body = item.body();
+            // A sketch's curve or point names no body.
+            let Some(body) = item.body() else {
+                continue;
+            };
             let body = merged.holder(body).unwrap_or(body);
             if pickable(document, body, None) && !bodies.contains(&body) {
                 bodies.push(body);

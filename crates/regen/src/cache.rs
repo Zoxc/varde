@@ -52,7 +52,7 @@ use glam::DVec3;
 use serde::Serialize;
 use varde_document::Placement;
 use varde_kernel::{RenderMesh, Solid, Topology};
-use varde_sketch::{Profiles, TooComplex};
+use varde_sketch::{Curve, LinkShape, Profiles, Sketch, TooComplex};
 
 use crate::error_geometry::{ErrorGeometry, KernelFailure};
 use crate::history::Failed;
@@ -198,6 +198,12 @@ enum Entry {
     Measure(Arc<Kept>),
     /// The minimum distance between two picks.
     Distance(Result<Gap, String>),
+    /// What a sketch's link finds of its source, or why it finds
+    /// nothing.
+    Link(Result<LinkShape, String>),
+    /// A sketch with its stale links given what they found, solved, or
+    /// why it can't be.
+    Relinked(Result<Arc<Sketch>, String>),
 }
 
 impl Entry {
@@ -231,6 +237,14 @@ impl Entry {
             Entry::Topology(topology) => topology_bytes(topology),
             Entry::Measure(kept) => kept.as_ref().as_ref().err().map_or(0, String::len),
             Entry::Distance(gap) => gap.as_ref().err().map_or(0, String::len),
+            Entry::Link(found) => match found {
+                Ok(shape) => link_bytes(shape),
+                Err(why) => why.len(),
+            },
+            Entry::Relinked(relinked) => match relinked {
+                Ok(sketch) => sketch_bytes(sketch),
+                Err(why) => why.len(),
+            },
             Entry::Solves(_)
             | Entry::Placement(Ok(_))
             | Entry::Edge(Ok(_))
@@ -241,6 +255,36 @@ impl Entry {
         };
         data.saturating_add(OVERHEAD)
     }
+}
+
+/// About what a link's shape holds: its lists, and its splines' points.
+fn link_bytes(shape: &LinkShape) -> usize {
+    (size_of_val(&shape.points[..]))
+        .saturating_add(size_of_val(&shape.curves[..]))
+        .saturating_add(splines_bytes(&shape.curves))
+}
+
+/// About what a sketch holds: its lists' entries, and a spline's points.
+fn sketch_bytes(sketch: &Sketch) -> usize {
+    (size_of_val(&sketch.points[..]))
+        .saturating_add(size_of_val(&sketch.curves[..]))
+        .saturating_add(size_of_val(&sketch.constraints[..]))
+        .saturating_add(size_of_val(&sketch.dimensions[..]).saturating_mul(2))
+        .saturating_add(size_of_val(&sketch.links[..]))
+        .saturating_add(splines_bytes(
+            sketch.curves.iter().map(|entry| &entry.curve),
+        ))
+}
+
+/// What the splines among `curves` hold beyond their entries: their
+/// points and knots.
+fn splines_bytes<'a>(curves: impl IntoIterator<Item = &'a Curve>) -> usize {
+    (curves.into_iter()).fold(0usize, |sum, curve| match curve {
+        Curve::Spline(spline) => sum
+            .saturating_add(size_of_val(&spline.points[..]))
+            .saturating_add(size_of_val(&spline.knots[..])),
+        _ => sum,
+    })
 }
 
 fn solid_bytes(solid: &Solid) -> usize {
@@ -524,6 +568,28 @@ impl Cache {
     ) -> Result<EdgeLength, Failed> {
         match self.entry(key, || Entry::Length(make())) {
             Entry::Length(found) => found,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn link(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<LinkShape, String>,
+    ) -> Result<LinkShape, String> {
+        match self.entry(key, || Entry::Link(make())) {
+            Entry::Link(found) => found,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn relinked(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<Arc<Sketch>, String>,
+    ) -> Result<Arc<Sketch>, String> {
+        match self.entry(key, || Entry::Relinked(make())) {
+            Entry::Relinked(relinked) => relinked,
             _ => unreachable!("keys of different kinds differ"),
         }
     }

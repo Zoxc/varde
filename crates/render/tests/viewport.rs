@@ -3033,8 +3033,10 @@ fn a_hovered_or_selected_vertex_is_round() {
     assert!(tint(middle(&selected)) > 60, "{:?}", middle(&selected));
 }
 
+/// What's hovered and selected of the faded model behind a sketch is
+/// drawn over it: what a sketch's Project or Intersect picks of it.
 #[test]
-fn hover_and_selection_are_not_drawn_faded() {
+fn hover_and_selection_are_drawn_over_the_faded_model() {
     let (mesh, edge) = box_under_top_camera();
     let camera = top_camera();
     let face = face_facing(&mesh, Vec3::Z);
@@ -3064,7 +3066,7 @@ fn hover_and_selection_are_not_drawn_faded() {
         eprintln!("no GPU adapter, skipping");
         return;
     };
-    assert!(picked == plain);
+    assert!(picked != plain);
 }
 
 #[test]

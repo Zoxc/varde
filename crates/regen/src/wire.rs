@@ -46,7 +46,9 @@
 //! a sketch on a face is one a sketch can be drawn at
 //! ([`Placement::valid`]: finite, its axes unit and square within `1e-9`,
 //! its normal `x × y` within that, its origin within the coordinate
-//! limit), each sketch listed once; the failures' geometry, a feature's
+//! limit), each sketch listed once; the relinked sketches are decoded
+//! within [`MAX_RELINKED_ITEMS`] together, each list within a sketch's
+//! limits, and the broken links within [`MAX_BROKEN`]; the failures' geometry, a feature's
 //! and the draft's, rides in the head too, decoded within its bounds and
 //! checked against the model by [`ErrorGeometry::from_parts`]
 //! (coordinates finite and within bounds, triangles and lines whole,
@@ -76,7 +78,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use varde_document::{BodyId, DecodeError, FeatureId, Generation, Placement, codec};
+use varde_document::{BodyId, DecodeError, FeatureId, Generation, Id, Placement, Sketch, codec};
 use varde_kernel::{
     Aabb, LinesError, LinesPart, MeshError, MeshPart, MeshParts, RenderLines, RenderMesh,
 };
@@ -107,16 +109,131 @@ pub const MAX_FACES: usize = 1 << 20;
 /// the page, at least 27 in the head).
 pub const MAX_CORNERS: usize = 1 << 22;
 
-/// The bounded decoding of a head's picking tables: refused as soon as
-/// they're past their bounds, mostly before any element is read.
+/// The most a reply's relinked sketches may hold together, each
+/// weighing one and its points, curves, constraints, dimensions and
+/// links: several of the largest sketches there can be, and few enough
+/// that decoding them can't take the page's memory (an item is some 30
+/// to 100 bytes there and as few as 3 in the head). Relinked sketches
+/// past it aren't sent ([`encode_reply`]): they wait for a smaller
+/// model.
+pub const MAX_RELINKED_ITEMS: usize = 1 << 20;
+
+/// The most broken links a reply may list (some 40 bytes each on the
+/// page, as few as 3 in the head). Those past it aren't sent.
+pub const MAX_BROKEN: usize = 1 << 16;
+
+/// The bounded decoding of a head's picking tables, relinked sketches
+/// and broken links: refused as soon as they're past their bounds,
+/// mostly before any element is read.
 mod bounded {
     use serde::{Deserialize, Deserializer};
-    use varde_document::BodyId;
+    use varde_document::{BodyId, FeatureId, Id, Sketch};
     use varde_kernel::RenderMesh;
+    use varde_sketch::{
+        ConstraintEntry, CurveEntry, DimensionEntry, Link, MAX_CONSTRAINTS, MAX_CURVES,
+        MAX_DIMENSIONS, MAX_LINKS, MAX_POINTS, Point,
+    };
 
-    use super::{MAX_CORNERS, MAX_FACES};
+    use super::{MAX_BROKEN, MAX_CORNERS, MAX_FACES, MAX_RELINKED_ITEMS};
     use crate::picking::bounded::seq;
     use crate::{PickCorner, PickFace, Picking};
+
+    /// A [`Sketch`] as it's encoded, each list within what
+    /// [`Sketch::check`] holds it to, refused past it as it's decoded.
+    /// What's within an item (a spline's points and knots, a link's ids,
+    /// a dimension's expression) is no more than a few times its bytes.
+    /// Its fields are the sketch's, in order.
+    #[derive(Deserialize)]
+    struct BoundedSketch {
+        #[serde(deserialize_with = "points")]
+        points: Vec<Point>,
+        #[serde(deserialize_with = "curves")]
+        curves: Vec<CurveEntry>,
+        #[serde(deserialize_with = "constraints")]
+        constraints: Vec<ConstraintEntry>,
+        #[serde(deserialize_with = "dimensions")]
+        dimensions: Vec<DimensionEntry>,
+        next_id: u32,
+        #[serde(deserialize_with = "links")]
+        links: Vec<Link>,
+    }
+
+    impl BoundedSketch {
+        /// One and its items, see [`MAX_RELINKED_ITEMS`].
+        fn weight(&self) -> usize {
+            [
+                1,
+                self.points.len(),
+                self.curves.len(),
+                self.constraints.len(),
+                self.dimensions.len(),
+                self.links.len(),
+            ]
+            .into_iter()
+            .fold(0, usize::saturating_add)
+        }
+    }
+
+    fn points<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Point>, D::Error> {
+        seq(d, MAX_POINTS, |_| 0, 0)
+    }
+
+    fn curves<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<CurveEntry>, D::Error> {
+        seq(d, MAX_CURVES, |_| 0, 0)
+    }
+
+    fn constraints<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<ConstraintEntry>, D::Error> {
+        seq(d, MAX_CONSTRAINTS, |_| 0, 0)
+    }
+
+    fn dimensions<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<DimensionEntry>, D::Error> {
+        seq(d, MAX_DIMENSIONS, |_| 0, 0)
+    }
+
+    fn links<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Link>, D::Error> {
+        seq(d, MAX_LINKS, |_| 0, 0)
+    }
+
+    /// Sketches weighing at most [`MAX_RELINKED_ITEMS`] together, each
+    /// bounded as [`BoundedSketch`] is.
+    pub(super) fn relinked<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<(FeatureId, Sketch)>, D::Error> {
+        let sketches = seq(
+            d,
+            MAX_RELINKED_ITEMS,
+            |(_, sketch): &(FeatureId, BoundedSketch)| sketch.weight(),
+            MAX_RELINKED_ITEMS,
+        )?;
+        Ok((sketches.into_iter())
+            .map(|(feature, sketch)| {
+                let BoundedSketch {
+                    points,
+                    curves,
+                    constraints,
+                    dimensions,
+                    next_id,
+                    links,
+                } = sketch;
+                let sketch = Sketch {
+                    points,
+                    curves,
+                    constraints,
+                    dimensions,
+                    next_id,
+                    links,
+                };
+                (feature, sketch)
+            })
+            .collect())
+    }
+
+    /// At most [`MAX_BROKEN`] broken links.
+    pub(super) fn broken<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<(FeatureId, Id, String)>, D::Error> {
+        seq(d, MAX_BROKEN, |_| 0, 0)
+    }
 
     /// At most [`MAX_FACES`] faces with at most [`Picking::MAX_ALIASES`]
     /// aliases together.
@@ -239,6 +356,16 @@ pub enum Head {
         /// tables ([`Inspected::checked`]): one that fails is answered as
         /// an error, the model with it as usual.
         inspected: Option<Box<Inspected>>,
+        /// The sketches relinked, within [`MAX_RELINKED_ITEMS`] and
+        /// each list within a sketch's limits, refused as they're
+        /// decoded. Checked by the document's check when the app folds
+        /// one in, which refuses one that fails it, so not here.
+        #[serde(deserialize_with = "bounded::relinked")]
+        relinked: Vec<(FeatureId, Sketch)>,
+        /// The broken links, at most [`MAX_BROKEN`]: only marks and
+        /// words.
+        #[serde(deserialize_with = "bounded::broken")]
+        broken: Vec<(FeatureId, Id, String)>,
     },
     /// A [`Response::Failed`].
     Failed {
@@ -273,12 +400,31 @@ impl Head {
 /// ([`MeshParts`]' fields, in order), and the sketches' points and ends.
 pub const MODEL_PARTS: usize = 14;
 
+/// What `relinked` weighs against [`MAX_RELINKED_ITEMS`]: each sketch
+/// one and its items.
+fn relinked_weight(relinked: &[(FeatureId, Arc<Sketch>)]) -> usize {
+    (relinked.iter())
+        .flat_map(|(_, sketch)| {
+            [
+                1,
+                sketch.points.len(),
+                sketch.curves.len(),
+                sketch.constraints.len(),
+                sketch.dimensions.len(),
+                sketch.links.len(),
+            ]
+        })
+        .fold(0, usize::saturating_add)
+}
+
 /// The reply answering `response`, the mirror of [`decode_reply`]: its
 /// encoded head, and the parts following it: its model's as bytes if it
 /// has one, see [`MODEL_PARTS`], or an export's bodies. A model whose
 /// head would be over [`MAX_HEAD_BYTES`], or whose picking tables are
 /// past [`MAX_FACES`], [`MAX_CORNERS`] or [`Picking::MAX_ALIASES`], is answered as failed,
 /// which the page would otherwise refuse with no generation to answer.
+/// Relinked sketches past [`MAX_RELINKED_ITEMS`] go unsent, and broken
+/// links past [`MAX_BROKEN`].
 pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
     match response {
         Response::Regenerated {
@@ -295,6 +441,8 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             placements,
             bodies,
             inspected,
+            relinked,
+            broken,
         } => {
             let geometry = |geometry: &Option<Arc<ErrorGeometry>>| {
                 geometry.as_deref().map(ErrorGeometry::to_parts)
@@ -329,6 +477,15 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 snaps: picking.snaps().to_vec(),
                 corners: picking.corners().to_vec(),
                 inspected: inspected.clone(),
+                relinked: if relinked_weight(relinked) <= MAX_RELINKED_ITEMS {
+                    (relinked.iter())
+                        .map(|(feature, sketch)| (*feature, Sketch::clone(sketch)))
+                        .collect()
+                } else {
+                    // Relinking waits for a model small enough to send.
+                    Vec::new()
+                },
+                broken: broken.iter().take(MAX_BROKEN).cloned().collect(),
             };
             let mut encoded = head.encode();
             // Too large with the failures' geometry: the model without
@@ -337,9 +494,12 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 && let Head::Regenerated {
                     draft_geometry,
                     failed,
+                    relinked,
                     ..
                 } = &mut head
             {
+                // Relinking waits for a model small enough to send.
+                relinked.clear();
                 *draft_geometry = None;
                 failed
                     .iter_mut()
@@ -444,6 +604,8 @@ pub fn decode_reply(
             snaps,
             corners,
             inspected,
+            relinked,
+            broken,
         } => {
             let inspect = inspected.as_ref().map(|inspected| inspected.revision);
             let model = check_merged(&merged)
@@ -516,6 +678,10 @@ pub fn decode_reply(
                         merged,
                         placements,
                         bodies,
+                        relinked: (relinked.into_iter())
+                            .map(|(feature, sketch)| (feature, Arc::new(sketch)))
+                            .collect(),
+                        broken,
                     }
                 }
                 Err(error) => Response::Failed {

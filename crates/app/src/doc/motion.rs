@@ -66,7 +66,7 @@ use self::sweep::SweepSetup;
 use super::combine::pickable;
 use super::feed::Merges;
 use super::regions::TypedText;
-use super::{Doc, Focus};
+use super::{Doc, Focus, OUT_OF_DATE};
 
 /// The move, mirror or pattern being set up, while one is:
 /// [`Doc::motion`].
@@ -1083,10 +1083,9 @@ impl MotionSession {
             .collect();
         self.edited_bodies
             .retain(|&body| pickable(document, body, edited));
-        let features = document.features();
         let Some(index) = (match edited {
-            Some(id) => features.iter().position(|feature| feature.id == id),
-            None => Some(features.len()),
+            Some(id) => document.feature_index(id),
+            None => Some(document.features().len()),
         }) else {
             return;
         };
@@ -1318,7 +1317,6 @@ const NOT_A_PLANE: &str = "Only a flat face can be the mirror plane";
 const NOT_A_NEUTRAL_PLANE: &str = "Only a flat face can be the neutral plane";
 const DRAFTED_NEUTRAL_PLANE: &str =
     "That face is one the draft tilts: pick a face it doesn't, or an origin plane";
-const OUT_OF_DATE: &str = "The model shown is out of date: try again once it's regenerated";
 
 impl Doc {
     /// Starts setting up a new move, mirror or pattern (`kind`), in a
@@ -2086,13 +2084,8 @@ impl Doc {
     /// `bodies` where the model shown has them: a merged one as the body
     /// holding it.
     fn shown_bodies(&self, bodies: &[BodyId]) -> Vec<BodyId> {
-        let merged = self.feed.merged_bodies();
         (bodies.iter())
-            .map(|&body| {
-                (merged.iter())
-                    .find(|(consumed, _)| *consumed == body)
-                    .map_or(body, |&(_, holder)| holder)
-            })
+            .map(|&body| self.feed.shown_body(body))
             .collect()
     }
 
@@ -2127,13 +2120,7 @@ impl Doc {
     /// or split being set up ([`Naming`]): the history stopped at its
     /// feature, all of it for a new one.
     fn motion_naming(&self) -> Option<Naming> {
-        let session = self.motion.as_ref()?;
-        let document = self.editor.document();
-        let features = document.features();
-        let before = (session.feature)
-            .and_then(|id| features.iter().position(|feature| feature.id == id))
-            .unwrap_or(features.len());
-        Some(Naming::before(document, before, self.shown()))
+        Some(self.naming_at(self.motion.as_ref()?.feature))
     }
 
     /// The edge or face hovered, if it's one a click takes as the axis or

@@ -26,6 +26,7 @@ pub enum List {
     Curves,
     Constraints,
     Dimensions,
+    Links,
 }
 
 impl List {
@@ -35,6 +36,7 @@ impl List {
             List::Curves => "curves",
             List::Constraints => "constraints",
             List::Dimensions => "dimensions",
+            List::Links => "links",
         }
     }
 }
@@ -81,6 +83,13 @@ impl Sketch {
     /// origin and axes are named only as they can be
     /// ([`Constraint::fits_builtins`](crate::Constraint::fits_builtins)),
     /// never as a curve's point, and no id given out reaches theirs.
+    /// Links ([`Link`](crate::Link)) are in increasing id order, at most
+    /// [`MAX_LINKS`](crate::MAX_LINKS), each id below `next_id` and
+    /// naming no item, each listing points and curves of its own, in
+    /// increasing order, its curves made of its points alone, no fillet,
+    /// chamfer or spline with handles among them, construction unless
+    /// the link counts for profiles; no other curve is made of a link's
+    /// points.
     pub fn check(&self, design: &Design) -> Result<(), SketchError> {
         let max = design.max;
         for (list, count, limit) in [
@@ -166,6 +175,7 @@ impl Sketch {
         if let Some(id) = self.repeated_corner() {
             return Err(SketchError::Corner(id));
         }
+        self.check_links()?;
         for entry in &self.constraints {
             let from = entry.id;
             match entry.constraint {
@@ -312,6 +322,13 @@ pub enum SketchError {
     /// The dimension's label is farther than the limit from its anchor, or
     /// not a number.
     Label(Id),
+    /// The link names what isn't a point or curve of its own: one that
+    /// isn't there or is another link's, a curve made of points not its
+    /// own, a fillet or chamfer, a spline with handles, a curve counting
+    /// for profiles as the link doesn't say (or the other way), its ids
+    /// out of order or too many; or a curve not the link's is made of its
+    /// points.
+    Link(Id),
     /// The dimension's expression doesn't evaluate to its stored value in
     /// the design's units, or not to what its measure asks for: not a
     /// length or an angle, not above zero, past the limit.
@@ -378,6 +395,10 @@ impl fmt::Display for SketchError {
             SketchError::Label(id) => {
                 write!(f, "sketch dimension {id} has its label out of bounds")
             }
+            SketchError::Link(id) => write!(
+                f,
+                "sketch link {id} names geometry that isn't its own, or shares it"
+            ),
             SketchError::Value(id) => write!(
                 f,
                 "sketch dimension {id} has a value its expression doesn't give, or out of bounds"

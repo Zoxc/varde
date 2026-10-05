@@ -2,13 +2,13 @@
 //! Sketch tab in place of the Timeline.
 
 use iced::widget::{
-    MouseArea, Space, button, column, container, hover, mouse_area, opaque, row, slider, space,
-    stack, text, text_input,
+    MouseArea, Row, Space, button, column, container, hover, mouse_area, opaque, row, slider,
+    space, stack, text, text_input,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
 use varde_document::{BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Opacity};
 use varde_expr::LengthUnit;
-use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, Sketch};
+use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, LinkKind, Sketch};
 
 use crate::chrome::{self, ChipSize, Edge, edged, icon_button, key_chip};
 use crate::context_menu::ContextMenu;
@@ -22,8 +22,8 @@ use crate::theme::{
 };
 use crate::toolbar::{menu_item, menu_separator};
 use crate::{
-    ConstraintKind, DocumentState, Edit, Look, Message, Panel, RowMenu, SketchState, VALUE_FIELD,
-    ValueTarget, dimension, split,
+    ConstraintKind, DocumentState, Edit, LinkRow, Look, Message, Panel, RowMenu, SketchState,
+    VALUE_FIELD, ValueTarget, dimension, split,
 };
 
 pub(crate) const ROW_HEIGHT: f32 = 28.0;
@@ -503,16 +503,7 @@ fn name<'a>(name: impl text::IntoFragment<'a>, visible: bool) -> iced::widget::T
 
 /// A group's heading in a list: its `label` and how many it holds.
 fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
-    row![
-        icons::tinted(Icon::Chev, icons::INLINE, |p| p.muted),
-        chrome::heading(label),
-        text(count).size(11.5).style(theme::faint_text),
-    ]
-    .spacing(8)
-    .height(ROW_HEIGHT)
-    .padding([0, 8])
-    .align_y(Alignment::Center)
-    .into()
+    group_row(label, count).padding([0, 8]).into()
 }
 
 /// The bodies, then the sketches. A body a join merged into another
@@ -853,48 +844,172 @@ fn sketch_tab<'a>(
     column![container(plane).padding(Padding::ZERO.top(6)), lists].into()
 }
 
-/// The sketch's curves, then its points, by name, each selected on a
-/// click. Only the rows in view of the list's `height` are laid out, since
-/// a sketch can hold tens of thousands of items: the rest are room.
-fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
-    let items = sketch.sketch.curves.len() + sketch.sketch.points.len();
-    let conflicts = sketch.conflicting_items();
-    let row_at = |i: usize| {
-        let curves = &sketch.sketch.curves;
-        match curves.get(i) {
-            Some(entry) => {
-                let icon = match (entry.corner, &entry.curve) {
-                    (Some(_), Curve::Arc { .. }) => Icon::Fillet,
-                    (Some(_), _) => Icon::Chamfer,
-                    (None, Curve::Line { .. }) => Icon::Line,
-                    (None, Curve::Circle { .. }) => Icon::Circle,
-                    (None, Curve::Arc { .. }) => Icon::Arc,
-                    (None, Curve::Spline(_)) => Icon::Spline,
-                };
-                let note = entry.construction.then_some("Construction");
-                let danger = conflicts.contains(&entry.id);
-                item_row(sketch, entry.id, icon, entry.name(), note, danger).into()
-            }
-            None => {
-                let point = &sketch.sketch.points[i - curves.len()];
-                let danger = conflicts.contains(&point.id);
-                item_row(sketch, point.id, Icon::Point, point.name(), None, danger).into()
-            }
+/// A row of the Sketch tab's Geometry list, see [`geometry_rows`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GeometryRow {
+    /// A group's header: its name and how many rows it has.
+    Header(&'static str, usize),
+    /// A curve of the sketch's own, by its place in its curves.
+    Curve(usize),
+    /// A point of the sketch's own, by its place in its points.
+    Point(usize),
+    /// A link, by its place among `links`.
+    Link(usize),
+}
+
+/// The rows of the Sketch tab's Geometry list, groups with a header row
+/// each: Geometry, the sketch's own curves then points (what no link
+/// made), then Projected and Intersected, its links of each kind, a
+/// link a row. A group with nothing in it isn't listed, but for
+/// Geometry while there's no link either, which says nothing's drawn.
+pub(crate) fn geometry_rows(sketch: &Sketch, links: &[LinkRow]) -> Vec<GeometryRow> {
+    let linked = sketch.linked();
+    let own = |id: &Id| !linked.contains(id);
+    let curves = (sketch.curves.iter().enumerate())
+        .filter(|(_, entry)| own(&entry.id))
+        .map(|(i, _)| GeometryRow::Curve(i));
+    let points = (sketch.points.iter().enumerate())
+        .filter(|(_, point)| own(&point.id))
+        .map(|(i, _)| GeometryRow::Point(i));
+    let mut rows = vec![GeometryRow::Header("Geometry", 0)];
+    rows.extend(curves.chain(points));
+    let count = rows.len() - 1;
+    rows[0] = GeometryRow::Header("Geometry", count);
+    if count == 0 && !links.is_empty() {
+        rows.clear();
+    }
+    for kind in [LinkKind::Project, LinkKind::Intersect] {
+        let of: Vec<GeometryRow> = (links.iter().enumerate())
+            .filter(|(_, link)| link.kind == kind)
+            .map(|(i, _)| GeometryRow::Link(i))
+            .collect();
+        if !of.is_empty() {
+            rows.push(GeometryRow::Header(kind.name(), of.len()));
+            rows.extend(of);
         }
+    }
+    rows
+}
+
+/// The sketch's curves, then its points, by name, each selected on a
+/// click, under a Geometry header, then its links under Projected and
+/// Intersected, as [`geometry_rows`] has them, headers as rows. Only the
+/// rows in view of the list's `height` are laid out, since a sketch can
+/// hold tens of thousands of items: the rest are room.
+fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
+    let rows = geometry_rows(sketch.sketch, sketch.links);
+    let conflicts = sketch.conflicting_items();
+    let row_at = |i: usize| match rows[i] {
+        GeometryRow::Header(label, count) => group_row(label, count).into(),
+        GeometryRow::Curve(at) => {
+            let entry = &sketch.sketch.curves[at];
+            let icon = match (entry.corner, &entry.curve) {
+                (Some(_), Curve::Arc { .. }) => Icon::Fillet,
+                (Some(_), _) => Icon::Chamfer,
+                (None, Curve::Line { .. }) => Icon::Line,
+                (None, Curve::Circle { .. }) => Icon::Circle,
+                (None, Curve::Arc { .. }) => Icon::Arc,
+                (None, Curve::Spline(_)) => Icon::Spline,
+            };
+            let note = entry.construction.then_some("Construction");
+            let danger = conflicts.contains(&entry.id);
+            item_row(sketch, entry.id, icon, entry.name(), note, danger).into()
+        }
+        GeometryRow::Point(at) => {
+            let point = &sketch.sketch.points[at];
+            let danger = conflicts.contains(&point.id);
+            item_row(sketch, point.id, Icon::Point, point.name(), None, danger).into()
+        }
+        GeometryRow::Link(at) => link_row(sketch, &sketch.links[at]),
     };
-    let header = container(group("Geometry", items)).padding([0, 8]);
-    let list = if items == 0 {
-        empty_note("Nothing drawn yet.")
+    let list = if rows == [GeometryRow::Header("Geometry", 0)] {
+        column![
+            container(group("Geometry", 0)).padding([0, 8]),
+            empty_note("Nothing drawn yet.")
+        ]
+        .into()
     } else {
-        virtual_list(
-            items,
-            sketch.scroll,
-            height - ROW_HEIGHT,
-            row_at,
-            |offset| Message::Look(Look::ScrollGeometry(offset)),
-        )
+        virtual_list(rows.len(), sketch.scroll, height, row_at, |offset| {
+            Message::Look(Look::ScrollGeometry(offset))
+        })
     };
-    column![header, list].padding(Padding::ZERO.top(6)).into()
+    container(list).padding(Padding::ZERO.top(6)).into()
+}
+
+/// A group's header as a row of a list: as [`group`], within the list's
+/// own padding.
+fn group_row<'a>(label: &'a str, count: usize) -> Row<'a, Message> {
+    row![
+        icons::tinted(Icon::Chev, icons::INLINE, |p| p.muted),
+        chrome::heading(label),
+        text(count).size(11.5).style(theme::faint_text),
+    ]
+    .spacing(8)
+    .height(ROW_HEIGHT)
+    .align_y(Alignment::Center)
+}
+
+/// A link's row: its kind's icon and what it comes from, "In profiles"
+/// if its curves count for them, in the danger colour with why if it's
+/// broken. Clicking selects what it made, hovering lights what it comes
+/// from in the model, and its context menu removes it or has its curves
+/// count for profiles or not.
+fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Message> {
+    let id = link.link;
+    let made = sketch.sketch.link(id);
+    let selected = made.is_some_and(|made| {
+        !made.points.is_empty() && made.items().all(|item| sketch.selection.contains(&item))
+    });
+    let icon = match link.kind {
+        LinkKind::Project => Icon::Project,
+        LinkKind::Intersect => Icon::Intersect,
+    };
+    let note = match &link.broken {
+        Some(why) => Some(why.as_str().into()),
+        None => link.profiles.then(|| "In profiles".into()),
+    };
+    let row = SelectableRow {
+        icon,
+        name: link.source.as_str().into(),
+        faint: sketch.pending.contains(&id),
+        danger: link.broken.is_some(),
+        failed: false,
+        note,
+        indent: 24.0,
+        selected,
+    }
+    .view(Message::Look(Look::ClickLink(id)))
+    .on_enter(Message::Look(Look::HoverLink(Some(id))))
+    .on_exit(Message::Look(Look::HoverLink(None)));
+    let menu = (sketch.link_menu == Some(id)).then(|| {
+        let editable = sketch.editable;
+        let profiles = if link.profiles {
+            "Leave out of profiles"
+        } else {
+            "Use in profiles"
+        };
+        let toggle = Message::Edit(Edit::SetLinkProfiles(id, !link.profiles));
+        let remove = Message::Edit(Edit::RemoveLink(id));
+        row_menu(vec![
+            menu_item(icon, profiles.into(), None, editable.then_some(toggle)).into(),
+            menu_separator().into(),
+            menu_item(
+                Icon::Trash,
+                "Remove".into(),
+                None,
+                editable.then_some(remove),
+            )
+            .into(),
+        ])
+    });
+    let on = RowMenu::Link(id);
+    ContextMenu::new(
+        row,
+        menu,
+        Message::Look(Look::OpenMenu(on)),
+        Message::Look(Look::CloseMenu),
+    )
+    .into()
 }
 
 /// A list of `count` rows [`ROW_HEIGHT`] tall, `height` tall and scrolled
@@ -1291,5 +1406,84 @@ mod tests {
         let rows = Rows::in_view(20, f32::NAN, f32::NAN);
         assert_eq!(rows.shown, 0..1);
         assert_eq!(Rows::in_view(0, 50.0, 100.0).shown, 0..0);
+    }
+
+    /// The Geometry list groups the sketch's own items, then its
+    /// projected and intersected links, under a header row each, empty
+    /// groups left out.
+    #[test]
+    fn the_geometry_list_groups_own_geometry_and_links() {
+        use glam::DVec2;
+        use varde_sketch::{LinkShape, SketchEdit};
+
+        let design = varde_sketch::Design {
+            max: 1e6,
+            units: LengthUnit::Mm,
+        };
+        let row = |link: Id, kind: LinkKind| LinkRow {
+            link,
+            kind,
+            source: "Edge of Body 1".into(),
+            broken: None,
+            profiles: false,
+        };
+        // Nothing yet: Geometry alone, empty.
+        let empty = Sketch::default();
+        assert_eq!(
+            geometry_rows(&empty, &[]),
+            [GeometryRow::Header("Geometry", 0)]
+        );
+
+        // A link only: no Geometry group.
+        let mut sketch = SketchEdit::AddLink {
+            kind: LinkKind::Intersect,
+        }
+        .apply(&empty, &design)
+        .unwrap();
+        let intersected = sketch.links[0].id;
+        let mut shape = LinkShape::default();
+        let start = shape.point(DVec2::ZERO);
+        let end = shape.point(DVec2::X);
+        shape.curve(Curve::Line { start, end });
+        sketch = SketchEdit::Relink(vec![(intersected, shape)])
+            .apply(&sketch, &design)
+            .unwrap();
+        let links = [row(intersected, LinkKind::Intersect)];
+        assert_eq!(
+            geometry_rows(&sketch, &links),
+            [GeometryRow::Header("Intersected", 1), GeometryRow::Link(0)]
+        );
+
+        // A line of its own and a projected link too: its own first, the
+        // link's line and points not among them.
+        let a = sketch.add_point(DVec2::new(0.0, 5.0)).unwrap();
+        let b = sketch.add_point(DVec2::new(5.0, 5.0)).unwrap();
+        sketch
+            .add_curve(Curve::Line { start: a, end: b }, false)
+            .unwrap();
+        sketch = SketchEdit::AddLink {
+            kind: LinkKind::Project,
+        }
+        .apply(&sketch, &design)
+        .unwrap();
+        let projected = sketch.links[1].id;
+        let links = [
+            row(intersected, LinkKind::Intersect),
+            row(projected, LinkKind::Project),
+        ];
+        let own_line = sketch.curves.len() - 1;
+        assert_eq!(
+            geometry_rows(&sketch, &links),
+            [
+                GeometryRow::Header("Geometry", 3),
+                GeometryRow::Curve(own_line),
+                GeometryRow::Point(2),
+                GeometryRow::Point(3),
+                GeometryRow::Header("Projected", 1),
+                GeometryRow::Link(1),
+                GeometryRow::Header("Intersected", 1),
+                GeometryRow::Link(0),
+            ]
+        );
     }
 }
