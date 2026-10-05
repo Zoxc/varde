@@ -540,6 +540,19 @@ impl Doc {
         self.persist.leaving
     }
 
+    /// Has the document as it is count as saved and auto-saved where
+    /// `was`, its revision before, did: for what follows from reading it
+    /// alone, see `relink.rs`.
+    pub(super) fn keep_clean(&mut self, was: Revision) {
+        let now = self.editor.revision();
+        if self.persist.saved_revision == Some(was) {
+            self.persist.saved_revision = Some(now);
+        }
+        if self.persist.auto_save.sent == Some(was) {
+            self.persist.auto_save.sent = Some(now);
+        }
+    }
+
     /// The editor revision last saved, see [`Persist::saved_revision`].
     #[cfg(test)]
     pub(crate) fn saved_revision(&self) -> Option<Revision> {

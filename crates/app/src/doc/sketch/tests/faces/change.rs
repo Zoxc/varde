@@ -393,10 +393,7 @@ fn a_cut_face_of_a_body_merged_after_the_sketch_is_named_by_the_body_it_was_cut_
     }
     let region = square.profiles().unwrap().reference(0).unwrap();
     editor
-        .apply(Command::SetSketch {
-            feature: pocket,
-            sketch: Box::new(square),
-        })
+        .apply(editor.document().set_sketch_whole(pocket, square))
         .unwrap();
     let ask = Extent::ask(&editor.document().design());
     let cut = Extrude {
@@ -458,10 +455,7 @@ fn a_face_cut_through_two_bodies_merged_after_the_sketch_is_refused() {
     }
     let region = square.profiles().unwrap().reference(0).unwrap();
     editor
-        .apply(Command::SetSketch {
-            feature: hole,
-            sketch: Box::new(square),
-        })
+        .apply(editor.document().set_sketch_whole(hole, square))
         .unwrap();
     let cut = Extrude {
         taper: None,

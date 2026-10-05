@@ -28,10 +28,7 @@ fn sketch_on(editor: &mut Editor, plane: Plane, draw: impl FnOnce(&mut Sketch)) 
     let mut sketch = Sketch::default();
     draw(&mut sketch);
     editor
-        .apply(Command::SetSketch {
-            feature,
-            sketch: Box::new(sketch),
-        })
+        .apply(editor.document().set_sketch_whole(feature, sketch))
         .unwrap();
     feature
 }
@@ -643,10 +640,13 @@ fn a_section_s_region_gone_is_said_to_be_gone() {
     pick(plates, top);
     pick(plates, side);
     assert!(plates.doc.motion_ready());
-    plates.doc.apply(Command::SetSketch {
-        feature: side,
-        sketch: Box::new(Sketch::default()),
-    });
+    plates.doc.apply(
+        plates
+            .doc
+            .editor
+            .document()
+            .set_sketch_whole(side, Sketch::default()),
+    );
     plates.doc.sync();
     plates.answer();
     assert!(shows(
@@ -662,10 +662,13 @@ fn a_section_s_region_gone_is_said_to_be_gone() {
     assert!(!shows(plates, "is gone"));
     assert!(plates.doc.motion_ready());
     // Gone again, and taken out: whole.
-    plates.doc.apply(Command::SetSketch {
-        feature: side,
-        sketch: Box::new(Sketch::default()),
-    });
+    plates.doc.apply(
+        plates
+            .doc
+            .editor
+            .document()
+            .set_sketch_whole(side, Sketch::default()),
+    );
     plates.doc.sync();
     plates.motion(MotionLook::DropSection(2));
     assert!(!shows(plates, "is gone"));
@@ -689,10 +692,13 @@ fn add_holed(plates: &mut Plates, min: (f64, f64), max: (f64, f64)) -> FeatureId
     sketch
         .add_curve(Curve::Circle { center, radius }, false)
         .unwrap();
-    plates.doc.apply(Command::SetSketch {
-        feature,
-        sketch: Box::new(sketch),
-    });
+    plates.doc.apply(
+        plates
+            .doc
+            .editor
+            .document()
+            .set_sketch_whole(feature, sketch),
+    );
     plates.doc.sync();
     plates.answer();
     feature
@@ -772,10 +778,9 @@ fn a_start_off_its_corners_shows_in_its_row() {
     }
     let moved = (redrawn.points.iter_mut()).find(|point| point.id == start);
     moved.unwrap().at = DVec2::new(20.0, 2.0);
-    plates.doc.apply(Command::SetSketch {
-        feature: top,
-        sketch: Box::new(redrawn),
-    });
+    plates
+        .doc
+        .apply(plates.doc.editor.document().set_sketch_whole(top, redrawn));
     plates.doc.sync();
     plates.answer();
     let state = plates.doc.motion_state().unwrap();
@@ -819,7 +824,10 @@ fn hidden_section_sketches_share_their_own_work() {
     // which is what's tested: a twentieth of it, of sketches as much simpler,
     // so as not to take seconds in a debug build.
     use crate::doc::regions::with_work_unit;
-    with_work_unit(varde_sketch::MAX_WORK / WORK_SHARE, hidden_section_sketches_share);
+    with_work_unit(
+        varde_sketch::MAX_WORK / WORK_SHARE,
+        hidden_section_sketches_share,
+    );
 }
 
 /// How much smaller the budgets are in the tests spending all of them.
@@ -974,10 +982,9 @@ fn a_start_at_a_corner_s_second_point_is_drawn() {
     pick(plates, top);
     let mut redrawn = sketch_of(plates.doc.editor.document(), top).clone();
     let second = redrawn.add_point(DVec2::new(25.0, 5.0)).unwrap();
-    plates.doc.apply(Command::SetSketch {
-        feature: top,
-        sketch: Box::new(redrawn),
-    });
+    plates
+        .doc
+        .apply(plates.doc.editor.document().set_sketch_whole(top, redrawn));
     plates.doc.sync();
     plates.motion(MotionLook::LoftStart {
         section: 1,

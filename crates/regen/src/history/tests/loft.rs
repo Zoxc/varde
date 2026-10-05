@@ -82,10 +82,7 @@ fn add_sketch<T>(
     let mut sketch = Sketch::default();
     let drawn = draw(&mut sketch);
     editor
-        .apply(Command::SetSketch {
-            feature,
-            sketch: Box::new(sketch),
-        })
+        .apply(editor.document().set_sketch_whole(feature, sketch))
         .unwrap();
     (feature, drawn)
 }
@@ -99,10 +96,7 @@ fn edit(editor: &mut Editor, feature: FeatureId, change: impl FnOnce(&mut Sketch
     let mut sketch = sketch.clone();
     change(&mut sketch);
     editor
-        .apply(Command::SetSketch {
-            feature,
-            sketch: Box::new(sketch),
-        })
+        .apply(editor.document().set_sketch_whole(feature, sketch))
         .unwrap();
 }
 

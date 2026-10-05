@@ -252,10 +252,7 @@ fn a_sketch_on_a_moved_face_follows_it() {
     let profiles = drawn.profiles().unwrap();
     let regions = vec![profiles.reference(0).unwrap()];
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     let join = Extrude {
         taper: None,

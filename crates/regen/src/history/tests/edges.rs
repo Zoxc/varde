@@ -44,10 +44,7 @@ fn draw_rectangle(
     let mut drawn = Sketch::default();
     rectangle((a.0.min(b.0), a.1.min(b.1)), (a.0.max(b.0), a.1.max(b.1)))(&mut drawn);
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
 }
 
@@ -412,10 +409,7 @@ fn a_revolve_whose_edge_is_gone_fails() {
         let mut drawn = Sketch::default();
         rectangle(min, max)(&mut drawn);
         editor
-            .apply(Command::SetSketch {
-                feature: skim_sketch,
-                sketch: Box::new(drawn),
-            })
+            .apply(editor.document().set_sketch_whole(skim_sketch, drawn))
             .unwrap();
     };
     widen(&mut editor, (-40.0, -30.0), (40.0, 30.0));
@@ -449,10 +443,7 @@ fn a_revolve_whose_edge_s_body_is_gone_fails() {
     let mut drawn = Sketch::default();
     rectangle((-30.0, 0.0), (30.0, 40.0))(&mut drawn);
     editor
-        .apply(Command::SetSketch {
-            feature: sketch_1,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch_1, drawn))
         .unwrap();
     let profiles = match &editor.document().features()[0].kind {
         FeatureKind::Sketch { sketch, .. } => sketch.profiles().unwrap(),
@@ -813,10 +804,7 @@ fn a_sketch_on_a_tilted_face_revolves_about_its_edge() {
         drawn.add_curve(line, false).unwrap();
     }
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     let axis = edge(wedge, slope, side, start + along * 10.0);
     add_about(&mut editor, sketch, AxisLine::Edge(axis));

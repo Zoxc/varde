@@ -18,6 +18,12 @@
 //! with it, are said in the status bar. A relinked sketch the document refuses is left as it
 //! was, logged.
 //!
+//! A sketch face added as the document was read (`varde_document::
+//! sketch_face`) makes nothing until it's relinked: filling only such
+//! empty links in a document as it was opened or saved keeps it so
+//! (`Doc::keep_clean`), neither unsaved nor auto-saved for it, as the file
+//! read again gives the same.
+//!
 //! [`Editor::amend`]: varde_document::Editor::amend
 
 use std::sync::Arc;
@@ -36,6 +42,8 @@ impl Doc {
             return;
         }
         let mut lost = Vec::new();
+        let clean = (!self.edited()).then(|| self.editor.revision());
+        let mut only_filled = true;
         for (feature, sketch) in relinked {
             let document = self.editor.document();
             let Some((name, before)) =
@@ -48,6 +56,9 @@ impl Doc {
             };
             let gone = went_with(&before, &sketch);
             let stale = stale_links(&before, &sketch);
+            only_filled &= (before.links.iter())
+                .filter(|link| stale.contains(&link.id))
+                .all(|link| link.items().next().is_none());
             let command = Command::SetSketch {
                 feature,
                 sketch: Box::new(Arc::unwrap_or_clone(sketch)),
@@ -62,6 +73,9 @@ impl Doc {
                     }
                 }
             }
+        }
+        if let Some(clean) = clean.filter(|_| only_filled) {
+            self.keep_clean(clean);
         }
         if let Some(said) = (lost.iter())
             .map(|(name, (constraints, dimensions))| lost_note(name, *constraints, *dimensions))

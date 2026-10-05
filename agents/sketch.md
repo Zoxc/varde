@@ -1175,7 +1175,8 @@ bar says why (`EditError::Sketch`).
     the source, committed by `Command::AddLink` with the new link's id,
     one undoable change); a click on what a link of the tool's kind
     already comes from (a model pick by the item it finds on the model
-    shown, a sketch's by its id) proposes deleting that link. The link
+    shown, a sketch's by its id) proposes deleting that link, but the
+    sketch face's (below), refused with a notice. The link
     holds nothing until the next model answers it, its geometry then
     folded into the change that added it (`agents/features.md`, Sketch
     links). Anything else is refused with why in the status bar (`Doc::notice`):
@@ -1199,6 +1200,24 @@ bar says why (`EditError::Sketch`).
     the Sketch tab selected) deletes the whole link with the rest of
     the selection, one undoable change, as only the link can go
     (deleting a link's item alone is `EditError::Linked` to the edit).
+    The sketch face's geometry is left out of it (nothing else
+    selected, a notice says it stays).
+
+  **The sketch face**: a sketch on a face (`Plane::Face`) has a Project
+  link of that face, its outline (`varde_document::sketch_face`: the
+  first Project link whose source is the sketch's own face, told by the
+  source alone, nothing more stored). The document gives it one
+  (`agents/features.md`, Sketch links); the app names it "Sketch face"
+  in a group of its own in the Geometry list, before Projected
+  (`GeometryGroup::SketchFace`, `LinkRow::sketch_face`). Its menu has
+  only "Construction", ticked while it's out of profiles
+  (`Edit::SetLinkProfiles`), and `X` turns it so too while any of it is
+  selected (`Doc::toggle_construction`, beside the other curves
+  selected); it starts construction. It can't be removed: no Remove,
+  `Edit::RemoveLink` and the Project tool's second click refused with a
+  notice (`links::SKETCH_FACE_STAYS`), deleting a selection leaves it,
+  and the document refuses any sketch set without it
+  (`EditError::SketchFace`).
 
   The shapes are worked out by `varde_view::typed::outline`, which the
   viewport's preview draws too, so what's shown is what's placed.
@@ -1410,8 +1429,8 @@ bar says why (`EditError::Sketch`).
   and comes apart once that's deleted; its constraints and dimensions
   stay with the first curve. The Objects tab folds its Bodies
   and Sketches groups the same way (`Look::ToggleObjectGroup`,
-  `Doc::objects_folded`). After Geometry come Projected and Intersected,
-  the links
+  `Doc::objects_folded`). After Geometry come Sketch face (above),
+  Projected and Intersected, the links
   of each kind, a row each (`LinkRow`, made by `Doc::refresh_links` on
   every sync and model answered: its kind's icon, what it comes from by
   name, `links::source_name`: "Line 3 of Sketch 2", "Edge of Body 1",
@@ -1428,7 +1447,8 @@ refused what it found, `MeshFeed::broken`). An
   sketch's item isn't lit), and its context menu (`RowMenu::Link`, only
   in a sketch) has "Use in profiles" or "Leave out of profiles"
   (`Edit::SetLinkProfiles`) and "Remove" (`Edit::RemoveLink`, deleting
-  the link with what it made), both proposed, acting only while the
+  the link with what it made; the sketch face's has neither but
+  "Construction", above), both proposed, acting only while the
   document can be changed. In the viewport points the constraints leave
   free have their rims in `SketchColors::point`, the orange the drawing
   tools' icons draw points in; a link's curves and points'

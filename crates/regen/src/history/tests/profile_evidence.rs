@@ -110,10 +110,7 @@ fn a_touching_extrude_fails_with_where_it_touches() {
         panic!("a sketch");
     };
     sketched
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn.clone()),
-        })
+        .apply(sketched.document().set_sketch_whole(sketch, drawn.clone()))
         .unwrap();
     let draft = Draft {
         revision: 3,
@@ -190,10 +187,7 @@ fn a_touching_extrude_on_a_face_is_placed_by_the_face() {
         .map(|index| profiles.reference(index).unwrap())
         .collect();
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     let extrude = Extrude {
         taper: None,

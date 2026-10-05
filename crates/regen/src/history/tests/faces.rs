@@ -20,10 +20,7 @@ fn add_sketch(editor: &mut Editor, plane: Plane, draw: impl FnOnce(&mut Sketch))
     let mut sketch = Sketch::default();
     draw(&mut sketch);
     editor
-        .apply(Command::SetSketch {
-            feature,
-            sketch: Box::new(sketch),
-        })
+        .apply(editor.document().set_sketch_whole(feature, sketch))
         .unwrap();
     feature
 }
@@ -331,10 +328,7 @@ fn sketches_on_a_tilted_face_build_square_to_it() {
     let mut drawn = Sketch::default();
     disc(boss_at, 3.0)(&mut drawn);
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     add_extrude_of(&mut editor, sketch, one_side("5"), join());
     let hole = add_sketch(&mut editor, Plane::Face(slope), disc(hole_at, 2.0));
@@ -370,10 +364,7 @@ fn sketches_on_a_tilted_face_build_square_to_it() {
     let mut drawn = Sketch::default();
     disc(pin_at, 2.0)(&mut drawn);
     editor
-        .apply(Command::SetSketch {
-            feature: on_floor,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(on_floor, drawn))
         .unwrap();
     let pin = add_extrude_of(&mut editor, on_floor, one_side("3"), join());
     let evaluation = evaluated(editor.document(), &mut cache);
@@ -399,10 +390,7 @@ fn sketches_on_a_tilted_face_build_square_to_it() {
     let mut drawn = Sketch::default();
     disc(pocket_at, 1.0)(&mut drawn);
     editor
-        .apply(Command::SetSketch {
-            feature: on_end,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(on_end, drawn))
         .unwrap();
     let extent = two_sides(editor.document(), "1", "2");
     add_extrude_of(&mut editor, on_end, extent, cut());
@@ -668,30 +656,28 @@ fn placements_are_cached_by_the_solid_and_profiles_by_the_sketch() {
     cache.begin();
     let first = evaluate(editor.document(), &mut cache);
     assert!(first.failed.is_empty(), "{:?}", first.failed);
-    // Two sketches' profiles, the plate, the placement, the boss's tool,
-    // whether it touches the plate, and the union.
-    assert_eq!(cache.counts(), (0, 7));
+    // Two sketches' profiles, the plate, the placement, the sketch face
+    // found and relinked, the boss's tool, whether it touches the plate,
+    // and the union.
+    assert_eq!(cache.counts(), (0, 9));
     cache.begin();
     let again = evaluate(editor.document(), &mut cache);
-    assert_eq!(cache.counts(), (7, 7));
+    assert_eq!(cache.counts(), (9, 9));
     assert_eq!(bits(&placed(&again, sketch)), bits(&placed(&first, sketch)));
 
     // Another drawing: its profiles, the tool, the touch and the union
-    // again; the placement found.
+    // again, and its new sketch face relinked; the placement found.
     let mut drawn = Sketch::default();
     disc((20.0, 0.0), 4.0)(&mut drawn);
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     cache.begin();
     evaluate(editor.document(), &mut cache);
-    assert_eq!(cache.counts(), (7 + 3, 7 + 4));
+    assert_eq!(cache.counts(), (9 + 4, 9 + 5));
 
-    // On XY, 10 lower: its profiles are found, the tool isn't (its frame
-    // changed), and nothing is placed.
+    // On XY, 10 lower: the tool isn't found (its frame changed), the
+    // sketch face is gone with the face, and nothing is placed.
     editor
         .apply(Command::SetSketchPlane {
             feature: sketch,
@@ -701,10 +687,11 @@ fn placements_are_cached_by_the_solid_and_profiles_by_the_sketch() {
     cache.begin();
     let on_xy = evaluate(editor.document(), &mut cache);
     assert!(on_xy.placements.is_empty());
-    assert_eq!(cache.counts(), (10 + 3, 11 + 3));
+    assert_eq!(cache.counts(), (13 + 2, 14 + 4));
 
     // Back on the top, the plate made thicker: the plate, the placement,
-    // the tool, the touch and the union are worked out again.
+    // a new sketch face, the tool, the touch and the union are worked out
+    // again.
     editor
         .apply(Command::SetSketchPlane {
             feature: sketch,
@@ -725,7 +712,7 @@ fn placements_are_cached_by_the_solid_and_profiles_by_the_sketch() {
     cache.begin();
     let thicker = evaluate(editor.document(), &mut cache);
     assert_eq!(placed(&thicker, sketch).origin.z, 12.0);
-    assert_eq!(cache.counts(), (13 + 2, 14 + 5));
+    assert_eq!(cache.counts(), (15 + 1, 18 + 8));
 }
 
 /// A sketch on a boss's top still resolves once the boss is made flush
@@ -820,10 +807,7 @@ fn a_sketch_on_a_hexagonal_prism_s_wall_builds_square_to_it() {
     let mut drawn = Sketch::default();
     disc(local(&placement, middle), 3.0)(&mut drawn);
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     add_extrude_of(&mut editor, sketch, one_side("5"), join());
     let evaluation = evaluated(editor.document());
@@ -945,10 +929,7 @@ fn a_sketch_on_a_face_whose_plane_passes_the_limit_fails() {
     let mut drawn = Sketch::default();
     disc((at.x - n.x * 5.0, at.y - n.y * 5.0), 1.0)(&mut drawn);
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     let evaluation = evaluated(editor.document());
     assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
@@ -1011,10 +992,7 @@ fn a_chain_of_sketches_on_a_far_tilted_wall_follows_its_edits() {
     let mut drawn = Sketch::default();
     disc(at, 3.0)(&mut drawn);
     editor
-        .apply(Command::SetSketch {
-            feature: on_wall,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(on_wall, drawn))
         .unwrap();
     let boss = add_extrude_of(&mut editor, on_wall, one_side("5"), join());
     let end = FaceRef {
@@ -1090,10 +1068,7 @@ fn a_chain_of_sketches_on_a_far_tilted_wall_follows_its_edits() {
         point.at = moved.at;
     }
     editor
-        .apply(Command::SetSketch {
-            feature: base,
-            sketch: Box::new(wider),
-        })
+        .apply(editor.document().set_sketch_whole(base, wider))
         .unwrap();
     let extrude = match &editor.document().feature(prism).unwrap().kind {
         FeatureKind::Extrude(extrude) => Extrude {
@@ -1412,9 +1387,6 @@ fn edit_sketch_of(editor: &mut Editor, feature: FeatureId, draw: impl FnOnce(&mu
     let mut sketch = Sketch::default();
     draw(&mut sketch);
     editor
-        .apply(Command::SetSketch {
-            feature,
-            sketch: Box::new(sketch),
-        })
+        .apply(editor.document().set_sketch_whole(feature, sketch))
         .unwrap();
 }

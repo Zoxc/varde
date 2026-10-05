@@ -200,10 +200,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
     };
     let (boss, ring) = (region((6.0, 12.0)), region((37.0, 2.0)));
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     // A disc of radius 12 from z = 10 to 14 about the world's z, on the
     // plate's top.
@@ -2325,10 +2322,7 @@ fn placements_round_trip() {
     };
     let drawn = Box::new(drawn.clone());
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: drawn,
-        })
+        .apply(editor.document().set_sketch_whole(sketch, *drawn))
         .unwrap();
     editor
         .apply(Command::SetFeatureVisible(sketch, true))
@@ -3176,10 +3170,7 @@ fn a_revolve_about_an_edge_round_trips() {
     }
     let region = drawn.profiles().unwrap().reference(0).unwrap();
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     let edge = EdgeRef {
         body: plate,
@@ -3383,10 +3374,7 @@ fn a_sweep_and_a_helix_draft_round_trip() {
         .add_curve(Curve::Line { start: a, end: b }, false)
         .unwrap();
     editor
-        .apply(Command::SetSketch {
-            feature: path,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(path, drawn))
         .unwrap();
     let extrude = crate::history::tests::example_extrude(editor.document());
     let sweep = Sweep {
@@ -3471,10 +3459,7 @@ fn a_loft_and_its_draft_round_trip() {
         let mut sketch = Sketch::default();
         draw(&mut sketch);
         editor
-            .apply(Command::SetSketch {
-                feature,
-                sketch: Box::new(sketch.clone()),
-            })
+            .apply(editor.document().set_sketch_whole(feature, sketch.clone()))
             .unwrap();
         (feature, sketch)
     };

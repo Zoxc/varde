@@ -10,9 +10,9 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use varde_sketch::LinkKind;
+use varde_sketch::{LinkKind, Sketch};
 
-use crate::{EdgeError, EdgeRef, FaceRef, FeatureId, Id, PlaneError, PointRef};
+use crate::{EdgeError, EdgeRef, FaceRef, FeatureId, Id, Plane, PlaneError, PointRef};
 
 /// Geometry outside a sketch that it projects or intersects: always of
 /// features before the sketch. New kinds are appended: a kind's place in
@@ -43,6 +43,24 @@ impl OutsideRef {
                 )
         )
     }
+}
+
+/// The sketch face of a sketch on `plane`, holding `sketch` with
+/// `sources`: the first Project link of the face the sketch is on, its
+/// outline, which every sketch on a face has (the editor adds it with the
+/// sketch, follows the sketch onto another face and keeps it from being
+/// deleted; a document read gets it if it lacks one). Told by its source
+/// alone, so nothing more is stored. `None` off a face, or while it lacks one.
+pub fn sketch_face(plane: &Plane, sketch: &Sketch, sources: &[LinkSource]) -> Option<Id> {
+    let face = plane.face()?;
+    (sources.iter())
+        .filter(|from| from.source == OutsideRef::Face(*face))
+        .map(|from| from.link)
+        .find(|&id| {
+            sketch
+                .link(id)
+                .is_some_and(|link| link.kind == LinkKind::Project)
+        })
 }
 
 /// What a sketch's link comes from: the link's id in the sketch, and

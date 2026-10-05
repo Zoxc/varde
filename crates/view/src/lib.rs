@@ -1030,6 +1030,8 @@ pub enum RowMenu {
 pub enum GeometryGroup {
     /// The sketch's own points and curves.
     Own,
+    /// Its sketch face: the outline of the face it's on, projected.
+    SketchFace,
     /// Its links projecting outside geometry.
     Projected,
     /// Its links intersecting outside geometry with its plane.

@@ -131,6 +131,10 @@ impl Doc {
         };
         let linked = (self.outside_links().into_iter()).find(|(_, source)| same(source));
         match linked {
+            Some((link, _)) if self.sketch_face() == Some(link) => {
+                self.notice = Some(super::links::SKETCH_FACE_STAYS.to_owned());
+                return;
+            }
             Some((link, _)) => {
                 self.propose(SketchEdit::Delete(vec![link]));
             }

@@ -144,10 +144,7 @@ fn circle_in(doc: &mut Doc, requests: &Requests, id: FeatureId, center: DVec2, r
     drawn
         .add_curve(Curve::Circle { center, radius }, false)
         .unwrap();
-    doc.apply(Command::SetSketch {
-        feature: id,
-        sketch: Box::new(drawn),
-    });
+    doc.apply(doc.editor.document().set_sketch_whole(id, drawn));
     doc.sync();
     answer(doc, requests);
 }
@@ -348,8 +345,9 @@ fn edited_lines(doc: &Doc, id: FeatureId) -> usize {
     else {
         panic!("not a sketch");
     };
+    // The sketch face's outline isn't drawn.
     (sketch.curves.iter())
-        .filter(|entry| matches!(entry.curve, Curve::Line { .. }))
+        .filter(|entry| matches!(entry.curve, Curve::Line { .. }) && !sketch.is_linked(entry.id))
         .count()
 }
 
@@ -440,10 +438,7 @@ fn prism() -> (Doc, Requests) {
     }
     let region = end.profiles().unwrap().reference(0).unwrap();
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(end),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, end))
         .unwrap();
     let ask = Extent::ask(&editor.document().design());
     let extrude = Extrude {
@@ -588,7 +583,12 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     doc.look(Look::EditFeature(id));
     doc.update(Edit::PlanePicked(OriginPlane::XY));
     assert_eq!(plane(&doc, id), Plane::Origin(OriginPlane::XY));
-    assert_eq!(sketch_of(&doc, id), drawn);
+    // Off its face, without the sketch face.
+    let mut kept = drawn.clone();
+    let faces: Vec<_> = drawn.links.iter().map(|link| link.id).collect();
+    assert_eq!(faces.len(), 1);
+    kept.delete(&faces);
+    assert_eq!(sketch_of(&doc, id), kept);
     assert_eq!(edited(&doc), Some(id));
     assert_eq!(
         doc.sketch_state().unwrap().placement,
@@ -672,6 +672,7 @@ fn text_at(doc: &Doc, label: &str) -> iced::Point {
 }
 
 mod change;
+mod sketch_face;
 mod fuzz;
 
 #[test]

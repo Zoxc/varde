@@ -50,10 +50,7 @@ fn on_the_front() -> (Doc, Requests, FeatureId) {
         };
         drawn.add_curve(line, false).unwrap();
     }
-    doc.apply(Command::SetSketch {
-        feature: sketch,
-        sketch: Box::new(drawn),
-    });
+    doc.apply(doc.editor.document().set_sketch_whole(sketch, drawn));
     doc.sync();
     answer(&mut doc, &requests);
     (doc, requests, sketch)
@@ -330,10 +327,7 @@ fn add_rectangle(
         drawn.add_curve(line, false).unwrap();
     }
     editor
-        .apply(Command::SetSketch {
-            feature,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(feature, drawn))
         .unwrap();
     feature
 }
@@ -478,10 +472,7 @@ fn an_undo_taking_the_edge_s_body_away_drops_the_axis() {
         panic!("a sketch");
     };
     let base_id = doc.editor.document().features().last().unwrap().id;
-    doc.apply(Command::SetSketch {
-        feature: base_id,
-        sketch: Box::new(drawn.clone()),
-    });
+    doc.apply(doc.editor.document().set_sketch_whole(base_id, drawn.clone()));
     let FeatureKind::Extrude(extrude) = box_feature.kind else {
         panic!("an extrude");
     };

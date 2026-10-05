@@ -50,7 +50,7 @@ pub use loft::{
 pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
 pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
-pub use outside::{LinkError, LinkSource, OutsideRef};
+pub use outside::{LinkError, LinkSource, OutsideRef, sketch_face};
 pub use pattern::{Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternKind};
 pub use plane::{FaceRef, FaceSetError, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
@@ -200,7 +200,7 @@ impl Unchecked {
             next_id,
         };
         document.check()?;
-        Ok(document)
+        Ok(document.with_sketch_faces())
     }
 }
 
@@ -1317,6 +1317,10 @@ pub enum EditError {
     /// sketch, or asked to set one: sketches are added by
     /// [`Command::AddSketch`] and set by [`Command::SetSketch`].
     SketchKind,
+    /// [`Command::SetSketch`] or [`Command::AddLink`] would take away the
+    /// sketch face ([`sketch_face`]) of this sketch feature, which stays
+    /// while the sketch is on its face.
+    SketchFace(FeatureId),
 }
 
 impl fmt::Display for EditError {
@@ -1328,6 +1332,7 @@ impl fmt::Display for EditError {
             EditError::SketchKind => {
                 f.write_str("sketches are added and set by their own commands")
             }
+            EditError::SketchFace(_) => f.write_str("the sketch face can't be removed"),
         }
     }
 }
@@ -1335,7 +1340,7 @@ impl fmt::Display for EditError {
 impl std::error::Error for EditError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            EditError::OutOfIds | EditError::SketchKind => None,
+            EditError::OutOfIds | EditError::SketchKind | EditError::SketchFace(_) => None,
             EditError::Invalid(why) => Some(why),
             EditError::Sketch(_, why) => Some(why),
         }

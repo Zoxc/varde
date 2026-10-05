@@ -22,7 +22,7 @@ use crate::shortcut::{Held, Shortcut};
 use crate::theme::{
     self, Palette, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TAB_LINE, TabLook, Tone,
 };
-use crate::toolbar::{menu_item, menu_separator};
+use crate::toolbar::{menu_item, menu_separator, ticked};
 use crate::{
     ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup, Panel,
     RowMenu, SketchState, VALUE_FIELD, ValueTarget, dimension, split,
@@ -876,8 +876,9 @@ pub(crate) enum GeometryRow {
 /// The rows of the Sketch tab's Geometry list as a tree, groups with a
 /// header row each: Geometry, the sketch's own curves (what no link
 /// made), each followed by its points while it's `expanded`, then the
-/// points no curve has; then Projected and Intersected, its links of each
-/// kind, a link a row. A point a few curves share is under each. A group
+/// points no curve has; then Sketch face, the outline of the face it's
+/// on, then Projected and Intersected, its other links of each kind, a
+/// link a row. A point a few curves share is under each. A group
 /// `folded` lists its header alone. A group with nothing in it isn't
 /// listed, but for Geometry while there's no link either, which says
 /// nothing's drawn.
@@ -919,13 +920,17 @@ pub(crate) fn geometry_rows(
             rows.extend(tree);
         }
     }
-    for kind in [LinkKind::Project, LinkKind::Intersect] {
+    let groups = [
+        (GeometryGroup::SketchFace, LinkKind::Project, true),
+        (GeometryGroup::Projected, LinkKind::Project, false),
+        (GeometryGroup::Intersected, LinkKind::Intersect, false),
+    ];
+    for (group, kind, sketch_face) in groups {
         let of: Vec<GeometryRow> = (links.iter().enumerate())
-            .filter(|(_, link)| link.kind == kind)
+            .filter(|(_, link)| link.kind == kind && link.sketch_face == sketch_face)
             .map(|(i, _)| GeometryRow::Link(i))
             .collect();
         if !of.is_empty() {
-            let group = GeometryGroup::of_links(kind);
             rows.push(GeometryRow::Header(group, of.len()));
             if !folded.contains(&group) {
                 rows.extend(of);
@@ -939,6 +944,7 @@ pub(crate) fn geometry_rows(
 fn group_label(group: GeometryGroup) -> &'static str {
     match group {
         GeometryGroup::Own => "Geometry",
+        GeometryGroup::SketchFace => "Sketch face",
         GeometryGroup::Projected => LinkKind::Project.name(),
         GeometryGroup::Intersected => LinkKind::Intersect.name(),
     }
@@ -1270,17 +1276,32 @@ fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Messa
         };
         let toggle = Message::Edit(Edit::SetLinkProfiles(id, !link.profiles));
         let remove = Message::Edit(Edit::RemoveLink(id));
-        row_menu(vec![
-            menu_item(icon, profiles.into(), None, editable.then_some(toggle)).into(),
-            menu_separator().into(),
-            menu_item(
-                Icon::Trash,
-                "Remove".into(),
-                None,
-                editable.then_some(remove),
-            )
-            .into(),
-        ])
+        // The sketch face can't be removed; it's construction, out of
+        // profiles, or not.
+        let items = if link.sketch_face {
+            vec![
+                menu_item(
+                    ticked(!link.profiles),
+                    "Construction".into(),
+                    Some(Shortcut::CONSTRUCTION),
+                    editable.then_some(toggle),
+                )
+                .into(),
+            ]
+        } else {
+            vec![
+                menu_item(icon, profiles.into(), None, editable.then_some(toggle)).into(),
+                menu_separator().into(),
+                menu_item(
+                    Icon::Trash,
+                    "Remove".into(),
+                    None,
+                    editable.then_some(remove),
+                )
+                .into(),
+            ]
+        };
+        row_menu(items)
     });
     let on = RowMenu::Link(id);
     ContextMenu::new(
@@ -1736,6 +1757,7 @@ mod tests {
             source: "Edge of Body 1".into(),
             broken: None,
             profiles: false,
+            sketch_face: false,
         };
         let none = BTreeSet::new();
         // Nothing yet: Geometry alone, empty.

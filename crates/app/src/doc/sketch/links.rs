@@ -3,11 +3,13 @@
 //! its curves count for profiles), selecting what a link made from its
 //! row, lighting what it comes from in the model while its row is
 //! hovered, and its row's menu: removing it, or having its curves count
-//! for profiles or not.
+//! for profiles or not. The sketch face, the Project link of the face a
+//! sketch is on ([`varde_document::sketch_face`]), is named so and can't
+//! be removed.
 
 use std::sync::Arc;
 
-use varde_document::{Document, FeatureKind, OutsideRef, PointRef};
+use varde_document::{Document, FeatureKind, OutsideRef, PointRef, sketch_face};
 use varde_sketch::{Id, SketchEdit};
 use varde_view::{LinkRow, ModelHighlight, Picked};
 
@@ -24,15 +26,21 @@ impl Doc {
             return;
         };
         let document = self.editor.document();
+        let face = self.sketch_face();
         let rows = match self.edited_links() {
             Some((sketch, sources)) => (sketch.links.iter())
                 .zip(sources)
                 .map(|(link, from)| LinkRow {
                     link: link.id,
                     kind: link.kind,
-                    source: source_name(document, &from.source),
+                    source: if face == Some(link.id) {
+                        SKETCH_FACE.to_owned()
+                    } else {
+                        source_name(document, &from.source)
+                    },
                     broken: self.feed.broken(feature, link.id).map(capitalized),
                     profiles: link.profiles,
+                    sketch_face: face == Some(link.id),
                 })
                 .collect(),
             None => Vec::new(),
@@ -68,9 +76,28 @@ impl Doc {
         self.pick.link_highlight = self.link_highlight();
     }
 
-    /// Deletes the link `link`, with what it made.
+    /// Deletes the link `link`, with what it made, but the sketch face,
+    /// which stays, saying so.
     pub(crate) fn remove_link(&mut self, link: Id) {
+        if self.sketch_face() == Some(link) {
+            self.notice = Some(SKETCH_FACE_STAYS.to_owned());
+            return;
+        }
         self.propose(SketchEdit::Delete(vec![link]));
+    }
+
+    /// The sketch face of the sketch being edited, as committed: the
+    /// Project link of the face it's on, if it's on one.
+    pub(crate) fn sketch_face(&self) -> Option<Id> {
+        let session = self.sketch.as_ref()?;
+        match &self.editor.document().feature(session.feature)?.kind {
+            FeatureKind::Sketch {
+                plane,
+                sketch,
+                sources,
+            } => sketch_face(plane, sketch, sources),
+            _ => None,
+        }
     }
 
     /// Has the link `link`'s curves count for profiles, or not.
@@ -106,6 +133,12 @@ impl Doc {
         Some(&self.pick.link_highlight).filter(|highlight| !highlight.is_empty())
     }
 }
+
+/// The sketch face's name in the Sketch tab.
+pub(crate) const SKETCH_FACE: &str = "Sketch face";
+
+/// Why the sketch face can't be removed.
+pub(crate) const SKETCH_FACE_STAYS: &str = "The sketch face stays while the sketch is on its face";
 
 /// `why` with its first letter capitalized, as a row's note.
 fn capitalized(why: &str) -> String {

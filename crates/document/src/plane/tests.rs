@@ -342,10 +342,7 @@ fn sketched_on_top() -> (Editor, FeatureId) {
     };
     let sketch = Box::new(sketch.clone());
     editor
-        .apply(Command::SetSketch {
-            feature: id,
-            sketch,
-        })
+        .apply(editor.document().set_sketch_whole(id, *sketch))
         .unwrap();
     (editor, id)
 }
@@ -384,7 +381,11 @@ fn set_sketch_plane_moves_a_sketch_keeping_its_drawing() {
         })
         .unwrap();
     assert_eq!(plane_of(editor.document(), id), xz);
-    assert_eq!(drawn(&editor), drawing);
+    // Off its face, the sketch face goes.
+    let mut off = drawing.clone();
+    assert_eq!(drawing.links.len(), 1);
+    off.delete(&[drawing.links[0].id]);
+    assert_eq!(drawn(&editor), off);
     editor.undo();
     assert_eq!(plane_of(editor.document(), id), top);
     assert_eq!(editor.revision(), revision);
@@ -400,7 +401,15 @@ fn set_sketch_plane_moves_a_sketch_keeping_its_drawing() {
         })
         .unwrap();
     assert_eq!(plane_of(editor.document(), id), elsewhere);
-    assert_eq!(drawn(&editor), drawing);
+    // The drawing kept, with a sketch face of its new face again.
+    let back = drawn(&editor);
+    assert_eq!(back.points, drawing.points);
+    assert_eq!(back.curves, drawing.curves);
+    assert_eq!(back.links.len(), 1);
+    assert_eq!(
+        sketch_face_of(editor.document(), id),
+        Some((back.links[0].id, elsewhere.face().copied().unwrap()))
+    );
 
     // The plane it's on, a feature that isn't a sketch and one that isn't
     // there change nothing.
@@ -720,4 +729,114 @@ fn flipped_bytes_decode_to_documents_that_can_be_edited() {
         "{decoded} of {} bits",
         bytes.len() * 8
     );
+}
+
+/// The sketch face ([`crate::sketch_face`]) of sketch `id`, with the face
+/// it comes from.
+fn sketch_face_of(
+    document: &Document,
+    id: FeatureId,
+) -> Option<(varde_sketch::Id, crate::FaceRef)> {
+    let FeatureKind::Sketch {
+        plane,
+        sketch,
+        sources,
+    } = &document.feature(id)?.kind
+    else {
+        return None;
+    };
+    let link = crate::sketch_face(plane, sketch, sources)?;
+    let from = sources.iter().find(|from| from.link == link)?;
+    match from.source {
+        crate::OutsideRef::Face(face) => Some((link, face)),
+        _ => None,
+    }
+}
+
+/// A sketch added on a face has its sketch face, out of profiles, one
+/// undo step with the sketch; moved to another face it follows it,
+/// keeping its id; it can't be set away; and a document read without it
+/// gets it, once.
+#[test]
+fn a_sketch_on_a_face_keeps_its_sketch_face() {
+    let mut editor = Editor::new(with_body());
+    let top = on_top(editor.document());
+    editor.apply(editor.document().add_sketch(top)).unwrap();
+    let id = editor.document().features().last().unwrap().id;
+    let (link, face) = sketch_face_of(editor.document(), id).expect("a sketch face");
+    assert_eq!(Some(&face), top.face());
+    let FeatureKind::Sketch { sketch, .. } = &editor.document().feature(id).unwrap().kind else {
+        unreachable!()
+    };
+    assert!(!sketch.link(link).unwrap().profiles);
+    editor.undo();
+    assert!(editor.document().feature(id).is_none());
+    editor.redo();
+
+    // Another face: the same link, following it.
+    let elsewhere = Plane::Face(top_of(editor.document(), DVec3::new(-20.0, 5.0, 10.0)));
+    editor
+        .apply(Command::SetSketchPlane {
+            feature: id,
+            plane: elsewhere,
+        })
+        .unwrap();
+    assert_eq!(
+        sketch_face_of(editor.document(), id),
+        Some((link, *elsewhere.face().unwrap()))
+    );
+
+    // Deleting it, or the sketch set without it, is refused.
+    let FeatureKind::Sketch { sketch, .. } = &editor.document().feature(id).unwrap().kind else {
+        unreachable!()
+    };
+    let mut without = sketch.clone();
+    without.delete(&[link]);
+    assert_eq!(
+        editor.apply(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(without),
+        }),
+        Err(EditError::SketchFace(id))
+    );
+    // Drawn afresh, it's given one.
+    editor
+        .apply(
+            editor
+                .document()
+                .set_sketch_whole(id, varde_sketch::Sketch::default()),
+        )
+        .unwrap();
+    assert!(sketch_face_of(editor.document(), id).is_some());
+
+    // A document without it, read, gets it; one with it stays as it is.
+    let mut document = editor.document().clone();
+    let at = document.feature_index(id).unwrap();
+    if let FeatureKind::Sketch {
+        sketch, sources, ..
+    } = &mut document.features[at].kind
+    {
+        sketch.links.clear();
+        sources.clear();
+    }
+    let read = Document::from_postcard(&document.to_postcard()).unwrap();
+    let (_, face) = sketch_face_of(&read, id).expect("added on reading");
+    assert_eq!(Some(&face), elsewhere.face());
+    let again = Document::from_postcard(&read.to_postcard()).unwrap();
+    assert_eq!(again, read);
+
+    // Off the face, it goes.
+    editor
+        .apply(Command::SetSketchPlane {
+            feature: id,
+            plane: Plane::Origin(OriginPlane::XZ),
+        })
+        .unwrap();
+    let FeatureKind::Sketch {
+        sketch, sources, ..
+    } = &editor.document().feature(id).unwrap().kind
+    else {
+        unreachable!()
+    };
+    assert!(sketch.links.is_empty() && sources.is_empty());
 }

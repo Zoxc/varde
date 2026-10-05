@@ -479,6 +479,26 @@ sketch (with a new link) and records the link's source;
 `Command::SetSketch` keeps the sources of the links the new sketch still
 has and drops the rest, so deleting a link (a sketch edit) drops its
 source; a sketch with a link the feature has no source for is refused.
+**The sketch face** (`document/src/outside.rs`, `sketch_face`): every
+sketch on a face has a Project link of that face, the first one whose
+source is `OutsideRef::Face` of its plane's face, known by comparing
+sources, with no field of its own. `Command::AddSketch` on a face adds
+it (empty, out of profiles, so its curves come construction once
+relinked) in the same change; `Command::SetSketchPlane` makes it follow
+(onto another face the same link takes the new face, or goes if a
+Project link of that face is there already, which then is it; onto an
+origin plane it's deleted); `Command::SetSketch` and `Command::AddLink`
+taking it away are refused, `EditError::SketchFace`.
+`Document::set_sketch_whole` gives a sketch drawn afresh one if it lacks
+it (as `AddLink`). A document read (`Unchecked::check`, every file,
+auto-save and wire decode) gets one where it lacks it
+(`Document::with_sketch_faces`, after the check, before any editor sees
+it, so it isn't an edit: no undo step, the editor's first revision).
+Relinking then fills it on the first answer, an amend; the app keeps a
+document as it was opened or saved clean through amends that only fill
+empty links (`Doc::keep_clean` in `app/src/doc/relink.rs`: not
+unsaved, not auto-saved).
+
 `Editor::amend` applies a command folded into the change before it:
 undo takes both back at once, the redo history stays, and the document
 gets a new revision and generation.

@@ -291,10 +291,7 @@ fn a_tool_without_a_solid_fails_and_a_removed_one_takes_the_combine() {
     let index = features.iter().position(|f| f.id == maker).unwrap();
     let sketch = features[index - 1].id;
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::default(),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, *Box::default()))
         .unwrap();
     let evaluation = evaluated(editor.document());
     assert_eq!(failure(&evaluation, maker), Some("region not found"));
@@ -343,10 +340,7 @@ fn later_features_on_a_consumed_tool_follow_the_target() {
     let profiles = drawn.profiles().unwrap();
     let regions = vec![profiles.reference(0).unwrap()];
     editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: Box::new(drawn),
-        })
+        .apply(editor.document().set_sketch_whole(sketch, drawn))
         .unwrap();
     let boss = Extrude {
         taper: None,

@@ -346,6 +346,9 @@ pub struct LinkRow {
     pub broken: Option<String>,
     /// Whether its curves count for profiles.
     pub profiles: bool,
+    /// Whether it's the sketch face, the outline of the face the sketch
+    /// is on, which can't be removed: its menu has no Remove.
+    pub sketch_face: bool,
 }
 
 /// The value field of a dimension: placing one with the Dimension tool,

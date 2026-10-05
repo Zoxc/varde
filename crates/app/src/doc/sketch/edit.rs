@@ -254,14 +254,25 @@ impl Doc {
             return;
         }
         // A link any of whose geometry is selected goes whole, as only the
-        // link can go: its row picked, or one curve of it.
+        // link can go: its row picked, or one curve of it. The sketch
+        // face stays, its geometry left out.
+        let face = self.sketch_face();
         if let Some(sketch) = self.editable_sketch() {
             for link in &sketch.links {
                 if link.items().any(|item| ids.contains(&item)) {
                     ids.retain(|&id| link.items().all(|item| item != id));
-                    ids.push(link.id);
+                    if face != Some(link.id) {
+                        ids.push(link.id);
+                    }
                 }
             }
+        }
+        ids.retain(|&id| face != Some(id));
+        if ids.is_empty() {
+            if face.is_some() {
+                self.notice = Some(super::links::SKETCH_FACE_STAYS.to_owned());
+            }
+            return;
         }
         self.propose(SketchEdit::Delete(ids));
     }
@@ -284,14 +295,31 @@ impl Doc {
             self.set_drawing(drawing);
             return;
         }
+        // The sketch face, any of it selected, turns whole, by whether it
+        // counts for profiles; the rest selected as ever.
+        let face = (self.sketch_face())
+            .and_then(|id| sketch.link(id))
+            .filter(|link| link.items().any(|item| session.selection.contains(&item)));
+        let face_items: Vec<Id> = face.map_or_else(Vec::new, |link| link.items().collect());
         let selected: Vec<_> = sketch
             .curves
             .iter()
-            .filter(|entry| session.selection.contains(&entry.id))
+            .filter(|entry| {
+                session.selection.contains(&entry.id) && !face_items.contains(&entry.id)
+            })
             .collect();
         let construction = selected.iter().any(|entry| !entry.construction);
-        let ids = selected.iter().map(|entry| entry.id).collect();
-        self.propose(SketchEdit::SetConstruction { ids, construction });
+        let ids: Vec<Id> = selected.iter().map(|entry| entry.id).collect();
+        let face = face.map(|link| (link.id, link.profiles));
+        if !ids.is_empty() || face.is_none() {
+            self.propose(SketchEdit::SetConstruction { ids, construction });
+        }
+        if let Some((link, profiles)) = face {
+            self.propose(SketchEdit::SetLinkProfiles {
+                link,
+                profiles: !profiles,
+            });
+        }
     }
 
     /// Constrains the geometry selected so, as [`Doc::constrain`] does,
