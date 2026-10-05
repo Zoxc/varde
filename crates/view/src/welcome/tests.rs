@@ -44,6 +44,7 @@ fn state<'a>(recent: Option<Vec<RecentCard<'a>>>, stored: Vec<DesignCard<'a>>) -
         error: None,
         recent,
         stored,
+        samples: Vec::new(),
         storage: None,
         deleting: None,
         dragging: false,
@@ -438,4 +439,41 @@ fn deleting_a_design_not_downloaded_asks_first() {
             "{sent:?}"
         );
     }
+}
+
+/// The web page lists the samples below browser storage, and clicking one
+/// opens it.
+#[test]
+fn the_page_lists_the_samples_below_browser_storage() {
+    let samples = vec![
+        SampleCard {
+            index: 0,
+            name: "Knob",
+            about: "A revolve",
+            thumbnail: None,
+        },
+        SampleCard {
+            index: 1,
+            name: "Lever",
+            about: "Tangent arcs",
+            thumbnail: None,
+        },
+    ];
+    let mut laid = Laid::new(
+        welcome(WelcomeState {
+            samples,
+            ..state(None, vec![saved("a.vrdp", Downloads::Never)])
+        }),
+        WINDOW,
+    );
+    let shown = laid.texts();
+    assert!(find(&shown, "In browser storage").bounds.y < find(&shown, "Samples").bounds.y);
+    let sent = click(&mut laid, find(&shown, "Lever").bounds.center());
+    assert!(
+        matches!(sent[..], [Message::Welcome(Welcome::OpenSample(1))]),
+        "{sent:?}"
+    );
+    // None, none listed.
+    let shown = Laid::new(welcome(state(None, Vec::new())), WINDOW).texts();
+    assert!(!shows(&shown, "Samples"));
 }

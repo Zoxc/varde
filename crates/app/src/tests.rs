@@ -5633,3 +5633,29 @@ mod export;
 mod panicked;
 mod storage;
 mod thumbnail;
+
+/// A sample opens as a new design known by its name: a store entry asked
+/// for, the design as the sample has it, and nothing to save yet.
+#[cfg(feature = "samples")]
+#[test]
+fn a_sample_opens_as_a_new_design() {
+    let (mut varde, requests) = with_files();
+    sent(&requests);
+    for (index, sample) in crate::samples::SAMPLES.iter().enumerate() {
+        let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::OpenSample(index))));
+        let [.., IoRequest::New { id }] = sent(&requests)[..] else {
+            panic!("no store entry asked for");
+        };
+        let _ = varde.update(Message::Io(IoResponse::Created {
+            id,
+            result: Ok(FileId(9 + index as u64)),
+        }));
+        let doc = document(&varde);
+        assert_eq!(doc.name, sample.name);
+        assert_eq!(doc.suggested_name(), sample.name);
+        let (expected, _) = varde_io::vrdp::from_bytes(sample.file).expect("a sample reads");
+        assert_eq!(*doc.editor.document(), expected);
+        assert!(!doc.editor.document().features().is_empty());
+        let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
+    }
+}

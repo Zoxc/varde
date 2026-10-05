@@ -8,6 +8,7 @@ mod keys;
 mod message;
 mod platform;
 mod recent;
+mod samples;
 mod settings;
 mod welcome;
 mod when;
@@ -77,6 +78,9 @@ struct Files {
     /// design and save, see [`Files::browser_listed`].
     browser: Vec<BrowserDesign>,
     browser_thumbnails: Vec<BrowserThumbnail>,
+    /// The sample designs' thumbnails ([`samples::SAMPLES`]), each as its
+    /// file has one, made once.
+    sample_thumbnails: Vec<Option<ThumbnailHandles>>,
     /// On the web, what the browser says of its storage, see
     /// [`varde_io::storage`].
     storage: StorageState,
@@ -161,6 +165,9 @@ impl Files {
             recovered: Vec::new(),
             browser: Vec::new(),
             browser_thumbnails: Vec::new(),
+            sample_thumbnails: (samples::SAMPLES.iter())
+                .map(|sample| varde_io::thumbnail::of_file(sample.file).map(ThumbnailHandles::new))
+                .collect(),
             storage: StorageState::default(),
             ask_persist: false,
             thumbnails: Vec::new(),
@@ -203,6 +210,13 @@ impl Files {
         (self.browser_thumbnails.iter())
             .find(|thumbnail| Some(thumbnail.sum) == design.sum && thumbnail.name == design.name)
             .map(|thumbnail| thumbnail.handles.of(mode))
+    }
+
+    /// The thumbnail of the sample `index` ([`samples::SAMPLES`]), if its
+    /// file has one, in `mode`'s colours.
+    fn sample_thumbnail(&self, index: usize, mode: Mode) -> Option<iced::widget::image::Handle> {
+        let handles = self.sample_thumbnails.get(index)?.as_ref()?;
+        Some(handles.of(mode))
     }
 
     /// What the platform offers the document screen.

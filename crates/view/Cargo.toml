@@ -22,6 +22,9 @@ log.workspace = true
 probe = []
 
 [dev-dependencies]
+# The sample designs' files, written by examples/samples.rs with their
+# thumbnails.
+varde-io.workspace = true
 # Blocks on wgpu setup in headless render tests.
 pollster.workspace = true
 # An independent reference for the bits of saved angles.

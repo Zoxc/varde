@@ -145,8 +145,6 @@ use chain::Chain;
 pub(crate) use check::check_unchanged;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use preview::read_previews;
-#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
-#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) use preview::{FileEnd, end};
 pub use preview::{MAX_MEDIA_TYPE, MAX_PREVIEW, MAX_PREVIEWS, Preview};
 

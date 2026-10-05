@@ -135,8 +135,9 @@ pub(crate) fn encode(image: &Image, media_type: &str) -> Option<Preview> {
 }
 
 /// The previews a save writes: `thumbnail`'s images as PNGs, the light
-/// one first, if there's one, each that encodes.
-pub(crate) fn previews(thumbnail: Option<&Thumbnail>) -> Vec<Preview> {
+/// one first, if there's one, each that encodes. Public for writing
+/// designs as a save would, with [`crate::vrdp::to_bytes`].
+pub fn previews(thumbnail: Option<&Thumbnail>) -> Vec<Preview> {
     let Some(thumbnail) = thumbnail else {
         return Vec::new();
     };
@@ -185,11 +186,19 @@ fn theme(preview: &Preview) -> Option<Theme> {
     }
 }
 
+/// The thumbnail the whole design file `bytes` holds, if it has one that
+/// decodes (see [`decode`]): what a sample design built into the app
+/// shows.
+pub fn of_file(bytes: &[u8]) -> Option<Thumbnail> {
+    match crate::vrdp::end(bytes).ok()? {
+        crate::vrdp::FileEnd::Design { previews, .. } => decode(&previews),
+        crate::vrdp::FileEnd::NotADesign => None,
+    }
+}
+
 /// The thumbnail `previews` hold, or `None` if they hold no image of one
 /// that decodes: each theme's the first of its own that does, else a
 /// plain one's, else the other theme's, see the module docs.
-// The web has no recent files to read them from.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) fn decode(previews: &[Preview]) -> Option<Thumbnail> {
     let first = |wanted| {
         (previews.iter())

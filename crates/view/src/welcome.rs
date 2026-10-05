@@ -32,6 +32,9 @@ pub struct WelcomeState<'a> {
     /// left behind by sessions that crashed, on the web the designs saved
     /// in browser storage among them.
     pub stored: Vec<DesignCard<'a>>,
+    /// On the web, the sample designs built into the app, listed below
+    /// browser storage; none where the build has none.
+    pub samples: Vec<SampleCard<'a>>,
     /// On the web, what's said of browser storage: whether the browser
     /// keeps it for good, and how much is used.
     pub storage: Option<StorageNote>,
@@ -167,6 +170,18 @@ pub struct DesignCard<'a> {
     pub note: Option<&'static str>,
     /// Whether it may be deleted: not while another tab has it open.
     pub deletable: bool,
+}
+
+/// A sample design built into the app, which opens as a new design.
+#[derive(Debug, Clone)]
+pub struct SampleCard<'a> {
+    /// Which sample it is, as [`Welcome::OpenSample`] names it.
+    pub index: usize,
+    pub name: &'a str,
+    /// A line on what it shows.
+    pub about: &'a str,
+    /// The thumbnail its file holds, if it has one.
+    pub thumbnail: Option<image::Handle>,
 }
 
 /// Where a design in browser storage stands against its downloads, each
@@ -315,12 +330,18 @@ fn web<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
     if storage.may_clear && count > 0 {
         content = content.push(clearing_note());
     }
-    let cards = cards(
+    let stored = cards(
         std::iter::once(drop_zone(state.dragging)).chain(state.stored.into_iter().map(design_card)),
     );
     content = content
         .push(heading("In browser storage", Some(count)))
-        .push(cards);
+        .push(stored);
+    if !state.samples.is_empty() {
+        content = content
+            .push(Space::new().height(12))
+            .push(heading("Samples", Some(state.samples.len())))
+            .push(cards(state.samples.into_iter().map(sample_card)));
+    }
     let content = middle(container(content).padding(Padding::from([32, 0]).bottom(28)));
 
     let used = storage
@@ -884,6 +905,30 @@ fn design_card<'a>(design: DesignCard<'a>) -> Element<'a, Message> {
         meta,
         Some(STORED_META_HEIGHT),
         design.opens.then_some(Message::Welcome(open)),
+    )
+}
+
+/// A sample design's card: its thumbnail, if it has one, its name and
+/// what it shows. Clicking it opens
+/// it as a new design.
+fn sample_card<'a>(sample: SampleCard<'a>) -> Element<'a, Message> {
+    let meta = move || {
+        column![
+            clipped(
+                text(sample.name)
+                    .font(theme::SEMIBOLD)
+                    .wrapping(text::Wrapping::None)
+            ),
+            text(sample.about).size(11.5).style(theme::muted_text),
+        ]
+        .spacing(2)
+        .into()
+    };
+    card(
+        sample.thumbnail.clone(),
+        meta,
+        Some(STORED_META_HEIGHT),
+        Some(Message::Welcome(Welcome::OpenSample(sample.index))),
     )
 }
 

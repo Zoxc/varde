@@ -58,8 +58,7 @@ impl ThumbnailRequest {
         home: &Camera,
         done: impl FnOnce(Option<ThumbnailImages>) + Send + 'static,
     ) -> Option<Arc<ThumbnailRequest>> {
-        let room = THUMBNAIL_ROOM.map(|side| side * THUMBNAIL_SCALE);
-        let shot = varde_render::frame(&mesh, home, room, MARGIN)?;
+        let shot = thumbnail_shot(&mesh, home)?;
         Some(Arc::new(ThumbnailRequest {
             mesh,
             opacity,
@@ -70,8 +69,7 @@ impl ThumbnailRequest {
 
     /// The colours it's rendered in, one image each: the light theme's
     /// model, then the dark's.
-    pub(crate) const COLORS: [Colors; 2] =
-        [Mode::Light.palette().scene, Mode::Dark.palette().scene];
+    pub const COLORS: [Colors; 2] = [Mode::Light.palette().scene, Mode::Dark.palette().scene];
 
     /// What takes its pixels, one image for each of [`Self::COLORS`], the
     /// first time it's asked for: it's rendered once.
@@ -85,6 +83,14 @@ impl ThumbnailRequest {
             done(images);
         })
     }
+}
+
+/// How a thumbnail frames `mesh`, looking from where `home` does: to fit
+/// [`THUMBNAIL_ROOM`] at [`THUMBNAIL_SCALE`], cropped to the model. `None`
+/// for a mesh with nothing to frame.
+pub fn thumbnail_shot(mesh: &RenderMesh, home: &Camera) -> Option<PreviewShot> {
+    let room = THUMBNAIL_ROOM.map(|side| side * THUMBNAIL_SCALE);
+    varde_render::frame(mesh, home, room, MARGIN)
 }
 
 impl fmt::Debug for ThumbnailRequest {

@@ -116,11 +116,13 @@ pub use shortcut::{
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
-pub use thumbnail::{THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailImages, ThumbnailRequest};
+pub use thumbnail::{
+    THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailImages, ThumbnailRequest, thumbnail_shot,
+};
 pub use viewport::ModelPicking;
 pub use welcome::{
     CardKey, DamagedPrompt, DeleteFromBrowserPrompt, DesignCard, Downloads, PanicNote, RecentCard,
-    StorageNote, WelcomeState, welcome,
+    SampleCard, StorageNote, WelcomeState, welcome,
 };
 
 /// The text field a dimension's value is typed in, placing it or editing
@@ -249,6 +251,9 @@ pub enum Welcome {
     DeleteFromBrowser(String),
     /// Downloads a design saved in browser storage, as it's saved.
     DownloadFromBrowser(String),
+    /// Opens the sample design of this index, built into the web build,
+    /// as a new design.
+    OpenSample(usize),
     /// Agrees to delete the design asked about.
     ConfirmDelete,
     /// Keeps the design asked about.

@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# The sample designs of `examples/`, built in and listed on the web page
+# (src/samples.rs). The GitHub Pages build turns it on through varde-web's.
+samples = []
+
 [dependencies]
 varde-document.workspace = true
 varde-sketch.workspace = true

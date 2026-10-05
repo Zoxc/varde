@@ -237,6 +237,32 @@ changes, lighting the drop zone. A file is kept in the page's registry as
 it's dropped; one the app doesn't open, dropped with a document open or
 over a dialog, is let go of (`pick::forget`).
 
+### Samples
+
+Below browser storage the page can list **samples**: the designs of the
+workspace's `examples/` (written by `cargo run -p varde-view --example
+samples`, with the thumbnail a save would write, rendered offscreen
+through `varde_view::thumbnail_shot`, `ThumbnailRequest::COLORS` and
+`varde_render::render_preview`, encoded by `varde_io::thumbnail::previews`;
+`crates/io/tests/samples.rs` checks each file has one), each a card with
+its thumbnail (`thumbnail::of_file`, decoded once into
+`Files::sample_thumbnails`),
+its name and a line on what it shows. They're built into the app with `include_bytes!` behind
+`varde-app`'s `samples` feature (`crates/app/src/samples.rs`), which
+`varde-web`'s feature of the name turns on; trunk passes it for a
+`data-cargo-features="samples"` on the page's `varde-web` link, which the
+GitHub Pages build adds. Without it (`trunk serve`, native builds) there
+are none, and the heading isn't shown. Built in rather than fetched as
+files: they're a few kilobytes, need no manifest, copy step or fetch
+and can't go missing from the site, and open without waiting.
+
+Clicking one opens it as New design does, as a new design known by the
+sample's name: never saved, auto-saved to an entry in `designs/`, its
+first Save a Save As suggesting the name (`Welcome::open_sample`).
+Nothing is put in browser storage until the user saves it, so opening a
+sample again and again leaves no copies, and closing one unchanged
+leaves nothing.
+
 The page's title (`document.title`) is the design's name, as the native
 window's (`platform::show_title`), so the tab and the history show it.
 

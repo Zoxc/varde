@@ -4325,6 +4325,7 @@ dependencies = [
  "pollster",
  "varde-document",
  "varde-expr",
+ "varde-io",
  "varde-kernel",
  "varde-regen",
  "varde-render",

@@ -14,6 +14,7 @@ use varde_io::{
 use varde_view::{Message as Ui, Mode, ThemeChoice, Welcome as WelcomeUi};
 
 use crate::doc::{Dialog, Doc, FileDamage, Leave, Origin, Recovery, Target, design_name};
+use crate::samples::SAMPLES;
 use crate::{Files, Next, when};
 
 /// State of the welcome screen.
@@ -102,6 +103,7 @@ impl Welcome {
             WelcomeUi::OpenFromBrowser(name) => {
                 self.open(files, Source::Chosen(Chosen::Browser(name)))
             }
+            WelcomeUi::OpenSample(index) => self.open_sample(files, index),
             WelcomeUi::DeleteFromBrowser(name) => self.delete_from_browser(files, name),
             WelcomeUi::DownloadFromBrowser(name) => {
                 files.io.send(IoRequest::DownloadFromBrowser { name });
@@ -230,6 +232,30 @@ impl Welcome {
             ..Origin::new(Target::None, Access::Edit, UNTITLED.to_owned())
         };
         Next::Show(Box::new(Doc::new(Document::default(), origin)))
+    }
+
+    /// Opens the sample design `index` (see [`crate::samples`]) as a new
+    /// design known by the sample's name: never saved, auto-saved to a
+    /// store entry, its first Save a Save As, as for New design. Nothing
+    /// of it is kept in browser storage until the user saves it.
+    fn open_sample(&mut self, files: &mut Files, index: usize) -> Next {
+        let Some(sample) = SAMPLES.get(index) else {
+            return Next::Stay;
+        };
+        let document = match varde_io::vrdp::from_bytes(sample.file) {
+            Ok((document, _)) => document,
+            Err(error) => {
+                self.error = Some(format!("Couldn't open the sample {}: {error}", sample.name));
+                return Next::Stay;
+            }
+        };
+        self.error = None;
+        self.give_up(files);
+        let origin = Origin {
+            creating: Some(files.io.create()),
+            ..Origin::new(Target::None, Access::Edit, sample.name.to_owned())
+        };
+        Next::Show(Box::new(Doc::new(document, origin)))
     }
 
     /// Opens `source`. Not a store entry listed as one nothing can be read
@@ -545,6 +571,14 @@ impl Welcome {
             error: self.error.as_deref(),
             recent,
             stored,
+            samples: (SAMPLES.iter().enumerate())
+                .map(|(index, sample)| varde_view::SampleCard {
+                    index,
+                    name: sample.name,
+                    about: sample.about,
+                    thumbnail: files.sample_thumbnail(index, mode),
+                })
+                .collect(),
             storage,
             deleting,
             dragging: self.dragging,

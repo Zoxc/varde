@@ -53,6 +53,20 @@ fn a_thumbnail_comes_back_as_it_went() {
     assert_eq!(super::previews(None), []);
 }
 
+#[test]
+fn a_whole_file_gives_the_thumbnail_it_holds() {
+    let sent = Thumbnail {
+        light: image(6, 4),
+        dark: image(4, 6),
+    };
+    let document = varde_document::Document::default();
+    let (with, _) = crate::vrdp::to_bytes(&document, &previews(Some(&sent))).unwrap();
+    assert_eq!(of_file(&with), Some(sent));
+    let (without, _) = crate::vrdp::to_bytes(&document, &[]).unwrap();
+    assert_eq!(of_file(&without), None);
+    assert_eq!(of_file(b"not a design"), None);
+}
+
 /// `image` as a PNG preview of `media_type`.
 fn typed(image: &Image, media_type: &str) -> Preview {
     encode(image, media_type).unwrap()
