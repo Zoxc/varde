@@ -191,8 +191,9 @@ pub(crate) fn draw(
         let hot = active == Some(index);
         let (color, _) = handle::tone(colors, knob.tone, hot);
         let along = knob.along(knob.value, seen.pixel);
-        if knob.shaft {
-            let shaft = path_points(&knob, 0.0, along, seen.radius);
+        if let Some(from) = knob.shaft {
+            let from = knob.along(from, seen.pixel);
+            let shaft = path_points(&knob, from, along, seen.radius);
             handle::draw_shaft(live, &projector, &shaft, color);
         }
         if hot {
@@ -408,6 +409,7 @@ fn snapped(knob: &OpKnob, value: f64, drag: &Drag, units: LengthUnit) -> Option<
     let step = match knob.snap {
         KnobSnap::Length => snap_step(1.0 / unit, units)?,
         KnobSnap::Factor => round_step(1.0 / unit),
+        KnobSnap::Count => 1.0,
         // A unit of an angle is a radian: `unit` is the arc's radius.
         KnobSnap::Angle => angle_step(unit).to_radians(),
     };

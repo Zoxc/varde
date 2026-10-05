@@ -322,17 +322,24 @@ fn dragging_a_ring_turns_about_the_centre() {
         None,
     );
     let mut input = Interaction::default();
-    // The Y ring, square to the view, at 45° from Z towards X, and dragged
-    // a quarter turn back past Z: -90° about Y.
+    // The Y ring's knob, square to the view, on the orb where the layout
+    // put it, and dragged on round its ring 89° back: -90° about Y.
+    let state = state(MotionKind::Move, MotionPick::Bodies, None);
+    let handles =
+        (Moving::new(state).handles(&Input::default(), &camera, bounds())).expect("handles");
+    let knob = (handles.knobs.iter())
+        .find(|knob| knob.axis == Axis3::Y)
+        .expect("the Y ring's knob");
+    let (from, radius) = (knob.at, knob.radius);
     let on_ring = |degrees: f64| {
-        let turn = degrees.to_radians();
-        at(CENTRE + (DVec3::Z * angle::cos(turn) + DVec3::X * angle::sin(turn)) * 14.0)
+        let turn = from + degrees.to_radians();
+        at(CENTRE + (DVec3::Z * angle::cos(turn) + DVec3::X * angle::sin(turn)) * radius)
     };
-    let grab = on_ring(45.0);
+    let grab = on_ring(0.0);
     let (_, captured) = feed(&viewport, &mut input, &[moved(grab), press(grab)]);
     assert!(captured);
     assert_eq!(input.motion.hover, Some(Grip::Ring(Axis3::Y)));
-    let (messages, _) = feed(&viewport, &mut input, &[moved(on_ring(-44.0))]);
+    let (messages, _) = feed(&viewport, &mut input, &[moved(on_ring(-89.0))]);
     // Turning about the Y axis through the origin, then shifted so the
     // centre stays where it is.
     let turn = MotionLook::Turn {
@@ -431,7 +438,7 @@ fn no_handles_while_the_axis_is_picked() {
 
 #[test]
 fn angle_steps_are_round_degrees_a_few_pixels_apart() {
-    assert_eq!(angle_step(RING_PIXELS), 5.0);
+    assert_eq!(angle_step(ORB_PIXELS), 5.0);
     assert_eq!(angle_step(1000.0), 1.0);
     assert_eq!(angle_step(1.0), 90.0);
     let turned = turned_about(DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0), Axis3::Z, 90.0);
@@ -656,7 +663,7 @@ fn offset_face(at: f64) -> MotionState<'static> {
         scale: crate::KnobScale::Times(1.0),
         snap: crate::KnobSnap::Length,
         out: DVec3::Z,
-        shaft: true,
+        shaft: Some(0.0),
         tone: crate::KnobTone::Modify,
     }];
     state
@@ -814,7 +821,7 @@ fn an_arc_knob_turns_and_a_slider_scales() {
         scale: crate::KnobScale::Times(1.0),
         snap: crate::KnobSnap::Angle,
         out: DVec3::Z,
-        shaft: true,
+        shaft: Some(0.0),
         tone: crate::KnobTone::Modify,
     }];
     let viewport_arc = viewport(arc, &camera, None);
@@ -1478,6 +1485,47 @@ fn a_loft_s_and_a_split_s_regions_and_corners_are_hovered_again_as_the_camera_mo
             assert_eq!(input.motion.loft.region, None);
             feed(&here, &mut input, &[(redraw(), at)]);
             assert_eq!(input.motion.loft.corner, None);
+        }
+    }
+}
+
+/// From all round, in both projections, the handles keep apart on the
+/// screen: no two knobs' grab areas (13 pixels round each) meet, nor
+/// does a ring's knob or arc come within reach of an arrow's shaft or
+/// knob.
+#[test]
+fn the_move_s_arrows_and_rings_keep_apart_from_all_round() {
+    let state = state(MotionKind::Move, MotionPick::Bodies, None);
+    let moving = Moving::new(state);
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        for view in [View::Front, View::Top, View::Right, View::Bottom] {
+            for (yaw, pitch) in [(0.0, 0.0), (0.4, 0.3), (-0.9, 0.6), (1.7, -0.5), (2.6, 1.2)] {
+                let mut camera = camera(view, projection);
+                camera.orbit(yaw, pitch);
+                let case = format!("{view:?} {projection:?} {yaw} {pitch}");
+                let handles = moving
+                    .handles(&Input::default(), &camera, bounds())
+                    .expect(&case);
+                let knobs: Vec<DVec2> = (handles.arrows.iter().map(|arrow| arrow.puck.screen()))
+                    .chain(handles.knobs.iter().map(|knob| knob.puck.screen()))
+                    .collect();
+                for (k, a) in knobs.iter().enumerate() {
+                    for b in &knobs[k + 1..] {
+                        assert!(a.distance(*b) > 26.0, "{case}: knobs {a} {b}");
+                    }
+                }
+                for knob in &handles.knobs {
+                    for arrow in &handles.arrows {
+                        let shaft = [handles.centre, arrow.tip];
+                        let near = handles.distance_to_polyline(&shaft, knob.puck.screen());
+                        assert!(near > 13.0 + HIT_PIXELS, "{case}: knob by an arrow, {near}");
+                        let tip = arrow.puck.screen();
+                        let near = handles.distance_to_polyline(&knob.arc, tip);
+                        assert!(near > 13.0 + HIT_PIXELS, "{case}: arc by a knob, {near}");
+                    }
+                }
+                assert!(!handles.arrows.is_empty(), "{case}");
+            }
         }
     }
 }

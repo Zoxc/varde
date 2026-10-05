@@ -1,6 +1,6 @@
 //! The handles of the operations set up in the move's session that have
 //! a value to drag: an offset face's, a shell's, a draft's, a chamfer's,
-//! a fillet's, a scale's and an align's. The app works out where each
+//! a fillet's, a scale's, an align's and a pattern's. The app works out where each
 //! knob is and how it drags from what it knows of the model; the viewport
 //! draws them as the extrude's handle (`viewport/handle.rs`) and drags
 //! them (`viewport/knobs.rs`), sending [`MotionLook::DragKnob`] with the
@@ -30,8 +30,10 @@ pub struct OpKnob {
     pub snap: KnobSnap,
     /// The way its arrow points, of unit length: out of what it moves.
     pub out: DVec3,
-    /// Whether its shaft is drawn, from where the value is zero to it.
-    pub shaft: bool,
+    /// Where its shaft starts, as a value (zero, mostly: a pattern's
+    /// count's from the original, 1), if it has one: drawn from there to
+    /// it.
+    pub shaft: Option<f64>,
     /// Its colours: its tool's icon category's.
     pub tone: KnobTone,
 }
@@ -81,6 +83,8 @@ pub enum KnobSnap {
     Angle,
     /// A factor: 1, 2 or 5 × 10ⁿ.
     Factor,
+    /// A count: whole numbers.
+    Count,
 }
 
 /// The colours of a knob: those of its tool's icon category.
@@ -90,6 +94,9 @@ pub enum KnobTone {
     Create,
     /// Modify's: red, with a blue accent.
     Modify,
+    /// A count's beside another value's knob (a pattern's): teal, so
+    /// the two read apart.
+    Count,
 }
 
 impl OpKnob {

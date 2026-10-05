@@ -163,6 +163,10 @@ pub struct SketchColors {
     pub modify_handle_accent: Color,
     pub modify_handle_hovered: Color,
     pub modify_handle_accent_hovered: Color,
+    /// A pattern's count's knob, beside its spacing's or span's in the
+    /// handles' colour: teal, to read apart.
+    pub count_handle: Color,
+    pub count_handle_hovered: Color,
     /// The rail along a handle's axis while it's hovered or dragged: ink,
     /// the text mixed 80% into the panel.
     pub rail: Color,
@@ -339,6 +343,9 @@ const DARK_ICONS: IconColors = {
 /// How much of a handle's colours is kept, mixed into white, while it's
 /// hovered or dragged.
 const HANDLE_HOVERED: f32 = 0.72;
+/// A pattern's count's knob's teal, beside the handles' magenta.
+const LIGHT_COUNT: Color = color!(0x0b8a91);
+const DARK_COUNT: Color = color!(0x3fc9d3);
 
 // The mock's colours for sketches and for construction, used by the
 // renderer and the sketch being edited alike.
@@ -430,6 +437,8 @@ const LIGHT: Palette = Palette {
         modify_handle_accent: LIGHT_ICONS.modify.accent,
         modify_handle_hovered: mix(LIGHT_ICONS.modify.line, Color::WHITE, HANDLE_HOVERED),
         modify_handle_accent_hovered: mix(LIGHT_ICONS.modify.accent, Color::WHITE, HANDLE_HOVERED),
+        count_handle: LIGHT_COUNT,
+        count_handle_hovered: mix(LIGHT_COUNT, Color::WHITE, HANDLE_HOVERED),
         rail: mix(LIGHT_TEXT, LIGHT_PANEL, 0.8),
     },
 };
@@ -518,6 +527,8 @@ const DARK: Palette = Palette {
         modify_handle_accent: DARK_ICONS.modify.accent,
         modify_handle_hovered: mix(DARK_ICONS.modify.line, Color::WHITE, HANDLE_HOVERED),
         modify_handle_accent_hovered: mix(DARK_ICONS.modify.accent, Color::WHITE, HANDLE_HOVERED),
+        count_handle: DARK_COUNT,
+        count_handle_hovered: mix(DARK_COUNT, Color::WHITE, HANDLE_HOVERED),
         rail: mix(DARK_TEXT, DARK_PANEL, 0.8),
     },
 };

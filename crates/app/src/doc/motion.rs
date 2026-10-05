@@ -2319,20 +2319,15 @@ impl Doc {
         Some(&session.highlight).filter(|highlight| current && !highlight.is_empty())
     }
 
-    /// The move or mirror being set up, for the view.
-    pub(crate) fn motion_state(&self) -> Option<MotionState<'_>> {
-        let session = self.motion.as_ref()?;
+    /// What the session's axis or plane is called, and where it's drawn: a
+    /// point on it and its direction (a plane's normal), a flipped linear
+    /// pattern's turned the way its copies go; none while it isn't known,
+    /// or a move turning by nothing (unless it's being picked).
+    pub(super) fn reference_line(
+        &self,
+        session: &MotionSession,
+    ) -> (Option<String>, Option<[DVec3; 2]>) {
         let document = self.editor.document();
-        let design = document.design();
-        // A body gone from the document stays listed, as the UI mock's.
-        let named = |body: BodyId| CombineBody {
-            body,
-            name: (document.body(body)).map_or("Missing body", |body| body.name.as_str()),
-        };
-        let editing = session
-            .feature
-            .and_then(|feature| document.feature(feature))
-            .map(|feature| feature.name.as_str());
         let (reference, origin) = match session.kind {
             // A sweep's helix's axis, only while its path is a helix.
             MotionKind::Sweep if session.sweep.path != SweepPath::Helix => (None, None),
@@ -2381,6 +2376,24 @@ impl Doc {
             .or_else(|| self.feed.draft_reference())
             .filter(|_| turning && reference.is_some())
             .map(|[point, along]| [point, if flipped { -along } else { along }]);
+        (reference, line)
+    }
+
+    /// The move or mirror being set up, for the view.
+    pub(crate) fn motion_state(&self) -> Option<MotionState<'_>> {
+        let session = self.motion.as_ref()?;
+        let document = self.editor.document();
+        let design = document.design();
+        // A body gone from the document stays listed, as the UI mock's.
+        let named = |body: BodyId| CombineBody {
+            body,
+            name: (document.body(body)).map_or("Missing body", |body| body.name.as_str()),
+        };
+        let editing = session
+            .feature
+            .and_then(|feature| document.feature(feature))
+            .map(|feature| feature.name.as_str());
+        let (reference, line) = self.reference_line(session);
         // The bodies where the model shown has them: a merged one in its
         // holder.
         let bounds = self.motion_bounds(session);

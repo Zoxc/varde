@@ -23,6 +23,13 @@
 //!   world axis for Per axis; none for Edge length.
 //! - An align's: along the target's primary direction from its point, at
 //!   the offset, and on a ring about it there, at the turn.
+//! - A linear pattern's: the spacing's on its axis from the original's
+//!   start to the first copy's (the total's to the last's), the count's
+//!   on a rail above the copies, in its own colour.
+//! - A circular pattern's: the span's on the arc through the copies at
+//!   the last copy (none for Full 360°), the count's on a slider running
+//!   on along the arc's tangent past it; for a new one only, as it finds
+//!   the original on the document's model.
 //!
 //! A shell's, draft's, chamfer's and fillet's knobs stand where their
 //! first face or edge is before the feature changes it, which the model
@@ -35,7 +42,7 @@ use varde_document::{EdgeRef, FaceRef, Generation, PlaneRef};
 use varde_expr::{AngleUnit, Unit};
 use varde_view::{
     ChamferType, KnobPath, KnobRadius, KnobScale, KnobSnap, KnobTone, MotionField, MotionKind,
-    OpKnob, ScaleMode, ShellDirection,
+    OpKnob, PatternMode, ScaleMode, ShellDirection,
 };
 
 use super::{Doc, MotionSession, field_ask};
@@ -44,6 +51,8 @@ use super::{Doc, MotionSession, field_ask};
 const SCALE_PIXELS: f64 = 100.0;
 /// How far out of the target's point an align's ring is, in pixels.
 const TURN_PIXELS: f64 = 60.0;
+/// How many pixels a circular pattern's count's slider runs a copy.
+const COUNT_PIXELS: f64 = 8.0;
 
 /// Where a shell's, draft's, chamfer's or fillet's knobs stand, as the
 /// first face or edge is before the feature: found on the model shown at
@@ -88,6 +97,8 @@ impl Doc {
             MotionKind::Fillet => self.fillet_knob(session).into_iter().collect(),
             MotionKind::Scale => self.scale_knobs(session, bounds),
             MotionKind::Align => self.align_knobs(session),
+            MotionKind::LinearPattern => self.linear_knobs(session, bounds),
+            MotionKind::CircularPattern => self.circular_knobs(session),
             _ => Vec::new(),
         };
         let finite = |knob: &OpKnob| {
@@ -123,6 +134,9 @@ impl Doc {
             // Its sign is its side: through zero, never at it.
             MotionKind::OffsetFace => value == 0.0,
             MotionKind::Align => false,
+            // A whole count, of two or more (the field's ask says how
+            // many at most).
+            _ if knob.snap == KnobSnap::Count => value < 2.0 || value.fract() != 0.0,
             _ => value <= 0.0,
         };
         if !value.is_finite() || refused {
@@ -135,7 +149,7 @@ impl Doc {
         let units = match knob.snap {
             KnobSnap::Length => Some(Unit::Length(document.units())),
             KnobSnap::Angle => Some(Unit::Angle(AngleUnit::Deg)),
-            KnobSnap::Factor => None,
+            KnobSnap::Factor | KnobSnap::Count => None,
         };
         let shown = if kind == MotionKind::OffsetFace {
             value.abs()
@@ -272,7 +286,7 @@ impl Doc {
             scale: KnobScale::Times(1.0),
             snap: KnobSnap::Length,
             out: handle.normal,
-            shaft: true,
+            shaft: Some(0.0),
             tone: KnobTone::Modify,
         })
     }
@@ -338,7 +352,7 @@ impl Doc {
             scale: KnobScale::Times(1.0),
             snap: KnobSnap::Length,
             out: along,
-            shaft: true,
+            shaft: Some(0.0),
             tone: KnobTone::Modify,
         })
     }
@@ -386,7 +400,7 @@ impl Doc {
             scale: KnobScale::Times(1.0),
             snap: KnobSnap::Angle,
             out: tangent,
-            shaft: true,
+            shaft: Some(0.0),
             tone: KnobTone::Modify,
         })
     }
@@ -406,7 +420,7 @@ impl Doc {
                 scale: KnobScale::Times(times),
                 snap: KnobSnap::Length,
                 out: along,
-                shaft: true,
+                shaft: Some(0.0),
                 tone: KnobTone::Modify,
             })
         };
@@ -449,7 +463,7 @@ impl Doc {
             scale: KnobScale::Times(times),
             snap: KnobSnap::Length,
             out: along,
-            shaft: true,
+            shaft: Some(0.0),
             tone: KnobTone::Modify,
         })
     }
@@ -473,7 +487,7 @@ impl Doc {
                 scale: KnobScale::Pixels(SCALE_PIXELS),
                 snap: KnobSnap::Factor,
                 out: along,
-                shaft: true,
+                shaft: Some(0.0),
                 tone: KnobTone::Modify,
             })
         };
@@ -525,7 +539,7 @@ impl Doc {
                 scale: KnobScale::Times(1.0),
                 snap: KnobSnap::Length,
                 out: primary,
-                shaft: true,
+                shaft: Some(0.0),
                 tone: KnobTone::Create,
             },
             OpKnob {
@@ -540,9 +554,185 @@ impl Doc {
                 scale: KnobScale::Times(1.0),
                 snap: KnobSnap::Angle,
                 out: tangent,
-                shaft: true,
+                shaft: Some(0.0),
                 tone: KnobTone::Create,
             },
         ]
     }
+
+    /// A linear pattern's knobs, once its axis and the bodies' box are
+    /// known: the spacing's (the total's in Total) on the axis through the
+    /// box's middle, from the original's start (the box's end the copies
+    /// go away from, which the box has whether it holds the copies or
+    /// not) to the first copy's (the last's); and the count's on a rail
+    /// above the copies, at the last copy, a spacing a copy, its shaft
+    /// from the original.
+    fn linear_knobs(&self, session: &MotionSession, bounds: Option<[DVec3; 2]>) -> Vec<OpKnob> {
+        let (Some([low, high]), (_, Some([_, along]))) = (bounds, self.reference_line(session))
+        else {
+            return Vec::new();
+        };
+        let Some(along) = along.try_normalize() else {
+            return Vec::new();
+        };
+        let count = Self::knob_value(session, MotionField::Count);
+        let spread = Self::knob_value(session, MotionField::Spread);
+        let corners = box_corners(low, high);
+        let middle = (low + high) / 2.0;
+        let start = (corners.iter().map(|&corner| corner.dot(along))).fold(f64::INFINITY, f64::min);
+        let origin = middle + along * (start - middle.dot(along));
+        let up = (DVec3::Z - along * along.dot(DVec3::Z))
+            .try_normalize()
+            .unwrap_or(DVec3::Y);
+        let top = (corners.iter().map(|&corner| corner.dot(up))).fold(f64::NEG_INFINITY, f64::max);
+        let rail = origin + up * (top - origin.dot(up) + 0.25 * (high - low).length());
+        let total = session.mode == PatternMode::Total;
+        let mut knobs = Vec::new();
+        if let Some(spread) = spread {
+            knobs.push(OpKnob {
+                field: MotionField::Spread,
+                path: KnobPath::Line { origin, along },
+                value: spread,
+                scale: KnobScale::Times(1.0),
+                snap: KnobSnap::Length,
+                out: along,
+                shaft: Some(0.0),
+                tone: KnobTone::Create,
+            });
+        }
+        // A copy's step along the rail.
+        let step = match (spread, count) {
+            (Some(spread), Some(count)) if total && count > 1.0 => spread / (count - 1.0),
+            (Some(spread), _) if !total => spread,
+            _ => return knobs,
+        };
+        if let Some(count) = count.filter(|_| step > 0.0 && step.is_finite()) {
+            knobs.push(OpKnob {
+                field: MotionField::Count,
+                path: KnobPath::Line {
+                    origin: rail - along * step,
+                    along,
+                },
+                value: count,
+                scale: KnobScale::Times(step),
+                snap: KnobSnap::Count,
+                out: along,
+                shaft: Some(1.0),
+                tone: KnobTone::Count,
+            });
+        }
+        knobs
+    }
+
+    /// A circular pattern's knobs, for a new one once its axis and the
+    /// bodies' box in the document's model (without the pattern) are
+    /// known: the span's on the arc through the copies (the bodies' box
+    /// centre turned about the axis), at the last copy (the step's in
+    /// Spacing, a step a copy less one; none for Full 360°); and the
+    /// count's on a slider running on along the arc's tangent past its
+    /// end, 8 pixels a copy.
+    fn circular_knobs(&self, session: &MotionSession) -> Vec<OpKnob> {
+        if session.feature.is_some() {
+            return Vec::new();
+        }
+        let (Some(centre), (_, Some([point, axis]))) =
+            (self.committed_centre(session), self.reference_line(session))
+        else {
+            return Vec::new();
+        };
+        let Some(axis) = axis.try_normalize() else {
+            return Vec::new();
+        };
+        let foot = point + axis * (centre - point).dot(axis);
+        let radial = centre - foot;
+        let radius = radial.length();
+        let Some(radial) = radial.try_normalize() else {
+            return Vec::new();
+        };
+        let count = Self::knob_value(session, MotionField::Count);
+        let spread = Self::knob_value(session, MotionField::Spread);
+        let (span, times) = match (session.mode, spread, count) {
+            (PatternMode::Full, ..) => (std::f64::consts::TAU, None),
+            (PatternMode::Total, Some(spread), _) => (spread, Some(1.0)),
+            (PatternMode::Spacing, Some(step), Some(count)) => {
+                (step * (count - 1.0), Some(count - 1.0))
+            }
+            _ => return Vec::new(),
+        };
+        let (sin, cos) = span.sin_cos();
+        let end = foot + (radial * cos + axis.cross(radial) * sin) * radius;
+        let tangent = axis.cross(radial) * cos - radial * sin;
+        let mut knobs = Vec::new();
+        if let (Some(times), Some(spread)) = (times, spread)
+            && times > 0.0
+        {
+            knobs.push(OpKnob {
+                field: MotionField::Spread,
+                path: KnobPath::Arc {
+                    centre: foot,
+                    axis,
+                    radial,
+                    radius: KnobRadius::World(radius),
+                },
+                value: spread,
+                scale: KnobScale::Times(times),
+                snap: KnobSnap::Angle,
+                out: tangent,
+                shaft: Some(0.0),
+                tone: KnobTone::Create,
+            });
+        }
+        if let Some(count) = count {
+            knobs.push(OpKnob {
+                field: MotionField::Count,
+                path: KnobPath::Line {
+                    origin: end,
+                    along: tangent,
+                },
+                value: count,
+                scale: KnobScale::Pixels(COUNT_PIXELS),
+                snap: KnobSnap::Count,
+                out: tangent,
+                shaft: Some(0.0),
+                tone: KnobTone::Count,
+            });
+        }
+        knobs
+    }
+
+    /// The centre of the session's bodies' box in the document's model,
+    /// the last the committed document regenerated to (a merged body in
+    /// its holder).
+    fn committed_centre(&self, session: &MotionSession) -> Option<DVec3> {
+        let (mesh, parts) = self.feed.committed()?;
+        let shown = self.shown_bodies(&session.bodies);
+        let positions = mesh.positions();
+        let indices = mesh.indices();
+        let mut bounds: Option<[DVec3; 2]> = None;
+        for (part, body) in mesh.parts().zip(parts) {
+            if !shown.contains(body) {
+                continue;
+            }
+            for &index in indices.get(part.indices.clone())? {
+                let at = glam::Vec3::from(*positions.get(index as usize)?).as_dvec3();
+                bounds = Some(match bounds {
+                    Some([low, high]) => [low.min(at), high.max(at)],
+                    None => [at, at],
+                });
+            }
+        }
+        let [low, high] = bounds?;
+        Some((low + high) / 2.0)
+    }
+}
+
+/// The eight corners of the box from `low` to `high`.
+fn box_corners(low: DVec3, high: DVec3) -> [DVec3; 8] {
+    std::array::from_fn(|k| {
+        DVec3::new(
+            if k & 1 == 0 { low.x } else { high.x },
+            if k & 2 == 0 { low.y } else { high.y },
+            if k & 4 == 0 { low.z } else { high.z },
+        )
+    })
 }

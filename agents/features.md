@@ -1390,11 +1390,26 @@ would jump as a ring is let go of and the next turn would be about
 another point; these stay where a ring turned the bodies about, move
 with typed or dragged offsets at once, and a ring turned back undoes its
 turn. Before the pivot is known, the box's centre. A fixed size on
-the screen, an arrow along each world axis (100 px, a 2 px shaft as the
-extrude handle's, in the axis's scene colour, `Colors::axes`, with a knob
-at the end, a 7 px accent disc in a 2 px rim of the points' fill) and a ring
-square to each (70 px across, 64 segments, the axis's colour); the one
-under the cursor or dragged in the hovered colour. Not for a mirror,
+the screen, laid out there so the arrows and the rings' knobs keep apart
+(`Handles::new`, "big orb, short arrows"): an arrow
+along each world axis 50 px long on the screen, each flipped to whichever
+end spreads the three most (the least angle between them on the screen
+the widest, flipping as few as that allows) and left out pointing within
+about 17° of the eye (shown shorter than 0.3 of its length), a shaft in
+the axis's scene colour (`Colors::axes`) to a puck as the extrude
+handle's, its ring in the axis's colour and its arrow in the handles'
+accent; then a faint orb 104 px out (ink, at 0.25), and on it a knob for
+each ring not seen nearer edge on than 0.09: the gaps between the
+arrows on the orb are cut into slots 31 px clear of the arrows and 58
+px apart, the rings put in them as most fit (then the largest least
+scale), each ring's radius such that it runs through its slot's middle
+on the orb, a puck there (its arrow the way positive angles turn) on the
+stretch of the ring in the slot (at most 40° either way and the orb's
+radius long, 12 px clear of the slot's edges). The one under the cursor
+or dragged lighter, with an ink rail along its axis or round its ring.
+Shafts, arcs and pucks are on the screen over the model. A test checks
+from all round, in both projections, that no two knobs' grab areas meet
+and no ring's knob or arc comes within reach of an arrow. Not for a mirror,
 while the axis is picked, without the bodies' box, or in a document
 that can't be changed; while the move turns about another axis than a
 world axis only the arrows, while about a world axis only its ring
@@ -1404,9 +1419,8 @@ They take the mouse ahead of picking the model (`Moving::mouse`,
 the model's hover is let go of and not worked out again until the cursor
 leaves it; a press on one grabs it, anywhere else goes to picking and
 the camera as before. Hit testing on the screen: an arrow's shaft within
-6 px or its knob (the nearest arrow first; one shown shorter than 12 px,
-nearly along the view, can't be grabbed), then the nearest ring within
-6 px. A drag keeps the centre where it was grabbed (an arrow's moving
+6 px or its puck (the nearest arrow first), then the nearest ring's knob
+(its puck, or its arc within 6 px). A drag keeps the centre where it was grabbed (an arrow's moving
 with its offset). Dragging an arrow sets that axis's offset: the offset
 as grabbed plus how far along the arrow's line the cursor's ray has
 passed nearest it (`Projector::along_line`, which the extrude handle
@@ -1419,7 +1433,7 @@ measures the angle the cursor sweeps about the centre on the ring's plane
 (right-handed about the axis, unwrapped across half turns), the angle as
 grabbed (the angle field's value, zero if none) plus it snapped absolute
 to round degrees (1, 2, 5, 10, 15, 30, 45 or 90, the first 6 px along
-the ring: 5° at 70 px) and brought within a turn, and sends
+the orb: 5° at 104 px) and brought within a turn, and sends
 `MotionLook::Turn { axis, angle, offset }`: the session's axis becomes
 that world axis (`AxisRef::Origin`), and since a move turns about an axis
 through the origin before it shifts, the offsets become the grabbed
@@ -4792,7 +4806,7 @@ loft's parts refused as read), `view/src/loft/tests.rs` (the notes).
 ## Operation knobs
 
 The operations set up in the move's session that have a value to drag
-(offset face, shell, draft, chamfer, fillet, scale, align) have a
+(offset face, shell, draft, chamfer, fillet, scale, align, patterns) have a
 handle of knobs, as the extrude's and revolve's are drawn
 (`agents/viewport.md`): `MotionState::knobs`, `OpKnob`
 (`view/src/motion/knobs.rs`), worked out by the app
@@ -4805,9 +4819,10 @@ in millimetres or pixels), its value in the field's own units
 how a value maps onto the path (times a factor, or a slider so many
 pixels a unit), what it snaps to (lengths as the extrude's handle,
 angles as a move's ring, factors 1, 2 or 5 × 10ⁿ, each at least 6 px
-along the path), its arrow's way (the way the value grows), whether it
-has a shaft from where the value is zero, and its colours (Create's or
-Modify's). Dragged, the viewport sends `MotionLook::DragKnob { knob,
+along the path, counts whole), its arrow's way (the way the value
+grows), where its shaft starts if it has one (a value, zero but for a
+pattern's count's, from the original), and its colours (Create's,
+Modify's, or a count's teal beside a pattern's other knob). Dragged, the viewport sends `MotionLook::DragKnob { knob,
 value }`, the value snapped; the app (`Doc::drag_knob`) types it into
 the field as the design's units (or degrees, or a bare factor) write
 it, where the field takes it: none at or below zero but an offset
@@ -4836,6 +4851,21 @@ quarter turn or more. None in a document that can't be changed.
 - **Align**: along the target's primary direction from its point at the
   offset, and on a ring 60 px out about it there at the turn, from the
   target's second direction.
+- **Linear pattern** ("rail above"): the spacing's on the axis through
+  the bodies' box's middle from the original's start (the box's end the
+  copies go away from, there whether the box holds the copies or not)
+  to the first copy's, the total's to the last's in Total; the count's,
+  teal, on a rail above the copies (a quarter of the box's diagonal
+  above its top, square to the axis towards +Z), a step a copy, at the
+  last copy, its shaft from the original. A count dragged is whole and
+  two or more.
+- **Circular pattern** ("running on"): the span's on the arc through
+  the copies (the bodies' box centre turned about the axis) at the last
+  copy, the step's in Spacing (a step a copy less one), none for Full
+  360°; the count's, teal, on a slider running on along the arc's
+  tangent past its end, 8 px a copy. The original is found on the
+  document's model (`MeshFeed::committed`), so only a new pattern has
+  knobs.
 
 A shell's, draft's, chamfer's and fillet's knobs stand where their
 first face or edge is before the feature changes it (`KnobAnchor`):

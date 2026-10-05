@@ -64,6 +64,11 @@ pub(crate) struct Puck<K> {
 }
 
 impl<K> Puck<K> {
+    /// Where it shows on the screen.
+    pub(crate) fn screen(&self) -> DVec2 {
+        self.screen
+    }
+
     /// The world point `pixels` along its arrow's line, out of the end.
     pub(crate) fn along(&self, pixels: f64) -> DVec3 {
         self.at + self.out * (pixels * self.pixel)
@@ -128,6 +133,8 @@ pub(crate) fn tone(colors: SketchColors, tone: KnobTone, hot: bool) -> (Color, C
             colors.modify_handle_hovered,
             colors.modify_handle_accent_hovered,
         ),
+        (KnobTone::Count, false) => (colors.count_handle, colors.handle_accent),
+        (KnobTone::Count, true) => (colors.count_handle_hovered, colors.handle_accent_hovered),
     }
 }
 

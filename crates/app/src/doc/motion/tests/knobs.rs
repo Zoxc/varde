@@ -252,3 +252,103 @@ fn no_knobs_read_only_or_editing() {
     assert!(plates.doc.motion.is_some());
     assert!(knobs(&plates).is_empty());
 }
+
+/// The count a linear or circular pattern's last request previews, and
+/// its spacing or angle.
+fn pattern_drafted(plates: &Plates) -> (Option<u32>, f64) {
+    let FeatureKind::Pattern(pattern) = drafted(plates) else {
+        panic!("a pattern");
+    };
+    let spread = match &pattern.kind {
+        varde_document::PatternKind::Linear { spacing, .. } => spacing.value,
+        varde_document::PatternKind::Circular { angle, .. } => angle.value,
+    };
+    (pattern.count(), spread)
+}
+
+/// A linear pattern of the right disc (radius 5 about (20, 0), z −5 to
+/// 15) along X: the spacing's knob on the axis through the box's middle
+/// from the disc's start (x 15), at the first copy; the count's, teal,
+/// on a rail above the copies, a spacing a copy, at the last copy; each
+/// dragged types its field, a count only whole and two or more.
+#[test]
+fn a_linear_pattern_s_knobs_set_its_spacing_and_count() {
+    let mut plates = super::plates();
+    let [_, right, _] = plates.bodies;
+    plates.answer();
+    plates.click(right);
+    plates.doc.look(Look::StartPattern);
+    plates.input(MotionField::Count, "4");
+    plates.input(MotionField::Spread, "12");
+    let [spacing, count] = knobs(&plates)[..] else {
+        panic!("{:?}", knobs(&plates));
+    };
+    assert_eq!(spacing.field, MotionField::Spread);
+    assert_eq!(spacing.tone, KnobTone::Create);
+    let (origin, along) = line(&spacing);
+    assert!(near(origin, DVec3::new(15.0, 0.0, 5.0)), "{origin}");
+    assert!(near(along, DVec3::X));
+    assert_eq!(spacing.value, 12.0);
+    assert_eq!(count.field, MotionField::Count);
+    assert_eq!(count.tone, KnobTone::Count);
+    assert_eq!(count.value, 4.0);
+    assert_eq!(count.scale, KnobScale::Times(12.0));
+    let (rail, _) = line(&count);
+    assert!(
+        rail.z > 15.0 && near(rail.with_z(0.0), DVec3::new(3.0, 0.0, 0.0)),
+        "{rail}"
+    );
+
+    drag(&mut plates, 0, 10.0);
+    assert_eq!(pattern_drafted(&plates), (Some(4), 10.0));
+    drag(&mut plates, 1, 6.0);
+    assert_eq!(pattern_drafted(&plates), (Some(6), 10.0));
+    drag(&mut plates, 1, 1.0);
+    drag(&mut plates, 1, 2.5);
+    assert_eq!(pattern_drafted(&plates), (Some(6), 10.0));
+}
+
+/// A circular pattern of the right disc about Z: in Full 360° only the
+/// count's knob, on a slider along the tangent from the original (8
+/// pixels a copy); in Spacing, the step's knob too, on the arc through
+/// the copies at the last copy, a step a copy less one.
+#[test]
+fn a_circular_pattern_s_knobs_set_its_count_and_step() {
+    let mut plates = super::plates();
+    let [_, right, _] = plates.bodies;
+    plates.answer();
+    plates.click(right);
+    plates.doc.look(Look::StartCircularPattern);
+    let [count] = knobs(&plates)[..] else {
+        panic!("{:?}", knobs(&plates));
+    };
+    assert_eq!(count.field, MotionField::Count);
+    assert_eq!(count.scale, KnobScale::Pixels(8.0));
+    let (origin, along) = line(&count);
+    assert!(near(origin, DVec3::new(20.0, 0.0, 5.0)), "{origin}");
+    assert!(near(along, DVec3::Y), "{along}");
+    drag(&mut plates, 0, 6.0);
+    assert_eq!(pattern_drafted(&plates).0, Some(6));
+
+    plates.motion(MotionLook::Mode(varde_view::PatternMode::Spacing));
+    plates.input(MotionField::Spread, "30");
+    let [step, count] = knobs(&plates)[..] else {
+        panic!("{:?}", knobs(&plates));
+    };
+    assert_eq!(step.field, MotionField::Spread);
+    assert_eq!(step.scale, KnobScale::Times(5.0));
+    assert!(matches!(
+        step.path,
+        KnobPath::Arc { centre, radius: KnobRadius::World(r), .. }
+            if near(centre, DVec3::new(0.0, 0.0, 5.0)) && (r - 20.0).abs() < 1e-9
+    ));
+    assert_eq!(count.field, MotionField::Count);
+    drag(&mut plates, 0, 20f64.to_radians());
+    let (copies, angle) = pattern_drafted(&plates);
+    assert_eq!(copies, Some(6));
+    assert!(
+        (angle - 100f64.to_radians()).abs() < 1e-9,
+        "{}",
+        angle.to_degrees()
+    );
+}

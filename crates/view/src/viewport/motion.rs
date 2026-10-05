@@ -10,9 +10,13 @@
 //! panel's row of it is hovered.
 //!
 //! A move has handles at its bodies' pivot ([`MotionState::centre`],
-//! else their box's centre), a fixed size on the screen: an arrow along
-//! each world axis, a shaft in the axis's colour with a knob at its end
-//! as the extrude's handle has, and a ring about each. They take the mouse ahead of picking the model. Dragging an
+//! else their box's centre), a fixed size on the screen and laid out
+//! there to keep apart ([`Handles::new`]): a short arrow along each world
+//! axis, a shaft in the axis's colour to a puck as the extrude's handle
+//! has, flipped to spread them and left out pointing at the eye; and on a
+//! faint orb round them, in the gaps between the arrows, a knob for each
+//! ring not seen edge on, on a stretch of its ring. They take the mouse
+//! ahead of picking the model. Dragging an
 //! arrow sets that axis's offset, where the cursor's ray passes nearest
 //! the arrow's line, snapped as the extrude's handle ([`snap_step`] of a
 //! pixel's size at the camera's target);
@@ -45,7 +49,7 @@
 //! meanwhile. The pieces the preview shows are labelled with their
 //! bodies' names ([`Moving::labels`]).
 
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::{Arc, LazyLock};
 
 use glam::{DVec2, DVec3};
@@ -58,6 +62,7 @@ use varde_kernel::Motion;
 use varde_render::{Camera, Colors, GridPlane, PointStyle, SketchLayer, Space as LayerSpace, Srgb};
 use varde_sketch::{Id, angle};
 
+use super::handle::{self, Puck};
 use super::knobs;
 use super::regions::{self, Regions, grid_plane};
 use super::sketch::{fill_region_in, line, srgba};
@@ -101,25 +106,32 @@ const PICKED_FILL: f32 = 0.35;
 const CORNER_RADIUS: f32 = 3.5;
 const START_RADIUS: f32 = 5.5;
 
-/// How long the handles' arrows are, and the rings' radius, in pixels.
-const ARROW_PIXELS: f64 = 100.0;
-const RING_PIXELS: f64 = 70.0;
-/// How wide the arrows' shafts and the rings are drawn, in pixels: the
-/// extrude handle's shaft.
-const SHAFT_WIDTH: f32 = 2.0;
-/// The knob at an arrow's end, the extrude handle's: its radius and its
-/// rim's width, in pixels.
-const KNOB_RADIUS: f32 = 7.0;
-const KNOB_RIM: f32 = 2.0;
-/// How many segments a ring is drawn and hit tested with.
+/// How long the handles' arrows are on the screen, in pixels, and how
+/// far out of their centre the rings' knobs are, on an orb drawn faintly
+/// round them (the variants mock's "Big orb, short arrows").
+const ARROW_PIXELS: f64 = 50.0;
+const ORB_PIXELS: f64 = 104.0;
+/// How opaque the orb's outline is.
+const ORB_ALPHA: f32 = 0.25;
+/// An arrow shorter on the screen than this share of its length seen
+/// square on (pointing within about 17° of the eye) is left out.
+const MIN_FORESHORTENED: f64 = 0.3;
+/// How far a ring's knob keeps clear of the arrows on the orb, and how
+/// far apart knobs in one gap between arrows are at least, in pixels.
+const KNOB_CLEAR: f64 = 31.0;
+const KNOB_SEPARATION: f64 = 58.0;
+/// A ring seen nearer edge on than this (the cosine between its axis and
+/// the way to the eye) has no knob.
+const RING_EDGE_ON: f64 = 0.09;
+/// How far a ring's arc runs either side of its knob at most, in degrees,
+/// and how far it keeps clear of its gap's edges, in pixels.
+const ARC_DEGREES: f64 = 40.0;
+const ARC_CLEAR: f64 = 12.0;
+/// How many segments the orb is drawn with.
 const RING_SEGMENTS: usize = 64;
 /// How near the cursor a shaft or ring is grabbed, in pixels: a sketch's
 /// hit tolerance; a knob, anywhere on it too.
 const HIT_PIXELS: f64 = 6.0;
-/// How long an arrow has to show, in pixels, to be dragged: shorter, it
-/// runs nearly along the view, where the cursor says next to nothing of
-/// how far along it.
-const MIN_ARROW_PIXELS: f64 = 12.0;
 /// How near to edge on a ring's plane the cursor's ray may run and still
 /// turn it, as the cosine between the ray and the ring's axis.
 const EDGE_ON: f64 = 1e-3;
@@ -282,32 +294,224 @@ impl Input {
     }
 }
 
-/// The handles as they're shown: where, a pixel's size there, and which
-/// rings.
-#[derive(Debug, Clone, Copy)]
+/// An arrow of the handles as it's laid out: along its axis's direction
+/// or against it (`sign`), to `tip`, `ARROW_PIXELS` long on the screen.
+#[derive(Debug, Clone)]
+struct ArrowShown {
+    axis: Axis3,
+    tip: DVec3,
+    puck: Puck<Grip>,
+}
+
+/// A ring's knob as it's laid out: on the orb, in a gap between the
+/// arrows, with the stretch of its ring there (`arc`).
+#[derive(Debug, Clone)]
+struct RingShown {
+    axis: Axis3,
+    arc: Vec<DVec3>,
+    /// The ring's radius in millimetres, and where on it the knob is.
+    radius: f64,
+    at: f64,
+    puck: Puck<Grip>,
+}
+
+/// The handles as they're shown: where, a pixel's size there, which
+/// rings, and the arrows and rings' knobs as they're laid out on the
+/// screen.
+#[derive(Debug, Clone)]
 struct Handles {
     centre: DVec3,
     pixel: f64,
     rings: [bool; 3],
     projector: Projector,
+    arrows: Vec<ArrowShown>,
+    knobs: Vec<RingShown>,
+}
+
+/// How a placing of rings' knobs in slots scores: more placed is better.
+type Score<'s> = dyn Fn(&[(Axis3, usize)]) -> f64 + 's;
+
+/// A stretch of the orb between two arrows that a ring's knob can take:
+/// its middle and its ends, as angles on the screen.
+#[derive(Debug, Clone, Copy)]
+struct Slot {
+    middle: f64,
+    low: f64,
+    high: f64,
 }
 
 impl Handles {
-    /// The end of the arrow of `axis`.
-    fn arrow(&self, axis: Axis3) -> DVec3 {
-        self.centre + axis.direction() * (ARROW_PIXELS * self.pixel)
+    /// The handles about `centre`, a pixel `pixel` there, seen through
+    /// `projector`, with the rings `rings` says: the arrows laid out
+    /// first, each flipped to whichever end spreads the three the most
+    /// on the screen and left out pointing at the eye; then a knob for
+    /// each ring not seen edge on, in the gaps between them on the orb,
+    /// as many as fit.
+    fn new(centre: DVec3, pixel: f64, rings: [bool; 3], projector: Projector) -> Self {
+        let mut handles = Self {
+            centre,
+            pixel,
+            rings,
+            projector,
+            arrows: Vec::new(),
+            knobs: Vec::new(),
+        };
+        let origin = projector.show(centre);
+        // Each axis's way on the screen, and how foreshortened it is.
+        let seen: Vec<(Axis3, f64, f64)> = Axis3::ALL
+            .into_iter()
+            .filter_map(|axis| {
+                let way = projector.show(centre + axis.direction()) - origin;
+                let shown = way.length() * pixel;
+                (shown >= MIN_FORESHORTENED && shown.is_finite())
+                    .then(|| (axis, shown, angle::atan2(way.y, way.x)))
+            })
+            .collect();
+        // The flips spreading them most: the least gap between them the
+        // widest, flipping as few as that allows.
+        let mut best: Option<(f64, usize)> = None;
+        for mask in 0..1usize << seen.len() {
+            let mut angles: Vec<f64> = (seen.iter().enumerate())
+                .map(|(k, &(_, _, at))| turned(at + if mask >> k & 1 == 1 { PI } else { 0.0 }))
+                .collect();
+            angles.sort_by(f64::total_cmp);
+            let gap = least_gap(&angles);
+            let score = gap - 0.05 * f64::from(mask.count_ones());
+            if best.is_none_or(|(best, _)| score > best) {
+                best = Some((score, mask));
+            }
+        }
+        let mask = best.map_or(0, |(_, mask)| mask);
+        let mut rays = Vec::new();
+        for (k, &(axis, shown, at)) in seen.iter().enumerate() {
+            let sign = if mask >> k & 1 == 1 { -1.0 } else { 1.0 };
+            let way = axis.direction() * sign;
+            let tip = centre + way * (ARROW_PIXELS * pixel / shown);
+            rays.push(turned(at + if sign < 0.0 { PI } else { 0.0 }));
+            if let Some(puck) = Puck::new(Grip::Arrow(axis), tip, way, &projector) {
+                handles.arrows.push(ArrowShown { axis, tip, puck });
+            }
+        }
+        rays.sort_by(f64::total_cmp);
+        handles.knobs = handles.lay_rings(&rays, origin);
+        handles
     }
 
-    /// The points around the ring of `axis`, the first again at the end.
-    fn ring(&self, axis: Axis3) -> Vec<DVec3> {
-        let (u, v) = plane_axes(axis);
-        let radius = RING_PIXELS * self.pixel;
-        (0..=RING_SEGMENTS)
-            .map(|k| {
-                let turn = TAU * k as f64 / RING_SEGMENTS as f64;
-                self.centre + (u * angle::cos(turn) + v * angle::sin(turn)) * radius
+    /// The rings' knobs in the gaps between the arrows at `rays` (their
+    /// angles on the screen, sorted), the centre showing at `origin`: of
+    /// the ways to put the rings not seen edge on in the gaps' slots, the
+    /// one placing the most, then with the largest least scale.
+    fn lay_rings(&self, rays: &[f64], origin: DVec2) -> Vec<RingShown> {
+        let projector = &self.projector;
+        let (eye, backward) = projector.eye();
+        let to_eye = if projector.perspective() {
+            (eye - self.centre).normalize_or_zero()
+        } else {
+            backward
+        };
+        let axes: Vec<Axis3> = Axis3::ALL
+            .into_iter()
+            .filter(|&axis| {
+                self.rings[axis_index(axis)] && axis.direction().dot(to_eye).abs() >= RING_EDGE_ON
             })
+            .collect();
+        let slots = slots(rays, ORB_PIXELS, KNOB_CLEAR, KNOB_SEPARATION);
+        let toward =
+            |axis: Axis3, middle: f64| ring_toward(projector, self.centre, origin, axis, middle);
+        let mut best: Option<(f64, Vec<(Axis3, usize)>)> = None;
+        let mut picked = Vec::new();
+        fn search(
+            axes: &[Axis3],
+            slots: &[Slot],
+            picked: &mut Vec<(Axis3, usize)>,
+            score: &Score<'_>,
+            best: &mut Option<(f64, Vec<(Axis3, usize)>)>,
+        ) {
+            let Some((&axis, rest)) = axes.split_first() else {
+                let got = score(picked);
+                if best.as_ref().is_none_or(|(best, _)| got > *best) {
+                    *best = Some((got, picked.clone()));
+                }
+                return;
+            };
+            search(rest, slots, picked, score, best);
+            for slot in 0..slots.len() {
+                if picked.iter().any(|&(_, taken)| taken == slot) {
+                    continue;
+                }
+                picked.push((axis, slot));
+                search(rest, slots, picked, score, best);
+                picked.pop();
+            }
+        }
+        let score = |picked: &[(Axis3, usize)]| {
+            let least = (picked.iter())
+                .map(|&(axis, slot)| toward(axis, slots[slot].middle).1 * self.pixel)
+                .fold(1.0, f64::min);
+            picked.len() as f64 * 10.0 + least
+        };
+        search(&axes, &slots, &mut picked, &score, &mut best);
+        let Some((_, picked)) = best else {
+            return Vec::new();
+        };
+        (picked.into_iter())
+            .filter_map(|(axis, slot)| self.ring_knob(axis, slots[slot], origin))
             .collect()
+    }
+
+    /// The knob of the ring of `axis` in `slot`, the centre showing at
+    /// `origin`: where the ring runs through the slot's middle, with the
+    /// ring's radius making that `ORB_PIXELS` out; and the stretch of the
+    /// ring either side of it in the slot, `ARC_CLEAR` clear of its edges,
+    /// at most `ARC_DEGREES` and the orb's radius long on the screen.
+    fn ring_knob(&self, axis: Axis3, slot: Slot, origin: DVec2) -> Option<RingShown> {
+        let projector = &self.projector;
+        let (at, scale) = ring_toward(projector, self.centre, origin, axis, slot.middle);
+        if !(scale > 0.0 && scale.is_finite()) {
+            return None;
+        }
+        let radius = ORB_PIXELS / scale;
+        let (u, v) = plane_axes(axis);
+        let point =
+            |turn: f64| self.centre + (u * angle::cos(turn) + v * angle::sin(turn)) * radius;
+        let fits = |turn: f64| {
+            let q = projector.show(point(turn)) - origin;
+            let r = q.length();
+            let along = slot.low + turned(angle::atan2(q.y, q.x) - slot.low);
+            let clear = |by: f64| r * angle::sin(by.min(FRAC_PI_2));
+            along <= slot.high
+                && clear(along - slot.low) >= ARC_CLEAR
+                && clear(slot.high - along) >= ARC_CLEAR
+        };
+        let side = |way: f64| {
+            let mut points = Vec::new();
+            let (mut run, mut last) = (0.0, projector.show(point(at)));
+            let mut step = 2.0;
+            while step <= ARC_DEGREES {
+                let turn = at + way * step.to_radians();
+                let shown = projector.show(point(turn));
+                run += shown.distance(last);
+                last = shown;
+                if !fits(turn) || run > ORB_PIXELS {
+                    break;
+                }
+                points.push(point(turn));
+                step += 2.0;
+            }
+            points
+        };
+        let mut arc: Vec<DVec3> = side(-1.0).into_iter().rev().collect();
+        arc.push(point(at));
+        arc.extend(side(1.0));
+        let tangent = v * angle::cos(at) - u * angle::sin(at);
+        let puck = Puck::new(Grip::Ring(axis), point(at), tangent, projector)?;
+        Some(RingShown {
+            axis,
+            arc,
+            radius,
+            at,
+            puck,
+        })
     }
 
     /// Where the world segment from `a` to `b` shows, unless it's behind
@@ -317,27 +521,31 @@ impl Handles {
         Some((self.projector.show(a), self.projector.show(b)))
     }
 
+    /// How far the screen position `at` is from the polyline through the
+    /// world `points`, in pixels.
+    fn distance_to_polyline(&self, points: &[DVec3], at: DVec2) -> f64 {
+        (points.windows(2))
+            .filter_map(|pair| self.shown(pair[0], pair[1]))
+            .map(|(a, b)| segment_distance(at, a, b))
+            .fold(f64::INFINITY, f64::min)
+    }
+
     /// The handle at the screen position `at`, if any: the nearest
-    /// arrow's knob or shaft first, then the nearest ring.
+    /// arrow (its puck, or its shaft within `HIT_PIXELS`) first, then the
+    /// nearest ring's knob (its puck, or its arc).
     fn grip_at(&self, at: DVec2) -> Option<Grip> {
-        let arrows = Axis3::ALL.into_iter().filter_map(|axis| {
-            let (a, b) = self.shown(self.centre, self.arrow(axis))?;
-            if a.distance(b) < MIN_ARROW_PIXELS {
-                return None;
-            }
-            let knob = (at.distance(b) - f64::from(KNOB_RADIUS)).max(0.0);
-            Some((Grip::Arrow(axis), segment_distance(at, a, b).min(knob)))
+        let arrows = self.arrows.iter().map(|arrow| {
+            let shaft = self.distance_to_polyline(&[self.centre, arrow.tip], at);
+            let puck = arrow.puck.screen().distance(at);
+            let reached = handle::knob_at(std::slice::from_ref(&arrow.puck), at).is_some();
+            let distance = if reached { puck.min(shaft) } else { shaft };
+            (Grip::Arrow(arrow.axis), distance)
         });
-        let rings = Axis3::ALL.into_iter().filter_map(|axis| {
-            if !self.rings[axis_index(axis)] {
-                return None;
-            }
-            let ring = self.ring(axis);
-            let distance = (ring.windows(2))
-                .filter_map(|pair| self.shown(pair[0], pair[1]))
-                .map(|(a, b)| segment_distance(at, a, b))
-                .fold(f64::INFINITY, f64::min);
-            Some((Grip::Ring(axis), distance))
+        let rings = self.knobs.iter().map(|knob| {
+            let arc = self.distance_to_polyline(&knob.arc, at);
+            let reached = handle::knob_at(std::slice::from_ref(&knob.puck), at).is_some();
+            let distance = if reached { 0.0 } else { arc };
+            (Grip::Ring(knob.axis), distance)
         });
         nearest(arrows).or_else(|| nearest(rings))
     }
@@ -372,6 +580,88 @@ impl Handles {
         let turn = angle::atan2(y, x);
         (turn.is_finite() && (x != 0.0 || y != 0.0)).then_some(turn)
     }
+}
+
+/// `angle` brought into a turn from zero.
+fn turned(angle: f64) -> f64 {
+    angle.rem_euclid(TAU)
+}
+
+/// The least gap between the sorted `angles`, all the way round: a whole
+/// turn for one or none.
+fn least_gap(angles: &[f64]) -> f64 {
+    if angles.len() < 2 {
+        return TAU;
+    }
+    (0..angles.len())
+        .map(|k| match angles.get(k + 1) {
+            Some(next) => next - angles[k],
+            None => angles[0] + TAU - angles[k],
+        })
+        .fold(TAU, f64::min)
+}
+
+/// The slots of the gaps between the arrows at `rays` (sorted angles on
+/// the screen) on a circle `radius` pixels out: none nearer an arrow than
+/// `clear` pixels, `separation` pixels apart at least, each gap's split
+/// evenly, as many as fit (one in a gap that fits one). With no arrows, a
+/// whole turn from the screen's right.
+fn slots(rays: &[f64], radius: f64, clear: f64, separation: f64) -> Vec<Slot> {
+    // The arcsine, by the crate's own arctangent.
+    let asin = |x: f64| {
+        let x = x.clamp(-1.0, 1.0);
+        angle::atan2(x, (1.0 - x * x).sqrt())
+    };
+    let edge = asin(clear / radius);
+    let apart = 2.0 * asin(separation / (2.0 * radius));
+    let rays = if rays.is_empty() { &[0.0][..] } else { rays };
+    let mut slots = Vec::new();
+    for (k, &low) in rays.iter().enumerate() {
+        let high = rays.get(k + 1).copied().unwrap_or(rays[0] + TAU);
+        let room = high - low - 2.0 * edge;
+        if room < 0.0 {
+            continue;
+        }
+        let count = (room / apart).floor().max(1.0) as usize;
+        for q in 0..count {
+            let width = room / count as f64;
+            let middle = low + edge + width * (q as f64 + 0.5);
+            slots.push(Slot {
+                middle,
+                low: if q == 0 { low } else { middle - width / 2.0 },
+                high: if q == count - 1 {
+                    high
+                } else {
+                    middle + width / 2.0
+                },
+            });
+        }
+    }
+    slots
+}
+
+/// Where the ring of `axis` about `centre` (showing at `origin`) runs the
+/// way `angle` on the screen: the angle round it, from its plane's first
+/// axis towards its second ([`plane_axes`]), and how many pixels a
+/// millimetre of its radius makes there.
+fn ring_toward(
+    projector: &Projector,
+    centre: DVec3,
+    origin: DVec2,
+    axis: Axis3,
+    angle: f64,
+) -> (f64, f64) {
+    let (u, v) = plane_axes(axis);
+    let p = projector.show(centre + u) - origin;
+    let q = projector.show(centre + v) - origin;
+    let way = DVec2::new(angle::cos(angle), angle::sin(angle));
+    let mut turn = angle::atan2(-way.perp_dot(p), way.perp_dot(q));
+    let mut reach = p * angle::cos(turn) + q * angle::sin(turn);
+    if reach.dot(way) < 0.0 {
+        turn += PI;
+        reach = -reach;
+    }
+    (turn, reach.length())
 }
 
 /// The nearest of `grips`, each with how far from the cursor it is in
@@ -926,12 +1216,7 @@ impl<'a> Moving<'a> {
         }
         let angle = self.field(MotionField::Angle).unwrap_or(0.0);
         let rings = Axis3::ALL.map(|axis| angle == 0.0 || state.origin_axis == Some(axis));
-        Some(Handles {
-            centre,
-            pixel,
-            rings,
-            projector,
-        })
+        Some(Handles::new(centre, pixel, rings, projector))
     }
 
     /// The value of `field` as it last read, if it reads.
@@ -1192,7 +1477,7 @@ impl<'a> Moving<'a> {
                 let now = handles.angle_at(drag.centre, axis, at)?;
                 drag.turned += wrapped(now - drag.at);
                 drag.at = now;
-                let step = angle_step(RING_PIXELS);
+                let step = angle_step(ORB_PIXELS);
                 let to = drag.angle + degrees(drag.turned);
                 // Within a turn either way, as a move takes.
                 let to = ((to / step).round() * step % 360.0) + 0.0;
@@ -1821,41 +2106,58 @@ fn draw_handles(
     colors: SketchColors,
 ) {
     let active = input.drag.map(|drag| drag.grip).or(input.hover);
-    let color = |grip: Grip, axis: Axis3| {
+    let projector = &handles.projector;
+    // The orb, faintly, on the screen.
+    let origin = projector.show(handles.centre);
+    let orb: Vec<DVec2> = (0..=RING_SEGMENTS)
+        .map(|k| {
+            let turn = TAU * k as f64 / RING_SEGMENTS as f64;
+            origin + DVec2::new(angle::cos(turn), angle::sin(turn)) * ORB_PIXELS
+        })
+        .collect();
+    let faint = iced::Color {
+        a: colors.rail.a * ORB_ALPHA,
+        ..colors.rail
+    };
+    live.polyline(LayerSpace::Screen, &orb, line(faint, 1.0, false));
+    // An axis's colour, lighter while its handle is hovered or dragged,
+    // with the handles' accent.
+    let tone = |grip: Grip, axis: Axis3| {
+        let [r, g, b] = scene.axes[axis_index(axis)].0;
+        let color = iced::Color::from_rgb(r, g, b);
         if active == Some(grip) {
-            colors.hovered
+            let lighter = |c: f32| c * 0.72 + 0.28;
+            let lit = iced::Color::from_rgb(lighter(r), lighter(g), lighter(b));
+            (lit, colors.handle_accent_hovered)
         } else {
-            let [r, g, b] = scene.axes[axis_index(axis)].0;
-            iced::Color::from_rgb(r, g, b)
+            (color, colors.handle_accent)
         }
     };
-    for axis in Axis3::ALL {
-        if handles.rings[axis_index(axis)] {
-            let ring: Vec<_> = handles.ring(axis).iter().map(|p| p.as_vec3()).collect();
-            let grip = Grip::Ring(axis);
-            live.world_polyline(&ring, line(color(grip, axis), SHAFT_WIDTH, false));
+    for knob in &handles.knobs {
+        let grip = Grip::Ring(knob.axis);
+        let (color, accent) = tone(grip, knob.axis);
+        handle::draw_shaft(live, projector, &knob.arc, color);
+        if active == Some(grip) {
+            let (u, v) = plane_axes(knob.axis);
+            let per_pixel = (knob.puck.pixel / knob.radius).min(PI / handle::RAIL_REACH);
+            let path = |px: f64| {
+                let turn = knob.at + px * per_pixel;
+                handles.centre + (u * angle::cos(turn) + v * angle::sin(turn)) * knob.radius
+            };
+            handle::draw_rail(live, projector, colors.rail, path);
         }
+        handle::draw_puck(live, projector, &knob.puck, (color, accent));
     }
-    let [r, g, b] = scene.selected.0;
-    let accent = iced::Color::from_rgb(r, g, b);
-    for axis in Axis3::ALL {
-        let grip = Grip::Arrow(axis);
-        let tip = handles.arrow(axis);
-        let shaft = [handles.centre.as_vec3(), tip.as_vec3()];
-        live.world_polyline(&shaft, line(color(grip, axis), SHAFT_WIDTH, false));
-        let fill = if active == Some(grip) {
-            colors.hovered
-        } else {
-            accent
-        };
-        let knob = PointStyle {
-            radius: KNOB_RADIUS,
-            rim_width: KNOB_RIM,
-            rim: srgba(colors.point_fill),
-            fill: srgba(fill),
-            fixed: false,
-        };
-        live.world_point(tip.as_vec3(), knob);
+    for arrow in &handles.arrows {
+        let grip = Grip::Arrow(arrow.axis);
+        let (color, accent) = tone(grip, arrow.axis);
+        handle::draw_shaft(live, projector, &[handles.centre, arrow.tip], color);
+        if active == Some(grip) {
+            let way = arrow.axis.direction();
+            let path = |px: f64| arrow.tip + way * (px * arrow.puck.pixel);
+            handle::draw_rail(live, projector, colors.rail, path);
+        }
+        handle::draw_puck(live, projector, &arrow.puck, (color, accent));
     }
 }
 

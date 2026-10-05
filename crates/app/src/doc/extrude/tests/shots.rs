@@ -2048,7 +2048,9 @@ fn face_pick(doc: &Doc, normal: [f64; 3], at: [f64; 3]) -> varde_view::Pick {
 /// session, on the example's plate: a chamfer of its top front edge,
 /// Equal then Two distances; a fillet of it; a shell of its top; an
 /// offset of its top; a draft of its front about the XY plane; a scale
-/// about the origin; the last also dark at scale 2.
+/// about the origin (also dark at scale 2); a move's handles, from two
+/// sides (also dark at scale 2); a linear and a circular pattern of a
+/// disc beside the plate (the circular also dark at scale 2).
 #[test]
 #[ignore = "writes screenshots, see the module"]
 fn shots_33_op_knobs() {
@@ -2110,5 +2112,53 @@ fn shots_33_op_knobs() {
         doc.look(Look::StartScale);
         camera.take(&doc, "33-scale", Shot::new());
         camera.take(&doc, "33-scale-dark-scale2", Shot::new().dark().scale(2.0));
+        cancel(&mut doc);
+        answer(&mut doc, &requests);
+
+        // A move's handles: short arrows, the rings' knobs on the orb in
+        // the gaps between them, from two sides.
+        doc.look(Look::StartMove);
+        answer(&mut doc, &requests);
+        camera.take(&doc, "33-move", Shot::new());
+        camera.take(&doc, "33-move-dark-scale2", Shot::new().dark().scale(2.0));
+        aim(&mut doc, 1.2, 0.9, PLATE_ZOOM);
+        camera.take(&doc, "33-move-steep", Shot::new());
+        cancel(&mut doc);
+
+        // A linear and a circular pattern of a disc beside the plate: the
+        // spacing's knob and the count's rail above, the step's knob on
+        // the arc and the count's slider running on past it.
+        let mut editor = varde_document::Editor::new(varde_document::Document::example());
+        let extent = crate::tests::two_sides(editor.document(), "15", "5");
+        let new = varde_document::Operation::NewBody(varde_document::BodyId::NEW);
+        crate::tests::add_disc(&mut editor, (20.0, 0.0), extent, new);
+        let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+        answer(&mut doc, &requests);
+        aim(&mut doc, -0.35, 0.35, PLATE_ZOOM * 1.4);
+        let disc = doc.editor.document().bodies()[1].id;
+        doc.look(Look::ClickBody {
+            body: disc,
+            add: false,
+        });
+        doc.look(Look::StartPattern);
+        answer(&mut doc, &requests);
+        camera.take(&doc, "33-pattern-linear", Shot::new());
+        cancel(&mut doc);
+        answer(&mut doc, &requests);
+        doc.look(Look::ClickBody {
+            body: disc,
+            add: false,
+        });
+        doc.look(Look::StartCircularPattern);
+        doc.look(Look::Motion(MotionLook::Mode(
+            varde_view::PatternMode::Spacing,
+        )));
+        answer(&mut doc, &requests);
+        camera.take(&doc, "33-pattern-circular", Shot::new());
+        camera.take(
+            &doc,
+            "33-pattern-circular-dark-scale2",
+            Shot::new().dark().scale(2.0),
+        );
     });
 }
