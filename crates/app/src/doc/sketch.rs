@@ -1347,10 +1347,9 @@ fn facing(projection: Projection, placement: Placement, sketch: &Sketch) -> Came
         // too, so these are finite.
         Some((low, high)) => {
             camera.set_target(placement.to_world((low + high) / 2.0).as_vec3());
+            // No closer than the default camera sees, for a lone point.
             let size = (high - low).max_element() as f32 * FRAME_MARGIN;
-            if size > camera.view_height() {
-                camera.zoom(size / camera.view_height());
-            }
+            camera.set_view_height(size.max(Camera::default().view_height()));
         }
         None => {
             let normal = placement.normal.as_vec3();

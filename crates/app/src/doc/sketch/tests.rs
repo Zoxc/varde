@@ -1485,3 +1485,25 @@ fn the_sketch_toolbar_fits_at_1280_px() {
     let splines = fits(&doc);
     assert!(splines.iter().any(|t| t == "Convert"), "{splines:?}");
 }
+
+#[test]
+fn a_sketch_is_framed_to_its_size_however_far_home_is() {
+    let placement = Placement {
+        origin: glam::DVec3::ZERO,
+        x: glam::DVec3::X,
+        y: glam::DVec3::Y,
+        normal: glam::DVec3::Z,
+    };
+    let mut sketch = varde_sketch::Sketch::default();
+    let start = sketch.add_point(DVec2::ZERO).unwrap();
+    let end = sketch.add_point(DVec2::new(20.0, 0.0)).unwrap();
+    sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+    let camera = facing(Projection::default(), placement, &sketch);
+    let expected = 20.0 * FRAME_MARGIN;
+    assert!((camera.view_height() - expected).abs() < 1e-3 * expected);
+    // A lone point, no closer than the default camera.
+    let mut point = varde_sketch::Sketch::default();
+    point.add_point(DVec2::new(3.0, 4.0)).unwrap();
+    let camera = facing(Projection::default(), placement, &point);
+    assert!((camera.view_height() - Camera::default().view_height()).abs() < 1e-3);
+}

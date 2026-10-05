@@ -313,11 +313,16 @@ const HOME_TARGET: Vec3 = Vec3::ZERO;
 /// way, in the words the status bar shows.
 const OUT_OF_DATE: &str = "The model shown is out of date: try again once it's regenerated";
 
+/// How far from the origin, in millimetres, the camera looks with nothing
+/// shown: about as far as a screen from the eye.
+const HOME_DISTANCE: f32 = 1000.0;
+
 /// The camera Home turns to, framed on the origin.
 fn home_camera(projection: Projection) -> Camera {
     let mut camera = Camera::default();
     camera.set_projection(projection);
     camera.set_target(HOME_TARGET);
+    camera.zoom(HOME_DISTANCE / camera.distance());
     camera
 }
 

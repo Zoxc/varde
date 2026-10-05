@@ -144,8 +144,10 @@ fn an_opened_document_frames_its_first_model_unless_the_camera_moved() {
     let (mut doc, requests) = deferred();
     doc.apply(Command::Replace(Box::new(a_disc_off_the_origin(5.0))));
     doc.sync();
+    let start = doc.camera;
     answer(&mut doc, &requests);
-    assert_eq!(doc.camera, home);
+    assert_eq!(doc.camera, start);
+    assert_eq!(doc.camera.target(), home.target());
 }
 
 #[test]
@@ -257,6 +259,9 @@ impl<R> Transport<R> for Deferred<R> {
 pub(crate) fn deferred() -> (Doc, Rc<RefCell<Vec<Request>>>) {
     let requests = Rc::default();
     let mut doc = untitled();
+    // The camera close to the origin, as the clicks the tests make at
+    // places on the screen expect, rather than Home's 1 m away.
+    doc.camera.zoom(9.0 / doc.camera.distance());
     doc.feed.connect(Deferred(Rc::clone(&requests)));
     doc.sync();
     (doc, requests)
