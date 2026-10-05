@@ -28,8 +28,11 @@
   #bracket/face, #bracket/body, #bracket/tools, #empty; #bracket/failed
   selects Fillet 2, which fails, and #bracket/failed-edit opens it; #bracket/op:<kind>
   opens an operation set up for a screenshot (extrude, revolve, combine, move,
-  bmirror, lpattern, cpattern, fillet, chamfer, shell; /join for revolve's
-  join); /v-top (any view cube view) sets the camera.
+  bmirror, lpattern, cpattern, fillet, chamfer, shell, and align, scale,
+  oface and draft, which have no tool here; /join for revolve's join,
+  /axes for scale per axis, /equal or /two for chamfer's types); /v-top
+  (any view cube view) sets the camera. Each shows the drag handles the app
+  draws for it (none for combine and mirror, which have no value to drag).
   Append /web for the web build (no title bar; a bar under the file cell
   says where the design is kept), with /unsaved or /local for a design
   never saved or a file on the computer rather than in browser storage.
@@ -64,6 +67,29 @@
 .band { fill: var(--accent); fill-opacity: .22; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; pointer-events: none; }
 .band.ring { fill: none; }
 .pplane { fill: var(--accent); fill-opacity: .08; stroke: var(--accent); stroke-opacity: .7; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+
+/* The drag handles the app draws for the operation being set up (the
+   app's puck): a ring square to its arrow with
+   a faint fill and a dot, the arrow out of it in the accent with an open
+   head facing the eye, and a shaft from where the value is zero; all over
+   the model, in the tool's category colours (a move's axes in theirs, a
+   pattern's count in teal). Static here: none is hovered. */
+.hdls { pointer-events: none; }
+.hdl { fill: none; stroke-linecap: round; stroke-linejoin: round; --c: var(--main, var(--c0)); --a: color-mix(in srgb, var(--a0) 60%, var(--c0)); }
+.hdl * { vector-effect: non-scaling-stroke; }
+.hdl.create { --c0: #c0409a; --a0: #0d9a88; }
+.hdl.modify { --c0: color-mix(in srgb, #cf3f30 90%, #000); --a0: #2f6fd8; }
+.hdl.count { --c0: #0b8a91; --a0: var(--c0); --a: color-mix(in srgb, var(--c0) 55%, var(--text)); }
+:root[data-theme="dark"] .hdl.create { --c0: #ef77c2; --a0: #3fd3bf; }
+:root[data-theme="dark"] .hdl.modify { --c0: color-mix(in srgb, #ff7a66 90%, #000); --a0: #78aaff; }
+:root[data-theme="dark"] .hdl.count { --c0: #3fc9d3; }
+.hdl .s { stroke: var(--c); stroke-width: 2; }
+.hdl .f { fill: var(--c); stroke: none; }
+.hdl .as { stroke: var(--a); stroke-width: 2; }
+.hdl .soft { fill: var(--c); fill-opacity: .2; stroke: none; }
+.hdl .thin { stroke: var(--c); stroke-width: 1.2; }
+.hdl .dash { stroke: var(--c); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .55; }
+.hdl-ink { fill: none; stroke: color-mix(in srgb, var(--text) 80%, var(--panel)); stroke-width: 1; opacity: .25; vector-effect: non-scaling-stroke; }
 
 /* ---- operation panel: as the tool rail's cards, a white head over a
    recessed grey well flush along the card's bottom, its top corners rounded
@@ -1007,6 +1033,252 @@ const OPS = {
   },
 };
 
+
+// ---------------------------------------------------------------- drag handles
+// What the app draws to drag an operation's values, sized in screen pixels:
+// a puck
+// (a ring 11 px across square to its arrow, faint fill, a 2.6 px dot, a 20 px
+// arrow in the accent with an open head facing the eye) and its shaft from
+// where the value is zero. Static: nothing here is hovered, so no rails.
+const HD = {
+  k: 1,
+  // Screen px of a point, and px per mm along v at p.
+  S: p => proj.P(...p).map(c => c / HD.k),
+  along: (p, v) => { const a = HD.S(p), b = HD.S(add(p, v)); return [b[0] - a[0], b[1] - a[1]]; },
+  pxmm: p => Math.hypot(...HD.along(p, proj.r)),
+  mm: (p, px) => px / HD.pxmm(p),
+  eye: p => proj.D === Infinity ? proj.d : norm(sub(add(proj.T, mul(proj.d, proj.D)), p)),
+};
+const hdlG = (cls, body, main) => `<g class="hdl ${cls}"${main ? ` style="--main: ${main}"` : ''}>${body}</g>`;
+const hdlLine = (ps, cls = 's') => `<polyline class="${cls}" points="${pts(ps)}"/>`;
+function puckSvg(at, out, size = 1) {
+  const L = px => HD.mm(at, px * size), a = Math.abs(out[0]) < .9 ? [1, 0, 0] : [0, 1, 0], e1 = norm(cross(out, a)), e2 = cross(out, e1);
+  const rg = Array.from({ length: 32 }, (_, i) => { const t = i / 32 * 2 * Math.PI; return add(at, add(mul(e1, L(11) * Math.cos(t)), mul(e2, L(11) * Math.sin(t)))); });
+  const tip = add(at, mul(out, L(20))), back = add(at, mul(out, L(14)));
+  let w = cross(out, HD.eye(at)), head = '';
+  const [tx, ty] = HD.S(tip), [bx, by] = HD.S(back);
+  if (len(w) > 1e-3 && Math.hypot(tx - bx, ty - by) > 1.5) { w = mul(norm(w), L(4.5)); head = hdlLine([add(back, w), tip, sub(back, w)], 'as'); }
+  const [x, y] = proj.P(...at);
+  return `<polygon class="soft" points="${pts(rg)}"/><polygon class="s" points="${pts(rg)}"/><circle class="f" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="${(2.6 * Math.max(size, .8) * HD.k).toFixed(3)}"/>${hdlLine([at, tip], 'as')}${head}`;
+}
+// A handle: its knob `at`, arrow `out`, `shaft` from its zero, colours.
+const handleSvg = ({ at, out, shaft, cls = 'create', main, size, extra = '' }) => hdlG(cls, (shaft ? hdlLine(shaft) : '') + extra + puckSvg(at, out, size), main);
+const arcAbout = (p, c, d, deg0, deg1, n = 32) => Array.from({ length: n + 1 }, (_, i) => XF.turn(c, d, deg0 + (deg1 - deg0) * i / n).p(p));
+const centreOf = ps => mul(ps.reduce(add), 1 / ps.length);
+const boxCentre = ps => bounds(ps).map(([a, b]) => (a + b) / 2);
+const midOf = e => mul(add(e.a, e.b), .5);
+
+// Move, as the app's "big orb, short arrows":
+// on the screen first, each axis's arrow (50 px) flipped to whichever end
+// spreads the three most and left out within 17° of the eye; the turns'
+// knobs on an orb 104 px out, each on the stretch of its ring running
+// through a gap between the arrows.
+const TAU = 2 * Math.PI, angN = a => ((a % TAU) + TAU) % TAU;
+const MOVE_AXES = [[[1, 0, 0], [0, 1, 0]], [[0, 1, 0], [0, 0, 1]], [[0, 0, 1], [1, 0, 0]]];
+function moveHandles(c) {
+  const pp = HD.pxmm(c), c2 = HD.S(c);
+  const vis = [0, 1, 2].map(i => { const q = HD.along(c, MOVE_AXES[i][0]), f = Math.hypot(...q) / pp; return { i, f, ang: Math.atan2(q[1], q[0]) }; }).filter(a => a.f >= .3);
+  let best = null;
+  for (let m = 0; m < 1 << vis.length; m++) {
+    const angs = vis.map((a, j) => angN(a.ang + (m >> j & 1 ? Math.PI : 0))).sort((x, y) => x - y);
+    let g = Infinity, bits = 0;
+    angs.forEach((x, j) => { g = Math.min(g, (j + 1 < angs.length ? angs[j + 1] : angs[0] + TAU) - x); bits += m >> j & 1; });
+    if (!best || g - .05 * bits > best.score) best = { score: g - .05 * bits, m };
+  }
+  vis.forEach((a, j) => { a.s = best.m >> j & 1 ? -1 : 1; a.dir = angN(a.ang + (a.s < 0 ? Math.PI : 0)); });
+  const rays = vis.map(a => a.dir).sort((x, y) => x - y);
+  let out = `<circle class="hdl-ink" cx="${(c2[0] * HD.k).toFixed(2)}" cy="${(c2[1] * HD.k).toFixed(2)}" r="${(104 * HD.k).toFixed(2)}"/>`;
+  for (const a of vis) {
+    const k = mul(MOVE_AXES[a.i][0], a.s), at = add(c, mul(k, 50 / (a.f * pp)));
+    out += handleSvg({ at, out: k, shaft: [c, at], main: AXIS_COLORS[a.i], size: .8 });
+  }
+  // The gaps cut into slots 58 px apart on the orb, none nearer an arrow than 31 px.
+  const D = 104, e = Math.asin(31 / D), sp = 2 * Math.asin(58 / (2 * D)), slots = [];
+  rays.forEach((a, j) => {
+    const b = j + 1 < rays.length ? rays[j + 1] : rays[0] + TAU, w = b - a - 2 * e;
+    if (w < 0) return;
+    const n = Math.max(1, Math.floor(w / sp));
+    for (let q = 0; q < n; q++) { const th = a + e + w * (q + .5) / n; slots.push({ th, lo: q === 0 ? a : th - w / (2 * n), hi: q === n - 1 ? b : th + w / (2 * n) }); }
+  });
+  const eye = HD.eye(c), rings = [0, 1, 2].filter(i => Math.abs(dot(MOVE_AXES[i][0], eye)) >= .09);
+  const toward = (i, th) => {
+    const [k, r0] = MOVE_AXES[i], p0 = HD.along(c, r0), p1 = HD.along(c, cross(k, r0)), d = [Math.cos(th), Math.sin(th)], cr = (u, v) => u[0] * v[1] - u[1] * v[0];
+    let t = Math.atan2(-cr(d, p0), cr(d, p1)), w = [Math.cos(t) * p0[0] + Math.sin(t) * p1[0], Math.cos(t) * p0[1] + Math.sin(t) * p1[1]];
+    if (w[0] * d[0] + w[1] * d[1] < 0) { t += Math.PI; w = [-w[0], -w[1]]; }
+    return { t, s: Math.hypot(...w) };
+  };
+  let pick = null;
+  const go = (ri, used, acc) => {
+    if (ri === rings.length) { const got = acc.filter(Boolean), sc = got.length * 10 + Math.min(1, ...got.map(x => x.s / pp)); if (!pick || sc > pick.sc) pick = { sc, got }; return; }
+    acc.push(null); go(ri + 1, used, acc); acc.pop();
+    slots.forEach((sl, si) => { if (used.has(si)) return; used.add(si); acc.push({ ...toward(rings[ri], sl.th), sl, i: rings[ri] }); go(ri + 1, used, acc); acc.pop(); used.delete(si); });
+  };
+  go(0, new Set(), []);
+  for (const { t, s, sl, i } of pick.got) {
+    const [k, r0] = MOVE_AXES[i], R = D / s, pt = tt => add(c, mul(XF.turn([0, 0, 0], k, tt * 180 / Math.PI).p(r0), R));
+    const fits = tt => {
+      const p = HD.S(pt(tt)), q = [p[0] - c2[0], p[1] - c2[1]], r = Math.hypot(...q), an = sl.lo + angN(Math.atan2(q[1], q[0]) - sl.lo);
+      return an <= sl.hi && r * Math.sin(Math.min(an - sl.lo, Math.PI / 2)) >= 12 && r * Math.sin(Math.min(sl.hi - an, Math.PI / 2)) >= 12;
+    };
+    const side = way => { const ps = []; let run = 0, last = HD.S(pt(t)); for (let dd = 2; dd <= 40; dd += 2) { const tt = t + way * rad(dd), p = HD.S(pt(tt)); run += Math.hypot(p[0] - last[0], p[1] - last[1]); last = p; if (!fits(tt) || run > D) break; ps.push(pt(tt)); } return ps; };
+    const band = [...side(-1).reverse(), pt(t), ...side(1)];
+    out += handleSvg({ at: pt(t), out: XF.turn([0, 0, 0], k, t * 180 / Math.PI).p(cross(k, r0)), shaft: band.length > 2 ? band : null, main: AXIS_COLORS[i], size: .8 });
+  }
+  return out;
+}
+
+OPS.extrude.handles = (o, m, r) => {
+  const g = r.rs[0], c = centreOf(r.rs.flatMap(g => g.pts));
+  return r.span.filter(t => Math.abs(t) > 1e-9).map(t => { const at = add(c, mul(g.n, t)); return handleSvg({ at, out: mul(g.n, Math.sign(t)), shaft: [c, at] }); }).join('');
+};
+OPS.revolve.handles = (o, m, r) => {
+  const c = centreOf(r.rs.flatMap(g => g.pts)), A = r.axis, foot = add(A.p, mul(A.d, dot(sub(c, A.p), A.d)));
+  return r.span.filter(t => Math.abs(t) > 1e-9).map(t => {
+    const at = XF.turn(A.p, A.d, t).p(c), out = mul(norm(cross(A.d, sub(at, foot))), Math.sign(t));
+    return handleSvg({ at, out, shaft: arcAbout(c, A.p, A.d, 0, t, Math.max(8, Math.ceil(Math.abs(t) / 6))) });
+  }).join('');
+};
+OPS.move.handles = (o, m, r) => moveHandles(r.x.p(boxCentre(facesOf(o.bodies, m).flatMap(f => f.p))));
+OPS.lpattern.handles = (o, m, r) => {
+  const ps = facesOf(o.bodies, m).flatMap(f => f.p), c = boxCentre(ps), d = o.flip ? mul(r.axis.d, -1) : r.axis.d;
+  const up = Math.abs(d[2]) > .9 ? [0, 1, 0] : [0, 0, 1], top = Math.max(...ps.map(p => dot(p, up))) - dot(c, up);
+  const R0 = add(c, mul(up, top + 14)), cp = k => add(c, mul(d, r.step * k)), last = add(R0, mul(d, r.step * (r.n - 1)));
+  let rail = '';
+  for (let k = 0; k < r.n; k++) {
+    const p = add(R0, mul(d, r.step * k)), h = mul(up, HD.mm(p, 5));
+    rail += hdlLine([add(cp(k), mul(up, top + 2)), add(cp(k), mul(up, top + 11))], 'dash') + hdlLine([sub(p, h), add(p, h)], 'thin');
+  }
+  return handleSvg({ at: cp(1), out: d, shaft: [c, cp(1)] }) + hdlG('count', rail) + handleSvg({ cls: 'count', at: last, out: d, shaft: [R0, last] });
+};
+OPS.cpattern.handles = (o, m, r) => {
+  const A = r.axis, c = boxCentre(facesOf(o.bodies, m).flatMap(f => f.p)), foot = add(A.p, mul(A.d, dot(sub(c, A.p), A.d)));
+  if (len(sub(c, foot)) < 1e-6) return '';
+  const span = o.mode === 'full' ? 360 : r.step * (r.n - 1), at = XF.turn(A.p, A.d, span).p(c), d = norm(cross(A.d, sub(at, foot)));
+  const mmPx = 1 / Math.max(Math.hypot(...HD.along(at, d)), .3 * HD.pxmm(at)), on = px => add(at, mul(d, px * mmPx));
+  let ticks = '';
+  const across = norm(cross(d, HD.eye(at)));
+  for (let n = 2; n <= r.n + 3; n++) { const p = on(44 + (n - 2) * 8), h = mul(across, HD.mm(p, 4)); ticks += `<polyline class="thin"${n > r.n ? ' opacity=".45"' : ''} points="${pts([sub(p, h), add(p, h)])}"/>`; }
+  return handleSvg({ at, out: d, shaft: arcAbout(c, A.p, A.d, 0, span, 48) }) + hdlG('count', ticks)
+    + handleSvg({ cls: 'count', at: on(44 + (r.n - 2) * 8), out: d, size: .85, shaft: [on(32), on(44 + (r.n - 2) * 8)] });
+};
+// A fillet's or chamfer's first edge: the bisector of its faces, into the body.
+const bisector = e => norm(add(e.sides[0].w, e.sides[1].w));
+OPS.chamfer.handles = (o, m, r) => {
+  const e = r.es.find(e => !e.rim);
+  if (!e) return '';
+  const c = midOf(e), [A, B] = e.sides;
+  if (o.type === 'equal') { const at = add(c, mul(add(A.w, B.w), r.d[0] / 2)); return handleSvg({ cls: 'modify', at, out: mul(bisector(e), -1), shaft: [c, at] }); }
+  return [[A, r.d[0]], [B, r.d[1]]].map(([s, d]) => { const at = add(c, mul(s.w, d)); return handleSvg({ cls: 'modify', at, out: s.w, shaft: [c, at] }); }).join('');
+};
+OPS.fillet.handles = (o, m, r) => {
+  const e = r.es.find(e => !e.rim);
+  if (!e) return '';
+  const c = midOf(e), b = bisector(e), half = Math.acos(clamp(dot(e.sides[0].w, b), -1, 1)), at = add(c, mul(b, r.d[0] / Math.sin(half) - r.d[0]));
+  return handleSvg({ cls: 'modify', at, out: mul(b, -1), shaft: [c, at] });
+};
+OPS.shell.handles = (o, m, r) => {
+  const f = r.fs[0];
+  if (!f) return '';
+  const c = centreOf(f.p), into = mul(f.n, o.dir === 'in' ? -1 : 1), at = add(c, mul(into, r.t));
+  return handleSvg({ cls: 'modify', at, out: into, shaft: [c, at] });
+};
+
+// Operations the mock has no panel for otherwise, set up just enough to
+// show their handles (#bracket/op:align, op:scale, op:scale/axes, op:oface,
+// op:draft).
+Object.assign(I, {
+  align: '<rect x="3" y="15" width="18" height="5" rx="1"/><rect class="t" x="8" y="4" width="8" height="6" rx="1"/><path class="a" d="M12 10v5M10 13l2 2 2-2"/>',
+  scale: '<rect x="3" y="12" width="9" height="9" rx="1"/><rect class="r" x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="2 2"/><path class="a" d="M10 14l9-9M14 5h5v5"/>',
+  draft: '<path class="r" d="M3 20h18"/><path class="t" d="M6 20l3-15h6l3 15"/><path class="a" d="M9 5v15" stroke-dasharray="2 2"/>',
+});
+Object.assign(CAT, { align: 'solid', scale: 'mod', draft: 'mod' });
+const SCALES = [['uniform', 'Uniform'], ['axes', 'Per axis']];
+const faceById = (m, id) => m.br?.faces.find(f => f.id === id);
+const faceCheck = (o, m, verb) => {
+  const r = { errs: {} };
+  r.f = faceById(m, o.face);
+  if (!m.br) r.error = 'No body to ' + verb;
+  else if (!o.face) r.need = 'Click a face to ' + verb;
+  else if (!r.f) r.error = 'The picked face is gone';
+  return r;
+};
+Object.assign(OPS, {
+  align: {
+    label: 'Align', icon: 'align', needs: 'bracket',
+    picks: { face: Pick('face', 'the target', 'Click the face to align onto') },
+    init: () => ({ face: 'base-top', offset: '12 mm', turn: '30°', pick: null }),
+    body: (o, m, r) => `${pickOne(o, 'face', 'Target', FACE_NAME[o.face], 'Click a face', 'se-face')}${numField(o, 'offset', 'Offset', r)}${numField(o, 'turn', 'Turn', r)}`,
+    check(o, m) {
+      const r = faceCheck(o, m, 'align onto');
+      r.off = readVal(o, 'offset', r.errs, { signed: true }); r.turn = readVal(o, 'turn', r.errs, { unit: 'deg', signed: true, max: 360 });
+      if (r.f && r.off != null && r.turn != null) {
+        const c = centreOf(r.f.p), cyl = facesOf(['cyl'], m), base = boxCentre(cyl.flatMap(f => f.p));
+        base[2] = Math.min(...cyl.flatMap(f => f.p).map(p => p[2]));
+        r.c = c; r.x = XF.then(XF.move(sub(add(c, mul(r.f.n, r.off)), base)), XF.turn(c, r.f.n, r.turn));
+      }
+      return r;
+    },
+    preview: (o, m, r) => ({ marks: new Set([o.face]), ...(r.x && { faces: xformFaces(facesOf(['cyl'], m), r.x).map(f => ({ ...f, draft: true, tint: 's' })), fade: new Set(['cyl']) }) }),
+    handles: (o, m, r) => {
+      const n = r.f.n, at = add(r.c, mul(n, r.off)), R = HD.mm(at, 60), x0 = norm(sub([1, 0, 0], mul(n, dot([1, 0, 0], n))));
+      const ring = arcAbout(add(at, mul(x0, R)), at, n, 0, 360, 48), kn = XF.turn(at, n, r.turn).p(add(at, mul(x0, R)));
+      return handleSvg({ at, out: n, shaft: [r.c, at] }) + handleSvg({ at: kn, out: norm(cross(n, sub(kn, at))), shaft: ring });
+    },
+    row: (o, r) => ({ meta: fmt(r.off) + ' mm', info: `Cylinder onto ${FACE_NAME[o.face]} · ${fmt(r.off)} mm · ${fmt(r.turn)}°` }),
+  },
+  scale: {
+    label: 'Scale', icon: 'scale', needs: 'bracket',
+    picks: {},
+    init: () => ({ mode: flag('axes') ? 'axes' : 'uniform', k: '1.25', kx: '1.25', ky: '0.8', kz: '1.1', pick: null }),
+    body: (o, m, r) => `<h4>Factor</h4>${choices(o, 'mode', SCALES)}${o.mode === 'uniform' ? numField(o, 'k', 'Factor', r) : numField(o, 'kx', 'X', r) + numField(o, 'ky', 'Y', r) + numField(o, 'kz', 'Z', r)}`,
+    check(o, m) {
+      const r = { errs: {} }, v = n => readVal(o, n, r.errs, { unit: 'count', max: 100 });
+      r.ks = o.mode === 'uniform' ? (k => [k, k, k])(v('k')) : ['kx', 'ky', 'kz'].map(v);
+      if (!m.br) r.error = 'No body to scale';
+      if (r.ks.every(k => k != null)) r.x = { p: p => p.map((c, i) => c * r.ks[i]), n: n => norm(n.map((c, i) => c / r.ks[i])) };
+      return r;
+    },
+    preview: (o, m, r) => r.x ? { faces: xformFaces(m.br.faces, r.x).map(f => ({ ...f, draft: true, tint: 's' })), fade: new Set(['body']) } : {},
+    // From the point it scales about (the origin) towards the box's centre,
+    // 100 px a factor of 1; or one along each world axis.
+    handles: (o, m, r) => {
+      const p0 = [0, 0, 0], perPx = v => 1 / Math.max(Math.hypot(...HD.along(p0, v)), .3 * HD.pxmm(p0));
+      const dirs = o.mode === 'uniform' ? [[norm(boxCentre(m.br.faces.flatMap(f => f.p))), r.ks[0]]] : [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map((v, i) => [v, r.ks[i]]);
+      return dirs.map(([v, k]) => { const at = add(p0, mul(v, 100 * k * perPx(v))); return handleSvg({ cls: 'modify', at, out: v, shaft: [p0, at] }); }).join('');
+    },
+    row: (o, r) => ({ meta: '×' + r.ks.map(fmt).join(' '), info: 'About the origin · ×' + r.ks.map(fmt).join(', ') }),
+  },
+  oface: {
+    label: 'Offset face', icon: 'pushpull', needs: 'bracket',
+    picks: { face: Pick('face', 'faces', 'Click the faces to offset') },
+    init: () => ({ face: 'up-top', dist: '8 mm', pick: null }),
+    body: (o, m, r) => `${pickOne(o, 'face', 'Faces', FACE_NAME[o.face], 'Click a face', 'se-face')}${numField(o, 'dist', 'Distance', r)}`,
+    check(o, m) { const r = faceCheck(o, m, 'offset'); r.d = readVal(o, 'dist', r.errs, { signed: true, max: 1000 }); return r; },
+    preview: (o, m, r) => ({ marks: new Set([o.face]), faces: r.f && r.d ? extrudeFaces(r.f.p, r.f.n, Math.min(0, r.d), Math.max(0, r.d), false).map(f => ({ ...f, draft: true, tint: r.d > 0 ? 's' : 'x' })) : [] }),
+    handles: (o, m, r) => { const c = centreOf(r.f.p), at = add(c, mul(r.f.n, r.d)); return handleSvg({ cls: 'modify', at, out: r.f.n, shaft: [c, at] }); },
+    row: (o, r) => ({ meta: fmt(r.d) + ' mm', info: `${FACE_NAME[o.face]} · ${fmt(r.d)} mm` }),
+  },
+  draft: {
+    label: 'Draft', icon: 'draft', needs: 'bracket',
+    picks: { face: Pick('face', 'faces', 'Click the faces to draft') },
+    init: () => ({ face: 'up-x', angle: '8°', pick: null }),
+    body: (o, m, r) => `${pickOne(o, 'face', 'Faces', FACE_NAME[o.face], 'Click a face', 'se-face')}<div class="fld"><label>Neutral plane</label><div class="pf"><span class="chip"><span class="ci">${icon('se-face')}</span><span class="nm">Base top</span></span></div></div>${numField(o, 'angle', 'Angle', r)}`,
+    check(o, m) { const r = faceCheck(o, m, 'draft'); r.a = readVal(o, 'angle', r.errs, { unit: 'deg', signed: true, max: 60 }); return r; },
+    // Turned about where it meets the neutral plane (z = 10), its top leaning in.
+    hinge: (r) => { const lo = Math.min(...r.f.p.map(p => p[2])), h = r.f.p.filter(p => Math.abs(p[2] - lo) < 1e-6); return { c: centreOf(h), d: norm(cross(r.f.n, [0, 0, 1])) }; },
+    preview(o, m, r) {
+      if (!r.f || r.a == null) return { marks: new Set([o.face]) };
+      const h = this.hinge(r), x = XF.turn(h.c, h.d, r.a);
+      return { marks: new Set([o.face]), svg: `<polygon class="band" points="${pts(r.f.p.map(x.p))}"/>` };
+    },
+    handles(o, m, r) {
+      const h = this.hinge(r), R = HD.mm(h.c, 60), up = add(h.c, [0, 0, R]), x = XF.turn(h.c, h.d, r.a);
+      return handleSvg({ cls: 'modify', at: x.p(up), out: x.n(r.f.n), shaft: arcAbout(up, h.c, h.d, 0, r.a, 16) });
+    },
+    row: (o, r) => ({ meta: fmt(r.a) + '°', info: `${FACE_NAME[o.face]} · ${fmt(r.a)}° from Base top` }),
+  },
+});
+
 function opPreview(m) {
   const o = st.op, def = OPS[o.kind];
   return def.preview(o, m, def.check(o, m));
@@ -1215,7 +1487,13 @@ Object.assign(page, {
       const p = OPS[st.op.kind].picks[st.op.pick];
       return p ? 'Pick ' + p.what : 'Pick';
     },
-    preview: (bodies, active) => opPreview(ctxOf(bodies, active)),
+    // The preview, and over it the handles of an operation that reads.
+    preview(bodies, active) {
+      const m = ctxOf(bodies, active), o = st.op, def = OPS[o.kind], r = def.check(o, m), pv = def.preview(o, m, r);
+      if (!def.handles || !ready(r)) return pv;
+      HD.k = unitsPerPixel();
+      return { ...pv, svg: (pv.svg || '') + `<g class="hdls">${def.handles(o, m, r)}</g>` };
+    },
     panel: opPanel,
     pick: opPick,
     // Bodies and origin planes in the objects list can be picked into the panel too.
@@ -1247,12 +1525,15 @@ const SHOTS = {
   extrude: { regions: ['s2:0'], d1: '20 mm', pick: null },
   revolve: { regions: ['s1:0'], axis: 's1:l5', extent: 'one', a1: '270°', flip: true, pick: null, ...(flag('join') && { op: 'join' }) },
   combine: { tools: ['dm:0:0'] },
-  move: { dx: '-20 mm', dy: '-80 mm', angle: '30°' },
+  move: { bodies: ['body'], dx: '-20 mm', dy: '-80 mm', angle: '30°' },
+  lpattern: { bodies: ['body'] },
+  cpattern: { bodies: ['body'] },
   bmirror: { plane: 'plane-yz', pick: null },
   fillet: { edges: [E('base-x', 'base-top'), E('base-top', 'side'), E('up-top', 'up-x'), 'rim:hole-a:base-top', E('back', 'up-top'), E('side', 'up-top')], radius: '3 mm' },
-  chamfer: { edges: [E('base-x', 'base-top'), E('base-x', 'side')], type: 'angle', d1: '3 mm', angle: '30°' },
+  chamfer: { edges: [E('base-x', 'base-top'), E('base-x', 'side')], type: flag('equal') ? 'equal' : flag('two') ? 'two' : 'angle', d1: '3 mm', d2: '5 mm', angle: '30°' },
   shell: { faces: ['up-top', 'base-x'] },
 };
+// The operations above with no tool in the rail open only from the address.
 {
   const doc = HASH[0] || 'bracket', view = HASH[1];
   st.doc = doc === 'empty' ? makeDoc('empty', 'Untitled') : makeDoc('bracket', doc);
