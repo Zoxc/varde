@@ -1239,6 +1239,8 @@ fn walls_tangent_along_a_line_are_decided_within_a_small_budget() {
 
 #[test]
 fn walls_overlapping_along_two_lines_are_cut_within_a_small_budget() {
+    // About 0.6 s in a debug build, over the quick target: the time is the
+    // crossing searches this checks, in one case.
     // Cylinders side by side overlapping by 1e-5 and 1e-4 at the default
     // tolerance meet in two lines 6e-3 and 2e-2 apart. The pairs along
     // them have ends, two lines' worth where the pieces hold both, and
@@ -1247,6 +1249,11 @@ fn walls_overlapping_along_two_lines_are_cut_within_a_small_budget() {
     // units); each line's ends join along it now. The second cylinder
     // over the middle of the first, its seam in the lens as the first's
     // is, or as tall as the first and turned off its seams.
+    //
+    // Some 0.6 s of work in a debug build (measured, profiled), three
+    // quarters of it the turned pair 1e-4 deep, whose crossing searches
+    // along the lines are what is tested: the kernel's own work, every
+    // case in quick runs too.
     for overlap in [1e-5, 1e-4] {
         for (z0, h, turn) in [(0.5, 1.0, 0.0), (0.0, 2.0, 0.3)] {
             let a = cylinder([0.0, 0.0, 0.0], 1.0, 2.0);
@@ -1267,15 +1274,20 @@ fn walls_overlapping_along_two_lines_are_cut_within_a_small_budget() {
                 (&a, &b, Op::Difference, va - lens),
                 (&b, &a, Op::Difference, vb - lens),
             ] {
-                let got = boolean(x, y, op, &TOL, &budget)
-                    .unwrap_or_else(|e| panic!("{overlap} {turn} {op:?}: {e:?}"));
+                let got = || boolean(x, y, op, &TOL, &budget);
+                // The intersection the same on 1 and 8 threads.
+                let got = if op == Op::Intersection {
+                    assert_deterministic(got)
+                } else {
+                    got()
+                };
+                let got = got.unwrap_or_else(|e| panic!("{overlap} {turn} {op:?}: {e:?}"));
                 assert!(
                     (got.volume() - want).abs() < 1e-12,
                     "{overlap} {turn} {op:?}: {} vs {want}",
                     got.volume()
                 );
             }
-            assert_deterministic(|| boolean(&a, &b, Op::Intersection, &TOL, &budget)).unwrap();
         }
     }
 }
@@ -1876,7 +1888,14 @@ fn bosses_sunk_through_drilled_plates_at_their_middle() {
             2.0,
         ),
     ];
-    for (holes, (bx, by, br), z0, h) in cases {
+    // 0.1 to 0.3 s a case in a debug build: quick runs take the curves
+    // dipping into the plate holding and crossing a hole, which also have
+    // the slivers the first six had.
+    let quick = [4, 5];
+    for (k, (holes, (bx, by, br), z0, h)) in cases.into_iter().enumerate() {
+        if !quick.contains(&k) && !varde_testing::full() {
+            continue;
+        }
         let plate = run(&slab, &drill(holes[0], 2), Op::Difference);
         let plate = run(&plate, &drill(holes[1], 3), Op::Difference);
         let boss = Solid::cylinder(DVec3::new(bx, by, z0), br, h, 4, &TOL).unwrap();
@@ -2029,10 +2048,15 @@ fn drilling_a_tall_plate() {
         DVec2::new(-17.27, 5.21),
         DVec2::new(13.61, 1.26),
     ];
-    for h in [100.0, 300.0, 1000.0, 10000.0] {
+    // 16 drillings, some 0.3 s in a debug build: quick runs drill each
+    // height at one place, the `i`th at the `i`th.
+    for (i, h) in [100.0, 300.0, 1000.0, 10000.0].into_iter().enumerate() {
         let plate = tall_plate(h);
         let want = (2400.0 - 64.0 * PI - 9.0 * PI) * h;
-        for d in drills {
+        for (j, d) in drills.into_iter().enumerate() {
+            if i != j && !varde_testing::full() {
+                continue;
+            }
             let drill = cylinder([d.x, d.y, -5.0], 3.0, h + 10.0);
             let drilled = boolean(&plate, &drill, Op::Difference, &TOL, &Budget::DEFAULT)
                 .unwrap_or_else(|e| panic!("{h} tall, drilled at {d}: {e:?}"));
@@ -2229,8 +2253,14 @@ fn coaxial_cylinders_stacked_or_overlapping_unite() {
         ("same", circle(c, 1.0, 0, false)),
         ("turned", turned_circle(c, 1.0, 0, 0.3, 3)),
     ];
-    for (what, lp) in &circles {
-        for (from, to) in [(1.0, 2.0), (0.5, 2.0), (0.0, 2.0), (-0.5, 0.5)] {
+    // 48 operations, some 0.4 s in a debug build: quick runs take every
+    // span once, the circles taking turns.
+    for (k, (what, lp)) in circles.iter().enumerate() {
+        let spans = [(1.0, 2.0), (0.5, 2.0), (0.0, 2.0), (-0.5, 0.5)];
+        for (i, (from, to)) in spans.into_iter().enumerate() {
+            if i % 2 != k && !varde_testing::full() {
+                continue;
+            }
             let b = extruded(vec![lp.clone()], from, to, 8);
             let both = (to.min(1.0) - from.max(0.0)).max(0.0);
             coaxial(&format!("{what} {from}..{to}"), &a, &b, both, 64);
@@ -2283,8 +2313,16 @@ fn coaxial_cylinders_on_the_side_planes() {
     // below at another; split by one sample's height, the crossings
     // gave the two walls on one cylinder ends, and every operation
     // failed as `Inconsistent` (YZ all, XZ those in 3 arcs).
+    //
+    // 72 operations, some 0.9 s in a debug build: quick runs take the YZ
+    // plane only.
     let c = DVec2::new(0.5, 0.2);
-    for (plane, frame) in SIDE_PLANES {
+    let planes = if varde_testing::full() {
+        &SIDE_PLANES[..]
+    } else {
+        &SIDE_PLANES[1..]
+    };
+    for &(plane, frame) in planes {
         let a = extruded_on(vec![circle(c, 1.0, 0, false)], frame, 0.0, 1.0, 7);
         let circles = [
             ("same", circle(c, 1.0, 0, false)),
@@ -2351,9 +2389,16 @@ fn coaxial_stacks_and_flush_pins_on_turned_frames() {
         },
     ];
     let c = DVec2::new(0.5, 0.2);
+    // 68 operations, some 0.9 s in a debug build: quick runs take every
+    // other span and pin on each frame, each on one of the two.
+    let this_frame = |k: usize, i: usize| i % 2 == k || varde_testing::full();
     for (k, frame) in frames.into_iter().enumerate() {
         let a = extruded_on(vec![circle(c, 1.0, 0, false)], frame, 0.0, 1.0, 7);
-        for (from, to) in [(1.0, 2.0), (0.5, 2.0), (0.0, 1.0), (0.25, 0.75)] {
+        let spans = [(1.0, 2.0), (0.5, 2.0), (0.0, 1.0), (0.25, 0.75)];
+        for (i, (from, to)) in spans.into_iter().enumerate() {
+            if !this_frame(k, i) {
+                continue;
+            }
             let b = extruded_on(vec![circle(c, 1.0, 0, false)], frame, from, to, 8);
             let both = (to.min(1.0) - from.max(0.0)).max(0.0);
             coaxial(&format!("frame {k}, {from}..{to}"), &a, &b, both, 128);
@@ -2368,7 +2413,10 @@ fn coaxial_stacks_and_flush_pins_on_turned_frames() {
             1.0,
             5,
         );
-        for (from, to) in [(0.0, 1.0), (-1.0, 1.0)] {
+        for (i, (from, to)) in [(0.0, 1.0), (-1.0, 1.0)].into_iter().enumerate() {
+            if !this_frame(k, i) {
+                continue;
+            }
             let pin = extruded_on(vec![circle(c, 1.0, 0, false)], frame, from, to, 7);
             let results = all_four(&plate, &pin, 1e-12);
             let name = format!("frame {k}, pin {from}..{to}");
@@ -2522,8 +2570,17 @@ fn a_profile_joined_again_over_a_longer_span() {
         (5.0, 15.0),
         (-3.0, 10.0),
     ];
-    for (name, loops) in [("plate", plate), ("rounded", rounded), ("outline", outline)] {
+    // Some 2 s in all in a debug build: quick runs take each profile on
+    // one frame, the plate on YZ, the rounded one on XZ and the outline,
+    // the cheapest (some 25 ms a span against 60 to 150), on XY with
+    // every span: a quarter of it.
+    let shapes = [("plate", plate), ("rounded", rounded), ("outline", outline)];
+    let quick = [2, 1, 0];
+    for (s, (name, loops)) in shapes.into_iter().enumerate() {
         for (k, &frame) in frames.iter().enumerate() {
+            if k != quick[s] && !varde_testing::full() {
+                continue;
+            }
             let a = extruded_on(loops.clone(), frame, 0.0, 10.0, 1);
             let area = a.volume() / 10.0;
             for &(from, to) in &spans[..if k == 0 { 5 } else { 2 }] {
@@ -2616,10 +2673,15 @@ fn random_bars_through_boxes_are_right_or_refused() {
     // 154, see `nearly_straight_arcs_keep_their_bands_on_the_cylinder`):
     // copies of the wall claiming no surface, identities off by up to
     // 2.7e-5.
-    for (seed, count, least) in [(7, 24, 20), (1, 24, 20), (2, 24, 20)] {
+    //
+    // Quick runs each seed's first 4 cases (at some 50 ms a case in a
+    // debug build), full its first 24.
+    let count = varde_testing::pick(4, 24);
+    for seed in [7, 1, 2] {
         let done = bars_through_boxes(seed, 0..count);
-        // Most go through.
-        assert!(done >= least, "seed {seed}: {done}");
+        // Most go through: 20 of 24 (the first refusal is seed 1's case
+        // 14).
+        assert!(done >= count * 5 / 6, "seed {seed}: {done} of {count}");
     }
 }
 
@@ -2627,24 +2689,27 @@ fn random_bars_through_boxes_are_right_or_refused() {
 /// draws at `seed`, draw `case` (from 0).
 fn bar_and_box(seed: u64, case: usize) -> (Solid, Solid) {
     let mut rng = crate::test_rng::Rng::new(seed);
+    // Only the numbers of the draws before `case`: building their solids
+    // made the bars' cases quadratic.
     let mut draw = || {
         let c = rng.point(1.0);
         let r = rng.log_range(0.2, 1.5);
         let q = DQuat::from_rotation_x(rng.range(-1.0, 1.0))
             * DQuat::from_rotation_y(rng.range(-1.0, 1.0));
-        let bar = moved(&cylinder([0.0, 0.0, -2.0], r, 4.0), |p| q * p + c);
         let min = rng.point(1.0) - DVec3::splat(1.5);
         let size = DVec3::new(
             rng.range(0.5, 3.0),
             rng.range(0.5, 3.0),
             rng.range(0.5, 3.0),
         );
-        (bar, Solid::cuboid(min, size, 1, &TOL).unwrap())
+        (c, r, q, min, size)
     };
     for _ in 0..case {
         draw();
     }
-    draw()
+    let (c, r, q, min, size) = draw();
+    let bar = moved(&cylinder([0.0, 0.0, -2.0], r, 4.0), |p| q * p + c);
+    (bar, Solid::cuboid(min, size, 1, &TOL).unwrap())
 }
 
 /// The bars through boxes of `cases` at `seed`, all four operations:
@@ -3392,8 +3457,13 @@ fn a_box_across_a_wall_with_level_ends() {
             parts: 3,
         },
     ];
+    // 150 operations, some 1.5 s in a debug build: quick runs take each
+    // arch on one frame (the `j`th on the `j % 3`th), a third of them.
     for (f, frame) in LEVEL_FRAMES.into_iter().enumerate() {
-        for arch in &arches {
+        for (j, arch) in arches.iter().enumerate() {
+            if j % 3 != f && !varde_testing::full() {
+                continue;
+            }
             let a = arch.solid(frame);
             let va = arch.area() * 5.0;
             assert!((a.volume() - va).abs() <= 1e-9, "{}", a.volume() - va);
@@ -3432,7 +3502,8 @@ fn random_boxes_across_walls_with_level_ends() {
     // volume in closed form, or refused.
     let mut rng = crate::test_rng::Rng::new(60);
     let (mut done, mut all) = (0, 0);
-    for i in 0..40 {
+    // Some 35 ms a case in a debug build: quick runs take the first 12.
+    for i in 0..varde_testing::pick(12, 40) {
         let arch = Arch {
             deg: [20.0, 45.0, 60.0][i % 3],
             convex: rng.unit() < 0.5,
@@ -4120,6 +4191,8 @@ fn slanted_cuts_round_a_boss_silhouette_are_exact() {
 
 #[test]
 fn nicks_by_a_crossing_cylinder_keep_their_checked_fallbacks() {
+    // About 0.55 s in a debug build, over the quick target: six regressions
+    // found by fuzzing, about 0.1 s each, each covering its own fallback.
     // An upright cylinder (z 0..5) nicked by a level one whose axis passes
     // a few `1e-5` short of touching it: the cut is a small loop round
     // the near-contact, between two curved faces. In the differences,
@@ -4131,6 +4204,10 @@ fn nicks_by_a_crossing_cylinder_keep_their_checked_fallbacks() {
     // integral across of the two cylinders' chords. Seen fuzzing crossing
     // cylinders near tangency: no fallback the check kept was more than
     // half the fit tolerance off the true cut, either way.
+    //
+    // Some 0.1 s a difference in a debug build (measured, profiled:
+    // the crossing searches and rays near the tangency), six of them,
+    // each case a distinct find, all in quick runs too.
     // (radius, arcs, start; radius, arcs, start; axis offset, height,
     // turn about z)
     let cases = [
@@ -4249,7 +4326,7 @@ fn a_cross_hole_through_a_round_boss() {
         x: DVec3::Y,
         y: DVec3::Z,
     };
-    for (r, s, z) in cases {
+    for (k, (r, s, z)) in cases.into_iter().enumerate() {
         let hole = extruded_on(
             vec![circle(DVec2::new(s, z), r, 5, false)],
             yz,
@@ -4257,8 +4334,15 @@ fn a_cross_hole_through_a_round_boss() {
             15.0,
             2,
         );
-        // The cut faces' points are placed the same at 1 and 8 threads.
-        let got = assert_deterministic(|| run(&boss, &hole, Op::Difference));
+        // The cut faces' points are placed the same at 1 and 8 threads:
+        // the first case's in quick runs (each cut takes some 0.1 s in a
+        // debug build), every case's in full ones.
+        let cut = || run(&boss, &hole, Op::Difference);
+        let got = if k == 0 || varde_testing::full() {
+            assert_deterministic(cut)
+        } else {
+            cut()
+        };
         // The hole's part inside the boss, scaled from the unit boss's.
         let want =
             PI * big * big * 10.0 - big.powi(3) * crossing_volume(1.0, 0.0, r / big, s / big);

@@ -521,8 +521,9 @@ two arcs tangent at a top; an S (convex, then concave) turning at the
 joint; a boss with a concave `r 2` fillet onto a plate; a lip (half a
 torus on a cup's wall); a thin round (`R 50, r 0.5`); a rounded hole
 edge; a torus split 0.3 rad off its turns; a round over its top in one
-131° arc. At `1e-2`, `1e-3` and `1e-4` (and `1e-5` in release builds) on
-the axis and two random frames up to `1e3` out, all pass `check` with no
+131° arc. At `1e-2`, `1e-3` and `1e-4` (and `1e-5` in release builds
+under `VARDE_TESTS=full`) on the axis and two random frames up to `1e3`
+out (quick: each profile on one of them by turns), all pass `check` with no
 repair, volume within the area times half the fit tolerance of Pappus
 (`π∮ρ² dh`), area within `4·A·fit/2` over the smallest radius, refused
 inside out; every triangle split once at `1e-2` still passes; the same
@@ -1333,7 +1334,7 @@ its triangles share, which is topology:
     Measured: random pairs sharing a random conic edge, creases into one
     quadrant and anything (100 000, 8 527 parted, 5 741 by the pencil
     alone): `G` at 465 points of each away from the edge always has the
-    promised signs (test). Hunted (scratch): 2 million adversarial pairs
+    promised signs (test; quick runs the first 20 000). Hunted (scratch): 2 million adversarial pairs
     in five layouts (the cylinder's hunt plus crease layouts `1e-9` rad
     to a quadrant apart, sometimes exactly in the plane or on the
     cylinder; tangent joins leaning anywhere; crease angles within
@@ -1562,7 +1563,8 @@ they get a hanging vertex. With two or three curved sides a red
 child's straight inner edge can cross one (above), and the split would
 fold as the bisection does: of seeded plane triangles with two or three
 conic sides (weights `0.25..4`) given a hanging vertex, the straight
-bisector folds in 3 943 of 30 000, and the red children fail too in 18
+bisector folds in 3 943 of 30 000 (the test's full run; quick runs the
+first 3 000), and the red children fail too in 18
 of those (about one in 220; none of 3 082 cap triangles with an arc
 bulging in and a second arc). Such a leaf was split red at first all
 the same, which only moved the refinement (11 times in the repair of
@@ -1993,7 +1995,8 @@ is the same measured from anywhere; the segment shares match the
 circular segments' areas and Simpson's rule; a thin disc bounded by
 quarter arcs on a long rod (its first corner at the rod's foot) passes
 and turned over is refused, as do a hundred of random proportions and
-forty random thin rings; 300 random nestings of boxes and cylinders up
+forty random thin rings (a third of each in quick runs); 300 random
+nestings (100 quick) of boxes and cylinders up
 to four deep, on a grid that sends the rays through edges and corners,
 some shells turned wrong, match the nesting they were built with (the
 first wrong shell named, a right mesh's volume the shells' signed
@@ -2031,7 +2034,7 @@ corner 0.9 resolutions off fail with `Invalid(Hull)` in under 1 000 units
 of work, as does a shell thinner than the resolution (also moved by
 `1e5`), where small cylinders 1.5 resolutions apart still reach
 `MIN_SPLIT`; the box at 1.05 and the cylinders at 1.1 resolutions pass
-and check; a small budget runs out, and bad topology and weights are
+and check (the cylinders, over a second, under `VARDE_TESTS=full` only); a small budget runs out, and bad topology and weights are
 refused; the shell's and the cylinder's repairs, and failures on a
 witness with their work, are the same at 1 and 8 threads. A witness
 needs the pieces' leaves apart and comes off by a planar leaf's
@@ -2916,7 +2919,9 @@ order).
 Cap quality (`extrude/quality_tests.rs`): profiles whose plain caps
 held triangles too thin or too crowded for the mesh's rules, each
 extruded right (volume within `1e-12`, `check_faces`) now that the caps
-are refined for quality, with what it failed with plain:
+are refined for quality, with what it failed with plain (the sets
+below are `VARDE_TESTS=full`'s; quick runs a smaller set of each, such
+as one corner cut a corner and the first seed of the cut circles):
 
 - fine regular polygons of radius 10 (1 024, 2 048 and 4 096 sides at
   fit 0.1, 4 096 at 1e-2, 8 192 at 1e-3): all five `Invalid`, at 1 and 8
@@ -2960,9 +2965,10 @@ finds two pieces of one patch within the resolution at a vertex).
 Pinned, refined: the 64-hole plate's 4 292 patches, the four-hole
 plate's 116, a 100 × 1 rib's 100 (both its plain triangles have a 0.6°
 corner, and no small input angle exempts them, so its long sides are
-halved), the 16 384-gon's 78 560 (release), and the patches of
-`circles_cut_unevenly`'s circles (30 092; 18 872 plain) and
-`random_plates_with_holes`' plates (1 636; 1 150 plain) all told. The
+halved), the 16 384-gon's 78 560 (under `VARDE_TESTS=full`), and the
+patches of `circles_cut_unevenly`'s circles (30 092, every fourth 7 152
+in quick runs; 18 872 plain) and `random_plates_with_holes`' plates
+(1 636; 1 150 plain) all told, pinned in those tests. The
 kept triangulation is the one made afresh from the last round's chords
 and points for outlines of 100 to 300 uneven pieces round random holes
 of conics, on every try.
@@ -3328,12 +3334,13 @@ parts (a triangle's inner corners, its flip onto an outer wall, two
 lines into one quadrant, a 10° wedge, lenses of 40° and 10°, a D, a
 round past its turn against a wall, and a dovetail as a control), full
 and part turns on `Frame::Z` and a random frame at `1e-2` to `1e-4`
-(`1e-5` in release) through the same checks, under a ceiling of about
+(`1e-5` too under `VARDE_TESTS=full`; quick, each shape at one fit and
+turn by turns) through the same checks, under a ceiling of about
 twice the measured patches (the triangle 304), the same bits at 1 and 8
 threads; the same crease profiles turned fully and cut by a box through
 a crease's ring, a cylinder round the axis through it and a drill across
-it, all three operations (release; the first three with the box in
-debug), each result checked with its tags and the volumes adding up (72
+it, all three operations (under `VARDE_TESTS=full`; quick, the first
+three with the box), each result checked with its tags and the volumes adding up (72
 of the 81 work, the rest `Invalid`); and a spindle's arcs closed by a
 wall straight down.
 
@@ -7115,8 +7122,8 @@ a hidden loop; the saddle above and below its saddle point; tangent
 cylinders (union not a manifold, the rest the operands); a plate drilled,
 joined and drilled again, fed on; merging back a ball and slab refined
 and not cut; the same bits at 1 and 8 threads; random turned bars
-against boxes, 24 for each of three seeds (200 for each of four in an
-ignored test), each result exact (every patch on its surface to
+against boxes, 24 for each of three seeds under `VARDE_TESTS=full`
+(4 in quick runs; 200 for each of four in an ignored test), each result exact (every patch on its surface to
 `1e-11`, none claiming no surface) or refused, with the volume
 identities to `1e-11`; a hole sketched on a triangular prism's slanted
 wall, upright and turned, cut square to it through the prism and out of
@@ -7734,7 +7741,7 @@ slope not certified.
       spline hole on a tilted frame, grooved through both (fitted cuts),
       then pocketed and drilled across the bands, each step against its
       intersection within the fit tolerance's allowance, at 1 and 8
-      threads.
+      threads (under `VARDE_TESTS=full`).
     - `drilled_grids_in_line` and `boxes_drilled_in_grids`
       (`seeded_tests.rs`, the second `#[ignore]`d as slow): 60 holes
       drilled one at a time in rows of 8 from (1, 1), a failed step
@@ -8720,7 +8727,7 @@ there is one of every visible sketch with regions (each found once, and
 again when its sketch changes; those with none to pick, too complex
 within the whole of `MAX_WORK` or empty, are kept too, by value, so a
 change elsewhere doesn't work them out again; the visible sketches worked
-out in one refresh share `REFRESH_WORK`, twice `MAX_WORK`, through
+out in one refresh share `refresh_work()`, twice `MAX_WORK`, through
 `Sketch::profiles_spending`, and those past it have none to pick and
 aren't worked out at all, not even their splines' shapes, so a file of
 many hostile sketches costs the UI thread a bounded time; skipped so, or

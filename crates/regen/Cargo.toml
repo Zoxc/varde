@@ -34,6 +34,8 @@ js-sys.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+# How long the fuzz runs are (`VARDE_TESTS`, `VARDE_TEST_SEED`).
+varde-testing.workspace = true
 # Typed distances of extrudes made in tests.
 varde-expr.workspace = true
 # Waiting on the thread lane in tests.

@@ -475,6 +475,51 @@ pub(crate) struct Answer {
     pub(crate) placements: Vec<(FeatureId, varde_document::Placement)>,
 }
 
+/// Asserts `cached` and `fresh` are the same answer, as their `Debug`
+/// output would be: the meshes bit for bit (printing every coordinate
+/// took most of the time of the tests comparing answers), the rest by
+/// that output.
+fn assert_same(cached: &Response, fresh: &Response, step: usize) {
+    fn parts(response: &Response) -> (Option<MeshBits>, String) {
+        let mut response = response.clone();
+        let mesh = match &mut response {
+            Response::Regenerated { mesh, .. } => {
+                Some(MeshBits::of(std::mem::take(Arc::make_mut(mesh))))
+            }
+            _ => None,
+        };
+        (mesh, format!("{response:?}"))
+    }
+    let (cached, fresh) = (parts(cached), parts(fresh));
+    assert!(cached.0 == fresh.0, "step {step}: the meshes differ");
+    assert_eq!(cached.1, fresh.1, "step {step}");
+}
+
+/// A mesh's parts with each coordinate as its bits, so that two compare
+/// equal exactly when their `Debug` output does.
+#[derive(PartialEq)]
+struct MeshBits {
+    floats: [Vec<[u32; 3]>; 3],
+    parts: varde_kernel::MeshParts,
+}
+
+impl MeshBits {
+    fn of(mesh: RenderMesh) -> MeshBits {
+        let mut parts = mesh.into_parts();
+        let bits = |v: &mut Vec<[f32; 3]>| -> Vec<[u32; 3]> {
+            std::mem::take(v).iter().map(|p| p.map(f32::to_bits)).collect()
+        };
+        MeshBits {
+            floats: [
+                bits(&mut parts.positions),
+                bits(&mut parts.normals),
+                bits(&mut parts.corners),
+            ],
+            parts,
+        }
+    }
+}
+
 pub(crate) fn answered(response: Response) -> Answer {
     let Response::Regenerated {
         draft,
@@ -851,7 +896,8 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
     assert_eq!(regenerator.cache().counts().1, worked + 4);
 }
 
-/// A hole drafted tangent to the plate's hole and dragged deeper twice:
+/// A hole drafted tangent to the plate's hole and dragged deeper twice
+/// (once quick):
 /// whether the tool touches the plate is worked out again for each
 /// tool, and says it does, so the plate is listed and the cut decided by
 /// its boolean, never failed by the touch test. Inside the hole the cut
@@ -865,7 +911,13 @@ fn a_tangent_hole_dragged_reruns_its_touch_test_which_holds() {
             drafted(|editor| crate::history::tests::add_drilled(editor, distance, 0.7, 3.0));
         let mut regenerator = Regenerator::default();
         let committed = answered(regenerator.handle(regenerate(&editor, None)));
-        for (revision, depth) in [(1, "20"), (2, "21"), (3, "22")] {
+        // Quick, dragged once, which already reruns the touch test;
+        // `VARDE_TESTS=full` twice. Each draft's cut of tangent cylinders
+        // is up to a second of the kernel's crossing search in a debug
+        // build (outside the hole, past the first depth), so even quick
+        // this takes over a second.
+        let drags = [(1, "20"), (2, "21"), (3, "22")];
+        for &(revision, depth) in &drags[..varde_testing::pick(2, 3)] {
             draft.revision = revision;
             draft.extrude_mut().extent =
                 crate::history::tests::two_sides(editor.document(), depth, "20");
@@ -1696,7 +1748,9 @@ impl Churn {
 /// besides what the request before and this one used and the committed
 /// scene the request began with; a request asked
 /// again works out nothing, and the committed model asked again after
-/// drafts joins no scene.
+/// drafts joins no scene. Quick runs each budget's first 12 steps,
+/// `VARDE_TESTS=full` all 120: every step regenerates from scratch for the
+/// fresh answer, which is where the time goes.
 #[test]
 fn churn_answers_as_a_fresh_cache_would() {
     use crate::history::tests::{add_extrude, add_pocket, disc, length, rectangle, two_sides};
@@ -1710,7 +1764,7 @@ fn churn_answers_as_a_fresh_cache_would() {
         // The generation of the last request without a draft, if only
         // drafts of that same document were asked since.
         let mut committed: Option<varde_document::Generation> = None;
-        for step in 0..120 {
+        for step in 0..varde_testing::pick(12, 120) {
             let plate = editor.document().features().get(1).map(|f| f.id);
             let mut repeat = false;
             let mut draft = None;
@@ -1836,7 +1890,7 @@ fn churn_answers_as_a_fresh_cache_would() {
             let scene = regenerator.cache().committed_bytes();
             let cached = regenerator.handle(request.clone());
             let fresh = Regenerator::default().handle(request.clone());
-            assert_eq!(format!("{cached:?}"), format!("{fresh:?}"), "step {step}");
+            assert_same(&cached, &fresh, step);
             let (total, protected) = regenerator.cache().audit();
             assert_eq!(regenerator.cache().bytes(), total);
             let bound = budget.saturating_add(protected).saturating_add(scene);
@@ -1860,7 +1914,9 @@ fn churn_answers_as_a_fresh_cache_would() {
 /// Many bodies, each shown and hidden in turn so that every request
 /// joins a new scene: with no budget the cache holds no more than the
 /// requests it protects, however many go by; with room for a few, it
-/// stays within that room besides them.
+/// stays within that room besides them. Quick hides and shows each body
+/// once (16 steps), `VARDE_TESTS=full` takes 40: every step regenerates
+/// from scratch for the fresh answer, which is where the time goes.
 #[test]
 fn many_bodies_stay_within_the_budget() {
     use crate::history::tests::{add_extrude, disc, length};
@@ -1883,13 +1939,16 @@ fn many_bodies_stay_within_the_budget() {
     for budget in [0, one / 2, 2 * one] {
         let mut editor = Editor::new(editor.document().clone());
         let mut regenerator = Regenerator::with_budget(budget);
-        for (step, body) in bodies.iter().cycle().take(40).enumerate() {
+        for (step, body) in (bodies.iter().cycle())
+            .take(varde_testing::pick(16, 40))
+            .enumerate()
+        {
             let visible = editor.document().body(*body).unwrap().visible;
             editor.apply(Command::SetVisible(*body, !visible)).unwrap();
             let scene = regenerator.cache().committed_bytes();
             let cached = regenerator.handle(regenerate(&editor, None));
             let fresh = Regenerator::default().handle(regenerate(&editor, None));
-            assert_eq!(format!("{cached:?}"), format!("{fresh:?}"), "step {step}");
+            assert_same(&cached, &fresh, step);
             let (total, protected) = regenerator.cache().audit();
             assert!(total <= budget + protected + scene, "step {step}");
             // The protected set is two requests' worth at most.

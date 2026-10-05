@@ -121,9 +121,18 @@ impl<'a> Laid<'a> {
         element: impl Into<iced::Element<'a, crate::Message>>,
         max: iced::Size,
     ) -> Self {
+        Self::with_renderer(element, max, crate::probe::renderer())
+    }
+
+    /// As [`Laid::new`], drawn with `renderer`: one taken from an earlier
+    /// `Laid` keeps its caches (parsed SVGs, about 10 ms each in tests).
+    pub(crate) fn with_renderer(
+        element: impl Into<iced::Element<'a, crate::Message>>,
+        max: iced::Size,
+        renderer: iced::Renderer,
+    ) -> Self {
         use iced::advanced::layout::Limits;
         let mut element = element.into();
-        let renderer = crate::probe::renderer();
         let mut tree = iced::advanced::widget::Tree::new(&element);
         let node = element.as_widget_mut().layout(
             &mut tree,
@@ -181,6 +190,8 @@ impl<'a> Laid<'a> {
         let base = theme.base();
         let viewport =
             iced::Rectangle::with_size(iced::Size::new(size.width as f32, size.height as f32));
+        // Clears what an earlier draw left, for a renderer drawn with again.
+        iced::advanced::Renderer::reset(&mut self.renderer, viewport);
         self.element.as_widget().draw(
             &self.tree,
             &mut self.renderer,

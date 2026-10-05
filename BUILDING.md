@@ -30,7 +30,14 @@ The workspace's default member is only the desktop binary, so pass
 
 ```sh
 cargo test --workspace
+VARDE_TESTS=full cargo test --workspace   # the long runs: every fuzz seed, slow bounds checks
+VARDE_TEST_SEED=7 cargo test -p varde-app random_fillet   # replay one fuzz seed
 ```
+
+The default (`VARDE_TESTS` unset, or `quick`) runs a short prefix of each
+fuzz test's seeds. Any other value fails the tests, so a typo can't
+quietly run the quick suite. The variable is read at runtime: switching it
+rebuilds nothing.
 
 Rendering tests draw offscreen on the GPU and are skipped when no GPU
 adapter is found.

@@ -1719,18 +1719,22 @@ fn run(seed: u64, steps: usize) {
     }
 }
 
-/// See the module's docs. `VARDE_MOTION_SEEDS` runs more seeds
-/// (`VARDE_MOTION_FROM` the first).
+/// See the module's docs. Quick runs seed 0's first `QUICK_STEPS` steps;
+/// `VARDE_TESTS=full` runs seeds 0 to 2 to 24 steps, and
+/// `VARDE_TEST_SEED` replays one seed to 24 steps. Each step evaluates
+/// the whole history cold, so a run's time grows with its steps squared.
 #[test]
 fn random_histories_with_moves_mirrors_patterns_and_aligns_hold() {
-    let number = |name: &str, default: u64| {
-        std::env::var(name)
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(default)
+    let replay = varde_testing::replay_seed().is_some();
+    let steps = if replay {
+        24
+    } else {
+        varde_testing::pick(QUICK_STEPS, 24)
     };
-    let from = number("VARDE_MOTION_FROM", 0);
-    for seed in from..from.saturating_add(number("VARDE_MOTION_SEEDS", 3)) {
-        run(seed, 24);
+    for seed in varde_testing::seeds(1, 3) {
+        run(seed, steps);
     }
 }
+
+/// The steps of the quick run.
+const QUICK_STEPS: usize = 12;

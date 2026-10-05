@@ -601,8 +601,9 @@ fn measure(mesh: Mesh, volume: f64, area: f64) {
 
 #[test]
 fn frustums_are_solids_of_their_volume_and_area() {
+    // Quick runs the first 12 (three of 256 pieces, the bulk of the time).
     let mut rng = Rng::new(6);
-    for i in 0..40 {
+    for i in 0..varde_testing::pick(12, 40) {
         let axis = if i == 0 {
             Axis::Z
         } else {

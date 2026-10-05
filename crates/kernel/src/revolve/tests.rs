@@ -294,14 +294,21 @@ fn revolved(shape: &Shape, frame: &Frame, sweep: Sweep, tol: &Tolerance) -> Soli
 
 const TOL: Tolerance = Tolerance::DEFAULT;
 
+/// Whether a test over [`shapes`] and [`sweeps`] runs shape `i` through
+/// sweep `j`: every pair under `VARDE_TESTS=full`, two sweeps a shape by
+/// turns by default (every sweep for some shapes, every shape twice).
+fn runs(i: usize, j: usize) -> bool {
+    varde_testing::full() || j == i % 5 || j == (i + 2) % 5
+}
+
 #[test]
 fn shapes_are_solids_of_their_volume_and_area() {
-    for shape in shapes() {
-        for sweep in sweeps() {
-            if shape.part_only && sweep == Sweep::Full {
+    for (i, shape) in shapes().iter().enumerate() {
+        for (j, sweep) in sweeps().into_iter().enumerate() {
+            if shape.part_only && sweep == Sweep::Full || !runs(i, j) {
                 continue;
             }
-            revolved(&shape, &Z, sweep, &TOL);
+            revolved(shape, &Z, sweep, &TOL);
         }
     }
 }
@@ -314,7 +321,12 @@ fn shapes_anywhere_at_any_tolerance() {
             if shape.part_only && sweep == Sweep::Full {
                 continue;
             }
+            // Drawn for every pair, so each runs in the same frame either
+            // way.
             let frame = random_frame(&mut rng, 1e3);
+            if !runs(i, j) {
+                continue;
+            }
             let tol = Tolerance::new([1e-2, 1e-3, 1e-4][(i + j) % 3]).unwrap();
             revolved(shape, &frame, sweep, &tol);
         }
@@ -788,9 +800,9 @@ fn lens(p: DVec2, q: DVec2, half: f64, curve: u64) -> Loop {
 #[test]
 fn crease_revolves_through_booleans() {
     let mut ok = 0;
-    // Slow in debug builds: there only the first three with the box.
+    // Slow: quick runs only the first three with the box.
     let shapes = crease_shapes();
-    let shapes = if cfg!(debug_assertions) {
+    let shapes = if !varde_testing::full() {
         &shapes[..3]
     } else {
         &shapes[..]
@@ -826,7 +838,7 @@ fn crease_revolves_through_booleans() {
         )
         .unwrap();
         let tools = [("box", box_through), ("round", round_it), ("drill", drill)];
-        let tools = if cfg!(debug_assertions) {
+        let tools = if !varde_testing::full() {
             &tools[..1]
         } else {
             &tools[..]
@@ -855,7 +867,7 @@ fn crease_revolves_through_booleans() {
     }
     // 72 of the 81 work; the rest are refused as `Invalid` (thin tips and
     // the cylinder brushing the rings).
-    assert!(ok >= 72 || cfg!(debug_assertions), "{ok} results");
+    assert!(ok >= 72 || !varde_testing::full(), "{ok} results");
 }
 
 /// Profiles whose corners are creases where both faces leave the ring on
@@ -963,20 +975,27 @@ fn creases_are_parted_by_the_pencil() {
     // does. Without it repair split the rings until their arcs were
     // straight to the resolution: the triangle took 14 192 patches at
     // `1e-1` and 229 232 at `1e-3`, and finer fits ran out of budget.
+    // Quick, each shape at one fit and turn, by turns.
     let mut rng = Rng::new(96);
     let frame = random_frame(&mut rng, 1e3);
     let mut fits = vec![1e-2, 1e-3, 1e-4];
-    if !cfg!(debug_assertions) {
+    if varde_testing::full() {
         fits.push(1e-5);
     }
-    for (shape, ceiling) in crease_shapes() {
-        for &fit in &fits {
+    for (i, (shape, ceiling)) in crease_shapes().into_iter().enumerate() {
+        for (j, &fit) in fits.iter().enumerate() {
             let tol = Tolerance::new(fit).unwrap();
-            for (frame, sweep) in [
+            for (k, (frame, sweep)) in [
                 (&Z, Sweep::Full),
                 (&Z, Sweep::Part { from: 0.3, to: 2.0 }),
                 (&frame, Sweep::Full),
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if !varde_testing::full() && (j != i % 3 || k != i / 3 % 3) {
+                    continue;
+                }
                 let patches = revolved(&shape, frame, sweep, &tol).mesh().tris().len();
                 assert!(
                     patches <= ceiling,

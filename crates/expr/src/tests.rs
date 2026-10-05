@@ -185,7 +185,7 @@ fn arbitrary_tokens_never_panic() {
     ];
     let asks = asks();
     let mut rng = Rng(0x2545_f491_4f6c_dd1d);
-    for _ in 0..20_000 {
+    for _ in 0..varde_testing::pick(8_000, 20_000) {
         let count = rng.below(40);
         let text: String = (0..count)
             .map(|_| PIECES[rng.below(PIECES.len())])

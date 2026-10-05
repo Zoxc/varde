@@ -469,6 +469,8 @@ fn lidded_plate() -> PickIndex {
 /// Seen from below, the lid hides the 400 holes' rims, hundreds of edge
 /// pieces nearer the cursor than the lid's edge a few pixels off: that
 /// edge is still picked, the hidden ones not searched for one by one.
+/// About 0.7 s in a debug build, nearly all of it building the model; the
+/// 400 holes are what put hundreds of hidden edges before the shown one.
 #[test]
 fn a_shown_edge_behind_many_hidden_ones_is_picked() {
     let index = lidded_plate();

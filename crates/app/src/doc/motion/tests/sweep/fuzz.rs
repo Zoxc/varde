@@ -693,18 +693,14 @@ fn run(seed: u64, steps: usize) {
     check_volumes(&plates, &format!("seed {seed} at the end"));
 }
 
-/// See the module's docs. `VARDE_SWEEP_SEEDS` runs more seeds
-/// (`VARDE_SWEEP_FROM` the first).
+/// The steps of the quick run, see [`crate::tests::fuzz_steps`].
+const QUICK_STEPS: usize = 95;
+
+/// See the module's docs. A few steps of the first seed by default, all
+/// 200 steps of each seed with `VARDE_TESTS=full` or `VARDE_TEST_SEED`.
 #[test]
 fn random_sweep_sessions_hold() {
-    let number = |name: &str, default: u64| {
-        std::env::var(name)
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(default)
-    };
-    let from = number("VARDE_SWEEP_FROM", 0);
-    for seed in from..from.saturating_add(number("VARDE_SWEEP_SEEDS", 3)) {
-        run(seed, 200);
+    for seed in varde_testing::seeds(1, 3) {
+        run(seed, crate::tests::fuzz_steps(QUICK_STEPS, 200));
     }
 }

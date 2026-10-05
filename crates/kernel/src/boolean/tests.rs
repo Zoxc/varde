@@ -2074,9 +2074,11 @@ fn boxes_flush_with_a_slanted_wall_on_tilted_frames() {
         DVec2::new(r / 2.0, -h),
     ];
     let prism_volume = 3.0 * r * h * height;
-    // The prism upright, then on frames turned and moved at random.
+    // The prism upright, then on frames turned and moved at random (the
+    // first two of the six in a quick run).
     let mut rng = crate::test_rng::Rng::new(40);
-    let bases = std::iter::once(Frame::XY).chain((0..6).map(|_| {
+    let turned = varde_testing::pick(2, 6);
+    let bases = std::iter::once(Frame::XY).chain((0..turned).map(|_| {
         let q = DQuat::from_axis_angle(rng.direction(), rng.range(0.0, 6.0));
         Frame {
             origin: rng.point(100.0),
@@ -2780,12 +2782,19 @@ fn a_small_cut_costs_little_a_patch_of_a_large_body() {
     // units a patch, 442 000 on the 20 × 20 plate (19 180 patches), then
     // about 8 with repair and the check near the change (157 577); now
     // under 4 (70 650), and the same for any size of plate.
+    // A quick debug run takes plates of 10 and 12 (5 532 and about 8 000
+    // patches), about 0.5 s (measured: building them 0.06 and 0.08 s,
+    // the cuts 0.1 and 0.12, the cut within the budget 0.12, the volumes
+    // the rest): smaller plates' fixed cost of the cut puts them over 4
+    // units a patch (7.5 at 3, 4.02 at 8), so they can't show the bound.
     let corner = cube([-0.1, -0.1, 0.5], [0.2, 0.2, 0.2]);
     let removed = 0.1 * 0.1 * 0.2;
-    let sizes: &[usize] = if cfg!(debug_assertions) {
+    let sizes: &[usize] = if !cfg!(debug_assertions) {
+        &[10, 20, 30]
+    } else if varde_testing::full() {
         &[10, 20]
     } else {
-        &[10, 20, 30]
+        &[10, 12]
     };
     let mut per_patch = Vec::new();
     for &n in sizes {
@@ -2794,8 +2803,17 @@ fn a_small_cut_costs_little_a_patch_of_a_large_body() {
         assert!((cut.volume() - (plate.volume() - removed)).abs() < 1e-9);
         let patches = plate.mesh().tris().len();
         per_patch.push(units as f64 / patches as f64);
-        if n == 20 {
-            let within = boolean(&plate, &corner, Op::Difference, &TOL, &Budget::new(75_000));
+        // Within a budget of the units it should take, on the 20 × 20
+        // plate or, in a quick run, the largest: the same result.
+        let limit = if n == 20 {
+            Some(75_000)
+        } else if !sizes.contains(&20) && sizes.last() == Some(&n) {
+            Some(4 * patches as u64)
+        } else {
+            None
+        };
+        if let Some(limit) = limit {
+            let within = boolean(&plate, &corner, Op::Difference, &TOL, &Budget::new(limit));
             assert!(within.stripped() == Ok(cut));
         }
     }
@@ -2907,6 +2925,12 @@ fn clean_ups_that_change_much_cost_no_more_than_visiting_everything() {
     // change came to ten times the soup a round, `TooComplex` where
     // visiting every triangle gave its `NotManifold` within the budget.
     // Rounds that change that much visit every triangle instead.
+    //
+    // A bound on cost, about 1.5 s in a debug build, on the smallest plate
+    // that shows it: only in a full run (`VARDE_TESTS=full`).
+    if !varde_testing::full() {
+        return;
+    }
     let tol = Tolerance::new(1e-4).unwrap();
     let round = holed_plate_at(2, true, &tol);
     let square = holed_plate_at(2, false, &tol);

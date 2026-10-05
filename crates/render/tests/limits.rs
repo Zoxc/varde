@@ -17,6 +17,16 @@ use varde_render::{
 static NO_HIGHLIGHTS: std::sync::LazyLock<Arc<Highlights>> = std::sync::LazyLock::new(Arc::default);
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// The renderer the tests share, on the shared device, made once: it
+/// holds only pipelines, and building them is most of a test's time
+/// (about 0.4 s in a debug build).
+fn renderer(device: &wgpu::Device) -> Arc<Renderer> {
+    static RENDERER: std::sync::OnceLock<Arc<Renderer>> = std::sync::OnceLock::new();
+    RENDERER
+        .get_or_init(|| Arc::new(Renderer::new(device, FORMAT)))
+        .clone()
+}
 /// A black background and a grey model, with the app's scene colours
 /// otherwise.
 const COLORS: Colors = Colors {
@@ -46,6 +56,9 @@ const COLORS: Colors = Colors {
     error_halo: Srgba([0.9, 0.1, 0.1, 0.3]),
 };
 
+// The binary's first GPU test pays for the device and the shared renderer's
+// pipelines (about 0.5-2s in a debug build, more for each further texture
+// format): a floor shared by every test here, so over the 0.5s aim.
 /// The device the tests share, whose buffers hold at most 512 bytes, if
 /// there's an adapter. Made once for the binary: the Vulkan loader isn't
 /// thread safe across instances made and dropped while another test uses
@@ -131,7 +144,7 @@ fn mesh_past_the_buffer_limit_is_skipped() {
     assert_eq!(mesh.positions().len(), 24);
     let mesh = Arc::new(mesh);
 
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let mut slot = renderer.slot(&device);
     let (camera, sketches) = (Camera::default(), Arc::default());
     let frame = frame(&camera, &mesh, &sketches);
@@ -222,7 +235,7 @@ fn edges_fit_up_to_the_buffer_limit() {
             .unwrap(),
         )
     };
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let mut slot = renderer.slot(&device);
     let (camera, sketches) = (Camera::default(), Arc::default());
     let mut prepare = |mesh: &Arc<RenderMesh>| {
@@ -257,7 +270,7 @@ fn lines_past_the_buffer_limit_are_skipped() {
         limit: 512,
     };
 
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let mut slot = renderer.slot(&device);
     let (camera, mesh) = (Camera::default(), Arc::default());
     let frame = frame(&camera, &mesh, &lines);
@@ -309,7 +322,7 @@ fn sketch_layers_past_the_buffer_limit_are_skipped() {
         limit: 512,
     };
 
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let mut slot = renderer.slot(&device);
     let empty = SketchLayer::default();
     let (camera, mesh, sketches) = (Camera::default(), Arc::default(), Arc::default());
@@ -359,7 +372,7 @@ fn errors_past_the_buffer_limit_are_skipped() {
         limit: 512,
     };
 
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let mut slot = renderer.slot(&device);
     let (camera, model, sketches) = (Camera::default(), Arc::default(), Arc::default());
     let frame = Frame {

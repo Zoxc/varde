@@ -746,14 +746,12 @@ fn random_combine(document: &Document, rng: &mut Rng) -> Option<varde_document::
 /// the history with the features from there on removed).
 #[test]
 fn merged_before_agrees_with_regen_on_random_histories() {
-    let seeds: u64 = std::env::var("VARDE_MERGES_SEEDS")
-        .ok()
-        .and_then(|seeds| seeds.parse().ok())
-        .unwrap_or(4);
-    for seed in 0..seeds {
+    for seed in varde_testing::seeds(1, 4) {
         let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ (seed + 1).wrapping_mul(0x1000_0001));
         let mut editor = Editor::new(Document::default());
         let mut regen = varde_regen::Regenerator::default();
+        // For the histories stopped early: shared, as their features are.
+        let mut cache = varde_regen::Cache::default();
         let (mut feed, requests) = connected();
         // Where the blocks are, every 8 mm, each 10 mm long: neighbours
         // overlap.
@@ -843,8 +841,7 @@ fn merged_before_agrees_with_regen_on_random_histories() {
                         before.apply(Command::RemoveFeature(later)).unwrap();
                     }
                 }
-                let evaluation =
-                    varde_regen::evaluate(before.document(), &mut varde_regen::Cache::default());
+                let evaluation = varde_regen::evaluate(before.document(), &mut cache);
                 let replayed = feed.merged_before(document, Some(until));
                 for &body in &bodies {
                     let regen = (evaluation.merged.iter())

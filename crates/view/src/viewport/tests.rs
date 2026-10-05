@@ -13,6 +13,9 @@ fn cube() -> Arc<RenderMesh> {
     Arc::new(solid.unwrap().tessellate(&display).unwrap())
 }
 
+// The binary's first GPU test pays for the device and the shared renderer's
+// pipelines (about 0.5-2s in a debug build, more for each further texture
+// format): a floor shared by every test here, so over the 0.5s aim.
 /// The one device the tests share, if there's an adapter. The Vulkan
 /// loader isn't thread safe across instances: a test creating its own
 /// while another names an object on its device crashed it
@@ -40,6 +43,19 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
 }
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// A new pipeline, with no slots, on the renderer the tests share: a
+/// renderer holds only its pipelines, and building them is most of a
+/// test's time (about 0.5 s in a debug build).
+fn pipeline(device: &wgpu::Device) -> Pipeline {
+    static RENDERER: std::sync::OnceLock<Arc<Renderer>> = std::sync::OnceLock::new();
+    Pipeline {
+        renderer: RENDERER
+            .get_or_init(|| Arc::new(Renderer::new(device, FORMAT)))
+            .clone(),
+        slots: Vec::new(),
+    }
+}
 const SIZE: u32 = 64;
 
 /// Draws `mesh` through `pipeline` in the widget with `state` the way iced
@@ -194,7 +210,7 @@ fn next_document_does_not_show_the_previous_mesh() {
         return;
     };
     let cube = cube();
-    let mut shared = Pipeline::new(&device, &queue, FORMAT);
+    let mut shared = pipeline(&device);
     let widget = Interaction::default();
     let first = render(&device, &queue, &mut shared, &widget, &cube);
 
@@ -203,7 +219,7 @@ fn next_document_does_not_show_the_previous_mesh() {
         let expected = render(
             &device,
             &queue,
-            &mut Pipeline::new(&device, &queue, FORMAT),
+            &mut pipeline(&device),
             &Interaction::default(),
             &next,
         );
@@ -225,7 +241,7 @@ fn viewports_in_one_frame_show_their_own_mesh() {
     let cube = cube();
     let empty = Arc::new(RenderMesh::default());
     let alone = |mesh: &Arc<RenderMesh>| {
-        let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+        let mut pipeline = pipeline(&device);
         render(
             &device,
             &queue,
@@ -235,7 +251,7 @@ fn viewports_in_one_frame_show_their_own_mesh() {
         )
     };
 
-    let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+    let mut pipeline = pipeline(&device);
     let (first, second) = (Interaction::default(), Interaction::default());
     let (a, b) = (primitive(&first, &cube), primitive(&second, &empty));
     prepare(&device, &queue, &mut pipeline, &a);
@@ -254,7 +270,7 @@ fn hidden_edges_show_unless_turned_off() {
     let cube = cube();
     let state = Interaction::default();
     assert!(primitive(&state, &cube).scene.hidden_edges);
-    let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+    let mut pipeline = pipeline(&device);
     let mut drawn = |hidden_edges| {
         let mut primitive = primitive(&state, &cube);
         primitive.scene.hidden_edges = hidden_edges;
@@ -275,7 +291,7 @@ fn wires_show_only_in_a_wireframe() {
     let cube = cube();
     let state = Interaction::default();
     assert!(!primitive(&state, &cube).scene.wireframe);
-    let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+    let mut pipeline = pipeline(&device);
     let mut drawn = |wireframe| {
         let mut primitive = primitive(&state, &cube);
         primitive.scene.wireframe = wireframe;
@@ -294,7 +310,7 @@ fn trim_drops_the_slots_of_gone_viewports() {
         return;
     };
     let mesh = cube();
-    let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+    let mut pipeline = pipeline(&device);
     let kept = Interaction::default();
     render(&device, &queue, &mut pipeline, &kept, &mesh);
     render(
@@ -340,7 +356,7 @@ fn sketches_show_and_go_with_their_document() {
     };
     let empty = Arc::new(RenderMesh::default());
     let alone = |sketches: &Arc<RenderLines>| {
-        let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+        let mut pipeline = pipeline(&device);
         let widget = Interaction::default();
         render_with(&device, &queue, &mut pipeline, &widget, &empty, sketches)
     };
@@ -359,7 +375,7 @@ fn sketches_show_and_go_with_their_document() {
         "the sketches should show: {sketched}"
     );
 
-    let mut shared = Pipeline::new(&device, &queue, FORMAT);
+    let mut shared = pipeline(&device);
     let widget = Interaction::default();
     render_with(&device, &queue, &mut shared, &widget, &empty, &sketches());
     let next = render_with(
@@ -498,7 +514,7 @@ fn the_sketch_being_edited_is_drawn_with_the_scene() {
         )
         .draw(&state, mouse::Cursor::Unavailable, bounds())
     };
-    let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+    let mut pipeline = pipeline(&device);
     let mut shown = |primitive: &Primitive| {
         prepare(&device, &queue, &mut pipeline, primitive);
         draw(&device, &queue, &pipeline, primitive)
@@ -533,7 +549,7 @@ fn a_region_with_a_hole_is_shaded_around_it() {
     let projector =
         crate::projection::Projector::new(&camera, placement, SIZE as f32, SIZE as f32).unwrap();
     let selection = Default::default();
-    let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+    let mut pipeline = pipeline(&device);
     // Renders the sketch, shaded or not, with the cursor at the sketch
     // point `hover` if there is one, and returns the pixels.
     let mut shown = |shaded: bool, hover: Option<(f64, f64)>| {
@@ -1391,3 +1407,4 @@ fn a_press_held_picking_outside_a_sketch_lists_the_model_and_other_sketches() {
             .any(|item| matches!(item, OverlapItem::Model(_)))
     );
 }
+

@@ -397,7 +397,7 @@ fn fitted_grooves_across_drilled_plates() {
             22,
         ),
     ];
-    let steps = assert_deterministic(|| {
+    let steps = || {
         let mut current = plate.clone();
         let mut out = Vec::new();
         for tool in &tools {
@@ -423,7 +423,14 @@ fn fitted_grooves_across_drilled_plates() {
             }
         }
         out
-    });
+    };
+    // The chain takes some 0.7 s in a debug build: the same on 1 and 8
+    // threads in full runs only (others check that on other chains).
+    let steps = if varde_testing::full() {
+        assert_deterministic(steps)
+    } else {
+        steps()
+    };
     for (k, (va, area, less, both, free)) in steps.into_iter().enumerate() {
         println!("step {k}: {less:?} {both:?}, {free:?} faces claiming no surface");
         assert!(free.is_some_and(|n| n > 0), "step {k}: no fitted bands");
@@ -499,9 +506,14 @@ fn a_cross_hole_near_another_holes_mouth() {
         (Op::Union, va + vb - inside),
     ]
     .map(|(op, want)| {
-        let result = assert_deterministic(|| {
-            boolean(&drilled, &tool, op, &TOL, &Budget::DEFAULT).map_err(|f| f.error)
-        });
+        let result = || boolean(&drilled, &tool, op, &TOL, &Budget::DEFAULT).map_err(|f| f.error);
+        // Each operation takes some 0.2 s in a debug build: quick runs
+        // check the cut alone on 1 and 8 threads.
+        let result = if op == Op::Difference || varde_testing::full() {
+            assert_deterministic(result)
+        } else {
+            result()
+        };
         let Ok(solid) = result else {
             assert!(op != Op::Difference, "the cut: {result:?}");
             return None;

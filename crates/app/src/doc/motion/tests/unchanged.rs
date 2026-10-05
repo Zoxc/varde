@@ -10,34 +10,35 @@ use crate::tests::holding;
 /// [`plates`] with, as their sessions make them: Body 2 moved and turned
 /// about the Z axis, then mirrored across YZ, Body 3 in a linear pattern
 /// and Body 2 in a circular one, and Body 3 cut from Body 1 by a combine
-/// (as a file would hold it).
-fn transformed() -> Plates {
+/// (as a file would hold it). Answered by `regen`, so that its cache
+/// holds the patterns' and the combine's work for the test after.
+fn transformed(regen: &mut varde_regen::Regenerator) -> Plates {
     let mut plates = plates();
     let [plate, right, left] = plates.bodies;
-    let commit = |plates: &mut Plates| {
-        plates.answer();
+    let commit = |plates: &mut Plates, regen: &mut varde_regen::Regenerator| {
+        answer(plates, regen);
         plates.doc.update(Edit::CommitMotion);
         assert!(plates.doc.motion.is_none(), "committed");
-        plates.answer();
+        answer(plates, regen);
     };
     plates.click(right);
     plates.doc.look(Look::StartMove);
     plates.input(MotionField::Offset(varde_document::Axis3::X), "5");
     plates.input(MotionField::Angle, "30");
-    commit(&mut plates);
+    commit(&mut plates, regen);
     plates.click(right);
     plates.doc.look(Look::StartMirror);
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     plates.motion(MotionLook::OriginPlane(OriginPlane::YZ));
-    commit(&mut plates);
+    commit(&mut plates, regen);
     plates.click(left);
     plates.doc.look(Look::StartPattern);
     plates.input(MotionField::Count, "4");
     plates.input(MotionField::Spread, "12");
-    commit(&mut plates);
+    commit(&mut plates, regen);
     plates.click(right);
     plates.doc.look(Look::StartCircularPattern);
-    commit(&mut plates);
+    commit(&mut plates, regen);
     let document = plates.doc.editor.document();
     let combine = Combine {
         target: plate,
@@ -46,8 +47,16 @@ fn transformed() -> Plates {
         keep_tools: false,
     };
     plates.doc.apply(document.add_feature(combine.into()));
-    plates.answer();
+    answer(&mut plates, regen);
     plates
+}
+
+/// Answers the requests waiting of `plates` with `regen`, keeping its
+/// cache, as the document's lane does.
+fn answer(plates: &mut Plates, regen: &mut varde_regen::Regenerator) {
+    for request in plates.requests.take() {
+        plates.doc.computed(regen.handle(request));
+    }
 }
 
 /// A revolve of a rectangle a quarter turn about its sketch's Y axis, as
@@ -73,7 +82,9 @@ fn revolved() -> Plates {
 /// Opens the feature `id` of `plates` for editing and presses OK (Accept
 /// error where its preview failed): nothing is written, not even a
 /// revision with no change.
-fn ok_writes_nothing(plates: &mut Plates, id: FeatureId) {
+fn ok_writes_nothing(plates: &mut Plates, regen: &mut varde_regen::Regenerator, id: FeatureId) {
+    // Answered by `regen`, whose cache is kept between the features of
+    // one fixture, as the document's lane does.
     let kind = plates
         .doc
         .editor
@@ -83,11 +94,11 @@ fn ok_writes_nothing(plates: &mut Plates, id: FeatureId) {
         .kind
         .clone();
     let name = format!("{kind:?}");
-    plates.answer();
+    answer(plates, regen);
     let revision = plates.doc.editor.revision();
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::EditFeature(id));
-    plates.answer();
+    answer(plates, regen);
     let commit = match kind {
         FeatureKind::Extrude(_) => Edit::CommitExtrude,
         FeatureKind::Revolve(_) => Edit::CommitRevolve,
@@ -115,32 +126,33 @@ fn ok_writes_nothing(plates: &mut Plates, id: FeatureId) {
 /// writes nothing.
 #[test]
 fn ok_on_any_feature_opened_and_left_as_it_was_writes_nothing() {
-    type Fixture = (&'static str, fn() -> Plates);
+    type Fixture = (&'static str, fn(&mut varde_regen::Regenerator) -> Plates);
     let fixtures: [Fixture; 13] = [
         ("transformed", transformed),
-        ("revolved", revolved),
-        ("chamfer", || super::chamfer::made().0),
-        ("fillet", || super::fillet::made().0),
-        ("shell", || super::shell::made().0),
-        ("offset face", || super::offset_face::made().0),
-        ("draft", || super::face_draft::made().0),
-        ("split", || super::split::made().0),
-        ("sweep", || super::sweep::made().0),
-        ("loft", || super::loft::made().0),
-        ("scale", || super::scale::made().0),
-        ("align", || super::align::made().0),
-        ("plates", plates),
+        ("revolved", |_| revolved()),
+        ("chamfer", |_| super::chamfer::made().0),
+        ("fillet", |_| super::fillet::made().0),
+        ("shell", |_| super::shell::made().0),
+        ("offset face", |_| super::offset_face::made().0),
+        ("draft", |_| super::face_draft::made().0),
+        ("split", |_| super::split::made().0),
+        ("sweep", |_| super::sweep::made().0),
+        ("loft", |_| super::loft::made().0),
+        ("scale", |_| super::scale::made().0),
+        ("align", |_| super::align::made().0),
+        ("plates", |_| plates()),
     ];
     let mut kinds = std::collections::HashSet::new();
     for (_, make) in fixtures {
-        let mut plates = make();
+        let mut regen = varde_regen::Regenerator::default();
+        let mut plates = make(&mut regen);
         let features: Vec<(FeatureId, FeatureKind)> = (plates.doc.editor.document().features())
             .iter()
             .filter(|feature| !matches!(feature.kind, FeatureKind::Sketch { .. }))
             .map(|feature| (feature.id, feature.kind.clone()))
             .collect();
         for (id, kind) in features {
-            ok_writes_nothing(&mut plates, id);
+            ok_writes_nothing(&mut plates, &mut regen, id);
             kinds.insert(std::mem::discriminant(&kind));
         }
     }

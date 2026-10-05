@@ -1,6 +1,9 @@
 //! The renderer on wgpu's GL backend, which the browser build runs on
 //! (WebGL2): its own binary, so its instance never meets the Vulkan one
 //! of the other tests. Skipped where there's no GL adapter.
+// Holding the shared wgpu device in a `static` asks whether it's `Sync`
+// deeper than the default limit.
+#![recursion_limit = "256"]
 
 use std::sync::Arc;
 
@@ -55,22 +58,42 @@ fn hidden_grid() -> GridPlane {
     GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap()
 }
 
-/// A device on the GL backend, if there's an adapter for it.
+// The binary's first GPU test pays for the device and the shared renderer's
+// pipelines (about 0.5-2s in a debug build, more for each further texture
+// format): a floor shared by every test here, so over the 0.5s aim.
+/// The one GL device the tests share, if there's an adapter for it.
 fn gl_device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::GL,
-        ..Default::default()
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        // As iced asks for, which allows two bind groups only.
-        required_limits: wgpu::Limits {
-            max_bind_groups: 2,
-            ..wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
-        },
-        ..Default::default()
-    }))
-    .ok()
+    static DEVICE: std::sync::OnceLock<Option<(wgpu::Device, wgpu::Queue)>> =
+        std::sync::OnceLock::new();
+    DEVICE
+        .get_or_init(|| {
+            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::GL,
+                ..Default::default()
+            });
+            let adapter =
+                pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                // As iced asks for, which allows two bind groups only.
+                required_limits: wgpu::Limits {
+                    max_bind_groups: 2,
+                    ..wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+                },
+                ..Default::default()
+            }))
+            .ok()
+        })
+        .clone()
+}
+
+/// The renderer the tests share, on the shared GL device, made once: it
+/// holds only pipelines, and building them is most of a test's time
+/// (about 0.45 s in a debug build).
+fn renderer(device: &wgpu::Device) -> Arc<Renderer> {
+    static RENDERER: std::sync::OnceLock<Arc<Renderer>> = std::sync::OnceLock::new();
+    RENDERER
+        .get_or_init(|| Arc::new(Renderer::new(device, FORMAT)))
+        .clone()
 }
 
 /// From the top, a cube from (-2, -2, 0) to (2, 2, 4) over the whole
@@ -208,7 +231,7 @@ fn a_depth_tested_sketch_is_hidden_by_the_model_on_gl() {
     let square =
         [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(x, y)| DVec2::new(x, y));
     live.fill(Space::On(plane), [&square[..]], Srgba([0.0, 1.0, 0.0, 1.0]));
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let (sketches, base) = (Arc::default(), Arc::new(SketchLayer::default()));
     for depth_tested in [false, true] {
         let frame = Frame {
@@ -251,7 +274,7 @@ fn a_closed_edge_is_joined_where_it_closes_on_gl() {
     camera.set_projection(Projection::Perspective);
     camera.look_from(View::Top);
     camera.zoom(12.0 / camera.view_height());
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let sketches = Arc::default();
     let render = |faded| {
         let frame = Frame {
@@ -292,7 +315,7 @@ fn hidden_edges_are_drawn_on_gl() {
     };
     let (mut camera, mesh) = cube_from_top();
     camera.set_projection(Projection::Perspective);
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let sketches = Arc::default();
     let yellow = |hidden_edges| {
         let frame = Frame {
@@ -329,7 +352,7 @@ fn transparent_parts_are_drawn_on_gl() {
         return;
     };
     let (camera, mesh) = cube_from_top();
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let sketches = Arc::default();
     let middle = |opacity: &[f32]| {
         let frame = Frame {
@@ -370,7 +393,7 @@ fn hover_and_selection_are_drawn_on_gl() {
         .faces()
         .position(|indices| mesh.normals()[indices[0] as usize][2] > 0.99)
         .unwrap() as u32;
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let sketches = Arc::default();
     let draw_with = |hovered_faces: &[u32], selected_faces: &[u32], highlights: Highlights| {
         let highlights = Arc::new(highlights);
@@ -453,7 +476,7 @@ fn errors_and_their_halo_are_drawn_on_gl() {
         halo_only: false,
     };
     let errors = [parts(&lines), parts(&under)];
-    let renderer = Renderer::new(&device, FORMAT);
+    let renderer = renderer(&device);
     let sketches = Arc::default();
     let pixels = draw(
         &device,

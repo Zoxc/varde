@@ -524,17 +524,12 @@ fn run(seed: u64, steps: usize) {
     }
 }
 
+/// The steps of the quick run, see [`crate::tests::fuzz_steps`].
+const QUICK_STEPS: usize = 85;
+
 #[test]
 fn random_sessions_keep_their_invariants() {
-    let seeds: u64 = std::env::var("VARDE_FUZZ_SEEDS")
-        .ok()
-        .and_then(|seeds| seeds.parse().ok())
-        .unwrap_or(6);
-    let from: u64 = std::env::var("VARDE_FUZZ_FROM")
-        .ok()
-        .and_then(|from| from.parse().ok())
-        .unwrap_or(0);
-    for seed in from..from.saturating_add(seeds) {
-        run(seed, 150);
+    for seed in varde_testing::seeds(1, 6) {
+        run(seed, crate::tests::fuzz_steps(QUICK_STEPS, 150));
     }
 }

@@ -166,6 +166,12 @@ fn tangent_cases(k: f64, tol: &Tolerance) -> Vec<Case> {
 /// error grows with the cut's length, not the volumes). Gives which
 /// worked.
 fn right_or_refused(case: &Case, tol: &Tolerance, rel: f64, budget: &Budget) -> [bool; 4] {
+    refusals(case, tol, rel, budget).map(|e| e.is_none())
+}
+
+/// [`right_or_refused`], giving each refused result's error (`None`
+/// where it worked).
+fn refusals(case: &Case, tol: &Tolerance, rel: f64, budget: &Budget) -> [Option<KernelError>; 4] {
     let (a, b) = (&case.a, &case.b);
     let (va, vb) = (a.volume(), b.volume());
     let want = [
@@ -174,7 +180,7 @@ fn right_or_refused(case: &Case, tol: &Tolerance, rel: f64, budget: &Budget) -> 
         va - case.both,
         vb - case.both,
     ];
-    let mut worked = [false; 4];
+    let mut refused = [None, None, None, None];
     for (k, (x, y, op)) in [
         (a, b, Op::Union),
         (a, b, Op::Intersection),
@@ -184,7 +190,7 @@ fn right_or_refused(case: &Case, tol: &Tolerance, rel: f64, budget: &Budget) -> 
     .into_iter()
     .enumerate()
     {
-        match boolean(x, y, op, tol, budget) {
+        match boolean(x, y, op, tol, budget).stripped() {
             Ok(solid) => {
                 let got = solid.volume();
                 let free = free_area(&solid);
@@ -199,12 +205,14 @@ fn right_or_refused(case: &Case, tol: &Tolerance, rel: f64, budget: &Budget) -> 
                     case.name,
                     want[k]
                 );
-                worked[k] = true;
             }
-            Err(e) => assert!(!case.works[k], "{}, result {k}: {e:?}", case.name),
+            Err(e) => {
+                assert!(!case.works[k], "{}, result {k}: {e:?}", case.name);
+                refused[k] = Some(e);
+            }
         }
     }
-    worked
+    refused
 }
 
 #[test]
@@ -373,7 +381,14 @@ fn a_pin_plugging_a_hole_it_touches_inside_is_no_pinch() {
     for turn in [0.0f64, 0.3] {
         let at = v(turn.cos(), turn.sin()) * -0.1;
         let pin = ex(vec![circle(at, 1.1, 0, false)], -0.5, 1.5, 2, &TOL);
-        for (x, y) in [(&block, &pin), (&pin, &block)] {
+        // Turned, each order runs out of its million units, most of the
+        // test's time: quick runs take the block first only.
+        let orders = if turn > 0.0 && !varde_testing::full() {
+            &[(&block, &pin)][..]
+        } else {
+            &[(&block, &pin), (&pin, &block)][..]
+        };
+        for &(x, y) in orders {
             let budget = if turn > 0.0 {
                 Budget::new(1_000_000)
             } else {
@@ -534,10 +549,17 @@ fn tangent_contacts_at_rounded_edges_are_right_or_refused() {
         },
     ];
     for case in &cases {
+        // The hole's operations spend over a million units each, most of
+        // the test's time (some 1.5 s of 1.8 in a debug build): only in
+        // full runs.
+        if case.name == "hole tangent to the side" && !varde_testing::full() {
+            continue;
+        }
         // The hole's cut through the round is fitted. The bars' pairs
-        // along the round refine to any budget.
+        // along the round refine to any budget (those that work take
+        // under 75 000 units; quick runs give the rest less to spend).
         let budget = if case.name.starts_with("bar") {
-            Budget::new(300_000)
+            Budget::new(varde_testing::pick(100_000, 300_000))
         } else {
             Budget::DEFAULT
         };
@@ -575,6 +597,8 @@ fn sphere(c: DVec3, axis: DVec3, r: f64) -> Solid {
 
 #[test]
 fn spheres_touching_faces_at_a_point_are_right_or_refused() {
+    // About 0.5 s in a debug build, at the quick target: four distinct
+    // contacts, the cylinder beside a sphere searching deep at its point.
     // A sphere resting on a plate's top or touching it from inside, on a
     // frame turned off the axes, and a cylinder beside a sphere: the
     // results with a point contact on the skin from outside (unions) or
@@ -630,6 +654,10 @@ fn spheres_touching_faces_at_a_point_are_right_or_refused() {
             [no, yes, yes, yes],
         ),
     ];
+    // Each case a different contact, so quick runs them all: some 0.8 s
+    // of CPU in a debug build (0.5 s on several threads), 0.5 s of it the
+    // cylinder beside the sphere, whose contact the crossing search
+    // refines deep, the union (refused) the most.
     for (name, a, b, inside, works) in cases {
         let both = if inside { b.volume() } else { 0.0 };
         let case = Case {
@@ -639,19 +667,10 @@ fn spheres_touching_faces_at_a_point_are_right_or_refused() {
             both,
             works,
         };
-        let worked = right_or_refused(&case, &TOL, 1e-9, &Budget::DEFAULT);
-        assert_eq!(worked, works, "{name}");
-        let jobs = [
-            (&case.a, &case.b, Op::Union),
-            (&case.a, &case.b, Op::Intersection),
-            (&case.a, &case.b, Op::Difference),
-            (&case.b, &case.a, Op::Difference),
-        ];
-        for (k, (x, y, op)) in jobs.into_iter().enumerate() {
-            if !works[k] {
-                let e = boolean(x, y, op, &TOL, &Budget::DEFAULT)
-                    .stripped()
-                    .unwrap_err();
+        let refused = refusals(&case, &TOL, 1e-9, &Budget::DEFAULT);
+        assert_eq!(refused.each_ref().map(Option::is_none), works, "{name}");
+        for (k, e) in refused.into_iter().enumerate() {
+            if let Some(e) = e {
                 assert_eq!(
                     e,
                     KernelError::Boolean(BooleanError::NotManifold),

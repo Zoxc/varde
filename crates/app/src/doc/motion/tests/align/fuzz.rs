@@ -460,18 +460,14 @@ fn run(seed: u64, steps: usize) {
     }
 }
 
-/// See the module's docs. `VARDE_ALIGN_SEEDS` runs more seeds
-/// (`VARDE_ALIGN_FROM` the first).
+/// The steps of the quick run, see [`crate::tests::fuzz_steps`].
+const QUICK_STEPS: usize = 50;
+
+/// See the module's docs. A few steps of the first seed by default, all
+/// 200 steps of each seed with `VARDE_TESTS=full` or `VARDE_TEST_SEED`.
 #[test]
 fn random_align_sessions_hold() {
-    let number = |name: &str, default: u64| {
-        std::env::var(name)
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(default)
-    };
-    let from = number("VARDE_ALIGN_FROM", 0);
-    for seed in from..from.saturating_add(number("VARDE_ALIGN_SEEDS", 3)) {
-        run(seed, 200);
+    for seed in varde_testing::seeds(1, 3) {
+        run(seed, crate::tests::fuzz_steps(QUICK_STEPS, 200));
     }
 }

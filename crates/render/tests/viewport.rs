@@ -47,6 +47,9 @@ const COLORS: Colors = Colors {
 const SIZE: [u32; 2] = [512, 256];
 const SENTINEL: [u8; 4] = [255, 0, 255, 255];
 
+// The binary's first GPU test pays for the device and the shared renderer's
+// pipelines (about 0.5-2s in a debug build, more for each further texture
+// format): a floor shared by every test here, so over the 0.5s aim.
 /// The one device the tests share, if there's an adapter. The Vulkan
 /// loader isn't thread safe across instances: a test creating its own
 /// while another names an object on its device crashed it

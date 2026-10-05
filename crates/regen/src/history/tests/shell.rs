@@ -559,8 +559,10 @@ fn the_stand_in_shells_boxes_by_their_volumes() {
     }
     let mm = editor.document().clone();
     let id = add(&mut editor, shell(&mm, body, Vec::new(), "1"));
+    // One cache, so the block is made once.
+    let mut cache = Cache::default();
     let whole: f64 = size.iter().product();
-    for mask in 0..64u32 {
+    for mask in box_face_masks() {
         let open: Vec<FaceRef> = (0..6)
             .filter(|k| mask & (1 << k) != 0)
             .map(|k| sides[k].1)
@@ -587,7 +589,8 @@ fn the_stand_in_shells_boxes_by_their_volumes() {
                     ..shell(&mm, body, open.clone(), text)
                 };
                 set(&mut editor, id, kind);
-                let evaluation = evaluated(editor.document());
+                cache.begin();
+                let evaluation = evaluate(editor.document(), &mut cache);
                 let (wanted, slack) = if outward {
                     let grown: f64 = (0..3).map(|a| size[a] + t * closed[a]).product();
                     (grown - whole, f64::INFINITY)

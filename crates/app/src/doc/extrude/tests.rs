@@ -10,7 +10,7 @@ use varde_regen::Request;
 use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, Mode, OperationKind};
 
 use super::*;
-use crate::doc::regions::REFRESH_WORK;
+use crate::doc::regions::{refresh_work, with_work_unit};
 use crate::doc::sketch::CHECKING;
 use crate::tests::{answer, deferred, example, example_and_a_hole, key_in, press_in};
 
@@ -2280,6 +2280,9 @@ fn ui_bound() -> f64 {
 
 #[test]
 fn a_sketch_too_complex_is_skipped_quickly_and_once() {
+    // About 0.6 s in a debug build: the sketch must spend the whole of
+    // `varde_sketch::MAX_WORK` to be too complex, once for the visible
+    // sketches and once as the source (and in its regeneration).
     let (mut doc, plate, requests) = plate();
     let hostile = add_visible(&mut doc, concentric(3000));
     doc.sync();
@@ -2339,14 +2342,27 @@ fn a_sketch_too_complex_is_skipped_quickly_and_once() {
 
 #[test]
 fn the_visible_sketches_share_the_work() {
+    // Each refresh spends the whole budget on the sketches' profiles,
+    // which is what's tested: a tenth of it, of sketches as much simpler,
+    // so as not to take seconds in a debug build.
+    with_work_unit(varde_sketch::MAX_WORK / WORK_SHARE, visible_sketches_share);
+}
+
+/// How much smaller the budgets are in the tests spending all of them.
+const WORK_SHARE: usize = 10;
+
+/// The circles of each sketch in those tests: a good share of the budget.
+const SHARED_CIRCLES: usize = 400;
+
+fn visible_sketches_share() {
     let (mut doc, plate, requests) = plate();
     // Each takes a good share of what one may: those past what all may
     // together have no regions to pick.
-    let drawn = concentric(1500);
+    let drawn = concentric(SHARED_CIRCLES);
     let mut left = usize::MAX;
     drawn.profiles_spending(&mut left).unwrap();
     let each = usize::MAX - left;
-    let fit = REFRESH_WORK / each;
+    let fit = refresh_work() / each;
     assert!((2..=6).contains(&fit), "{each}");
     let sketches: Vec<FeatureId> = (0..fit + 2)
         .map(|_| add_visible(&mut doc, drawn.clone()))

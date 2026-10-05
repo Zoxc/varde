@@ -333,7 +333,14 @@ fn caps_a_hair_apart_take_the_region_fallback() {
     // triangulates the rim's clusters again. Right within that hair times
     // the plate's top, in either order and on a turned frame.
     let hair = 2e-8;
-    for frame in [Frame::XY, turned()] {
+    // Each union spends over three million units, some 0.3 s in a debug
+    // build: quick runs take the turned frame only.
+    let frames = if varde_testing::full() {
+        &[Frame::XY, turned()][..]
+    } else {
+        &[turned()][..]
+    };
+    for &frame in frames {
         let plate = extruded_on(
             vec![rect(DVec2::splat(-1.25), DVec2::splat(1.25), 0)],
             frame,
@@ -349,16 +356,26 @@ fn caps_a_hair_apart_take_the_region_fallback() {
             2,
         );
         let want = 3.125 + PI * 0.25 * hair;
-        for (a, b) in [(&boss, &plate), (&plate, &boss)] {
-            let before = super::super::cleanup::DISSOLVED.get();
-            let union = run(a, b, Op::Union);
-            assert!(super::super::cleanup::DISSOLVED.get() > before);
+        for (k, (a, b)) in [(&boss, &plate), (&plate, &boss)].into_iter().enumerate() {
+            // Whether the clean-up dissolved anything, counted on the
+            // thread the union runs on.
+            let union = || {
+                let before = super::super::cleanup::DISSOLVED.get();
+                let union = run(a, b, Op::Union);
+                (super::super::cleanup::DISSOLVED.get() > before, union)
+            };
+            // The boss first the same on 1 and 8 threads.
+            let (dissolved, union) = if k == 0 {
+                assert_deterministic(union)
+            } else {
+                union()
+            };
+            assert!(dissolved);
             assert!(union.mesh().tris().len() < 100);
             let got = union.volume();
             assert!((got - want).abs() <= 6.25 * hair, "{got} not {want}");
             exact_to("hair", &union, size(&union), hair);
         }
-        assert_deterministic(|| run(&boss, &plate, Op::Union));
     }
 }
 

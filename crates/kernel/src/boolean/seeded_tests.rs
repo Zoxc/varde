@@ -588,7 +588,10 @@ fn part(rng: &mut Rng, step: f64, feature: u64, tol: &Tolerance) -> Option<Solid
 #[test]
 fn parts_built_in_chains_of_twenty_are_right_or_refused() {
     // As a user builds a part: solids on the sketch planes, joined, cut
-    // and now and then intersected, each result fed on.
+    // and now and then intersected, each result fed on. A debug build
+    // takes about 1 s, nearly all of it the first step, whose four
+    // operations are all refused after trying with ties and exactly;
+    // the later steps take milliseconds, so fewer wouldn't help.
     let tol = Tolerance::DEFAULT;
     let mut tally = Tally::default();
     let mut rng = Rng::new(21);
@@ -1752,10 +1755,17 @@ fn drilled_grids_in_line() {
     // long cap triangles the earlier holes left from the box's far
     // corners: 4 of the 180 steps failed (steps 1 and 8 at pitch 2.4, 3
     // and 24 at 2.2) before the clean-up refined the plane faces a cut
-    // makes. In a debug build, the first nine of each.
+    // makes. In a debug build, the first nine of each; in a quick one,
+    // the first four at 2.2 and nine at 2.4, which hold the steps that
+    // failed.
     let mut total = 0;
-    for pitch in [2.2, 2.3, 2.4] {
-        let (failed, patches) = drilled_grid(0.5, pitch, cases(60, 9));
+    let pitches: &[(f64, usize)] = if varde_testing::full() || !cfg!(debug_assertions) {
+        &[(2.2, 9), (2.3, 9), (2.4, 9)]
+    } else {
+        &[(2.2, 4), (2.4, 9)]
+    };
+    for &(pitch, debug) in pitches {
+        let (failed, patches) = drilled_grid(0.5, pitch, cases(60, debug));
         println!("pitch {pitch}: failed steps {failed:?}, {patches} patches");
         total += failed.len();
     }
@@ -1887,6 +1897,8 @@ fn a_cut_face_that_cant_be_triangulated_shows_its_loops() {
 
 #[test]
 fn tangent_cylinders_that_dont_fit_together_show_where() {
+    // About 1.5 s in a debug build, over the quick target: three
+    // near-tangent kinds of contact, each needing its four boolean tries.
     // Near-tangent cylinders at the coarsest tolerance, whose decisions
     // with near ties don't fit together (`Inconsistent`) at three kinds
     // of place, each with what it is about, on the walls where they
@@ -1919,12 +1931,19 @@ fn tangent_cylinders_that_dont_fit_together_show_where() {
             .key()
     };
     let near_line = |p: DVec3| (p.x - 1.0).abs() < 0.05 && p.y.abs() < 0.15;
-    for (gap, h, op) in [
+    // One case of each kind of place first (a vertex, a crossing, an
+    // edge), then a second crossing: a quick run takes the three, about
+    // 1.5 s in a debug build (measured: the vertex about 0.6 s, the
+    // crossing 0.2, the edge 0.75), as each takes four tries of the
+    // boolean (two for the threads, two deciding again) on curved walls
+    // a hair apart, most of it in the curved searches and exact signs.
+    let tries = [
         (-1.5e-6, 0.75, Op::Intersection),
-        (1e-6, 0.25, Op::Union),
         (1e-6, 1.0, Op::Union),
         (1.5e-6, 1.0, Op::Union),
-    ] {
+        (1e-6, 0.25, Op::Union),
+    ];
+    for (gap, h, op) in tries.into_iter().take(varde_testing::pick(3, 4)) {
         let b = Solid::cylinder(DVec3::ZERO, 1.0, h, 3, &tol).unwrap();
         let b = moved(&b, &tol, |p| p + DVec3::new(2.0 + gap, 0.0, 0.5));
         let failure = assert_deterministic(|| {

@@ -20,6 +20,7 @@ varde-solve = { path = "crates/solve" }
 varde-io = { path = "crates/io" }
 varde-view = { path = "crates/view" }
 varde-app = { path = "crates/app" }
+varde-testing = { path = "crates/testing" }
 
 # `advanced` for the layer of widgets anchored over the viewport, a widget
 # of its own. `image-without-codecs` for the welcome screen's thumbnails,

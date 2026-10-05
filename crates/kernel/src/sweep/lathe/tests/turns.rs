@@ -356,7 +356,11 @@ fn build(frame: &Frame, segs: &[Seg], tol: &Tolerance) -> Result<Built, KernelEr
 /// 0.15 wide, fail the hull rule against the wall far out (the plane
 /// through a ring arc of bulge `1.2e-4` tilts by rounding), no ring at a
 /// turn. Gives each profile's lathe pieces and patches on `Frame::Z`.
-fn sweep(fit: f64, seed: u64) -> Vec<(usize, usize)> {
+///
+/// Quick runs each profile on one of the frames by turns, and the puck's
+/// and the torus split at its turns (whose counts the tests pin) on
+/// `Frame::Z`; the counts of profiles it doesn't run there are `None`.
+fn sweep(fit: f64, seed: u64) -> Vec<Option<(usize, usize)>> {
     let mut rng = Rng::new(seed);
     let frames = [
         Frame::Z,
@@ -365,14 +369,19 @@ fn sweep(fit: f64, seed: u64) -> Vec<(usize, usize)> {
     ];
     let tol = Tolerance::new(fit).unwrap();
     let mut counts = Vec::new();
-    for (name, segs) in profiles() {
+    for (n, (name, segs)) in profiles().into_iter().enumerate() {
+        let mut count = None;
         for (i, frame) in frames.iter().enumerate() {
             if i > 0 && fit < 1e-4 && name.starts_with("thin") {
                 continue;
             }
+            let on = if n == 0 || n == 2 { 0 } else { n % 3 };
+            if !varde_testing::full() && i != on {
+                continue;
+            }
             let built = build(frame, &segs, &tol).unwrap();
             if i == 0 {
-                counts.push((built.pieces, built.mesh.tris().len()));
+                count = Some((built.pieces, built.mesh.tris().len()));
             }
             let limit = fit / 2.0;
             let floor = 1e-9 * frame.scale(60.0).powi(3);
@@ -386,6 +395,7 @@ fn sweep(fit: f64, seed: u64) -> Vec<(usize, usize)> {
             );
             assert!(volume_error <= area * limit + floor, "{name} at {fit:e}");
         }
+        counts.push(count);
     }
     counts
 }
@@ -439,20 +449,24 @@ fn profiles_with_rings_at_turns_are_solids_by_default() {
     // The puck's, and the torus split at its turns (as many patches as
     // one split off them; its diagonals leaving the turns' rings in their
     // planes fit in half the pieces round the axis, twice as many along).
-    assert_eq!(counts[0], (16, 192));
-    assert_eq!(counts[2], (64, 1024));
+    assert_eq!(counts[0], Some((16, 192)));
+    assert_eq!(counts[2], Some((64, 1024)));
 }
 
 #[test]
 fn profiles_with_rings_at_turns_are_solids_fine() {
     let counts = sweep(1e-4, 85);
-    assert_eq!(counts[2], (128, 2048));
+    assert_eq!(counts[2], Some((128, 2048)));
 }
 
-/// One to six seconds a profile in release; not run in debug builds.
+/// One to six seconds a profile in release: run only under
+/// `VARDE_TESTS=full`, and not in debug builds.
 #[cfg(not(debug_assertions))]
 #[test]
 fn profiles_with_rings_at_turns_are_solids_finest() {
+    if !varde_testing::full() {
+        return;
+    }
     sweep(1e-5, 86);
 }
 
@@ -502,13 +516,19 @@ fn rings_just_past_turns_are_solids() {
     // A turn this near a band piece's end is left to the ring there,
     // which the cylinder parts. Balanced instead, the piece over the turn
     // was a sliver the band halved round the axis until `TooComplex`.
+    // Quick runs each on one of the frames, by turns.
     let mut rng = Rng::new(89);
     let frames = [Frame::Z, Frame::random(&mut rng, 1e3)];
+    let mut case = 0;
     for fit in [1e-2, 1e-3] {
         let tol = Tolerance::new(fit).unwrap();
         for eps in [1e-5, 1e-4, 1e-3] {
             for (name, segs) in near_turns(eps) {
-                for frame in &frames {
+                case += 1;
+                for (i, frame) in frames.iter().enumerate() {
+                    if !varde_testing::full() && i != case % 2 {
+                        continue;
+                    }
                     let built = build(frame, &segs, &tol)
                         .unwrap_or_else(|e| panic!("{name} {eps:e} at {fit:e}: {e:?}"));
                     let limit = fit / 2.0;
@@ -560,7 +580,9 @@ fn refined_rings_at_turns_stay_solids() {
 fn rings_at_turns_are_the_same_on_any_thread_count() {
     let frame = Frame::random(&mut Rng::new(88), 1e3);
     let tol = Tolerance::DEFAULT;
-    for (_, segs) in profiles() {
+    // Quick runs every third profile.
+    let step = varde_testing::pick(3, 1);
+    for (_, segs) in profiles().into_iter().step_by(step) {
         assert_deterministic(|| {
             let solid = Solid::new(build(&frame, &segs, &tol).unwrap().mesh, &tol).unwrap();
             (solid.volume(), solid)

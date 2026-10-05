@@ -9,9 +9,9 @@
 //! thinner than a few resolutions, wherever an angle bound leaves some
 //! (chords too short to halve).
 //!
-//! In release builds these take a few minutes all told, most of it the
-//! corner cuts and the cut circles at many seeds; debug builds run a
-//! smaller set of each.
+//! With `VARDE_TESTS=full` these take a few minutes all told in release
+//! builds, most of it the corner cuts and the cut circles at many seeds;
+//! the quick default runs a smaller set of each.
 
 #![allow(
     clippy::disallowed_methods,
@@ -35,8 +35,14 @@ use crate::{Budget, Solid};
 
 const TOL: Tolerance = Tolerance::DEFAULT;
 
-/// `release` in a release build, `debug` in a debug one.
-fn sized<T>(release: T, debug: T) -> T {
+/// `full` under `VARDE_TESTS=full`, `quick` by default.
+fn sized<T>(full: T, quick: T) -> T {
+    varde_testing::pick(quick, full)
+}
+
+/// `release` in a release build, `debug` in a debug one: for time
+/// bounds, which go by how fast the build runs, not by the cases.
+fn by_build<T>(release: T, debug: T) -> T {
     if cfg!(debug_assertions) {
         debug
     } else {
@@ -213,6 +219,8 @@ fn fine_outlines_with_holes() {
 
 #[test]
 fn a_fine_polygon_past_the_budget_runs_out_in_time() {
+    // About 0.55 s in a debug build, over the quick target: one polygon of
+    // 65,536 sides, and the time is the cap refinement this is about.
     // 65 536 sides of radius 100, each vertex 5e-3 resolutions off its
     // neighbours' chord at fit 0.1: more patches than the budget pays
     // for, refined or not. With the plain caps it ran out only after 16 s
@@ -222,11 +230,16 @@ fn a_fine_polygon_past_the_budget_runs_out_in_time() {
     // triangles); counting its box pairs finds it crowded, and refining
     // it for that runs out of budget in about a second, with no work left
     // for a second try.
+    //
+    // About 0.6 s in a debug build, over the quick target: the input is
+    // the case, and the time is the refinement it runs out in (building
+    // box trees over the fan about half of it, the triangulation a
+    // fifth).
     let p = profile(vec![ngon(65_536, 100.0)]);
     let start = Instant::now();
     let result = run(&p, &Tolerance::new(0.1).unwrap(), 1.0);
     assert_eq!(result.map(|_| ()), Err(KernelError::TooComplex));
-    let bound = sized(30, 120);
+    let bound = by_build(30, 120);
     assert!(start.elapsed().as_secs() < bound, "{:?}", start.elapsed());
 }
 
@@ -263,7 +276,7 @@ fn strips_between_fine_rings() {
         assert!(patches < 12 * 2 * n, "{what}: {patches} patches");
     }
     refused.none();
-    if cfg!(debug_assertions) {
+    if !varde_testing::full() {
         return;
     }
     // Two 16 384-gons fit the budget too, with some 157 000 patches,
@@ -295,7 +308,7 @@ fn crowded_caps_run_out_of_budget_quickly() {
     let start = Instant::now();
     let result = extrude(&p, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 18)).stripped();
     assert_eq!(result.map(|_| ()), Err(KernelError::TooComplex));
-    let bound = sized(2, 20);
+    let bound = by_build(2, 20);
     assert!(start.elapsed().as_secs() < bound, "{:?}", start.elapsed());
 }
 
@@ -363,10 +376,11 @@ fn circles_cut_unevenly_at_the_coarsest_tolerance() {
 #[test]
 fn circles_cut_unevenly_at_many_seeds() {
     // 32 cases of these 1 600 failed with the plain caps, in 18 of the 40
-    // seeds.
+    // seeds. Quick runs the first seed.
     let start = Instant::now();
     let mut refused = Refused::default();
-    for seed in 1000..sized(1040, 1004) {
+    for seed in varde_testing::seeds(1, 40) {
+        let seed = seed.checked_add(1000).expect("seed out of range");
         let cases = uneven_circles_from(seed, [Tolerance::MIN_FIT, 1e-3, 1e-2]);
         for (case, (p, r, tol)) in cases.iter().enumerate() {
             if case % 3 != 2 {
@@ -376,10 +390,10 @@ fn circles_cut_unevenly_at_many_seeds() {
             refused.solid(p, tol, *r, run(p, tol, *r), &what);
         }
     }
-    // About three minutes in release on a machine loaded seven times
-    // over.
+    // Full, about three minutes in release on a machine loaded seven
+    // times over.
     refused.none();
-    let bound = sized(240, 240);
+    let bound = by_build(240, 240);
     assert!(start.elapsed().as_secs() < bound, "{:?}", start.elapsed());
 }
 
@@ -549,7 +563,9 @@ fn perforated(k: usize, r: Option<f64>) -> (Solid, f64) {
 fn corner_cuts_on_perforated_plates() {
     // Boxes 0.3 to 2 across cut from each corner, flush with the plate's
     // sides or 0.1 in: none comes near a hole. With the plain caps 15, 12,
-    // 20 and 32 of each plate's 32 were refused.
+    // 20 and 32 of each plate's 32 were refused. Each cut is a boolean on
+    // a plate of 100 holes and its volume, about 0.15 s in debug builds:
+    // quick runs one cut a corner, every size and both insets among them.
     let plates = sized(
         vec![
             (10, Some(2.0)),
@@ -563,9 +579,13 @@ fn corner_cuts_on_perforated_plates() {
     for (k, r) in plates {
         let (plate, volume) = perforated(k, r);
         let size = 10.0 * k as f64;
-        for (cx, cy) in [(0.0, 0.0), (size, 0.0), (size, size), (0.0, size)] {
-            for s in [0.3, 0.5, 1.0, 2.0] {
-                for inset in [0.0, 0.1] {
+        let corners = [(0.0, 0.0), (size, 0.0), (size, size), (0.0, size)];
+        for (c, (cx, cy)) in corners.into_iter().enumerate() {
+            for (i, s) in [0.3, 0.5, 1.0, 2.0].into_iter().enumerate() {
+                for (j, inset) in [0.0, 0.1].into_iter().enumerate() {
+                    if !varde_testing::full() && (i != c || j != c % 2) {
+                        continue;
+                    }
                     let from = |c: f64| {
                         if c == 0.0 {
                             -s / 2.0 + inset
@@ -599,11 +619,19 @@ fn holes_drilled_in_line_with_extruded_ones() {
     // A plate with one to three holes in a row, extruded, then the next
     // hole of the row drilled. With the plain caps 2 of the 36 were
     // refused, the second hole 5 from the first on the smaller plate.
+    // Quick runs one row length for each plate, radius and pitch, by
+    // turns, and those two.
     let mut refused = Refused::default();
+    let mut combo = 0;
     for size in [20.0, 60.0] {
         for r in [0.5, 1.0] {
             for pitch in [2.4, 3.0, 5.0] {
+                combo += 1;
                 for k in 1..4 {
+                    let known = size == 20.0 && pitch == 5.0 && k == 1;
+                    if !varde_testing::full() && !known && k != 1 + combo % 3 {
+                        continue;
+                    }
                     let mut loops = vec![rect(DVec2::ZERO, DVec2::splat(size), 0)];
                     for i in 0..k {
                         let at = DVec2::new(2.0 + pitch * i as f64, 2.0);
@@ -633,7 +661,9 @@ fn holes_drilled_in_line_with_extruded_ones() {
 
 // Pins: the patch counts of caps that passed before refinement, now
 // refined wherever a triangle had an angle under 5° (they were 4 012, 92,
-// 12 and 65 532 with the plain caps).
+// 12 and 65 532 with the plain caps). The uneven circles' and the random
+// plates' are pinned where they are extruded already,
+// `circles_cut_unevenly` and `random_plates_with_holes`.
 
 #[test]
 fn refined_caps_patches() {
@@ -654,27 +684,9 @@ fn refined_caps_patches() {
     let rib = profile(vec![rect(DVec2::ZERO, DVec2::new(100.0, 1.0), 0)]);
     assert_eq!(patches(&rib), 100);
     // 16 384 sides of radius 100.
-    if !cfg!(debug_assertions) {
+    if varde_testing::full() {
         assert_eq!(patches(&profile(vec![ngon(16_384, 100.0)])), 78_560);
     }
-}
-
-#[test]
-fn uneven_circles_and_random_plates_patches() {
-    // The patches of `circles_cut_unevenly`'s circles and of
-    // `random_plates_with_holes`' plates that extrude, all told (18 872
-    // and 1 150 with the plain caps).
-    let circles: usize = uneven_circles_from(3, [Tolerance::MIN_FIT, 1e-3, 1e-2])
-        .iter()
-        .map(|(p, r, tol)| run(p, tol, *r).unwrap().mesh().tris().len())
-        .sum();
-    assert_eq!(circles, 30_092);
-    let plates: usize = super::tests::random_plates()
-        .iter()
-        .filter_map(|(p, tol, h)| run(p, tol, *h).ok())
-        .map(|solid| solid.mesh().tris().len())
-        .sum();
-    assert_eq!(plates, 1636);
 }
 
 #[test]
@@ -828,6 +840,10 @@ fn a_run_of_fine_pieces_in_a_cut_circle_extrudes() {
     // 1e-3: the refined first try fails, and the plain caps' first try
     // passes after repair. Its caps' boxes crowd each other (some 500 000
     // pairs); refined for that, they failed instead.
+    //
+    // About 0.65 s in a debug build, over the quick target: one case,
+    // extruded three ways, most of it checking those pairs' hulls apart
+    // and repairing the plain caps.
     let mut rng = Rng::new(300_291);
     let tol = Tolerance::new(pick(&mut rng, &[1e-5, 1e-4, 1e-3, 1e-2, 1e-1])).unwrap();
     let r = rng.log_range(0.1, 1000.0);

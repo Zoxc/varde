@@ -712,7 +712,8 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
         });
     }
     assert_eq!(plates.doc.motion.as_ref().unwrap().sweep.chains.len(), 64);
-    plates.answer();
+    // The newest only: each pick asked for the model again.
+    plates.answer_newest();
     plates.doc.notice = None;
     click_edge(plates, plate, CORNER);
     assert!(
@@ -766,7 +767,8 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
             curve,
         });
     }
-    plates.answer();
+    // The newest only: each pick asked for the model again.
+    plates.answer_newest();
     plates.doc.notice = None;
     click_edge(plates, plate, CORNER);
     assert!(

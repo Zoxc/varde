@@ -573,7 +573,9 @@ fn the_stand_in_moves_boxes_by_their_volumes() {
     }
     let mm = editor.document().clone();
     let id = add(&mut editor, offset(&mm, vec![sides[0].1], "1", false));
-    for mask in 1..64u32 {
+    // One cache, so the block is made once.
+    let mut cache = Cache::default();
+    for mask in box_face_masks().into_iter().filter(|&mask| mask != 0) {
         let picked: Vec<FaceRef> = (0..6)
             .filter(|k| mask & (1 << k) != 0)
             .map(|k| sides[k].1)
@@ -587,7 +589,8 @@ fn the_stand_in_moves_boxes_by_their_volumes() {
                 let d: f64 = text.parse().unwrap();
                 let signed = if inward { -d } else { d };
                 set(&mut editor, id, offset(&mm, picked.clone(), text, inward));
-                let evaluation = evaluated(editor.document());
+                cache.begin();
+                let evaluation = evaluate(editor.document(), &mut cache);
                 let sizes: Vec<f64> = (0..3).map(|a| size[a] + signed * moved[a]).collect();
                 let slack = sizes.iter().copied().fold(f64::INFINITY, f64::min);
                 let what = format!("faces {mask:06b} {text} inward {inward}");

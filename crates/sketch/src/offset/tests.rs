@@ -25,10 +25,7 @@ fn offset(chain: Vec<Id>, distance: &str, side: Side) -> SketchEdit {
 /// A closed polygon through `corners`, counter-clockwise, and its lines.
 fn polygon(corners: &[(f64, f64)]) -> (Sketch, Vec<Id>) {
     let mut sketch = Sketch::default();
-    let points: Vec<Id> = corners
-        .iter()
-        .map(|&(x, y)| point(&mut sketch, x, y))
-        .collect();
+    let points = testing::points(&mut sketch, corners);
     let lines = (0..points.len())
         .map(|i| line(&mut sketch, points[i], points[(i + 1) % points.len()]))
         .collect();
@@ -718,7 +715,7 @@ fn meet_at_ends(sketch: &Sketch, curves: &[Id]) -> bool {
 fn random_loops_offset_into_closed_copies_that_never_cross() {
     let mut rand = random(12345);
     let mut offset_some = 0;
-    for case in 0..400 {
+    for case in 0..varde_testing::pick(200, 400) {
         // Round the origin, a line or an arc from each corner to the next.
         let n = 3 + (rand() * 10.0) as usize;
         let corners: Vec<DVec2> = (0..n)
@@ -790,14 +787,15 @@ fn random_loops_offset_into_closed_copies_that_never_cross() {
             "case {case}"
         );
     }
-    assert!(offset_some > 200, "{offset_some}");
+    // About two in three cases offset.
+    assert!(offset_some > varde_testing::pick(100, 200), "{offset_some}");
 }
 
 #[test]
 fn random_rounded_loops_keep_their_freedom() {
     let mut rand = random(777);
     let mut offset_some = 0;
-    for case in 0..300 {
+    for case in 0..varde_testing::pick(40, 300) {
         // A polygon round the origin, each corner rounded by a tangent arc.
         let n = 3 + (rand() * 8.0) as usize;
         let corners: Vec<DVec2> = (0..n)
@@ -867,7 +865,7 @@ fn random_rounded_loops_keep_their_freedom() {
             Err(why) => panic!("case {case}: {why:?}"),
         }
     }
-    assert!(offset_some > 100, "{offset_some}");
+    assert!(offset_some > varde_testing::pick(25, 100), "{offset_some}");
 }
 
 #[test]
@@ -879,6 +877,8 @@ fn a_chain_too_long_to_work_out_is_refused() {
             (100.0 * angle.cos(), 100.0 * angle.sin())
         })
         .collect();
+    // Most of the time is spending all of `MAX_OFFSET_WORK`, whatever
+    // the length past it.
     let (sketch, lines) = polygon(&corners);
     assert_eq!(
         sketch.offset_preview(&lines, 1.0, Side::Positive),

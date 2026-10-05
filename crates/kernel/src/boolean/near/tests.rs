@@ -69,6 +69,13 @@ const GAPS: [(f64, bool); 5] = [
     (3.0, false),
 ];
 
+/// [`GAPS`], less the last in a quick run: the gaps that don't touch
+/// take the longest (the search refines until it shows them apart), and
+/// `2.5` stays to show it.
+fn gaps() -> &'static [(f64, bool)] {
+    &GAPS[..varde_testing::pick(4, 5)]
+}
+
 #[test]
 fn cylinders_side_by_side_touch_along_a_ruling() {
     // On the seams of both (phase 0) and off them; the second as tall as
@@ -78,7 +85,7 @@ fn cylinders_side_by_side_touch_along_a_ruling() {
         let a = rod(DVec2::ZERO, 1.0, [0.0, 2.0], &tol);
         for phase in [0.0, 0.3] {
             for z in [[0.0, 2.0], [0.5, 1.5]] {
-                for (gap, want) in GAPS {
+                for &(gap, want) in gaps() {
                     let b = rod(at(phase, 2.0 + gap * r), 1.0, z, &tol);
                     assert_eq!(both(&a, &b, &tol), want, "{tol:?} {phase} {z:?} {gap}");
                 }
@@ -124,20 +131,26 @@ fn holed_plate(tol: &Tolerance) -> Solid {
 #[test]
 fn a_pin_against_a_holes_wall_touches() {
     // A pin of radius 0.5 in the hole, against its wall on the seams and
-    // off them, through the plate and inside it.
+    // off them, through the plate and inside it: every pairing in a full
+    // run, in a quick one on the seams through the plate and off them
+    // inside it.
+    let places = [
+        (0.0, [-1.0, 2.0]),
+        (0.3, [0.25, 0.75]),
+        (0.0, [0.25, 0.75]),
+        (0.3, [-1.0, 2.0]),
+    ];
     for tol in [TOL, coarse()] {
         let r = tol.resolution();
         let plate = holed_plate(&tol);
-        for phase in [0.0, 0.3] {
-            for z in [[-1.0, 2.0], [0.25, 0.75]] {
-                for (gap, want) in GAPS {
-                    let pin = rod(at(phase, 0.5 - gap * r), 0.5, z, &tol);
-                    assert_eq!(
-                        both(&plate, &pin, &tol),
-                        want,
-                        "{tol:?} {phase} {z:?} {gap}"
-                    );
-                }
+        for &(phase, z) in &places[..varde_testing::pick(2, 4)] {
+            for &(gap, want) in gaps() {
+                let pin = rod(at(phase, 0.5 - gap * r), 0.5, z, &tol);
+                assert_eq!(
+                    both(&plate, &pin, &tol),
+                    want,
+                    "{tol:?} {phase} {z:?} {gap}"
+                );
             }
         }
     }

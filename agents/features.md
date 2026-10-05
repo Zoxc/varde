@@ -745,7 +745,7 @@ an extrude's.
 `RevolveSession`) follows the extrude's (see "The extrude UI" in
 `agents/kernel.md`), sharing its parts (`app/src/doc/regions.rs`):
 `RegionPick` (the source sketch, the candidates' profiles found within
-`REFRESH_WORK`, the regions picked and their references, found again
+`refresh_work()`, the regions picked and their references, found again
 when the sketch changes, the edited feature's missing ones counted),
 `BodyTargets` (the bodies taken out and those just put back, as the
 Bodies list shows them, `Doc::body_targets`) and `TypedText` (a typed
@@ -843,7 +843,7 @@ first angle's field and "90°" in the second, a new body.
   whole document, read-only, or the edited revolve or the source gone
   end it (`Doc::prune_revolve`).
 - **Random sequences** (`app/src/doc/revolve/tests/fuzz.rs`; more with
-  `VARDE_FUZZ_SEEDS`, `VARDE_FUZZ_FROM`) drive both sessions with picks,
+  `VARDE_TESTS=full`, one replayed with `VARDE_TEST_SEED`) drive both sessions with picks,
   typed angles and distances (bad ones too), keys, undo and redo, sketch
   edits deleting the axis or regions, replacements, read-only, deletes
   from the Timeline, unit and tolerance changes, answers late or out of
@@ -1069,7 +1069,7 @@ is, so it sees the bodies as the features before it leave them:
   `None`. Drafts need nothing new (`Draft::kind` is any kind); the wire
   carries the kind in the document's postcard and `merged` as before.
 - **Random histories** (`regen/src/history/tests/combine/fuzz.rs`;
-  more with `VARDE_COMBINE_SEEDS`, `VARDE_COMBINE_FROM`): blocks and
+  more with `VARDE_TESTS=full`, one replayed with `VARDE_TEST_SEED`): blocks and
   discs on a grid (overlapping and flush), joins, cuts and intersects,
   combines of every operation naming any bodies (used up ones too),
   edits of earlier combines and upstream extrudes, removals, undo and
@@ -1149,7 +1149,7 @@ with.
   drops it and its draft. A replacement of the whole document,
   read-only, or the edited combine gone end it (`Doc::prune_combine`).
 - **Random sequences** (`app/src/doc/combine/tests/fuzz.rs`; more with
-  `VARDE_FUZZ_SEEDS`, `VARDE_FUZZ_FROM`) start it from `B`, Look and the
+  `VARDE_TESTS=full`, one replayed with `VARDE_TEST_SEED`) start it from `B`, Look and the
   Timeline, pick in the viewport (stale picks too) and Objects, drop
   chips, switch the fields, operation and Keep, cancel, `Esc`, commit,
   undo and redo, add bodies and joins, delete features and bodies,
@@ -1207,7 +1207,7 @@ warning replays combines alike. `feed/tests.rs`'s
 the same answer on random histories of bodies, joins, combines (some
 naming used-up bodies, so failing) and edits of earlier combines, for
 the whole history and stopped before each feature
-(`VARDE_MERGES_SEEDS`, 4 by default).
+(one seed by default, 4 with `VARDE_TESTS=full`).
 
 **An extrude or revolve making a combined body** can't stop making it
 (the document refuses the edit, above). Its panel says so at once when
@@ -1614,7 +1614,7 @@ original), edits, removals, undo and redo, each move and mirror held to
 the volume and centre of mass the motion worked out with `glam` gives
 (a mirror with its original to the boolean identities with the image),
 plus the combine fuzz's warm/cold, flipped-bytes, later-edits and wire
-checks (`VARDE_MOTION_SEEDS`, `VARDE_MOTION_FROM`).
+checks (more with `VARDE_TESTS=full`, one replayed with `VARDE_TEST_SEED`).
 
 Known gaps: the moved bodies' old place isn't shown faded (the mock's
 `fade`), as the preview replaces the model; a move with an angle of zero
@@ -1821,7 +1821,7 @@ a draft's list of copy bodies laid out again whatever it held, its
 length tampered refused), `io/src/vrdp/tests.rs` (through a file;
 tampered records refused, a copy list's length, ids and the count
 among them), and
-the motion fuzz (`motion/fuzz.rs`, `VARDE_MOTION_SEEDS`): random linear
+the motion fuzz (`motion/fuzz.rs`, `VARDE_TESTS=full`): random linear
 and circular patterns of 2 to 4 copies about origin axes, edges and
 round faces, half of them of bodies patterned already (copies of copies),
 each copy's centre where `glam` places it and the whole as the copies
@@ -1996,7 +1996,7 @@ joining, and sending no draft while the direction is picked; too many
 copy bodies refused; the warning for two bodies apart, in inches,
 flipped and along the plate's edges; deleting a copy body asking
 first), `pattern/fuzz.rs`
-(`VARDE_PATTERN_SEEDS`: random modes, Flip, counts, long and nested
+(`VARDE_TESTS=full`: random modes, Flip, counts, long and nested
 spreads, units, undo and redo, kind swaps, commits, the direction
 picked, copy bodies picked, named by later combines and mirrors,
 hidden and deleted; edits held to the values their fields come to, a
@@ -2304,7 +2304,7 @@ asked for in the order clicks go to them, first ones before a second
 one left alone; the example plate's hole split by a slot, its two top
 arcs between the same faces, the far one's centre lit and found again
 there on the next model), the session fuzz (`motion/tests/align/fuzz.rs`,
-`VARDE_ALIGN_SEEDS`: picks of faces, edges, vertices and snap dots on the
+`VARDE_TESTS=full`: picks of faces, edges, vertices and snap dots on the
 model shown or one gone by, the body switched, fields picked into and
 clicked again, references taken out, the origin, Flip, distances and
 angles, units, undo and redo, joins and combines merging bodies before
@@ -2340,7 +2340,7 @@ through a join a block is taken out of; nearly straight arcs' centres
 up to the coordinate limit, placed where the drawn centre takes them or
 refused as out of range), `regen/src/wire/tests.rs` (datums on the wire,
 bad ones refused), `io/src/vrdp/tests.rs` (through a file, tampered
-records refused), and the motion fuzz (`VARDE_MOTION_SEEDS`): random
+records refused), and the motion fuzz (`VARDE_TESTS=full`): random
 aligns of corners, middles and centres, with normals, face axes and
 edge directions or none, onto other bodies or the origin, with
 secondaries (mostly across), flips, offsets and turns, blocks among the
@@ -2651,8 +2651,7 @@ Timeline, a move by nothing while the point is picked, Esc, another
 factor and undo; a point an undo takes away said to be gone, back on
 redo; an edge picked on a disc a redone combine then merges into the
 plate following it there, still whole and measured) with its session
-fuzz (`motion/tests/scale/fuzz.rs`, `VARDE_SCALE_SEEDS`,
-`VARDE_SCALE_FROM`: picks of faces, edges, vertices and snap dots on the
+fuzz (`motion/tests/scale/fuzz.rs`, `VARDE_TESTS=full`: picks of faces, edges, vertices and snap dots on the
 model shown or one gone by as the point or the edge, modes switched,
 Along its axis only, bodies picked and dropped, factors and lengths
 typed out of range, overflowing or not numbers, the origin, units, undo
@@ -2662,7 +2661,7 @@ session whole, passing its own and the document's checks with its edge
 on one of its bodies, previewed as set up, committed as drafted; the
 edge lit naming the edge picked on the body drawing it; an edited scale
 opening to what it stores and OK writing nothing). The motion fuzz
-(`VARDE_MOTION_SEEDS`) makes scales too: uniform, per axis or to the
+(`VARDE_TESTS=full`) makes scales too: uniform, per axis or to the
 length of a random edge (along its axis or not), about the origin or a
 random point of any body; each that works is held to its noted point
 (the topology's), its factors (typed, or the length typed over the
@@ -3024,7 +3023,7 @@ gives its body and new body the booleans' pieces as `original` and
 `keep` say and leaves the rest alone, one that fails changes nothing,
 each sketch on a face placed on that face where it followed it, the
 cache warm and cold alike, later edits possible, flipped bytes;
-`VARDE_SPLIT_SEEDS` runs more),
+`VARDE_TESTS=full` runs more),
 `io/src/vrdp/tests.rs` (through a file, a tampered face point refused,
 held ids through a file, older records with none read, held ids changed
 on disk refused,
@@ -3054,7 +3053,7 @@ split session fuzz: tiles switched, picks on the model shown and on one
 gone by, regions and curves, Keeps and Keep, undo and redo, merges,
 removals, commits and edits held to what they set up (an edited
 split keeping its new body's id, held or made), and each split
-working at the end cutting its body's volume in two; `VARDE_SPLIT_SEEDS`
+working at the end cutting its body's volume in two; `VARDE_TESTS=full`
 runs more). The app's tests split by
 two booleans through regen's `testing` feature
 (`varde_regen::testing::split_by_booleans`, the thread local the regen
@@ -3319,7 +3318,7 @@ on a used-up body, chamfers edited, upstream extrudes changed, removals,
 undo and redo, drafts: each chamfer failing alike whole and cut short,
 one failing changing nothing, one working taking material off its body
 alone; cache warm and cold alike; edits, bytes and the wire;
-`VARDE_CHAMFER_SEEDS`), `io/src/vrdp/tests.rs` (through a file, a
+`VARDE_TESTS=full`), `io/src/vrdp/tests.rs` (through a file, a
 tampered edge point refused, a damaged chamfers' record refused or
 checked, edges out of order, repeated, on another body, none or past
 the limit and values disagreeing refused as read), `view/src/chamfer/tests.rs` (the notes),
@@ -3351,7 +3350,7 @@ merge, commits, Add anyway, cancels; each step the session sorted on
 one body, ready only when its checks pass and previewed as set up,
 committed as drafted, edits opening to what they store, the edges lit
 on the body drawing theirs; at the end each working chamfer takes
-material off; `VARDE_CHAMFER_SEEDS`). The app's tests chamfer by prisms through regen's `testing`
+material off; `VARDE_TESTS=full`). The app's tests chamfer by prisms through regen's `testing`
 feature (`varde_regen::testing::chamfer_by_wedges`).
 
 ## Shell
@@ -3578,10 +3577,11 @@ it went; with the box stand-in: closed, open at one and two faces and
 outward by their volumes, too thick refused and just under it, the
 cache; recording: a face named twice handed over once, the thickness
 and direction as stored; refusals worded and drawn; a consumed body;
-the stand-in against the volumes it should give for every set of a
-box's faces opened, inward and outward, at thicknesses about half a side
+the stand-in against the volumes it should give for sets of a box's
+faces opened (six that give each axis each of its states; all 64 under
+`VARDE_TESTS=full`), inward and outward, at thicknesses about half a side
 and past one; `shell/fuzz.rs`, random histories with shells,
-`VARDE_SHELL_SEEDS`: each that works was of a box and has the volume
+`VARDE_TESTS=full`: each that works was of a box and has the volume
 its open sides, thickness and direction give, each failing changes
 nothing, warm and cold caches alike, bytes and wire;
 ignored: the kernel's on a box open, closed and outward, a slot-shaped
@@ -3614,7 +3614,7 @@ body taking them; a face and a body picked following their body a
 redone combine merges; the toolbar fitting at 1280 px in a shell
 session; the top left in two strips by its opposite sides opened, both
 lit and either clicked taking it out; 256 faces, the next refused
-with why; `shell/fuzz.rs`, random shell sessions, `VARDE_SHELL_SEEDS`,
+with why; `shell/fuzz.rs`, random shell sessions, `VARDE_TESTS=full`,
 each shell the model shows working holding to its volume). The app's
 tests shell by boxes through
 regen's `testing` feature (`varde_regen::testing::shell_by_boxes`).
@@ -3797,7 +3797,7 @@ slot's rim by Pappus, determinism),
 `regen/src/history/tests/fillet/fuzz.rs` (the chamfer's history fuzz
 with fillets of every radius: each failing alike whole and cut short,
 one failing changing nothing, one working taking material off its body
-alone and leaving a round of its radius; `VARDE_FILLET_SEEDS`),
+alone and leaving a round of its radius; `VARDE_TESTS=full`),
 `io/src/vrdp/tests.rs` (through a
 file, a tampered edge point and radius refused, a record's fillets
 damaged 2 000 ways refused or checked, edges out of order, repeated, on
@@ -3824,7 +3824,7 @@ off; the overlap list ticking and picking the fillet's edges),
 with radii, plus quick clicks with nothing answered, `F` while
 measuring or with a combine or chamfer set up, and the overlap list
 opened, hovered, ticked and chosen across models answered and undo;
-`VARDE_FILLET_SEEDS`); the chamfer's toolbar test checks a fillet
+`VARDE_TESTS=full`); the chamfer's toolbar test checks a fillet
 session's bar fits and
 that Fillet isn't on the idle bar. The app's tests fillet through
 regen's `testing` feature (`varde_regen::testing::fillet_by_arcs`).
@@ -4019,7 +4019,8 @@ joined on it; out, in, two faces, opposite faces and every face by
 their volumes; past the opposite face refused and just short of it;
 recording: a face named twice handed over once, the signed distance
 and tangent flag; every refusal worded and drawn; the cache; a
-consumed body; the stand-in against every set of a box's faces moved,
+consumed body; the stand-in against sets of a box's faces (all under
+`VARDE_TESTS=full`) moved,
 out and in, by volume and names kept; ignored, the kernel's: a box's
 face out and in and every face, names kept; a hexagonal prism's
 slanted wall; a boss's top down and up and its wall; a hole's wall and
@@ -4064,11 +4065,11 @@ starts: each step's session whole when ready, checked, previewed and
 committed as drafted, its handle's knob at the distance, and for a new
 one whose working preview is shown on the first face as moved with the
 handle on it as it is; each offset working giving its box's volume;
-`VARDE_OFFSET_SEEDS`). `regen/src/history/tests/offset_face/fuzz.rs`
+`VARDE_TESTS=full`). `regen/src/history/tests/offset_face/fuzz.rs`
 is the shell's history fuzz with offsets of one to four faces, out and
 in, each failing alike whole and cut short, one failing changing
 nothing, one working giving its box's moved volume, every face keeping
-its name and the other bodies untouched (`VARDE_OFFSET_SEEDS`);
+its name and the other bodies untouched (`VARDE_TESTS=full`);
 `document/src/offset_face/tests.rs` holds old "Offset N" names mixing
 with "Offset face N" ones. The app's tests offset by boxes through
 regen's `testing` feature (`varde_regen::testing::offset_by_boxes`).
@@ -4198,8 +4199,8 @@ body's face, a sketch on a drafted face following the angle and an
 upstream change, sides meeting and a face facing the pull refused, the
 cache, a consumed body; recording: a face named twice handed over
 once, the neutral point, pull, angle and tangent flag; every refusal
-worded and drawn; the stand-in against every set of a box's faces
-drafted from XY and from its top, flipped or not, by volume and names
+worded and drawn; the stand-in against sets of a box's faces (all
+under `VARDE_TESTS=full`) drafted from XY and from its top, flipped or not, by volume and names
 kept; ignored, the kernel's: a box's sides from the foot and the top,
 names kept, the same bits twice; hinges inside the faces; a boss's
 wall an exact cone and a hole's widening; a rounded slot across its
@@ -4211,7 +4212,7 @@ drafted one, another body's, one merged by a combine before it):
 failing alike in the whole history and the one ending with it, a
 failure changing nothing, every one that works of a box with its pull
 along an axis and of the volume its cross-sections give, names kept,
-cache warm and cold, bytes and wire; `VARDE_DRAFT_SEEDS`), `io/src/vrdp/tests.rs` (through a file, tampered points and
+cache warm and cold, bytes and wire; `VARDE_TESTS=full`), `io/src/vrdp/tests.rs` (through a file, tampered points and
 angles refused, damaged 2 000 ways refused or checked, faces out of
 order, repeated, none, on two bodies, past the limit, named by the
 draft or later, the neutral face named by the draft or on a body not
@@ -4320,7 +4321,7 @@ angles, Flip, Tangent faces, units, undo and redo, merges of the
 session's or the neutral face's body, overlap lists while either
 picks; each ready session whole and checked, committed as set up, the
 plane drawn finite, and each draft that works by its volume;
-`VARDE_DRAFT_SEEDS`). What the face sessions' tests share (boxes, flat faces found
+`VARDE_TESTS=full`). What the face sessions' tests share (boxes, flat faces found
 and clicked, the screen's text) is `app/src/doc/motion/tests/face_session.rs`.
 
 ## Sweep
@@ -4650,14 +4651,14 @@ set up, commits, Add anyway, cancels, edits OK'd straight away: the
 path always within its limits, each ready session whole, checked and
 previewed as set up, committed as drafted, edges lit on their body's
 holder, and each body a working sweep makes its profile extruded from
-its plane; `VARDE_SWEEP_SEEDS`), `regen/src/history/tests/sweep/fuzz.rs`
+its plane; `VARDE_TESTS=full`), `regen/src/history/tests/sweep/fuzz.rs`
 (random histories with sweeps along sketch chains, model edges and
 helices, edited, path sketches redrawn, upstream changes, combines,
 undo and redo: each failing alike whole and cut short, a failure
 changing nothing, one working only on a path worked out apart from
 regeneration to be one the stand-in sweeps and giving exactly an
 extrude's bodies, cache warm and cold, bytes and wire;
-`VARDE_SWEEP_SEEDS`), `io/src/vrdp/tests.rs` (also the path's limits,
+`VARDE_TESTS=full`), `io/src/vrdp/tests.rs` (also the path's limits,
 empty parts, curves out of order, edges on two bodies, a part's sketch
 not a sketch, a helix's axis named by the sweep, refused as read),
 `viewport/motion/tests.rs` (regions and path curves picked in their
@@ -4812,8 +4813,8 @@ and the Bodies list.
   visible sketch before the loft (and each section's own, shown or not:
   adding the loft hid them; `RegionPick::also`, with no source, kept
   even with no regions, worked out within a share of their own,
-  `ALSO_WORK`, four times `MAX_WORK` in all, apart from the visible
-  ones' `REFRESH_WORK`: those past it are worked out on a later change,
+  `also_work()`, four times `MAX_WORK` in all, apart from the visible
+  ones' `refresh_work()`: those past it are worked out on a later change,
   and meanwhile their sections aren't said to be gone) shows its regions on its
   plane, and every visible sketch's points on their own (no curve's) as
   dots. Under the cursor, in this order: a corner of a region section
@@ -4930,12 +4931,12 @@ refused; the kernel's refusals worded; twisted starts; the cache; a
 point on its neighbour's plane), `regen/src/history/tests/loft/fuzz.rs`
 (random histories with lofts by the stand-in: warm and cold cache alike,
 failures changing nothing, those that work an extrude's; bytes and the
-wire; `VARDE_LOFT_SEEDS`, `VARDE_LOFT_FROM`),
+wire; `VARDE_TESTS=full`, one replayed with `VARDE_TEST_SEED`),
 `app/src/doc/motion/tests/loft.rs` (the session; deferred section
 sketches through undo and redo) and its `fuzz.rs` (random sessions:
 limits, a start not gone always drawn, ready only when the document
 takes it and regeneration finds every section and start, commits as
-drafted, edits reopening as stored; `VARDE_LOFT_SEEDS`),
+drafted, edits reopening as stored; `VARDE_TESTS=full`),
 `view/src/viewport/motion/tests.rs` (the seam knob dragged round its corners, none read-only; rails', regions' and corners'
 hover worked out again as the camera moves),
 `regen/src/wire/tests.rs` (a loft and its draft round trip),

@@ -54,6 +54,9 @@ static NO_HIGHLIGHTS: LazyLock<Arc<Highlights>> = LazyLock::new(Arc::default);
 static NO_LINES: LazyLock<Arc<RenderLines>> = LazyLock::new(Arc::default);
 static NO_MESH: LazyLock<Arc<RenderMesh>> = LazyLock::new(Arc::default);
 
+// The binary's first GPU test pays for the device and the shared renderer's
+// pipelines (about 0.5-2s in a debug build, more for each further texture
+// format): a floor shared by every test here, so over the 0.5s aim.
 /// The one device the tests share, if there's an adapter: see
 /// `viewport.rs`.
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {

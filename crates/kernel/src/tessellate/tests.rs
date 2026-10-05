@@ -30,16 +30,22 @@ fn bits(p: [f32; 3]) -> [u32; 3] {
 /// triangle has two corners at one position.
 fn assert_watertight(mesh: &RenderMesh) {
     let p = mesh.positions();
-    let mut sides: BTreeMap<([u32; 3], [u32; 3]), i64> = BTreeMap::new();
+    // Every side as often as its reverse: the sides and the reversed
+    // sides, sorted, are the same list.
+    let mut sides: Vec<([u32; 3], [u32; 3])> = Vec::with_capacity(mesh.indices().len());
     for tri in mesh.indices().chunks(3) {
         let q = [0, 1, 2].map(|i| bits(p[tri[i] as usize]));
         assert!(q[0] != q[1] && q[1] != q[2] && q[2] != q[0], "{q:?}");
         for i in 0..3 {
-            *sides.entry((q[i], q[(i + 1) % 3])).or_default() += 1;
+            sides.push((q[i], q[(i + 1) % 3]));
         }
     }
-    for (&(a, b), &n) in &sides {
-        assert_eq!(sides.get(&(b, a)), Some(&n), "side {a:?} -> {b:?}");
+    let mut reversed: Vec<([u32; 3], [u32; 3])> = sides.iter().map(|&(a, b)| (b, a)).collect();
+    sides.sort_unstable();
+    reversed.sort_unstable();
+    if let Some(k) = (0..sides.len()).find(|&k| sides[k] != reversed[k]) {
+        let (a, b) = sides[k].min(reversed[k]);
+        panic!("side {a:?} -> {b:?} not matched by its reverse");
     }
 }
 
@@ -771,25 +777,38 @@ fn off_patch(mesh: &Mesh, tri: &InPatch) -> f64 {
                 DVec3::new(f64::from(a), f64::from(b), f64::from(steps - a - b)) / f64::from(steps);
             let x = tri.points[0] * l.x + tri.points[1] * l.y + tri.points[2] * l.z;
             let u = tri.params[0] * l.x + tri.params[1] * l.y + tri.params[2] * l.z;
-            let n = unit_normal(&patch, u);
-            far = far.max((x - patch.eval(u)).dot(n).abs());
+            // The point and normal from one evaluation (the normal along
+            // the derivatives' cross product, as `unit_normal`'s).
+            let [p, pu, pv] = patch.eval_derivs(u);
+            let n = (pu.cross(pv).try_normalize())
+                .or_else(|| patch.fold_direction())
+                .unwrap_or(DVec3::Z);
+            far = far.max((x - p).dot(n).abs());
         }
     }
     far
 }
 
-/// What a tessellation of `mesh` is like, before and after the inner
-/// grids are refined: the triangles, and the farthest a triangle of a
-/// patch curved both ways ([`curved_both_ways`]) gets from it, over the
+/// What a tessellation of `mesh` is like: the triangles before and after
+/// the inner grids are refined, and the farthest a triangle of a patch
+/// curved both ways ([`curved_both_ways`]) gets from it after, over the
 /// chord.
 #[derive(Debug, PartialEq)]
 struct Drawn {
     triangles: (u64, u64),
-    worst: (f64, f64),
+    worst: f64,
 }
 
 fn drawn(mesh: &Mesh, display: &Display) -> Drawn {
-    let plan = Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap();
+    drawn_by(
+        &Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap(),
+        display,
+    )
+}
+
+/// [`drawn`] by `plan`, the mesh's plan within `display`.
+fn drawn_by(plan: &Plan, display: &Display) -> Drawn {
+    let mesh = plan.mesh;
     let bounds = Bounds3::around(mesh.verts()).unwrap();
     let chord = display.chord((bounds.max - bounds.min).length());
     let form = |t: usize| &mesh.faces()[mesh.tris()[t].face as usize].form;
@@ -797,23 +816,36 @@ fn drawn(mesh: &Mesh, display: &Display) -> Drawn {
     for (t, level) in plan.levels.iter().enumerate() {
         assert!(level.straight.is_none() || !curved_both_ways(form(t)));
     }
-    let worst = |plan: &Plan| {
-        (in_patches(plan).iter())
-            .filter(|tri| curved_both_ways(form(tri.t)))
-            .map(|tri| off_patch(mesh, tri) / chord)
+    // The farthest a triangle gets from a patch curved both ways, over
+    // the chord, the patches measured in parallel: the dense sampling is
+    // most of the time, so only the refined plan's (the one checked) is.
+    let mut tris = vec![Vec::new(); mesh.tris().len()];
+    for tri in in_patches(plan) {
+        tris[tri.t].push((tri.params, tri.points));
+    }
+    let ts: Vec<usize> = (0..tris.len()).collect();
+    let worst = crate::par::par_map(&ts, |&t| {
+        if !curved_both_ways(form(t)) {
+            return 0.0;
+        }
+        (tris[t].iter())
+            .map(|&(params, points)| off_patch(mesh, &InPatch { t, params, points }))
+            .map(|off| off / chord)
             .fold(0.0, f64::max)
-    };
-    let mut before = Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap();
-    before.levels = (before.levels.iter())
+    })
+    .into_iter()
+    .fold(0.0, f64::max);
+    // Before refining: the same levels, every grid not ruled at its
+    // edges' counts (refining keeps those), counted as `Plan::count` does.
+    let before = (plan.levels.iter())
         .map(|level| match level.straight {
-            Some(_) => *level,
-            None => Level::new(level.counts),
+            Some(_) => level.triangles(),
+            None => Level::new(level.counts).triangles(),
         })
-        .collect();
-    before.count();
+        .fold(0u64, u64::saturating_add);
     Drawn {
-        triangles: (before.triangles, plan.triangles),
-        worst: (worst(&before), worst(&plan)),
+        triangles: (before, plan.triangles),
+        worst,
     }
 }
 
@@ -821,9 +853,13 @@ fn drawn(mesh: &Mesh, display: &Display) -> Drawn {
 /// as the patch and cover it once: positive areas summing to the
 /// domain's.
 fn assert_tiled(mesh: &Mesh, display: &Display) {
-    let plan = Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap();
+    assert_tiled_by(&Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap());
+}
+
+/// [`assert_tiled`] by `plan`, the mesh's plan.
+fn assert_tiled_by(plan: &Plan) {
     let mut area = vec![0.0f64; plan.tri_ids.len()];
-    for tri in in_patches(&plan) {
+    for tri in in_patches(plan) {
         let [a, b, c] = tri.params.map(|u| glam::DVec2::new(u.y, u.z));
         // Fractions of at most 256: anything less is rounding, three
         // samples in line.
@@ -923,13 +959,16 @@ fn doubly_curved_patches_are_drawn_within_the_chord() {
     ));
     for (name, solid) in &solids {
         for display in [Display::default(), coarse] {
-            let d = drawn(solid.mesh(), &display);
+            let plan = Plan::new(solid.mesh(), &display, &Limits::RENDER)
+                .unwrap()
+                .unwrap();
+            let d = drawn_by(&plan, &display);
             eprintln!("{name} at {display:?}: {d:?}");
             // The edges' own segments are within the chord at their
             // middles, a hair more between.
-            assert!(d.worst.1 <= 1.05, "{name}: {d:?}");
+            assert!(d.worst <= 1.05, "{name}: {d:?}");
             assert!(d.triangles.1 >= d.triangles.0);
-            assert_tiled(solid.mesh(), &display);
+            assert_tiled_by(&plan);
             let mesh = solid.tessellate(&display).unwrap();
             assert_watertight(&mesh);
             assert_normals_and_volume(&mesh);
@@ -1299,7 +1338,7 @@ fn scaled_balls_are_measured_and_scaled_cones_keep_their_grids() {
     assert!((ellipsoids.iter()).all(|&q| q.c < 0.0 && curved_both_ways(&Form::Quadric(q))));
     let display = Display::default();
     let d = drawn(ellipsoid.mesh(), &display);
-    assert!(d.worst.1 <= 1.05, "{d:?}");
+    assert!(d.worst <= 1.05, "{d:?}");
     assert_tiled(ellipsoid.mesh(), &display);
     assert_watertight(&ellipsoid.tessellate(&display).unwrap());
 
@@ -1392,15 +1431,15 @@ fn steep_ring_corners_and_single_triangles_are_measured() {
         ("cut ball", cut),
         ("rounded corner", corner.unwrap()),
     ] {
-        let d = drawn(solid.mesh(), &display);
-        eprintln!("{name}: {d:?}");
-        assert!(d.worst.1 <= 1.05, "{name}: {d:?}");
-        assert_tiled(solid.mesh(), &display);
-        assert_watertight(&solid.tessellate(&display).unwrap());
-        solid.manifold_mesh(&display).unwrap();
         let plan = Plan::new(solid.mesh(), &display, &Limits::RENDER)
             .unwrap()
             .unwrap();
+        let d = drawn_by(&plan, &display);
+        eprintln!("{name}: {d:?}");
+        assert!(d.worst <= 1.05, "{name}: {d:?}");
+        assert_tiled_by(&plan);
+        assert_watertight(&solid.tessellate(&display).unwrap());
+        solid.manifold_mesh(&display).unwrap();
         let opened = (plan.levels.iter())
             .filter(|level| level.counts == [1, 1, 1] && level.inner.is_some())
             .count();

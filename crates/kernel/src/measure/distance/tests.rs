@@ -658,6 +658,11 @@ fn a_pin_along_a_holes_wall_and_two_holes() {
         let d = between_at(&pin.body(), &p.body(), &tol);
         assert!((d.distance - 0.3).abs() < 1e-15, "{d:?}");
         assert!(spent_at(&pin.body(), &p.body(), &tol) < 10_000);
+        // The walls at the finest tolerance take most of a second, the
+        // others a twentieth of it: only in full runs.
+        if tol.fit() == Tolerance::MIN_FIT && !varde_testing::full() {
+            continue;
+        }
         let d = between_at(&wall(&pin, 0.5), &wall(&p, 1.0), &tol);
         assert!((d.distance - 0.3).abs() < 1e-15, "{d:?}");
     }
@@ -958,7 +963,9 @@ fn random_revolved_bodies_are_no_further_apart_than_their_points() {
         }
     };
     let mut crossing = 0;
-    for _ in 0..20 {
+    // Quick mode runs the first 11, through the first crossing (the
+    // fitted revolves are most of the time).
+    for _ in 0..varde_testing::pick(11, 20) {
         let (fa, fb) = (frame(3.0), frame(12.0));
         let torus = Profile {
             loops: vec![circle(v(4.0, 0.0), 1.0, 1, false)],
@@ -982,6 +989,6 @@ fn random_revolved_bodies_are_no_further_apart_than_their_points() {
             crossing += 1;
         }
     }
-    // Seed 77 places two of them crossing.
-    assert_eq!(crossing, 2);
+    // Seed 77 places two of them crossing, the 11th and the 19th.
+    assert_eq!(crossing, varde_testing::pick(1, 2));
 }

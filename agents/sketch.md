@@ -592,7 +592,9 @@ details and the timings.
   loaded machine): nested 100-point splines, 3000 concentric circles,
   copies of a spline, 1000 lines across 20 splines, 1000–3000 short arcs
   on circles crossing each other (which took 0.3–1.1 s before
-  `MEET_COST` was weighed by time) are `TooComplex` in 0.02–0.15 s; the
+  `MEET_COST` was weighed by time) are `TooComplex` in 0.02–0.15 s
+  (`hostile_sketches_are_too_complex_in_bounded_time`, run only with
+  `VARDE_TESTS=full`: seconds in a debug build); the
   slowest found are 40 closed 50-point splines crossing each other
   (10 921 regions, ~110 ms, 75 % of the work) and a 200 × 200 line grid
   (~80 ms). `Sketch::profiles_spending(&mut left)` also stops at what's

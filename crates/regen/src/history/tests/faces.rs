@@ -306,8 +306,14 @@ fn sloped() -> (Editor, FeatureId, FaceRef) {
 #[test]
 fn sketches_on_a_tilted_face_build_square_to_it() {
     let (mut editor, _, slope) = sloped();
+    // One cache throughout, so each step works out only what it adds.
+    let mut cache = Cache::default();
+    let evaluated = |document: &Document, cache: &mut Cache| {
+        cache.begin();
+        evaluate(document, cache)
+    };
     let sketch = add_sketch(&mut editor, Plane::Face(slope), |_| {});
-    let evaluation = evaluated(editor.document());
+    let evaluation = evaluated(editor.document(), &mut cache);
     let placement = placed(&evaluation, sketch);
     let n = DVec3::new(1.0, 0.0, 4.0) / 17f64.sqrt();
     assert!((placement.normal - n).length() < 1e-15, "{placement:?}");
@@ -334,7 +340,7 @@ fn sketches_on_a_tilted_face_build_square_to_it() {
     let hole = add_sketch(&mut editor, Plane::Face(slope), disc(hole_at, 2.0));
     let extent = two_sides(editor.document(), "1", "3");
     let drilled = add_extrude_of(&mut editor, hole, extent, cut());
-    let evaluation = evaluated(editor.document());
+    let evaluation = evaluated(editor.document(), &mut cache);
     assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
     let base = plate(8.0, 10.0) - 2000.0;
     assert_close(
@@ -358,7 +364,7 @@ fn sketches_on_a_tilted_face_build_square_to_it() {
         near: floor_at,
     };
     let on_floor = add_sketch(&mut editor, Plane::Face(floor), |_| {});
-    let floor_placement = placed(&evaluated(editor.document()), on_floor);
+    let floor_placement = placed(&evaluated(editor.document(), &mut cache), on_floor);
     assert!((floor_placement.normal - n).length() < 1e-15);
     let pin_at = local(&floor_placement, floor_at);
     let mut drawn = Sketch::default();
@@ -370,7 +376,7 @@ fn sketches_on_a_tilted_face_build_square_to_it() {
         })
         .unwrap();
     let pin = add_extrude_of(&mut editor, on_floor, one_side("3"), join());
-    let evaluation = evaluated(editor.document());
+    let evaluation = evaluated(editor.document(), &mut cache);
     assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
     assert_close(only_body(&evaluation).volume(), base + PI * 9.0 * 5.0);
 
@@ -386,7 +392,7 @@ fn sketches_on_a_tilted_face_build_square_to_it() {
         near: floor_at + n * 3.0,
     };
     let on_end = add_sketch(&mut editor, Plane::Face(end), |_| {});
-    let end_placement = placed(&evaluated(editor.document()), on_end);
+    let end_placement = placed(&evaluated(editor.document(), &mut cache), on_end);
     assert!((end_placement.normal - n).length() < 1e-15);
     assert!((end_placement.origin - placement.origin).length() < 1e-9);
     let pocket_at = local(&end_placement, floor_at + n * 3.0);
@@ -400,7 +406,7 @@ fn sketches_on_a_tilted_face_build_square_to_it() {
         .unwrap();
     let extent = two_sides(editor.document(), "1", "2");
     add_extrude_of(&mut editor, on_end, extent, cut());
-    let evaluation = evaluated(editor.document());
+    let evaluation = evaluated(editor.document(), &mut cache);
     assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
     assert_close(
         only_body(&evaluation).volume(),

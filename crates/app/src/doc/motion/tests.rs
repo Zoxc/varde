@@ -55,6 +55,12 @@ impl Plates {
         answer(&mut self.doc, &self.requests);
     }
 
+    /// Answers only the newest regeneration waiting, see
+    /// [`crate::tests::answer_newest`].
+    fn answer_newest(&mut self) {
+        crate::tests::answer_newest(&mut self.doc, &self.requests);
+    }
+
     /// A click in the viewport on `target` of `body` of the model shown,
     /// at `at`.
     fn click_at(&mut self, body: BodyId, target: Picked, at: DVec3) {

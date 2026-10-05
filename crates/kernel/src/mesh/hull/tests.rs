@@ -842,7 +842,9 @@ fn the_pencil_rule_is_sound_on_random_pairs() {
     let mut rng = Rng::new(96);
     let (mut tried, mut passed, mut only) = (0, 0, 0);
     let sign = |rng: &mut Rng| if rng.unit() < 0.5 { 1.0 } else { -1.0 };
-    for _ in 0..100_000 {
+    // Quick mode runs the first fifth.
+    let cases = varde_testing::pick(20_000, 100_000);
+    for _ in 0..cases {
         // An edge from `p` to `q` across the x axis in the xy plane, its
         // control point above it, in a random frame.
         let length = rng.log_range(1e-1, 1e1);
@@ -905,18 +907,21 @@ fn the_pencil_rule_is_sound_on_random_pairs() {
             continue;
         }
         tried += 1;
-        // The shared pass gives the rules' answer.
+        // The shared pass gives the rules' answer. Each rule is asked
+        // once: the pencil's member is most of the time here.
+        let plane = edge_neighbours_apart(&a, 0, &b, 0, margin);
+        let pair = CurvedPair::new(&a, 0, &b, 0, margin);
+        let cylinder = (pair.as_ref()).is_some_and(|pair| super::cylinder_apart(pair, margin));
+        let member = (pair.as_ref()).and_then(|pair| super::pencil_member(pair, margin));
         assert_eq!(
             edge_neighbours_parted(&a, 0, &b, 0, margin),
-            edge_neighbours_apart(&a, 0, &b, 0, margin)
-                || cylinder_apart(&a, 0, &b, 0, margin)
-                || pencil_apart(&a, 0, &b, 0, margin)
+            plane || cylinder || member.is_some()
         );
-        let Some((alpha, beta)) = pencil_member(&a, 0, &b, 0, margin) else {
+        let Some((alpha, beta)) = member else {
             continue;
         };
         passed += 1;
-        if !edge_neighbours_apart(&a, 0, &b, 0, margin) && !cylinder_apart(&a, 0, &b, 0, margin) {
+        if !plane && !cylinder {
             only += 1;
         }
         let (e1, e2) = (pg - cg, qg - cg);
@@ -955,7 +960,7 @@ fn the_pencil_rule_is_sound_on_random_pairs() {
         );
     }
     assert!(
-        tried > 50_000 && passed > 5_000 && only > 1_000,
+        tried * 2 > cases && passed * 20 > cases && only * 100 > cases,
         "tried {tried}, passed {passed}, pencil only {only}"
     );
 }

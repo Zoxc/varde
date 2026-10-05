@@ -22,13 +22,44 @@ use super::extrude::is_sketch;
 /// in all, in the unit of [`MAX_WORK`], on the UI thread: a file can hold
 /// any number of sketches, each as complex as [`MAX_WORK`] allows.
 /// Those past it have no regions to pick.
-pub(crate) const REFRESH_WORK: usize = 2 * MAX_WORK;
+pub(crate) fn refresh_work() -> usize {
+    2 * work_unit()
+}
 
 /// The most work finding the profiles of [`RegionPick::also`]'s sketches
-/// may take in all, apart from [`REFRESH_WORK`]: a loft's up to 64
+/// may take in all, apart from [`refresh_work`]: a loft's up to 64
 /// sections may each be of a sketch of its own, hidden. Those past it
 /// are worked out on a later change, as the visible ones past theirs.
-pub(crate) const ALSO_WORK: usize = 4 * MAX_WORK;
+pub(crate) fn also_work() -> usize {
+    4 * work_unit()
+}
+
+/// The unit of [`refresh_work`] and [`also_work`]: [`MAX_WORK`], or in
+/// tests what [`with_work_unit`] sets on this thread, so that tests of
+/// the budgets needn't spend the whole of them in a debug build.
+fn work_unit() -> usize {
+    #[cfg(test)]
+    if let Some(unit) = WORK_UNIT.get() {
+        return unit;
+    }
+    MAX_WORK
+}
+
+#[cfg(test)]
+thread_local! {
+    static WORK_UNIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with [`work_unit`] `unit` (at most [`MAX_WORK`]) on this
+/// thread.
+#[cfg(test)]
+pub(crate) fn with_work_unit<R>(unit: usize, f: impl FnOnce() -> R) -> R {
+    assert!(unit <= MAX_WORK);
+    let old = WORK_UNIT.replace(Some(unit));
+    let result = f();
+    WORK_UNIT.set(old);
+    result
+}
 
 /// The regions an operation takes, of the sketch it takes them of: the
 /// source, the one the session started from (selected, or the edited
@@ -48,7 +79,7 @@ pub(crate) struct RegionPick {
     /// the whole of [`MAX_WORK`], or but for the source with none. Kept,
     /// as those found are, and also while not wanted, so as not to work
     /// them out again on every change to the document until they change.
-    /// Those past what's left of [`REFRESH_WORK`] aren't: they're tried
+    /// Those past what's left of [`refresh_work`] aren't: they're tried
     /// again on the next change.
     pub(crate) skipped: Vec<(FeatureId, Sketch)>,
     /// How many times profiles were worked out, for tests.
@@ -66,8 +97,8 @@ pub(crate) struct RegionPick {
     /// The most regions that can be picked: the feature's limit.
     most: usize,
     /// Sketches whose profiles are found too while there's no source,
-    /// whether shown or not, within [`ALSO_WORK`] in all (not
-    /// [`REFRESH_WORK`]), kept even with no regions: a loft's sections'
+    /// whether shown or not, within [`also_work`] in all (not
+    /// [`refresh_work`]), kept even with no regions: a loft's sections'
     /// sketches, which adding it hid.
     pub(crate) also: Vec<FeatureId>,
 }
@@ -197,8 +228,8 @@ impl RegionPick {
     /// be picked again where their sketch changed, and those picked in
     /// the source again by their references. False if the source is gone.
     /// The source's within [`MAX_WORK`], or before there is one the
-    /// visible sketches' within [`REFRESH_WORK`] in all, and
-    /// [`RegionPick::also`]'s within [`ALSO_WORK`].
+    /// visible sketches' within [`refresh_work`] in all, and
+    /// [`RegionPick::also`]'s within [`also_work`].
     pub(crate) fn refresh(&mut self, document: &Document) -> bool {
         let wanted: Vec<FeatureId> = match self.source {
             Some(source) => vec![source],
@@ -211,8 +242,8 @@ impl RegionPick {
         };
         let mut old = std::mem::take(&mut self.found);
         let mut old_skipped = std::mem::take(&mut self.skipped);
-        let mut left = REFRESH_WORK;
-        let mut also_left = ALSO_WORK;
+        let mut left = refresh_work();
+        let mut also_left = also_work();
         let mut remap = false;
         for id in wanted {
             let Some(FeatureKind::Sketch { sketch, .. }) = document.feature(id).map(|f| &f.kind)

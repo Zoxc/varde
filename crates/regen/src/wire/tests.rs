@@ -1934,7 +1934,7 @@ fn two_plates() -> (Vec<u8>, Vec<Vec<u8>>) {
 fn damaged_picking_tables_never_panic() {
     let (head, parts) = two_plates();
     let mut rng = Rng(0xfeed);
-    for _ in 0..3000 {
+    for _ in 0..varde_testing::pick(1500, 3000) {
         let damaged_head = rng.mutate(&head);
         let mut damaged = parts.clone();
         // Mostly the parts the tables go by: the faces', edges' and
@@ -2053,7 +2053,11 @@ fn too_many_parts_faces_aliases_or_flags_are_refused_as_the_head_is_decoded() {
         }
     }
     // All faces' aliases together: two faces of half as many and one
-    // more.
+    // more. Filling the bound takes about half a second in a debug
+    // build, so only under `VARDE_TESTS=full`.
+    if !varde_testing::full() {
+        return;
+    }
     let aliased = |aliases: usize| {
         tables(|faces, _| {
             faces[0].aliases = (0..aliases as u64)
@@ -2075,6 +2079,11 @@ fn too_many_parts_faces_aliases_or_flags_are_refused_as_the_head_is_decoded() {
 /// for its generation, not sent for the page to refuse.
 #[test]
 fn a_model_with_too_many_faces_is_answered_as_failed() {
+    // Only under `VARDE_TESTS=full`: a model of the most faces takes about
+    // a second to build in a debug build.
+    if !varde_testing::full() {
+        return;
+    }
     let response = |faces: usize| {
         // As many triangles, all on the one vertex triple, a face each.
         let mesh = RenderMesh::from_parts(MeshParts {
@@ -2909,6 +2918,8 @@ fn measured_replies() -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
 fn damaged_measures_never_panic_and_what_is_taken_holds() {
     let mut rng = Rng(0x1235);
     let mut taken = 0;
+    // Quick tries a fifth of the damage.
+    let rounds = varde_testing::pick(600, 3000);
     for (head, parts) in measured_replies() {
         let Ok(Response::Regenerated {
             inspected: Some(sent),
@@ -2926,7 +2937,7 @@ fn damaged_measures_never_panic_and_what_is_taken_holds() {
         let tail = [0, 0];
         assert!(head.ends_with(&[&bytes[..], &tail].concat()));
         let at = head.len() - tail.len() - bytes.len();
-        for _ in 0..3000 {
+        for _ in 0..rounds {
             // Damage only the measure's bytes, so most heads still
             // decode: the measure's checks are what's tried.
             let mut damaged = head[..at].to_vec();
@@ -2951,7 +2962,7 @@ fn damaged_measures_never_panic_and_what_is_taken_holds() {
             }
         }
     }
-    assert!(taken > 1000, "{taken}");
+    assert!(taken > rounds / 3, "{taken}");
 }
 
 /// Geometry of a failure on [`triangle_mesh`]'s model: a patch, a line, a
@@ -3075,6 +3086,11 @@ fn bad_failure_geometry_fails_its_generation() {
 /// model and the failures' words still cross, the geometry left out.
 #[test]
 fn a_head_too_large_with_failure_geometry_is_sent_without_it() {
+    // Only under `VARDE_TESTS=full`: a head past the bound takes over a
+    // second to build and encode in a debug build.
+    if !varde_testing::full() {
+        return;
+    }
     let n = ErrorGeometry::MAX_VERTICES;
     // A geometry of the most vertices, each [`MAX_HEAD_BYTES`]'s share
     // costing 24 bytes of floats: enough copies of it pass the bound.
@@ -3717,7 +3733,11 @@ fn relinked_sketches_and_broken_links_are_bounded_as_the_head_is_decoded() {
     assert!(decodes(relinking(Vec::new(), MAX_BROKEN)));
     assert!(!decodes(relinking(Vec::new(), MAX_BROKEN + 1)));
     // Each sketch weighs one and its items, all together within the
-    // budget.
+    // budget: filling it takes about a second in a debug build, so only
+    // under `VARDE_TESTS=full`.
+    if !varde_testing::full() {
+        return;
+    }
     let full = with(MAX_POINTS, 0);
     let fit = MAX_RELINKED_ITEMS / (MAX_POINTS + 1);
     assert!(decodes(relinking(vec![full.clone(); fit], 0)));

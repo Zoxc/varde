@@ -163,6 +163,24 @@ pub(crate) fn add_pocket(editor: &mut Editor) -> FeatureId {
 /// The volume the pocket takes away.
 pub(crate) const POCKET: f64 = 13.0 * 20.0 * 4.0;
 
+/// Which of an axis-aligned box's six faces the box stand-ins' tests
+/// pick, each a mask whose bit `2 * axis + end` is the face at `end` of
+/// `axis`: under `VARDE_TESTS=full` all 64; quick, none, all, and four
+/// that between them give each axis each of its four states (neither
+/// end, the low, the high, both) beside different states of the others.
+fn box_face_masks() -> Vec<u32> {
+    if varde_testing::full() {
+        return (0..64).collect();
+    }
+    let mut masks = vec![0, 63];
+    masks.extend((0..4u32).map(|i| {
+        (0..3u32)
+            .map(|axis| ((i + axis) % 4) << (2 * axis))
+            .sum::<u32>()
+    }));
+    masks
+}
+
 fn evaluated(document: &Document) -> Evaluation {
     evaluate(document, &mut Cache::default())
 }

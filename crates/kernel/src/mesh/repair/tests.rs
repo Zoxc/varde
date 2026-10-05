@@ -191,6 +191,11 @@ fn surfaces_just_over_the_resolution_apart_pass() {
         (cylinder_and_box(1.05 * res), 300_000),
         (cylinders(1.0, 30.0, 1.1 * res, &TOL), 2_000_000),
     ] {
+        // The two cylinders take over a second (repair splits them to
+        // 52k triangles): only in full runs.
+        if most > 300_000 && !varde_testing::full() {
+            continue;
+        }
         let (result, work) = repair_counting(mesh, &TOL);
         let repaired = result.unwrap();
         assert_eq!(repaired.check(&TOL), Ok(()));

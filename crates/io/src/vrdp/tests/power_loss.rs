@@ -292,6 +292,9 @@ fn record_save(before: &Before, document: &Document) -> (Vec<Op>, Tail) {
 
 /// Every subset of a save of a few pages, in a random order, over every
 /// file before and every kind of stale bytes.
+///
+/// About 0.6s in a debug build, over the suite's 0.5s aim: it is
+/// exhaustive, and fewer subsets would leave cases unchecked.
 #[test]
 fn every_power_loss_during_a_short_save_opens() {
     let document = edited(4);
@@ -328,13 +331,18 @@ fn every_power_loss_during_a_short_save_opens() {
 #[test]
 fn sampled_power_losses_during_a_save_in_small_pages_open() {
     let document = edited(4);
-    let mut rng = Rng(0xfa11);
+    // Quick runs take 30 samples per case, full runs 150. Each case has a
+    // generator of its own, so quick's samples are the first of full's.
+    let samples = varde_testing::pick(30, 150);
+    let mut case_seed = 0xfa11_u64;
     for before in befores() {
         let (ops, lost) = record_save(&before, &document);
         let units = units(&ops, 16);
         assert!(units.len() > 20);
         for (stale_name, stale) in stales(&before.durable) {
-            for sample in 0..150 {
+            case_seed = case_seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut rng = Rng(case_seed | 1);
+            for sample in 0..samples {
                 // Each unit kept with a chance that varies by sample, so
                 // that nearly whole and nearly empty saves come up.
                 let chance = 1 + rng.below(9);

@@ -121,18 +121,25 @@ fn shows(pixels: &[u8], color: Color) -> bool {
 }
 
 /// Every icon parses and draws: in one colour, and a tool's in its
-/// category's three, in both modes.
+/// category's three, in both modes. One renderer draws them all, so each
+/// icon's SVG is parsed once rather than once a draw (6 s to 0.13 s).
 #[test]
 fn icons_draw_in_their_colours() {
     const SIDE: u32 = 48;
     let size = Size::new(SIDE, SIDE);
     let max = Size::new(SIDE as f32, SIDE as f32);
+    let mut renderer = Some(crate::probe::renderer());
+    let mut pixels = |element: iced::Element<'static, Message>, mode| {
+        let mut laid = Laid::with_renderer(element, max, renderer.take().unwrap());
+        let pixels = laid.pixels_in(size, mode);
+        renderer = Some(laid.renderer);
+        pixels
+    };
     for mode in [Mode::Light, Mode::Dark] {
         let palette = mode.palette();
         for each in Icon::ALL {
             let pink = Color::from_rgb8(0xff, 0x00, 0xff);
-            let pixels =
-                Laid::new(tinted(each, SIDE as f32, move |_| pink), max).pixels_in(size, mode);
+            let pixels = pixels(tinted(each, SIDE as f32, move |_| pink).into(), mode);
             assert_eq!(shows(&pixels, pink), each != Icon::Blank, "{each:?}");
         }
         for each in FROM_MOCK.into_iter().chain([Icon::Body, Icon::Convert]) {
@@ -141,7 +148,7 @@ fn icons_draw_in_their_colours() {
                 accent,
                 reference,
             } = each.tone(palette);
-            let pixels = Laid::new(icon::<Message>(each, SIDE as f32), max).pixels_in(size, mode);
+            let pixels = pixels(icon::<Message>(each, SIDE as f32), mode);
             for (layer, color) in [
                 (Layer::Line, line),
                 (Layer::Accent, accent),

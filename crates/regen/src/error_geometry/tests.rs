@@ -119,6 +119,11 @@ fn what_cannot_be_drawn_is_left_out() {
 /// before kept.
 #[test]
 fn patches_past_the_bound_are_left_out() {
+    // Only under `VARDE_TESTS=full`: filling the bound's 2^18 vertices
+    // takes most of a second in a debug build.
+    if !varde_testing::full() {
+        return;
+    }
     let mut evidence = Evidence::default();
     // Patches bulging hard, all in one place: each is cut finely next to
     // the box, so all of them take more samples than fit.

@@ -410,12 +410,38 @@ pub(crate) fn add_disc_of(
 
 /// The texts `doc`'s screen shows at 1280 × 800, light.
 pub(crate) fn screen_texts(doc: &Doc) -> Vec<String> {
-    let mut renderer = varde_view::probe::renderer();
-    let size = iced::Size::new(1280.0, 800.0);
-    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
-    (texts(&mut ui, &renderer).into_iter())
-        .map(|text| text.text)
-        .collect()
+    with_renderer(|renderer| {
+        let size = iced::Size::new(1280.0, 800.0);
+        let mut ui = shown(doc.view_in(Mode::Light), size, renderer);
+        (texts(&mut ui, renderer).into_iter())
+            .map(|text| text.text)
+            .collect()
+    })
+}
+
+/// How many steps a fuzz test runs of each seed: `quick` by default, `full`
+/// with `VARDE_TESTS=full` or when replaying one seed with
+/// `VARDE_TEST_SEED`. A seed's quick steps are the start of its full ones.
+pub(crate) fn fuzz_steps(quick: usize, full: usize) -> usize {
+    if varde_testing::replay_seed().is_some() {
+        full
+    } else {
+        varde_testing::pick(quick, full)
+    }
+}
+
+/// Runs `f` with this thread's headless renderer, made once: a fresh one
+/// loads the system fonts again the first time it measures an icon, which
+/// the fuzz tests calling [`screen_texts`] at every step paid each time.
+pub(crate) fn with_renderer<R>(f: impl FnOnce(&mut iced::Renderer) -> R) -> R {
+    thread_local! {
+        static RENDERER: std::cell::RefCell<Option<iced::Renderer>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    RENDERER.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        f(cell.get_or_insert_with(varde_view::probe::renderer))
+    })
 }
 
 /// The texts of `doc`'s status bar, left to right, at 1280 × 800, light,
@@ -423,18 +449,19 @@ pub(crate) fn screen_texts(doc: &Doc) -> Vec<String> {
 pub(crate) fn status_bar_texts(doc: &Doc, mouse_hints: bool) -> Vec<String> {
     let size = iced::Size::new(1280.0, 800.0);
     let top = size.height - varde_view::STATUS_BAR_ROOM;
-    let mut renderer = varde_view::probe::renderer();
     let options = varde_view::ViewOptions {
         mouse_hints,
         ..Default::default()
     };
     let view = doc.view(false, Mode::Light, options, crate::Offers::default());
-    let mut ui = shown(view, size, &mut renderer);
     // It floats over the viewport, right of the side panel.
-    let mut bar: Vec<_> = texts(&mut ui, &renderer)
-        .into_iter()
-        .filter(|text| text.bounds.y >= top && text.bounds.x >= varde_view::SIDE_PANEL_WIDTH)
-        .collect();
+    let mut bar: Vec<_> = with_renderer(|renderer| {
+        let mut ui = shown(view, size, renderer);
+        texts(&mut ui, renderer)
+    })
+    .into_iter()
+    .filter(|text| text.bounds.y >= top && text.bounds.x >= varde_view::SIDE_PANEL_WIDTH)
+    .collect();
     bar.sort_by(|a, b| a.bounds.x.total_cmp(&b.bounds.x));
     bar.into_iter().map(|text| text.text).collect()
 }
@@ -443,6 +470,19 @@ pub(crate) fn status_bar_texts(doc: &Doc, mouse_hints: bool) -> Vec<String> {
 pub(crate) fn answer(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
     for request in requests.take() {
         doc.computed(handle(request));
+    }
+}
+
+/// Answers the requests waiting as the lane's latest-wins slot would:
+/// of the regenerations only the newest, the rest dropped unanswered.
+pub(crate) fn answer_newest(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
+    let waiting = requests.take();
+    let newest =
+        (waiting.iter()).rposition(|request| matches!(request, Request::Regenerate { .. }));
+    for (at, request) in waiting.into_iter().enumerate() {
+        if !matches!(request, Request::Regenerate { .. }) || Some(at) == newest {
+            doc.computed(handle(request));
+        }
     }
 }
 

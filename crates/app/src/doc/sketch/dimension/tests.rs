@@ -1,7 +1,6 @@
-use iced::advanced::renderer::Headless;
 use iced::keyboard::{self, key};
 use iced::time::{Duration, Instant};
-use iced::{Event, Font, Pixels, Size, mouse};
+use iced::{Event, Size, mouse};
 use iced_runtime::user_interface::{Cache, UserInterface};
 use varde_expr::LengthUnit;
 use varde_sketch::{Curve, Measure, Rejected, Side};
@@ -556,31 +555,26 @@ fn a_double_click_on_a_label_opens_the_field_on_it_and_its_release_keeps_it() {
 /// for a click at `at`, its cache after, for the next click to be a
 /// double-click, and the times just before and after the click went in.
 fn click_screen(doc: &Doc, at: iced::Point, cache: Cache) -> (Vec<Ui>, Cache, [Instant; 2]) {
-    let Some(mut renderer) = iced::futures::executor::block_on(iced::Renderer::new(
-        Font::DEFAULT,
-        Pixels(13.0),
-        Some("tiny-skia"),
-    )) else {
-        panic!("no headless renderer");
-    };
-    let view = doc.view_in(Mode::Light);
-    let mut ui = UserInterface::build(view, Size::new(1280.0, 800.0), cache, &mut renderer);
-    let mut sent = Vec::new();
-    let events = [
-        mouse::Event::CursorMoved { position: at },
-        mouse::Event::ButtonPressed(mouse::Button::Left),
-        mouse::Event::ButtonReleased(mouse::Button::Left),
-    ]
-    .map(Event::Mouse);
-    let before = Instant::now();
-    ui.update(
-        &events,
-        mouse::Cursor::Available(at),
-        &mut renderer,
-        &mut iced::advanced::clipboard::Null,
-        &mut sent,
-    );
-    (sent, ui.into_cache(), [before, Instant::now()])
+    crate::tests::with_renderer(|renderer| {
+        let view = doc.view_in(Mode::Light);
+        let mut ui = UserInterface::build(view, Size::new(1280.0, 800.0), cache, renderer);
+        let mut sent = Vec::new();
+        let events = [
+            mouse::Event::CursorMoved { position: at },
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ]
+        .map(Event::Mouse);
+        let before = Instant::now();
+        ui.update(
+            &events,
+            mouse::Cursor::Available(at),
+            renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+        (sent, ui.into_cache(), [before, Instant::now()])
+    })
 }
 
 /// How far apart iced's two clicks may be to make a double-click.

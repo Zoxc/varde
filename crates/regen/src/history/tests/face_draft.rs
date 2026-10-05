@@ -811,7 +811,9 @@ fn the_stand_in_drafts_boxes_by_their_volumes() {
     let top = PlaneRef::Face(sides[5].1);
     let mm = editor.document().clone();
     let id = add(&mut editor, draft(&mm, vec![sides[0].1], XY, "1", false));
-    for mask in 1..64u32 {
+    // One cache, so the block is made once.
+    let mut cache = Cache::default();
+    for mask in box_face_masks().into_iter().filter(|&mask| mask != 0) {
         let picked: Vec<usize> = (0..6).filter(|k| mask & (1 << k) != 0).collect();
         let faces: Vec<FaceRef> = picked.iter().map(|&k| sides[k].1).collect();
         let mut drafted = [0.0f64; 2];
@@ -827,7 +829,8 @@ fn the_stand_in_drafts_boxes_by_their_volumes() {
                 for flip in [false, true] {
                     let kind = draft(&mm, faces.clone(), neutral, text, flip);
                     set(&mut editor, id, kind);
-                    let evaluation = evaluated(editor.document());
+                    cache.begin();
+                    let evaluation = evaluate(editor.document(), &mut cache);
                     let sign = if flip { -1.0 } else { 1.0 };
                     let width =
                         |axis: usize, z: f64| size[axis] - drafted[axis] * t * sign * (z - q);

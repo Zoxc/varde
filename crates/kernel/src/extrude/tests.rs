@@ -162,6 +162,11 @@ fn a_slot_and_a_d() {
 fn a_thin_band() {
     // A ring a hundredth of its radius wide: the arcs are halved until the
     // chords of the two circles keep apart.
+    //
+    // About 0.55 s in a debug build, over the quick target: the thinner
+    // ring has 49 152 patches, none flat (each cap triangle has an arc
+    // side), and integrating their volume and area, which is the check,
+    // is about 60% of it.
     for (outer, inner) in [(10.0, 9.9), (10.0, 9.999)] {
         let p = profile(vec![
             circle(DVec2::ZERO, outer, 0, false),
@@ -638,19 +643,23 @@ pub(super) fn random_plates() -> Vec<(Profile, Tolerance, f64)> {
 fn random_plates_with_holes() {
     // Random outlines with random holes, at every tolerance: those whose
     // loops touch or don't nest are refused, the rest have their volumes.
-    let mut built = 0;
+    // A pin too: their patches, all told, refined for quality (1 150 with
+    // the plain caps).
+    let (mut built, mut patches) = (0, 0);
     for (case, (p, tol, h)) in random_plates().into_iter().enumerate() {
         match extrude(&p, &Frame::XY, 0.0, h, 1, &tol, &Budget::DEFAULT).stripped() {
             Ok(solid) => {
                 let exact = p.area() * h;
                 assert!((solid.volume() - exact).abs() < 1e-12 * 1e4 * h);
                 built += 1;
+                patches += solid.mesh().tris().len();
             }
             Err(KernelError::Profile(ProfileError::Touching(_) | ProfileError::Nesting(_))) => {}
             Err(e) => panic!("case {case}: {e}"),
         }
     }
     assert!(built >= 10, "{built}");
+    assert_eq!(patches, 1636);
 }
 
 #[test]
@@ -726,6 +735,14 @@ fn uneven_circles() -> Vec<(Profile, f64, Tolerance)> {
     uneven_circles_from(3, [Tolerance::MIN_FIT, 1e-3, 1e-2])
 }
 
+/// The cases of `cases` a test runs, with their indices: all of them
+/// under `VARDE_TESTS=full`, every `step`-th by default, from the first
+/// (so with `step` prime to 3, every tolerance of the uneven circles).
+fn thinned<T>(cases: Vec<T>, step: usize) -> Vec<(usize, T)> {
+    let step = varde_testing::pick(step, 1);
+    cases.into_iter().enumerate().step_by(step).collect()
+}
+
 /// 120 circles of radii 0.1 to 1 000 cut at random angles into arcs of
 /// at least `2e-3` radians, from the generator seeded with `seed`, case
 /// `i` at the tolerance `fits[i % 3]`, with their radii.
@@ -748,21 +765,26 @@ fn circles_cut_unevenly() {
     // close to its sides as the ear is flat, and slivers along the loop
     // come within the resolution of the walls. Moving Steiner points in
     // from those corners mends them. The same bits at 1 and 8 threads.
-    let cases = uneven_circles();
+    // A pin too: their patches, all told, refined for quality (18 872 with
+    // the plain caps). Quick runs every fourth circle.
+    let cases = thinned(uneven_circles(), 4);
     let results = assert_deterministic(|| {
         cases
             .iter()
-            .map(|(p, r, tol)| extrude(p, &Frame::XY, 0.0, *r, 1, tol, &Budget::DEFAULT))
+            .map(|(_, (p, r, tol))| extrude(p, &Frame::XY, 0.0, *r, 1, tol, &Budget::DEFAULT))
             .collect::<Vec<_>>()
     });
-    for (case, ((p, r, tol), result)) in cases.iter().zip(results).enumerate() {
+    let mut patches = 0;
+    for ((case, (p, r, tol)), result) in cases.iter().zip(results) {
         let solid = result.unwrap_or_else(|e| panic!("case {case}: {e}"));
         let exact = straightened(p, tol).area() * r;
         assert!(
             (solid.volume() - exact).abs() < 1e-12 * exact,
             "case {case}"
         );
+        patches += solid.mesh().tris().len();
     }
+    assert_eq!(patches, varde_testing::pick(7152, 30_092));
 }
 
 #[test]
@@ -1013,13 +1035,15 @@ fn the_second_try_resumes_where_the_first_found_a_flat_corner() {
         Some(0)
     );
     // `circles_cut_unevenly`'s circles and `random_plates_with_holes`'
-    // plates.
-    let forked = uneven_circles()
+    // plates (quick, every fourth and every third of them).
+    let forked = thinned(uneven_circles(), 4)
         .iter()
-        .filter(|(p, _, tol)| resumes_as_from_the_start(p, tol).is_some())
+        .filter(|(_, (p, _, tol))| resumes_as_from_the_start(p, tol).is_some())
         .count();
-    assert!((10..110).contains(&forked), "{forked}");
-    for (p, tol, _) in random_plates() {
+    // Some fork, and some don't.
+    let bounds = varde_testing::pick(2..28, 10..110);
+    assert!(bounds.contains(&forked), "{forked}");
+    for (_, (p, tol, _)) in thinned(random_plates(), 3) {
         resumes_as_from_the_start(&p, &tol);
     }
 }

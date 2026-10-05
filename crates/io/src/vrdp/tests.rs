@@ -824,7 +824,10 @@ fn a_payload_claiming_more_than_it_can_hold_is_refused() {
     let zeros = vec![0; 1 << 20];
     let dense = snap::raw::Encoder::new().compress_vec(&zeros).unwrap();
     assert!(zeros.len() <= dense.len() * MAX_EXPANSION);
-    let large = edited(2000);
+    // Building a large one is quadratic in its sketches (each edit copies
+    // the document); its compression ratio levels off by 400 (10.6, against
+    // 11.4 at 2000), so quick runs build that many.
+    let large = edited(varde_testing::pick(400, 2000));
     assert_eq!(
         decode::<Document>(&encode(&large).unwrap()).unwrap().0,
         large

@@ -14,6 +14,22 @@ pub(crate) fn point(sketch: &mut Sketch, x: f64, y: f64) -> Id {
     sketch.add_point(DVec2::new(x, y)).unwrap()
 }
 
+/// New points at `places`, as [`point`] adds them one by one, but
+/// numbered from the highest found once: a sketch of thousands of points
+/// would otherwise look through them all for each.
+pub(crate) fn points(sketch: &mut Sketch, places: &[(f64, f64)]) -> Vec<Id> {
+    let mut number = sketch.next_number(crate::Kind::Point.name());
+    (places.iter())
+        .map(|&(x, y)| {
+            let id = sketch.new_id().unwrap();
+            let at = DVec2::new(x, y);
+            sketch.points.push(crate::Point { id, number, at });
+            number = number.saturating_add(1);
+            id
+        })
+        .collect()
+}
+
 pub(crate) fn line(sketch: &mut Sketch, start: Id, end: Id) -> Id {
     sketch.add_curve(Curve::Line { start, end }, false).unwrap()
 }
@@ -33,7 +49,7 @@ pub(crate) fn arc(sketch: &mut Sketch, center: Id, start: Id, end: Id) -> Id {
 /// A spline through new points at `places`, open or `closed`: its id and
 /// its fit points.
 pub(crate) fn spline(sketch: &mut Sketch, places: &[(f64, f64)], closed: bool) -> (Id, Vec<Id>) {
-    let fit: Vec<Id> = places.iter().map(|&(x, y)| point(sketch, x, y)).collect();
+    let fit = points(sketch, places);
     let spline = Spline::through(fit.clone(), closed);
     let id = sketch.add_curve(Curve::Spline(spline), false).unwrap();
     (id, fit)

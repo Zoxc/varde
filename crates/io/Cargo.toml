@@ -79,6 +79,8 @@ web-sys = { workspace = true, features = [
 [dev-dependencies]
 # Waiting on the thread lane in tests.
 varde-lane = { workspace = true, features = ["testing"] }
+# Quick and full test runs (`VARDE_TESTS`).
+varde-testing.workspace = true
 # Polling the native lane's responses.
 futures.workspace = true
 # Running the code over a `Dir`, which is async for the browser's sake.

@@ -45,8 +45,9 @@ fn arc(sketch: &mut Sketch, x: f64, y: f64, radius: f64, from: f64, to: f64) -> 
 
 fn profiles(sketch: &Sketch) -> Profiles {
     let profiles = sketch.profiles().unwrap();
+    let geoms = Geoms::default();
     for region in &profiles.regions {
-        closed(sketch, region);
+        closed_in(sketch, &geoms, region);
     }
     profiles
 }
@@ -56,15 +57,34 @@ fn geom(sketch: &Sketch, piece: &Piece) -> Geom {
     Geom::of(sketch, &sketch.curve(piece.curve).unwrap().curve).unwrap()
 }
 
+/// The shapes of a sketch's curves, each worked out once: a spline's
+/// takes its interpolation, which the checks of a sketch with thousands
+/// of regions would otherwise repeat for every piece.
+#[derive(Default)]
+struct Geoms(std::cell::RefCell<std::collections::BTreeMap<Id, Geom>>);
+
+impl Geoms {
+    fn of(&self, sketch: &Sketch, piece: &Piece) -> Geom {
+        (self.0.borrow_mut().entry(piece.curve))
+            .or_insert_with(|| geom(sketch, piece))
+            .clone()
+    }
+}
+
 /// The area `pieces` enclose, positive counter-clockwise, worked out
 /// from the curves, about where they start, as their ends meet only
 /// within the tolerance.
 fn area(sketch: &Sketch, pieces: &[Piece]) -> f64 {
-    let origin = geom(sketch, &pieces[0]).at(pieces[0].from);
+    area_in(sketch, &Geoms::default(), pieces)
+}
+
+/// [`area`], taking the curves' shapes from `geoms`.
+fn area_in(sketch: &Sketch, geoms: &Geoms, pieces: &[Piece]) -> f64 {
+    let origin = geoms.of(sketch, &pieces[0]).at(pieces[0].from);
     pieces
         .iter()
         .map(|piece| {
-            let geom = geom(sketch, piece);
+            let geom = geoms.of(sketch, piece);
             let (a, b) = (geom.at(piece.from) - origin, geom.at(piece.to) - origin);
             a.perp_dot(b) / 2.0 + geom.bulge(piece.from, piece.to)
         })
@@ -74,12 +94,17 @@ fn area(sketch: &Sketch, pieces: &[Piece]) -> f64 {
 /// Checks each of `region`'s loops joins up, the outer one runs
 /// counter-clockwise and the holes clockwise, and the area adds up.
 fn closed(sketch: &Sketch, region: &Region) {
+    closed_in(sketch, &Geoms::default(), region);
+}
+
+/// [`closed`], taking the curves' shapes from `geoms`.
+fn closed_in(sketch: &Sketch, geoms: &Geoms, region: &Region) {
     let size = sketch
         .points
         .iter()
         .map(|point| point.at.abs().max_element())
         .fold(1.0, f64::max);
-    let place = |piece: &Piece, u: f64| geom(sketch, piece).at(u);
+    let place = |piece: &Piece, u: f64| geoms.of(sketch, piece).at(u);
     for pieces in std::iter::once(&region.outer).chain(&region.holes) {
         assert!(!pieces.is_empty());
         for (i, piece) in pieces.iter().enumerate() {
@@ -89,12 +114,13 @@ fn closed(sketch: &Sketch, region: &Region) {
             assert_eq!(piece.end, next.start);
         }
     }
-    let outer = area(sketch, &region.outer);
+    let outer = area_in(sketch, geoms, &region.outer);
     assert!(outer > 0.0, "{outer}");
-    let holes: f64 = region.holes.iter().map(|hole| area(sketch, hole)).sum();
-    for hole in &region.holes {
-        assert!(area(sketch, hole) < 0.0);
-    }
+    let holes: Vec<f64> = (region.holes.iter())
+        .map(|hole| area_in(sketch, geoms, hole))
+        .collect();
+    assert!(holes.iter().all(|&hole| hole < 0.0), "{holes:?}");
+    let holes: f64 = holes.iter().sum();
     assert!(
         (outer + holes - region.area).abs() <= 1e-6 * size * size,
         "{outer} {holes} {}",
@@ -614,6 +640,14 @@ fn hostile_sketches() -> Vec<(&'static str, Sketch)> {
 
 #[test]
 fn hostile_sketches_are_too_complex_in_bounded_time() {
+    // Only in the full run: each sketch must be big enough to run out of
+    // `MAX_WORK`, which takes seconds in all in a debug build, and a
+    // smaller one isn't refused.
+    // `too_many_crossings_or_too_much_work_is_too_complex` covers refusing
+    // in the quick run.
+    if !varde_testing::full() {
+        return;
+    }
     for (name, sketch) in hostile_sketches() {
         assert_eq!(sketch.check(&crate::testing::DESIGN), Ok(()), "{name}");
         let started = std::time::Instant::now();
@@ -687,9 +721,18 @@ fn normal_sketches_take_a_fraction_of_the_work() {
         work: MAX_WORK / 3,
     };
     for (name, sketch, count) in sketches {
-        let found = profiles(&sketch);
+        // Not refused within a third of the work, and right: the limits
+        // only bound the work, so this is what `profiles()` finds, which
+        // the full run checks too (it doubles the time).
+        let found = sketch.profiles_within(&limits).expect(name);
+        let geoms = Geoms::default();
+        for region in &found.regions {
+            closed_in(&sketch, &geoms, region);
+        }
         assert_eq!(found.regions.len(), count, "{name}");
-        assert_eq!(sketch.profiles_within(&limits), Ok(found), "{name}");
+        if varde_testing::full() {
+            assert_eq!(sketch.profiles(), Ok(found), "{name}");
+        }
     }
 }
 
@@ -1021,7 +1064,8 @@ fn random_sketches_with_near_copies_are_closed_or_too_complex() {
 fn random_sketches_make_closed_regions() {
     let mut random = Random(7);
     let mut regions = 0;
-    for round in 0..300 {
+    // Five passes through the sizes quick, all of them up to 40 curves.
+    for round in 0..varde_testing::pick(200, 300) {
         let snap = round % 2 == 0;
         let sketch = random_sketch(&mut random, 1 + round % 40, snap);
         let found = sketch.profiles().unwrap();
@@ -1956,7 +2000,9 @@ fn resolve_agrees_with_a_scan() {
     // Random sketches, each resolving its own references, and those of
     // the sketch it grew from (the same curves, fewer of them) and of
     // the sketch it grows into.
-    for round in 0..200 {
+    // Two passes through the counts quick, seven in full.
+    let rounds = varde_testing::pick(60, 210);
+    for round in 0..rounds {
         let snap = round % 2 == 0;
         let seed = random.0;
         let count = 1 + round % 30;

@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::mesh::Form;
+use crate::par::on_threads;
 use crate::revolve::{Sweep, revolve};
 use crate::test_rng::Rng;
 
@@ -319,7 +320,13 @@ fn random_coaxial_frustums() {
     // exact where it is upright. Never a wrong result; most succeed.
     let mut rng = Rng::new(12);
     let (mut ok, mut total) = (0, 0);
-    let cases = if cfg!(debug_assertions) { 6 } else { 40 };
+    // Some 0.15 s a case in a debug build: quick runs there take the
+    // first 3.
+    let cases = if cfg!(debug_assertions) {
+        varde_testing::pick(3, 6)
+    } else {
+        40
+    };
     for case in 0..cases {
         let mut stack = || {
             let h0 = (rng.range(-2.0, 2.0) * 4.0).round() / 4.0;
@@ -490,7 +497,14 @@ fn nearly_flat_cones_cut_through_their_axis_are_exact() {
         let tan = half.to_radians().tan();
         let (r0, r1) = (0.5, 20.5);
         let h1 = 20.0 / tan;
-        for far in [0.0, 1e3] {
+        // Quick runs take the cones far from the origin only (where
+        // rounding is coarsest), half the time.
+        let fars = if varde_testing::full() {
+            &[0.0, 1e3][..]
+        } else {
+            &[1e3][..]
+        };
+        for &far in fars {
             let origin = DVec3::new(far, -0.7 * far, 0.3 * far);
             let frame = Frame {
                 origin,
@@ -597,14 +611,18 @@ fn coaxial_shortcuts_that_fail_are_tried_again_as_before() {
     // Refined as before, every cut is still a plane's on the cone, but
     // the triangles at the two vertices a ten-millionth apart are `1e-8`
     // off it.
-    let both = run(&a, &b, Op::Intersection);
+    let [_, both, ..] = four_kept("hair apart", &a, &b);
     exact_to("slab", &both, 3.0, 1e-8);
     assert!(
         (both.volume() - slab).abs() <= 1e-8 * slab,
         "{}",
         both.volume()
     );
-    four_kept("hair apart", &a, &b);
+    // The ring and the ball take some 1.5 s each in a debug build (the
+    // ring's union alone has 18 000 patches): only in full runs.
+    if !varde_testing::full() {
+        return;
+    }
     // A ring whose corner is a hundredth outside a cone's wall, the cuts
     // a fiftieth apart about it (`Hull`).
     let a = turned(
@@ -642,6 +660,14 @@ fn coaxial_shortcuts_that_fail_are_tried_again_as_before() {
         ],
         2,
     );
-    four_kept("ball", &ball(1.125, -0.625), &ring);
-    assert_deterministic(|| run(&ball(1.125, -0.625), &ring, Op::Union).into_mesh());
+    // The union the same on 1 and 8 threads (`assert_deterministic`,
+    // reusing the four's union rather than making it twice more).
+    let ball = ball(1.125, -0.625);
+    let [union, ..] = on_threads(8, || four_kept("ball", &ball, &ring));
+    let one = on_threads(1, || run(&ball, &ring, Op::Union));
+    assert_eq!(
+        format!("{:?}", one.mesh()),
+        format!("{:?}", union.mesh()),
+        "1 and 8 threads disagree"
+    );
 }

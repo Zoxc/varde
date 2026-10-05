@@ -73,7 +73,9 @@ or `cargo clippy` covers almost nothing; pass `--workspace`.
 
 ```sh
 cargo run                                   # native app
-cargo test --workspace                      # all tests
+cargo test --workspace                      # all tests, quick mode
+VARDE_TESTS=full cargo test --workspace     # long runs: all fuzz seeds, slow bounds checks
+VARDE_TEST_SEED=7 cargo test -p varde-app some_fuzz_test   # replay one seed
 cargo test -p varde-io                      # one crate
 cargo test -p varde-io some_test_name       # one test (substring match)
 cargo clippy --workspace --all-targets
@@ -84,8 +86,12 @@ cd crates/web && trunk serve                # browser build
 
 GPU tests (`crates/render/tests`, viewport tests in `varde-view`) render
 offscreen via `pollster` and print "no GPU adapter, skipping" and pass when
-there is no adapter. Tests pass temporary directories (or none) to
-`varde_io::Stores` so they never touch the user's config/data dirs.
+there is no adapter.
+`VARDE_TESTS` (unset/`quick` or `full`, anything else panics) and
+`VARDE_TEST_SEED` are read by the `varde-testing` dev-dependency
+(`crates/testing`); fuzz tests take their seeds from `varde_testing::seeds`.
+Tests pass temporary directories (or none) to `varde_io::Stores` so they never
+touch the user's config/data dirs.
 
 The dev profile builds `varde-kernel` at `opt-level = 1` (its tests run about
 8 times slower at 0), and `varde-sketch` too (over twice as slow at 0). To

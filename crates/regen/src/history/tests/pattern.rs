@@ -375,6 +375,11 @@ fn pin_grid(n: usize) -> Option<Result<(), String>> {
 #[test]
 fn a_pin_grid_is_cut_from_a_plate_in_one_difference() {
     assert_eq!(pin_grid(4), Some(Ok(())));
+    // A hundred pins take over a second in a debug build: only under
+    // `VARDE_TESTS=full`.
+    if !varde_testing::full() {
+        return;
+    }
     let ten = pin_grid(10);
     assert!(matches!(ten, None | Some(Ok(()))), "{ten:?}");
 }
@@ -504,6 +509,8 @@ fn an_unchanged_pattern_is_found_in_the_cache() {
 /// pattern along an edge of the last copy of the last copy finds it.
 #[test]
 fn a_pattern_of_a_pattern_names_its_last_copy() {
+    // About half a second in a debug build, making and checking the 4096
+    // blocks: fewer wouldn't reach the last copy `Naming` tells apart.
     let mut editor = Editor::new(Document::default());
     let body = block(&mut editor, 0.0, 0.0, 1.0, 1.0, "1");
     let other = block(&mut editor, -10.0, -10.0, -9.0, -9.0, "1");

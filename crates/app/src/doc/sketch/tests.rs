@@ -1192,12 +1192,14 @@ fn the_sketch_toolbar_fits_at_1280_px() {
     use crate::tests::{shown as laid_out, texts};
     use varde_view::Mode;
     let fits = |doc: &Doc| {
-        let mut renderer = varde_view::probe::renderer();
         let size = iced::Size::new(1280.0, 800.0);
-        let mut ui = laid_out(doc.view_in(Mode::Light), size, &mut renderer);
-        let mut on: Vec<_> = (texts(&mut ui, &renderer).into_iter())
-            .filter(|t| t.bounds.y < 40.0)
-            .collect();
+        let mut on: Vec<_> = crate::tests::with_renderer(|renderer| {
+            let mut ui = laid_out(doc.view_in(Mode::Light), size, renderer);
+            texts(&mut ui, renderer)
+        })
+        .into_iter()
+        .filter(|t| t.bounds.y < 40.0)
+        .collect();
         on.sort_by(|a, b| a.bounds.x.total_cmp(&b.bounds.x));
         let mut end = 0.0;
         for t in &on {

@@ -204,10 +204,12 @@ fn blob(sketch: &mut Sketch) -> varde_sketch::Id {
         .unwrap()
 }
 
-/// The shoelace area of `sketch`'s spline `curve`, sampled finely.
+/// The shoelace area of `sketch`'s spline `curve`, sampled finely: for
+/// the blob, 20 000 samples are off by about 1e-6 mm², far inside the
+/// tests' bounds (4e-4 mm² at the finest fit).
 fn spline_area(sketch: &Sketch, curve: varde_sketch::Id) -> f64 {
     let shape = sketch.spline_shape(sketch.spline(curve).unwrap()).unwrap();
-    let n = 200_000;
+    let n = 20_000;
     let points: Vec<DVec2> = (0..n).map(|i| shape.point(i as f64 / n as f64)).collect();
     (0..n)
         .map(|i| points[i].perp_dot(points[(i + 1) % n]) / 2.0)
@@ -220,15 +222,43 @@ fn largest_error(sketch: &Sketch, curve: varde_sketch::Id, l: &Loop) -> f64 {
     let shape = sketch.spline_shape(sketch.spline(curve).unwrap()).unwrap();
     let n = 20_000;
     let dense: Vec<DVec2> = (0..=n).map(|i| shape.point(i as f64 / n as f64)).collect();
+    // The polyline's pieces bucketed by where they start, in cells as
+    // wide as the longest piece, so a point is held only to those near it.
+    let cell = (dense.windows(2))
+        .map(|w| w[0].distance(w[1]))
+        .fold(0.0, f64::max)
+        .max(1e-12);
+    let at = |p: DVec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
+    let mut cells: std::collections::HashMap<(i64, i64), Vec<usize>> = Default::default();
+    for (i, &p) in dense[..n].iter().enumerate() {
+        cells.entry(at(p)).or_default().push(i);
+    }
+    let to_piece = |p: DVec2, i: usize| {
+        let (a, d) = (dense[i], dense[i + 1] - dense[i]);
+        let t = ((p - a).dot(d) / d.length_squared()).clamp(0.0, 1.0);
+        p.distance(a + d * t)
+    };
     let to_polyline = |p: DVec2| {
-        dense
-            .windows(2)
-            .map(|w| {
-                let d = w[1] - w[0];
-                let t = ((p - w[0]).dot(d) / d.length_squared()).clamp(0.0, 1.0);
-                p.distance(w[0] + d * t)
-            })
-            .fold(f64::INFINITY, f64::min)
+        let (x, y) = at(p);
+        let mut best = f64::INFINITY;
+        // A piece starting in ring `r` around `p`'s cell is at least
+        // `(r - 2) * cell` from `p`.
+        for r in 0i64.. {
+            if best <= (r - 2) as f64 * cell {
+                return best;
+            }
+            for dx in -r..=r {
+                for dy in -r..=r {
+                    if dx.abs().max(dy.abs()) != r {
+                        continue;
+                    }
+                    for &i in cells.get(&(x + dx, y + dy)).into_iter().flatten() {
+                        best = best.min(to_piece(p, i));
+                    }
+                }
+            }
+        }
+        unreachable!()
     };
     l.segments
         .iter()
@@ -248,6 +278,7 @@ fn a_spline_is_fitted_within_the_tolerance_turning_smoothly() {
     let mut sketch = Sketch::default();
     let curve = blob(&mut sketch);
     let mut counts = Vec::new();
+    let area = spline_area(&sketch, curve);
     for fit in [1e-1, 1e-3, 1e-5] {
         let (profile, _) = picked_within(&sketch, |_| true, fit);
         let [l] = &profile.loops[..] else {
@@ -281,7 +312,6 @@ fn a_spline_is_fitted_within_the_tolerance_turning_smoothly() {
             }
             assert!(out.dot(on) > 0.0);
         }
-        let area = spline_area(&sketch, curve);
         let perimeter = 40.0;
         assert!(
             (profile.area() - area).abs() <= fit * perimeter,

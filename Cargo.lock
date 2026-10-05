@@ -4164,6 +4164,7 @@ dependencies = [
  "varde-render",
  "varde-sketch",
  "varde-solve",
+ "varde-testing",
  "varde-view",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -4187,6 +4188,7 @@ name = "varde-expr"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "varde-testing",
 ]
 
 [[package]]
@@ -4215,6 +4217,7 @@ dependencies = [
  "varde-kernel",
  "varde-lane",
  "varde-sketch",
+ "varde-testing",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -4230,6 +4233,7 @@ dependencies = [
  "rayon",
  "serde",
  "spade",
+ "varde-testing",
 ]
 
 [[package]]
@@ -4260,6 +4264,7 @@ dependencies = [
  "varde-kernel",
  "varde-lane",
  "varde-sketch",
+ "varde-testing",
  "wasm-bindgen",
 ]
 
@@ -4285,6 +4290,7 @@ dependencies = [
  "postcard",
  "serde",
  "varde-expr",
+ "varde-testing",
 ]
 
 [[package]]
@@ -4303,6 +4309,10 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
 ]
+
+[[package]]
+name = "varde-testing"
+version = "0.1.0"
 
 [[package]]
 name = "varde-view"

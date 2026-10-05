@@ -318,7 +318,9 @@ fn cap_triangles_are_split_red_where_a_bisector_would_fold() {
     use crate::test_rng::Rng;
     let mut rng = Rng::new(7);
     let (mut tried, mut red) = (0, 0);
-    while tried < 3000 {
+    // Quick mode runs the first third.
+    let cases = varde_testing::pick(1000, 3000);
+    while tried < cases {
         let angle = rng.range(0.02, std::f64::consts::FRAC_PI_2);
         let o = DVec3::X;
         let a = DVec3::new(angle.cos(), angle.sin(), 0.0);
@@ -387,7 +389,10 @@ fn cap_triangles_are_split_red_where_a_bisector_would_fold() {
         }
     }
     println!("{red} of {tried} split red");
-    assert!((200..=600).contains(&red), "{red} of {tried} split red");
+    assert!(
+        (cases / 15..=cases / 5).contains(&red),
+        "{red} of {tried} split red"
+    );
 }
 
 #[test]
@@ -406,7 +411,9 @@ fn a_leaf_is_split_red_for_its_bisector_only_where_its_children_pass() {
     use crate::test_rng::Rng;
     let mut rng = Rng::new(11);
     let (mut red, mut left, mut tried) = (0, 0, 0);
-    while tried < 30_000 {
+    // Quick mode runs the first tenth: about 390 red and 5 left.
+    let cases = varde_testing::pick(3_000, 30_000);
+    while tried < cases {
         let p = [0, 1, 2].map(|_| DVec3::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0), 0.0));
         // Clockwise from above.
         if (p[1] - p[0]).cross(p[2] - p[0]).z > -0.05 {
@@ -439,25 +446,28 @@ fn a_leaf_is_split_red_for_its_bisector_only_where_its_children_pass() {
             split(&mut refiner, &[side as u32 + 1]);
             let pieces = refiner.pieces().unwrap();
             let mine: Vec<&Piece> = pieces.iter().filter(|p| p.face == 0).collect();
-            let what = format!("{p:?}, {curved:?}, side {side}");
+            // Formatted only on a failure: it costs more than the case.
+            let what = || format!("{p:?}, {curved:?}, side {side}");
             if refiner.leaves[0].is_none() {
-                assert!(folds && kids_pass, "{what}: split red");
+                assert!(folds && kids_pass, "{}: split red", what());
                 red += 1;
                 let made: Vec<Patch> = mine.iter().map(|p| p.patch).collect();
-                assert_eq!(made, kids, "{what}");
+                assert_eq!(made, kids, "{}", what());
                 assert!(
                     mine.iter().all(|p| p.patch.fold_direction().is_some()),
-                    "{what}"
+                    "{}",
+                    what()
                 );
             } else {
-                assert!(!folds || !kids_pass, "{what}: bisected");
+                assert!(!folds || !kids_pass, "{}: bisected", what());
                 left += usize::from(folds);
-                assert_eq!(mine.len(), 2, "{what}");
+                assert_eq!(mine.len(), 2, "{}", what());
             }
         }
     }
     println!("{red} split red, {left} left bisected though folding, of {tried}");
-    assert!(red >= 3000 && (5..=60).contains(&left), "{red}, {left}");
+    let lefts = varde_testing::pick(1..=20, 5..=60);
+    assert!(red * 10 >= cases && lefts.contains(&left), "{red}, {left}");
 }
 
 /// `a` and `b` as one mesh, `b`'s vertices and triangles after `a`'s.

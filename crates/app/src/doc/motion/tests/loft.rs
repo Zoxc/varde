@@ -809,18 +809,32 @@ fn concentric(count: usize) -> Sketch {
 }
 
 /// A loft's hidden section sketches share their own budget for their
-/// profiles ([`ALSO_WORK`]), apart from the visible ones': those past it
+/// profiles ([`also_work`]), apart from the visible ones': those past it
 /// are worked out on later refreshes, each kept once found.
 ///
-/// [`ALSO_WORK`]: crate::doc::regions::ALSO_WORK
+/// [`also_work`]: crate::doc::regions::also_work
 #[test]
 fn hidden_section_sketches_share_their_own_work() {
-    use crate::doc::regions::{ALSO_WORK, RegionPick};
-    let drawn = concentric(1500);
+    // Each refresh spends the whole budget on the sketches' profiles,
+    // which is what's tested: a twentieth of it, of sketches as much simpler,
+    // so as not to take seconds in a debug build.
+    use crate::doc::regions::with_work_unit;
+    with_work_unit(varde_sketch::MAX_WORK / WORK_SHARE, hidden_section_sketches_share);
+}
+
+/// How much smaller the budgets are in the tests spending all of them.
+const WORK_SHARE: usize = 20;
+
+/// The circles of each sketch in those tests: a good share of the budget.
+const SHARED_CIRCLES: usize = 300;
+
+fn hidden_section_sketches_share() {
+    use crate::doc::regions::{RegionPick, also_work};
+    let drawn = concentric(SHARED_CIRCLES);
     let mut left = usize::MAX;
     drawn.profiles_spending(&mut left).unwrap();
     let each = usize::MAX - left;
-    let fit = ALSO_WORK / each;
+    let fit = also_work() / each;
     assert!((2..=12).contains(&fit), "{each}");
     let mut editor = Editor::new(Document::default());
     let sketches: Vec<FeatureId> = (0..fit + 2)
@@ -853,18 +867,25 @@ fn hidden_section_sketches_share_their_own_work() {
 }
 
 /// Editing a loft whose sections are of more hidden sketches than
-/// [`ALSO_WORK`] works out at once: those deferred are never said to be
+/// [`also_work`] works out at once: those deferred are never said to be
 /// gone, an undo and a redo of an edit after the loft while it's edited
 /// leave it ready, and OK on it unchanged writes nothing.
 ///
-/// [`ALSO_WORK`]: crate::doc::regions::ALSO_WORK
+/// [`also_work`]: crate::doc::regions::also_work
 #[test]
 fn a_loft_of_deferred_sketches_through_undo_and_redo() {
-    use crate::doc::regions::ALSO_WORK;
+    // Each refresh of the sections spends the whole of `also_work`, about
+    // two seconds in a debug build, and this takes several: only with
+    // `VARDE_TESTS=full`. The budget itself is covered quickly by
+    // `hidden_section_sketches_share_their_own_work`.
+    if !varde_testing::full() {
+        return;
+    }
+    use crate::doc::regions::also_work;
     let drawn = concentric(1500);
     let mut left = usize::MAX;
     let profiles = drawn.profiles_spending(&mut left).unwrap();
-    let fit = ALSO_WORK / (usize::MAX - left);
+    let fit = also_work() / (usize::MAX - left);
     // The innermost disc: the region with no holes.
     let disc = (profiles.regions.iter())
         .position(|region| region.holes.is_empty())

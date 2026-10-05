@@ -456,7 +456,9 @@ fn mutated_meshes_are_refused_unless_still_manifolds() {
         .collect();
     let mut rng = Rng::new(60);
     let (mut kept, mut refused, mut untold) = (0, 0, 0);
-    for case in 0..6000 {
+    // Quick mode runs the first quarter.
+    let cases = varde_testing::pick(1500, 6000);
+    for case in 0..cases {
         let mesh = &meshes[case % meshes.len()];
         let mut origin = mesh.origin();
         let mut p = mesh.positions().to_vec();
@@ -572,7 +574,7 @@ fn mutated_meshes_are_refused_unless_still_manifolds() {
     }
     // Both kinds seen plenty.
     assert!(
-        kept > 150 && refused > 3000 && untold < 2000,
+        kept * 40 > cases && refused * 2 > cases && untold * 3 < cases,
         "{kept} kept, {refused} refused, {untold} untold"
     );
 }

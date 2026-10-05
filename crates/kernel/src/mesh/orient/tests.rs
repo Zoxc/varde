@@ -685,7 +685,9 @@ fn random_nested_shells_are_told_right() {
     // the shells' own, signed.
     let mut rng = crate::test_rng::Rng::new(56);
     let (mut right, mut wrong) = (0, 0);
-    for case in 0..300 {
+    // Quick mode runs the first third.
+    let cases = varde_testing::pick(100, 300);
+    for case in 0..cases {
         let mut shells = nested(&mut rng);
         // Half the cases with one or two shells turned the wrong way.
         if case % 2 == 1 {
@@ -736,7 +738,7 @@ fn random_nested_shells_are_told_right() {
             wrong += 1;
         }
     }
-    assert!(right > 50 && wrong > 50, "{right} {wrong}");
+    assert!(right * 6 > cases && wrong * 6 > cases, "{right} {wrong}");
 }
 
 /// `mesh` with every vertex and control point moved by `f`, on one free
@@ -810,7 +812,10 @@ fn random_thin_curved_shells_are_told() {
     // rings with their volume), turned over they are refused.
     let mut rng = crate::test_rng::Rng::new(6);
     let mut rings = 0;
-    for case in 0..40 {
+    // Quick mode runs the first third of each kind (integrating the rings'
+    // volumes is most of the time).
+    let ring_cases = varde_testing::pick(14, 40);
+    for case in 0..ring_cases {
         let outer = rng.range(1.0, 5.0);
         let inner = outer * (1.0 - rng.log_range(0.005, 0.2));
         let n = 4 + (rng.next_u64() % 61) as usize;
@@ -831,8 +836,8 @@ fn random_thin_curved_shells_are_told() {
             "ring {case}"
         );
     }
-    assert!(rings > 20, "{rings}");
-    for case in 0..100 {
+    assert!(rings * 2 > ring_cases, "{rings}");
+    for case in 0..varde_testing::pick(34, 100) {
         let r = rng.range(1.0, 10.0);
         let t = rng.range(0.05, 1.0);
         let a = rng.range(0.1, r / 4.0);
@@ -860,7 +865,10 @@ fn lune_bounds_hold_on_random_patches() {
     // at most a third of it).
     let mut rng = crate::test_rng::Rng::new(9);
     let mut tried = 0;
-    for _ in 0..3000 {
+    // Quick mode runs the first fifth: integrating a patch with weights
+    // this far from 1 takes its 1024 pieces, most of the time here.
+    let cases = varde_testing::pick(600, 3000);
+    for _ in 0..cases {
         let p = [rng.point(1.0), rng.point(1.0), rng.point(1.0)];
         let c = [0, 1, 2].map(|i| {
             let e = rng.log_range(1e-3, 3.0);
@@ -878,5 +886,5 @@ fn lune_bounds_hold_on_random_patches() {
         let bound = lune_bound(&patch);
         assert!(own.abs() <= 0.5 * bound, "{patch:?}: {own} {bound}");
     }
-    assert!(tried > 1000, "{tried}");
+    assert!(tried * 3 > cases, "{tried}");
 }

@@ -21,7 +21,7 @@ use varde_view::{
 
 use super::super::*;
 use super::two_plates;
-use crate::tests::{answer, two_sides};
+use crate::tests::two_sides;
 
 /// A small deterministic generator (xorshift64*).
 struct Rng(u64);
@@ -90,8 +90,14 @@ fn random_pick(doc: &Doc, rng: &mut Rng) -> Option<Pick> {
 
 /// Answers some of the requests waiting: all in order, only the newest
 /// (the rest stay, to come late), one at random, or all newest first;
-/// returning what the answers had the document ask.
-fn deliver(doc: &mut Doc, requests: &RefCell<Vec<Request>>, rng: &mut Rng) -> Vec<Request> {
+/// returning what the answers had the document ask. `regen` keeps its
+/// cache between answers, as the document's lane does.
+fn deliver(
+    doc: &mut Doc,
+    requests: &RefCell<Vec<Request>>,
+    regen: &mut varde_regen::Regenerator,
+    rng: &mut Rng,
+) -> Vec<Request> {
     let waiting = requests.take();
     if waiting.is_empty() {
         return Vec::new();
@@ -100,20 +106,20 @@ fn deliver(doc: &mut Doc, requests: &RefCell<Vec<Request>>, rng: &mut Rng) -> Ve
     match rng.below(4) {
         0 => {
             for request in waiting.drain(..) {
-                doc.computed(varde_regen::handle(request));
+                doc.computed(regen.handle(request));
             }
         }
         1 => {
             let newest = waiting.pop().unwrap();
-            doc.computed(varde_regen::handle(newest));
+            doc.computed(regen.handle(newest));
         }
         2 => {
             let one = waiting.remove(rng.below(waiting.len()));
-            doc.computed(varde_regen::handle(one));
+            doc.computed(regen.handle(one));
         }
         _ => {
             for request in waiting.drain(..).rev() {
-                doc.computed(varde_regen::handle(request));
+                doc.computed(regen.handle(request));
             }
         }
     }
@@ -337,17 +343,18 @@ fn shows_its_values(doc: &Doc, rng: &mut Rng) {
             150.0 + rng.below(900) as f32,
         )
     };
-    let mut renderer = varde_view::probe::renderer();
     let view = doc.view(
         false,
         mode,
         varde_view::ViewOptions::default(),
         crate::Offers::default(),
     );
-    let mut ui = crate::tests::shown(view, size, &mut renderer);
-    let found: Vec<String> = (crate::tests::texts(&mut ui, &renderer).into_iter())
-        .map(|text| text.text)
-        .collect();
+    let found: Vec<String> = crate::tests::with_renderer(|renderer| {
+        let mut ui = crate::tests::shown(view, size, renderer);
+        (crate::tests::texts(&mut ui, renderer).into_iter())
+            .map(|text| text.text)
+            .collect()
+    });
     let Some(session) = &doc.measure else {
         return;
     };
@@ -371,25 +378,30 @@ fn newest_revision(sent: &[Request]) -> Option<u64> {
     sent.iter().filter_map(Request::inspect).max()
 }
 
+/// The steps of the quick run, see [`crate::tests::fuzz_steps`].
+const QUICK_STEPS: usize = 20;
+
 #[test]
 fn random_measuring_keeps_its_invariants() {
-    let seeds = std::env::var("VARDE_MEASURE_FUZZ")
-        .ok()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(2u64);
-    let first = std::env::var("VARDE_MEASURE_SEED")
-        .ok()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(1u64);
-    let compared: usize = (first..first + seeds).map(|seed| run(seed, 200)).sum();
-    // Measures and distances compared with the kernel's: not vacuous.
-    assert!(compared >= 20 * seeds as usize, "{compared}");
+    // Seed 2 first: seed 1 measures nothing for its first 150 steps.
+    let seeds = match varde_testing::replay_seed() {
+        Some(seed) => vec![seed],
+        None => varde_testing::pick(vec![2], vec![2, 1]),
+    };
+    let steps = crate::tests::fuzz_steps(QUICK_STEPS, 200);
+    let compared: usize = seeds.iter().map(|&seed| run(seed, steps)).sum();
+    // Measures and distances compared with the kernel's, about one in ten
+    // steps: not vacuous (a seed replayed alone may compare fewer).
+    if varde_testing::replay_seed().is_none() {
+        assert!(compared >= seeds.len() * steps / 10, "{compared}");
+    }
 }
 
 fn run(seed: u64, steps: usize) -> usize {
     let mut compared = 0;
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ seed.wrapping_mul(0x1000_0001));
     let (mut doc, requests, below) = two_plates();
+    let mut regen = varde_regen::Regenerator::default();
     // Every request sent, in the order sent.
     let mut sent: Vec<Request> = Vec::new();
     let mut joined = false;
@@ -535,7 +547,7 @@ fn run(seed: u64, steps: usize) -> usize {
             );
         }
         if rng.chance(60) {
-            sent.extend(deliver(&mut doc, &requests, &mut rng));
+            sent.extend(deliver(&mut doc, &requests, &mut regen, &mut rng));
         }
         // Only the newest answer is shown: its revision is the newest
         // asked.
@@ -559,7 +571,9 @@ fn run(seed: u64, steps: usize) -> usize {
         let _ = below;
     }
     // Everything answered, the panel and its copies hold.
-    answer(&mut doc, &requests);
+    for request in requests.take() {
+        doc.computed(regen.handle(request));
+    }
     if doc.measure.is_some()
         && let Some(inspected) = doc.feed.inspected()
     {
