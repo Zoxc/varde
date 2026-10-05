@@ -537,6 +537,85 @@ fn a_sketch_on_a_face_follows_it_into_the_new_body() {
     );
 }
 
+/// A sketch on the cube's face at x = 0 named on the split's new body
+/// (the back), placed there; and the cube with its other faces.
+fn sketch_on_the_new_piece() -> (Editor, BodyId, BodyId, FeatureId, FeatureId) {
+    with_booleans();
+    let (mut editor, cube, tool) = cube_and_tool();
+    let id = add(&mut editor, split(cube, SplitTool::Body(tool)));
+    let piece = new_body(&editor, id);
+    let evaluation = evaluated(editor.document());
+    let left = FaceRef {
+        body: piece,
+        key: key_on(solid_of(&evaluation, piece), DVec3::NEG_X, 0.0),
+        near: DVec3::new(0.0, 5.0, 5.0),
+    };
+    editor
+        .apply(editor.document().add_sketch(Plane::Face(left)))
+        .unwrap();
+    let sketch = editor.document().features().last().unwrap().id;
+    (editor, cube, tool, id, sketch)
+}
+
+/// Where sketch `sketch` is placed, its origin's x, or why it isn't.
+fn placed_x(editor: &Editor, sketch: FeatureId) -> Result<f64, String> {
+    let evaluation = evaluated(editor.document());
+    if let Some(failed) = failure(&evaluation, sketch) {
+        return Err(failed.message.clone());
+    }
+    Ok((evaluation.placements.iter())
+        .find(|(id, _)| *id == sketch)
+        .map(|(_, placement)| placement.origin.x)
+        .expect("placed"))
+}
+
+/// A sketch on a face of a split's new body; the split edited to keep
+/// the front (the sketch's body gone), then in a later edit both again:
+/// the new body comes back with its id and the sketch finds its face
+/// again.
+#[test]
+fn a_sketch_on_a_new_body_kept_again_finds_its_face() {
+    let (mut editor, cube, tool, id, sketch) = sketch_on_the_new_piece();
+    let piece = new_body(&editor, id);
+    assert_eq!(placed_x(&editor, sketch), Ok(0.0));
+    let trim = Split {
+        keep: Keep::Front,
+        new_body: None,
+        ..split(cube, SplitTool::Body(tool))
+    };
+    set(&mut editor, id, trim);
+    assert!(editor.document().body(piece).is_none());
+    assert!(placed_x(&editor, sketch).is_err());
+    set(&mut editor, id, split(cube, SplitTool::Body(tool)));
+    assert_eq!(new_body(&editor, id), piece);
+    assert_eq!(placed_x(&editor, sketch), Ok(0.0));
+    // Undo and redo across both edits.
+    editor.undo();
+    assert!(placed_x(&editor, sketch).is_err());
+    editor.undo();
+    assert_eq!(placed_x(&editor, sketch), Ok(0.0));
+    editor.redo();
+    editor.redo();
+    assert_eq!(placed_x(&editor, sketch), Ok(0.0));
+}
+
+/// A sketch on a face of a split's new body, the pieces then swapped
+/// (`original` Back): the face is on the body split now, and the sketch
+/// follows it there.
+#[test]
+fn a_sketch_on_a_new_body_follows_its_face_when_the_pieces_swap() {
+    let (mut editor, cube, tool, id, sketch) = sketch_on_the_new_piece();
+    let swapped = Split {
+        original: Side::Back,
+        ..split(cube, SplitTool::Body(tool))
+    };
+    set(&mut editor, id, swapped);
+    let evaluation = evaluated(editor.document());
+    // The back, with the face at x = 0, is the cube's now.
+    assert_near(solid_of(&evaluation, cube).volume(), 600.0);
+    assert_eq!(placed_x(&editor, sketch), Ok(0.0));
+}
+
 /// A sketch on a face follows it through a chain of splits and merges:
 /// the cube's face at x = 0 goes to the first split's new body, which a
 /// combine merges into another block, which a second split cuts, its

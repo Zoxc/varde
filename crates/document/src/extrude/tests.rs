@@ -268,6 +268,7 @@ fn excluded_bodies_are_sorted_and_made_earlier() {
     let first = editor.document().bodies[0].id;
     let cut = plate(Operation::Join(Targets {
         excluded: vec![first, second],
+        held: None,
     }));
     editor
         .apply(editor.document().add_feature(cut.into()))
@@ -276,7 +277,10 @@ fn excluded_bodies_are_sorted_and_made_earlier() {
     let join = document.features[3].id;
     let excluding = |excluded: Vec<BodyId>| {
         changed(&document, join, |extrude| {
-            extrude.operation = Operation::Join(Targets { excluded });
+            extrude.operation = Operation::Join(Targets {
+                excluded,
+                held: None,
+            });
         })
     };
     refused(
@@ -301,7 +305,10 @@ fn excluded_bodies_are_sorted_and_made_earlier() {
     let mut editor = Editor::new(document.clone());
     let cut = |excluded| {
         Box::new(Extrude {
-            operation: Operation::Cut(Targets { excluded }),
+            operation: Operation::Cut(Targets {
+                excluded,
+                held: None,
+            }),
             ..plate(Operation::NewBody(BodyId::NEW))
         })
     };
@@ -329,6 +336,7 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
     // A join after both, excluding the second body.
     let join = plate(Operation::Join(Targets {
         excluded: vec![first_body, body],
+        held: None,
     }));
     editor
         .apply(editor.document().add_feature(join.into()))
@@ -364,8 +372,12 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
         .unwrap();
     assert_eq!(editor.revision(), revision);
 
-    // Made a cut, it loses its body, and the join no longer excludes it.
-    let cut = plate(Operation::Cut(Targets::default()));
+    // Made a cut, it loses its body, and the join no longer excludes it;
+    // it holds the body's id, whatever the command held.
+    let cut = plate(Operation::Cut(Targets {
+        excluded: Vec::new(),
+        held: Some(first_body),
+    }));
     editor
         .apply(Command::SetFeature {
             feature: second,
@@ -378,9 +390,40 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
         extrude_of(document, join).operation.excluded(),
         [first_body]
     );
-
-    // Made a new body again, it gets a new one.
+    assert_eq!(
+        extrude_of(document, second).operation,
+        Operation::Cut(Targets {
+            excluded: Vec::new(),
+            held: Some(body),
+        })
+    );
+    // Its distance changed, it holds it still.
     let next = BodyId(document.next_id);
+    let cut = Extrude {
+        extent: Extent::OneSide(distance("5")),
+        ..plate(Operation::Cut(Targets::default()))
+    };
+    editor
+        .apply(Command::SetFeature {
+            feature: second,
+            kind: Box::new(cut.into()),
+        })
+        .unwrap();
+    assert_eq!(
+        extrude_of(editor.document(), second).operation.held_body(),
+        Some(body)
+    );
+    // A feature added meanwhile gets an id of its own.
+    editor
+        .apply((editor.document()).add_feature(plate(Operation::NewBody(body)).into()))
+        .unwrap();
+    let third = editor.document().features.last().unwrap().id;
+    let added = editor.document().bodies.last().unwrap().id;
+    assert_eq!(added, BodyId(next.0 + 1));
+    assert_eq!(editor.document().body(added).unwrap().created_by, third);
+    editor.undo();
+
+    // Made a new body again, it gets its body back, with its id.
     editor
         .apply(Command::SetFeature {
             feature: second,
@@ -390,16 +433,24 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
     let document = editor.document();
     assert_eq!(
         extrude_of(document, second).operation,
-        Operation::NewBody(next)
+        Operation::NewBody(body)
     );
-    let made = document.body(next).unwrap();
+    let made = document.body(body).unwrap();
     assert_eq!((made.name.as_str(), made.created_by), ("Body 2", second));
+    assert_eq!(document.bodies.len(), start.bodies.len());
 
     // Each one step to undo.
-    for _ in 0..3 {
+    for _ in 0..4 {
         editor.undo();
     }
     assert_eq!(*editor.document(), start);
+    for _ in 0..4 {
+        editor.redo();
+    }
+    assert_eq!(editor.document().body(body).unwrap().created_by, second);
+    for _ in 0..4 {
+        editor.undo();
+    }
 
     // A sketch isn't set this way, and a missing feature isn't set.
     let cut = || Box::new(plate(Operation::Cut(Targets::default())).into());

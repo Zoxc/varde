@@ -372,6 +372,7 @@ impl BodyTargets {
     pub(crate) fn operation(&self, kind: OperationKind) -> Operation {
         let targets = Targets {
             excluded: self.excluded.clone(),
+            held: None,
         };
         match kind {
             OperationKind::NewBody => Operation::NewBody(BodyId::NEW),

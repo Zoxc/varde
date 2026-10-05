@@ -128,8 +128,9 @@ fn keeping_one_side_makes_no_body() {
 }
 
 /// Editing a split keeps its new body while it keeps both sides, takes
-/// it away when it keeps one, and makes another when it keeps both
-/// again; a later feature naming the new body refuses taking it away.
+/// it away when it keeps one, holding its id, and brings it back with
+/// that id when it keeps both again; a later feature naming the new body
+/// refuses taking it away.
 #[test]
 fn editing_what_is_kept_adds_and_removes_the_new_body() {
     let mut editor = Editor::new(with_body());
@@ -145,18 +146,24 @@ fn editing_what_is_kept_adds_and_removes_the_new_body() {
     set(&mut editor, id, back.clone()).unwrap();
     assert_eq!(split_of(editor.document(), id).new_body, Some(made));
     assert_eq!(split_of(editor.document(), id).kept(), Side::Back);
-    // One side: the body goes.
+    // One side: the body goes, its id held.
     let front = Split {
         keep: Keep::Front,
+        new_body: None,
         ..back.clone()
     };
     set(&mut editor, id, front.clone()).unwrap();
     assert!(editor.document().body(made).is_none());
-    assert_eq!(split_of(editor.document(), id).new_body, None);
-    // Both again: a new one.
+    let trim = split_of(editor.document(), id);
+    assert_eq!(trim.new_body, Some(made));
+    assert_eq!((trim.made_body(), trim.held_body()), (None, Some(made)));
+    let feature = editor.document().feature(id).unwrap();
+    assert_eq!(feature.kind.new_body(), None);
+    assert_eq!(feature.kind.held_body(), Some(made));
+    // Both again: the same one.
     set(&mut editor, id, back.clone()).unwrap();
     let again = split_of(editor.document(), id).new_body.unwrap();
-    assert_ne!(again, made);
+    assert_eq!(again, made);
     assert_eq!(editor.document().body(again).unwrap().created_by, id);
     // A scale of the new body holds it.
     let ask = Scale::factor_ask(&editor.document().design());
@@ -411,9 +418,9 @@ fn splits_round_trip() {
     );
 }
 
-/// Bytes whose split is wrong are refused as they're read: a new body
-/// though it keeps one side, none though it keeps both, one it doesn't
-/// make, and a body made by a split that doesn't make it.
+/// Bytes whose split is wrong are refused as they're read: one keeping
+/// a side whose new body is still there, none though it keeps both, one
+/// it doesn't make, and a body made by a split that doesn't make it.
 #[test]
 fn wrong_splits_are_refused_when_read() {
     let (mut editor, [a, b], _) = two_bodies();
@@ -429,26 +436,136 @@ fn wrong_splits_are_refused_when_read() {
         Document::from_postcard(&document.to_postcard()).map_err(|e| e.to_string())
     };
     let n = id.get();
-    assert_eq!(
-        read(&|s| s.keep = Keep::Front),
+    let not_made = Err(format!(
+        "body {} is made by feature {n}, which doesn't make it",
+        made.0
+    ));
+    assert_eq!(read(&|s| s.keep = Keep::Front), not_made);
+    assert_eq!(read(&|s| s.new_body = None), not_made);
+    assert_eq!(read(&|s| s.new_body = Some(b)), not_made);
+}
+
+/// The id a split keeping one side holds is checked as it's read: below
+/// the next id, no body's, held by no other feature. A split keeping a
+/// side that holds none (as every one written before ids were held)
+/// reads.
+#[test]
+fn held_ids_are_checked_when_read() {
+    let (mut editor, [a, b], _) = two_bodies();
+    let id = add(&mut editor, by_xy(a)).unwrap();
+    let made = split_of(editor.document(), id).new_body.unwrap();
+    let trim = Split {
+        keep: Keep::Front,
+        ..by_xy(a)
+    };
+    set(&mut editor, id, trim.clone()).unwrap();
+    let other = add(&mut editor, trim).unwrap();
+    assert_eq!(split_of(editor.document(), other).new_body, None);
+    let next_id = editor.document().next_id;
+    let read = |feature: FeatureId, held: Option<BodyId>| {
+        let mut document = editor.document().clone();
+        let index = document.feature_index(feature).unwrap();
+        let FeatureKind::Split(split) = &mut document.features[index].kind else {
+            unreachable!()
+        };
+        split.new_body = held;
+        Document::from_postcard(&document.to_postcard()).map_err(|e| e.to_string())
+    };
+    let held = |feature: FeatureId, body: BodyId| {
         Err(format!(
-            "feature {n}: makes a new body exactly when it keeps both sides"
+            "feature {} holds body id {} for a body it made, which is taken or not given out yet",
+            feature.get(),
+            body.0
         ))
-    );
+    };
+    assert_eq!(read(id, Some(made)), Ok(editor.document().clone()));
+    assert!(read(id, None).is_ok());
+    assert_eq!(read(id, Some(b)), held(id, b));
+    let ahead = BodyId(next_id);
+    assert_eq!(read(id, Some(ahead)), held(id, ahead));
+    assert_eq!(read(id, Some(BodyId::NEW)), held(id, BodyId::NEW));
+    // Two holding one id: the second is refused.
+    assert_eq!(read(other, Some(made)), held(other, made));
+    // An id given out and no body's, held by the other: fine.
+    assert!(read(other, Some(BodyId(other.get()))).is_ok());
+}
+
+/// The repro the held id is for: a sketch on a face of a split's new
+/// body; the split edited to keep one side, then (in a later edit) both
+/// again: the sketch's face is on a body again, the same one. Features
+/// added while the split keeps one side get ids of their own; undo and
+/// redo go through each step.
+#[test]
+fn a_sketch_on_the_new_body_finds_it_again() {
+    let mut editor = Editor::new(with_body());
+    let body = editor.document().bodies[0].id;
+    let id = add(&mut editor, by_xy(body)).unwrap();
+    let made = split_of(editor.document(), id).new_body.unwrap();
+    let maker = editor.document().features[1].id;
+    let face = top(made, maker);
+    editor
+        .apply(editor.document().add_sketch(crate::Plane::Face(face)))
+        .unwrap();
+    let sketch = editor.document().features.last().unwrap().id;
+    let both = editor.document().clone();
+    set(
+        &mut editor,
+        id,
+        Split {
+            keep: Keep::Front,
+            new_body: None,
+            ..by_xy(body)
+        },
+    )
+    .unwrap();
+    let trimmed = editor.document().clone();
+    assert!(trimmed.body(made).is_none());
+    assert_eq!(trimmed.bodies.len(), 1);
+    // The sketch stays, naming the body held.
+    assert!(trimmed.feature(sketch).is_some());
+    // A split and an extrude added meanwhile make bodies of their own.
+    let later = add(&mut editor, by_xy(body)).unwrap();
+    let theirs = split_of(editor.document(), later).new_body.unwrap();
+    assert_ne!(theirs, made);
+    let (_, plate) = extrude_again(&mut editor);
+    assert!(theirs > made && plate > made);
+    editor.undo();
+    editor.undo();
+    assert_eq!(*editor.document(), trimmed);
+    set(
+        &mut editor,
+        id,
+        Split {
+            new_body: None,
+            ..by_xy(body)
+        },
+    )
+    .unwrap();
+    let document = editor.document();
+    let back = document.body(made).unwrap();
+    assert_eq!(back.created_by, id);
+    assert_eq!(split_of(document, id).new_body, Some(made));
     assert_eq!(
-        read(&|s| s.new_body = None),
-        Err(format!(
-            "body {} is made by feature {n}, which doesn't make it",
-            made.0
-        ))
+        (document.bodies.iter().map(|body| body.id)).collect::<Vec<_>>(),
+        [body, made]
     );
-    assert_eq!(
-        read(&|s| s.new_body = Some(b)),
-        Err(format!(
-            "body {} is made by feature {n}, which doesn't make it",
-            made.0
-        ))
-    );
+    let FeatureKind::Sketch { plane, .. } = &document.feature(sketch).unwrap().kind else {
+        unreachable!()
+    };
+    assert_eq!(plane.face().map(|face| face.body), Some(made));
+    let again = document.clone();
+    // Its name is given again; all else is as it was.
+    let mut named = again.clone();
+    let index = named.body_index(made).unwrap();
+    named.bodies[index].name = both.body(made).unwrap().name.clone();
+    assert_eq!(named, both);
+    editor.undo();
+    assert_eq!(*editor.document(), trimmed);
+    editor.undo();
+    assert_eq!(*editor.document(), both);
+    editor.redo();
+    editor.redo();
+    assert_eq!(*editor.document(), again);
 }
 
 /// Kinds are stored by name in files, but the workers' postcard keeps

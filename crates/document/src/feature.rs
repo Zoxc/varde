@@ -238,15 +238,30 @@ impl FeatureKind {
     /// [`Operation::NewBody`], or a split's new body.
     pub fn new_body(&self) -> Option<BodyId> {
         match self {
-            FeatureKind::Split(split) => split.new_body,
+            FeatureKind::Split(split) => split.made_body(),
             _ => self.operation().and_then(Operation::new_body),
+        }
+    }
+
+    /// The id it holds for the body it made before but doesn't make now,
+    /// which no other body or feature gets: a split's new body while it
+    /// keeps one side ([`Split::held_body`]), or that of a join, cut or
+    /// intersect that was a new body ([`Operation::held_body`]). Making
+    /// the body again brings it back with this id.
+    ///
+    /// [`Split::held_body`]: crate::Split::held_body
+    pub fn held_body(&self) -> Option<BodyId> {
+        match self {
+            FeatureKind::Split(split) => split.held_body(),
+            _ => self.operation().and_then(Operation::held_body),
         }
     }
 
     /// The same, to change.
     pub(crate) fn new_body_mut(&mut self) -> Option<&mut BodyId> {
         match self {
-            FeatureKind::Split(split) => split.new_body.as_mut(),
+            FeatureKind::Split(split) if split.keeps_both() => split.new_body.as_mut(),
+            FeatureKind::Split(_) => None,
             _ => match self.operation_mut()? {
                 Operation::NewBody(body) => Some(body),
                 _ => None,

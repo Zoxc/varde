@@ -20,8 +20,8 @@ they share with the newer kinds is here. The kernel math of each is in
   whatever id the command held (`BodyId::NEW`); a pattern whose copies
   are bodies of their own adds one per copy, laid out as "Pattern"
   says; a split keeping both pieces adds one for its other piece
-  (`Split::new_body`, filled in or taken out as its `keep` says, see
-  "Split"). One undo step. A sketch
+  (`Split::new_body`, filled in as its `keep` says, see "Split"). One
+  undo step. A sketch
   kind is refused (`EditError::SketchKind`): sketches are added empty by
   `AddSketch` and set by `SetSketch`.
 - `Command::SetFeature { feature, kind }` replaces a feature's kind,
@@ -31,8 +31,21 @@ they share with the newer kinds is here. The kernel math of each is in
   the operation. A `NewBody` that stays one keeps its body (whatever id
   the command held; a split's new body likewise, `FeatureKind::new_body`
   / `new_body_mut`); one that stops removes the body and drops it from
-  the other features' excluded lists; one that starts adds one. A
-  pattern's copy bodies go the same way, copy by copy (see "Pattern").
+  the other features' excluded lists, but **holds its id**
+  (`FeatureKind::held_body`: a join's, cut's or intersect's
+  `Targets::held`, a split's `new_body` while it keeps a side); one that
+  starts gets the body back with the id it held (in its place in id
+  order, named "Body N" afresh), else adds one with a new id. So what
+  was named on the body (a sketch on its face, a later feature's
+  reference) finds it again across edits (New body, Join, New body; a
+  split keeping both, one side, both). The commands fill the id in
+  whatever they held (`planned_new_body`: the old feature's body or
+  held id, carried across kinds that have the slot, else `BodyId::NEW`
+  for one to make; `AddFeature` never holds one), so a panel needn't.
+  The document's check wants every held id below the next id, no body's
+  and held by one feature only (`CheckError::Held`), so features added
+  meanwhile never get it. A pattern's copy bodies go the same way, copy
+  by copy (see "Pattern"), but aren't held.
   The caller passes regions referenced afresh from the sketch as it is.
   Setting what's already there changes nothing (no new revision).
 - Both run the document's whole check on the result, and then
@@ -2522,7 +2535,7 @@ pub struct Split {
     pub tool: SplitTool,
     #[serde(default)] pub original: Side,           // Front | Back: which piece keeps the id
     #[serde(default)] pub keep: Keep,               // Both | Front | Back
-    #[serde(default)] pub new_body: Option<BodyId>, // Some exactly when keep is Both
+    #[serde(default)] pub new_body: Option<BodyId>, // Some when keep is Both; held while one side is
 }
 pub enum SplitTool {
     Plane(PlaneRef),                                      // an origin plane or a flat face's
@@ -2552,18 +2565,15 @@ pub enum SplitTool {
   two in step), `SetFeature` keeps it while both are kept (switching
   `original` keeps the same body, now the other piece), removes it when
   one side is kept (refused while a later feature names it, as an
-  extrude's new body is), and adds a new one when both are kept again.
-  Within one edit (one side, then both again before OK; an extrude's
-  New body, Join, New body likewise) the stored feature still names the
-  body, so `SetFeature` keeps its id and OK writes nothing. Across
-  edits (one side kept and committed, both again in a later edit) the
-  body gets a new id, and what named the old one (a sketch on its face)
-  stays broken: a split keeping a side stores no `new_body`, so the old
-  id isn't known, and keeping it would mean storing it there, a change
-  to the document's types (decided against here; ids are never reused).
+  extrude's new body is) but keeps its id in `new_body`
+  (`Split::held_body`; `Split::made_body` is the body it makes, only
+  while both are kept), and when both are kept again, in the same edit
+  or a later one, brings the body back with that id, so what named it
+  (a sketch on its face) finds it again. A split that never kept both
+  holds none and gets a new id when it first does; so does every split
+  written before ids were held (a trim with `new_body` none).
 - **Checks** (`CheckError::Split(id, SplitError)`): `Split::check_own()`
-  (cheap): the new body there exactly when both are kept
-  (`NewBodyKept`), a tool body not the body (`ToolIsBody`), a face's
+  (cheap): the new body there when both are kept (`NoNewBody`), a tool body not the body (`ToolIsBody`), a face's
   point in bounds (`Face(PlaneError)`), 1..=256 regions each checked
   (`Regions`, `Region`), 1..=256 curves sorted without repeats
   (`Curves`, `CurveOrder`). `Document::check` then wants the body made
@@ -2572,7 +2582,9 @@ pub enum SplitTool {
   plane face's body and any face's maker as a mirror's plane's
   (`RefBody`, `RefMaker`: one not there is allowed with ids no later
   body or feature can take), a sketch tool's sketch a sketch before it
-  (`Sketch`), and the new body a body it makes (`NewBody`). On add and
+  (`Sketch`), and the new body, while both are kept, a body it makes
+  (`NewBody`); a held id is checked as every feature's
+  (`CheckError::Held`, above). On add and
   set only (`check_new`): a chain's curves are curves of its sketch
   (`Split::check_curves`, `Curve`); a later edit deleting one makes
   regeneration fail it, as a revolve's axis line.
@@ -2582,7 +2594,12 @@ pub enum SplitTool {
   names that; removing the new body removes the split (its maker). A
   plane face's body isn't listed (the split stays and fails, as a
   mirror's plane). `uses()` and `sketch()` give a sketch tool's sketch,
-  which adding the split hides, as an extrude does.
+  which adding the split hides, as an extrude does. A held id is no
+  body: it's in no body list (`Document::bodies`, so not in Objects),
+  `RemoveBody` of it removes nothing, and it goes with its split; a
+  reference to it (a sketch on its face) passes the check as one to a
+  body that isn't there with an id below the next id does, and fails
+  in regeneration until the body is back.
 - `SetUnits`: nothing to pin.
 
 ### Regeneration
@@ -2650,7 +2667,11 @@ pub enum SplitTool {
   it (in `Evaluation::splits`' order), and on those of splits of those,
   and the sketch is placed on the first it's found on (a placement's
   cached failure keeps only its words, so "not found" is told by
-  `FACE_NOT_FOUND`, which `place_on` says for that alone). Switching
+  `FACE_NOT_FOUND`, which `place_on` says for that alone). The search
+  goes back through splits too: a face named on a split's new body that
+  isn't found there is looked for on the body split (and on through
+  that body's splits), so a sketch on a face of the new body follows it
+  when `original` is switched and the face goes to the body. Switching
   `original` swaps which body later features work on.
 - **Kernel stand-in**: the kernel's `split`, `half_space`,
   `surface_tool` and `chain_tool` (`kernel/src/boolean/split.rs`) are
@@ -2748,7 +2769,11 @@ face picked, the origin planes on the toolbar).
   body a later feature names is refused at once, as the document would
   ("Move 2 uses Body 4, the piece this split would no longer keep: keep
   both, or take Body 4 out of Move 2 or delete it first", the panel's
-  foot, `Doc::split_held`), and not previewed.
+  foot, `Doc::split_held`), and not previewed. Keeping both again
+  (in a later edit too) brings the new body back with the id the split
+  held, the commands filling it in: the panel sends `BodyId::NEW` or
+  none, a new split getting a new id; the preview labels it "New body"
+  until committed, as a body the document doesn't hold.
 - **Whole and ready**: a body and the tool of the tile shown
   (`MotionSession::split`, its new body `BodyId::NEW` while both are
   kept, which the commands fill in or keep), else what's next for the
@@ -2825,15 +2850,20 @@ curves aren't checked to join into one open line until regeneration
 says so.
 
 Tests: `document/src/split/tests.rs` (a new body made and undone, a
-trim making none, editing what's kept adding and removing the new body
-and refused while a scale names it, sketch tools hiding and using their
+trim making none, editing what's kept adding and removing the new body,
+holding its id and bringing it back with it, and refused while a scale
+names it; a sketch on the new body's face across a trim and both again,
+with undo and redo and features added meanwhile getting ids of their
+own; held ids checked when read, sketch tools hiding and using their
 sketch, every check, removal along the bodies named, units, postcard
 round trip, wrong splits refused when read, the tenth kind),
 `regen/src/history/tests/split.rs` (the stand-in failing as too complex
 with the history going on, every tool reaching the kernel, regen's
 refusals before it, the chain joined end to end, a line of 256 curves
 joined at once, an arc run against its way round, ends joined within
-the resolution only; with the booleans: the
+the resolution only; with the booleans: a sketch on the new body's
+face found again once both are kept again in a later edit, and
+following its face back to the body when the pieces swap; the
 pieces to the body and the new body with `original` and `keep`, a
 sketch region through all, a side empty, a sketch on a face following
 into the new body while a mirror's face doesn't, and on through a
@@ -2849,6 +2879,8 @@ each sketch on a face placed on that face where it followed it, the
 cache warm and cold alike, later edits possible, flipped bytes;
 `VARDE_SPLIT_SEEDS` runs more),
 `io/src/vrdp/tests.rs` (through a file, a tampered face point refused,
+held ids through a file, older records with none read, held ids changed
+on disk refused,
 every tool's split damaged on disk refused or checked),
 `view/src/motion/tests.rs` (the notes; the panel's order, the tool's
 count beside it, where to click, the later features' warning, the
@@ -2862,7 +2894,9 @@ flat face as its plane and the hole's wall as its surface, unpreviewed
 while picked; with the booleans, another body as the tool, the body
 itself refused, the pieces tinted and labelled, Back, a trim committed;
 a sketch's region through all and an open line; editing from the
-Timeline, Cancel, Back and OK, undo; the later features' warning and a
+Timeline, Cancel, Back and OK, undo; a sketch on the new body's face,
+the split kept to the front and OK, then both and OK: the body back
+with its id and the sketch placed; the later features' warning and a
 named new body held; a tool body an undo takes away said to be gone,
 back on redo; an edited split's new piece's face named on the body
 split, and a click on it picking that body; a tool body merged with the
@@ -2871,7 +2905,8 @@ again from any sketch, the regions back on undo; each tile's tool told
 gone on its own) and `app/src/doc/motion/tests/split/fuzz.rs` (a
 split session fuzz: tiles switched, picks on the model shown and on one
 gone by, regions and curves, Keeps and Keep, undo and redo, merges,
-removals, commits and edits held to what they set up, and each split
+removals, commits and edits held to what they set up (an edited
+split keeping its new body's id, held or made), and each split
 working at the end cutting its body's volume in two; `VARDE_SPLIT_SEEDS`
 runs more). The app's tests split by
 two booleans through regen's `testing` feature

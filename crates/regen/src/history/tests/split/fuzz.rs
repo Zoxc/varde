@@ -185,7 +185,7 @@ fn check_splits(document: &Document, evaluation: &Evaluation, cache: &mut Cache,
         }
         let body = solid(&before, split.body).expect("a body worked on");
         let kept = solid(&after, split.body).expect("the body keeps a piece");
-        let other = split.new_body.map(|new| {
+        let other = split.made_body().map(|new| {
             assert_eq!(after.bodies.last().unwrap().body, new, "{what}: last");
             assert_eq!(after.splits.last(), Some(&(split.body, new)), "{what}");
             solid(&after, new).expect("the new body has the other piece")

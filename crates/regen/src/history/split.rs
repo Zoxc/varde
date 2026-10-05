@@ -167,7 +167,7 @@ pub(super) fn evaluate_split(
         Side::Front => Arc::clone(&front),
         Side::Back => Arc::clone(&back),
     };
-    let new = split.new_body.map(|body| BodySolid {
+    let new = split.made_body().map(|body| BodySolid {
         body,
         solid: piece(kept.other()),
         key: piece_key(kept.other()),

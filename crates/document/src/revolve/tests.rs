@@ -325,7 +325,10 @@ fn a_revolve_must_use_an_earlier_sketch_and_own_its_body() {
     // Excluded bodies sorted and made earlier.
     let join = |excluded: Vec<BodyId>| {
         changed(&document, id, |revolve| {
-            revolve.operation = Operation::Join(Targets { excluded });
+            revolve.operation = Operation::Join(Targets {
+                excluded,
+                held: None,
+            });
         })
     };
     let mut ok = join(vec![first]);
@@ -467,8 +470,8 @@ fn set_feature_keeps_adds_or_removes_a_revolve_s_body() {
     editor.redo();
     assert!(editor.document().body(body).is_none());
 
-    // A new body again gets a new id.
-    let next = BodyId(editor.document().next_id);
+    // A new body again gets its id back.
+    let next = body;
     editor
         .apply(Command::SetFeature {
             feature: id,
@@ -527,6 +530,7 @@ fn removing_the_sketch_removes_the_revolve_and_its_body() {
     let first = document.bodies[0].id;
     let join = ring(Operation::Join(Targets {
         excluded: vec![first],
+        held: None,
     }));
     editor
         .apply(editor.document().add_feature(join.into()))
@@ -578,6 +582,7 @@ fn revolves_round_trip() {
         Operation::Join(Targets::default()),
         Operation::Cut(Targets {
             excluded: vec![first],
+            held: None,
         }),
         Operation::Intersect(Targets::default()),
     ];

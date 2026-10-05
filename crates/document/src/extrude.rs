@@ -78,6 +78,16 @@ pub enum Operation {
 pub struct Targets {
     /// Sorted without repeats, each a body an earlier feature makes.
     pub excluded: Vec<BodyId>,
+    /// The id of the body the feature made when it was a new body, if it
+    /// was one, which the document holds for it (no other body or feature
+    /// gets it), so that making a new body again brings the body back
+    /// with it, and what was named on it (a sketch on its face) finds it
+    /// again. The commands fill it in, whatever it holds: none when
+    /// adding, the feature's body or held id when setting.
+    /// `#[serde(default)]`: none, as every operation written before ids
+    /// were held reads.
+    #[serde(default)]
+    pub held: Option<BodyId>,
 }
 
 impl Operation {
@@ -106,6 +116,17 @@ impl Operation {
         match *self {
             Operation::NewBody(body) => Some(body),
             _ => None,
+        }
+    }
+
+    /// The id it holds for the body it made as a new body before, for a
+    /// join, cut or intersect ([`Targets::held`]).
+    pub fn held_body(&self) -> Option<BodyId> {
+        match self {
+            Operation::NewBody(_) => None,
+            Operation::Join(targets) | Operation::Cut(targets) | Operation::Intersect(targets) => {
+                targets.held
+            }
         }
     }
 }

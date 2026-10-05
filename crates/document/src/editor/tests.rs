@@ -181,6 +181,7 @@ fn removing_a_sketch_removes_the_extrudes_using_it_and_their_bodies() {
     let first_body = editor.document().bodies[0].id;
     let cut = plate(Operation::Cut(Targets {
         excluded: vec![first_body, body],
+        held: None,
     }));
     editor
         .apply(editor.document().add_feature(cut.into()))

@@ -241,7 +241,15 @@ fn a_loft_is_edited() {
         })
         .unwrap();
     assert!(editor.document().body(body).is_none());
-    assert_eq!(loft_of(editor.document(), id), &joined);
+    // It holds the body's id, for a new body again.
+    let held = Loft {
+        operation: Operation::Join(Targets {
+            excluded: Vec::new(),
+            held: Some(body),
+        }),
+        ..joined
+    };
+    assert_eq!(loft_of(editor.document(), id), &held);
 }
 
 /// What needs only the loft, checked by `check_own` and as it's added.
@@ -415,6 +423,7 @@ fn what_it_names_is_checked() {
             with(&|l| {
                 l.operation = Operation::Join(Targets {
                     excluded: vec![BodyId(999)],
+                    held: None,
                 });
             }),
             LoftError::Excluded(BodyId(999)),

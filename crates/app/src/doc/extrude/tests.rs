@@ -3065,6 +3065,7 @@ fn cut_excluding_the_lower_plate(after: bool) -> (Doc, Rc<RefCell<Vec<Request>>>
     let through = crate::tests::two_sides(editor.document(), "20", "10");
     let excluded = varde_document::Targets {
         excluded: vec![below],
+        held: None,
     };
     let cut = varde_document::Operation::Cut(excluded);
     let cut = crate::tests::add_disc(&mut editor, (-20.0, 10.0), through, cut);

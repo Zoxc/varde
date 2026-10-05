@@ -526,6 +526,7 @@ fn removal_follows_its_sketches_and_bodies() {
         }]),
         operation: Operation::Cut(Targets {
             excluded: vec![document.bodies[0].id],
+            held: None,
         }),
         ..helical(&document, AxisRef::Origin(Axis3::Z))
     };

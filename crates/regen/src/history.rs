@@ -220,7 +220,8 @@ pub struct Evaluation {
     /// Each split that kept both pieces: the body split, which kept one,
     /// and its new body, which got the other, in the document's order.
     /// A sketch on a face of the body that went to the new body follows
-    /// it there.
+    /// it there, and one on a face of the new body that went to the body
+    /// (with the pieces swapped) follows it back.
     pub splits: Vec<(BodyId, BodyId)>,
 }
 
@@ -1199,8 +1200,9 @@ impl Run<'_> {
 /// ([`Topology::face`](varde_kernel::Topology::face); none is "wasn't
 /// found", unless a split before the sketch gave the face to its new
 /// body: the face is then looked for on the bodies splits made of the
-/// holder, in [`Evaluation::splits`]' order, and on those made of them,
-/// and the sketch follows it to the first it's found on); its form must be a plane ("isn't flat", which shows the face
+/// holder or made it of, in [`Evaluation::splits`]' order, and on those
+/// made of them or made them of, and the sketch follows it to the first
+/// it's found on); its form must be a plane ("isn't flat", which shows the face
 /// found, see [`face_geometry`]), whose `n` and `d`
 /// give the placement by [`Placement::on_plane`], the same rule and the
 /// same bits as the app's from the picking tables' summary of the face
@@ -1221,21 +1223,31 @@ pub(crate) fn place_on_face(
         .ok_or(message::FACE_BODY_GONE)?;
     let placed = place_on(made, face, tolerance, cache);
     if not_found(&placed) {
-        // Followed into the bodies splits made of it, the first split
-        // first, and on into those made of them.
+        // Followed through the splits: into the bodies splits made of
+        // it, the first split first, and back into the bodies splits made
+        // it of (a split that swapped which piece keeps the id moves the
+        // face there), and on from those.
         let mut on = vec![made.body];
         let mut at = 0;
         while let Some(&body) = on.get(at) {
             at += 1;
             for &(split, new) in &evaluation.splits {
-                let Some(new) = evaluation.holder(new) else {
+                let (Some(split), Some(new)) = (evaluation.holder(split), evaluation.holder(new))
+                else {
                     continue;
                 };
-                if evaluation.holder(split) != Some(body) || on.contains(&new) {
+                let next = if split == body {
+                    new
+                } else if new == body {
+                    split
+                } else {
+                    continue;
+                };
+                if on.contains(&next) {
                     continue;
                 }
-                on.push(new);
-                let Some(made) = evaluation.bodies.iter().find(|made| made.body == new) else {
+                on.push(next);
+                let Some(made) = evaluation.bodies.iter().find(|made| made.body == next) else {
                     continue;
                 };
                 let followed = place_on(made, face, tolerance, cache);

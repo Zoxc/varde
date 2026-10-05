@@ -33,6 +33,7 @@ pub(crate) fn add_failing(editor: &mut Editor) -> FeatureId {
     let extrude = Extrude {
         operation: Operation::Join(Targets {
             excluded: vec![body],
+            held: None,
         }),
         ..example_extrude(editor.document())
     };
@@ -500,6 +501,7 @@ fn bodies_taken_out_are_left_as_they_are() {
         Extent::ThroughAll,
         Operation::Cut(Targets {
             excluded: vec![top],
+            held: None,
         }),
     );
     let evaluation = evaluated(editor.document());
@@ -702,6 +704,7 @@ fn a_body_taken_out_of_a_join_stays_apart() {
         extent,
         Operation::Join(Targets {
             excluded: vec![below],
+            held: None,
         }),
     );
     let evaluation = evaluated(editor.document());
@@ -833,6 +836,7 @@ fn a_feature_leaving_one_target_empty_changes_none() {
     set_extrude(&mut editor, cut, |extrude| {
         extrude.operation = Operation::Cut(Targets {
             excluded: vec![top],
+            held: None,
         });
     });
     let evaluation = evaluated(editor.document());
@@ -935,6 +939,7 @@ fn an_intersect_with_every_body_taken_out_changes_none() {
         extent,
         Operation::Intersect(Targets {
             excluded: vec![top, below],
+            held: None,
         }),
     );
     let evaluation = evaluated(editor.document());
@@ -954,6 +959,7 @@ fn an_intersect_with_every_body_taken_out_changes_none() {
     set_extrude(&mut editor, intersect, |extrude| {
         extrude.operation = Operation::Intersect(Targets {
             excluded: vec![top],
+            held: None,
         });
     });
     let evaluation = evaluated(editor.document());
@@ -1317,6 +1323,7 @@ fn a_body_that_cant_be_told_is_passed_over_or_listed() {
     set_extrude(&mut editor, cut, |extrude| {
         extrude.operation = Operation::Cut(Targets {
             excluded: vec![top],
+            held: None,
         });
     });
     let taken_out = editor.document().clone();
@@ -1647,6 +1654,7 @@ fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
     set_extrude(&mut editor, join, |extrude| {
         extrude.operation = Operation::Join(Targets {
             excluded: vec![round],
+            held: None,
         });
     });
     let evaluation = evaluated(editor.document());

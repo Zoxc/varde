@@ -482,6 +482,67 @@ fn editing_a_split_from_the_timeline_cancel_and_undo() {
     assert_eq!(*plates.doc.editor.document(), before);
 }
 
+/// The repro the held id is for: a sketch on a face of the split's new
+/// body; the split edited to keep the front and OK, then edited to keep
+/// both and OK: the new body is back with its id, and the sketch finds
+/// its face again. Each edit one undo step.
+#[test]
+fn a_new_body_kept_again_in_a_later_edit_keeps_its_id() {
+    varde_regen::testing::split_by_booleans();
+    let (editor, id, new) = split_plates();
+    let mut plates = held(&editor);
+    let index = plates.doc.feed.pick_index();
+    let at = DVec3::new(-25.0, 0.0, 10.0);
+    let face = index.face_ref(plates.face(new, top), at).expect("a name");
+    assert_eq!(face.body, new);
+    plates
+        .doc
+        .apply((plates.doc.editor.document()).add_sketch(Plane::Face(face)));
+    let sketch = plates.doc.editor.document().features().last().unwrap().id;
+    plates.doc.sync();
+    plates.answer();
+    let failed = |plates: &Plates| {
+        (plates.doc.feed.failed_features().iter()).any(|failed| failed.feature == sketch)
+    };
+    assert!(!failed(&plates));
+    let stored = |plates: &Plates| match &plates.doc.editor.document().feature(id).unwrap().kind {
+        FeatureKind::Split(split) => split.clone(),
+        other => panic!("{other:?}"),
+    };
+    let edit = |plates: &mut Plates, keep: Keep| {
+        plates.doc.look(Look::EditFeature(id));
+        plates.motion(MotionLook::Keep(keep));
+        plates.answer();
+        key_in(&mut plates.doc, enter());
+        assert!(plates.doc.motion.is_none(), "{:?}", plates.doc.edit_error);
+        plates.doc.sync();
+        plates.answer();
+    };
+    let both = plates.doc.editor.document().clone();
+    edit(&mut plates, Keep::Front);
+    assert!(plates.doc.editor.document().body(new).is_none());
+    assert_eq!(stored(&plates).new_body, Some(new), "held");
+    assert!(failed(&plates));
+    let trimmed = plates.doc.editor.document().clone();
+    edit(&mut plates, Keep::Both);
+    assert_eq!(stored(&plates).new_body, Some(new));
+    assert_eq!(
+        plates
+            .doc
+            .editor
+            .document()
+            .body(new)
+            .map(|body| body.created_by),
+        Some(id)
+    );
+    assert!(!failed(&plates), "the sketch finds its face again");
+    assert_eq!(*plates.doc.editor.document(), both);
+    plates.doc.update(Edit::Undo);
+    assert_eq!(*plates.doc.editor.document(), trimmed);
+    plates.doc.update(Edit::Undo);
+    assert_eq!(*plates.doc.editor.document(), both);
+}
+
 /// Later features naming the body are warned of with the piece they'll
 /// get; keeping one side while a later feature names the new body is
 /// refused at once, as the document would, and not previewed.

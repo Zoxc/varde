@@ -8138,8 +8138,10 @@ operation })`:
   field is (the workspace never skips a field on writing: the workers'
   postcard is positional and would misread a skipped one).
 - `operation`: `NewBody(BodyId)`, or `Join`, `Cut`, `Intersect` of
-  `Targets { excluded }`, the bodies taken out (sorted without repeats,
-  each made by an earlier feature).
+  `Targets { excluded, held }`, the bodies taken out (sorted without
+  repeats, each made by an earlier feature) and the id of the body it
+  made when it was a new body (`#[serde(default)]`, see "Commands shared
+  by every kind" in `agents/features.md`).
 
 Commands:
 
@@ -8152,7 +8154,9 @@ Commands:
 - `SetFeature { feature, kind }` replaces it whole, the caller passing
   regions freshly referenced from the sketch as it is. A `NewBody` that
   stays one keeps its body; one that stops removes the body and drops it
-  from other features' excluded lists; one that starts adds a body.
+  from other features' excluded lists, holding its id (`Targets::held`);
+  one that starts gets the body back with the id it held, else adds a
+  body.
 - `RemoveFeature` and `RemoveBody` apply `Document::removal(Removable)`:
   the feature (a body's maker, for a body) and every later feature using
   one removed (`FeatureKind::uses`, a list: an extrude's sketch), in timeline

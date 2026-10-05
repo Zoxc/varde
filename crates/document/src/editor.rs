@@ -8,7 +8,7 @@ use varde_sketch::Sketch;
 
 use crate::{
     Body, BodyId, CheckError, Copies, Document, EditError, FeatureId, FeatureKind,
-    MAX_PATTERN_BODIES, Move, Opacity, Pattern, Plane, Removable, Snapshot, Turn,
+    MAX_PATTERN_BODIES, Move, Opacity, Operation, Pattern, Plane, Removable, Snapshot, Turn,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
@@ -45,7 +45,8 @@ pub enum Command {
     /// "Body N" one past the bodies so named, and gives it its id whatever
     /// [`Operation::NewBody`] held ([`BodyId::NEW`]); a split keeping
     /// both sides makes one too, whatever its `new_body` held, and one
-    /// keeping a side makes none ([`Split::new_body`]). A pattern whose
+    /// keeping a side makes none ([`Split::new_body`]); nothing added
+    /// holds an id ([`FeatureKind::held_body`]). A pattern whose
     /// copies are bodies of their own ([`Copies::Separate`]) adds them,
     /// one per copy, named so in turn, whatever its list held. A
     /// revolve's axis must be a line of its sketch
@@ -73,8 +74,10 @@ pub enum Command {
     /// making it removes it, dropping it from the other features'
     /// excluded lists (but refused while a combine names it, as a target
     /// or a tool: removing it would leave the combine naming a body that
-    /// isn't there); one that starts making one adds it, as
-    /// [`Command::AddFeature`] does. A split's new body goes the same
+    /// isn't there), holding its id ([`FeatureKind::held_body`]); one
+    /// that starts making one gets back the body whose id it held, else
+    /// adds one as [`Command::AddFeature`] does. The id is filled in
+    /// whatever the command held. A split's new body goes the same
     /// way, as its `keep` has both sides or one. A pattern's copy bodies go the same
     /// way: each copy (by its original and its `k`) the feature made a
     /// body of keeps it, the others get new ones, and those it no longer
@@ -150,6 +153,26 @@ impl Document {
         self.add_numbered_body(feature, number)
     }
 
+    /// Adds a body made by `feature` with the id `id` it held (see
+    /// [`FeatureKind::held_body`]), in its place in id order, named as
+    /// [`Document::add_body`] names a new one. The id is one the
+    /// document's check held for it: below the next id and no body's.
+    fn restore_body(&mut self, feature: FeatureId, id: BodyId) {
+        let names = self.bodies.iter().map(|body| body.name.as_str());
+        let name = format!("Body {}", next_number(names, "Body"));
+        let at = self.bodies.partition_point(|body| body.id < id);
+        self.bodies.insert(
+            at,
+            Body {
+                id,
+                name,
+                visible: true,
+                opacity: Opacity::default(),
+                created_by: feature,
+            },
+        );
+    }
+
     /// Adds a body as [`Document::add_body`] does, named "Body `number`".
     fn add_numbered_body(&mut self, feature: FeatureId, number: u64) -> Result<BodyId, EditError> {
         let name = format!("Body {number}");
@@ -194,15 +217,30 @@ fn planned_copies(old: Option<&FeatureKind>, pattern: &Pattern) -> Option<Vec<Op
         .collect::<Option<Vec<_>>>()
 }
 
-/// Gives a split keeping both sides a new body ([`BodyId::NEW`] unless
-/// it names one) and one keeping a side none, as [`Command::AddFeature`]
-/// and [`Command::SetFeature`] take it: a panel needn't keep the two in
-/// step.
-fn planned_new_body(kind: &mut FeatureKind) {
+/// Fills in the body `kind` makes or holds, as [`Command::AddFeature`]
+/// (with no `old`) and [`Command::SetFeature`] (in place of `old`) take
+/// it, whatever the command held: the body `old` makes or holds
+/// ([`FeatureKind::held_body`]), if any, else [`BodyId::NEW`] for a body
+/// it makes, for the command to give a new id; a panel needn't keep them
+/// in step. A split's new body and an operation's (a new body's, or a
+/// join's, cut's or intersect's held id, [`Targets::held`]); other kinds
+/// hold none, and drop what `old` held.
+///
+/// [`Targets::held`]: crate::Targets::held
+fn planned_new_body(old: Option<&FeatureKind>, kind: &mut FeatureKind) {
+    let held = old.and_then(|old| old.new_body().or(old.held_body()));
     if let FeatureKind::Split(split) = kind {
-        split.new_body = split
-            .keeps_both()
-            .then(|| split.new_body.unwrap_or(BodyId::NEW));
+        split.new_body = held.or(split.keeps_both().then_some(BodyId::NEW));
+        return;
+    }
+    match kind.operation_mut() {
+        Some(Operation::NewBody(body)) => *body = held.unwrap_or(BodyId::NEW),
+        Some(
+            Operation::Join(targets) | Operation::Cut(targets) | Operation::Intersect(targets),
+        ) => {
+            targets.held = held;
+        }
+        None => {}
     }
 }
 
@@ -549,7 +587,7 @@ impl Editor {
                     return Err(EditError::SketchKind);
                 }
                 let mut kind = kind;
-                planned_new_body(&mut kind);
+                planned_new_body(None, &mut kind);
                 let mut next = Document::clone(document);
                 let sketches = kind.profile_sketches();
                 let makes_body = kind.new_body().is_some();
@@ -586,11 +624,8 @@ impl Editor {
                 {
                     return Err(EditError::SketchKind);
                 }
-                planned_new_body(&mut kind);
+                planned_new_body(Some(old), &mut kind);
                 let kept = old.new_body();
-                if let (Some(body), Some(new)) = (kept, kind.new_body_mut()) {
-                    *new = body;
-                }
                 let copies = match &mut *kind {
                     FeatureKind::Pattern(pattern) => {
                         let planned = planned_copies(Some(old), pattern);
@@ -623,10 +658,14 @@ impl Editor {
                         }
                         next.drop_excluded(&[body]);
                     }
-                    (None, true) => {
-                        let body = next.add_body(feature)?;
-                        next.set_new_body(feature, body);
-                    }
+                    (None, true) => match next.features[index].kind.new_body() {
+                        // Made again with the id it held.
+                        Some(held) if held != BodyId::NEW => next.restore_body(feature, held),
+                        _ => {
+                            let body = next.add_body(feature)?;
+                            next.set_new_body(feature, body);
+                        }
+                    },
                     _ => {}
                 }
                 next.check_new(index, &next.features[index].kind)?;

@@ -773,6 +773,7 @@ fn references_on_the_holder_after_a_join_lets_go() {
     set_extrude(&mut editor, join, |extrude| {
         extrude.operation = Operation::Join(Targets {
             excluded: vec![block],
+            held: None,
         });
     });
     let evaluation = evaluated(editor.document());

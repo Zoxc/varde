@@ -355,7 +355,10 @@ fn run(seed: u64, steps: usize) {
                     .filter(|_| rng.below(4) == 0)
                     .collect();
                 excluded.sort_unstable();
-                let targets = Targets { excluded };
+                let targets = Targets {
+                    excluded,
+                    held: None,
+                };
                 let operation = match rng.below(3) {
                     0 => Operation::Join(targets),
                     1 => Operation::Cut(targets),

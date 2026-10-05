@@ -366,7 +366,7 @@ impl Naming {
         made.sort_unstable();
         let split_from = (later.iter())
             .filter_map(|feature| match &feature.kind {
-                FeatureKind::Split(split) => Some((split.new_body?, split.body)),
+                FeatureKind::Split(split) => Some((split.made_body()?, split.body)),
                 _ => None,
             })
             .collect();

@@ -2899,6 +2899,133 @@ fn a_tampered_split_is_refused() {
     }
 }
 
+/// A split keeping one side holds its new body's id through a file,
+/// as does an extrude made a join from a new body; one written before
+/// ids were held (a split keeping a side with no new body, a join with
+/// no `held` field) reads; a held id changed on disk to a body's, or past
+/// the next id, is refused.
+#[test]
+fn held_body_ids_read_from_older_files_and_are_checked() {
+    use varde_document::{
+        BodyId, Extrude, FeatureKind, Keep, Operation, PlaneRef, Side, Split, SplitTool, Targets,
+    };
+    // An older join: its targets' map of two fields made one.
+    let mut editor = Editor::new(Document::example());
+    let FeatureKind::Extrude(extrude) = editor.document().features()[1].kind.clone() else {
+        panic!("the example's extrude");
+    };
+    let join = Extrude {
+        operation: Operation::Join(Targets::default()),
+        ..extrude.clone()
+    };
+    editor
+        .apply(editor.document().add_feature(join.into()))
+        .unwrap();
+    let joined = editor.document().clone();
+    let raw = record_msgpack(&joined);
+    let mut targets = vec![0x82, 0xa8];
+    targets.extend_from_slice(b"excluded");
+    targets.push(0x90);
+    targets.push(0xa4);
+    targets.extend_from_slice(b"held");
+    targets.push(0xc0);
+    let at = (raw.windows(targets.len()))
+        .position(|window| window == targets)
+        .expect("the join's targets");
+    let mut older = raw[..at].to_vec();
+    older.extend_from_slice(&[0x81, 0xa8]);
+    older.extend_from_slice(b"excluded");
+    older.push(0x90);
+    older.extend_from_slice(&raw[at + targets.len()..]);
+    let (read, _) = from_msgpack::<Document>(&older).unwrap();
+    assert_eq!(read, joined);
+    // An older split keeping a side, with no new body: `split_plate`'s
+    // second, read in `splits_round_trip`.
+
+    // Held ids through a file: the first extrude made a join, a split
+    // keeping both then the front.
+    let mut editor = Editor::new(Document::example());
+    let first = editor.document().features()[1].id;
+    let again = Extrude {
+        operation: Operation::NewBody(BodyId::NEW),
+        ..extrude.clone()
+    };
+    editor
+        .apply(editor.document().add_feature(again.into()))
+        .unwrap();
+    let other = editor.document().bodies().last().unwrap().id;
+    let split = |keep| Split {
+        body: other,
+        tool: SplitTool::Plane(PlaneRef::Origin(OriginPlane::XY)),
+        original: Side::Front,
+        keep,
+        new_body: None,
+    };
+    editor
+        .apply(editor.document().add_feature(split(Keep::Both).into()))
+        .unwrap();
+    let id = editor.document().features().last().unwrap().id;
+    let piece = editor.document().bodies().last().unwrap().id;
+    for (feature, kind) in [
+        (id, FeatureKind::from(split(Keep::Front))),
+        (first, FeatureKind::from(join_of(&extrude))),
+    ] {
+        editor
+            .apply(Command::SetFeature {
+                feature,
+                kind: Box::new(kind),
+            })
+            .unwrap();
+    }
+    let document = editor.document().clone();
+    assert_eq!(document.bodies().len(), 1);
+    let FeatureKind::Split(stored) = &document.feature(id).unwrap().kind else {
+        panic!("the split");
+    };
+    assert_eq!(stored.new_body, Some(piece));
+    let (bytes, _) = to_bytes(&document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read, document);
+
+    // Changed on disk: to the body's id, the other's held id, or the next
+    // id or past it (ids here are small: one byte each).
+    let raw = record_msgpack(&document);
+    let after = |key: &[u8], last: bool| {
+        let mut bytes = vec![0xa0 | u8::try_from(key.len()).unwrap()];
+        bytes.extend_from_slice(key);
+        let mut found = (raw.windows(bytes.len())).enumerate();
+        let at = if last {
+            found.rfind(|(_, w)| *w == bytes)
+        } else {
+            found.find(|(_, w)| *w == bytes)
+        };
+        let at = at.expect("the key").0 + bytes.len();
+        assert!(raw[at] < 0x80, "a small id");
+        at
+    };
+    let (new_body, held) = (after(b"new_body", false), after(b"held", false));
+    let body = raw[after(b"body", false)];
+    let next = raw[after(b"next_id", true)];
+    for (at, other_held) in [(new_body, raw[held]), (held, raw[new_body])] {
+        for now in [body, other_held, next, next + 5] {
+            let mut changed = raw.clone();
+            changed[at] = now;
+            assert!(
+                from_msgpack::<Document>(&changed).is_err(),
+                "{now} was taken"
+            );
+        }
+    }
+}
+
+/// The example's extrude as a join.
+fn join_of(extrude: &varde_document::Extrude) -> varde_document::Extrude {
+    varde_document::Extrude {
+        operation: varde_document::Operation::Join(varde_document::Targets::default()),
+        ..extrude.clone()
+    }
+}
+
 /// [`split_plate`] with a second plate under it and a sketch of a
 /// rectangle and an open line of two lines, then splits of the plate by
 /// the second plate, by the rectangle's region, by the line and by its
@@ -3006,7 +3133,10 @@ fn a_damaged_split_is_refused_or_checked() {
             for feature in document.features() {
                 if let varde_document::FeatureKind::Split(split) = &feature.kind {
                     split.check_own().unwrap();
-                    assert_eq!(split.new_body.is_some(), split.keeps_both());
+                    assert_eq!(split.made_body().is_some(), split.keeps_both());
+                    if let Some(held) = split.held_body() {
+                        assert!(document.body(held).is_none());
+                    }
                 }
             }
         }
@@ -4834,6 +4964,7 @@ fn a_loft_s_parts_are_checked_as_read() {
     refused(&|loft| {
         loft.operation = Operation::Join(Targets {
             excluded: vec![BodyId::NEW],
+            held: None,
         });
     });
 }

@@ -465,7 +465,10 @@ fn taking_a_merged_body_out_of_a_later_cut_takes_nothing_out() {
         &mut editor,
         rectangle((0.0, -26.0), (10.0, -24.0)),
         through,
-        Operation::Cut(Targets { excluded: vec![b] }),
+        Operation::Cut(Targets {
+            excluded: vec![b],
+            held: None,
+        }),
     );
     let evaluation = evaluated(editor.document());
     assert_eq!(evaluation.merged, [(b, a)]);

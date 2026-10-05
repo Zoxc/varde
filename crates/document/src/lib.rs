@@ -61,7 +61,7 @@ pub use sweep::{
     MAX_TWIST_TURNS, MIN_HELIX_TURNS, Orientation, PathPart, PathRef, Sweep, SweepError,
 };
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -303,7 +303,9 @@ impl Document {
     /// revolve, sweep, loft or split the document holds that names it as its new
     /// body, and every such body is there, or by a pattern listing it as a copy
     /// body ([`Copies::Separate`]), every such body there too, one per
-    /// copy; every sketch passes [`Sketch::check`]
+    /// copy; every id a feature holds for a body it made before
+    /// ([`FeatureKind::held_body`]) is below `next_id`, no body's, and
+    /// held by that feature alone; every sketch passes [`Sketch::check`]
     /// against [`MAX_COORD`] and the document's units
     /// ([`Document::design`]), so every dimension's expression gives its
     /// value in them, and every sketch on a face names what comes before
@@ -328,7 +330,7 @@ impl Document {
     /// split's body, tool body and face tool's body are bodies features
     /// before it make, its plane face and faces' makers named as a
     /// mirror's plane is, its sketch a sketch before it, and its new body
-    /// there exactly when it keeps both pieces, as [`Split::check_own`]
+    /// there when it keeps both pieces, as [`Split::check_own`]
     /// wants it; and every chamfer's edges are on one body a feature
     /// before it makes, its faces' makers before it (or not there with
     /// ids no later feature can take), its edges and values as
@@ -512,6 +514,15 @@ impl Document {
             && last.id.0 >= self.next_id
         {
             return Err(CheckError::NextId(last.id));
+        }
+        // Ids held for bodies made before: given out, no body's, held once.
+        let mut held = BTreeSet::new();
+        for feature in &self.features {
+            if let Some(body) = feature.kind.held_body()
+                && (body.0 >= self.next_id || self.body(body).is_some() || !held.insert(body))
+            {
+                return Err(CheckError::Held(feature.id, body));
+            }
         }
         match self.features.last() {
             Some(last) if last.id.0 >= self.next_id => Err(CheckError::FeatureNextId(last.id)),
@@ -814,14 +825,15 @@ impl Document {
     /// as a combine's ([`Document::check_combine`]); a plane face's body
     /// and any face's maker as a mirror's plane ([`Document::check_motion`]);
     /// a sketch tool's sketch a sketch feature before it; and its new
-    /// body, if it has one, a body it makes.
+    /// body, while it keeps both pieces, a body it makes (the id it holds
+    /// otherwise is [`Document::check`]'s, as every held id).
     fn check_split(&self, index: usize, split: &Split) -> Result<(), SplitError> {
         if !self.made_before(index, split.body) {
             return Err(SplitError::Body(split.body));
         }
         self.check_split_tool(index, &split.tool)?;
         let id = self.features[index].id;
-        if let Some(body) = split.new_body
+        if let Some(body) = split.made_body()
             && self.body(body).is_none_or(|body| body.created_by != id)
         {
             return Err(SplitError::NewBody(body));
@@ -1063,6 +1075,10 @@ pub enum CheckError {
     Order(BodyId, BodyId),
     /// The last body's id isn't below the document's next id.
     NextId(BodyId),
+    /// A feature holds this id for a body it made before
+    /// ([`FeatureKind::held_body`]), but it's a body's, another feature
+    /// holds it too, or it isn't below the document's next id.
+    Held(FeatureId, BodyId),
     /// A feature's name is this many bytes, over [`MAX_NAME_LEN`].
     FeatureNameLength(FeatureId, usize),
     /// A sketch feature's sketch fails [`Sketch::check`].
@@ -1135,6 +1151,11 @@ impl fmt::Display for CheckError {
                 write!(f, "body id {} doesn't come after {}", id.0, before.0)
             }
             CheckError::NextId(id) => write!(f, "body id {} is not below the next id", id.0),
+            CheckError::Held(feature, id) => write!(
+                f,
+                "feature {} holds body id {} for a body it made, which is taken or not given out yet",
+                feature.0, id.0
+            ),
             CheckError::FeatureNameLength(id, len) => write!(
                 f,
                 "feature {} has a name of {len} bytes, over the limit of {MAX_NAME_LEN}",

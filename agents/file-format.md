@@ -279,7 +279,10 @@ written as nil; `#[serde(default)]`, so an extrude written before tapers
 reads untapered, and an older build skips it, reading a tapered extrude
 untapered; one of zero reads as none), and the operation: a
 new body, by id, or join, cut or intersect with the bodies taken out of
-its targets; or a revolve,
+its targets and `held`, the id of the body the feature made when it
+was a new body, held for it so that a new body again gets it back
+(`#[serde(default)]`: none, as every record written before it reads;
+an older build skips it); or a revolve,
 `crates/document/src/revolve.rs`: the sketch, regions, flip and
 operation as an extrude's, the axis (a line of the sketch by curve id,
 the sketch's x or y axis, or a straight edge of a body,
@@ -322,9 +325,16 @@ plane or a face's plane as a mirror's; a face as a sketch's; another
 body's id; a sketch's id and regions as an extrude's; or a sketch's id
 and the ids of its curves, sorted), which piece keeps the body's id
 (front or back), which pieces are kept (both, front or back) and the
-id of the body the other piece becomes, there exactly when both are
-kept. `original`, `keep` and `new_body` are `#[serde(default)]` (front,
-both, none); splits are new, so no older record holds one; or a
+id of the body the other piece becomes: there when both are kept, and
+while one side is kept the id it had (held for it, for when both are
+kept again) or none for a split that never kept both. `original`,
+`keep` and `new_body` are `#[serde(default)]` (front, both, none);
+splits are new, so no older record holds one, but one written before
+ids were held, keeping a side with no new body, reads as one that never
+kept both; an older build reads a held id as a new body that isn't
+there and refuses the file. A held id (a split's or a join's, cut's or
+intersect's) must be below the next id, no body's and held by one
+feature only, or the record is refused; or a
 chamfer, `crates/document/src/chamfer.rs`: its edges (each as a
 revolve's axis edge: a body's id, two face keys, sorted, and a picked
 point), sorted by body, keys and point, its size (equal: one typed
@@ -425,8 +435,11 @@ made earlier and not the body, its face tool's body there and made
 earlier, its plane face's body and any face's maker as a mirror's
 plane's, a sketch tool's sketch a sketch before it, 1 to 256 regions
 or 1 to 256 curves sorted without repeats, and its new body there
-exactly when it keeps both pieces, a body it makes (a body made by a
-split must be its new body);
+when it keeps both pieces, a body it makes (a body made by a split
+must be its new body, and so the one it keeps both pieces for); every
+id held for a body a feature made before (a split's new body while it
+keeps a side, a join's, cut's or intersect's `held`) below the next id,
+no body's and held once;
 a chamfer's 1 to 256 edges on one body there and made by an earlier
 feature, sorted without repeats, each edge's keys sorted and different,
 its point finite and within the coordinate limit, and its keys'

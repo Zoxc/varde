@@ -15,8 +15,8 @@
 //! check and the document's for its tool, its body one the feature can
 //! name and not its tool body, and is previewed as set up when it picks
 //! nothing; one ready whose preview didn't fail commits, and the
-//! document holds what it drafted (its new body filled in exactly when
-//! it keeps both); a split edited opens to what it stores and OK on it
+//! document holds what it drafted (its new body made exactly when it
+//! keeps both, an edited one's id kept, held or made); a split edited opens to what it stores and OK on it
 //! straight away writes nothing; a session never outlives the split it
 //! edits; the panel's texts never panic; and the document passes its
 //! check. Each split the model shows working cut its body in two: its
@@ -159,7 +159,7 @@ fn check_volumes(plates: &Plates, what: &str) {
             continue;
         };
         let kept = volume(at + 1, split.body).unwrap_or_else(|| panic!("{what}: kept piece"));
-        let other = match split.new_body {
+        let other = match split.made_body() {
             Some(new) => volume(at + 1, new).unwrap_or_else(|| panic!("{what}: new piece")),
             None => continue,
         };
@@ -374,6 +374,14 @@ fn run(seed: u64, steps: usize) {
                     (ready && session.kind == MotionKind::Split)
                         .then(|| (session.feature, session.split()))
                 });
+                // The new body the edited split has, held or made.
+                let held = (before.as_ref())
+                    .and_then(|(edited, _)| *edited)
+                    .and_then(|id| plates.doc.editor.document().feature(id))
+                    .map(|feature| match &feature.kind {
+                        FeatureKind::Split(split) => (feature.id, split.new_body),
+                        _ => (feature.id, None),
+                    });
                 plates.doc.update(Edit::CommitMotion);
                 if let Some((edited, Some(split))) = before {
                     assert!(
@@ -386,8 +394,12 @@ fn run(seed: u64, steps: usize) {
                     let FeatureKind::Split(stored) = stored else {
                         panic!("{what}: {stored:?}");
                     };
-                    assert_eq!(stored.new_body.is_some(), split.keeps_both(), "{what}");
+                    assert_eq!(stored.made_body().is_some(), split.keeps_both(), "{what}");
                     assert_ne!(stored.new_body, Some(BodyId::NEW), "{what}");
+                    // An edited split keeps the new body it had, held or made.
+                    if let Some((_, Some(had))) = &held {
+                        assert_eq!(stored.new_body, Some(*had), "{what}: held");
+                    }
                     let set = Split {
                         new_body: stored.new_body,
                         ..split

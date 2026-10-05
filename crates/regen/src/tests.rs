@@ -609,6 +609,7 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
         kind: Extrude {
             operation: Operation::Join(varde_document::Targets {
                 excluded: vec![body],
+                held: None,
             }),
             ..new_body_draft(editor.document(), 0, "3").extrude().clone()
         }
@@ -815,6 +816,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
     out.revision = 2;
     out.extrude_mut().operation = Operation::Cut(varde_document::Targets {
         excluded: vec![body],
+        held: None,
     });
     let answer = answered(regenerator.handle(regenerate_with(&editor, Some(out))));
     let drafted = answer.draft.unwrap();
@@ -955,6 +957,7 @@ fn an_unchanged_model_is_answered_with_the_same_mesh() {
         kind: Extrude {
             operation: Operation::Join(varde_document::Targets {
                 excluded: vec![plate],
+                held: None,
             }),
             ..new_body_draft(editor.document(), 0, "3").extrude().clone()
         }
@@ -1970,6 +1973,7 @@ fn a_join_draft_merging_two_bodies(regenerator: &mut Regenerator, remeshed: usiz
     out.revision = 3;
     out.extrude_mut().operation = Operation::Join(Targets {
         excluded: vec![below],
+        held: None,
     });
     let apart = answered(regenerator.handle(regenerate_with(&editor, Some(out))));
     assert_eq!(apart.draft.unwrap().error, None);

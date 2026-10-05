@@ -22,8 +22,10 @@ pub const MAX_SPLIT_CURVES: usize = 256;
 /// With both kept, the piece `original` names keeps the body's id (and
 /// so every later feature naming the body gets it), and the other is
 /// `new_body`, which the split makes. Keeping one side is a trim: that
-/// side keeps the id, whatever `original` says, and there's no new body.
-/// A side of several pieces is one body of several shells.
+/// side keeps the id, whatever `original` says, and there's no new body;
+/// but a split that made one keeps its id in `new_body`, for when it
+/// keeps both again. A side of several pieces is one body of several
+/// shells.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Split {
     /// A body a feature before it makes.
@@ -35,10 +37,15 @@ pub struct Split {
     #[serde(default)]
     pub keep: Keep,
     /// The body the piece `original` doesn't name becomes, made by the
-    /// split: there exactly when both sides are kept. A command adding
-    /// the split gives it a new id whatever it holds ([`BodyId::NEW`]
-    /// stands for it until then), and fills it in or takes it out as
-    /// `keep` says.
+    /// split while both sides are kept, and there then. Keeping one side
+    /// it's the id the body had, if the split made one before, which the
+    /// document holds for it (no other body or feature gets it), so that
+    /// keeping both again brings the body back with it, and what was
+    /// named on it (a sketch on its face) finds it again; or none, for a
+    /// split that never kept both (and every split written before ids
+    /// were held). The commands fill it in ([`BodyId::NEW`] stands for a
+    /// new body until then), whatever it holds: a new id when adding,
+    /// the one held when setting.
     #[serde(default)]
     pub new_body: Option<BodyId>,
 }
@@ -150,6 +157,17 @@ impl Split {
         self.keep == Keep::Both
     }
 
+    /// The body it makes: its new body while it keeps both pieces.
+    pub fn made_body(&self) -> Option<BodyId> {
+        self.new_body.filter(|_| self.keeps_both())
+    }
+
+    /// The id it holds for its new body while it keeps one side, see
+    /// [`Split::new_body`].
+    pub fn held_body(&self) -> Option<BodyId> {
+        self.new_body.filter(|_| !self.keeps_both())
+    }
+
     /// The bodies it names, which it depends on: its body, a tool body,
     /// and a face tool's body; sorted without repeats. Not a plane face's
     /// body (as a mirror's plane: the split stays, and fails until given
@@ -166,15 +184,15 @@ impl Split {
         bodies
     }
 
-    /// Checks what needs only the split: its new body there exactly when
-    /// both sides are kept, a tool body not the body itself, a face's
+    /// Checks what needs only the split: its new body there when both
+    /// sides are kept, a tool body not the body itself, a face's
     /// point in bounds, the regions' count and each region, the curves'
     /// count and order. What the bodies, faces and sketch name is
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
     pub fn check_own(&self) -> Result<(), SplitError> {
-        if self.new_body.is_some() != self.keeps_both() {
-            return Err(SplitError::NewBodyKept);
+        if self.keeps_both() && self.new_body.is_none() {
+            return Err(SplitError::NoNewBody);
         }
         match &self.tool {
             SplitTool::Plane(PlaneRef::Origin(_)) => {}
@@ -229,9 +247,8 @@ pub enum SplitError {
     /// It splits this body, which isn't there or which no feature before
     /// it makes.
     Body(BodyId),
-    /// Its new body is there though it keeps one side, or missing though
-    /// it keeps both.
-    NewBodyKept,
+    /// It keeps both sides but has no new body.
+    NoNewBody,
     /// Its new body, this one, isn't a body it makes.
     NewBody(BodyId),
     /// Its tool body is the body it splits.
@@ -275,9 +292,7 @@ impl fmt::Display for SplitError {
                 "splits body {}, which isn't there or no earlier feature makes",
                 body.0
             ),
-            SplitError::NewBodyKept => {
-                f.write_str("makes a new body exactly when it keeps both sides")
-            }
+            SplitError::NoNewBody => f.write_str("keeps both sides but makes no new body"),
             SplitError::NewBody(body) => {
                 write!(
                     f,

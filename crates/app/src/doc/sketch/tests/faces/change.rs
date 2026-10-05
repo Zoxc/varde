@@ -407,6 +407,7 @@ fn a_cut_face_of_a_body_merged_after_the_sketch_is_named_by_the_body_it_was_cut_
         flip: true,
         operation: Operation::Cut(varde_document::Targets {
             excluded: vec![top],
+            held: None,
         }),
     };
     editor
