@@ -1682,9 +1682,8 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
                     .font(theme::SEMIBOLD),
                 standing,
                 text(format!(
-                    "{}{} · {}{}",
-                    sketch_summary(sketch.sketch),
-                    profile_count(sketch).map_or_else(String::new, |count| format!(" · {count}")),
+                    "{}{}{}",
+                    profile_count(sketch).map_or_else(String::new, |count| format!("{count} · ")),
                     crate::plane_pick::on_plane(state.editor.document(), &sketch.plane),
                     status_suffix(state)
                 ))
