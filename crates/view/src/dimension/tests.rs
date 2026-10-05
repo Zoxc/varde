@@ -73,7 +73,7 @@ fn a_line_measures_its_length_or_beside_its_ends_its_extent() {
 
 #[test]
 fn two_items_measure_what_lies_between_them() {
-    let (sketch, [slope, lone, parallel, steep, circle, _], [a, b]) = shapes();
+    let (sketch, [slope, lone, parallel, steep, _, _], [a, b]) = shapes();
     assert_eq!(
         measured(&sketch, &[a, lone], 5.0, 15.0),
         Some(Measure::Distance(a, lone))
@@ -106,12 +106,12 @@ fn two_items_measure_what_lies_between_them() {
         None,
         "its own end"
     );
-    assert_eq!(measured(&sketch, &[slope, circle], 5.0, 8.0), None);
     assert_eq!(measured(&sketch, &[a, b, lone], 5.0, 8.0), None);
     assert!(joins(&sketch, &[a], lone));
     assert!(joins(&sketch, &[slope], steep));
     assert!(!joins(&sketch, &[slope], b));
-    assert!(!joins(&sketch, &[circle], a));
+    // A circle with the rest measures from its edge: see
+    // `a_circle_picked_with_other_geometry_measures_from_its_edge`.
     assert!(!joins(&sketch, &[a, lone], b));
 }
 
@@ -327,4 +327,36 @@ fn a_rectangle_selected_measures_its_width_and_height() {
         [(0.0, 50.0), (2.0, 60.0), (22.0, 60.0), (20.0, 50.0)],
     );
     assert_eq!(rectangle(&sketch, &skewed), None);
+}
+
+/// A circle or an arc picked with a point, a line or another circle or
+/// arc measures from its edge, the one holding the other first; with its
+/// own centre, nothing.
+#[test]
+fn a_circle_picked_with_other_geometry_measures_from_its_edge() {
+    let (sketch, [slope, lone, _, _, circle, arc], _) = shapes();
+    assert_eq!(
+        measured(&sketch, &[circle, lone], 30.0, 10.0),
+        Some(Measure::EdgeDistance(circle, lone))
+    );
+    assert_eq!(
+        measured(&sketch, &[lone, circle], 30.0, 10.0),
+        Some(Measure::EdgeDistance(circle, lone))
+    );
+    assert_eq!(
+        measured(&sketch, &[slope, circle], 30.0, 0.0),
+        Some(Measure::EdgeDistance(circle, slope))
+    );
+    // The arc, of radius 4 about the same centre, holds the circle.
+    assert_eq!(
+        measured(&sketch, &[circle, arc], 47.0, 0.0),
+        Some(Measure::EdgeDistance(arc, circle))
+    );
+    assert!(joins(&sketch, &[lone], circle));
+    let center = match sketch.curve(circle).unwrap().curve {
+        Curve::Circle { center, .. } => center,
+        _ => unreachable!(),
+    };
+    assert_eq!(measured(&sketch, &[circle, center], 30.0, 10.0), None);
+    assert!(!joins(&sketch, &[circle], center));
 }

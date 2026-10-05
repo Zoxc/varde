@@ -32,6 +32,8 @@ pub(crate) struct Lines {
 ///   there, with the lines extended to it;
 /// - a radius, from the centre towards the label to the curve, and a
 ///   diameter across the curve, each reaching out to the label;
+/// - a circle's or an arc's edge's distance, as between two places, from
+///   the place on its edge nearest what it's from;
 /// - an offset, between lines as a distance from the copy's middle; of a
 ///   circle or an arc, from the one to the other towards the label, or a
 ///   round join's as a radius.
@@ -92,6 +94,18 @@ pub(crate) fn lines(sketch: &Sketch, measure: &Measure, side: Side, label: DVec2
             Lines {
                 lines,
                 arrows: vec![[near, far], [far, near]],
+            }
+        }
+        Measure::EdgeDistance(round, other) => {
+            let (on_edge, on_other) = sketch.edge_ends(round, other, side)?;
+            match sketch.line(other) {
+                Some((start, end)) => {
+                    let t = param(on_edge, start, end);
+                    let mut lines = aligned(on_edge, on_other, label)?;
+                    lines.lines.extend(extended(on_other, t, start, end));
+                    lines
+                }
+                None => aligned(on_edge, on_other, label)?,
             }
         }
         Measure::Offset(a, b) => match sketch.offset_pair([a, b])? {

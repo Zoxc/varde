@@ -128,7 +128,13 @@ and the side the geometry is on, for `Sketch::tangent` and
 Dimensions (`dimension.rs`) measure a distance (two points, a point and
 a line, two lines), a horizontal or vertical distance, a length, an angle
 (between lines, or a spline's handle named by its tip, from its fit
-point to its tip), a radius or a diameter, or an offset pair's offset
+point to its tip), a radius or a diameter, an offset pair's offset, or
+the gap from a circle's or an arc's edge (taken whole, as a circle) to
+a point, a line or another circle's or arc's edge (`EdgeDistance(round,
+other)`: its side outside or inside for a point, the side of a line the
+centre is on, apart or the other inside for a circle; `Sketch::edge_ends`
+where the gap runs, its anchor halfway; `fits` refuses a spline and the
+round's own points; the solver's `Residual::EdgeGap`)
 (`Measure`, `Measure::fits` for what roles can't say), with the
 value as typed
 (`varde_expr::Value`: the text and what it came to in millimetres or
@@ -1432,7 +1438,10 @@ refused what it found, `MeshFeed::broken`). An
   horizontal or vertical extent; two points the same way; a point and a
   line; two lines' distance if parallel, else the angle whose corner, or
   the one across from it, the label is in; a circle's diameter, an arc's
-  radius, `Tab` switching, `Look::SwitchRound`). A click on something that
+  radius, `Tab` switching, `Look::SwitchRound`; a circle or an arc
+  with a point, a line or another, the gap from its edge, the one
+  holding the other first: picking the circle itself, not its centre,
+  which measures from the centre as any point). A click on something that
   joins what's picked picks it, on something else starts afresh from it,
   and on nothing, on a pick, or with two picked places the dimension with
   its label there. The selection is picked when the tool is taken up, if

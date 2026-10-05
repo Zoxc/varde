@@ -25,19 +25,47 @@ enum Extent {
 
 /// Whether the items `picked` of `sketch` measure something together: a
 /// line alone, a circle or an arc alone, a spline's handle alone (by its
-/// tip), two points, a point and a line that doesn't end at it, or two
-/// lines; not an axis alone, nor the origin and axes among themselves.
+/// tip), two points, a point and a line that doesn't end at it, two
+/// lines, or a circle or an arc and a point, a line or another circle or
+/// arc, by its edge (see [`edge_distance`]); not an axis alone, nor the
+/// origin and axes among themselves.
 fn measurable(sketch: &Sketch, picked: &[Id]) -> bool {
     let plays = |id, role: Role| sketch.kind(id).is_some_and(|kind| role.admits(kind));
     match *picked {
         [one] if sketch.handle(one).is_some() => true,
         [one] => plays(one, Role::Curve) && !one.is_builtin(),
         [a, b] if a != b && !(a.is_builtin() && b.is_builtin()) => {
+            if let Some(edge) = edge_distance(sketch, a, b) {
+                let tips = std::collections::HashSet::new();
+                return edge.items().all(|(id, role)| plays(id, role)) && edge.fits(sketch, &tips);
+            }
             let distance = Measure::Distance(a, b);
             distance.items().all(|(id, role)| plays(id, role))
                 && distance.own_point(sketch).is_none()
         }
         _ => false,
+    }
+}
+
+/// The distance from the edge of a circle or an arc to the other of `a`
+/// and `b` of `sketch`, if either is one: the circle first, and of two,
+/// the one holding the other if one does, else `a`. A circle's centre is
+/// a point, measured from as any other.
+fn edge_distance(sketch: &Sketch, a: Id, b: Id) -> Option<Measure> {
+    let round = |id| sketch.kind(id).is_some_and(|kind| Role::Round.admits(kind));
+    match (round(a), round(b)) {
+        (true, true) => {
+            let ((ca, ra), (cb, rb)) = (sketch.round(a)?, sketch.round(b)?);
+            // `b` holds `a`: from `b`'s edge in to `a`'s.
+            if cb.distance(ca) + ra < rb {
+                Some(Measure::EdgeDistance(b, a))
+            } else {
+                Some(Measure::EdgeDistance(a, b))
+            }
+        }
+        (true, false) => Some(Measure::EdgeDistance(a, b)),
+        (false, true) => Some(Measure::EdgeDistance(b, a)),
+        (false, false) => None,
     }
 }
 
@@ -78,6 +106,8 @@ pub fn round(sketch: &Sketch, picked: &[Id]) -> bool {
 ///   from it, which is the same;
 /// - a circle its diameter, an arc its radius, or with `switched` the
 ///   other;
+/// - a circle or an arc and a point, a line or another circle or arc:
+///   the gap from its edge, see [`Measure::EdgeDistance`];
 /// - a spline's handle, by its tip, its angle from the X axis
 ///   (counter-clockwise; its length is its fit point's and its tip's
 ///   distance).
@@ -106,6 +136,7 @@ pub fn measure(
             Curve::Arc { .. } => Measure::Radius(one),
             Curve::Spline(_) => return None,
         },
+        [a, b] if edge_distance(sketch, a, b).is_some() => edge_distance(sketch, a, b)?,
         [a, b] => match (point(a), point(b)) {
             (Some(p), Some(q)) => along(extent(p, q, at), a, b, Measure::Distance(a, b)),
             (None, None) => {
@@ -208,7 +239,7 @@ pub(crate) fn sector_holds(from: DVec2, sweep: f64, toward: DVec2) -> bool {
 /// A measure as the user sees it: "Length", "Horizontal distance".
 pub fn name(measure: &Measure) -> &'static str {
     match measure {
-        Measure::Distance(..) => "Distance",
+        Measure::Distance(..) | Measure::EdgeDistance(..) => "Distance",
         Measure::HorizontalDistance(..) => "Horizontal distance",
         Measure::VerticalDistance(..) => "Vertical distance",
         Measure::Length(_) => "Length",

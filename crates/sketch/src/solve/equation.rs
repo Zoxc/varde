@@ -55,6 +55,14 @@ impl RoundSlots {
     }
 }
 
+/// What an edge's gap ([`Residual::EdgeGap`]) runs to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum EdgeTo {
+    Point(PointSlots),
+    Line(LineSlots),
+    Round(RoundSlots),
+}
+
 /// An offset pair (see [`Sketch::offset_pair`](crate::Sketch::offset_pair)):
 /// how far the second of it lies from the first.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -310,6 +318,19 @@ pub(crate) enum Residual {
     },
     /// A radius less `value`.
     Radius { round: RoundSlots, value: f64 },
+    /// The gap from a circle's edge to `to`, less `value`: of a point,
+    /// `sign` times its distance from the centre less the radius (1
+    /// outside, -1 inside); of a line, `sign` times the centre's signed
+    /// distance from it, less the radius; of another circle, `sign` times
+    /// the distance between the centres less the radius, less the other's
+    /// radius (1 apart, -1 with it inside). See
+    /// [`Measure::EdgeDistance`](crate::Measure::EdgeDistance).
+    EdgeGap {
+        round: RoundSlots,
+        to: EdgeTo,
+        sign: f64,
+        value: f64,
+    },
     /// `sign` times how far an offset pair's second lies from its first,
     /// less `value`.
     PairOffset {
@@ -522,6 +543,14 @@ impl Residual {
                 line(l, f);
             }
             Residual::Radius { round: r, .. } => round(r, f),
+            Residual::EdgeGap { round: r, to, .. } => {
+                round(r, f);
+                match to {
+                    EdgeTo::Point(p) => point(p, f),
+                    EdgeTo::Line(l) => line(l, f),
+                    EdgeTo::Round(other) => round(other, f),
+                }
+            }
             Residual::PairOffset { pair: ref p, .. } => pair(p, f),
             Residual::EqualOffset(ref a, ref b) => {
                 pair(a, f);
@@ -723,6 +752,23 @@ impl Residual {
                 distance(point(a).midpoint(point(b)), line) * R::constant(sign) - R::constant(value)
             }
             Residual::Radius { round, value } => radius(round) - R::constant(value),
+            Residual::EdgeGap {
+                round,
+                to,
+                sign,
+                value,
+            } => {
+                let (center, sign) = (point(round.center()), R::constant(sign));
+                let gap = match to {
+                    EdgeTo::Point(p) => sign * ((point(p) - center).length() - radius(round)),
+                    EdgeTo::Line(line) => sign * distance(center, line) - radius(round),
+                    EdgeTo::Round(other) => {
+                        let between = (point(other.center()) - center).length();
+                        sign * (between - radius(round)) - radius(other)
+                    }
+                };
+                gap - R::constant(value)
+            }
             Residual::PairOffset {
                 ref pair,
                 sign,

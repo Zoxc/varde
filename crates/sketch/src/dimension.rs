@@ -60,6 +60,15 @@ pub enum Measure {
     /// radius about its corner. What drives a copy
     /// [`SketchEdit::Offset`](crate::SketchEdit::Offset) makes.
     Offset(Id, Id),
+    /// How far the edge of a circle or an arc (the first, taken whole, as
+    /// a circle) lies from a point, a line, or another circle's or arc's
+    /// edge (the second), across the gap between them, see
+    /// [`Sketch::edge_ends`]. Of a point, [`Side::Positive`] outside the
+    /// circle, [`Side::Negative`] inside; of a line, the side of it the
+    /// centre is on, as [`Measure::Distance`]'s, the near edge always; of
+    /// another circle, [`Side::Positive`] apart, [`Side::Negative`] with
+    /// the second inside the first.
+    EdgeDistance(Id, Id),
 }
 
 impl Measure {
@@ -77,6 +86,8 @@ impl Measure {
             // Which go together is `fits`'s to say: a point may be a
             // spline's copy's.
             Measure::Offset(a, b) => [Some((a, Geometry)), Some((b, Geometry))],
+            // Not a spline: `fits`'s to say.
+            Measure::EdgeDistance(round, other) => [Some((round, Round)), Some((other, Geometry))],
         }
         .into_iter()
         .flatten()
@@ -108,6 +119,7 @@ impl Measure {
             Radius(round) => Radius(map(round)?),
             Diameter(round) => Diameter(map(round)?),
             Offset(a, b) => Offset(map(a)?, map(b)?),
+            EdgeDistance(a, b) => EdgeDistance(map(a)?, map(b)?),
         })
     }
 
@@ -118,6 +130,14 @@ impl Measure {
     pub fn fits(&self, sketch: &Sketch, tips: &HashSet<Id>) -> bool {
         match *self {
             Measure::Offset(a, b) => sketch.offset_pair([a, b]).is_some(),
+            // Not a spline, nor the circle itself or one of its own
+            // points, whose distance from its edge is no gap.
+            Measure::EdgeDistance(round, other) => {
+                let own = sketch
+                    .curve(round)
+                    .is_some_and(|entry| entry.curve.points().any(|id| id == other));
+                round != other && sketch.kind(other) != Some(crate::Kind::Spline) && !own
+            }
             Measure::Angle(a, b) => [a, b]
                 .into_iter()
                 .all(|id| sketch.line(id).is_some() || tips.contains(&id)),
@@ -220,6 +240,72 @@ impl Sketch {
         })
     }
 
+    /// The gap a [`Measure::EdgeDistance`] of the circle or arc `round`
+    /// and `other` measures on `side`: negative where the geometry is on
+    /// the other side. `None` if either is missing or of another kind.
+    fn edge_gap(&self, round: Id, other: Id, side: Side) -> Option<f64> {
+        let (center, radius) = self.round(round)?;
+        let sign = side.sign();
+        Some(match self.end(other) {
+            Some(End::Point(point)) => sign * (point.distance(center) - radius),
+            Some(End::Line(start, end)) => sign * from_line(center, start, end) - radius,
+            None => {
+                let (to, to_radius) = self.round(other)?;
+                sign * (to.distance(center) - radius) - to_radius
+            }
+        })
+    }
+
+    /// The side a [`Measure::EdgeDistance`] of `round` and `other` holds
+    /// them on now: outside or inside, which side of a line.
+    fn edge_side(&self, round: Id, other: Id) -> Option<Side> {
+        let (center, radius) = self.round(round)?;
+        Some(match self.end(other) {
+            Some(End::Point(point)) => Side::of(point.distance(center) - radius),
+            Some(End::Line(start, end)) => Side::of(from_line(center, start, end)),
+            None => {
+                let (to, to_radius) = self.round(other)?;
+                if to.distance(center) + to_radius < radius {
+                    Side::Negative
+                } else {
+                    Side::Positive
+                }
+            }
+        })
+    }
+
+    /// Where a [`Measure::EdgeDistance`] of `round` and `other` on `side`
+    /// runs across its gap: from the place on `round`'s edge nearest
+    /// `other` to the point, its foot on the line, or the place on the
+    /// other circle's edge along the line through the centres. `None` if
+    /// either is missing or of another kind, or there's no telling which
+    /// way (a point at the centre).
+    pub fn edge_ends(&self, round: Id, other: Id, side: Side) -> Option<(DVec2, DVec2)> {
+        let (center, radius) = self.round(round)?;
+        let toward = |to: DVec2| (to - center).try_normalize();
+        match self.end(other) {
+            Some(End::Point(point)) => Some((center + toward(point)? * radius, point)),
+            Some(End::Line(start, end)) => {
+                let foot = foot(center, start, end);
+                // The near edge, on the side of the line the centre is.
+                let way = toward(foot).or_else(|| {
+                    let across = (end - start).try_normalize()?.perp();
+                    Some(-across * side.sign())
+                })?;
+                Some((center + way * radius, foot))
+            }
+            None => {
+                let (to, to_radius) = self.round(other)?;
+                let way = toward(to)?;
+                let far = match side {
+                    Side::Positive => -to_radius,
+                    Side::Negative => to_radius,
+                };
+                Some((center + way * radius, to + way * far))
+            }
+        }
+    }
+
     /// The tips of the handles of the sketch's splines, which an angle
     /// may name ([`Measure::fits`]).
     pub fn tips(&self) -> HashSet<Id> {
@@ -267,6 +353,7 @@ impl Sketch {
             Measure::Radius(round) => self.round(round)?.1,
             Measure::Diameter(round) => 2.0 * self.round(round)?.1,
             Measure::Offset(a, b) => self.offset_of([a, b])? * side.sign(),
+            Measure::EdgeDistance(round, other) => self.edge_gap(round, other, side)?,
         };
         value.is_finite().then_some(value)
     }
@@ -290,6 +377,7 @@ impl Sketch {
                 }
             }),
             Measure::Offset(a, b) => self.offset_of([a, b]).map(Side::of),
+            Measure::EdgeDistance(round, other) => self.edge_side(round, other),
             Measure::Length(_) | Measure::Radius(_) | Measure::Diameter(_) => None,
         };
         side.unwrap_or(Side::Positive)
@@ -372,6 +460,11 @@ impl Sketch {
             }
             Measure::Radius(round) | Measure::Diameter(round) => self.round(round)?.0,
             Measure::Offset(a, b) => self.offset_anchor([a, b])?,
+            Measure::EdgeDistance(round, other) => {
+                let side = self.edge_side(round, other)?;
+                let (on_edge, on_other) = self.edge_ends(round, other, side)?;
+                on_edge.midpoint(on_other)
+            }
         };
         anchor.is_finite().then_some(anchor)
     }

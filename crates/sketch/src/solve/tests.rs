@@ -710,6 +710,67 @@ fn every_dimension_holds_once_solved() {
     }
 }
 
+/// A circle's edge dimensioned from a point outside and one inside, a
+/// line, a circle apart and one inside it: each holds, on its side.
+#[test]
+fn edge_distances_hold_once_solved() {
+    let mut sketch = Sketch::default();
+    let p = |sketch: &mut Sketch, x, y| point(sketch, x, y);
+    let hub = p(&mut sketch, 0.0, 0.0);
+    let big = circle(&mut sketch, hub, 10.0);
+    let outside = p(&mut sketch, 15.0, 1.0);
+    let inside = p(&mut sketch, 2.0, 1.0);
+    let [a, b] = [(-20.0, -14.0), (20.0, -13.0)].map(|(x, y)| p(&mut sketch, x, y));
+    let below = line(&mut sketch, a, b);
+    let far_hub = p(&mut sketch, 0.0, 25.0);
+    let apart = circle(&mut sketch, far_hub, 3.0);
+    let near_hub = p(&mut sketch, -4.0, 0.0);
+    let held = circle(&mut sketch, near_hub, 2.0);
+    for (measure, text) in [
+        (Measure::EdgeDistance(big, outside), "4"),
+        (Measure::EdgeDistance(big, inside), "6"),
+        (Measure::EdgeDistance(big, below), "5"),
+        (Measure::EdgeDistance(big, apart), "8"),
+        (Measure::EdgeDistance(big, held), "3"),
+    ] {
+        dimension(&mut sketch, measure, text);
+    }
+    let sides: Vec<_> = (sketch.dimensions.iter())
+        .map(|entry| entry.dimension.side)
+        .collect();
+    use crate::Side::{Negative, Positive};
+    assert_eq!(sides, [Positive, Negative, Positive, Positive, Negative]);
+    let solved = settle(&sketch).unwrap().sketch;
+    for entry in &solved.dimensions {
+        let dimension = &entry.dimension;
+        let measured = solved.measure(&dimension.measure, dimension.side).unwrap();
+        assert!(
+            (measured - dimension.value.value).abs() < 1e-9,
+            "{:?}: {measured}",
+            dimension.measure
+        );
+        assert_eq!(solved.side(&dimension.measure), dimension.side);
+    }
+    // The gap runs from the edge: a point outside sits 4 past it.
+    let (edge, to) = (solved.edge_ends(big, outside, Positive)).unwrap();
+    let (center, radius) = solved.round(big).unwrap();
+    assert!((edge.distance(center) - radius).abs() < 1e-9);
+    assert!((edge.distance(to) - 4.0).abs() < 1e-9);
+}
+
+/// An edge distance takes no spline, nor the circle's own points.
+#[test]
+fn an_edge_distance_takes_no_spline_nor_its_own_points() {
+    let mut sketch = Sketch::default();
+    let hub = point(&mut sketch, 0.0, 0.0);
+    let round = circle(&mut sketch, hub, 2.0);
+    let tips = std::collections::HashSet::new();
+    assert!(!Measure::EdgeDistance(round, hub).fits(&sketch, &tips));
+    assert!(!Measure::EdgeDistance(round, round).fits(&sketch, &tips));
+    let lone = point(&mut sketch, 5.0, 0.0);
+    assert!(Measure::EdgeDistance(round, lone).fits(&sketch, &tips));
+}
+
 #[test]
 fn a_distance_from_a_line_never_reaches_its_mirror_image() {
     let mut sketch = Sketch::default();

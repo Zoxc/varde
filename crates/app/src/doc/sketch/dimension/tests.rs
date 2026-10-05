@@ -138,9 +138,15 @@ fn picks_join_what_they_measure_with_and_start_afresh_otherwise() {
     };
     assert_eq!(target(&doc), Measure::Distance(start, end));
 
-    // A circle doesn't join a point: it starts afresh, and is measured by
-    // its diameter, or switched, its radius.
+    // A circle joins a point, measured from its edge.
     pick(&mut doc, 0.0, 0.0, start);
+    pick(&mut doc, 23.0, 0.0, circle);
+    assert_eq!(drawing(&doc).unwrap().picked, [start, circle]);
+    place(&mut doc, 10.0, 3.0);
+    assert_eq!(target(&doc), Measure::EdgeDistance(circle, start));
+    assert_eq!(field(&doc).unwrap().text, "17 mm");
+
+    // Alone, it's measured by its diameter, or switched, its radius.
     pick(&mut doc, 23.0, 0.0, circle);
     assert_eq!(drawing(&doc).unwrap().picked, [circle]);
     doc.look(Look::SwitchRound);

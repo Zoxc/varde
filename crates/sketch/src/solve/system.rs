@@ -17,8 +17,8 @@ use crate::{
 };
 
 use super::equation::{
-    Equation, Heading, LineSlots, PairRead, PairSlots, PointSlots, Refit, Residual, RoundSlots,
-    Slot, SplineAt, SplineSlots,
+    EdgeTo, Equation, Heading, LineSlots, PairRead, PairSlots, PointSlots, Refit, Residual,
+    RoundSlots, Slot, SplineAt, SplineSlots,
 };
 
 /// How [`Constraint::Fix`] is modelled.
@@ -959,6 +959,16 @@ impl System {
             },
             // Its pair may add equations of its own: see `System::toward`.
             Measure::Offset(..) => return None,
+            Measure::EdgeDistance(round, other) => Residual::EdgeGap {
+                round: self.round(sketch, round)?,
+                to: match (point(other), line(other)) {
+                    (Some(p), _) => EdgeTo::Point(p),
+                    (None, Some(l)) => EdgeTo::Line(l),
+                    (None, None) => EdgeTo::Round(self.round(sketch, other)?),
+                },
+                sign,
+                value,
+            },
         })
     }
 
