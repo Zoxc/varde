@@ -1324,8 +1324,9 @@ fn item_row<'a>(
 /// The sketch's constraints and dimensions on the geometry selected, or
 /// all of them when none is, those in conflict first, each with what
 /// it ties together: "Tangent · Line 2, Arc 1", "Length 40 mm · Line 3".
-/// A dimension's value is changed in place, its row double-clicked. A
-/// header toggles the constraints' glyphs in the viewport.
+/// A dimension's value is changed in place, its row double-clicked. The
+/// header, "Constraints for selection" while it lists on the selection,
+/// toggles the constraints' glyphs in the viewport.
 fn constraints(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
     let shown = listed(&sketch);
     let conflicts = sketch.conflicts();
@@ -1338,12 +1339,20 @@ fn constraints(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
         Tone::Faint,
         Some(Message::Look(Look::ToggleGlyphs)),
     );
+    let title = if sketch.listed_on.is_empty() {
+        "Constraints"
+    } else {
+        "Constraints for selection"
+    };
     let header = container(
         row![
-            group("Constraints", shown.len()),
+            chrome::heading(title),
+            text(shown.len()).size(11.5).style(theme::faint_text),
             space::horizontal(),
             glyphs
         ]
+        .spacing(8)
+        .height(ROW_HEIGHT)
         .align_y(Alignment::Center),
     )
     .padding([0, 8]);

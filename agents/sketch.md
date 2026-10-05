@@ -1420,7 +1420,8 @@ refused what it found, `MeshFeed::broken`). An
   then by id; each as "Tangent · Line 2, Arc 1" or "Length 40 mm · Line
   3" (a reference's value in brackets); only the rows in view laid out,
   like the Geometry list. Double-clicking a driving dimension's row opens the value
-  field in it. Its header's eye hides and shows the glyphs
+  field in it. Its header reads "Constraints for selection" while it
+  lists on points and curves. Its header's eye hides and shows the glyphs
   (`Look::ToggleGlyphs`).
 - **Dimensions** (`doc/sketch/dimension.rs`). The Dimension tool (`D`,
   `Tool::Dimension`) picks with each click (`ToolClick::hit`) rather than
