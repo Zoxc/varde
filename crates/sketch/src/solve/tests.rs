@@ -1186,6 +1186,27 @@ fn a_handle_s_length_and_angle_are_dimensioned() {
 }
 
 #[test]
+fn handles_are_held_as_lines_are() {
+    let (mut sketch, fit, tips, _) = wave(false, &[0, 2, 4]);
+    let (a, b) = (point(&mut sketch, 0.0, -9.0), point(&mut sketch, 4.0, -6.0));
+    let slanted = line(&mut sketch, a, b);
+    constrain(&mut sketch, Constraint::Horizontal(tips[0]));
+    constrain(&mut sketch, Constraint::Parallel(slanted, tips[1]));
+    constrain(&mut sketch, Constraint::Perpendicular(tips[1], tips[2]));
+    let named = sketch.name(Id::handle(tips[0])).unwrap();
+    assert!(named.starts_with("Handle of Spline"), "{named}");
+    assert!(sketch.selectable(Id::handle(tips[0])) && !sketch.selectable(Id::handle(fit[1])));
+    let solved = settle(&sketch).unwrap().sketch;
+    let analysis = analyse(&solved);
+    assert!(analysis.solved && analysis.redundant.is_empty());
+    let handle = |i: usize| at(&solved, tips[i]) - at(&solved, fit[2 * i]);
+    let along = at(&solved, b) - at(&solved, a);
+    assert!(handle(0).y.abs() < 1e-9, "{}", handle(0));
+    assert!(handle(1).normalize().perp_dot(along.normalize()).abs() < 1e-9);
+    assert!(handle(1).normalize().dot(handle(2).normalize()).abs() < 1e-9);
+}
+
+#[test]
 fn a_point_on_a_spline_slides_past_its_knots_in_one_solve() {
     // By control points, a row of them, fixed; a point on it held above a
     // fixed point far along, so its parameter passes several knots.

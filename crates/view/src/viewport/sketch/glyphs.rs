@@ -19,10 +19,15 @@ pub(crate) fn anchors(sketch: &Sketch, constraint: &Constraint) -> Vec<DVec2> {
         Constraint::HorizontalPoints(a, b)
         | Constraint::VerticalPoints(a, b)
         | Constraint::Symmetric { a, b, .. } => between(a, b),
-        Constraint::Horizontal(item) | Constraint::Vertical(item) | Constraint::Fix(item) => {
-            anchor(sketch, item)
+        Constraint::Horizontal(item) | Constraint::Vertical(item) => line_anchor(sketch, item),
+        Constraint::Fix(item) => anchor(sketch, item),
+        Constraint::Parallel(a, b) => {
+            return [line_anchor(sketch, a), line_anchor(sketch, b)]
+                .into_iter()
+                .flatten()
+                .collect();
         }
-        Constraint::Parallel(a, b) | Constraint::Equal(a, b) => {
+        Constraint::Equal(a, b) => {
             return [anchor(sketch, a), anchor(sketch, b)]
                 .into_iter()
                 .flatten()
@@ -47,6 +52,18 @@ pub(crate) fn anchors(sketch: &Sketch, constraint: &Constraint) -> Vec<DVec2> {
     found.into_iter().collect()
 }
 
+/// Where a glyph goes on what's named as a line ([`Sketch::direction`]):
+/// a handle, by its tip, at its middle, else as [`anchor`].
+fn line_anchor(sketch: &Sketch, id: Id) -> Option<DVec2> {
+    match sketch.handle(id) {
+        Some(_) => {
+            let (at, tip) = sketch.direction(id)?;
+            Some((at + tip) / 2.0)
+        }
+        None => anchor(sketch, id),
+    }
+}
+
 /// Where a glyph goes on the item `id`: a point's place, a line's middle,
 /// a circle's upper right, an arc's or a spline's middle.
 fn anchor(sketch: &Sketch, id: Id) -> Option<DVec2> {
@@ -69,17 +86,17 @@ fn anchor(sketch: &Sketch, id: Id) -> Option<DVec2> {
     }
 }
 
-/// Where the lines `a` and `b` meet, if they do near them (a corner),
+/// Where the lines (or handles) `a` and `b` meet, if they do near them (a corner),
 /// else halfway between their middles. An axis, which has no middle, is
 /// near anywhere, and failing a corner the glyph is at the other's
 /// middle.
 fn corner(sketch: &Sketch, a: Id, b: Id) -> Option<DVec2> {
-    let halfway = match (anchor(sketch, a), anchor(sketch, b)) {
+    let halfway = match (line_anchor(sketch, a), line_anchor(sketch, b)) {
         (Some(a), Some(b)) => (a + b) / 2.0,
         (Some(one), None) | (None, Some(one)) => one,
         (None, None) => return None,
     };
-    let ((p, p_end), (q, q_end)) = (sketch.line(a)?, sketch.line(b)?);
+    let ((p, p_end), (q, q_end)) = (sketch.direction(a)?, sketch.direction(b)?);
     let r = p_end - p;
     let Some((t, _)) = crossing(p, r, q, q_end - q) else {
         return Some(halfway);

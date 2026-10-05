@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use varde_expr::{AngleUnit, LengthUnit, Unit, Value, format};
 
-use crate::origin::FIRST_BUILTIN;
+use crate::origin::LAST_ID;
 use crate::{
     Constraint, Curve, CurveEntry, Design, Dimension, Id, Kind, LinkKind, LinkShape, OutOfIds,
     Point, Setback, Side, Sketch, SketchError, SplineKind,
@@ -366,7 +366,7 @@ impl Add {
         u32::try_from(made)
             .ok()
             .and_then(|made| self.first.checked_add(made))
-            .filter(|&id| id < FIRST_BUILTIN)
+            .filter(|&id| id < LAST_ID)
             .map(Id)
             .ok_or(OutOfIds)
     }
@@ -413,11 +413,11 @@ impl Add {
             .chain(self.curves.iter().map(|curve| curve.id));
         let mut placed = BTreeMap::new();
         for id in placeholders {
-            if id.0 < self.first || id.is_builtin() {
+            if id.0 < self.first || id.0 >= LAST_ID {
                 return Err(EditError::Placeholder(id));
             }
             let new = self.resolve(sketch.next_id, id);
-            let new = new.filter(|new| !new.is_builtin()).ok_or(OutOfIds)?;
+            let new = new.filter(|new| new.0 < LAST_ID).ok_or(OutOfIds)?;
             if placed.insert(id, new).is_some() {
                 return Err(EditError::Placeholder(id));
             }

@@ -2,7 +2,7 @@ use glam::DVec2;
 use varde_expr::LengthUnit;
 
 use super::*;
-use crate::origin::FIRST_BUILTIN;
+use crate::origin::LAST_ID;
 use crate::testing::{DESIGN, point, value};
 use crate::{Kind, List, Measure};
 
@@ -115,7 +115,10 @@ fn placeholders_must_name_the_edits_own_items() {
     assert_eq!(fails(below), Err(EditError::Placeholder(line)));
     // An old id naming nothing, or the wrong kind, is the check's.
     let mut wrong = add;
-    wrong.constraints.push(Constraint::Horizontal(points[2]));
+    wrong.constraints.push(Constraint::Midpoint {
+        point: points[2],
+        line: points[2],
+    });
     assert!(matches!(
         fails(wrong),
         Err(EditError::Sketch(SketchError::Reference { .. }))
@@ -148,7 +151,7 @@ fn an_add_made_after_one_not_applied_names_nothing_of_it() {
 #[test]
 fn adding_past_the_last_id_fails() {
     let (mut sketch, _, _) = drawn();
-    sketch.next_id = FIRST_BUILTIN - 2;
+    sketch.next_id = LAST_ID - 2;
     let mut add = Add::new(&sketch);
     let a = add.point(DVec2::ZERO).unwrap();
     add.point(DVec2::X).unwrap();
@@ -164,7 +167,7 @@ fn adding_past_the_last_id_fails() {
     let mut one = add;
     one.points.truncate(1);
     let added = SketchEdit::Add(one).apply(&on, &DESIGN).unwrap();
-    assert_eq!(added.next_id, FIRST_BUILTIN);
+    assert_eq!(added.next_id, LAST_ID);
     assert!(added.point(Id(a.0 + 1)).is_some());
 }
 

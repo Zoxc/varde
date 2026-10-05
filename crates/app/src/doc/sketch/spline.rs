@@ -7,8 +7,8 @@
 //! other (see [`propose`](super::propose)), one undo step.
 
 use varde_sketch::{
-    Add, Curve, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, SketchEdit, Spline, SplineKind,
-    control_knots,
+    Add, Curve, Handle, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, SketchEdit, Spline, SplineKind,
+    control_knots, handle_tips,
 };
 use varde_view::{Target, Tool, ToolClick};
 
@@ -152,7 +152,8 @@ impl Doc {
 
 /// The spline of `kind` that `drawing` has placed, open or `closed`, as
 /// an addition to `sketch`: its points where they snapped (see
-/// [`place`]), by control points with knots from where they are.
+/// [`place`]), through fit points with a handle at each, by control
+/// points with knots from where they are.
 fn spline_add(
     sketch: &Sketch,
     drawing: &Drawing,
@@ -168,11 +169,23 @@ fn spline_add(
         SplineKind::Through => Vec::new(),
         SplineKind::Control => control_knots(&drawing.placed, closed),
     };
+    // Through fit points, a handle at each, keeping the shape drawn.
+    let mut handles = Vec::new();
+    if kind == SplineKind::Through
+        && let Some(tips) = handle_tips(&drawing.placed, closed)
+    {
+        for (&at, tip) in points.iter().zip(tips) {
+            handles.push(Handle {
+                at,
+                tip: add.point(tip)?,
+            });
+        }
+    }
     let spline = Spline {
         kind,
         points,
         closed,
-        handles: Vec::new(),
+        handles,
         knots,
     };
     add.curve(Curve::Spline(spline), drawing.construction)?;

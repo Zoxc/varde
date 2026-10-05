@@ -31,6 +31,19 @@ enum Extent {
 /// origin and axes among themselves.
 fn measurable(sketch: &Sketch, picked: &[Id]) -> bool {
     let plays = |id, role: Role| sketch.kind(id).is_some_and(|kind| role.admits(kind));
+    // A handle picked as a line ([`Id::handle`]): its angle, from the X
+    // axis or with a line or another handle.
+    if picked.iter().any(|id| id.handle_tip().is_some()) {
+        let direction = |id: Id| {
+            let tip = id.handle_tip();
+            tip.is_some_and(|tip| sketch.handle(tip).is_some()) || sketch.line(id).is_some()
+        };
+        return match *picked {
+            [one] => direction(one),
+            [a, b] => a != b && direction(a) && direction(b),
+            _ => false,
+        };
+    }
     match *picked {
         [one] if sketch.handle(one).is_some() => true,
         [one] => plays(one, Role::Curve) && !one.is_builtin(),
@@ -78,8 +91,12 @@ pub fn joins(sketch: &Sketch, picked: &[Id], id: Id) -> bool {
     }
 }
 
-/// Whether `id` can start a pick: a point, a line, a circle or an arc.
+/// Whether `id` can start a pick: a point, a line, a circle or an arc,
+/// or a spline's handle as a line ([`Id::handle`]).
 pub fn pickable(sketch: &Sketch, id: Id) -> bool {
+    if let Some(tip) = id.handle_tip() {
+        return sketch.handle(tip).is_some();
+    }
     sketch
         .kind(id)
         .is_some_and(|kind| kind != Kind::Spline && Role::Geometry.admits(kind))
@@ -108,9 +125,10 @@ pub fn round(sketch: &Sketch, picked: &[Id]) -> bool {
 ///   other;
 /// - a circle or an arc and a point, a line or another circle or arc:
 ///   the gap from its edge, see [`Measure::EdgeDistance`];
-/// - a spline's handle, by its tip, its angle from the X axis
-///   (counter-clockwise; its length is its fit point's and its tip's
-///   distance).
+/// - a spline's handle, by its tip or as a line ([`Id::handle`]), its
+///   angle from the X axis (counter-clockwise; its length is its fit
+///   point's and its tip's distance); as a line with a line or another
+///   handle, the angle between them as two lines'.
 pub fn measure(
     sketch: &Sketch,
     picked: &[Id],
@@ -121,7 +139,13 @@ pub fn measure(
         return None;
     }
     let point = |id| sketch.point(id).map(|point| point.at);
+    // Handles picked as lines are named by their tips.
+    let tip = |id: Id| id.handle_tip().unwrap_or(id);
     let measure = match *picked {
+        [one] if one.handle_tip().is_some() => Measure::Angle(Id::X_AXIS, tip(one)),
+        [a, b] if a.handle_tip().is_some() || b.handle_tip().is_some() => {
+            return angle(sketch, tip(a), tip(b), at);
+        }
         [one] if sketch.handle(one).is_some() => Measure::Angle(Id::X_AXIS, one),
         [one] => match sketch.curve(one)?.curve {
             Curve::Line { start, end } => along(
@@ -191,7 +215,7 @@ fn extent(p: DVec2, q: DVec2, at: DVec2) -> Extent {
     }
 }
 
-/// The angle between the lines `a` and `b` of `sketch` on the side `at`
+/// The angle between the lines (or handles, by their tips) `a` and `b` of `sketch` on the side `at`
 /// is: of the four angles between them, the one `at` is in, or the one
 /// across the corner from it, which is the same. As a measure under half
 /// a turn, the order of the lines and the side giving which.
@@ -207,7 +231,7 @@ fn angle(sketch: &Sketch, a: Id, b: Id, at: DVec2) -> Option<(Measure, Side)> {
     });
     let first = under_half.next()?;
     let holds = |&(a, _, side, value): &(Id, Id, Side, f64)| {
-        let (start, end) = sketch.line(a)?;
+        let (start, end) = sketch.direction(a)?;
         let from = (end - start) * side.sign();
         Some(sector_holds(from, value, toward) || sector_holds(from, value, -toward))
     };

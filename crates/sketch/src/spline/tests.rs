@@ -1186,6 +1186,16 @@ fn the_curvature_comb_turns_as_the_spline_and_stays_bounded() {
     let comb = sketch.curvature_comb(id).unwrap();
     assert!(comb.len() <= MAX_COMB_TEETH, "{}", comb.len());
     assert!(comb.len() >= 2 * MAX_SPLINE_POINTS);
+    // A spline through points on a slanted line, unevenly spaced, so
+    // rounding leaves a little curving: no teeth, not noise.
+    let mut sketch = Sketch::default();
+    let fit =
+        [0.0, 0.3, 1.7, 2.1, 5.9, 7.3].map(|s| point(&mut sketch, 0.1 + s * 0.37, 1.3 + s * 0.91));
+    let id = sketch
+        .add_curve(Curve::Spline(Spline::through(fit.to_vec(), false)), false)
+        .unwrap();
+    let comb = sketch.curvature_comb(id).unwrap();
+    assert!(comb.iter().all(|[_, curving]| *curving == DVec2::ZERO));
     // A line has none.
     let (a, b) = (point(&mut sketch, 0.0, 9.0), point(&mut sketch, 5.0, 9.0));
     let other = line(&mut sketch, a, b);

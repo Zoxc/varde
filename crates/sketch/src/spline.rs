@@ -383,7 +383,20 @@ pub const MAX_COMB_TEETH: usize = 1000;
 /// The most teeth a curvature comb has in each of a spline's segments.
 const COMB_PER_SEGMENT: usize = 16;
 
+/// The curvature times a spline's size below which its curvature comb
+/// counts it straight: rounding's noise, not a turn.
+const COMB_FLAT: f64 = 1e-9;
+
 impl Sketch {
+    /// Whether `id` names something of the sketch's that can be selected:
+    /// an item ([`Sketch::kind`]), or a handle as a line ([`Id::handle`]).
+    pub fn selectable(&self, id: Id) -> bool {
+        self.kind(id).is_some()
+            || id
+                .handle_tip()
+                .is_some_and(|tip| self.handle(tip).is_some())
+    }
+
     /// The spline `curve`, if it's one of the sketch's.
     pub fn spline(&self, curve: Id) -> Option<&Spline> {
         match &self.curve(curve)?.curve {
@@ -625,13 +638,21 @@ impl Sketch {
         let per = (MAX_COMB_TEETH.saturating_sub(1) / segments.max(1)).clamp(1, COMB_PER_SEGMENT);
         let mut params = shape.samples(per);
         params.truncate(MAX_COMB_TEETH);
-        let teeth = params
+        let evals: Vec<[DVec2; 3]> = params.into_iter().map(|t| shape.eval(t)).collect();
+        // Curving below rounding's reach of the spline's size reads as
+        // straight, so a flat spline (or a flat stretch) has no noise of
+        // teeth flipping side.
+        let (low, high) = evals.iter().fold(
+            (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+            |(low, high), [place, ..]| (low.min(*place), high.max(*place)),
+        );
+        let least = COMB_FLAT / (high - low).max_element();
+        let teeth = evals
             .into_iter()
-            .map(|t| {
-                let [place, first, second] = shape.eval(t);
+            .map(|[place, first, second]| {
                 let curvature = curvature(first, second);
                 let normal = first.perp().normalize_or_zero();
-                let curvature = if curvature.is_finite() {
+                let curvature = if curvature.is_finite() && curvature.abs() > least {
                     curvature
                 } else {
                     0.0
@@ -641,6 +662,26 @@ impl Sketch {
             .collect();
         Some(teeth)
     }
+}
+
+/// Where the tips of handles at each of `points` would be for the spline
+/// through them, open or `closed`, to keep the shape it has without
+/// handles (as [`Sketch::handle_tip`] gives them): what the Spline tool
+/// puts at each fit point. `None` for points that make no spline.
+pub fn handle_tips(points: &[DVec2], closed: bool) -> Option<Vec<DVec2>> {
+    if points.len() < SplineKind::Through.least(closed) || points.len() > MAX_SPLINE_POINTS {
+        return None;
+    }
+    let shape = BSpline::through(points, closed)?;
+    let params = chord_params(points, closed);
+    points
+        .iter()
+        .enumerate()
+        .map(|(i, &at)| {
+            let tip = at + shape.eval(params[i])[1] / handle_scale(&params, closed, i);
+            tip.is_finite().then_some(tip)
+        })
+        .collect()
 }
 
 /// The spline of `kind` through or by `points`, open or `closed`, as a

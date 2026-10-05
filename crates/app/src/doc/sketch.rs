@@ -890,7 +890,7 @@ impl Doc {
     /// Whether the sketch being edited, as it's worked on, holds `id`.
     pub(crate) fn holds(&self, id: Id) -> bool {
         self.working_sketch()
-            .is_some_and(|sketch| sketch.kind(id).is_some())
+            .is_some_and(|sketch| sketch.selectable(id))
     }
 
     /// Hovers the item `id` of a list or glyph, or none, if the sketch
@@ -1088,10 +1088,10 @@ impl Doc {
                 // solver.
                 let waiting = session.waiting.take();
                 let sketch = waiting.as_ref().map_or(sketch, |waiting| &waiting.sketch);
-                session.selection.retain(|&id| sketch.kind(id).is_some());
+                session.selection.retain(|&id| sketch.selectable(id));
                 session.expanded.retain(|&id| sketch.curve(id).is_some());
                 follow_selection(&session.selection, &mut session.listed_on, sketch);
-                session.hovered = session.hovered.filter(|&id| sketch.kind(id).is_some());
+                session.hovered = session.hovered.filter(|&id| sketch.selectable(id));
                 // What's measured or edited may be gone, by undo, say.
                 let dimension = |id| sketch.dimension(id).is_some();
                 if session.label.is_some_and(|label| !dimension(label.id)) {
@@ -1110,7 +1110,7 @@ impl Doc {
                     session.value = None;
                 }
                 if let Some(drawing) = &mut session.tool
-                    && (drawing.picked.iter().any(|&id| sketch.kind(id).is_none())
+                    && (drawing.picked.iter().any(|&id| !sketch.selectable(id))
                         || !shape::still_picked(sketch, drawing))
                 {
                     drawing.restart();
@@ -1378,7 +1378,12 @@ fn follow_selection(selection: &BTreeSet<Id>, listed_on: &mut BTreeSet<Id>, sket
             .kind(*id)
             .is_some_and(|kind| Role::Geometry.admits(kind))
     };
-    let selected: BTreeSet<Id> = selection.iter().copied().filter(geometry).collect();
+    // A handle as a line, by its tip, which its constraints name.
+    let selected: BTreeSet<Id> = selection
+        .iter()
+        .map(|id| id.handle_tip().unwrap_or(*id))
+        .filter(geometry)
+        .collect();
     if selected.is_empty() && !selection.is_empty() {
         listed_on.retain(geometry);
     } else {

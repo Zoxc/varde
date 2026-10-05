@@ -128,6 +128,7 @@ impl ConstraintKind {
             lines,
             rounds,
             splines,
+            handles,
         } = &picked;
         let curves = picked.curves();
         let takes_splines = matches!(
@@ -138,6 +139,17 @@ impl ConstraintKind {
                 | ConstraintKind::Fix
         );
         if !splines.is_empty() && !takes_splines {
+            return None;
+        }
+        // Handles are held only as lines' directions are.
+        let takes_handles = matches!(
+            self,
+            ConstraintKind::Horizontal
+                | ConstraintKind::Vertical
+                | ConstraintKind::Parallel
+                | ConstraintKind::Perpendicular
+        );
+        if !handles.is_empty() && !takes_handles {
             return None;
         }
         let first_with_each = |ids: &[Id], make: fn(Id, Id) -> Constraint| {
@@ -151,7 +163,20 @@ impl ConstraintKind {
             },
             ConstraintKind::Horizontal | ConstraintKind::Vertical => {
                 let horizontal = self == ConstraintKind::Horizontal;
+                let handles = picked.with_handles();
                 match (&points[..], &lines[..], &rounds[..]) {
+                    _ if let Some(lines) = &handles => Some(
+                        lines
+                            .iter()
+                            .map(|&line| {
+                                if horizontal {
+                                    Constraint::Horizontal(line)
+                                } else {
+                                    Constraint::Vertical(line)
+                                }
+                            })
+                            .collect(),
+                    ),
                     (&[a, b], [], []) => Some(vec![if horizontal {
                         Constraint::HorizontalPoints(a, b)
                     } else {
@@ -172,11 +197,11 @@ impl ConstraintKind {
                     _ => None,
                 }
             }
-            ConstraintKind::Parallel => match picked.only_lines() {
-                Some(lines) => first_with_each(lines, Constraint::Parallel),
+            ConstraintKind::Parallel => match picked.directions() {
+                Some(lines) => first_with_each(&lines, Constraint::Parallel),
                 None => None,
             },
-            ConstraintKind::Perpendicular => match picked.only_lines() {
+            ConstraintKind::Perpendicular => match picked.directions().as_deref() {
                 Some(&[a, b]) => Some(vec![Constraint::Perpendicular(a, b)]),
                 _ => None,
             },
@@ -255,7 +280,7 @@ impl ConstraintKind {
         {
             swap(&mut order, Horizontal, Vertical);
         }
-        if let Some(&[a, b]) = picked.only_lines()
+        if let Some(&[a, b]) = picked.directions().as_deref()
             && let (Some(a), Some(b)) = (line_direction(sketch, a), line_direction(sketch, b))
             && a.perp_dot(b).abs() > a.dot(b).abs()
         {
@@ -283,9 +308,10 @@ fn position(order: &[ConstraintKind], kind: ConstraintKind) -> usize {
         .expect("every kind is in the order")
 }
 
-/// A line's direction, start to end.
+/// A line's direction, start to end, or a handle's (named by its tip)
+/// from its fit point to its tip.
 fn line_direction(sketch: &Sketch, line: Id) -> Option<DVec2> {
-    let (start, end) = sketch.line(line)?;
+    let (start, end) = sketch.direction(line)?;
     Some(end - start)
 }
 
@@ -297,12 +323,20 @@ struct Picked {
     /// Circles and arcs.
     rounds: Vec<Id>,
     splines: Vec<Id>,
+    /// Handles selected as lines ([`Id::handle`]), by their tips.
+    handles: Vec<Id>,
 }
 
 impl Picked {
     fn of(sketch: &Sketch, selected: &BTreeSet<Id>) -> Self {
         let mut picked = Picked::default();
         for &id in selected {
+            if let Some(tip) = id.handle_tip() {
+                if sketch.handle(tip).is_some() {
+                    picked.handles.push(tip);
+                }
+                continue;
+            }
             match sketch.kind(id) {
                 Some(Kind::Point) => picked.points.push(id),
                 Some(Kind::Line) => picked.lines.push(id),
@@ -322,13 +356,36 @@ impl Picked {
 
     /// The lines, if nothing else is picked.
     fn only_lines(&self) -> Option<&[Id]> {
-        let others = self.points.is_empty() && self.rounds.is_empty() && self.splines.is_empty();
+        let others = self.points.is_empty()
+            && self.rounds.is_empty()
+            && self.splines.is_empty()
+            && self.handles.is_empty();
         (others && !self.lines.is_empty()).then_some(&self.lines[..])
     }
 
+    /// The lines and handles picked, handles by their tips, which name
+    /// them in a constraint, if there's a handle among them and nothing
+    /// else.
+    fn with_handles(&self) -> Option<Vec<Id>> {
+        let only = self.points.is_empty() && self.rounds.is_empty() && self.splines.is_empty();
+        (only && !self.handles.is_empty())
+            .then(|| self.lines.iter().chain(&self.handles).copied().collect())
+    }
+
+    /// The lines picked, or the lines and handles ([`Picked::with_handles`]).
+    fn directions(&self) -> Option<Vec<Id>> {
+        self.only_lines()
+            .map(<[Id]>::to_vec)
+            .or_else(|| self.with_handles())
+    }
+
     /// The way the selection runs, for telling horizontal from vertical:
-    /// the first line's, or from one of two points to the other.
+    /// the first line's or handle's, or from one of two points to the
+    /// other.
     fn direction(&self, sketch: &Sketch) -> Option<DVec2> {
+        if let Some(&[first, ..]) = self.with_handles().as_deref() {
+            return line_direction(sketch, first);
+        }
         match (&self.points[..], &self.lines[..]) {
             (&[a, b], []) => Some(sketch.point(b)?.at - sketch.point(a)?.at),
             ([], &[line, ..]) => line_direction(sketch, line),

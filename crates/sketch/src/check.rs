@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use varde_expr::LengthUnit;
 
-use crate::origin::FIRST_BUILTIN;
+use crate::origin::LAST_ID;
 use crate::{Constraint, Curve, Id, Role, Sketch};
 
 /// What a sketch is checked against, from the design it's part of: the
@@ -102,7 +102,7 @@ impl Sketch {
                 return Err(SketchError::TooMany { list, count, limit });
             }
         }
-        if self.next_id > FIRST_BUILTIN {
+        if self.next_id > LAST_ID {
             return Err(SketchError::NextIdReserved(self.next_id));
         }
         // Each list is sorted before an id is looked up in it.
@@ -285,8 +285,9 @@ pub enum SketchError {
     NextId(Id),
     /// The id names items in two lists.
     Shared(Id),
-    /// The sketch's next id is past the ids it can give out, into the
-    /// origin's and axes'.
+    /// The sketch's next id is past the ids it can give out, into those
+    /// reserved for handles as lines ([`Id::handle`]) and the origin's and
+    /// axes'.
     NextIdReserved(u32),
     /// The item names the origin or an axis as it can't be: a curve made
     /// from the origin, a constraint or dimension on them alone, or one

@@ -289,3 +289,40 @@ fn splines_take_a_point_on_them_a_tangent_a_smooth_join_and_a_fix() {
     assert_eq!(fitting(&[d.circle, d.spline]), [Tangent, Smooth, Fix]);
     assert_eq!(fitting(&[d.arc, d.spline]), [Tangent, Fix]);
 }
+
+#[test]
+fn a_handle_picked_as_a_line_is_held_as_one() {
+    let drawn = drawn();
+    let sketch = &drawn.sketch;
+    let tip = sketch.spline(drawn.spline).unwrap().handles[0].tip;
+    let handle = Id::handle(tip);
+    // Alone, nearly horizontal: horizontal first, then vertical, named
+    // by its tip.
+    let fitting = ConstraintKind::fitting(sketch, &set(&[handle]));
+    assert_eq!(fitting, [Horizontal, Vertical]);
+    assert_eq!(
+        Horizontal.make(sketch, &set(&[handle])),
+        Some(vec![Constraint::Horizontal(tip)])
+    );
+    // With a line, parallel, nearly so already, before perpendicular.
+    let picked = set(&[drawn.flat, handle]);
+    let fitting = ConstraintKind::fitting(sketch, &picked);
+    assert_eq!(fitting[..2], [Parallel, Perpendicular]);
+    assert_eq!(
+        Parallel.make(sketch, &picked),
+        Some(vec![Constraint::Parallel(drawn.flat, tip)])
+    );
+    for made in Perpendicular.make(sketch, &picked).unwrap() {
+        let mut sketch = sketch.clone();
+        sketch.add_constraint(made).unwrap();
+        assert_eq!(sketch.check(&crate::testing::DESIGN), Ok(()));
+    }
+    // Its tip is a point, as any.
+    assert_eq!(
+        Horizontal.make(sketch, &set(&[drawn.lone, tip])),
+        Some(vec![Constraint::HorizontalPoints(drawn.lone, tip)])
+    );
+    assert_eq!(Parallel.make(sketch, &set(&[drawn.flat, tip])), None);
+    // With a point, nothing.
+    assert_eq!(Horizontal.make(sketch, &set(&[drawn.lone, handle])), None);
+}

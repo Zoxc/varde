@@ -183,21 +183,24 @@ fn check_refuses_references_to_the_wrong_kind() {
             expected: Role::Point,
         },
     );
-    for constraint in [Constraint::Horizontal(circle), Constraint::Vertical(a)] {
-        let to = match constraint {
-            Constraint::Horizontal(to) | Constraint::Vertical(to) => to,
-            _ => unreachable!(),
-        };
+    for constraint in [Constraint::Horizontal(circle), Constraint::Vertical(circle)] {
         refused(
             None,
             Some(constraint),
             SketchError::Reference {
                 from: new,
-                to,
-                expected: Role::Line,
+                to: circle,
+                expected: Role::LineOrHandle,
             },
         );
     }
+    // A point that's no handle's tip names no handle.
+    refused(None, Some(Constraint::Vertical(a)), SketchError::Unfit(new));
+    refused(
+        None,
+        Some(Constraint::Parallel(line, b)),
+        SketchError::Unfit(new),
+    );
     for constraint in [
         Constraint::Coincident(a, line),
         Constraint::HorizontalPoints(a, line),
@@ -220,7 +223,7 @@ fn check_refuses_references_to_the_wrong_kind() {
         SketchError::Reference {
             from: new,
             to: new,
-            expected: Role::Line,
+            expected: Role::LineOrHandle,
         },
     );
 }
@@ -416,7 +419,11 @@ fn check_refuses_constraints_on_items_that_dont_fit() {
             d,
             Role::AnyCurve,
         ),
-        (Constraint::Parallel(line, circle), circle, Role::Line),
+        (
+            Constraint::Parallel(line, circle),
+            circle,
+            Role::LineOrHandle,
+        ),
         (
             Constraint::Tangent {
                 a: c,

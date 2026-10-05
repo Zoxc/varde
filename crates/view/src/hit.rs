@@ -10,7 +10,8 @@ use crate::projection::Projector;
 /// What's under the cursor at `at`, in sketch coordinates, within
 /// `tolerance` sketch units: the nearest point, the origin included,
 /// or failing one, the nearest curve as drawn, or failing one, the
-/// nearest axis. A point of the sketch's goes before the origin where
+/// nearest spline handle as drawn ([`Id::handle`], see [`handles`]), or
+/// failing one, the nearest axis. A point of the sketch's goes before the origin where
 /// they're as near.
 pub(crate) fn hit(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id> {
     if !at.is_finite() {
@@ -28,12 +29,14 @@ pub(crate) fn hit(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id> {
     let axes = [(Id::X_AXIS, at.y.abs()), (Id::Y_AXIS, at.x.abs())];
     nearest(points, tolerance)
         .or_else(|| nearest(curves, tolerance))
+        .or_else(|| nearest(handles(sketch, at).into_iter(), tolerance))
         .or_else(|| nearest(axes.into_iter(), tolerance))
 }
 
 /// Everything under the cursor at `at` within `tolerance` sketch units,
 /// as [`hit`] would find each on its own: the points, the origin
-/// included, then the curves, then the axes, each nearest first.
+/// included, then the curves, then the handles, then the axes, each
+/// nearest first.
 pub(crate) fn overlaps(sketch: &Sketch, at: DVec2, tolerance: f64) -> Vec<Id> {
     if !at.is_finite() {
         return Vec::new();
@@ -46,7 +49,7 @@ pub(crate) fn overlaps(sketch: &Sketch, at: DVec2, tolerance: f64) -> Vec<Id> {
         .filter_map(|entry| Some((entry.id, curve_distance(sketch, &entry.curve, at)?)))
         .collect();
     let axes = vec![(Id::X_AXIS, at.y.abs()), (Id::Y_AXIS, at.x.abs())];
-    [points, curves, axes]
+    [points, curves, handles(sketch, at), axes]
         .into_iter()
         .flat_map(|mut kind| {
             kind.retain(|&(_, distance)| distance <= tolerance);
@@ -146,6 +149,23 @@ pub(crate) fn curve_distance(sketch: &Sketch, curve: &Curve, at: DVec2) -> Optio
             .map(|pair| segment_distance(at, pair[0], pair[1]))
             .fold(f64::INFINITY, f64::min),
     })
+}
+
+/// The splines' handles, each by its id as a line ([`Id::handle`]), and how far
+/// `at` is from it as drawn: from its tip through its fit point to as
+/// far the other side.
+fn handles(sketch: &Sketch, at: DVec2) -> Vec<(Id, f64)> {
+    let mut found = Vec::new();
+    for (_, spline) in sketch.splines() {
+        for handle in &spline.handles {
+            if let (Some(from), Some(tip)) = (sketch.point(handle.at), sketch.point(handle.tip)) {
+                let (from, tip) = (from.at, tip.at);
+                let distance = segment_distance(at, 2.0 * from - tip, tip);
+                found.push((Id::handle(handle.tip), distance));
+            }
+        }
+    }
+    found
 }
 
 /// How far `p` is from the segment from `a` to `b`.

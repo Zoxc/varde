@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::*;
 use crate::testing::{at, dimension, handled_spline, line, point};
 
@@ -197,6 +199,39 @@ fn a_spline_s_handle_measures_its_angle_alone_and_its_length_with_its_point() {
     // Its other points measure nothing alone, nor the spline.
     assert_eq!(measured(&sketch, &[fit[0]], 1.0, 1.0), None);
     assert_eq!(measured(&sketch, &[spline], 1.0, 1.0), None);
+}
+
+#[test]
+fn a_handle_picked_as_a_line_measures_angles_as_a_line() {
+    let mut sketch = Sketch::default();
+    let (_, fit, tip) = handled_spline(&mut sketch);
+    let handle = Id::handle(tip);
+    let (a, b) = (
+        point(&mut sketch, 0.0, -10.0),
+        point(&mut sketch, 10.0, -10.0),
+    );
+    let flat = line(&mut sketch, a, b);
+    assert!(pickable(&sketch, handle));
+    assert!(joins(&sketch, &[flat], handle));
+    // Alone, from the X axis; with a line, the angle between them, its
+    // handle named by its tip.
+    assert_eq!(
+        measured(&sketch, &[handle], 16.0, 9.0),
+        Some(Measure::Angle(Id::X_AXIS, tip))
+    );
+    let (measure, side) = measure(&sketch, &[flat, handle], at(12.0, 1.0), false).unwrap();
+    let Measure::Angle(x, y) = measure else {
+        panic!("{measure:?}");
+    };
+    assert_eq!(BTreeSet::from([x, y]), BTreeSet::from([flat, tip]));
+    let value = sketch.measure(&measure, side).unwrap();
+    let quarter = 45f64.to_radians();
+    assert!(
+        (value - quarter).abs() < 1e-9 || (value - 3.0 * quarter).abs() < 1e-9,
+        "{value}"
+    );
+    // Not with a point.
+    assert!(!joins(&sketch, &[fit[0]], handle));
 }
 
 #[test]

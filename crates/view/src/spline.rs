@@ -81,7 +81,7 @@ pub fn conversions(sketch: &Sketch, selection: &BTreeSet<Id>) -> Vec<SketchEdit>
 
 /// What giving handles to what's selected in `sketch` does: the fit
 /// points among `selection` (of splines through fit points), or failing
-/// any, the ends of the open splines through fit points selected. Those
+/// any, all the fit points of the splines through fit points selected. Those
 /// without a handle get one ([`SketchEdit::AddHandles`]); if they all
 /// have, their handles go, by deleting the tips. `None` for nothing to
 /// give handles to.
@@ -106,13 +106,7 @@ pub fn handles(sketch: &Sketch, selection: &BTreeSet<Id>) -> Option<SketchEdit> 
     if points.is_empty() {
         points = selected_splines(sketch, selection)
             .filter(|(_, spline)| spline.kind == SplineKind::Through)
-            .flat_map(|(id, spline)| {
-                spline
-                    .ends()
-                    .into_iter()
-                    .flatten()
-                    .map(move |end| (end, vec![id]))
-            })
+            .flat_map(|(id, spline)| spline.points.iter().map(move |&point| (point, vec![id])))
             .collect();
     }
     if points.is_empty() {

@@ -218,3 +218,34 @@ fn fillet_and_chamfer_hit_the_corners_where_lines_meet() {
     assert_eq!(hit_corner(&sketch, DVec2::new(2.0, 2.0), 1.0), None);
     assert_eq!(hit_corner(&sketch, DVec2::NAN, 1.0), None);
 }
+
+#[test]
+fn a_handle_is_hit_by_its_tip_along_both_arms_after_curves() {
+    use varde_sketch::{Handle, Spline};
+    let mut sketch = Sketch::default();
+    let mut point = |x, y| sketch.add_point(DVec2::new(x, y)).unwrap();
+    let (a, b, c, tip) = (
+        point(0.0, 0.0),
+        point(10.0, 10.0),
+        point(20.0, 0.0),
+        point(14.0, 10.0),
+    );
+    let mut spline = Spline::through(vec![a, b, c], false);
+    spline.handles.push(Handle { at: b, tip });
+    let id = sketch.add_curve(Curve::Spline(spline), false).unwrap();
+    // On the tip's arm and on the mirrored one, as a line of its own.
+    assert_eq!(
+        hit(&sketch, DVec2::new(13.0, 10.2), 0.5),
+        Some(Id::handle(tip))
+    );
+    assert_eq!(
+        hit(&sketch, DVec2::new(7.0, 9.8), 0.5),
+        Some(Id::handle(tip))
+    );
+    assert_eq!(
+        overlaps(&sketch, DVec2::new(7.0, 9.8), 0.5),
+        [Id::handle(tip)]
+    );
+    // At the fit point, the spline runs along it: the spline first.
+    assert_eq!(hit(&sketch, DVec2::new(10.4, 10.1), 0.25), Some(id));
+}

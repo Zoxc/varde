@@ -1,5 +1,5 @@
 use super::*;
-use crate::origin::FIRST_BUILTIN;
+use crate::origin::LAST_ID;
 use crate::testing::DESIGN;
 
 /// A line from the origin to (10, 0), a circle and an arc, as the tools
@@ -105,11 +105,11 @@ fn items_are_numbered_by_kind_for_their_names() {
 fn adding_past_the_last_id_fails() {
     // `next_id` comes from the file, so it can be anything.
     let mut sketch = Sketch {
-        next_id: FIRST_BUILTIN - 1,
+        next_id: LAST_ID - 1,
         ..Sketch::default()
     };
     let point = sketch.add_point(DVec2::ZERO).unwrap();
-    assert_eq!(point, Id(FIRST_BUILTIN - 1));
+    assert_eq!(point, Id(LAST_ID - 1));
     let before = sketch.clone();
     assert_eq!(sketch.add_point(DVec2::ONE), Err(OutOfIds));
     let circle = Curve::Circle {

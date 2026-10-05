@@ -43,17 +43,19 @@ pub enum Constraint {
     /// A point on a curve: anywhere on the endless line through a line,
     /// on a circle, or on the circle an arc is part of.
     PointOnCurve { point: Id, curve: Id },
-    /// A line parallel to the x axis.
+    /// A line, or a spline's handle named by its tip, parallel to the x
+    /// axis.
     Horizontal(Id),
-    /// A line parallel to the y axis.
+    /// A line, or a handle by its tip, parallel to the y axis.
     Vertical(Id),
     /// Two points at the same y.
     HorizontalPoints(Id, Id),
     /// Two points at the same x.
     VerticalPoints(Id, Id),
-    /// Two lines parallel, running the same way or opposite ways.
+    /// Two lines (or handles, by their tips) parallel, running the same
+    /// way or opposite ways.
     Parallel(Id, Id),
-    /// Two lines at right angles.
+    /// Two lines (or handles, by their tips) at right angles.
     Perpendicular(Id, Id),
     /// Two curves touching without crossing, not both lines. A line and a
     /// circle or an arc (either way round): the circle's centre is on the
@@ -175,10 +177,10 @@ impl Constraint {
                 [Some((point, Point)), Some((curve, AnyCurve)), None, None]
             }
             Constraint::Horizontal(line) | Constraint::Vertical(line) => {
-                [Some((line, Line)), None, None, None]
+                [Some((line, LineOrHandle)), None, None, None]
             }
             Constraint::Parallel(a, b) | Constraint::Perpendicular(a, b) => {
-                [Some((a, Line)), Some((b, Line)), None, None]
+                [Some((a, LineOrHandle)), Some((b, LineOrHandle)), None, None]
             }
             Constraint::Tangent { a, b, at: None, .. } | Constraint::Equal(a, b) => {
                 [Some((a, Curve)), Some((b, Curve)), None, None]
@@ -273,7 +275,9 @@ impl Constraint {
 
     /// Whether the kinds of the items it names in `sketch`, each already
     /// playing its role (see [`items`](Constraint::items)), go together: a
-    /// tangent isn't between two lines, and is at a spline's end
+    /// horizontal, vertical, parallel or perpendicular names lines or
+    /// handles by their tips ([`Sketch::direction`]), a tangent isn't
+    /// between two lines, and is at a spline's end
     /// ([`Joint`]) where there's a spline, as a smooth join is, equal is
     /// two lines or two round curves, concentric isn't two points, and an
     /// equal offset's pairs are offset pairs ([`Sketch::offset_pair`]).
@@ -286,6 +290,11 @@ impl Constraint {
             } => Joint::of(sketch, a, b, at).is_some(),
             Constraint::Smooth { a, b, at, .. } => {
                 Joint::of(sketch, a, b, at).is_some_and(|joint| joint.curves(sketch, at))
+            }
+            // A point a handle's tip, naming the handle.
+            Constraint::Horizontal(a) | Constraint::Vertical(a) => sketch.direction(a).is_some(),
+            Constraint::Parallel(a, b) | Constraint::Perpendicular(a, b) => {
+                a != b && sketch.direction(a).is_some() && sketch.direction(b).is_some()
             }
             Constraint::Equal(a, b) => round(a) == round(b),
             Constraint::Concentric(a, b) => round(a) || round(b),

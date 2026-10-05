@@ -248,8 +248,14 @@ impl Doc {
 
     /// Deletes `items` and what depends on them.
     fn delete_items(&mut self, items: Vec<Id>) {
-        // The origin and axes are always there.
-        let mut ids: Vec<_> = items.into_iter().filter(|id| !id.is_builtin()).collect();
+        // The origin and axes are always there; a handle goes by its tip.
+        let mut ids: Vec<Id> = Vec::new();
+        for id in items.into_iter().filter(|id| !id.is_builtin()) {
+            let id = id.handle_tip().unwrap_or(id);
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
         if ids.is_empty() {
             return;
         }
@@ -822,11 +828,33 @@ fn tangent(sketch: &Sketch, curve: Id, new: Id, shape: Shape) -> Option<Constrai
     tangent_between((curve, sketch.shape(curve)?), (new, shape))
 }
 
+/// The move of the handle whose tip is `tip`, grabbed as a line at
+/// `from`, dragged to `to`: turned about its fit point to point at `to`
+/// (away from it, grabbed on the arm mirroring its tip), its length kept.
+fn handle_dragged(sketch: &Sketch, tip: Id, from: DVec2, to: DVec2) -> Option<SketchEdit> {
+    sketch.handle(tip)?;
+    let (at, tip_at) = sketch.direction(tip)?;
+    let arm = tip_at - at;
+    let sign = if (from - at).dot(arm) < 0.0 {
+        -1.0
+    } else {
+        1.0
+    };
+    let toward = ((to - at) * sign).try_normalize()?;
+    Some(SketchEdit::Move {
+        points: vec![(tip, at + toward * arm.length())],
+        radii: Vec::new(),
+    })
+}
+
 /// The move of the item `id` of `sketch`, grabbed at `from`, dragged to
 /// `to`, see [`Doc::drag_geometry`]. `None` if `id` names nothing that can
 /// be dragged; whether it stays within the coordinate limit is for
 /// applying it to tell.
 fn dragged(sketch: &Sketch, id: Id, from: DVec2, to: DVec2) -> Option<SketchEdit> {
+    if let Some(tip) = id.handle_tip() {
+        return handle_dragged(sketch, tip, from, to);
+    }
     let delta = to - from;
     let mut radii = Vec::new();
     let points: Vec<(Id, DVec2)> = match sketch.kind(id)? {

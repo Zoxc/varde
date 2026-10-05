@@ -94,12 +94,17 @@ unchanged kept, the ones replaced going with what's on them). A handle
 goes by deleting its tip. `Sketch::curvature_comb` gives places along a
 spline, evenly by parameter in each segment, at most `MAX_COMB_TEETH`
 (1000), each with its curvature times its left normal, for the view to
-draw; `flatten_spline` a spline of places not yet in a sketch, for the
+draw, a curvature under `COMB_FLAT` (10⁻⁹) over the spline's size taken
+as zero, so a straight spline shows no noise of rounding;
+`handle_tips` where `handle_tip` would put a handle at each of places
+not yet a spline, for the Spline tool; `flatten_spline` a spline of places not yet in a sketch, for the
 Spline tool's preview.
 
 Constraints (`constraint.rs`) name points and curves: coincident, point
 on curve (a spline's too), horizontal and vertical (a line, or two
-points), parallel, perpendicular, tangent, smooth, equal (lengths or
+points), parallel, perpendicular (these four and horizontal and vertical
+of one also take a spline's handle, named by its tip, `Role::LineOrHandle`,
+`Sketch::direction`, as an angle dimension does), tangent, smooth, equal (lengths or
 radii), concentric, midpoint, symmetric about a line, fix, and equal
 offset (two offset pairs as far apart as each other, which only Offset
 makes; see below). A tangent stores its `Side`, the mirror image it was
@@ -1101,7 +1106,9 @@ bar says why (`EditError::Sketch`).
     (`ActiveTool::spline_ends`: two fit points, four control points) ends
     it open where it is. The spline is an `Add` of its points placed as
     any shape's (`place`: a point of the sketch's its own, else a new one
-    with the snap's `auto` ties) and the curve, by control points with
+    with the snap's `auto` ties) and the curve, through fit points with a
+    handle at every one (`handle_tips`, the shape as without them; `Shift
+    H` or deleting a tip takes one away), by control points with
     `control_knots` of the places. `Z` (`Look::ToggleSplineKind`,
     `Drawing::control`, kept from one spline to the next, shown in the
     toolbar's tag) switches between through fit points and by control
@@ -1346,7 +1353,10 @@ bar says why (`EditError::Sketch`).
   have the letter (Trim `T`, Fillet `F`, Point `P`, Circle `C`, New
   sketch `S`, the sets `E` and `R`). A spline takes a point on it (Coincident), a tangent or a
   smooth join at an end (`Sketch::joint`) and a fix; with a spline
-  selected nothing else is offered. The Constrain tool (`K`,
+  selected nothing else is offered. A handle selected as a line
+  (`Id::handle`, below), alone or with lines only
+  (`Picked::with_handles`), takes horizontal, vertical, parallel and
+  perpendicular, named by its tip; its tip selected is a point as any. The Constrain tool (`K`,
   `SketchSession::constraining`, never with a drawing tool) lists in the
   toolbar, after its own button and in place of the tools, the kinds that
   fit the selection (`ConstraintKind::fitting`),
@@ -1530,7 +1540,9 @@ on the CPU. Construction curves are dashed, points are discs with a rim,
 and what's selected is drawn over the rest in the selection colour.
 The ends of lines a fillet or chamfer cuts off are dashed too
 (`Sketch::cut_back`, `cut_line`). A spline's handles are lines from their
-fit points to their tips, in its colour; a selected one
+tips through their fit points to as far the other side, symmetric on
+them, in `SketchColors::spline_handle` (their tips' rims too), in the
+selection's with their spline or tip; a selected one
 shows where its ends' handles would be where it has none, dashed in the
 preview colour with a point at the tip (`Sketch::handle_tip`), and by
 control points its control polygon dashed in the construction colour.
@@ -1738,8 +1750,21 @@ Pure functions, tested headless:
   and is the size under which the tools refuse a shape.
 - `hit` finds the nearest point within the tolerance, the origin
   included, and failing one the nearest curve as drawn (lines and circles
-  exactly, arcs and splines by their polyline), and failing one the
-  nearest axis.
+  exactly, arcs and splines by their polyline), failing one the nearest
+  spline handle as drawn, both arms, as a line of its own
+  (`Id::handle(tip)`, after the curves, as a spline runs along its
+  handle by the fit point), and failing one the nearest axis. A handle's
+  id as a line is the view's alone: ids from `LAST_ID` (2³¹ − 3) up are
+  never given out (`OutOfIds`, `NextIdReserved` past it), and
+  `Id::handle` sets bit 31 (`FIRST_RESERVED`) on the tip's, landing
+  below the origin's and axes'; `Sketch::name` calls one "Handle of
+  Spline 1"; nothing stored names one, what
+  it makes names the tip. `Sketch::selectable` holds an item or such a
+  handle, for the selection and hover; deleting one deletes its tip;
+  dragging one turns it about its fit point, its length kept
+  (`handle_dragged`); the Dimension tool picks one (`pickable`), alone
+  its angle from the X axis, with a line or another handle the angle
+  between them.
   With Trim or Extend, or Offset picking its chain, the viewport hits
   curves alone (`hit_curve`), so a click by a line's end is the line, and
   Mirror choosing its line lines and axes alone (`hit_line`), Fillet and

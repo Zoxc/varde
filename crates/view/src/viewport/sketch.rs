@@ -1049,7 +1049,14 @@ impl<'a> Sketching<'a> {
         let mut style = dot(POINT_RADIUS, colors.point_fill, builtin_color(Id::ORIGIN));
         style.fixed = true;
         layer.point(DVec2::ZERO, style);
-        self.spline_aids(&mut layer, colors, &state_color);
+        self.spline_aids(&mut layer, colors);
+        // Handles' tips and control points, in the handles' colour.
+        let mut tips = sketch.tips();
+        for (_, spline) in sketch.splines() {
+            if spline.kind == SplineKind::Control {
+                tips.extend(spline.points.iter().copied());
+            }
+        }
         for selected in [false, true] {
             let points = sketch
                 .points
@@ -1066,6 +1073,8 @@ impl<'a> Sketching<'a> {
                 } else {
                     if red(point.id) || states.fixed.contains(&point.id) {
                         state_color(point.id)
+                    } else if tips.contains(&point.id) {
+                        colors.spline_handle
                     } else {
                         colors.point
                     }
@@ -1079,17 +1088,13 @@ impl<'a> Sketching<'a> {
     }
 
     /// What shows how splines are shaped: each handle as a line from its
-    /// fit point to its tip, in the spline's colour by `state_color`, or
-    /// the selection's; and of a spline selected, where handles would be
-    /// at its ends that have none, dashed in the preview colour, and by
-    /// control points its control polygon, dashed in the construction
-    /// colour.
-    fn spline_aids(
-        &self,
-        layer: &mut SketchLayer,
-        colors: SketchColors,
-        state_color: &impl Fn(Id) -> Color,
-    ) {
+    /// tip through its fit point to as far the other side, symmetric on
+    /// it, with a point at that end as at its tip, in the handles' colour,
+    /// or the selection's with its spline or itself ([`Id::handle`]); and
+    /// of a spline selected, where handles would be at its fit points that
+    /// have none, dashed in the preview colour, and by control points its
+    /// control polygon, dashed in the handles' colour, as its points are.
+    fn spline_aids(&self, layer: &mut SketchLayer, colors: SketchColors) {
         let sketch = self.sketch;
         let at = |id: Id| sketch.point(id).map(|point| point.at);
         for entry in &sketch.curves {
@@ -1100,18 +1105,24 @@ impl<'a> Sketching<'a> {
             let color = if selected {
                 colors.selected
             } else {
-                state_color(entry.id)
+                colors.spline_handle
             };
             for handle in &spline.handles {
-                if let (Some(from), Some(tip)) = (at(handle.at), at(handle.tip)) {
+                if let Some(arms) = handle_arms(sketch, handle.tip) {
+                    let color = if self.selection.contains(&Id::handle(handle.tip)) {
+                        colors.selected
+                    } else {
+                        color
+                    };
                     let style = line(color, HANDLE_WIDTH, false);
-                    layer.polyline(Space::Sketch, &[from, tip], style);
+                    layer.polyline(Space::Sketch, &arms, style);
+                    layer.point(arms[0], dot(POINT_RADIUS, colors.point_fill, color));
                 }
             }
             if !selected {
                 continue;
             }
-            let bare = spline.ends().into_iter().flatten();
+            let bare = spline.points.iter().copied();
             for end in bare.filter(|&end| !spline.has_handle(end)) {
                 if let (Some(from), Some(tip)) = (at(end), sketch.handle_tip(entry.id, end)) {
                     let style = line(colors.preview, HANDLE_WIDTH, true);
@@ -1127,7 +1138,7 @@ impl<'a> Sketching<'a> {
                 {
                     polygon.push(first);
                 }
-                let style = line(colors.construction, HANDLE_WIDTH, true);
+                let style = line(colors.spline_handle, HANDLE_WIDTH, true);
                 layer.polyline(Space::Sketch, &polygon, style);
             }
         }
@@ -1564,9 +1575,15 @@ impl<'a> Sketching<'a> {
     }
 
     /// Draws the point or curve `id` highlighted in `color`, as under the
-    /// cursor, into `layer`: the origin and axes too.
+    /// cursor, into `layer`: the origin and axes too, and a spline's
+    /// handle as a line ([`Id::handle`]).
     fn highlight(&self, layer: &mut SketchLayer, id: Id, color: Color) {
-        if let Some(axis) = axis(id) {
+        if let Some(arms) = id
+            .handle_tip()
+            .and_then(|tip| handle_arms(self.sketch, tip))
+        {
+            layer.polyline(Space::Sketch, &arms, line(color, HOVERED_WIDTH, false));
+        } else if let Some(axis) = axis(id) {
             for half in axis {
                 layer.axis_polyline(Space::Sketch, &half, line(color, HOVERED_WIDTH, false));
             }
@@ -1580,6 +1597,15 @@ impl<'a> Sketching<'a> {
             layer.polyline(Space::Sketch, &polyline, style);
         }
     }
+}
+
+/// The handle whose tip is `tip` as drawn: from the place mirroring its
+/// tip in its fit point, through the fit point, to its tip. `None` if
+/// `tip` is no handle's tip.
+pub(crate) fn handle_arms(sketch: &Sketch, tip: Id) -> Option<[DVec2; 3]> {
+    sketch.handle(tip)?;
+    let (at, tip) = sketch.direction(tip)?;
+    Some([2.0 * at - tip, at, tip])
 }
 
 /// The axis `id` names, if it names one, as drawn: as far as a sketch

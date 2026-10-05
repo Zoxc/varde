@@ -740,6 +740,7 @@ impl System {
     ) -> Option<Vec<Residual>> {
         let point = |id| self.point(sketch, id);
         let line = |id| self.line(sketch, id);
+        let direction = |id| self.direction(sketch, id);
         let round = |id| self.round(sketch, id);
         // Both coordinates equal, or only x (0) or y (1).
         let equal = |a: PointSlots, b: PointSlots, axes: &[usize]| {
@@ -760,17 +761,19 @@ impl System {
                 }]
             }
             Constraint::Horizontal(id) => {
-                let line = line(id)?;
+                let line = direction(id)?;
                 equal(line.start, line.end, &[1])
             }
             Constraint::Vertical(id) => {
-                let line = line(id)?;
+                let line = direction(id)?;
                 equal(line.start, line.end, &[0])
             }
             Constraint::HorizontalPoints(a, b) => equal(point(a)?, point(b)?, &[1]),
             Constraint::VerticalPoints(a, b) => equal(point(a)?, point(b)?, &[0]),
-            Constraint::Parallel(a, b) => vec![Residual::Parallel(line(a)?, line(b)?)],
-            Constraint::Perpendicular(a, b) => vec![Residual::Perpendicular(line(a)?, line(b)?)],
+            Constraint::Parallel(a, b) => vec![Residual::Parallel(direction(a)?, direction(b)?)],
+            Constraint::Perpendicular(a, b) => {
+                vec![Residual::Perpendicular(direction(a)?, direction(b)?)]
+            }
             // Tangent where they meet at an end of each, the distance and
             // radius are equal to first order about the tangency, which
             // would be no equation to the analysis: the radius to that

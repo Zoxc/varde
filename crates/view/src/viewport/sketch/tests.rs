@@ -1831,36 +1831,54 @@ fn a_spline_s_handles_show_and_selected_its_ends_and_control_polygon() {
         )
         .0
     };
-    // Its handle as a line from its fit point to its tip.
+    // Its handle as a line from its tip through its fit point to as far
+    // the other side, it and its tip in the handles' colour.
+    let arms = [2.0 * at(middle) - at(tip), at(middle), at(tip)];
+    let rim = |id| {
+        if id == tip {
+            colors.spline_handle
+        } else {
+            colors.point
+        }
+    };
     let mut expected = builtins(colors);
     expected.polyline(
         Space::Sketch,
         &curve,
         line_style(colors.curve, CURVE_WIDTH, false),
     );
-    let handle = line_style(colors.curve, HANDLE_WIDTH, false);
-    expected.polyline(Space::Sketch, &[at(middle), at(tip)], handle);
+    let handle = line_style(colors.spline_handle, HANDLE_WIDTH, false);
+    expected.polyline(Space::Sketch, &arms, handle);
+    let end = |color| dot(POINT_RADIUS, colors.point_fill, color);
+    expected.point(arms[0], end(colors.spline_handle));
     for point in &sketch.points {
-        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.point));
+        expected.point(
+            point.at,
+            dot(POINT_RADIUS, colors.point_fill, rim(point.id)),
+        );
     }
     assert_eq!(*base(&BTreeSet::new()), expected);
 
-    // Selected, where its ends' handles would be too, dashed.
+    // Selected, where its other fit points' handles would be too, dashed.
     let selection = BTreeSet::from([spline]);
     let mut expected = builtins(colors);
     let selected = line_style(colors.selected, SELECTED_WIDTH, false);
     expected.polyline(Space::Sketch, &curve, selected);
     let handle = line_style(colors.selected, HANDLE_WIDTH, false);
-    expected.polyline(Space::Sketch, &[at(middle), at(tip)], handle);
-    let [first, last] = sketch.spline(spline).unwrap().ends().unwrap();
-    for end in [first, last] {
+    expected.polyline(Space::Sketch, &arms, handle);
+    expected.point(arms[0], end(colors.selected));
+    let fit = &sketch.spline(spline).unwrap().points;
+    for &end in fit.iter().filter(|&&point| point != middle) {
         let would = sketch.handle_tip(spline, end).unwrap();
         let ghost = line_style(colors.preview, HANDLE_WIDTH, true);
         expected.polyline(Space::Sketch, &[at(end), would], ghost);
         expected.point(would, dot(POINT_RADIUS, colors.point_fill, colors.preview));
     }
     for point in &sketch.points {
-        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.point));
+        expected.point(
+            point.at,
+            dot(POINT_RADIUS, colors.point_fill, rim(point.id)),
+        );
     }
     assert_eq!(*base(&selection), expected);
 
@@ -1881,10 +1899,15 @@ fn a_spline_s_handles_show_and_selected_its_ends_and_control_polygon() {
         .iter()
         .map(|&id| sketch.point(id).unwrap().at)
         .collect();
-    let dashed = line_style(colors.construction, HANDLE_WIDTH, true);
+    let dashed = line_style(colors.spline_handle, HANDLE_WIDTH, true);
     expected.polyline(Space::Sketch, &polygon, dashed);
     for point in &sketch.points {
-        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, colors.point));
+        let rim = if control.contains(&point.id) {
+            colors.spline_handle
+        } else {
+            colors.point
+        };
+        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, rim));
     }
     assert_eq!(*layer, expected);
 }

@@ -52,7 +52,7 @@ fn the_splines_selected_convert_to_the_other_kind() {
 }
 
 #[test]
-fn handles_go_on_fit_points_selected_or_a_spline_s_ends_and_come_off() {
+fn handles_go_on_fit_points_selected_or_all_a_spline_s_and_come_off() {
     let (mut sketch, [through, by], other) = splines();
     let fit = sketch.spline(through).unwrap().points.clone();
     // The fit point selected.
@@ -61,11 +61,11 @@ fn handles_go_on_fit_points_selected_or_a_spline_s_ends_and_come_off() {
         handles(&sketch, &middle),
         Some(SketchEdit::AddHandles(vec![fit[1]]))
     );
-    // The spline selected: its ends.
+    // The spline selected: all its fit points.
     let whole = BTreeSet::from([through]);
     assert_eq!(
         handles(&sketch, &whole),
-        Some(SketchEdit::AddHandles(vec![fit[0], fit[2]]))
+        Some(SketchEdit::AddHandles(fit.clone()))
     );
     // Once they all have, they come off.
     let tips: Vec<Id> = [(1.0, 1.0), (11.0, 1.0)]
@@ -83,9 +83,15 @@ fn handles_go_on_fit_points_selected_or_a_spline_s_ends_and_come_off() {
             },
         ];
     }
+    let ends = BTreeSet::from([fit[0], fit[2]]);
+    assert_eq!(
+        handles(&sketch, &ends),
+        Some(SketchEdit::Delete(tips.clone()))
+    );
+    // The spline selected, its middle without: that one gets one.
     assert_eq!(
         handles(&sketch, &whole),
-        Some(SketchEdit::Delete(tips.clone()))
+        Some(SketchEdit::AddHandles(vec![fit[1]]))
     );
     // One with and one without: the one without gets one.
     let both = BTreeSet::from([fit[0], fit[1]]);

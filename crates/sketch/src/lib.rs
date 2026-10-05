@@ -65,7 +65,7 @@ pub use propose::{Accepted, DragSession, Rejected, propose};
 pub use solve::{Analysis, Budget, DEFAULT_ITERATIONS, Failure, Goal, Solution, analyse, solve};
 pub use spline::{
     BSpline, Handle, Interpolation, MAX_COMB_TEETH, MAX_SPLINE_POINTS, MIN_KNOT_GAP, MIN_SPAN,
-    Spline, SplineKind, chord_params, control_knots, flatten_spline, handle_scale,
+    Spline, SplineKind, chord_params, control_knots, flatten_spline, handle_scale, handle_tips,
 };
 
 use std::collections::HashSet;
@@ -382,10 +382,11 @@ impl Sketch {
     }
 
     /// A new id. Fails, leaving the sketch as it was, once the ids have
-    /// run out, into those of the origin and axes: `next_id` may come from
+    /// run out, into those reserved for handles and the origin and axes
+    /// ([`Id::handle`]): `next_id` may come from
     /// a file, so it can be anything.
     pub(crate) fn new_id(&mut self) -> Result<Id, OutOfIds> {
-        if self.next_id >= origin::FIRST_BUILTIN {
+        if self.next_id >= origin::LAST_ID {
             return Err(OutOfIds);
         }
         let id = Id(self.next_id);

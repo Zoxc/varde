@@ -157,6 +157,9 @@ pub struct SketchColors {
     /// colour ([`Palette::danger_strong`]), as a failing feature's name in
     /// the Timeline.
     pub near_miss: Color,
+    /// A spline's handles: their lines and the rims of their tips, set
+    /// apart from the curves and points they shape.
+    pub spline_handle: Color,
     /// An extrude's handle: its shaft
     /// and pucks in the Create tools' icon colour, the arrows out of them
     /// in its accent, as the Extrude icon's slab and arrow; both lighter
@@ -443,6 +446,7 @@ const LIGHT: Palette = Palette {
         region: alpha(LIGHT_SKETCH, 0.1),
         region_hovered: color!(0x3d9b35, 0.18),
         near_miss: color!(0xad2a19),
+        spline_handle: color!(0x8e44c9),
         handle: LIGHT_ICONS.solid.line,
         handle_accent: LIGHT_ICONS.solid.accent,
         handle_hovered: mix(LIGHT_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
@@ -536,6 +540,7 @@ const DARK: Palette = Palette {
         region: alpha(DARK_SKETCH, 0.12),
         region_hovered: color!(0x76cc60, 0.2),
         near_miss: color!(0xf58a7a),
+        spline_handle: color!(0xc08cf2),
         handle: DARK_ICONS.solid.line,
         handle_accent: DARK_ICONS.solid.accent,
         handle_hovered: mix(DARK_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),

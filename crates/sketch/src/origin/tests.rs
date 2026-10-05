@@ -120,10 +120,10 @@ fn check_refuses_the_origin_and_axes_used_as_they_can_t_be() {
 
     // Nor does a sketch give out their ids.
     let mut past = sketch.clone();
-    past.next_id = FIRST_BUILTIN + 1;
+    past.next_id = LAST_ID + 1;
     assert_eq!(
         past.check(&DESIGN),
-        Err(SketchError::NextIdReserved(FIRST_BUILTIN + 1))
+        Err(SketchError::NextIdReserved(LAST_ID + 1))
     );
 }
 
