@@ -640,6 +640,8 @@ fn the_live_layer_has_the_box_the_hover_and_the_tool() {
     let mut expected = SketchLayer::default();
     let hovered = dot(HOVERED_POINT_RADIUS, colors.hovered, colors.hovered);
     expected.point(sketch.point(a).unwrap().at, hovered);
+    // Ringed, so it shows round the cursor.
+    expected.point(sketch.point(a).unwrap().at, snap_disc(colors.point));
     let preview = line_style(colors.preview, CURVE_WIDTH, false);
     expected.polyline(Space::Sketch, &[placed[0], cursor], preview);
     expected.point(cursor, dot(POINT_RADIUS, colors.preview, colors.preview));

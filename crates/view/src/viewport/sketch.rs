@@ -101,6 +101,11 @@ const NEAR_MISS_GAP: f64 = 6.0;
 /// outside and how wide it is, in pixels.
 const NEAR_MISS_RADIUS: f32 = 7.0;
 const NEAR_MISS_WIDTH: f32 = 1.5;
+/// The disc marking a spot a point snaps to ([`Snap::spot`]), drawing or
+/// dragged: its radius, in pixels, wide enough to show round the cursor
+/// over it, and how opaque it is, of the points' colour.
+const SNAP_RADIUS: f32 = 15.0;
+const SNAP_WASH: f32 = 0.15;
 /// How wide a spline's handles, its control polygon and its curvature
 /// comb are drawn, in pixels.
 const HANDLE_WIDTH: f32 = 1.0;
@@ -1189,7 +1194,8 @@ impl<'a> Sketching<'a> {
     /// The colour of the dimension `entry`, by its state and whether it's
     /// a reference.
     fn dimension_color(&self, entry: &DimensionEntry, colors: SketchColors) -> Color {
-        self.look(entry.id).color(colors, !entry.dimension.driving)
+        self.look(entry.id)
+            .dimension_color(colors, entry.dimension.driving)
     }
 
     /// Where the label of the dimension `entry` is, in sketch
@@ -1375,6 +1381,17 @@ impl<'a> Sketching<'a> {
             .flat_map(|id| tied_items(self.sketch, id));
         for id in hover.into_iter().chain(listed) {
             self.highlight(&mut layer, id, colors.hovered);
+        }
+        // A spot a drawing tool snaps to, or a point dragged, is marked
+        // round the cursor.
+        let dragged = (input.press)
+            .filter(|press| press.moved && press.grab && !Held::FREE.is_held(modifiers))
+            .and_then(|press| Some((press.hit?, press.point?)))
+            .zip(cursor)
+            .map(|((id, _), cursor)| snap::snap_drag(self.sketch, id, cursor.at, cursor.pixel));
+        let spot = snap.filter(|_| drawing).or(dragged).filter(Snap::spot);
+        if let Some(spot) = spot {
+            layer.point(spot.at, snap_disc(colors.point));
         }
         let region = cursor
             .filter(|_| still)
@@ -1673,6 +1690,23 @@ impl GlyphLook {
         } else {
             colors.curve
         };
+        self.over(free, colors)
+    }
+
+    /// Its colour as a dimension's among `colors`: free in the Dimension
+    /// tools' colour if `driving`, else in the construction colour, and
+    /// that faded while waiting on the solver.
+    fn dimension_color(self, colors: SketchColors, driving: bool) -> Color {
+        let free = if driving {
+            colors.dimension
+        } else {
+            colors.construction
+        };
+        self.over(free, colors)
+    }
+
+    /// Its colour among `colors`, free in `free`.
+    fn over(self, free: Color, colors: SketchColors) -> Color {
         match self {
             GlyphLook::Free => free,
             GlyphLook::Selected => colors.selected,
@@ -1718,7 +1752,7 @@ fn label_chip<'a>(
     let value = text(value)
         .size(LABEL_SIZE)
         .style(move |theme| text::Style {
-            color: Some(look.color(theme::palette(theme).sketching, !driving)),
+            color: Some(look.dimension_color(theme::palette(theme).sketching, driving)),
         });
     let area = chip(id, value, LABEL_PADDING, look)
         .on_press(Message::Look(Look::PressLabel { id, add: false }))
@@ -1857,6 +1891,19 @@ fn ring(color: Color) -> PointStyle {
         rim_width: NEAR_MISS_WIDTH,
         rim: srgba(color),
         fill: Srgba::default(),
+        fixed: false,
+    }
+}
+
+/// The disc marking a spot snapped to, a faint wash of `color` with no
+/// rim.
+fn snap_disc(color: Color) -> PointStyle {
+    let wash = srgba(color.scale_alpha(SNAP_WASH));
+    PointStyle {
+        radius: SNAP_RADIUS,
+        rim_width: 0.0,
+        rim: wash,
+        fill: wash,
         fixed: false,
     }
 }

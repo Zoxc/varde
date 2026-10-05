@@ -184,6 +184,11 @@ icons! {
     // region, an axis.
     SeRegion => r#"<path class="fl" d="M4 6h10l6 6-6 6H4z"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="12" r="1.5"/><circle class="af" cx="4" cy="18" r="1.5"/>"#,
     SeAxis => r#"<path d="M4 20L20 4"/><circle class="af" cx="7.5" cy="16.5" r="1.7"/><circle class="af" cx="16.5" cy="7.5" r="1.7"/>"#,
+    // The origin planes, not in the mocks: the three seen from the front
+    // right, X to the left, Y to the right, Z up, the one named filled.
+    PlaneXy => r#"<path class="r" d="M12 11L6 14.5L12 18L18 14.5zM12 11L6 14.5V6.5L12 3zM12 11L18 14.5V6.5L12 3z"/><path class="a fl" d="M12 11L6 14.5L12 18L18 14.5z"/>"#,
+    PlaneXz => r#"<path class="r" d="M12 11L6 14.5L12 18L18 14.5zM12 11L6 14.5V6.5L12 3zM12 11L18 14.5V6.5L12 3z"/><path class="a fl" d="M12 11L6 14.5V6.5L12 3z"/>"#,
+    PlaneYz => r#"<path class="r" d="M12 11L6 14.5L12 18L18 14.5zM12 11L6 14.5V6.5L12 3zM12 11L18 14.5V6.5L12 3z"/><path class="a fl" d="M12 11L18 14.5V6.5L12 3z"/>"#,
     SePlane => r#"<path class="t" d="M3 17l4-10h14l-4 10z"/><path class="a" d="M12 15V7"/>"#,
     // An edge, and a hole's rim, on a block: the model mock's
     // `se-edge` and `se-rim`, a chamfer's edges' rows.
@@ -361,7 +366,12 @@ impl Icon {
             | Icon::SeEdge
             | Icon::SeRim
             | Icon::SeFace => IconCategory::Solid,
-            Icon::Plane | Icon::SeAxis | Icon::SePlane => IconCategory::Construction,
+            Icon::Plane
+            | Icon::PlaneXy
+            | Icon::PlaneXz
+            | Icon::PlaneYz
+            | Icon::SeAxis
+            | Icon::SePlane => IconCategory::Construction,
             Icon::Measure | Icon::CatInspect => IconCategory::Inspect,
             Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,
             _ => return None,

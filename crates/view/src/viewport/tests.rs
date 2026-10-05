@@ -717,9 +717,11 @@ impl Plate {
             picks: Picks::All,
             snaps: false,
             planes: None,
+            hovered_origin: None,
             sketches: Vec::new(),
             hovered_sketch: None,
             marked: Vec::new(),
+            whole: Vec::new(),
         });
         program
     }

@@ -262,7 +262,7 @@ impl ExtrudeSession {
 impl Doc {
     /// Starts setting up a new extrude, in a document that can be changed
     /// and outside a sketch, taking the regions of the sketch selected in
-    /// the Timeline if one is; or cancels the one being set up. A revolve
+    /// the Timeline if one is, or else the first one selected in Objects; or cancels the one being set up. A revolve
     /// or combine being set up is dropped. The first
     /// distance's field takes the focus.
     pub(crate) fn start_extrude(&mut self) {
@@ -274,7 +274,10 @@ impl Doc {
         self.combine = None;
         self.motion = None;
         let document = self.editor.document();
-        let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
+        // Or the first selected in Objects.
+        let selected = (self.selected_feature.filter(|&id| is_sketch(document, id)))
+            .or_else(|| self.selected_sketches().next());
+        let document = self.editor.document();
         let mut session = ExtrudeSession::new(document, &self.camera, selected);
         session.regions.refresh(document);
         self.extrude = Some(session);

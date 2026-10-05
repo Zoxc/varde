@@ -74,6 +74,23 @@ impl Document {
         Removal { features, bodies }
     }
 
+    /// What removing all of `targets` takes with it: each one's
+    /// [`Document::removal`], together.
+    pub fn removal_of(&self, targets: &[Removable]) -> Removal {
+        let mut all = Removal::default();
+        for &target in targets {
+            let removal = self.removal(target);
+            all.features.extend(removal.features);
+            all.bodies.extend(removal.bodies);
+        }
+        // Sorted for searching, as one removal's are.
+        all.features.sort_unstable();
+        all.features.dedup();
+        all.bodies.sort_unstable();
+        all.bodies.dedup();
+        all
+    }
+
     /// Removes what `removal` lists, and drops its bodies from the other
     /// features' excluded lists.
     pub(crate) fn remove(&mut self, removal: &Removal) {

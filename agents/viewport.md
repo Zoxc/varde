@@ -509,6 +509,63 @@ sketches, since the origin often coincides with model corners, and under
 the sketch being edited. The world axes' directions and names are on the
 view cube instead (below).
 
+The world's origin objects. Objects lists them first, in an Origin group
+(`ObjectGroup::Origin`, folded to begin with): the origin, the X, Y and Z axes and the XY, XZ
+and YZ planes (`OriginObject`), each with an eye (`Look::ToggleOrigin`)
+but no bin or menu. Which are shown is the app's
+(`DocumentState::origin`, a `varde_render::OriginShown`), not the
+document's: not saved, not undone, and toggled read-only too. The origin
+and the X and Y axes start shown, the Z axis and the planes hidden; while a tool offers the
+origin planes on the toolbar (`toolbar::picks_origin_planes`: a sketch's
+plane, a split's tool by face, a reference that may be a plane) all
+three are drawn whatever Objects says (`DocumentState::origin_drawn`).
+The renderer takes them as `Frame::origin`, ignored in a sketch, whose
+grid's axis lines and marker it draws. Outside a sketch the grid is the
+XY plane, so its axis lines are the X and Y axes, drawn as Objects says
+(the mask in `grid_origin.w`, `OriginShown::mask`; on another plane the
+grid's axis lines always are); the Z axis is a third line in the grid's
+pass, through the world's origin, like them. Hiding the origin skips the
+marker's instance, and the pivot's marker then shows on the origin too.
+The planes (`vs_origin_plane`) are squares on one side of their axes,
+in the octant the default camera looks from (`PLANE_SIDES`: +X, -Y, +Z),
+so it sees the cube's inside, three faces of a cube cornered at the origin so none crosses
+another, from `PLANE_GAP` (0.08) to 1 of `PLANE_REACH` (0.2) view heights
+along their axes, so the same size on
+screen at any zoom, filled at 10 % in the colour of the axis they're
+normal to with a firmer rim, anti-aliased without MSAA (the quad grown
+a couple of pixels past its edges, `fs_origin_plane` fading its coverage
+over the last pixel by the derivatives of where it is in the square), depth tested without writing depth, drawn
+after the grid and under the finished sketches; the depth range takes
+their box in (`planes_bounds`). Picking a sketch's plane, a click on a
+plane drawn nearer than the model picks it as its toolbar button does
+(`Program::origin_plane_at`, `Edit::PlanePicked`).
+
+Hover. An origin object's row hovered (`Look::HoverOrigin`, left with
+`Look::LeaveOrigin`) and, picking a sketch's plane, the origin plane the
+cursor is over nearer than the model (`Look::HoverPlane`, in place of the
+model's hover, only while a plane is picked: `Doc::hovered_plane`) are
+`OriginShown::hovered`: drawn whether shown or not, a plane at 30 % with
+a solid rim twice as wide (its instance 3 on), an axis's line twice as
+wide (the mask's bits 4 to 6), the marker as it is. A body's row hovered
+(`Look::HoverBodyRow`, `ModelPick::row_hover`) lights its faces as
+hovered with the selection, in place of the cursor's hover; a body
+selected shows so already.
+
+Selection. Origin objects' and sketches' rows select in the list itself
+(`Look::ClickObject`, `ObjectRow`, `Doc::objects_selected`): a click one
+alone, letting go of the model's and the Timeline's selection, `Ctrl`
+(`Cmd`) adding or taking out, as the app fills in from the key held.
+Clicking a body alone, or an empty part of the panel, lets go of them,
+and a sketch the document loses goes (`Doc::prune_objects`). Selected
+origin objects are drawn as a hovered one is (`OriginShown::selected`),
+and selected sketches' curves as selected items are
+(`ModelPicking::whole`, drawn, not picked). They feed the tools: the
+Sketch tool takes an origin plane selected alone at once (and lets go of
+it), Extrude and Revolve the first sketch selected when the Timeline has
+none, and `Delete` removes the sketches selected together, one undo step
+(`Edit::RemoveObjects`, `Doc::remove_all`, `Command::RemoveFeatures`,
+asking first as one delete does, named by the first).
+
 The pivot's marker (`Frame::pivot`, a `Pivot` with its point and
 opacity) is the same quad's second instance: the same ring and dot, but
 the ring lies in the screen's plane, so it's always round, its core in

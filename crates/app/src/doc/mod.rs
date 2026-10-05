@@ -133,6 +133,17 @@ pub(crate) struct Doc {
     /// The row of the side panel whose context menu is open, if one is:
     /// a feature of the Timeline's only while it's selected.
     pub(crate) row_menu: Option<RowMenu>,
+    /// The world's origin objects shown, as Objects toggles them: the
+    /// app's, not the document's, so they're neither saved nor undone.
+    pub(crate) origin: varde_render::OriginShown,
+    /// The origin objects and sketches selected in Objects, in the order
+    /// they were.
+    pub(crate) objects_selected: Vec<varde_view::ObjectRow>,
+    /// The origin object whose row in Objects is hovered, if one is.
+    pub(crate) origin_hover: Option<varde_view::OriginObject>,
+    /// The origin plane hovered in the viewport picking a plane, if one
+    /// is: only while a plane is picked.
+    pub(crate) plane_hover: Option<varde_document::OriginPlane>,
     /// The Objects tab's groups folded.
     pub(crate) objects_folded: std::collections::BTreeSet<varde_view::ObjectGroup>,
     /// What overlaps where the left button was held still in the
@@ -375,7 +386,11 @@ impl Doc {
             hovered_feature: None,
             errors: Arc::default(),
             row_menu: None,
-            objects_folded: Default::default(),
+            origin: varde_render::OriginShown::DEFAULT,
+            origin_hover: None,
+            plane_hover: None,
+            objects_selected: Vec::new(),
+            objects_folded: [varde_view::ObjectGroup::Origin].into(),
             overlaps: None,
             opacity_preview: None,
             sketch: None,
@@ -423,6 +438,7 @@ impl Doc {
             self.placed = None;
         }
         self.prune_deleting();
+        self.prune_objects(replaced);
         self.prune(replaced);
         self.prune_plane_pick(replaced);
         self.prune_extrude(replaced);
@@ -544,6 +560,10 @@ impl Doc {
                 }
             }
             Edit::RemoveFeature(id) => self.remove(Removable::Feature(id)),
+            Edit::RemoveObjects => {
+                let sketches = self.selected_sketches().map(Removable::Feature).collect();
+                self.remove_all(sketches);
+            }
             Edit::ConfirmDelete => self.confirm_delete(),
             Edit::ToggleFeatureVisible(id) => self.change(Change::ToggleFeatureVisible(id)),
             Edit::ToolClick(click) => self.tool_click(click),
@@ -608,7 +628,7 @@ impl Doc {
     /// Makes `change` now, on the document as it is.
     pub(crate) fn make(&mut self, change: Change) {
         match change {
-            Change::Remove { target, confirmed } => self.remove_now(target, confirmed),
+            Change::Remove { targets, confirmed } => self.remove_now(targets, confirmed),
             Change::ToggleVisible(id) => {
                 if let Some(body) = self.editor.document().body(id) {
                     let visible = !body.visible;
@@ -680,6 +700,11 @@ impl Doc {
                     | Look::HoverLink(_)
                     | Look::HoverFeature(_)
                     | Look::LeaveFeature(_)
+                    | Look::HoverOrigin(_)
+                    | Look::HoverPlane(_)
+                    | Look::LeaveOrigin(_)
+                    | Look::HoverBodyRow(_)
+                    | Look::LeaveBodyRow(_)
                     | Look::HoverPanel(_)
                     | Look::LeavePanel(_)
                     | Look::HoverCube(_)
@@ -735,6 +760,11 @@ impl Doc {
                 | Look::HoverLink(_)
                 | Look::HoverFeature(_)
                 | Look::LeaveFeature(_)
+                | Look::HoverOrigin(_)
+                | Look::HoverPlane(_)
+                | Look::LeaveOrigin(_)
+                | Look::HoverBodyRow(_)
+                | Look::LeaveBodyRow(_)
                 | Look::HoverPanel(_)
                 | Look::LeavePanel(_)
                 | Look::HoverCube(_)
@@ -761,6 +791,11 @@ impl Doc {
                 | Look::HoverLink(_)
                 | Look::HoverFeature(_)
                 | Look::LeaveFeature(_)
+                | Look::HoverOrigin(_)
+                | Look::HoverPlane(_)
+                | Look::LeaveOrigin(_)
+                | Look::HoverBodyRow(_)
+                | Look::LeaveBodyRow(_)
                 | Look::HoverPanel(_)
                 | Look::LeavePanel(_)
                 | Look::Hover(_)
@@ -920,7 +955,29 @@ impl Doc {
             Look::LeavePanel(left) => self.leave_panel(left),
             // While the list is open, its row hovered is.
             Look::Hover(_) if self.overlaps.is_some() => {}
-            Look::Hover(pick) => self.hover(pick),
+            Look::Hover(pick) => {
+                self.plane_hover = None;
+                self.hover(pick);
+            }
+            Look::HoverOrigin(object) => self.origin_hover = object,
+            Look::HoverPlane(plane) => {
+                // In the model's place.
+                self.plane_hover = Some(plane);
+                self.hover(None);
+            }
+            Look::LeaveOrigin(object) => {
+                self.origin_hover.take_if(|&mut hovered| hovered == object);
+            }
+            Look::HoverBodyRow(body) => {
+                self.pick.row_hover = body;
+                self.refresh_highlight();
+            }
+            Look::LeaveBodyRow(body) => {
+                if self.pick.row_hover == Some(body) {
+                    self.pick.row_hover = None;
+                    self.refresh_highlight();
+                }
+            }
             Look::HoverSketch(_) if self.overlaps.is_some() => {}
             Look::HoverSketch(item) => self.hover_sketch(item),
             Look::ClickSketch { item, .. } if self.picks_outside() => {
@@ -946,6 +1003,7 @@ impl Doc {
             Look::ClickBody { body, .. } if self.motion.is_some() => self.motion_body(body),
             Look::ClickBody { body, add } if self.measure.is_some() => self.measure_body(body, add),
             Look::ClickBody { body, add } => self.click_body(body, add),
+            Look::ClickObject { row, add } => self.click_object(row, add),
             Look::Snap(snap) => {
                 if let Some(session) = &mut self.sketch {
                     session.snap = snap;
@@ -970,6 +1028,10 @@ impl Doc {
                 if !self.objects_folded.remove(&group) {
                     self.objects_folded.insert(group);
                 }
+            }
+            Look::ToggleOrigin(object) => {
+                let shown = object.shown(&mut self.origin);
+                *shown = !*shown;
             }
             Look::ToggleExpanded(id) => self.toggle_expanded(id),
             Look::SelectBox { ids, add } => self.select_box(ids, add),
@@ -1312,6 +1374,10 @@ impl Doc {
             thumbnail: self.thumbnail_request(),
             selected_feature: self.selected_feature,
             row_menu: self.row_menu,
+            origin: self.origin,
+            objects_selected: &self.objects_selected,
+            origin_hover: (self.hovered_plane().map(varde_view::OriginObject::Plane))
+                .or(self.origin_hover),
             objects_folded: &self.objects_folded,
             overlaps: self.overlaps.as_ref().map(|listed| &listed.list),
             overlap_ticks: self.overlap_ticks(),
@@ -1349,7 +1415,7 @@ pub(crate) enum Change {
     /// than `confirmed`, what the user said yes to, if anything, see
     /// [`Doc::remove`].
     Remove {
-        target: Removable,
+        targets: Vec<Removable>,
         confirmed: Option<Removal>,
     },
     ToggleVisible(BodyId),

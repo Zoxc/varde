@@ -190,6 +190,7 @@ pub fn render_preview(
             errors: &[],
             sketch: None,
             pivot: None,
+            origin: crate::OriginShown::NONE,
             viewport: Viewport {
                 x: 0.0,
                 y: 0.0,

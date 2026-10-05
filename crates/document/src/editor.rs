@@ -107,6 +107,9 @@ pub enum Command {
     /// bodies from the other features' excluded lists: what
     /// [`Document::removal`] lists.
     RemoveFeature(FeatureId),
+    /// Removes the features, with all [`Document::removal_of`] lists for
+    /// them, as one edit.
+    RemoveFeatures(Vec<FeatureId>),
     SetFeatureVisible(FeatureId, bool),
     /// Changes the design's units. Every dimension's expression first has
     /// the old units written in after its bare numbers
@@ -856,6 +859,16 @@ impl Editor {
             }
             Command::RemoveFeature(id) => {
                 let removal = document.removal(Removable::Feature(id));
+                if removal.is_empty() {
+                    return Ok(());
+                }
+                let mut next = Document::clone(document);
+                next.remove(&removal);
+                next
+            }
+            Command::RemoveFeatures(ids) => {
+                let targets: Vec<_> = ids.into_iter().map(Removable::Feature).collect();
+                let removal = document.removal_of(&targets);
                 if removal.is_empty() {
                     return Ok(());
                 }

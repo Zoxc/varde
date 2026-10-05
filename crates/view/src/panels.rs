@@ -7,8 +7,11 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Font, Length, Padding};
 use std::collections::BTreeSet;
-use varde_document::{BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Opacity};
+use varde_document::{
+    Axis3, BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Opacity, OriginPlane,
+};
 use varde_expr::LengthUnit;
+use varde_render::OriginShown;
 
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, LinkKind, Sketch};
 
@@ -24,8 +27,9 @@ use crate::theme::{
 };
 use crate::toolbar::{menu_item, menu_separator, ticked};
 use crate::{
-    ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup, Panel,
-    RowMenu, SketchState, VALUE_FIELD, ValueTarget, dimension, split,
+    ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup,
+    ObjectRow, OriginObject, Panel, RowMenu, SketchState, VALUE_FIELD, ValueTarget, dimension,
+    split,
 };
 
 pub(crate) const ROW_HEIGHT: f32 = 28.0;
@@ -117,6 +121,8 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             state.row_menu,
             state.model_selection,
             state.opacity_preview,
+            state.origin,
+            state.objects_selected,
             state.objects_folded,
         )),
         _ => scrolled(timeline(
@@ -509,7 +515,9 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
     group_row(label, count).padding([0, 8]).into()
 }
 
-/// The bodies, then the sketches. A body a join merged into another
+/// The world's origin objects, as `origin` has them shown, then the
+/// bodies, then the sketches. The origin objects can be shown and hidden,
+/// read-only too, as that's no edit, but not deleted. A body a join merged into another
 /// (`merged`, see [`DocumentState::merged`]) is listed faint, with the body
 /// holding it as its note: it's drawn as that one is, so it has no eye
 /// nor opacity of its own, but it can still be removed. Right-clicking a
@@ -519,6 +527,7 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
 /// `selection`, which marks the rows of the bodies it holds, says. Each
 /// group's header folds it, as the Sketch tab's do, those `folded`
 /// listing nothing under it.
+#[expect(clippy::too_many_arguments)]
 fn objects<'a>(
     document: &'a Document,
     merged: &[(BodyId, BodyId)],
@@ -526,8 +535,31 @@ fn objects<'a>(
     menu: Option<RowMenu>,
     selection: &crate::Selection,
     preview: Option<(BodyId, Opacity)>,
+    origin: OriginShown,
+    rows: &[ObjectRow],
     folded: &BTreeSet<ObjectGroup>,
 ) -> Element<'a, Message> {
+    let click = |row| Message::Look(Look::ClickObject { row, add: false });
+    let origins = OriginObject::ALL.into_iter().map(|object| {
+        let (icon, label) = origin_label(object);
+        object_row(Object {
+            icon,
+            label,
+            visible: *object.shown(&mut { origin }),
+            editable: true,
+            toggle: Some(Message::Look(Look::ToggleOrigin(object))),
+            remove: None,
+            note: None,
+            selected: rows.contains(&ObjectRow::Origin(object)),
+            on_press: Some(click(ObjectRow::Origin(object))),
+            on_double_click: None,
+            hover: Some((
+                Message::Look(Look::HoverOrigin(Some(object))),
+                Message::Look(Look::LeaveOrigin(object)),
+            )),
+            menu: None,
+        })
+    });
     let selected: Vec<BodyId> = selection.bodies().collect();
     let takes_bodies = selection.mode().takes_bodies();
     let bodies = document.bodies().iter().map(|body| {
@@ -547,13 +579,17 @@ fn objects<'a>(
                 add: false,
             })),
             on_double_click: None,
-            menu: ObjectMenu {
+            hover: Some((
+                Message::Look(Look::HoverBodyRow(Some(body.id))),
+                Message::Look(Look::LeaveBodyRow(body.id)),
+            )),
+            menu: Some(ObjectMenu {
                 on: RowMenu::Body(body.id),
                 open: menu == Some(RowMenu::Body(body.id)),
                 edit: None,
                 opacity: own.then(|| (body.id, shown_opacity(body, preview))),
                 delete: Message::Edit(Edit::RemoveBody(body.id)),
-            },
+            }),
         })
     });
     let is_sketch = |feature: &&Feature| matches!(feature.kind, FeatureKind::Sketch { .. });
@@ -567,10 +603,11 @@ fn objects<'a>(
             toggle: Some(Message::Edit(Edit::ToggleFeatureVisible(feature.id))),
             remove: None,
             note: None,
-            selected: false,
-            on_press: None,
+            selected: rows.contains(&ObjectRow::Sketch(feature.id)),
+            on_press: Some(click(ObjectRow::Sketch(feature.id))),
             on_double_click: Some(Message::Look(Look::EditFeature(feature.id))),
-            menu: ObjectMenu {
+            hover: None,
+            menu: Some(ObjectMenu {
                 on: RowMenu::Sketch(feature.id),
                 open: menu == Some(RowMenu::Sketch(feature.id)),
                 edit: Some((
@@ -579,7 +616,7 @@ fn objects<'a>(
                 )),
                 opacity: None,
                 delete: Message::Edit(Edit::RemoveFeature(feature.id)),
-            },
+            }),
         })
     });
     let header = |label, count, group| {
@@ -588,16 +625,42 @@ fn objects<'a>(
             .padding([0, 8])
             .into()
     };
+    let origin_folded = folded.contains(&ObjectGroup::Origin);
     let bodies_folded = folded.contains(&ObjectGroup::Bodies);
     let sketches_folded = folded.contains(&ObjectGroup::Sketches);
     let bodies_count = bodies_after_joins(document, merged);
     column(
-        std::iter::once(header("Bodies", bodies_count, ObjectGroup::Bodies))
-            .chain(bodies.filter(|_| !bodies_folded))
-            .chain([header("Sketches", count, ObjectGroup::Sketches)])
-            .chain(sketches.filter(|_| !sketches_folded)),
+        std::iter::once(header(
+            "Origin",
+            OriginObject::ALL.len(),
+            ObjectGroup::Origin,
+        ))
+        .chain(origins.filter(|_| !origin_folded))
+        .chain([header("Bodies", bodies_count, ObjectGroup::Bodies)])
+        .chain(bodies.filter(|_| !bodies_folded))
+        .chain([header("Sketches", count, ObjectGroup::Sketches)])
+        .chain(sketches.filter(|_| !sketches_folded)),
     )
     .into()
+}
+
+/// The icon and name of `object` in Objects.
+fn origin_label(object: OriginObject) -> (Icon, &'static str) {
+    match object {
+        OriginObject::Point => (Icon::Point, "Origin"),
+        OriginObject::Axis(Axis3::X) => (Icon::SeAxis, "X axis"),
+        OriginObject::Axis(Axis3::Y) => (Icon::SeAxis, "Y axis"),
+        OriginObject::Axis(Axis3::Z) => (Icon::SeAxis, "Z axis"),
+        OriginObject::Plane(OriginPlane::XY) => {
+            (crate::toolbar::plane_icon(OriginPlane::XY), "XY plane")
+        }
+        OriginObject::Plane(OriginPlane::XZ) => {
+            (crate::toolbar::plane_icon(OriginPlane::XZ), "XZ plane")
+        }
+        OriginObject::Plane(OriginPlane::YZ) => {
+            (crate::toolbar::plane_icon(OriginPlane::YZ), "YZ plane")
+        }
+    }
 }
 
 /// How many bodies `document` has once its joins have merged some
@@ -640,7 +703,11 @@ struct Object<'a> {
     /// What double-clicking the row sends, if anything: a sketch's opens
     /// it, as its Timeline row's does.
     on_double_click: Option<Message>,
-    menu: ObjectMenu,
+    /// What entering and leaving the row send, if anything: the
+    /// viewport lights the object while it's hovered.
+    hover: Option<(Message, Message)>,
+    /// Its context menu, if it has one.
+    menu: Option<ObjectMenu>,
 }
 
 /// The context menu of an object in the Objects list.
@@ -756,10 +823,12 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
         selected,
         on_press,
         on_double_click,
+        hover: on_hover,
         menu,
     } = object;
-    let (on, open) = (menu.on, menu.open);
-    let menu = open.then(|| menu.view(icon, visible, toggle.clone(), editable));
+    let on = menu.as_ref().map(|menu| menu.on);
+    let menu = (menu.filter(|menu| menu.open))
+        .map(|menu| menu.view(icon, visible, toggle.clone(), editable));
     // A button that shows only on hover keeps its room while it's hidden,
     // as the mock's do, so the note doesn't move: the hovered row is drawn
     // over the plain one, which shows through a translucent highlight.
@@ -801,12 +870,17 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
     };
 
     let row: Element<'_, Message> = match on_press {
-        Some(message) => mouse_area(hover(
-            content(false).style(theme::list_row(selected, false)),
-            content(true).style(theme::list_row(selected, true)),
-        ))
-        .on_press(message)
-        .into(),
+        Some(message) => {
+            let row = mouse_area(hover(
+                content(false).style(theme::list_row(selected, false)),
+                content(true).style(theme::list_row(selected, true)),
+            ))
+            .on_press(message);
+            match on_double_click {
+                Some(message) => row.on_double_click(message).into(),
+                None => row.into(),
+            }
+        }
         None => {
             let row = hover(content(false), content(true).style(theme::hovered_row));
             match on_double_click {
@@ -816,13 +890,20 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
             }
         }
     };
-    ContextMenu::new(
-        row,
-        menu,
-        Message::Look(Look::OpenMenu(on)),
-        Message::Look(Look::CloseMenu),
-    )
-    .into()
+    let row = match on_hover {
+        Some((enter, exit)) => mouse_area(row).on_enter(enter).on_exit(exit).into(),
+        None => row,
+    };
+    match on {
+        Some(on) => ContextMenu::new(
+            row,
+            menu,
+            Message::Look(Look::OpenMenu(on)),
+            Message::Look(Look::CloseMenu),
+        )
+        .into(),
+        None => row,
+    }
 }
 
 /// The sketch of `document` being edited: where it is, with a button
@@ -1088,20 +1169,25 @@ fn tree_header<'a>(
     folded: bool,
     on_press: Message,
 ) -> Element<'a, Message> {
-    let header = row![
-        icons::tinted(
-            if folded { Icon::ChevRight } else { Icon::Chev },
-            icons::INLINE,
-            |p| p.muted
-        ),
-        chrome::heading(label),
-        text(count).size(11.5).style(theme::faint_text),
-    ]
-    .spacing(8)
-    .height(ROW_HEIGHT)
-    .width(Length::Fill)
-    .align_y(Alignment::Center);
-    mouse_area(header)
+    let header = || {
+        container(
+            row![
+                icons::tinted(
+                    if folded { Icon::ChevRight } else { Icon::Chev },
+                    icons::INLINE,
+                    |p| p.muted
+                ),
+                chrome::heading(label),
+                text(count).size(11.5).style(theme::faint_text),
+            ]
+            .spacing(8)
+            .height(ROW_HEIGHT)
+            .width(Length::Fill)
+            .align_y(Alignment::Center),
+        )
+    };
+    // Highlighted while hovered, as the rows are.
+    mouse_area(hover(header(), header().style(theme::hovered_row)))
         .on_press(on_press)
         .interaction(iced::mouse::Interaction::Pointer)
         .into()
@@ -1658,6 +1744,8 @@ mod tests {
                 None,
                 &Default::default(),
                 None,
+                OriginShown::DEFAULT,
+                &[],
                 &BTreeSet::new(),
             );
             let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
@@ -1680,6 +1768,8 @@ mod tests {
             None,
             &Default::default(),
             None,
+            OriginShown::DEFAULT,
+            &[],
             &BTreeSet::new(),
         );
         let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
@@ -1689,6 +1779,32 @@ mod tests {
             .collect();
         assert_eq!(notes.len(), 2, "plain and hovered");
         assert_eq!(notes[0], notes[1]);
+    }
+
+    /// Objects lists the origin objects first, in a group of their own.
+    #[test]
+    fn the_origin_objects_are_listed_first() {
+        let document = Document::example();
+        let objects = objects(
+            &document,
+            &[],
+            true,
+            None,
+            &Default::default(),
+            None,
+            OriginShown::DEFAULT,
+            &[],
+            &BTreeSet::new(),
+        );
+        let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 600.0));
+        let shown: Vec<String> = laid.texts().into_iter().map(|shown| shown.text).collect();
+        let at = |text: &str| shown.iter().position(|shown| shown == text);
+        let names = [
+            "Origin", "X axis", "Y axis", "Z axis", "XY plane", "XZ plane", "YZ plane", "Bodies",
+        ];
+        let places: Vec<_> = names.iter().map(|name| at(name)).collect();
+        assert!(places.iter().all(Option::is_some), "{shown:?}");
+        assert!(places.is_sorted(), "{shown:?}");
     }
 
     /// A body's menu has an Opacity row between Hide and Delete, the

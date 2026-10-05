@@ -2,7 +2,9 @@
 //! or when a join, cut or intersect that stays worked only on bodies that
 //! go: see [`Doc::remove`].
 
-use varde_document::{BodyId, Command, FeatureId, Generation, Operation, Removable, Removal};
+use varde_document::{
+    BodyId, Command, Document, FeatureId, Generation, Operation, Removable, Removal,
+};
 use varde_view::DeletePrompt;
 
 use super::feed::Merges;
@@ -12,7 +14,8 @@ use super::{Change, Doc};
 /// to be removed, everything that goes with it, and the generation of
 /// the document that was worked out of.
 pub(crate) struct Deleting {
-    pub(crate) target: Removable,
+    /// One or more, from Objects' selection.
+    pub(crate) targets: Vec<Removable>,
     pub(crate) removal: Removal,
     generation: Generation,
 }
@@ -29,8 +32,18 @@ impl Doc {
     /// document. While edits wait on the solver it waits behind them, see
     /// [`Doc::change`], and asks once it's made.
     pub(crate) fn remove(&mut self, target: Removable) {
+        self.remove_all(vec![target]);
+    }
+
+    /// Removes all of `targets` together, as [`Doc::remove`] does one:
+    /// one undo step, asking first if anything else goes with them.
+    /// Nothing for none.
+    pub(crate) fn remove_all(&mut self, targets: Vec<Removable>) {
+        if targets.is_empty() {
+            return;
+        }
         self.change(Change::Remove {
-            target,
+            targets,
             confirmed: None,
         });
     }
@@ -48,7 +61,7 @@ impl Doc {
         };
         if deleting.generation == self.editor.generation() {
             let change = Change::Remove {
-                target: deleting.target,
+                targets: deleting.targets,
                 confirmed: Some(deleting.removal),
             };
             if self.proposals.take_asking() {
@@ -68,26 +81,29 @@ impl Doc {
 
     /// Removes `target` now, as [`Doc::remove`] says, without asking if
     /// the user said yes to removing all that goes with it, `confirmed`.
-    pub(super) fn remove_now(&mut self, target: Removable, confirmed: Option<Removal>) {
-        if !self.editable() {
+    pub(super) fn remove_now(&mut self, targets: Vec<Removable>, confirmed: Option<Removal>) {
+        if !self.editable() || targets.is_empty() {
             return;
         }
-        let removal = self.editor.document().removal(target);
+        let removal = self.editor.document().removal_of(&targets);
         // A body goes quietly only with the feature making it alone: a
         // copy body takes its pattern, and the pattern's other copy
         // bodies, which the user didn't pick.
-        let alone = match target {
-            Removable::Body(body) => removal.bodies.iter().all(|&other| other == body),
+        let picked = |body: &BodyId| targets.contains(&Removable::Body(*body));
+        let alone = (targets.iter()).all(|target| match target {
+            Removable::Body(_) => removal.bodies.iter().all(picked),
             Removable::Feature(_) => true,
-        };
-        let quiet = removal.features.len() <= 1 && alone && self.worked(&removal).0.is_empty();
+        });
+        let quiet =
+            removal.features.len() <= targets.len() && alone && self.worked(&removal).0.is_empty();
         if quiet || confirmed.as_ref() == Some(&removal) {
-            self.apply(command(target));
+            let command = command(self.editor.document(), &targets);
+            self.apply(command);
         } else {
             self.file_menu = false;
             self.view_menu = false;
             self.deleting = Some(Deleting {
-                target,
+                targets,
                 removal,
                 generation: self.editor.generation(),
             });
@@ -188,14 +204,15 @@ impl Doc {
         if deleting.generation != self.editor.generation() {
             return None;
         }
-        let name = match deleting.target {
+        // Several are named by the first.
+        let name = match *deleting.targets.first()? {
             Removable::Feature(id) => &document.feature(id)?.name,
             Removable::Body(id) => &document.body(id)?.name,
         };
         let (worked, worked_on) = self.worked(&deleting.removal);
         Some(DeletePrompt {
             name,
-            body: matches!(deleting.target, Removable::Body(_)),
+            body: matches!(deleting.targets[..], [Removable::Body(_), ..]),
             features: (deleting.removal.features.iter())
                 .filter_map(|&id| document.feature(id))
                 .collect(),
@@ -214,12 +231,22 @@ impl Doc {
     }
 }
 
-/// The command removing `target`, which removes what
-/// [`Document::removal`](varde_document::Document::removal) says.
-fn command(target: Removable) -> Command {
-    match target {
-        Removable::Feature(id) => Command::RemoveFeature(id),
-        Removable::Body(id) => Command::RemoveBody(id),
+/// The command removing `targets`, which removes what
+/// [`Document::removal_of`](varde_document::Document::removal_of) says:
+/// several by the features making them.
+fn command(document: &Document, targets: &[Removable]) -> Command {
+    match *targets {
+        [Removable::Feature(id)] => Command::RemoveFeature(id),
+        [Removable::Body(id)] => Command::RemoveBody(id),
+        _ => Command::RemoveFeatures(
+            (targets.iter())
+                .filter_map(|&target| match target {
+                    Removable::Feature(id) => Some(id),
+                    // Its feature goes with it, and only what that takes.
+                    Removable::Body(id) => document.body(id).map(|body| body.created_by),
+                })
+                .collect(),
+        ),
     }
 }
 

@@ -313,3 +313,28 @@ fn a_dragged_point_snaps_but_not_to_its_own_curves() {
     // The arc's start isn't snapped onto its own arc.
     assert!(!snap_drag(&d.sketch, d.arc_start, at(2.6, 21.6), PIXEL).snapped());
 }
+
+/// A line doesn't snap to the point it starts from, whether a point of
+/// the sketch's or the end it goes on from, but still to others.
+#[test]
+fn a_line_doesnt_snap_to_its_own_start() {
+    let d = drawn();
+    let placed = [at(8.0, 1.0)];
+    let targets = [Some(Target::Point(d.end))];
+    let line = tool(Tool::Line, &placed, &targets);
+    let back = snapped(&d.sketch, &line, 7.8, 1.2);
+    assert_ne!(target(back), Some(Target::Point(d.end)), "{back:?}");
+    assert_eq!(
+        target(snapped(&d.sketch, &line, 2.2, 1.1)),
+        Some(Target::Point(d.start))
+    );
+    // From the origin, not back to it.
+    let (origin_placed, origin_targets) = ([DVec2::ZERO], [Some(Target::Point(Id::ORIGIN))]);
+    let from_origin = tool(Tool::Line, &origin_placed, &origin_targets);
+    let origin = snapped(&d.sketch, &from_origin, 0.1, 0.2);
+    assert_ne!(
+        target(origin),
+        Some(Target::Point(Id::ORIGIN)),
+        "{origin:?}"
+    );
+}

@@ -514,6 +514,16 @@ impl Selection {
     /// faces. The faces, edges and vertices are those last found, so only
     /// of the model they were found in.
     pub fn highlight(&self, index: &PickIndex, hovered: Option<Pick>) -> ModelHighlight {
+        let hovered = hovered
+            .filter(|pick| pick.model == index.model())
+            .map(|pick| self.hovered(index, pick))
+            .unwrap_or_default();
+        self.highlight_hovering(index, hovered)
+    }
+
+    /// Like [`Self::highlight`], with `hovered` hovered (a body's faces,
+    /// its row in Objects hovered).
+    pub fn highlight_hovering(&self, index: &PickIndex, hovered: Vec<Picked>) -> ModelHighlight {
         let fresh = self.model == Some(index.model());
         let mut selected: Vec<Picked> = if fresh {
             self.targets().collect()
@@ -525,10 +535,6 @@ impl Selection {
         }
         selected.sort_unstable();
         selected.dedup();
-        let hovered = hovered
-            .filter(|pick| pick.model == index.model())
-            .map(|pick| self.hovered(index, pick))
-            .unwrap_or_default();
         index.highlight(&hovered, &selected)
     }
 }

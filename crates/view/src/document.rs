@@ -153,6 +153,13 @@ pub struct DocumentState<'a> {
     pub selected_feature: Option<FeatureId>,
     /// The row of the side panel whose context menu is open, if one is.
     pub row_menu: Option<RowMenu>,
+    /// The world's origin, axes and planes Objects has shown.
+    pub origin: varde_render::OriginShown,
+    /// The origin objects and sketches selected in Objects: the origin
+    /// objects drawn emphasised.
+    pub objects_selected: &'a [crate::ObjectRow],
+    /// The origin object hovered, if one is: drawn emphasised.
+    pub origin_hover: Option<crate::OriginObject>,
     /// The Objects tab's groups folded.
     pub objects_folded: &'a std::collections::BTreeSet<crate::ObjectGroup>,
     /// What overlaps where the left button was held still in the
@@ -217,6 +224,25 @@ impl DocumentState<'_> {
         self.read_only.is_none()
     }
 
+    /// What the viewport draws of the world's origin, axes and planes:
+    /// what Objects has shown, and the planes while a tool offers them
+    /// ([`toolbar::picks_origin_planes`]).
+    pub fn origin_drawn(&self) -> varde_render::OriginShown {
+        let mut origin = self.origin;
+        if toolbar::picks_origin_planes(self) {
+            origin.planes = [true; 3];
+        }
+        origin.hovered = self.origin_hover.map(crate::OriginObject::part);
+        for row in self.objects_selected {
+            if let crate::ObjectRow::Origin(object) = row
+                && let Some(selected) = origin.selected.get_mut(object.part().index())
+            {
+                *selected = true;
+            }
+        }
+        origin
+    }
+
     /// How opaque the viewport draws each part of the mesh: as its body
     /// in `editor`'s document, or `opacity_preview`, has it.
     pub fn part_opacity(&self) -> Arc<[f32]> {
@@ -227,6 +253,10 @@ impl DocumentState<'_> {
     pub(crate) fn keys(&self) -> DocumentKeys {
         DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
             .with_face_selected(self.face_selected())
+            .with_objects_deletable(
+                (self.objects_selected.iter())
+                    .any(|row| matches!(row, crate::ObjectRow::Sketch(_))),
+            )
             .with_extrude(self.extrude.as_ref())
             .with_revolve(self.revolve.as_ref())
             .with_combine(self.combinable, self.combine.as_ref())
@@ -771,6 +801,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.highlight,
                         state.hover_through,
                         state.errors,
+                        state.origin_drawn(),
                         state.options,
                         state.mode.palette(),
                         state

@@ -9,6 +9,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use glam::{DVec2, DVec3, Vec3};
 use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
+use varde_render::OriginShown;
 use varde_render::{
     Camera, ClipRect, Colors, ERROR_EDGE_WIDTH, ERROR_HALO, ERROR_POINT_RADIUS, ErrorParts, Frame,
     GridPlane, Highlights, LineStyle, Projection, Renderer, Shading, SketchLayer, SketchScene,
@@ -193,6 +194,11 @@ fn frame<'a>(
         errors,
         sketch: None,
         pivot: None,
+        // The grid's axis lines, as before the Z axis was drawn.
+        origin: OriginShown {
+            axes: [true, true, false],
+            ..OriginShown::DEFAULT
+        },
         viewport: Viewport {
             x: 0.0,
             y: 0.0,

@@ -379,6 +379,12 @@ impl Doc {
                 pick: self.new_sketch_pick(),
                 enter: false,
             });
+            // An origin plane selected alone in Objects is taken at once,
+            // and let go of.
+            if let Some(plane) = self.selected_origin_plane() {
+                self.objects_selected.clear();
+                self.plane_picked(Plane::Origin(plane));
+            }
         }
     }
 

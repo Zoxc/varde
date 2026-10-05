@@ -343,7 +343,8 @@ fn axis_holds(sketch: &varde_document::Sketch, axis: AxisLine) -> bool {
 impl Doc {
     /// Starts setting up a new revolve, in a document that can be changed
     /// and outside a sketch, taking the regions of the sketch selected in
-    /// the Timeline if one is; or cancels the one being set up. An extrude
+    /// the Timeline if one is, or else the first one selected in Objects;
+    /// or cancels the one being set up. An extrude
     /// or combine being set up is dropped. The first angle's field, if the extent has one, takes the
     /// focus.
     pub(crate) fn start_revolve(&mut self) {
@@ -355,7 +356,10 @@ impl Doc {
         self.combine = None;
         self.motion = None;
         let document = self.editor.document();
-        let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
+        // Or the first selected in Objects.
+        let selected = (self.selected_feature.filter(|&id| is_sketch(document, id)))
+            .or_else(|| self.selected_sketches().next());
+        let document = self.editor.document();
         let mut session = RevolveSession::new(document, selected);
         session.regions.refresh(document);
         self.revolve = Some(session);

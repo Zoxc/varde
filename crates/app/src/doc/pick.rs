@@ -10,10 +10,10 @@
 
 use std::sync::Arc;
 
-use varde_document::{BodyId, Document, FeatureKind};
+use varde_document::{BodyId, Document, FeatureId, FeatureKind};
 use varde_view::{
-    AlignRole, ModelHighlight, ModelPicking, MotionKind, MotionPick, PanelHover, Pick, Picked,
-    Picks, Selection, SketchItem, SketchLines,
+    AlignRole, ModelHighlight, ModelPicking, MotionKind, MotionPick, ObjectRow, PanelHover, Pick,
+    Picked, Picks, Selection, SketchItem, SketchLines,
 };
 
 use super::{Doc, MotionSession};
@@ -29,9 +29,13 @@ pub(crate) struct ModelPick {
     /// Built when what it's of changes, so the renderer uploads it only
     /// then.
     highlight: Arc<ModelHighlight>,
-    /// What `highlight` was built of: the model, the target hovered and
-    /// the selection.
-    built: Option<(u64, Option<Picked>, Selection)>,
+    /// The body whose row in Objects is hovered, if one is: its faces
+    /// are lit hovered with the selection, in place of the cursor's
+    /// hover.
+    pub(crate) row_hover: Option<BodyId>,
+    /// What `highlight` was built of: the model, the target hovered, the
+    /// selection and the body row hovered.
+    built: Option<(u64, Option<Picked>, Selection, Option<BodyId>)>,
     /// While an extrude or revolve is set up, the body whose row in its
     /// panel is hovered, lit in the model shown (its preview).
     panel_highlight: Arc<ModelHighlight>,
@@ -251,14 +255,82 @@ impl Doc {
         if self.sketch.is_some() || self.editor.document().body(body).is_none() {
             return;
         }
+        if !add {
+            self.objects_selected.clear();
+        }
         let body = self.feed.shown_body(body);
         self.pick.selection.click_body(body, add);
         self.selected_feature = None;
         self.refresh_highlight();
     }
 
+    /// Takes a click on `row`, an origin object's or a sketch's in
+    /// Objects: selects it alone, the model's selection and the
+    /// Timeline's let go, or with `add` adds it or takes it out. Not in a
+    /// sketch.
+    pub(crate) fn click_object(&mut self, row: ObjectRow, add: bool) {
+        if self.sketch.is_some() {
+            return;
+        }
+        if let ObjectRow::Sketch(id) = row
+            && self.editor.document().feature(id).is_none()
+        {
+            return;
+        }
+        if add {
+            match self
+                .objects_selected
+                .iter()
+                .position(|&selected| selected == row)
+            {
+                Some(at) => {
+                    self.objects_selected.remove(at);
+                }
+                None => self.objects_selected.push(row),
+            }
+        } else {
+            self.objects_selected = vec![row];
+            self.selected_feature = None;
+            self.pick.selection.clear();
+        }
+        self.refresh_highlight();
+    }
+
+    /// The sketches selected in Objects, in the order they were.
+    pub(crate) fn selected_sketches(&self) -> impl Iterator<Item = FeatureId> + '_ {
+        (self.objects_selected.iter()).filter_map(|row| match row {
+            ObjectRow::Sketch(id) => Some(*id),
+            ObjectRow::Origin(_) => None,
+        })
+    }
+
+    /// The origin plane selected in Objects, if it's the one origin
+    /// object selected there.
+    pub(crate) fn selected_origin_plane(&self) -> Option<varde_document::OriginPlane> {
+        let mut origins = (self.objects_selected.iter()).filter_map(|row| match row {
+            ObjectRow::Origin(object) => Some(*object),
+            ObjectRow::Sketch(_) => None,
+        });
+        match (origins.next(), origins.next()) {
+            (Some(varde_view::OriginObject::Plane(plane)), None) => Some(plane),
+            _ => None,
+        }
+    }
+
+    /// Drops the sketches selected in Objects the document no longer
+    /// has, or all of them if it was `replaced` whole, when their ids may
+    /// name others.
+    pub(crate) fn prune_objects(&mut self, replaced: bool) {
+        let document = self.editor.document();
+        self.objects_selected.retain(|row| match row {
+            ObjectRow::Sketch(id) => !replaced && document.feature(*id).is_some(),
+            ObjectRow::Origin(_) => true,
+        });
+    }
+
     /// Selects nothing in the model.
     pub(crate) fn clear_model_selection(&mut self) {
+        self.objects_selected.clear();
         self.pick.selection.clear();
         self.refresh_highlight();
     }
@@ -333,15 +405,29 @@ impl Doc {
             return;
         }
         let hover = self.shown_hover();
+        let row = self.pick.row_hover;
         let key = (
             self.feed.model(),
             hover.map(|pick| pick.target),
             self.pick.selection.clone(),
+            row,
         );
         if self.pick.built.as_ref() == Some(&key) {
             return;
         }
-        let highlight = if hover.is_none() && self.pick.selection.is_empty() {
+        let highlight = if let Some(body) = row {
+            let index = self.feed.pick_index();
+            // A body selected shows so already.
+            let selected = self
+                .pick
+                .selection
+                .bodies()
+                .any(|selected| selected == body);
+            let faces = (index.body_faces(body).filter(|_| !selected))
+                .map(Picked::Face)
+                .collect();
+            self.pick.selection.highlight_hovering(index, faces)
+        } else if hover.is_none() && self.pick.selection.is_empty() {
             ModelHighlight::default()
         } else {
             let index = self.feed.pick_index();
@@ -435,10 +521,20 @@ impl Doc {
                 self.pick.selection.mode().picks()
             },
             snaps: measuring || pointing,
+            hovered_origin: self.hovered_plane(),
+            whole: {
+                let selected: Vec<_> = self.selected_sketches().collect();
+                self.placed_sketches(|feature| feature.visible && selected.contains(&feature.id))
+            },
             planes: (self.picking_plane.as_ref())
                 .filter(|_| !measuring)
                 .map(|picking| &picking.pick),
         })
+    }
+
+    /// The origin plane hovered in the viewport, while a plane is picked.
+    pub(crate) fn hovered_plane(&self) -> Option<varde_document::OriginPlane> {
+        self.plane_hover.filter(|_| self.picking_plane.is_some())
     }
 
     /// What the viewport draws over the model, if anything: nothing while

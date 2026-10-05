@@ -27,6 +27,153 @@ fn depth_format(device: &wgpu::Device) -> wgpu::TextureFormat {
     }
 }
 
+/// Which of the world's origin objects a [`Frame`] draws: the origin
+/// marker, the X, Y and Z axis lines, and the XY, XZ and YZ planes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OriginShown {
+    pub marker: bool,
+    /// By axis: X, Y, Z.
+    pub axes: [bool; 3],
+    /// In the order of `PLANES` in the shader: XY, XZ, YZ.
+    pub planes: [bool; 3],
+    /// The one hovered, if one is: drawn whether it's shown or not, and
+    /// emphasised, a plane more opaque, an axis's line wider, the marker
+    /// as it is.
+    pub hovered: Option<OriginPart>,
+    /// Those selected, by [`OriginPart::index`]: drawn as the one hovered
+    /// is.
+    pub selected: [bool; OriginPart::COUNT],
+}
+
+/// One of the world's origin objects, as [`OriginShown`] has them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginPart {
+    Marker,
+    /// X, Y or Z: 0, 1 or 2.
+    Axis(usize),
+    /// XY, XZ or YZ: 0, 1 or 2.
+    Plane(usize),
+}
+
+impl OriginPart {
+    /// How many there are.
+    pub const COUNT: usize = 7;
+
+    /// Where it is among them: the marker, the axes, then the planes.
+    /// [`Self::COUNT`] or past for an axis or plane past 2.
+    pub fn index(self) -> usize {
+        match self {
+            OriginPart::Marker => 0,
+            OriginPart::Axis(axis) if axis < 3 => 1 + axis,
+            OriginPart::Plane(plane) if plane < 3 => 4 + plane,
+            _ => Self::COUNT,
+        }
+    }
+
+    /// Each, by [`Self::index`].
+    pub const ALL: [OriginPart; Self::COUNT] = [
+        OriginPart::Marker,
+        OriginPart::Axis(0),
+        OriginPart::Axis(1),
+        OriginPart::Axis(2),
+        OriginPart::Plane(0),
+        OriginPart::Plane(1),
+        OriginPart::Plane(2),
+    ];
+}
+
+impl OriginShown {
+    /// The marker and the X and Y axes, not the Z axis nor the planes.
+    pub const DEFAULT: OriginShown = OriginShown {
+        marker: true,
+        axes: [true, true, false],
+        planes: [false; 3],
+        hovered: None,
+        selected: [false; OriginPart::COUNT],
+    };
+    /// None of them.
+    pub const NONE: OriginShown = OriginShown {
+        marker: false,
+        axes: [false; 3],
+        planes: [false; 3],
+        hovered: None,
+        selected: [false; OriginPart::COUNT],
+    };
+
+    /// Whether `part` is drawn emphasised: hovered or selected.
+    fn emphasised(&self, part: OriginPart) -> bool {
+        self.hovered == Some(part) || self.selected.get(part.index()).copied().unwrap_or(false)
+    }
+
+    /// These with the ones hovered and selected shown too.
+    fn with_hovered(mut self) -> Self {
+        let shown = self;
+        for part in OriginPart::ALL
+            .into_iter()
+            .filter(|&part| shown.emphasised(part))
+        {
+            match part {
+                OriginPart::Marker => self.marker = true,
+                OriginPart::Axis(axis) => self.axes[axis] = true,
+                OriginPart::Plane(plane) => self.planes[plane] = true,
+            }
+        }
+        self
+    }
+
+    /// The mask the shader takes in `grid_origin.w`, drawing on `grid`:
+    /// [`GRID_X`] and [`GRID_Y`] for the grid's own axis lines, which on
+    /// the world's XY plane are the X and Y axes, else are always drawn;
+    /// [`WORLD_Z`] for the Z axis's line, and [`ORIGIN_MARKER`]; and the
+    /// hovered axis's bit shifted by [`HOVERED_SHIFT`], on the world's XY
+    /// plane, where the grid's lines are the axes.
+    fn mask(self, grid: &GridPlane) -> u32 {
+        let world = *grid == GridPlane::XY;
+        let bit = |on: bool, bit: u32| if on { bit } else { 0 };
+        let hovered = (0..3)
+            .filter(|&axis| (world || axis == 2) && self.emphasised(OriginPart::Axis(axis)))
+            .fold(0, |mask, axis| mask | 1 << axis << HOVERED_SHIFT);
+        bit(self.axes[0] || !world, GRID_X)
+            | bit(self.axes[1] || !world, GRID_Y)
+            | bit(self.axes[2], WORLD_Z)
+            | bit(self.marker, ORIGIN_MARKER)
+            | hovered
+    }
+}
+
+impl Default for OriginShown {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Bits of [`OriginShown::mask`], as in the shader.
+const GRID_X: u32 = 1;
+const GRID_Y: u32 = 1 << 1;
+const WORLD_Z: u32 = 1 << 2;
+const ORIGIN_MARKER: u32 = 1 << 3;
+/// How far a line's bit is shifted to say it's hovered, as in the shader.
+const HOVERED_SHIFT: u32 = 4;
+
+/// A quad per origin plane, an instance each: see `vs_origin_plane`.
+const PLANE_VERTICES: u32 = 6;
+
+/// How far an origin plane reaches from the origin along its positive
+/// axes, in view heights, as `PLANE_REACH` in the shader: drawn the same size on
+/// screen at any zoom.
+pub const PLANE_REACH: f32 = 0.2;
+
+/// Where an origin plane starts from the origin along its axes, of
+/// [`PLANE_REACH`]: they're squares on one side of their axes
+/// ([`PLANE_SIDES`]),
+/// three faces of a cube cornered at the origin, kept apart by the gap.
+pub const PLANE_GAP: f32 = 0.08;
+
+/// Which way the origin planes run along each world axis, as
+/// `PLANE_SIDES` in the shader: into the octant the default camera looks
+/// from (front right, above), so it sees the cube's inside.
+pub const PLANE_SIDES: Vec3 = Vec3::new(1.0, -1.0, 1.0);
+
 /// A quad per marker, an instance each: the origin's and the pivot's. See
 /// `vs_origin`.
 const ORIGIN_VERTICES: u32 = 6;
@@ -236,6 +383,12 @@ pub struct Frame<'a> {
     /// everything but the sketch being edited, unless it shows where the
     /// origin does.
     pub pivot: Option<Pivot>,
+    /// Which of the world's origin, axes and planes are drawn. The X and
+    /// Y axes are the grid's axis lines while it's the world's XY plane;
+    /// on another plane the grid's are drawn whatever this says. Ignored
+    /// while [`Self::faded`], in a sketch, whose grid's axis lines and
+    /// origin marker are drawn, and nothing else of it.
+    pub origin: OriginShown,
     /// Where to draw on the target.
     pub viewport: Viewport,
     /// Size of the whole render target in physical pixels.
@@ -399,7 +552,7 @@ struct Uniforms {
     pivot_color: [f32; 4],
     /// [`Frame::grid`]: xyz its origin, and unit x and y axes. The axes'
     /// w is [`axis_index`], for the colour of its axis line; the origin's
-    /// is unused.
+    /// is [`OriginShown::mask`], what's drawn of the axes and the marker.
     grid_origin: [f32; 4],
     grid_x: [f32; 4],
     grid_y: [f32; 4],
@@ -923,6 +1076,8 @@ pub struct Renderer {
     /// The edges of the mesh's triangles: [`Frame::tessellation`].
     triangle_edges: wgpu::RenderPipeline,
     origin: wgpu::RenderPipeline,
+    /// The origin planes shown: [`Frame::origin`].
+    origin_planes: wgpu::RenderPipeline,
     /// The sketch being edited: its fills, lines and points, drawn over
     /// everything, and the same hidden by the model in front of them
     /// ([`SketchScene::depth_tested`]).
@@ -973,6 +1128,9 @@ pub struct Slot {
     /// Whether the edges the model hides are drawn: [`Frame::hidden_edges`]
     /// and not [`Frame::faded`].
     hidden_edges: bool,
+    /// What's drawn of [`Frame::origin`]: while [`Frame::faded`], in a
+    /// sketch, only the grid's axis lines and the marker, the sketch's.
+    origin: OriginShown,
     /// The faces hovered and selected, the hovered first: none while
     /// [`Frame::faded`].
     faces: Vec<FaceDraw>,
@@ -1422,6 +1580,11 @@ impl Renderer {
                 ..Pass::overlay("varde triangle edges", "vs_triangle_edge", "fs_line")
             }),
             origin: pipeline(Pass::overlay("varde origin", "vs_origin", "fs_origin")),
+            origin_planes: pipeline(Pass::overlay(
+                "varde origin planes",
+                "vs_origin_plane",
+                "fs_origin_plane",
+            )),
             sketch_on_top: SketchPipelines {
                 fills: pipeline(Pass::on_top(
                     "varde sketch fills",
@@ -1596,6 +1759,7 @@ impl Renderer {
             hover_through: false,
             draws: PartDraws::default(),
             hidden_edges: false,
+            origin: OriginShown::NONE,
             faces: Vec::new(),
             highlights: HighlightBuffers::default(),
             highlights_source: Weak::new(),
@@ -1630,6 +1794,17 @@ impl Renderer {
         slot.faded = frame.faded;
         slot.hover_through = frame.hover_through && !frame.faded;
         slot.hidden_edges = frame.hidden_edges && !frame.faded;
+        // In a sketch, the grid's axis lines and the marker are the
+        // sketch's.
+        slot.origin = if frame.faded {
+            OriginShown {
+                marker: true,
+                axes: [true, true, false],
+                ..OriginShown::NONE
+            }
+        } else {
+            frame.origin.with_hovered()
+        };
 
         let mut result = Ok(());
         if !std::ptr::eq(slot.lines_source.as_ptr(), Arc::as_ptr(frame.sketches)) {
@@ -1746,6 +1921,7 @@ impl Renderer {
             slot.mesh.as_ref().and_then(|m| m.bounds),
             slot.lines.as_ref().and_then(|l| l.bounds),
             slot.errors.bounds,
+            planes_bounds(frame.camera, slot.origin),
         ]
         .into_iter()
         .chain(sketch_bounds.into_iter().flatten());
@@ -1819,7 +1995,9 @@ impl Renderer {
                 .filter(|pivot| pivot.at.is_finite() && (0.0..=1.0).contains(&pivot.opacity))
                 .map_or([0.0; 4], |pivot| pivot.at.extend(pivot.opacity).to_array()),
             pivot_color: linear(colors.pivot),
-            grid_origin: grid.origin().extend(0.0).to_array(),
+            grid_origin: (grid.origin())
+                .extend(slot.origin.mask(grid) as f32)
+                .to_array(),
             grid_x: grid.x().extend(axis_index(grid.x())).to_array(),
             grid_y: grid.y().extend(axis_index(grid.y())).to_array(),
             sketch_origin: sketch_plane.origin().extend(second[0]).to_array(),
@@ -2102,6 +2280,17 @@ impl Renderer {
             pass.draw(0..3, 0..1);
         }
 
+        // Under the finished sketches, which often lie on them.
+        if backdrop {
+            pass.set_pipeline(&self.origin_planes);
+            // The hovered one's instance is 3 on, see `vs_origin_plane`.
+            for (plane, _) in (0..).zip(slot.origin.planes).filter(|(_, shown)| *shown) {
+                let hovered = slot.origin.emphasised(OriginPart::Plane(plane as usize));
+                let instance = if hovered { plane + 3 } else { plane };
+                pass.draw(0..PLANE_VERTICES, instance..instance + 1);
+            }
+        }
+
         if let Some(lines) = slot.lines.as_ref().filter(|_| backdrop) {
             pass.set_pipeline(&self.lines);
             pass.set_vertex_buffer(0, lines.segments.slice(..));
@@ -2180,7 +2369,9 @@ impl Renderer {
 
         if backdrop {
             pass.set_pipeline(&self.origin);
-            pass.draw(0..ORIGIN_VERTICES, 0..MARKERS);
+            // The pivot's marker is the second instance.
+            let first = if slot.origin.marker { 0 } else { 1 };
+            pass.draw(0..ORIGIN_VERTICES, first..MARKERS);
         }
     }
 
@@ -2475,6 +2666,16 @@ impl SketchPipelines {
 
 /// Which world axis `axis`, a unit vector, lies along, 0 to 2, or 3 if
 /// none, for its axis line's colour: of [`Colors::axes`], or the grid's.
+/// The box the origin planes [`OriginShown`] has drawn take, seen with
+/// `camera`, if it has any: see [`PLANE_REACH`].
+fn planes_bounds(camera: &Camera, origin: OriginShown) -> Option<Aabb> {
+    let reach = PLANE_REACH * camera.view_height();
+    (origin.planes.contains(&true) && reach.is_finite()).then(|| Aabb {
+        min: Vec3::splat(-reach),
+        max: Vec3::splat(reach),
+    })
+}
+
 fn axis_index(axis: Vec3) -> f32 {
     let along = axis.abs();
     (0..3)

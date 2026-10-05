@@ -402,6 +402,9 @@ pub struct DocumentKeys {
     /// sketches, operations and picking a plane: a new sketch goes on it
     /// (if it's flat).
     pub face_selected: bool,
+    /// Whether sketches are selected in Objects, and no feature in the
+    /// Timeline: `Delete` removes them.
+    pub objects_deletable: bool,
     /// Whether an extrude is being set up.
     pub extruding: bool,
     /// Whether the extrude being set up can be committed.
@@ -488,6 +491,7 @@ impl DocumentKeys {
                     .collect()
             }),
             face_selected: false,
+            objects_deletable: false,
             extruding: false,
             extrude_ready: false,
             revolving: false,
@@ -508,6 +512,13 @@ impl DocumentKeys {
 
     /// The same keys where a face and nothing else is selected in the
     /// model if `face_selected`.
+    pub fn with_objects_deletable(self, objects_deletable: bool) -> Self {
+        Self {
+            objects_deletable,
+            ..self
+        }
+    }
+
     pub fn with_face_selected(self, face_selected: bool) -> Self {
         Self {
             face_selected,
@@ -966,6 +977,15 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             ),
         ]
     });
+    let objects =
+        (keys.objects_deletable && keys.selected.is_none() && !keys.sketching).then(|| {
+            Binding::new(
+                Shortcut::DELETE,
+                Message::Edit(Edit::RemoveObjects),
+                keys.editable && !keys.operating(),
+            )
+        });
+    let feature = feature.chain(objects);
     let sketch = keys.sketching.then(|| {
         Tool::ALL
             .map(|tool| tool_binding(tool, keys))

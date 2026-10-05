@@ -13,6 +13,7 @@ use varde_render::{
     PointStyle, Projection, Renderer, Shading, SketchLayer, SketchScene, Space, Srgb, Srgba,
     VERTEX_RADIUS, Vertex, View, Viewport, wgpu,
 };
+use varde_render::{OriginPart, OriginShown};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// A black background and a grey model, with the app's scene colours
@@ -118,6 +119,11 @@ fn render_to(
             errors: &[],
             sketch: None,
             pivot: None,
+            // The grid's axis lines, as before the Z axis was drawn.
+            origin: OriginShown {
+                axes: [true, true, false],
+                ..OriginShown::DEFAULT
+            },
             viewport,
             target_size: SIZE,
             scale_factor,
@@ -159,6 +165,9 @@ struct Extras {
     /// Whether the hover is drawn over what hides it too.
     hover_through: bool,
     highlights: Highlights,
+    /// What's drawn of the world's origin objects, if not the grid's axis
+    /// lines and the marker.
+    origin: Option<OriginShown>,
 }
 
 /// Renders `mesh` and `extras` into [`VIEWPORT`] at a scale factor of 1.
@@ -210,6 +219,11 @@ fn render_scaled(
             errors: &[],
             sketch,
             pivot: extras.pivot,
+            // The grid's axis lines, as before the Z axis was drawn.
+            origin: extras.origin.unwrap_or(OriginShown {
+                axes: [true, true, false],
+                ..OriginShown::DEFAULT
+            }),
             viewport,
             target_size: SIZE,
             scale_factor,
@@ -436,6 +450,91 @@ fn edges_stay_in_front_of_faces_zoomed_into_a_large_scene() {
         let dark = (y0..y0 + h).any(|y| pixel(&pixels, x, y)[..3].iter().all(|&c| c < 64));
         assert!(dark, "no edge in column {x}");
     }
+}
+
+/// Seen from the front, each origin object shows only while it's shown:
+/// the Z axis's line, blue, up the middle; the X axis's, red, across it;
+/// the marker, white, on the origin; and the XZ plane, faintly green,
+/// around it.
+#[test]
+fn origin_objects_are_drawn_as_shown() {
+    let mut camera = Camera::default();
+    camera.look_from(View::Front);
+    camera.orbit(0.0, 0.3);
+    let count = |origin: OriginShown, matches: &dyn Fn([u8; 4]) -> bool| {
+        let extras = Extras {
+            origin: Some(origin),
+            ..Extras::default()
+        };
+        let pixels = render_with(&camera, &RenderMesh::default(), extras)?;
+        let mut count = 0;
+        for y in CLIP.y..CLIP.y + CLIP.height {
+            for x in CLIP.x..CLIP.x + CLIP.width {
+                count += u32::from(matches(pixel(&pixels, x, y)));
+            }
+        }
+        Some(count)
+    };
+    let blue = |[r, g, b, _]: [u8; 4]| b > 128 && r < 128 && g < 160;
+    let red = |[r, g, _, _]: [u8; 4]| r > 128 && g < 128;
+    let white = |[r, g, b, _]: [u8; 4]| r > 220 && g > 220 && b > 220;
+    // Faint green on black: more green than either of the others.
+    let green =
+        |[r, g, b, _]: [u8; 4]| g > 10 && g > r.saturating_add(5) && g > b.saturating_add(5);
+    let all = OriginShown {
+        planes: [false, true, false],
+        ..OriginShown::DEFAULT
+    };
+    let z = OriginShown {
+        axes: [true; 3],
+        ..OriginShown::DEFAULT
+    };
+    assert_eq!(OriginShown::DEFAULT.axes, [true, true, false]);
+    let Some(shown) = count(z, &blue) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    assert!(shown > 50, "{shown} blue");
+    let hidden = OriginShown {
+        axes: [true, true, false],
+        ..all
+    };
+    assert_eq!(count(hidden, &blue), Some(0));
+
+    assert!(count(OriginShown::DEFAULT, &red).unwrap() > 50);
+    let no_x = OriginShown {
+        axes: [false, true, true],
+        ..OriginShown::DEFAULT
+    };
+    assert_eq!(count(no_x, &red), Some(0));
+
+    assert!(count(OriginShown::DEFAULT, &white).unwrap() > 5);
+    let no_marker = OriginShown {
+        marker: false,
+        ..OriginShown::DEFAULT
+    };
+    assert_eq!(count(no_marker, &white), Some(0));
+
+    let plane = count(all, &green).unwrap();
+    let none = count(OriginShown::DEFAULT, &green).unwrap();
+    assert!(
+        plane > none + 60,
+        "{plane} green with the plane, {none} without"
+    );
+
+    // Hovered, the plane is drawn though hidden, and stronger; the Z axis
+    // too, and wider.
+    let hovered = |part| OriginShown {
+        hovered: Some(part),
+        ..OriginShown::DEFAULT
+    };
+    let strong =
+        |[r, g, b, _]: [u8; 4]| g > 40 && g > r.saturating_add(20) && g > b.saturating_add(20);
+    let lit = count(hovered(OriginPart::Plane(1)), &strong).unwrap();
+    let plain = count(all, &strong).unwrap();
+    assert!(lit > plain + 30, "{lit} strong green hovered, {plain} not");
+    let z = count(hovered(OriginPart::Axis(2)), &blue).unwrap();
+    assert!(z > shown, "{z} blue hovered, {shown} shown");
 }
 
 #[test]

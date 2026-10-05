@@ -1546,7 +1546,11 @@ by the analysis darker (`SketchColors::fixed`, a point filled with
 `PointStyle::fixed`), in a conflict red (`conflict`: the analysis's
 redundant constraints and a refusal's, with what they tie together),
 failing red too within the errors' halo (`failing`, below), and
-faded while waiting on the solver. Colours are the palette's
+faded while waiting on the solver. A dimension (its lines, arrows and
+label) is free in the Dimension tools' icon colour
+(`SketchColors::dimension`, `IconColors::dimension`'s line), or in the
+construction colour if it's a reference (`GlyphLook::dimension_color`),
+and selected, in a conflict or waiting as the others. Colours are the palette's
 `SketchColors`, light and dark; `conflict` is the theme's error red,
 the renderer's `Colors::error`.
 
@@ -1614,11 +1618,15 @@ failures show").
   no item is (`Profiles::region_at`, filled in
   `SketchColors::region_hovered`; the cursor moving asks for a redraw only
   when it's another, `Input::region`), a ring in `SketchColors::near_miss`
-  between each pair of open ends within `NEAR_MISS_GAP` (6) pixels at the
+  (the Timeline's failed text's, `danger_strong`), `NEAR_MISS_RADIUS` (7)
+  pixels out, between each pair of open ends within `NEAR_MISS_GAP` (6) pixels at the
   target (`Projector::pixel`), paired again only when the profiles or the
   zoom change (`Input::near`), and the tool's preview (the rubber-band line,
   the circle or arc through the cursor where it snaps, with what it snaps
-  to highlighted and the snap's guide, the points placed; the Dimension
+  to highlighted, a spot of its own (`Snap::spot`: a point, a line's
+  middle, a quadrant) marked by a rimless disc of the points' colour at
+  `SNAP_WASH` (15 %), `SNAP_RADIUS` (15) pixels out so it shows round the
+  cursor, as is the spot a point dragged snaps to, and the snap's guide, the points placed; the Dimension
   tool's picks and the dimension it would place with the label at the
   cursor, or the one the value field places).
 
@@ -1688,7 +1696,8 @@ A label's press is its widget's, so the viewport follows a grabbed label
 `snap(sketch, tool, cursor, pixel)`, pure: where a drawing tool's next
 click goes and why (`Snap { at, target, inference }`), from candidates
 within `SNAP_TOLERANCE` (8) pixels of the cursor, the first kind found
-winning, the nearest of it: a point of the sketch's or the origin; a
+winning, the nearest of it: a point of the sketch's or the origin (not,
+with the Line tool, one at the line's start, which would make no line); a
 line's midpoint or a circle's or an arc's quadrant; with the Line tool a
 tangent point on a circle or an arc from the line's start, or with the
 Arc tool's last click the arc through its ends tangent at one to the

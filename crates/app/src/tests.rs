@@ -4226,6 +4226,62 @@ fn a_new_sketch_is_made_on_the_plane_picked_and_entered() {
     assert!(!doc.editor.can_undo());
 }
 
+/// Origin objects and sketches are selected in Objects, several with
+/// `Ctrl`: the Sketch tool takes an origin plane selected alone, and
+/// `Delete` removes the sketches selected together, as one undo step.
+#[test]
+fn origin_objects_and_sketches_are_selected_in_objects() {
+    use varde_view::{ObjectRow, OriginObject};
+
+    let mut doc = untitled();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let xz = ObjectRow::Origin(OriginObject::Plane(OriginPlane::XZ));
+    doc.look(Look::ClickObject {
+        row: xz,
+        add: false,
+    });
+    assert_eq!(doc.objects_selected, [xz]);
+    // Drawn emphasised, though hidden.
+    let drawn = origin_drawn(&doc);
+    assert!(drawn.selected[varde_render::OriginPart::Plane(1).index()]);
+
+    // The Sketch tool makes a sketch on it at once.
+    doc.look(Look::PickPlane);
+    assert!(doc.picking_plane.is_none());
+    let first = doc.editor.document().features()[0].id;
+    assert_eq!(edited(&doc), Some(first));
+    doc.look(Look::FinishSketch);
+
+    doc.look(Look::PickPlane);
+    doc.update(Edit::PlanePicked(OriginPlane::YZ));
+    doc.look(Look::FinishSketch);
+    let second = doc.editor.document().features()[1].id;
+    assert_eq!(sketches(&doc).len(), 2);
+
+    // A click selects one alone, `Ctrl` adds and takes out.
+    let (a, b) = (ObjectRow::Sketch(first), ObjectRow::Sketch(second));
+    doc.look(Look::ClickObject { row: a, add: false });
+    assert_eq!(doc.objects_selected, [a]);
+    doc.look(Look::ClickObject { row: xz, add: true });
+    doc.look(Look::ClickObject { row: b, add: true });
+    assert_eq!(doc.objects_selected, [a, xz, b]);
+    doc.look(Look::ClickObject { row: xz, add: true });
+    assert_eq!(doc.objects_selected, [a, b]);
+    // Not a lone plane with sketches selected: the tool picks as ever.
+    assert_eq!(doc.selected_origin_plane(), None);
+
+    doc.update(Edit::RemoveObjects);
+    assert!(sketches(&doc).is_empty());
+    assert!(doc.objects_selected.is_empty());
+    doc.update(Edit::Undo);
+    assert_eq!(sketches(&doc).len(), 2);
+
+    // Clearing the selection lets go of them.
+    doc.look(Look::ClickObject { row: a, add: false });
+    doc.look(Look::ClearSelection);
+    assert!(doc.objects_selected.is_empty());
+}
+
 #[test]
 fn a_sketch_is_not_made_in_a_read_only_document() {
     let mut editor = Editor::new(Document::default());
@@ -4504,6 +4560,86 @@ fn objects_have_context_menus() {
     assert_eq!(doc.row_menu, None);
 }
 
+/// What the viewport draws of the world's origin objects in `doc`.
+fn origin_drawn(doc: &Doc) -> varde_render::OriginShown {
+    let state = doc.state(
+        false,
+        Mode::Light,
+        ViewOptions::default(),
+        Offers::default(),
+    );
+    state.origin_drawn()
+}
+
+/// The origin, the axes and the planes are shown and hidden from Objects,
+/// the Z axis and the planes hidden to begin with, but drawn while a tool offers them.
+/// None of it is an edit of the document.
+#[test]
+fn origin_objects_are_shown_and_hidden() {
+    use varde_document::{Axis3, OriginPlane};
+    use varde_view::OriginObject;
+
+    let (mut doc, _) = example();
+    assert_eq!(origin_drawn(&doc), varde_render::OriginShown::DEFAULT);
+    assert_eq!(origin_drawn(&doc).planes, [false; 3]);
+
+    let generation = doc.editor.generation();
+    doc.look(Look::ToggleOrigin(OriginObject::Axis(Axis3::Y)));
+    doc.look(Look::ToggleOrigin(OriginObject::Point));
+    doc.look(Look::ToggleOrigin(OriginObject::Plane(OriginPlane::XZ)));
+    let drawn = origin_drawn(&doc);
+    assert_eq!(drawn.axes, [true, false, false]);
+    assert!(!drawn.marker);
+    assert_eq!(drawn.planes, [false, true, false]);
+    assert_eq!(doc.editor.generation(), generation);
+
+    // Picking a sketch's plane draws every plane, and no more after.
+    doc.look(Look::PickPlane);
+    assert!(doc.picking_plane.is_some());
+    assert_eq!(origin_drawn(&doc).planes, [true; 3]);
+    doc.look(Look::Escape);
+    assert!(doc.picking_plane.is_none());
+    assert_eq!(origin_drawn(&doc).planes, [false, true, false]);
+
+    doc.look(Look::ToggleOrigin(OriginObject::Plane(OriginPlane::XZ)));
+    assert_eq!(origin_drawn(&doc).planes, [false; 3]);
+
+    // A row hovered draws its object emphasised, until it's left.
+    let part = varde_render::OriginPart::Plane(OriginPlane::YZ as usize);
+    doc.look(Look::HoverOrigin(Some(OriginObject::Plane(
+        OriginPlane::YZ,
+    ))));
+    assert_eq!(origin_drawn(&doc).hovered, Some(part));
+    doc.look(Look::LeaveOrigin(OriginObject::Point));
+    assert_eq!(origin_drawn(&doc).hovered, Some(part));
+    doc.look(Look::LeaveOrigin(OriginObject::Plane(OriginPlane::YZ)));
+    assert_eq!(origin_drawn(&doc).hovered, None);
+
+    // A plane hovered in the viewport, only while one is picked.
+    doc.look(Look::PickPlane);
+    doc.look(Look::HoverPlane(OriginPlane::XY));
+    let xy = varde_render::OriginPart::Plane(OriginPlane::XY as usize);
+    assert_eq!(origin_drawn(&doc).hovered, Some(xy));
+    doc.look(Look::Escape);
+    assert_eq!(origin_drawn(&doc).hovered, None);
+}
+
+/// Hovering a body's row in Objects lights its faces in the viewport.
+#[test]
+fn a_body_row_hovered_lights_the_body() {
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let body = doc.editor.document().bodies()[0].id;
+    assert!(doc.highlight().is_none());
+    doc.look(Look::HoverBodyRow(Some(body)));
+    assert!(
+        doc.highlight()
+            .is_some_and(|highlight| !highlight.is_empty())
+    );
+    doc.look(Look::LeaveBodyRow(body));
+    assert!(doc.highlight().is_none());
+}
+
 /// Headless: right-clicking a body in Objects asks for its menu, which
 /// offers hiding and deleting it.
 #[test]
@@ -4538,7 +4674,8 @@ fn a_right_click_on_a_body_opens_its_menu() {
         );
     }
     let cache = ui.into_cache();
-    let [Ui::Look(Look::OpenMenu(menu))] = sent[..] else {
+    // Moved onto it, the row's hovered first.
+    let [.., Ui::Look(Look::OpenMenu(menu))] = sent[..] else {
         panic!("{sent:?}");
     };
     assert_eq!(menu, RowMenu::Body(body.id));
@@ -4553,7 +4690,8 @@ fn a_right_click_on_a_body_opens_its_menu() {
     );
     let hide = shown.iter().find(|t| t.text == "Hide").unwrap();
     let sent = clicked(&mut ui, &mut renderer, hide.bounds.center());
-    let [Ui::Edit(Edit::ToggleVisible(id))] = sent[..] else {
+    // Leaving the row for the menu first.
+    let [.., Ui::Edit(Edit::ToggleVisible(id))] = sent[..] else {
         panic!("{sent:?}");
     };
     assert_eq!(id, body.id);

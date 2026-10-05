@@ -16,14 +16,15 @@ mod sketch_pick;
 use std::any::Any;
 use std::sync::{Arc, Weak};
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 use iced::widget::shader::{self, Action};
 use iced::widget::{container, stack};
 use iced::{Element, Event, Length, Point, Rectangle, keyboard, mouse};
+use varde_document::OriginPlane;
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::{
-    Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Pivot, PrepareError, Renderer, Shading,
-    SketchLayer, SketchScene, Slot, wgpu,
+    Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, OriginShown, PLANE_GAP, PLANE_REACH,
+    PLANE_SIDES, Pivot, PrepareError, Renderer, Shading, SketchLayer, SketchScene, Slot, wgpu,
 };
 
 use crate::anchors::Anchors;
@@ -33,6 +34,7 @@ use crate::icons::MouseButton;
 use crate::operation_panel::placed;
 use crate::overlaps::{self, OverlapItems, Overlaps};
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
+use crate::projection::Projector;
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::thumbnail::{THUMBNAIL_SCALE, ThumbnailRequest};
@@ -106,6 +108,9 @@ pub struct ModelPicking<'a> {
     /// that can take the sketch picks it ([`Edit::FacePicked`]) rather
     /// than selecting, and a click elsewhere does nothing.
     pub planes: Option<&'a PlanePick>,
+    /// Picking a plane, the origin plane the app holds hovered in the
+    /// viewport, if any: one the cursor is over, nearer than the model.
+    pub hovered_origin: Option<OriginPlane>,
     /// The finished sketches whose curves and points are picked with
     /// the model, where they're placed: those shown, outside the
     /// sessions. Where one is under the cursor nearer than the model
@@ -116,6 +121,9 @@ pub struct ModelPicking<'a> {
     pub hovered_sketch: Option<SketchItem>,
     /// The items of `sketches` drawn as selected.
     pub marked: Vec<SketchItem>,
+    /// Sketches drawn selected whole, as Objects has them selected: not
+    /// picked.
+    pub whole: Vec<SketchLines<'a>>,
 }
 
 impl ModelPicking<'_> {
@@ -146,7 +154,8 @@ impl ModelPicking<'_> {
 /// over its left, and the list of what `overlaps` where the left button
 /// was held, over all of them. `pivot`, the point the camera orbits if one was picked,
 /// is marked, and `highlight` (its hover over what hides it too if
-/// `hover_through`) and the failures' `errors` drawn over the model. With `picking`, the cursor picks the model, drawn as the view
+/// `hover_through`) and the failures' `errors` drawn over the model, with
+/// what `origin` says of the world's origin, axes and planes. With `picking`, the cursor picks the model, drawn as the view
 /// `options` say: the edges the model hides dashed if asked for, outside
 /// a sketch, every patch's edges and every triangle's faint if asked
 /// for, and lit with their shading. Each of the mesh's parts is drawn as
@@ -162,6 +171,7 @@ pub(crate) fn viewport<'a>(
     highlight: Option<&Arc<ModelHighlight>>,
     hover_through: bool,
     errors: &Arc<ShownErrors>,
+    origin: OriginShown,
     options: ViewOptions,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
@@ -219,6 +229,7 @@ pub(crate) fn viewport<'a>(
     program.scene.thumbnail = thumbnail.cloned();
     program.scene.errors = errors.clone();
     program.scene.hover_through = hover_through;
+    program.scene.origin = origin;
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -269,6 +280,7 @@ fn program<'a>(
             thumbnail: None,
             errors: NO_ERRORS.clone(),
             hover_through: false,
+            origin: OriginShown::DEFAULT,
         },
         sketching,
         operating,
@@ -338,6 +350,8 @@ struct Scene {
     /// Whether the hover is drawn over what hides it too: see
     /// [`Frame::hover_through`].
     hover_through: bool,
+    /// What's drawn of the world's origin, axes and planes.
+    origin: OriginShown,
 }
 
 /// What dragging in the viewport does.
@@ -638,7 +652,11 @@ impl shader::Program<Message> for Program<'_> {
         // The sketches' items hovered and selected with the model, over
         // it: hidden by what's in front of them, as the sketches are.
         let marks = (self.picking.as_ref())
-            .filter(|picking| picking.hovered_sketch.is_some() || !picking.marked.is_empty())
+            .filter(|picking| {
+                picking.hovered_sketch.is_some()
+                    || !picking.marked.is_empty()
+                    || !picking.whole.is_empty()
+            })
             .map(|_| {
                 let mut live = SketchLayer::default();
                 self.draw_sketch_items(&mut live);
@@ -724,6 +742,20 @@ impl Program<'_> {
         if let Some(at) = cursor.position_over(bounds) {
             state.hover_seen = Some((self.scene.camera, picking.index.model(), at));
         }
+        // Picking a plane, an origin plane nearer than the model is
+        // hovered in its place.
+        if picking.planes.is_some() {
+            let near = pick.map(|pick| pick.at);
+            let plane = (cursor.position_over(bounds))
+                .and_then(|at| self.origin_plane_at(bounds, at, near));
+            if let Some(plane) = plane {
+                let changed = picking.hovered_origin != Some(plane) || picking.hovered.is_some();
+                return changed.then(|| Action::publish(Message::Look(Look::HoverPlane(plane))));
+            }
+            if picking.hovered_origin.is_some() {
+                return Some(Action::publish(Message::Look(Look::Hover(pick))));
+            }
+        }
         let held = (
             picking.hovered.map(|target| (target, picking.hovered_snap)),
             picking.hovered_sketch,
@@ -779,6 +811,44 @@ impl Program<'_> {
     }
 
     /// What of the model shows at `at`, in the window's pixels.
+    /// The origin plane drawn under the screen point `at`, if one is, and
+    /// nearer than the point `near` of the model if there's one there:
+    /// the nearest along the cursor's ray, of the squares the renderer
+    /// draws ([`PLANE_REACH`], [`PLANE_GAP`], [`PLANE_SIDES`]).
+    fn origin_plane_at(
+        &self,
+        bounds: Rectangle,
+        at: Point,
+        near: Option<DVec3>,
+    ) -> Option<OriginPlane> {
+        let camera = &self.scene.camera;
+        let projector = Projector::world(camera, bounds.width, bounds.height)?;
+        let pixel = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let (from, direction) = projector.ray(pixel)?;
+        let reach = f64::from(PLANE_REACH * camera.view_height());
+        let along = |point: DVec3| (point - from).dot(direction) / direction.length_squared();
+        let limit = near.map_or(f64::INFINITY, along);
+        let drawn = self.scene.origin.planes;
+        (OriginPlane::ALL.into_iter().zip(drawn))
+            .filter(|(_, drawn)| *drawn)
+            .filter_map(|(plane, _)| {
+                let placement = plane.placement();
+                let sides = PLANE_SIDES.as_dvec3();
+                let (x, y) = (placement.x * sides, placement.y * sides);
+                let facing = direction.dot(x.cross(y));
+                if facing == 0.0 {
+                    return None;
+                }
+                let t = -from.dot(x.cross(y)) / facing;
+                let hit = from + direction * t;
+                let within = |along: f64| (f64::from(PLANE_GAP) * reach..=reach).contains(&along);
+                let inside = within(hit.dot(x)) && within(hit.dot(y));
+                (inside && t.is_finite() && t < limit).then_some((plane, t))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(plane, _)| plane)
+    }
+
     fn pick_point(&self, picking: &ModelPicking<'_>, bounds: Rectangle, at: Point) -> Option<Pick> {
         let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
         let size = [bounds.width, bounds.height];
@@ -823,6 +893,16 @@ impl Program<'_> {
                 &picking.marked,
                 self.sketch_colors,
             );
+            // Every curve of the sketches selected whole.
+            let marked: Vec<SketchItem> = (picking.whole.iter())
+                .flat_map(|lines| {
+                    (lines.sketch.curves.iter()).map(|entry| SketchItem {
+                        sketch: lines.feature,
+                        item: entry.id,
+                    })
+                })
+                .collect();
+            sketch_pick::draw_items(live, &picking.whole, None, &marked, self.sketch_colors);
         }
     }
 
@@ -932,8 +1012,14 @@ impl Program<'_> {
                     };
                     let pick = self.pick_point(picking, bounds, at);
                     if let Some(planes) = picking.planes {
-                        // A face that can take the sketch is picked;
+                        // An origin plane nearer than the model is
+                        // picked, else a face that can take the sketch;
                         // anything else nothing.
+                        let near = pick.map(|pick| pick.at);
+                        if let Some(plane) = self.origin_plane_at(bounds, at, near) {
+                            let picked = Message::Edit(Edit::PlanePicked(plane));
+                            return Some(Action::publish(picked).and_capture());
+                        }
                         let face = pick.and_then(|pick| match pick.target {
                             Picked::Face(face) if planes.takes(picking.index, face) => {
                                 planes.face_ref(picking.index, face, pick.at)
@@ -1102,6 +1188,7 @@ impl shader::Primitive for Primitive {
                 tessellation: scene.tessellation,
                 shading: scene.shading,
                 pivot: scene.pivot,
+                origin: scene.origin,
                 hovered_faces: &self.highlight.hovered_faces,
                 selected_faces: &self.highlight.selected_faces,
                 second_faces: &self.highlight.second_faces,

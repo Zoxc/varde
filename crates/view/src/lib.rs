@@ -338,6 +338,9 @@ pub enum Edit {
     /// once if no other feature depends on it, or else asking first (see
     /// [`DeletePrompt`]).
     RemoveFeature(FeatureId),
+    /// Removes the sketches selected in Objects together, as one undo
+    /// step, as [`Edit::RemoveFeature`] does one.
+    RemoveObjects,
     /// Removes what the delete prompt lists, as one undo step: its
     /// Delete button.
     ConfirmDelete,
@@ -635,6 +638,13 @@ pub enum Look {
         body: BodyId,
         add: bool,
     },
+    /// An origin object's or a sketch's row in Objects clicked: selects it
+    /// alone, or with `Ctrl` (`Cmd` on macOS) held, which the app knows,
+    /// adds it or takes it out.
+    ClickObject {
+        row: ObjectRow,
+        add: bool,
+    },
     /// The left button held still in a sketch or on the model, over more
     /// than one item: lists them there to choose from.
     OpenOverlaps(Overlaps),
@@ -702,6 +712,23 @@ pub enum Look {
     ToggleExpanded(Id),
     /// Folds a group of the Objects tab, or unfolds it.
     ToggleObjectGroup(ObjectGroup),
+    /// Shows one of the world's origin objects in the viewport, or hides
+    /// it: not an edit of the document.
+    ToggleOrigin(OriginObject),
+    /// An origin object hovered by its row in Objects, or none: the
+    /// viewport draws it emphasised, shown or not.
+    HoverOrigin(Option<OriginObject>),
+    /// Picking a plane, the origin plane the cursor is over in the
+    /// viewport, nearer than the model, in place of the model's hover.
+    HoverPlane(OriginPlane),
+    /// The cursor left an origin object's row in Objects: it's no longer
+    /// hovered, unless another row was since (see [`Look::LeaveFeature`]).
+    LeaveOrigin(OriginObject),
+    /// A body's row in Objects hovered, or none: its faces are lit in the
+    /// viewport while it is.
+    HoverBodyRow(Option<BodyId>),
+    /// The cursor left a body's row in Objects, as [`Look::LeaveOrigin`].
+    LeaveBodyRow(BodyId),
     /// Drags the item `id` of the sketch being edited, grabbed at `from`,
     /// to `to`, in sketch coordinates. Shown until it's dropped
     /// ([`Edit::DropGeometry`]) or `Esc` puts it back.
@@ -1041,8 +1068,58 @@ pub enum GeometryGroup {
 /// A group of the Objects tab, which can be folded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ObjectGroup {
+    Origin,
     Bodies,
     Sketches,
+}
+
+/// A row of Objects that's selected in the list itself, not in the
+/// model: an origin object or a sketch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectRow {
+    Origin(OriginObject),
+    Sketch(FeatureId),
+}
+
+/// One of the world's origin objects, listed in Objects' Origin group,
+/// which can be shown and hidden but not deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginObject {
+    /// The origin's marker.
+    Point,
+    Axis(varde_document::Axis3),
+    Plane(OriginPlane),
+}
+
+impl OriginObject {
+    /// Each, in the order Objects lists them.
+    pub const ALL: [OriginObject; 7] = [
+        OriginObject::Point,
+        OriginObject::Axis(varde_document::Axis3::X),
+        OriginObject::Axis(varde_document::Axis3::Y),
+        OriginObject::Axis(varde_document::Axis3::Z),
+        OriginObject::Plane(OriginPlane::XY),
+        OriginObject::Plane(OriginPlane::XZ),
+        OriginObject::Plane(OriginPlane::YZ),
+    ];
+
+    /// It as the renderer has it.
+    pub fn part(self) -> varde_render::OriginPart {
+        match self {
+            OriginObject::Point => varde_render::OriginPart::Marker,
+            OriginObject::Axis(axis) => varde_render::OriginPart::Axis(axis as usize),
+            OriginObject::Plane(plane) => varde_render::OriginPart::Plane(plane as usize),
+        }
+    }
+
+    /// Its entry in `origin`, whether it's shown.
+    pub fn shown(self, origin: &mut varde_render::OriginShown) -> &mut bool {
+        match self {
+            OriginObject::Point => &mut origin.marker,
+            OriginObject::Axis(axis) => &mut origin.axes[axis as usize],
+            OriginObject::Plane(plane) => &mut origin.planes[plane as usize],
+        }
+    }
 }
 
 impl GeometryGroup {

@@ -128,6 +128,9 @@ pub struct SketchColors {
     pub conflict: Color,
     /// Construction curves, drawn dashed.
     pub construction: Color,
+    /// Driving dimensions, their lines, arrows and labels: the Dimension
+    /// tools' icon colour.
+    pub dimension: Color,
     /// What's selected.
     pub selected: Color,
     /// What's under the cursor.
@@ -150,7 +153,9 @@ pub struct SketchColors {
     pub region: Color,
     /// The region under the cursor, over its shading.
     pub region_hovered: Color,
-    /// The rings marking open ends that almost meet.
+    /// The rings marking open ends that almost meet: the failed text's
+    /// colour ([`Palette::danger_strong`]), as a failing feature's name in
+    /// the Timeline.
     pub near_miss: Color,
     /// An extrude's handle: its shaft
     /// and pucks in the Create tools' icon colour, the arrows out of them
@@ -425,6 +430,7 @@ const LIGHT: Palette = Palette {
         fixed: color!(0x0b5566),
         conflict: ERROR,
         construction: LIGHT_CONSTRUCTION,
+        dimension: LIGHT_ICONS.dimension.line,
         selected: color!(0x2f5fd8),
         hovered: color!(0x3d9b35),
         point_fill: color!(0xf4f4f7),
@@ -436,7 +442,7 @@ const LIGHT: Palette = Palette {
         guide: color!(0xc2701d),
         region: alpha(LIGHT_SKETCH, 0.1),
         region_hovered: color!(0x3d9b35, 0.18),
-        near_miss: color!(0xe0564b),
+        near_miss: color!(0xad2a19),
         handle: LIGHT_ICONS.solid.line,
         handle_accent: LIGHT_ICONS.solid.accent,
         handle_hovered: mix(LIGHT_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
@@ -517,6 +523,7 @@ const DARK: Palette = Palette {
         fixed: color!(0x1f8394),
         conflict: ERROR,
         construction: DARK_CONSTRUCTION,
+        dimension: DARK_ICONS.dimension.line,
         selected: color!(0x7ea2ff),
         hovered: color!(0x76cc60),
         point_fill: color!(0x24252b),
@@ -528,7 +535,7 @@ const DARK: Palette = Palette {
         guide: color!(0xf0a24a),
         region: alpha(DARK_SKETCH, 0.12),
         region_hovered: color!(0x76cc60, 0.2),
-        near_miss: color!(0xe0564b),
+        near_miss: color!(0xf58a7a),
         handle: DARK_ICONS.solid.line,
         handle_accent: DARK_ICONS.solid.accent,
         handle_hovered: mix(DARK_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),

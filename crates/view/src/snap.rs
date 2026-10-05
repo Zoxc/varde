@@ -164,6 +164,16 @@ impl Snap {
         target.into_iter().chain(inference).collect()
     }
 
+    /// Whether it snapped to a spot of its own, which is marked: a point,
+    /// a line's middle or a circle's quadrant, not just somewhere on a
+    /// curve.
+    pub(crate) fn spot(&self) -> bool {
+        matches!(
+            self.target,
+            Some(Target::Point(_) | Target::Midpoint(_) | Target::Quadrant { .. })
+        )
+    }
+
     /// The item to highlight: what the point is on.
     pub(crate) fn highlighted(&self) -> Option<Id> {
         self.target.map(Target::item)
@@ -308,11 +318,18 @@ fn snap_within(
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, snap)| snap)
     };
+    let start = match (tool.tool, tool.placed) {
+        (Tool::Line, &[start]) => Some(start),
+        _ => None,
+    };
+    // A line doesn't snap to the point it starts from, which would make
+    // it no line.
     let points = sketch
         .points
         .iter()
         .map(|point| (point.at, point.id))
         .chain([(DVec2::ZERO, Id::ORIGIN)])
+        .filter(|&(at, _)| Some(at) != start)
         .map(|(at, id)| Snap::on(at, Target::Point(id)))
         .collect();
     if let Some(snap) = near(points) {
@@ -327,10 +344,6 @@ fn snap_within(
     if let Some(snap) = near(special_points(sketch)) {
         return Some(snap);
     }
-    let start = match (tool.tool, tool.placed) {
-        (Tool::Line, &[start]) => Some(start),
-        _ => None,
-    };
     if let Some(start) = start
         && let Some(snap) = near(tangent_points(sketch, start))
     {

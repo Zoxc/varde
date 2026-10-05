@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
 use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
+use varde_render::OriginShown;
 use varde_render::{
     Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Highlights, Projection, Renderer,
     Shading, SketchLayer, SketchScene, Space, Srgb, Srgba, Vertex, View, Viewport, wgpu,
@@ -71,8 +72,7 @@ fn gl_device() -> Option<(wgpu::Device, wgpu::Queue)> {
                 backends: wgpu::Backends::GL,
                 ..Default::default()
             });
-            let adapter =
-                pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+            let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 // As iced asks for, which allows two bind groups only.
                 required_limits: wgpu::Limits {
@@ -140,6 +140,8 @@ fn frame<'a>(
         errors: &[],
         sketch: None,
         pivot: None,
+        // The world's axes would cross what the tests read.
+        origin: OriginShown::NONE,
         viewport: Viewport {
             x: 0.0,
             y: 0.0,

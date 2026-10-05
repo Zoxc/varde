@@ -517,15 +517,13 @@ fn ops<'a>(
         // origin planes are offered here.
         let planes = OriginPlane::ALL.map(|plane| {
             op(
-                Icon::Plane,
+                plane_icon(plane),
                 plane_label(plane),
                 editable.then_some(Message::Edit(Edit::PlanePicked(plane))),
             )
         });
-        return [sketch, extrude, revolve, separator()]
-            .into_iter()
-            .chain(planes)
-            .collect();
+        // Only Sketch, which backs out: Extrude and Revolve take no plane.
+        return [sketch, separator()].into_iter().chain(planes).collect();
     }
     // Chamfer after the solids, before Combine, as the mock's model bar
     // orders them (its Hole isn't built). The mock's Fillet, before
@@ -605,7 +603,7 @@ fn ops<'a>(
             let buttons = (OriginPlane::ALL.iter()).map(|&plane| {
                 let send = (editable && motion.editable)
                     .then_some(Message::Look(Look::Motion(MotionLook::OriginPlane(plane))));
-                op(Icon::SePlane, plane_label(plane), send)
+                op(plane_icon(plane), plane_label(plane), send)
             });
             std::iter::once(separator()).chain(buttons).collect()
         }
@@ -639,7 +637,7 @@ fn ops<'a>(
                 | MotionKind::Draft => (OriginPlane::ALL.iter())
                     .map(|&plane| {
                         op(
-                            Icon::SePlane,
+                            plane_icon(plane),
                             plane_label(plane),
                             send(MotionLook::OriginPlane(plane)),
                         )
@@ -686,12 +684,48 @@ fn ops<'a>(
     .collect()
 }
 
+/// Whether the toolbar offers the origin planes now: picking a sketch's
+/// plane, a split's tool by face, or a reference that may be a plane. The
+/// viewport shows them then, whether Objects has them shown or not.
+pub(crate) fn picks_origin_planes(state: &DocumentState<'_>) -> bool {
+    let Some(motion) = &state.motion else {
+        return state.picking_plane.is_some();
+    };
+    match motion.picking {
+        MotionPick::Tool => {
+            (motion.split.as_ref()).is_some_and(|split| split.mode == SplitMode::Face)
+        }
+        MotionPick::Reference => matches!(
+            motion.kind,
+            MotionKind::Mirror
+                | MotionKind::Align
+                | MotionKind::Scale
+                | MotionKind::Split
+                | MotionKind::Chamfer
+                | MotionKind::Shell
+                | MotionKind::Fillet
+                | MotionKind::OffsetFace
+                | MotionKind::Draft
+        ),
+        _ => false,
+    }
+}
+
 /// The label of the button turning a move, or patterning, about `axis`.
 fn axis_label(axis: Axis3) -> &'static str {
     match axis {
         Axis3::X => "X axis",
         Axis3::Y => "Y axis",
         Axis3::Z => "Z axis",
+    }
+}
+
+/// The icon of `plane`, on its buttons and its row in Objects.
+pub(crate) fn plane_icon(plane: OriginPlane) -> Icon {
+    match plane {
+        OriginPlane::XY => Icon::PlaneXy,
+        OriginPlane::XZ => Icon::PlaneXz,
+        OriginPlane::YZ => Icon::PlaneYz,
     }
 }
 

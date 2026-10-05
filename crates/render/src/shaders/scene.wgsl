@@ -205,19 +205,32 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
     // In front of the eye and within the depth range.
     let valid = f32(clip.w > 0.0 && depth >= 0.0 && depth <= 1.0);
 
-    // The axis lines over the grid, not faded, the y axis over the x axis.
+    // The axis lines over the grid, not faded: its own, the y axis over
+    // the x axis, then the world's Z axis, those shown (see
+    // `OriginShown::mask` in renderer.rs).
     let pixel_at = fragment_pixels(in.position);
-    var axes = array<vec2<f32>, 2>(
-        axis_line(pixel_at, origin, dir, u.grid_x.xyz),
-        axis_line(pixel_at, origin, dir, u.grid_y.xyz),
+    let mask = origin_shown();
+    let width = vec3<f32>(
+        line_width(mask, 0u),
+        line_width(mask, 1u),
+        line_width(mask, 2u),
     );
-    var axis_colors = array<vec3<f32>, 2>(axis_color(u.grid_x.w), axis_color(u.grid_y.w));
+    var axes = array<vec2<f32>, 3>(
+        axis_line(pixel_at, origin, dir, u.grid_origin.xyz, u.grid_x.xyz, width.x),
+        axis_line(pixel_at, origin, dir, u.grid_origin.xyz, u.grid_y.xyz, width.y),
+        axis_line(pixel_at, origin, dir, vec3<f32>(0.0), vec3<f32>(0.0, 0.0, 1.0), width.z),
+    );
+    var axis_colors = array<vec3<f32>, 3>(
+        axis_color(u.grid_x.w),
+        axis_color(u.grid_y.w),
+        u.axes[2].rgb,
+    );
     var color = u.grid.rgb;
     var alpha = lines * fade * valid;
     var out_depth = clamp(depth, 0.0, 1.0);
-    for (var i = 0; i < 2; i++) {
+    for (var i = 0u; i < 3u; i++) {
         let line = axes[i];
-        if line.x > 0.0 {
+        if (mask & (1u << i)) != 0u && line.x > 0.0 {
             let a = line.x + alpha * (1.0 - line.x);
             color = (axis_colors[i] * line.x + color * alpha * (1.0 - line.x)) / a;
             alpha = a;
@@ -231,6 +244,16 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
     return out;
 }
 
+// What's drawn of the origin objects: `OriginShown::mask` in renderer.rs.
+// Bits 0 to 2 the grid's x and y axis lines and the world's Z axis's, and
+// this; and bits 4 to 6 for the lines hovered, drawn wider.
+const ORIGIN_MARKER: u32 = 8u;
+const HOVERED_SHIFT: u32 = 4u;
+
+fn origin_shown() -> u32 {
+    return u32(u.grid_origin.w);
+}
+
 // The colour of a grid's axis line along the world axis `index` names, 0
 // to 2, or the grid's for 3: see `Uniforms::grid_x` in renderer.rs.
 fn axis_color(index: f32) -> vec3<f32> {
@@ -241,8 +264,15 @@ fn axis_color(index: f32) -> vec3<f32> {
     return u.grid.rgb;
 }
 
-// How wide the grid's axis lines are, in logical pixels.
+// How wide the grid's axis lines are, in logical pixels, and a hovered
+// one.
 const AXIS_WIDTH: f32 = 1.75;
+const HOVERED_AXIS_WIDTH: f32 = 3.5;
+
+// How wide the axis line `i` of `fs_grid` is, by the `mask`.
+fn line_width(mask: u32, i: u32) -> f32 {
+    return select(AXIS_WIDTH, HOVERED_AXIS_WIDTH, (mask & (1u << (i + HOVERED_SHIFT))) != 0u);
+}
 // The sines of the angles between an axis and the view direction over
 // which its line fades in: gone within about 3 degrees, whole past 11.
 const AXIS_FADE: vec2<f32> = vec2<f32>(0.05, 0.2);
@@ -255,8 +285,8 @@ fn facing(axis: vec3<f32>) -> f32 {
     return smoothstep(AXIS_FADE.x, AXIS_FADE.y, length(cross(axis, u.backward.xyz)));
 }
 
-// The grid's axis line along `axis` (a unit vector in the grid's plane,
-// through its origin) at the pixel `p` (from `fragment_pixels`), whose ray
+// The axis line through `through` along `axis` (a unit vector) at the
+// pixel `p` (from `fragment_pixels`), whose ray
 // runs from `origin` along `dir`: its coverage there and its depth. The
 // line is infinite and not faded with distance: the coverage is from the
 // pixel's distance to the line's image on screen, the homogeneous line
@@ -266,9 +296,16 @@ fn facing(axis: vec3<f32>) -> f32 {
 // (`AXIS_FADE`). The depth is the axis's point nearest the ray's, and the
 // line is cut where that point is behind the near plane, so the part of
 // the image that's behind the eye isn't drawn.
-fn axis_line(p: vec2<f32>, origin: vec3<f32>, dir: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
+fn axis_line(
+    p: vec2<f32>,
+    origin: vec3<f32>,
+    dir: vec3<f32>,
+    through: vec3<f32>,
+    axis: vec3<f32>,
+    width: f32,
+) -> vec2<f32> {
     // The axis's point nearest the target, so clip coordinates stay small.
-    let base = u.grid_origin.xyz + axis * dot(u.focus.xyz - u.grid_origin.xyz, axis);
+    let base = through + axis * dot(u.focus.xyz - through, axis);
     let half_size = 0.5 * u.viewport.xy;
     let ca = u.view_proj * vec4<f32>(base, 1.0);
     let cd = u.view_proj * vec4<f32>(axis, 0.0);
@@ -289,7 +326,7 @@ fn axis_line(p: vec2<f32>, origin: vec3<f32>, dir: vec3<f32>, axis: vec3<f32>) -
     let q = u.view_proj * vec4<f32>(base + axis * s, 1.0);
     let in_front = denom > 1e-12 * c && q.w > 0.0 && q.z >= 0.0;
 
-    let half_width = 0.5 * AXIS_WIDTH * u.viewport.z;
+    let half_width = 0.5 * width * u.viewport.z;
     let coverage = clamp(half_width + 0.5 - distance, 0.0, 1.0) * f32(seen && in_front)
         * facing(axis);
     return vec2<f32>(coverage, clamp(q.z / max(q.w, 1e-30), 0.0, 1.0));
@@ -1226,7 +1263,7 @@ fn vs_origin(
     let s = u.viewport.z;
     var hidden = clip.w <= 0.0;
     if pivot && !hidden {
-        let on_origin = origin.w > 0.0
+        let on_origin = (origin_shown() & ORIGIN_MARKER) != 0u && origin.w > 0.0
             && distance(to_pixels(clip), to_pixels(origin)) < PIVOT_AT_ORIGIN * s;
         hidden = u.pivot.w <= 0.0 || on_origin;
     }
@@ -1280,6 +1317,80 @@ fn fs_origin(in: OriginOut) -> @location(0) vec4<f32> {
     );
     let color = mix(u.origin_outline.rgb, in.core.rgb, core / max(rim, 1e-6));
     return output(vec4<f32>(color, rim * in.core.a));
+}
+
+// --- Origin planes ---
+//
+// The XY, XZ and YZ planes, an instance each, as squares on one side of
+// their axes (PLANE_SIDES: the octant the default camera looks from, so it
+// sees inside), as three faces of a cube cornered at the world's origin, so none crosses another: from PLANE_GAP to 1 of PLANE_REACH view
+// heights along their axes, so they keep
+// their size on screen at any zoom: faintly filled in the colour of the
+// axis they're normal to, with a firmer rim. Depth tested, writing no
+// depth.
+
+// As `PLANE_REACH` in renderer.rs.
+const PLANE_REACH: f32 = 0.2;
+// As `PLANE_GAP` in renderer.rs.
+const PLANE_GAP: f32 = 0.08;
+// As `PLANE_SIDES` in renderer.rs: the octant the planes fill.
+const PLANE_SIDES: vec3<f32> = vec3<f32>(1.0, -1.0, 1.0);
+const PLANE_FILL: f32 = 0.1;
+const PLANE_RIM: f32 = 0.6;
+const PLANE_HOVERED_FILL: f32 = 0.3;
+// How wide the rim is, in logical pixels.
+const PLANE_RIM_WIDTH: f32 = 1.5;
+
+struct PlaneOut {
+    @builtin(position) position: vec4<f32>,
+    // Where the pixel is in the square, from -1 to 1 along each axis.
+    @location(0) at: vec2<f32>,
+    @location(1) @interpolate(flat) color: vec3<f32>,
+    // 1 if it's hovered, else 0.
+    @location(2) @interpolate(flat) hovered: f32,
+};
+
+@vertex
+fn vs_origin_plane(
+    @builtin(vertex_index) index: u32,
+    @builtin(instance_index) instance: u32,
+) -> PlaneOut {
+    // Each plane's axes, and the axis it's normal to.
+    var xs = array<vec3<f32>, 3>(vec3(1.0, 0.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0));
+    var ys = array<vec3<f32>, 3>(vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, 1.0));
+    var normals = array<u32, 3>(2u, 1u, 0u);
+    // Instances 3 on draw the plane 3 before them hovered.
+    let i = instance % 3u;
+    let reach = PLANE_REACH * view_height();
+    // Grown past its edges by a couple of pixels (as at the target), so
+    // its edges' coverage fades out within the quad: anti-aliased without
+    // MSAA.
+    let half_side = 0.5 * (1.0 - PLANE_GAP) * reach;
+    let pixel = view_height() / max(u.viewport.y, 1.0);
+    let grow = 1.0 + max(2.0 * pixel / max(half_side, 1e-30), 0.04);
+    let corner = square_corner(index) * grow;
+    // From PLANE_GAP to 1 of the reach along each axis.
+    let along = mix(vec2<f32>(PLANE_GAP), vec2<f32>(1.0), 0.5 * (corner + 1.0)) * reach;
+    let world = (xs[i] * along.x + ys[i] * along.y) * PLANE_SIDES;
+    var out: PlaneOut;
+    out.position = u.view_proj * vec4<f32>(world, 1.0);
+    out.at = corner;
+    out.color = u.axes[normals[i]].rgb;
+    out.hovered = f32(instance >= 3u);
+    return out;
+}
+
+@fragment
+fn fs_origin_plane(in: PlaneOut) -> @location(0) vec4<f32> {
+    // Pixels to the square's edge, on the nearer axis: negative past it,
+    // where the grown quad fades out.
+    let to_edge = (1.0 - abs(in.at)) / max(fwidth(in.at), vec2<f32>(1e-6));
+    let coverage = clamp(0.5 + min(to_edge.x, to_edge.y), 0.0, 1.0);
+    let fill = mix(PLANE_FILL, PLANE_HOVERED_FILL, in.hovered);
+    let width = mix(PLANE_RIM_WIDTH, 2.0 * PLANE_RIM_WIDTH, in.hovered);
+    let edge = clamp(width * u.viewport.z + 0.5 - min(to_edge.x, to_edge.y), 0.0, 1.0);
+    let alpha = mix(fill, mix(PLANE_RIM, 1.0, in.hovered), edge) * coverage;
+    return output(vec4<f32>(in.color, alpha));
 }
 
 // --- The sketch being edited: points and fills ---
