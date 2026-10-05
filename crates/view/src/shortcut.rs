@@ -833,12 +833,14 @@ pub fn constrain_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
-/// Applying the constraint `kind` to the selection: while it fits it, in a
-/// sketch that can be changed. None for a kind with no key.
+/// Applying the constraint `kind` to the selection, or taking it off
+/// what all has it already ([`Edit::ToggleConstraint`]): while it fits
+/// it, in a sketch that can be changed. None for a kind with no key.
 pub fn constraint_binding(kind: ConstraintKind, keys: DocumentKeys) -> Option<Binding> {
+    let edit = Edit::ToggleConstraint(kind);
     Some(Binding::new(
         kind.shortcut()?,
-        Message::Edit(Edit::Constrain(kind)),
+        Message::Edit(edit),
         keys.editable && keys.sketching && keys.constraints.contains(kind),
     ))
 }
@@ -1454,7 +1456,9 @@ mod tests {
         };
         assert!(matches!(
             tangent(fitting),
-            Some(Message::Edit(Edit::Constrain(ConstraintKind::Tangent)))
+            Some(Message::Edit(Edit::ToggleConstraint(
+                ConstraintKind::Tangent
+            )))
         ));
         let read_only = DocumentKeys {
             editable: false,

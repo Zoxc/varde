@@ -1303,7 +1303,12 @@ bar says why (`EditError::Sketch`).
   Vertical `V`, Parallel `Shift P`, Perpendicular `Shift R`, Tangent
   `Shift T`, Smooth `Shift S`, Equal `Shift E`, Concentric `Shift C`, Midpoint
   `M`, Symmetric `Y`, Fix `Shift F`, bound only while they fit
-  (`DocumentKeys::constraints`); Shift where a tool or the rail's sets
+  (`DocumentKeys::constraints`); the keys and the toolbar's and rail's
+  buttons toggle (`Edit::ToggleConstraint`, `Doc::toggle_constraint`),
+  deleting the constraint where everything selected has it already, of
+  that kind on the same items in any order (`same_constraint`), rather
+  than restate it, the redundant edit the solver refuses (as
+  `Edit::Constrain` still does); Shift where a tool or the rail's sets
   have the letter (Trim `T`, Fillet `F`, Point `P`, Circle `C`, New
   sketch `S`, the sets `E` and `R`). A spline takes a point on it (Coincident), a tangent or a
   smooth join at an end (`Sketch::joint`) and a fix; with a spline

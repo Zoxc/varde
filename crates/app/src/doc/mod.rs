@@ -513,7 +513,7 @@ impl Doc {
             self.close_value();
         }
         // Picked from the rail's list, or not: the list has done its job.
-        if matches!(message, Edit::Constrain(_)) {
+        if matches!(message, Edit::Constrain(_) | Edit::ToggleConstraint(_)) {
             self.rail.close();
         }
         match message {
@@ -539,6 +539,7 @@ impl Doc {
             Edit::DeleteSelection => self.delete_selection(),
             Edit::ToggleConstruction => self.toggle_construction(),
             Edit::Constrain(kind) => self.constrain(kind),
+            Edit::ToggleConstraint(kind) => self.toggle_constraint(kind),
             Edit::SubmitValue => self.submit_value(),
             Edit::DropLabel => self.drop_label(),
             Edit::ToggleReference => self.toggle_reference(),

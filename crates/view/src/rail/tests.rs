@@ -193,7 +193,9 @@ fn an_open_set_s_letters_come_before_the_document_s_keys() {
     };
     assert!(matches!(
         pressed(document_bindings(open), &key("p"), none),
-        Some(Message::Edit(Edit::Constrain(ConstraintKind::Parallel)))
+        Some(Message::Edit(Edit::ToggleConstraint(
+            ConstraintKind::Parallel
+        )))
     ));
     // Not fitting, P does nothing, rather than take up Point.
     let unfit = DocumentKeys {
@@ -209,7 +211,9 @@ fn an_open_set_s_letters_come_before_the_document_s_keys() {
     // Shift P is Parallel's own key either way.
     assert!(matches!(
         pressed(document_bindings(open), &key("P"), Modifiers::SHIFT),
-        Some(Message::Edit(Edit::Constrain(ConstraintKind::Parallel)))
+        Some(Message::Edit(Edit::ToggleConstraint(
+            ConstraintKind::Parallel
+        )))
     ));
 }
 

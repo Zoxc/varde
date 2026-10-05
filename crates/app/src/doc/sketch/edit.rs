@@ -265,6 +265,36 @@ impl Doc {
         self.propose(SketchEdit::SetConstruction { ids, construction });
     }
 
+    /// Constrains the geometry selected so, as [`Doc::constrain`] does,
+    /// unless all of it has the constraint already (any way round, see
+    /// [`same_constraint`]): then takes it off, rather than restate it,
+    /// which the solver would refuse. The keys and the toolbar's and
+    /// rail's buttons.
+    pub(crate) fn toggle_constraint(&mut self, kind: ConstraintKind) {
+        let Some(sketch) = self.editable_sketch() else {
+            return;
+        };
+        let Some(session) = &self.sketch else {
+            return;
+        };
+        let Some(constraints) = kind.make(sketch, &session.selection) else {
+            return;
+        };
+        let held: Option<Vec<Id>> = (constraints.iter())
+            .map(|made| {
+                let mut entries = sketch.constraints.iter();
+                let entry = entries.find(|entry| same_constraint(&entry.constraint, made))?;
+                Some(entry.id)
+            })
+            .collect();
+        match held {
+            Some(ids) if !ids.is_empty() => {
+                self.propose(SketchEdit::Delete(ids));
+            }
+            _ => self.constrain(kind),
+        }
+    }
+
     /// Constrains the geometry selected so, if it fits it, see
     /// [`ConstraintKind::make`]. With the Constrain tool the selection is
     /// cleared for the next.
@@ -286,6 +316,17 @@ impl Doc {
             session.selection.clear();
         }
     }
+}
+
+/// Whether `a` and `b` are one constraint: of one kind on the same items,
+/// in any order, whatever side a tangent is on.
+fn same_constraint(a: &Constraint, b: &Constraint) -> bool {
+    let items = |c: &Constraint| {
+        let mut ids: Vec<Id> = c.items().map(|(id, _)| id).collect();
+        ids.sort();
+        ids
+    };
+    a == b || (ConstraintKind::of(a) == ConstraintKind::of(b) && items(a) == items(b))
 }
 
 /// What a tool's click does to the shape being drawn.

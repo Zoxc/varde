@@ -357,6 +357,10 @@ pub enum Edit {
     /// Constrains the geometry selected in the sketch being edited so, if
     /// it fits, see [`ConstraintKind::make`].
     Constrain(ConstraintKind),
+    /// Constrains the geometry selected so, or takes the constraint off
+    /// if all of it has it already: the keys and the toolbar's and rail's
+    /// buttons.
+    ToggleConstraint(ConstraintKind),
     /// Takes the value typed in the value field: places the dimension
     /// with it, or sets the one edited to it, if it reads as a value of
     /// the kind asked for; else says why.

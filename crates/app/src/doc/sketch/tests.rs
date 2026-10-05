@@ -663,6 +663,72 @@ fn space_puts_down_the_tool_in_a_sketch() {
 }
 
 #[test]
+fn h_and_v_toggle_their_constraint_on_a_line() {
+    let (mut doc, [_, _, line, ..]) = with_shapes();
+    doc.look(Look::ClickGeometry {
+        hit: Some(line),
+        add: false,
+    });
+    let horizontal = |doc: &Doc| {
+        (sketch(doc).constraints.iter())
+            .filter(|entry| entry.constraint == varde_sketch::Constraint::Horizontal(line))
+            .count()
+    };
+    doc.update(Edit::ToggleConstraint(
+        varde_view::ConstraintKind::Horizontal,
+    ));
+    assert_eq!(horizontal(&doc), 1);
+    doc.update(Edit::ToggleConstraint(
+        varde_view::ConstraintKind::Horizontal,
+    ));
+    assert_eq!(horizontal(&doc), 0);
+    doc.update(Edit::ToggleConstraint(
+        varde_view::ConstraintKind::Horizontal,
+    ));
+    assert_eq!(horizontal(&doc), 1);
+}
+
+/// Any constraint applied again to what has it is taken off, rather than
+/// restated and refused: perpendicular lines, one way round or the other.
+#[test]
+fn a_constraint_applied_again_toggles_off() {
+    let (mut doc, feature, _) = sketching();
+    let mut drawn = Sketch::default();
+    let o = drawn.add_point(at(0.0, 0.0)).unwrap();
+    let x = drawn.add_point(at(10.0, 1.0)).unwrap();
+    let y = drawn.add_point(at(1.0, 10.0)).unwrap();
+    let a = drawn
+        .add_curve(Curve::Line { start: o, end: x }, false)
+        .unwrap();
+    let b = drawn
+        .add_curve(Curve::Line { start: o, end: y }, false)
+        .unwrap();
+    // Already there, the other way round.
+    drawn
+        .add_constraint(varde_sketch::Constraint::Perpendicular(b, a))
+        .unwrap();
+    doc.editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    doc.sync();
+    doc.lane.answer(&mut doc.doc);
+    doc.look(Look::SelectBox {
+        ids: vec![a, b],
+        add: false,
+    });
+    let perpendicular = |doc: &Doc| sketch(doc).constraints.len();
+    let kind = varde_view::ConstraintKind::Perpendicular;
+    doc.update(Edit::ToggleConstraint(kind));
+    assert_eq!(perpendicular(&doc), 0);
+    assert!(doc.sketch_state().unwrap().refusal.is_none());
+    doc.update(Edit::ToggleConstraint(kind));
+    assert_eq!(perpendicular(&doc), 1);
+}
+
+#[test]
 fn delete_removes_the_selection_and_what_depends_on_it() {
     let (mut doc, [a, b, line, c, circle]) = with_shapes();
     let before = sketch(&doc).clone();
