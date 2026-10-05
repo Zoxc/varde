@@ -70,8 +70,8 @@ use crate::anchors::Anchors;
 use crate::extrude::snap_step;
 use crate::hit::{self, segment_distance};
 use crate::motion::{
-    AlignView, LoftShape, LoftView, MotionField, MotionKind, MotionLook, MotionPick, MotionState,
-    ScaleView, SketchLines, SplitMode, SplitView, SweepView,
+    AlignView, KnobTone, LoftShape, LoftView, MotionField, MotionKind, MotionLook, MotionPick,
+    MotionState, ScaleView, SketchLines, SplitMode, SplitView, SweepView,
 };
 use crate::operation_panel::PanelHover;
 use crate::projection::Projector;
@@ -188,6 +188,8 @@ pub(crate) struct Input {
     sweep: SplitInput,
     /// A loft's sections and rails picked in their sketches.
     loft: LoftInput,
+    /// A loft's seam knobs, its sections' starts.
+    seams: SeamInput,
     /// Whether the cursor just left a sweep's path curve: the move is
     /// the model's picking's too (an edge there hovered at once), and the
     /// curve's lit chain is drawn away after it ([`Input::take_redraw`]).
@@ -216,6 +218,15 @@ struct LoftInput {
     curve: Option<(FeatureId, Id)>,
 }
 
+/// What the viewport keeps of a loft's seam knobs: the section whose
+/// start's knob is under the cursor, and the one dragged, by their place,
+/// with its start as grabbed or last sent.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct SeamInput {
+    hover: Option<usize>,
+    drag: Option<(usize, Option<Id>)>,
+}
+
 impl LoftInput {
     /// Whether anything is under the cursor.
     fn over(&self) -> bool {
@@ -240,6 +251,7 @@ impl Input {
             || self.drag.is_some()
             || self.knobs.holds()
             || self.sweep.curve.is_some()
+            || self.seams != SeamInput::default()
     }
 
     /// Lets go of a sweep's, a split's or a loft's region, curve, point
@@ -284,6 +296,7 @@ impl Input {
         }
         if kind != MotionKind::Loft {
             self.loft = LoftInput::default();
+            self.seams = SeamInput::default();
         }
     }
 
@@ -845,7 +858,7 @@ impl<'a> Moving<'a> {
             return (EMPTY.clone(), live);
         }
         if let Some(loft) = &self.state.loft {
-            self.loft_layers(&mut live, loft, &input.loft, scene, colors);
+            self.loft_layers(&mut live, loft, input, scene, colors, (camera, bounds));
             return (EMPTY.clone(), live);
         }
         if let Some(split) = &self.state.split {
@@ -1266,6 +1279,9 @@ impl<'a> Moving<'a> {
         if let Some(picking) = self.sweep_picking() {
             return self.sweep_mouse(picking, input, event, bounds, cursor, camera);
         }
+        if let Some(action) = self.seams_mouse(&mut input.seams, event, bounds, cursor, camera) {
+            return Some(action);
+        }
         let Some(picking) = self.loft_picking() else {
             return self.handles_mouse(input, event, bounds, cursor, camera, hovered);
         };
@@ -1360,6 +1376,14 @@ impl<'a> Moving<'a> {
         if let Some(mode) = self.split_picking() {
             return (self.split_hover(mode, &mut input.split, at, camera, bounds))
                 .then(Action::request_redraw);
+        }
+        if let Some(loft) = &self.state.loft
+            && input.seams.drag.is_none()
+        {
+            let over = at.and_then(|at| self.seam_under(loft, at, camera, bounds));
+            if std::mem::replace(&mut input.seams.hover, over) != over {
+                return Some(Action::request_redraw());
+            }
         }
         if let Some(picking) = self.loft_picking()
             && let Some(loft) = &self.state.loft
@@ -1512,6 +1536,12 @@ impl<'a> Moving<'a> {
             // Off the curves, the model's edges as the model picks them.
             return over.then_some(mouse::Interaction::Pointer);
         }
+        if input.seams.drag.is_some() {
+            return Some(mouse::Interaction::Grabbing);
+        }
+        if input.seams.hover.is_some() {
+            return Some(mouse::Interaction::Grab);
+        }
         if self.loft_picking().is_some() {
             return input.loft.over().then_some(mouse::Interaction::Pointer);
         }
@@ -1573,6 +1603,89 @@ impl<'a> Moving<'a> {
             &[middle.as_vec3(), tip.as_vec3()],
             line(color, LINE_WIDTH, false),
         );
+    }
+
+    /// The section whose seam knob is under the screen position `at`,
+    /// by its place, if the loft can be changed.
+    fn seam_under(
+        &self,
+        loft: &LoftView<'_>,
+        at: DVec2,
+        camera: &Camera,
+        bounds: Rectangle,
+    ) -> Option<usize> {
+        if !self.state.editable {
+            return None;
+        }
+        let projector = world_projector(camera, bounds)?;
+        handle::knob_at(&seam_pucks(loft, &projector), at)
+    }
+
+    /// Takes the mouse `event` for a loft's seam knobs, with the `cursor`
+    /// over `bounds` seen by `camera`, ahead of what the loft picks: over
+    /// one, the cursor is a grab hand; a press grabs it, and dragged, its
+    /// section's start moves to the corner nearest the cursor
+    /// ([`MotionLook::LoftStart`]), each time it's another. `None` for
+    /// what's left to the rest: anything off them.
+    fn seams_mouse(
+        &self,
+        input: &mut SeamInput,
+        event: mouse::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+        camera: &Camera,
+    ) -> Option<Action<Message>> {
+        let Some(loft) = &self.state.loft else {
+            *input = SeamInput::default();
+            return None;
+        };
+        let local = |p: Point| DVec2::new((p.x - bounds.x).into(), (p.y - bounds.y).into());
+        match event {
+            mouse::Event::CursorMoved { position } => {
+                if let Some((section, sent)) = &mut input.drag {
+                    let section = *section;
+                    let look = nearest_corner(loft, section, local(position), camera, bounds)
+                        .filter(|&point| *sent != Some(point))
+                        .map(|point| {
+                            *sent = Some(point);
+                            MotionLook::LoftStart { section, point }
+                        });
+                    return Some(
+                        match look {
+                            Some(look) => Action::publish(Message::Look(Look::Motion(look))),
+                            None => Action::capture(),
+                        }
+                        .and_capture(),
+                    );
+                }
+                let over = (cursor.position_over(bounds))
+                    .and_then(|at| self.seam_under(loft, local(at), camera, bounds));
+                let was = std::mem::replace(&mut input.hover, over);
+                match (over, was != over) {
+                    (Some(_), true) => Some(Action::request_redraw().and_capture()),
+                    (Some(_), false) => Some(Action::capture()),
+                    (None, true) => Some(Action::request_redraw()),
+                    (None, false) => None,
+                }
+            }
+            mouse::Event::CursorLeft if input.drag.is_none() => {
+                input.hover.take().map(|_| Action::request_redraw())
+            }
+            mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                let at = local(cursor.position_over(bounds)?);
+                let section = self.seam_under(loft, at, camera, bounds)?;
+                *input = SeamInput {
+                    hover: Some(section),
+                    drag: Some((section, loft_start(loft, section))),
+                };
+                Some(Action::request_redraw().and_capture())
+            }
+            mouse::Event::ButtonReleased(mouse::Button::Left) => {
+                input.drag.take()?;
+                Some(Action::request_redraw().and_capture())
+            }
+            _ => None,
+        }
     }
 
     /// What a loft picks in its sketches, while it does: its sections
@@ -1670,17 +1783,22 @@ impl<'a> Moving<'a> {
     /// stronger) and its points on their own; its sections' regions
     /// filled and outlined in the selected colour (the one whose row is
     /// hovered in the hovered colour), their corners while picking, and
-    /// each section's start dot (a point section's point) in the accent,
+    /// a point section's point in the accent, each region section's start
+    /// as its seam knob (a teal puck, its arrow along the loop; the one
+    /// under the cursor or dragged lighter, with its section's corners),
     /// the corner under the cursor in the hovered colour; its rails as a
     /// sweep's path.
     fn loft_layers(
         &self,
         live: &mut SketchLayer,
         loft: &LoftView<'_>,
-        input: &LoftInput,
+        input: &Input,
         scene: &Colors,
         colors: SketchColors,
+        (camera, bounds): (&Camera, Rectangle),
     ) {
+        let (input, seams) = (&input.loft, input.seams);
+        let held = seams.drag.map(|(section, _)| section).or(seams.hover);
         let picking = self.loft_picking();
         let sections = picking == Some(MotionPick::Regions);
         if sections {
@@ -1720,7 +1838,7 @@ impl<'a> Moving<'a> {
                     closed.extend(polyline.first().copied());
                     live.polyline(space, &closed, line(color, PICKED_CURVE_WIDTH, false));
                 }
-                if sections {
+                if sections || held == Some(at) {
                     for &(id, corner) in corners {
                         let hovered = input.corner == Some((at, id));
                         let rim = if hovered {
@@ -1733,6 +1851,9 @@ impl<'a> Moving<'a> {
                     }
                 }
             }
+            if matches!(section.shape, LoftShape::Region { .. }) {
+                continue;
+            }
             if let Some(start) = section.shape.dot() {
                 let color = if lit { colors.hovered } else { accent };
                 let style = PointStyle {
@@ -1741,6 +1862,13 @@ impl<'a> Moving<'a> {
                     ..dot(START_RADIUS, colors.point_fill)
                 };
                 live.world_point(placement.to_world(start).as_vec3(), style);
+            }
+        }
+        if let Some(projector) = world_projector(camera, bounds) {
+            for puck in seam_pucks(loft, &projector) {
+                let hot = held == Some(puck.knob);
+                let tone = handle::tone(colors, KnobTone::Count, hot);
+                handle::draw_puck(live, &projector, &puck, tone);
             }
         }
         let hovered = input.curve.filter(|_| picking == Some(MotionPick::Path));
@@ -1914,6 +2042,69 @@ fn corner_under(
         }
     }
     nearest.map(|(_, index, id)| (index, id))
+}
+
+/// The projector for what's in the world, seen by `camera` over
+/// `bounds`.
+fn world_projector(camera: &Camera, bounds: Rectangle) -> Option<Projector> {
+    Projector::new(
+        camera,
+        OriginPlane::XY.placement(),
+        bounds.width,
+        bounds.height,
+    )
+}
+
+/// The start of `loft`'s section `section`, if it's a region's with one.
+fn loft_start(loft: &LoftView<'_>, section: usize) -> Option<Id> {
+    match &loft.sections.get(section)?.shape {
+        LoftShape::Region { start, .. } => *start,
+        LoftShape::Point(_) => None,
+    }
+}
+
+/// The seam knobs of `loft` as `projector` shows them: each region
+/// section's start, its arrow along the loop towards its next corner (its
+/// sketch's x for a loop of one corner), by the section's place.
+fn seam_pucks(loft: &LoftView<'_>, projector: &Projector) -> Vec<Puck<usize>> {
+    let mut pucks = Vec::new();
+    for (index, section) in loft.sections.iter().enumerate() {
+        let (Some(placement), LoftShape::Region { corners, start, .. }) =
+            (section.placement, &section.shape)
+        else {
+            continue;
+        };
+        let Some(k) = (*start).and_then(|start| corners.iter().position(|&(id, _)| id == start))
+        else {
+            continue;
+        };
+        let at = placement.to_world(corners[k].1);
+        let next = placement.to_world(corners[(k + 1) % corners.len()].1);
+        let out = (next - at).try_normalize().unwrap_or(placement.x);
+        pucks.extend(Puck::new(index, at, out, projector));
+    }
+    pucks
+}
+
+/// The corner of `loft`'s section `section` nearest the screen position
+/// `at`, its sketch point.
+fn nearest_corner(
+    loft: &LoftView<'_>,
+    section: usize,
+    at: DVec2,
+    camera: &Camera,
+    bounds: Rectangle,
+) -> Option<Id> {
+    let section = loft.sections.get(section)?;
+    let (Some(placement), LoftShape::Region { corners, .. }) = (section.placement, &section.shape)
+    else {
+        return None;
+    };
+    let projector = Projector::new(camera, placement, bounds.width, bounds.height)?;
+    (corners.iter())
+        .filter_map(|&(id, corner)| Some((id, projector.project(corner)?.distance(at))))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
 }
 
 /// The points on their own (no curve's) of `sketch`, with where they are.

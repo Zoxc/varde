@@ -76,6 +76,7 @@ use varde_kernel::{Budget, Evidence, Frame, Profile, Solid, Tolerance, Topology}
 use varde_sketch::Curve;
 
 use super::{Evaluation, Failed, Run, motion};
+use crate::SweepFound;
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::{ErrorGeometry, KernelFailure};
 use crate::inspect;
@@ -224,6 +225,15 @@ impl Run<'_> {
             Orientation::FollowPath => path_sweep::Orientation::Follow,
             Orientation::Keep => path_sweep::Orientation::Keep,
         };
+        let found = match &path {
+            Path::Chain { pieces, closed } => (!closed)
+                .then(|| chain_end(pieces, &frame, orientation))
+                .flatten(),
+            Path::Helix(helix) => Some(helix_start(helix, self.profile_middle(&placement))),
+        };
+        if let Some(found) = found.filter(SweepFound::fits) {
+            evaluation.swept.push((self.feature.id, found));
+        }
         let twist = sweep.twist.as_ref().map_or(0.0, |twist| twist.value);
         let mut keyer = Keyer::new("sweep");
         keyer
@@ -423,6 +433,87 @@ impl Run<'_> {
             }
         };
         message::sweep_refused(why).into()
+    }
+}
+
+/// How many points each conic of a curved piece is walked by, carrying
+/// the profile's x along an open chain to its end.
+const END_STEPS: usize = 16;
+
+/// Where an open chain of `pieces` ends, for the sweep's twist knob
+/// ([`SweepFound::End`]): its end, its tangent there, and the x of the
+/// profile's `frame` carried there, by rotation-minimizing frames
+/// (double reflection over the pieces' points) to follow the path, or
+/// taken square to the end's tangent to keep it. `None` for a chain
+/// with no length at its start or end.
+fn chain_end(
+    pieces: &[Piece],
+    frame: &Frame,
+    orientation: path_sweep::Orientation,
+) -> Option<SweepFound> {
+    // Points along the chain with their tangents (not unit).
+    let mut walk: Vec<(DVec3, DVec3)> = Vec::new();
+    for piece in pieces {
+        match piece {
+            Piece::Line { from, to } => {
+                walk.push((*from, *to - *from));
+                walk.push((*to, *to - *from));
+            }
+            Piece::Arc { conics, .. } | Piece::Curve { conics, .. } => {
+                for conic in conics {
+                    walk.extend(
+                        (0..=END_STEPS).map(|k| conic.eval_deriv(k as f64 / END_STEPS as f64)),
+                    );
+                }
+            }
+        }
+    }
+    let unit = |(at, way): (DVec3, DVec3)| way.try_normalize().map(|way| (at, way));
+    let walk: Vec<(DVec3, DVec3)> = walk.into_iter().filter_map(unit).collect();
+    let (&(_, first), &(at, tangent)) = (walk.first()?, walk.last()?);
+    let square = |x: DVec3, t: DVec3| (x - t * t.dot(x)).try_normalize();
+    let zero = match orientation {
+        path_sweep::Orientation::Keep => {
+            square(frame.x, tangent).or_else(|| square(frame.y, tangent))?
+        }
+        path_sweep::Orientation::Follow => {
+            let mut x = square(frame.x, first)?;
+            for pair in walk.windows(2) {
+                let [(p0, t0), (p1, t1)] = [pair[0], pair[1]];
+                let v1 = p1 - p0;
+                let c1 = v1.dot(v1);
+                if c1 <= 0.0 {
+                    continue;
+                }
+                let x_l = x - v1 * (2.0 * v1.dot(x) / c1);
+                let t_l = t0 - v1 * (2.0 * v1.dot(t0) / c1);
+                let v2 = t1 - t_l;
+                let c2 = v2.dot(v2);
+                x = if c2 > 0.0 {
+                    x_l - v2 * (2.0 * v2.dot(x_l) / c2)
+                } else {
+                    x_l
+                };
+            }
+            square(x, tangent)?
+        }
+    };
+    Some(SweepFound::End {
+        at: at.to_array(),
+        tangent: tangent.to_array(),
+        zero: zero.to_array(),
+    })
+}
+
+/// Where a helix starts, for its pitch's and turns' knobs
+/// ([`SweepFound::Helix`]): the profile's `middle`, its foot on the
+/// axis, and the axis the way it climbs.
+fn helix_start(helix: &path_sweep::Helix, middle: DVec3) -> SweepFound {
+    let foot = helix.point + helix.axis * (middle - helix.point).dot(helix.axis);
+    SweepFound::Helix {
+        middle: middle.to_array(),
+        foot: foot.to_array(),
+        axis: helix.axis.to_array(),
     }
 }
 

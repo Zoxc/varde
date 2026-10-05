@@ -25,6 +25,7 @@ use varde_sketch::{Id, RegionRef};
 
 use super::motion::{add, block, failure, set, the_plate};
 use super::*;
+use crate::SweepFound;
 
 /// Sweeps on this test's thread by the extruding stand-in.
 fn with_extrudes() {
@@ -400,6 +401,82 @@ fn arcs_and_circles_are_arc_pieces() {
     assert_eq!(conics[0].p0, conics[3].p1);
 }
 
+/// Where sweep `feature` found its handles, in `evaluation`.
+fn handles_of(evaluation: &Evaluation, feature: FeatureId) -> Option<SweepFound> {
+    (evaluation.swept.iter())
+        .find(|(id, _)| *id == feature)
+        .map(|(_, found)| *found)
+}
+
+fn assert_near(a: [f64; 3], b: DVec3) {
+    assert!(DVec3::from(a).distance(b) < 1e-9, "{a:?} is not {b}");
+}
+
+/// An open path's end is noted for the twist's knob whether or not the
+/// kernel sweeps it: up a straight path the profile's x as it is; round
+/// a quarter turn toward +x on XZ, followed, the x turned down to −z,
+/// kept, taken square to the end (y, as x runs along it). A closed path
+/// notes none.
+#[test]
+fn an_open_path_s_end_is_noted_for_its_twist() {
+    let (editor, straight, ..) = square_up(30.0);
+    let evaluation = evaluated(editor.document());
+    let Some(SweepFound::End { at, tangent, zero }) = handles_of(&evaluation, straight) else {
+        panic!("{:?}", evaluation.swept);
+    };
+    assert_near(at, DVec3::new(20.0, 0.0, 30.0));
+    assert_near(tangent, DVec3::Z);
+    assert_near(zero, DVec3::X);
+
+    let mut editor = Editor::new(Document::default());
+    let profile = square_profile(&mut editor);
+    let bent = sketch_on(&mut editor, OriginPlane::XZ, |sketch| {
+        let p = |sketch: &mut Sketch, x, y| sketch.add_point(DVec2::new(x, y)).unwrap();
+        let [a, b, c, d] =
+            [(0.0, 0.0), (0.0, 10.0), (5.0, 15.0), (10.0, 15.0)].map(|(x, y)| p(sketch, x, y));
+        let center = p(sketch, 5.0, 10.0);
+        sketch
+            .add_curve(Curve::Line { start: a, end: b }, false)
+            .unwrap();
+        let arc = Curve::Arc {
+            center,
+            start: c,
+            end: b,
+        };
+        sketch.add_curve(arc, false).unwrap();
+        sketch
+            .add_curve(Curve::Line { start: c, end: d }, false)
+            .unwrap();
+    });
+    let parts = vec![curves_part(&editor, bent)];
+    let follow = add_swept(
+        &mut editor,
+        profile,
+        parts.clone(),
+        Operation::NewBody(BodyId::NEW),
+    );
+    let keep = Sweep {
+        orientation: Orientation::Keep,
+        ..swept(&editor, profile, parts, Operation::NewBody(BodyId::NEW))
+    };
+    let keep = add(&mut editor, keep);
+    let ring = sketch_on(&mut editor, OriginPlane::XZ, disc((20.0, 0.0), 3.0));
+    let parts = vec![curves_part(&editor, ring)];
+    let closed = add_swept(&mut editor, profile, parts, Operation::NewBody(BodyId::NEW));
+    let evaluation = evaluated(editor.document());
+    let end = |feature| match handles_of(&evaluation, feature) {
+        Some(SweepFound::End { at, tangent, zero }) => (at, tangent, zero),
+        found => panic!("{found:?}"),
+    };
+    let (at, tangent, zero) = end(follow);
+    assert_near(at, DVec3::new(10.0, 0.0, 15.0));
+    assert_near(tangent, DVec3::X);
+    assert!(DVec3::from(zero).distance(-DVec3::Z) < 1e-6, "{zero:?}");
+    let (_, _, zero) = end(keep);
+    assert_near(zero, DVec3::Y);
+    assert_eq!(handles_of(&evaluation, closed), None);
+}
+
 /// What draws a path's sketch.
 type Drawing = Box<dyn FnOnce(&mut Sketch)>;
 
@@ -645,6 +722,16 @@ fn a_helix_s_axis_is_resolved() {
     assert_eq!((point.x, point.y), (50.0, 10.0));
     assert_eq!((direction.x, direction.y), (0.0, 0.0));
     assert_eq!(found(flipped), [DVec3::ZERO, -DVec3::Z]);
+    // Its handles: the profile's middle, its foot on the axis, the axis
+    // the way it climbs.
+    assert_eq!(
+        handles_of(&evaluation, flipped),
+        Some(SweepFound::Helix {
+            middle: [55.5, 0.0, 0.5],
+            foot: [0.0, 0.0, 0.5],
+            axis: [0.0, 0.0, -1.0],
+        })
+    );
     let Path::Helix(handed_helix) = paths[0] else {
         panic!("{:?}", paths[0]);
     };

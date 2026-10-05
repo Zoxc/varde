@@ -1,6 +1,6 @@
 //! The handles of the operations set up in the move's session that have
 //! a value to drag: an offset face's, a shell's, a draft's, a chamfer's,
-//! a fillet's, a scale's, an align's and a pattern's. The app works out where each
+//! a fillet's, a scale's, an align's, a pattern's and a sweep's. The app works out where each
 //! knob is and how it drags from what it knows of the model; the viewport
 //! draws them as the extrude's handle (`viewport/handle.rs`) and drags
 //! them (`viewport/knobs.rs`), sending [`MotionLook::DragKnob`] with the
@@ -94,8 +94,9 @@ pub enum KnobTone {
     Create,
     /// Modify's: red, with a blue accent.
     Modify,
-    /// A count's beside another value's knob (a pattern's): teal, so
-    /// the two read apart.
+    /// A count's beside another value's knob (a pattern's), a sweep's
+    /// twist, or a helix's turns beside its pitch: teal, so they read
+    /// apart from the operation's own colours.
     Count,
 }
 

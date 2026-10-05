@@ -30,6 +30,14 @@
 //!   the last copy (none for Full 360°), the count's on a slider running
 //!   on along the arc's tangent past it; for a new one only, as it finds
 //!   the original on the document's model.
+//! - A sweep's, where regenerating its draft found them
+//!   ([`varde_regen::SweepFound`]): along a path, the twist's on a ring
+//!   about the path's end, from where no twist leaves the profile's x,
+//!   right-handed about the path's tangent, in the count's colour;
+//!   along a helix, the pitch's on the axis from the
+//!   profile's foot, and the turns' on a rail up from the profile's
+//!   middle at the helix's end, a pitch a turn, in the count's colour.
+//!   None along a closed path.
 //!
 //! A shell's, draft's, chamfer's and fillet's knobs stand where their
 //! first face or edge is before the feature changes it, which the model
@@ -40,9 +48,10 @@
 use glam::DVec3;
 use varde_document::{EdgeRef, FaceRef, Generation, PlaneRef};
 use varde_expr::{AngleUnit, Unit};
+use varde_regen::SweepFound;
 use varde_view::{
     ChamferType, KnobPath, KnobRadius, KnobScale, KnobSnap, KnobTone, MotionField, MotionKind,
-    OpKnob, PatternMode, ScaleMode, ShellDirection,
+    OpKnob, PatternMode, ScaleMode, ShellDirection, SweepPath,
 };
 
 use super::{Doc, MotionSession, field_ask};
@@ -99,6 +108,7 @@ impl Doc {
             MotionKind::Align => self.align_knobs(session),
             MotionKind::LinearPattern => self.linear_knobs(session, bounds),
             MotionKind::CircularPattern => self.circular_knobs(session),
+            MotionKind::Sweep => self.sweep_knobs(session),
             _ => Vec::new(),
         };
         let finite = |knob: &OpKnob| {
@@ -134,6 +144,8 @@ impl Doc {
             // Its sign is its side: through zero, never at it.
             MotionKind::OffsetFace => value == 0.0,
             MotionKind::Align => false,
+            // Either way round, or none.
+            MotionKind::Sweep if knob.field == MotionField::Twist => false,
             // A whole count, of two or more (the field's ask says how
             // many at most).
             _ if knob.snap == KnobSnap::Count => value < 2.0 || value.fract() != 0.0,
@@ -698,6 +710,80 @@ impl Doc {
             });
         }
         knobs
+    }
+
+    /// A sweep's knobs, once its draft has found where they stand: for
+    /// a path, the twist's on a ring [`TURN_PIXELS`] out about its end;
+    /// for a helix, the pitch's on the axis from the profile's foot and
+    /// the turns' up from the profile's middle, a pitch a turn.
+    fn sweep_knobs(&self, session: &MotionSession) -> Vec<OpKnob> {
+        let Some(found) = self.feed.draft_sweep() else {
+            return Vec::new();
+        };
+        let v = DVec3::from_array;
+        match (session.sweep.path, found) {
+            (SweepPath::Path, SweepFound::End { at, tangent, zero }) => {
+                let (tangent, zero) = (v(tangent), v(zero));
+                let Some(twist) = Self::knob_value(session, MotionField::Twist) else {
+                    return Vec::new();
+                };
+                let (sin, cos) = twist.sin_cos();
+                let along = tangent.cross(zero) * cos - zero * sin;
+                vec![OpKnob {
+                    field: MotionField::Twist,
+                    path: KnobPath::Arc {
+                        centre: v(at),
+                        axis: tangent,
+                        radial: zero,
+                        radius: KnobRadius::Pixels(TURN_PIXELS),
+                    },
+                    value: twist,
+                    scale: KnobScale::Times(1.0),
+                    snap: KnobSnap::Angle,
+                    out: if twist < 0.0 { -along } else { along },
+                    shaft: Some(0.0),
+                    tone: KnobTone::Count,
+                }]
+            }
+            (SweepPath::Helix, SweepFound::Helix { middle, foot, axis }) => {
+                let axis = v(axis);
+                let Some(pitch) = Self::knob_value(session, MotionField::Pitch) else {
+                    return Vec::new();
+                };
+                let mut knobs = vec![OpKnob {
+                    field: MotionField::Pitch,
+                    path: KnobPath::Line {
+                        origin: v(foot),
+                        along: axis,
+                    },
+                    value: pitch,
+                    scale: KnobScale::Times(1.0),
+                    snap: KnobSnap::Length,
+                    out: axis,
+                    shaft: Some(0.0),
+                    tone: KnobTone::Create,
+                }];
+                if let Some(turns) = Self::knob_value(session, MotionField::Turns)
+                    && pitch > 0.0
+                {
+                    knobs.push(OpKnob {
+                        field: MotionField::Turns,
+                        path: KnobPath::Line {
+                            origin: v(middle),
+                            along: axis,
+                        },
+                        value: turns,
+                        scale: KnobScale::Times(pitch),
+                        snap: KnobSnap::Factor,
+                        out: axis,
+                        shaft: Some(0.0),
+                        tone: KnobTone::Count,
+                    });
+                }
+                knobs
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// The centre of the session's bodies' box in the document's model,

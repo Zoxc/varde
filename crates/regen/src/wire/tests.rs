@@ -159,6 +159,7 @@ fn a_revolve_and_its_draft_round_trip() {
             reference: None,
             datums: None,
             scale: None,
+            sweep: None,
         }
     );
     let revolve = editor.document().features().last().unwrap().id;
@@ -262,6 +263,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
             reference: None,
             datums: None,
             scale: None,
+            sweep: None,
         }))
     );
     assert!(failed.is_empty(), "{failed:?}");
@@ -340,6 +342,7 @@ fn request_with_a_draft_round_trips() {
             reference: None,
             datums: None,
             scale: None,
+            sweep: None,
         }))
     );
 
@@ -410,6 +413,7 @@ fn untested_and_touching_nothing_stay_apart() {
                 reference: None,
                 datums: None,
                 scale: None,
+                sweep: None,
             });
         }
         let Head::Regenerated { draft, .. } = Head::decode(&head.encode()).unwrap() else {
@@ -507,6 +511,7 @@ fn draft_references_must_be_lines_within_bounds() {
                 reference: Some(Box::new(bad)),
                 datums: None,
                 scale: None,
+                sweep: None,
             });
         }
         let Response::Failed { error, .. } =
@@ -529,6 +534,7 @@ fn draft_references_must_be_lines_within_bounds() {
             reference: Some(Box::new(good)),
             datums: None,
             scale: None,
+            sweep: None,
         });
     }
     let Response::Regenerated { draft, .. } =
@@ -576,6 +582,7 @@ fn draft_datums_must_be_within_bounds() {
                 reference: None,
                 datums: Some(Box::new(datums)),
                 scale: None,
+                sweep: None,
             });
         }
         decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
@@ -628,6 +635,7 @@ fn a_scale_draft_s_findings_must_be_within_bounds() {
                 reference: None,
                 datums: None,
                 scale: Some(Box::new(found)),
+                sweep: None,
             });
         }
         decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
@@ -682,6 +690,59 @@ fn a_scale_draft_s_findings_must_be_within_bounds() {
             panic!("a good scale was refused");
         };
         assert_eq!(draft.unwrap().scale.as_deref(), Some(&good));
+    }
+}
+
+/// Where a sweep's draft found its handles: points within bounds and
+/// finite, directions unit; refused otherwise, and a good one goes as it
+/// was.
+#[test]
+fn a_sweep_draft_s_handles_must_be_within_bounds() {
+    use crate::SweepFound;
+    let head_with = |found: SweepFound| {
+        let mut head = regenerated(5);
+        if let Head::Regenerated { draft, .. } = &mut head {
+            *draft = Some(Drafted {
+                revision: 1,
+                geometry: None,
+                error: None,
+                touched: None,
+                uncut: Vec::new(),
+                reference: None,
+                datums: None,
+                scale: None,
+                sweep: Some(Box::new(found)),
+            });
+        }
+        decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
+    };
+    let far = crate::MAX_REFERENCE * 2.0;
+    let end =
+        |at: [f64; 3], tangent: [f64; 3], zero: [f64; 3]| SweepFound::End { at, tangent, zero };
+    let helix =
+        |middle: [f64; 3], foot: [f64; 3], axis: [f64; 3]| SweepFound::Helix { middle, foot, axis };
+    for bad in [
+        end([far, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
+        end([0.0, f64::NAN, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
+        end([0.0; 3], [0.0, 0.0, 2.0], [1.0, 0.0, 0.0]),
+        end([0.0; 3], [0.0, 0.0, 1.0], [0.0; 3]),
+        helix([0.0, 0.0, far], [0.0; 3], [0.0, 0.0, 1.0]),
+        helix([0.0; 3], [f64::INFINITY, 0.0, 0.0], [0.0, 0.0, 1.0]),
+        helix([0.0; 3], [0.0; 3], [0.0; 3]),
+    ] {
+        let Response::Failed { error, .. } = head_with(bad) else {
+            panic!("a bad sweep's handles were taken: {bad:?}");
+        };
+        assert_eq!(error, Error::Reference.to_string());
+    }
+    for good in [
+        end([1.0, 2.0, 3.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
+        helix([10.0, 0.0, 0.0], [0.0; 3], [0.0, 1.0, 0.0]),
+    ] {
+        let Response::Regenerated { draft, .. } = head_with(good) else {
+            panic!("a good sweep's handles were refused");
+        };
+        assert_eq!(draft.unwrap().sweep.as_deref(), Some(&good));
     }
 }
 
@@ -2935,6 +2996,7 @@ fn answer_with_failures() -> Response {
             reference: None,
             datums: None,
             scale: None,
+            sweep: None,
         }))
     }
     response

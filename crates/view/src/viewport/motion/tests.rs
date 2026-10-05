@@ -1122,6 +1122,98 @@ fn a_loft_s_sections_starts_and_rails_are_picked_in_their_sketches() {
     }
 }
 
+/// A loft whose section, an 8 × 8 square at (20, 12) on XY, starts at
+/// its corner (20, 12), seen from the top, picking nothing: its seam knob
+/// there takes the mouse ahead of the model, a grab hand over it; pressed
+/// and dragged, the start goes to the corner nearest the cursor, sent
+/// once for each corner it reaches; let go of on release. Read-only, no
+/// knob.
+#[test]
+fn a_loft_s_seam_knob_drags_its_start_round_its_corners() {
+    use crate::motion::{LoftSection, LoftShape, LoftView};
+    use varde_sketch::{Curve, Sketch};
+    let mut drawn = Sketch::default();
+    let corners = [(20.0, 12.0), (28.0, 12.0), (28.0, 20.0), (20.0, 20.0)]
+        .map(|(x, y)| drawn.add_point(DVec2::new(x, y)).unwrap());
+    for (k, &start) in corners.iter().enumerate() {
+        let end = corners[(k + 1) % 4];
+        drawn.add_curve(Curve::Line { start, end }, false).unwrap();
+    }
+    let profiles = Arc::new(drawn.profiles().unwrap());
+    let features = varde_document::Document::example();
+    let sketch = features.features()[0].id;
+    let placement = OriginPlane::XY.placement();
+    let camera = camera(View::Top, Projection::Orthographic);
+    let top = |at: DVec3| {
+        let p = shown(&camera, at);
+        Point::new(p.x as f32, p.y as f32)
+    };
+    let index = plate();
+    let corner_list: Vec<(varde_sketch::Id, DVec2)> = corners
+        .iter()
+        .map(|&id| (id, drawn.point(id).unwrap().at))
+        .collect();
+    let lofting = |editable: bool| {
+        let mut state: MotionState<'_> = state(MotionKind::Loft, MotionPick::Nothing, None);
+        state.editable = editable;
+        state.loft = Some(Box::new(LoftView {
+            candidates: Vec::new(),
+            lines: Vec::new(),
+            sections: vec![LoftSection {
+                name: "Sketch 1".to_owned(),
+                gone: false,
+                sketch,
+                placement: Some(placement),
+                shape: LoftShape::Region {
+                    region: profiles.regions.first(),
+                    corners: corner_list.clone(),
+                    start: Some(corners[0]),
+                },
+            }],
+            rails: Vec::new(),
+            chains: Vec::new(),
+            mode: varde_document::LoftMode::Smooth,
+            closed: false,
+            operation: crate::OperationKind::NewBody,
+            targets: Vec::new(),
+            info: None,
+        }));
+        state
+    };
+    let program = viewport(lofting(true), &camera, Some(&index));
+    let mut input = Interaction::default();
+    let seam = DVec3::new(20.0, 12.0, 0.0);
+    let (_, captured) = feed(&program, &mut input, &[moved(top(seam))]);
+    assert!(captured, "the knob takes the mouse");
+    assert_eq!(input.motion.seams.hover, Some(0));
+    assert!(input.motion.holds());
+    let (messages, _) = feed(
+        &program,
+        &mut input,
+        &[
+            press(top(seam)),
+            moved(top(DVec3::new(21.0, 13.0, 0.0))),
+            moved(top(DVec3::new(27.0, 19.0, 0.0))),
+            moved(top(DVec3::new(27.5, 19.5, 0.0))),
+            release(top(DVec3::new(27.5, 19.5, 0.0))),
+        ],
+    );
+    let sent: Vec<&MotionLook> = looks(&messages).into_iter().flatten().collect();
+    assert_eq!(
+        sent,
+        [&MotionLook::LoftStart {
+            section: 0,
+            point: corners[2],
+        }]
+    );
+    assert_eq!(input.motion.seams.drag, None, "let go of");
+
+    let program = viewport(lofting(false), &camera, Some(&index));
+    let mut input = Interaction::default();
+    feed(&program, &mut input, &[moved(top(seam))]);
+    assert_eq!(input.motion.seams.hover, None, "read-only");
+}
+
 /// A sweep picking its path in a sketch on XY holding a line from
 /// (-20, 0) to (20, 0), seen from the top over the plate, the cursor
 /// still while the camera moves: a line brought under it is hovered as
@@ -1397,7 +1489,9 @@ fn a_loft_s_and_a_split_s_regions_and_corners_are_hovered_again_as_the_camera_mo
                         .iter()
                         .map(|&id| (id, square.point(id).unwrap().at))
                         .collect(),
-                    start: Some(corners[0]),
+                    // Not the corner under the cursor: its seam knob
+                    // would take it.
+                    start: Some(corners[1]),
                 },
             }]
         } else {

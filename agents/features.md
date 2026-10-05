@@ -4387,6 +4387,19 @@ body", the uncut note).
   `history/tests/sweep.rs` and `#[ignore = "kernel sweep not built"]`.
 - The draft's reply carries a helix's axis as `Drafted::reference`, as
   a move's (checked on the wire as theirs).
+- **Where its handles stand** (`SweepFound`, noted in
+  `Evaluation::swept` once the path is built, before the kernel is
+  asked; the draft's reply carries it as `Drafted::sweep`, checked on
+  the wire: points within `MAX_REFERENCE`, finite, directions unit): an
+  open chain's end, its unit tangent and the profile's x carried there
+  (`SweepFound::End`: rotation-minimizing frames by double reflection
+  over the pieces' points, 16 a conic, following the path; the x, or
+  the y where x runs along it, taken square to the end's tangent for
+  Keep orientation); a helix's profile's middle, its foot on the axis
+  and the axis as climbed (`SweepFound::Helix`). None for a closed
+  chain. Tested in `history/tests/sweep.rs` (a straight path's and a
+  quarter turn's ends, followed and kept, none for a ring; a helix's)
+  and `wire/tests.rs`.
 
 ### UI
 
@@ -4491,13 +4504,18 @@ and a ring), the note "along Sketch 3", "along Body 1" (one edge part),
 "along 3 parts" or "helix · 10 turns", the status bar "Along Sketch 3 ·
 Follow path · Twist 90° · New body" (`view/src/sweep.rs`).
 
-Known gaps: no handle; a path sketch hidden by the user isn't offered
+Handles: the twist's on a ring about the path's end, a helix's pitch
+and turns along its axis (see Operation knobs).
+
+Known gaps: no handle for a closed path's twist; a path sketch hidden by the user isn't offered
 (its parts stay listed); edge parts on several bodies only as stored;
 a helix's edge or face axis is drawn where the preview's regeneration
 found it (an origin axis as it is), 10 mm either side of its point, as
 a sweep has no bodies' box.
 
-Tests: `app/src/doc/motion/tests/sweep.rs` (the rail's Sweep: the
+Tests: `app/src/doc/motion/tests/sweep.rs` (the knobs: the twist's
+ring about the path's end found by the preview, dragged either way, to
+none, past 8 turns refused; a helix's pitch and turns; the rail's Sweep: the
 panel, regions then path, the profile's own sketch refused, a chain a
 part, too complex in the panel, Add anyway as one undo step, the
 profile's sketch hidden and the path's not; with the stand-in, a
@@ -4708,10 +4726,21 @@ and the Bodies list.
   the corner is the first of them; a start at the other (from a file,
   or an edit of the sketch) is drawn at that corner all the same
   (`shown_start`), as regeneration takes it.
+- **Seam knobs**: each region section's start is a knob (the operation
+  knobs' puck, in the count's teal, its arrow along the outer loop
+  towards the next corner), picking or not, while the loft can be
+  changed: it takes the mouse ahead of what the loft picks and the model
+  (`viewport/motion.rs`, `SeamInput`, `seam_pucks`; a grab hand over
+  it, the model's hover let go of); pressed and dragged, the section's
+  start goes to its corner nearest the cursor on the screen, each corner
+  reached sent once (`MotionLook::LoftStart`), its section's corners
+  drawn meanwhile; a corner under the start is its knob's, not a
+  click's. The camera moving under a still cursor works its hover out
+  again.
 - **Drawn**: each region section filled and outlined in the selected
   colour on its plane (the one whose row is hovered in the hovered
-  colour), its start dot in the accent (a point section's point too),
-  and each section's number in a chip by it (`Moving::labels`).
+  colour), its seam knob, a point section's point as a dot in the
+  accent, and each section's number in a chip by it (`Moving::labels`).
 - **Rows**: "Section 1" with its sketch's name ("gone" once what it
   names is), an up and a down chevron (`ordered_row`; the first's up
   and the last's down faint) moving it past its neighbour
@@ -4770,7 +4799,8 @@ The Timeline shows a loft's row with the model mock's `loft` icon
 sections" (`view/src/loft.rs`, `loft_note`); the status bar says "3
 sections · Smooth · Closed · 2 rails · New body" (`loft_info`).
 
-Known gaps: no handle; the start dots follow sketch points only (a
+Known gaps: no seam knob for a region with no start (a circle's);
+the start dots follow sketch points only (a
 corner where curves cross without a point can't be a start); a section
 sketch hidden by the user is still offered (its regions are found to
 draw the section).
@@ -4797,7 +4827,7 @@ sketches through undo and redo) and its `fuzz.rs` (random sessions:
 limits, a start not gone always drawn, ready only when the document
 takes it and regeneration finds every section and start, commits as
 drafted, edits reopening as stored; `VARDE_LOFT_SEEDS`),
-`view/src/viewport/motion/tests.rs` (rails', regions' and corners'
+`view/src/viewport/motion/tests.rs` (the seam knob dragged round its corners, none read-only; rails', regions' and corners'
 hover worked out again as the camera moves),
 `regen/src/wire/tests.rs` (a loft and its draft round trip),
 `io/src/vrdp/tests.rs` (round trip, tampered and damaged records, a
@@ -4806,7 +4836,7 @@ loft's parts refused as read), `view/src/loft/tests.rs` (the notes).
 ## Operation knobs
 
 The operations set up in the move's session that have a value to drag
-(offset face, shell, draft, chamfer, fillet, scale, align, patterns) have a
+(offset face, shell, draft, chamfer, fillet, scale, align, patterns, sweep) have a
 handle of knobs, as the extrude's and revolve's are drawn
 (`agents/viewport.md`): `MotionState::knobs`, `OpKnob`
 (`view/src/motion/knobs.rs`), worked out by the app
@@ -4822,12 +4852,13 @@ angles as a move's ring, factors 1, 2 or 5 × 10ⁿ, each at least 6 px
 along the path, counts whole), its arrow's way (the way the value
 grows), where its shaft starts if it has one (a value, zero but for a
 pattern's count's, from the original), and its colours (Create's,
-Modify's, or a count's teal beside a pattern's other knob). Dragged, the viewport sends `MotionLook::DragKnob { knob,
+Modify's, or a count's teal beside another knob: a pattern's count, a
+sweep's twist or turns). Dragged, the viewport sends `MotionLook::DragKnob { knob,
 value }`, the value snapped; the app (`Doc::drag_knob`) types it into
 the field as the design's units (or degrees, or a bare factor) write
 it, where the field takes it: none at or below zero but an offset
-face's (its sign its side, zero nothing) and an align's, no draft of a
-quarter turn or more. None in a document that can't be changed.
+face's (its sign its side, zero nothing), an align's and a sweep's
+twist, no draft of a quarter turn or more. None in a document that can't be changed.
 
 - **Offset face**: along the first face's outward normal (its
   `Anchor`, above), at the distance.
@@ -4866,6 +4897,19 @@ quarter turn or more. None in a document that can't be changed.
   tangent past its end, 8 px a copy. The original is found on the
   document's model (`MeshFeed::committed`), so only a new pattern has
   knobs.
+- **Sweep**: where regenerating its draft found them
+  (`Drafted::sweep`, `SweepFound`, worked out from the path as built,
+  before the kernel is asked, so there while the kernel's sweep fails).
+  Along a path ("end ring"): the twist's, teal, on a ring 60 px out
+  about the path's end, right-handed about its tangent there, from where
+  no twist leaves the profile's x (carried by rotation-minimizing frames,
+  double reflection over the pieces' points, 16 a conic; for Keep
+  orientation the x taken square to the end's tangent, the y where x
+  runs along it), the twist any way round or none; none along a closed
+  path. Along a helix ("climb"): the pitch's on the axis from the
+  foot of the profile's box's middle, as climbed (flipped with Flip);
+  the turns', teal, on a rail up from the profile's middle, a pitch a
+  turn, so at the helix's end, snapping as a factor.
 
 A shell's, draft's, chamfer's and fillet's knobs stand where their
 first face or edge is before the feature changes it (`KnobAnchor`):

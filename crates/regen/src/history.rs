@@ -217,6 +217,9 @@ pub struct Evaluation {
     /// in the document's order. For the app to show a draft's edge's
     /// length and fitted faces, and draw its point.
     pub scaled: Vec<(FeatureId, crate::ScaleFound)>,
+    /// Each sweep whose path was built, and where its handles stand,
+    /// in the document's order. For the app to put a draft's knobs.
+    pub swept: Vec<(FeatureId, crate::SweepFound)>,
     /// Each split that kept both pieces: the body split, which kept one,
     /// and its new body, which got the other, in the document's order.
     /// A sketch on a face of the body that went to the new body follows

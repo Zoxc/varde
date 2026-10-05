@@ -17,8 +17,8 @@ use varde_document::{
 use varde_regen::Summary;
 use varde_sketch::{Curve, Id, Sketch};
 use varde_view::{
-    Edit, Look, MotionField, MotionKind, MotionLook, MotionPick, OperationKind, PanelHover, Picked,
-    SweepPath,
+    Edit, KnobPath, KnobRadius, KnobScale, KnobTone, Look, MotionField, MotionKind, MotionLook,
+    MotionPick, OpKnob, OperationKind, PanelHover, Picked, SweepPath,
 };
 
 use super::Plates;
@@ -885,6 +885,116 @@ fn a_helix_s_axis_gone_stays_gone_through_path_and_helix() {
     plates.answer();
     assert!(!gone(plates));
     assert!(ready(plates));
+}
+
+/// The knobs the view has.
+fn knobs(plates: &Plates) -> Vec<OpKnob> {
+    (plates.doc.motion_state()).map_or_else(Vec::new, |state| state.knobs)
+}
+
+/// Along the path, once its preview has found the path's end: the
+/// twist's knob on a ring 60 pixels out about the end, from the
+/// profile's x, right-handed about the path, in the count's colour;
+/// dragged either way round (or to none), the twist is typed, past 8
+/// turns refused. Along a helix: the pitch's on the axis from the
+/// profile's foot, the turns' up from the profile's middle at a pitch a
+/// turn, dragged typed.
+#[test]
+fn a_sweep_s_knobs_turn_its_end_or_climb_its_helix() {
+    let mut swept = swept();
+    set_up(&mut swept);
+    let plates = &mut swept.plates;
+    assert!(knobs(plates).is_empty(), "nothing found yet");
+    plates.answer();
+    let [knob] = knobs(plates)[..] else {
+        panic!("{:?}", knobs(plates));
+    };
+    assert_eq!(knob.field, MotionField::Twist);
+    assert_eq!(knob.tone, KnobTone::Count);
+    assert_eq!(knob.value, 0.0);
+    let KnobPath::Arc {
+        centre,
+        axis,
+        radial,
+        radius,
+    } = knob.path
+    else {
+        panic!("{knob:?}");
+    };
+    assert!(
+        centre.distance(DVec3::new(20.0, 0.0, 30.0)) < 1e-9,
+        "{centre}"
+    );
+    assert!(axis.distance(DVec3::Z) < 1e-9, "{axis}");
+    assert!(radial.distance(DVec3::X) < 1e-9, "{radial}");
+    assert_eq!(radius, KnobRadius::Pixels(60.0));
+    assert!(knob.out.distance(DVec3::Y) < 1e-9, "{}", knob.out);
+    let twist = |plates: &Plates| drafted(plates).unwrap().twist.map(|twist| twist.value);
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: -30f64.to_radians(),
+    });
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: 3000f64.to_radians(),
+    });
+    assert!((twist(plates).unwrap() + 30f64.to_radians()).abs() < 1e-12);
+    plates.answer();
+    let knob = knobs(plates)[0];
+    assert!((knob.value + 30f64.to_radians()).abs() < 1e-12);
+    assert!(knob.out.dot(DVec3::Y) < 0.0, "turning back: {}", knob.out);
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: 0.0,
+    });
+    assert_eq!(twist(plates), None, "no twist");
+
+    plates.motion(MotionLook::SweepPath(SweepPath::Helix));
+    plates.motion(MotionLook::OriginAxis(Axis3::Z));
+    plates.input(MotionField::Pitch, "4");
+    plates.answer();
+    let [pitch, turns] = knobs(plates)[..] else {
+        panic!("{:?}", knobs(plates));
+    };
+    assert_eq!(
+        (pitch.field, pitch.tone, pitch.value),
+        (MotionField::Pitch, KnobTone::Create, 4.0)
+    );
+    assert_eq!(
+        pitch.path,
+        KnobPath::Line {
+            origin: DVec3::ZERO,
+            along: DVec3::Z
+        }
+    );
+    assert_eq!(
+        (turns.field, turns.tone, turns.value, turns.scale),
+        (
+            MotionField::Turns,
+            KnobTone::Count,
+            5.0,
+            KnobScale::Times(4.0)
+        )
+    );
+    assert_eq!(
+        turns.path,
+        KnobPath::Line {
+            origin: DVec3::new(20.0, 0.0, 0.0),
+            along: DVec3::Z
+        }
+    );
+    plates.motion(MotionLook::DragKnob {
+        knob: 1,
+        value: 2.5,
+    });
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: 6.0,
+    });
+    let PathRef::Helix(helix) = drafted(plates).unwrap().path else {
+        panic!("a helix");
+    };
+    assert_eq!((helix.pitch.value, helix.turns.value), (6.0, 2.5));
 }
 
 mod fuzz;

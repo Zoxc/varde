@@ -776,6 +776,7 @@ fn a_revolve_draft_is_answered_from_the_cache() {
             reference: None,
             datums: None,
             scale: None,
+            sweep: None,
         })
     );
     assert_ne!(first.mesh, committed.mesh);

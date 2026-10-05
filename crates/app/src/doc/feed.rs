@@ -488,6 +488,16 @@ impl MeshFeed {
         self.drafted.as_ref()?.scale.as_deref().copied()
     }
 
+    /// Where the newest draft answered of the current run of drafts found
+    /// a sweep's handles, if it's a sweep's ([`Drafted::sweep`]), while a
+    /// draft is asked for.
+    pub(crate) fn draft_sweep(&self) -> Option<varde_regen::SweepFound> {
+        if !self.draft_shown() {
+            return None;
+        }
+        self.drafted.as_ref()?.sweep.as_deref().copied()
+    }
+
     /// Whether the model shown answers what was asked last: picks on it
     /// are of the document, and the draft, as they're set up now. What
     /// was measured on it doesn't count: another measure asks for the

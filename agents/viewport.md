@@ -287,7 +287,10 @@ arc, the angle the cursor turns about the axis on the arc's plane (all
 the way round as often as it goes, nothing with the plane edge on);
 each new snapped value is sent (`MotionLook::DragKnob`). A session
 without knobs lets go of what one held (`Input::settle`), and one with
-them of a move's handles.
+them of a move's handles. A loft's seam knobs (its sections' starts, `SeamInput`; see
+`agents/features.md`, Loft) are drawn as the knobs' pucks and taken
+ahead of what the loft picks: dragged, the start goes to the section's
+corner nearest the cursor.
 
 The panel follows the mock's (`.opp`): a card 288 px wide, 8 px round,
 with a 3 px accent line along its top and the mock's shadow, drawn by

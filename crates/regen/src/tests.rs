@@ -569,6 +569,7 @@ fn a_draft_is_answered_as_if_applied() {
             reference: None,
             datums: None,
             scale: None,
+            sweep: None,
         })
     );
     assert!(answer.failed.is_empty());
@@ -665,6 +666,7 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
                 reference: None,
                 datums: None,
                 scale: None,
+                sweep: None,
             })
         );
         assert_eq!(answer.mesh, committed.mesh);
@@ -801,6 +803,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
             reference: None,
             datums: None,
             scale: None,
+            sweep: None,
         })
     );
     assert_ne!(cut.mesh, committed.mesh);

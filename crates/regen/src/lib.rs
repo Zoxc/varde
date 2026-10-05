@@ -271,6 +271,49 @@ pub struct Drafted {
     /// whether or not the draft goes on to work. Checked on the wire
     /// ([`ScaleFound::fits`]).
     pub scale: Option<Box<ScaleFound>>,
+    /// For a sweep, where its handles stand, as [`Evaluation::swept`]
+    /// has it, whether or not the draft goes on to work. Checked on the
+    /// wire ([`SweepFound::fits`]).
+    pub sweep: Option<Box<SweepFound>>,
+}
+
+/// Where a sweep's handles stand, found from its path as built, before
+/// the kernel is asked: for its twist, the end of an open chain; for a
+/// helix's pitch and turns, its axis and the profile's middle.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum SweepFound {
+    /// An open chain's end: where it ends, its unit tangent there, and
+    /// the profile's x carried along to it (unit, square to the tangent),
+    /// where no twist leaves it: by rotation-minimizing frames as the
+    /// path turns, or kept and taken square to the tangent for Keep
+    /// orientation.
+    End {
+        at: [f64; 3],
+        tangent: [f64; 3],
+        zero: [f64; 3],
+    },
+    /// A helix's start: the middle of the profile's box, its foot on
+    /// the axis, and the unit axis the way the helix climbs.
+    Helix {
+        middle: [f64; 3],
+        foot: [f64; 3],
+        axis: [f64; 3],
+    },
+}
+
+impl SweepFound {
+    /// Whether the workers' wire takes it: its points within
+    /// [`MAX_REFERENCE`] of zero, finite, its directions unit.
+    pub fn fits(&self) -> bool {
+        let within = |v: &[f64; 3]| v.iter().all(|x| x.is_finite() && x.abs() <= MAX_REFERENCE);
+        let unit = |v: &[f64; 3]| (glam::DVec3::from(*v).length() - 1.0).abs() < 1e-6;
+        match self {
+            SweepFound::End { at, tangent, zero } => within(at) && unit(tangent) && unit(zero),
+            SweepFound::Helix { middle, foot, axis } => {
+                within(middle) && within(foot) && unit(axis)
+            }
+        }
+    }
 }
 
 /// What a scale found, on its bodies as the features before it leave
@@ -707,6 +750,7 @@ impl Regenerator {
             reference: None,
             datums: None,
             scale: None,
+            sweep: None,
         };
         match applied(document, draft) {
             Ok((with_draft, feature)) => {
@@ -722,6 +766,9 @@ impl Regenerator {
                     .find(|(id, _)| of(id))
                     .map(|(_, datums)| Box::new(*datums));
                 drafted.scale = (evaluation.scaled.iter())
+                    .find(|(id, _)| of(id))
+                    .map(|(_, found)| Box::new(*found));
+                drafted.sweep = (evaluation.swept.iter())
                     .find(|(id, _)| of(id))
                     .map(|(_, found)| Box::new(*found));
                 match (evaluation.failed.iter()).position(|failed| failed.feature == feature) {

@@ -450,6 +450,7 @@ pub fn decode_reply(
                 .and_then(|()| check_reference(draft.as_ref()))
                 .and_then(|()| check_datums(draft.as_ref()))
                 .and_then(|()| check_scale(draft.as_ref()))
+                .and_then(|()| check_sweep(draft.as_ref()))
                 .and_then(|()| decode_placements(&placements))
                 .and_then(|placements| Ok((placements, decode_bodies(&bodies)?)))
                 .and_then(|(placements, bodies)| {
@@ -597,6 +598,15 @@ fn check_datums(draft: Option<&Drafted>) -> Result<(), Error> {
 /// [`ScaleFound::fits`](crate::ScaleFound::fits) says.
 fn check_scale(draft: Option<&Drafted>) -> Result<(), Error> {
     match draft.and_then(|draft| draft.scale.as_deref()) {
+        Some(found) if !found.fits() => Err(Error::Reference),
+        _ => Ok(()),
+    }
+}
+
+/// Checks where a sweep's draft found its handles, if it has that, as
+/// [`SweepFound::fits`](crate::SweepFound::fits) says.
+fn check_sweep(draft: Option<&Drafted>) -> Result<(), Error> {
+    match draft.and_then(|draft| draft.sweep.as_deref()) {
         Some(found) if !found.fits() => Err(Error::Reference),
         _ => Ok(()),
     }
