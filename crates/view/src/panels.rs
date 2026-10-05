@@ -1469,11 +1469,16 @@ impl Listed<'_> {
 }
 
 /// The constraints and dimensions the Constraints list shows: those on the
-/// points and curves it lists on ([`SketchState::listed_on`]), or
-/// selected themselves, or all when it lists on none; those in conflict
-/// first, then by id.
+/// points and curves it lists on ([`SketchState::listed_on`]) and the
+/// points of those curves, or selected themselves, or all when it lists
+/// on none; those in conflict first, then by id.
 fn listed<'a>(sketch: &SketchState<'a>) -> Vec<Listed<'a>> {
-    let (selection, on) = (sketch.selection, sketch.listed_on);
+    let selection = sketch.selection;
+    // A curve lists what's on its points too.
+    let points = (sketch.listed_on.iter())
+        .filter_map(|&id| sketch.sketch.curve(id))
+        .flat_map(|entry| entry.curve.points());
+    let on: BTreeSet<Id> = sketch.listed_on.iter().copied().chain(points).collect();
     let conflicts = sketch.conflicts();
     let constraints = sketch.sketch.constraints.iter().map(Listed::Constraint);
     let dimensions = sketch.sketch.dimensions.iter().map(Listed::Dimension);

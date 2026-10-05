@@ -1435,7 +1435,8 @@ refused what it found, `MeshFeed::broken`). An
   rims are in `SketchColors::link`, the Modify tools' reference tone,
   curves dashed unless they count for profiles, as construction ones.
 - **The Constraints list** (lower half of the Sketch tab) shows the
-  constraints and dimensions on the points and curves selected, or
+  constraints and dimensions on the points and curves selected (a
+  curve's points included), or
   selected themselves, or all when no point or curve is; while only
   constraints and dimensions are selected it keeps listing on the points
   and curves it did (`SketchSession::listed_on`, kept by
