@@ -29,7 +29,8 @@
   selects Fillet 2, which fails, and #bracket/failed-edit opens it; #bracket/op:<kind>
   opens an operation set up for a screenshot (extrude, revolve, combine, move,
   bmirror, lpattern, cpattern, fillet, chamfer, shell, and align, scale,
-  oface and draft, which have no tool here; /join for revolve's join,
+  oface, draft, sweep and loft, which have no tool here; /join for
+  revolve's join, /helix for a sweep round a helix,
   /axes for scale per axis, /equal or /two for chamfer's types); /v-top
   (any view cube view) sets the camera. Each shows the drag handles the app
   draws for it (none for combine and mirror, which have no value to drag).
@@ -66,6 +67,7 @@
 .axc text { font: 700 5px system-ui, sans-serif; fill: var(--ax); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
 .band { fill: var(--accent); fill-opacity: .22; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; pointer-events: none; }
 .band.ring { fill: none; }
+.swp { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .pplane { fill: var(--accent); fill-opacity: .08; stroke: var(--accent); stroke-opacity: .7; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 
 /* The drag handles the app draws for the operation being set up (the
@@ -1276,6 +1278,157 @@ Object.assign(OPS, {
       return handleSvg({ cls: 'modify', at: x.p(up), out: x.n(r.f.n), shaft: arcAbout(up, h.c, h.d, 0, r.a, 16) });
     },
     row: (o, r) => ({ meta: fmt(r.a) + '°', info: `${FACE_NAME[o.face]} · ${fmt(r.a)}° from Base top` }),
+  },
+});
+
+// ---------------------------------------------------------------- sweep and loft
+// Address only (#bracket/op:sweep, op:sweep/helix, op:loft): no sketch
+// of the mock holds their profiles and paths, so each stands beside the
+// bracket as the operation draws it. Their handles are the app's: a
+// sweep's twist on a ring 60 px out about its path's end; a helix's pitch
+// on its axis from the profile's foot and its turns up from the
+// profile's middle; a loft's seam knob at each section's start, its
+// arrow along the loop, dragged round the corners. Teal, as a pattern's
+// count, but the pitch.
+// Points along the sweep's path with their unit tangents: up 30 from
+// the profile's middle at (−45, 45), a quarter turn of radius 15 towards
+// −x, then on 15. In one plane (y = 45), so its frames keep y.
+const SWEEP_AT = [-45, 45];
+function sweepPath() {
+  const [x, y] = SWEEP_AT, out = [];
+  for (let i = 0; i <= 6; i++) out.push({ p: [x, y, 5 * i], t: [0, 0, 1] });
+  for (let i = 1; i <= 12; i++) {
+    const a = i / 12 * Math.PI / 2;
+    out.push({ p: [x - 15 + 15 * Math.cos(a), y, 30 + 15 * Math.sin(a)], t: [-Math.sin(a), 0, Math.cos(a)] });
+  }
+  for (let i = 1; i <= 4; i++) out.push({ p: [x - 15 - 15 * i / 4, y, 45], t: [-1, 0, 0] });
+  return out;
+}
+// A tube of loops along a path: each loop (counter-clockwise about its
+// tangent) to the next, smooth, the ends capped.
+function tubeFaces(loops, ends = true) {
+  const faces = [];
+  for (let i = 0; i + 1 < loops.length; i++) {
+    const a = loops[i], b = loops[i + 1], k = a.length;
+    for (let j = 0; j < k; j++) { const p = [a[j], a[(j + 1) % k], b[(j + 1) % k], b[j]]; faces.push({ smooth: true, n: newell(p), p }); }
+  }
+  if (ends) faces.push({ n: mul(newell(loops[0]), -1), p: [...loops[0]].reverse() }, { n: newell(loops.at(-1)), p: loops.at(-1) });
+  return faces.map(f => ({ ...f, draft: true, tint: 's' }));
+}
+const hermite = (p0, m0, p1, m1, t) => {
+  const t2 = t * t, t3 = t2 * t;
+  return add(add(mul(p0, 2 * t3 - 3 * t2 + 1), mul(m0, t3 - 2 * t2 + t)), add(mul(p1, -2 * t3 + 3 * t2), mul(m1, t3 - t2)));
+};
+// A loft's sections: a square, a hexagon and a turned rectangle, each 48
+// points round from its start corner, counter-clockwise from above.
+const LOFT_N = 48;
+const LOFT_SECTIONS = [
+  { name: 'Sketch 6', c: [-50, 45, 0], vs: [[12, 12], [-12, 12], [-12, -12], [12, -12]] },
+  { name: 'Sketch 7', c: [-50, 45, 25], vs: Array.from({ length: 6 }, (_, k) => [9 * Math.cos(k * Math.PI / 3), 9 * Math.sin(k * Math.PI / 3)]) },
+  { name: 'Sketch 8', c: [-48, 47, 50], vs: [[8, 4], [-8, 4], [-8, -4], [8, -4]].map(([x, y]) => [x * Math.cos(rad(25)) - y * Math.sin(rad(25)), x * Math.sin(rad(25)) + y * Math.cos(rad(25))]) },
+];
+function loftLoop(sec, start) {
+  const vs = sec.vs.map((_, k) => sec.vs[(start + k) % sec.vs.length]), n = vs.length;
+  const lens = vs.map((v, k) => Math.hypot(vs[(k + 1) % n][0] - v[0], vs[(k + 1) % n][1] - v[1])), total = lens.reduce((a, b) => a + b);
+  return Array.from({ length: LOFT_N }, (_, i) => {
+    let d = total * i / LOFT_N, e = 0;
+    while (d > lens[e] + 1e-9) d -= lens[e++];
+    const a = vs[e], b = vs[(e + 1) % n], t = d / lens[e];
+    return add(sec.c, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 0]);
+  });
+}
+Object.assign(CAT, { sweep: 'solid', loft: 'solid' });
+const SWEEP_ALONG = [['path', 'Path', 'sweep'], ['helix', 'Helix', 'revolve']];
+Object.assign(OPS, {
+  sweep: {
+    label: 'Sweep', icon: 'sweep',
+    picks: {},
+    init: () => ({ along: flag('helix') ? 'helix' : 'path', keep: false, twist: '90°', pitch: '8 mm', turns: '4', op: 'new', excl: [], pick: null }),
+    body: (o, m, r) => `
+      ${pickOne({ ...o, profile: 1 }, 'profile', 'Profile', o.along === 'helix' ? 'Sketch 6 · region 1' : 'Sketch 5 · region 1', '', 'se-region')}
+      <h4>Along</h4>
+      ${choices(o, 'along', SWEEP_ALONG)}
+      ${o.along === 'path'
+        ? `${pickOne({ ...o, path: 1 }, 'path', 'Path', 'Sketch 6 · 3 curves', '', 'line')}${tick(o, 'keep', 'Keep orientation')}${numField(o, 'twist', 'Twist', r)}`
+        : `${pickOne({ ...o, axis: 1 }, 'axis', 'Axis', 'Cylinder · round face', '', 'se-axis')}${numField(o, 'pitch', 'Pitch', r)}${numField(o, 'turns', 'Turns', r)}`}
+      <h4>Operation</h4>
+      ${choices(o, 'op', BOOLS)}`,
+    check(o) {
+      const r = { errs: {} };
+      if (o.along === 'path') r.tw = readVal(o, 'twist', r.errs, { unit: 'deg', signed: true, max: 2880 });
+      else { r.pitch = readVal(o, 'pitch', r.errs); r.turns = readVal(o, 'turns', r.errs, { unit: 'count', max: 1000 }); }
+      return r;
+    },
+    // Along the path: 12 × 6 about the path's start, the twist spread
+    // along it; along the helix: a ring of radius 2.5 on the plane through
+    // the cylinder's axis, 18 out, climbing round it.
+    preview(o, m, r) {
+      if (o.along === 'path') {
+        const path = sweepPath(), prof = [[6, 3], [-6, 3], [-6, -3], [6, -3]], tw = r.tw ?? 0;
+        const loops = path.map((f, i) => {
+          const a = rad(tw * i / (path.length - 1)), U = [0, 1, 0], V = cross(f.t, U);
+          const u = add(mul(U, Math.cos(a)), mul(V, Math.sin(a))), v = add(mul(U, -Math.sin(a)), mul(V, Math.cos(a)));
+          return prof.map(([x, y]) => add(f.p, add(mul(u, x), mul(v, y))));
+        });
+        return { faces: tubeFaces(loops), svg: `<polygon class="rgn on" points="${pts(loops[0])}"/><polyline class="swp" points="${pts(path.map(f => f.p))}"/>` };
+      }
+      const [cx, cy] = [-25, -40], pitch = r.pitch ?? 8, turns = Math.min(r.turns ?? 4, 8), steps = Math.ceil(turns * 32);
+      const ring = Array.from({ length: 12 }, (_, k) => [2.5 * Math.cos(k * Math.PI / 6), 2.5 * Math.sin(k * Math.PI / 6)]);
+      const loops = Array.from({ length: steps + 1 }, (_, i) => {
+        const a = 2 * Math.PI * turns * i / steps, out = [Math.cos(a), Math.sin(a), 0], up = pitch * turns * i / steps;
+        const c = [cx + 18 * out[0], cy + 18 * out[1], 3 + up];
+        return ring.map(([x, z]) => add(c, add(mul(out, x), [0, 0, z])));
+      });
+      return { faces: tubeFaces(loops), svg: `<polygon class="rgn on" points="${pts(loops[0])}"/><g class="axc on" style="--ax:var(--accent)">${lineP([cx, cy, -10], [cx, cy, 50], 'vis')}</g>` };
+    },
+    handles(o, m, r) {
+      if (o.along === 'path') {
+        const end = sweepPath().at(-1), t = end.t, zero = [0, 1, 0], R = HD.mm(end.p, 60), tw = r.tw;
+        const kn = XF.turn(end.p, t, tw).p(add(end.p, mul(zero, R))), out = mul(norm(cross(t, sub(kn, end.p))), tw < 0 ? -1 : 1);
+        return handleSvg({ cls: 'count', at: kn, out, shaft: Math.abs(tw) > 1e-9 ? arcAbout(add(end.p, mul(zero, R)), end.p, t, 0, tw, Math.max(8, Math.ceil(Math.abs(tw) / 6))) : null });
+      }
+      const foot = [-25, -40, 3], middle = [-7, -40, 3], up = [0, 0, 1];
+      const pitchAt = add(foot, mul(up, r.pitch)), turnsAt = add(middle, mul(up, r.pitch * r.turns));
+      return handleSvg({ at: pitchAt, out: up, shaft: [foot, pitchAt] }) + handleSvg({ cls: 'count', at: turnsAt, out: up, shaft: [middle, turnsAt] });
+    },
+    row: (o, r) => o.along === 'path'
+      ? { meta: fmt(r.tw) + '°', info: `Along Sketch 6 · ${o.keep ? 'Keep orientation' : 'Follow path'} · Twist ${fmt(r.tw)}° · ${labelOf(BOOLS, o.op)}` }
+      : { meta: fmt(r.turns) + ' turns', info: `Helix · ${fmt(r.turns)} turns · ${labelOf(BOOLS, o.op)}` },
+  },
+  loft: {
+    label: 'Loft', icon: 'loft',
+    picks: {},
+    init: () => ({ starts: [0, 1, 0], mode: 'smooth', op: 'new', excl: [], pick: null }),
+    body: (o, m, r) => `
+      <div class="fld"><label>Sections</label><div class="pf list">${LOFT_SECTIONS.map((sec, i) =>
+        `<span class="chip"><span class="ci">${icon('se-region')}</span><span class="nm">Section ${i + 1}</span><span class="meta">${sec.name}</span></span>`).join('')}</div></div>
+      <h4>Between sections</h4>
+      ${choices(o, 'mode', [['smooth', 'Smooth'], ['ruled', 'Ruled']])}
+      <h4>Operation</h4>
+      ${choices(o, 'op', BOOLS)}`,
+    check: () => ({ errs: {} }),
+    // Each column through the sections' matching points, Catmull-Rom
+    // inside (straight for Ruled), the ends' tangents to the next.
+    loops(o) {
+      const Q = LOFT_SECTIONS.map((sec, i) => loftLoop(sec, o.starts[i])), rows = [], n = 10;
+      const m = [j => sub(Q[1][j], Q[0][j]), j => mul(sub(Q[2][j], Q[0][j]), .5), j => sub(Q[2][j], Q[1][j])];
+      for (let s = 0; s < 2; s++)
+        for (let i = s ? 0 : 0; i <= n - (s ? 0 : 1); i++)
+          rows.push(Q[0].map((_, j) => o.mode === 'ruled'
+            ? add(Q[s][j], mul(sub(Q[s + 1][j], Q[s][j]), i / n))
+            : hermite(Q[s][j], m[s](j), Q[s + 1][j], m[s + 1](j), i / n)));
+      return { Q, rows };
+    },
+    preview(o) {
+      const { Q, rows } = this.loops(o);
+      return { faces: tubeFaces(rows), svg: Q.map(q => `<polygon class="rgn on" points="${pts(q)}"/>`).join('') };
+    },
+    // A seam knob at each section's start, its arrow towards the next corner.
+    handles: o => LOFT_SECTIONS.map((sec, i) => {
+      const k = sec.vs.length, a = sec.vs[o.starts[i] % k], b = sec.vs[(o.starts[i] + 1) % k], at = add(sec.c, [...a, 0]);
+      return handleSvg({ cls: 'count', at, out: norm([b[0] - a[0], b[1] - a[1], 0]) });
+    }).join(''),
+    row: o => ({ meta: '3 sections', info: `3 sections · ${o.mode === 'ruled' ? 'Ruled' : 'Smooth'} · ${labelOf(BOOLS, o.op)}` }),
   },
 });
 
