@@ -114,3 +114,9 @@ debug = false
 # kernel's own opt-level: at 0 its tests run about 8 times slower.
 [profile.dev.package.varde-kernel]
 opt-level = 1
+
+# Likewise the sketch solver's sparse factorization, faer's generic code
+# compiled at the sketch's opt-level, and its profile and offset math: at
+# 0 its tests run over twice as slow.
+[profile.dev.package.varde-sketch]
+opt-level = 1

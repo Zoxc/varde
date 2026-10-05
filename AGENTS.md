@@ -88,8 +88,9 @@ there is no adapter. Tests pass temporary directories (or none) to
 `varde_io::Stores` so they never touch the user's config/data dirs.
 
 The dev profile builds `varde-kernel` at `opt-level = 1` (its tests run about
-8 times slower at 0). To debug it unoptimized, pass
-`--config 'profile.dev.package.varde-kernel.opt-level=0'`.
+8 times slower at 0), and `varde-sketch` too (over twice as slow at 0). To
+debug one unoptimized, pass
+`--config 'profile.dev.package.varde-kernel.opt-level=0'` (or `varde-sketch`).
 Dev builds carry line tables only (dependencies none); for variables in a
 debugger, add `--config 'profile.dev.debug="full"'`.
 
