@@ -642,6 +642,27 @@ fn space_clears_the_selection_in_a_sketch_and_the_timeline_s_outside() {
 }
 
 #[test]
+fn space_puts_down_the_tool_in_a_sketch() {
+    let (mut doc, [_, _, line, ..]) = with_shapes();
+    let space = || keyboard::Key::Named(key::Named::Space);
+    doc.look(Look::ClickGeometry {
+        hit: Some(line),
+        add: false,
+    });
+    doc.look(Look::SelectTool(Tool::Line));
+    doc.key(space());
+    let session = doc.sketch.as_ref().unwrap();
+    assert!(session.tool.is_none());
+    // The selection stays, and the next press clears it.
+    assert_eq!(selection(&doc), [line]);
+    doc.look(Look::ToggleConstrain);
+    doc.key(space());
+    assert!(!doc.sketch.as_ref().unwrap().constraining);
+    doc.key(space());
+    assert!(selection(&doc).is_empty());
+}
+
+#[test]
 fn delete_removes_the_selection_and_what_depends_on_it() {
     let (mut doc, [a, b, line, c, circle]) = with_shapes();
     let before = sketch(&doc).clone();

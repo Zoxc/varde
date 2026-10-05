@@ -893,6 +893,16 @@ impl Doc {
         }
     }
 
+    /// Puts down the tool in use, the Constrain tool too, and the drag
+    /// with it.
+    pub(crate) fn put_down_tool(&mut self) {
+        if let Some(session) = &mut self.sketch {
+            session.drag = None;
+            session.tool = None;
+            session.constraining = false;
+        }
+    }
+
     /// Shows the constraints' glyphs, or hides them.
     pub(crate) fn toggle_glyphs(&mut self) {
         if let Some(session) = &mut self.sketch {

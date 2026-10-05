@@ -682,6 +682,9 @@ pub enum Look {
     ToggleConstrain,
     /// Shows the constraints' glyphs in the viewport, or hides them.
     ToggleGlyphs,
+    /// Puts down the tool in use in the sketch being edited, the
+    /// Constrain tool too: `Space` while one is.
+    PutDownTool,
     /// Drags the item `id` of the sketch being edited, grabbed at `from`,
     /// to `to`, in sketch coordinates. Shown until it's dropped
     /// ([`Edit::DropGeometry`]) or `Esc` puts it back.

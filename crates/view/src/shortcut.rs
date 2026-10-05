@@ -369,6 +369,9 @@ pub struct DocumentKeys {
     pub geometry_selected: bool,
     /// Whether a tool drawing shapes is in use in the sketch being edited.
     pub drawing: bool,
+    /// Whether any tool is in use in the sketch being edited, the
+    /// Constrain tool included: `Space` puts it down.
+    pub tool: bool,
     /// Whether any dimensions are selected in the sketch being edited.
     pub dimensions_selected: bool,
     /// Whether the Dimension tool is placing a dimension of a circle or an
@@ -448,6 +451,7 @@ impl DocumentKeys {
             selected,
             geometry_selected: sketch.is_some_and(|sketch| !sketch.selection.is_empty()),
             drawing: sketch.is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool.draws())),
+            tool: sketch.is_some_and(|sketch| sketch.tool.is_some() || sketch.constraining),
             dimensions_selected: sketch.is_some_and(|sketch| {
                 let mut selected = sketch.selection.iter();
                 selected.any(|&id| sketch.sketch.dimension(id).is_some())
@@ -1032,10 +1036,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
         .into_iter()
         .chain(file_bindings(keys.editable, keys.edited))
         .chain(history_bindings(keys))
-        .chain([
-            sketch_binding(keys),
-            Binding::new(Shortcut::SPACE, Message::Look(Look::ClearSelection), true),
-        ])
+        .chain([sketch_binding(keys), space_binding(keys)])
         .chain(extrude.into_iter().flatten())
         .chain(commit)
         .chain(commit_revolve)
@@ -1045,6 +1046,18 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
         .chain(sketch.into_iter().flatten())
         .chain(crate::rail::set_bindings(keys.sketching))
         .collect()
+}
+
+/// `Space`: puts down the tool in use in the sketch being edited, if one
+/// is, else clears the selection. A value field with the focus takes
+/// `Space` itself, so it only gets here with none.
+fn space_binding(keys: DocumentKeys) -> Binding {
+    let message = if keys.sketching && keys.tool {
+        Look::PutDownTool
+    } else {
+        Look::ClearSelection
+    };
+    Binding::new(Shortcut::SPACE, Message::Look(message), true)
 }
 
 /// Whether pressing `key` with `modifiers` backs out as `Esc` does: `Esc`
@@ -1885,6 +1898,20 @@ mod tests {
             Some(Message::Look(Look::StartCombine))
         ));
         assert_eq!(Shortcut::COMBINE.label(), "B");
+    }
+
+    #[test]
+    fn space_puts_down_a_sketch_tool() {
+        let space = KeyPress::Named(Named::Space);
+        let tool = DocumentKeys {
+            sketching: true,
+            tool: true,
+            ..keys(true)
+        };
+        assert!(matches!(
+            pressed(document_bindings(tool), &space, Modifiers::empty()),
+            Some(Message::Look(Look::PutDownTool))
+        ));
     }
 
     #[test]

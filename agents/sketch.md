@@ -1314,7 +1314,9 @@ bar says why (`EditError::Sketch`).
   the most likely first: those tying items together first, and of
   horizontal or vertical, parallel or perpendicular, concentric or not,
   the one the geometry is nearer to; applying one clears the selection.
-  `Esc` puts it down.
+  `Esc` puts it down, as `Space` does it and any drawing tool
+  (`Look::PutDownTool`, `DocumentKeys::tool`; a focused value field takes
+  `Space` as text).
 - **The tool rail** (`varde-view`'s `rail.rs`, the app's `doc/rail.rs`):
   the same tools in sets, over the viewport's left (see
   `agents/viewport.md`). In a sketch: Draw (the drawing tools), Modify
@@ -1352,7 +1354,8 @@ bar says why (`EditError::Sketch`).
   inside it dragged left to right, what it touches right to left, `Ctrl`
   adding to the selection. The button held still over items that
   overlap lists them to choose one from ("Overlaps" in
-  `agents/viewport.md`). `Space` clears the selection everywhere: the
+  `agents/viewport.md`). `Space`, but where it puts a tool down, clears
+  the selection everywhere: the
   sketch's in a sketch, else the model's and the Timeline's (see
   "Selecting" in `agents/viewport.md`). A row of the Geometry or
   Constraints list, or a glyph, sends `Look::ClickRow`, which the app

@@ -686,6 +686,7 @@ impl Doc {
                 | Look::ClearSelection
                 | Look::SelectTool(_)
                 | Look::ToggleConstrain
+                | Look::PutDownTool
                 | Look::PressLabel { .. }
                 | Look::EditDimension { .. }
         ) {
@@ -700,6 +701,7 @@ impl Doc {
                 | Look::SelectBox { .. }
                 | Look::SelectTool(_)
                 | Look::ToggleConstrain
+                | Look::PutDownTool
                 | Look::PressLabel { .. }
                 | Look::DragGeometry { .. }
                 | Look::EditFeature(_)
@@ -947,6 +949,7 @@ impl Doc {
             Look::MirrorAbout => self.mirror_about(),
             Look::ToggleConstrain => self.toggle_constrain(),
             Look::ToggleGlyphs => self.toggle_glyphs(),
+            Look::PutDownTool => self.put_down_tool(),
             Look::SelectBox { ids, add } => self.select_box(ids, add),
             // While measuring, the selection is hidden, and kept for
             // after: Space doesn't clear what can't be seen.
