@@ -435,6 +435,13 @@ fn a_failing_draft_says_why_for_its_revision_only() {
     extrude.flip = true;
     feed.request_with(&editor, None, drafted((feature, extrude)), None);
     assert_eq!(feed.draft_error(), None);
+    // The panel keeps the one before until the answer, or SLOW passes.
+    assert!(feed.shown_draft_error().is_some());
+    let now = Instant::now();
+    feed.tick(&editor, now);
+    assert!(feed.shown_draft_error().is_some());
+    feed.tick(&editor, now + SLOW);
+    assert_eq!(feed.shown_draft_error(), None);
 }
 
 #[test]

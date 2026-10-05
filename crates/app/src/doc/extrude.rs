@@ -461,7 +461,7 @@ impl Doc {
             targets: self.body_targets(session.operation, session.feature, &session.targets),
             grabbed: session.grabbed,
             hover: self.panel_hover(),
-            error: self.feed.draft_error(),
+            error: self.feed.shown_draft_error(),
             show_error: self.draft_framed(),
             refused: session.refused(&document.design()),
             held: self.held(session.feature, session.operation),

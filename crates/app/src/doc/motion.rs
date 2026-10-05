@@ -2445,7 +2445,7 @@ impl Doc {
             refused: (session.gone().map(str::to_owned))
                 .or_else(|| session.refused(&design))
                 .or_else(|| self.motion_held()),
-            error: self.feed.draft_error(),
+            error: self.feed.shown_draft_error(),
             show_error: self.draft_framed(),
             checking: self.proposals.slow(),
             ready: self.commit_by(self.motion_ready(), false),

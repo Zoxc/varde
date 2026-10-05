@@ -432,6 +432,20 @@ impl MeshFeed {
             .flatten()
     }
 
+    /// Why the draft fails, as its panel says: [`MeshFeed::draft_error`],
+    /// but while a changed draft is on its way and that's not taken
+    /// [`SLOW`] yet, the failure of the one before it in the run, so the
+    /// error doesn't blink out on every change that fails again.
+    pub(crate) fn shown_draft_error(&self) -> Option<&str> {
+        let revision = self.draft.as_ref()?.revision;
+        let drafted = self.drafted.as_ref()?;
+        let slow = self.lagging.is_some_and(|(_, slow)| slow);
+        let held = drafted.revision >= self.run && drafted.revision < revision && !slow;
+        (drafted.revision == revision || held)
+            .then_some(drafted.error.as_deref())
+            .flatten()
+    }
+
     /// The bodies the draft asked for last, a cut that works, takes
     /// nothing from, once its answer is shown ([`Drafted::uncut`]).
     pub(crate) fn draft_uncut(&self) -> &[BodyId] {

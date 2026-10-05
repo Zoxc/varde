@@ -619,7 +619,7 @@ impl Doc {
             flip: session.flip,
             operation: session.operation,
             targets: self.body_targets(session.operation, session.feature, &session.targets),
-            error: self.feed.draft_error(),
+            error: self.feed.shown_draft_error(),
             show_error: self.draft_framed(),
             refused: session.refused(document),
             held: self.held(session.feature, session.operation),
