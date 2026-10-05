@@ -175,7 +175,7 @@ fn the_hole_cut_through_its_axis_is_two_lines() {
         assert!(((a.y - b.y).abs() - 10.0).abs() < 1e-9, "{a} {b}");
     }
     // The plate's top lies in no origin plane, but its bottom is in XY:
-    // refused with why.
+    // cut by its own plane, it gives its outline.
     let bottom = face(|form| matches!(*form, Form::Plane { n, d } if n.z < -0.5 && d.abs() < 1e-9));
     let (editor, feature) = linked(
         OriginPlane::XY,
@@ -183,8 +183,92 @@ fn the_hole_cut_through_its_axis_is_two_lines() {
         OutsideRef::Face(bottom),
     );
     let (relinked, broken) = found(&editor, feature);
-    assert!(relinked.is_none());
-    assert_eq!(broken, [FACE_IN_PLANE]);
+    assert!(broken.is_empty(), "{broken:?}");
+    assert_eq!(outline(&held(&relinked.unwrap())), (4, vec![8.0]));
+}
+
+/// The lines and the circles' radii (rounded to 1e-6) of `shape`.
+fn outline(shape: &LinkShape) -> (usize, Vec<f64>) {
+    let lines = (shape.curves.iter())
+        .filter(|curve| matches!(curve, Curve::Line { .. }))
+        .count();
+    let radii: Vec<f64> = (shape.curves.iter())
+        .filter_map(|curve| match *curve {
+            Curve::Circle { radius, .. } => Some((radius * 1e6).round() / 1e6),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shape.curves.len(), lines + radii.len(), "{shape:?}");
+    (lines, radii)
+}
+
+#[test]
+fn a_face_projects_to_its_outline_and_follows_its_feature() {
+    let top = face(|form| matches!(*form, Form::Plane { n, .. } if n.z > 0.5));
+    let (mut editor, feature) = linked(OriginPlane::XY, LinkKind::Project, OutsideRef::Face(top));
+    let (relinked, broken) = found(&editor, feature);
+    assert!(broken.is_empty(), "{broken:?}");
+    let relinked = relinked.unwrap();
+    assert_eq!(outline(&held(&relinked)), (4, vec![8.0]));
+    editor
+        .amend(Command::SetSketch {
+            feature,
+            sketch: Box::new(Sketch::clone(&relinked)),
+        })
+        .unwrap();
+    assert!(found(&editor, feature).0.is_none());
+
+    // Seen edge on, from the side, its outline is lines along the top.
+    let (side, _) = linked(OriginPlane::XZ, LinkKind::Project, OutsideRef::Face(top));
+    let shape = held(&found(&side, feature).0.unwrap());
+    assert!(
+        shape.curves.iter().all(|c| matches!(c, Curve::Line { .. })),
+        "{shape:?}"
+    );
+    assert!(
+        shape.points.iter().all(|p| (p.y - 10.0).abs() < 1e-9),
+        "{shape:?}"
+    );
+
+    // The plate's sketch edited: the hole smaller, then gone.
+    let first = editor.document().features()[0].id;
+    let plate = sketch_of(&editor, first).clone();
+    let circle = (plate.curves.iter())
+        .position(|entry| matches!(entry.curve, Curve::Circle { .. }))
+        .unwrap();
+    let mut smaller = plate.clone();
+    if let Curve::Circle { radius, .. } = &mut smaller.curves[circle].curve {
+        *radius = 5.0;
+    }
+    editor
+        .apply(Command::SetSketch {
+            feature: first,
+            sketch: Box::new(smaller),
+        })
+        .unwrap();
+    let (relinked, broken) = found(&editor, feature);
+    assert!(broken.is_empty(), "{broken:?}");
+    let relinked = relinked.unwrap();
+    assert_eq!(outline(&held(&relinked)), (4, vec![5.0]));
+    editor
+        .amend(Command::SetSketch {
+            feature,
+            sketch: Box::new(Sketch::clone(&relinked)),
+        })
+        .unwrap();
+
+    let mut solid = plate.clone();
+    let id = solid.curves[circle].id;
+    solid.delete(&[id]);
+    editor
+        .apply(Command::SetSketch {
+            feature: first,
+            sketch: Box::new(solid),
+        })
+        .unwrap();
+    let (relinked, broken) = found(&editor, feature);
+    assert!(broken.is_empty(), "{broken:?}");
+    assert_eq!(outline(&held(&relinked.unwrap())), (4, vec![]));
 }
 
 #[test]

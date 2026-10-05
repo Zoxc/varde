@@ -9,8 +9,8 @@
 //! that change (see `relink`); a click on what a link of the kind
 //! already comes from proposes deleting that link. A click on something
 //! the tool can't use says why in the status bar (`Doc::notice`).
-//! Project takes edges, corners and other sketches' curves and points;
-//! Intersect faces and edges. Only what's made before the sketch is
+//! Project takes edges, faces (their outlines), corners and other
+//! sketches' curves and points; Intersect faces and edges. Only what's made before the sketch is
 //! taken.
 
 use std::borrow::Cow;
@@ -181,7 +181,7 @@ impl Doc {
                 let edge = naming.edge_ref(index, edge, pick.at).map_err(refused)?;
                 Ok(OutsideRef::Edge(edge))
             }
-            (Tool::Intersect, Picked::Face(face)) => {
+            (_, Picked::Face(face)) => {
                 let face = (naming.checked_face_ref(index, face, pick.at)).map_err(refused)?;
                 Ok(OutsideRef::Face(face))
             }
@@ -191,7 +191,6 @@ impl Doc {
                 let corner = naming.corner_ref(index, corner).map_err(refused)?;
                 Ok(OutsideRef::Corner(corner))
             }
-            (Tool::Project, _) => Err(PROJECT_TAKES.into()),
             _ => Err(INTERSECT_TAKES.into()),
         }
     }
@@ -252,9 +251,6 @@ pub(crate) fn link_kind(tool: Tool) -> LinkKind {
     }
 }
 
-/// What Project takes, said when it's clicked on something else.
-const PROJECT_TAKES: &str = "Project takes edges, corners and other sketches' curves and points";
-
 /// What Intersect takes, said when it's clicked on something else.
 const INTERSECT_TAKES: &str = "Intersect takes faces and edges, cut with the sketch's plane";
 
@@ -268,14 +264,12 @@ fn later(tool: Tool, name: &str) -> String {
     format!("Only what's made before {name} can be {done}")
 }
 
-/// Whether `tool` takes the model's `target`'s kind: Project edges and
-/// vertices, Intersect faces and edges.
+/// Whether `tool` takes the model's `target`'s kind: Project faces,
+/// edges and vertices, Intersect faces and edges.
 fn takes_kind(tool: Tool, target: Picked) -> bool {
     matches!(
         (tool, target),
-        (_, Picked::Edge(_))
-            | (Tool::Project, Picked::Vertex(_))
-            | (Tool::Intersect, Picked::Face(_))
+        (_, Picked::Edge(_) | Picked::Face(_)) | (Tool::Project, Picked::Vertex(_))
     )
 }
 

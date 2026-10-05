@@ -12,9 +12,11 @@
 //! edge projected is sampled exactly along its conics and fitted
 //! ([`LinkShape::fit`]: a point, a line, a circle or an arc to the
 //! resolution, else a spline within the fit tolerance), a corner a
-//! point; an edge intersected gives the points where it crosses the
+//! point, a face its boundary's edges (outer loop and holes) projected
+//! likewise; an edge intersected gives the points where it crosses the
 //! plane, a face the curves where the plane cuts it
-//! ([`varde_kernel::section`]), each fitted likewise. One that isn't
+//! ([`varde_kernel::section`]), or its outline where it lies in the
+//! plane, each fitted likewise. One that isn't
 //! found, or gives nothing, is broken with why, keeping what it holds.
 //!
 //! A link whose shape found isn't the one it holds, to the resolution
@@ -61,9 +63,6 @@ pub(crate) const EDGE_MISSES: &str = "its edge doesn't cross the sketch's plane"
 pub(crate) const EDGE_IN_PLANE: &str = "its edge lies in the sketch's plane: project it instead";
 /// A face intersected that the plane doesn't cut.
 pub(crate) const FACE_MISSES: &str = "the sketch's plane doesn't cut its face";
-/// A face intersected that lies in the plane.
-pub(crate) const FACE_IN_PLANE: &str =
-    "its face lies in the sketch's plane: project its edges instead";
 /// More than a section or a sampling may take.
 pub(crate) const TOO_COMPLEX: &str = "it's too complex to follow";
 /// What it found can't be held by the sketch (past the limit).
@@ -210,12 +209,21 @@ fn one(
                     let solid = &made.solid;
                     let region = (topology.face(solid, &face.key, face.near))
                         .map_err(|_| FACE_NOT_FOUND.to_owned())?;
+                    let outline = || {
+                        let chains = outline(made, &topology, region, placement)?;
+                        LinkShape::fit(&chains, exact, fit).map_err(|why| why.to_string())
+                    };
+                    if kind == LinkKind::Project {
+                        return outline();
+                    }
                     let tris = &topology.regions()[region as usize].tris;
-                    let sections = section::face_section(solid, tris, &cut(placement), exact)
-                        .map_err(|why| match why {
-                            SectionError::InPlane => FACE_IN_PLANE.to_owned(),
-                            SectionError::TooComplex => TOO_COMPLEX.to_owned(),
-                        })?;
+                    let sections = match section::face_section(solid, tris, &cut(placement), exact)
+                    {
+                        Ok(sections) => sections,
+                        // Cut by its own plane, a face gives its outline.
+                        Err(SectionError::InPlane) => return outline(),
+                        Err(SectionError::TooComplex) => return Err(TOO_COMPLEX.to_owned()),
+                    };
                     if sections.is_empty() {
                         return Err(FACE_MISSES.to_owned());
                     }
@@ -327,6 +335,41 @@ fn on_body<T>(
 /// split may have moved onto another.
 fn not_there(why: &str) -> bool {
     [EDGE_NOT_FOUND, FACE_NOT_FOUND, CORNER_NOT_FOUND].contains(&why)
+}
+
+/// The boundary of the region `region` of `made`'s solid, its outer
+/// loop and holes, each edge ([`Chain`](varde_kernel::topology::Chain))
+/// with another region beside it sampled along its conics and projected
+/// square onto the plane of the sketch at `placement`, in that sketch.
+fn outline(
+    made: &BodySolid,
+    topology: &varde_kernel::topology::Topology,
+    region: u32,
+    placement: &Placement,
+) -> Result<Vec<SampledChain>, String> {
+    let mesh = made.solid.mesh();
+    let tris = mesh.tris().len();
+    let mut out = Vec::new();
+    for chain in topology.chains() {
+        let [a, b] = chain.regions;
+        if a == b || (a != region && b != region) {
+            continue;
+        }
+        if (chain.halfedges.iter()).any(|&h| (h as usize) / 3 >= tris) {
+            return Err(FACE_NOT_FOUND.to_owned());
+        }
+        let curves: Vec<_> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
+        let places = section::sample(&curves, PER_CONIC, chain.closed)
+            .map_err(|_| TOO_COMPLEX.to_owned())?;
+        out.push(SampledChain {
+            places: places.iter().map(|&p| placement.to_sketch(p)).collect(),
+            closed: chain.closed,
+        });
+    }
+    if out.is_empty() {
+        return Err(FACE_NOT_FOUND.to_owned());
+    }
+    Ok(out)
 }
 
 /// The places of `sections` in the sketch at `placement`.

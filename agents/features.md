@@ -461,8 +461,8 @@ sources`, a `LinkSource { link, source: OutsideRef }` per link, in the
 links' order). `OutsideRef` (`document/src/outside.rs`) is another
 sketch's feature and item ids, or an `EdgeRef`, a `FaceRef` or a
 `PointRef::Corner`, named as features name them; `OutsideRef::takes`
-says which a link's kind can take (Project: edges, corners, sketch
-items; Intersect: faces, edges). It lives in the document, not the
+says which a link's kind can take (Project: edges, faces, corners,
+sketch items; Intersect: faces, edges). It lives in the document, not the
 sketch, because `varde-sketch` can't name the model (`document` depends
 on `sketch`); the sketch holds only what the solver and editing need.
 
@@ -497,16 +497,22 @@ onto another body doesn't lose it, and a face or edge isn't looked for in
 the final model. A model edge projected is sampled along its conics
 (`varde_kernel::section::sample`, 32 places a conic) and fitted
 (`LinkShape::fit`, to the resolution, splines within the fit tolerance);
-a corner is a point; an edge intersected gives the points where it
-crosses the plane (`section::crossings`), a face the curves where the
-plane cuts it (`section::face_section`), fitted likewise. What it finds
+a corner is a point; a face projected is its outline (`link::outline`):
+every edge of its region with another region beside it, outer loop and
+holes, sampled and projected so, fitted together as one link; an edge
+intersected gives the points where it crosses the plane
+(`section::crossings`), a face the curves where the plane cuts it
+(`section::face_section`), fitted likewise, or its outline where it
+lies in the plane. Like every link, a face's follows the model: its
+loops changing (moved, resized, a hole added or gone) make the link
+stale and relinked (below). What it finds
 is cached by the solid's key, the source, the link's kind, the sketch's
 placement and the tolerance (a sketch source by that sketch's key and
 both placements). Found nothing is a broken link, with why (the words are
 `link.rs`'s constants: its sketch isn't there or isn't placed, it isn't
 in its sketch any more, the sketch isn't placed, its body is gone, its
 edge, face or corner wasn't found, its edge doesn't cross the plane or
-lies in it, the plane doesn't cut its face or it lies in it, too complex,
+lies in it, the plane doesn't cut its face, too complex,
 or a fit's refusal); it keeps what it holds.
 
 `link::relink`: a link whose shape found isn't what it holds, to the

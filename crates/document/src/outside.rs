@@ -30,17 +30,17 @@ pub enum OutsideRef {
 }
 
 impl OutsideRef {
-    /// Whether a link of `kind` can take it: Project an edge, a corner
-    /// or another sketch's item; Intersect a face or an edge.
+    /// Whether a link of `kind` can take it: Project an edge, a face
+    /// (its outline), a corner or another sketch's item; Intersect a
+    /// face or an edge.
     pub fn takes(&self, kind: LinkKind) -> bool {
         matches!(
             (kind, self),
-            (_, OutsideRef::Edge(_))
+            (_, OutsideRef::Edge(_) | OutsideRef::Face(_))
                 | (
                     LinkKind::Project,
                     OutsideRef::Sketch { .. } | OutsideRef::Corner(_)
                 )
-                | (LinkKind::Intersect, OutsideRef::Face(_))
         )
     }
 }

@@ -1164,7 +1164,8 @@ bar says why (`EditError::Sketch`).
     don't take the left button: the viewport sends `Look::ClickModel`
     and `Look::ClickSketch` as on the model (see "Sketches picked with
     the model" in `agents/viewport.md`), which the app turns into
-    `Doc::outside_click`. Project takes edges, corners (a vertex as the
+    `Doc::outside_click`. Project takes edges, faces (the face's outline:
+    its outer loop and holes, one link), corners (a vertex as the
     `PointRef::Corner` of its picking corner) and other sketches' curves
     and points; Intersect faces and edges. What it takes is named as a
     feature at the sketch's place names it (`Naming::before`:
@@ -1178,8 +1179,7 @@ bar says why (`EditError::Sketch`).
     holds nothing until the next model answers it, its geometry then
     folded into the change that added it (`agents/features.md`, Sketch
     links). Anything else is refused with why in the status bar (`Doc::notice`):
-    "Project takes edges, corners and other sketches' curves and
-    points", "Intersect takes faces and edges, cut with the sketch's
+    "Intersect takes faces and edges, cut with the sketch's
     plane", "Only what's made before Sketch 3 can be projected" (a later
     sketch, or a body or face made later). What's picked is drawn: the
     model's as selected (`Doc::outside_highlight`, found on each model

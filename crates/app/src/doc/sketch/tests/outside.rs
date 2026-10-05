@@ -113,7 +113,7 @@ fn item((sketch, item): (FeatureId, Id)) -> SketchItem {
 }
 
 #[test]
-fn project_picks_earlier_sketches_and_edges_and_refuses_the_rest() {
+fn project_picks_earlier_sketches_edges_and_faces_and_refuses_the_rest() {
     let Setup {
         mut doc,
         before,
@@ -157,7 +157,7 @@ fn project_picks_earlier_sketches_and_edges_and_refuses_the_rest() {
         double: false,
     });
     assert_eq!(outside(&doc), [wanted]);
-    // A later sketch's line, and a face, are refused, saying why.
+    // A later sketch's line is refused, saying why.
     doc.look(Look::ClickSketch {
         item: item(after),
         add: false,
@@ -168,13 +168,23 @@ fn project_picks_earlier_sketches_and_edges_and_refuses_the_rest() {
         doc.notice.as_deref(),
         Some(format!("Only what's made before {name} can be projected").as_str())
     );
+    // A face is taken whole, its outline, lit; clicked again, it's
+    // taken out.
+    let face = pick(&doc, 20.0, 5.0);
+    assert!(matches!(face.target, Picked::Face(_)), "{face:?}");
     doc.look(Look::ClickModel {
-        pick: Some(pick(&doc, 20.0, 5.0)),
+        pick: Some(face),
+        add: false,
+        double: false,
+    });
+    assert!(matches!(outside(&doc)[..], [_, OutsideRef::Face(_)]));
+    assert_eq!(doc.highlight().unwrap().selected_faces.len(), 1);
+    doc.look(Look::ClickModel {
+        pick: Some(face),
         add: false,
         double: false,
     });
     assert_eq!(outside(&doc), [wanted]);
-    assert!(doc.notice.as_deref().unwrap().starts_with("Project takes"));
     // A click on nothing picks nothing.
     doc.look(Look::ClickModel {
         pick: None,
