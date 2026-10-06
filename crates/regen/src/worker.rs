@@ -1,8 +1,8 @@
 //! A lane on the web: a Web Worker per document.
 //!
 //! The same API as the native lane, so the app doesn't tell them apart. The
-//! worker is a second wasm instance built from `src/bin/varde-regen-worker.rs`
-//! by trunk (see `crates/web/index.html`) and shares no memory with the
+//! worker is a second instance of the page's wasm, started in the role
+//! [`WORKER_ROLE`](crate::WORKER_ROLE), and shares no memory with the
 //! page: requests are posted as bytes and meshes come back as transferred
 //! buffers, see [`wire`]. The page's side never waits; how its requests
 //! reach the worker is [`varde_lane::page`]'s.
@@ -34,7 +34,7 @@ use crate::{Regenerator, Request, Response};
 /// read responses from [`Responses`]; dropping the latter terminates the
 /// worker.
 pub fn spawn() -> (Lane, Responses) {
-    mailbox::spawn("varde-regen-worker", "the regeneration worker", Regenerate)
+    mailbox::spawn(crate::WORKER_ROLE, "the regeneration worker", Regenerate)
 }
 
 /// How the lane's requests and replies cross, see [`wire`].

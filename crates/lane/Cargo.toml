@@ -20,8 +20,13 @@ js-sys.workspace = true
 web-sys = { workspace = true, features = [
     "console",
     "DedicatedWorkerGlobalScope",
+    "Document",
+    "Element",
     "ErrorEvent",
     "Event",
     "MessageEvent",
+    "Window",
     "Worker",
+    "WorkerOptions",
+    "WorkerType",
 ] }

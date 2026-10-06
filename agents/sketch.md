@@ -838,7 +838,7 @@ to `propose` as it does an `Add`'s).
 
 Proposals, drag steps and analyses run off the UI thread in a lane per
 open document, natively a thread (`thread.rs`) and on the web a Web Worker
-(`worker.rs`, the `varde-solve-worker` binary), built on `varde-lane` like
+(`worker.rs`, the web module in the role `solve`), built on `varde-lane` like
 the regeneration lane. `notes/SketchImpl.md` ("Built so far (step 2c)")
 has the details.
 

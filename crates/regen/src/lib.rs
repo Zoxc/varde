@@ -137,11 +137,17 @@ pub mod lane {
     pub type Responses = varde_lane::Responses<Request, Response>;
 }
 
-/// The regeneration Web Worker's side, run by its `main` (see
-/// `src/bin/varde-regen-worker.rs`), never by the page.
+/// The regeneration Web Worker's side, run by the web app's `serve_worker` in
+/// the role [`WORKER_ROLE`] (see `crates/web/src/lib.rs`), never by the
+/// page.
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
 pub use crate::worker::serve as serve_worker;
+
+/// The role the web app starts the regeneration Web Worker in.
+#[cfg(target_arch = "wasm32")]
+#[doc(hidden)]
+pub const WORKER_ROLE: &str = "regen";
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

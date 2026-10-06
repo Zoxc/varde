@@ -1,8 +1,10 @@
-//! The worker's side of a lane on the web, run by the Web Worker's `main`:
-//! listening to the page and posting back to it.
+//! The worker's side of a lane on the web, run by the web app's
+//! `serve_worker` in the worker's role: listening to the page and posting
+//! back to it.
 //!
-//! A worker is a wasm instance of its own, built from a binary of the
-//! lane's crate so it holds that lane's side only, not iced and wgpu.
+//! A worker is a wasm instance of its own of the page's module, see
+//! [`Host::start`](crate::page::Host::start): the same code, but none of the
+//! page's memory.
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -18,7 +20,7 @@ fn scope() -> DedicatedWorkerGlobalScope {
 /// Runs the worker's side of a lane, called `name` in errors, e.g. "the
 /// file worker": hands each message the page posts to `on_message`, for as
 /// long as the worker lives, and tells the page it listens. Called once, by
-/// the worker's `main`. Anything the page posts that isn't a [`Message`],
+/// `serve_worker`. Anything the page posts that isn't a [`Message`],
 /// or that `on_message` refuses, throws, worded "… got something else" or
 /// "… got something broken: …", which stops the worker.
 ///

@@ -135,12 +135,11 @@ have no UI code; `render` has no iced dependency.
     new designs and `recent.toml`. File pickers (`io::pick`) run on the UI
     thread/page, never in the lane. Web side: OPFS (`io/src/opfs.rs`,
     `io/src/web.rs`) and the File System Access API or download fallback.
-- **Web workers**: trunk builds four wasm binaries from `crates/web/index.html`:
-  `varde-web`, `varde-regen-worker` (a bin of `varde-regen`),
-  `varde-solve-worker` (a bin of `varde-solve`) and `varde-io-worker` (a bin of
-  `varde-io`), `no-modules` target, started via
-  `crates/web/worker_loader.js` rather than trunk's shims. Page and worker share
-  no memory: messages are postcard bytes in transferred `ArrayBuffer`s, validated
+- **Web workers**: trunk builds one wasm module from `crates/web/index.html`,
+  `varde-web` (a `cdylib`), which runs the app on the page and each worker in
+  its role (`serve_worker`): the page posts its compiled module, glue URL and
+  role to `crates/web/worker_loader.js`, a module worker (see
+  `agents/crates.md`). Page and worker share no memory: messages are postcard bytes in transferred `ArrayBuffer`s, validated
   on receipt (`regen::wire`, `solve::wire`, `io::wire`).
 - **Rendering**: the viewport is an iced `shader` widget whose primitive calls
   `varde_render::Renderer`, compositing onto iced's frame; GPU objects stay on the

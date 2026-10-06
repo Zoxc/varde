@@ -2,9 +2,9 @@
 //! order.
 //!
 //! The same API as the native lane, so the app doesn't tell them apart. The
-//! worker is a second wasm instance built from `src/bin/varde-io-worker.rs`
-//! by trunk (see `crates/web/index.html`), next to the regeneration worker
-//! of `varde-regen`. It shares no memory with the page: messages cross as
+//! worker is a second instance of the page's wasm, started in the role
+//! [`WORKER_ROLE`](crate::WORKER_ROLE), as the regeneration and solver
+//! workers are. It shares no memory with the page: messages cross as
 //! bytes, see [`wire`].
 //!
 //! The code here is split by where it runs. `page` is the page's side: the

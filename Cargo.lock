@@ -4340,8 +4340,14 @@ dependencies = [
  "console_error_panic_hook",
  "console_log",
  "iced",
+ "js-sys",
  "log",
  "varde-app",
+ "varde-io",
+ "varde-regen",
+ "varde-solve",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

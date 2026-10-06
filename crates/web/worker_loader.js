@@ -1,15 +1,24 @@
-// Starts a Web Worker that trunk built with wasm-bindgen's `no-modules`
-// target, named by the query: `./worker_loader.js?varde-io-worker`.
+// Starts a Web Worker, a module worker running an instance of the page's
+// own wasm. The page posts it first the compiled `WebAssembly.Module`, the
+// URL of wasm-bindgen's glue and the worker's role (see
+// `varde_lane::page::Host::start`); the worker imports the glue,
+// instantiates the module and serves the role, whose code then takes the
+// messages from the page.
 //
-// Trunk's own loader shim leaves the promise of `wasm_bindgen` unhandled,
-// so a `.wasm` that fails to load only fires `unhandledrejection` in the
-// worker, which the page never hears of. Rethrown from a task of its own,
-// the failure is uncaught and reaches the page's `Worker.onerror`, as a
-// script that failed to load does.
-const name = self.location.search.slice(1);
-importScripts(`./${name}.js`);
-wasm_bindgen({ module_or_path: `./${name}_bg.wasm` }).catch((error) => {
-  setTimeout(() => {
-    throw error;
-  });
-});
+// Whatever fails here is rethrown from a task of its own, so it's
+// uncaught and reaches the page's `Worker.onerror`, as a script that
+// failed to load does, rather than only firing `unhandledrejection` in
+// the worker, which the page never hears of.
+self.onmessage = async (event) => {
+  self.onmessage = null;
+  try {
+    const [module, glue, role] = event.data;
+    const bindings = await import(glue);
+    await bindings.default({ module_or_path: module });
+    bindings.serve_worker(role);
+  } catch (error) {
+    setTimeout(() => {
+      throw error;
+    });
+  }
+};

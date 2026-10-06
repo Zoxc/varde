@@ -16,13 +16,9 @@
       canvas:focus, canvas:focus-visible { outline: none; }
     </style>
     <link data-trunk rel="icon" href="../../assets/logo.svg" />
-    <link data-trunk rel="rust" data-bin="varde-web" />
-    <!-- The regeneration Web Worker, from varde-regen. -->
-    <link data-trunk rel="rust" href="../regen/Cargo.toml" data-bin="varde-regen-worker" data-type="worker" />
-    <!-- The solver Web Worker, from varde-solve. -->
-    <link data-trunk rel="rust" href="../solve/Cargo.toml" data-bin="varde-solve-worker" data-type="worker" />
-    <!-- The IO Web Worker, from varde-io: new designs in the Origin Private File System. -->
-    <link data-trunk rel="rust" href="../io/Cargo.toml" data-bin="varde-io-worker" data-type="worker" />
+    <!-- The app, and the regeneration, solver and IO Web Workers, which
+         instantiate the same module. -->
+    <link data-trunk rel="rust" />
     <!-- Starts any of the workers, see the script. -->
     <link data-trunk rel="copy-file" href="worker_loader.js" />
   </head>

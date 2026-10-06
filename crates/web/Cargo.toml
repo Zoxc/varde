@@ -5,13 +5,24 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# A library, for the one wasm module the page and its workers instantiate.
+[lib]
+crate-type = ["cdylib"]
+
 [features]
 # The sample designs, listed on the start page: for the GitHub Pages build
-# (`data-cargo-features="samples"` on the page's link to this binary).
+# (`data-cargo-features="samples"` on the page's link to this crate).
 samples = ["varde-app/samples"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 varde-app.workspace = true
+# The workers, which the module runs too.
+varde-regen.workspace = true
+varde-solve.workspace = true
+varde-io.workspace = true
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window"] }
 iced = { workspace = true, features = ["webgl", "fira-sans"] }
 console_error_panic_hook.workspace = true
 console_log.workspace = true

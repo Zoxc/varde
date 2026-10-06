@@ -250,7 +250,7 @@ its thumbnail (`thumbnail::of_file`, decoded once into
 its name and a line on what it shows. They're built into the app with `include_bytes!` behind
 `varde-app`'s `samples` feature (`crates/app/src/samples.rs`), which
 `varde-web`'s feature of the name turns on; trunk passes it for a
-`data-cargo-features="samples"` on the page's `varde-web` link, which the
+`data-cargo-features="samples"` on the page's `rel="rust"` link, which the
 GitHub Pages build adds. Without it (`trunk serve`, native builds) there
 are none, and the heading isn't shown. Built in rather than fetched as
 files: they're a few kilobytes, need no manifest, copy step or fetch

@@ -31,10 +31,10 @@ use std::task::{Context, Poll};
 
 use futures::Stream;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
-use js_sys::Uint8Array;
+use js_sys::{Array, Uint8Array};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::{ErrorEvent, Event, MessageEvent, Worker};
+use web_sys::{ErrorEvent, Event, MessageEvent, Worker, WorkerOptions, WorkerType};
 
 use crate::Transport;
 pub use crate::message::Refused;
@@ -68,22 +68,21 @@ pub trait Page<R> {
     fn fail(&self, error: String);
 }
 
-/// Starts a lane on the page, with a worker built from the binary called
-/// `bin`, e.g. "varde-io-worker" for `src/bin/varde-io-worker.rs` (see
-/// `crates/web/index.html`), and called `name` in errors, e.g. "the file
-/// worker": `build` makes its [`Page`] from the
+/// Starts a lane on the page, with a worker in the role `role`, e.g. "io",
+/// which the web app's `serve_worker` runs (see `crates/web/src/lib.rs`),
+/// and called `name` in errors, e.g. "the file worker": `build` makes its [`Page`] from the
 /// worker's [`Host`], not started yet, and the sender the page answers
 /// through. The worker then starts, or the page hears why not through
 /// [`Page::fail`]. Send requests through the [`Lane`], read responses from
 /// [`Responses`]; dropping the latter terminates the worker.
 pub fn spawn<R: 'static, S, P: Page<R> + 'static>(
-    bin: &'static str,
+    role: &'static str,
     name: &'static str,
     build: impl FnOnce(Host, UnboundedSender<S>) -> P,
 ) -> (Lane<R>, Responses<R, S>) {
     let (lane, requests) = unbounded();
     let (sender, receiver) = unbounded();
-    let page = Rc::new_cyclic(|this: &Weak<P>| build(Host::new(this, bin, name), sender));
+    let page = Rc::new_cyclic(|this: &Weak<P>| build(Host::new(this, role, name), sender));
     if let Err(error) = page.host().start() {
         // Already logged and stopped by `start`.
         page.fail(error);
@@ -160,11 +159,28 @@ impl<R, S> Drop for Responses<R, S> {
 /// `crates/web/worker_loader.js`.
 const LOADER: &str = "./worker_loader.js";
 
+/// The URL of wasm-bindgen's glue for the page's wasm, which a worker
+/// imports to instantiate the module the page posts it. Trunk names it by
+/// a hash of its contents and preloads it from the page's `<head>`, the
+/// one module it preloads.
+fn glue() -> Result<String, String> {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| {
+            document
+                .query_selector(r#"link[rel="modulepreload"]"#)
+                .ok()
+                .flatten()
+        })
+        .and_then(|link| link.get_attribute("href"))
+        .ok_or_else(|| "the page doesn't preload its wasm's glue".to_owned())
+}
+
 /// A Web Worker and the callbacks it calls, which hold the page they call
 /// back weakly: the page owns them, so a strong hold would keep both alive.
 pub struct Host {
-    /// The binary the worker is built from, which the loader loads.
-    bin: &'static str,
+    /// The worker's role, which the loader starts it in.
+    role: &'static str,
     /// What the worker is called in errors, e.g. "the file worker".
     name: &'static str,
     /// `None` before the worker starts and after it stopped.
@@ -176,11 +192,15 @@ pub struct Host {
 }
 
 impl Host {
-    /// A host for the worker built from the binary `bin`, called `name` in
+    /// A host for a worker in the role `role`, called `name` in
     /// errors, that isn't started yet. Its messages go to the page `this`
     /// refers to, see [`deliver`], and if it stops, why goes to
     /// [`Page::fail`]. For a page made with `Rc::new_cyclic`.
-    fn new<R, P: Page<R> + 'static>(this: &Weak<P>, bin: &'static str, name: &'static str) -> Self {
+    fn new<R, P: Page<R> + 'static>(
+        this: &Weak<P>,
+        role: &'static str,
+        name: &'static str,
+    ) -> Self {
         let weak = this.clone();
         let on_message = Closure::new(move |event: MessageEvent| {
             if let Some(page) = weak.upgrade() {
@@ -198,7 +218,7 @@ impl Host {
             }
         });
         Self {
-            bin,
+            role,
             name,
             worker: RefCell::default(),
             ready: Cell::new(false),
@@ -208,14 +228,23 @@ impl Host {
     }
 
     /// Starts a worker, replacing none: the one before must have stopped.
-    /// If it can't, why is logged, for the page to [`fail`](Page::fail)
-    /// with.
+    /// The worker is an instance of the page's own wasm module, which is
+    /// posted to it, compiled, with the glue's URL and the role, for the
+    /// loader to start it in. If it can't, why is logged, for the page to
+    /// [`fail`](Page::fail) with.
     pub fn start(&self) -> Result<(), String> {
-        let worker = Worker::new(&format!("{LOADER}?{}", self.bin))
-            .map_err(|e| self.stopped(format!("couldn't start {}: {e:?}", self.name)))?;
+        let couldnt = |e| self.stopped(format!("couldn't start {}: {e}", self.name));
+        let glue = glue().map_err(couldnt)?;
+        let options = WorkerOptions::new();
+        options.set_type(WorkerType::Module);
+        let worker =
+            Worker::new_with_options(LOADER, &options).map_err(|e| couldnt(format!("{e:?}")))?;
         worker.set_onmessage(Some(self.on_message.as_ref().unchecked_ref()));
         worker.set_onerror(Some(self.on_error.as_ref().unchecked_ref()));
+        let start = Array::of3(&wasm_bindgen::module(), &glue.into(), &self.role.into());
+        let posted = worker.post_message(&start);
         *self.worker.borrow_mut() = Some(worker);
+        posted.map_err(|e| couldnt(format!("{e:?}")))?;
         self.ready.set(false);
         Ok(())
     }

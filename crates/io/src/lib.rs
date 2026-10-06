@@ -105,11 +105,17 @@ pub mod lane {
     pub type Responses = varde_lane::Responses<Request, Response>;
 }
 
-/// The IO Web Worker's side, run by its `main` (see
-/// `src/bin/varde-io-worker.rs`), never by the page.
+/// The IO Web Worker's side, run by the web app's `serve_worker` in
+/// the role [`WORKER_ROLE`] (see `crates/web/src/lib.rs`), never by the
+/// page.
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
 pub use crate::web::serve as serve_worker;
+
+/// The role the web app starts the IO Web Worker in.
+#[cfg(target_arch = "wasm32")]
+#[doc(hidden)]
+pub const WORKER_ROLE: &str = "io";
 
 use std::fmt;
 use std::path::PathBuf;

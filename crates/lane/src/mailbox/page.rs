@@ -52,18 +52,18 @@ pub trait Wire: 'static {
     fn starting(&self) {}
 }
 
-/// Starts a lane on the page whose worker, built from the binary `bin` and
+/// Starts a lane on the page whose worker, in the role `role` and
 /// called `name` in errors (see [`page::spawn`]), takes one request at a
 /// time, speaking `wire`. Started now rather than on the first request, so
 /// it loads while the document opens. Send requests through the [`Lane`],
 /// read responses from [`Responses`]; dropping the latter terminates the
 /// worker.
-pub fn spawn<W, R, S>(bin: &'static str, name: &'static str, wire: W) -> (Lane<R>, Responses<R, S>)
+pub fn spawn<W, R, S>(role: &'static str, name: &'static str, wire: W) -> (Lane<R>, Responses<R, S>)
 where
     W: Wire<Request = R, Response = S>,
     R: 'static,
 {
-    page::spawn(bin, name, |host, sender| Posting {
+    page::spawn(role, name, |host, sender| Posting {
         host,
         mailbox: RefCell::default(),
         wire,

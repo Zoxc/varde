@@ -23,7 +23,7 @@ use crate::{Chosen, Picked, Request, Response, SaveTo};
 /// requests through the [`Lane`], read responses from [`Responses`];
 /// dropping the latter terminates the worker.
 pub fn spawn() -> (Lane, Responses) {
-    page::spawn("varde-io-worker", "the file worker", |host, sender| {
+    page::spawn(crate::WORKER_ROLE, "the file worker", |host, sender| {
         Shared {
             host,
             state: RefCell::new(State {
