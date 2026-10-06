@@ -11,6 +11,11 @@
 //!                           | corners | edge corners | wire vertices
 //!                           | wire ends | part ends
 //!                           | line points | line ends
+//!                           | upload points | upload ranges | upload boxes
+//!                           | triangle nodes | triangle items
+//!                           | segment nodes | segment items
+//!                           | vertex nodes | vertex items
+//!                           | corner faces | chain starts | chain items
 //!         | postcard(Head) | postcard(Vec<ExportedBody>)
 //!         | postcard(Head)
 //! ```
@@ -24,7 +29,9 @@
 //! transferred, not copied. A [`Response`] crosses as its [`Head`], which
 //! has no model: the model's parts follow only a [`Head::Regenerated`] and
 //! are the bytes of the [`RenderMesh`]'s and the sketches' [`RenderLines`]'
-//! vectors as they are in memory (little endian on wasm). The [`Picking`]
+//! vectors as they are in memory (little endian on wasm), then those of
+//! the mesh's [`MeshUpload`] and its [`PickTables`], which the worker
+//! builds so the page doesn't. The [`Picking`]
 //! tables ride in the head, and so does the answer to a measure
 //! ([`Inspected`]).
 //!
@@ -34,7 +41,9 @@
 //! [`RenderMesh`] and [`RenderLines`] limits, both before they're copied,
 //! so a broken reply doesn't allocate without bound, and together the parts
 //! make a [`RenderMesh`] by [`RenderMesh::from_parts`] and [`RenderLines`]
-//! by [`RenderLines::from_parts`] and, with the head's tables, a
+//! by [`RenderLines::from_parts`], the mesh's upload by
+//! [`MeshUpload::from_parts`] and its hierarchies by
+//! [`PickTables::from_parts`] and, with the head's tables, a
 //! [`Picking`] by [`Picking::from_parts`] (snap points and corners'
 //! points within bounds, each corner between three faces of one part),
 //! each part's body one the head lists; a measure's answer is checked
@@ -80,13 +89,15 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use varde_document::{BodyId, DecodeError, FeatureId, Generation, Id, Placement, Sketch, codec};
 use varde_kernel::{
-    Aabb, LinesError, LinesPart, MeshError, MeshPart, MeshParts, RenderLines, RenderMesh,
+    Aabb, LinesError, LinesPart, MeshError, MeshPart, MeshParts, MeshUpload, RenderLines,
+    RenderMesh, UploadError,
 };
 use varde_lane::bytes::Buffer;
 
 use crate::{
-    Detail, Drafted, ErrorGeometry, ExportedBody, FeatureFailure, GeometryError, GeometryParts,
-    Inspected, PickCorner, PickFace, Picking, PickingError, Progress, Request, Response,
+    Bvh, Drafted, ErrorGeometry, ExportedBody, FeatureFailure, GeometryError, GeometryParts,
+    Inspected, PickCorner, PickFace, PickTables, PickTablesError, PickTablesParts, Picking,
+    PickingError, Progress, Request, Response,
 };
 
 /// The most bytes a reply's head may have. A head is a generation, a few
@@ -301,7 +312,7 @@ pub enum Head {
     Regenerated {
         generation: Generation,
         exclude: Option<FeatureId>,
-        detail: Option<Detail>,
+        sight: Option<u32>,
         /// Without its geometry, which follows.
         draft: Option<Drafted>,
         /// The draft's [`Drafted::geometry`], checked as the failures'
@@ -374,7 +385,7 @@ pub enum Head {
         exclude: Option<FeatureId>,
         draft: Option<u64>,
         inspect: Option<u64>,
-        detail: Option<Detail>,
+        sight: Option<u32>,
         error: String,
     },
     /// A [`Response::Exported`]: if `Ok`, followed by one part, the
@@ -399,8 +410,25 @@ impl Head {
 }
 
 /// How many parts follow a [`Head::Regenerated`]: the mesh's twelve
-/// ([`MeshParts`]' fields, in order), and the sketches' points and ends.
-pub const MODEL_PARTS: usize = 14;
+/// ([`MeshParts`]' fields, in order), the sketches' points and ends, the
+/// mesh's [`MeshUpload`] (its points, its parts' ranges and boxes) and its
+/// [`PickTables`] (each hierarchy's nodes and items, triangles', segments'
+/// and vertices', the corners' faces, the chains' starts and items).
+pub const MODEL_PARTS: usize = 26;
+
+/// A part's box in an upload's [`MeshUpload::bounds`] as it crosses: its
+/// least corner then its greatest, or [`NO_BOX`] for none.
+type PartBox = [f32; 6];
+
+/// A part without a box, as it crosses.
+const NO_BOX: PartBox = [
+    f32::INFINITY,
+    f32::INFINITY,
+    f32::INFINITY,
+    f32::NEG_INFINITY,
+    f32::NEG_INFINITY,
+    f32::NEG_INFINITY,
+];
 
 /// What `relinked` weighs against [`MAX_RELINKED_ITEMS`]: each sketch
 /// one and its items.
@@ -432,10 +460,11 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
         Response::Regenerated {
             generation,
             exclude,
-            detail,
+            sight,
             draft,
             mesh,
             picking,
+            tables,
             sketches,
             unsolved,
             failed,
@@ -453,7 +482,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             let mut head = Head::Regenerated {
                 generation: *generation,
                 exclude: *exclude,
-                detail: *detail,
+                sight: *sight,
                 draft: draft.as_deref().cloned(),
                 draft_geometry: draft.as_ref().and_then(|draft| geometry(&draft.geometry)),
                 unsolved: unsolved.clone(),
@@ -523,7 +552,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                     exclude: *exclude,
                     draft: draft.as_ref().map(|draft| draft.revision),
                     inspect: inspected.as_ref().map(|inspected| inspected.revision),
-                    detail: *detail,
+                    sight: *sight,
                     error: "the model has more faces than can be sent".to_owned(),
                 };
                 return (failed.encode(), Vec::new());
@@ -547,7 +576,9 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                     bytemuck::cast_slice(sketches.ends()),
                 ]
                 .map(Cow::Borrowed)
-                .into(),
+                .into_iter()
+                .chain(prepared_parts(mesh, tables))
+                .collect(),
             )
         }
         Response::Failed {
@@ -555,7 +586,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             exclude,
             draft,
             inspect,
-            detail,
+            sight,
             error,
         } => (
             Head::Failed {
@@ -563,7 +594,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 exclude: *exclude,
                 draft: *draft,
                 inspect: *inspect,
-                detail: *detail,
+                sight: *sight,
                 error: error.clone(),
             }
             .encode(),
@@ -596,7 +627,7 @@ pub fn decode_reply(
         Head::Regenerated {
             generation,
             exclude,
-            detail,
+            sight,
             mut draft,
             draft_geometry,
             unsolved,
@@ -629,7 +660,7 @@ pub fn decode_reply(
                     if !(part_bodies.iter()).all(|body| listed.binary_search(body).is_ok()) {
                         return Err(Error::Picking(PickingError::Body));
                     }
-                    let (mesh, sketches) = decode_model(parts)?;
+                    let (mesh, sketches, tables) = decode_model(parts)?;
                     let picking = Picking::from_parts(
                         part_bodies,
                         faces,
@@ -659,27 +690,34 @@ pub fn decode_reply(
                     Ok((
                         placements,
                         bodies,
-                        mesh,
-                        sketches,
+                        (mesh, sketches, tables),
                         picking,
                         failed,
                         draft_geometry,
                     ))
                 });
             match model {
-                Ok((placements, bodies, mesh, sketches, picking, failed, draft_geometry)) => {
+                Ok((
+                    placements,
+                    bodies,
+                    (mesh, sketches, tables),
+                    picking,
+                    failed,
+                    draft_geometry,
+                )) => {
                     if let Some(draft) = &mut draft {
                         draft.geometry = draft_geometry;
                     }
                     Response::Regenerated {
                         generation,
                         exclude,
-                        detail,
+                        sight,
                         draft: draft.map(Box::new),
                         inspected: inspected
                             .map(|inspected| Box::new(inspected.checked(&mesh, &picking))),
                         mesh: Arc::new(mesh),
                         picking: Arc::new(picking),
+                        tables: Arc::new(tables),
                         sketches: Arc::new(sketches),
                         unsolved,
                         failed,
@@ -698,7 +736,7 @@ pub fn decode_reply(
                     exclude,
                     draft: draft.map(|draft| draft.revision),
                     inspect,
-                    detail,
+                    sight,
                     error: error.to_string(),
                 },
             }
@@ -708,14 +746,14 @@ pub fn decode_reply(
             exclude,
             draft,
             inspect,
-            detail,
+            sight,
             error,
         } => Response::Failed {
             generation,
             exclude,
             draft,
             inspect,
-            detail,
+            sight,
             error,
         },
         Head::Exported { export, result } => Response::Exported {
@@ -834,13 +872,128 @@ fn decode_bodies(bodies: &[(BodyId, [[f32; 3]; 2])]) -> Result<Vec<(BodyId, Aabb
         .collect()
 }
 
+/// The parts of `mesh`'s [`MeshUpload`] and its `tables`, as they follow
+/// the sketches' lines.
+fn prepared_parts<'a>(
+    mesh: &'a RenderMesh,
+    tables: &'a PickTables,
+) -> impl Iterator<Item = Cow<'a, [u8]>> {
+    let upload = mesh.upload();
+    let ranges: Vec<[u32; 4]> = (upload.parts().iter())
+        .map(|[e, w]| [e.start, e.end, w.start, w.end])
+        .collect();
+    let boxes: Vec<PartBox> = (upload.bounds().iter())
+        .map(|aabb| {
+            aabb.map_or(NO_BOX, |Aabb { min, max }| {
+                [min.x, min.y, min.z, max.x, max.y, max.z]
+            })
+        })
+        .collect();
+    let corner_faces: Vec<[u32; 2]> = (tables.corner_faces().iter())
+        .map(|&(corner, face)| [corner, face])
+        .collect();
+    let tree = |bvh: &'a Bvh| {
+        [
+            Cow::Borrowed(bytemuck::cast_slice(bvh.nodes())),
+            Cow::Borrowed(bytemuck::cast_slice(bvh.items())),
+        ]
+    };
+    [
+        Cow::Borrowed(bytemuck::cast_slice(upload.points())),
+        Cow::Owned(bytemuck::cast_slice(&ranges).to_vec()),
+        Cow::Owned(bytemuck::cast_slice(&boxes).to_vec()),
+    ]
+    .into_iter()
+    .chain(tree(tables.triangles()))
+    .chain(tree(tables.segments()))
+    .chain(tree(tables.vertices()))
+    .chain([
+        Cow::Owned(bytemuck::cast_slice(&corner_faces).to_vec()),
+        Cow::Borrowed(bytemuck::cast_slice(tables.chain_starts())),
+        Cow::Borrowed(bytemuck::cast_slice(tables.chain_items())),
+    ])
+}
+
 /// Decodes and checks the model's parts following a [`Head::Regenerated`]:
-/// the mesh and the sketches' lines.
-pub fn decode_model(parts: &[impl Buffer]) -> Result<(RenderMesh, RenderLines), Error> {
-    let Ok([mesh @ .., points, ends]) = <&[_; MODEL_PARTS]>::try_from(parts) else {
+/// the mesh, given its upload, the sketches' lines and the mesh's
+/// picking hierarchies.
+pub fn decode_model(parts: &[impl Buffer]) -> Result<(RenderMesh, RenderLines, PickTables), Error> {
+    let Ok(parts) = <&[_; MODEL_PARTS]>::try_from(parts) else {
         return Err(Error::Parts(parts.len()));
     };
-    Ok((decode_mesh(mesh)?, decode_lines([points, ends])?))
+    let (mesh, rest) = parts.split_first_chunk::<12>().expect("as many parts");
+    let (lines, rest) = rest.split_first_chunk::<2>().expect("as many parts");
+    let (upload, rest) = rest.split_first_chunk::<3>().expect("as many parts");
+    let tables: &[_; 9] = rest.try_into().expect("as many parts");
+    let mesh = decode_mesh(mesh)?;
+    let lines = decode_lines([&lines[0], &lines[1]])?;
+    mesh.set_upload(decode_upload(upload, &mesh)?);
+    let tables = decode_tables(tables, &mesh)?;
+    Ok((mesh, lines, tables))
+}
+
+/// Decodes and checks `mesh`'s [`MeshUpload`]: its points, its parts'
+/// ranges and boxes.
+fn decode_upload<B: Buffer>(
+    [points, ranges, boxes]: &[B; 3],
+    mesh: &RenderMesh,
+) -> Result<MeshUpload, Error> {
+    let part = Part::Upload;
+    // Within what the mesh can have, not only what any mesh can.
+    let parts = mesh.part_ends().len();
+    let points = copy(part, points, MeshUpload::most_points(mesh))?;
+    let ranges: Vec<[u32; 4]> = copy(part, ranges, parts)?;
+    let boxes: Vec<PartBox> = copy(part, boxes, parts)?;
+    let ranges = (ranges.into_iter())
+        .map(|[a, b, c, d]| [a..b, c..d])
+        .collect();
+    let boxes = (boxes.into_iter())
+        .map(|b| {
+            (b != NO_BOX).then(|| Aabb {
+                min: Vec3::new(b[0], b[1], b[2]),
+                max: Vec3::new(b[3], b[4], b[5]),
+            })
+        })
+        .collect();
+    MeshUpload::from_parts(mesh, points, ranges, boxes).map_err(Error::Upload)
+}
+
+/// Decodes and checks `mesh`'s [`PickTables`].
+fn decode_tables<B: Buffer>(
+    [
+        triangle_nodes,
+        triangle_items,
+        segment_nodes,
+        segment_items,
+        vertex_nodes,
+        vertex_items,
+        corner_faces,
+        chain_starts,
+        chain_items,
+    ]: &[B; 9],
+    mesh: &RenderMesh,
+) -> Result<PickTables, Error> {
+    let part = Part::PickTables;
+    // Within what the mesh can have, not only what any mesh can: a
+    // hierarchy has fewer nodes than twice its items, at most one item per
+    // triangle, edge vertex or corner.
+    let tree = |nodes: &B, items: &B, most: usize| -> Result<_, Error> {
+        Ok((
+            copy(part, nodes, most.saturating_mul(2))?,
+            copy(part, items, most)?,
+        ))
+    };
+    let edges = mesh.edge_count();
+    let parts = PickTablesParts {
+        triangles: tree(triangle_nodes, triangle_items, mesh.triangle_count())?,
+        segments: tree(segment_nodes, segment_items, mesh.edge_vertices().len())?,
+        vertices: tree(vertex_nodes, vertex_items, mesh.corners().len())?,
+        // Two corners and two faces an edge.
+        corner_faces: copy(part, corner_faces, edges.saturating_mul(4))?,
+        chain_starts: copy(part, chain_starts, edges.saturating_add(1))?,
+        chain_items: copy(part, chain_items, edges)?,
+    };
+    PickTables::from_parts(mesh, parts).map_err(Error::PickTables)
 }
 
 /// Decodes and checks a mesh's parts, [`MeshParts`]' fields in order.
@@ -858,7 +1011,7 @@ fn decode_mesh<B: Buffer>(
         wire_vertices,
         wire_ends,
         part_ends,
-    ]: &[B; MODEL_PARTS - 2],
+    ]: &[B; 12],
 ) -> Result<RenderMesh, Error> {
     use RenderMesh as M;
     let part = Part::RenderMesh;
@@ -939,6 +1092,10 @@ pub enum Part {
     Head,
     RenderMesh(MeshPart),
     RenderLines(LinesPart),
+    /// One of the mesh's [`MeshUpload`]'s.
+    Upload,
+    /// One of the mesh's [`PickTables`]'.
+    PickTables,
     /// An export's bodies.
     Export,
 }
@@ -949,6 +1106,8 @@ impl fmt::Display for Part {
             Part::Head => f.write_str("head"),
             Part::RenderMesh(part) => part.fmt(f),
             Part::RenderLines(part) => part.fmt(f),
+            Part::Upload => f.write_str("mesh upload"),
+            Part::PickTables => f.write_str("picking hierarchies"),
             Part::Export => f.write_str("exported bodies"),
         }
     }
@@ -971,6 +1130,10 @@ pub enum Error {
     RenderMesh(MeshError),
     /// The parts don't make lines.
     RenderLines(LinesError),
+    /// The parts don't make the mesh's upload.
+    Upload(UploadError),
+    /// The parts don't make the mesh's picking hierarchies.
+    PickTables(PickTablesError),
     /// A body's box isn't finite, or its corners are out of order.
     Bounds,
     /// A consumed body is listed twice, or as a holder.
@@ -1006,6 +1169,8 @@ impl fmt::Display for Error {
             }
             Error::RenderMesh(e) => e.fmt(f),
             Error::RenderLines(e) => e.fmt(f),
+            Error::Upload(e) => e.fmt(f),
+            Error::PickTables(e) => e.fmt(f),
             Error::Bounds => f.write_str("a body's box isn't one"),
             Error::Merged => f.write_str("a merged body is listed twice or holds another"),
             Error::Placement => f.write_str("a sketch's placement isn't one"),
@@ -1027,6 +1192,8 @@ impl std::error::Error for Error {
             | Error::Partial { .. }
             | Error::RenderMesh(_)
             | Error::RenderLines(_)
+            | Error::Upload(_)
+            | Error::PickTables(_)
             | Error::Bounds
             | Error::Merged
             | Error::Placement

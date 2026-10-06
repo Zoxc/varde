@@ -648,7 +648,7 @@ spans along the line, so their ends fade over a pixel, and dashes shorter
 than a pixel (an edge seen nearly end on, or far off in perspective) blur
 to their average rather than beating.
 
-The edges are uploaded as a stream of points (`EdgePoint`, 20 bytes:
+The edges are uploaded as a stream of points (`varde_kernel::EdgePoint`, 20 bytes:
 position, how far along its polyline in world units, and which polyline),
 polyline after polyline, a point repeated in a row left out, with a point
 of no edge at each end: every part's edges, then every part's wires
@@ -659,7 +659,16 @@ segments or more has its last but one point before it and its second
 after it, marked neighbours only (`NEIGHBOUR_ONLY`, the edge's top bit),
 so its ends join like any other. That's at most one and a half points
 per edge or wire vertex, so `RenderMesh::MAX_EDGE_POINTS`, which bounds
-the two together, fits a 256 MiB buffer. Creases (an edge with one face
+the two together, fits a 256 MiB buffer (`MeshUpload::MAX_POINTS`). The
+stream, each part's ranges of it and each part's box are the mesh's
+`MeshUpload`, built in the regen lane with the scene (`RenderMesh::upload`,
+kept in the mesh, left out of its comparisons, built again after an
+append) and crossing from the web worker as model parts (checked by
+`MeshUpload::from_parts`: points within the mesh's bounds and edges, the
+stream starting and ending with its point of no edge and each range in
+order between them, as the draw reads a point either side), so the UI
+thread's upload only creates the buffers; a mesh from elsewhere (tests)
+builds it on first upload. Creases (an edge with one face
 both sides, see `agents/kernel.md`: patches whose normals part inside a
 face, as where a boolean's cut leaves fitted patches on a cylinder) and
 wires are marked `CREASE` (the next bit) and drawn `CREASE_WIDTH` (1)
@@ -772,25 +781,42 @@ share) and placed on an origin plane's placement, or a sketch on a face
 at the placement regeneration found for it (`Evaluation::placements`;
 one not placed isn't drawn: see `agents/features.md`).
 
-**Detail by zoom.** The model is drawn as finely as the camera shows
-it: a request carries a `regen::Detail`, a level whose chord is
-`2^level` mm, which the lane draws the visible bodies at
-(`Display::for_view`: that chord in place of the share of each solid's
-size, no finer than the fit tolerance, the 10° turn per segment still
-keeping a circle round however far out). `MeshFeed::view` picks it from
-the camera's (or its animation's end's) view height before each
-request: half a pixel of a nominal view 1000 px tall (`VIEW_CHORD`;
-the app doesn't know the viewport's size), rounded to a level and kept
-while the view stays within `DETAIL_SLACK` (0.75 of a level) of it, so
-zooming a little asks for nothing. None until the first model shows,
-which frames the camera. Another level asks again for the same
+**Detail by zoom.** Each visible body is drawn as finely as the camera
+shows it: a request carries a `regen::Sight`, a `Detail` level per body
+the app has seen (chords within `2^level` mm) and one for the rest,
+which the lane draws each body at (`Display::for_view`: that chord in
+place of the share of each solid's size, no finer than the fit
+tolerance, the 10° turn per segment still keeping a circle round however
+far out); a body listed as `None` is drawn as with no sight.
+`MeshFeed::view` picks the levels from the camera (or its animation's
+end) before each request, by the boxes of the bodies of the model shown
+(`body_chord`): half a pixel of a nominal view 1000 px tall
+(`VIEW_CHORD`; the app doesn't know the viewport's size) of the view's
+height where the box is nearest the eye in perspective (no nearer than
+the camera's near distance, so an eye inside a box asks for the finest
+the camera draws), or at the target when orthographic; `None` for a box
+wholly out of the view, or behind the eye. The view's sides are the
+viewport's own: the viewport publishes its width over its height
+(`Look::ViewAspect`) on the frame after it changes by more than
+`ASPECT_SLACK` (1%) of what the app last heard (`Doc::aspect`, kept
+within 0.01 to 100), and until it has, a view `MAX_ASPECT` (3) times as
+wide as tall. A body the boxes don't know yet (one the edit just made) gets
+the view's level, from the view's height at the target. Each level is
+rounded and kept while the view stays within `DETAIL_SLACK` (0.75 of a
+level) of it, so zooming or orbiting a little asks for nothing; any
+level changing gives the sight a new revision, which the request and its
+answer carry (`Response::sight`). None until the first model shows,
+which frames the camera. Another sight asks again for the same
 generation; the model shown stays meanwhile and the wait isn't
 `Regenerating` (only the generation and the draft count for that, and
 for `answers_request`), and the answer brings its picking tables with
-its mesh. The lane files each level's meshes apart in its cache, and
-a level whose meshes pass `RenderMesh`'s limits is drawn as without
-one rather than failing. Exports keep the document tolerance's
-`Display`.
+its mesh. The lane files each level's meshes apart in its cache (the
+scene's key holds each body's), and a sight whose meshes pass
+`RenderMesh`'s limits is drawn again with every level `COARSER_STEPS`
+(3) coarser (`Sight::coarser`), and so on until it fits, as without a
+sight once every level is the coarsest, rather than failing: a body
+zoomed into closely keeps what detail fits, the others theirs.
+Exports keep the document tolerance's `Display`.
 
 An answer also carries the features that failed and why (`failed`, an
 extrude whose region is gone, whose profile the kernel refuses, or whose
@@ -1050,18 +1076,32 @@ compared, and either way it keeps its index). A
 hierarchy over the triangles, one over the segments of the edges
 between two faces and one over the vertices, the faces at each corner
 an edge between two faces ends at, and each tangent chain's edges) is
-built the first time it's
-asked for (`MeshFeed::pick_index`, a `OnceCell`), sequentially (each
+made the first time it's asked for (`MeshFeed::pick_index`, a
+`OnceCell`, `PickIndex::with_tables`) and dropped with the model. The
+hierarchies, corners' faces and chains are `regen::PickTables`, built in
+the regen lane with the scene and kept in its cache with it, answered
+beside `picking` (`Response::Regenerated::tables`), so the UI thread
+only wraps them: building them there took about 200 ms in a dev build
+for a model of 130,000 triangles, each time a zoom asked for a finer
+model. On the web they cross as model parts, checked as they're decoded
+(each part copied only within what the mesh can have, its triangles,
+edge vertices, corners or edges; `PickTables::from_parts`: each
+hierarchy a tree from its root, no more nodes than twice its items,
+whose
+nodes are each reached once, both children after their parent, so a
+walk ends and visits each once; its items within what it's over; the
+corners' faces sorted and the mesh's; a chain start per edge, in order).
+They're built sequentially (each
 node split along the longest side of its items' middles at that side's
 middle, in one pass, or at the median where that leaves a quarter or
-less on one side, ties by index, so the same mesh gives the same tree),
-and dropped with the model. It's built on the UI thread: a plate with
-400 holes (217,000 triangles, 33,000 edges) takes about 50 ms optimized
-on a loaded machine (twice that with median splits throughout), once
-per model, on the first hover or click after it shows; a pick on it
-under a millisecond (the ignored test `measure_the_index_of_a_plate_with_400_holes`,
-run with `--config 'profile.dev.opt-level=3'`: `varde-view`'s tests don't
-build without debug assertions). Not capped. Tables that don't go with
+less on one side, ties by index, so the same mesh gives the same tree):
+a plate with 400 holes (217,000 triangles, 33,000 edges) takes about
+50 ms optimized on a loaded machine (twice that with median splits
+throughout); a pick on it under a millisecond (the ignored test
+`measure_the_index_of_a_plate_with_400_holes`, run with `--config
+'profile.dev.opt-level=3'`: `varde-view`'s tests don't build without
+debug assertions). `PickIndex::new` builds them itself, for tests. Not
+capped. Tables that don't go with
 the mesh pick nothing. `PickIndex::pick(camera, size, at)` casts the
 cursor's ray (`Projector::ray`; in an orthographic view from far enough
 back that the whole mesh is ahead, in perspective from the near plane):
@@ -1680,7 +1720,8 @@ the mesh through `RenderMesh::from_parts`, points within their bound,
 line ends splitting the points into polylines of two or more, bodies'
 boxes finite and in order, the picking tables checked by
 `Picking::from_parts` against the mesh and naming only bodies the head
-lists; see `regen::wire`). An export's answer is a head and one part,
+lists, the mesh's upload by `MeshUpload::from_parts` and the picking
+hierarchies by `PickTables::from_parts`; see `regen::wire`). An export's answer is a head and one part,
 the bodies' postcard, copied within 1 GiB and decoded with every
 `ManifoldMesh` checked again. A regeneration's progress is a lone
 `Head::Progress`, posted ahead of its answer. The worker keeps

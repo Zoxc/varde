@@ -51,7 +51,7 @@ use std::sync::Arc;
 use glam::DVec3;
 use serde::Serialize;
 use varde_document::Placement;
-use varde_kernel::{RenderMesh, Solid, Topology};
+use varde_kernel::{MeshUpload, RenderMesh, Solid, Topology};
 use varde_sketch::{Curve, LinkShape, Profiles, Sketch, TooComplex};
 
 use crate::error_geometry::{ErrorGeometry, KernelFailure};
@@ -233,7 +233,10 @@ impl Entry {
             | Entry::Boolean(Err(failure))
             | Entry::Split(Err(failure)) => failure.bytes(),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
-            Entry::Scene(scene) => mesh_bytes(&scene.mesh).saturating_add(scene.picking.bytes()),
+            Entry::Scene(scene) => (mesh_bytes(&scene.mesh))
+                .saturating_add(upload_bytes(scene.mesh.upload()))
+                .saturating_add(scene.picking.bytes())
+                .saturating_add(scene.tables.bytes()),
             Entry::Topology(topology) => topology_bytes(topology),
             Entry::Measure(kept) => kept.as_ref().as_ref().err().map_or(0, String::len),
             Entry::Distance(gap) => gap.as_ref().err().map_or(0, String::len),
@@ -329,6 +332,12 @@ fn mesh_bytes(mesh: &RenderMesh) -> usize {
         .saturating_add(size_of_val(mesh.wire_ends()))
         .saturating_add(size_of_val(mesh.part_ends()))
         .saturating_add(size_of_val(mesh))
+}
+
+fn upload_bytes(upload: &MeshUpload) -> usize {
+    (size_of_val(upload.points()))
+        .saturating_add(size_of_val(upload.parts()))
+        .saturating_add(size_of_val(upload.bounds()))
 }
 
 fn profiles_bytes(profiles: &Profiles) -> usize {

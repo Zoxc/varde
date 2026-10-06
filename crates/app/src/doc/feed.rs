@@ -8,15 +8,17 @@ use std::time::Duration;
 
 use iced::time::Instant;
 
+use glam::DVec3;
 use varde_document::{
     BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Id, Operation, Placement, Plane,
     Sketch, Snapshot,
 };
-use varde_kernel::{RenderLines, RenderMesh};
+use varde_kernel::{Aabb, RenderLines, RenderMesh};
 use varde_regen::{
     Detail, Draft, Drafted, ErrorGeometry, FeatureFailure, Inspect, InspectPick, Inspected,
-    Picking, Progress, Request, Response, Transport,
+    PickTables, Picking, Progress, Request, Response, Sight, Transport,
 };
+use varde_render::{Camera, Projection};
 use varde_view::{MeshStatus, PickIndex};
 
 /// The mesh and sketch lines shown for the document. They're built by the
@@ -34,6 +36,8 @@ pub(crate) struct MeshFeed {
     /// `mesh`'s picking tables: the body each of its parts is of, its
     /// faces' keys and summaries, its edges' tangent chains.
     picking: Arc<Picking>,
+    /// The hierarchies `mesh` is picked with, built with it in the lane.
+    tables: Arc<PickTables>,
     /// Counts the models shown, up as `mesh` or `picking` changes: what
     /// picks name the model by ([`varde_view::Pick::model`]).
     model: u64,
@@ -100,10 +104,14 @@ pub(crate) struct MeshFeed {
     shown: Option<Asked>,
     /// What was asked for last.
     requested: Option<Asked>,
-    /// How finely the model is asked for, picked from the camera's zoom
-    /// ([`MeshFeed::view`]): `None` until the first model shows, which
-    /// is drawn within a share of each solid's size.
-    detail: Option<Detail>,
+    /// How finely each body is asked for, picked from the camera and the
+    /// bodies' boxes ([`MeshFeed::view`]): `None` until the first model
+    /// shows, which is drawn within a share of each solid's size.
+    sight: Option<Sight>,
+    /// The boxes of the bodies with a solid, of the same generation as
+    /// `mesh`, sorted by body: what [`MeshFeed::view`] picks their
+    /// levels by.
+    boxes: Vec<(BodyId, Aabb)>,
     /// The draft asked for last, if any: another one is given the next
     /// revision.
     draft: Option<Draft>,
@@ -149,11 +157,87 @@ pub(crate) const SLOW: Duration = Duration::from_millis(250);
 /// height at the camera's target: half a pixel of a view 1000 pixels tall.
 const VIEW_CHORD: f64 = 1.0 / 2000.0;
 
+/// The view's width over its height that the bodies in it are found
+/// for before the viewport has told its own ([`Look::ViewAspect`]): wide,
+/// so a body out of a view this wide is out of most.
+///
+/// [`Look::ViewAspect`]: varde_view::Look::ViewAspect
+const MAX_ASPECT: f64 = 3.0;
+
 /// How far, in powers of two, the chord a view asks for may drift from
 /// the level asked for before another is: past half a level either way,
 /// so zooming back and forth about where two levels meet doesn't ask for
 /// the model again and again.
 const DETAIL_SLACK: f64 = 0.75;
+
+/// The level whose chord is nearest `ideal` (a power of two's exponent),
+/// within [`Detail`]'s bounds, or `kept` while `ideal` is within
+/// [`DETAIL_SLACK`] of it.
+fn level(kept: Option<Detail>, ideal: f64) -> Detail {
+    if let Some(Detail(level)) = kept
+        && (ideal - f64::from(level)).abs() <= DETAIL_SLACK
+    {
+        return Detail(level);
+    }
+    let bounds = f64::from(Detail::MIN)..=f64::from(Detail::MAX);
+    // Within the bounds, so the cast is exact; NaN, which no bounded
+    // view gives, is taken as the coarsest.
+    let ideal = if ideal.is_nan() { *bounds.end() } else { ideal };
+    Detail(ideal.round().clamp(*bounds.start(), *bounds.end()) as i8)
+}
+
+/// The chord a body in `aabb` is drawn within for `camera`'s view, in mm:
+/// [`VIEW_CHORD`] of the view's height where the box is nearest the eye
+/// (no nearer than the camera draws), or at the target in an
+/// orthographic view; `None` if the box is out of a view
+/// `aspect` (its width over its height) wide.
+fn body_chord(camera: &Camera, aspect: f64, aabb: Aabb) -> Option<f64> {
+    let (min, max) = (aabb.min.as_dvec3(), aabb.max.as_dvec3());
+    let (center, half) = ((min + max) / 2.0, (max - min) / 2.0);
+    let forward = -camera.backward().as_dvec3();
+    let (right, up) = (camera.right().as_dvec3(), camera.up().as_dvec3());
+    let height = f64::from(camera.view_height());
+    // Whether the box is wholly on the far side of the plane through
+    // `at` whose normal is `normal`: its nearest corner is past it.
+    let beyond =
+        |at: DVec3, normal: DVec3| (center - at).dot(normal) - half.dot(normal.abs()) > 0.0;
+    match camera.projection() {
+        Projection::Perspective => {
+            let eye = camera.eye().as_dvec3();
+            let distance = f64::from(camera.distance());
+            // The view's half height and half width a millimetre ahead.
+            let tan = height / (2.0 * distance);
+            let wide = tan * aspect;
+            let sides = [
+                up - forward * tan,
+                -up - forward * tan,
+                right - forward * wide,
+                -right - forward * wide,
+                -forward,
+            ];
+            if sides.into_iter().any(|side| beyond(eye, side)) {
+                return None;
+            }
+            let nearest = eye.clamp(min, max).distance(eye);
+            let nearest = nearest.max(f64::from(camera.near()));
+            Some(2.0 * nearest * tan * VIEW_CHORD)
+        }
+        Projection::Orthographic => {
+            let target = camera.target().as_dvec3();
+            let (high, wide) = (height / 2.0, height / 2.0 * aspect);
+            let sides = [
+                (target + up * high, up),
+                (target - up * high, -up),
+                (target + right * wide, right),
+                (target - right * wide, -right),
+            ];
+            if sides.into_iter().any(|(at, side)| beyond(at, side)) {
+                return None;
+            }
+            Some(height * VIEW_CHORD)
+        }
+    }
+}
 
 /// A model shown without a draft: its mesh, its picking tables for the
 /// bodies of its parts, and what it's of.
@@ -179,7 +263,7 @@ struct Asked {
     exclude: Option<FeatureId>,
     draft: Option<u64>,
     inspect: Option<u64>,
-    detail: Option<Detail>,
+    sight: Option<u32>,
 }
 
 impl Asked {
@@ -190,7 +274,7 @@ impl Asked {
             exclude: response.exclude(),
             draft: response.draft(),
             inspect: response.inspect(),
-            detail: response.detail(),
+            sight: response.sight(),
         })
     }
 }
@@ -274,7 +358,7 @@ impl MeshFeed {
             exclude,
             draft: draft.as_ref().map(|draft| draft.revision),
             inspect: inspect.as_ref().map(|inspect| inspect.revision),
-            detail: self.detail,
+            sight: self.sight.as_ref().map(|sight| sight.revision),
         };
         self.draft = draft.clone();
         self.inspect = inspect.clone();
@@ -296,40 +380,61 @@ impl MeshFeed {
                 exclude,
                 draft: draft.map(Box::new),
                 inspect: inspect.map(Box::new),
-                detail: asked.detail,
+                sight: self.sight.clone().map(Box::new),
             });
         }
     }
 
-    /// Notes the camera's view, `view_height` mm tall at its target, for
-    /// the next [`MeshFeed::request_with`] to ask for the model drawn as
-    /// finely as it shows ([`VIEW_CHORD`]), in levels a power of two
-    /// apart, kept while the view stays within [`DETAIL_SLACK`] of the
-    /// level's: a camera moving a little asks for nothing new. The model
-    /// shown stays until the one at the new level comes, and the wait
-    /// isn't shown as regenerating. Nothing before the first model shows,
-    /// as the camera is only framed on it then.
-    pub(crate) fn view(&mut self, view_height: f32) {
-        let height = f64::from(view_height);
+    /// Notes the camera's view for the next [`MeshFeed::request_with`] to
+    /// ask for each body drawn as finely as it shows ([`VIEW_CHORD`] of
+    /// the view's height where the body's box is nearest the eye), one
+    /// out of view as coarsely as with no view, and a body the boxes
+    /// don't know yet as finely as the view's height at the target asks;
+    /// in levels a power of two apart, each kept while the view stays
+    /// within [`DETAIL_SLACK`] of it: a camera moving a little asks for
+    /// nothing new. The model shown stays until the one at the new levels
+    /// comes, and the wait isn't shown as regenerating. Nothing before
+    /// the first model shows, as the camera is only framed on it then.
+    pub(crate) fn view(&mut self, camera: &Camera, aspect: Option<f32>) {
+        let aspect = aspect.map_or(MAX_ASPECT, f64::from);
+        let height = f64::from(camera.view_height());
         if self.shown.is_none() || !(height.is_finite() && height > 0.0) {
             return;
         }
-        let ideal = (height * VIEW_CHORD).log2();
-        if let Some(Detail(level)) = self.detail
-            && (ideal - f64::from(level)).abs() <= DETAIL_SLACK
-        {
+        let last = self.sight.as_ref();
+        let view = level(last.map(|sight| sight.view), (height * VIEW_CHORD).log2());
+        // A body is kept at the level it was asked for at, the view's if
+        // it wasn't listed.
+        let kept = |body: BodyId| last.map(|sight| sight.level(body));
+        let bodies: Vec<(BodyId, Option<Detail>)> = (self.boxes.iter())
+            .map(|&(body, aabb)| {
+                let ideal = body_chord(camera, aspect, aabb).map(f64::log2);
+                (body, ideal.map(|ideal| level(kept(body).flatten(), ideal)))
+            })
+            .collect();
+        // Only a level that changes asks again: a body gone, or one at
+        // the level it was drawn at unlisted, doesn't.
+        let same = last.is_some_and(|sight| {
+            sight.view == view && (bodies.iter()).all(|&(body, level)| sight.level(body) == level)
+        });
+        if same {
             return;
         }
-        let bounds = f64::from(Detail::MIN)..=f64::from(Detail::MAX);
-        // Within the bounds, so the cast is exact.
-        let level = ideal.round().clamp(*bounds.start(), *bounds.end()) as i8;
-        self.detail = Some(Detail(level));
+        // One per change of a level.
+        // Told apart by equality only, so wrapping after four billion
+        // changes is harmless.
+        let revision = last.map_or(0, |sight| sight.revision.wrapping_add(1));
+        self.sight = Some(Sight {
+            revision,
+            view,
+            bodies,
+        });
     }
 
     /// How finely the model is asked for, see [`MeshFeed::view`].
     #[cfg(test)]
-    pub(crate) fn detail(&self) -> Option<Detail> {
-        self.detail
+    pub(crate) fn sight(&self) -> Option<&Sight> {
+        self.sight.as_ref()
     }
 
     /// Asks the lane to weld the visible bodies of the editor's committed
@@ -369,6 +474,7 @@ impl MeshFeed {
             Response::Regenerated {
                 mesh,
                 picking,
+                tables,
                 sketches,
                 unsolved,
                 failed,
@@ -395,8 +501,11 @@ impl MeshFeed {
                     self.index = OnceCell::new();
                 }
                 self.mesh = mesh;
-                self.solid_bodies = bodies.into_iter().map(|(body, _)| body).collect();
+                self.solid_bodies = bodies.iter().map(|&(body, _)| body).collect();
+                self.boxes = bodies;
+                self.boxes.sort_unstable_by_key(|&(body, _)| body);
                 self.picking = picking;
+                self.tables = tables;
                 self.sketches = sketches;
                 self.unsolved = unsolved;
                 self.failed_features = failed;
@@ -464,8 +573,8 @@ impl MeshFeed {
                 requested.exclude,
                 requested.draft,
                 requested.inspect,
-                requested.detail,
-            ) == (asked.exclude, asked.draft, asked.inspect, asked.detail)
+                requested.sight,
+            ) == (asked.exclude, asked.draft, asked.inspect, asked.sight)
         }) && self.shown != Some(asked)
             && !failed
     }
@@ -772,8 +881,10 @@ impl MeshFeed {
     /// The model shown made ready for picking, built the first time it's
     /// asked for.
     pub(crate) fn pick_index(&self) -> &PickIndex {
-        self.index
-            .get_or_init(|| PickIndex::new(self.mesh.clone(), self.picking.clone(), self.model))
+        self.index.get_or_init(|| {
+            let (mesh, picking) = (self.mesh.clone(), self.picking.clone());
+            PickIndex::with_tables(mesh, picking, self.tables.clone(), self.model)
+        })
     }
 
     /// The body each of [`mesh`](Self::mesh)'s parts is of, in order.

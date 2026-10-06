@@ -76,6 +76,9 @@ pub(crate) struct Doc {
     pub(crate) id: DocId,
     pub(crate) editor: Editor,
     pub(crate) camera: Camera,
+    /// The viewport's width over its height, once it has told
+    /// ([`Look::ViewAspect`]): which bodies are in view, for their detail.
+    pub(crate) aspect: Option<f32>,
     /// The mesh the viewport shows, as it comes from the document's
     /// regeneration lane.
     pub(crate) feed: MeshFeed,
@@ -382,6 +385,7 @@ impl Doc {
             ),
             editor,
             camera: home_camera(Projection::default()),
+            aspect: None,
             feed: MeshFeed::new(),
             solver: None,
             proposals: Proposals::default(),
@@ -499,7 +503,7 @@ impl Doc {
         // Drawn as finely as the camera shows it, where an animation
         // ends rather than at each of its steps.
         let camera = self.animation.as_ref().map_or(&self.camera, |a| &a.to);
-        self.feed.view(camera.view_height());
+        self.feed.view(camera, self.aspect);
         self.feed
             .request_with(&self.editor, exclude, draft, inspect);
     }
@@ -841,6 +845,7 @@ impl Doc {
                 | Look::Orbit { .. }
                 | Look::Pan { .. }
                 | Look::Zoom { .. }
+                | Look::ViewAspect(_)
                 | Look::SetPivot(_)
         ) {
             self.notice = None;
@@ -1164,6 +1169,12 @@ impl Doc {
                 self.animation = None;
                 self.camera.zoom_at(factor, x, y);
             }
+            // Bounded, so no view is taken for wider or narrower than
+            // any window gets.
+            Look::ViewAspect(aspect) if aspect.is_finite() && aspect > 0.0 => {
+                self.aspect = Some(aspect.clamp(0.01, 100.0));
+            }
+            Look::ViewAspect(_) => {}
             // In a sketch, Home faces it; outside, it frames the model.
             // Either way it orbits its target again.
             Look::ResetCamera => {
@@ -1524,6 +1535,7 @@ impl Doc {
             options,
             picking_plane: self.picking_plane.as_ref().map(|picking| &picking.pick),
             thumbnail: self.thumbnail_request(),
+            aspect: self.aspect,
             selected_feature: self.selected_feature,
             row_menu: self.row_menu,
             origin: self.origin,

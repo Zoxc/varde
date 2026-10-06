@@ -167,6 +167,7 @@ fn triangle() -> RenderMesh {
         wire_vertices: vec![1, 2],
         wire_ends: vec![2],
         part_ends: vec![[1, 2, 2, 1]],
+        upload: Upload::default(),
     }
 }
 

@@ -5,6 +5,9 @@ use varde_document::{Command, Document, FeatureId, FeatureKind};
 
 use varde_regen::handle;
 
+use varde_kernel::Aabb;
+use varde_render::{Camera, Projection};
+
 use super::*;
 use crate::tests::Deferred;
 
@@ -140,7 +143,7 @@ fn failure_ends_regenerating_and_keeps_the_last_mesh() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
-        detail: None,
+        sight: None,
         draft: None,
         inspect: None,
         generation: request.generation().unwrap(),
@@ -229,7 +232,7 @@ fn sketches_are_shown_with_their_mesh() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
-        detail: None,
+        sight: None,
         draft: None,
         inspect: None,
         generation: request.generation().unwrap(),
@@ -301,7 +304,7 @@ fn only_the_sketch_asked_for_last_is_shown_left_out() {
 
     // A failure of the same generation doesn't replace it.
     feed.apply(Response::Failed {
-        detail: None,
+        sight: None,
         draft: None,
         inspect: None,
         generation: editor.generation(),
@@ -323,7 +326,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
-        detail: None,
+        sight: None,
         draft: None,
         inspect: None,
         generation: request.generation().unwrap(),
@@ -347,7 +350,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
-        detail: None,
+        sight: None,
         draft: None,
         inspect: None,
         generation: request.generation().unwrap(),
@@ -529,7 +532,7 @@ fn merged_bodies_follow_the_model_shown() {
     feed.request(&editor, None);
     regen.take();
     feed.apply(Response::Failed {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         exclude: None,
         draft: None,
@@ -645,7 +648,7 @@ fn the_parts_bodies_follow_the_mesh_shown() {
     feed.request(&editor, None);
     let request = regen.take().pop().unwrap();
     feed.apply(Response::Failed {
-        detail: None,
+        sight: None,
         generation: request.generation().unwrap(),
         exclude: None,
         draft: None,
@@ -914,34 +917,45 @@ fn a_slow_regeneration_shows_with_its_progress_until_answered() {
     assert_eq!(feed.slow(&editor), None, "the next waits its turn too");
 }
 
+/// The default camera in perspective, `height` mm tall at the origin.
+fn viewing(height: f32) -> Camera {
+    let mut camera = Camera::default();
+    camera.set_projection(Projection::Perspective);
+    camera.set_view_height(height);
+    camera
+}
+
 #[test]
 fn the_view_asks_for_the_model_in_levels_without_regenerating() {
     let editor = one_line();
     let (mut feed, regen) = connected();
     // Not before the first model, which frames the camera.
-    feed.view(100.0);
-    assert_eq!(feed.detail(), None);
+    feed.view(&viewing(100.0), None);
+    assert_eq!(feed.sight(), None);
     feed.request(&editor, None);
     feed.apply(handle(regen.borrow_mut().remove(0)));
 
-    // 100 mm tall asks for chords of 2^-4 mm (0.05 rounded).
-    feed.view(100.0);
-    assert_eq!(feed.detail(), Some(Detail(-4)));
+    // 100 mm tall asks for chords of 2^-4 mm (0.05 rounded); no bodies.
+    feed.view(&viewing(100.0), None);
+    let sight = feed.sight().unwrap().clone();
+    assert_eq!((sight.view, sight.bodies.len()), (Detail(-4), 0));
     feed.request(&editor, None);
     let asked = regen.borrow_mut().remove(0);
-    assert_eq!(asked.detail(), Some(Detail(-4)));
+    assert_eq!(asked.sight(), Some(sight.revision));
     // The model shown stays, current, while the finer one comes.
     assert_eq!(feed.status(&editor), MeshStatus::Current);
     assert_eq!(feed.generation(), Some(Generation::from(0)));
 
     // A little zoom asks for nothing new; past the slack, the next level.
-    feed.view(130.0);
+    feed.view(&viewing(130.0), None);
     feed.request(&editor, None);
     assert!(regen.borrow().is_empty());
-    feed.view(40.0);
-    assert_eq!(feed.detail(), Some(Detail(-6)));
+    feed.view(&viewing(40.0), None);
+    assert_eq!(feed.sight().unwrap().view, Detail(-6));
     feed.request(&editor, None);
     let newest = regen.borrow_mut().remove(0);
+    let revision = feed.sight().unwrap().revision;
+    assert_ne!(revision, sight.revision);
 
     // The answer for the level let go of is dropped, the newest taken.
     let model = feed.model();
@@ -949,5 +963,98 @@ fn the_view_asks_for_the_model_in_levels_without_regenerating() {
     assert_eq!(feed.model(), model);
     feed.apply(handle(newest));
     assert_eq!(feed.status(&editor), MeshStatus::Current);
-    assert_eq!(feed.shown.and_then(|shown| shown.detail), Some(Detail(-6)));
+    assert_eq!(feed.shown.and_then(|shown| shown.sight), Some(revision));
+}
+
+/// The example plate regenerated, and its body's box.
+fn plate() -> (Editor, MeshFeed, Rc<RefCell<Vec<Request>>>, BodyId, Aabb) {
+    let editor = Editor::new(Document::example());
+    let (mut feed, regen) = connected();
+    feed.request(&editor, None);
+    feed.apply(handle(regen.borrow_mut().remove(0)));
+    let &[(body, aabb)] = &feed.boxes[..] else {
+        panic!("the plate is one body");
+    };
+    (editor, feed, regen, body, aabb)
+}
+
+#[test]
+fn each_body_is_asked_for_as_finely_as_it_shows() {
+    let (editor, mut feed, regen, body, aabb) = plate();
+    let level = |feed: &MeshFeed| feed.sight().unwrap().level(body);
+    let mut camera = viewing(100.0);
+    camera.set_target(aabb.max);
+
+    // Nearer the eye than the target, so finer than the view's level.
+    feed.view(&camera, None);
+    let near = level(&feed).unwrap();
+    assert!(near.0 <= feed.sight().unwrap().view.0);
+    feed.request(&editor, None);
+    let Request::Regenerate { sight, .. } = regen.borrow_mut().remove(0) else {
+        panic!("a regeneration");
+    };
+    assert_eq!(sight.unwrap().level(body), Some(near));
+
+    // Looking away, out of view: drawn as coarsely as with no view.
+    camera.set_target(aabb.max + camera.right() * 10_000.0);
+    feed.view(&camera, None);
+    assert_eq!(level(&feed), None);
+    // Behind the eye too.
+    let mut behind = viewing(100.0);
+    behind.set_target(aabb.max - behind.backward() * 1000.0);
+    feed.view(&behind, None);
+    assert_eq!(level(&feed), None);
+
+    // The eye inside the box: as fine as the camera draws.
+    let mut inside = viewing(0.01);
+    inside.set_target((aabb.min + aabb.max) / 2.0);
+    feed.view(&inside, None);
+    assert!(level(&feed).unwrap().0 < near.0);
+
+    // Orthographic: by the view's height, the body in view.
+    let mut flat = viewing(100.0);
+    flat.set_projection(Projection::Orthographic);
+    flat.set_target((aabb.min + aabb.max) / 2.0);
+    feed.view(&flat, None);
+    assert_eq!(level(&feed), Some(Detail(-4)));
+    flat.set_target(aabb.max + flat.up() * 10_000.0);
+    feed.view(&flat, None);
+    assert_eq!(level(&feed), None);
+}
+
+#[test]
+fn orbiting_a_little_asks_for_nothing_new() {
+    let (editor, mut feed, regen, _, aabb) = plate();
+    let mut camera = viewing(200.0);
+    camera.set_target((aabb.min + aabb.max) / 2.0);
+    feed.view(&camera, None);
+    feed.request(&editor, None);
+    regen.borrow_mut().clear();
+    for step in 0..20 {
+        camera.orbit(0.01 * step as f32, 0.0);
+        feed.view(&camera, None);
+        feed.request(&editor, None);
+    }
+    assert!(regen.borrow().is_empty());
+}
+
+/// Which bodies are in view goes by the viewport's own shape once it has
+/// told it, and by a wide one before.
+#[test]
+fn the_viewports_shape_decides_what_is_in_view() {
+    let (_, mut feed, _, body, aabb) = plate();
+    let mut camera = Camera::default();
+    camera.set_projection(Projection::Orthographic);
+    camera.set_view_height(100.0);
+    // The box's nearest side a view's height right of the target: in a
+    // view three times as wide as tall, out of a square one.
+    let right = camera.right();
+    let reach = ((aabb.max - aabb.min) / 2.0).dot(right.abs());
+    camera.set_target((aabb.min + aabb.max) / 2.0 - right * (reach + 100.0));
+    feed.view(&camera, None);
+    assert!(feed.sight().unwrap().level(body).is_some());
+    feed.view(&camera, Some(1.0));
+    assert_eq!(feed.sight().unwrap().level(body), None);
+    feed.view(&camera, Some(2.5));
+    assert!(feed.sight().unwrap().level(body).is_some());
 }

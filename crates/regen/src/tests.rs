@@ -10,7 +10,7 @@ use crate::history::tests::{example_extrude, plate_below};
 
 fn regenerate(editor: &Editor, exclude: Option<FeatureId>) -> Request {
     Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude,
@@ -457,7 +457,7 @@ fn lines_are_drawn_without_the_ends_a_chamfer_cuts_off() {
 
 pub(crate) fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request {
     Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -1352,10 +1352,7 @@ fn a_draft_finding_the_older_scene_leaves_the_committed_one_held() {
 fn a_failed_join_is_not_kept() {
     let key = |k: u64| Keyer::new("test").number(k).finish();
     let mut cache = Cache::default();
-    let empty = || Scene {
-        mesh: Arc::new(RenderMesh::default()),
-        picking: Arc::new(Picking::default()),
-    };
+    let empty = || Scene::new(RenderMesh::default(), Picking::default());
     let mesh = |cache: &mut Cache, k: u64, drafted: bool| {
         cache
             .scene(key(k), drafted, |_| Ok::<_, ()>(empty()))
@@ -2771,4 +2768,74 @@ fn an_export_request_is_answered_with_the_committed_bodies() {
         document: editor.snapshot(),
     });
     assert_eq!(response.generation(), None);
+}
+
+/// Each body is drawn at its own level of the view's sight: a body out
+/// of view as with none, one the sight doesn't list at the view's level.
+#[test]
+fn each_body_is_drawn_at_its_level_of_the_sight() {
+    let editor = Editor::new(Document::example());
+    let triangles = |sight: Option<Sight>| {
+        let mut request = regenerate_with(&editor, None);
+        let Request::Regenerate { sight: asked, .. } = &mut request else {
+            unreachable!()
+        };
+        *asked = sight.map(Box::new);
+        let Response::Regenerated { mesh, sight, .. } = handle(request) else {
+            panic!("the plate regenerates");
+        };
+        (mesh.triangle_count(), sight)
+    };
+    let body = editor.document().bodies()[0].id;
+    let sight = |view: i8, bodies: Vec<(BodyId, Option<Detail>)>| Sight {
+        revision: 3,
+        view: Detail(view),
+        bodies,
+    };
+    let (coarse, none) = triangles(None);
+    assert_eq!(none, None);
+    let (out, revision) = triangles(Some(sight(-8, vec![(body, None)])));
+    assert_eq!((out, revision), (coarse, Some(3)));
+    let (fine, _) = triangles(Some(sight(10, vec![(body, Some(Detail(-8)))])));
+    assert!(fine > coarse, "{fine} > {coarse}");
+    // Not listed: at the view's level.
+    let (unlisted, _) = triangles(Some(sight(-8, Vec::new())));
+    assert_eq!(unlisted, fine);
+}
+
+/// A sight too fine for the mesh's limits is tried again coarser, every
+/// level by the same steps, until it asks for nothing finer than the
+/// bodies' shares.
+#[test]
+fn a_sight_is_made_coarser_a_few_levels_at_a_time() {
+    let mut editor = Editor::new(Document::example());
+    let a = editor.document().bodies()[0].id;
+    let b = crate::history::tests::plate_below(&mut editor);
+    assert!(a < b);
+    let sight = Sight {
+        revision: 7,
+        view: Detail(-4),
+        bodies: vec![(a, Some(Detail(-9))), (b, None)],
+    };
+    let coarser = sight.coarser(3).unwrap();
+    assert_eq!(coarser.revision, 7);
+    assert_eq!(coarser.view, Detail(-1));
+    assert_eq!(coarser.bodies, [(a, Some(Detail(-6))), (b, None)]);
+    // Clamped at the coarsest, and none once every level is there.
+    let near_top = Sight {
+        view: Detail(Detail::MAX - 1),
+        bodies: vec![(a, Some(Detail(i8::MAX)))],
+        ..sight.clone()
+    };
+    let top = near_top.coarser(3).unwrap();
+    assert_eq!(top.view, Detail(Detail::MAX));
+    assert_eq!(top.bodies, [(a, Some(Detail(Detail::MAX)))]);
+    assert_eq!(top.coarser(3), None);
+    // Levels past the finest bound count from it.
+    let past = Sight {
+        view: Detail(i8::MIN),
+        bodies: Vec::new(),
+        ..sight
+    };
+    assert_eq!(past.coarser(3).unwrap().view, Detail(Detail::MIN + 3));
 }

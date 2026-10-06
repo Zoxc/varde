@@ -7,7 +7,7 @@ use std::ops::Range;
 use bytemuck::{Pod, Zeroable};
 use varde_kernel::RenderMesh;
 
-use crate::renderer::{EdgePoint, EdgeStream};
+use varde_kernel::{EdgePoint, EdgeStream};
 
 /// The edges and vertices of a [`Frame`](crate::Frame)'s mesh that are
 /// hovered or selected, by their ids in it: an edge by its polyline

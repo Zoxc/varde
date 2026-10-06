@@ -189,6 +189,7 @@ pub(crate) fn viewport<'a>(
     rail: Element<'a, Message>,
     overlaps: Option<Element<'a, Message>>,
     thumbnail: Option<&Arc<ThumbnailRequest>>,
+    aspect: Option<f32>,
 ) -> Element<'a, Message> {
     // Constraint glyphs, nudged apart; dimensions' labels, where they're
     // put; the value field, in a layer of its own so its state stays its
@@ -228,6 +229,7 @@ pub(crate) fn viewport<'a>(
     let mut program = Program {
         picking,
         highlight: highlight.cloned().unwrap_or_else(|| NO_HIGHLIGHT.clone()),
+        aspect,
         ..program(mesh, sketches, camera, pivot, palette, sketching, operating)
     };
     program.scene.hidden_edges = options.hidden_edges;
@@ -298,6 +300,7 @@ fn program<'a>(
         picking: None,
         highlight: NO_HIGHLIGHT.clone(),
         sketch_colors: palette.sketching,
+        aspect: None,
     }
 }
 
@@ -329,7 +332,16 @@ struct Program<'a> {
     /// Drawn over the model.
     highlight: Arc<ModelHighlight>,
     sketch_colors: SketchColors,
+    /// The viewport's width over its height as the app last heard it, 0
+    /// before it has: another is published ([`Look::ViewAspect`]). `None`
+    /// where nothing listens, as in a thumbnail's or a test's.
+    aspect: Option<f32>,
 }
+
+/// How far, as a share of it, the viewport's width over its height may
+/// differ from what the app last heard before it's told again: resizing
+/// a window a pixel at a time doesn't send a message each.
+const ASPECT_SLACK: f32 = 0.01;
 
 /// What one frame of the viewport draws but the sketch being edited.
 #[derive(Debug, Clone)]
@@ -467,141 +479,21 @@ impl shader::Program<Message> for Program<'_> {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<Action<Message>> {
-        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
-            state.modifiers = *modifiers;
-            let sketching = self.sketching.as_ref()?;
-            return sketching.modifiers_changed(
-                &mut state.sketch,
-                bounds,
-                cursor,
-                &self.scene.camera,
-                *modifiers,
-            );
-        }
-        if let Event::Window(iced::window::Event::RedrawRequested(now)) = event
-            && let Some(action) = self.hold(state, *now, bounds)
-        {
-            return Some(action);
-        }
-        // A move's handles under a cursor that stayed put as the frame
-        // changed.
-        if let Some(Operating::Motion(moving)) = &self.operating
-            && state.drag.is_none()
+        let action = self.handle(state, event, bounds, cursor);
+        // The app is told the viewport's shape once it changes, on a frame
+        // nothing else answers.
+        if action.is_none()
             && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
-            && let Some(action) = moving.redraw(
-                &mut state.motion,
-                bounds,
-                cursor,
-                &self.scene.camera,
-                (self.picking.as_ref()).is_some_and(|picking| picking.hovered.is_some()),
-            )
+            && bounds.height >= 1.0
         {
-            // The model let go of under it is picked again once it's off.
-            state.hover_seen = None;
-            return Some(action);
-        }
-        // The operation's picking and handle come first, unless the
-        // camera is being dragged; the rest goes on as outside a sketch.
-        if let Some(operating) = &self.operating
-            && state.drag.is_none()
-            && let Event::Mouse(event) = event
-        {
-            let camera = &self.scene.camera;
-            let action = match operating {
-                // Its knobs, ahead of its regions.
-                Operating::Extrude(extruding) => {
-                    extruding.mouse(&mut state.extrude, *event, bounds, cursor, camera)
-                }
-                // Its knobs, ahead of its lines, edges and regions.
-                Operating::Revolve(revolving) => {
-                    revolving.mouse(&mut state.revolve, *event, bounds, cursor, camera)
-                }
-                // A move's handles, ahead of picking the model.
-                Operating::Motion(moving) => {
-                    let hovered = self
-                        .picking
-                        .as_ref()
-                        .is_some_and(|picking| picking.hovered.is_some());
-                    moving.mouse(&mut state.motion, *event, bounds, cursor, camera, hovered)
-                }
-                // The cursor picks the model as outside the sessions.
-                Operating::Measure(_) => None,
-            };
-            if action.is_some() {
-                return action;
+            let aspect = bounds.width / bounds.height;
+            let changed =
+                (self.aspect).is_some_and(|known| (aspect - known).abs() > known * ASPECT_SLACK);
+            if aspect.is_finite() && changed {
+                return Some(Action::publish(Message::Look(Look::ViewAspect(aspect))));
             }
         }
-        // Nothing's picked under a move's handles.
-        let handled = matches!(self.operating, Some(Operating::Motion(_))) && state.motion.holds();
-        // A move the session saw without taking it that still wants a
-        // frame (the cursor off a sweep's path curve): after the model's
-        // picking has had it.
-        let redraw = state.motion.take_redraw();
-        if let Some(picking) = &self.picking
-            && state.drag.is_none()
-            && !handled
-            && let Some(action) = self.hover(state, picking, event, bounds, cursor)
-        {
-            return Some(action);
-        }
-        if redraw {
-            return Some(Action::request_redraw());
-        }
-        // While the camera's dragged (past a click), nothing's hovered:
-        // what was moves away from the cursor. It's worked out again once
-        // the drag ends. A sweep's region or path curve likewise.
-        if state.drag.is_some()
-            && state.click.is_none()
-            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
-            && state.motion.leave_sketches()
-            && (self.picking.as_ref()).is_none_or(|picking| !picking.hovers())
-        {
-            return Some(Action::request_redraw());
-        }
-        if let Some(picking) = &self.picking
-            && state.drag.is_some()
-            && state.click.is_none()
-            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
-        {
-            state.hover_seen = None;
-            if picking.hovers() {
-                return Some(Action::publish(Message::Look(Look::Hover(None))));
-            }
-        }
-        let camera = match event {
-            // The left button is the sketch's in a sketch, and moving the
-            // cursor while the camera isn't dragged. Its release goes where
-            // its press went: `Esc` may have let go of a tool picking
-            // outside the sketch while it was held.
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                state.left_camera = self.sketching.is_none() || self.picks_outside();
-                state.left_camera
-            }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                std::mem::take(&mut state.left_camera)
-                    || self.sketching.is_none()
-                    || self.picks_outside()
-            }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => state.drag.is_some(),
-            Event::Mouse(_) => true,
-            _ => false,
-        };
-        if camera {
-            let Event::Mouse(event) = event else {
-                return None;
-            };
-            return self.camera(state, *event, bounds, cursor);
-        }
-        let sketching = self.sketching.as_ref()?;
-        let camera = &self.scene.camera;
-        sketching.update(
-            &mut state.sketch,
-            event,
-            bounds,
-            cursor,
-            camera,
-            state.modifiers,
-        )
+        action
     }
 
     fn draw(&self, state: &Interaction, _cursor: mouse::Cursor, bounds: Rectangle) -> Primitive {
@@ -1134,6 +1026,154 @@ impl Program<'_> {
             }
             _ => None,
         }
+    }
+}
+
+impl Program<'_> {
+    /// [`shader::Program::update`] but for telling the app the
+    /// viewport's shape.
+    fn handle(
+        &self,
+        state: &mut Interaction,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<Action<Message>> {
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            state.modifiers = *modifiers;
+            let sketching = self.sketching.as_ref()?;
+            return sketching.modifiers_changed(
+                &mut state.sketch,
+                bounds,
+                cursor,
+                &self.scene.camera,
+                *modifiers,
+            );
+        }
+        if let Event::Window(iced::window::Event::RedrawRequested(now)) = event
+            && let Some(action) = self.hold(state, *now, bounds)
+        {
+            return Some(action);
+        }
+        // A move's handles under a cursor that stayed put as the frame
+        // changed.
+        if let Some(Operating::Motion(moving)) = &self.operating
+            && state.drag.is_none()
+            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
+            && let Some(action) = moving.redraw(
+                &mut state.motion,
+                bounds,
+                cursor,
+                &self.scene.camera,
+                (self.picking.as_ref()).is_some_and(|picking| picking.hovered.is_some()),
+            )
+        {
+            // The model let go of under it is picked again once it's off.
+            state.hover_seen = None;
+            return Some(action);
+        }
+        // The operation's picking and handle come first, unless the
+        // camera is being dragged; the rest goes on as outside a sketch.
+        if let Some(operating) = &self.operating
+            && state.drag.is_none()
+            && let Event::Mouse(event) = event
+        {
+            let camera = &self.scene.camera;
+            let action = match operating {
+                // Its knobs, ahead of its regions.
+                Operating::Extrude(extruding) => {
+                    extruding.mouse(&mut state.extrude, *event, bounds, cursor, camera)
+                }
+                // Its knobs, ahead of its lines, edges and regions.
+                Operating::Revolve(revolving) => {
+                    revolving.mouse(&mut state.revolve, *event, bounds, cursor, camera)
+                }
+                // A move's handles, ahead of picking the model.
+                Operating::Motion(moving) => {
+                    let hovered = self
+                        .picking
+                        .as_ref()
+                        .is_some_and(|picking| picking.hovered.is_some());
+                    moving.mouse(&mut state.motion, *event, bounds, cursor, camera, hovered)
+                }
+                // The cursor picks the model as outside the sessions.
+                Operating::Measure(_) => None,
+            };
+            if action.is_some() {
+                return action;
+            }
+        }
+        // Nothing's picked under a move's handles.
+        let handled = matches!(self.operating, Some(Operating::Motion(_))) && state.motion.holds();
+        // A move the session saw without taking it that still wants a
+        // frame (the cursor off a sweep's path curve): after the model's
+        // picking has had it.
+        let redraw = state.motion.take_redraw();
+        if let Some(picking) = &self.picking
+            && state.drag.is_none()
+            && !handled
+            && let Some(action) = self.hover(state, picking, event, bounds, cursor)
+        {
+            return Some(action);
+        }
+        if redraw {
+            return Some(Action::request_redraw());
+        }
+        // While the camera's dragged (past a click), nothing's hovered:
+        // what was moves away from the cursor. It's worked out again once
+        // the drag ends. A sweep's region or path curve likewise.
+        if state.drag.is_some()
+            && state.click.is_none()
+            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
+            && state.motion.leave_sketches()
+            && (self.picking.as_ref()).is_none_or(|picking| !picking.hovers())
+        {
+            return Some(Action::request_redraw());
+        }
+        if let Some(picking) = &self.picking
+            && state.drag.is_some()
+            && state.click.is_none()
+            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
+        {
+            state.hover_seen = None;
+            if picking.hovers() {
+                return Some(Action::publish(Message::Look(Look::Hover(None))));
+            }
+        }
+        let camera = match event {
+            // The left button is the sketch's in a sketch, and moving the
+            // cursor while the camera isn't dragged. Its release goes where
+            // its press went: `Esc` may have let go of a tool picking
+            // outside the sketch while it was held.
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                state.left_camera = self.sketching.is_none() || self.picks_outside();
+                state.left_camera
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                std::mem::take(&mut state.left_camera)
+                    || self.sketching.is_none()
+                    || self.picks_outside()
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => state.drag.is_some(),
+            Event::Mouse(_) => true,
+            _ => false,
+        };
+        if camera {
+            let Event::Mouse(event) = event else {
+                return None;
+            };
+            return self.camera(state, *event, bounds, cursor);
+        }
+        let sketching = self.sketching.as_ref()?;
+        let camera = &self.scene.camera;
+        sketching.update(
+            &mut state.sketch,
+            event,
+            bounds,
+            cursor,
+            camera,
+            state.modifiers,
+        )
     }
 }
 

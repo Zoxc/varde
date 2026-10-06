@@ -21,6 +21,7 @@ use std::fmt;
 use std::mem::size_of_val;
 use std::sync::Arc;
 
+use crate::PickTables;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_document::BodyId;
@@ -624,11 +625,28 @@ impl Drawn {
     }
 }
 
-/// A model's mesh with its picking tables, as a scene is kept.
+/// A model's mesh with its picking tables and hierarchies, as a scene is
+/// kept. Its mesh's [`RenderMesh::upload`] is built.
 #[derive(Debug, Clone)]
 pub(crate) struct Scene {
     pub(crate) mesh: Arc<RenderMesh>,
     pub(crate) picking: Arc<Picking>,
+    pub(crate) tables: Arc<PickTables>,
+}
+
+impl Scene {
+    /// The scene of `mesh` and its `picking`, its hierarchies and the
+    /// mesh's upload built: the work the UI thread would do with it
+    /// otherwise.
+    pub(crate) fn new(mesh: RenderMesh, picking: Picking) -> Scene {
+        mesh.upload();
+        let tables = PickTables::new(&mesh, &picking);
+        Scene {
+            mesh: Arc::new(mesh),
+            picking: Arc::new(picking),
+            tables: Arc::new(tables),
+        }
+    }
 }
 
 /// Why parts don't make a [`Picking`] of a mesh.

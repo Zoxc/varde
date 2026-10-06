@@ -11,7 +11,7 @@ use crate::{Draft, handle};
 
 fn regenerate(editor: &Editor) -> Request {
     Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -24,7 +24,7 @@ fn regenerate(editor: &Editor) -> Request {
 /// one part, of the one body it lists, one face and one crease.
 fn regenerated(generation: u64) -> Head {
     Head::Regenerated {
-        detail: None,
+        sight: None,
         generation: generation.into(),
         exclude: None,
         draft: None,
@@ -82,7 +82,7 @@ fn request_round_trips() {
         exclude,
         draft,
         inspect: None,
-        detail: None,
+        sight: None,
     } = decode_request(&bytes).unwrap()
     else {
         panic!("not a regeneration");
@@ -127,7 +127,7 @@ fn a_revolve_and_its_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -235,7 +235,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
         .into(),
     };
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -319,7 +319,7 @@ fn request_with_a_draft_round_trips() {
         kind: extrude.clone().into(),
     };
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -357,7 +357,7 @@ fn request_with_a_draft_round_trips() {
     let mut join = extrude.clone();
     join.operation = varde_document::Operation::Join(varde_document::Targets::default());
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -379,7 +379,7 @@ fn request_with_a_draft_round_trips() {
 fn request_leaving_out_a_sketch_round_trips() {
     let (editor, feature) = sketched();
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: Some(feature),
@@ -829,7 +829,7 @@ fn a_pattern_and_its_draft_round_trip() {
         kind: row("-100").into(),
     };
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -918,7 +918,7 @@ fn a_move_a_mirror_and_a_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -996,7 +996,7 @@ fn a_combine_and_its_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -1090,7 +1090,7 @@ fn empty_model_round_trips() {
 fn failed_round_trips() {
     let (_, feature) = sketched();
     let response = Response::Failed {
-        detail: Some(crate::Detail(-3)),
+        sight: Some(3),
         generation: Generation::from(u64::MAX),
         exclude: Some(feature),
         draft: Some(2),
@@ -1103,13 +1103,13 @@ fn failed_round_trips() {
         exclude,
         draft,
         inspect,
-        detail,
+        sight,
         error,
     } = round_trip(&response)
     else {
         panic!("not a failure");
     };
-    assert_eq!(detail, Some(crate::Detail(-3)));
+    assert_eq!(sight, Some(3));
     assert_eq!(u64::from(generation), u64::MAX);
     assert_eq!(exclude, Some(feature));
     assert_eq!(draft, Some(2));
@@ -1274,13 +1274,15 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
     let snaps = vec![None; mesh.edge_count()];
     let picking =
         Picking::from_parts(parts, faces, closed, tangents, snaps, Vec::new(), &mesh).unwrap();
+    let tables = PickTables::new(&mesh, &picking);
     Response::Regenerated {
-        detail: None,
+        sight: None,
         generation: Generation::from(0),
         exclude: None,
         draft: None,
         mesh: Arc::new(mesh),
         picking: Arc::new(picking),
+        tables: Arc::new(tables),
         sketches: Arc::new(lines),
         unsolved: Vec::new(),
         failed: Vec::new(),
@@ -1344,16 +1346,16 @@ fn slices(parts: &[Vec<u8>]) -> Vec<&[u8]> {
 }
 
 fn decode(parts: &[Vec<u8>]) -> Result<RenderMesh, Error> {
-    decode_model(&slices(parts)).map(|(mesh, _)| mesh)
+    decode_model(&slices(parts)).map(|(mesh, _, _)| mesh)
 }
 
 fn decode_lines(parts: &[Vec<u8>]) -> Result<RenderLines, Error> {
-    decode_model(&slices(parts)).map(|(_, lines)| lines)
+    decode_model(&slices(parts)).map(|(_, lines, _)| lines)
 }
 
 #[test]
 fn triangle_decodes() {
-    let (mesh, lines) = decode_model(&slices(&triangle())).unwrap();
+    let (mesh, lines, _) = decode_model(&slices(&triangle())).unwrap();
     assert_eq!(mesh.triangle_count(), 1);
     assert_eq!(lines.segment_count(), 2);
 }
@@ -1543,7 +1545,7 @@ fn oversized_head_is_an_error() {
 #[test]
 fn errors_display() {
     let error = decode(&[]).unwrap_err();
-    assert_eq!(error.to_string(), "model in 0 parts instead of 14");
+    assert_eq!(error.to_string(), "model in 0 parts instead of 26");
 }
 
 /// A small deterministic generator for the fuzz tests below (xorshift64).
@@ -1589,10 +1591,32 @@ fn decode_any(head: &[u8], parts: &[Vec<u8>]) {
         mesh,
         sketches,
         picking,
+        tables,
         bodies,
         ..
     }) = decode_reply(head, &slices(parts))
     {
+        // Each hierarchy walks each node once, from the root.
+        for bvh in [tables.triangles(), tables.segments(), tables.vertices()] {
+            let nodes = bvh.nodes();
+            let mut stack: Vec<usize> = (!nodes.is_empty()).then_some(0).into_iter().collect();
+            let mut visits = 0;
+            while let Some(at) = stack.pop() {
+                visits += 1;
+                assert!(visits <= nodes.len());
+                let node = nodes[at];
+                if node.count == 0 {
+                    stack.extend([at + 1, node.start as usize]);
+                } else {
+                    bvh.leaf(&node);
+                }
+            }
+        }
+        let upload = mesh.upload();
+        for [edges, wires] in upload.parts() {
+            assert!(edges.end as usize <= upload.points().len());
+            assert!(wires.end as usize <= upload.points().len());
+        }
         let mut start = 0;
         for &end in sketches.ends() {
             assert!(end >= start + 2);
@@ -1656,7 +1680,7 @@ fn damaged_encodings_never_panic() {
     let (head, _) = encode_reply(&handle(decode_request(&request).unwrap()));
     let parts = triangle();
     let failed = Head::Failed {
-        detail: None,
+        sight: None,
         generation: Generation::from(3),
         exclude: None,
         draft: Some(1),
@@ -1691,7 +1715,7 @@ fn huge_lengths_are_refused_without_allocating_them() {
 
     // An error message that long.
     let mut head = Head::Failed {
-        detail: None,
+        sight: None,
         generation: Generation::from(3),
         exclude: None,
         draft: None,
@@ -2119,13 +2143,15 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
             &mesh,
         )
         .unwrap();
+        let tables = PickTables::new(&mesh, &picking);
         Response::Regenerated {
-            detail: None,
+            sight: None,
             generation: 4.into(),
             exclude: None,
             draft: None,
             mesh: Arc::new(mesh),
             picking: Arc::new(picking),
+            tables: Arc::new(tables),
             sketches: Arc::new(RenderLines::default()),
             unsolved: Vec::new(),
             failed: Vec::new(),
@@ -3230,7 +3256,7 @@ fn a_revolve_about_an_edge_round_trips() {
     };
     let feature = editor.document().features().last().unwrap().id;
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -3290,7 +3316,7 @@ fn a_draft_s_list_of_copy_bodies_is_laid_out_again_or_refused() {
         .unwrap();
     let id = editor.document().features()[2].id;
     let request = |list: Vec<BodyId>| Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -3429,7 +3455,7 @@ fn a_sweep_and_a_helix_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -3537,7 +3563,7 @@ fn a_loft_and_its_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -3577,7 +3603,7 @@ fn a_tapered_draft_crosses_the_wire() {
     let mut tapered = extrude.clone();
     tapered.taper = Some(varde_expr::Value::new("4", &ask).unwrap());
     let request = |extrude: varde_document::Extrude| Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -3760,4 +3786,71 @@ fn relinked_sketches_and_broken_links_are_bounded_as_the_head_is_decoded() {
         panic!("the model wasn't sent");
     };
     assert!(relinked.is_empty());
+}
+
+/// The lane's upload of the mesh and its picking hierarchies cross with
+/// the model, so the page needn't build them again.
+#[test]
+fn the_upload_and_the_hierarchies_round_trip() {
+    let editor = Editor::new(Document::example());
+    let response = handle(crate::tests::regenerate_with(&editor, None));
+    let Response::Regenerated {
+        mesh: sent,
+        tables: sent_tables,
+        ..
+    } = &response
+    else {
+        panic!("the plate regenerates");
+    };
+    let Response::Regenerated { mesh, tables, .. } = round_trip(&response) else {
+        panic!("the plate crosses");
+    };
+    assert_eq!(*tables, **sent_tables);
+    assert!(!tables.triangles().nodes().is_empty());
+    assert_eq!(mesh.upload(), sent.upload());
+}
+
+/// A model whose hierarchies or upload don't go with its mesh fails its
+/// generation.
+#[test]
+fn broken_hierarchies_or_upload_fail_the_generation() {
+    let editor = Editor::new(Document::example());
+    let response = handle(crate::tests::regenerate_with(&editor, None));
+    let (head, parts) = encode_reply(&response);
+    let parts: Vec<Vec<u8>> = parts.into_iter().map(Cow::into_owned).collect();
+    // The upload's points, then the triangles' nodes: each cut to its
+    // first element.
+    for (part, size, error) in [(14, 20, "stream"), (17, 32, "hierarchy")] {
+        let mut broken = parts.clone();
+        broken[part].truncate(size);
+        let Response::Failed { error: got, .. } =
+            decode_reply(&head[..], &slices(&broken)).unwrap()
+        else {
+            panic!("decoded a model with part {part} broken");
+        };
+        assert!(got.contains(error), "{got}");
+    }
+}
+
+/// A request's sight crosses as it went, and its answer says which.
+#[test]
+fn a_sight_round_trips() {
+    let (editor, _) = sketched();
+    let sight = crate::Sight {
+        revision: 7,
+        view: crate::Detail(-4),
+        bodies: vec![(BodyId::NEW, None)],
+    };
+    let mut request = regenerate(&editor);
+    let Request::Regenerate { sight: asked, .. } = &mut request else {
+        panic!("a regeneration");
+    };
+    *asked = Some(Box::new(sight.clone()));
+    let Request::Regenerate { sight: back, .. } =
+        decode_request(&encode_request(&request)).unwrap()
+    else {
+        panic!("not a regeneration");
+    };
+    assert_eq!(back.as_deref(), Some(&sight));
+    assert_eq!(round_trip(&handle(request)).sight(), Some(7));
 }

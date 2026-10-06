@@ -76,7 +76,7 @@ fn export_goes_while_a_body_is_shown_and_regenerating_works() {
     ));
     let request = regen.take().pop().unwrap();
     doc.computed(Response::Failed {
-        detail: None,
+        sight: None,
         generation: request.generation().unwrap(),
         exclude: None,
         draft: None,

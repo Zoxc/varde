@@ -48,6 +48,7 @@ pub mod loft;
 mod manifold;
 pub mod measure;
 pub mod mesh;
+mod mesh_upload;
 mod par;
 pub mod patch;
 mod profile;
@@ -77,6 +78,9 @@ pub use error::KernelError;
 pub use extrude::{Frame, TaperError, extrude, extrude_tapered};
 pub use failure::{EVIDENCE_WORK, Evidence, EvidenceCaps, Failure, MAX_EVIDENCE, Operand};
 pub use manifold::{ManifoldError, ManifoldMesh};
+pub use mesh_upload::{
+    CREASE, EdgePoint, EdgeStream, MeshUpload, NEIGHBOUR_ONLY, NO_EDGE, UploadError,
+};
 pub use profile::{Loop, MAX_PROFILE_SEGMENTS, Profile, ProfileError, Segment};
 pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, MeshParts, RenderMesh, RenderPart};

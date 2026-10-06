@@ -49,7 +49,7 @@ impl Tables {
 /// the tables and the answer.
 fn ask(regenerator: &mut Regenerator, editor: &Editor, inspect: Inspect) -> (Tables, Inspected) {
     let response = regenerator.handle(Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -82,7 +82,7 @@ fn inspect_revision(response: &Response) -> u64 {
 /// The example's tables, without a measure.
 fn tables(editor: &Editor) -> Tables {
     let response = crate::handle(Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -547,7 +547,7 @@ fn of_several_faces_of_the_same_key_the_nearest_is_measured() {
     // The right piece's place is the one drawn at the right: one of its
     // triangles has a vertex past the slot.
     let Response::Regenerated { mesh, .. } = crate::handle(Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -684,7 +684,7 @@ fn a_measure_on_a_draft_is_of_the_drafted_model() {
         face_pick(&picking, bottom(&picking, body), [-20.0, 0.0, 0.0]),
     );
     let response = crate::handle(Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -715,7 +715,7 @@ fn extrude_of(document: &Document, feature: varde_document::FeatureId) -> varde_
 #[test]
 fn a_failed_regeneration_says_which_measure_it_had() {
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: 4.into(),
         document: Arc::new(Document::default()),
         exclude: None,

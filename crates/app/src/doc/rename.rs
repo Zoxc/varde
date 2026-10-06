@@ -146,6 +146,7 @@ fn passive(message: &Look) -> bool {
             | Look::Orbit { .. }
             | Look::Pan { .. }
             | Look::Zoom { .. }
+            | Look::ViewAspect(_)
             | Look::SetPivot(_)
     )
 }

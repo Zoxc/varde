@@ -4,7 +4,9 @@ use std::sync::{Arc, Weak};
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
-use varde_kernel::{Aabb, RenderLines, RenderMesh};
+#[cfg(test)]
+use varde_kernel::NO_EDGE;
+use varde_kernel::{Aabb, CREASE, EdgePoint, EdgeStream, MeshUpload, RenderLines, RenderMesh};
 use wgpu::util::DeviceExt;
 
 use crate::Camera;
@@ -654,41 +656,12 @@ const MAX_BUFFER_BYTES: usize = 256 << 20;
 // each end.
 const _: () = assert!(size_of::<[f32; 3]>() * RenderMesh::MAX_VERTICES <= MAX_BUFFER_BYTES);
 const _: () = assert!(size_of::<u32>() * RenderMesh::MAX_INDICES <= MAX_BUFFER_BYTES);
-const _: () =
-    assert!(size_of::<EdgePoint>() * (RenderMesh::MAX_EDGE_POINTS / 2 * 3 + 2) <= MAX_BUFFER_BYTES);
+const _: () = assert!(size_of::<EdgePoint>() * MeshUpload::MAX_POINTS <= MAX_BUFFER_BYTES);
 // Lines are uploaded a segment of two points each, fewer than points.
 const _: () = assert!(size_of::<Segment>() * RenderLines::MAX_POINTS <= MAX_BUFFER_BYTES);
 
 /// A segment of a line as the GPU takes it: its two ends.
 type Segment = [[f32; 3]; 2];
-
-/// A point of the stream the feature edges are drawn from (see
-/// [`EdgeStream`] and `agents/viewport.md`). The stream is bound to
-/// [`EDGE_SLOTS`] vertex buffer slots a point apart, so the instance
-/// drawing the segment from point `i + 1` to `i + 2` sees the points either
-/// side too. See `edge_segment` in the shader.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
-pub(crate) struct EdgePoint {
-    pub(crate) position: [f32; 3],
-    /// How far along its polyline it is, in world units.
-    along: f32,
-    /// Which polyline it's on.
-    pub(crate) edge: u32,
-}
-
-/// The edge of the points at the ends of the stream: no polyline's.
-const NO_EDGE: u32 = u32::MAX;
-
-/// Set in [`EdgePoint::edge`] for a point that is only a neighbour of its
-/// edge's segments, where a closed polyline joins itself. As
-/// `NEIGHBOUR_ONLY` in the shader.
-const NEIGHBOUR_ONLY: u32 = 1 << 31;
-
-/// Set in [`EdgePoint::edge`] for a crease's points: an edge with one face
-/// on both sides. As `CREASE` in the shader.
-const CREASE: u32 = 1 << 30;
-const _: () = assert!(RenderMesh::MAX_EDGE_POLYLINES <= CREASE as usize);
 
 /// How many slots the edge stream is bound to: previous, start, end and
 /// next point.
@@ -3162,20 +3135,13 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
     // The kernel's limits keep every part within `MAX_BUFFER_BYTES`, so
     // this doesn't saturate.
     let bytes = |len: usize, size: usize| len.saturating_mul(size) as u64;
-    let (edge_points, part_points) =
-        if mesh.edge_vertices().is_empty() && mesh.wire_vertices().is_empty() {
-            (None, Vec::new())
-        } else {
-            let (points, parts) = edge_stream(mesh);
-            (Some(points), parts)
-        };
+    // Built in the regeneration lane, natively and in the web worker.
+    let upload = mesh.upload();
+    let edge_points = (!upload.points().is_empty()).then(|| upload.points());
     let largest = [
         bytes(mesh.positions().len(), size_of::<[f32; 3]>()),
         bytes(mesh.indices().len(), size_of::<u32>()),
-        bytes(
-            edge_points.as_ref().map_or(0, Vec::len),
-            size_of::<EdgePoint>(),
-        ),
+        bytes(edge_points.map_or(0, <[_]>::len), size_of::<EdgePoint>()),
     ]
     .into_iter()
     .max()
@@ -3189,7 +3155,7 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
     let edges = edge_points.map(|points| {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("varde mesh edges"),
-            contents: bytemuck::cast_slice(&points),
+            contents: bytemuck::cast_slice(points),
             usage: wgpu::BufferUsages::VERTEX,
         })
     });
@@ -3198,22 +3164,25 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
         let at = |n| u32::try_from(n).expect("kernel bounds indices");
         at(range.start)..at(range.end)
     };
-    let part =
-        |faces: Range<usize>, indices: Range<usize>, [points, wires]: [Range<u32>; 2]| GpuPart {
-            bounds: bounds_of(mesh.positions(), &mesh.indices()[indices.clone()]),
-            faces: to_u32(faces),
-            indices: to_u32(indices),
-            points,
-            wires,
-        };
+    let part = |faces: Range<usize>,
+                indices: Range<usize>,
+                [points, wires]: [Range<u32>; 2],
+                bounds| GpuPart {
+        bounds,
+        faces: to_u32(faces),
+        indices: to_u32(indices),
+        points,
+        wires,
+    };
     // With no edges or wires, none of the parts has points.
-    let points = |i: usize| part_points.get(i).cloned().unwrap_or([1..1, 1..1]);
+    let points = |i: usize| upload.parts().get(i).cloned().unwrap_or([1..1, 1..1]);
+    let bounds = |i: usize| upload.bounds().get(i).copied().flatten();
     let mut parts: Vec<GpuPart> = (mesh.parts().enumerate())
-        .map(|(i, part_of)| part(part_of.faces, part_of.indices, points(i)))
+        .map(|(i, part_of)| part(part_of.faces, part_of.indices, points(i), bounds(i)))
         .collect();
     if parts.is_empty() {
         let (faces, indices) = (0..mesh.face_count(), 0..mesh.indices().len());
-        parts.push(part(faces, indices, [1..1, 1..1]));
+        parts.push(part(faces, indices, [1..1, 1..1], mesh.bounds()));
     }
 
     Ok(Some(GpuMesh {
@@ -3289,149 +3258,6 @@ fn triangle_edges(
         }),
         parts: ranges,
     })
-}
-
-/// The bounds of the positions `indices` refer to, or `None` if there are
-/// none.
-fn bounds_of(positions: &[[f32; 3]], indices: &[u32]) -> Option<Aabb> {
-    let mut points = indices.iter().map(|&i| Vec3::from(positions[i as usize]));
-    let first = points.next()?;
-    let (min, max) = points.fold((first, first), |(min, max), p| (min.min(p), max.max(p)));
-    Some(Aabb { min, max })
-}
-
-/// The [`EdgePoint`] stream of `mesh`'s feature edges, then its wires,
-/// and where each part's edges' and wires' points are in it. Creases and
-/// wires are marked [`CREASE`]; a wire is numbered after every edge.
-fn edge_stream(mesh: &RenderMesh) -> (Vec<EdgePoint>, Vec<[Range<u32>; 2]>) {
-    let points = (mesh.edge_vertices().len()).saturating_add(mesh.wire_vertices().len());
-    let mut stream = EdgeStream::with_capacity(points);
-    // The kernel bounds the edges and wires together well within `u32`,
-    // below `CREASE`.
-    let to_u32 = |n: usize| u32::try_from(n).expect("kernel bounds edges");
-    let mut edge_points = Vec::with_capacity(mesh.part_ends().len());
-    let mut polylines = mesh.polylines().zip(mesh.edge_faces());
-    for part in mesh.parts() {
-        let start = stream.len();
-        for (edge, (polyline, [a, b])) in part.edges.zip(polylines.by_ref()) {
-            let id = if a == b {
-                to_u32(edge) | CREASE
-            } else {
-                to_u32(edge)
-            };
-            stream.push(id, mesh.positions(), polyline);
-        }
-        edge_points.push(start..stream.len());
-    }
-    let edges = to_u32(mesh.edge_count());
-    let mut wires = mesh.wires();
-    let parts = (mesh.parts().zip(edge_points))
-        .map(|(part, edge_points)| {
-            let start = stream.len();
-            for (wire, polyline) in part.wires.zip(wires.by_ref()) {
-                stream.push((edges + to_u32(wire)) | CREASE, mesh.positions(), polyline);
-            }
-            [edge_points, start..stream.len()]
-        })
-        .collect();
-    (stream.finish(), parts)
-}
-
-/// An [`EdgePoint`] stream being built: polylines one after another, from
-/// a point of no edge, which ends it too.
-pub(crate) struct EdgeStream {
-    points: Vec<EdgePoint>,
-    /// A polyline's points, repeats in a row left out: a segment of no
-    /// length between two others would keep them from joining.
-    kept: Vec<[f32; 3]>,
-}
-
-impl EdgeStream {
-    /// A stream with room for `points` points of polylines.
-    pub(crate) fn with_capacity(points: usize) -> EdgeStream {
-        let mut stream = EdgeStream {
-            points: Vec::with_capacity(points.saturating_add(2)),
-            kept: Vec::new(),
-        };
-        stream.separate();
-        stream
-    }
-
-    /// Appends the polyline through `polyline`'s vertices of `positions`
-    /// as edge `edge`, below [`NEIGHBOUR_ONLY`].
-    pub(crate) fn push(&mut self, edge: u32, positions: &[[f32; 3]], polyline: &[u32]) {
-        self.push_points(
-            edge,
-            polyline.iter().map(|&vertex| positions[vertex as usize]),
-        );
-    }
-
-    /// Appends the polyline through `polyline` as edge `edge`, likewise.
-    pub(crate) fn push_points(&mut self, edge: u32, polyline: impl IntoIterator<Item = [f32; 3]>) {
-        let (points, kept) = (&mut self.points, &mut self.kept);
-        kept.clear();
-        for position in polyline {
-            if kept.last() != Some(&position) {
-                kept.push(position);
-            }
-        }
-        let neighbour = |position| EdgePoint {
-            position,
-            along: 0.0,
-            edge: edge | NEIGHBOUR_ONLY,
-        };
-        // Closed, round three segments or more; two would be one there and
-        // back, joined at its turns already.
-        let closed = kept.len() >= 4 && kept.first() == kept.last();
-        if closed {
-            points.push(neighbour(kept[kept.len() - 2]));
-        }
-        // Summed in `f64`, so a long polyline of short segments doesn't
-        // drift. Positions are bounded, so it stays finite.
-        let mut along = 0.0f64;
-        for (i, &position) in kept.iter().enumerate() {
-            if let Some(&last) = i.checked_sub(1).and_then(|i| kept.get(i)) {
-                along += f64::from(Vec3::from(position).distance(Vec3::from(last)));
-            }
-            points.push(EdgePoint {
-                position,
-                along: along as f32,
-                edge,
-            });
-        }
-        if closed {
-            points.push(neighbour(kept[1]));
-        }
-        // One left of the polyline, all its points the same, is a dot.
-        if let [point] = kept[..] {
-            points.push(EdgePoint {
-                position: point,
-                along: 0.0,
-                edge,
-            });
-        }
-    }
-
-    /// Appends a point of no edge, which no segment joins.
-    pub(crate) fn separate(&mut self) {
-        self.points.push(EdgePoint {
-            position: [0.0; 3],
-            along: 0.0,
-            edge: NO_EDGE,
-        });
-    }
-
-    /// How many points it has.
-    pub(crate) fn len(&self) -> u32 {
-        // The kernel's limits keep the stream well within `u32`.
-        u32::try_from(self.points.len()).expect("kernel bounds edges")
-    }
-
-    /// The stream, ended by a point of no edge.
-    pub(crate) fn finish(mut self) -> Vec<EdgePoint> {
-        self.separate();
-        self.points
-    }
 }
 
 /// Uploads `lines` a segment each, or nothing if there are none. See

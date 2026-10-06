@@ -320,7 +320,7 @@ fn the_index_is_the_same_built_twice() {
             );
         }
     }
-    assert_eq!(a.triangles.items, b.triangles.items);
+    assert_eq!(a.tables, b.tables);
 }
 
 #[test]

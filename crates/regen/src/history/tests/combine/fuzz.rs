@@ -288,7 +288,7 @@ pub(in crate::history::tests) fn wire(
     what: &str,
 ) {
     let request = Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,

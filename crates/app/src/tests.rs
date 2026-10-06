@@ -486,11 +486,11 @@ pub(crate) fn status_bar_texts(doc: &Doc, mouse_hints: bool) -> Vec<String> {
 /// model frames the camera, which asks for it drawn as finely as it shows.
 pub(crate) fn answer(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
     loop {
-        let detail = doc.feed.detail();
+        let detail = doc.feed.sight().map(|sight| sight.revision);
         for request in requests.take() {
             doc.computed(handle(request));
         }
-        if doc.feed.detail() == detail || requests.borrow().is_empty() {
+        if doc.feed.sight().map(|sight| sight.revision) == detail || requests.borrow().is_empty() {
             return;
         }
     }
@@ -619,7 +619,7 @@ fn draw_line(doc: &mut Doc) {
 /// The model of [`with_a_line`], for generation 1.
 fn one_line() -> Response {
     handle(Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: Generation::from(1),
         document: Arc::new(with_a_line()),
         exclude: None,
@@ -2840,16 +2840,18 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     draft,
                     mesh,
                     picking,
+                    tables,
                     sketches,
                     bodies,
                     ..
                 } => Response::Regenerated {
-                    detail: None,
+                    sight: None,
                     generation,
                     exclude,
                     draft,
                     mesh,
                     picking,
+                    tables,
                     sketches,
                     unsolved: vec![id],
                     failed: vec![varde_regen::FeatureFailure {
@@ -5799,7 +5801,7 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     ));
     for request in requests.take() {
         doc.computed(Response::Failed {
-            detail: None,
+            sight: None,
             draft: None,
             inspect: None,
             generation: request.generation().unwrap(),
@@ -5870,4 +5872,19 @@ fn a_sample_opens_as_a_new_design() {
         assert!(!doc.editor.document().features().is_empty());
         let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     }
+}
+
+/// The viewport's shape is kept as it tells it, within bounds; one that
+/// isn't a number is let go of.
+#[test]
+fn the_viewports_shape_is_kept_within_bounds() {
+    let (mut doc, _) = deferred();
+    assert_eq!(doc.aspect, None);
+    doc.look(Look::ViewAspect(1.6));
+    assert_eq!(doc.aspect, Some(1.6));
+    doc.look(Look::ViewAspect(f32::NAN));
+    doc.look(Look::ViewAspect(-1.0));
+    assert_eq!(doc.aspect, Some(1.6));
+    doc.look(Look::ViewAspect(1e9));
+    assert_eq!(doc.aspect, Some(100.0));
 }

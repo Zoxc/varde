@@ -4228,6 +4228,7 @@ dependencies = [
 name = "varde-kernel"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "glam 0.30.10",
  "libm",
  "rayon",

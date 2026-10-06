@@ -1,8 +1,9 @@
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use glam::Vec3;
 
-use crate::{Aabb, MAX_COORD};
+use crate::{Aabb, MAX_COORD, MeshUpload};
 
 /// A solid tessellated for drawing: an indexed triangle mesh with
 /// per-vertex normals, its triangles grouped by face, and the feature
@@ -27,6 +28,10 @@ use crate::{Aabb, MAX_COORD};
 /// bounds and depth range stay finite.
 /// The fields are private so that holds; a mesh built outside the kernel
 /// comes in through [`RenderMesh::from_parts`], which checks it.
+///
+/// It also holds what the renderer uploads beyond its vectors, once it's
+/// built ([`RenderMesh::upload`]), so whoever builds the mesh off the UI
+/// thread can build that too.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RenderMesh {
     positions: Vec<[f32; 3]>,
@@ -41,6 +46,18 @@ pub struct RenderMesh {
     wire_vertices: Vec<u32>,
     wire_ends: Vec<u32>,
     part_ends: Vec<[u32; 4]>,
+    upload: Upload,
+}
+
+/// A mesh's [`MeshUpload`], once built: derived from the rest, so left
+/// out of comparisons.
+#[derive(Debug, Clone, Default)]
+struct Upload(OnceLock<MeshUpload>);
+
+impl PartialEq for Upload {
+    fn eq(&self, _: &Upload) -> bool {
+        true
+    }
 }
 
 /// What a [`RenderMesh`] is made of, as [`RenderMesh::from_parts`] takes
@@ -204,6 +221,7 @@ impl RenderMesh {
             wire_vertices,
             wire_ends,
             part_ends,
+            upload: Upload::default(),
         };
         mesh.check_corners()?;
         Ok(mesh)
@@ -462,6 +480,7 @@ impl RenderMesh {
         let wire_points = base(self.wire_vertices.len())?;
         let wires = base(self.wire_ends.len())?;
 
+        self.upload = Upload::default();
         // Corners move as their positions do, so they stay equal.
         let moved = |p: &[f32; 3]| (Vec3::from(*p) + offset).to_array();
         self.positions.extend(other.positions.iter().map(moved));
@@ -497,6 +516,19 @@ impl RenderMesh {
     pub fn edge_segments(&self) -> impl Iterator<Item = [u32; 2]> + '_ {
         self.polylines()
             .flat_map(|polyline| polyline.windows(2).map(|pair| [pair[0], pair[1]]))
+    }
+
+    /// What the renderer uploads of the mesh beyond its vectors, built the
+    /// first time it's asked for: the regeneration lane asks, so the UI
+    /// thread doesn't build it.
+    pub fn upload(&self) -> &MeshUpload {
+        self.upload.0.get_or_init(|| MeshUpload::new(self))
+    }
+
+    /// Gives the mesh `upload`, which [`MeshUpload::from_parts`] checked
+    /// against it, unless it has one already.
+    pub fn set_upload(&self, upload: MeshUpload) {
+        let _ = self.upload.0.set(upload);
     }
 
     /// Axis-aligned bounds, or `None` for an empty mesh.

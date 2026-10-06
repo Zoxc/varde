@@ -1466,3 +1466,30 @@ fn a_press_held_picking_outside_a_sketch_lists_the_model_and_other_sketches() {
             .any(|item| matches!(item, OverlapItem::Model(_)))
     );
 }
+
+/// The viewport tells the app its shape on a frame nothing else answers,
+/// once it differs from what the app heard by more than the slack, and
+/// not where nothing listens.
+#[test]
+fn the_viewport_tells_its_shape_once_it_changes() {
+    use iced::widget::shader::Program as _;
+    let plate = Plate::new();
+    // Off the model, so a frame says nothing else.
+    let cursor = mouse::Cursor::Unavailable;
+    let bounds = Plate::bounds();
+    let shape = bounds.width / bounds.height;
+    let sent = |aspect: Option<f32>| {
+        let mut program = plate.program(&plate.camera, None);
+        program.aspect = aspect;
+        let mut state = Interaction::default();
+        (program.update(&mut state, &redraw(), bounds, cursor))
+            .and_then(|action| action.into_inner().0)
+    };
+    assert!(matches!(sent(Some(0.0)), Some(Message::Look(Look::ViewAspect(a))) if a == shape));
+    assert!(matches!(
+        sent(Some(shape * 1.1)),
+        Some(Message::Look(Look::ViewAspect(_)))
+    ));
+    assert!(sent(Some(shape * 1.005)).is_none(), "within the slack");
+    assert!(sent(None).is_none(), "nothing listens");
+}

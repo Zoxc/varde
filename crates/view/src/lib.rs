@@ -845,6 +845,10 @@ pub enum Look {
         x: f32,
         y: f32,
     },
+    /// The viewport's width over its height, published when it differs
+    /// from what the app last heard ([`DocumentState::aspect`]): what the
+    /// model's detail takes the view's sides by.
+    ViewAspect(f32),
     /// Home: turns the camera to the home view and forgets the pivot.
     ResetCamera,
     LookFrom(View),

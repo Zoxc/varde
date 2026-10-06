@@ -103,6 +103,7 @@ pub mod testing {
 mod inspect;
 mod message;
 mod newest;
+mod pick_tables;
 mod picking;
 mod profile;
 #[cfg(not(target_arch = "wasm32"))]
@@ -162,6 +163,7 @@ pub use history::{BodySolid, Evaluation, evaluate, note_merge};
 pub use inspect::{
     At, Between, EdgeForm, Entity, Gap, Inspect, InspectPick, Inspected, Measure, Probed,
 };
+pub use pick_tables::{Bvh, BvhNode, PickTables, PickTablesError, PickTablesParts, vertex_runs};
 pub use picking::{PickCorner, PickFace, Picking, PickingError, Summary};
 pub use profile::{ProfileError, chain_closes, loft_corner, loft_corners, profile};
 
@@ -195,9 +197,10 @@ pub enum Request {
         /// longer show, and the picks are always measured on the very
         /// model the answer draws, whose tables say where they are.
         inspect: Option<Box<Inspect>>,
-        /// How finely to draw the model for the view, or `None` for
-        /// within a share of each solid's size: see [`Detail`].
-        detail: Option<Detail>,
+        /// How finely to draw each body for the view, or `None` for
+        /// within a share of each solid's size: see [`Sight`]. Boxed, as
+        /// it lists the bodies.
+        sight: Option<Box<Sight>>,
     },
     /// Welds the visible bodies of the committed `document` for export
     /// (see [`export`]), answered with [`Response::Exported`] tagged
@@ -232,6 +235,66 @@ impl Detail {
         2f64.powi(i32::from(self.0.clamp(Self::MIN, Self::MAX)))
     }
 }
+
+/// How finely each visible body is drawn for the view: a [`Detail`]
+/// level per body the app has seen, from how near the eye its box is and
+/// whether it's in view at all, and one for the rest. The app picks the
+/// levels from the camera and the boxes of the model shown, and asks
+/// again only once one changes ([`Sight::revision`] tells them apart).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sight {
+    /// Tells this sight from the app's others: an answer carries it back
+    /// ([`Response::sight`]).
+    pub revision: u32,
+    /// The level of a body not in `bodies`, one the app hasn't seen: from
+    /// the view's height at the camera's target.
+    pub view: Detail,
+    /// Each body's level, sorted by body: `None` for one out of view,
+    /// drawn within a share of its size. A body listed twice, or the
+    /// list unsorted, only draws at another listed level.
+    pub bodies: Vec<(BodyId, Option<Detail>)>,
+}
+
+impl Sight {
+    /// The level `body` is drawn at, `None` for within a share of its
+    /// size.
+    pub fn level(&self, body: BodyId) -> Option<Detail> {
+        match (self.bodies).binary_search_by_key(&body, |&(body, _)| body) {
+            Ok(at) => self.bodies[at].1,
+            Err(_) => Some(self.view),
+        }
+    }
+
+    /// The sight with every level `steps` coarser, no coarser than
+    /// [`Detail::MAX`]; `None` once they all are, as a sight that asks
+    /// for nothing finer than its bodies' shares would.
+    pub fn coarser(&self, steps: i8) -> Option<Sight> {
+        let coarser = |Detail(level): Detail| {
+            Detail(
+                level
+                    .clamp(Detail::MIN, Detail::MAX)
+                    .saturating_add(steps)
+                    .min(Detail::MAX),
+            )
+        };
+        let finest = (self.bodies.iter().filter_map(|&(_, level)| level))
+            .chain([self.view])
+            .map(|Detail(level)| level)
+            .min()?;
+        (finest < Detail::MAX).then(|| Sight {
+            revision: self.revision,
+            view: coarser(self.view),
+            bodies: (self.bodies.iter())
+                .map(|&(body, level)| (body, level.map(coarser)))
+                .collect(),
+        })
+    }
+}
+
+/// How many levels coarser a sight is drawn at each time its meshes
+/// pass [`RenderMesh`]'s limits: a factor of eight in chord, about
+/// three in triangles along a curve.
+const COARSER_STEPS: i8 = 3;
 
 /// A feature being set up, new or edited, that isn't committed (an
 /// extrude, a revolve): a request answers with it applied, as
@@ -531,10 +594,10 @@ impl Response {
         }
     }
 
-    /// How finely the request answered asked for the model.
-    pub fn detail(&self) -> Option<Detail> {
+    /// The revision of the [`Sight`] the request answered had, if any.
+    pub fn sight(&self) -> Option<u32> {
         match self {
-            Response::Regenerated { detail, .. } | Response::Failed { detail, .. } => *detail,
+            Response::Regenerated { sight, .. } | Response::Failed { sight, .. } => *sight,
             Response::Exported { .. } | Response::Progress(_) => None,
         }
     }
@@ -583,10 +646,10 @@ impl Request {
         }
     }
 
-    /// How finely the request asks for the model to be drawn.
-    pub fn detail(&self) -> Option<Detail> {
+    /// The revision of the [`Sight`] the request has, if any.
+    pub fn sight(&self) -> Option<u32> {
         match self {
-            Request::Regenerate { detail, .. } => *detail,
+            Request::Regenerate { sight, .. } => sight.as_ref().map(|sight| sight.revision),
             Request::Export { .. } => None,
         }
     }
@@ -601,24 +664,24 @@ impl Request {
                 exclude,
                 draft,
                 inspect,
-                detail,
+                sight,
                 ..
             } => Err((
                 *generation,
                 *exclude,
                 draft.as_ref().map(|d| d.revision),
                 inspect.as_ref().map(|i| i.revision),
-                *detail,
+                sight.as_ref().map(|s| s.revision),
             )),
             Request::Export { export, .. } => Ok(*export),
         };
         move |error| match failed {
-            Err((generation, exclude, draft, inspect, detail)) => Response::Failed {
+            Err((generation, exclude, draft, inspect, sight)) => Response::Failed {
                 generation,
                 exclude,
                 draft,
                 inspect,
-                detail,
+                sight,
                 error,
             },
             Ok(export) => Response::Exported {
@@ -637,9 +700,10 @@ pub enum Response {
         /// The sketch left out of `sketches`, as the request asked: a
         /// request can ask again for the same generation with another one.
         exclude: Option<FeatureId>,
-        /// How finely the request asked for the model to be drawn: the
-        /// mesh may be drawn otherwise, if too large at that.
-        detail: Option<Detail>,
+        /// The revision of the [`Sight`] the request asked for the model
+        /// to be drawn by: the mesh may be drawn otherwise, if too large
+        /// by it.
+        sight: Option<u32>,
         /// How the request's draft went, if it had one. Boxed, as the
         /// variant is large enough.
         draft: Option<Box<Drafted>>,
@@ -647,6 +711,10 @@ pub enum Response {
         /// The body of each of `mesh`'s parts, and its faces' and edges'
         /// tables, see [`Picking`].
         picking: Arc<Picking>,
+        /// The hierarchies the viewport picks `mesh` with, built here so
+        /// the UI thread doesn't, see [`PickTables`]. `mesh`'s
+        /// [`RenderMesh::upload`] is built too.
+        tables: Arc<PickTables>,
         /// The visible sketches' curves, see [`flatten_sketches`].
         sketches: Arc<RenderLines>,
         /// The sketches that don't solve, see [`unsolved`], in the
@@ -695,8 +763,8 @@ pub enum Response {
         draft: Option<u64>,
         /// The revision of the request's measure, if it had one.
         inspect: Option<u64>,
-        /// How finely the request asked for the model to be drawn.
-        detail: Option<Detail>,
+        /// The revision of the request's [`Sight`], if it had one.
+        sight: Option<u32>,
         error: String,
     },
     /// Answers [`Request::Export`] tagged `export`: the visible bodies
@@ -747,18 +815,20 @@ impl Regenerator {
                 exclude,
                 draft,
                 inspect,
-                detail,
+                sight,
             } => {
                 self.cache.begin();
                 let asked = (draft.as_deref(), inspect.as_deref());
-                match self.regenerate(&document, exclude, asked, detail, report) {
+                let revision = sight.as_ref().map(|sight| sight.revision);
+                match self.regenerate(&document, exclude, asked, sight.as_deref(), report) {
                     Ok(model) => Response::Regenerated {
                         generation,
                         exclude,
-                        detail,
+                        sight: revision,
                         draft: model.draft.map(Box::new),
                         mesh: model.scene.mesh,
                         picking: model.scene.picking,
+                        tables: model.scene.tables,
                         sketches: Arc::new(model.sketches),
                         unsolved: model.unsolved,
                         failed: model.failed,
@@ -775,7 +845,7 @@ impl Regenerator {
                         exclude,
                         draft: draft.map(|draft| draft.revision),
                         inspect: inspect.map(|inspect| inspect.revision),
-                        detail,
+                        sight: revision,
                         error,
                     },
                 }
@@ -799,11 +869,11 @@ impl Regenerator {
         document: &Document,
         exclude: Option<FeatureId>,
         (draft, inspect): (Option<&Draft>, Option<&Inspect>),
-        detail: Option<Detail>,
+        sight: Option<&Sight>,
         report: &mut dyn FnMut(Progress),
     ) -> Result<Model, String> {
         let Some(draft) = draft else {
-            return self.model(document, exclude, None, (inspect, detail), report);
+            return self.model(document, exclude, None, (inspect, sight), report);
         };
         let mut drafted = Drafted {
             revision: draft.revision,
@@ -847,14 +917,14 @@ impl Regenerator {
                             .map(|(_, uncut)| uncut.clone())
                             .unwrap_or_default();
                         report(Progress::drawing(with_draft.features().len()));
-                        let asked = (inspect, detail);
+                        let asked = (inspect, sight);
                         return self.draw(&with_draft, evaluation, exclude, Some(drafted), asked);
                     }
                 }
             }
             Err(error) => drafted.error = Some(error),
         }
-        self.model(document, exclude, Some(drafted), (inspect, detail), report)
+        self.model(document, exclude, Some(drafted), (inspect, sight), report)
     }
 
     /// The model of `document`, telling `report` how far it has got.
@@ -863,7 +933,7 @@ impl Regenerator {
         document: &Document,
         exclude: Option<FeatureId>,
         draft: Option<Drafted>,
-        asked: (Option<&Inspect>, Option<Detail>),
+        asked: (Option<&Inspect>, Option<&Sight>),
         report: &mut dyn FnMut(Progress),
     ) -> Result<Model, String> {
         let evaluation = self.evaluate(document, report);
@@ -881,30 +951,34 @@ impl Regenerator {
     }
 
     /// The model of `document`, whose history gave `evaluation`, with
-    /// `inspect` measured on it, drawn at `detail`.
+    /// `inspect` measured on it, drawn by `sight`.
     fn draw(
         &mut self,
         document: &Document,
         mut evaluation: Evaluation,
         exclude: Option<FeatureId>,
         mut draft: Option<Drafted>,
-        (inspect, detail): (Option<&Inspect>, Option<Detail>),
+        (inspect, sight): (Option<&Inspect>, Option<&Sight>),
     ) -> Result<Model, String> {
         // Only a draft that worked is drawn: one that failed is answered
         // with the committed model.
         let drafted = draft.as_ref().is_some_and(|draft| draft.error.is_none());
-        // A view's detail too fine for the mesh's limits falls back to the
-        // share of each solid's size, rather than failing the model.
-        let scene = match detail {
-            Some(detail) => tessellate_scene(
+        // A sight too fine for the mesh's limits is drawn coarser, a few
+        // levels at a time, and in the end at the share of each solid's
+        // size, rather than failing the model.
+        let mut sight = sight.cloned();
+        let scene = loop {
+            let scene = tessellate_scene(
                 document,
                 &evaluation,
                 drafted,
-                Some(detail),
+                sight.as_ref(),
                 &mut self.cache,
-            )
-            .or_else(|_| tessellate_scene(document, &evaluation, drafted, None, &mut self.cache)),
-            None => tessellate_scene(document, &evaluation, drafted, None, &mut self.cache),
+            );
+            match (scene, sight) {
+                (Err(_), Some(fine)) => sight = fine.coarser(COARSER_STEPS),
+                (scene, _) => break scene,
+            }
         }
         .map_err(|error| error.to_string())?;
         let sketches = flatten_sketches(document, &evaluation.placements, exclude)
@@ -1046,32 +1120,34 @@ pub fn tessellate_picking(
 
 /// [`tessellate_picking`], for a draft's answer if `drafted`, whose scene
 /// doesn't become the committed one the cache never evicts (see
-/// [`Cache`]), drawn at the view's `detail` if there is one
-/// ([`Display::for_view`]), each level's meshes filed apart.
+/// [`Cache`]), each body drawn at its level of the view's `sight` if
+/// there is one ([`Display::for_view`]), each level's meshes filed apart.
 fn tessellate_scene(
     document: &Document,
     evaluation: &Evaluation,
     drafted: bool,
-    detail: Option<Detail>,
+    sight: Option<&Sight>,
     cache: &mut Cache,
 ) -> Result<Scene, MeshError> {
     let fit = document.tolerance().fit().to_bits();
-    // Levels past the bounds draw as the bounds do, so they're filed so.
-    let level = detail.map_or(u64::MAX, |detail| detail.chord().to_bits());
     let shown: Vec<_> = evaluation
         .bodies
         .iter()
         .filter(|made| document.body(made.body).is_some_and(|body| body.visible))
         .map(|made| {
+            let detail = sight.and_then(|sight| sight.level(made.body));
+            // Levels past the bounds draw as the bounds do, so they're
+            // filed so.
+            let level = detail.map_or(u64::MAX, |detail| detail.chord().to_bits());
             let key = (Keyer::new("mesh").key(made.key).number(fit))
                 .number(level)
                 .finish();
-            (made, key)
+            (made, key, detail)
         })
         .collect();
     // The bodies too: the picking tables name the body of each part.
     let mut scene = Keyer::new("scene");
-    for (made, key) in &shown {
+    for (made, key, _) in &shown {
         scene.value(&made.body).key(*key);
     }
     let filed = scene.number(shown.len() as u64).finish();
@@ -1079,13 +1155,13 @@ fn tessellate_scene(
     let scene = cache.scene(filed, drafted, |cache| {
         found = false;
         let tolerance = document.tolerance();
-        let display = match detail {
-            Some(detail) => Display::for_view(&tolerance, detail.chord()),
-            None => Display::new(&tolerance),
-        };
         let mut mesh = RenderMesh::default();
         let mut picking = Picking::default();
-        for (made, key) in &shown {
+        for (made, key, detail) in &shown {
+            let display = match detail {
+                Some(detail) => Display::for_view(&tolerance, detail.chord()),
+                None => Display::new(&tolerance),
+            };
             // The topology is kept too, for the measure tool's picks.
             let topology = (!cache.holds(*key)).then(|| inspect::topology(made, cache));
             let drawn = cache.mesh(*key, || match &topology {
@@ -1095,14 +1171,11 @@ fn tessellate_scene(
             mesh.append(&drawn.mesh)?;
             picking.append(made.body, &drawn)?;
         }
-        Ok(Scene {
-            mesh: Arc::new(mesh),
-            picking: Arc::new(picking),
-        })
+        Ok(Scene::new(mesh, picking))
     })?;
     if found {
         // The bodies' meshes stay for the next scene that changes one.
-        for (_, key) in &shown {
+        for (_, key, _) in &shown {
             cache.keep(*key);
         }
     }

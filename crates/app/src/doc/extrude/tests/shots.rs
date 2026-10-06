@@ -895,7 +895,7 @@ fn shots_13_status_bar() {
         doc.update(Edit::SetTolerance(Tolerance::new(1e-2).unwrap()));
         for request in requests.take() {
             doc.computed(varde_regen::Response::Failed {
-                detail: None,
+                sight: None,
                 draft: None,
                 inspect: None,
                 generation: request.generation().unwrap(),

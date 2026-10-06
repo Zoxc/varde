@@ -16,7 +16,7 @@ fn next(responses: &mut Responses) -> Response {
 
 fn regenerate(editor: &Editor) -> Request {
     Request::Regenerate {
-        detail: None,
+        sight: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,

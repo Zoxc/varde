@@ -22,7 +22,7 @@ use glam::{DVec2, DVec3, Vec3};
 use varde_document::{BodyId, EdgeRef, FaceRef, Placement};
 use varde_kernel::RenderMesh;
 use varde_kernel::mesh::FaceKey;
-use varde_regen::{Picking, Summary};
+use varde_regen::{Bvh, BvhNode, PickTables, Picking, Summary, vertex_runs};
 use varde_render::{Camera, Highlights, Vertex};
 
 use crate::projection::Projector;
@@ -61,9 +61,6 @@ const MAX_OCCLUDERS: usize = 16;
 /// straight down an edge shows where the one behind it does, which the
 /// hidden test can take for seen, its ray running along the faces there.
 const SAME_PLACE: f64 = 0.5;
-
-/// The most triangles or edges in a leaf of a hierarchy.
-const LEAF: usize = 4;
 
 /// What the cursor picks in the model: faces, edges and vertices (a
 /// vertex near the cursor winning over an edge, and an edge over a face),
@@ -160,18 +157,8 @@ pub struct PickIndex {
     mesh: Arc<RenderMesh>,
     picking: Arc<Picking>,
     model: u64,
-    /// Over the mesh's triangles, by index.
-    triangles: Bvh,
-    /// Over the segments of the mesh's edges between two faces, each by
-    /// where it starts in [`RenderMesh::edge_vertices`].
-    segments: Bvh,
-    /// Over the mesh's corners where three faces or more meet, by index.
-    vertices: Bvh,
-    /// The faces at each corner an edge between two faces ends at, as
-    /// `(corner, face)`, sorted, each once.
-    corner_faces: Vec<(u32, u32)>,
-    /// Each tangent chain's edges, by its first.
-    tangent_chains: Groups,
+    /// Its hierarchies and groups, built with the model in the lane.
+    tables: Arc<PickTables>,
     /// The mesh's bounds, kept: working them out walks every position,
     /// and each point tested for being hidden needs them.
     bounds: Option<varde_kernel::Aabb>,
@@ -188,67 +175,27 @@ pub(crate) fn empty_index() -> &'static PickIndex {
 impl PickIndex {
     /// The index of `mesh` and its tables `picking`, which came with it;
     /// its picks carry `model`. Tables that don't go with the mesh pick
-    /// nothing.
+    /// nothing. Builds the [`PickTables`], which the lane does with the
+    /// model: see [`PickIndex::with_tables`].
     pub fn new(mesh: Arc<RenderMesh>, picking: Arc<Picking>, model: u64) -> Self {
-        let fits = picking.bodies().len() == mesh.part_ends().len()
-            && picking.faces().len() == mesh.face_count()
-            && picking.tangents().len() == mesh.edge_count();
-        let (triangles, segments, vertices, corner_faces, tangent_chains) = if fits {
-            let corners = |triangle: &[u32; 3]| triangle.map(|i| position(&mesh, i));
-            let triangles = mesh.indices().as_chunks::<3>().0;
-            let boxes = triangles.iter().map(|t| bounds(&corners(t)));
-            let chain = |edge: usize| matches!(mesh.edge_faces()[edge], [a, b] if a != b);
-            let segments: Vec<u32> = (0..mesh.edge_count())
-                .filter(|&edge| chain(edge))
-                .flat_map(|edge| {
-                    let range = mesh.polyline_range(edge).unwrap_or_default();
-                    range.start..range.end.saturating_sub(1)
-                })
-                .filter_map(|start| u32::try_from(start).ok())
-                .collect();
-            let segment_boxes = segments.iter().map(|&start| {
-                let ends = segment(&mesh, start).unwrap_or_default();
-                bounds(&ends)
-            });
-            let mut corner_faces: Vec<(u32, u32)> = (0..mesh.edge_count())
-                .filter(|&edge| chain(edge))
-                .flat_map(|edge| {
-                    let faces = mesh.edge_faces()[edge];
-                    (mesh.edge_corners()[edge].into_iter())
-                        .flat_map(move |corner| faces.map(|face| (corner, face)))
-                })
-                .collect();
-            corner_faces.sort_unstable();
-            corner_faces.dedup();
-            let vertices: Vec<u32> = vertex_runs(&corner_faces).map(|run| run[0].0).collect();
-            let vertex_boxes = vertices.iter().map(|&corner| {
-                let at = corner_position(&mesh, corner).unwrap_or_default();
-                [at, at]
-            });
-            // A crease is in no tangent chain.
-            let tangents: Vec<u32> = (picking.tangents().iter().enumerate())
-                .map(|(edge, &first)| if chain(edge) { first } else { u32::MAX })
-                .collect();
-            (
-                Bvh::new(boxes.collect()),
-                Bvh::with_items(segment_boxes.collect(), segments),
-                Bvh::with_items(vertex_boxes.collect(), vertices),
-                corner_faces,
-                Groups::new(mesh.edge_count(), &tangents),
-            )
-        } else {
-            Default::default()
-        };
+        let tables = Arc::new(PickTables::new(&mesh, &picking));
+        Self::with_tables(mesh, picking, tables, model)
+    }
+
+    /// The index of `mesh`, its tables `picking` and `tables`, which came
+    /// with it, as [`PickIndex::new`].
+    pub fn with_tables(
+        mesh: Arc<RenderMesh>,
+        picking: Arc<Picking>,
+        tables: Arc<PickTables>,
+        model: u64,
+    ) -> Self {
         Self {
             bounds: mesh.bounds(),
             mesh,
             picking,
             model,
-            triangles,
-            segments,
-            vertices,
-            corner_faces,
-            tangent_chains,
+            tables,
         }
     }
 
@@ -398,7 +345,7 @@ impl PickIndex {
         let mut vertices = Vec::new();
         if picks == Picks::All {
             let grown = reach(&projector, pixels);
-            self.vertices.near(&ray, grown, |corner| {
+            self.tables.vertices().near(&ray, grown, |corner| {
                 let point = self.corner_point(corner)?;
                 let (point, _) = projector.in_front(point, point)?;
                 let distance = projector.show(point).distance(at);
@@ -413,7 +360,7 @@ impl PickIndex {
         let mut edges = Vec::new();
         if picks != Picks::Faces {
             let grown = reach(&projector, pixels);
-            self.segments.near(&ray, grown, |start| {
+            self.tables.segments().near(&ray, grown, |start| {
                 let (_, point) = self.segment_near(&projector, start, at, pixels)?;
                 let edge = Picked::Edge(self.segment_edge(start));
                 edges.push((0.0, projector.world_depth(point), edge, point));
@@ -423,7 +370,7 @@ impl PickIndex {
         let mut faces = Vec::new();
         if picks != Picks::Edges {
             let grown = reach(&projector, pixels);
-            self.triangles.near(&ray, grown, |triangle| {
+            self.tables.triangles().near(&ray, grown, |triangle| {
                 let corners = self.corners(triangle)?;
                 let [a, b, c] = corners.map(|i| position(&self.mesh, i).as_dvec3());
                 // Under the cursor, else showing within reach of it.
@@ -561,7 +508,7 @@ impl PickIndex {
         let Some(&first) = self.picking.tangents().get(chain as usize) else {
             return &[];
         };
-        self.tangent_chains.get(first)
+        self.tables.tangent_chain(first)
     }
 
     /// The box of `bodies`' faces in the model, its least and greatest
@@ -806,7 +753,7 @@ impl PickIndex {
     /// or alias, among the faces there), the nearest to `near` among
     /// several, as [`PickIndex::find_face`] finds faces.
     pub fn find_vertex(&self, body: BodyId, keys: [FaceKey; 3], near: DVec3) -> Option<u32> {
-        let found = vertex_runs(&self.corner_faces)
+        let found = vertex_runs(self.tables.corner_faces())
             .filter(|run| self.face_body(run[0].1) == Some(body))
             .filter(|run| {
                 (keys.iter()).all(|key| run.iter().any(|&(_, face)| self.named(face, key)))
@@ -990,7 +937,8 @@ impl PickIndex {
     /// Where along `ray` between `from` and `to` it first meets a
     /// triangle, and which, if it does.
     fn first_hit(&self, ray: &Ray, from: f64, to: f64) -> Option<(f64, u32)> {
-        (self.triangles).nearest(ray, from, to, |triangle| self.triangle_hit(ray, triangle))
+        (self.tables.triangles())
+            .nearest(ray, from, to, |triangle| self.triangle_hit(ray, triangle))
     }
 
     /// Where along `ray` it meets the triangle `triangle`, front or back,
@@ -1005,14 +953,13 @@ impl PickIndex {
     /// triangle, and which, if it does: what's drawn there, the backs of
     /// the triangles being culled.
     fn first_front(&self, ray: &Ray) -> Option<(f64, u32)> {
-        self.triangles
-            .nearest(ray, ray.from, f64::INFINITY, |triangle| {
-                let corners = self.corners(triangle)?;
-                let [a, b, c] = corners.map(|i| position(&self.mesh, i).as_dvec3());
-                // Its corners run counterclockwise seen from its front.
-                let facing = (b - a).cross(c - a).dot(ray.direction) < 0.0;
-                facing.then(|| ray_hits(ray.origin, ray.direction, [a, b, c]))?
-            })
+        (self.tables.triangles()).nearest(ray, ray.from, f64::INFINITY, |triangle| {
+            let corners = self.corners(triangle)?;
+            let [a, b, c] = corners.map(|i| position(&self.mesh, i).as_dvec3());
+            // Its corners run counterclockwise seen from its front.
+            let facing = (b - a).cross(c - a).dot(ray.direction) < 0.0;
+            facing.then(|| ray_hits(ray.origin, ray.direction, [a, b, c]))?
+        })
     }
 
     /// The vertex showing nearest `at` within [`VERTEX_REACH`] that
@@ -1026,17 +973,16 @@ impl PickIndex {
         at: DVec2,
     ) -> Option<(u32, DVec3)> {
         let mut near = Vec::new();
-        self.vertices
-            .near(ray, reach(projector, VERTEX_REACH), |corner| {
-                let point = self.corner_point(corner)?;
-                let (point, _) = projector.in_front(point, point)?;
-                let distance = projector.show(point).distance(at);
-                if distance.is_nan() || distance > VERTEX_REACH {
-                    return None;
-                }
-                near.push((distance, projector.world_depth(point), corner, point));
-                Some(())
-            });
+        (self.tables.vertices()).near(ray, reach(projector, VERTEX_REACH), |corner| {
+            let point = self.corner_point(corner)?;
+            let (point, _) = projector.in_front(point, point)?;
+            let distance = projector.show(point).distance(at);
+            if distance.is_nan() || distance > VERTEX_REACH {
+                return None;
+            }
+            near.push((distance, projector.world_depth(point), corner, point));
+            Some(())
+        });
         self.nearest_shown(camera, projector, near)
     }
 
@@ -1051,12 +997,11 @@ impl PickIndex {
         at: DVec2,
     ) -> Option<(u32, DVec3)> {
         let mut near = Vec::new();
-        self.segments
-            .near(ray, reach(projector, EDGE_REACH), |start| {
-                let (distance, point) = self.segment_near(projector, start, at, EDGE_REACH)?;
-                near.push((distance, projector.world_depth(point), start, point));
-                Some(())
-            });
+        (self.tables.segments()).near(ray, reach(projector, EDGE_REACH), |start| {
+            let (distance, point) = self.segment_near(projector, start, at, EDGE_REACH)?;
+            near.push((distance, projector.world_depth(point), start, point));
+            Some(())
+        });
         let (start, point) = self.nearest_shown(camera, projector, near)?;
         Some((self.segment_edge(start), point))
     }
@@ -1116,9 +1061,10 @@ impl PickIndex {
 
     /// The faces at `corner`, as `(corner, face)`, ascending.
     fn corner_faces(&self, corner: u32) -> &[(u32, u32)] {
-        let from = (self.corner_faces).partition_point(|&(at, _)| at < corner);
-        let to = (self.corner_faces).partition_point(|&(at, _)| at <= corner);
-        &self.corner_faces[from..to]
+        let corner_faces = self.tables.corner_faces();
+        let from = corner_faces.partition_point(|&(at, _)| at < corner);
+        let to = corner_faces.partition_point(|&(at, _)| at <= corner);
+        &corner_faces[from..to]
     }
 
     /// Whether something of the mesh is in front of the world point
@@ -1217,12 +1163,6 @@ fn corner_position(mesh: &RenderMesh, corner: u32) -> Option<Vec3> {
     Some(Vec3::from(*mesh.corners().get(corner as usize)?))
 }
 
-/// The runs of `corner_faces`, sorted by corner, of each corner where
-/// three faces or more meet: the vertices.
-fn vertex_runs(corner_faces: &[(u32, u32)]) -> impl Iterator<Item = &[(u32, u32)]> {
-    (corner_faces.chunk_by(|a, b| a.0 == b.0)).filter(|run| run.len() >= 3)
-}
-
 /// How far a box of the world, from `min` to `max`, must be grown for
 /// what's in it showing within `pixels` of the cursor to be within it
 /// grown: that many pixels at its deepest, as far from the ray.
@@ -1273,12 +1213,6 @@ fn triangle_distance(p: DVec3, [a, b, c]: [DVec3; 3]) -> f64 {
         .iter()
         .map(|&(u, v)| segment_distance_3d(p, u, v))
         .fold(f64::INFINITY, f64::min)
-}
-
-/// The box around `points`.
-fn bounds(points: &[Vec3]) -> [Vec3; 2] {
-    let first = points.first().copied().unwrap_or_default();
-    (points.iter()).fold([first; 2], |[min, max], &p| [min.min(p), max.max(p)])
 }
 
 /// How far from `at` the world segment from `a` to `b` shows, the part of
@@ -1375,106 +1309,8 @@ pub(crate) fn through_box(
     (near <= far).then_some((near, far))
 }
 
-/// Items grouped by what they belong to: a face's triangles, a chain's
-/// edges.
-#[derive(Debug, Default)]
-struct Groups {
-    /// Where each group's items start in `items`, and the end.
-    starts: Vec<u32>,
-    items: Vec<u32>,
-}
-
-impl Groups {
-    /// The items of `groups` groups, item `i` in group `of[i]`, unless
-    /// that's past the groups (as a crease's tangent chain is made out to
-    /// be, `u32::MAX`). None if there are more items than `u32`s number,
-    /// which no mesh has.
-    fn new(groups: usize, of: &[u32]) -> Self {
-        if u32::try_from(of.len()).is_err() {
-            return Self::default();
-        }
-        let group = |g: u32| Some(g as usize).filter(|&g| g < groups);
-        // Counts, then running sums: no more than `of.len()`, a `u32`.
-        let mut starts = vec![0u32; groups + 1];
-        for g in of.iter().filter_map(|&g| group(g)) {
-            starts[g + 1] += 1;
-        }
-        for g in 0..groups {
-            starts[g + 1] += starts[g];
-        }
-        let mut filled = starts.clone();
-        let mut items = vec![0u32; starts[groups] as usize];
-        for (item, g) in of.iter().enumerate() {
-            if let Some(g) = group(*g) {
-                items[filled[g] as usize] = item as u32;
-                filled[g] += 1;
-            }
-        }
-        Self { starts, items }
-    }
-
-    /// The items of `group`, none if there's no such group.
-    fn get(&self, group: u32) -> &[u32] {
-        let group = group as usize;
-        let (Some(&start), Some(&end)) = (self.starts.get(group), self.starts.get(group + 1))
-        else {
-            return &[];
-        };
-        self.items.get(start as usize..end as usize).unwrap_or(&[])
-    }
-}
-
-/// A bounding volume hierarchy over items with boxes: split in two at the
-/// median of their middles along the box's longest side, until a few
-/// are left. Built sequentially, the same for the same items.
-#[derive(Debug, Default)]
-struct Bvh {
-    nodes: Vec<Node>,
-    /// The items in the leaves' order.
-    items: Vec<u32>,
-}
-
-/// A node of a [`Bvh`]: its box, and its leaf's items or its children.
-#[derive(Debug, Clone, Copy)]
-struct Node {
-    min: Vec3,
-    max: Vec3,
-    /// A leaf's first item in [`Bvh::items`], or an inner node's second
-    /// child; its first comes right after it.
-    start: u32,
-    /// A leaf's number of items, 0 for an inner node.
-    count: u32,
-}
-
-impl Bvh {
-    /// Over items `0..boxes.len()`, each in its box.
-    fn new(boxes: Vec<[Vec3; 2]>) -> Self {
-        let items = (0..boxes.len())
-            .filter_map(|i| u32::try_from(i).ok())
-            .collect();
-        Self::with_items(boxes, items)
-    }
-
-    /// Over `items`, the `i`th in `boxes[i]`.
-    fn with_items(boxes: Vec<[Vec3; 2]>, items: Vec<u32>) -> Self {
-        // Each item with its box and middle, permuted in place as the tree
-        // is built: sequential memory, not a lookup per comparison.
-        let mut entries: Vec<Entry> = (boxes.iter().zip(&items))
-            .map(|(&[min, max], &item)| Entry {
-                min,
-                max,
-                middle: min + max,
-                item,
-            })
-            .collect();
-        let mut nodes = Vec::new();
-        if !entries.is_empty() {
-            build(&mut entries, 0, &mut nodes);
-        }
-        let items = entries.into_iter().map(|entry| entry.item).collect();
-        Self { nodes, items }
-    }
-
+/// The walks of a [`Bvh`] a ray picks with.
+trait Walk {
     /// The item `hit` says the ray meets first between `from` and `to`,
     /// and where: `hit` gives where along the ray an item is met, if it
     /// is.
@@ -1483,17 +1319,39 @@ impl Bvh {
         ray: &Ray,
         from: f64,
         to: f64,
+        hit: impl FnMut(u32) -> Option<f64>,
+    ) -> Option<(f64, u32)>;
+
+    /// Visits each item whose box, grown by `reach` of the box, the ray
+    /// passes through from its `from` on: `visit` says nothing back that
+    /// matters.
+    fn near(
+        &self,
+        ray: &Ray,
+        reach: impl Fn(DVec3, DVec3) -> f64,
+        visit: impl FnMut(u32) -> Option<()>,
+    );
+}
+
+impl Walk for Bvh {
+    fn nearest(
+        &self,
+        ray: &Ray,
+        from: f64,
+        to: f64,
         mut hit: impl FnMut(u32) -> Option<f64>,
     ) -> Option<(f64, u32)> {
+        let nodes = self.nodes();
         let mut best: Option<(f64, u32)> = None;
         let mut stack = Vec::new();
-        if !self.nodes.is_empty() {
+        if !nodes.is_empty() {
             stack.push(0usize);
         }
         while let Some(index) = stack.pop() {
-            let node = self.nodes[index];
+            let node = &nodes[index];
             let limit = best.map_or(to, |(t, _)| t);
-            let Some(_) = through_box(ray.origin, ray.direction, node.bounds(), from, limit) else {
+            let Some(_) = through_box(ray.origin, ray.direction, node_box(node), from, limit)
+            else {
                 continue;
             };
             if node.count > 0 {
@@ -1509,7 +1367,7 @@ impl Bvh {
             // The nearer child first, so the further is more often cut.
             let (first, second) = (index + 1, node.start as usize);
             let enter = |child: usize| {
-                let bounds = self.nodes[child].bounds();
+                let bounds = node_box(&nodes[child]);
                 through_box(ray.origin, ray.direction, bounds, from, limit).map(|(t, _)| t)
             };
             let (a, b) = (enter(first), enter(second));
@@ -1521,22 +1379,20 @@ impl Bvh {
         best
     }
 
-    /// Visits each item whose box, grown by `reach` of the box, the ray
-    /// passes through from its `from` on: `visit` says nothing back that
-    /// matters.
     fn near(
         &self,
         ray: &Ray,
         reach: impl Fn(DVec3, DVec3) -> f64,
         mut visit: impl FnMut(u32) -> Option<()>,
     ) {
+        let nodes = self.nodes();
         let mut stack = Vec::new();
-        if !self.nodes.is_empty() {
+        if !nodes.is_empty() {
             stack.push(0usize);
         }
         while let Some(index) = stack.pop() {
-            let node = self.nodes[index];
-            let [min, max] = node.bounds();
+            let node = &nodes[index];
+            let [min, max] = node_box(node);
             let grow = DVec3::splat(reach(min, max));
             let grown = [min - grow, max + grow];
             if through_box(ray.origin, ray.direction, grown, ray.from, f64::INFINITY).is_none() {
@@ -1551,90 +1407,11 @@ impl Bvh {
             }
         }
     }
-
-    /// A leaf's items.
-    fn leaf(&self, node: Node) -> &[u32] {
-        let start = node.start as usize;
-        self.items
-            .get(start..start.saturating_add(node.count as usize))
-            .unwrap_or(&[])
-    }
 }
 
-impl Node {
-    fn bounds(&self) -> [DVec3; 2] {
-        [self.min.as_dvec3(), self.max.as_dvec3()]
-    }
-}
-
-/// Moves the entries `left` says go left before the rest, in one pass
-/// from both ends: how many go left.
-fn partition(entries: &mut [Entry], left: impl Fn(&Entry) -> bool) -> usize {
-    let (mut i, mut j) = (0, entries.len());
-    loop {
-        while i < j && left(&entries[i]) {
-            i += 1;
-        }
-        while i < j && !left(&entries[j - 1]) {
-            j -= 1;
-        }
-        if i >= j {
-            return i;
-        }
-        entries.swap(i, j - 1);
-    }
-}
-
-/// An item being built into a [`Bvh`]: its box, twice its middle, and
-/// the item.
-#[derive(Debug, Clone, Copy)]
-struct Entry {
-    min: Vec3,
-    max: Vec3,
-    middle: Vec3,
-    item: u32,
-}
-
-/// Builds the nodes over `entries`, the items `offset..` of the whole,
-/// onto `nodes`, reordering `entries` into the leaves' order. Ties along
-/// the axis split by item, so the same items give the same tree.
-fn build(entries: &mut [Entry], offset: usize, nodes: &mut Vec<Node>) {
-    let mut bounds = [Vec3::INFINITY, Vec3::NEG_INFINITY];
-    let mut middles = [Vec3::INFINITY, Vec3::NEG_INFINITY];
-    for entry in entries.iter() {
-        bounds = [bounds[0].min(entry.min), bounds[1].max(entry.max)];
-        middles = [middles[0].min(entry.middle), middles[1].max(entry.middle)];
-    }
-    let index = nodes.len();
-    // Items and nodes number fewer than the mesh's triangles, whose
-    // indices are `u32`s.
-    let at = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    nodes.push(Node {
-        min: bounds[0],
-        max: bounds[1],
-        start: at(offset),
-        count: at(entries.len()),
-    });
-    if entries.len() <= LEAF {
-        return;
-    }
-    let axis = (middles[1] - middles[0]).max_position();
-    // Split at the middle of the middles along the axis, one pass; where
-    // that leaves a side with too few (bunched items), at the median.
-    let split = (middles[0][axis] + middles[1][axis]) / 2.0;
-    let mut half = partition(entries, |entry| entry.middle[axis] < split);
-    if half < entries.len() / 4 || half > entries.len() - entries.len() / 4 {
-        half = entries.len() / 2;
-        entries.select_nth_unstable_by(half, |a, b| {
-            (a.middle[axis].total_cmp(&b.middle[axis])).then(a.item.cmp(&b.item))
-        });
-    }
-    let (left, right) = entries.split_at_mut(half);
-    build(left, offset, nodes);
-    let second = nodes.len();
-    build(right, offset + half, nodes);
-    nodes[index].start = at(second);
-    nodes[index].count = 0;
+/// A node's box, as [`through_box`] takes it.
+fn node_box(node: &BvhNode) -> [DVec3; 2] {
+    aabb(node.aabb())
 }
 
 #[cfg(test)]

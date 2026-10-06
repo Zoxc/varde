@@ -158,6 +158,9 @@ pub struct DocumentState<'a> {
     /// A thumbnail for the viewport to render on its next frame, if one
     /// is asked for (see [`ThumbnailRequest`](crate::ThumbnailRequest)).
     pub thumbnail: Option<&'a Arc<crate::ThumbnailRequest>>,
+    /// The viewport's width over its height, as it last told the app, if
+    /// it has ([`Look::ViewAspect`]).
+    pub aspect: Option<f32>,
     /// The feature selected in the Timeline, if any.
     pub selected_feature: Option<FeatureId>,
     /// The row of the side panel whose context menu is open, if one is.
@@ -838,6 +841,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                             state.editor.document(),
                         )),
                         state.thumbnail,
+                        Some(state.aspect.unwrap_or(0.0)),
                     ),
                     status::status_bar(status(&state)),
                     state.regenerating.map(crate::regenerating::regenerating),
