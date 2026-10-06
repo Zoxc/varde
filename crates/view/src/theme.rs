@@ -1695,7 +1695,11 @@ pub fn rail_head(
             background: if held {
                 // Hovered, the selection's tint deepens.
                 let soft = p.accent_soft;
-                let a = if is_hovered(status) { soft.a * 1.75 } else { soft.a };
+                let a = if is_hovered(status) {
+                    soft.a * 1.75
+                } else {
+                    soft.a
+                };
                 Some(Background::Color(Color { a, ..soft }))
             } else {
                 (open || is_hovered(status)).then_some(Background::Color(p.hl))

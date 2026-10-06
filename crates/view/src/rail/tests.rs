@@ -188,7 +188,11 @@ fn an_open_set_s_letters_come_before_the_document_s_keys() {
     ));
     // With Constraints open, P is Parallel, once it fits the selection.
     let open = DocumentKeys {
-        rail: Some(RailOpen { set: 2, row: 0, held: true }),
+        rail: Some(RailOpen {
+            set: 2,
+            row: 0,
+            held: true,
+        }),
         constraints: [ConstraintKind::Parallel].into_iter().collect(),
         ..sketching()
     };
@@ -221,12 +225,20 @@ fn an_open_set_s_letters_come_before_the_document_s_keys() {
 #[test]
 fn a_set_index_past_the_mode_s_sets_has_no_letters() {
     let keys = DocumentKeys {
-        rail: Some(RailOpen { set: 4, row: 0, held: true }),
+        rail: Some(RailOpen {
+            set: 4,
+            row: 0,
+            held: true,
+        }),
         ..DocumentKeys::default()
     };
     assert!(letter_bindings(keys).is_empty());
     let keys = DocumentKeys {
-        rail: Some(RailOpen { set: 0, row: 0, held: true }),
+        rail: Some(RailOpen {
+            set: 0,
+            row: 0,
+            held: true,
+        }),
         editable: true,
         ..DocumentKeys::default()
     };
@@ -292,7 +304,11 @@ fn the_arrows_move_along_the_open_list_and_enter_picks_its_row() {
     // Closed, the arrows do nothing.
     assert!(pressed(document_bindings(sketching()), &down, none).is_none());
     let draw = |row| DocumentKeys {
-        rail: Some(RailOpen { set: 0, row, held: true }),
+        rail: Some(RailOpen {
+            set: 0,
+            row,
+            held: true,
+        }),
         ..sketching()
     };
     assert!(matches!(

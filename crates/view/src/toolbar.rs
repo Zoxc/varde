@@ -103,15 +103,18 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         // The ops and what's empty of the bar after them, cut off where
         // they would run under Undo, Redo and the theme's button, which
         // are laid out first and so always show.
-        container(row![
-            row(ops(state, operation.as_ref()))
-                .spacing(2)
-                .padding([0, 6])
-                .align_y(Alignment::Center),
-            // What's empty of the bar: a click on it clears the selection.
-            mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
-                .on_press(crate::panels::CLEAR_SELECTION),
-        ])
+        container(
+            row![
+                row(ops(state, operation.as_ref()))
+                    .spacing(2)
+                    .padding([0, 6])
+                    .align_y(Alignment::Center),
+                // What's empty of the bar: a click on it clears the selection.
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                    .on_press(crate::panels::CLEAR_SELECTION),
+            ]
+            .align_y(Alignment::Center)
+        )
         .width(Length::Fill)
         .height(Length::Fill)
         .align_y(Alignment::Center)
