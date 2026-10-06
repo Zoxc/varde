@@ -1094,6 +1094,10 @@ bar says why (`EditError::Sketch`).
   revision (`Analyses`). It colours the sketch, gives the status bar
   "Fully constrained", "N degrees of freedom left", "Doesn't solve" or
   "Over-constrained", and marks conflicts red in the lists and viewport.
+- **The toolbar's pill** names the sketch, its button leaving it: a
+  check once the sketch differs from what it was when entered
+  (`SketchSession::entered`, `SketchState::modified`; undoing back to it
+  counts as unchanged), else an X, "Leave sketch, unchanged".
 - **Tools** (`Tool` in `varde-view`, keys `L`, `B`, `C`, `A`, `G`, `N`,
   `P`, and `D` for the Dimension tool under Dimensions, the rail, or the
   toolbar, which shows the UI mock's sketch bar, `Tool::BAR`: Line,

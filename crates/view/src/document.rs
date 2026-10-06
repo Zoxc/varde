@@ -302,6 +302,8 @@ impl DocumentState<'_> {
 pub struct SketchState<'a> {
     /// The sketch feature's name.
     pub name: &'a str,
+    /// Whether the sketch differs from what it was when entered.
+    pub modified: bool,
     pub plane: Plane,
     /// Where its plane is.
     pub placement: Placement,
@@ -449,6 +451,7 @@ impl<'a> SketchState<'a> {
         static NO_GROUPS: BTreeSet<crate::GeometryGroup> = BTreeSet::new();
         SketchState {
             name: "Sketch",
+            modified: false,
             plane: Plane::Origin(varde_document::OriginPlane::XY),
             placement: varde_document::OriginPlane::XY.placement(),
             sketch,

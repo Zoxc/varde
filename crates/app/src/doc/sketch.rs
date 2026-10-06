@@ -108,13 +108,16 @@ pub(crate) struct SketchSession {
     /// The link whose row is hovered, if one's is: what it comes from is
     /// lit in the model.
     pub(crate) link_hover: Option<Id>,
+    /// The sketch as it was entered, to tell whether it's been changed.
+    pub(crate) entered: Sketch,
 }
 
 impl SketchSession {
-    fn new(feature: FeatureId, placement: Placement) -> Self {
+    fn new(feature: FeatureId, placement: Placement, entered: Sketch) -> Self {
         Self {
             feature,
             placement,
+            entered,
             tool: None,
             selection: BTreeSet::new(),
             listed_on: BTreeSet::new(),
@@ -765,7 +768,11 @@ impl Doc {
             self.before_sketch = Some(self.animation.as_ref().map_or(self.camera, |a| a.to));
             self.panel_before_sketch = Some(self.panel);
         }
-        self.sketch = Some(SketchSession::new(id, placement));
+        let entered = match &feature.kind {
+            FeatureKind::Sketch { sketch, .. } => sketch.clone(),
+            _ => Sketch::default(),
+        };
+        self.sketch = Some(SketchSession::new(id, placement, entered));
         self.panel = Panel::Sketch;
         // The rail's sets are the sketch's now.
         self.rail.close();
@@ -1179,7 +1186,7 @@ impl Doc {
         static NONE: BTreeSet<Id> = BTreeSet::new();
         let session = self.sketch.as_ref()?;
         let feature = self.editor.document().feature(session.feature)?;
-        let FeatureKind::Sketch { plane, .. } = &feature.kind else {
+        let FeatureKind::Sketch { plane, sketch, .. } = &feature.kind else {
             return None;
         };
         let waiting = session.waiting.as_ref();
@@ -1190,6 +1197,7 @@ impl Doc {
         };
         Some(SketchState {
             name: &feature.name,
+            modified: *sketch != session.entered,
             plane: *plane,
             placement: session.placement,
             sketch: self.shown_sketch()?,

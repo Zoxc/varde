@@ -46,7 +46,16 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                 Icon::Sketch,
                 sketch.name,
                 Some(Message::Look(Look::FinishSketch)),
-                "Finish sketch (Esc)",
+                if sketch.modified {
+                    "Finish sketch (Esc)"
+                } else {
+                    "Leave sketch, unchanged (Esc)"
+                },
+                if sketch.modified {
+                    Icon::Check
+                } else {
+                    Icon::Close
+                },
             ),
             match sketch.tool {
                 Some(tool) => Some(tool_tag(&tool)),
@@ -62,6 +71,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                 operation.name,
                 operation.ok.clone(),
                 "OK (Enter)",
+                Icon::Check,
             ),
             None,
         ),
@@ -184,16 +194,17 @@ fn operation<'a>(state: &DocumentState<'a>) -> Option<Operation<'a>> {
 
 /// The sketch being edited or the operation being set up, named with
 /// `icon` on the soft accent, joined at its right end by the button
-/// finishing it, sending `finish` (disabled without), which hovering
-/// tells `tip`.
+/// finishing it, showing `mark` and sending `finish` (disabled without),
+/// which hovering tells `tip`.
 fn pill<'a>(
     icon: Icon,
     name: &'a str,
     finish: Option<Message>,
     tip: &'static str,
+    mark: Icon,
 ) -> Element<'a, Message> {
     let finish = button(
-        container(icons::tinted(Icon::Check, icons::INLINE, |p| {
+        container(icons::tinted(mark, icons::INLINE, |p| {
             Emphasis::Primary.content(p)
         }))
         .center(Length::Fill),
