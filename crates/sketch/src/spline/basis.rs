@@ -25,6 +25,18 @@ pub const MIN_KNOT_GAP: f64 = 1e-7;
 /// zero: the system has no single solution.
 const SINGULAR: f64 = 1e-12;
 
+/// The least a tip moves a target, for a unit move, that
+/// [`Interpolation::nearest_tips`] counts: a tip's pull falls by about a
+/// quarter a span, so this keeps some fifteen spans either side, which
+/// keeps the fit as good and its work in step with the spline's length.
+const FELT: f64 = 1e-9;
+
+/// How much being off along a target's direction counts in
+/// [`Interpolation::nearest_tips`], against 1 across it: the place a
+/// target is matched to is only near where the spline comes nearest it,
+/// so being off along the curve matters less than across it.
+const SLIDE: f64 = 0.3;
+
 /// Chord-length parameters of `points`: 0 at the first, each one on by
 /// the distance from the one before, scaled so the last is 1 for an open
 /// spline, and the way back round from the last to the first ends at 1
@@ -744,6 +756,82 @@ impl Interpolation {
     pub fn spline(&self, fit: &[DVec2], tips: &[DVec2]) -> Option<BSpline> {
         let control = self.control(fit, tips)?;
         BSpline::new(&self.knots.kept, control, self.knots.closed)
+    }
+
+    /// The tips of its handles that bring the spline through `fit`
+    /// nearest `targets`, by least squares. Each target is a parameter,
+    /// where the spline should be there, and the direction a curve it's
+    /// matched to goes there: being off across that counts in full,
+    /// along it by [`SLIDE`], as the place matched could be a little
+    /// further on or back. The spline is linear in its tips: at `t`, the
+    /// spline with no tips plus each tip times its weight in the control
+    /// points there times their basis functions. `None` unless it was
+    /// made for `fit` with handles, or if the targets don't settle every
+    /// tip.
+    pub(crate) fn nearest_tips(
+        &self,
+        fit: &[DVec2],
+        targets: &[(f64, DVec2, DVec2)],
+    ) -> Option<Vec<DVec2>> {
+        let n = fit.len();
+        let tips = self.inputs.checked_sub(n).filter(|&tips| tips > 0)?;
+        let count = 2 * tips;
+        let base = self.spline(fit, &vec![DVec2::ZERO; tips])?;
+        let mut a = vec![0.0; count * count];
+        let mut b = vec![0.0; count];
+        // How far a tip moves the spline at a target, for a unit move,
+        // and the tips it moves it by more than `FELT`.
+        let mut pull = vec![0.0; tips];
+        let mut felt: Vec<usize> = Vec::with_capacity(tips);
+        for &(t, want, along) in targets {
+            let across = along.perp();
+            let along = along * SLIDE;
+            let off = want - base.point(t);
+            let t = self.knots.domain(t);
+            let span = self.knots.span(t);
+            let basis = self.knots.basis(span, t)[0];
+            pull.fill(0.0);
+            for (j, &weight) in basis.iter().enumerate() {
+                let control = self.knots.control(span - 3 + j);
+                let weights = &self.weights(control)[n..];
+                for (pull, &w) in pull.iter_mut().zip(weights) {
+                    *pull += weight * w;
+                }
+            }
+            felt.clear();
+            felt.extend((0..tips).filter(|&j| pull[j].abs() > FELT));
+            // Each coordinate of a tip moves the target along an axis:
+            // across and along are those axes' parts.
+            let part = |k: usize| {
+                let axis = if k.is_multiple_of(2) {
+                    DVec2::X
+                } else {
+                    DVec2::Y
+                };
+                (across.dot(axis), along.dot(axis))
+            };
+            for &ti in &felt {
+                for ki in [2 * ti, 2 * ti + 1] {
+                    let (xi, yi) = part(ki);
+                    let (xi, yi) = (xi * pull[ti], yi * pull[ti]);
+                    for &tj in &felt {
+                        for kj in [2 * tj, 2 * tj + 1] {
+                            let (xj, yj) = part(kj);
+                            a[ki * count + kj] += (xi * xj + yi * yj) * pull[tj];
+                        }
+                    }
+                    b[ki] += xi * across.dot(off) + yi * along.dot(off);
+                }
+            }
+        }
+        let x = solve(a, b, count, 1)?;
+        Some(
+            x.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&[x, y]| DVec2::new(x, y))
+                .collect(),
+        )
     }
 }
 

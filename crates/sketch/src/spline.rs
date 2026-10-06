@@ -311,7 +311,8 @@ impl Sketch {
     /// fit points to by control points exactly (the interpolation's
     /// control points and knots), the other way through the places its
     /// knots are at, which it then passes through but between them
-    /// strays a little. An open spline keeps its first and last points,
+    /// strays a hair, with handles at its ends or at every one, whichever
+    /// keeps nearer its shape ([`through_tips`]). An open spline keeps its first and last points,
     /// the rest are new, and those only it used go with what's on them,
     /// as do its handles. Nothing changes if it's `to` already.
     /// `Target` if `curve` is no spline or has no shape.
@@ -323,25 +324,30 @@ impl Sketch {
         }
         let spline = spline.clone();
         let shape = self.spline_shape(&spline).ok_or(target)?;
-        // Through fit points, an open spline's handles at its ends.
-        let mut tips = [None, None];
+        let mut breaks = Vec::new();
         let (places, knots) = match to {
             SplineKind::Control => (shape.control().to_vec(), shape.knots().to_vec()),
             SplineKind::Through => {
-                let mut breaks = shape.breaks();
-                if spline.closed {
-                    breaks.pop();
-                }
+                // A closed spline's knots are where its pieces meet,
+                // round from the first; 0 needn't be one.
+                breaks = if spline.closed {
+                    shape.knots().to_vec()
+                } else {
+                    shape.breaks()
+                };
                 let places: Vec<DVec2> = breaks.iter().map(|&t| shape.point(t)).collect();
-                if !spline.closed {
-                    tips = end_tips(&shape, &breaks, &places);
-                }
                 (places, Vec::new())
             }
         };
         if places.len() < to.least(spline.closed) || places.len() > MAX_SPLINE_POINTS {
             return Err(target);
         }
+        // Through fit points, the handles, each its fit point's index and
+        // its tip.
+        let tips = match to {
+            SplineKind::Control => Vec::new(),
+            SplineKind::Through => through_tips(&shape, &breaks, &places).ok_or(target)?,
+        };
         let last = places.len() - 1;
         let mut points = Vec::with_capacity(places.len());
         for (i, &place) in places.iter().enumerate() {
@@ -356,11 +362,9 @@ impl Sketch {
             });
         }
         let mut handles = Vec::new();
-        for (i, tip) in [0, last].into_iter().zip(tips) {
-            if let Some(tip) = tip {
-                let tip = self.add_point(tip)?;
-                handles.push(Handle { at: points[i], tip });
-            }
+        for (i, tip) in tips {
+            let tip = self.add_point(tip)?;
+            handles.push(Handle { at: points[i], tip });
         }
         let old: Vec<Id> = spline.all_points().collect();
         let entry = self.curve_mut(curve).ok_or(target)?;
@@ -700,6 +704,125 @@ pub fn flatten_spline(points: &[DVec2], kind: SplineKind, closed: bool) -> Optio
     };
     let path = shape.path();
     path.is_sound().then(|| path.flatten())
+}
+
+/// How many places in each piece of a spline [`through_tips`] weighs a
+/// spline through its breaks against it at.
+const FIT_PER_PIECE: usize = 8;
+
+/// How many times [`through_tips`] fits the handles' tips, each to
+/// where the spline the last made came nearest the targets.
+const FIT_ROUNDS: usize = 8;
+
+/// The parameter near `u` where `spline` comes nearest `want`, by a few
+/// steps of Newton's method from `u`; `u` if they go astray.
+fn nearest_by_newton(spline: &BSpline, mut u: f64, want: DVec2) -> f64 {
+    let start = u;
+    for _ in 0..4 {
+        let [p, d, dd] = spline.eval(u);
+        let slope = d.length_squared() + (p - want).dot(dd);
+        if slope.is_nan() || slope <= 0.0 {
+            break;
+        }
+        u -= (p - want).dot(d) / slope;
+    }
+    if u.is_finite()
+        && spline.point(u).distance_squared(want) <= spline.point(start).distance_squared(want)
+    {
+        u
+    } else {
+        start
+    }
+}
+
+/// The handles, each its fit point's index and tip, for the spline
+/// through `places`, which `shape` is at its parameters `along` (where
+/// its pieces meet: an open one's breaks, a closed one's knots), to keep
+/// to `shape` best: of two, the one nearer [`FIT_PER_PIECE`] places of
+/// `shape` in each piece, each matched first by the parameter, piece for
+/// piece, then where the spline comes nearest it. One has handles at an open
+/// spline's ends only ([`end_tips`]), which keeps the shape exactly when
+/// the breaks are at the chord-length parameters of `places`, as they are
+/// for a spline through fit points without handles converted to control
+/// points. The other has a handle at every fit point, as the Spline tool
+/// draws them, their tips by least squares
+/// ([`Interpolation::nearest_tips`]): the knots a handle brings can't be
+/// kept to otherwise, so a spline drawn with handles converted to control
+/// points and back strays visibly without them. `None` if neither makes
+/// a spline.
+fn through_tips(shape: &BSpline, along: &[f64], places: &[DVec2]) -> Option<Vec<(usize, DVec2)>> {
+    let closed = shape.closed();
+    let n = places.len();
+    let params = chord_params(places, closed);
+    let pieces = if closed { n } else { n - 1 };
+    let mut targets = Vec::with_capacity(pieces * FIT_PER_PIECE);
+    for i in 0..pieces {
+        let (u0, s0) = (params[i], along[i]);
+        let (u1, s1) = match (i + 1 < n, closed) {
+            (true, _) => (params[i + 1], along[i + 1]),
+            // A closed spline's last piece, round to its first point.
+            _ => (1.0, along[0] + 1.0),
+        };
+        for k in 0..FIT_PER_PIECE {
+            let f = (k as f64 + 0.5) / FIT_PER_PIECE as f64;
+            let u = u0 + (u1 - u0) * f;
+            let [at, d, _] = shape.eval(s0 + (s1 - s0) * f);
+            targets.push((u, at, d.normalize_or_zero()));
+        }
+    }
+    // How far the spline through `places` with `tips` at `handles` is
+    // from the targets, each its distance from the nearest place near
+    // where it's matched, and the targets matched there instead.
+    let off = |handles: &[usize], tips: &[DVec2], targets: &[(f64, DVec2, DVec2)]| {
+        let spline = Interpolation::at_chords(places, closed, handles)?.spline(places, tips)?;
+        let mut off = 0.0;
+        let mut nearer = Vec::with_capacity(targets.len());
+        for &(u, want, along) in targets {
+            let u = nearest_by_newton(&spline, u, want);
+            off += spline.point(u).distance_squared(want);
+            nearer.push((u, want, along));
+        }
+        off.is_finite().then_some((off, nearer))
+    };
+    let mut ends: Vec<(usize, DVec2)> = Vec::new();
+    if !closed {
+        for (i, tip) in [0, n - 1].into_iter().zip(end_tips(shape, along, places)) {
+            if let Some(tip) = tip {
+                ends.push((i, tip));
+            }
+        }
+    }
+    let (indices, tips): (Vec<usize>, Vec<DVec2>) = ends.iter().copied().unzip();
+    let ends_off = off(&indices, &tips, &targets).map(|(off, _)| off);
+    // A handle at every fit point, the tips fitted, then fitted again to
+    // where the spline they make comes nearest the targets, keeping the
+    // best.
+    let every: Vec<usize> = (0..n).collect();
+    let all = Interpolation::at_chords(places, closed, &every).and_then(|interpolation| {
+        let mut targets = targets.clone();
+        let mut best: Option<(f64, Vec<DVec2>)> = None;
+        for _ in 0..FIT_ROUNDS {
+            let Some(tips) = interpolation.nearest_tips(places, &targets) else {
+                break;
+            };
+            let Some((off, nearer)) = off(&every, &tips, &targets) else {
+                break;
+            };
+            if best.as_ref().is_none_or(|(least, _)| off < *least) {
+                best = Some((off, tips));
+            }
+            targets = nearer;
+        }
+        best
+    });
+    match (ends_off, all) {
+        (Some(ends_off), Some((all_off, tips))) if all_off < ends_off => {
+            Some(every.into_iter().zip(tips).collect())
+        }
+        (None, Some((_, tips))) => Some(every.into_iter().zip(tips).collect()),
+        (Some(_), _) => Some(ends),
+        (None, None) => None,
+    }
 }
 
 /// The tips of handles at the first and last of `places`, which `shape`

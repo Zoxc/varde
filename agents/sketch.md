@@ -84,9 +84,15 @@ along).
 
 Splines are shaped by edits of their own (`spline.rs`):
 `SketchEdit::Convert` (`Sketch::convert_spline`: to control points
-exactly; to fit points through its places at its knots, with handles at
-an open one's ends giving the tangents it had, straying a little
-between; an open one keeps its end points), `AddHandles` (a handle at
+exactly; to fit points through its places at its knots, straying a hair
+between, with handles (`through_tips`) at an open one's ends giving the
+tangents it had, or at every fit point, their tips fitted by least
+squares to places along it (`Interpolation::nearest_tips`, rematched to
+where the new spline comes nearest a few rounds), whichever keeps nearer
+it: the first is exact for a spline without handles converted and back,
+the second keeps a drawn one, whose handles' knots the first can't
+follow, to about a ten-thousandth of its size; an open one keeps its
+end points), `AddHandles` (a handle at
 each fit point named, on every spline through fit points it's one of
 without one, its tip at `Sketch::handle_tip`, where the spline keeps the
 tangent it has there, so the shape changes only by the knots a handle

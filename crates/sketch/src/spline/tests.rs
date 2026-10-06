@@ -490,6 +490,46 @@ fn converting_keeps_the_shape() {
     }
 }
 
+/// How far `after` strays from `before` at most: from each of many
+/// places along `before`, the nearest place of `after`.
+fn strays(before: &Geom, after: &Geom) -> f64 {
+    params(400)
+        .map(|t| before.at(t).distance(after.at(after.closest(before.at(t)))))
+        .fold(0.0, f64::max)
+}
+
+#[test]
+fn converting_a_spline_with_handles_round_and_back_keeps_its_shape() {
+    // Handles at every fit point, as the Spline tool draws it.
+    for closed in [false, true] {
+        let (mut sketch, id) = sketch_with(&wave(), closed);
+        let fit = sketch.spline(id).unwrap().points.clone();
+        sketch.add_handles(&fit).unwrap();
+        assert_eq!(sketch.check(&DESIGN), Ok(()));
+        let before = geom(&sketch, id);
+        sketch.convert_spline(id, SplineKind::Control).unwrap();
+        let control = geom(&sketch, id);
+        for t in params(100) {
+            assert!(before.at(t).distance(control.at(t)) < 1e-9, "{closed} {t}");
+        }
+        sketch.convert_spline(id, SplineKind::Through).unwrap();
+        assert_eq!(sketch.check(&DESIGN), Ok(()));
+        let spline = sketch.spline(id).unwrap();
+        assert_eq!(spline.kind, SplineKind::Through);
+        assert_eq!(spline.handles.len(), spline.points.len());
+        // Through the places at its knots with a handle at each, a hair
+        // off between them: with handles at its ends alone, it strayed
+        // half a percent of its size open.
+
+        let after = geom(&sketch, id);
+        let both = strays(&before, &after).max(strays(&after, &before));
+        assert!(
+            both < if closed { 5e-3 } else { 2e-4 } * 12.0,
+            "{closed} {both}"
+        );
+    }
+}
+
 #[test]
 fn converting_by_control_points_to_through_strays_a_little() {
     let mut sketch = Sketch::default();
@@ -530,8 +570,7 @@ fn converting_by_control_points_to_through_strays_a_little() {
         let near = after.at(after.closest(before.at(t)));
         most = most.max(near.distance(before.at(t)));
     }
-    assert!(most < 0.03 * 17.0, "{most}");
-    assert_eq!(fit.handles.len(), 2);
+    assert!(most < 0.003 * 17.0, "{most}");
 }
 
 #[test]
