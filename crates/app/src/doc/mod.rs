@@ -181,8 +181,8 @@ pub(crate) struct Doc {
     focus: Option<Focus>,
     animation: Option<CameraAnimation>,
     /// Whether the camera is to frame the first model shown, see
-    /// [`Doc::fit_first_model`]: a document opened, until its first model
-    /// shows.
+    /// [`Doc::fit_first_model`]: a document opened with features (from a
+    /// file or as a sample), until its first model shows.
     fit_on_model: bool,
     /// The view the camera had before turning to the sketch being edited,
     /// which it turns back to on leaving it.
@@ -349,7 +349,8 @@ impl Doc {
             damage,
             download,
         } = origin;
-        let fit_on_model = !matches!(target, Target::None);
+        // Opened from a file, or as a sample: anything with a model.
+        let fit_on_model = !document.features().is_empty();
         let editor = Editor::new(document);
         let revision = editor.revision();
         let lineage = editor.lineage();

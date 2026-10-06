@@ -112,6 +112,16 @@ fn an_opened_document_frames_its_first_model_unless_the_camera_moved() {
         doc.sync();
         (doc, requests)
     };
+    // A sample opens as a new design, and is framed all the same.
+    let requests = Rc::default();
+    let origin = Origin::new(Target::None, Access::Edit, "sample".to_owned());
+    let mut doc = Doc::new(a_disc_off_the_origin(5.0), origin);
+    doc.feed.connect(Deferred(Rc::clone(&requests)));
+    doc.sync();
+    answer(&mut doc, &requests);
+    let (low, high) = (Vec3::new(20.0, 15.0, 0.0), Vec3::new(30.0, 25.0, 4.0));
+    assert!(frames(&doc.camera, low, high), "{:?}", doc.camera);
+
     let (mut doc, requests) = opened();
     let home = doc.camera;
     answer(&mut doc, &requests);

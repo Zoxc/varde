@@ -143,7 +143,8 @@ Home, go back to orbiting the target. Home outside a sketch looks from
 its default direction framing the model shown, its bodies and sketches
 (`Doc::home_view`: target the box's middle, the view `FRAME_MARGIN`
 times its diagonal, at least 1 mm tall), or on the origin when it shows
-nothing; a document opened jumps there once its first model shows,
+nothing; a document opened with features (from a file, or a sample
+opened as a new design) jumps there once its first model shows,
 unless the camera was moved meanwhile (`Doc::fit_first_model`), while a
 new design starts on the origin, from `HOME_DISTANCE` (1 m) away, as Home
 with nothing shown does. Tools opening never move the camera: their
