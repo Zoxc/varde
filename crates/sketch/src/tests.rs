@@ -226,3 +226,32 @@ fn deleting_a_curve_deletes_every_kind_of_constraint_on_it() {
     assert!(sketch.point(lone).is_some());
     assert_eq!(sketch.check(&DESIGN), Ok(()));
 }
+
+#[test]
+fn points_are_named_by_their_role_in_a_curve() {
+    let (mut sketch, _) = drawn();
+    let names: Vec<_> = (sketch.points.iter())
+        .map(|point| sketch.point_name(point))
+        .collect();
+    // The line's start is the arc's end; the line's own end has no role.
+    assert_eq!(
+        names,
+        [
+            "End of Arc 1",
+            "Point 2",
+            "Centre of Circle 1",
+            "Start of Arc 1"
+        ]
+    );
+
+    let a = sketch.add_point(DVec2::ZERO).unwrap();
+    let b = sketch.add_point(DVec2::X).unwrap();
+    let mut spline = Spline::through(vec![a, b], false);
+    sketch
+        .add_curve(Curve::Spline(spline.clone()), false)
+        .unwrap();
+    assert_eq!(sketch.name(b).unwrap(), "Point 6");
+    spline.kind = SplineKind::Control;
+    sketch.curves.last_mut().unwrap().curve = Curve::Spline(spline);
+    assert_eq!(sketch.name(b).unwrap(), "Control point 2 of Spline 1");
+}

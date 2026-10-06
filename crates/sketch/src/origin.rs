@@ -15,7 +15,7 @@
 
 use glam::DVec2;
 
-use crate::{Constraint, Id, Measure, Point, Sketch};
+use crate::{Constraint, Curve, Id, Measure, Point, Sketch, SplineKind};
 
 /// The lowest of the ids the built-in items take.
 pub(crate) const FIRST_BUILTIN: u32 = u32::MAX - 2;
@@ -82,7 +82,8 @@ pub(crate) fn axis(id: Id) -> Option<(DVec2, DVec2)> {
 
 impl Sketch {
     /// The name of the point or curve `id`, as the user sees it: "Point 3",
-    /// "Arc 1", "Origin", "X axis".
+    /// "Arc 1", "Origin", "X axis", or a point by its role in a curve,
+    /// see [`Sketch::point_name`].
     pub fn name(&self, id: Id) -> Option<String> {
         match id {
             Id::X_AXIS => Some("X axis".into()),
@@ -92,10 +93,33 @@ impl Sketch {
                 Some(format!("Handle of {}", self.curve(curve)?.name()))
             }
             _ => match self.point(id) {
-                Some(point) => Some(point.name()),
+                Some(point) => Some(self.point_name(point)),
                 None => self.curve(id).map(|entry| entry.name()),
             },
         }
+    }
+
+    /// The name of `point` as the user sees it: by its role in the first
+    /// circle, arc or spline by control points it's one of ("Centre of
+    /// Arc 1", "Start of Arc 1", "End of Arc 1", "Control point 2 of
+    /// Spline 1"), else [`Point::name`] ("Point 3", "Origin").
+    pub fn point_name(&self, point: &Point) -> String {
+        let id = point.id;
+        let role = self.curves.iter().find_map(|entry| {
+            let role = match &entry.curve {
+                &Curve::Circle { center, .. } if center == id => "Centre".to_owned(),
+                &Curve::Arc { center, .. } if center == id => "Centre".to_owned(),
+                &Curve::Arc { start, .. } if start == id => "Start".to_owned(),
+                &Curve::Arc { end, .. } if end == id => "End".to_owned(),
+                Curve::Spline(spline) if spline.kind == SplineKind::Control => {
+                    let at = spline.points.iter().position(|&p| p == id)?;
+                    format!("Control point {}", at + 1)
+                }
+                _ => return None,
+            };
+            Some(format!("{role} of {}", entry.name()))
+        });
+        role.unwrap_or_else(|| point.name())
     }
 }
 

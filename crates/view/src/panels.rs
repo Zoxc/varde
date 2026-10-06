@@ -28,8 +28,8 @@ use crate::theme::{
 use crate::toolbar::{menu_item, menu_separator, ticked};
 use crate::{
     ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup,
-    ObjectRow, OriginObject, Panel, RENAME_FIELD, RowMenu, SketchState, VALUE_FIELD, ValueTarget, dimension,
-    split,
+    ObjectRow, OriginObject, Panel, RENAME_FIELD, RowMenu, SketchState, VALUE_FIELD, ValueTarget,
+    dimension, split,
 };
 
 pub(crate) const ROW_HEIGHT: f32 = 28.0;
@@ -1158,7 +1158,7 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
             let item = Item {
                 id: point.id,
                 icon: Icon::Point,
-                name: point.name(),
+                name: sketch.sketch.point_name(point),
                 note: Some(dimension::point_note(point.at, sketch.units)),
                 driven: false,
                 danger: conflicts.contains(&point.id),

@@ -13,7 +13,10 @@ and dimensions in vectors sorted by id, with `next_id` handing out ids
 shared by all four, so an id names one thing and never changes.
 `add_point`, `add_curve`, `add_constraint` and `add_dimension` give the
 next id (running out is `OutOfIds`) and a number
-per kind for the name ("Line 3"). Curves name their points by id, so lines
+per kind for the name ("Line 3"); `Sketch::point_name` names a point of a
+circle, arc or spline by control points by its role ("Centre of Arc 1",
+"Control point 2 of Spline 1"), which `Sketch::name` and the Geometry
+list use. Curves name their points by id, so lines
 drawn in a chain share the point between them. An arc runs
 counter-clockwise from `start` to `end` around `center`; until the solver
 holds its radii equal, the radius changes evenly along it.
