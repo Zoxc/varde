@@ -1181,7 +1181,8 @@ impl Doc {
     }
 
     /// Opens the context menu of the side panel's row `menu` is on,
-    /// selecting a feature of the Timeline's, unless in a sketch, where
+    /// selecting a feature of the Timeline's, or an Objects row not
+    /// already selected, unless in a sketch, where
     /// neither list's rows show.
     fn open_menu(&mut self, menu: RowMenu) {
         let document = self.editor.document();
@@ -1203,9 +1204,31 @@ impl Doc {
         if self.sketch.is_some() != in_sketch || !exists {
             return;
         }
-        if let RowMenu::Feature(id) = menu {
-            self.selected_feature = Some(id);
-            self.clear_model_selection();
+        match menu {
+            RowMenu::Feature(id) => {
+                self.selected_feature = Some(id);
+                self.clear_model_selection();
+            }
+            // An Objects row is selected alone as a click would, unless
+            // already part of the selection, which is kept.
+            RowMenu::Body(id) => {
+                let shown = self.feed.shown_body(id);
+                let picking = self.combine.is_some() || self.motion.is_some();
+                if !picking
+                    && self.measure.is_none()
+                    && self.pick.selection.mode().takes_bodies()
+                    && !self.pick.selection.bodies().any(|body| body == shown)
+                {
+                    self.click_body(id, false);
+                }
+            }
+            RowMenu::Sketch(id) => {
+                let row = varde_view::ObjectRow::Sketch(id);
+                if !self.objects_selected.contains(&row) {
+                    self.click_object(row, false);
+                }
+            }
+            RowMenu::Link(_) | RowMenu::Item(_) => {}
         }
         self.row_menu = Some(menu);
     }

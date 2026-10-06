@@ -4549,13 +4549,28 @@ fn objects_have_context_menus() {
 
     doc.look(Look::OpenMenu(RowMenu::Body(body)));
     assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
-    // Not selected in the Timeline: the Objects' rows aren't.
+    // Not selected in the Timeline: the Objects' rows aren't. The row
+    // is selected, alone.
     assert_eq!(doc.selected_feature, None);
+    assert!(doc.pick.selection.bodies().eq([body]));
     doc.update(Edit::ToggleVisible(body));
     assert_eq!(doc.row_menu, None);
     assert!(!doc.editor.document().body(body).unwrap().visible);
 
     doc.look(Look::OpenMenu(RowMenu::Sketch(sketch)));
+    assert_eq!(
+        doc.objects_selected,
+        [varde_view::ObjectRow::Sketch(sketch)]
+    );
+    assert_eq!(doc.pick.selection.bodies().count(), 0);
+    // A row already selected keeps the selection it's part of.
+    doc.look(Look::ClickBody { body, add: true });
+    doc.look(Look::OpenMenu(RowMenu::Sketch(sketch)));
+    assert_eq!(
+        doc.objects_selected,
+        [varde_view::ObjectRow::Sketch(sketch)]
+    );
+    assert!(doc.pick.selection.bodies().eq([body]));
     doc.look(Look::Escape);
     assert_eq!(doc.row_menu, None);
     doc.look(Look::OpenMenu(RowMenu::Sketch(sketch)));
