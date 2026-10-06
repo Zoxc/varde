@@ -893,6 +893,13 @@ impl Doc {
             .is_some_and(|sketch| sketch.selectable(id))
     }
 
+    /// Lets go of the item `id` hovered, if it still is.
+    pub(crate) fn leave_item(&mut self, id: Id) {
+        if let Some(session) = &mut self.sketch {
+            session.hovered.take_if(|&mut hovered| hovered == id);
+        }
+    }
+
     /// Hovers the item `id` of a list or glyph, or none, if the sketch
     /// holds it.
     pub(crate) fn hover_item(&mut self, id: Option<Id>) {

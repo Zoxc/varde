@@ -1809,7 +1809,7 @@ fn chip<'a>(
         .style(move |theme| theme::glyph(theme, look == GlyphLook::Conflict));
     mouse_area(chip)
         .on_enter(Message::Look(Look::HoverItem(Some(id))))
-        .on_exit(Message::Look(Look::HoverItem(None)))
+        .on_exit(Message::Look(Look::LeaveItem(id)))
 }
 
 /// The shape `tool` is drawing, with the cursor `at` its next point if

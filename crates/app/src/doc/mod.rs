@@ -720,6 +720,8 @@ impl Doc {
                     | Look::HoverSketch(_)
                     | Look::HoverItem(_)
                     | Look::HoverLink(_)
+                    | Look::LeaveItem(_)
+                    | Look::LeaveLink(_)
                     | Look::HoverFeature(_)
                     | Look::LeaveFeature(_)
                     | Look::HoverOrigin(_)
@@ -780,6 +782,8 @@ impl Doc {
                 | Look::HoverSketch(_)
                 | Look::HoverItem(_)
                 | Look::HoverLink(_)
+                | Look::LeaveItem(_)
+                | Look::LeaveLink(_)
                 | Look::HoverFeature(_)
                 | Look::LeaveFeature(_)
                 | Look::HoverOrigin(_)
@@ -811,6 +815,8 @@ impl Doc {
                 | Look::Escape
                 | Look::HoverItem(_)
                 | Look::HoverLink(_)
+                | Look::LeaveItem(_)
+                | Look::LeaveLink(_)
                 | Look::HoverFeature(_)
                 | Look::LeaveFeature(_)
                 | Look::HoverOrigin(_)
@@ -967,6 +973,8 @@ impl Doc {
             Look::HoverItem(id) => self.hover_item(id),
             Look::ClickLink(link) => self.click_link(link),
             Look::HoverLink(link) => self.hover_link(link),
+            Look::LeaveItem(id) => self.leave_item(id),
+            Look::LeaveLink(link) => self.leave_link(link),
             Look::HoverFeature(feature) => self.hovered_feature = feature,
             Look::LeaveFeature(feature) => {
                 (self.hovered_feature).take_if(|&mut hovered| hovered == feature);

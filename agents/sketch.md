@@ -1414,7 +1414,10 @@ bar says why (`EditError::Sketch`).
   turns into a click adding with the command modifier held (tracked from
   `ModifiersChanged`, `Message::CommandHeld`). Hovering one sends
   `Look::HoverItem`, kept in the session (`hovered`), which the viewport
-  highlights: geometry itself, a constraint by what it ties together. The
+  highlights: geometry itself, a constraint by what it ties together.
+  Leaving sends `Look::LeaveItem(id)`, which only lets go of `id` if it
+  is still the one hovered: moving up a list, the row entered tells
+  before the one left (links likewise, `Look::LeaveLink`). The
   selection and hover may name items still waiting on the solver.
 - **The Geometry list** (upper half of the Sketch tab, `panels.rs`,
   `geometry_rows`) is a tree of groups, a header row each, in one

@@ -76,6 +76,13 @@ impl Doc {
         self.pick.link_highlight = self.link_highlight();
     }
 
+    /// Lets go of the link `link` hovered, if it still is.
+    pub(crate) fn leave_link(&mut self, link: Id) {
+        if self.sketch.as_ref().is_some_and(|session| session.link_hover == Some(link)) {
+            self.hover_link(None);
+        }
+    }
+
     /// Deletes the link `link`, with what it made, but the sketch face,
     /// which stays, saying so.
     pub(crate) fn remove_link(&mut self, link: Id) {

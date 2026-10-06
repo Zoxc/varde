@@ -123,6 +123,8 @@ fn passive(message: &Look) -> bool {
         message,
         Look::HoverItem(_)
             | Look::HoverLink(_)
+            | Look::LeaveItem(_)
+            | Look::LeaveLink(_)
             | Look::HoverFeature(_)
             | Look::LeaveFeature(_)
             | Look::HoverOrigin(_)

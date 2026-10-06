@@ -1507,3 +1507,16 @@ fn a_sketch_is_framed_to_its_size_however_far_home_is() {
     let camera = facing(Projection::default(), placement, &point);
     assert!((camera.view_height() - Camera::default().view_height()).abs() < 1e-3);
 }
+
+#[test]
+fn moving_up_the_list_hovers_the_row_entered() {
+    let (mut doc, [a, b, ..]) = with_shapes();
+    let hovered = |doc: &Doc| doc.sketch.as_ref().unwrap().hovered;
+    doc.look(Look::HoverItem(Some(b)));
+    // Moving up a row, the one entered tells it before the one left.
+    doc.look(Look::HoverItem(Some(a)));
+    doc.look(Look::LeaveItem(b));
+    assert_eq!(hovered(&doc), Some(a));
+    doc.look(Look::LeaveItem(a));
+    assert_eq!(hovered(&doc), None);
+}

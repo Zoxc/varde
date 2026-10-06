@@ -1333,7 +1333,7 @@ fn geometry_item<'a>(
     ))
     .on_press(Message::Look(Look::ClickRow(id)))
     .on_enter(Message::Look(Look::HoverItem(Some(id))))
-    .on_exit(Message::Look(Look::HoverItem(None)));
+    .on_exit(Message::Look(Look::LeaveItem(id)));
     let menu = (sketch.item_menu == Some(id)).then(|| {
         let editable = sketch.editable && !id.is_builtin();
         let detach = sketch.sketch.detachable(id).then(|| {
@@ -1413,7 +1413,7 @@ fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Messa
     }
     .view(Message::Look(Look::ClickLink(id)))
     .on_enter(Message::Look(Look::HoverLink(Some(id))))
-    .on_exit(Message::Look(Look::HoverLink(None)));
+    .on_exit(Message::Look(Look::LeaveLink(id)));
     let menu = (sketch.link_menu == Some(id)).then(|| {
         let editable = sketch.editable;
         let profiles = if link.profiles {
@@ -1542,7 +1542,7 @@ fn item_row<'a>(
     };
     row.view(Message::Look(Look::ClickRow(id)))
         .on_enter(Message::Look(Look::HoverItem(Some(id))))
-        .on_exit(Message::Look(Look::HoverItem(None)))
+        .on_exit(Message::Look(Look::LeaveItem(id)))
 }
 
 /// The sketch's constraints and dimensions on the geometry selected, or

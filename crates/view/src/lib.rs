@@ -595,6 +595,13 @@ pub enum Look {
     /// A link's row of the Sketch tab hovered, or none: what it comes
     /// from is lit in the model.
     HoverLink(Option<Id>),
+    /// The cursor left the row or glyph of the sketch item `id`: it's no
+    /// longer hovered, unless another was since, as with
+    /// [`Look::LeaveFeature`].
+    LeaveItem(Id),
+    /// The cursor left a link's row: it's no longer hovered, unless
+    /// another was since, as with [`Look::LeaveFeature`].
+    LeaveLink(Id),
     /// A feature's row in the Timeline hovered, or none: a failed
     /// feature's error geometry shows in the viewport while it is.
     HoverFeature(Option<FeatureId>),
