@@ -195,6 +195,9 @@ pub enum Request {
         /// longer show, and the picks are always measured on the very
         /// model the answer draws, whose tables say where they are.
         inspect: Option<Box<Inspect>>,
+        /// How finely to draw the model for the view, or `None` for
+        /// within a share of each solid's size: see [`Detail`].
+        detail: Option<Detail>,
     },
     /// Welds the visible bodies of the committed `document` for export
     /// (see [`export`]), answered with [`Response::Exported`] tagged
@@ -206,6 +209,28 @@ pub enum Request {
         #[serde(with = "varde_document::codec::snapshot")]
         document: Snapshot,
     },
+}
+
+/// How finely a model is drawn for the view: its chords within
+/// `2^level` mm of the curves, as the app picks from the camera's zoom
+/// ([`Display::for_view`]). Levels apart so a camera moving a little
+/// doesn't ask for the model again; past [`Detail::MIN`] and
+/// [`Detail::MAX`] they're taken as those.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Detail(pub i8);
+
+impl Detail {
+    /// The finest level: chords within about a micrometre, finer than the
+    /// fit tolerance can be anyway.
+    pub const MIN: i8 = -20;
+    /// The coarsest level: chords within a metre, where the turn per
+    /// segment decides alone.
+    pub const MAX: i8 = 10;
+
+    /// The chord error asked for, in mm.
+    pub fn chord(self) -> f64 {
+        2f64.powi(i32::from(self.0.clamp(Self::MIN, Self::MAX)))
+    }
 }
 
 /// A feature being set up, new or edited, that isn't committed (an
@@ -506,6 +531,14 @@ impl Response {
         }
     }
 
+    /// How finely the request answered asked for the model.
+    pub fn detail(&self) -> Option<Detail> {
+        match self {
+            Response::Regenerated { detail, .. } | Response::Failed { detail, .. } => *detail,
+            Response::Exported { .. } | Response::Progress(_) => None,
+        }
+    }
+
     /// The revision of the measure the request answered had, if any.
     pub fn inspect(&self) -> Option<u64> {
         match self {
@@ -550,6 +583,14 @@ impl Request {
         }
     }
 
+    /// How finely the request asks for the model to be drawn.
+    pub fn detail(&self) -> Option<Detail> {
+        match self {
+            Request::Regenerate { detail, .. } => *detail,
+            Request::Export { .. } => None,
+        }
+    }
+
     /// The answer to this request should handling it fail with `error`,
     /// e.g. by a panic: every request has one. Keeps only what the
     /// answer needs, not the document.
@@ -560,21 +601,24 @@ impl Request {
                 exclude,
                 draft,
                 inspect,
+                detail,
                 ..
             } => Err((
                 *generation,
                 *exclude,
                 draft.as_ref().map(|d| d.revision),
                 inspect.as_ref().map(|i| i.revision),
+                *detail,
             )),
             Request::Export { export, .. } => Ok(*export),
         };
         move |error| match failed {
-            Err((generation, exclude, draft, inspect)) => Response::Failed {
+            Err((generation, exclude, draft, inspect, detail)) => Response::Failed {
                 generation,
                 exclude,
                 draft,
                 inspect,
+                detail,
                 error,
             },
             Ok(export) => Response::Exported {
@@ -593,6 +637,9 @@ pub enum Response {
         /// The sketch left out of `sketches`, as the request asked: a
         /// request can ask again for the same generation with another one.
         exclude: Option<FeatureId>,
+        /// How finely the request asked for the model to be drawn: the
+        /// mesh may be drawn otherwise, if too large at that.
+        detail: Option<Detail>,
         /// How the request's draft went, if it had one. Boxed, as the
         /// variant is large enough.
         draft: Option<Box<Drafted>>,
@@ -648,6 +695,8 @@ pub enum Response {
         draft: Option<u64>,
         /// The revision of the request's measure, if it had one.
         inspect: Option<u64>,
+        /// How finely the request asked for the model to be drawn.
+        detail: Option<Detail>,
         error: String,
     },
     /// Answers [`Request::Export`] tagged `export`: the visible bodies
@@ -698,13 +747,15 @@ impl Regenerator {
                 exclude,
                 draft,
                 inspect,
+                detail,
             } => {
                 self.cache.begin();
                 let asked = (draft.as_deref(), inspect.as_deref());
-                match self.regenerate(&document, exclude, asked, report) {
+                match self.regenerate(&document, exclude, asked, detail, report) {
                     Ok(model) => Response::Regenerated {
                         generation,
                         exclude,
+                        detail,
                         draft: model.draft.map(Box::new),
                         mesh: model.scene.mesh,
                         picking: model.scene.picking,
@@ -724,6 +775,7 @@ impl Regenerator {
                         exclude,
                         draft: draft.map(|draft| draft.revision),
                         inspect: inspect.map(|inspect| inspect.revision),
+                        detail,
                         error,
                     },
                 }
@@ -747,10 +799,11 @@ impl Regenerator {
         document: &Document,
         exclude: Option<FeatureId>,
         (draft, inspect): (Option<&Draft>, Option<&Inspect>),
+        detail: Option<Detail>,
         report: &mut dyn FnMut(Progress),
     ) -> Result<Model, String> {
         let Some(draft) = draft else {
-            return self.model(document, exclude, None, inspect, report);
+            return self.model(document, exclude, None, (inspect, detail), report);
         };
         let mut drafted = Drafted {
             revision: draft.revision,
@@ -794,13 +847,14 @@ impl Regenerator {
                             .map(|(_, uncut)| uncut.clone())
                             .unwrap_or_default();
                         report(Progress::drawing(with_draft.features().len()));
-                        return self.draw(&with_draft, evaluation, exclude, Some(drafted), inspect);
+                        let asked = (inspect, detail);
+                        return self.draw(&with_draft, evaluation, exclude, Some(drafted), asked);
                     }
                 }
             }
             Err(error) => drafted.error = Some(error),
         }
-        self.model(document, exclude, Some(drafted), inspect, report)
+        self.model(document, exclude, Some(drafted), (inspect, detail), report)
     }
 
     /// The model of `document`, telling `report` how far it has got.
@@ -809,12 +863,12 @@ impl Regenerator {
         document: &Document,
         exclude: Option<FeatureId>,
         draft: Option<Drafted>,
-        inspect: Option<&Inspect>,
+        asked: (Option<&Inspect>, Option<Detail>),
         report: &mut dyn FnMut(Progress),
     ) -> Result<Model, String> {
         let evaluation = self.evaluate(document, report);
         report(Progress::drawing(document.features().len()));
-        self.draw(document, evaluation, exclude, draft, inspect)
+        self.draw(document, evaluation, exclude, draft, asked)
     }
 
     /// The history of `document` evaluated, telling `report` of each
@@ -827,20 +881,32 @@ impl Regenerator {
     }
 
     /// The model of `document`, whose history gave `evaluation`, with
-    /// `inspect` measured on it.
+    /// `inspect` measured on it, drawn at `detail`.
     fn draw(
         &mut self,
         document: &Document,
         mut evaluation: Evaluation,
         exclude: Option<FeatureId>,
         mut draft: Option<Drafted>,
-        inspect: Option<&Inspect>,
+        (inspect, detail): (Option<&Inspect>, Option<Detail>),
     ) -> Result<Model, String> {
         // Only a draft that worked is drawn: one that failed is answered
         // with the committed model.
         let drafted = draft.as_ref().is_some_and(|draft| draft.error.is_none());
-        let scene = tessellate_scene(document, &evaluation, drafted, &mut self.cache)
-            .map_err(|error| error.to_string())?;
+        // A view's detail too fine for the mesh's limits falls back to the
+        // share of each solid's size, rather than failing the model.
+        let scene = match detail {
+            Some(detail) => tessellate_scene(
+                document,
+                &evaluation,
+                drafted,
+                Some(detail),
+                &mut self.cache,
+            )
+            .or_else(|_| tessellate_scene(document, &evaluation, drafted, None, &mut self.cache)),
+            None => tessellate_scene(document, &evaluation, drafted, None, &mut self.cache),
+        }
+        .map_err(|error| error.to_string())?;
         let sketches = flatten_sketches(document, &evaluation.placements, exclude)
             .map_err(|error| error.to_string())?;
         // The failures' operand faces, on the model drawn.
@@ -965,7 +1031,7 @@ pub fn tessellate(
     evaluation: &Evaluation,
     cache: &mut Cache,
 ) -> Result<Arc<RenderMesh>, MeshError> {
-    tessellate_scene(document, evaluation, false, cache).map(|scene| scene.mesh)
+    tessellate_scene(document, evaluation, false, None, cache).map(|scene| scene.mesh)
 }
 
 /// [`tessellate`], with the scene's [`Picking`] tables.
@@ -974,24 +1040,34 @@ pub fn tessellate_picking(
     evaluation: &Evaluation,
     cache: &mut Cache,
 ) -> Result<(Arc<RenderMesh>, Arc<Picking>), MeshError> {
-    tessellate_scene(document, evaluation, false, cache).map(|scene| (scene.mesh, scene.picking))
+    tessellate_scene(document, evaluation, false, None, cache)
+        .map(|scene| (scene.mesh, scene.picking))
 }
 
 /// [`tessellate_picking`], for a draft's answer if `drafted`, whose scene
 /// doesn't become the committed one the cache never evicts (see
-/// [`Cache`]).
+/// [`Cache`]), drawn at the view's `detail` if there is one
+/// ([`Display::for_view`]), each level's meshes filed apart.
 fn tessellate_scene(
     document: &Document,
     evaluation: &Evaluation,
     drafted: bool,
+    detail: Option<Detail>,
     cache: &mut Cache,
 ) -> Result<Scene, MeshError> {
     let fit = document.tolerance().fit().to_bits();
+    // Levels past the bounds draw as the bounds do, so they're filed so.
+    let level = detail.map_or(u64::MAX, |detail| detail.chord().to_bits());
     let shown: Vec<_> = evaluation
         .bodies
         .iter()
         .filter(|made| document.body(made.body).is_some_and(|body| body.visible))
-        .map(|made| (made, Keyer::new("mesh").key(made.key).number(fit).finish()))
+        .map(|made| {
+            let key = (Keyer::new("mesh").key(made.key).number(fit))
+                .number(level)
+                .finish();
+            (made, key)
+        })
         .collect();
     // The bodies too: the picking tables name the body of each part.
     let mut scene = Keyer::new("scene");
@@ -1002,7 +1078,11 @@ fn tessellate_scene(
     let mut found = true;
     let scene = cache.scene(filed, drafted, |cache| {
         found = false;
-        let display = Display::new(&document.tolerance());
+        let tolerance = document.tolerance();
+        let display = match detail {
+            Some(detail) => Display::for_view(&tolerance, detail.chord()),
+            None => Display::new(&tolerance),
+        };
         let mut mesh = RenderMesh::default();
         let mut picking = Picking::default();
         for (made, key) in &shown {

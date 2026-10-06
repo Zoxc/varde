@@ -140,6 +140,7 @@ fn failure_ends_regenerating_and_keeps_the_last_mesh() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
+        detail: None,
         draft: None,
         inspect: None,
         generation: request.generation().unwrap(),
@@ -228,6 +229,7 @@ fn sketches_are_shown_with_their_mesh() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
+        detail: None,
         draft: None,
         inspect: None,
         generation: request.generation().unwrap(),
@@ -299,6 +301,7 @@ fn only_the_sketch_asked_for_last_is_shown_left_out() {
 
     // A failure of the same generation doesn't replace it.
     feed.apply(Response::Failed {
+        detail: None,
         draft: None,
         inspect: None,
         generation: editor.generation(),
@@ -320,6 +323,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
+        detail: None,
         draft: None,
         inspect: None,
         generation: request.generation().unwrap(),
@@ -343,6 +347,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
+        detail: None,
         draft: None,
         inspect: None,
         generation: request.generation().unwrap(),
@@ -524,6 +529,7 @@ fn merged_bodies_follow_the_model_shown() {
     feed.request(&editor, None);
     regen.take();
     feed.apply(Response::Failed {
+        detail: None,
         generation: editor.generation(),
         exclude: None,
         draft: None,
@@ -639,6 +645,7 @@ fn the_parts_bodies_follow_the_mesh_shown() {
     feed.request(&editor, None);
     let request = regen.take().pop().unwrap();
     feed.apply(Response::Failed {
+        detail: None,
         generation: request.generation().unwrap(),
         exclude: None,
         draft: None,
@@ -905,4 +912,42 @@ fn a_slow_regeneration_shows_with_its_progress_until_answered() {
     feed.request(&editor, None);
     feed.tick(&editor, start + SLOW * 3);
     assert_eq!(feed.slow(&editor), None, "the next waits its turn too");
+}
+
+#[test]
+fn the_view_asks_for_the_model_in_levels_without_regenerating() {
+    let editor = one_line();
+    let (mut feed, regen) = connected();
+    // Not before the first model, which frames the camera.
+    feed.view(100.0);
+    assert_eq!(feed.detail(), None);
+    feed.request(&editor, None);
+    feed.apply(handle(regen.borrow_mut().remove(0)));
+
+    // 100 mm tall asks for chords of 2^-4 mm (0.05 rounded).
+    feed.view(100.0);
+    assert_eq!(feed.detail(), Some(Detail(-4)));
+    feed.request(&editor, None);
+    let asked = regen.borrow_mut().remove(0);
+    assert_eq!(asked.detail(), Some(Detail(-4)));
+    // The model shown stays, current, while the finer one comes.
+    assert_eq!(feed.status(&editor), MeshStatus::Current);
+    assert_eq!(feed.generation(), Some(Generation::from(0)));
+
+    // A little zoom asks for nothing new; past the slack, the next level.
+    feed.view(130.0);
+    feed.request(&editor, None);
+    assert!(regen.borrow().is_empty());
+    feed.view(40.0);
+    assert_eq!(feed.detail(), Some(Detail(-6)));
+    feed.request(&editor, None);
+    let newest = regen.borrow_mut().remove(0);
+
+    // The answer for the level let go of is dropped, the newest taken.
+    let model = feed.model();
+    feed.apply(handle(asked));
+    assert_eq!(feed.model(), model);
+    feed.apply(handle(newest));
+    assert_eq!(feed.status(&editor), MeshStatus::Current);
+    assert_eq!(feed.shown.and_then(|shown| shown.detail), Some(Detail(-6)));
 }

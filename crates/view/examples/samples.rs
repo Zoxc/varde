@@ -633,6 +633,7 @@ impl Gpu {
     fn thumbnail(&self, document: &Document) -> Thumbnail {
         let editor = Editor::new(document.clone());
         let response = varde_regen::handle(varde_regen::Request::Regenerate {
+            detail: None,
             generation: editor.generation(),
             document: editor.snapshot(),
             exclude: None,

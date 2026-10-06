@@ -496,6 +496,10 @@ impl Doc {
             .and_then(MeasureSession::inspect)
             .or_else(|| self.scale_inspect())
             .or_else(|| self.selection_inspect());
+        // Drawn as finely as the camera shows it, where an animation
+        // ends rather than at each of its steps.
+        let camera = self.animation.as_ref().map_or(&self.camera, |a| &a.to);
+        self.feed.view(camera.view_height());
         self.feed
             .request_with(&self.editor, exclude, draft, inspect);
     }

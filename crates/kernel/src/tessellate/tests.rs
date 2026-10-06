@@ -1642,3 +1642,20 @@ fn a_wall_far_out_is_drawn_as_at_the_origin() {
         far.manifold_mesh(&display).unwrap();
     }
 }
+
+#[test]
+fn a_view_chord_draws_finer_or_coarser_but_round() {
+    let radius = 3.0;
+    let solid = Solid::cylinder(DVec3::ZERO, radius, 5.0, 7, &TOL).unwrap();
+    let segments = |display: Display| edge_segments(&solid.tessellate(&display).unwrap());
+    let relative = segments(Display::default());
+    let fine = segments(Display::for_view(&TOL, 1e-4));
+    let coarse = segments(Display::for_view(&TOL, 1e3));
+    assert!(fine > relative, "{fine} {relative}");
+    assert!(coarse <= relative, "{coarse} {relative}");
+    // Two rims: at least 36 segments round each, however coarse the chord.
+    assert!(coarse >= 2 * 36, "{coarse}");
+    // No closer than the fit tolerance, nor a chord that isn't one.
+    assert_eq!(Display::for_view(&TOL, 0.0), Display::default());
+    assert_eq!(Display::for_view(&TOL, 1e-9).chord(1.0), TOL.fit());
+}

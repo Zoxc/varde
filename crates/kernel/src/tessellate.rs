@@ -45,6 +45,9 @@ use crate::{MeshError, MeshParts, RenderMesh, Tolerance, Topology};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Display {
     fit: f64,
+    /// The chord error asked for by the view, in mm, if it's drawn for
+    /// one: taken in place of the share of the diagonal.
+    view: Option<f64>,
 }
 
 impl Display {
@@ -60,13 +63,30 @@ impl Display {
 
     /// Sampling to within the fit tolerance of `tol` at best.
     pub fn new(tol: &Tolerance) -> Display {
-        Display { fit: tol.fit() }
+        Display {
+            fit: tol.fit(),
+            view: None,
+        }
+    }
+
+    /// Sampling for a view: chords within `chord` mm of their curves
+    /// whatever the solid's size, but no closer than the fit tolerance of
+    /// `tol`. The turn per segment still bounds how coarse it gets, so a
+    /// circle keeps at least 36 segments however coarse `chord` is. A
+    /// `chord` that isn't positive and finite is ignored.
+    pub fn for_view(tol: &Tolerance, chord: f64) -> Display {
+        Display {
+            fit: tol.fit(),
+            view: (chord.is_finite() && chord > 0.0).then_some(chord),
+        }
     }
 
     /// The chord error allowed on a solid `diagonal` across: its
-    /// [`Display::RELATIVE_CHORD`], but no less than the fit tolerance.
+    /// [`Display::RELATIVE_CHORD`] (or the view's chord, for
+    /// [`Display::for_view`]), but no less than the fit tolerance.
     pub fn chord(&self, diagonal: f64) -> f64 {
-        self.fit.max(Self::RELATIVE_CHORD * diagonal)
+        let chord = self.view.unwrap_or(Self::RELATIVE_CHORD * diagonal);
+        self.fit.max(chord)
     }
 }
 

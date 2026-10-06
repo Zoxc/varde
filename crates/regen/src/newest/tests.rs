@@ -6,6 +6,7 @@ use super::*;
 
 fn regenerate(generation: u64) -> Request {
     Request::Regenerate {
+        detail: None,
         generation: generation.into(),
         document: Arc::new(Document::default()),
         exclude: None,

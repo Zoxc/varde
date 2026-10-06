@@ -14,8 +14,8 @@ use varde_document::{
 };
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{
-    Draft, Drafted, ErrorGeometry, FeatureFailure, Inspect, InspectPick, Inspected, Picking,
-    Progress, Request, Response, Transport,
+    Detail, Draft, Drafted, ErrorGeometry, FeatureFailure, Inspect, InspectPick, Inspected,
+    Picking, Progress, Request, Response, Transport,
 };
 use varde_view::{MeshStatus, PickIndex};
 
@@ -100,6 +100,10 @@ pub(crate) struct MeshFeed {
     shown: Option<Asked>,
     /// What was asked for last.
     requested: Option<Asked>,
+    /// How finely the model is asked for, picked from the camera's zoom
+    /// ([`MeshFeed::view`]): `None` until the first model shows, which
+    /// is drawn within a share of each solid's size.
+    detail: Option<Detail>,
     /// The draft asked for last, if any: another one is given the next
     /// revision.
     draft: Option<Draft>,
@@ -141,6 +145,16 @@ type Relinked = Vec<(FeatureId, Arc<Sketch>)>;
 /// doesn't flicker any of these.
 pub(crate) const SLOW: Duration = Duration::from_millis(250);
 
+/// The chord error the model is drawn within, as a share of the view's
+/// height at the camera's target: half a pixel of a view 1000 pixels tall.
+const VIEW_CHORD: f64 = 1.0 / 2000.0;
+
+/// How far, in powers of two, the chord a view asks for may drift from
+/// the level asked for before another is: past half a level either way,
+/// so zooming back and forth about where two levels meet doesn't ask for
+/// the model again and again.
+const DETAIL_SLACK: f64 = 0.75;
+
 /// A model shown without a draft: its mesh, its picking tables for the
 /// bodies of its parts, and what it's of.
 struct Committed {
@@ -157,14 +171,15 @@ const MAX_ASKED: usize = 64;
 
 /// What a request asks for, and so what its answer is of: a generation
 /// of the document, the sketch left out of the lines, the revision of the
-/// draft applied, if any, and the revision of the measure taken on it, if
-/// any.
+/// draft applied, if any, the revision of the measure taken on it, if
+/// any, and how finely it's drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Asked {
     generation: Generation,
     exclude: Option<FeatureId>,
     draft: Option<u64>,
     inspect: Option<u64>,
+    detail: Option<Detail>,
 }
 
 impl Asked {
@@ -175,6 +190,7 @@ impl Asked {
             exclude: response.exclude(),
             draft: response.draft(),
             inspect: response.inspect(),
+            detail: response.detail(),
         })
     }
 }
@@ -258,6 +274,7 @@ impl MeshFeed {
             exclude,
             draft: draft.as_ref().map(|draft| draft.revision),
             inspect: inspect.as_ref().map(|inspect| inspect.revision),
+            detail: self.detail,
         };
         self.draft = draft.clone();
         self.inspect = inspect.clone();
@@ -279,8 +296,40 @@ impl MeshFeed {
                 exclude,
                 draft: draft.map(Box::new),
                 inspect: inspect.map(Box::new),
+                detail: asked.detail,
             });
         }
+    }
+
+    /// Notes the camera's view, `view_height` mm tall at its target, for
+    /// the next [`MeshFeed::request_with`] to ask for the model drawn as
+    /// finely as it shows ([`VIEW_CHORD`]), in levels a power of two
+    /// apart, kept while the view stays within [`DETAIL_SLACK`] of the
+    /// level's: a camera moving a little asks for nothing new. The model
+    /// shown stays until the one at the new level comes, and the wait
+    /// isn't shown as regenerating. Nothing before the first model shows,
+    /// as the camera is only framed on it then.
+    pub(crate) fn view(&mut self, view_height: f32) {
+        let height = f64::from(view_height);
+        if self.shown.is_none() || !(height.is_finite() && height > 0.0) {
+            return;
+        }
+        let ideal = (height * VIEW_CHORD).log2();
+        if let Some(Detail(level)) = self.detail
+            && (ideal - f64::from(level)).abs() <= DETAIL_SLACK
+        {
+            return;
+        }
+        let bounds = f64::from(Detail::MIN)..=f64::from(Detail::MAX);
+        // Within the bounds, so the cast is exact.
+        let level = ideal.round().clamp(*bounds.start(), *bounds.end()) as i8;
+        self.detail = Some(Detail(level));
+    }
+
+    /// How finely the model is asked for, see [`MeshFeed::view`].
+    #[cfg(test)]
+    pub(crate) fn detail(&self) -> Option<Detail> {
+        self.detail
     }
 
     /// Asks the lane to weld the visible bodies of the editor's committed
@@ -404,14 +453,19 @@ impl MeshFeed {
             return asked.generation > answered;
         }
         // Of the same generation: only the answer to what was asked last,
-        // the same sketch left out and the same draft applied, once.
+        // the same sketch left out, the same draft applied and drawn as
+        // finely, once.
         let failed = self
             .failed
             .as_ref()
             .is_some_and(|(failed, _)| *failed == asked);
         self.requested.is_some_and(|requested| {
-            (requested.exclude, requested.draft, requested.inspect)
-                == (asked.exclude, asked.draft, asked.inspect)
+            (
+                requested.exclude,
+                requested.draft,
+                requested.inspect,
+                requested.detail,
+            ) == (asked.exclude, asked.draft, asked.inspect, asked.detail)
         }) && self.shown != Some(asked)
             && !failed
     }

@@ -481,10 +481,18 @@ pub(crate) fn status_bar_texts(doc: &Doc, mouse_hints: bool) -> Vec<String> {
     bar.into_iter().map(|text| text.text).collect()
 }
 
-/// Answers the requests waiting, as the lane's messages would.
+/// Answers the requests waiting, as the lane's messages would, and again
+/// while an answer changed how finely the model is asked for: the first
+/// model frames the camera, which asks for it drawn as finely as it shows.
 pub(crate) fn answer(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
-    for request in requests.take() {
-        doc.computed(handle(request));
+    loop {
+        let detail = doc.feed.detail();
+        for request in requests.take() {
+            doc.computed(handle(request));
+        }
+        if doc.feed.detail() == detail || requests.borrow().is_empty() {
+            return;
+        }
     }
 }
 
@@ -611,6 +619,7 @@ fn draw_line(doc: &mut Doc) {
 /// The model of [`with_a_line`], for generation 1.
 fn one_line() -> Response {
     handle(Request::Regenerate {
+        detail: None,
         generation: Generation::from(1),
         document: Arc::new(with_a_line()),
         exclude: None,
@@ -2835,6 +2844,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     bodies,
                     ..
                 } => Response::Regenerated {
+                    detail: None,
                     generation,
                     exclude,
                     draft,
@@ -2870,6 +2880,8 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
     };
     add_sketch(&mut doc);
     let ours = doc.editor.document().features()[0].id;
+    answer_marking(&mut doc, requests.take(), ours);
+    // The model framed, it's asked for as finely as it shows.
     answer_marking(&mut doc, requests.take(), ours);
     assert_eq!(doc.feed.unsolved(), [ours]);
     assert_eq!(doc.feed.failed_features().len(), 1);
@@ -5787,6 +5799,7 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     ));
     for request in requests.take() {
         doc.computed(Response::Failed {
+            detail: None,
             draft: None,
             inspect: None,
             generation: request.generation().unwrap(),

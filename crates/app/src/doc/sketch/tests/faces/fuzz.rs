@@ -144,6 +144,7 @@ fn regen_placements(request: Request) -> Option<Vec<(FeatureId, Placement)>> {
 /// A fresh request for the document as it is, without a draft.
 fn fresh_request(doc: &Doc) -> Request {
     Request::Regenerate {
+        detail: None,
         generation: doc.editor.generation(),
         document: doc.editor.snapshot(),
         exclude: None,

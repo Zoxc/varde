@@ -772,6 +772,26 @@ share) and placed on an origin plane's placement, or a sketch on a face
 at the placement regeneration found for it (`Evaluation::placements`;
 one not placed isn't drawn: see `agents/features.md`).
 
+**Detail by zoom.** The model is drawn as finely as the camera shows
+it: a request carries a `regen::Detail`, a level whose chord is
+`2^level` mm, which the lane draws the visible bodies at
+(`Display::for_view`: that chord in place of the share of each solid's
+size, no finer than the fit tolerance, the 10° turn per segment still
+keeping a circle round however far out). `MeshFeed::view` picks it from
+the camera's (or its animation's end's) view height before each
+request: half a pixel of a nominal view 1000 px tall (`VIEW_CHORD`;
+the app doesn't know the viewport's size), rounded to a level and kept
+while the view stays within `DETAIL_SLACK` (0.75 of a level) of it, so
+zooming a little asks for nothing. None until the first model shows,
+which frames the camera. Another level asks again for the same
+generation; the model shown stays meanwhile and the wait isn't
+`Regenerating` (only the generation and the draft count for that, and
+for `answers_request`), and the answer brings its picking tables with
+its mesh. The lane files each level's meshes apart in its cache, and
+a level whose meshes pass `RenderMesh`'s limits is drawn as without
+one rather than failing. Exports keep the document tolerance's
+`Display`.
+
 An answer also carries the features that failed and why (`failed`, an
 extrude whose region is gone, whose profile the kernel refuses, or whose
 join, cut or intersect touches no body or can't be worked out) and the box of each

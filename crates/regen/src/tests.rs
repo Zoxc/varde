@@ -10,6 +10,7 @@ use crate::history::tests::{example_extrude, plate_below};
 
 fn regenerate(editor: &Editor, exclude: Option<FeatureId>) -> Request {
     Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude,
@@ -456,6 +457,7 @@ fn lines_are_drawn_without_the_ends_a_chamfer_cuts_off() {
 
 pub(crate) fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request {
     Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -1212,7 +1214,7 @@ fn scenes_are_held_within_the_budget() {
     ];
     let ask = |cache: &mut Cache, scene: usize, drafted: bool| {
         cache.begin();
-        tessellate_scene(&document, &scenes[scene], drafted, cache)
+        tessellate_scene(&document, &scenes[scene], drafted, None, cache)
             .unwrap()
             .mesh
     };
@@ -1328,7 +1330,7 @@ fn a_draft_finding_the_older_scene_leaves_the_committed_one_held() {
     for mut cache in [Cache::default(), Cache::with_budget(0)] {
         let mut ask = |evaluation: &Evaluation, drafted: bool| {
             cache.begin();
-            tessellate_scene(&document, evaluation, drafted, &mut cache)
+            tessellate_scene(&document, evaluation, drafted, None, &mut cache)
                 .unwrap()
                 .mesh
         };

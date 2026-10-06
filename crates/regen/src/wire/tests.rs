@@ -11,6 +11,7 @@ use crate::{Draft, handle};
 
 fn regenerate(editor: &Editor) -> Request {
     Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -23,6 +24,7 @@ fn regenerate(editor: &Editor) -> Request {
 /// one part, of the one body it lists, one face and one crease.
 fn regenerated(generation: u64) -> Head {
     Head::Regenerated {
+        detail: None,
         generation: generation.into(),
         exclude: None,
         draft: None,
@@ -80,6 +82,7 @@ fn request_round_trips() {
         exclude,
         draft,
         inspect: None,
+        detail: None,
     } = decode_request(&bytes).unwrap()
     else {
         panic!("not a regeneration");
@@ -124,6 +127,7 @@ fn a_revolve_and_its_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -231,6 +235,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
         .into(),
     };
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -314,6 +319,7 @@ fn request_with_a_draft_round_trips() {
         kind: extrude.clone().into(),
     };
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -351,6 +357,7 @@ fn request_with_a_draft_round_trips() {
     let mut join = extrude.clone();
     join.operation = varde_document::Operation::Join(varde_document::Targets::default());
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -372,6 +379,7 @@ fn request_with_a_draft_round_trips() {
 fn request_leaving_out_a_sketch_round_trips() {
     let (editor, feature) = sketched();
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: Some(feature),
@@ -821,6 +829,7 @@ fn a_pattern_and_its_draft_round_trip() {
         kind: row("-100").into(),
     };
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -909,6 +918,7 @@ fn a_move_a_mirror_and_a_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -986,6 +996,7 @@ fn a_combine_and_its_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -1079,6 +1090,7 @@ fn empty_model_round_trips() {
 fn failed_round_trips() {
     let (_, feature) = sketched();
     let response = Response::Failed {
+        detail: Some(crate::Detail(-3)),
         generation: Generation::from(u64::MAX),
         exclude: Some(feature),
         draft: Some(2),
@@ -1091,11 +1103,13 @@ fn failed_round_trips() {
         exclude,
         draft,
         inspect,
+        detail,
         error,
     } = round_trip(&response)
     else {
         panic!("not a failure");
     };
+    assert_eq!(detail, Some(crate::Detail(-3)));
     assert_eq!(u64::from(generation), u64::MAX);
     assert_eq!(exclude, Some(feature));
     assert_eq!(draft, Some(2));
@@ -1261,6 +1275,7 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
     let picking =
         Picking::from_parts(parts, faces, closed, tangents, snaps, Vec::new(), &mesh).unwrap();
     Response::Regenerated {
+        detail: None,
         generation: Generation::from(0),
         exclude: None,
         draft: None,
@@ -1641,6 +1656,7 @@ fn damaged_encodings_never_panic() {
     let (head, _) = encode_reply(&handle(decode_request(&request).unwrap()));
     let parts = triangle();
     let failed = Head::Failed {
+        detail: None,
         generation: Generation::from(3),
         exclude: None,
         draft: Some(1),
@@ -1675,6 +1691,7 @@ fn huge_lengths_are_refused_without_allocating_them() {
 
     // An error message that long.
     let mut head = Head::Failed {
+        detail: None,
         generation: Generation::from(3),
         exclude: None,
         draft: None,
@@ -2103,6 +2120,7 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
         )
         .unwrap();
         Response::Regenerated {
+            detail: None,
             generation: 4.into(),
             exclude: None,
             draft: None,
@@ -3212,6 +3230,7 @@ fn a_revolve_about_an_edge_round_trips() {
     };
     let feature = editor.document().features().last().unwrap().id;
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -3271,6 +3290,7 @@ fn a_draft_s_list_of_copy_bodies_is_laid_out_again_or_refused() {
         .unwrap();
     let id = editor.document().features()[2].id;
     let request = |list: Vec<BodyId>| Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -3409,6 +3429,7 @@ fn a_sweep_and_a_helix_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -3516,6 +3537,7 @@ fn a_loft_and_its_draft_round_trip() {
         .into(),
     };
     let request = Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
@@ -3555,6 +3577,7 @@ fn a_tapered_draft_crosses_the_wire() {
     let mut tapered = extrude.clone();
     tapered.taper = Some(varde_expr::Value::new("4", &ask).unwrap());
     let request = |extrude: varde_document::Extrude| Request::Regenerate {
+        detail: None,
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
