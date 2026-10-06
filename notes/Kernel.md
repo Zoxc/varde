@@ -535,7 +535,9 @@ counts, refinement depth (`MAX_REFINE_DEPTH` 24), trace steps
 - `Boolean`: `Inconsistent` (decisions that don't fit together),
   `Degenerate` (a face that can't be triangulated) or `NotManifold` (the
   result would touch itself, or come closer to itself than the
-  resolution).
+  resolution);
+- `NotImplemented(&'static str)`: an operation, or a case of one, that
+  isn't built yet, named by the string.
 
 Inside the kernel steps pass that small `Copy` error. The public
 operations making or combining solids (`extrude`, `revolve`, `boolean`,
@@ -647,12 +649,12 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   single-threaded and a running operation isn't interrupted.
 - **Not built yet**: the revolve feature's UI (the kernel's `revolve`
   is built and the history evaluates revolves), the extrude's taper
-  (`extrude/taper.rs` is a stand-in failing as too complex for any taper,
+  (`extrude/taper.rs` is a stand-in failing as not implemented for any taper,
   which the taper option is built on), sketches on faces, fillets and other features the reserved
   face parts are for, path sweeps (`sweep/path.rs` is a stand-in with the
-  planned signature, failing as too complex, which the sweep feature is
+  planned signature, failing as not implemented, which the sweep feature is
   built on), lofts (`loft.rs` is a stand-in with the planned
-  signature, failing as too complex, which the loft feature is built
+  signature, failing as not implemented, which the loft feature is built
   on), picking by face, a batch boolean of many operands,
   GPU patch evaluation, and wasm threads (which would need cross-origin
   isolation; results would be identical either way).

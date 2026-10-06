@@ -6,7 +6,7 @@
 //!
 //! **Not built yet**: [`shell`], [`offset_faces`] and [`draft_faces`]
 //! are stand-ins with
-//! the planned signatures that fail with [`KernelError::TooComplex`], so
+//! the planned signatures that fail with [`KernelError::NotImplemented`], so
 //! the shell, offset face and draft features above the kernel (their
 //! documents, regeneration and messages) are built against them. The real implementation replaces this file (and adds
 //! `shell/`, the **offset solid**: a solid with each of its regions
@@ -93,7 +93,7 @@ impl From<Failure> for ShellError {
 /// through the regions `open` of `topology` (made from `solid`; sorted,
 /// each at most once; none for a closed hollow body), the new faces
 /// named for `feature`. Not built yet: always [`ShellError::Failed`]
-/// with [`KernelError::TooComplex`].
+/// with [`KernelError::NotImplemented`].
 #[allow(clippy::too_many_arguments)]
 pub fn shell(
     _solid: &Solid,
@@ -105,7 +105,9 @@ pub fn shell(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, ShellError> {
-    Err(ShellError::Failed(KernelError::TooComplex.into()))
+    Err(ShellError::Failed(
+        KernelError::NotImplemented("shelling").into(),
+    ))
 }
 
 /// Why an offset of faces gives no solid. Regions are named by their
@@ -187,7 +189,7 @@ impl From<Failure> for OffsetError {
 /// references to a moved face still find it); faces made new (none,
 /// unless a chain must be split) are named for `feature`. The
 /// refusals are [`OffsetError`]'s. Not built yet: always
-/// [`OffsetError::Failed`] with [`KernelError::TooComplex`].
+/// [`OffsetError::Failed`] with [`KernelError::NotImplemented`].
 #[allow(clippy::too_many_arguments)]
 pub fn offset_faces(
     _solid: &Solid,
@@ -199,7 +201,9 @@ pub fn offset_faces(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, OffsetError> {
-    Err(OffsetError::Failed(KernelError::TooComplex.into()))
+    Err(OffsetError::Failed(
+        KernelError::NotImplemented("offsetting faces").into(),
+    ))
 }
 
 /// Why a draft of faces gives no solid. Regions are named by their
@@ -291,7 +295,7 @@ impl From<Failure> for DraftError {
 /// unchanged, every face keeping its name; faces made new (none, unless
 /// a chain must be split) are named for `feature`. The refusals are
 /// [`DraftError`]'s. Not built yet: always [`DraftError::Failed`] with
-/// [`KernelError::TooComplex`].
+/// [`KernelError::NotImplemented`].
 #[allow(clippy::too_many_arguments)]
 pub fn draft_faces(
     _solid: &Solid,
@@ -305,5 +309,7 @@ pub fn draft_faces(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, DraftError> {
-    Err(DraftError::Failed(KernelError::TooComplex.into()))
+    Err(DraftError::Failed(
+        KernelError::NotImplemented("drafting faces").into(),
+    ))
 }

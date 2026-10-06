@@ -109,17 +109,10 @@ fn polyline(editor: &mut Editor, points: &'static [(f64, f64)]) -> (FeatureId, V
     (sketch, curves)
 }
 
-/// The too-complex message of splitting `body` in the kernel.
-fn too_complex(body: &str) -> String {
-    format!(
-        "splitting {body} is too complex to work out: they may meet on faces that are tangent \
-         or nearly flush"
-    )
-}
-
-/// The too-complex message of building a tool past `body`.
-fn tool_too_complex(body: &str) -> String {
-    format!("extending its tool past {body} is too complex to work out")
+/// The message of the kernel's split on `body`, which isn't built
+/// yet.
+fn not_built(body: &str) -> String {
+    format!("splitting {body} isn't supported yet")
 }
 
 /// A split the kernel can't do yet fails as too complex, leaving the
@@ -151,7 +144,7 @@ fn a_split_the_kernel_cant_do_fails_as_too_complex() {
     );
     let evaluation = evaluated(editor.document());
     let failed = failure(&evaluation, by_body).unwrap();
-    assert_eq!(failed.message, too_complex("Body 1"));
+    assert_eq!(failed.message, not_built("Body 1"));
     assert!(failure(&evaluation, moved).is_none());
     assert_eq!(
         failure(&evaluation, lost).unwrap().message,
@@ -209,10 +202,18 @@ fn every_tool_reaches_the_kernel_and_fails_as_too_complex() {
     let messages: Vec<&str> = (ids.iter())
         .map(|&id| failure(&evaluation, id).unwrap().message.as_str())
         .collect();
-    let tool = tool_too_complex("Body 1");
+    let tool = |what| format!("its tool past Body 1 can't be made: {what} isn't implemented yet");
+    let half_space = tool("a half-space split tool");
     assert_eq!(
         messages,
-        [&tool, &tool, &tool, &tool, &too_complex("Body 1")].map(String::as_str)
+        [
+            &half_space,
+            &half_space,
+            &tool("a surface split tool"),
+            &tool("a chain split tool"),
+            &not_built("Body 1"),
+        ]
+        .map(String::as_str)
     );
     assert_near(solid_of(&evaluation, cube).volume(), 1000.0);
 }
@@ -696,7 +697,7 @@ fn a_split_draft_is_answered() {
         Some(draft.clone()),
     )));
     let drafted = answer.draft.unwrap();
-    assert_eq!(drafted.error, Some(too_complex("Body 1")));
+    assert_eq!(drafted.error, Some(not_built("Body 1")));
     assert_eq!(answer.parts.len(), 2);
     with_booleans();
     let answer = crate::tests::answered(crate::handle(crate::tests::regenerate_with(

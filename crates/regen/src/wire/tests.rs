@@ -3429,15 +3429,15 @@ fn a_sweep_and_a_helix_draft_round_trip() {
     let Response::Regenerated { draft, failed, .. } = round_trip(&handle(decoded)) else {
         panic!("regeneration failed");
     };
-    let too_complex = "sweeping its regions along its path is too complex to work out";
+    let not_built = "sweeping along a path isn't supported yet";
     let draft = draft.unwrap();
-    assert_eq!(draft.error.as_deref(), Some(too_complex));
+    assert_eq!(draft.error.as_deref(), Some(not_built));
     assert_eq!(
         draft.reference.as_deref(),
         Some(&[[0.0; 3], [0.0, 0.0, -1.0]])
     );
     let committed = editor.document().features().last().unwrap().id;
-    assert_eq!(failed, [(committed, too_complex.to_owned())]);
+    assert_eq!(failed, [(committed, not_built.to_owned())]);
 }
 
 /// A document holding a loft and a loft's draft cross and come back as
@@ -3536,10 +3536,10 @@ fn a_loft_and_its_draft_round_trip() {
     let Response::Regenerated { draft, failed, .. } = round_trip(&handle(decoded)) else {
         panic!("regeneration failed");
     };
-    let too_complex = "lofting its sections is too complex to work out";
-    assert_eq!(draft.unwrap().error.as_deref(), Some(too_complex));
+    let not_built = "lofting isn't supported yet";
+    assert_eq!(draft.unwrap().error.as_deref(), Some(not_built));
     let committed = editor.document().features().last().unwrap().id;
-    assert_eq!(failed, [(committed, too_complex.to_owned())]);
+    assert_eq!(failed, [(committed, not_built.to_owned())]);
 }
 
 /// A tapered draft crosses the workers' wire with its taper, and is
@@ -3579,7 +3579,7 @@ fn a_tapered_draft_crosses_the_wire() {
     let error = draft.unwrap().error;
     assert_eq!(
         error.as_deref(),
-        Some("tapering its walls is too complex to work out")
+        Some("a tapered extrude isn't supported yet")
     );
 
     let mut tampered = tapered;

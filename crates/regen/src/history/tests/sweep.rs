@@ -38,6 +38,8 @@ fn evaluated(document: &Document) -> Evaluation {
 
 /// What the kernel's sweep says today.
 const TOO_COMPLEX: &str = "sweeping its regions along its path is too complex to work out";
+/// The message of the kernel's sweep, which isn't built yet.
+const NOT_BUILT: &str = "sweeping along a path isn't supported yet";
 
 /// Adds a sketch on `plane` drawn by `draw`: its id.
 fn sketch_on(editor: &mut Editor, plane: OriginPlane, draw: impl FnOnce(&mut Sketch)) -> FeatureId {
@@ -184,7 +186,7 @@ fn the_kernel_s_sweep_fails_as_too_complex_and_the_history_goes_on() {
     let pocket = add_pocket(&mut editor);
     let evaluation = evaluated(editor.document());
     let failed = failure(&evaluation, id).expect("the sweep fails");
-    assert_eq!(failed.message, TOO_COMPLEX);
+    assert_eq!(failed.message, NOT_BUILT);
     assert!(evaluation.bodies.iter().all(|made| made.body != body));
     assert!(failure(&evaluation, pocket).is_none());
     assert_close(evaluation.bodies[0].solid.volume(), the_plate() - POCKET);

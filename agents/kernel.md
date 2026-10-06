@@ -2511,7 +2511,7 @@ over another conic, along the normal.
 `extrude_tapered(profile, frame, from, to, taper, feature, tol, budget)
 -> Result<Solid, TaperError>` is a stand-in with its planned signature:
 a zero taper is `extrude` exactly, any other fails with
-`TaperError::Failed(TooComplex)`. The plan: the walls the untapered
+`TaperError::Failed(NotImplemented)`. The plan: the walls the untapered
 extrude's, drafted with the neutral plane the profile's plane (height 0)
 and the pull along the normal on each side of it, so a positive taper
 (radians, under a right angle either way, its sine and cosine from
@@ -8249,8 +8249,9 @@ failing feature changes no body, and the later ones still run.
   profile before its end: try a smaller taper or a shorter distance",
   "the taper is too steep for this profile: try a smaller taper", "the
   taper widens it out of range", its running out of budget "tapering
-  its walls is too complex to work out" (what the stand-in gives today:
-  the extrude makes no body and changes none, and the history goes on),
+  its walls is too complex to work out", the stand-in's `NotImplemented`
+  "a tapered extrude isn't supported yet" (what it gives today: the
+  extrude makes no body and changes none, and the history goes on),
   its other failures as an untapered tool's. Tests replace the kernel's
   by `testing::taper_by_frustum` (a rectangle on one side of its plane
   made a frustum of a pyramid by moving its box's corners): through it
@@ -8439,7 +8440,8 @@ the cause is hedged and no tolerance is offered, a finer one mending
 neither;
 "… can't be worked out: they meet on faces too nearly flush or tangent
 to tell apart; move it a little" for `Inconsistent`; "… is too complex
-to work out…" for `TooComplex`; for a result that's empty, the
+to work out…" for `TooComplex`; "… isn't supported yet" for the
+unbuilt stand-ins' `NotImplemented`; for a result that's empty, the
 `emptied` texts above). Every message starts in lower case,
 the Timeline putting it after the feature's name. Body names are looked up when the message is
 made, not kept in the cache.
@@ -8909,8 +8911,8 @@ icon and its distances as the note, in the design's units
 (`extent_note`: "10 mm", "10 mm symmetric", "10 mm + 5 mm", "Through
 all"), a taper after it (`extrude_note`: "10 mm · 2°"; the status bar
 "Distance 10 mm · Taper 2° · New body"). A tapered extrude's preview
-fails as too complex until the kernel's taper is built ("tapering its
-walls is too complex to work out"): OK waits and Add anyway keeps it,
+fails until the kernel's taper is built ("a tapered extrude isn't
+supported yet"): OK waits and Add anyway keeps it,
 failing in the Timeline. A feature in the answer's `failed` (which `MeshFeed` keeps with
 the model shown, `failed_features`) has its name in the danger colour
 and tells why in a tooltip; a sketch that doesn't solve is marked as
@@ -10305,17 +10307,17 @@ see `agents/features.md`, "Failures and where they are").
   regeneration came before the kernel's split (the user put kernel work
   off): `boolean/split.rs` holds `split`, `half_space`, `surface_tool`
   (with `ToolError`) and `chain_tool` with their planned signatures,
-  each failing with `KernelError::TooComplex`, to be replaced whole by
-  the real ones (one arrangement for both pieces; the half-space box,
+  each failing with `KernelError::NotImplemented`, to be replaced whole
+  by the real ones (one arrangement for both pieces; the half-space box,
   the extended surfaces and the open chain's tool from the body's box).
-  Until then every split fails as too complex (see "Split" in
+  Until then every split fails as not implemented (see "Split" in
   `agents/features.md`).
 - **Chamfer built above a stand-in.** The chamfer feature's document
   and regeneration came before the kernel's chains, spines, rails and
   chamfer (kernel work put off): `blend.rs` holds `chamfer(solid,
   topology, chains: &[ChamferChain], feature, tol, budget) ->
   Result<Solid, BlendError>` with its planned signature, failing with
-  `BlendError::Failed(TooComplex)`, to be replaced by the real one (the
+  `BlendError::Failed(NotImplemented)`, to be replaced by the real one (the
   rest of `blend/`). The caller hands it chains of the solid's
   `Topology`, each with the `FacePart::Blend` edge name its faces get
   and a `ChamferCut` in the chain's region order (two distances, or a
@@ -10330,7 +10332,7 @@ see `agents/features.md`, "Failures and where they are").
   and vertex blends (kernel work put off): `blend.rs` holds
   `fillet(solid, topology, chains: &[FilletChain], radius, feature,
   tol, budget) -> Result<Solid, BlendError>`, failing with
-  `BlendError::Failed(TooComplex)`, to be replaced by the real one. The
+  `BlendError::Failed(NotImplemented)`, to be replaced by the real one. The
   caller hands it chains of the solid's `Topology`, each once, with the
   `FacePart::Blend` edge name its faces get (grown along tangent chains
   and named as a chamfer's), and one radius for all (constant-radius
@@ -10342,7 +10344,7 @@ see `agents/features.md`, "Failures and where they are").
   regeneration came before the kernel's offset solid and shell (kernel
   work put off): `shell.rs` holds `shell(solid, topology, open: &[u32],
   thickness, outward, feature, tol, budget) -> Result<Solid,
-  ShellError>`, failing with `ShellError::Failed(TooComplex)`, to be
+  ShellError>`, failing with `ShellError::Failed(NotImplemented)`, to be
   replaced by the real one (and `shell/`, the offset solid with a
   distance per region that offset face and draft share). The caller
   hands it the regions of the solid's `Topology` to open, sorted and
@@ -10359,7 +10361,7 @@ see `agents/features.md`, "Failures and where they are").
 - **Offset face built above a stand-in.** As the shell's: `shell.rs`
   also holds `offset_faces(solid, topology, faces: &[u32], distance,
   tangent, feature, tol, budget) -> Result<Solid, OffsetError>`,
-  failing with `OffsetError::Failed(TooComplex)`, to be replaced by the
+  failing with `OffsetError::Failed(NotImplemented)`, to be replaced by the
   offset solid with the picked regions by `distance` and the rest by
   zero (rebuilt only where a corner or chain moved, no boolean, every
   face keeping its name). The caller hands it regions of the solid's
@@ -10376,7 +10378,7 @@ see `agents/features.md`, "Failures and where they are").
 - **Draft built above a stand-in.** As offset face's: `shell.rs` also
   holds `draft_faces(solid, topology, faces: &[u32], neutral: DVec3,
   pull: DVec3, angle, tangent, feature, tol, budget) -> Result<Solid,
-  DraftError>`, failing with `DraftError::Failed(TooComplex)`, to be
+  DraftError>`, failing with `DraftError::Failed(NotImplemented)`, to be
   replaced by the offset solid generalized to a new form per region
   (the drafted forms: planes turned about their hinges, cylinders along
   the pull to cones, cones' half-angles grown, other walls along the
@@ -10397,7 +10399,7 @@ see `agents/features.md`, "Failures and where they are").
   built): `sweep/path.rs` holds the kernel's path types and
   `sweep(profile, frame, path, orientation, twist, feature, tol,
   budget) -> Result<Solid, SweepError>` with its planned signature,
-  failing with `SweepError::Failed(TooComplex)`, to be replaced whole by
+  failing with `SweepError::Failed(NotImplemented)`, to be replaced whole by
   the real one (with what it needs beside it under `sweep/`). Reached
   as `varde_kernel::sweep::sweep` and `varde_kernel::sweep::{Path,
   Piece, Helix, Orientation, SweepError}`, not re-exported at the
@@ -10426,7 +10428,7 @@ see `agents/features.md`, "Failures and where they are").
   and closed lofts and rails are not built): `loft.rs` holds the
   kernel's loft types and `loft(sections, mode, closed, rails, feature,
   tol, budget) -> Result<Solid, LoftError>` with its planned signature,
-  failing with `LoftError::Failed(TooComplex)`, to be replaced whole by
+  failing with `LoftError::Failed(NotImplemented)`, to be replaced whole by
   the real one (with what it needs beside it under `loft/`). Reached as
   `varde_kernel::loft::{loft, Section, LoftMode, Rail, LoftError,
   on_one_plane, MAX_SECTIONS, MAX_RAILS}`, not re-exported at the
@@ -10459,7 +10461,7 @@ see `agents/features.md`, "Failures and where they are").
   regeneration and panel came before the kernel's (kernel work put off):
   `extrude/taper.rs` holds `extrude_tapered(profile, frame, from, to,
   taper, feature, tol, budget) -> Result<Solid, TaperError>`, a zero
-  taper the extrude exactly and any other `TaperError::Failed(TooComplex)`,
+  taper the extrude exactly and any other `TaperError::Failed(NotImplemented)`,
   to be replaced by the extrude's walls (split at height 0 for a span
   across it) drafted by the draft kernel. The plan has the extrude's
   walls drafted by `draft_faces` after `extrude`; a separate entry

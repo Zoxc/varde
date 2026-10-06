@@ -2,7 +2,7 @@
 //! walls leaning by an angle.
 //!
 //! **Not built yet**: [`extrude_tapered`] is a stand-in with the planned
-//! signature that fails with [`KernelError::TooComplex`] for any taper
+//! signature that fails with [`KernelError::NotImplemented`] for any taper
 //! but zero (which is [`extrude()`](super::extrude) exactly), so the
 //! extrude's taper above the kernel (its document, regeneration,
 //! messages and panel) is built against it. The plan: the walls are the
@@ -68,7 +68,7 @@ impl From<Failure> for TaperError {
 /// the extrude's solid exactly.
 ///
 /// Not built yet: any other taper is [`TaperError::Failed`] with
-/// [`KernelError::TooComplex`].
+/// [`KernelError::NotImplemented`].
 #[allow(clippy::too_many_arguments)]
 pub fn extrude_tapered(
     profile: &Profile,
@@ -83,7 +83,9 @@ pub fn extrude_tapered(
     if taper == 0.0 {
         return Ok(extrude(profile, frame, from, to, feature, tol, budget)?);
     }
-    Err(TaperError::Failed(KernelError::TooComplex.into()))
+    Err(TaperError::Failed(
+        KernelError::NotImplemented("a tapered extrude").into(),
+    ))
 }
 
 #[cfg(test)]

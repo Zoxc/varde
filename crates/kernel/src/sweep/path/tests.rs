@@ -681,7 +681,7 @@ fn three_d_sweeps_are_the_same_on_any_thread_count() {
 /// The stand-in fails every sweep as too complex, until the kernel's is
 /// built.
 #[test]
-fn the_stand_in_is_too_complex() {
+fn the_stand_in_is_not_implemented() {
     let path = chain(vec![line(DVec3::ZERO, v(0.0, 0.0, 10.0))]);
     assert!(matches!(
         sweep(
@@ -695,7 +695,7 @@ fn the_stand_in_is_too_complex() {
             &Budget::DEFAULT
         ),
         Err(SweepError::Failed(Failure {
-            error: KernelError::TooComplex,
+            error: KernelError::NotImplemented(_),
             ..
         }))
     ));

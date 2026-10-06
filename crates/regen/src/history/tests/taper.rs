@@ -24,8 +24,10 @@ fn evaluated(document: &Document) -> Evaluation {
     evaluate(document, &mut Cache::default())
 }
 
-/// What the kernel's tapered extrude says today.
+/// The message of a taper too complex to work out.
 const TOO_COMPLEX: &str = "tapering its walls is too complex to work out";
+/// The message of the kernel's taper, which isn't built yet.
+const NOT_BUILT: &str = "a tapered extrude isn't supported yet";
 
 /// A taper of `text` in `document`'s design.
 fn taper(document: &Document, text: &str) -> Value {
@@ -91,7 +93,7 @@ fn the_kernel_s_taper_fails_as_too_complex_and_the_history_goes_on() {
     let pocket = add_pocket(&mut editor);
     let evaluation = evaluated(editor.document());
     let failed = failure(&evaluation, boss).expect("the taper fails");
-    assert_eq!(failed.message, TOO_COMPLEX);
+    assert_eq!(failed.message, NOT_BUILT);
     assert!(evaluation.bodies.iter().all(|made| made.body != body));
     assert!(failure(&evaluation, pocket).is_none());
     assert_close(evaluation.bodies[0].solid.volume(), the_plate() - POCKET);
@@ -110,7 +112,7 @@ fn a_tapered_cut_fails_and_changes_no_body() {
         Operation::Cut(Targets::default()),
     );
     let evaluation = evaluated(editor.document());
-    assert_eq!(failure(&evaluation, cut).unwrap().message, TOO_COMPLEX);
+    assert_eq!(failure(&evaluation, cut).unwrap().message, NOT_BUILT);
     assert_close(evaluation.bodies[0].solid.volume(), the_plate());
 }
 
@@ -346,7 +348,7 @@ fn a_two_sided_taper_is_too_complex_with_the_kernel_stub() {
         Operation::NewBody(BodyId::NEW),
     );
     let evaluation = evaluated(editor.document());
-    assert_eq!(failure(&evaluation, boss).unwrap().message, TOO_COMPLEX);
+    assert_eq!(failure(&evaluation, boss).unwrap().message, NOT_BUILT);
     assert!(evaluation.bodies.is_empty());
 }
 
@@ -463,8 +465,8 @@ fn a_flipped_taper_narrows_away_from_the_plane() {
 }
 
 /// Symmetric and two sides span the sketch's plane, whose walls only
-/// the kernel's taper splits there: both too complex with the stand-in
-/// and the kernel's stub alike, making nothing; the rest goes on.
+/// the kernel's taper splits there: too complex with the stand-in and
+/// not built with the kernel's stub, making nothing; the rest goes on.
 #[test]
 fn tapers_across_the_plane_fail_and_change_nothing() {
     for frustums in [false, true] {
@@ -488,7 +490,8 @@ fn tapers_across_the_plane_fail_and_change_nothing() {
             );
             let pocket = add_pocket(&mut editor);
             let evaluation = evaluated(editor.document());
-            assert_eq!(failure(&evaluation, cut).unwrap().message, TOO_COMPLEX);
+            let expected = if frustums { TOO_COMPLEX } else { NOT_BUILT };
+            assert_eq!(failure(&evaluation, cut).unwrap().message, expected);
             assert!(failure(&evaluation, pocket).is_none());
             assert_close(evaluation.bodies[0].solid.volume(), the_plate() - POCKET);
         }

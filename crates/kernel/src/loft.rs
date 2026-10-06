@@ -2,7 +2,7 @@
 //! loop on a plane of its own, or (first or last only) a point.
 //!
 //! **Not built yet**: [`loft`] is a stand-in with the planned signature
-//! that fails with [`KernelError::TooComplex`], so the loft feature
+//! that fails with [`KernelError::NotImplemented`], so the loft feature
 //! above the kernel (its document, regeneration and messages) is built
 //! against it. The real implementation replaces this file (and adds
 //! what it needs beside it, under `loft/`):
@@ -186,7 +186,7 @@ pub fn on_one_plane(a: &Section, b: &Section, resolution: f64) -> bool {
 /// (at most [`MAX_RAILS`], none for a closed loft), the faces named for
 /// `feature`, as the module's docs describe. The refusals are
 /// [`LoftError`]'s. Not built yet: always [`LoftError::Failed`] with
-/// [`KernelError::TooComplex`].
+/// [`KernelError::NotImplemented`].
 pub fn loft(
     _sections: &[Section],
     _mode: LoftMode,
@@ -196,7 +196,9 @@ pub fn loft(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, LoftError> {
-    Err(LoftError::Failed(KernelError::TooComplex.into()))
+    Err(LoftError::Failed(
+        KernelError::NotImplemented("lofting").into(),
+    ))
 }
 
 #[cfg(test)]

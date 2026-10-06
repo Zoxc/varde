@@ -2,7 +2,7 @@
 //! the tools cut along them, the chamfer, the fillet and corners.
 //!
 //! **Not built yet**: [`chamfer`] and [`fillet`] are stand-ins with the
-//! planned signatures that fail with [`KernelError::TooComplex`], so the
+//! planned signatures that fail with [`KernelError::NotImplemented`], so the
 //! chamfer and fillet features above the kernel (their documents,
 //! regeneration and messages) are built against them. The real
 //! implementation replaces this file (and adds `blend/`): per chain,
@@ -134,7 +134,7 @@ impl From<Failure> for BlendError {
 /// `solid` with the chains `chains` of `topology` (made from `solid`,
 /// each chain at most once) chamfered as each says, the new faces named
 /// for `feature` and the chain's name. Not built yet: always
-/// [`BlendError::Failed`] with [`KernelError::TooComplex`].
+/// [`BlendError::Failed`] with [`KernelError::NotImplemented`].
 pub fn chamfer(
     _solid: &Solid,
     _topology: &Topology,
@@ -143,14 +143,16 @@ pub fn chamfer(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, BlendError> {
-    Err(BlendError::Failed(KernelError::TooComplex.into()))
+    Err(BlendError::Failed(
+        KernelError::NotImplemented("chamfering").into(),
+    ))
 }
 
 /// `solid` with the chains `chains` of `topology` (made from `solid`,
 /// each chain at most once) rounded off to `radius` (in model units,
 /// positive), convex edges losing material and concave ones gaining it,
 /// the new faces named for `feature` and the chain's name. Not built
-/// yet: always [`BlendError::Failed`] with [`KernelError::TooComplex`].
+/// yet: always [`BlendError::Failed`] with [`KernelError::NotImplemented`].
 pub fn fillet(
     _solid: &Solid,
     _topology: &Topology,
@@ -160,5 +162,7 @@ pub fn fillet(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, BlendError> {
-    Err(BlendError::Failed(KernelError::TooComplex.into()))
+    Err(BlendError::Failed(
+        KernelError::NotImplemented("filleting").into(),
+    ))
 }

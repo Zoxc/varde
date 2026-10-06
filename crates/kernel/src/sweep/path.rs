@@ -2,7 +2,7 @@
 //! carried round a helix.
 //!
 //! **Not built yet**: [`sweep`] is a stand-in with the planned signature
-//! that fails with [`KernelError::TooComplex`], so the sweep feature
+//! that fails with [`KernelError::NotImplemented`], so the sweep feature
 //! above the kernel (its document, regeneration and messages) is built
 //! against it. The real implementation replaces this file (and adds
 //! what it needs beside it, under `sweep/`): each piece built from the
@@ -181,7 +181,7 @@ impl From<Failure> for SweepError {
 /// `orientation` says and turned by `twist` radians about the path over
 /// its length (none with a helix), the faces named for `feature`. Not
 /// built yet: always [`SweepError::Failed`] with
-/// [`KernelError::TooComplex`].
+/// [`KernelError::NotImplemented`].
 #[allow(clippy::too_many_arguments)]
 pub fn sweep(
     _profile: &Profile,
@@ -193,7 +193,9 @@ pub fn sweep(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, SweepError> {
-    Err(SweepError::Failed(KernelError::TooComplex.into()))
+    Err(SweepError::Failed(
+        KernelError::NotImplemented("sweeping along a path").into(),
+    ))
 }
 
 #[cfg(test)]

@@ -124,6 +124,12 @@ fn too_complex(body: &str) -> String {
     format!("drafting faces of {body} is too complex to work out")
 }
 
+/// The message of the kernel's face draft on `body`, which isn't built
+/// yet.
+fn not_built(body: &str) -> String {
+    format!("drafting faces of {body} isn't supported yet")
+}
+
 fn assert_near(a: f64, b: f64) {
     assert!((a - b).abs() <= 1e-9 * b.abs().max(1.0), "{a} vs {b}");
 }
@@ -168,7 +174,7 @@ fn a_draft_the_kernel_cant_do_fails_as_too_complex() {
     );
     let evaluation = evaluated(editor.document());
     let failed = failure(&evaluation, id).expect("the draft fails");
-    assert_eq!(failed.message, too_complex("Body 1"));
+    assert_eq!(failed.message, not_built("Body 1"));
     assert!(failure(&evaluation, join).is_none());
     assert_eq!(evaluation.failed.len(), 1);
     assert_near(
@@ -187,7 +193,7 @@ fn a_draft_the_kernel_cant_do_fails_as_too_complex() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, id).unwrap().message,
-        too_complex("Body 1")
+        not_built("Body 1")
     );
 }
 
@@ -224,7 +230,7 @@ fn a_face_that_is_gone_is_not_found() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, id).unwrap().message,
-        too_complex("Body 1")
+        not_built("Body 1")
     );
     editor.apply(Command::RemoveFeature(notch)).unwrap();
     assert!(editor.document().feature(id).is_some());
@@ -317,7 +323,7 @@ fn a_draft_survives_an_upstream_change() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, id).unwrap().message,
-        too_complex("Body 1")
+        not_built("Body 1")
     );
     // The stand-in's: the front leaning in by tan 5° as it rises 20.
     with_boxes();

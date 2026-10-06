@@ -494,7 +494,7 @@ fn lofts_are_the_same_on_any_thread_count() {
 /// The stand-in fails every loft as too complex, until the kernel's is
 /// built: even two equal squares, which make a box.
 #[test]
-fn the_stand_in_is_too_complex() {
+fn the_stand_in_is_not_implemented() {
     let sections = [
         section(square(20.0, 1), at(0.0)),
         section(square(20.0, 5), at(10.0)),
@@ -510,7 +510,7 @@ fn the_stand_in_is_too_complex() {
             &Budget::DEFAULT
         ),
         Err(LoftError::Failed(Failure {
-            error: KernelError::TooComplex,
+            error: KernelError::NotImplemented(_),
             ..
         }))
     ));

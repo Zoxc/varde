@@ -1,5 +1,5 @@
 //! The split session: the rail's Split body on the example plate, by XY
-//! from the toolbar, failing as too complex (the kernel's split isn't
+//! from the toolbar, failing as not built yet (the kernel's split isn't
 //! built) and kept by Add anyway; a flat face as its plane and a curved
 //! one as its surface; another body as the tool, with regeneration
 //! splitting by two booleans ([`varde_regen::testing`]): the pieces
@@ -125,11 +125,11 @@ fn held(editor: &Editor) -> Plates {
 
 /// The rail's Split body with the example's only body: picks the tool
 /// next, a plane or face to begin with, the toolbar offering the origin
-/// planes; XY from it previews, which fails as too complex (the kernel's
+/// planes; XY from it previews, which fails as not built yet (the kernel's
 /// split isn't built), shown in the panel; OK waits, and Add anyway keeps
 /// it, "Split 1" making "Body 2", as one undo step.
 #[test]
-fn the_rail_s_split_body_by_xy_fails_too_complex_and_add_anyway_keeps_it() {
+fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartSplit);
@@ -173,7 +173,7 @@ fn the_rail_s_split_body_by_xy_fails_too_complex_and_add_anyway_keeps_it() {
     assert_eq!(state.line, Some([DVec3::ZERO, DVec3::Z]));
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("too complex"), "{error}");
+    assert!(error.contains("yet"), "{error}");
     assert!(shows(&plates, "Split fails"));
     assert!(shows(&plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();
@@ -239,7 +239,7 @@ fn a_flat_face_splits_by_its_plane_and_a_curved_one_by_its_surface() {
     assert_eq!(split.tool, SplitTool::Face(face));
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("too complex"), "{error}");
+    assert!(error.contains("yet"), "{error}");
 }
 
 /// Another body as the tool, regeneration splitting by two booleans: the
@@ -366,7 +366,7 @@ fn add_tools_sketch(editor: &mut Editor) -> (FeatureId, Id) {
 /// A sketch's region as the tool, picked in the viewport (the model
 /// isn't picked meanwhile), splits the plate through all; picked again
 /// it's taken out. A line of the sketch's curves is the tool too, which
-/// the stand-in fails as too complex.
+/// the stand-in fails as not built yet.
 #[test]
 fn regions_of_a_sketch_and_an_open_line_split_a_body() {
     varde_regen::testing::split_by_booleans();
@@ -425,7 +425,7 @@ fn regions_of_a_sketch_and_an_open_line_split_a_body() {
     assert!(shows(&plates, "1 curve"));
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("too complex"), "{error}");
+    assert!(error.contains("yet"), "{error}");
     // The regions' tile keeps its own, none now.
     plates.motion(MotionLook::SplitWith(SplitMode::Regions));
     assert_eq!(tool(&plates), None);

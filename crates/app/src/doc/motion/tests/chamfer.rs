@@ -1,6 +1,6 @@
 //! The chamfer session: `C` on the example plate, edges picked and
 //! toggled with a click (lit, sorted, all on one body: another body's
-//! neither lit nor taken), the kernel's stand-in failing as too complex
+//! neither lit nor taken), the kernel's stand-in failing as not built yet
 //! in the panel and Add anyway keeping it; with regeneration chamfering
 //! by prisms ([`varde_regen::testing`]), the cut previewed, the types,
 //! Flip sides and Tangent chain drafted, OK as one undo step; editing
@@ -121,10 +121,10 @@ pub(super) fn faces_way(plates: &Plates, body: BodyId, normal: DVec3) -> bool {
 /// `C` with the example's only body: a chamfer picking edges, the
 /// mock's panel; a face refused; edges clicked picked, lit and listed
 /// sorted with their lengths, a second click taking one out; the
-/// preview fails as too complex (the kernel's chamfer isn't built),
+/// preview fails as not built yet (the kernel's chamfer isn't built),
 /// shown in the panel; OK waits, Add anyway keeps it as one undo step.
 #[test]
-fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_too_complex_chamfer() {
+fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_chamfer() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
     key_in(&mut plates.doc, character("c"));
@@ -211,11 +211,11 @@ fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_too_complex_chamfer() {
     assert!(!shows(&plates, "Edge 3"));
     assert_eq!(drafted(&plates).unwrap().edges, edges(&plates));
 
-    // The stand-in fails as too complex: the panel says so, and the body
+    // The stand-in fails as not built yet: the panel says so, and the body
     // is shown whole, its edges there to pick.
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("too complex"), "{error}");
+    assert!(error.contains("yet"), "{error}");
     assert!(shows(&plates, "Chamfer fails"));
     assert!(shows(&plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();

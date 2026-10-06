@@ -69,6 +69,8 @@ fn asked() -> Vec<Asked> {
 }
 
 const TOO_COMPLEX: &str = "lofting its sections is too complex to work out";
+/// The message of the kernel's loft, which isn't built yet.
+const NOT_BUILT: &str = "lofting isn't supported yet";
 
 /// Adds a sketch on `plane` drawn by `draw`: its id and what `draw`
 /// gave.
@@ -254,7 +256,7 @@ fn a_loft_fails_as_too_complex_and_the_history_goes_on() {
         new_body(),
     );
     let evaluation = evaluated(editor.document());
-    assert_eq!(evaluation.failed, [(id, TOO_COMPLEX.to_owned())]);
+    assert_eq!(evaluation.failed, [(id, NOT_BUILT.to_owned())]);
     assert!(evaluation.bodies.iter().all(|body| body.body != made));
     assert_eq!(evaluation.bodies.len(), 2);
     assert!(

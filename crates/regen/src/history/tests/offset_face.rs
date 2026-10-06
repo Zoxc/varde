@@ -81,9 +81,10 @@ fn front(solid: &Solid, body: BodyId) -> FaceRef {
     face(body, key_on(solid, -DVec3::Y, 0.0), [5.0, 0.0, 5.0])
 }
 
-/// What the kernel's offset face says of `body` today.
-fn too_complex(body: &str) -> String {
-    format!("offsetting faces of {body} is too complex to work out")
+/// The message of the kernel's offset face on `body`, which isn't built
+/// yet.
+fn not_built(body: &str) -> String {
+    format!("offsetting faces of {body} isn't supported yet")
 }
 
 fn assert_near(a: f64, b: f64) {
@@ -124,7 +125,7 @@ fn an_offset_the_kernel_cant_do_fails_as_too_complex() {
     );
     let evaluation = evaluated(editor.document());
     let failed = failure(&evaluation, id).expect("the offset fails");
-    assert_eq!(failed.message, too_complex("Body 1"));
+    assert_eq!(failed.message, not_built("Body 1"));
     assert!(failure(&evaluation, join).is_none());
     assert_eq!(evaluation.failed.len(), 1);
     assert_near(
@@ -137,7 +138,7 @@ fn an_offset_the_kernel_cant_do_fails_as_too_complex() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, id).unwrap().message,
-        too_complex("Body 1")
+        not_built("Body 1")
     );
 }
 
@@ -167,7 +168,7 @@ fn a_face_that_is_gone_is_not_found() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, id).unwrap().message,
-        too_complex("Body 1")
+        not_built("Body 1")
     );
     editor.apply(Command::RemoveFeature(notch)).unwrap();
     assert!(editor.document().feature(id).is_some());
@@ -199,7 +200,7 @@ fn an_offset_face_is_found_again_after_an_upstream_change() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, id).unwrap().message,
-        too_complex("Body 1")
+        not_built("Body 1")
     );
     // The stand-in's: the top, now at 20, moved to 22.
     with_boxes();

@@ -2819,7 +2819,8 @@ pub enum SplitTool {
   curves, the sketch's key and placement. A sketch not placed is "its
   sketch isn't placed". The kernel's tool errors are worded by
   `message::split_tool`: too complex "extending its tool past Body 1 is
-  too complex to work out", out of bounds "Body 1 is too near the edge
+  too complex to work out", not built "its tool past Body 1 can't be
+  made: a half-space split tool isn't implemented yet", out of bounds "Body 1 is too near the edge
   of the space to split", a profile touching itself "the line doesn't
   split Body 1: it crosses itself once extended".
 - **The chain** (`profile::chain(sketch, curves, join, fit)`): each curve
@@ -2864,10 +2865,11 @@ pub enum SplitTool {
 - **Kernel stand-in**: the kernel's `split`, `half_space`,
   `surface_tool` and `chain_tool` (`kernel/src/boolean/split.rs`) are
   not built yet: each has its planned signature and fails with
-  `TooComplex`. So every split fails today with the too-complex message
-  (a plane's, a face's or a line's tool first, as "extending its tool
-  ..."; a tool body or a sketch's regions, whose tools the kernel
-  already builds, as "splitting Body 1 is too complex to work out: ..."),
+  `NotImplemented`. So every split fails today with the not-built
+  message (a plane's, a face's or a line's tool first, as "its tool past
+  Body 1 can't be made: a half-space split tool isn't implemented yet";
+  a tool body or a sketch's regions, whose tools the kernel already
+  builds, as "splitting Body 1 isn't supported yet"),
   its body is left whole and its new body has no solid (a feature naming
   it fails: "Body 3 has no solid: the feature making it failed"); the
   rest of the history goes on. The regen tests swap the kernel's split
@@ -2993,9 +2995,10 @@ face picked, the origin planes on the toolbar).
   picked. An origin plane is drawn as a mirror's (`MotionState::line`);
   a face's plane isn't (regeneration doesn't answer where it found it).
   **The kernel's split isn't built**, so every preview fails today with
-  regeneration's too-complex message ("Split fails" over "extending its
-  tool past Body 1 is too complex to work out", or "splitting Body 1 is
-  too complex to work out: ..." for a tool body or regions), OK waits,
+  regeneration's not-built message ("Split fails" over "its tool past
+  Body 1 can't be made: a half-space split tool isn't implemented yet",
+  or "splitting Body 1 isn't supported yet" for a tool body or
+  regions), OK waits,
   and Add anyway keeps it, failing in the Timeline. Once the preview
   splits, **the pieces are tinted apart and labelled**: the body's faces
   as selected, the other piece's in the second colour
@@ -3076,7 +3079,7 @@ status text; a trim's kept side), `viewport/motion/tests.rs` (a line's
 curve and a region picked from the top in their sketch, off them left
 to the camera; the pieces' labels), `rail/tests.rs` (Split body's
 letter) and `app/src/doc/motion/tests/split.rs` (the rail's Split body
-on the example plate by XY from the toolbar, failing as too complex in
+on the example plate by XY from the toolbar, failing as not built in
 the panel, OK waiting and Add anyway keeping it as one undo step; a
 flat face as its plane and the hole's wall as its surface, unpreviewed
 while picked; with the booleans, another body as the tool, the body
@@ -3206,12 +3209,13 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   chain ...", a corner "edges of Body 1 meeting at a corner can't be
   chamfered together: chamfer them apart"; its failures as a boolean's
   ("chamfering Body 1 is too complex to work out" for `TooComplex`,
+  "chamfering Body 1 isn't supported yet" for `NotImplemented`,
   `message::blending`), the evidence's faces on the body.
 - **Kernel stand-in**: `varde_kernel::chamfer` (`kernel/src/blend.rs`,
   with `ChamferChain`, `ChamferCut`, `BlendError`) isn't built yet: it
-  has its planned signature and fails with `TooComplex`. So every
-  chamfer that finds its edges fails today with "chamfering Body 1 is
-  too complex to work out", its body left whole; the rest of the history
+  has its planned signature and fails with `NotImplemented`. So every
+  chamfer that finds its edges fails today with "chamfering Body 1
+  isn't supported yet", its body left whole; the rest of the history
   goes on. The regen tests swap it (`chamfer::CHAMFERER`, a thread local;
   other crates' tests through the `testing` feature,
   `varde_regen::testing::chamfer_by_wedges`) for `by_wedges`: each chain
@@ -3312,7 +3316,7 @@ panel.
   all taken out) is previewed as a move of nothing of its body, which
   shows the body as of the feature with its edges to pick. **The
   kernel's chamfer isn't built**, so today every preview fails with
-  "Chamfer fails" over "chamfering Body 1 is too complex to work out",
+  "Chamfer fails" over "chamfering Body 1 isn't supported yet",
   the body shown whole (its edges there to pick), OK waits, and Add
   anyway keeps it, failing in the Timeline. Regeneration's own
   refusals ("its edge 2 wasn't found", the flat, folded, too-big and
@@ -3370,7 +3374,7 @@ status text), `rail/tests.rs` (Chamfer's `C` in the Modify set) and
 `app/src/doc/motion/tests/chamfer.rs` (`C` on the example plate: a face
 refused, edges hovered and lit, picked and listed sorted with their
 lengths, clicked again taken out, the row hovered lighting its edge, the
-stand-in's too-complex failure in the panel, OK waiting and Add anyway
+stand-in's not-built failure in the panel, OK waiting and Add anyway
 keeping it as one undo step; a slot's rim lit whole under the cursor
 and picked, the line alone with Tangent chain off, a click on its arc
 taking the line out; with the prisms, the cut previewed and the
@@ -3468,11 +3472,12 @@ stand-ins):
   faces "faces of Body 1 meeting at a corner can't be offset together:
   try another thickness" (the vertex drawn); its failures as a
   boolean's ("shelling Body 1 is too complex to work out" for
-  `TooComplex`, `message::shelling`), the evidence's faces on the body.
+  `TooComplex`, "shelling Body 1 isn't supported yet" for
+  `NotImplemented`, `message::shelling`), the evidence's faces on the body.
 - **Kernel stand-in**: `varde_kernel::shell` (`kernel/src/shell.rs`,
   with `ShellError`) isn't built yet: it has its planned signature and
-  fails with `TooComplex`. So every shell that finds its faces fails
-  today with "shelling Body 1 is too complex to work out", its body left
+  fails with `NotImplemented`. So every shell that finds its faces fails
+  today with "shelling Body 1 isn't supported yet", its body left
   whole; the rest of the history goes on. The regen tests swap it
   (`shell::SHELLER`, a thread local; other crates' tests through the
   `testing` feature, `varde_regen::testing::shell_by_boxes`) for
@@ -3585,8 +3590,8 @@ panel.
   picking or not (a new one with its body found starts previewed,
   closed). An edited one with nothing it names there is previewed as a
   move of nothing of its body. **The kernel's shell isn't built**, so
-  today every preview fails with "Shell fails" over "shelling Body 1 is
-  too complex to work out", the body shown whole (its faces there to
+  today every preview fails with "Shell fails" over "shelling Body 1 isn't
+  supported yet", the body shown whole (its faces there to
   pick), OK waits, and Add anyway keeps it, failing in the Timeline.
   Regeneration's own refusals show in the panel the same way.
 - **Committing**: OK (`Enter`, Add anyway) adds "Shell N" or sets the
@@ -3640,7 +3645,7 @@ and `app/src/doc/motion/tests/shell.rs` (the rail's Shell on the
 example plate: the only body taken, closed and previewed with the
 warning, an edge refused, faces hovered and lit, picked and listed
 sorted with their kinds, clicked again taken out, the row hovered
-lighting its face, the stand-in's too-complex failure in the panel, OK
+lighting its face, the stand-in's not-built failure in the panel, OK
 waiting and Add anyway keeping it as one undo step; with the boxes, the
 closed hollow and the top opened previewed (the walls' ends lit as the
 face removed, the hollow's faces refused), another face opened and its
@@ -3716,11 +3721,12 @@ pub struct Fillet {
   its edge 2 runs into another face at its end"; a corner "edges of Body
   1 meeting at a corner can't be filleted together: fillet them apart";
   its failures as a boolean's ("filleting Body 1 is too complex to work
-  out", `message::blending`).
+  out" for `TooComplex`, "filleting Body 1 isn't supported yet" for
+  `NotImplemented`, `message::blending`).
 - **Kernel stand-in**: `varde_kernel::fillet` (`kernel/src/blend.rs`,
   with `FilletChain`) isn't built yet: it has its planned signature and
-  fails with `TooComplex`. So every fillet that finds its edges fails
-  today with "filleting Body 1 is too complex to work out", its body
+  fails with `NotImplemented`. So every fillet that finds its edges
+  fails today with "filleting Body 1 isn't supported yet", its body
   left whole; the rest of the history goes on. The regen tests swap it
   (`fillet::FILLETER`, a thread local; other crates' tests through the
   `testing` feature, `varde_regen::testing::fillet_by_arcs`) for
@@ -3794,7 +3800,7 @@ mock's fillet panel: Edges, Radius, Tangent chain.
   from the model shown (their rows stay, unmeasured). An edited one with
   its edges all taken out is previewed as a move of nothing of its body.
   **The kernel's fillet isn't built**, so today every preview fails with
-  "Fillet fails" over "filleting Body 1 is too complex to work out", the
+  "Fillet fails" over "filleting Body 1 isn't supported yet", the
   body shown whole, OK waits, and Add anyway keeps it, failing in the
   Timeline.
 - **Committing**: OK (`Enter`, Add anyway) adds "Fillet N" or sets the
@@ -3851,7 +3857,7 @@ measures, no Type or Flip sides, the status text), `rail/tests.rs`
 `app/src/doc/motion/tests/fillet.rs` (`F` on the example plate: the
 mock's panel, a face refused, edges picked, lit, listed sorted with
 their lengths and taken out again, a row hovered lighting its edge, the
-stand-in's too-complex failure in the panel, OK waiting and Add anyway
+stand-in's not-built failure in the panel, OK waiting and Add anyway
 keeping it as one undo step, failing in the Timeline; with the
 regeneration stand-in, the round previewed as a cylinder of the radius
 and the edge gone from the model shown, another radius, a radius of
@@ -3936,12 +3942,14 @@ pub struct OffsetFace {
   at a corner can't be offset together: try another distance", out of
   range "it moves Body 1 out of range" (the face or corner drawn where
   there is one); its failures as a boolean's ("offsetting faces of Body
-  1 is too complex to work out", `message::offsetting`); an empty
+  1 is too complex to work out" for `TooComplex`, "offsetting faces of
+  Body 1 isn't supported yet" for `NotImplemented`,
+  `message::offsetting`); an empty
   result "offsetting faces of Body 1 leaves nothing of it".
 - **Kernel stand-in**: `varde_kernel::offset_faces` (`kernel/src/shell.rs`,
   beside `shell`, with `OffsetError`) isn't built: it fails with
-  `TooComplex`, so every offset that finds its faces fails today with
-  "offsetting faces of Body 1 is too complex to work out", the body left
+  `NotImplemented`, so every offset that finds its faces fails today
+  with "offsetting faces of Body 1 isn't supported yet", the body left
   as it was, and the rest of the history goes on. The regen tests swap
   it (`offset_face::OFFSETTER`, a thread local; other crates' tests
   through the `testing` feature, `varde_regen::testing::offset_by_boxes`)
@@ -4027,8 +4035,8 @@ menu), so the panel is built in the style of the mock's shell panel.
   `OffsetFace::check_own` refuses in the foot. **Preview**: the offset
   as set up is the draft while it's whole (as a shell's). **The
   kernel's offset face isn't built**, so today every preview fails with
-  "Offset face fails" over "offsetting faces of Body 1 is too complex to work
-  out", OK waits, and Add anyway keeps it, failing in the Timeline.
+  "Offset face fails" over "offsetting faces of Body 1 isn't supported
+  yet", OK waits, and Add anyway keeps it, failing in the Timeline.
 - **Committing**: OK (`Enter`, Add anyway) adds "Offset face N" or sets the
   edited one, one undo step; Cancel or `Esc` leaves no trace. The
   status bar says `offset_info` once whole ("1 face · 2 mm inward"),
@@ -4082,7 +4090,7 @@ cursor ahead of the model; zoomed in as far as the camera goes, no
 distance sent that shows as "0 mm"), `rail/tests.rs` (Offset face in the Modify
 set) and `app/src/doc/motion/tests/offset_face.rs` (the rail's Offset
 face on the example plate: no body until a face, the panel, an edge
-refused, the top picked, lit and listed, the stand-in's too-complex
+refused, the top picked, lit and listed, the stand-in's not-built
 failure in the panel with the handle on the face, OK waiting and Add
 anyway keeping it, failing in the Timeline, undo; with the boxes: the
 moved top previewed, the handle on the face as it was, a typed distance
@@ -4203,13 +4211,14 @@ pub struct FaceDraft {
   be drafted together: try another angle", out of range "it moves Body
   1 out of range" (the face or corner drawn where there is one); its
   failures as a boolean's ("drafting faces of Body 1 is too complex to
-  work out", `message::drafting`); an empty result "drafting faces of
-  Body 1 leaves nothing of it".
+  work out" for `TooComplex`, "drafting faces of Body 1 isn't supported
+  yet" for `NotImplemented`, `message::drafting`); an empty result
+  "drafting faces of Body 1 leaves nothing of it".
 - **Kernel stand-in**: `varde_kernel::draft_faces` (`kernel/src/shell.rs`,
   beside `offset_faces`, with `DraftError`) isn't built: it fails with
-  `TooComplex`, so every draft that finds its faces and neutral plane
-  fails today with "drafting faces of Body 1 is too complex to work
-  out", the body left as it was, and the rest of the history goes on.
+  `NotImplemented`, so every draft that finds its faces and neutral
+  plane fails today with "drafting faces of Body 1 isn't supported
+  yet", the body left as it was, and the rest of the history goes on.
   The regen tests swap it (`face_draft::DRAFTER`, a thread local; other
   crates' tests through the `testing` feature,
   `varde_regen::testing::draft_by_boxes`) for `by_boxes`: a box along
@@ -4323,7 +4332,7 @@ Shell), so the panel is built in the style of the mock's shell panel.
 - **Preview**: the draft as set up is the draft while it's whole, picking
   faces or the plane. **The kernel's draft isn't built**, so today
   every preview fails with "Draft fails" over "drafting faces of Body 1
-  is too complex to work out", OK waits, and Add anyway keeps it,
+  isn't supported yet", OK waits, and Add anyway keeps it,
   failing in the Timeline.
 - **Committing**: OK (`Enter`, Add anyway) adds "Draft N" or sets the
   edited one, one undo step; Cancel or `Esc` leaves no trace. The
@@ -4342,7 +4351,7 @@ Direction, the status text), `rail/tests.rs` (Draft in the Modify set,
 its letter) and `app/src/doc/motion/tests/face_draft.rs` (the rail's
 Draft on the example plate: no body until a face, XY to begin with, the
 panel, an edge refused, a side picked, lit and listed, the stand-in's
-too-complex failure in the panel, OK waiting and Add anyway keeping it,
+not-built failure in the panel, OK waiting and Add anyway keeping it,
 failing in the Timeline, undo; with the boxes: the front drafted and
 previewed, the plane drawn by the body along the pull, the neutral
 plane's row toggling the picking, an edge refused as the plane, the top
@@ -4521,10 +4530,12 @@ body", the uncut note).
   its profile: neighbouring turns would meet", "the sweep runs into
   itself"; its failures as a tool's (`message::tool` with
   `Making::Sweep`: too complex is "sweeping its regions along its path
-  is too complex to work out").
+  is too complex to work out", not built "sweeping along a path isn't
+  supported yet").
 - **Kernel stand-in**: the kernel's sweep (`kernel/src/sweep/path.rs`)
-  isn't built yet: it fails with `TooComplex`. So every sweep whose path
-  regen builds fails today with that message, making no body (its new
+  isn't built yet: it fails with `NotImplemented`. So every sweep whose
+  path regen builds fails today with "sweeping along a path isn't
+  supported yet", making no body (its new
   body has no solid; a feature naming it fails as for any), and the rest
   of the history goes on. The regen tests swap it (`sweep::SWEEPER`, a
   thread local; other crates' tests through the `testing` feature,
@@ -4637,8 +4648,8 @@ Operation as tiles and the Bodies list.
   starting "its" or "a" not given an "it".
 - **Preview**: the sweep as set up is the draft while it's whole,
   picking or not. **The kernel's sweep isn't built**, so today every
-  preview fails with "Sweep fails" over "sweeping its regions along its
-  path is too complex to work out", OK waits, and Add anyway keeps it,
+  preview fails with "Sweep fails" over "sweeping along a path
+  isn't supported yet", OK waits, and Add anyway keeps it,
   failing in the Timeline. The app's tests sweep straight paths through
   regen's `testing` feature (`varde_regen::testing::sweep_by_extrude`).
 - **Committing**: OK (`Enter`, Add anyway) adds "Sweep N" or sets the
@@ -4669,7 +4680,7 @@ Tests: `app/src/doc/motion/tests/sweep.rs` (the knobs: the twist's
 ring about the path's end found by the preview, dragged either way, to
 none, past 8 turns refused; a helix's pitch and turns; the rail's Sweep: the
 panel, regions then path, the profile's own sketch refused, a chain a
-part, too complex in the panel, Add anyway as one undo step, the
+part, not built in the panel, Add anyway as one undo step, the
 profile's sketch hidden and the path's not; with the stand-in, a
 straight path previewed as its box and OK; a part taken out by its
 curve or its cross; model edges as a part, a face refused, Tangent
@@ -4811,13 +4822,13 @@ before it in `Run::sketches`), in history order:
   doesn't pass through section 2", "the loft twists: pick matching
   start points", "the loft runs into itself"; its failures by
   `message::lofting` ("lofting its sections is too complex to work
-  out", else as an extrude's tool with the verb "loft"). Then the tool
+  out", "lofting isn't supported yet" for `NotImplemented`, else as an extrude's tool with the verb "loft"). Then the tool
   goes on as an extrude's: a new body, or touches and booleans (a join
   touching several bodies merges them).
 - **Kernel stand-in**: `varde_kernel::loft::loft` (`kernel/src/loft.rs`)
-  isn't built: it fails with `TooComplex`, so every loft that gets as
-  far as the kernel fails today with "lofting its sections is too
-  complex to work out", making no body, and the rest of the history
+  isn't built: it fails with `NotImplemented`, so every loft that gets as
+  far as the kernel fails today with "lofting isn't supported yet",
+  making no body, and the rest of the history
   goes on. The regen tests swap it (`loft::LOFTER`, a thread local;
   other crates' tests through the `testing` feature,
   `varde_regen::testing::loft_by_extrude`) for `by_extrude`: two open

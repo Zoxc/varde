@@ -4,7 +4,7 @@
 //! curves (a chain a part) and the model's edges, a helix about an origin
 //! axis with its pitch, turns, Left-handed and Flip; Keep orientation,
 //! the twist and the operation drafted; the kernel's stand-in failing as
-//! too complex in the panel and Add anyway keeping it; with regeneration
+//! not built yet in the panel and Add anyway keeping it; with regeneration
 //! sweeping straight paths by extruding ([`varde_regen::testing`]), the
 //! preview and OK as one undo step; editing from the Timeline, Cancel and
 //! undo; a path an edit takes away said to be gone.
@@ -185,7 +185,7 @@ fn boxed(plates: &Plates, plate: BodyId, low: [f64; 3], high: [f64; 3]) -> bool 
 /// The rail's Sweep: the profile's regions picked first on its sketches
 /// (not the model), then the path; a click on a curve of the path's
 /// sketch adds the chain it's in as one part, listed by its sketch; the
-/// preview fails as too complex (the kernel's sweep isn't built), shown
+/// preview fails as not built yet (the kernel's sweep isn't built), shown
 /// in the panel; OK waits, and Add anyway keeps it as one undo step,
 /// "Sweep 1" failing in the Timeline, its profile's sketch hidden and
 /// its path's not.
@@ -287,7 +287,7 @@ fn the_rail_s_sweep_picks_a_profile_and_a_path_and_add_anyway_keeps_it() {
 
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("too complex"), "{error}");
+    assert!(error.contains("yet"), "{error}");
     assert!(shows(plates, "Sweep fails"));
     assert!(shows(plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();

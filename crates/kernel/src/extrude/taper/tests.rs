@@ -112,10 +112,10 @@ fn no_taper_is_the_extrude() {
 }
 
 #[test]
-fn a_taper_is_too_complex_until_the_kernel_drafts_walls() {
+fn a_taper_is_not_implemented_until_the_kernel_drafts_walls() {
     let failed = extrude_tapered(&square(2.0), &XY, 0.0, 3.0, 0.1, 7, &TOL, &Budget::DEFAULT);
     assert!(
-        matches!(&failed, Err(TaperError::Failed(f)) if f.error == KernelError::TooComplex),
+        matches!(&failed, Err(TaperError::Failed(f)) if matches!(f.error, KernelError::NotImplemented(_))),
         "{failed:?}"
     );
 }

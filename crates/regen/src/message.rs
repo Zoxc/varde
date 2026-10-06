@@ -946,6 +946,7 @@ pub(crate) fn tool(making: Making, error: KernelError, finest: bool) -> String {
         KernelError::Profile(error) => profile(making, error, finest),
         // Making a tool makes no boolean.
         KernelError::Boolean(error) => format!("it couldn't be {}: {error}", making.done()),
+        KernelError::NotImplemented(what) => format!("{what} isn't supported yet"),
     }
 }
 
@@ -1035,6 +1036,7 @@ fn failed(what: &str, error: KernelError) -> String {
         }
         KernelError::Patch(_) => format!("{what} goes out of bounds"),
         KernelError::Profile(error) => format!("{what} failed: {error}"),
+        KernelError::NotImplemented(_) => format!("{what} isn't supported yet"),
     }
 }
 

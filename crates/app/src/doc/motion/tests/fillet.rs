@@ -1,7 +1,7 @@
 //! The fillet session: `F` on the example plate, edges picked and
 //! toggled as a chamfer's (the edge session they share), the mock's
 //! panel (Edges, Radius, Tangent chain), the kernel's stand-in failing
-//! as too complex in the panel and Add anyway keeping it; with
+//! as not built yet in the panel and Add anyway keeping it; with
 //! regeneration filleting by its stand-in ([`varde_regen::testing`]),
 //! the round previewed, the radius and Tangent chain drafted, a radius
 //! of nothing refused, OK as one undo step; editing from the Timeline,
@@ -57,11 +57,11 @@ fn rounded(plates: &Plates, body: varde_document::BodyId, radius: f64) -> bool {
 /// `F` with the example's only body: a fillet picking edges, the mock's
 /// panel; a face refused; edges clicked picked, lit, listed sorted with
 /// their lengths, a second click taking one out, a row hovered lighting
-/// its edge; the preview fails as too complex (the kernel's fillet isn't
+/// its edge; the preview fails as not built yet (the kernel's fillet isn't
 /// built), shown in the panel; OK waits, Add anyway keeps it as one undo
 /// step, failing in the Timeline.
 #[test]
-fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_too_complex_fillet() {
+fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
     key_in(&mut plates.doc, character("f"));
@@ -129,7 +129,10 @@ fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_too_complex_fillet() {
 
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("filleting Body 1 is too complex"), "{error}");
+    assert!(
+        error.contains("filleting Body 1 isn't supported yet"),
+        "{error}"
+    );
     assert!(shows(&plates, "Fillet fails"));
     assert!(shows(&plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();

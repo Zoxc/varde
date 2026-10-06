@@ -1,7 +1,7 @@
 //! The draft session: the rail's Draft on the example plate, faces
 //! picked with a click (lit, listed with their kind), the panel with its
 //! neutral plane (XY to begin with), the kernel's stand-in failing as
-//! too complex and Add anyway keeping it; with regeneration drafting
+//! not built yet and Add anyway keeping it; with regeneration drafting
 //! boxes' sides ([`varde_regen::testing::draft_by_boxes`]): the drafted
 //! face previewed, the neutral plane picked as a face or from the
 //! toolbar's origin planes, Flip, the angle typed and refused, Tangent
@@ -37,11 +37,11 @@ fn tan(degrees: f64) -> f64 {
 /// The rail's Draft on the example plate: no body until a face is
 /// picked, the panel in the shell's style with the neutral plane XY;
 /// an edge refused; a side clicked picked, lit and listed; the preview
-/// fails as too complex (the kernel's draft isn't built), shown in the
+/// fails as not built yet (the kernel's draft isn't built), shown in the
 /// panel; OK waits, Add anyway keeps it as one undo step, failing in the
 /// Timeline.
 #[test]
-fn draft_picks_faces_and_add_anyway_keeps_the_too_complex_draft() {
+fn draft_picks_faces_and_add_anyway_keeps_the_unbuilt_draft() {
     let mut plates = held(Document::example());
     let plate = plates.bodies[0];
     let before = plates.doc.editor.document().clone();
@@ -106,7 +106,7 @@ fn draft_picks_faces_and_add_anyway_keeps_the_too_complex_draft() {
 
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("too complex"), "{error}");
+    assert!(error.contains("yet"), "{error}");
     assert!(shows(&plates, "Draft fails"));
     assert!(shows(&plates, "Add anyway"));
     let features = plates.doc.editor.document().features().len();

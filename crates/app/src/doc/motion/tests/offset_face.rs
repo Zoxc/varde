@@ -1,6 +1,6 @@
 //! The offset face session: the rail's Offset face on the example plate,
 //! faces picked with a click (lit, listed with their kind), the panel,
-//! the kernel's stand-in failing as too complex and Add anyway keeping
+//! the kernel's stand-in failing as not built yet and Add anyway keeping
 //! it; with regeneration moving boxes' faces
 //! ([`varde_regen::testing::offset_by_boxes`]): the moved face
 //! previewed, the handle standing on the face as it was with its knob at
@@ -40,11 +40,11 @@ fn top(plates: &Plates, body: BodyId, z: f64) -> Pick {
 
 /// The rail's Offset face on the example plate: no body until a face is
 /// picked, the panel in the shell's style; the top clicked picked, lit
-/// and listed; the preview fails as too complex (the kernel's offset
+/// and listed; the preview fails as not built yet (the kernel's offset
 /// face isn't built), shown in the panel; OK waits, Add anyway keeps it
 /// as one undo step, failing in the Timeline.
 #[test]
-fn offset_face_picks_faces_and_add_anyway_keeps_the_too_complex_offset() {
+fn offset_face_picks_faces_and_add_anyway_keeps_the_unbuilt_offset() {
     let (mut plates, plate) = {
         let plates = held(Document::example());
         let plate = plates.bodies[0];
@@ -100,7 +100,7 @@ fn offset_face_picks_faces_and_add_anyway_keeps_the_too_complex_offset() {
 
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("too complex"), "{error}");
+    assert!(error.contains("yet"), "{error}");
     assert!(shows(&plates, "Offset face fails"));
     assert!(shows(&plates, "Add anyway"));
     // The body is shown as it is: the handle stands on the top.

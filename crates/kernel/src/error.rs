@@ -24,6 +24,9 @@ pub enum KernelError {
     Profile(ProfileError),
     /// A boolean that can't be worked out.
     Boolean(BooleanError),
+    /// The operation, or this case of it, isn't implemented yet; names
+    /// what isn't.
+    NotImplemented(&'static str),
 }
 
 impl std::fmt::Display for KernelError {
@@ -34,6 +37,7 @@ impl std::fmt::Display for KernelError {
             KernelError::Patch(e) => write!(f, "the geometry is out of bounds: {e}"),
             KernelError::Profile(e) => write!(f, "the profile can't be extruded: {e}"),
             KernelError::Boolean(e) => write!(f, "the boolean can't be worked out: {e}"),
+            KernelError::NotImplemented(what) => write!(f, "{what} isn't implemented yet"),
         }
     }
 }

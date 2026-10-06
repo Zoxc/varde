@@ -1,7 +1,7 @@
 //! The extrude's taper: typed in the panel's Taper field, in the draft
 //! the preview regenerates, refused where it isn't an angle under 90°
 //! either way, 0° stored as none. The kernel's tapered extrude isn't
-//! built (it fails as too complex): the preview fails, OK waits and Add
+//! built (it fails as not built yet): the preview fails, OK waits and Add
 //! anyway keeps it, failing in the Timeline with its note; with
 //! regeneration tapering rectangles into frustums
 //! ([`varde_regen::testing::taper_by_frustum`]) the preview works and
@@ -79,7 +79,7 @@ fn a_typed_taper_is_previewed_and_add_anyway_keeps_it() {
     assert_eq!(drafted_taper(&requests), Some(5f64.to_radians()));
     answer(&mut doc, &requests);
     let error = doc.feed.draft_error().expect("the stand-in fails");
-    assert_eq!(error, "tapering its walls is too complex to work out");
+    assert_eq!(error, "a tapered extrude isn't supported yet");
     assert!(shows(&doc, "Add anyway"));
     let state = doc.extrude_state().unwrap();
     assert!(!state.ready && state.accept);

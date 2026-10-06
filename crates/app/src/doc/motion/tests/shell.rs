@@ -1,7 +1,7 @@
 //! The shell session: the rail's Shell on the example plate, faces
 //! picked and toggled with a click (lit, sorted, all on one body:
 //! another body's neither lit nor taken), none for a closed one with the
-//! mock's warning, the kernel's stand-in failing as too complex in the
+//! mock's warning, the kernel's stand-in failing as not built yet in the
 //! panel and Add anyway keeping it; with regeneration shelling boxes
 //! ([`varde_regen::testing`]), the hollow previewed open and closed, the
 //! thickness and direction drafted, too thick refused, OK as one undo
@@ -53,11 +53,11 @@ fn front(plates: &Plates, body: BodyId) -> Pick {
 /// The rail's Shell with the example's only body: a shell of it picking
 /// faces, the mock's panel, closed to begin with and said so; an edge
 /// refused; faces clicked picked, lit and listed sorted with their kind,
-/// a second click taking one out; the preview fails as too complex (the
+/// a second click taking one out; the preview fails as not built yet (the
 /// kernel's shell isn't built), shown in the panel; OK waits, Add anyway
 /// keeps it as one undo step.
 #[test]
-fn shell_picks_and_toggles_faces_and_add_anyway_keeps_the_too_complex_shell() {
+fn shell_picks_and_toggles_faces_and_add_anyway_keeps_the_unbuilt_shell() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartShell);
@@ -144,11 +144,11 @@ fn shell_picks_and_toggles_faces_and_add_anyway_keeps_the_too_complex_shell() {
     assert!(!shows(&plates, "Face 3"));
     assert_eq!(drafted(&plates).unwrap().open, faces(&plates));
 
-    // The stand-in fails as too complex: the panel says so, and the body
+    // The stand-in fails as not built yet: the panel says so, and the body
     // is shown whole, its faces there to pick.
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("too complex"), "{error}");
+    assert!(error.contains("yet"), "{error}");
     assert!(shows(&plates, "Shell fails"));
     assert!(shows(&plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();

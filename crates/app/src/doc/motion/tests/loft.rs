@@ -190,7 +190,7 @@ fn boxed(plates: &Plates, plate: BodyId, low: [f64; 3], high: [f64; 3]) -> bool 
 
 /// The rail's Loft opens its panel, picking its sections on the sketches
 /// (not the model); sections are listed in the order they're picked, each
-/// starting at a corner; the preview fails as too complex (the kernel's
+/// starting at a corner; the preview fails as not built yet (the kernel's
 /// loft isn't built), shown in the panel; OK waits, and Add anyway keeps
 /// it as one undo step, "Loft 1" failing in the Timeline, the sections'
 /// sketches hidden.
@@ -253,7 +253,7 @@ fn the_rail_s_loft_picks_sections_in_order_and_add_anyway_keeps_it() {
 
     plates.answer();
     let error = plates.doc.feed.draft_error().expect("the stand-in fails");
-    assert!(error.contains("too complex"), "{error}");
+    assert!(error.contains("yet"), "{error}");
     assert!(shows(plates, "Loft fails"));
     assert!(shows(plates, "Add anyway"));
     let state = plates.doc.motion_state().unwrap();

@@ -109,9 +109,10 @@ pub(super) fn front_top(solid: &Solid, body: BodyId) -> EdgeRef {
     block_edge(solid, body, TOP, FRONT, [5.0, 0.0, 10.0])
 }
 
-/// What the kernel's chamfer says of `body` today.
-fn too_complex(body: &str) -> String {
-    format!("chamfering {body} is too complex to work out")
+/// The message of the kernel's chamfer on `body`, which isn't built
+/// yet.
+fn not_built(body: &str) -> String {
+    format!("chamfering {body} isn't supported yet")
 }
 
 pub(super) fn assert_near(a: f64, b: f64) {
@@ -135,7 +136,7 @@ fn a_chamfer_the_kernel_cant_do_fails_as_too_complex() {
     );
     let evaluation = evaluated(editor.document());
     let failed = failure(&evaluation, id).expect("the chamfer fails");
-    assert_eq!(failed.message, too_complex("Body 1"));
+    assert_eq!(failed.message, not_built("Body 1"));
     assert!(failure(&evaluation, join).is_none());
     assert_eq!(evaluation.failed.len(), 1);
     // The cube and the join's block, 4 × 4 × 13 less the 2 × 2 × 10
@@ -171,7 +172,7 @@ fn an_edge_that_is_gone_is_not_found() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, id).unwrap().message,
-        too_complex("Body 1")
+        not_built("Body 1")
     );
     editor.apply(Command::RemoveFeature(notch)).unwrap();
     assert!(editor.document().feature(id).is_some());
@@ -208,7 +209,7 @@ fn an_edge_is_found_again_after_an_upstream_change() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         failure(&evaluation, id).unwrap().message,
-        too_complex("Body 1")
+        not_built("Body 1")
     );
     // The stand-in's: cut where the edge now is.
     with_wedges();

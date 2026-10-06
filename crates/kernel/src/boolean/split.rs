@@ -1,7 +1,7 @@
 //! Splitting a solid in two by a tool, and the tools a split cuts with.
 //!
 //! **Not built yet**: every entry point here is a stand-in with the
-//! planned signature that fails with [`KernelError::TooComplex`], so the
+//! planned signature that fails with [`KernelError::NotImplemented`], so the
 //! split feature above the kernel (its document, regeneration and
 //! messages) is built against it. The real implementation replaces this
 //! file whole: `split` as `body ∩ tool` and `body − tool` from one
@@ -18,14 +18,14 @@ use crate::profile::Segment;
 use crate::{Budget, Failure, Frame, KernelError, Solid, Tolerance};
 
 /// `body` split by `tool`: its part inside the tool (the front) and the
-/// rest (the back). Not built yet: always [`KernelError::TooComplex`].
+/// rest (the back). Not built yet: always [`KernelError::NotImplemented`].
 pub fn split(
     _body: &Solid,
     _tool: &Solid,
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<(Solid, Solid), Failure> {
-    Err(KernelError::TooComplex.into())
+    Err(KernelError::NotImplemented("splitting a solid").into())
 }
 
 /// Why [`surface_tool`] gives no tool.
@@ -51,7 +51,7 @@ impl std::error::Error for ToolError {}
 /// The half-space on the side of the plane `n·x = d` that `n` points
 /// to, as far as a body in `bounds` reaches, its face on the plane
 /// `Split(0)` of `feature`. Not built yet: always
-/// [`KernelError::TooComplex`].
+/// [`KernelError::NotImplemented`].
 pub fn half_space(
     _n: DVec3,
     _d: f64,
@@ -60,13 +60,13 @@ pub fn half_space(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, Failure> {
-    Err(KernelError::TooComplex.into())
+    Err(KernelError::NotImplemented("a half-space split tool").into())
 }
 
 /// The closed solid bounded by the surface of `form` (the form of a face
 /// through `on`), continued past a body in `bounds`, its faces on the
 /// surface `Split(0)` of `feature`. Not built yet: always
-/// [`ToolError::Failed`] with [`KernelError::TooComplex`].
+/// [`ToolError::Failed`] with [`KernelError::NotImplemented`].
 pub fn surface_tool(
     _form: &Form,
     _on: DVec3,
@@ -75,7 +75,9 @@ pub fn surface_tool(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, ToolError> {
-    Err(ToolError::Failed(KernelError::TooComplex.into()))
+    Err(ToolError::Failed(
+        KernelError::NotImplemented("a surface split tool").into(),
+    ))
 }
 
 /// The tool an open chain of sketch curves on `frame` splits a body in
@@ -83,7 +85,7 @@ pub fn surface_tool(
 /// rectangle round the body's shadow (its sides named as profile curve
 /// `rim`), closed on the chain's left and extruded through the body both
 /// ways, named for `feature`. Not built yet: always
-/// [`KernelError::TooComplex`].
+/// [`KernelError::NotImplemented`].
 pub fn chain_tool(
     _chain: &[Segment],
     _frame: &Frame,
@@ -93,5 +95,5 @@ pub fn chain_tool(
     _tol: &Tolerance,
     _budget: &Budget,
 ) -> Result<Solid, Failure> {
-    Err(KernelError::TooComplex.into())
+    Err(KernelError::NotImplemented("a chain split tool").into())
 }
