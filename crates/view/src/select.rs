@@ -209,6 +209,59 @@ impl Selection {
         }
     }
 
+    /// Whether something is selected, all of it what `of` takes.
+    fn only(&self, of: impl Fn(&Selected) -> bool) -> bool {
+        !self.is_empty() && self.items().all(of)
+    }
+
+    /// Whether edges are selected, and nothing else.
+    pub fn only_edges(&self) -> bool {
+        self.only(|item| matches!(item, Selected::Edge { .. }))
+    }
+
+    /// Whether faces are selected, and nothing else.
+    pub fn only_faces(&self) -> bool {
+        self.only(|item| matches!(item, Selected::Face { .. }))
+    }
+
+    /// Whether edges and faces are selected, both, and nothing else.
+    pub fn edges_and_faces(&self) -> bool {
+        self.only(|item| matches!(item, Selected::Edge { .. } | Selected::Face { .. }))
+            && !self.only_edges()
+            && !self.only_faces()
+    }
+
+    /// Whether vertices are selected, and nothing else.
+    pub fn only_vertices(&self) -> bool {
+        self.only(|item| matches!(item, Selected::Vertex { .. }))
+    }
+
+    /// Whether bodies are selected, and nothing else.
+    pub fn only_bodies(&self) -> bool {
+        self.only(|item| matches!(item, Selected::Body(_)))
+    }
+
+    /// The faces, edges and vertices selected in the model
+    /// [`Selection::model`], in the order they were, as a click on each
+    /// where it was picked would pick it.
+    pub fn picks(&self) -> impl Iterator<Item = Pick> + '_ {
+        self.found().filter_map(|entry| {
+            let (body, at) = match entry.item {
+                Selected::Face { body, near, .. }
+                | Selected::Edge { body, near, .. }
+                | Selected::Vertex { body, near, .. } => (body, near),
+                Selected::Body(_) | Selected::SketchItem { .. } => return None,
+            };
+            Some(Pick {
+                model: self.model?,
+                target: entry.target?,
+                body,
+                at,
+                snap: None,
+            })
+        })
+    }
+
     /// The bodies selected, as bodies.
     pub fn bodies(&self) -> impl Iterator<Item = BodyId> + '_ {
         self.found().filter_map(|entry| match entry.item {

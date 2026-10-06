@@ -1020,6 +1020,8 @@ fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
     // A mirror's plane, a face of the disc, likewise.
     plates.doc.update(Edit::Redo);
     plates.answer();
+    // The plate selected, not its face: a mirror takes that as its plane.
+    plates.doc.pick.selection = varde_view::Selection::new(varde_view::SelectionMode::Bodies);
     plates.click(plate);
     plates.doc.start_motion(MotionKind::Mirror);
     plates.answer();
@@ -1186,6 +1188,7 @@ mod offset_face;
 mod overlaps;
 mod pattern;
 mod scale;
+mod selection;
 mod shell;
 mod split;
 mod sweep;

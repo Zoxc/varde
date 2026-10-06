@@ -1369,8 +1369,17 @@ impl Doc {
         self.extrude = None;
         self.revolve = None;
         self.combine = None;
-        let mut bodies = self.selected_bodies();
-        if bodies.is_empty() {
+        let picks = self.selection_picks();
+        // A split with a face alone selected cuts with it: its body is
+        // picked next.
+        let split_face =
+            kind == MotionKind::Split && self.pick.selection.only_faces() && picks.len() == 1;
+        let mut bodies = if split_face {
+            Vec::new()
+        } else {
+            self.selected_bodies()
+        };
+        if bodies.is_empty() && !split_face {
             bodies.extend(self.only_body());
         }
         self.motion = Some(MotionSession::new(
@@ -1379,13 +1388,61 @@ impl Doc {
             &self.camera,
             bodies,
         ));
-        // A chamfer's edges are those selected that it takes.
-        if kind.blends() {
-            self.refs_selected::<EdgeRef>();
+        // A blend's edges are those selected that it takes, and those
+        // around the faces selected; a sweep's path's edges are those
+        // selected.
+        if kind.blends() || kind == MotionKind::Sweep {
+            self.refs_selected::<EdgeRef>(0);
         }
-        // A face session's faces are those selected that it takes.
-        if kind.picks_faces() {
-            self.refs_selected::<FaceRef>();
+        if kind.blends() {
+            self.face_edges_selected();
+        }
+        match (kind, &picks[..]) {
+            // A mirror's plane is the face selected, if a face alone is,
+            // saying why if it can't be.
+            (MotionKind::Mirror, &[pick]) if self.pick.selection.only_faces() => {
+                if let Err(why) = self.motion_reference(pick) {
+                    self.notice = Some(why.into_owned());
+                }
+            }
+            // A move's or pattern's axis is the edge selected, if one alone
+            // is and it can be (a face selected says only which body).
+            (
+                MotionKind::Move | MotionKind::LinearPattern | MotionKind::CircularPattern,
+                &[pick],
+            ) if matches!(pick.target, Picked::Edge(_)) => {
+                let _ = self.motion_reference(pick);
+            }
+            // A draft's neutral plane is the first face selected of two or
+            // more, if it's flat, its faces the rest.
+            (MotionKind::Draft, &[first, _, ..]) if self.pick.selection.only_faces() => {
+                let neutral = self.motion_reference(first).is_ok();
+                self.refs_selected::<FaceRef>(usize::from(neutral));
+            }
+            (MotionKind::Split, &[pick]) if split_face => {
+                if let Err(why) = self.split_tool(pick) {
+                    self.notice = Some(why.into_owned());
+                }
+                if let Some(session) = &mut self.motion {
+                    session.picking = MotionPick::Bodies;
+                }
+            }
+            // An align's moved point, or a scale's, is the vertex
+            // selected.
+            (MotionKind::Align, &[pick]) if self.pick.selection.only_vertices() => {
+                let slot = AlignSlot::new(AlignSide::Moved, AlignRole::Point);
+                if let Err(why) = self.align_pick(slot, pick) {
+                    self.notice = Some(why.into_owned());
+                }
+            }
+            (MotionKind::Scale, &[pick]) if self.pick.selection.only_vertices() => {
+                if let Err(why) = self.scale_point(pick) {
+                    self.notice = Some(why.into_owned());
+                }
+            }
+            // A face session's faces are those selected that it takes.
+            _ if kind.picks_faces() => self.refs_selected::<FaceRef>(0),
+            _ => {}
         }
         // A sweep's profile is of the sketch selected in the Timeline, if
         // one is.
@@ -1399,6 +1456,11 @@ impl Doc {
                 session.sweep.regions.refresh(document);
             }
         }
+        // Sketch curves selected: a sweep's profile, the regions they
+        // bound, or else its path; a split's line.
+        if let Some((sketch, curves)) = self.selected_curves() {
+            self.curves_selected(kind, sketch, &curves);
+        }
         // A loft's candidates' regions.
         if kind == MotionKind::Loft {
             let document = self.editor.document();
@@ -1409,6 +1471,61 @@ impl Doc {
         if !picks_first(kind) {
             self.focus = Some(Focus::All);
         }
+    }
+
+    /// Takes the curves `curves` of `sketch`, selected, for the session
+    /// of `kind` just started: a sweep's profile, the regions they bound,
+    /// or else the chains through them as its path; a split's line, its
+    /// body picked next if it has none.
+    fn curves_selected(
+        &mut self,
+        kind: MotionKind,
+        sketch: FeatureId,
+        curves: &[varde_sketch::Id],
+    ) {
+        let document = self.editor.document();
+        let Some(session) = &mut self.motion else {
+            return;
+        };
+        match kind {
+            MotionKind::Sweep => {
+                if session.sweep.regions.take_curves(sketch, curves, document) {
+                    return;
+                }
+                for &curve in curves {
+                    // A chain picked already through another of them
+                    // isn't taken out again.
+                    if sweep::chain_at(&session.sweep.chains, sketch, curve).is_none()
+                        && let Err(why) = session.sweep_curve(sketch, curve, document)
+                    {
+                        self.notice = Some(why.into_owned());
+                        return;
+                    }
+                }
+            }
+            MotionKind::Split => {
+                session.split.mode = SplitMode::Line;
+                for &curve in curves {
+                    session.split.toggle_curve(sketch, curve);
+                }
+                session.picking = if session.bodies.is_empty() {
+                    MotionPick::Bodies
+                } else {
+                    MotionPick::Nothing
+                };
+            }
+            _ => {}
+        }
+    }
+
+    /// The faces, edges and vertices selected, as clicks on the model
+    /// shown would pick them: none if it's another model.
+    pub(super) fn selection_picks(&self) -> Vec<Pick> {
+        let model = self.feed.pick_index().model();
+        if self.pick.selection.model() != Some(model) {
+            return Vec::new();
+        }
+        self.pick.selection.picks().collect()
     }
 
     /// The model's only body, if it has just one: of the bodies a new

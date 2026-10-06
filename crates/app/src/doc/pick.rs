@@ -296,6 +296,27 @@ impl Doc {
         self.refresh_highlight();
     }
 
+    /// The curves selected in the model, if curves of one sketch are all
+    /// that's selected: the sketch and the curves, in the order they
+    /// were.
+    pub(crate) fn selected_curves(&self) -> Option<(FeatureId, Vec<varde_sketch::Id>)> {
+        let document = self.editor.document();
+        let mut items = self.pick.selection.sketch_items().peekable();
+        let sketch = items.peek()?.sketch;
+        let Some(FeatureKind::Sketch { sketch: drawn, .. }) =
+            document.feature(sketch).map(|feature| &feature.kind)
+        else {
+            return None;
+        };
+        let curves: Option<Vec<varde_sketch::Id>> = items
+            .map(|item| {
+                (item.sketch == sketch && drawn.curve(item.item).is_some()).then_some(item.item)
+            })
+            .collect();
+        let curves = curves?;
+        (curves.len() == self.pick.selection.items().count()).then_some((sketch, curves))
+    }
+
     /// The sketches selected in Objects, in the order they were.
     pub(crate) fn selected_sketches(&self) -> impl Iterator<Item = FeatureId> + '_ {
         (self.objects_selected.iter()).filter_map(|row| match row {

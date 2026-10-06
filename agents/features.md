@@ -91,6 +91,48 @@ they share with the newer kinds is here. The kernel math of each is in
   The camera is the only input: the bodies are mostly picked after the
   session opens, and a size from them could land off screen. Editing a
   feature opens with its stored values, and a value typed stays.
+- **The toolbar by selection** (`view::toolbar::selection_bar`):
+  outside sketches and sessions, what's selected decides the model
+  bar's operations (Measure always last), those fitting it first:
+  - Edges alone: Sketch, Revolve (while all straight), Fillet,
+    Chamfer, Sweep, Move, and Pattern for one straight edge; one round
+    edge (a rim) gives Fillet, Chamfer, Sketch, Sweep, Circular
+    pattern, Move.
+  - Faces alone: Sketch on face (while all flat), Extrude, Offset,
+    Fillet, Chamfer, Shell, Draft, Move, Mirror (while all flat).
+  - Edges and faces: Fillet, Chamfer, Sketch, Move.
+  - Vertices: Sketch, Align, Scale, Move.
+  - Bodies: Sketch, Move, Mirror, Pattern, Combine, Split, Scale,
+    Shell.
+  - A sketch selected in the Timeline: Extrude, Revolve, Sweep, Loft,
+    then the model bar's others.
+  - A sketch's curves (`toolbar::sketch_items_bar`): Extrude, Revolve,
+    Sweep, Split, Edit sketch; a straight line alone the same less
+    Extrude; its points, or curves and points, Edit sketch alone.
+
+  Each takes the selection when started (`Doc::start_motion`,
+  `Doc::start_revolve`, `Doc::start_measure`): a blend the edges
+  selected and those around the faces selected
+  (`Doc::face_edges_selected`), keeping to the first one's body; a face
+  session the faces; a draft with two faces or more the first, if flat,
+  as its neutral plane and the rest as its faces; a sweep the edges as
+  its path; a mirror the face alone selected as its plane (a face that
+  can't be one said why); a move or a pattern the edge alone selected
+  as its axis, if it can be (a face selected says only which body, as
+  clicking one to pick its body does); a split the face alone selected
+  as its tool, its body picked next; an align the vertex alone selected
+  as its moved point, a scale as its point; a revolve the straight edge
+  alone selected as its axis once its profile is picked
+  (`RevolveSession::axis_selected`, tried once); the measure tool one
+  or two things selected as A and B. Curves of one sketch selected
+  (`Doc::selected_curves`) give an extrude, a revolve or a sweep's
+  profile the regions they bound alone (`RegionPick::take_curves`: each
+  piece of the outer loop on one of them), a revolve as its axis the
+  one straight line among them on none of those loops (or a line
+  alone), a sweep with no region bounded the chains through them as
+  its path, and a split its line (`Doc::curves_selected`). Move,
+  pattern, mirror, align and scale can't name a sketch's line or point
+  (`AxisRef`, `PlaneRef`, `PointRef`), so take none.
 
 ## Failures and where they are
 

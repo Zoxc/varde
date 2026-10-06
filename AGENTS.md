@@ -24,6 +24,8 @@
   new variants, names never reused); one that can't breaks old files,
   which is fine for now. Those docs also hold the design for once the
   format must be stable.
+- **Don't drop toolbar items to make the bar fit.** The toolbar adapts to
+  its size, so offer what belongs there and leave fitting it to the bar.
 - **No wildcard deletes.** `rm -f dir/*` and other globbed or recursive
   deletes trigger permission prompts. For headless Firefox runs, give each
   run fresh directories in the scratchpad rather than clearing old ones: a

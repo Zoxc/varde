@@ -7,22 +7,26 @@ use iced::widget::{
     tooltip,
 };
 use iced::{Alignment, Element, Length, Padding, mouse};
-use varde_document::{Axis3, EXTENSION, OriginPlane, Tolerance};
+use varde_document::{Axis3, EXTENSION, FeatureId, FeatureKind, OriginPlane, Tolerance};
 use varde_expr::LengthUnit;
+use varde_regen::Summary;
+use varde_sketch::Curve;
 
 use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
-    Binding, Shortcut, chamfer_binding, comb_binding, combine_binding, constrain_binding,
-    constraint_binding, extrude_binding, file_bindings, handles_binding, history_bindings,
-    measure_binding, move_binding, pattern_binding, revolve_binding, sketch_binding,
+    Binding, Shortcut, align_binding, chamfer_binding, circular_pattern_binding, comb_binding,
+    combine_binding, constrain_binding, constraint_binding, draft_binding, extrude_binding,
+    file_bindings, fillet_binding, handles_binding, history_bindings, loft_binding,
+    measure_binding, mirror_binding, move_binding, offset_face_binding, pattern_binding,
+    revolve_binding, scale_binding, shell_binding, sketch_binding, split_binding, sweep_binding,
     switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
     ActiveTool, AlignRole, AlignSide, ConstraintKind, DocumentState, Downloads, Edit, File,
-    Location, Look, Message, MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, SplitMode,
-    Tool,
+    Location, Look, Message, MotionKind, MotionLook, MotionPick, NOT_SAVED, Overlay, Picked,
+    SplitMode, Tool,
 };
 
 /// Includes the 1 px border.
@@ -668,6 +672,14 @@ fn ops<'a>(
         );
         return std::iter::once(cancel).chain(origins).collect();
     }
+    // What's selected decides the operations offered, each starting
+    // with it ([`selection_bar`]).
+    if let Some(bar) = selection_bar(state) {
+        return (bar.into_iter())
+            .map(|kind| bar_op(state, kind))
+            .chain([separator(), measure])
+            .collect();
+    }
     [
         sketch,
         extrude,
@@ -682,6 +694,233 @@ fn ops<'a>(
     .into_iter()
     .chain(origins)
     .collect()
+}
+
+/// An operation the toolbar offers for what's selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BarOp {
+    Sketch,
+    Extrude,
+    Revolve,
+    Sweep,
+    Loft,
+    Offset,
+    Fillet,
+    Chamfer,
+    Shell,
+    Draft,
+    Combine,
+    Move,
+    Mirror,
+    Pattern,
+    CircularPattern,
+    Align,
+    Scale,
+    Split,
+    /// Editing the sketch whose items are selected.
+    EditSketch(FeatureId),
+}
+
+/// The operations offered for what's selected, in place of the model
+/// bar's, outside sketches and sessions; none for nothing selected, or
+/// a selection of mixed kinds that takes none of them.
+///
+/// - Edges alone: Revolve while they're all straight (an axis), Pattern
+///   for one straight edge (a direction), Fillet and Chamfer first and
+///   Circular pattern for one round edge (a rim), with Sweep (a path).
+/// - Faces alone: Sketch on face and Mirror while they're all flat,
+///   with Offset, Fillet, Chamfer, Shell and Draft.
+/// - Edges and faces: Fillet and Chamfer, taking both, first.
+/// - Vertices: Align and Scale, which take a point.
+/// - Bodies: the operations on bodies.
+/// - A sketch selected in the Timeline: those making a solid of it
+///   first.
+fn selection_bar(state: &DocumentState<'_>) -> Option<Vec<BarOp>> {
+    use BarOp::*;
+    let picking = state.picking.as_ref()?;
+    let selection = state.model_selection;
+    let index = picking.index;
+    let targets: Vec<Picked> = selection.targets().collect();
+    let straight = |edge: u32| {
+        (index.chain_keys(edge)).is_some_and(|keys| index.edge_ends(edge, &keys).is_some())
+    };
+    let summary = |face: u32| (index.picking().faces().get(face as usize)).map(|f| f.summary);
+    let flat = |face: u32| matches!(summary(face), Some(Summary::Plane { .. }));
+    let edges = || {
+        targets.iter().filter_map(|target| match *target {
+            Picked::Edge(edge) => Some(edge),
+            _ => None,
+        })
+    };
+    let faces = || {
+        targets.iter().filter_map(|target| match *target {
+            Picked::Face(face) => Some(face),
+            _ => None,
+        })
+    };
+    if selection.only_edges() {
+        return Some(match targets[..] {
+            [Picked::Edge(edge)] if !straight(edge) => {
+                vec![Fillet, Chamfer, Sketch, Sweep, CircularPattern, Move]
+            }
+            [Picked::Edge(_)] => vec![Sketch, Revolve, Fillet, Chamfer, Sweep, Move, Pattern],
+            _ if edges().all(straight) => vec![Sketch, Revolve, Fillet, Chamfer, Sweep, Move],
+            _ => vec![Sketch, Fillet, Chamfer, Sweep, Move],
+        });
+    }
+    if selection.only_faces() {
+        let flat = faces().all(flat);
+        let mut bar = Vec::new();
+        bar.extend(flat.then_some(Sketch));
+        bar.extend([Extrude, Offset, Fillet, Chamfer, Shell, Draft]);
+        bar.push(Move);
+        bar.extend(flat.then_some(Mirror));
+        return Some(bar);
+    }
+    if selection.edges_and_faces() {
+        return Some(vec![Fillet, Chamfer, Sketch, Move]);
+    }
+    if selection.only_vertices() {
+        return Some(vec![Sketch, Align, Scale, Move]);
+    }
+    if selection.only_bodies() {
+        return Some(vec![
+            Sketch, Move, Mirror, Pattern, Combine, Split, Scale, Shell,
+        ]);
+    }
+    let document = state.editor.document();
+    if let Some(bar) = sketch_items_bar(state) {
+        return Some(bar);
+    }
+    let sketch_selected = selection.is_empty()
+        && (state.selected_feature.and_then(|id| document.feature(id)))
+            .is_some_and(|feature| matches!(feature.kind, FeatureKind::Sketch { .. }));
+    sketch_selected.then(|| {
+        vec![
+            Extrude, Revolve, Sweep, Loft, Sketch, Chamfer, Combine, Move, Pattern,
+        ]
+    })
+}
+
+/// The operations offered for the items of one sketch selected in the
+/// model, as [`selection_bar`] lists them: for curves, those taking the
+/// regions they bound or the chain they make (Revolve a line alone as
+/// its axis, with no regions to extrude), and the sketch's editing.
+fn sketch_items_bar(state: &DocumentState<'_>) -> Option<Vec<BarOp>> {
+    use BarOp::*;
+    let selection = state.model_selection;
+    let mut items = selection.sketch_items().peekable();
+    let sketch = items.peek()?.sketch;
+    let Some(FeatureKind::Sketch { sketch: drawn, .. }) =
+        (state.editor.document().feature(sketch)).map(|feature| &feature.kind)
+    else {
+        return None;
+    };
+    let curves: Option<Vec<&Curve>> = items
+        .map(|item| {
+            (item.sketch == sketch)
+                .then(|| drawn.curve(item.item))
+                .flatten()
+                .map(|entry| &entry.curve)
+        })
+        .collect();
+    let edit = EditSketch(sketch);
+    if selection.sketch_items().count() != selection.items().count() {
+        return None;
+    }
+    Some(match curves.as_deref() {
+        Some([Curve::Line { .. }]) => vec![Revolve, Sweep, Split, edit],
+        Some(_) => vec![Extrude, Revolve, Sweep, Split, edit],
+        None => vec![edit],
+    })
+}
+
+/// The toolbar's button for `kind`, with its key, lit while it's set up.
+fn bar_op(state: &DocumentState<'_>, kind: BarOp) -> Element<'static, Message> {
+    let keys = state.keys();
+    let moving = state.motion.as_ref().map(|motion| motion.kind);
+    let motion = |icon, label, binding, kind| bound_op(icon, label, binding, moving == Some(kind));
+    match kind {
+        BarOp::Sketch => bound_op(
+            Icon::Sketch,
+            if keys.face_selected {
+                "Sketch on face"
+            } else {
+                "Sketch"
+            },
+            sketch_binding(keys),
+            false,
+        ),
+        BarOp::Extrude => bound_op(
+            Icon::Extrude,
+            "Extrude",
+            extrude_binding(keys),
+            state.extrude.is_some(),
+        ),
+        BarOp::Revolve => bound_op(
+            Icon::Revolve,
+            "Revolve",
+            revolve_binding(keys),
+            state.revolve.is_some(),
+        ),
+        BarOp::Combine => bound_op(
+            Icon::Combine,
+            "Combine",
+            combine_binding(keys),
+            state.combine.is_some(),
+        ),
+        BarOp::Sweep => motion(Icon::Sweep, "Sweep", sweep_binding(keys), MotionKind::Sweep),
+        BarOp::Loft => motion(Icon::Loft, "Loft", loft_binding(keys), MotionKind::Loft),
+        BarOp::Offset => motion(
+            Icon::OffsetFace,
+            "Offset",
+            offset_face_binding(keys),
+            MotionKind::OffsetFace,
+        ),
+        BarOp::Fillet => motion(
+            Icon::BFillet,
+            "Fillet",
+            fillet_binding(keys),
+            MotionKind::Fillet,
+        ),
+        BarOp::Chamfer => motion(
+            Icon::BChamfer,
+            "Chamfer",
+            chamfer_binding(keys),
+            MotionKind::Chamfer,
+        ),
+        BarOp::Shell => motion(Icon::Shell, "Shell", shell_binding(keys), MotionKind::Shell),
+        BarOp::Draft => motion(Icon::Draft, "Draft", draft_binding(keys), MotionKind::Draft),
+        BarOp::Move => motion(Icon::Move, "Move", move_binding(keys), MotionKind::Move),
+        BarOp::Mirror => motion(
+            MotionKind::Mirror.icon(),
+            "Mirror",
+            mirror_binding(keys),
+            MotionKind::Mirror,
+        ),
+        BarOp::Pattern => motion(
+            Icon::LPattern,
+            "Pattern",
+            pattern_binding(keys),
+            MotionKind::LinearPattern,
+        ),
+        BarOp::CircularPattern => motion(
+            MotionKind::CircularPattern.icon(),
+            "Circular pattern",
+            circular_pattern_binding(keys),
+            MotionKind::CircularPattern,
+        ),
+        BarOp::Align => motion(Icon::Align, "Align", align_binding(keys), MotionKind::Align),
+        BarOp::Scale => motion(Icon::Scale, "Scale", scale_binding(keys), MotionKind::Scale),
+        BarOp::Split => motion(Icon::Split, "Split", split_binding(keys), MotionKind::Split),
+        BarOp::EditSketch(sketch) => op(
+            Icon::Sketch,
+            "Edit sketch",
+            state
+                .editable()
+                .then_some(Message::Look(Look::EditFeature(sketch))),
+        ),
+    }
 }
 
 /// Whether the toolbar offers the origin planes now: picking a sketch's

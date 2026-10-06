@@ -526,15 +526,18 @@ impl Doc {
     }
 
     /// Picks those of type `R` selected in the model shown, those a click
-    /// would pick, for the session just started. The first one's body
-    /// decides, over the body the session started with.
-    pub(super) fn refs_selected<R: Ref>(&mut self) {
+    /// would pick, for the session just started, but the first `skip`.
+    /// The first one's body decides, over the body the session started
+    /// with.
+    pub(super) fn refs_selected<R: Ref>(&mut self, skip: usize) {
         let index = self.feed.pick_index();
         let model = index.model();
         if self.pick.selection.model() != Some(model) {
             return;
         }
         let picks: Vec<Pick> = (self.pick.selection.items())
+            .filter(|item| R::selected(item).is_some())
+            .skip(skip)
             .filter_map(|item| {
                 let found = R::selected(item)?;
                 let target = found.find(index, found.body())?;
@@ -550,6 +553,44 @@ impl Doc {
         for pick in picks {
             // One refused (on another body, made later) is left out.
             let _ = self.refs_click::<R>(pick);
+        }
+    }
+
+    /// Picks the edges around the faces selected in the model shown, for
+    /// a blend just started with faces selected: each edge between two
+    /// faces once, though it bounds two of them.
+    pub(super) fn face_edges_selected(&mut self) {
+        let index = self.feed.pick_index();
+        let model = index.model();
+        if self.pick.selection.model() != Some(model) {
+            return;
+        }
+        let faces: Vec<u32> = (self.pick.selection.targets())
+            .filter_map(|target| match target {
+                Picked::Face(face) => Some(face),
+                _ => None,
+            })
+            .collect();
+        let chains = u32::try_from(index.mesh().edge_count()).unwrap_or(u32::MAX);
+        let picks: Vec<Pick> = (0..chains)
+            .filter_map(|edge| {
+                let sides = index.edge_faces(edge)?;
+                let face = *faces.iter().find(|face| sides.contains(face))?;
+                Some(Pick {
+                    model,
+                    target: Picked::Edge(edge),
+                    body: index.face_body(face)?,
+                    at: index.chain_point(edge)?,
+                    snap: None,
+                })
+            })
+            .collect();
+        for pick in picks {
+            // One a tangent chain picked already isn't taken out again.
+            if self.ref_picked::<EdgeRef>(pick).is_none() {
+                // One refused (on another body, made later) is left out.
+                let _ = self.refs_click::<EdgeRef>(pick);
+            }
         }
     }
 

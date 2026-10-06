@@ -39,7 +39,7 @@ fn drafted(plates: &Plates) -> Option<Chamfer> {
 }
 
 /// The edges of the chamfer being set up.
-fn edges(plates: &Plates) -> Vec<varde_document::EdgeRef> {
+pub(super) fn edges(plates: &Plates) -> Vec<varde_document::EdgeRef> {
     plates
         .doc
         .motion

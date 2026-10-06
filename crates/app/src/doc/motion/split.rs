@@ -158,7 +158,7 @@ impl SplitSetup {
     /// Picks the curve `curve` of `sketch` for its line, or takes it out:
     /// only of the line's sketch, or of any while none is picked. At most
     /// [`MAX_SPLIT_CURVES`].
-    fn toggle_curve(&mut self, sketch: FeatureId, curve: Id) {
+    pub(super) fn toggle_curve(&mut self, sketch: FeatureId, curve: Id) {
         match &mut self.chain {
             Some((of, curves)) if *of == sketch => match curves.binary_search(&curve) {
                 Ok(at) => {

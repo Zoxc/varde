@@ -196,6 +196,32 @@ impl RegionPick {
         true
     }
 
+    /// Takes the curves `curves` of `sketch`, selected: the sketch as the
+    /// source and the regions they bound alone (every piece of the outer
+    /// loop on one of them) picked. False, nothing changed, if they bound
+    /// none, or the sketch can't be the source.
+    pub(crate) fn take_curves(
+        &mut self,
+        sketch: FeatureId,
+        curves: &[varde_sketch::Id],
+        document: &Document,
+    ) -> bool {
+        let Some(found) = self.found(sketch) else {
+            return false;
+        };
+        let bounded: BTreeSet<usize> = (found.profiles.regions.iter().enumerate())
+            .filter(|(_, region)| (region.outer.iter()).all(|piece| curves.contains(&piece.curve)))
+            .map(|(index, _)| index)
+            .take(self.most)
+            .collect();
+        if bounded.is_empty() || !self.choose(sketch) {
+            return false;
+        }
+        self.pick(bounded);
+        self.refresh(document);
+        true
+    }
+
     /// Picks the region `region` of `sketch`, or takes it out if it's
     /// picked: only of the source, or the first of any candidate, which
     /// becomes the source. All taken out, another sketch's may be picked,

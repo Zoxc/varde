@@ -169,7 +169,16 @@ impl Doc {
             return;
         }
         self.picking_plane = None;
-        self.measure = Some(MeasureSession::new());
+        let mut session = MeasureSession::new();
+        // What's selected, one or two, is A and B to start with.
+        let picks: Option<Vec<InspectPick>> =
+            self.pick.selection.items().map(selected_pick).collect();
+        if let Some(picks) = picks.filter(|picks| picks.len() <= 2) {
+            for picked in picks {
+                session.put(picked, true);
+            }
+        }
+        self.measure = Some(session);
     }
 
     /// Takes `message`, changing the measure tool.

@@ -17,8 +17,8 @@ use varde_document::{
 };
 use varde_expr::{AngleUnit, Unit};
 use varde_view::{
-    Angle, OperationKind, PanelHover, RevolveLook, RevolvePick, RevolveState, TurnKind, Unnamed,
-    axis_edge,
+    Angle, OperationKind, PanelHover, RevolveLook, RevolvePick, RevolveState, Selected, TurnKind,
+    Unnamed, axis_edge,
 };
 
 use super::extrude::is_sketch;
@@ -44,6 +44,9 @@ pub(crate) struct RevolveSession {
     /// order it runs. For the arrow only: regenerating finds the edge
     /// again.
     pub(crate) edge_ends: Option<[DVec3; 2]>,
+    /// The straight edge selected when the session started, its axis
+    /// once the profile is picked (which the edge is checked against).
+    axis_selected: Option<EdgeRef>,
     /// What a click picks first.
     pub(crate) picking: RevolvePick,
     pub(crate) extent: TurnKind,
@@ -95,6 +98,7 @@ impl RevolveSession {
             axis: None,
             axis_missing: false,
             edge_ends: None,
+            axis_selected: None,
             picking: RevolvePick::Regions,
             extent: TurnKind::Full,
             fields: DEFAULT_ANGLES.map(field),
@@ -167,6 +171,32 @@ impl RevolveSession {
         self.edge_ends = None;
         self.picking = RevolvePick::Regions;
         self.regions.refresh(document);
+    }
+
+    /// Takes the curves `curves` of `sketch`, selected: the regions they
+    /// bound, and as the axis the one straight line among them on none of
+    /// those regions' outer loops, if one alone is.
+    fn take_curves(&mut self, sketch: FeatureId, curves: &[varde_sketch::Id], document: &Document) {
+        let bounded = self.regions.take_curves(sketch, curves, document);
+        let Some(found) = self.regions.found(sketch) else {
+            return;
+        };
+        let on_loops = |curve: varde_sketch::Id| {
+            bounded
+                && (self.regions.picked.iter()).any(|&region| {
+                    (found.profiles.regions.get(region))
+                        .is_some_and(|region| region.outer.iter().any(|piece| piece.curve == curve))
+                })
+        };
+        let mut lines = (curves.iter().copied()).filter(|&curve| {
+            matches!(
+                found.sketch.curve(curve).map(|entry| &entry.curve),
+                Some(varde_sketch::Curve::Line { .. })
+            ) && !on_loops(curve)
+        });
+        if let (Some(line), None) = (lines.next(), lines.next()) {
+            self.pick_axis(sketch, AxisLine::Curve(line), document);
+        }
     }
 
     /// Drops the axis if it's a model edge `document` no longer takes
@@ -359,11 +389,47 @@ impl Doc {
         // Or the first selected in Objects.
         let selected = (self.selected_feature.filter(|&id| is_sketch(document, id)))
             .or_else(|| self.selected_sketches().next());
+        let curves = self.selected_curves();
         let document = self.editor.document();
         let mut session = RevolveSession::new(document, selected);
         session.regions.refresh(document);
+        // Sketch curves selected: the regions they bound, and the line
+        // among them bounding none, or a line alone, as the axis.
+        if let Some((sketch, curves)) = curves {
+            session.take_curves(sketch, &curves, document);
+        }
+        // An edge alone selected is the axis to be.
+        let mut items = self.pick.selection.items();
+        session.axis_selected = match (items.next(), items.next()) {
+            (Some(&Selected::Edge { body, faces, near }), None) => {
+                Some(EdgeRef { body, faces, near })
+            }
+            _ => None,
+        };
+        drop(items);
         self.revolve = Some(session);
         self.focus = Some(Focus::All);
+        self.axis_from_selection();
+    }
+
+    /// Picks the edge selected when the revolve started as its axis, once
+    /// it has a profile and no axis, saying why if it can't be: tried
+    /// once.
+    fn axis_from_selection(&mut self) {
+        let Some(session) = &mut self.revolve else {
+            return;
+        };
+        if session.axis.is_some() || session.regions.source.is_none() {
+            return;
+        }
+        let Some(edge) = session.axis_selected.take() else {
+            return;
+        };
+        let index = self.feed.pick_index();
+        let body = self.feed.shown_body(edge.body);
+        if let Some(found) = index.find_edge(body, edge.faces, edge.near) {
+            self.pick_axis_edge(index.model(), found, edge.near);
+        }
     }
 
     /// Edits the revolve feature `id`, if the document holds it, in a
@@ -524,6 +590,7 @@ impl Doc {
             }
             RevolveLook::DropHandle => session.grabbed = None,
         }
+        self.axis_from_selection();
     }
 
     /// Whether the revolve being set up can be committed: the document

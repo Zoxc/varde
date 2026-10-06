@@ -277,9 +277,14 @@ impl Doc {
         // Or the first selected in Objects.
         let selected = (self.selected_feature.filter(|&id| is_sketch(document, id)))
             .or_else(|| self.selected_sketches().next());
+        let curves = self.selected_curves();
         let document = self.editor.document();
         let mut session = ExtrudeSession::new(document, &self.camera, selected);
         session.regions.refresh(document);
+        // Sketch curves selected: the regions they bound.
+        if let Some((sketch, curves)) = curves {
+            session.regions.take_curves(sketch, &curves, document);
+        }
         self.extrude = Some(session);
         self.focus = Some(Focus::All);
     }
