@@ -20,8 +20,8 @@ pub use camera::{Camera, Projection, View};
 pub use highlight::{Highlights, Vertex};
 pub use preview::{PreviewError, PreviewImage, PreviewShot, frame, render_preview};
 pub use renderer::{
-    CREASE_ALPHA, CREASE_WIDTH, ClipRect, Colors, EDGE_WIDTH, ERROR_EDGE_WIDTH, ERROR_HALO,
-    ERROR_POINT_RADIUS, ErrorParts, Frame, HIDDEN_DASH, HIDDEN_EDGE_WIDTH, HOVER_RIM,
+    BodyTint, CREASE_ALPHA, CREASE_WIDTH, ClipRect, Colors, EDGE_WIDTH, ERROR_EDGE_WIDTH,
+    ERROR_HALO, ERROR_POINT_RADIUS, ErrorParts, Frame, HIDDEN_DASH, HIDDEN_EDGE_WIDTH, HOVER_RIM,
     HOVER_THROUGH_ALPHA, HOVERED_EDGE_WIDTH, LINE_WIDTH, OriginPart, OriginShown, PLANE_GAP,
     PLANE_REACH, PLANE_SIDES, Pivot, PrepareError, Renderer, SELECTED_EDGE_WIDTH, SELECTED_RIM,
     Shading, Slot, Srgb, VERTEX_RADIUS, Viewport,

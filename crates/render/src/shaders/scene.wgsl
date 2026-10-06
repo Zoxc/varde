@@ -39,6 +39,15 @@ struct Part {
 
 @group(1) @binding(0) var<uniform> part: Part;
 
+// See `Slot::tints` in renderer.rs: the linear colour of the part of the
+// model being drawn, the model's or its body's own, bound at its entry's
+// offset. Binding 3, as the errors' group 0 has 1 and 2.
+struct Tint {
+    color: vec4<f32>,
+};
+
+@group(0) @binding(3) var<uniform> tint: Tint;
+
 // Set by the renderer. True if the target stores output as is, so it must be
 // sRGB encoded here, false if the target encodes it.
 override ENCODE_SRGB: bool;
@@ -424,9 +433,9 @@ fn metal(n: vec3<f32>, key: vec3<f32>, base: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    // Less than opaque when faded, or as its part is, blended over what's
-    // behind it.
-    return output(vec4<f32>(shaded(in, front, u.model.rgb), u.model.a * part.alpha.x));
+    // In its part's colour; less than opaque when faded, or as its part
+    // is, blended over what's behind it.
+    return output(vec4<f32>(shaded(in, front, tint.color.rgb), u.model.a * part.alpha.x));
 }
 
 // The hovered face, drawn again over itself (depth tested Equal) in the

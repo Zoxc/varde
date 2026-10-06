@@ -1,7 +1,7 @@
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
-use varde_document::{Command, Editor, Opacity, OriginPlane, Plane};
+use varde_document::{Body, Command, Editor, Opacity, OriginPlane, Plane, Tint};
 
 use super::check::{Append, Found, block_at};
 use super::*;
@@ -130,6 +130,55 @@ fn opacity_round_trips() {
     let (read, _) = from_bytes(&bytes).unwrap();
     assert_eq!(read.body(body).unwrap().opacity, opacity);
     assert_eq!(&read, document);
+}
+
+/// A body's colour is kept through a file.
+#[test]
+fn color_round_trips() {
+    let mut editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let color = Tint::new(200, 40);
+    editor.apply(Command::SetColor(body, color)).unwrap();
+    let document = editor.document();
+    let (bytes, _) = to_bytes(document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read.body(body).unwrap().color, color);
+    assert_eq!(&read, document);
+}
+
+/// A body as files store it, by field names: one written before bodies
+/// had colours reads as having none, and one with a colour keeps it.
+#[test]
+fn a_body_reads_with_or_without_a_color() {
+    let document = Document::example();
+    let body = document.bodies()[0].clone();
+    // The same body without the field, as an older file has it.
+    #[derive(serde::Serialize)]
+    struct Older<'a> {
+        id: varde_document::BodyId,
+        name: &'a str,
+        visible: bool,
+        opacity: Opacity,
+        created_by: varde_document::FeatureId,
+    }
+    let older = rmp_serde::to_vec_named(&Older {
+        id: body.id,
+        name: &body.name,
+        visible: body.visible,
+        opacity: body.opacity,
+        created_by: body.created_by,
+    })
+    .unwrap();
+    let read: Body = rmp_serde::from_slice(&older).unwrap();
+    assert_eq!(read, body);
+    assert_eq!(read.color, None);
+
+    let colored = Body {
+        color: Tint::new(15, 45),
+        ..body
+    };
+    let named = rmp_serde::to_vec_named(&colored).unwrap();
+    assert_eq!(rmp_serde::from_slice::<Body>(&named).unwrap(), colored);
 }
 
 /// A move about a model face and a mirror in one are kept through a

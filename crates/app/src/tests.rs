@@ -4650,6 +4650,26 @@ fn a_body_row_hovered_lights_the_body() {
     assert!(doc.highlight().is_none());
 }
 
+/// Hovering the Opacity and Colour part of a body's menu leaves what's lit
+/// out of the viewport, until the cursor leaves it or the menu closes.
+#[test]
+fn a_body_menu_s_look_part_hovered_hides_the_highlight() {
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let body = doc.editor.document().bodies()[0].id;
+    doc.look(Look::HoverBodyRow(Some(body)));
+    assert!(doc.highlight().is_some());
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    doc.look(Look::HoverBodyLook(true));
+    assert!(doc.highlight().is_none());
+    doc.look(Look::HoverBodyLook(false));
+    assert!(doc.highlight().is_some());
+    doc.look(Look::HoverBodyLook(true));
+    doc.look(Look::CloseMenu);
+    assert!(!doc.body_look_hovered);
+    assert!(doc.highlight().is_some());
+}
+
 /// Headless: right-clicking a body in Objects asks for its menu, which
 /// offers hiding and deleting it.
 #[test]
@@ -4822,6 +4842,87 @@ fn make_opaque_resets_the_opacity_in_one_step() {
     assert_eq!(body_opacity(&doc).1, percent(30));
 }
 
+/// The colour each part of `doc`'s mesh is drawn in.
+fn part_tints(doc: &Doc) -> Vec<Option<varde_render::BodyTint>> {
+    let state = doc.state(
+        false,
+        Mode::Light,
+        ViewOptions::default(),
+        Offers::default(),
+    );
+    state.part_tints().to_vec()
+}
+
+/// Dragging the Hue or Saturation slider in a body's context menu shows
+/// the body in that colour without editing the document, with no
+/// shortcuts nor peeking; letting go sets it as one undo step, the menu
+/// left open; Default colour takes it back as another.
+#[test]
+fn the_colour_sliders_preview_then_commit_one_step() {
+    use varde_document::Tint;
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let (body, _) = body_opacity(&doc);
+    let color = |doc: &Doc| doc.editor.document().body(body).unwrap().color;
+    assert!(!part_tints(&doc).is_empty());
+    assert!(part_tints(&doc).iter().all(Option::is_none));
+    let generation = doc.editor.generation();
+    let teal = Tint::new(180, 30).unwrap();
+
+    // Not without the body's menu open.
+    doc.look(Look::PreviewColor(body, teal));
+    assert_eq!(doc.color_preview, None);
+
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    // Nothing to take back yet.
+    doc.update(Edit::ResetColor(body));
+    assert_eq!(doc.editor.generation(), generation);
+    for hue in [20, 300, 180] {
+        doc.look(Look::PreviewColor(body, Tint::new(hue, 30).unwrap()));
+    }
+    let shown = Some(varde_view::body_tint(teal));
+    assert_eq!(doc.editor.generation(), generation);
+    assert_eq!(color(&doc), None);
+    assert!(part_tints(&doc).iter().all(|&tint| tint == shown));
+    assert!(doc.keys().is_none());
+    assert!(!doc.peeks(true));
+
+    doc.update(Edit::CommitColor);
+    assert_eq!(doc.color_preview, None);
+    assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
+    assert_eq!(color(&doc), Some(teal));
+    assert!(part_tints(&doc).iter().all(|&tint| tint == shown));
+    assert!(doc.keys().is_some());
+
+    doc.update(Edit::ResetColor(body));
+    assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
+    assert_eq!(color(&doc), None);
+    assert!(part_tints(&doc).iter().all(Option::is_none));
+    doc.update(Edit::Undo);
+    assert_eq!(color(&doc), Some(teal));
+    doc.update(Edit::Undo);
+    assert_eq!(color(&doc), None);
+}
+
+/// `Esc` mid-drag closes the menu and goes back to the body's own colour,
+/// and letting go after changes nothing.
+#[test]
+fn escape_drops_the_colour_preview() {
+    use varde_document::Tint;
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let (body, _) = body_opacity(&doc);
+    let generation = doc.editor.generation();
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    doc.look(Look::PreviewColor(body, Tint::new(90, 30).unwrap()));
+    doc.look(Look::Escape);
+    assert_eq!(doc.row_menu, None);
+    assert_eq!(doc.color_preview, None);
+    assert!(part_tints(&doc).iter().all(Option::is_none));
+    doc.update(Edit::CommitColor);
+    assert_eq!(doc.editor.generation(), generation);
+}
+
 /// Letting go of the slider where it started, or with nothing previewed,
 /// adds no history.
 #[test]
@@ -4891,6 +4992,13 @@ fn the_body_menu_s_opacity_slider_is_dragged() {
         update(&mut ui, iced::Event::Mouse(event), at);
     }
     drop(ui);
+    // Entering the Opacity part says so, for the viewport to leave the
+    // selection out.
+    assert!(
+        (sent.iter()).any(|sent| matches!(sent, Ui::Look(Look::HoverBodyLook(true)))),
+        "{sent:?}"
+    );
+    sent.retain(|sent| !matches!(sent, Ui::Look(Look::HoverBodyLook(_))));
     let [
         Ui::Look(Look::PreviewOpacity(first, low)),
         Ui::Look(Look::PreviewOpacity(_, dragged)),

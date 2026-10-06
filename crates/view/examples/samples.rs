@@ -645,6 +645,9 @@ impl Gpu {
         let opacity: Arc<[f32]> = (picking.bodies().iter())
             .map(|&body| document.body(body).map_or(1.0, |body| body.opacity.alpha()))
             .collect();
+        let tints: Arc<[_]> = (picking.bodies().iter())
+            .map(|&body| (document.body(body)?.color).map(varde_view::body_tint))
+            .collect();
         let shot = thumbnail_shot(&mesh, &Camera::default()).expect("a model to frame");
         let (send, read) = std::sync::mpsc::channel();
         varde_render::render_preview(
@@ -653,6 +656,7 @@ impl Gpu {
             &self.queue,
             &mesh,
             &opacity,
+            &tints,
             &shot,
             &ThumbnailRequest::COLORS,
             THUMBNAIL_SCALE as f32,

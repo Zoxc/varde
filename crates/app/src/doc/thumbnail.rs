@@ -56,11 +56,13 @@ struct Rendered {
     image: Option<Thumbnail>,
 }
 
-/// What a thumbnail shows: a mesh, its parts as opaque as `opacity` says.
+/// What a thumbnail shows: a mesh, its parts as opaque as `opacity` says
+/// and in the colours `tints` gives them.
 #[derive(Clone)]
 struct Of {
     mesh: Arc<RenderMesh>,
     opacity: Arc<[f32]>,
+    tints: Arc<[Option<varde_render::BodyTint>]>,
 }
 
 impl Of {
@@ -68,23 +70,28 @@ impl Of {
     /// renderer does, by their `Arc`s: the regeneration lane hands an
     /// unchanged model back as the same one, natively.
     fn is(&self, other: &Of) -> bool {
-        Arc::ptr_eq(&self.mesh, &other.mesh) && self.opacity == other.opacity
+        Arc::ptr_eq(&self.mesh, &other.mesh)
+            && self.opacity == other.opacity
+            && self.tints == other.tints
     }
 }
 
 impl Doc {
     /// What the thumbnail shows now: the committed model's mesh, its
-    /// parts as opaque as their bodies are. `None` before there's a
-    /// model.
+    /// parts as opaque and in the colours their bodies are. `None` before
+    /// there's a model.
     fn thumbnail_of(&self) -> Option<Of> {
         let (mesh, parts) = self.feed.committed()?;
         let document = self.editor.document();
         let opacity = parts
             .iter()
             .map(|&body| document.body(body).map_or(1.0, |body| body.opacity.alpha()));
+        let tints =
+            (parts.iter()).map(|&body| (document.body(body)?.color).map(varde_view::body_tint));
         Some(Of {
             mesh: mesh.clone(),
             opacity: opacity.collect(),
+            tints: tints.collect(),
         })
     }
 
@@ -108,6 +115,7 @@ impl Doc {
         let request = ThumbnailRequest::new(
             of.mesh.clone(),
             of.opacity.clone(),
+            of.tints.clone(),
             &Camera::default(),
             move |image| {
                 // Unless the document went meanwhile.

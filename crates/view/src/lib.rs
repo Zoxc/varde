@@ -65,7 +65,7 @@ mod welcome;
 use std::path::PathBuf;
 
 use glam::DVec2;
-use varde_document::{BodyId, FaceRef, FeatureId, Opacity, OriginPlane, Tolerance};
+use varde_document::{BodyId, FaceRef, FeatureId, Opacity, OriginPlane, Tint, Tolerance};
 use varde_expr::LengthUnit;
 use varde_render::{Projection, Shading, View};
 use varde_sketch::{Id, Sketch};
@@ -76,7 +76,7 @@ pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
     ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, LinkRow, MeshStatus,
     NamePrompt, Overlay, RecoveredChanges, RefusedEdit, SketchState, ValueField, ValueTarget,
-    document,
+    body_tint, document,
 };
 pub use errors::{ShownError, ShownErrors};
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
@@ -439,6 +439,13 @@ pub enum Edit {
     /// Makes the body fully opaque as one undo step, keeping the context
     /// menu open: the Opaque item under its Opacity slider.
     ResetOpacity(BodyId),
+    /// Sets the colour previewed ([`Look::PreviewColor`]) as one undo
+    /// step, keeping the context menu open: letting go of the Hue or
+    /// Saturation slider.
+    CommitColor,
+    /// Gives the body the theme's colour back as one undo step, keeping
+    /// the context menu open: the item under its Colour sliders.
+    ResetColor(BodyId),
     /// Changes the design's units.
     SetUnits(LengthUnit),
     /// Changes the design's tolerance, which regenerates everything.
@@ -570,6 +577,9 @@ pub enum Look {
     /// Shows the body as `Opacity` says while its context menu's slider is
     /// dragged, without changing the document.
     PreviewOpacity(BodyId, Opacity),
+    /// Shows the body in the colour `Tint` says while its context menu's
+    /// Hue or Saturation slider is dragged, without changing the document.
+    PreviewColor(BodyId, Tint),
     /// A click in the sketch being edited without a tool, or on a row of
     /// its Geometry list, on `hit` if anything: selects it alone, or
     /// nothing, or with `add` (`Ctrl`, or `Cmd` on macOS) adds it to the
@@ -750,6 +760,10 @@ pub enum Look {
     /// The cursor left an origin object's row in Objects: it's no longer
     /// hovered, unless another row was since (see [`Look::LeaveFeature`]).
     LeaveOrigin(OriginObject),
+    /// The cursor entered or left the Opacity and Colour part of a body's
+    /// context menu: the viewport leaves the selection out while it's
+    /// there, so the body shows as it's drawn.
+    HoverBodyLook(bool),
     /// A body's row in Objects hovered, or none: its faces are lit in the
     /// viewport while it is.
     HoverBodyRow(Option<BodyId>),

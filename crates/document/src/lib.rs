@@ -33,6 +33,7 @@ mod split;
 mod sweep;
 #[cfg(test)]
 mod testing;
+mod tint;
 
 pub use align::{Align, AlignError, AlignRefs, DirRef, PointRef};
 pub use blend::{BlendEdgesError, MAX_BLEND_EDGES, check_blend_edges_own};
@@ -64,6 +65,7 @@ pub use sweep::{
     CurveChain, Helix, MAX_HELIX_TURNS, MAX_PATH_CURVES, MAX_PATH_PARTS, MAX_SWEEP_REGIONS,
     MAX_TWIST_TURNS, MIN_HELIX_TURNS, Orientation, PathPart, PathRef, Sweep, SweepError,
 };
+pub use tint::Tint;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -125,6 +127,11 @@ pub struct Body {
     /// How opaque it's drawn, in range in a checked document, see
     /// [`Opacity`].
     pub opacity: Opacity,
+    /// The colour it's drawn in, if not the theme's: in range in a
+    /// checked document, see [`Tint`]. Missing in older files, which read
+    /// as none.
+    #[serde(default)]
+    pub color: Option<Tint>,
     /// The feature that makes the body, listed in the document.
     pub created_by: FeatureId,
 }
@@ -302,7 +309,8 @@ impl Document {
     /// increasing order and below `next_id`, so bodies added later get new
     /// ids and come last, where an edit adds them, and the same for
     /// feature ids; no name is longer than [`MAX_NAME_LEN`]; every body's
-    /// opacity is one [`Opacity::new`] takes; the tolerance is one
+    /// opacity is one [`Opacity::new`] takes, and its colour, if it has one,
+    /// one [`Tint::new`] takes; the tolerance is one
     /// [`Tolerance::new`] takes; every body is made by an extrude,
     /// revolve, sweep, loft or split the document holds that names it as its new
     /// body, and every such body is there, or by a pattern listing it as a copy
@@ -386,6 +394,9 @@ impl Document {
             }
             if !body.opacity.in_range() {
                 return Err(CheckError::Opacity(id, body.opacity.percent()));
+            }
+            if let Some(tint) = body.color.filter(|tint| !tint.in_range()) {
+                return Err(CheckError::Tint(id, tint.hue(), tint.saturation()));
             }
             let made = match self.feature(body.created_by).map(|feature| &feature.kind) {
                 Some(FeatureKind::Pattern(_)) => {
@@ -1146,6 +1157,9 @@ pub enum CheckError {
     /// A body's opacity is this percent, out of [`Opacity::MIN`] to
     /// [`Opacity::MAX`].
     Opacity(BodyId, u8),
+    /// A body's colour is this hue and saturation, out of what
+    /// [`Tint::new`] takes.
+    Tint(BodyId, u16, u8),
     /// A body's maker isn't an extrude, revolve, sweep, loft or split the document
     /// holds that makes it as its new body, or a pattern (whose own check
     /// holds it to the copy bodies it lists).
@@ -1223,6 +1237,13 @@ impl fmt::Display for CheckError {
                 id.0,
                 Opacity::MIN,
                 Opacity::MAX
+            ),
+            CheckError::Tint(id, hue, saturation) => write!(
+                f,
+                "body {} has a colour of hue {hue}° and saturation {saturation} %, not below 360° \
+                 and at most {} %",
+                id.0,
+                Tint::MAX_SATURATION
             ),
             CheckError::Creator(id, feature) => write!(
                 f,

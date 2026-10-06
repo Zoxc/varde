@@ -77,6 +77,44 @@ fn new_bodies_are_opaque() {
     assert!(editor.document().body(body).unwrap().opacity.is_opaque());
 }
 
+/// A body's colour is set and taken back to the theme's as one undo step
+/// each; setting it as it is adds none.
+#[test]
+fn set_color_undoes_and_redoes() {
+    let mut editor = Editor::new(with_body());
+    let id = editor.document().bodies[0].id;
+    assert_eq!(editor.document().bodies[0].color, None);
+    let teal = Tint::new(180, 30);
+    editor.apply(Command::SetColor(id, teal)).unwrap();
+    assert_eq!(editor.document().bodies[0].color, teal);
+    let set = editor.revision();
+    editor.apply(Command::SetColor(id, teal)).unwrap();
+    assert_eq!(editor.revision(), set);
+    editor.apply(Command::SetColor(id, None)).unwrap();
+    assert_eq!(editor.document().bodies[0].color, None);
+    editor.undo();
+    assert_eq!(editor.document().bodies[0].color, teal);
+    assert_eq!(editor.revision(), set);
+    editor.undo();
+    assert_eq!(editor.document().bodies[0].color, None);
+    editor.redo();
+    assert_eq!(editor.document().bodies[0].color, teal);
+}
+
+#[test]
+fn check_refuses_a_color_out_of_range() {
+    let mut document = with_body();
+    let id = document.bodies[0].id;
+    for (hue, saturation) in [(360, 0), (0, Tint::MAX_SATURATION + 1), (u16::MAX, u8::MAX)] {
+        // Deserializing doesn't check the range: the document does.
+        let bytes = postcard::to_allocvec(&(hue, saturation)).unwrap();
+        document.bodies[0].color = Some(postcard::from_bytes(&bytes).unwrap());
+        assert_eq!(document.check(), Err(CheckError::Tint(id, hue, saturation)));
+    }
+    document.bodies[0].color = Tint::new(359, Tint::MAX_SATURATION);
+    assert_eq!(document.check(), Ok(()));
+}
+
 #[test]
 fn snapshot_is_shared_and_unaffected_by_edits() {
     let mut editor = Editor::new(with_body());

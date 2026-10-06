@@ -8,7 +8,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use varde_kernel::RenderMesh;
-use varde_render::{Camera, Colors, PreviewImage, PreviewShot};
+use varde_render::{BodyTint, Camera, Colors, PreviewImage, PreviewShot};
 
 use crate::theme::Mode;
 
@@ -25,13 +25,16 @@ pub const THUMBNAIL_SCALE: u32 = 2;
 const MARGIN: u32 = 6;
 
 /// A thumbnail for the viewport to render, taken by its first frame
-/// drawn: `mesh`, its parts as opaque as `opacity` says, as `shot`
+/// drawn: `mesh`, its parts as opaque as `opacity` says and in the
+/// colours `tints` gives them, as `shot`
 /// frames it, in each theme's colours. What it's handed to is called with
 /// the pixels read back, or with `None` should that fail, and dropped
 /// uncalled should it not be drawn at all.
 pub struct ThumbnailRequest {
     pub mesh: Arc<RenderMesh>,
     pub opacity: Arc<[f32]>,
+    /// The colour of each of its parts, see `varde_render::Frame::tints`.
+    pub tints: Arc<[Option<BodyTint>]>,
     pub shot: PreviewShot,
     done: Mutex<Option<Done>>,
 }
@@ -47,7 +50,8 @@ pub struct ThumbnailImages {
 type Done = Box<dyn FnOnce(Option<ThumbnailImages>) + Send>;
 
 impl ThumbnailRequest {
-    /// The thumbnail of `mesh`, its parts as opaque as `opacity` says,
+    /// The thumbnail of `mesh`, its parts as opaque as `opacity` says and
+    /// in the colours `tints` gives them,
     /// looking from where the home camera does, framed to fit
     /// [`THUMBNAIL_ROOM`] at [`THUMBNAIL_SCALE`] and cropped to the model,
     /// handing its pixels to `done`. `None` for a mesh with nothing to
@@ -55,6 +59,7 @@ impl ThumbnailRequest {
     pub fn new(
         mesh: Arc<RenderMesh>,
         opacity: Arc<[f32]>,
+        tints: Arc<[Option<BodyTint>]>,
         home: &Camera,
         done: impl FnOnce(Option<ThumbnailImages>) + Send + 'static,
     ) -> Option<Arc<ThumbnailRequest>> {
@@ -62,6 +67,7 @@ impl ThumbnailRequest {
         Some(Arc::new(ThumbnailRequest {
             mesh,
             opacity,
+            tints,
             shot,
             done: Mutex::new(Some(Box::new(done))),
         }))

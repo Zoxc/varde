@@ -32,7 +32,7 @@ use iced::time::Instant;
 use varde_document::name::UNTITLED;
 use varde_document::{
     BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, Opacity,
-    Plane, Removable, Removal, Revision, Tolerance,
+    Plane, Removable, Removal, Revision, Tint, Tolerance,
 };
 use varde_io::{Access, Damage, DamageKind, LastDownload, Offer, OpenId, UnixSeconds};
 use varde_render::{Camera, Projection};
@@ -161,6 +161,13 @@ pub(crate) struct Doc {
     /// A body's opacity previewed while its context menu's slider is
     /// dragged: only while that menu is open ([`Doc::preview_opacity`]).
     pub(crate) opacity_preview: Option<(BodyId, Opacity)>,
+    /// Whether the cursor is over the Opacity and Colour part of a body's
+    /// context menu: the viewport leaves the selection out meanwhile.
+    pub(crate) body_look_hovered: bool,
+    /// A body's colour previewed while its context menu's Hue or
+    /// Saturation slider is dragged: only while that menu is open
+    /// ([`Doc::preview_color`]).
+    pub(crate) color_preview: Option<(BodyId, Tint)>,
     /// The sketch being edited, if one is.
     pub(crate) sketch: Option<SketchSession>,
     /// The extrude being set up, if one is: never with a sketch.
@@ -406,6 +413,8 @@ impl Doc {
             objects_folded: [varde_view::ObjectGroup::Origin].into(),
             overlaps: None,
             opacity_preview: None,
+            body_look_hovered: false,
+            color_preview: None,
             sketch: None,
             extrude: None,
             revolve: None,
@@ -545,7 +554,10 @@ impl Doc {
         self.end_refusal();
         self.notice = None;
         // Letting go of the Opacity slider leaves its menu open, to go on.
-        if !matches!(message, Edit::CommitOpacity | Edit::ResetOpacity(_)) {
+        if !matches!(
+            message,
+            Edit::CommitOpacity | Edit::ResetOpacity(_) | Edit::CommitColor | Edit::ResetColor(_)
+        ) {
             self.row_menu = None;
         }
         // Any other edit, a click of the Dimension tool included, leaves
@@ -622,6 +634,18 @@ impl Doc {
                     self.change(Change::SetOpacity(id, Opacity::MAX));
                 }
             }
+            Edit::CommitColor => {
+                if let Some((id, tint)) = self.color_preview.take() {
+                    self.change(Change::SetColor(id, Some(tint)));
+                }
+            }
+            Edit::ResetColor(id) => {
+                self.color_preview = None;
+                let colored = (self.editor.document().body(id)).is_some_and(|b| b.color.is_some());
+                if colored {
+                    self.change(Change::SetColor(id, None));
+                }
+            }
             Edit::CommitRename => self.commit_rename(),
             Edit::SetUnits(units) => self.change(Change::SetUnits(units)),
             Edit::SetTolerance(tolerance) => self.change(Change::SetTolerance(tolerance)),
@@ -677,6 +701,7 @@ impl Doc {
             } => self.set_sketch_plane(feature, plane, placed, enter),
             // Nothing if it's as it was: the editor adds no undo step.
             Change::SetOpacity(id, opacity) => self.apply(Command::SetOpacity(id, opacity)),
+            Change::SetColor(id, color) => self.apply(Command::SetColor(id, color)),
             Change::SetUnits(units) => self.apply(Command::SetUnits(units)),
             Change::SetTolerance(tolerance) => self.apply(Command::SetTolerance(tolerance)),
             Change::Rename(command) => self.apply(command),
@@ -737,6 +762,7 @@ impl Doc {
                     | Look::LeaveOrigin(_)
                     | Look::HoverBodyRow(_)
                     | Look::LeaveBodyRow(_)
+                    | Look::HoverBodyLook(_)
                     | Look::HoverPanel(_)
                     | Look::LeavePanel(_)
                     | Look::HoverCube(_)
@@ -799,6 +825,7 @@ impl Doc {
                 | Look::LeaveOrigin(_)
                 | Look::HoverBodyRow(_)
                 | Look::LeaveBodyRow(_)
+                | Look::HoverBodyLook(_)
                 | Look::HoverPanel(_)
                 | Look::LeavePanel(_)
                 | Look::HoverCube(_)
@@ -820,6 +847,7 @@ impl Doc {
             message,
             Look::OpenMenu(_)
                 | Look::PreviewOpacity(..)
+                | Look::PreviewColor(..)
                 | Look::Escape
                 | Look::HoverItem(_)
                 | Look::HoverLink(_)
@@ -832,6 +860,7 @@ impl Doc {
                 | Look::LeaveOrigin(_)
                 | Look::HoverBodyRow(_)
                 | Look::LeaveBodyRow(_)
+                | Look::HoverBodyLook(_)
                 | Look::HoverPanel(_)
                 | Look::LeavePanel(_)
                 | Look::Hover(_)
@@ -974,6 +1003,7 @@ impl Doc {
             Look::OpenMenu(menu) => self.open_menu(menu),
             Look::CloseMenu => {}
             Look::PreviewOpacity(id, opacity) => self.preview_opacity(id, opacity),
+            Look::PreviewColor(id, tint) => self.preview_color(id, tint),
             Look::ClickGeometry { hit, add } => self.click_geometry(hit, add),
             // The app turns this into a `ClickGeometry`, knowing the keys
             // held; alone, it selects.
@@ -1016,6 +1046,7 @@ impl Doc {
                     self.refresh_highlight();
                 }
             }
+            Look::HoverBodyLook(hovered) => self.body_look_hovered = hovered,
             Look::HoverSketch(_) if self.overlaps.is_some() => {}
             Look::HoverSketch(item) => self.hover_sketch(item),
             Look::ClickSketch { item, .. } if self.picks_outside() => {
@@ -1189,11 +1220,29 @@ impl Doc {
         }
     }
 
-    /// Drops the opacity previewed unless its body's context menu, and so
-    /// the slider, is still open.
+    /// Previews `tint` for the body `id` as [`Doc::preview_opacity`] does
+    /// its opacity: [`Edit::CommitColor`] commits it on letting go.
+    fn preview_color(&mut self, id: BodyId, tint: Tint) {
+        if self.editable() && self.row_menu == Some(RowMenu::Body(id)) {
+            self.color_preview = Some((id, tint));
+        }
+    }
+
+    /// Drops the opacity and colour previewed unless their body's context
+    /// menu, and so the sliders, is still open.
     fn prune_preview(&mut self) {
         let menu = self.row_menu;
+        if !matches!(menu, Some(RowMenu::Body(_))) {
+            self.body_look_hovered = false;
+        }
         (self.opacity_preview).take_if(|(id, _)| menu != Some(RowMenu::Body(*id)));
+        (self.color_preview).take_if(|(id, _)| menu != Some(RowMenu::Body(*id)));
+    }
+
+    /// Whether a slider of a body's context menu is being dragged: its
+    /// opacity or colour is previewed.
+    pub(crate) fn sliding(&self) -> bool {
+        self.opacity_preview.is_some() || self.color_preview.is_some()
     }
 
     /// Starts sending requests to `lane`, the document's regeneration
@@ -1244,10 +1293,10 @@ impl Doc {
 
     /// What the document screen's shortcuts depend on, or `None` while
     /// the user is asked about unsaved changes or deleting, or drags the
-    /// Opacity slider: no key changes the document behind the prompt, or
-    /// before the opacity is committed.
+    /// Opacity or a Colour slider: no key changes the document behind the prompt, or
+    /// before the opacity or colour is committed.
     pub(crate) fn keys(&self) -> Option<DocumentKeys> {
-        let dragging = self.opacity_preview.is_some();
+        let dragging = self.sliding();
         (self.dialog().is_none() && !dragging).then(|| {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_face_selected(self.selected_face().is_some())
@@ -1285,10 +1334,10 @@ impl Doc {
 
     /// Whether the other panel tab shows with the peek key `held`: not in
     /// the Dimension tool, where it's held to place references, nor while
-    /// the Opacity slider is dragged, which would go with its tab and so
+    /// a body's Opacity or Colour slider is dragged, which would go with its tab and so
     /// never see its release.
     pub(crate) fn peeks(&self, held: bool) -> bool {
-        held && !self.dimensioning() && self.opacity_preview.is_none()
+        held && !self.dimensioning() && !self.sliding()
     }
 
     /// Takes `message`, an answer for this document: the app has checked
@@ -1362,6 +1411,8 @@ impl Doc {
             mesh: self.feed.mesh(),
             parts: self.feed.parts(),
             opacity_preview: self.opacity_preview,
+            body_look_hovered: self.body_look_hovered,
+            color_preview: self.color_preview,
             renaming: (self.renaming.as_ref())
                 .map(|renaming| (renaming.target, renaming.text.as_str())),
             sketches: self.feed.sketches(),
@@ -1464,6 +1515,7 @@ pub(crate) enum Change {
     ToggleVisible(BodyId),
     ToggleFeatureVisible(FeatureId),
     SetOpacity(BodyId, Opacity),
+    SetColor(BodyId, Option<Tint>),
     NewSketch(Plane),
     /// Puts the sketch `feature` on `plane`, where it's `placed` if
     /// that's a face (as worked out where it was picked), and edits it if

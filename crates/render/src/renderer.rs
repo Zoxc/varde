@@ -319,6 +319,11 @@ pub struct Frame<'a> {
     /// within half an 8 bit step of 1. Ignored while [`Self::faded`].
     /// Changing it re-uploads nothing.
     pub opacity: &'a [f32],
+    /// The colour each of the mesh's parts is drawn in, in the same order:
+    /// [`Colors::model`] tinted ([`Srgb::tinted`]) for one with a tint,
+    /// as is for one with none or no entry. Faded too. Changing it
+    /// re-uploads nothing of the mesh.
+    pub tints: &'a [Option<BodyTint>],
     /// Finished sketches' curves, drawn with the model as lines
     /// [`LINE_WIDTH`] wide, hidden by what's in front of them. Only
     /// re-uploaded when it's another `Arc` than the last one prepared.
@@ -439,6 +444,54 @@ pub struct Pivot {
 /// converts it for its target.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Srgb(pub [f32; 3]);
+
+/// A colour of a body's own: a hue and a saturation, its lightness the
+/// colour it's applied to's ([`Srgb::tinted`]).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BodyTint {
+    /// In degrees round the colour wheel.
+    pub hue: f32,
+    /// From 0, grey, to 1.
+    pub saturation: f32,
+}
+
+impl Srgb {
+    /// This colour with `tint`'s hue and saturation, keeping its HSL
+    /// lightness: how a body's own colour is drawn on the theme's model
+    /// colour, lit as it is. The saturation sets the chroma
+    /// ([`TINT_CHROMA`] at 1) rather than HSL's share of what the
+    /// lightness allows, so a colour is as vivid on a pale model as on a
+    /// dark one, up to what the lightness allows. A hue not finite is 0, a
+    /// saturation out of range clamped to it (NaN is grey).
+    pub fn tinted(self, tint: BodyTint) -> Srgb {
+        let [r, g, b] = self
+            .0
+            .map(|c| if c.is_nan() { 0.0 } else { c.clamp(0.0, 1.0) });
+        let lightness = (r.max(g).max(b) + r.min(g).min(b)) / 2.0;
+        let hue = if tint.hue.is_finite() {
+            tint.hue.rem_euclid(360.0)
+        } else {
+            0.0
+        };
+        let saturation = if tint.saturation.is_nan() {
+            0.0
+        } else {
+            tint.saturation.clamp(0.0, 1.0)
+        };
+        let chroma = (TINT_CHROMA * saturation).min(1.0 - (2.0 * lightness - 1.0).abs());
+        // Each channel's distance round the wheel from its peak, in sixths.
+        let channel = |n: f32| {
+            let k = (n + hue / 30.0).rem_euclid(12.0);
+            lightness - chroma / 2.0 * (k - 3.0).min(9.0 - k).clamp(-1.0, 1.0)
+        };
+        Srgb([channel(0.0), channel(8.0), channel(4.0)].map(|c| c.clamp(0.0, 1.0)))
+    }
+}
+
+/// The chroma of a [`BodyTint`] of saturation 1, where the lightness
+/// allows it: tints are drawn at this share of it, whatever the model
+/// colour's lightness ([`Srgb::tinted`]).
+pub const TINT_CHROMA: f32 = 0.6;
 
 /// Scene colours, from the UI theme.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -645,6 +698,10 @@ const EDGE_SLOTS: u32 = 4;
 // (the browser's WebGL2) allows strides up to 255.
 const _: () = assert!(size_of::<EdgePoint>() == 20);
 
+/// The size of an entry of a slot's tints: a linear colour, w unused. See
+/// [`Slot::tints`].
+const TINT_SIZE: u64 = 16;
+
 /// The most alphas a part can be drawn at, from 0 to 1: 8 bits' worth, as
 /// fine as the target shows. See [`Alphas`].
 const ALPHA_STEPS: u32 = 256;
@@ -844,15 +901,25 @@ struct PartDraws {
 }
 
 impl PartDraws {
-    /// How `parts` are drawn at `opacity`, at `alphas`' steps, seen from
-    /// `camera`.
-    fn new(parts: &[GpuPart], opacity: &[f32], alphas: &Alphas, camera: &Camera) -> PartDraws {
+    /// How `parts` are drawn at `opacity`, at `alphas`' steps, in the
+    /// colours of `tints`' entries ([`Slot::part_tints`]), seen from
+    /// `camera`. A run of opaque parts is of one colour.
+    fn new(
+        parts: &[GpuPart],
+        opacity: &[f32],
+        tints: &[u32],
+        alphas: &Alphas,
+        camera: &Camera,
+    ) -> PartDraws {
         let mut draws = PartDraws::default();
+        let tint = |i: usize| tints.get(i).copied().unwrap_or(0);
         for i in 0..parts.len() {
             let step = alphas.step(opacity.get(i).copied());
             if step < alphas.opaque {
                 draws.transparent.push((i, step));
-            } else if let Some(run) = draws.opaque.last_mut().filter(|run| run.end == i) {
+            } else if let Some(run) =
+                (draws.opaque.last_mut()).filter(|run| run.end == i && tint(run.start) == tint(i))
+            {
                 run.end = i + 1;
             } else {
                 draws.opaque.push(i..i + 1);
@@ -1121,6 +1188,9 @@ pub struct Renderer {
     errors: ErrorPipelines,
     bind_group_layout: wgpu::BindGroupLayout,
     alphas: Alphas,
+    /// How far apart the entries of a slot's tints are, in bytes: see
+    /// [`Slot::tints`].
+    tint_stride: u32,
     depth_format: wgpu::TextureFormat,
     /// The target's format, which the pipelines are built for.
     format: wgpu::TextureFormat,
@@ -1134,7 +1204,17 @@ pub struct Renderer {
 /// keeps its mesh uploaded.
 pub struct Slot {
     uniforms: wgpu::Buffer,
+    /// Group 0: the uniforms, and the tints at a dynamic offset.
     bind_group: wgpu::BindGroup,
+    /// The colours the mesh's parts are drawn in, linear, an entry each
+    /// [`Renderer::tint_stride`] apart: the first [`Colors::model`], then
+    /// one for each other colour of [`Frame::tints`]. Written each
+    /// prepare; made again, with the bind group, when it needs more room.
+    tints: wgpu::Buffer,
+    /// How many entries `tints` holds.
+    tint_room: u32,
+    /// The entry of `tints` each part of the mesh is drawn in.
+    part_tints: Vec<u32>,
     mesh: Option<GpuMesh>,
     /// The [`Frame::mesh`] `mesh` was uploaded from, or skipped for. Holding
     /// it keeps the allocation from being reused for another mesh, and
@@ -1214,7 +1294,37 @@ impl Renderer {
                 }],
             })
         };
-        let bind_group_layout = uniform_layout("varde uniforms", size_of::<Uniforms>(), false);
+        // The uniforms, and at binding 3 (the errors' group 0 has 1 and 2)
+        // the colour of the part drawn, at a dynamic offset into the
+        // slot's tints: see `Slot::tints`. Group 0 rather than a group of
+        // its own: iced asks the device for two bind groups only.
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("varde uniforms"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(size_of::<Uniforms>() as u64),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(TINT_SIZE),
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let tint_stride =
+            (device.limits().min_uniform_buffer_offset_alignment).max(TINT_SIZE as u32);
         // How opaque the part drawn is, at a dynamic offset into the
         // alphas' buffer: see `Alphas`. Every pipeline has it, so
         // it's bound once for all of them.
@@ -1876,6 +1986,7 @@ impl Renderer {
             },
             bind_group_layout,
             alphas,
+            tint_stride,
             depth_format,
             format,
         }
@@ -1886,6 +1997,95 @@ impl Renderer {
         self.format
     }
 
+    /// A slot's tints' buffer with room for `room` entries, and its group
+    /// 0 binding it with `uniforms`.
+    fn tints(
+        &self,
+        device: &wgpu::Device,
+        uniforms: &wgpu::Buffer,
+        room: u32,
+    ) -> (wgpu::Buffer, wgpu::BindGroup) {
+        let tints = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("varde tints"),
+            size: u64::from(room) * u64::from(self.tint_stride),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("varde uniforms"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniforms.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &tints,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(TINT_SIZE),
+                    }),
+                },
+            ],
+        });
+        (tints, bind_group)
+    }
+
+    /// Writes the colours `frame`'s parts are drawn in to `slot`'s tints,
+    /// making room for them if they need it and the device has it; a
+    /// part whose colour finds none is drawn in the model's.
+    fn write_tints(
+        &self,
+        slot: &mut Slot,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &Frame<'_>,
+    ) {
+        let parts = slot.mesh.as_ref().map_or(0, |mesh| mesh.parts.len());
+        let model = frame.colors.model;
+        let mut colors = vec![linear(model)];
+        slot.part_tints.clear();
+        let most = (device.limits().max_buffer_size / u64::from(self.tint_stride)).max(1);
+        for i in 0..parts {
+            let Some(tint) = frame.tints.get(i).copied().flatten() else {
+                slot.part_tints.push(0);
+                continue;
+            };
+            let color = linear(model.tinted(tint));
+            let entry = match colors.iter().position(|&c| c == color) {
+                Some(at) => at,
+                None if (colors.len() as u64) < most => {
+                    colors.push(color);
+                    colors.len() - 1
+                }
+                None => 0,
+            };
+            // At most the parts' count plus one, well within u32.
+            slot.part_tints.push(entry as u32);
+        }
+        // Within `most`, which fits a buffer.
+        let needed = colors.len() as u32;
+        if needed > slot.tint_room {
+            let room = needed.next_power_of_two().min(most as u32).max(needed);
+            (slot.tints, slot.bind_group) = self.tints(device, &slot.uniforms, room);
+            slot.tint_room = room;
+        }
+        let stride = self.tint_stride as usize;
+        let mut bytes = vec![0u8; colors.len() * stride];
+        for (color, entry) in colors.iter().zip(bytes.chunks_exact_mut(stride)) {
+            entry[..TINT_SIZE as usize].copy_from_slice(bytemuck::bytes_of(color));
+        }
+        queue.write_buffer(&slot.tints, 0, &bytes);
+    }
+
+    /// Binds `slot`'s group 0 with `part`'s colour, the model's if it's
+    /// none of the mesh's parts.
+    fn set_tint(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot, part: usize) {
+        let entry = slot.part_tints.get(part).copied().unwrap_or(0);
+        pass.set_bind_group(0, &slot.bind_group, &[entry * self.tint_stride]);
+    }
+
     /// Creates a slot to draw a scene with, empty until it's prepared.
     pub fn slot(&self, device: &wgpu::Device) -> Slot {
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1894,17 +2094,13 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("varde uniforms"),
-            layout: &self.bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniforms.as_entire_binding(),
-            }],
-        });
+        let (tints, bind_group) = self.tints(device, &uniforms, 1);
         Slot {
             uniforms,
             bind_group,
+            tints,
+            tint_room: 1,
+            part_tints: Vec::new(),
             mesh: None,
             source: Weak::new(),
             lines: None,
@@ -2003,8 +2199,9 @@ impl Renderer {
                 };
             }
         }
+        self.write_tints(slot, device, queue, frame);
         let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
-        slot.draws = PartDraws::new(parts, opacity, &self.alphas, frame.camera);
+        slot.draws = PartDraws::new(parts, opacity, &slot.part_tints, &self.alphas, frame.camera);
 
         // What's hovered and selected names the mesh's faces, edges and
         // vertices, so it's written again with the mesh too.
@@ -2297,7 +2494,7 @@ impl Renderer {
         let vp = slot.viewport;
         pass.set_viewport(vp.x, vp.y, vp.width, vp.height, 0.0, 1.0);
         pass.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
-        pass.set_bind_group(0, &slot.bind_group, &[]);
+        pass.set_bind_group(0, &slot.bind_group, &[0]);
         self.alphas.set(&mut pass, self.alphas.opaque);
         pass
     }
@@ -2347,7 +2544,7 @@ impl Renderer {
         let cores = Some(errors.cores);
         self.draw_error_layers(&mut pass, layers, [dimmed, opaque], errors, cores);
         self.alphas.set(&mut pass, opaque);
-        pass.set_bind_group(0, &slot.bind_group, &[]);
+        pass.set_bind_group(0, &slot.bind_group, &[0]);
         self.draw_sketch(&mut pass, slot);
     }
 
@@ -2416,8 +2613,14 @@ impl Renderer {
                 let all = 0..mesh.parts.len();
                 pass.set_pipeline(&self.mesh_depth);
                 draw_faces(pass, mesh, all.clone());
+                // Faded, every part is opaque to `draws`, in runs of a
+                // colour.
                 pass.set_pipeline(&self.mesh_faded);
-                draw_faces(pass, mesh, all.clone());
+                for run in &draws.opaque {
+                    self.set_tint(pass, slot, run.start);
+                    draw_faces(pass, mesh, run.clone());
+                }
+                pass.set_bind_group(0, &slot.bind_group, &[0]);
                 // What a sketch's tool picks of the model, over it.
                 self.draw_picked_faces(pass, &slot.faces, false);
                 draw_edges(pass, &self.edges, mesh, all.clone());
@@ -2425,8 +2628,10 @@ impl Renderer {
             } else {
                 pass.set_pipeline(&self.mesh);
                 for run in &draws.opaque {
+                    self.set_tint(pass, slot, run.start);
                     draw_faces(pass, mesh, run.clone());
                 }
+                pass.set_bind_group(0, &slot.bind_group, &[0]);
                 // Before anything else writes depth where they are.
                 self.draw_picked_faces(pass, &slot.faces, false);
                 for run in &draws.opaque {
@@ -2498,12 +2703,14 @@ impl Renderer {
             pass.set_pipeline(&self.glass_back);
             for &(part, step) in &draws.transparent {
                 self.alphas.set(pass, step);
+                self.set_tint(pass, slot, part);
                 draw_faces(pass, mesh, part..part + 1);
             }
             // Each part's front faces over their own depth, so only the
             // nearest are blended, not whichever come last.
             for &(part, step) in &draws.transparent {
                 self.alphas.set(pass, step);
+                self.set_tint(pass, slot, part);
                 for pipeline in [&self.mesh_depth, &self.glass_front] {
                     pass.set_pipeline(pipeline);
                     draw_faces(pass, mesh, part..part + 1);
@@ -2523,6 +2730,7 @@ impl Renderer {
             // What's in front of the glass, drawn under it above, again
             // over it where it's the nearest.
             pass.set_stencil_reference(0);
+            pass.set_bind_group(0, &slot.bind_group, &[0]);
             self.alphas.set(pass, self.alphas.opaque);
             if let Some(lines) = slot.lines.as_ref().filter(|_| backdrop) {
                 pass.set_pipeline(&self.lines_over_glass);

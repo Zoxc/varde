@@ -95,6 +95,7 @@ fn frame<'a>(
         camera,
         mesh,
         opacity: &[],
+        tints: &[],
         sketches,
         grid: GridPlane::XY,
         faded: false,

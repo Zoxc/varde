@@ -265,7 +265,10 @@ postcard instead (`varde_document::codec`).
 ## Documents
 
 A document (`crates/document/src/lib.rs`) holds its bodies (a name,
-whether it's visible, its opacity, a `u8` percent, and the extrude,
+whether it's visible, its opacity, a `u8` percent, its colour if it
+has one of its own (`color`, `#[serde(default)]`, so older files read as
+none: a `Tint`, a hue in degrees and a saturation percent), and the
+extrude,
 revolve or pattern that makes it: no geometry, which regenerating the feature
 history gives), its features (a name, whether it's visible, and a kind,
 stored by its variant name in `FeatureKind`: a sketch, an
@@ -405,7 +408,8 @@ edge, a sketch's face or an align's corner are), the design's units (a
 bodies and features take. A document read from a file is checked
 (`Document::check`, which runs `Sketch::check` on each sketch): body and
 feature ids increasing and below the next id, every body's opacity from
-10 to 100, every body made by an
+10 to 100, every body's colour's hue below 360 and saturation at most
+30 %, every body made by an
 extrude, revolve or sweep the document holds whose operation makes it as its
 new body, or a split naming it as its new body, and every such body there, or by a pattern listing it as a
 copy body (one per copy, none repeated, every body it makes listed, at

@@ -428,6 +428,24 @@ opaque one, and only an alpha of 0 gets the first, so a faint part is
 drawn a step up rather than not at all. In a sketch every part is drawn
 faded alike at `faded_alpha`, whatever its opacity.
 
+Each body is drawn in its own colour if it has one (`Body::color`, a
+`Tint`: hue and saturation), or as its menu's Colour sliders have it
+while dragged (`DocumentState::color_preview`, `shown_color`), else in
+`Colors::model`; a merged body's parts are its holder's, as for
+opacity. The view hands the frame a `BodyTint` per part (`Frame::tints`,
+`DocumentState::part_tints`, `body_tint`), and the renderer gives the
+part `Srgb::tinted`: the model colour's HSL lightness with the tint's
+hue, so each theme keeps its shading (the thumbnail's light and dark
+images too), and a chroma of the saturation times `TINT_CHROMA` (capped
+by what the lightness allows) rather than HSL's share of the most the
+lightness allows, which left a colour far duller on the light theme's
+pale model than on the dark one's. The colours are written each prepare to the
+slot's tints buffer (`Slot::tints`: the model's first, then each other
+colour once), bound at group 0 binding 3 (iced allows two groups; the
+errors' group 0 has 1 and 2) at the part's entry's dynamic offset;
+`fs_mesh` reads its base colour from it. Runs of opaque parts split
+where the colour changes, faded included, each a draw.
+
 Outside a sketch, the passes round the glass (the parts less than
 opaque) go:
 

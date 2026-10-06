@@ -179,6 +179,7 @@ fn frame<'a>(
         camera,
         mesh,
         opacity: &[],
+        tints: &[],
         sketches: &NO_LINES,
         grid: hidden_grid(),
         faded,

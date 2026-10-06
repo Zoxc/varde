@@ -2162,3 +2162,24 @@ fn shots_33_op_knobs() {
         );
     });
 }
+
+/// Scenario 34: a body coloured, its menu open over the Colour part, in
+/// light and dark, to compare how saturated it looks.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_34_body_colour() {
+    shooting(|camera| {
+        let (mut doc, requests) = example();
+        let body = doc.editor.document().bodies()[0].id;
+        let tint = varde_document::Tint::new(200, varde_document::Tint::MAX_SATURATION).unwrap();
+        doc.apply(Command::SetColor(body, Some(tint)));
+        answer(&mut doc, &requests);
+        framed(&mut doc);
+        doc.look(Look::SelectPanel(varde_view::Panel::Objects));
+        doc.look(Look::OpenMenu(varde_view::RowMenu::Body(body)));
+        doc.look(Look::HoverBodyLook(true));
+        let hovered = Shot::new().pointer(Pointer::Over("Colour"));
+        camera.take(&doc, "34-body-colour", hovered);
+        camera.take(&doc, "34-body-colour-dark", hovered.dark());
+    });
+}

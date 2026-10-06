@@ -804,7 +804,7 @@ impl Doc {
     }
 
     /// Backs out of whatever is open, the innermost first: the delete
-    /// prompt, a drag of the Opacity slider with its context menu, the
+    /// prompt, a drag of a body's Opacity or Colour slider with its context menu, the
     /// rail's list, a row's context menu, the file menu, the view options
     /// menu, picking a plane, the operation being set up, the
     /// value field, a label grabbed, the drag of geometry, the shape the
@@ -814,7 +814,9 @@ impl Doc {
     pub(crate) fn escape(&mut self) {
         if self.deleting.is_some() {
             self.deleting = None;
-        } else if self.opacity_preview.take().is_some() {
+        } else if self.sliding() {
+            self.opacity_preview = None;
+            self.color_preview = None;
             self.row_menu = None;
         } else if self.rail.open.is_some() {
             self.rail.close();

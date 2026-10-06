@@ -575,6 +575,10 @@ impl Doc {
     /// What the viewport draws over the model, if anything: nothing while
     /// the cursor doesn't pick it.
     pub(crate) fn highlight(&self) -> Option<&Arc<ModelHighlight>> {
+        // A body's Opacity or Colour hovered or slid shows it as drawn.
+        if self.body_look_hovered || self.sliding() {
+            return None;
+        }
         // A link's row hovered lights what it comes from, whatever's
         // picked.
         if let Some(highlight) = self.hovered_link_highlight() {

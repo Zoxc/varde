@@ -13,11 +13,11 @@ use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
     APP_NAME, AxisLine, Body, BodyId, Document, EditError, Editor, Extent, Feature, FeatureId,
-    FeatureKind, Opacity, Placement, Plane,
+    FeatureKind, Opacity, Placement, Plane, Tint,
 };
 use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
-use varde_render::Camera;
+use varde_render::{BodyTint, Camera};
 use varde_sketch::{
     Analysis, Failure, Id, Kind, LinkKind, Measure, Profiles, Rejected, Side, Sketch, TooComplex,
 };
@@ -52,6 +52,12 @@ pub struct DocumentState<'a> {
     /// A body's opacity shown in place of the document's while its context
     /// menu's slider is dragged, if one is.
     pub opacity_preview: Option<(BodyId, Opacity)>,
+    /// A body's colour shown in place of the document's while its context
+    /// menu's Hue or Saturation slider is dragged, if one is.
+    pub color_preview: Option<(BodyId, Tint)>,
+    /// Whether the cursor is over the Opacity and Colour part of a
+    /// body's context menu: washed as hovered.
+    pub body_look_hovered: bool,
     /// The feature, sketch or body being renamed and the name as typed,
     /// if one is: its row in the side panel holds the rename field.
     pub renaming: Option<(varde_document::Named, &'a str)>,
@@ -250,6 +256,12 @@ impl DocumentState<'_> {
     /// in `editor`'s document, or `opacity_preview`, has it.
     pub fn part_opacity(&self) -> Arc<[f32]> {
         part_opacity(self.editor.document(), self.parts, self.opacity_preview)
+    }
+
+    /// The colour the viewport draws each part of the mesh in: as its
+    /// body in `editor`'s document, or `color_preview`, has it.
+    pub fn part_tints(&self) -> Arc<[Option<BodyTint>]> {
+        part_tints(self.editor.document(), self.parts, self.color_preview)
     }
 
     /// What the screen's shortcuts depend on.
@@ -797,6 +809,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                     viewport::viewport(
                         state.mesh,
                         state.part_opacity(),
+                        state.part_tints(),
                         state.sketches,
                         state.camera,
                         state.pivot,
@@ -898,6 +911,40 @@ pub(crate) fn shown_opacity(body: &Body, preview: Option<(BodyId, Opacity)>) -> 
     match preview {
         Some((id, opacity)) if id == body.id => opacity,
         _ => body.opacity,
+    }
+}
+
+/// The colour each part of the mesh is drawn in, the parts being of
+/// `parts`' bodies in order: as its body in `document` is shown
+/// ([`shown_color`]), or the theme's if it's of none there.
+fn part_tints(
+    document: &Document,
+    parts: &[BodyId],
+    preview: Option<(BodyId, Tint)>,
+) -> Arc<[Option<BodyTint>]> {
+    parts
+        .iter()
+        .map(|&id| {
+            let body = document.body(id)?;
+            shown_color(body, preview).map(body_tint)
+        })
+        .collect()
+}
+
+/// The colour `body` is shown in, none for the theme's: as `preview` has
+/// it if it's of `body`, else its own.
+pub(crate) fn shown_color(body: &Body, preview: Option<(BodyId, Tint)>) -> Option<Tint> {
+    match preview {
+        Some((id, tint)) if id == body.id => Some(tint),
+        _ => body.color,
+    }
+}
+
+/// `tint` as the renderer takes it.
+pub fn body_tint(tint: Tint) -> BodyTint {
+    BodyTint {
+        hue: f32::from(tint.hue()),
+        saturation: f32::from(tint.saturation()) / 100.0,
     }
 }
 
@@ -2310,6 +2357,27 @@ mod tests {
         // The slider's preview stands in for its body's, and only its.
         let preview = Some((body, Opacity::new(55).unwrap()));
         assert_eq!(*part_opacity(document, &parts, preview), [0.55, 1.0, 0.55]);
+    }
+
+    /// Parts are drawn in their bodies' colours, the slider's preview
+    /// standing in for its body's, and a part of no body in the theme's.
+    #[test]
+    fn parts_are_in_their_bodies_colours() {
+        let mut editor = Editor::new(Document::example());
+        let body = editor.document().bodies()[0].id;
+        let teal = Tint::new(180, 30).unwrap();
+        editor
+            .apply(varde_document::Command::SetColor(body, Some(teal)))
+            .unwrap();
+        let parts = [body, BodyId::NEW];
+        let document = editor.document();
+        let tinted = Some(body_tint(teal));
+        assert_eq!(*part_tints(document, &parts, None), [tinted, None]);
+        let red = Tint::new(0, 45).unwrap();
+        let preview = Some((body, red));
+        let shown = Some(body_tint(red));
+        assert_eq!(*part_tints(document, &parts, preview), [shown, None]);
+        assert_eq!(body_tint(red).saturation, 0.45);
     }
 
     /// The status bar's mouse hints say the left button orbits outside a

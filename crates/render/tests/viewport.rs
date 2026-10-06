@@ -104,6 +104,7 @@ fn render_to(
             camera,
             mesh: &Arc::new(mesh.clone()),
             opacity: &[],
+            tints: &[],
             sketches: &Arc::default(),
             grid: GridPlane::XY,
             faded: false,
@@ -157,6 +158,8 @@ struct Extras {
     colors: Option<Colors>,
     /// How opaque each part of the mesh is, opaque past its end.
     opacity: Vec<f32>,
+    /// The colour of each part of the mesh, the model's past its end.
+    tints: Vec<Option<varde_render::BodyTint>>,
     /// The faces hovered, the faces selected, those in the second colour,
     /// and the edges and vertices hovered and selected.
     hovered_faces: Vec<u32>,
@@ -204,6 +207,7 @@ fn render_scaled(
             camera,
             mesh: &Arc::new(mesh.clone()),
             opacity: &extras.opacity,
+            tints: &extras.tints,
             sketches: &Arc::new(extras.sketches),
             grid: extras.grid,
             faded: extras.faded,
@@ -3353,6 +3357,7 @@ fn a_preview_is_the_model_alone_on_nothing() {
             &queue,
             &mesh,
             &[],
+            &[],
             &shot,
             &[COLORS, red],
             2.0,
@@ -3538,4 +3543,86 @@ fn a_sketch_axis_fades_with_the_grid_axis_it_lies_on() {
             "{projection:?}: {yellows} yellow, {blues} blue"
         );
     }
+}
+
+/// A part with a tint is drawn in the model's colour with its hue and
+/// saturation, opaque or not, and only that part: the others keep the
+/// model's.
+#[test]
+fn a_tinted_part_is_drawn_in_its_colour() {
+    use varde_render::BodyTint;
+    let (camera, _, both) = cube_behind_cube();
+    let red = Some(BodyTint {
+        hue: 0.0,
+        saturation: 0.45,
+    });
+    // The near cube is the second part.
+    let with = |tints: Vec<Option<BodyTint>>, opacity: Vec<f32>| Extras {
+        tints,
+        opacity,
+        ..Extras::default()
+    };
+    let (Some(plain), Some(near), Some(far), Some(glass)) = (
+        render_with(&camera, &both, Extras::default()),
+        render_with(&camera, &both, with(vec![None, red], vec![])),
+        render_with(&camera, &both, with(vec![red], vec![])),
+        render_with(&camera, &both, with(vec![None, red], vec![1.0, 0.6])),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let [plain, near, far, glass] = [plain, near, far, glass].map(|p| pixel(&p, cx, cy));
+    let reddish = |[r, _, b, _]: [u8; 4]| i32::from(r) - i32::from(b);
+    assert!(reddish(plain).abs() < 8, "{plain:?}");
+    assert!(reddish(near) > 40, "{near:?}");
+    // The far cube is hidden behind the near one, drawn as before.
+    assert_eq!(far, plain);
+    assert!(reddish(glass) > 20, "{glass:?}");
+}
+
+/// Tinting keeps the colour's lightness: no saturation is grey of it, and
+/// the hue sets which channel leads.
+#[test]
+fn tinting_keeps_the_lightness() {
+    use varde_render::BodyTint;
+    let model = Srgb([0.7, 0.72, 0.75]);
+    let lightness = |Srgb([r, g, b]): Srgb| (r.max(g).max(b) + r.min(g).min(b)) / 2.0;
+    let grey = model.tinted(BodyTint {
+        hue: 120.0,
+        saturation: 0.0,
+    });
+    let l = lightness(model);
+    for c in grey.0 {
+        assert!((c - l).abs() < 1e-5, "{grey:?}");
+    }
+    for (hue, lead) in [(0.0, 0), (120.0, 1), (240.0, 2), (360.0, 0)] {
+        let tinted = model.tinted(BodyTint {
+            hue,
+            saturation: 0.45,
+        });
+        assert!((lightness(tinted) - l).abs() < 1e-5, "{tinted:?}");
+        let most = (0..3)
+            .max_by(|&a, &b| tinted.0[a].total_cmp(&tinted.0[b]))
+            .unwrap();
+        assert_eq!(most, lead, "{hue}: {tinted:?}");
+    }
+    // As vivid on a pale model as on a dark one: the same chroma.
+    let chroma = |Srgb([r, g, b]): Srgb| r.max(g).max(b) - r.min(g).min(b);
+    let tint = BodyTint {
+        hue: 200.0,
+        saturation: 0.45,
+    };
+    let pale = Srgb([0.83, 0.82, 0.87]).tinted(tint);
+    let dark = Srgb([0.42, 0.39, 0.49]).tinted(tint);
+    assert!(
+        (chroma(pale) - chroma(dark)).abs() < 1e-5,
+        "{pale:?} {dark:?}"
+    );
+    // Out of range is clamped, NaN grey.
+    let nan = model.tinted(BodyTint {
+        hue: f32::NAN,
+        saturation: f32::NAN,
+    });
+    assert_eq!(nan, grey);
 }

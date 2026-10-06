@@ -9,7 +9,7 @@ use varde_sketch::{LinkKind, Sketch};
 use crate::{
     Body, BodyId, CheckError, Copies, Document, EditError, FeatureId, FeatureKind, Id, LinkSource,
     MAX_PATTERN_BODIES, Move, Named, Opacity, Operation, OutsideRef, Pattern, Plane, Removable,
-    Snapshot, Turn, sketch_face,
+    Snapshot, Tint, Turn, sketch_face,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
@@ -21,6 +21,8 @@ pub enum Command {
     RemoveBody(BodyId),
     SetVisible(BodyId, bool),
     SetOpacity(BodyId, Opacity),
+    /// Gives a body a colour of its own, or with `None` the theme's back.
+    SetColor(BodyId, Option<Tint>),
     /// Adds a feature holding an empty sketch on `plane`, an origin plane
     /// or a face of a body ([`Plane::Face`]).
     AddSketch {
@@ -324,6 +326,7 @@ impl Document {
                 name,
                 visible: true,
                 opacity: Opacity::default(),
+                color: None,
                 created_by: feature,
             },
         );
@@ -338,6 +341,7 @@ impl Document {
             name,
             visible: true,
             opacity: Opacity::default(),
+            color: None,
             created_by: feature,
         });
         Ok(id)
@@ -712,6 +716,12 @@ impl Editor {
             }
             Command::SetOpacity(id, opacity) => {
                 let Some(next) = document.with_body(id, |body| body.opacity = opacity) else {
+                    return Ok(());
+                };
+                next
+            }
+            Command::SetColor(id, color) => {
+                let Some(next) = document.with_body(id, |body| body.color = color) else {
                     return Ok(());
                 };
                 next

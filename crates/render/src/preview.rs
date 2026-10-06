@@ -9,8 +9,8 @@ use glam::Vec3;
 use varde_kernel::{RenderLines, RenderMesh};
 
 use crate::{
-    Camera, ClipRect, Colors, Frame, GridPlane, Highlights, PrepareError, Projection, Renderer,
-    Shading, Viewport,
+    BodyTint, Camera, ClipRect, Colors, Frame, GridPlane, Highlights, PrepareError, Projection,
+    Renderer, Shading, Viewport,
 };
 
 /// Where a preview looks from and how large it is: see [`frame`].
@@ -101,7 +101,8 @@ pub fn frame(mesh: &RenderMesh, from: &Camera, max: [u32; 2], margin: u32) -> Op
 }
 
 /// Draws `mesh` as `shot` frames it, its parts as opaque as `opacity` says
-/// (see [`Frame::opacity`]), once in each of `colors`, with nothing behind
+/// (see [`Frame::opacity`]) and in the colours `tints` gives them (see
+/// [`Frame::tints`]), once in each of `colors`, with nothing behind
 /// it: no background, grid, sketches or markers, nothing hovered or
 /// selected. Lines are as wide as `scale_factor` physical pixels to a
 /// logical one make them.
@@ -120,6 +121,7 @@ pub fn render_preview(
     queue: &wgpu::Queue,
     mesh: &Arc<RenderMesh>,
     opacity: &[f32],
+    tints: &[Option<BodyTint>],
     shot: &PreviewShot,
     colors: &[Colors],
     scale_factor: f32,
@@ -175,6 +177,7 @@ pub fn render_preview(
             camera: &shot.camera,
             mesh,
             opacity,
+            tints,
             sketches: &Arc::new(RenderLines::default()),
             grid: GridPlane::XY,
             faded: false,

@@ -23,8 +23,9 @@ use iced::{Element, Event, Length, Point, Rectangle, keyboard, mouse};
 use varde_document::OriginPlane;
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::{
-    Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, OriginShown, PLANE_GAP, PLANE_REACH,
-    PLANE_SIDES, Pivot, PrepareError, Renderer, Shading, SketchLayer, SketchScene, Slot, wgpu,
+    BodyTint, Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, OriginShown, PLANE_GAP,
+    PLANE_REACH, PLANE_SIDES, Pivot, PrepareError, Renderer, Shading, SketchLayer, SketchScene,
+    Slot, wgpu,
 };
 
 use crate::anchors::Anchors;
@@ -165,11 +166,13 @@ impl ModelPicking<'_> {
 /// `options` say: the edges the model hides dashed if asked for, outside
 /// a sketch, every patch's edges and every triangle's faint if asked
 /// for, and lit with their shading. Each of the mesh's parts is drawn as
-/// opaque as `opacity` says, see [`Frame::opacity`].
+/// opaque as `opacity` says, see [`Frame::opacity`], in the colour `tints`
+/// says, see [`Frame::tints`].
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn viewport<'a>(
     mesh: &Arc<RenderMesh>,
     opacity: Arc<[f32]>,
+    tints: Arc<[Option<BodyTint>]>,
     sketches: &Arc<RenderLines>,
     camera: &'a Camera,
     pivot: Option<Pivot>,
@@ -232,6 +235,7 @@ pub(crate) fn viewport<'a>(
     program.scene.tessellation = options.edges == Edges::Tessellation;
     program.scene.shading = options.shading;
     program.scene.opacity = opacity;
+    program.scene.tints = tints;
     program.scene.thumbnail = thumbnail.cloned();
     program.scene.errors = errors.clone();
     program.scene.hover_through = hover_through;
@@ -274,6 +278,7 @@ fn program<'a>(
         scene: Scene {
             mesh: mesh.clone(),
             opacity: Arc::new([]),
+            tints: Arc::new([]),
             sketches: sketches.clone(),
             camera: *camera,
             pivot,
@@ -332,6 +337,8 @@ struct Scene {
     mesh: Arc<RenderMesh>,
     /// How opaque each of the mesh's parts is: see [`Frame::opacity`].
     opacity: Arc<[f32]>,
+    /// The colour of each of the mesh's parts: see [`Frame::tints`].
+    tints: Arc<[Option<BodyTint>]>,
     sketches: Arc<RenderLines>,
     camera: Camera,
     /// The point the camera orbits, marked, if one was picked.
@@ -1243,6 +1250,7 @@ impl shader::Primitive for Primitive {
                 camera: &scene.camera,
                 mesh: &scene.mesh,
                 opacity: &scene.opacity,
+                tints: &scene.tints,
                 sketches: &scene.sketches,
                 // A sketch being edited moves the grid onto its plane and
                 // fades the model.
@@ -1291,6 +1299,7 @@ impl shader::Primitive for Primitive {
                 queue,
                 &thumbnail.mesh,
                 &thumbnail.opacity,
+                &thumbnail.tints,
                 &thumbnail.shot,
                 &ThumbnailRequest::COLORS,
                 THUMBNAIL_SCALE as f32,

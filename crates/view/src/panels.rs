@@ -9,15 +9,16 @@ use iced::{Alignment, Element, Font, Length, Padding};
 use std::collections::BTreeSet;
 use varde_document::{
     Axis3, BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Named, Opacity, OriginPlane,
+    Tint,
 };
 use varde_expr::LengthUnit;
-use varde_render::OriginShown;
+use varde_render::{BodyTint, OriginShown};
 
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, LinkKind, Sketch};
 
 use crate::chrome::{self, ChipSize, Edge, edged, icon_button, key_chip};
 use crate::context_menu::ContextMenu;
-use crate::document::shown_opacity;
+use crate::document::{shown_color, shown_opacity};
 use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
 use crate::mouse_only::MouseOnly;
@@ -121,6 +122,8 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             state.row_menu,
             state.model_selection,
             state.opacity_preview,
+            state.color_preview,
+            state.body_look_hovered,
             state.origin,
             state.objects_selected,
             state.objects_folded,
@@ -421,7 +424,18 @@ fn edit_label(feature: &Feature) -> &'static str {
 
 /// A row's context menu holding `items`.
 fn row_menu<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
-    container(column(items).width(180))
+    sized_row_menu(items, ROW_MENU_WIDTH)
+}
+
+/// The width of a row's context menu.
+const ROW_MENU_WIDTH: f32 = 180.0;
+
+/// The width of a body's context menu, wider for its sliders.
+const BODY_MENU_WIDTH: f32 = 256.0;
+
+/// A row's context menu of `items`, `width` wide.
+fn sized_row_menu<'a>(items: Vec<Element<'a, Message>>, width: f32) -> Element<'a, Message> {
+    container(column(items).width(width))
         .padding(4)
         .style(theme::menu)
         .into()
@@ -563,9 +577,10 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
 /// read-only too, as that's no edit, but not deleted. A body a join merged into another
 /// (`merged`, see [`DocumentState::merged`]) is listed faint, with the body
 /// holding it as its note: it's drawn as that one is, so it has no eye
-/// nor opacity of its own, but it can still be removed. Right-clicking a
-/// row asks for its context menu, shown on the one `menu` is on, with a
-/// body's opacity as `preview` has it while its slider is dragged.
+/// nor opacity or colour of its own, but it can still be removed.
+/// Right-clicking a row asks for its context menu, shown on the one `menu`
+/// is on, with a body's opacity as `preview` has it, and its colour as
+/// `color_preview` has it, while their sliders are dragged.
 /// Clicking a body's row selects it where bodies are selected, as
 /// `selection`, which marks the rows of the bodies it holds, says. Each
 /// group's header folds it, as the Sketch tab's do, those `folded`
@@ -578,6 +593,8 @@ fn objects<'a>(
     menu: Option<RowMenu>,
     selection: &crate::Selection,
     preview: Option<(BodyId, Opacity)>,
+    color_preview: Option<(BodyId, Tint)>,
+    body_look_hovered: bool,
     origin: OriginShown,
     rows: &[ObjectRow],
     folded: &BTreeSet<ObjectGroup>,
@@ -636,6 +653,8 @@ fn objects<'a>(
                 edit: None,
                 rename: Message::Look(Look::StartRename(Named::Body(body.id))),
                 opacity: own.then(|| (body.id, shown_opacity(body, preview))),
+                color: own.then(|| (body.id, shown_color(body, color_preview))),
+                look_hovered: body_look_hovered,
                 delete: Message::Edit(Edit::RemoveBody(body.id)),
             }),
         })
@@ -667,6 +686,8 @@ fn objects<'a>(
                 )),
                 rename: Message::Look(Look::StartRename(Named::Feature(feature.id))),
                 opacity: None,
+                color: None,
+                look_hovered: false,
                 delete: Message::Edit(Edit::RemoveFeature(feature.id)),
             }),
         })
@@ -773,6 +794,11 @@ struct ObjectMenu {
     rename: Message,
     /// The body it is and how opaque it's shown, if it has an opacity.
     opacity: Option<(BodyId, Opacity)>,
+    /// The body it is and the colour it's shown in, none for the theme's,
+    /// if it has a colour of its own to set.
+    color: Option<(BodyId, Option<Tint>)>,
+    /// Whether its Opacity and Colour part is hovered, washed so.
+    look_hovered: bool,
     /// What deleting it sends.
     delete: Message,
 }
@@ -780,7 +806,8 @@ struct ObjectMenu {
 impl ObjectMenu {
     /// The menu, for an object `visible` or not, whose eye sends
     /// `toggle` if it has one: editing it, renaming it, showing or hiding
-    /// it, its opacity if it has one and deleting it, all but editing only if the
+    /// it, its opacity and colour if it has them and deleting it, all but
+    /// editing only if the
     /// document is `editable`. No keys are given, as the keys act on the
     /// Timeline's selection.
     fn view<'a>(
@@ -806,25 +833,32 @@ impl ObjectMenu {
             };
             menu_item(eye, label.into(), None, editable.then_some(toggle)).into()
         });
-        let opacity = (self.opacity.into_iter()).flat_map(|(body, opacity)| {
-            [
-                menu_separator().into(),
-                opacity_rows(body, opacity, editable),
-            ]
-        });
+        let parts: Vec<Element<'a, Message>> = (self.opacity)
+            .map(|(body, opacity)| opacity_rows(body, opacity, editable))
+            .into_iter()
+            .chain((self.color).map(|(body, color)| color_rows(body, color, editable)))
+            .collect();
+        let look = (!parts.is_empty())
+            .then(|| [menu_separator().into(), look_area(parts, self.look_hovered)]);
+        let width = if self.opacity.is_some() || self.color.is_some() {
+            BODY_MENU_WIDTH
+        } else {
+            ROW_MENU_WIDTH
+        };
         let delete = menu_item(
             Icon::Trash,
             "Delete".into(),
             None,
             editable.then_some(self.delete),
         );
-        row_menu(
+        sized_row_menu(
             edit.into_iter()
                 .chain([rename.into()])
                 .chain(toggle)
-                .chain(opacity)
+                .chain(look.into_iter().flatten())
                 .chain([menu_separator().into(), delete.into()])
                 .collect(),
+            width,
         )
     }
 }
@@ -832,12 +866,112 @@ impl ObjectMenu {
 /// How far the Opacity slider moves at a time, in percent.
 const OPACITY_STEP: f32 = 5.0;
 
-/// The Opacity rows of `body`'s context menu: a heading over a slider from
-/// [`Opacity::MIN`] to [`Opacity::MAX`] showing `opacity`, the percentage
-/// beside it. Dragging previews, letting go commits; it takes only the
-/// mouse ([`MouseOnly`]). Unless the document is `editable`, it's faded
-/// and the app ignores it. Under it, while the body isn't opaque, an item
-/// making it so.
+/// The Opacity and Colour part of a body's context menu, `parts`, under
+/// one wash while `hovered`. Entering and leaving it tell the app, which
+/// leaves the selection out of the viewport meanwhile, so the body shows
+/// as it's drawn.
+fn look_area<'a>(parts: Vec<Element<'a, Message>>, hovered: bool) -> Element<'a, Message> {
+    let wash = if hovered {
+        theme::hovered_row
+    } else {
+        |_: &iced::Theme| container::Style::default()
+    };
+    mouse_area(
+        container(column(parts).spacing(4).padding([2, 0]))
+            .width(Length::Fill)
+            .style(wash),
+    )
+    .on_enter(Message::Look(Look::HoverBodyLook(true)))
+    .on_exit(Message::Look(Look::HoverBodyLook(false)))
+    .into()
+}
+
+/// A part of a body's context menu showing how it's drawn: a heading of
+/// `title`, then `extra` and, rightmost, a reset icon sending `reset` if
+/// it's not as it would be by default (inert if the document isn't
+/// `editable`), over `rows`.
+fn look_part<'a>(
+    title: &'static str,
+    extra: Option<Element<'a, Message>>,
+    reset: Option<Message>,
+    editable: bool,
+    rows: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let reset = reset.map(|reset| -> Element<'a, Message> {
+        icon_button(Icon::Reset, Tone::Faint, editable.then_some(reset)).into()
+    });
+    let heading = row![chrome::heading(title), space::horizontal()]
+        .push(extra)
+        .push(reset)
+        .spacing(8)
+        .height(24)
+        .padding([0, 8])
+        .align_y(Alignment::Center);
+    column![heading].extend(rows).into()
+}
+
+/// A slider line of a body's context menu: `slider`, the full width but
+/// for `value` beside it.
+fn slider_line<'a>(
+    slider: iced::widget::Slider<'a, f32, Message>,
+    value: String,
+    editable: bool,
+) -> Element<'a, Message> {
+    let slider = slider
+        .height(2.0 * theme::SLIDER_HANDLE_RADIUS)
+        .style(theme::slider(editable));
+    value_line(MouseOnly::new(slider).into(), value)
+}
+
+/// A colour slider line of a body's context menu: `slider` over a rail
+/// of the colours of `stops` (see [`theme::color_rail`]), its handle
+/// filled with `handle`, `value` beside it.
+fn color_line<'a>(
+    slider: iced::widget::Slider<'a, f32, Message>,
+    stops: Vec<Option<BodyTint>>,
+    handle: Option<BodyTint>,
+    value: String,
+    editable: bool,
+) -> Element<'a, Message> {
+    let slider = slider
+        .height(2.0 * theme::SLIDER_HANDLE_RADIUS)
+        .style(theme::color_slider(editable, handle));
+    // The handle's middle runs a radius in from either end, and the rail's
+    // colours with it.
+    let rail = container(
+        container(Space::new())
+            .width(Length::Fill)
+            .height(theme::COLOR_RAIL_HEIGHT)
+            .style(theme::color_rail(stops, editable)),
+    )
+    .padding([0.0, theme::SLIDER_HANDLE_RADIUS])
+    .center_y(Length::Fill);
+    let slider = stack![rail, MouseOnly::new(slider)].height(2.0 * theme::SLIDER_HANDLE_RADIUS);
+    value_line(slider.into(), value)
+}
+
+/// A slider line of a body's context menu: `slider`, `value` beside it.
+fn value_line<'a>(slider: Element<'a, Message>, value: String) -> Element<'a, Message> {
+    row![
+        slider,
+        text(value)
+            .width(OPACITY_VALUE_WIDTH)
+            .align_x(Alignment::End)
+            .style(theme::muted_text),
+    ]
+    .spacing(10)
+    .height(28)
+    .padding([0, 8])
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// The Opacity rows of `body`'s context menu ([`look_part`]): a slider
+/// from [`Opacity::MIN`] to [`Opacity::MAX`] showing `opacity`, the
+/// percentage beside it. Dragging previews, letting go commits; it takes
+/// only the mouse ([`MouseOnly`]). Unless the document is `editable`, it's
+/// faded and the app ignores it. While the body isn't opaque, the reset
+/// icon makes it so.
 fn opacity_rows<'a>(body: BodyId, opacity: Opacity, editable: bool) -> Element<'a, Message> {
     let percent = |opacity: Opacity| f32::from(opacity.percent());
     let slider = slider(
@@ -846,33 +980,106 @@ fn opacity_rows<'a>(body: BodyId, opacity: Opacity, editable: bool) -> Element<'
         move |percent| Message::Look(Look::PreviewOpacity(body, Opacity::clamped(percent))),
     )
     .step(OPACITY_STEP)
-    .on_release(Message::Edit(Edit::CommitOpacity))
-    .height(2.0 * theme::SLIDER_HANDLE_RADIUS)
-    .style(theme::slider(editable));
-    let heading = container(chrome::heading("Opacity")).padding([4, 8]);
-    let value = text(opacity.to_string())
-        .width(OPACITY_VALUE_WIDTH)
-        .align_x(Alignment::End)
-        .style(theme::muted_text);
-    let reset = (!opacity.is_opaque()).then(|| {
-        menu_item(
-            Icon::Body,
-            "Make opaque".into(),
-            None,
-            editable.then_some(Message::Edit(Edit::ResetOpacity(body))),
-        )
-    });
-    column![
-        heading,
-        row![MouseOnly::new(slider), value]
-            .spacing(10)
-            .height(28)
-            .padding([0, 8])
-            .align_y(Alignment::Center),
-    ]
-    .push(reset)
-    .into()
+    .on_release(Message::Edit(Edit::CommitOpacity));
+    look_part(
+        "Opacity",
+        None,
+        (!opacity.is_opaque()).then_some(Message::Edit(Edit::ResetOpacity(body))),
+        editable,
+        vec![slider_line(slider, opacity.to_string(), editable)],
+    )
 }
+
+/// The Colour rows of `body`'s context menu ([`look_part`]): a swatch of
+/// `color` as the model is drawn in it in the heading, "Default" beside
+/// it while the body has none of its own (the theme's model colour),
+/// over a Hue slider (0 to 359°) and a Saturation one (0 to
+/// [`Tint::MAX_SATURATION`] %), each with its value beside it, a dash
+/// for the default. They work as the Opacity slider does: dragging
+/// previews, letting go commits, the mouse only. Dragging the hue of a
+/// body with no colour of its own, or none saturated, starts it at
+/// [`Tint::DEFAULT_SATURATION`], so it shows. While the body has a
+/// colour, the reset icon gives it the theme's back.
+fn color_rows(body: BodyId, color: Option<Tint>, editable: bool) -> Element<'static, Message> {
+    // With no colour of its own, the saturation shows the default, where
+    // dragging the hue starts, so its handle doesn't jump.
+    let (hue, saturation) = color.map_or((0, Tint::DEFAULT_SATURATION), |tint| {
+        (tint.hue(), tint.saturation())
+    });
+    let preview = move |tint| Message::Look(Look::PreviewColor(body, tint));
+    let hue_slider = slider(0.0..=359.0, f32::from(hue), move |hue| {
+        let saturation = match saturation {
+            0 => Tint::DEFAULT_SATURATION,
+            saturation => saturation,
+        };
+        preview(Tint::clamped(hue, f32::from(saturation)))
+    })
+    .on_release(Message::Edit(Edit::CommitColor));
+    let max = f32::from(Tint::MAX_SATURATION);
+    let saturation_slider = slider(0.0..=max, f32::from(saturation), move |saturation| {
+        preview(Tint::clamped(f32::from(hue), saturation))
+    })
+    .on_release(Message::Edit(Edit::CommitColor));
+    // The hue's rail runs round the wheel at the most saturation, whatever
+    // the saturation, the saturation's from grey to the most at the hue.
+    let tint = |hue: u16, saturation: u8| {
+        Some(crate::document::body_tint(
+            Tint::new(hue, saturation).expect("a hue below 360, a saturation in range"),
+        ))
+    };
+    let hue_stops = (0..=6)
+        .map(|sixth: u16| tint((sixth * 60).min(359), Tint::MAX_SATURATION))
+        .collect();
+    let saturation_stops = vec![tint(hue, 0), tint(hue, Tint::MAX_SATURATION)];
+    let handle = color.map(crate::document::body_tint);
+    let value = |shown: String| {
+        if color.is_some() {
+            shown
+        } else {
+            "–".to_owned()
+        }
+    };
+    let swatch = container(Space::new())
+        .width(COLOR_SWATCH_WIDTH)
+        .height(COLOR_SWATCH_HEIGHT)
+        .style(theme::body_swatch(color.map(crate::document::body_tint)));
+    let default = color
+        .is_none()
+        .then(|| text("Default").size(11.5).style(theme::faint_text));
+    let extra = row![]
+        .push(default)
+        .push(swatch)
+        .spacing(6)
+        .align_y(Alignment::Center);
+    look_part(
+        "Colour",
+        Some(extra.into()),
+        color
+            .is_some()
+            .then_some(Message::Edit(Edit::ResetColor(body))),
+        editable,
+        vec![
+            color_line(
+                hue_slider,
+                hue_stops,
+                handle,
+                value(format!("{hue}°")),
+                editable,
+            ),
+            color_line(
+                saturation_slider,
+                saturation_stops,
+                handle,
+                value(format!("{saturation} %")),
+                editable,
+            ),
+        ],
+    )
+}
+
+/// The size of the swatch in the Colour heading.
+const COLOR_SWATCH_WIDTH: f32 = 36.0;
+const COLOR_SWATCH_HEIGHT: f32 = 14.0;
 
 /// The room the Opacity slider's percentage takes, "100 %" at the widest.
 const OPACITY_VALUE_WIDTH: f32 = 40.0;
@@ -1815,6 +2022,8 @@ mod tests {
                 None,
                 &Default::default(),
                 None,
+                None,
+                false,
                 OriginShown::DEFAULT,
                 &[],
                 &BTreeSet::new(),
@@ -1840,6 +2049,8 @@ mod tests {
             None,
             &Default::default(),
             None,
+            None,
+            false,
             OriginShown::DEFAULT,
             &[],
             &BTreeSet::new(),
@@ -1865,6 +2076,8 @@ mod tests {
             None,
             &Default::default(),
             None,
+            None,
+            false,
             OriginShown::DEFAULT,
             &[],
             &BTreeSet::new(),
@@ -1882,8 +2095,7 @@ mod tests {
     }
 
     /// A body's menu has an Opacity row between Hide and Delete, the
-    /// slider's value beside it and Make opaque under it unless it's
-    /// opaque; a menu without an opacity, none.
+    /// slider's value beside it; a menu without an opacity, none.
     #[test]
     fn a_body_s_menu_has_an_opacity_row() {
         let body = Document::example().bodies()[0].id;
@@ -1894,6 +2106,8 @@ mod tests {
                 edit: None,
                 rename: Message::Look(Look::StartRename(Named::Body(body))),
                 opacity,
+                color: None,
+                look_hovered: false,
                 delete: Message::Edit(Edit::RemoveBody(body)),
             };
             let toggle = Some(Message::Edit(Edit::ToggleVisible(body)));
@@ -1903,11 +2117,45 @@ mod tests {
             shown.collect::<Vec<_>>()
         };
         let shown = menu(Some((body, Opacity::new(40).unwrap())));
-        let rows = ["Rename", "Hide", "Opacity", "40 %", "Make opaque", "Delete"];
+        let rows = ["Rename", "Hide", "Opacity", "40 %", "Delete"];
         assert_eq!(shown, rows);
         let shown = menu(Some((body, Opacity::MAX)));
         assert_eq!(shown, ["Rename", "Hide", "Opacity", "100 %", "Delete"]);
         assert_eq!(menu(None), ["Rename", "Hide", "Delete"]);
+    }
+
+    /// A body's menu has a Colour heading with Hue and Saturation rows
+    /// after its opacity, their values beside them, and the heading says
+    /// Default, the values dashes, while the body has no colour of its own.
+    #[test]
+    fn a_body_s_menu_has_colour_rows() {
+        let body = Document::example().bodies()[0].id;
+        let menu = |color| {
+            let menu = ObjectMenu {
+                on: RowMenu::Body(body),
+                open: true,
+                edit: None,
+                rename: Message::Look(Look::StartRename(Named::Body(body))),
+                opacity: Some((body, Opacity::MAX)),
+                color: Some((body, color)),
+                look_hovered: false,
+                delete: Message::Edit(Edit::RemoveBody(body)),
+            };
+            let view = menu.view(Icon::Body, true, None, true);
+            let mut laid = crate::testing::Laid::new(view, iced::Size::new(300.0, 500.0));
+            let shown = laid.texts().into_iter().map(|shown| shown.text);
+            shown.collect::<Vec<_>>()
+        };
+        let shown = menu(Tint::new(200, 30));
+        let rows = [
+            "Rename", "Opacity", "100 %", "Colour", "200°", "30 %", "Delete",
+        ];
+        assert_eq!(shown, rows);
+        let shown = menu(None);
+        let rows = [
+            "Rename", "Opacity", "100 %", "Colour", "Default", "–", "–", "Delete",
+        ];
+        assert_eq!(shown, rows);
     }
 
     #[test]

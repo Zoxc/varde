@@ -8939,11 +8939,39 @@ in place of the body's own (`DocumentState::opacity_preview`,
 shortcuts are off (`Doc::keys` is `None`) and the peek key doesn't swap
 the tab (`Doc::peeks`), which would take the slider and its release with
 it. Letting go sends `Edit::CommitOpacity`, one `Command::SetOpacity`
-(none if unchanged), and leaves the menu open. Under the slider, while
-the body shown isn't opaque, Make opaque sends `Edit::ResetOpacity`: one
-`Command::SetOpacity` to 100 %, dropping any preview and leaving the menu
-open too. The preview goes whenever
-the menu does (`Doc::prune_preview`), so `Esc` mid-drag drops it. `Esc` or a
+(none if unchanged), and leaves the menu open. While the body shown
+isn't opaque, a reset icon at the right of the Opacity heading sends
+`Edit::ResetOpacity`: one `Command::SetOpacity` to 100 %, dropping any
+preview and leaving the menu open too. Below it, likewise for an own
+body only, Colour: a heading with a wide swatch of the colour as drawn,
+"Default" beside it (and dashes for the values) while the body has no
+colour of its own (`theme::body_swatch`, the theme's
+model colour tinted), a Hue slider (0 to 359°) and a Saturation one (0
+to `Tint::MAX_SATURATION`, 30 %, so bodies stay duller than the
+selection and hover), `MouseOnly` too, previewing with
+`Look::PreviewColor` into `Doc::color_preview` (`DocumentState::color_preview`,
+`shown_color`) and committing on release with `Edit::CommitColor`, one
+`Command::SetColor`; dragging the hue of a body with no saturation
+starts it at `Tint::DEFAULT_SATURATION`, 17 %, so it shows; with no
+colour of its own the Saturation slider shows that too, so its handle
+doesn't jump. While the body has a colour, the
+Colour heading's reset icon sends `Edit::ResetColor`, one
+`Command::SetColor` to none. The Hue and Saturation sliders lie over
+rails of their colours (`color_line`, `theme::color_rail`, a gradient
+inset by the handle's radius, so a colour sits under the handle that
+picks it): the hue's round the wheel at the most saturation, whatever
+the saturation, the saturation's from grey to the most at the hue;
+their own rails are left out and their handles filled with the colour
+(`theme::color_slider`). The sliders run the menu's width (a body's
+menu is `BODY_MENU_WIDTH`, wider than other rows' menus), each with its
+value beside it. Opacity and Colour (`look_part`) sit in one area
+(`look_area`) that sends `Look::HoverBodyLook` on entering and leaving
+it, kept in `Doc::body_look_hovered` (dropped with the menu) and washed
+as one hovered row; while it's hovered or a slider dragged, `Doc::highlight` is none, so
+the body shows as drawn without the selection over it. Either
+preview keeps the shortcuts and the peek off as the opacity's does
+(`Doc::sliding`). The previews go whenever
+the menu does (`Doc::prune_preview`), so `Esc` mid-drag drops them. `Esc` or a
 press off a menu closes it alone; any other message closes it too, and
 it goes with what its row lists. Outside a
 sketch or a session the floating status bar (`view/src/status.rs`, as

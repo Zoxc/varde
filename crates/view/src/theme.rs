@@ -9,7 +9,7 @@ use iced::theme::palette::Extended;
 use iced::widget::slider::{self as slide, HandleShape};
 use iced::widget::{button, checkbox, container, progress_bar, rule, scrollable, text, text_input};
 use iced::{Background, Border, Color, Font, Shadow, Theme, Vector, border, color, font};
-use varde_render::{Colors, Srgb, Srgba};
+use varde_render::{BodyTint, Colors, Srgb, Srgba};
 
 /// Whether the UI is light or dark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1236,6 +1236,22 @@ pub fn tick(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
     }
 }
 
+/// The swatch of a body's colour in its context menu: the model's colour
+/// as the viewport has it, tinted by `tint` if it has one, framed by a
+/// line.
+pub fn body_swatch(tint: Option<BodyTint>) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = palette(theme);
+        let model = p.scene.model;
+        let Srgb([r, g, b]) = tint.map_or(model, |tint| model.tinted(tint));
+        container::Style {
+            background: Some(Background::Color(Color::from_rgb(r, g, b))),
+            border: border::rounded(3.0).color(p.line).width(1.0),
+            ..container::Style::default()
+        }
+    }
+}
+
 /// The radius of a [`slider`]'s handle.
 pub const SLIDER_HANDLE_RADIUS: f32 = 6.0;
 
@@ -1279,6 +1295,65 @@ pub fn slider(enabled: bool) -> impl Fn(&Theme, slide::Status) -> slide::Style {
         }
     }
 }
+
+/// A [`slider`] laid over a [`color_rail`]: its own rail left out, its
+/// handle filled with the model colour tinted as `handle` says (the
+/// theme's own if none), so it shows the colour picked.
+pub fn color_slider(
+    enabled: bool,
+    handle: Option<BodyTint>,
+) -> impl Fn(&Theme, slide::Status) -> slide::Style {
+    let plain = slider(enabled);
+    move |theme, status| {
+        let model = palette(theme).scene.model;
+        let Srgb([r, g, b]) = handle.map_or(model, |tint| model.tinted(tint));
+        let mut style = plain(theme, status);
+        style.rail.backgrounds = (
+            Background::Color(Color::TRANSPARENT),
+            Background::Color(Color::TRANSPARENT),
+        );
+        style.handle.background = Background::Color(Color::from_rgb(r, g, b));
+        style
+    }
+}
+
+/// The rail under a [`color_slider`]: the model colour tinted by each of
+/// `stops` in turn, evenly spread from left to right (at most 8, iced's
+/// limit for a gradient), none for the theme's own. Faded unless
+/// `enabled`.
+pub fn color_rail(
+    stops: Vec<Option<BodyTint>>,
+    enabled: bool,
+) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = palette(theme);
+        let model = p.scene.model;
+        let last = stops.len().saturating_sub(1).max(1) as f32;
+        let gradient = (stops.iter().enumerate()).fold(
+            iced::gradient::Linear::new(iced::Degrees(90.0)),
+            |gradient, (i, tint)| {
+                let Srgb([r, g, b]) = tint.map_or(model, |tint| model.tinted(tint));
+                let color = Color::from_rgb(r, g, b);
+                let color = if enabled {
+                    color
+                } else {
+                    color.scale_alpha(DISABLED_OPACITY)
+                };
+                gradient.add_stop(i as f32 / last, color)
+            },
+        );
+        container::Style {
+            background: Some(Background::Gradient(gradient.into())),
+            border: border::rounded(COLOR_RAIL_HEIGHT / 2.0)
+                .color(p.line)
+                .width(1.0),
+            ..container::Style::default()
+        }
+    }
+}
+
+/// The height of a [`color_rail`].
+pub const COLOR_RAIL_HEIGHT: f32 = 8.0;
 
 /// Width of a scrollbar's scroller, in pixels. It floats over the
 /// content's edge or in a padding left for it.
