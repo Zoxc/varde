@@ -8786,7 +8786,7 @@ frees OK. So do the other ways the wait ends (tested): a rejected edit
 the session gone with it), restoring recovered changes (drops them; one
 that changes the document ends the session, above), a units change in
 the window (set after the answers, then followed by the session); read-only in the window ends the session. A solver lane not
-started yet keeps OK waiting, as saving waits. After `CHECKING` (250 ms) the panel says "Checking the
+started yet keeps OK waiting, as saving waits. After `feed::SLOW` (250 ms) the panel says "Checking the
 sketch…" (`ExtrudeState.checking`, from `Proposals::slow`) when
 there's neither a refusal nor a draft error to show. OK, the screen's
 `Enter` binding and the hint take `ExtrudeState.ready`, which is
@@ -8867,8 +8867,15 @@ wash, the error under it in muted words, and an "Add anyway" button in
 the strong danger colour that commits anyway (`Edit::AcceptError`,
 `Doc::commit_by`; every operation's panel, never a key), Show or Go
 back left of it where the error has geometry (see `agents/viewport.md`): the feature is
-kept with its error, marked failed in the Timeline, to fix later. The error is the newest draft's, none while it's unanswered, so OK
-doesn't wait on the preview.
+kept with its error, marked failed in the Timeline, to fix later. The error is the one shown
+(`MeshFeed::shown_draft_error`): the newest draft's, none while it's
+unanswered, so OK doesn't wait on the preview. While a changed draft is
+on its way, the failure of the run's draft before it stays in the box
+until the answer or `feed::SLOW`, its Show (`shown_draft_geometry`) and
+Add anyway (`Doc::offers_accept`; pressed before the answer it does
+nothing, as `commit_by` takes the newest draft's error) with it, so
+ticking a body or changing a value that fails again doesn't blink the
+box. The viewport doesn't hold the failure's geometry.
 Errors that stand alone, the field errors, the refusal and the draft's
 error here and a failed feature's tooltip, are shown as sentences,
 capitalised by the view (`chrome::sentence`): the messages themselves

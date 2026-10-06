@@ -465,7 +465,7 @@ impl Doc {
                 .flatten(),
             checking: self.proposals.slow(),
             ready: self.commit_by(self.extrude_ready(), false),
-            accept: self.commit_by(self.extrude_ready(), true),
+            accept: self.offers_accept(self.extrude_ready()),
             editable: self.editable(),
             units: document.units(),
         })

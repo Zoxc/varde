@@ -477,7 +477,7 @@ impl Doc {
             show_error: self.draft_framed(),
             checking: self.proposals.slow(),
             ready: self.commit_by(self.combine_ready(), false),
-            accept: self.commit_by(self.combine_ready(), true),
+            accept: self.offers_accept(self.combine_ready()),
             editable: self.editable(),
             hover: self.panel_hover(),
         })

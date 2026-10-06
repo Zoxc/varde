@@ -133,8 +133,12 @@ pub(crate) struct MeshFeed {
 /// Sketches whose links were given what they found, by feature.
 type Relinked = Vec<(FeatureId, Arc<Sketch>)>;
 
-/// How long the model shown lags the editor before the regeneration
-/// shows over the viewport: one that's quicker never flickers there.
+/// How long something waited on shows as waiting: the model shown
+/// lagging the editor before the regeneration shows over the viewport,
+/// and sketch edits on the solver before the status bar and the tools'
+/// panels say they're being checked and the items they add fade. Most
+/// answers come well within it, so dragging a handle or changing a value
+/// doesn't flicker any of these.
 pub(crate) const SLOW: Duration = Duration::from_millis(250);
 
 /// A model shown without a draft: its mesh, its picking tables for the
@@ -435,15 +439,21 @@ impl MeshFeed {
     /// Why the draft fails, as its panel says: [`MeshFeed::draft_error`],
     /// but while a changed draft is on its way and that's not taken
     /// [`SLOW`] yet, the failure of the one before it in the run, so the
-    /// error doesn't blink out on every change that fails again.
+    /// error, and the buttons beside it, don't blink out on every change
+    /// that fails again (a body ticked in the panel, say). The viewport
+    /// doesn't hold the failure's geometry: [`MeshFeed::draft_geometry`].
     pub(crate) fn shown_draft_error(&self) -> Option<&str> {
+        self.shown_drafted()?.error.as_deref()
+    }
+
+    /// The draft answer the panel shows, see
+    /// [`MeshFeed::shown_draft_error`].
+    fn shown_drafted(&self) -> Option<&Drafted> {
         let revision = self.draft.as_ref()?.revision;
         let drafted = self.drafted.as_ref()?;
         let slow = self.lagging.is_some_and(|(_, slow)| slow);
         let held = drafted.revision >= self.run && drafted.revision < revision && !slow;
-        (drafted.revision == revision || held)
-            .then_some(drafted.error.as_deref())
-            .flatten()
+        (drafted.revision == revision || held).then_some(drafted)
     }
 
     /// The bodies the draft asked for last, a cut that works, takes
@@ -463,6 +473,14 @@ impl MeshFeed {
         (drafted.revision == revision && drafted.error.is_some())
             .then_some(drafted.geometry.as_ref())
             .flatten()
+    }
+
+    /// The geometry of the failure [`MeshFeed::shown_draft_error`] gives,
+    /// held as that is, for the panel's Show beside it.
+    pub(crate) fn shown_draft_geometry(&self) -> Option<&Arc<ErrorGeometry>> {
+        let drafted = self.shown_drafted()?;
+        drafted.error.as_ref()?;
+        drafted.geometry.as_ref()
     }
 
     /// Whether the model shown has a draft of the current run of drafts

@@ -699,7 +699,7 @@ impl Doc {
                 .flatten(),
             checking: self.proposals.slow(),
             ready: self.commit_by(self.revolve_ready(), false),
-            accept: self.commit_by(self.revolve_ready(), true),
+            accept: self.offers_accept(self.revolve_ready()),
             editable: self.editable(),
             hover: self.panel_hover(),
             grabbed: session.grabbed,

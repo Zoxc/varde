@@ -2603,7 +2603,7 @@ impl Doc {
             show_error: self.draft_framed(),
             checking: self.proposals.slow(),
             ready: self.commit_by(self.motion_ready(), false),
-            accept: self.commit_by(self.motion_ready(), true),
+            accept: self.offers_accept(self.motion_ready()),
             editable: self.editable(),
             hover: self.panel_hover(),
             align: (session.kind == MotionKind::Align).then(|| Box::new(self.align_view(session))),

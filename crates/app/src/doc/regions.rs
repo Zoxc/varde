@@ -555,6 +555,14 @@ impl Doc {
         ready && self.feed.draft_error().is_some() == accept
     }
 
+    /// Whether the panel offers Add anyway: as [`Doc::commit_by`] takes
+    /// it, but with the error the panel shows, held a moment while a
+    /// changed draft is on its way, so the button doesn't blink with it.
+    /// Pressed before the answer, it does nothing.
+    pub(crate) fn offers_accept(&self, ready: bool) -> bool {
+        ready && self.feed.shown_draft_error().is_some()
+    }
+
     /// Why the feature `edited` can't do `operation`, if it makes a new
     /// body that a combine after it names and `operation` would stop it
     /// making one: the document refuses that ("combines body 2, which

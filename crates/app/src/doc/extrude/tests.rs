@@ -10,8 +10,8 @@ use varde_regen::Request;
 use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, Mode, OperationKind};
 
 use super::*;
+use crate::doc::feed::SLOW;
 use crate::doc::regions::{refresh_work, with_work_unit};
-use crate::doc::sketch::CHECKING;
 use crate::tests::{answer, deferred, example, example_and_a_hole, key_in, press_in};
 
 type Requests = Rc<RefCell<Vec<Request>>>;
@@ -1086,7 +1086,7 @@ fn a_slow_solver_says_checking_in_the_extrude_panel() {
     assert!(!doc.extrude_state().unwrap().checking);
     // Frames are wanted to tell, outside the sketch too.
     assert!(doc.timing());
-    let later = iced::time::Instant::now() + CHECKING + std::time::Duration::from_millis(1);
+    let later = iced::time::Instant::now() + SLOW + std::time::Duration::from_millis(1);
     doc.tick(later);
     let state = doc.extrude_state().unwrap();
     assert!(state.checking);
@@ -1326,7 +1326,7 @@ fn ok_waits_for_a_solver_lane_not_started_yet() {
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     assert!(!doc.extrude_state().unwrap().ready);
-    let later = iced::time::Instant::now() + CHECKING + std::time::Duration::from_millis(1);
+    let later = iced::time::Instant::now() + SLOW + std::time::Duration::from_millis(1);
     doc.tick(later);
     assert!(doc.extrude_state().unwrap().checking);
     doc.update(Edit::CommitExtrude);
@@ -2113,7 +2113,7 @@ fn nothing_waiting_moves_while_a_delete_from_the_queue_asks() {
     assert_eq!(points(&doc, hole), Some(2), "the second point waits");
     assert!(lane.waiting().is_empty());
     // Not "Checking…" while the user is asked.
-    doc.tick(std::time::Instant::now() + CHECKING * 2);
+    doc.tick(std::time::Instant::now() + SLOW * 2);
     assert!(!doc.proposals.slow());
     // Undo takes back the newest first: the point, the example's
     // deletion, then the question.
@@ -3303,4 +3303,39 @@ fn a_new_extrude_fits_the_camera_and_an_edited_one_keeps_its_distance() {
     doc.camera.set_view_height(40_000.0);
     doc.look(Look::EditFeature(feature));
     assert_eq!(distance(&doc), stored.value, "its own, not the view's");
+}
+
+#[test]
+fn a_failure_and_add_anyway_hold_while_a_toggled_body_is_on_its_way() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let FeatureKind::Extrude(plate) = doc.editor.document().features()[1].kind.clone() else {
+        panic!("the example's second feature is its extrude");
+    };
+    let mut second = plate;
+    second.operation = Operation::NewBody(varde_document::BodyId::NEW);
+    doc.apply(doc.editor.document().add_feature(second.into()));
+    doc.sync();
+    answer(&mut doc, &requests);
+    doc.look(Look::SelectFeature(sketch));
+    doc.look(Look::StartExtrude);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
+    answer(&mut doc, &requests);
+    let bodies: Vec<_> = (doc.editor.document().bodies().iter())
+        .map(|body| body.id)
+        .collect();
+    for &body in &bodies {
+        extrude(&mut doc, ExtrudeLook::Target(body));
+    }
+    answer(&mut doc, &requests);
+    let state = doc.extrude_state().unwrap();
+    assert!(state.error.is_some() && state.accept);
+    // Ticking one back: until the answer, the box stays as it was, its
+    // Add anyway too, though pressing it does nothing until then.
+    extrude(&mut doc, ExtrudeLook::Target(bodies[0]));
+    let state = doc.extrude_state().unwrap();
+    assert!(state.error.is_some() && state.accept);
+    answer(&mut doc, &requests);
+    let state = doc.extrude_state().unwrap();
+    assert!(state.error.is_none() && !state.accept && state.ready);
 }

@@ -34,8 +34,6 @@ use super::extrude::is_sketch;
 use super::{Change, Doc, HOME_TARGET, OUT_OF_DATE, home_camera};
 pub(crate) use dimension::Focus;
 pub(crate) use outside::OutsideClick;
-#[cfg(test)]
-pub(crate) use propose::CHECKING;
 use propose::sketch_of;
 pub(crate) use propose::{Analyses, Proposals};
 
@@ -1193,7 +1191,12 @@ impl Doc {
             plane: *plane,
             placement: session.placement,
             sketch: self.shown_sketch()?,
-            pending: waiting.map_or(&NONE, |waiting| &waiting.added),
+            // Faded only once they've waited `feed::SLOW`, as the status
+            // bar says so: most are answered well within it.
+            pending: match waiting {
+                Some(waiting) if self.proposals.slow() => &waiting.added,
+                _ => &NONE,
+            },
             selection: &session.selection,
             listed_on: &session.listed_on,
             tool: session.tool.as_ref().map(Drawing::active),

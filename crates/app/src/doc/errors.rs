@@ -166,7 +166,7 @@ impl Doc {
     /// The box of the geometry of the draft's failure, as the panel shows
     /// it, if it has one.
     fn draft_bounds(&self) -> Option<Aabb> {
-        (self.feed.draft_geometry()).and_then(|geometry| geometry.bounds())
+        (self.feed.shown_draft_geometry()).and_then(|geometry| geometry.bounds())
     }
 
     /// The button beside the panel's error, if the draft's failure has

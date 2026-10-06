@@ -1007,7 +1007,8 @@ bar says why (`EditError::Sketch`).
   `Propose { base, sketch, edit }` on the sketch committed now, and the
   rest queue behind it in order. While any wait, the session's `Waiting`
   is the committed sketch with them applied (unsolved): what's shown, with
-  the items they add faded, and what the tools draw on, so a chain's next
+  the items they add faded once they've waited `feed::SLOW` (250 ms, so
+  quick answers don't flicker them), and what the tools draw on, so a chain's next
   line goes on from a point still waiting. An `Add` made on that names the
   waiting items by their ids to be, which apply only once those are
   accepted (`Add::apply` refuses an id past the sketch's own). `Accepted`
@@ -1026,7 +1027,7 @@ bar says why (`EditError::Sketch`).
   going, or the document being replaced whole. An answer for a
   revision that's no longer the document's (something else was committed
   meanwhile) is proposed again; nothing the user does commits meanwhile
-  (below), so that's a safeguard. After 250 ms of waiting (`CHECKING`,
+  (below), so that's a safeguard. After 250 ms of waiting (`feed::SLOW`,
   told by frames while waiting) the status bar says "Checking…". Until
   the lane has started, proposals wait in the app.
 - **Other changes wait behind them** (`Doc::change`, `Change`): while any
@@ -1074,7 +1075,7 @@ bar says why (`EditError::Sketch`).
   what's committed. An extrude's OK waits too (`Doc::extrude_ready`),
   since its regions are of the sketch the edits change: an `Enter` in
   the window is dropped, and the panel says "Checking the sketch…" after
-  `CHECKING`.
+  `feed::SLOW`.
 - **Analysis**: on entering a sketch, and whenever its revision has none
   (undo, redo), the app asks `Analyse` of the committed sketch, one at a
   time (answers name only the revision, which two sketches share); an

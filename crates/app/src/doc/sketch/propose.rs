@@ -19,7 +19,6 @@
 use std::collections::VecDeque;
 use std::mem;
 use std::sync::Arc;
-use std::time::Duration;
 
 use iced::time::Instant;
 use varde_document::{
@@ -31,14 +30,8 @@ use varde_solve::{Request, Response, Tag};
 use varde_view::RefusedEdit;
 
 use super::{Refusal, Waiting};
+use crate::doc::feed::SLOW;
 use crate::doc::{Change, Doc};
-
-/// How long edits wait on the solver before the status bar says it's
-/// checking them, as the tools' panels do: most are answered well within
-/// it, so dragging a tool's handle or changing its values doesn't flicker
-/// the message. As long as the regeneration waits to show
-/// ([`crate::doc::feed::SLOW`]).
-pub(crate) const CHECKING: Duration = Duration::from_millis(250);
 
 /// How many analyses a session keeps, by revision, so undoing and redoing
 /// shows them at once.
@@ -57,7 +50,7 @@ pub(crate) struct Proposals {
     dropped: usize,
     /// When the proposals waiting started waiting.
     since: Option<Instant>,
-    /// Whether they've waited [`CHECKING`] or longer.
+    /// Whether they've waited [`SLOW`] or longer.
     slow: bool,
     /// The analysis asked of the lane and not answered yet, of which
     /// revision of which sketch. One at a time: the answer names only the
@@ -106,7 +99,7 @@ impl Proposals {
     }
 
     /// Whether edits have waited on the solver long enough to say so, see
-    /// [`CHECKING`].
+    /// [`SLOW`].
     pub(crate) fn slow(&self) -> bool {
         self.slow
     }
@@ -557,7 +550,7 @@ impl Doc {
         let proposals = &mut self.proposals;
         if proposals
             .since
-            .is_some_and(|since| now.saturating_duration_since(since) >= CHECKING)
+            .is_some_and(|since| now.saturating_duration_since(since) >= SLOW)
         {
             proposals.slow = true;
         }

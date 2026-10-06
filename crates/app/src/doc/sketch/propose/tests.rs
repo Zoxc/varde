@@ -46,7 +46,8 @@ fn an_accepted_edit_is_committed_as_one_undo_step() {
     let before = t.editor.revision();
     click_waiting(&mut t.doc, 3.0, 4.0);
 
-    // Shown, faded, but not committed until the solver says.
+    // Shown, but not committed until the solver says; faded once it's
+    // waited SLOW, not before, so a quick answer doesn't flicker it.
     assert_eq!(t.editor.revision(), before);
     assert!(t.proposing());
     assert_eq!(proposed(&t.lane), [before]);
@@ -54,7 +55,13 @@ fn an_accepted_edit_is_committed_as_one_undo_step() {
     let [point] = &state.sketch.points[..] else {
         panic!("{:?}", state.sketch);
     };
-    assert!(state.pending.contains(&point.id));
+    let point = point.id;
+    assert!(state.pending.is_empty());
+    let since = t.proposals.since.unwrap();
+    t.tick(since + SLOW / 2);
+    assert!(t.sketch_state().unwrap().pending.is_empty());
+    t.tick(since + SLOW);
+    assert!(t.sketch_state().unwrap().pending.contains(&point));
     assert!(sketch(&t).points.is_empty());
 
     t.lane.answer(&mut t.doc);
@@ -202,9 +209,9 @@ fn waiting_long_enough_says_checking() {
     click_waiting(&mut t.doc, 1.0, 1.0);
     assert!(t.timing());
     let since = t.proposals.since.unwrap();
-    t.tick(since + CHECKING / 2);
+    t.tick(since + SLOW / 2);
     assert!(!t.sketch_state().unwrap().checking);
-    t.tick(since + CHECKING + Duration::from_millis(1));
+    t.tick(since + SLOW + Duration::from_millis(1));
     assert!(t.sketch_state().unwrap().checking);
     assert!(!t.timing(), "no more frames needed");
     t.lane.answer(&mut t.doc);
