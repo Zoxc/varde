@@ -272,7 +272,7 @@ fn geometry_is_dragged_and_dropped() {
     );
     let [
         ..,
-        Message::Look(Look::DragGeometry { id, from, to }),
+        Message::Look(Look::DragGeometry { id, from, to, .. }),
         Message::Edit(Edit::DropGeometry),
     ] = messages.as_slice()
     else {

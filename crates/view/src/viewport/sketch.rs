@@ -101,7 +101,7 @@ const NEAR_MISS_GAP: f64 = 6.0;
 /// outside and how wide it is, in pixels.
 const NEAR_MISS_RADIUS: f32 = 7.0;
 const NEAR_MISS_WIDTH: f32 = 1.5;
-/// The disc marking a spot a point snaps to ([`Snap::spot`]), drawing or
+/// The disc marking where a point snaps ([`Snap::snapped`]), drawing or
 /// dragged: its radius, in pixels, wide enough to show round the cursor
 /// over it, and how opaque it is, of the points' colour.
 const SNAP_RADIUS: f32 = 15.0;
@@ -608,11 +608,16 @@ impl<'a> Sketching<'a> {
                         .filter(|(_, snap)| snap.snapped());
                     // Snapped, the point goes where it snapped rather than
                     // keep the offset it was grabbed at.
-                    let (from, to) = match snapped {
-                        Some((point, snap)) => (point, snap.at),
-                        None => (from, cursor.at),
+                    let (from, to, target) = match snapped {
+                        Some((point, snap)) => (point, snap.at, snap.target),
+                        None => (from, cursor.at, None),
                     };
-                    Message::Look(Look::DragGeometry { id, from, to })
+                    Message::Look(Look::DragGeometry {
+                        id,
+                        from,
+                        to,
+                        target,
+                    })
                 });
         Some(capture(message))
     }
@@ -1385,14 +1390,14 @@ impl<'a> Sketching<'a> {
         for id in hover.into_iter().chain(listed) {
             self.highlight(&mut layer, id, colors.hovered);
         }
-        // A spot a drawing tool snaps to, or a point dragged, is marked
-        // round the cursor.
+        // Where a drawing tool's click, or a point dragged, snaps is
+        // marked round the cursor, whatever it snapped to.
         let dragged = (input.press)
             .filter(|press| press.moved && press.grab && !Held::FREE.is_held(modifiers))
             .and_then(|press| Some((press.hit?, press.point?)))
             .zip(cursor)
             .map(|((id, _), cursor)| snap::snap_drag(self.sketch, id, cursor.at, cursor.pixel));
-        let spot = snap.filter(|_| drawing).or(dragged).filter(Snap::spot);
+        let spot = snap.filter(|_| drawing).or(dragged).filter(Snap::snapped);
         if let Some(spot) = spot {
             layer.point(spot.at, snap_disc(colors.point));
         }

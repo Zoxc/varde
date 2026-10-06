@@ -324,6 +324,8 @@ pub(crate) struct Drag {
     pub(crate) start: Arc<Sketch>,
     /// The move to where the cursor is, which dropping it proposes.
     pub(crate) edit: SketchEdit,
+    /// What the point dragged snapped to, which dropping it ties it to.
+    pub(crate) target: Option<varde_view::Target>,
     /// The last step the solver converged on, shown; none until the
     /// first.
     pub(crate) solution: Option<Arc<Sketch>>,

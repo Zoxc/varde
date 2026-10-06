@@ -19,7 +19,18 @@ circle, arc or spline by control points by its role ("Centre of Arc 1",
 list use. Curves name their points by id, so lines
 drawn in a chain share the point between them. An arc runs
 counter-clockwise from `start` to `end` around `center`; until the solver
-holds its radii equal, the radius changes evenly along it.
+holds its radii equal, the radius changes evenly along it. A closed arc
+(`Curve::closed_arc`) has its `end` its `start`: it runs all the way
+round (`arc_sweep` of a vector to itself is a full turn), a circle with a
+point on it. Its point counts once in `Curve::points`, it has no
+`ends` (as a circle or a closed spline has none, so nothing joins it end
+to end, Extend and tangents at an end don't take it), and the solver has
+no radius equation for it, its one point setting the radius.
+`SketchEdit::CloseArc` (`close.rs`, `Sketch::closable`: an open arc of
+the sketch's own, no fillet) makes one: the end's other curves are made
+from the start, the end goes with what's on it, and what no longer fits
+(a tangent at the end) goes too. A closed arc trims as a circle does,
+needing two cuts, and is an open arc after, its point gone unless kept.
 
 **Angles** (`angle.rs`): every `sin`, `cos`, `tan`, `atan2`, `acos`,
 `exp`, `ln` and `hypot` in the crate goes through `crate::angle`, which
@@ -685,7 +696,7 @@ to `propose` as it does an `Add`'s).
   `near` goes: a line or an arc keeps its id for what's before it, gets a
   new curve of its kind for what's after (sharing an arc's centre), or
   just a new end; a circle needs two cuts and becomes an arc, keeping its
-  id, numbered as an arc. With no cuts there (a circle cut once, by a
+  id, numbered as an arc, and a closed arc likewise stays one. With no cuts there (a circle cut once, by a
   tangent), the whole curve is deleted as `Delete` would. A new end is the
   cutting curve's end where that's there (the two share it, as a T's stem
   and bar; a link's end gets a new point `Coincident` with it instead,
@@ -1339,7 +1350,8 @@ bar says why (`EditError::Sketch`).
 - **Dragging** (`Look::DragGeometry`, then `Edit::DropGeometry`) is a
   drag session of the lane's: each step sends `Drag { session, sketch,
   points, radii }` with the `Move` to where the cursor is (a point or a
-  line with both ends by the cursor's movement; a circle or an arc grabbed
+  line with both ends by the cursor's movement, the handles at the fit
+  points moved going with them, their tips moved as far; a circle or an arc grabbed
   by its edge takes the cursor's distance from its centre as its radius,
   an arc's ends moving along their directions from the centre), and the
   view shows the last solution that converged (`Dragged`), the committed
@@ -1354,8 +1366,18 @@ bar says why (`EditError::Sketch`).
   A point dragged snaps, unless `Held::FREE` (`Shift`) is held
   (`snap::snap_drag`, in the viewport): to another point or the origin,
   a midpoint or quadrant, then a curve, then an axis, leaving out what's
-  on its own curves; snapped, it goes to the snap rather than keep the
-  offset it was grabbed at. No constraint is added.
+  on its own curves but the other end of an arc it's an end of
+  (`snap::closing`) and every other fit or control point of a spline of
+  three points or more it's one of (`own_snaps`); snapped, it goes
+  to the snap rather than keep the offset it was grabbed at. The drag
+  carries what it snapped to (`DragGeometry::target`, kept in `Drag`),
+  and dropping ties the point there with a drawing tool's `auto`
+  constraints (`edit.rs`, `snapped`: coincident, midpoint, on a curve or
+  an axis, a quadrant's): an `Add` proposed on the drag's last solution
+  in place of the `Move`, so still one undo step (with no solution yet,
+  after the `Move`, a step of its own). On an arc's other end it's
+  `CloseArc` instead, as two coincident ends of an arc are redundant; a
+  spline's two points are coincident.
 - **Constraints**: the selection's geometry is constrained by a
   `ConstraintKind` (`varde-view`, `constrain.rs`): `make` builds the
   constraints it makes of the selection (several items tie the first to
@@ -1658,10 +1680,11 @@ failures show").
   target (`Projector::pixel`), paired again only when the profiles or the
   zoom change (`Input::near`), and the tool's preview (the rubber-band line,
   the circle or arc through the cursor where it snaps, with what it snaps
-  to highlighted, a spot of its own (`Snap::spot`: a point, a line's
-  middle, a quadrant) marked by a rimless disc of the points' colour at
-  `SNAP_WASH` (15 %), `SNAP_RADIUS` (15) pixels out so it shows round the
-  cursor, as is the spot a point dragged snaps to, and the snap's guide, the points placed; the Dimension
+  to highlighted, where it snaps, whatever to (`Snap::snapped`: a point,
+  a curve, a direction inferred; a grid would be the exception), marked
+  by a rimless disc of the points' colour at `SNAP_WASH` (15 %),
+  `SNAP_RADIUS` (15) pixels out so it shows round the cursor, as is where
+  a point dragged snaps, and the snap's guide, the points placed; the Dimension
   tool's picks and the dimension it would place with the label at the
   cursor, or the one the value field places).
 
@@ -1772,11 +1795,12 @@ Pure functions, tested headless:
   turns the pixel tolerance (`HIT_TOLERANCE`, 6 pixels) into sketch units
   and is the size under which the tools refuse a shape.
 - `hit` finds the nearest point within the tolerance, the origin
-  included, and failing one the nearest curve as drawn (lines and circles
-  exactly, arcs and splines by their polyline), failing one the nearest
-  spline handle as drawn, both arms, as a line of its own
-  (`Id::handle(tip)`, after the curves, as a spline runs along its
-  handle by the fit point), and failing one the nearest axis. A handle's
+  included, and failing one the nearest spline handle as drawn, both
+  arms, as a line of its own (`Id::handle(tip)`, before the curves, so
+  where a spline runs along its handle by the fit point the handle is
+  hit), failing one the nearest curve as drawn (lines and circles
+  exactly, arcs and splines by their polyline), and failing one the
+  nearest axis. A handle's
   id as a line is the view's alone: ids from `LAST_ID` (2³¹ − 3) up are
   never given out (`OutOfIds`, `NextIdReserved` past it), and
   `Id::handle` sets bit 31 (`FIRST_RESERVED`) on the tip's, landing
@@ -1796,7 +1820,8 @@ Pure functions, tested headless:
   Pressing the origin or an axis without a tool selects it but never
   drags it.
 - `overlaps` finds everything within the tolerance, as `hit` would
-  each: points, the origin included, then curves, then axes, each
+  each: points, the origin included, then handles, then curves, then
+  axes, each
   nearest first. A press held still lists them.
 - `in_box` projects points and flattened curves and tests them against the
   box on the screen: wholly inside, or touching (any segment meeting it).

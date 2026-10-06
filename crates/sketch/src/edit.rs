@@ -162,6 +162,9 @@ pub enum SketchEdit {
     SetLinkProfiles { link: Id, profiles: bool },
     /// The point curves share made one of each, see [`Sketch::detach`].
     Detach(Id),
+    /// The arc's end made its start, so it runs all the way round, see
+    /// [`Sketch::closable`].
+    CloseArc(Id),
 }
 
 impl SketchEdit {
@@ -269,6 +272,7 @@ impl SketchEdit {
                 next.set_link_profiles(*link, *profiles)?;
             }
             SketchEdit::Detach(point) => next.detach(*point)?,
+            SketchEdit::CloseArc(arc) => next.close_arc(*arc)?,
         }
         // Only a link's own edits change what it made; deleting a link
         // takes it whole.

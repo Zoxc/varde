@@ -356,6 +356,19 @@ impl Sketch {
                 entry.curve = Curve::Arc { center, start, end };
                 entry.number = number;
             }
+            // A closed arc is cut as a circle is, its point going unless
+            // a cut is there or another curve has it.
+            (Curve::Arc { center, start, end }, Some(from), Some(to)) if start == end => {
+                let start_at = self.cut_point(&geom, &to, &own, &mut ties)?;
+                let end_at = self.cut_point(&geom, &from, &own, &mut ties)?;
+                let entry = self.curve_mut(curve).ok_or(EditError::Target(curve))?;
+                entry.curve = Curve::Arc {
+                    center,
+                    start: start_at,
+                    end: end_at,
+                };
+                gone.push(start);
+            }
             (Curve::Line { start, end } | Curve::Arc { start, end, .. }, from, to) => {
                 // What's before `from` keeps the curve's id, and what's
                 // after `to` is a new curve of the same kind.

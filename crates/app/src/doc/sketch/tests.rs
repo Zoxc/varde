@@ -929,11 +929,13 @@ fn a_drag_shows_as_it_goes_and_commits_one_step_when_dropped() {
         id: b,
         from: at(10.0, 0.0),
         to: at(10.0, 1.0),
+        target: None,
     });
     doc.look(Look::DragGeometry {
         id: b,
         from: at(10.0, 0.0),
         to: at(12.0, 3.0),
+        target: None,
     });
     // Shown, not committed.
     assert_eq!(position(shown(&doc), b), at(12.0, 3.0));
@@ -947,6 +949,7 @@ fn a_drag_shows_as_it_goes_and_commits_one_step_when_dropped() {
         id: line,
         from: at(5.0, 0.0),
         to: at(6.0, -1.0),
+        target: None,
     });
     doc.update(Edit::DropGeometry);
     let moved = sketch(&doc);
@@ -956,6 +959,111 @@ fn a_drag_shows_as_it_goes_and_commits_one_step_when_dropped() {
     );
 }
 
+/// A point dropped where it snapped is tied there, as a drawing tool's
+/// point is, in the drop's one undo step: on a curve, coincident with a
+/// point.
+#[test]
+fn a_point_dropped_where_it_snapped_is_tied_there() {
+    let (mut doc, [_, b, _, c, circle]) = with_shapes();
+    let before = sketch(&doc).clone();
+    doc.look(Look::DragGeometry {
+        id: b,
+        from: at(10.0, 0.0),
+        to: at(18.0, 0.0),
+        target: Some(varde_view::Target::On(circle)),
+    });
+    doc.update(Edit::DropGeometry);
+    let tied = sketch(&doc);
+    assert!(position(tied, b).abs_diff_eq(at(18.0, 0.0), 1e-9));
+    let on = varde_sketch::Constraint::PointOnCurve {
+        point: b,
+        curve: circle,
+    };
+    assert!(tied.constraints.iter().any(|entry| entry.constraint == on));
+    assert_eq!(undo_to(&mut doc, &before), 1);
+
+    doc.look(Look::DragGeometry {
+        id: b,
+        from: at(10.0, 0.0),
+        to: at(20.0, 0.0),
+        target: Some(varde_view::Target::Point(c)),
+    });
+    doc.update(Edit::DropGeometry);
+    let coincident = varde_sketch::Constraint::Coincident(b, c);
+    assert!((sketch(&doc).constraints.iter()).any(|entry| entry.constraint == coincident));
+    assert_eq!(undo_to(&mut doc, &before), 1);
+}
+
+/// An arc's end dropped on its other end closes it: still an arc, its
+/// end its start now, round the whole circle.
+#[test]
+fn an_arc_dropped_on_its_own_end_closes() {
+    let (mut doc, _, _) = sketching();
+    doc.look(Look::SelectTool(Tool::Arc));
+    click(&mut doc, 3.0, 0.0);
+    click(&mut doc, 0.0, 3.0);
+    click(&mut doc, 3.0_f64.sqrt() * 1.5, 1.5);
+    doc.look(Look::Escape);
+    let before = sketch(&doc).clone();
+    let arc = before.curves.last().unwrap().clone();
+    let Curve::Arc { center, start, end } = arc.curve else {
+        panic!("{arc:?}");
+    };
+    doc.look(Look::DragGeometry {
+        id: end,
+        from: at(0.0, 3.0),
+        to: at(3.0, 0.0),
+        target: Some(varde_view::Target::Point(start)),
+    });
+    doc.update(Edit::DropGeometry);
+    let closed = sketch(&doc);
+    assert_eq!(
+        closed.curve(arc.id).unwrap().curve,
+        Curve::Arc {
+            center,
+            start,
+            end: start
+        }
+    );
+    assert!(closed.point(end).is_none());
+    assert_eq!(closed.profiles().unwrap().regions.len(), 1);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+}
+
+/// A fit point dragged takes its handle with it, its tip moved as far.
+#[test]
+fn a_fit_point_dragged_takes_its_handle_along() {
+    let (mut doc, feature, _) = sketching();
+    let mut sketch_ = Sketch::default();
+    let fit: Vec<Id> = [(0.0, 0.0), (10.0, 10.0), (20.0, 0.0)]
+        .map(|(x, y)| sketch_.add_point(at(x, y)).unwrap())
+        .to_vec();
+    let tip = sketch_.add_point(at(14.0, 10.0)).unwrap();
+    let mut spline = varde_sketch::Spline::through(fit.clone(), false);
+    spline
+        .handles
+        .push(varde_sketch::Handle { at: fit[1], tip });
+    sketch_.add_curve(Curve::Spline(spline), false).unwrap();
+    doc.editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch_),
+        })
+        .unwrap();
+    doc.sync();
+    doc.lane.answer(&mut doc.doc);
+    doc.look(Look::DragGeometry {
+        id: fit[1],
+        from: at(10.0, 10.0),
+        to: at(12.0, 7.0),
+        target: None,
+    });
+    doc.update(Edit::DropGeometry);
+    let moved = sketch(&doc);
+    assert!(position(moved, fit[1]).abs_diff_eq(at(12.0, 7.0), 1e-9));
+    assert!(position(moved, tip).abs_diff_eq(at(16.0, 7.0), 1e-9));
+}
+
 #[test]
 fn a_circle_or_an_arc_dragged_by_its_edge_changes_radius() {
     let (mut doc, [.., c, circle]) = with_shapes();
@@ -963,6 +1071,7 @@ fn a_circle_or_an_arc_dragged_by_its_edge_changes_radius() {
         id: circle,
         from: at(22.0, 0.0),
         to: at(20.0, 5.0),
+        target: None,
     });
     doc.update(Edit::DropGeometry);
     let entry = sketch(&doc).curve(circle).unwrap();
@@ -987,6 +1096,7 @@ fn a_circle_or_an_arc_dragged_by_its_edge_changes_radius() {
         id: arc.id,
         from: at(0.0, 1.0),
         to: at(0.0, 3.0),
+        target: None,
     });
     doc.update(Edit::DropGeometry);
     let drawn = sketch(&doc);
@@ -1003,6 +1113,7 @@ fn escape_or_an_undo_puts_a_drag_back() {
             id: b,
             from: at(10.0, 0.0),
             to: at(10.0, 4.0),
+            target: None,
         });
     };
     drag(&mut doc);
@@ -1028,18 +1139,21 @@ fn a_drag_past_the_coordinate_limit_stops_short() {
         id: line,
         from: at(0.0, 0.0),
         to: at(max - 20.0, 0.0),
+        target: None,
     });
     // The far end would go past it, so the line stays where it was.
     doc.look(Look::DragGeometry {
         id: line,
         from: at(0.0, 0.0),
         to: at(max - 5.0, 0.0),
+        target: None,
     });
     assert_eq!(position(shown(&doc), a), at(max - 20.0, 0.0));
     doc.look(Look::DragGeometry {
         id: a,
         from: at(0.0, 0.0),
         to: at(f64::NAN, 0.0),
+        target: None,
     });
     assert_eq!(position(shown(&doc), a), at(max - 20.0, 0.0));
 }
@@ -1052,6 +1166,7 @@ fn nothing_is_dragged_with_a_tool_or_read_only() {
         id: b,
         from: at(10.0, 0.0),
         to: at(10.0, 4.0),
+        target: None,
     });
     assert!(doc.sketch.as_ref().unwrap().drag.is_none());
     doc.look(Look::SelectTool(Tool::Point));
@@ -1060,6 +1175,7 @@ fn nothing_is_dragged_with_a_tool_or_read_only() {
         id: b,
         from: at(10.0, 0.0),
         to: at(10.0, 4.0),
+        target: None,
     });
     assert!(doc.sketch.as_ref().unwrap().drag.is_none());
     // Selecting still works.
@@ -1148,6 +1264,7 @@ fn cancelling_a_drag_that_moved_nothing_stays_in_the_sketch() {
         id: b,
         from: at(10.0, 0.0),
         to: at(10.0, 4.0),
+        target: None,
     });
     doc.look(Look::CancelDrag);
     assert!(doc.sketch.is_some());
@@ -1278,6 +1395,7 @@ fn profiles_are_found_once_per_sketch_shown() {
         id: b,
         from: at(10.0, 0.0),
         to: at(10.0, 3.0),
+        target: None,
     });
     let dragged = found_profiles(&doc);
     assert!(!Arc::ptr_eq(&first, &dragged));

@@ -229,6 +229,7 @@ fn a_drag_shows_only_what_the_solver_converged_on() {
         id: b,
         from: at(10.0, 0.0),
         to: at(12.0, 3.0),
+        target: None,
     });
     let waiting = t.lane.waiting();
     let [Request::Drag { session, .. }] = waiting[..] else {
@@ -259,6 +260,7 @@ fn a_drag_shows_only_what_the_solver_converged_on() {
         id: b,
         from: at(10.0, 0.0),
         to: at(10.0, 5.0),
+        target: None,
     });
     let waiting = t.lane.waiting();
     let [Request::Drag { session: next, .. }] = waiting[..] else {
@@ -276,6 +278,7 @@ fn a_drag_cancelled_or_cut_short_commits_nothing() {
             id: b,
             from: at(10.0, 0.0),
             to: at(10.0, 4.0),
+            target: None,
         });
     };
     drag(&mut t);
@@ -459,12 +462,14 @@ fn a_dropped_drag_shows_the_move_while_it_waits() {
         id: b,
         from: at(10.0, 0.0),
         to: at(12.0, 3.0),
+        target: None,
     });
     // The last step isn't answered before the drop.
     t.doc.look(Look::DragGeometry {
         id: b,
         from: at(10.0, 0.0),
         to: at(15.0, 3.0),
+        target: None,
     });
     t.doc.update(Edit::DropGeometry);
     assert!(t.proposing());

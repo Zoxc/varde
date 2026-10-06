@@ -1131,7 +1131,12 @@ impl Doc {
                 }
             }
             Look::SelectTool(tool) => self.select_tool(tool),
-            Look::DragGeometry { id, from, to } => self.drag_geometry(id, from, to),
+            Look::DragGeometry {
+                id,
+                from,
+                to,
+                target,
+            } => self.drag_geometry(id, from, to, target),
             Look::CancelDrag => {
                 if let Some(session) = &mut self.sketch {
                     session.drag = None;

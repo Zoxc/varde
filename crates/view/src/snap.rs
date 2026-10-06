@@ -164,16 +164,6 @@ impl Snap {
         target.into_iter().chain(inference).collect()
     }
 
-    /// Whether it snapped to a spot of its own, which is marked: a point,
-    /// a line's middle or a circle's quadrant, not just somewhere on a
-    /// curve.
-    pub(crate) fn spot(&self) -> bool {
-        matches!(
-            self.target,
-            Some(Target::Point(_) | Target::Midpoint(_) | Target::Quadrant { .. })
-        )
-    }
-
     /// The item to highlight: what the point is on.
     pub(crate) fn highlighted(&self) -> Option<Id> {
         self.target.map(Target::item)
@@ -243,17 +233,24 @@ pub(crate) fn snap(sketch: &Sketch, tool: &ActiveTool, cursor: DVec2, pixel: f64
 /// without directions, to another point or the origin, then a midpoint or
 /// a quadrant, then the nearest place on a curve, then on an axis. What's on a
 /// curve the point is on is left out, so it isn't snapped to its own
-/// curves nor to any of their points: a line's other end, an arc's
-/// centre or other end. Free where nothing's near.
+/// curves nor to any of their points (a line's other end, an arc's
+/// centre), but those it can be tied to ([`own_snaps`]): the other end
+/// of an arc it's an end of, which closes it, and every other fit or
+/// control point of a spline of three points or more it's one of. Free
+/// where nothing's near.
 pub(crate) fn snap_drag(sketch: &Sketch, dragged: Id, cursor: DVec2, pixel: f64) -> Snap {
     let tolerance = SNAP_TOLERANCE * pixel;
     let own: Vec<Id> = (sketch.curves.iter())
         .filter(|entry| entry.curve.points().any(|point| point == dragged))
         .map(|entry| entry.id)
         .collect();
+    let closes: Vec<Id> = (own.iter())
+        .flat_map(|&curve| own_snaps(sketch, curve, dragged))
+        .collect();
     let neighbours: Vec<Id> = (own.iter())
         .filter_map(|&curve| sketch.curve(curve))
         .flat_map(|entry| entry.curve.points())
+        .filter(|point| !closes.contains(point))
         .collect();
     let near = |candidates: Vec<Snap>| {
         candidates
@@ -296,6 +293,46 @@ pub(crate) fn snap_drag(sketch: &Sketch, dragged: Id, cursor: DVec2, pixel: f64)
         })
         .or_else(|| on(&mut [Id::X_AXIS, Id::Y_AXIS].into_iter()))
         .unwrap_or(Snap::free(cursor))
+}
+
+/// The points of the curve `curve` of `sketch` its point `point`,
+/// dragged, snaps to: an arc's other end from it ([`closing`]), or, of
+/// a spline of three points or more, open or closed, every other fit or
+/// control point if `point` is one (not a handle's tip): fewer would
+/// fold back on itself. None for a line or a circle.
+fn own_snaps(sketch: &Sketch, curve: Id, point: Id) -> Vec<Id> {
+    match sketch.curve(curve).map(|entry| &entry.curve) {
+        Some(Curve::Spline(spline))
+            if spline.points.len() >= 3 && spline.points.contains(&point) =>
+        {
+            (spline.points.iter())
+                .copied()
+                .filter(|&other| other != point)
+                .collect()
+        }
+        Some(Curve::Arc { .. }) => closing(sketch, curve, point).into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The other end of the curve `curve` of `sketch` from its end `end`,
+/// which `end` dragged there closes it: an arc's, or an open spline's of
+/// three points or more (fewer would fold back on itself). `None` for
+/// any other curve, or a point that's no end of it.
+pub fn closing(sketch: &Sketch, curve: Id, end: Id) -> Option<Id> {
+    let entry = sketch.curve(curve)?;
+    let [start, last] = entry.curve.ends()?;
+    let closes = match &entry.curve {
+        Curve::Arc { .. } => true,
+        Curve::Spline(spline) => spline.points.len() >= 3,
+        Curve::Line { .. } | Curve::Circle { .. } => false,
+    };
+    match (start == end, last == end) {
+        _ if !closes => None,
+        (true, false) => Some(last),
+        (false, true) => Some(start),
+        _ => None,
+    }
 }
 
 /// Where the click of `tool`, placing `placing`, snaps with the cursor at

@@ -9,9 +9,10 @@ use crate::projection::Projector;
 
 /// What's under the cursor at `at`, in sketch coordinates, within
 /// `tolerance` sketch units: the nearest point, the origin included,
-/// or failing one, the nearest curve as drawn, or failing one, the
-/// nearest spline handle as drawn ([`Id::handle`], see [`handles`]), or
-/// failing one, the nearest axis. A point of the sketch's goes before the origin where
+/// or failing one, the nearest spline handle as drawn ([`Id::handle`],
+/// see [`handles`]), so a handle along its spline is the handle, or
+/// failing one, the nearest curve as drawn, or failing one, the nearest
+/// axis. A point of the sketch's goes before the origin where
 /// they're as near.
 pub(crate) fn hit(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id> {
     if !at.is_finite() {
@@ -28,14 +29,14 @@ pub(crate) fn hit(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id> {
     });
     let axes = [(Id::X_AXIS, at.y.abs()), (Id::Y_AXIS, at.x.abs())];
     nearest(points, tolerance)
-        .or_else(|| nearest(curves, tolerance))
         .or_else(|| nearest(handles(sketch, at).into_iter(), tolerance))
+        .or_else(|| nearest(curves, tolerance))
         .or_else(|| nearest(axes.into_iter(), tolerance))
 }
 
 /// Everything under the cursor at `at` within `tolerance` sketch units,
 /// as [`hit`] would find each on its own: the points, the origin
-/// included, then the curves, then the handles, then the axes, each
+/// included, then the handles, then the curves, then the axes, each
 /// nearest first.
 pub(crate) fn overlaps(sketch: &Sketch, at: DVec2, tolerance: f64) -> Vec<Id> {
     if !at.is_finite() {
@@ -49,7 +50,7 @@ pub(crate) fn overlaps(sketch: &Sketch, at: DVec2, tolerance: f64) -> Vec<Id> {
         .filter_map(|entry| Some((entry.id, curve_distance(sketch, &entry.curve, at)?)))
         .collect();
     let axes = vec![(Id::X_AXIS, at.y.abs()), (Id::Y_AXIS, at.x.abs())];
-    [points, curves, handles(sketch, at), axes]
+    [points, handles(sketch, at), curves, axes]
         .into_iter()
         .flat_map(|mut kind| {
             kind.retain(|&(_, distance)| distance <= tolerance);

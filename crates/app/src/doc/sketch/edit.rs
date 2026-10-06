@@ -142,7 +142,7 @@ impl Doc {
     /// converged. A step that would put anything past the coordinate limit
     /// is left out. Not while edits wait on the solver: the drag starts
     /// once they're answered.
-    pub(crate) fn drag_geometry(&mut self, id: Id, from: DVec2, to: DVec2) {
+    pub(crate) fn drag_geometry(&mut self, id: Id, from: DVec2, to: DVec2, target: Option<Target>) {
         if !self.editable() || self.proposing() {
             return;
         }
@@ -196,6 +196,7 @@ impl Doc {
                 session,
                 start,
                 edit,
+                target,
                 solution,
             });
         }
@@ -203,11 +204,30 @@ impl Doc {
 
     /// Proposes the geometry dragged where it was dropped: the move to
     /// where the cursor was, from where the solver last converged, so the
-    /// drag commits as one undo step what it showed, solved.
+    /// drag commits as one undo step what it showed, solved. A point
+    /// snapped is tied to what it snapped to ([`snapped`]): on that
+    /// solution, still one step, or after the move where there's none.
     pub(crate) fn drop_geometry(&mut self) {
-        if let Some(drag) = self.sketch.as_mut().and_then(|session| session.drag.take()) {
-            let from = drag.solution.map(|solution| (drag.revision, solution));
-            self.propose_from(drag.edit, from);
+        let Some(drag) = self.sketch.as_mut().and_then(|session| session.drag.take()) else {
+            return;
+        };
+        let tie = match drag.edit {
+            SketchEdit::Move { ref points, .. } => (drag.target)
+                .zip(points.first())
+                .and_then(|(target, &(point, _))| snapped(&drag.start, point, target)),
+            _ => None,
+        };
+        match (tie, drag.solution) {
+            (Some(tie), Some(solution)) => {
+                self.propose_from(tie, Some((drag.revision, solution)));
+            }
+            (tie, solution) => {
+                let from = solution.map(|solution| (drag.revision, solution));
+                self.propose_from(drag.edit, from);
+                if let Some(tie) = tie {
+                    self.propose(tie);
+                }
+            }
         }
     }
 
@@ -775,10 +795,17 @@ pub(super) fn place(
         return Ok(id);
     }
     let point = add.point(at)?;
-    let ties = match target {
+    add.auto.extend(ties(sketch, point, target));
+    Ok(point)
+}
+
+/// The constraints tying the point `point` of `sketch` to `target`, what
+/// it snapped to: coincident with a point, a line's midpoint, on a
+/// curve or an axis, on a circle level with its centre or above it.
+fn ties(sketch: &Sketch, point: Id, target: Option<Target>) -> Vec<Constraint> {
+    match target {
         None => Vec::new(),
-        // The origin, or a link's point.
-        Some(Target::Point(fixed)) => vec![Constraint::Coincident(point, fixed)],
+        Some(Target::Point(other)) => vec![Constraint::Coincident(point, other)],
         Some(Target::Midpoint(line)) => vec![Constraint::Midpoint { point, line }],
         Some(Target::On(curve)) => vec![Constraint::PointOnCurve { point, curve }],
         Some(Target::Quadrant { round, level }) => {
@@ -796,9 +823,7 @@ pub(super) fn place(
             });
             [Some(on), level].into_iter().flatten().collect()
         }
-    };
-    add.auto.extend(ties);
-    Ok(point)
+    }
 }
 
 /// The `auto` constraint of a curve `new` passing through the point it
@@ -857,7 +882,7 @@ fn dragged(sketch: &Sketch, id: Id, from: DVec2, to: DVec2) -> Option<SketchEdit
     }
     let delta = to - from;
     let mut radii = Vec::new();
-    let points: Vec<(Id, DVec2)> = match sketch.kind(id)? {
+    let mut points: Vec<(Id, DVec2)> = match sketch.kind(id)? {
         Kind::Point => vec![(id, sketch.point(id)?.at + delta)],
         Kind::Line | Kind::Spline => sketch
             .curve(id)?
@@ -891,7 +916,41 @@ fn dragged(sketch: &Sketch, id: Id, from: DVec2, to: DVec2) -> Option<SketchEdit
         }
         Kind::Constraint | Kind::Dimension => return None,
     };
+    // A fit point's handle goes with it, its tip moved as far.
+    let tips: Vec<(Id, DVec2)> = (sketch.splines())
+        .flat_map(|(_, spline)| &spline.handles)
+        .filter(|handle| {
+            points.iter().any(|&(point, _)| point == handle.at)
+                && points.iter().all(|&(point, _)| point != handle.tip)
+        })
+        .filter_map(|handle| Some((handle.tip, sketch.point(handle.tip)?.at + delta)))
+        .collect();
+    points.extend(tips);
     Some(SketchEdit::Move { points, radii })
+}
+
+/// The edit tying the point `point` of `sketch`, dragged, to `target`,
+/// what it snapped to: the `auto` constraints a drawing tool's point
+/// gets ([`ties`]), so one that restates the rest is dropped; or, on the
+/// other end of an arc it's an end of, the arc closed
+/// ([`SketchEdit::CloseArc`]), as two coincident ends of one would be
+/// redundant.
+fn snapped(sketch: &Sketch, point: Id, target: Target) -> Option<SketchEdit> {
+    if let Target::Point(other) = target
+        && let Some(arc) = (sketch.curves.iter()).find(|entry| {
+            entry.curve.kind() == Kind::Arc
+                && varde_view::closing(sketch, entry.id, point) == Some(other)
+        })
+    {
+        return Some(SketchEdit::CloseArc(arc.id));
+    }
+    let auto = ties(sketch, point, Some(target));
+    (!auto.is_empty()).then(|| {
+        SketchEdit::Add(Add {
+            auto,
+            ..Add::new(sketch)
+        })
+    })
 }
 
 #[cfg(test)]

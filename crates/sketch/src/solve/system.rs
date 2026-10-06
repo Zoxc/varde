@@ -317,8 +317,10 @@ impl System {
         let mirrored = mirrored_arcs(sketch, &images);
         for entry in &sketch.curves {
             // A link's arc is held as found: its radii are constants,
-            // equal to rounding, so no equation of its own.
+            // equal to rounding, so no equation of its own. A closed
+            // arc's one point has the one radius.
             if let Curve::Arc { center, start, end } = entry.curve
+                && start != end
                 && !mirrored.contains(&entry.id)
                 && !linked.contains(&entry.id)
                 && let (Some(center), Some(start), Some(end)) = (
@@ -865,7 +867,12 @@ impl System {
                     match entry.curve {
                         // Its radius equation holds the end at the
                         // start's distance, so only the end's direction
-                        // from the centre is left to fix.
+                        // from the centre is left to fix: nothing for a
+                        // closed arc's.
+                        Curve::Arc { center, start, end } if start == end => {
+                            slots.extend(point(center)?);
+                            slots.extend(point(start)?);
+                        }
                         Curve::Arc { center, start, end } => {
                             let (center, end) = (point(center)?, point(end)?);
                             slots.extend(center);

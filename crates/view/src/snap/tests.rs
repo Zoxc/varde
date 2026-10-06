@@ -314,6 +314,46 @@ fn a_dragged_point_snaps_but_not_to_its_own_curves() {
     assert!(!snap_drag(&d.sketch, d.arc_start, at(2.6, 21.6), PIXEL).snapped());
 }
 
+/// An arc's end dragged snaps to its other end, closing it, and a point
+/// of a spline of three points or more to any other of its points; a
+/// line's end, or a spline's of two points, doesn't.
+#[test]
+fn a_dragged_end_snaps_to_its_own_curves_other_end() {
+    let d = drawn();
+    let Some([_, arc_end]) = d.sketch.curve(d.arc).unwrap().curve.ends() else {
+        panic!("the arc has no ends");
+    };
+    let closed = snap_drag(&d.sketch, d.arc_start, at(0.2, 22.8), PIXEL);
+    assert_eq!(
+        (closed.at, target(closed)),
+        (at(0.0, 23.0), Some(Target::Point(arc_end)))
+    );
+    assert_eq!(closing(&d.sketch, d.arc, d.arc_start), Some(arc_end));
+    assert_eq!(closing(&d.sketch, d.line, d.start), None);
+    let mut sketch = d.sketch.clone();
+    let mut spline = |places: &[(f64, f64)]| {
+        let points: Vec<Id> = (places.iter())
+            .map(|&(x, y)| sketch.add_point(at(x, y)).unwrap())
+            .collect();
+        let spline = varde_sketch::Spline::through(points.clone(), false);
+        let id = sketch.add_curve(Curve::Spline(spline), false).unwrap();
+        (id, points)
+    };
+    let (long, fit) = spline(&[(30.0, 30.0), (40.0, 35.0), (30.0, 40.0)]);
+    let (short, two) = spline(&[(50.0, 50.0), (55.0, 50.0)]);
+    let ends = snap_drag(&sketch, fit[2], at(30.2, 30.3), PIXEL);
+    assert_eq!(target(ends), Some(Target::Point(fit[0])));
+    assert_eq!(closing(&sketch, long, fit[0]), Some(fit[2]));
+    assert_eq!(closing(&sketch, long, fit[1]), None);
+    assert_eq!(closing(&sketch, short, two[0]), None);
+    assert!(!snap_drag(&sketch, two[1], at(50.2, 50.1), PIXEL).snapped());
+    // Any of a spline's points to any other of its own, not only its ends.
+    let middle = snap_drag(&sketch, fit[1], at(30.1, 39.8), PIXEL);
+    assert_eq!(target(middle), Some(Target::Point(fit[2])));
+    let first = snap_drag(&sketch, fit[0], at(39.9, 35.2), PIXEL);
+    assert_eq!(target(first), Some(Target::Point(fit[1])));
+}
+
 /// A line doesn't snap to the point it starts from, whether a point of
 /// the sketch's or the end it goes on from, but still to others.
 #[test]

@@ -430,6 +430,7 @@ fn a_handle_is_selected_dragged_constrained_and_deleted_as_a_line() {
         id: line,
         from: (fit + tip) / 2.0,
         to: up,
+        target: None,
     });
     doc.update(Edit::DropGeometry);
     let turned = sketch(&doc).point(handle.tip).unwrap().at - fit;

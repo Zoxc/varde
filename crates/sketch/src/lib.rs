@@ -23,6 +23,7 @@
 
 pub mod angle;
 mod check;
+mod close;
 mod constraint;
 mod corner;
 mod detach;
@@ -154,7 +155,9 @@ pub enum Curve {
     },
     /// Counter-clockwise from `start` to `end`. Its radius is
     /// `|start - center|`, which `|end - center|` is to equal: the solver
-    /// holds that as an equation the arc implies.
+    /// holds that as an equation the arc implies. A closed arc's `end` is
+    /// its `start`: it runs all the way round, a circle with a point on
+    /// it ([`Curve::closed_arc`]).
     Arc {
         center: Id,
         start: Id,
@@ -174,13 +177,16 @@ impl Curve {
         }
     }
 
-    /// The points the curve is made from: a spline's fit or control
-    /// points, then its handles' tips.
+    /// The points the curve is made from, each once: a spline's fit or
+    /// control points, then its handles' tips.
     pub fn points(&self) -> impl Iterator<Item = Id> + Clone + '_ {
         let (own, spline) = match self {
             &Curve::Line { start, end } => ([Some(start), Some(end), None], None),
             &Curve::Circle { center, .. } => ([Some(center), None, None], None),
-            &Curve::Arc { center, start, end } => ([Some(center), Some(start), Some(end)], None),
+            &Curve::Arc { center, start, end } => {
+                let end = (end != start).then_some(end);
+                ([Some(center), Some(start), end], None)
+            }
             Curve::Spline(spline) => ([None; 3], Some(spline)),
         };
         let spline = spline.into_iter().flat_map(Spline::all_points);
@@ -188,13 +194,19 @@ impl Curve {
     }
 
     /// A line's, an arc's or an open spline's start and end. `None` for
-    /// a circle or a closed spline.
+    /// a circle, a closed arc or a closed spline.
     pub fn ends(&self) -> Option<[Id; 2]> {
         match self {
+            &Curve::Arc { start, end, .. } if start == end => None,
             &Curve::Line { start, end } | &Curve::Arc { start, end, .. } => Some([start, end]),
             Curve::Spline(spline) => spline.ends(),
             Curve::Circle { .. } => None,
         }
+    }
+
+    /// Whether it's an arc whose end is its start, all the way round.
+    pub fn closed_arc(&self) -> bool {
+        matches!(*self, Curve::Arc { start, end, .. } if start == end)
     }
 
     /// A circle's or an arc's centre. `None` for a line or a spline.

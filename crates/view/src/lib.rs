@@ -115,7 +115,7 @@ pub use shell::shell_info;
 pub use shortcut::{
     Binding, DocumentKeys, Held, claimed, document_bindings, escapes, pressed, welcome_bindings,
 };
-pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
+pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target, closing};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
 pub use thumbnail::{
@@ -774,12 +774,14 @@ pub enum Look {
     /// The cursor left a body's row in Objects, as [`Look::LeaveOrigin`].
     LeaveBodyRow(BodyId),
     /// Drags the item `id` of the sketch being edited, grabbed at `from`,
-    /// to `to`, in sketch coordinates. Shown until it's dropped
+    /// to `to`, in sketch coordinates, a point snapped there to `target`,
+    /// which dropping it ties it to. Shown until it's dropped
     /// ([`Edit::DropGeometry`]) or `Esc` puts it back.
     DragGeometry {
         id: Id,
         from: DVec2,
         to: DVec2,
+        target: Option<Target>,
     },
     /// Puts back the geometry being dragged in the sketch being edited, if
     /// any is: `Esc` during a drag, which does nothing else then, even if

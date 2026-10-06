@@ -220,7 +220,7 @@ fn fillet_and_chamfer_hit_the_corners_where_lines_meet() {
 }
 
 #[test]
-fn a_handle_is_hit_by_its_tip_along_both_arms_after_curves() {
+fn a_handle_is_hit_by_its_tip_along_both_arms_before_curves() {
     use varde_sketch::{Handle, Spline};
     let mut sketch = Sketch::default();
     let mut point = |x, y| sketch.add_point(DVec2::new(x, y)).unwrap();
@@ -246,6 +246,17 @@ fn a_handle_is_hit_by_its_tip_along_both_arms_after_curves() {
         overlaps(&sketch, DVec2::new(7.0, 9.8), 0.5),
         [Id::handle(tip)]
     );
-    // At the fit point, the spline runs along it: the spline first.
-    assert_eq!(hit(&sketch, DVec2::new(10.4, 10.1), 0.25), Some(id));
+    // At the fit point, where the spline runs along it, the handle
+    // first; off its arms, the spline.
+    assert_eq!(
+        hit(&sketch, DVec2::new(10.4, 10.1), 0.25),
+        Some(Id::handle(tip))
+    );
+    assert_eq!(
+        overlaps(&sketch, DVec2::new(10.4, 10.1), 0.25),
+        [Id::handle(tip), id]
+    );
+    let flat = sketch.flatten(&sketch.curve(id).unwrap().curve).unwrap();
+    let along = flat[flat.len() / 4];
+    assert_eq!(hit(&sketch, along, 0.25), Some(id));
 }
