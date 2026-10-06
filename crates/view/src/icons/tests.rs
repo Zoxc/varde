@@ -90,6 +90,8 @@ fn every_toolbar_tool_has_an_icon() {
             | Tool::Extend
             | Tool::Mirror
             | Tool::Offset
+            | Tool::Fillet
+            | Tool::Chamfer
             | Tool::Project
             | Tool::Intersect => IconCategory::Modify,
             Tool::Dimension => IconCategory::Dimension,

@@ -111,8 +111,10 @@ icons! {
     Extend => r#"<path d="M3 19l7-7"/><path class="a" d="M10 12l6.5-6.5" stroke-dasharray="2 2.2"/><path class="r" d="M13 2l8 8"/><circle class="af" cx="16.5" cy="5.5" r="1.4"/>"#,
     Mirror => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 9L3 19h6z"/><path d="M15 9l6 10h-6z"/><path class="a" d="M7 6.5C9 3 15 3 17 6.5M17.3 3.8L17 6.5l-2.6-.6"/>"#,
     Offset => r#"<path class="r" d="M4 20c2-7 7-12 16-13"/><path d="M3 13c2-4 6-7 11-7.8"/><path class="a" d="M10.5 14.5L8 11M7.5 13.3L8 11l2.4.2"/>"#,
-    Fillet => r#"<path d="M5 20v-8M12 5h7"/><path class="r" d="M5 12V5h7" stroke-dasharray="1.6 2"/><path class="a" d="M5 12a7 7 0 0 1 7-7"/>"#,
-    Chamfer => r#"<path d="M5 20v-9M13 5h6"/><path class="r" d="M5 11V5h8" stroke-dasharray="1.6 2"/><path class="a" d="M5 11l8-6"/>"#,
+    // `notes/ui-mock-fillet-chamfer.html`'s option B: the fillet shows its
+    // centre and radii, the chamfer hatches the corner it removes.
+    Fillet => r#"<path d="M4 20v-6M14 4h6"/><path class="r" d="M14 14H4M14 14V4" stroke-dasharray="1.6 2"/><path class="a" d="M4 14a10 10 0 0 1 10-10"/><circle class="af" cx="4" cy="14" r="1.5"/><circle class="af" cx="14" cy="4" r="1.5"/><circle class="af" cx="14" cy="14" r="1.3"/>"#,
+    Chamfer => r#"<path d="M4 20v-6M14 4h6"/><path class="r" d="M4 14V4h10" stroke-dasharray="1.6 2"/><path class="r" stroke-width=".9" d="M4 10l6-6M4 6l2-2"/><path class="a" d="M4 14l10-10"/><circle class="af" cx="4" cy="14" r="1.5"/><circle class="af" cx="14" cy="4" r="1.5"/>"#,
     Project => r#"<path class="r" d="M4 7l8-4 8 4-8 4z"/><path class="a" d="M12 11v6" stroke-dasharray="2 2"/><path class="a" d="M10 15l2 2 2-2"/><path d="M5 20h14"/>"#,
     Intersect => r#"<path d="M3 18C8 8 13 6 21 5"/><path d="M3 6c6 1 11 5 18 13"/><circle class="af" cx="11" cy="9.3" r="2"/>"#,
     Measure => r#"<path class="t" d="M3 17L17 3l4 4L7 21z"/><path class="a" d="M7 13l2 2M10 10l2 2M13 7l2 2"/>"#,
@@ -283,8 +285,6 @@ impl Icon {
             | Icon::Polygon
             | Icon::Spline
             | Icon::Point
-            | Icon::Fillet
-            | Icon::Chamfer
             | Icon::Convert
             | Icon::Handles
             | Icon::Comb
@@ -294,6 +294,8 @@ impl Icon {
             | Icon::Extend
             | Icon::Mirror
             | Icon::Offset
+            | Icon::Fillet
+            | Icon::Chamfer
             | Icon::Project
             | Icon::Intersect
             | Icon::Combine
