@@ -7,7 +7,7 @@
 //! says the name was taken.
 
 use varde_document::Named;
-use varde_view::Look;
+use varde_view::{Look, RailLook};
 
 use super::{Change, Doc};
 
@@ -121,9 +121,12 @@ fn passive(message: &Look) -> bool {
     matches!(
         message,
         Look::HoverItem(_)
-            | Look::HoverLink(_)
             | Look::LeaveItem(_)
+            | Look::HoverLink(_)
             | Look::LeaveLink(_)
+            | Look::HoverOverlap(_)
+            | Look::LeaveOverlap(_)
+            | Look::Rail(RailLook::Hover(..) | RailLook::Row(_))
             | Look::HoverFeature(_)
             | Look::LeaveFeature(_)
             | Look::HoverOrigin(_)

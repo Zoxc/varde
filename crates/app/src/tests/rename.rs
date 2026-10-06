@@ -115,3 +115,87 @@ fn the_rename_field_shows_in_the_row() {
     // The row is drawn plain and hovered.
     assert_eq!(count(&after) + 2, count(&before), "{before:?} {after:?}");
 }
+
+/// Moving the cursor over the viewport, across the rail and the view
+/// cube on the way, leaves the rename field open and focused.
+#[test]
+fn moving_over_the_viewport_keeps_the_field() {
+    let (doc, _) = example();
+    let feature = doc.editor.document().features()[0].id;
+    let body = doc.editor.document().bodies()[0].id;
+    move_over_viewport(Panel::Timeline, Named::Feature(feature));
+    move_over_viewport(Panel::Objects, Named::Feature(feature));
+    move_over_viewport(Panel::Objects, Named::Body(body));
+}
+
+/// Renames `target` from `panel` and moves the cursor over the viewport.
+fn move_over_viewport(panel: Panel, target: Named) {
+    use iced::mouse::{Cursor, Event};
+    use iced_runtime::user_interface::UserInterface;
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(panel));
+    doc.look(Look::StartRename(target));
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut cache = iced_runtime::user_interface::Cache::default();
+    {
+        use iced::advanced::widget::operation::focusable;
+        let mut ui = UserInterface::build(doc.view_in(Mode::Light), size, cache, &mut renderer);
+        ui.operate(&renderer, &mut focusable::focus(varde_view::RENAME_FIELD));
+        cache = ui.into_cache();
+    }
+    for step in 0..80 {
+        let at = iced::Point::new(
+            300.0 + (step % 10) as f32 * 95.0,
+            40.0 + (step / 10) as f32 * 90.0,
+        );
+        let mut ui = UserInterface::build(doc.view_in(Mode::Light), size, cache, &mut renderer);
+        let mut sent = Vec::new();
+        for event in [
+            iced::Event::Mouse(Event::CursorMoved { position: at }),
+            iced::Event::Window(iced::window::Event::RedrawRequested(Instant::now())),
+        ] {
+            let _ = ui.update(
+                &[event],
+                Cursor::Available(at),
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut sent,
+            );
+        }
+        // Typing still reaches the field.
+        let key = iced::keyboard::Key::Character("x".into());
+        let typed = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key.clone(),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::empty(),
+            text: Some("x".into()),
+            repeat: false,
+        });
+        let mut typing = Vec::new();
+        let _ = ui.update(
+            &[typed],
+            Cursor::Available(at),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut typing,
+        );
+        assert!(
+            matches!(typing[..], [Ui::Look(Look::RenameInput(_))]),
+            "unfocused at {step}: {typing:?}"
+        );
+        cache = ui.into_cache();
+        for message in sent {
+            match message {
+                Ui::Look(look) => doc.look(look),
+                Ui::Edit(edit) => doc.update(edit),
+                _ => {}
+            }
+            assert!(doc.renaming.is_some(), "closed at {step}");
+        }
+    }
+}
