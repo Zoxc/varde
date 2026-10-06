@@ -11,7 +11,7 @@ pub(crate) mod files;
 pub(crate) mod panicked;
 pub(crate) mod pick;
 mod recent;
-mod settings;
+pub(crate) mod settings;
 mod sidecar;
 mod store;
 pub(crate) mod thread;

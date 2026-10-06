@@ -83,6 +83,19 @@ pub fn store() -> Option<PathBuf> {
     crate::native::project_dirs().map(|dirs| dirs.config_dir().join("settings.toml"))
 }
 
+/// Reads the settings from [`store`] on the calling thread, defaulted
+/// where they can't be read: for the theme the window first draws in,
+/// before the IO lane has answered [`Request::LoadSettings`]. Everything
+/// else asks the lane.
+///
+/// [`Request::LoadSettings`]: crate::Request::LoadSettings
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_now() -> Settings {
+    store()
+        .map(|store| crate::native::settings::load(&store))
+        .unwrap_or_default()
+}
+
 /// On the web, `settings.toml` at the root of the Origin Private File
 /// System.
 #[cfg(target_arch = "wasm32")]

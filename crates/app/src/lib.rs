@@ -363,7 +363,13 @@ impl Varde {
     /// The app as it starts, and the task asking for the mode the system
     /// prefers, which [`Varde::subscription`] hears of changes to after.
     fn boot() -> (Self, Task<Message>) {
-        let app = Self::new();
+        #[allow(unused_mut, reason = "only native reads the settings early")]
+        let mut app = Self::new();
+        // Natively the stored theme is read before the window first draws,
+        // which the IO lane's answer would come after: so it doesn't open
+        // light and turn dark. The lane's answer still follows.
+        #[cfg(not(target_arch = "wasm32"))]
+        Settings::preview(varde_io::settings::read_now(), &mut app.options);
         let storage = if app.files.browser_storage {
             storage_state()
         } else {

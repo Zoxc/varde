@@ -5,9 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Varde CAD</title>
     <style>
-      /* The light theme's background, `LIGHT.panel` in crates/view/src/theme.rs,
-         which the app starts in; shown until iced draws its first frame. */
+      /* The theme's background, `LIGHT_PANEL` or `DARK_PANEL` in
+         crates/view/src/theme.rs, as the system prefers; shown until iced draws
+         its first frame. */
       html, body { margin: 0; height: 100%; overflow: hidden; background: #fafafb; }
+      @media (prefers-color-scheme: dark) { html, body { background: #212228; } }
       canvas { display: block; width: 100%; height: 100%; }
       /* winit gives the canvas a tabindex and focuses it on a click; Chrome then
          draws its focus ring, of which a dark line shows along the top edge. */

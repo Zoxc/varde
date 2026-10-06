@@ -43,6 +43,14 @@ impl Settings {
             .flatten()
     }
 
+    /// Takes `stored` into `options` ahead of [`Settings::loaded`], which
+    /// stays the one that counts: so the first frame has the stored theme.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn preview(stored: Stored, options: &mut ViewOptions) {
+        options.theme = choice(stored.theme);
+        options.mouse_hints = stored.mouse_hints;
+    }
+
     /// Records that the user chose the theme of `options`, returning the
     /// write storing it, once the stored settings have arrived: before,
     /// writing would drop what else they hold.
