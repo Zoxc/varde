@@ -1409,4 +1409,3 @@ fn a_press_held_picking_outside_a_sketch_lists_the_model_and_other_sketches() {
             .any(|item| matches!(item, OverlapItem::Model(_)))
     );
 }
-

@@ -472,7 +472,11 @@ fn an_undo_taking_the_edge_s_body_away_drops_the_axis() {
         panic!("a sketch");
     };
     let base_id = doc.editor.document().features().last().unwrap().id;
-    doc.apply(doc.editor.document().set_sketch_whole(base_id, drawn.clone()));
+    doc.apply(
+        doc.editor
+            .document()
+            .set_sketch_whole(base_id, drawn.clone()),
+    );
     let FeatureKind::Extrude(extrude) = box_feature.kind else {
         panic!("an extrude");
     };

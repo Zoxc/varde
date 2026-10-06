@@ -123,7 +123,10 @@ fn flat_patches_take_the_rules_flux_in_closed_form() {
         let rule = rule_flux(&patch, o);
         assert!(flat_flux(&patch, o).is_some());
         let scale = rule.y.max(1.0);
-        assert!((closed - rule).abs().max_element() <= 1e-12 * scale, "{closed} {rule}");
+        assert!(
+            (closed - rule).abs().max_element() <= 1e-12 * scale,
+            "{closed} {rule}"
+        );
     }
     // A curved edge takes the rule.
     let mut bent = crate::patch::Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap();

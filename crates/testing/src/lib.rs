@@ -69,7 +69,10 @@ fn parse_seed(value: Option<&str>) -> Option<u64> {
     match value.parse::<u64>() {
         // One below the top, so `seed + 1` bounds a range.
         Ok(seed) if seed < u64::MAX => Some(seed),
-        _ => panic!("VARDE_TEST_SEED={value:?}: expected a number below {}", u64::MAX),
+        _ => panic!(
+            "VARDE_TEST_SEED={value:?}: expected a number below {}",
+            u64::MAX
+        ),
     }
 }
 

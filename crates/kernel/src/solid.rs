@@ -565,8 +565,7 @@ fn rule_flux(patch: &Patch, o: glam::DVec3) -> glam::DVec2 {
 /// and its corners. `None` unless every edge is straight.
 fn flat_flux(patch: &Patch, o: glam::DVec3) -> Option<f64> {
     let p = patch.p;
-    let straight =
-        (0..3).all(|i| patch.w[i] == 1.0 && patch.c[i] == (p[i] + p[(i + 1) % 3]) * 0.5);
+    let straight = (0..3).all(|i| patch.w[i] == 1.0 && patch.c[i] == (p[i] + p[(i + 1) % 3]) * 0.5);
     straight.then(|| {
         let [a, b, c] = p.map(|q| q - o);
         a.dot(b.cross(c)) / 6.0

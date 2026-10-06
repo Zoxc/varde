@@ -507,7 +507,10 @@ impl MeshBits {
     fn of(mesh: RenderMesh) -> MeshBits {
         let mut parts = mesh.into_parts();
         let bits = |v: &mut Vec<[f32; 3]>| -> Vec<[u32; 3]> {
-            std::mem::take(v).iter().map(|p| p.map(f32::to_bits)).collect()
+            std::mem::take(v)
+                .iter()
+                .map(|p| p.map(f32::to_bits))
+                .collect()
         };
         MeshBits {
             floats: [
