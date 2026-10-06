@@ -2384,11 +2384,11 @@ mod tests {
         let document = editor.document();
         let tinted = Some(body_tint(teal));
         assert_eq!(*part_tints(document, &parts, None), [tinted, None]);
-        let red = Tint::new(0, 45).unwrap();
+        let red = Tint::new(0, 30).unwrap();
         let preview = Some((body, red));
         let shown = Some(body_tint(red));
         assert_eq!(*part_tints(document, &parts, preview), [shown, None]);
-        assert_eq!(body_tint(red).saturation, 0.45);
+        assert_eq!(body_tint(red).saturation, 0.3);
     }
 
     /// The status bar's mouse hints say the left button orbits outside a

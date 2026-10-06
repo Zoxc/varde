@@ -575,14 +575,15 @@ fn a_document_that_fails_its_checks_is_refused() {
     // Two copies of a sketch, spliced into a design's bytes since a
     // document's fields are private and one can't be decoded unchecked: no
     // bodies, the feature count, the feature, millimetres, the tolerance
-    // and the next id.
+    // the next id and the rollback.
     let sketched = hidden().to_postcard();
     let [0, 1, rest @ ..] = &sketched[..] else {
         panic!("not the design's bytes: {sketched:?}");
     };
-    let (feature, tail) = rest.split_at(rest.len() - 10);
+    let (feature, tail) = rest.split_at(rest.len() - 11);
     assert_eq!(tail[0], 0, "millimetres");
     assert_eq!(tail[9], 1, "the next id");
+    assert_eq!(tail[10], 0, "no rollback");
     let twins = [&[0, 2], feature, feature, tail].concat();
     assert!(Document::from_postcard(&twins).is_err());
     let bytes = encode(

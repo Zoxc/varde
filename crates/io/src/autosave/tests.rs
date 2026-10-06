@@ -88,9 +88,11 @@ fn checking_an_auto_save_says_what_is_wrong() {
         AutoSaved::check(unchecked(Some("é".repeat(70_000)), &document)).err(),
         Some(AutoSavedError::Name(140_000))
     );
-    // The next id, now 0, which the sketch's id 0 isn't below.
+    // The next id, now 0, which the sketch's id 0 isn't below; the
+    // rollback, none, comes after it.
     let mut invalid = document;
-    *invalid.last_mut().unwrap() = 0;
+    let at = invalid.len() - 2;
+    invalid[at] = 0;
     assert!(matches!(
         AutoSaved::check(unchecked(None, &invalid)),
         Err(AutoSavedError::Document(CheckError::FeatureNextId(_)))
