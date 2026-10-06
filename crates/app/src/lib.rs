@@ -57,6 +57,11 @@ pub(crate) struct Varde {
     /// The short message showing over the screen for a few seconds, if
     /// one is: a document's ([`Doc::take_toast`]) or the app's.
     toast: Toast,
+    /// Whether the welcome screen carries [`varde_view::warm_up`]: once
+    /// the IO lane first answers, after the screen has shown, so building
+    /// the viewport's pipelines neither holds up its first frame nor waits
+    /// for the first design.
+    warm_up: bool,
 }
 
 /// The files side of the app, which both screens' steps use: the IO lane,
@@ -351,6 +356,7 @@ impl Varde {
             files,
             quitting: None,
             toast: Toast::default(),
+            warm_up: false,
         }
     }
 
@@ -460,7 +466,10 @@ impl Varde {
                 });
             }
             Message::IoReady(lane) => self.files.io.ready(Box::new(lane)),
-            Message::Io(response) => return self.io_response(response),
+            Message::Io(response) => {
+                self.warm_up = true;
+                return self.io_response(response);
+            }
 
             Message::Ui(Ui::Edit(message)) => {
                 // Undo may drop the edits a save waits for.
@@ -831,7 +840,13 @@ impl Varde {
 
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let view = match &self.screen {
-            Screen::Welcome(welcome) => welcome.view(&self.files, self.mode(), self.options.theme),
+            Screen::Welcome(welcome) => {
+                let view = welcome.view(&self.files, self.mode(), self.options.theme);
+                match self.warm_up {
+                    true => iced::widget::stack![view, varde_view::warm_up()].into(),
+                    false => view,
+                }
+            }
             Screen::Document(doc) => {
                 doc.view(self.peeking, self.mode(), self.options, self.files.offers())
             }

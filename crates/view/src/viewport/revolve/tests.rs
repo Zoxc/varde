@@ -667,7 +667,7 @@ fn a_knob_is_drawn_lighter_with_its_rail_while_grabbed() {
     let live = |state: RevolveState<'_>| {
         let viewport = shown(state);
         let frame = viewport.draw(&input, mouse::Cursor::Unavailable, bounds());
-        frame.sketch.expect("drawn").live
+        frame.sketch.clone().expect("drawn").live
     };
     let idle = live(turned(&sketch, &profiles, &picked, left));
     let mut grabbed = turned(&sketch, &profiles, &picked, left);

@@ -1192,7 +1192,12 @@ fn a_sketch_s_curve_over_the_model_is_picked_and_one_behind_it_not() {
         use iced::widget::shader::Program as _;
         program.draw(&state, mouse::Cursor::Available(at), Plate::bounds())
     };
-    assert!(drawn.sketch.is_some_and(|frame| frame.depth_tested));
+    assert!(
+        drawn
+            .sketch
+            .as_ref()
+            .is_some_and(|frame| frame.depth_tested)
+    );
     let sent = send(&program, &mut state, &[left(true), left(false)], at);
     assert!(
         matches!(sent[..], [Message::Look(Look::ClickSketch { item: clicked, add: false })] if clicked == item),

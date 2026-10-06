@@ -674,12 +674,12 @@ impl shader::Program<Message> for Program<'_> {
                     failing: None,
                 }
             });
-        Primitive {
+        Primitive(Some(Drawn {
             scene: self.scene.clone(),
             sketch: sketch.or(operation).or(marks),
             highlight: self.highlight.clone(),
             slot: state.slot.clone(),
-        }
+        }))
     }
 
     fn mouse_interaction(
@@ -1130,9 +1130,55 @@ impl Program<'_> {
     }
 }
 
+/// A widget a pixel square that draws nothing, but has iced build the
+/// viewport's [`Pipeline`], and so the [`Renderer`]'s, if no viewport has
+/// yet. On the web that compiles and links the shaders on the page's
+/// thread (WebGL2 has nothing else), a long pause, so a screen shown
+/// before any design, the welcome screen, carries it once it has shown,
+/// rather than the first design waiting on it.
+pub fn warm_up<'a, Message: 'a>() -> Element<'a, Message> {
+    shader::Shader::new(WarmUp)
+        .width(Length::Fixed(1.0))
+        .height(Length::Fixed(1.0))
+        .into()
+}
+
+/// [`warm_up`]'s program.
+struct WarmUp;
+
+impl<Message> shader::Program<Message> for WarmUp {
+    type State = ();
+    type Primitive = Primitive;
+
+    fn draw(&self, _state: &(), _cursor: mouse::Cursor, _bounds: Rectangle) -> Primitive {
+        Primitive(None)
+    }
+}
+
+/// What a viewport widget draws, or nothing for [`warm_up`]'s.
+#[derive(Debug, Clone)]
+struct Primitive(Option<Drawn>);
+
+/// Tests read what a viewport widget draws, which is always something.
+#[cfg(test)]
+impl std::ops::Deref for Primitive {
+    type Target = Drawn;
+
+    fn deref(&self) -> &Drawn {
+        self.0.as_ref().expect("a viewport widget draws")
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for Primitive {
+    fn deref_mut(&mut self) -> &mut Drawn {
+        self.0.as_mut().expect("a viewport widget draws")
+    }
+}
+
 /// A frame's scene and the widget that draws it.
 #[derive(Debug, Clone)]
-struct Primitive {
+struct Drawn {
     scene: Scene,
     /// The sketch being edited, if one is.
     sketch: Option<SketchFrame>,
@@ -1166,16 +1212,19 @@ impl shader::Primitive for Primitive {
         bounds: &Rectangle,
         viewport: &shader::Viewport,
     ) {
+        let Some(drawn) = &self.0 else {
+            return;
+        };
         let scale = viewport.scale_factor();
         let target = viewport.physical_size();
 
-        let scene = &self.scene;
+        let scene = &drawn.scene;
         // Borrowed from the geometry, so made each frame (a few small
         // structs); the renderer uploads them again only when their
         // sources change. The sketch's failing curves only as their halo:
         // the sketch draws them, red, at its own width.
         let mut errors = scene.errors.parts();
-        let failing = (self.sketch.as_ref()).and_then(|sketch| sketch.failing.as_ref());
+        let failing = (drawn.sketch.as_ref()).and_then(|sketch| sketch.failing.as_ref());
         if let Some(lines) = failing {
             let erased: Arc<dyn Any + Send + Sync> = lines.clone();
             errors.push(ErrorParts {
@@ -1187,7 +1236,7 @@ impl shader::Primitive for Primitive {
             });
         }
         let prepared = pipeline.prepare(
-            &self.slot,
+            &drawn.slot,
             device,
             queue,
             &Frame {
@@ -1205,13 +1254,13 @@ impl shader::Primitive for Primitive {
                 shading: scene.shading,
                 pivot: scene.pivot,
                 origin: scene.origin,
-                hovered_faces: &self.highlight.hovered_faces,
-                selected_faces: &self.highlight.selected_faces,
-                second_faces: &self.highlight.second_faces,
+                hovered_faces: &drawn.highlight.hovered_faces,
+                selected_faces: &drawn.highlight.selected_faces,
+                second_faces: &drawn.highlight.second_faces,
                 hover_through: scene.hover_through,
-                highlights: &self.highlight.highlights,
+                highlights: &drawn.highlight.highlights,
                 errors: &errors,
-                sketch: self.sketch.as_ref().map(|sketch| SketchScene {
+                sketch: drawn.sketch.as_ref().map(|sketch| SketchScene {
                     plane: sketch.plane,
                     depth_tested: sketch.depth_tested,
                     base: &sketch.base,
@@ -1259,8 +1308,11 @@ impl shader::Primitive for Primitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
+        let Some(drawn) = &self.0 else {
+            return;
+        };
         pipeline.render(
-            &self.slot,
+            &drawn.slot,
             encoder,
             target,
             ClipRect {

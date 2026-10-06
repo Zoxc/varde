@@ -12,6 +12,15 @@ viewport; the cube's `mouse_area` only says when the cursor enters or
 leaves it, `Look::HoverCube`). Neither takes events off its widgets, so
 they reach the scene.
 
+iced builds the widget's pipeline (`viewport::Pipeline`, and with it the
+`Renderer`'s render pipelines) the first time it prepares one of its
+primitives. On the web that compiles and links every shader program on
+the page's thread (WebGL2 links synchronously; it measured 0.4-0.9 s in
+headless Firefox), which would hold up the first design opened. So the
+welcome screen carries `varde_view::warm_up`, a 1 px shader widget of the
+same primitive type that draws nothing, from the IO lane's first answer
+on (after the screen has shown), and the pipelines are ready by then.
+
 The tool rail (`rail.rs`) floats over the viewport's left edge: a card
 per tool set of the mode (see "The tool rail" in `agents/sketch.md`), 48
 px wide, 6 px in from the viewport's left and top and apart, each a head

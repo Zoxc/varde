@@ -123,6 +123,7 @@ pub use thumbnail::{
 };
 pub use toast::toast;
 pub use viewport::ModelPicking;
+pub use viewport::warm_up;
 pub use welcome::{
     CardKey, DamagedPrompt, DeleteFromBrowserPrompt, DesignCard, Downloads, PanicNote, RecentCard,
     SampleCard, StorageNote, WelcomeState, welcome,

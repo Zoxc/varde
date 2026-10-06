@@ -254,7 +254,7 @@ fn the_regions_and_the_shaft_are_drawn() {
         &none,
         None,
     ));
-    let frame = draw(&viewport).sketch.expect("drawn");
+    let frame = draw(&viewport).sketch.clone().expect("drawn");
     assert!(frame.base.is_empty());
     assert!(!frame.live.is_empty());
     // Hidden by the model in front of it.
@@ -270,11 +270,11 @@ fn the_regions_and_the_shaft_are_drawn() {
         &picked,
         None,
     ));
-    let frame = draw(&viewport).sketch.expect("drawn");
+    let frame = draw(&viewport).sketch.clone().expect("drawn");
     assert!(!frame.base.is_empty());
     assert!(!frame.live.is_empty());
     // The base layer is kept while nothing it shows changes.
-    let again = draw(&viewport).sketch.unwrap();
+    let again = draw(&viewport).sketch.clone().unwrap();
     assert!(Arc::ptr_eq(&frame.base, &again.base));
 }
 
@@ -289,7 +289,7 @@ fn an_extrude_its_own_check_refuses_draws_no_shaft() {
     let live = |state: ExtrudeState<'_>| {
         let viewport = shown(state);
         let frame = viewport.draw(&input, mouse::Cursor::Unavailable, bounds());
-        frame.sketch.expect("drawn").live
+        frame.sketch.clone().expect("drawn").live
     };
     let whole = live(state.clone());
     state.refused = Some(ExtrudeError::Length);
@@ -359,7 +359,7 @@ fn a_knob_is_drawn_lighter_with_its_rail_while_hovered() {
     let mut input = Interaction::default();
     let draw = |input: &Interaction| {
         let frame = viewport.draw(input, mouse::Cursor::Unavailable, bounds());
-        frame.sketch.expect("drawn").live
+        frame.sketch.clone().expect("drawn").live
     };
     let idle = draw(&input);
     let at = Point::new(100.0, 150.0);
