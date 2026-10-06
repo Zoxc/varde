@@ -29,6 +29,7 @@ pub use loft::loft_info;
 mod measure;
 mod motion;
 mod mouse_only;
+mod toast;
 mod offset_face;
 mod operation_panel;
 mod overlaps;
@@ -99,6 +100,7 @@ pub use offset_face::offset_info;
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
 };
+pub use toast::toast;
 pub use overlaps::{OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps};
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
@@ -133,6 +135,10 @@ pub const VALUE_FIELD: iced::widget::Id = iced::widget::Id::new("dimension-value
 /// The text field of the Save As dialog's name, on the web, focused as it
 /// opens.
 pub const NAME_FIELD: iced::widget::Id = iced::widget::Id::new("design-name");
+
+/// The text field a feature, sketch or body is renamed in, in its row of
+/// the side panel: there's one at a time, focused as it opens.
+pub const RENAME_FIELD: iced::widget::Id = iced::widget::Id::new("rename");
 
 /// What shows in the name's place of a design with no name, never saved.
 pub const NOT_SAVED: &str = "Not saved";
@@ -376,6 +382,9 @@ pub enum Edit {
     /// if all of it has it already: the keys and the toolbar's and rail's
     /// buttons.
     ToggleConstraint(ConstraintKind),
+    /// Renames what the rename field is open on to what's typed in it,
+    /// closing it.
+    CommitRename,
     /// Takes the value typed in the value field: places the dimension
     /// with it, or sets the one edited to it, if it reads as a value of
     /// the kind asked for; else says why.
@@ -769,6 +778,13 @@ pub enum Look {
         id: Id,
         in_list: bool,
     },
+    /// Opens the rename field on a feature, sketch or body, in its row
+    /// of the side panel, holding its name: `F2` or its context menu.
+    StartRename(varde_document::Named),
+    /// The text in the rename field, as typed.
+    RenameInput(String),
+    /// Closes the rename field, changing nothing.
+    CancelRename,
     /// The text in the value field, as typed.
     ValueInput(String),
     /// Closes the value field, changing nothing.

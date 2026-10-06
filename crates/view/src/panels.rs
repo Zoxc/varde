@@ -8,7 +8,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Font, Length, Padding};
 use std::collections::BTreeSet;
 use varde_document::{
-    Axis3, BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Opacity, OriginPlane,
+    Axis3, BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Named, Opacity, OriginPlane,
 };
 use varde_expr::LengthUnit;
 use varde_render::OriginShown;
@@ -28,7 +28,7 @@ use crate::theme::{
 use crate::toolbar::{menu_item, menu_separator, ticked};
 use crate::{
     ConstraintKind, DocumentState, Edit, GeometryGroup, LinkRow, Look, Message, ObjectGroup,
-    ObjectRow, OriginObject, Panel, RowMenu, SketchState, VALUE_FIELD, ValueTarget, dimension,
+    ObjectRow, OriginObject, Panel, RENAME_FIELD, RowMenu, SketchState, VALUE_FIELD, ValueTarget, dimension,
     split,
 };
 
@@ -124,6 +124,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             state.origin,
             state.objects_selected,
             state.objects_folded,
+            state.renaming,
         )),
         _ => scrolled(timeline(
             document,
@@ -132,6 +133,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             editable,
             state.unsolved,
             state.failed,
+            state.renaming,
             state.mode.palette(),
         )),
     };
@@ -173,7 +175,8 @@ fn empty_note<'a>(note: impl text::IntoFragment<'a>) -> Element<'a, Message> {
 /// highlighted, the one `menu` is on with its context menu open, which
 /// right-clicking a feature asks for, those `unsolved` or
 /// `failed` marked. Features can only be deleted if the document is
-/// `editable`.
+/// `editable`. The row `renaming` is of holds the rename field.
+#[expect(clippy::too_many_arguments)]
 fn timeline<'a>(
     document: &'a Document,
     selected: Option<FeatureId>,
@@ -181,6 +184,7 @@ fn timeline<'a>(
     editable: bool,
     unsolved: &[FeatureId],
     failed: &'a [varde_regen::FeatureFailure],
+    renaming: Option<(Named, &'a str)>,
     palette: &'static Palette,
 ) -> Element<'a, Message> {
     if document.features().is_empty() {
@@ -194,6 +198,9 @@ fn timeline<'a>(
         let unsolved = unsolved.contains(&feature.id);
         let failed = (failed.iter()).find(|failed| failed.feature == feature.id);
         let selected = selected == Some(feature.id);
+        if let Some(text) = renamed(renaming, Named::Feature(feature.id)) {
+            return rename_row(feature_icon(feature), text, 8.0);
+        }
         let row = feature_row(
             document, feature, units, selected, unsolved, failed, palette,
         );
@@ -207,6 +214,35 @@ fn timeline<'a>(
         )
         .into()
     }))
+    .into()
+}
+
+/// The name typed for `target` if `renaming` is of it.
+fn renamed(renaming: Option<(Named, &str)>, target: Named) -> Option<&str> {
+    renaming.and_then(|(on, text)| (on == target).then_some(text))
+}
+
+/// The row of what's being renamed, in its list: its icon and the rename
+/// field holding `text` as typed, `Enter` renaming and `Esc` closing it,
+/// whatever has the focus. `indent` is the room left of the icon.
+fn rename_row<'a>(icon: Icon, text: &'a str, indent: f32) -> Element<'a, Message> {
+    let input = text_input("Name", text)
+        .id(RENAME_FIELD)
+        .on_input(|text| Message::Look(Look::RenameInput(text)))
+        .on_submit(Message::Edit(Edit::CommitRename))
+        .padding([2, 4])
+        .width(Length::Fill);
+    container(
+        row![
+            icons::icon(icon, icons::INLINE),
+            OnEscape::new(input, Message::Look(Look::CancelRename)),
+        ]
+        .spacing(8)
+        .height(ROW_HEIGHT)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding::from([0, 8]).left(indent))
+    .style(theme::selected_row)
     .into()
 }
 
@@ -297,10 +333,10 @@ fn feature_row<'a>(
     }
 }
 
-/// The context menu of `feature` in the Timeline: edit it, show or hide
-/// a sketch or put it on another plane, or delete it, all but editing
-/// only if the document is `editable`, by the keys that do the same to
-/// the feature selected.
+/// The context menu of `feature` in the Timeline: edit it, rename it,
+/// show or hide a sketch or put it on another plane, or delete it, all
+/// but editing only if the document is `editable`, by the keys that do
+/// the same to the feature selected.
 fn feature_menu<'a>(feature: &Feature, editable: bool) -> Element<'a, Message> {
     let id = feature.id;
     let edit = menu_item(
@@ -328,9 +364,16 @@ fn feature_menu<'a>(feature: &Feature, editable: bool) -> Element<'a, Message> {
         )
         .into()
     });
+    let rename = menu_item(
+        Icon::Rename,
+        "Rename".into(),
+        Some(Shortcut::RENAME),
+        editable.then_some(Message::Look(Look::StartRename(Named::Feature(id)))),
+    );
     row_menu(
         vec![
             Some(edit.into()),
+            Some(rename.into()),
             toggle,
             change_plane,
             Some(menu_separator().into()),
@@ -538,6 +581,7 @@ fn objects<'a>(
     origin: OriginShown,
     rows: &[ObjectRow],
     folded: &BTreeSet<ObjectGroup>,
+    renaming: Option<(Named, &'a str)>,
 ) -> Element<'a, Message> {
     let click = |row| Message::Look(Look::ClickObject { row, add: false });
     let origins = OriginObject::ALL.into_iter().map(|object| {
@@ -563,6 +607,9 @@ fn objects<'a>(
     let selected: Vec<BodyId> = selection.bodies().collect();
     let takes_bodies = selection.mode().takes_bodies();
     let bodies = document.bodies().iter().map(|body| {
+        if let Some(text) = renamed(renaming, Named::Body(body.id)) {
+            return rename_row(Icon::Body, text, 24.0);
+        }
         let note = consumed_note(document, merged, body.id);
         let own = note.is_none();
         object_row(Object {
@@ -587,6 +634,7 @@ fn objects<'a>(
                 on: RowMenu::Body(body.id),
                 open: menu == Some(RowMenu::Body(body.id)),
                 edit: None,
+                rename: Message::Look(Look::StartRename(Named::Body(body.id))),
                 opacity: own.then(|| (body.id, shown_opacity(body, preview))),
                 delete: Message::Edit(Edit::RemoveBody(body.id)),
             }),
@@ -595,6 +643,9 @@ fn objects<'a>(
     let is_sketch = |feature: &&Feature| matches!(feature.kind, FeatureKind::Sketch { .. });
     let count = document.features().iter().filter(is_sketch).count();
     let sketches = document.features().iter().filter(is_sketch).map(|feature| {
+        if let Some(text) = renamed(renaming, Named::Feature(feature.id)) {
+            return rename_row(Icon::Sketch, text, 24.0);
+        }
         object_row(Object {
             icon: Icon::Sketch,
             label: &feature.name,
@@ -614,6 +665,7 @@ fn objects<'a>(
                     edit_label(feature),
                     Message::Look(Look::EditFeature(feature.id)),
                 )),
+                rename: Message::Look(Look::StartRename(Named::Feature(feature.id))),
                 opacity: None,
                 delete: Message::Edit(Edit::RemoveFeature(feature.id)),
             }),
@@ -717,6 +769,8 @@ struct ObjectMenu {
     open: bool,
     /// What editing the object is called and sends, if it can be edited.
     edit: Option<(&'static str, Message)>,
+    /// What renaming it sends.
+    rename: Message,
     /// The body it is and how opaque it's shown, if it has an opacity.
     opacity: Option<(BodyId, Opacity)>,
     /// What deleting it sends.
@@ -725,8 +779,8 @@ struct ObjectMenu {
 
 impl ObjectMenu {
     /// The menu, for an object `visible` or not, whose eye sends
-    /// `toggle` if it has one: editing it, showing or hiding it, its
-    /// opacity if it has one and deleting it, the last three only if the
+    /// `toggle` if it has one: editing it, renaming it, showing or hiding
+    /// it, its opacity if it has one and deleting it, all but editing only if the
     /// document is `editable`. No keys are given, as the keys act on the
     /// Timeline's selection.
     fn view<'a>(
@@ -738,6 +792,12 @@ impl ObjectMenu {
     ) -> Element<'a, Message> {
         let edit = (self.edit)
             .map(|(label, message)| menu_item(icon, label.into(), None, Some(message)).into());
+        let rename = menu_item(
+            Icon::Rename,
+            "Rename".into(),
+            None,
+            editable.then_some(self.rename),
+        );
         let toggle = toggle.map(|toggle| {
             let (eye, label) = if visible {
                 (Icon::EyeOff, "Hide")
@@ -760,6 +820,7 @@ impl ObjectMenu {
         );
         row_menu(
             edit.into_iter()
+                .chain([rename.into()])
                 .chain(toggle)
                 .chain(opacity)
                 .chain([menu_separator().into(), delete.into()])
@@ -1747,6 +1808,7 @@ mod tests {
                 OriginShown::DEFAULT,
                 &[],
                 &BTreeSet::new(),
+                None,
             );
             let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
             laid.texts().into_iter().map(|shown| shown.text).collect()
@@ -1771,6 +1833,7 @@ mod tests {
             OriginShown::DEFAULT,
             &[],
             &BTreeSet::new(),
+            None,
         );
         let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
         let notes: Vec<_> = (laid.texts().into_iter())
@@ -1795,6 +1858,7 @@ mod tests {
             OriginShown::DEFAULT,
             &[],
             &BTreeSet::new(),
+            None,
         );
         let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 600.0));
         let shown: Vec<String> = laid.texts().into_iter().map(|shown| shown.text).collect();
@@ -1817,6 +1881,7 @@ mod tests {
                 on: RowMenu::Body(body),
                 open: true,
                 edit: None,
+                rename: Message::Look(Look::StartRename(Named::Body(body))),
                 opacity,
                 delete: Message::Edit(Edit::RemoveBody(body)),
             };
@@ -1827,8 +1892,8 @@ mod tests {
             shown.collect::<Vec<_>>()
         };
         let shown = menu(Some((body, Opacity::new(40).unwrap())));
-        assert_eq!(shown, ["Hide", "Opacity", "40 %", "Delete"]);
-        assert_eq!(menu(None), ["Hide", "Delete"]);
+        assert_eq!(shown, ["Rename", "Hide", "Opacity", "40 %", "Delete"]);
+        assert_eq!(menu(None), ["Rename", "Hide", "Delete"]);
     }
 
     #[test]

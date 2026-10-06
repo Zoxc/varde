@@ -3,7 +3,9 @@
 use iced::time::Instant;
 use iced::{Subscription, window};
 
-use super::TICK;
+use std::time::Duration;
+
+use super::{TOAST_TICK, TICK};
 use crate::Message;
 
 /// Natively the app asks before the window closes instead, see
@@ -25,30 +27,50 @@ pub(crate) fn drops() -> Subscription<Message> {
     Subscription::none()
 }
 
-/// Ticks every second with the time, as [`Message::AutoSaveTick`], from a
-/// thread of its own: iced's thread pool executor has no timer. The thread
-/// ends at the tick after the subscription is dropped.
+/// Ticks every second with the time, as [`Message::AutoSaveTick`], see
+/// [`ticks`].
 pub(crate) fn auto_save_ticks() -> Subscription<Message> {
+    ticks("auto-save timer", TICK, Message::AutoSaveTick)
+}
+
+/// Ticks every [`TOAST_TICK`] with the time, as [`Message::ToastTick`],
+/// see [`ticks`].
+pub(crate) fn toast_ticks() -> Subscription<Message> {
+    ticks("toast timer", TOAST_TICK, Message::ToastTick)
+}
+
+/// Ticks every `period` with the time, as `message`, from a thread of its
+/// own named `name`: iced's thread pool executor has no timer. The thread
+/// ends at the tick after the subscription is dropped. If the thread
+/// can't start, nothing ticks, which is logged.
+fn ticks(
+    name: &'static str,
+    period: Duration,
+    message: fn(Instant) -> Message,
+) -> Subscription<Message> {
     use iced::futures::StreamExt;
     use iced::futures::channel::mpsc;
 
-    fn start() -> impl iced::futures::Stream<Item = Message> {
+    type Timer = (&'static str, Duration, fn(Instant) -> Message);
+
+    fn start(
+        &(name, period, message): &Timer,
+    ) -> impl iced::futures::Stream<Item = Message> + use<> {
         let (sender, ticks) = mpsc::unbounded();
         let timer = std::thread::Builder::new()
-            .name("auto-save timer".to_owned())
+            .name(name.to_owned())
             .spawn(move || {
                 while sender.unbounded_send(Instant::now()).is_ok() {
-                    std::thread::sleep(TICK);
+                    std::thread::sleep(period);
                 }
             });
-        // Nothing is auto-saved then, but nothing else is lost.
         if let Err(error) = timer {
-            log::error!("Couldn't start auto-saving: {error}");
+            log::error!("Couldn't start the {name}: {error}");
         }
-        ticks.map(Message::AutoSaveTick)
+        ticks.map(message)
     }
 
-    Subscription::run(start)
+    Subscription::run_with((name, period, message), start)
 }
 
 /// The logo rasterized for the window icon. Uses the resvg that iced's SVG

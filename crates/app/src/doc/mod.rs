@@ -15,6 +15,7 @@ mod pick;
 mod rail;
 mod regions;
 mod relink;
+pub(crate) mod rename;
 mod revolve;
 mod save;
 mod sketch;
@@ -95,6 +96,14 @@ pub(crate) struct Doc {
     /// itself (a sketch on a curved face, a sketch that isn't placed
     /// entered): shown in the status bar until the next thing asked.
     pub(crate) notice: Option<String>,
+    /// What the app is to show as a toast, for a few seconds, if
+    /// anything: taken by the app after each message
+    /// ([`Doc::take_toast`]).
+    toast: Option<String>,
+    /// The rename field, if it's open on a feature, sketch or body.
+    pub(crate) renaming: Option<rename::Renaming>,
+    /// Whether the rename field is to take the focus, as it just opened.
+    rename_focus: bool,
     /// Where the newest sketch on a face was placed when its face was
     /// picked, until a model places it: see [`Doc::placement`].
     placed: Option<sketch::Placed>,
@@ -372,6 +381,9 @@ impl Doc {
             read_only: read_only(access),
             edit_error: None,
             notice: None,
+            toast: None,
+            renaming: None,
+            rename_focus: false,
             placed: None,
             refused_edit: None,
             name,
@@ -439,6 +451,7 @@ impl Doc {
             self.placed = None;
         }
         self.prune_deleting();
+        self.prune_renaming(replaced);
         self.prune_objects(replaced);
         self.prune(replaced);
         self.prune_plane_pick(replaced);
@@ -525,6 +538,10 @@ impl Doc {
     /// Takes `message`, asking something of the document itself. What
     /// the solver last refused shows until then.
     pub(crate) fn update(&mut self, message: Edit) {
+        // Anything else asked of the document renames first.
+        if !matches!(message, Edit::CommitRename) {
+            self.commit_rename();
+        }
         self.end_refusal();
         self.notice = None;
         // Letting go of the Opacity slider leaves its menu open, to go on.
@@ -597,6 +614,7 @@ impl Doc {
                     self.change(Change::SetOpacity(id, opacity));
                 }
             }
+            Edit::CommitRename => self.commit_rename(),
             Edit::SetUnits(units) => self.change(Change::SetUnits(units)),
             Edit::SetTolerance(tolerance) => self.change(Change::SetTolerance(tolerance)),
             // What waits on the solver, and what waits behind it, is newer
@@ -653,6 +671,7 @@ impl Doc {
             Change::SetOpacity(id, opacity) => self.apply(Command::SetOpacity(id, opacity)),
             Change::SetUnits(units) => self.apply(Command::SetUnits(units)),
             Change::SetTolerance(tolerance) => self.apply(Command::SetTolerance(tolerance)),
+            Change::Rename(command) => self.apply(command),
         }
     }
 
@@ -660,7 +679,9 @@ impl Doc {
     /// An action in the sketch ends what the solver last refused showing.
     pub(crate) fn look(&mut self, message: Look) {
         let asked = self.delete_asked();
-        self.look_at(message);
+        if !self.rename_look(&message) {
+            self.look_at(message);
+        }
         // The delete prompt cancelled: what waits on the solver, held while
         // it was up, goes on.
         if asked && !self.delete_asked() && self.proposing() {
@@ -1053,6 +1074,8 @@ impl Doc {
             Look::PressLabel { id, add } => self.press_label(id, add),
             Look::DragLabel { id, from, to } => self.drag_label(id, from, to),
             Look::EditDimension { id, in_list } => self.edit_dimension(id, in_list),
+            // Taken by `Doc::rename_look`.
+            Look::StartRename(_) | Look::RenameInput(_) | Look::CancelRename => {}
             Look::ValueInput(text) => self.value_input(text),
             Look::CancelValue => self.close_value(),
             Look::SwitchRound => self.switch_round(),
@@ -1221,6 +1244,7 @@ impl Doc {
                 )
                 .with_measure(self.measure.is_some())
                 .with_rail(self.rail.state())
+                .with_rename(self.rename_target())
                 .with_edited(self.edited())
                 .with_history(
                     self.editor.can_undo() || self.proposing(),
@@ -1322,6 +1346,8 @@ impl Doc {
             mesh: self.feed.mesh(),
             parts: self.feed.parts(),
             opacity_preview: self.opacity_preview,
+            renaming: (self.renaming.as_ref())
+                .map(|renaming| (renaming.target, renaming.text.as_str())),
             sketches: self.feed.sketches(),
             mesh_status: self.feed.status(&self.editor),
             regenerating: self.feed.slow(&self.editor),
@@ -1434,6 +1460,8 @@ pub(crate) enum Change {
     },
     SetUnits(LengthUnit),
     SetTolerance(Tolerance),
+    /// Renames a feature, sketch or body: [`Command::Rename`].
+    Rename(Command),
 }
 
 /// A prompt over a screen, see [`Doc::dialog`] and

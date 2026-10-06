@@ -35,6 +35,8 @@ enum Key {
     /// The arrow keys up and down.
     Up,
     Down,
+    /// `F2`.
+    F2,
     /// No key: a tool the UI mock gives none, reached from the toolbar
     /// and the rail. Never pressed, and shown as nothing.
     None,
@@ -86,6 +88,8 @@ impl Shortcut {
     pub const NONE: Self = Self::named(Key::None);
     pub const ENTER: Self = Self::named(Key::Enter);
     pub const DELETE: Self = Self::named(Key::Delete);
+    /// Renames the feature, sketch or body selected.
+    pub const RENAME: Self = Self::named(Key::F2);
     /// Only labels the key: the app matches it itself, with any
     /// modifiers, since what it does depends on what's open (see
     /// `escape_key` there).
@@ -195,6 +199,7 @@ impl Shortcut {
             Key::Tab => "Tab".into(),
             Key::Up => "↑".into(),
             Key::Down => "↓".into(),
+            Key::F2 => "F2".into(),
             Key::None => "".into(),
         };
         format!("{command}{shift}{key}")
@@ -222,7 +227,8 @@ impl Shortcut {
             | (Key::Space, KeyPress::Named(Named::Space))
             | (Key::Tab, KeyPress::Named(Named::Tab))
             | (Key::Up, KeyPress::Named(Named::ArrowUp))
-            | (Key::Down, KeyPress::Named(Named::ArrowDown)) => true,
+            | (Key::Down, KeyPress::Named(Named::ArrowDown))
+            | (Key::F2, KeyPress::Named(Named::F2)) => true,
             (Key::Space, KeyPress::Character(c)) => c == " ",
             _ => false,
         };
@@ -365,6 +371,10 @@ pub struct DocumentKeys {
     pub sketching: bool,
     /// The feature selected in the Timeline, if any.
     pub selected: Option<FeatureId>,
+    /// What `F2` renames: the feature selected in the Timeline, else the
+    /// one sketch selected in Objects or the one body selected, outside
+    /// sketches and operations.
+    pub rename: Option<varde_document::Named>,
     /// Whether anything is selected in the sketch being edited.
     pub geometry_selected: bool,
     /// Whether a tool drawing shapes is in use in the sketch being edited.
@@ -452,6 +462,7 @@ impl DocumentKeys {
             editable,
             sketching: sketch.is_some(),
             selected,
+            rename: None,
             geometry_selected: sketch.is_some_and(|sketch| !sketch.selection.is_empty()),
             drawing: sketch.is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool.draws())),
             tool: sketch.is_some_and(|sketch| sketch.tool.is_some() || sketch.constraining),
@@ -533,6 +544,11 @@ impl DocumentKeys {
 
     /// The same keys where the document has changes not saved if
     /// `edited`.
+    /// The same keys with `F2` renaming `rename`, if anything.
+    pub fn with_rename(self, rename: Option<varde_document::Named>) -> Self {
+        Self { rename, ..self }
+    }
+
     pub fn with_edited(self, edited: bool) -> Self {
         Self { edited, ..self }
     }
@@ -954,7 +970,8 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
 /// The document screen's shortcuts: the file's (Save, Save As), undo and
 /// redo, starting a
 /// sketch, clearing the selection, outside a sketch editing and deleting
-/// the feature selected in the Timeline, if there is one, and in a sketch
+/// the feature selected in the Timeline, if there is one, renaming what
+/// `F2` renames ([`DocumentKeys::rename`]), and in a sketch
 /// its tools, deleting what's selected, construction, the Constrain tool,
 /// the constraints that fit the selection, turning dimensions between
 /// driving and reference, `Tab` (see `tab_binding`), placing the shape
@@ -985,7 +1002,16 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
                 keys.editable && !keys.operating(),
             )
         });
-    let feature = feature.chain(objects);
+    let rename = (keys.rename)
+        .filter(|_| !keys.sketching && !keys.operating())
+        .map(|target| {
+            Binding::new(
+                Shortcut::RENAME,
+                Message::Look(Look::StartRename(target)),
+                keys.editable,
+            )
+        });
+    let feature = feature.chain(objects).chain(rename);
     let sketch = keys.sketching.then(|| {
         Tool::ALL
             .map(|tool| tool_binding(tool, keys))

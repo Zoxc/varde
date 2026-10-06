@@ -6,6 +6,7 @@ mod doc;
 mod io;
 mod keys;
 mod message;
+mod toast;
 mod platform;
 mod recent;
 mod samples;
@@ -31,6 +32,7 @@ use crate::doc::{Dialog, Doc, DocId, Downloader, Focus, Leave};
 use crate::io::Io;
 use crate::keys::{document_key, welcome_key};
 use crate::message::{ForDoc, Message};
+use crate::toast::Toast;
 use crate::recent::Recent;
 use crate::settings::Settings;
 use crate::welcome::Welcome;
@@ -52,6 +54,9 @@ pub(crate) struct Varde {
     files: Files,
     /// The window to close once the IO lane is done, see [`Varde::quit`].
     quitting: Option<window::Id>,
+    /// The short message showing over the screen for a few seconds, if
+    /// one is: a document's ([`Doc::take_toast`]) or the app's.
+    toast: Toast,
 }
 
 /// The files side of the app, which both screens' steps use: the IO lane,
@@ -345,6 +350,7 @@ impl Varde {
             command: false,
             files,
             quitting: None,
+            toast: Toast::default(),
         }
     }
 
@@ -374,6 +380,15 @@ impl Varde {
             Some(share) => Task::batch([task, scroll_rail(share)]),
             None => task,
         };
+        // The rename field takes the focus as it opens, its text selected.
+        let task = match self.screen.doc_mut().is_some_and(Doc::take_rename_focus) {
+            true => Task::batch([task, focus_rename()]),
+            false => task,
+        };
+        // What the document has to say shows as a toast.
+        if let Some(message) = self.screen.doc_mut().and_then(Doc::take_toast) {
+            self.toast.show(message, iced::time::Instant::now());
+        }
         // The Save As dialog's name field takes the focus as it shows.
         let task = match self.screen.doc_mut().is_some_and(Doc::take_name_focus) {
             true => Task::batch([task, focus_name()]),
@@ -545,6 +560,7 @@ impl Varde {
                 // The space used has changed with the save.
                 return storage_state();
             }
+            Message::ToastTick(now) => self.toast.tick(now),
             Message::AnimationFrame(now) => self.with_doc(|doc, _| {
                 doc.animation_frame(now);
                 doc.tick(now);
@@ -820,6 +836,10 @@ impl Varde {
                 doc.view(self.peeking, self.mode(), self.options, self.files.offers())
             }
         };
+        let view = match self.toast.message() {
+            Some(message) => iced::widget::stack![view, varde_view::toast(message)].into(),
+            None => view,
+        };
         view.map(Message::Ui)
     }
 
@@ -902,6 +922,7 @@ impl Varde {
                 }),
                 || window::frames().map(Message::AnimationFrame),
             ),
+            only_if(self.toast.message().is_some(), platform::toast_ticks),
             iced::system::theme_changes().map(Message::SystemTheme),
             self.regen_lane(),
             self.solve_lane(),
@@ -1023,6 +1044,7 @@ fn while_quitting(message: &Message) -> bool {
                     | ForDoc::Solved(_)
             )
             | Message::AnimationFrame(_)
+            | Message::ToastTick(_)
             | Message::PeekPanel(_)
             | Message::CommandHeld(_)
             | Message::SystemTheme(_)
@@ -1220,6 +1242,13 @@ impl<T: Send + 'static> iced::advanced::widget::Operation<T> for RevealField {
             offset,
         )))
     }
+}
+
+/// Has the rename field take the focus, its text selected to overtype.
+fn focus_rename() -> Task<Message> {
+    use iced::widget::operation;
+
+    operation::focus(varde_view::RENAME_FIELD).chain(operation::select_all(varde_view::RENAME_FIELD))
 }
 
 /// Has the Save As dialog's name field take the focus, its text selected

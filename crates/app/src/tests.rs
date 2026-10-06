@@ -5641,6 +5641,7 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
 mod damaged;
 mod export;
 mod panicked;
+mod rename;
 mod storage;
 mod thumbnail;
 

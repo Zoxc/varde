@@ -67,6 +67,31 @@ they share with the newer kinds is here. The kernel math of each is in
   `Document::removal` follows. Every extrude-only path that only cared
   about the operation (`drop_excluded`, the app's delete prompt and its
   join merges) goes through `operation()` so revolves get them too.
+- **Renaming** (`document/src/rename.rs`, `app/src/doc/rename.rs`):
+  `Command::Rename { target: Named, name }` sets a feature's (a
+  sketch's too) or a body's name as given, one undo step.
+  `Document::rename(target, wanted)` makes it: trimmed, cut to
+  `MAX_NAME_LEN`, `None` for an empty name or the one it has. Names
+  are kept apart across features and bodies together, but only here: a
+  document may still hold repeats (files, `next_number`). A name taken
+  gets the first free " (N)" from 1, a " (N)" ending the name asked for
+  taken off first, and `Rename::taken` says so; the app then shows a
+  toast "The name \"…\" already exists". `F2`
+  (`DocumentKeys::rename`: the feature selected in the Timeline, else
+  the one sketch selected in Objects, else the one body the model
+  selection is of) or Rename in a feature's, sketch's or body's
+  context menu opens the rename field in its row (`Look::StartRename`,
+  focused with its text selected); `Enter` renames
+  (`Edit::CommitRename`), `Esc` closes it, and any other message but
+  hovering, scrolling and moving the camera renames first. The name
+  isn't new to the file format: `Feature::name` and `Body::name` were
+  always stored.
+- **Toasts** (`app/src/toast.rs`, `view::toast`): one short message at
+  a time at the bottom middle of the window for `TOAST_TIME` (3 s),
+  timed by `platform::toast_ticks` while one shows. A document hands
+  one over through `Doc::toast` / `Doc::take_toast`, which the app takes
+  after every message. Unlike `Doc::notice`, which the status bar
+  shows until the next thing asked.
 - `SetUnits` pins revolve angles by `Turn::ask` as it pins extrude
   distances by `Extent::ask` (angles' bare numbers are degrees whatever
   the units, so only lengths inside an angle's expression change).

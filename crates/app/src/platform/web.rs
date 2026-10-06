@@ -17,6 +17,12 @@ pub(crate) fn auto_save_ticks() -> Subscription<Message> {
     iced::time::every(TICK).map(|_| Message::AutoSaveTick(Instant::now()))
 }
 
+/// Ticks every [`TOAST_TICK`](super::TOAST_TICK) with the time, as
+/// [`Message::ToastTick`].
+pub(crate) fn toast_ticks() -> Subscription<Message> {
+    iced::time::every(super::TOAST_TICK).map(|_| Message::ToastTick(Instant::now()))
+}
+
 /// Shows `title` as the page's, if it isn't already: the tab and the
 /// browser's history name the design by it.
 pub(crate) fn show_title(title: &str) {

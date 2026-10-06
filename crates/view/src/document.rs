@@ -52,6 +52,9 @@ pub struct DocumentState<'a> {
     /// A body's opacity shown in place of the document's while its context
     /// menu's slider is dragged, if one is.
     pub opacity_preview: Option<(BodyId, Opacity)>,
+    /// The feature, sketch or body being renamed and the name as typed,
+    /// if one is: its row in the side panel holds the rename field.
+    pub renaming: Option<(varde_document::Named, &'a str)>,
     /// The finished sketches' curves, which come with `mesh`.
     pub sketches: &'a Arc<RenderLines>,
     /// How `mesh` and `sketches` stand against the document.

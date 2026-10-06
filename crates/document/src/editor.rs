@@ -8,7 +8,7 @@ use varde_sketch::{LinkKind, Sketch};
 
 use crate::{
     Body, BodyId, CheckError, Copies, Document, EditError, FeatureId, FeatureKind, Id, LinkSource,
-    MAX_PATTERN_BODIES, Move, Opacity, Operation, OutsideRef, Pattern, Plane, Removable, Snapshot,
+    MAX_PATTERN_BODIES, Move, Named, Opacity, Operation, OutsideRef, Pattern, Plane, Removable, Snapshot,
     Turn, sketch_face,
 };
 
@@ -111,6 +111,13 @@ pub enum Command {
     /// them, as one edit.
     RemoveFeatures(Vec<FeatureId>),
     SetFeatureVisible(FeatureId, bool),
+    /// Gives a feature or a body `name`, as it is: [`Document::rename`]
+    /// makes the command with a name no other has. The name it has
+    /// already, or one that isn't there, changes nothing.
+    Rename {
+        target: Named,
+        name: String,
+    },
     /// Changes the design's units. Every dimension's expression first has
     /// the old units written in after its bare numbers
     /// ([`Sketch::pin_units`]), so it means what it did, and no value or
@@ -885,6 +892,16 @@ impl Editor {
                 };
                 let mut next = Document::clone(document);
                 next.features[index].visible = visible;
+                next
+            }
+            Command::Rename { target, name } => {
+                if document.name_of(target).is_none_or(|old| old == name) {
+                    return Ok(());
+                }
+                let mut next = Document::clone(document);
+                if let Some(slot) = next.name_mut(target) {
+                    *slot = name;
+                }
                 next
             }
             Command::SetUnits(units) => {

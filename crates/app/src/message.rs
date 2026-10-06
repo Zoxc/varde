@@ -39,6 +39,9 @@ pub(crate) enum Message {
     // For the open document, if there is one.
     /// A tick of the auto-save timer.
     AutoSaveTick(Instant),
+    /// A tick while a toast shows, which takes it down once its time is
+    /// up.
+    ToastTick(Instant),
     /// A frame while the camera is animating.
     AnimationFrame(Instant),
 
