@@ -34,8 +34,11 @@ use super::{Refusal, Waiting};
 use crate::doc::{Change, Doc};
 
 /// How long edits wait on the solver before the status bar says it's
-/// checking them: most are answered well within it.
-pub(crate) const CHECKING: Duration = Duration::from_millis(100);
+/// checking them, as the tools' panels do: most are answered well within
+/// it, so dragging a tool's handle or changing its values doesn't flicker
+/// the message. As long as the regeneration waits to show
+/// ([`crate::doc::feed::SLOW`]).
+pub(crate) const CHECKING: Duration = Duration::from_millis(250);
 
 /// How many analyses a session keeps, by revision, so undoing and redoing
 /// shows them at once.

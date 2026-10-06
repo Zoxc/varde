@@ -8786,7 +8786,7 @@ frees OK. So do the other ways the wait ends (tested): a rejected edit
 the session gone with it), restoring recovered changes (drops them; one
 that changes the document ends the session, above), a units change in
 the window (set after the answers, then followed by the session); read-only in the window ends the session. A solver lane not
-started yet keeps OK waiting, as saving waits. After `CHECKING` (100 ms) the panel says "Checking the
+started yet keeps OK waiting, as saving waits. After `CHECKING` (250 ms) the panel says "Checking the
 sketch…" (`ExtrudeState.checking`, from `Proposals::slow`) when
 there's neither a refusal nor a draft error to show. OK, the screen's
 `Enter` binding and the hint take `ExtrudeState.ready`, which is

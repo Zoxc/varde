@@ -1006,7 +1006,7 @@ bar says why (`EditError::Sketch`).
   going, or the document being replaced whole. An answer for a
   revision that's no longer the document's (something else was committed
   meanwhile) is proposed again; nothing the user does commits meanwhile
-  (below), so that's a safeguard. After ~100 ms of waiting (`CHECKING`,
+  (below), so that's a safeguard. After 250 ms of waiting (`CHECKING`,
   told by frames while waiting) the status bar says "Checking…". Until
   the lane has started, proposals wait in the app.
 - **Other changes wait behind them** (`Doc::change`, `Change`): while any
