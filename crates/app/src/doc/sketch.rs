@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use glam::DVec2;
+use glam::{DVec2, Vec3};
 use varde_document::{
     Command, FaceRef, Feature, FeatureId, FeatureKind, Generation, LinkSource, Placement, Plane,
     Revision, Sketch,
@@ -700,7 +700,7 @@ impl Doc {
         // leaves the view as it is.
         let turned = session.placement.normal.dot(placement.normal) < TURNED;
         session.placement = placement;
-        if turned && let Some(to) = self.sketch_camera() {
+        if turned && let Some(to) = self.turn_to_sketch() {
             self.animate_camera(to);
         }
     }
@@ -769,7 +769,7 @@ impl Doc {
         self.panel = Panel::Sketch;
         // The rail's sets are the sketch's now.
         self.rail.close();
-        if let Some(to) = self.sketch_camera() {
+        if let Some(to) = self.turn_to_sketch() {
             self.animate_camera(to);
         }
         self.sync();
@@ -1330,20 +1330,44 @@ impl Doc {
     }
 
     /// The camera looking straight at the sketch being edited, if one is,
-    /// framing it: what Home turns to in a sketch.
+    /// framing it, from its normal with its `y` up: what Home turns to in
+    /// a sketch.
     pub(crate) fn sketch_camera(&self) -> Option<Camera> {
         let (_, sketch) = self.edited_sketch()?;
         let placement = self.sketch.as_ref()?.placement;
-        Some(facing(self.camera.projection(), placement, sketch))
+        Some(facing(self.camera.projection(), None, placement, sketch))
+    }
+
+    /// The camera turning to the sketch being edited, if one is, as
+    /// entering it or its plane moving does: as [`Self::sketch_camera`],
+    /// but from the side of the plane and turned as near as it can be to
+    /// the view now (or where it's turning to), so the view changes least.
+    pub(crate) fn turn_to_sketch(&self) -> Option<Camera> {
+        let (_, sketch) = self.edited_sketch()?;
+        let placement = self.sketch.as_ref()?.placement;
+        let now = self.animation.as_ref().map_or(self.camera, |a| a.to);
+        Some(facing(now.projection(), Some(&now), placement, sketch))
     }
 }
 
 /// The camera in `projection` looking straight at `sketch` on `placement`,
 /// framing what's drawn of it, its points and its curves, or where Home
-/// looks brought onto the plane if it has none.
-fn facing(projection: Projection, placement: Placement, sketch: &Sketch) -> Camera {
+/// looks brought onto the plane if it has none. With a view `now`, it
+/// looks from the side of the plane `now` looks from, and keeps up on
+/// screen as near as it can to `now`'s (see [`facing_turn`]); else from
+/// the placement's normal with its `y` up.
+fn facing(
+    projection: Projection,
+    now: Option<&Camera>,
+    placement: Placement,
+    sketch: &Sketch,
+) -> Camera {
     let mut camera = home_camera(projection);
-    camera.face(placement.normal.as_vec3(), placement.y.as_vec3());
+    let (normal, up) = match now {
+        Some(now) => facing_turn(now, placement),
+        None => (placement.normal.as_vec3(), placement.y.as_vec3()),
+    };
+    camera.face(normal, up);
     // A circle's only point is its centre, so the curves count too.
     let curves = sketch
         .curves
@@ -1371,6 +1395,34 @@ fn facing(projection: Projection, placement: Placement, sketch: &Sketch) -> Came
         }
     }
     camera
+}
+
+/// Which way to face a sketch on `placement` from `now`: the normal to
+/// look from, the placement's own or its reverse, whichever side `now`
+/// looks from (the placement's for a view along the plane), and which of
+/// the sketch's axes, `±x` or `±y`, to put up on screen, the one nearest
+/// `now`'s up. Steps of a quarter turn keep the sketch's axes square on
+/// screen. The camera keeps world Z up unless it looks straight down or
+/// up, so only then does the axis chosen turn it.
+fn facing_turn(now: &Camera, placement: Placement) -> (Vec3, Vec3) {
+    let normal = placement.normal.as_vec3();
+    let normal = if now.backward().dot(normal) < 0.0 {
+        -normal
+    } else {
+        normal
+    };
+    let up = now.up();
+    let (x, y) = (placement.x.as_vec3(), placement.y.as_vec3());
+    let axes = [y, x, -y, -x];
+    // The first wins ties, so a view square to the plane keeps `y` up.
+    let best = axes
+        .into_iter()
+        .fold((y, f32::NEG_INFINITY), |best, axis| {
+            let score = axis.dot(up);
+            if score > best.1 { (axis, score) } else { best }
+        })
+        .0;
+    (normal, best)
 }
 
 /// Keeps `listed_on`, the points and curves the Constraints list lists

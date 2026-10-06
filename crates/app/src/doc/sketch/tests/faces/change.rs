@@ -295,6 +295,12 @@ fn an_undo_in_the_sketch_puts_it_back_on_its_face_and_turns_to_it() {
     let (mut doc, id, requests) = circle_on_the_top();
     doc.look(Look::EditFeature(id));
     doc.look(Look::ChangePlane(id));
+    // Looked at from below, as the bottom face would be picked.
+    settle_camera(&mut doc);
+    doc.look(Look::Orbit {
+        yaw: 0.0,
+        pitch: -2.0,
+    });
     let bottom = face_on(&doc, -DVec3::Z, 0.0);
     doc.update(Edit::FacePicked(bottom));
     assert_eq!(edited(&doc), Some(id));
@@ -316,8 +322,10 @@ fn an_undo_in_the_sketch_puts_it_back_on_its_face_and_turns_to_it() {
     let on_top = doc.placement(id).unwrap();
     assert_eq!(on_top.origin, DVec3::new(0.0, 0.0, 10.0));
     assert_eq!(doc.sketch_state().unwrap().placement, on_top);
+    // Still from below, the side the view was on, at the top face now.
     settle_camera(&mut doc);
-    assert!(doc.camera.backward().abs_diff_eq(Vec3::Z, 1e-5));
+    assert!(doc.camera.backward().abs_diff_eq(-Vec3::Z, 1e-5));
+    assert!((doc.camera.target().z - 10.0).abs() < 1e-4);
 }
 
 #[test]

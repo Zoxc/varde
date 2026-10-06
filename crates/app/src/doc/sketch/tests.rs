@@ -1095,13 +1095,46 @@ fn entering_frames_the_curves_not_only_their_points() {
         .add_curve(Curve::Circle { center, radius }, false)
         .unwrap();
     let placement = OriginPlane::XY.placement();
-    let camera = facing(varde_render::Projection::default(), placement, &sketch);
+    let camera = facing(Projection::default(), None, placement, &sketch);
     assert!(camera.view_height() >= 2.0 * radius as f32);
     assert!(
         camera
             .target()
             .abs_diff_eq(glam::Vec3::new(100.0, 0.0, 0.0), 1e-3)
     );
+}
+
+#[test]
+fn entering_looks_from_the_side_and_turn_nearest_the_view() {
+    use glam::Vec3;
+    let sketch = Sketch::default();
+    let near = |a: Vec3, b: Vec3| a.abs_diff_eq(b, 1e-4);
+    let from = |yaw: f32, pitch: f32| {
+        let mut camera = Camera::default();
+        camera.orbit(yaw.to_radians(), pitch.to_radians());
+        camera
+    };
+    let xy = OriginPlane::XY.placement();
+    // From above the front right: XY from above, its y up.
+    let camera = facing(Projection::default(), Some(&Camera::default()), xy, &sketch);
+    assert!(near(camera.backward(), Vec3::Z));
+    assert!(near(camera.up(), Vec3::Y));
+    // From below, it's seen from below, the view's up nearest -y.
+    let camera = facing(Projection::default(), Some(&from(0.0, -60.0)), xy, &sketch);
+    assert!(near(camera.backward(), -Vec3::Z));
+    assert!(near(camera.up(), -Vec3::Y));
+    // Turned a quarter round from above, -x is nearest the view's up.
+    let camera = facing(Projection::default(), Some(&from(90.0, 0.0)), xy, &sketch);
+    assert!(near(camera.backward(), Vec3::Z));
+    assert!(near(camera.up(), -Vec3::X));
+    // A side plane seen from behind is looked at from behind, Z up.
+    let xz = OriginPlane::XZ.placement();
+    let behind = from(180.0, 0.0);
+    let camera = facing(Projection::default(), Some(&behind), xz, &sketch);
+    let normal = xz.normal.as_vec3();
+    let side = normal * behind.backward().dot(normal).signum();
+    assert!(near(camera.backward(), side));
+    assert!(near(camera.up(), Vec3::Z));
 }
 
 #[test]
@@ -1498,13 +1531,13 @@ fn a_sketch_is_framed_to_its_size_however_far_home_is() {
     let start = sketch.add_point(DVec2::ZERO).unwrap();
     let end = sketch.add_point(DVec2::new(20.0, 0.0)).unwrap();
     sketch.add_curve(Curve::Line { start, end }, false).unwrap();
-    let camera = facing(Projection::default(), placement, &sketch);
+    let camera = facing(Projection::default(), None, placement, &sketch);
     let expected = 20.0 * FRAME_MARGIN;
     assert!((camera.view_height() - expected).abs() < 1e-3 * expected);
     // A lone point, no closer than the default camera.
     let mut point = varde_sketch::Sketch::default();
     point.add_point(DVec2::new(3.0, 4.0)).unwrap();
-    let camera = facing(Projection::default(), placement, &point);
+    let camera = facing(Projection::default(), None, placement, &point);
     assert!((camera.view_height() - Camera::default().view_height()).abs() < 1e-3);
 }
 

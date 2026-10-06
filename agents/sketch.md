@@ -923,7 +923,7 @@ a face alone selected in the model (`Selection::single_face`,
 one too far out is refused with the reason in the status bar
 (`Doc::notice`), and nothing is added; else one `AddSketch` with
 `Plane::Face`, one undo step, and the sketch is entered, the camera
-facing the face with its `y` up (for a side face, world Z projected).
+facing the face as the camera turns on entering any sketch (below).
 A face refused (curved, not the document's: a model shown from before
 an edit removed its feature, or too far out) keeps picking, the reason
 in the status bar. A sketch is entered only once it's placed
@@ -932,6 +932,17 @@ in the status bar. A sketch is entered only once it's placed
 (`Doc::follow_placement`) and stays as it was while none is known; an
 undo or redo in the sketch that puts it on another plane turns the
 camera to face it once its placement is known.
+
+Entering a sketch, or its plane turning under it, turns the camera to
+look straight at the plane changing the view least
+(`Doc::turn_to_sketch`, `facing_turn`): from the side of the plane the
+view is on (the placement's normal when looking along it), and with the
+sketch axis (`±x`, `±y`) nearest the view's up put up on screen, in
+quarter turns so the axes stay square. The camera keeps world Z up
+unless it looks straight down or up, so that turn only counts for a
+plane square to Z; a side plane shows world Z up either way. It frames
+what's drawn of the sketch. Home in a sketch (`Doc::sketch_camera`)
+resets instead: from the placement's normal, its `y` up.
 
 **Change plane** (`Look::ChangePlane(feature)`): from a sketch's
 Timeline row menu, or the Sketch tab's row naming the plane ("on XY",
