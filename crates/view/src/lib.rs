@@ -105,7 +105,7 @@ pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
 pub use plane_pick::{Naming, PlanePick, Shown, Unnamed, face_name, plane_note};
-pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
+pub use rail::{RAIL_LIST, RailLook, RailOpen, rail_rows, rail_sets};
 pub use revolve::{
     Angle, EDGE_NOT_STRAIGHT, EDGE_OFF_PLANE, RevolveLook, RevolvePick, RevolveState, TurnKind,
     axis_edge,

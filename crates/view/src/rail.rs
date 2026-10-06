@@ -6,8 +6,9 @@
 //! tool. Only what the app has is on it: a set with nothing yet isn't
 //! shown.
 //!
-//! The app keeps which set is open, and closes it as the cursor leaves
-//! (see [`RailLook`]); the layer ([`Rail`]) places the cards and the list
+//! The app keeps which set is open: one the cursor opened closes as it
+//! leaves the head, one a click or the key opened stays (see
+//! [`RailLook`]); the layer ([`Rail`]) places the cards and the list
 //! and closes the list on a click anywhere else.
 
 use iced::advanced::widget::{Operation, Tree};
@@ -71,10 +72,11 @@ const HEAD_HEIGHT: f32 = HEAD_PADDING[0] + ICON + HEAD_PADDING[1];
 /// What changes about the rail, from the rail, the keys and the cursor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RailLook {
-    /// Opens the list of the set at this index: its head clicked.
+    /// Opens the list of the set at this index and holds it, so it stays
+    /// as the cursor leaves: its head clicked.
     Open(usize),
     /// Opens the list of the set at this index, or closes it if it's the
-    /// one open: the set's key.
+    /// one open and held: the set's key. Either way it's then held.
     Toggle(usize),
     /// Closes the list: a click anywhere but on the rail and the list.
     Close,
@@ -85,11 +87,11 @@ pub enum RailLook {
     /// Puts the keys on this row of the open list: the cursor came over
     /// it, so the row highlighted is the one `Enter` picks.
     Row(usize),
-    /// The cursor came over `.0` (`true`) or left it. Over a head opens
-    /// its set's list, over a tool on a card closes it at once; off a
-    /// head and the list closes it after a moment, unless the cursor is
-    /// back on one by then, so it can cross to the list.
-    Hover(RailSpot, bool),
+    /// The cursor came over the head of the set at `.0` (`true`) or left
+    /// it. Over a head peeks at its set's list, off it closes the list
+    /// again: to use the list, click the head or press the set's key.
+    /// Neither touches a held list.
+    Hover(usize, bool),
 }
 
 /// The rail's set whose list is open, by its index among the mode's
@@ -98,21 +100,13 @@ pub enum RailLook {
 pub struct RailOpen {
     pub set: usize,
     pub row: usize,
+    /// Whether it was opened by a click or its key, and stays as the
+    /// cursor leaves, rather than peeked at.
+    pub held: bool,
 }
 
 /// The scrollable holding the rows of the open list.
 pub const RAIL_LIST: iced::widget::Id = iced::widget::Id::new("rail-list");
-
-/// A part of the rail the cursor can be over, see [`RailLook::Hover`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RailSpot {
-    /// The head of the set at this index.
-    Head(usize),
-    /// A tool on a card.
-    Tool,
-    /// The open set's list.
-    List,
-}
 
 /// A tool of a set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -563,8 +557,9 @@ pub(crate) fn rail<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     responsive(move |size| {
         let shown = fitting(sets, size.height - GAP - LIST_BOTTOM);
         let cards = sets.iter().zip(shown).enumerate().map(|(i, (set, shown))| {
-            let open = open.is_some_and(|open| open.set == i);
-            card(i, set, shown, open, keys, using)
+            let open = open.filter(|open| open.set == i);
+            let held = open.is_some_and(|open| open.held);
+            card(i, set, shown, open.is_some(), held, keys, using)
         });
         let list = open.map(|open| list(open, &sets[open.set], keys, using));
         Element::new(Rail {
@@ -577,17 +572,19 @@ pub(crate) fn rail<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     .into()
 }
 
-fn hover(spot: RailSpot, over: bool) -> Message {
-    Message::Look(Look::Rail(RailLook::Hover(spot, over)))
+fn hover(set: usize, over: bool) -> Message {
+    Message::Look(Look::Rail(RailLook::Hover(set, over)))
 }
 
 /// The card of the set `set` at index `i`, showing its first `shown`
-/// tools, its head highlighted while it's `open`.
+/// tools, its head highlighted while it's `open`, in the selection's
+/// colour while it's `held`.
 fn card<'a>(
     i: usize,
     set: &'static ToolSet,
     shown: usize,
     open: bool,
+    held: bool,
     keys: DocumentKeys,
     using: Using,
 ) -> Element<'a, Message> {
@@ -601,11 +598,11 @@ fn card<'a>(
     .width(Length::Fill)
     .height(HEAD_HEIGHT)
     .padding(0)
-    .style(theme::rail_head(open, strip))
+    .style(theme::rail_head(open, held, strip))
     .on_press(Message::Look(Look::Rail(RailLook::Open(i))));
     let head = mouse_area(head)
-        .on_enter(hover(RailSpot::Head(i), true))
-        .on_exit(hover(RailSpot::Head(i), false));
+        .on_enter(hover(i, true))
+        .on_exit(hover(i, false));
     let strip = strip.then(|| {
         let tools = column(shown.iter().map(|&entry| card_tool(entry, keys, using)))
             .spacing(TOOL_GAP)
@@ -620,7 +617,7 @@ fn card<'a>(
                 .width(Length::Fill)
                 .style(theme::rail_strip),
         )
-        .style(theme::rail_strip_backing(open));
+        .style(theme::rail_strip_backing(open, held));
         // Its gaps don't reach the scene.
         mouse_area(strip).interaction(mouse::Interaction::Idle)
     });
@@ -650,9 +647,6 @@ fn card_tool<'a>(entry: Entry, keys: DocumentKeys, using: Using) -> Element<'a, 
     .padding(0)
     .style(theme::flat_button(entry.on(using), theme::Tone::Text))
     .on_press_maybe(binding.sends());
-    let tool = mouse_area(tool)
-        .on_enter(hover(RailSpot::Tool, true))
-        .on_exit(hover(RailSpot::Tool, false));
     side_tip(tool, entry.shown_label(keys), binding.shortcut)
 }
 
@@ -701,8 +695,6 @@ fn list<'a>(
     .style(theme::rail_list_band(category));
     mouse_area(list)
         .interaction(mouse::Interaction::Idle)
-        .on_enter(hover(RailSpot::List, true))
-        .on_exit(hover(RailSpot::List, false))
         .into()
 }
 

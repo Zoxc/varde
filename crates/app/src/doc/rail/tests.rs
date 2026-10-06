@@ -1,7 +1,6 @@
 use iced::keyboard;
-use iced::time::Instant;
 use varde_document::OriginPlane;
-use varde_view::{Edit, Look, RailLook, RailOpen, RailSpot, Tool};
+use varde_view::{Edit, Look, RailLook, RailOpen, Tool};
 
 use super::*;
 use crate::tests::{key_in, untitled};
@@ -11,58 +10,51 @@ fn letter(d: &str) -> keyboard::Key {
 }
 
 #[test]
-fn leaving_the_head_closes_the_list_after_a_moment_unless_the_cursor_reaches_the_list() {
+fn hovering_a_head_peeks_at_its_list_till_the_cursor_leaves_it() {
     let mut rail = Rail::default();
-    let start = Instant::now();
-    rail.update(RailLook::Hover(RailSpot::Head(1), true), 2, |_| 3, start);
-    assert_eq!(rail.open, Some(1));
-    assert!(!rail.closing());
-
-    // Off the head, on its way to the list: closing, but not yet.
-    rail.update(RailLook::Hover(RailSpot::Head(1), false), 2, |_| 3, start);
-    assert!(rail.closing());
-    rail.tick(start + RAIL_CLOSE_DELAY / 2);
-    assert_eq!(rail.open, Some(1));
-    rail.update(RailLook::Hover(RailSpot::List, true), 2, |_| 3, start);
-    rail.tick(start + 2 * RAIL_CLOSE_DELAY);
-    assert_eq!(rail.open, Some(1));
-    assert!(!rail.closing());
-
-    // Entering the list before leaving the head, as layers can send them.
-    let mut rail = Rail::default();
-    rail.update(RailLook::Hover(RailSpot::Head(0), true), 2, |_| 3, start);
-    rail.update(RailLook::Hover(RailSpot::List, true), 2, |_| 3, start);
-    rail.update(RailLook::Hover(RailSpot::Head(0), false), 2, |_| 3, start);
-    assert!(!rail.closing());
-    rail.tick(start + 2 * RAIL_CLOSE_DELAY);
-    assert_eq!(rail.open, Some(0));
-
-    // Off the list, to nothing: it closes once the delay is up.
-    rail.update(RailLook::Hover(RailSpot::List, false), 2, |_| 3, start);
-    rail.tick(start + RAIL_CLOSE_DELAY - Duration::from_millis(1));
-    assert_eq!(rail.open, Some(0));
-    rail.tick(start + RAIL_CLOSE_DELAY);
+    rail.update(RailLook::Hover(1, true), 3, |_| 3);
+    assert_eq!(rail.state().map(|open| (open.set, open.held)), Some((1, false)));
+    rail.update(RailLook::Hover(1, false), 3, |_| 3);
     assert_eq!(rail.open, None);
-    assert!(!rail.closing());
+
+    // Entering the next head before leaving the last, as layers can send
+    // them: the next stays open.
+    rail.update(RailLook::Hover(0, true), 3, |_| 3);
+    rail.update(RailLook::Hover(2, true), 3, |_| 3);
+    rail.update(RailLook::Hover(0, false), 3, |_| 3);
+    assert_eq!(rail.open, Some(2));
+    // A head past the mode's sets opens nothing.
+    rail.update(RailLook::Hover(3, true), 3, |_| 3);
+    rail.update(RailLook::Open(7), 3, |_| 3);
+    assert_eq!(rail.open, Some(2));
 }
 
 #[test]
-fn a_tool_on_a_card_closes_the_list_at_once_and_another_head_opens_its_own() {
+fn a_list_opened_by_a_click_or_a_key_stays_as_the_cursor_leaves() {
+    for opening in [RailLook::Open(1), RailLook::Toggle(1)] {
+        let mut rail = Rail::default();
+        rail.update(RailLook::Hover(1, true), 3, |_| 3);
+        rail.update(opening, 3, |_| 3);
+        assert!(rail.state().is_some_and(|open| open.held));
+        rail.update(RailLook::Hover(1, false), 3, |_| 3);
+        assert_eq!(rail.open, Some(1));
+        // Another head doesn't change it.
+        rail.update(RailLook::Hover(2, true), 3, |_| 3);
+        rail.update(RailLook::Hover(2, false), 3, |_| 3);
+        assert_eq!(rail.open, Some(1));
+        // A click elsewhere closes it, and the next hover only peeks.
+        rail.update(RailLook::Close, 3, |_| 3);
+        assert_eq!(rail.open, None);
+        rail.update(RailLook::Hover(0, true), 3, |_| 3);
+        rail.update(RailLook::Hover(0, false), 3, |_| 3);
+        assert_eq!(rail.open, None);
+    }
+    // The key on a peeked list holds it; again, closes it.
     let mut rail = Rail::default();
-    let now = Instant::now();
-    rail.update(RailLook::Hover(RailSpot::Head(0), true), 4, |_| 3, now);
-    rail.update(RailLook::Hover(RailSpot::Head(0), false), 4, |_| 3, now);
-    rail.update(RailLook::Hover(RailSpot::Tool, true), 4, |_| 3, now);
-    assert_eq!(rail.open, None);
-    rail.update(RailLook::Hover(RailSpot::Tool, false), 4, |_| 3, now);
-    assert!(!rail.closing());
-    rail.update(RailLook::Hover(RailSpot::Head(2), true), 4, |_| 3, now);
-    assert_eq!(rail.open, Some(2));
-    // A head past the mode's sets opens nothing.
-    rail.update(RailLook::Hover(RailSpot::Head(4), true), 4, |_| 3, now);
-    rail.update(RailLook::Open(7), 4, |_| 3, now);
-    assert_eq!(rail.open, Some(2));
-    rail.update(RailLook::Close, 4, |_| 3, now);
+    rail.update(RailLook::Hover(0, true), 3, |_| 3);
+    rail.update(RailLook::Toggle(0), 3, |_| 3);
+    assert_eq!(rail.open, Some(0));
+    rail.update(RailLook::Toggle(0), 3, |_| 3);
     assert_eq!(rail.open, None);
 }
 
@@ -130,28 +122,15 @@ fn entering_or_leaving_a_sketch_closes_the_list_and_its_letters_pick_its_tools()
 }
 
 #[test]
-fn a_list_waiting_to_close_takes_frames() {
-    let mut doc = untitled();
-    assert!(!doc.animating());
-    doc.look(Look::Rail(RailLook::Hover(RailSpot::Head(0), true)));
-    doc.look(Look::Rail(RailLook::Hover(RailSpot::Head(0), false)));
-    assert!(doc.animating());
-    doc.rail.tick(Instant::now() + RAIL_CLOSE_DELAY);
-    assert!(!doc.animating());
-    assert_eq!(doc.rail.open, None);
-}
-
-#[test]
 fn the_arrows_go_round_the_open_list_scrolling_it_to_the_row() {
     let mut rail = Rail::default();
-    let now = Instant::now();
-    let update = |rail: &mut Rail, message| rail.update(message, 2, |set| [3, 5][set], now);
+    let update = |rail: &mut Rail, message| rail.update(message, 2, |set| [3, 5][set]);
     // Closed, the arrows do nothing.
     update(&mut rail, RailLook::Down);
     assert_eq!((rail.open, rail.take_scroll()), (None, None));
 
     update(&mut rail, RailLook::Toggle(1));
-    assert_eq!(rail.state(), Some(RailOpen { set: 1, row: 0 }));
+    assert_eq!(rail.state(), Some(RailOpen { set: 1, row: 0, held: true }));
     assert_eq!(rail.take_scroll(), Some(0.0));
     update(&mut rail, RailLook::Up);
     assert_eq!(rail.row, 4);
@@ -165,12 +144,12 @@ fn the_arrows_go_round_the_open_list_scrolling_it_to_the_row() {
     update(&mut rail, RailLook::Row(3));
     update(&mut rail, RailLook::Row(5));
     assert_eq!(rail.row, 3);
-    // Hovering the head of the set open keeps the row; another set
+    // Clicking the head of the set open keeps the row; another set
     // starts at its top.
-    update(&mut rail, RailLook::Hover(RailSpot::Head(1), true));
+    update(&mut rail, RailLook::Open(1));
     assert_eq!(rail.row, 3);
-    update(&mut rail, RailLook::Hover(RailSpot::Head(0), true));
-    assert_eq!(rail.state(), Some(RailOpen { set: 0, row: 0 }));
+    update(&mut rail, RailLook::Open(0));
+    assert_eq!(rail.state(), Some(RailOpen { set: 0, row: 0, held: true }));
     update(&mut rail, RailLook::Up);
     assert_eq!(rail.row, 2);
 }

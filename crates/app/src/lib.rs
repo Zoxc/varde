@@ -574,7 +574,6 @@ impl Varde {
                 doc.animation_frame(now);
                 doc.tick(now);
                 doc.feed.tick(&doc.editor, now);
-                doc.rail.tick(now);
             }),
         }
         Task::none()

@@ -1675,7 +1675,14 @@ pub fn rail_card(theme: &Theme) -> container::Style {
 /// hover and while its set's list is `open`, which it opens on hover, so
 /// the two look the same. Its top corners follow the card's, and its
 /// bottom ones too without a strip under it (`over_strip`).
-pub fn rail_head(open: bool, over_strip: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+///
+/// While its set is `held` open, by a click or its key, it shows the
+/// selection's colour rather than the hover highlight, deeper on hover.
+pub fn rail_head(
+    open: bool,
+    held: bool,
+    over_strip: bool,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
         let inner = RAIL_CARD_RADIUS - 1.0;
@@ -1685,7 +1692,14 @@ pub fn rail_head(open: bool, over_strip: bool) -> impl Fn(&Theme, button::Status
             border::Radius::new(inner)
         };
         button::Style {
-            background: (open || is_hovered(status)).then_some(Background::Color(p.hl)),
+            background: if held {
+                // Hovered, the selection's tint deepens.
+                let soft = p.accent_soft;
+                let a = if is_hovered(status) { soft.a * 1.75 } else { soft.a };
+                Some(Background::Color(Color { a, ..soft }))
+            } else {
+                (open || is_hovered(status)).then_some(Background::Color(p.hl))
+            },
             text_color: p.text,
             border: Border {
                 radius,
@@ -1710,10 +1724,15 @@ pub fn rail_strip(theme: &Theme) -> container::Style {
 }
 
 /// What's behind a tool rail card's strip: the head's highlight while its
-/// set is `open`, showing in the strip's rounded top corners.
-pub fn rail_strip_backing(open: bool) -> impl Fn(&Theme) -> container::Style {
+/// set is `open` (the selection's colour while `held`), showing in the
+/// strip's rounded top corners.
+pub fn rail_strip_backing(open: bool, held: bool) -> impl Fn(&Theme) -> container::Style {
     move |theme| container::Style {
-        background: open.then_some(Background::Color(palette(theme).hl)),
+        background: if held {
+            Some(Background::Color(palette(theme).accent_soft))
+        } else {
+            open.then_some(Background::Color(palette(theme).hl))
+        },
         border: border::rounded(border::Radius::new(0).bottom(RAIL_CARD_RADIUS - 1.0)),
         ..container::Style::default()
     }

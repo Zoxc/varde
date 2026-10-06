@@ -517,10 +517,10 @@ impl Doc {
             || self.motion.is_some()
     }
 
-    /// Whether the camera is turning to a new view, the pivot's marker
-    /// fading, or the rail's list waiting to close.
+    /// Whether the camera is turning to a new view or the pivot's marker
+    /// fading.
     pub(crate) fn animating(&self) -> bool {
-        self.animation.is_some() || self.pivot_fading() || self.rail.closing()
+        self.animation.is_some() || self.pivot_fading()
     }
 
     /// Whether the document may be edited, and so saved.
@@ -1194,7 +1194,7 @@ impl Doc {
             }
             Look::SetPivot(at) => self.set_pivot(at, Instant::now()),
             Look::HoverCube(over) => self.hover_cube(over, Instant::now()),
-            Look::Rail(message) => self.rail_look(message, Instant::now()),
+            Look::Rail(message) => self.rail_look(message),
             Look::SetProjection(projection) => {
                 self.view_menu = false;
                 self.camera.set_projection(projection);

@@ -25,7 +25,8 @@ The tool rail (`rail.rs`) floats over the viewport's left edge: a card
 per tool set of the mode (see "The tool rail" in `agents/sketch.md`), 48
 px wide, 6 px in from the viewport's left and top and apart, each a head
 with the set's icon (`theme::rail_head`, highlighted on hover and while
-its set is open) over a recessed strip of its first tools, as many as
+its set is open, in the selection's colour, `accent_soft`, while it's
+held, see below, deeper on hover) over a recessed strip of its first tools, as many as
 fit (`theme::rail_strip`; behind the strip's rounded top corners the head's
 highlight shows while open, `rail_strip_backing`), each with an instant
 tooltip at its right (`chrome::side_tip`) of its name and key. The open
@@ -42,15 +43,15 @@ and takes only what's over them: each card and the list are a
 cards reach the scene and those on a card's border or the list's
 padding don't. A press anywhere but on the cards and the list, the side
 panel and toolbar included, sends `RailLook::Close` and goes on to what's
-there. The head's and the list's `mouse_area`s say when the cursor comes
-over or leaves them, and the tools' when it comes over them
-(`RailLook::Hover`); the app (`doc/rail.rs`) opens a head's set as the
-cursor comes over it, closes the list at once over a tool on a card, and
-once the cursor has left the head or the list it was over, closes it
-after `RAIL_CLOSE_DELAY` (250 ms) unless it's over one again by then,
-which the frames subscription runs for (`Doc::animating`). Which spot
-the cursor is over is kept by the spot, so an enter and the leave
-before it can come in either order. The layer is `responsive`: from the
+there. The heads' `mouse_area`s say when the cursor comes over or leaves
+them (`RailLook::Hover`); the app (`doc/rail.rs`) opens a head's set as
+the cursor comes over it and closes it as the cursor leaves that head,
+so an enter and the leave of the head before can come in either order.
+That's a peek: to use the list, a click on its head (`RailLook::Open`)
+or the set's key (`Toggle`, which holds a peeked list rather than
+closing it) holds it, and the cursor neither closes it nor opens another
+set over it; picking a tool, a press elsewhere, `Esc` or the key again
+does. The layer is `responsive`: from the
 viewport's height, clear of the status bar like the list, `rail::fitting`
 works out how many tools each card shows, adding them one at a time to
 the set showing the fewest that has more (the first of those) until the
