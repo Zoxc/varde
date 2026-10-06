@@ -747,6 +747,10 @@ impl Doc {
             // document edited. The IO lane answers saves in the order sent,
             // so this is the newest one to land.
             Ok(()) => {
+                self.toast = Some(match self.persist.target {
+                    Target::Browser { .. } => format!("Saved {} to browser storage", self.name),
+                    _ => format!("Saved {}", self.name),
+                });
                 self.persist.saved_revision = Some(revision);
                 // Sending it cleared the save error, so one there now is
                 // of a Save As failing since, which a Save doesn't
@@ -760,6 +764,7 @@ impl Doc {
             // error, and leaving goes on or stops on its answer.
             Err(_) if self.persist.saves.supersede(kind) => {}
             Err(error) => {
+                self.toast = Some(format!("Couldn't save {}", self.name));
                 self.persist.save_error = Some(error);
                 self.stop_leaving_unless_discarding();
             }
@@ -1198,8 +1203,10 @@ impl Doc {
             .and_then(|(bytes, _)| download(&name, &bytes));
         if let Err(error) = result {
             self.notice = Some(format!("Couldn't download {name}: {error}"));
+            self.toast = Some(format!("Couldn't download {name}"));
             return;
         }
+        self.toast = Some(format!("Downloaded {name}"));
         if let Target::Browser { file, .. } = self.persist.target {
             // With changes not saved, it's not the design as saved: nor
             // with them on their way to the file, as that save may fail.

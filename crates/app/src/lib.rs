@@ -798,8 +798,8 @@ impl Varde {
                 }
                 return self.saved_as(to, revision, result);
             }
-            IoResponse::Exported { result, .. } => match self.screen.doc_mut() {
-                Some(doc) => doc.export_written(result),
+            IoResponse::Exported { to, result } => match self.screen.doc_mut() {
+                Some(doc) => doc.export_written(&to, result),
                 // Closed while it was written: the file is written or not
                 // all the same.
                 None => report_failure("export", result),

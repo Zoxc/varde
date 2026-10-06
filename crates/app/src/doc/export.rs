@@ -120,7 +120,7 @@ impl Doc {
         self.export.error = None;
         match self.feed.request_export(&self.editor) {
             Some(export) => self.export.exporting = Some(Exporting::Welding { export, to }),
-            None => self.export.error = Some("the model isn't ready yet: try again".to_owned()),
+            None => self.export_failed("the model isn't ready yet: try again".to_owned()),
         }
     }
 
@@ -148,15 +148,16 @@ impl Doc {
                 })
                 .collect(),
             Err(error) => {
-                self.export.error = Some(error);
+                self.export_failed(error);
                 return;
             }
         };
         // Hidden since, or failed: nothing to ask the file system for.
         if bodies.is_empty() {
-            self.export.error = Some(three_mf::Error::NoObjects.to_string());
+            self.export_failed(three_mf::Error::NoObjects.to_string());
             return;
         }
+        let file = download_name_with(&self.name, three_mf::EXTENSION);
         let written = match (to, &cx.downloader) {
             (Some(to), _) => {
                 cx.io.send(IoRequest::Export {
@@ -165,17 +166,16 @@ impl Doc {
                     bodies,
                 });
                 self.export.exporting = Some(Exporting::Writing);
-                Ok(())
+                return;
             }
             (None, Some(download)) => three_mf::package(&self.name, &bodies)
                 .map_err(|e| e.to_string())
-                .and_then(|bytes| {
-                    download(&download_name_with(&self.name, three_mf::EXTENSION), &bytes)
-                }),
+                .and_then(|bytes| download(&file, &bytes)),
             (None, None) => Err("there's nowhere to export to".to_owned()),
         };
-        if let Err(error) = written {
-            self.export.error = Some(error);
+        match written {
+            Ok(()) => self.toast = Some(format!("Exported {file}")),
+            Err(error) => self.export_failed(error),
         }
     }
 
@@ -185,19 +185,41 @@ impl Doc {
     pub(crate) fn regen_replaced(&mut self) {
         if let Some(Exporting::Welding { .. }) = self.export.exporting {
             self.export.exporting = None;
-            self.export.error =
-                Some("regenerating restarted before the bodies were welded: try again".to_owned());
+            self.export_failed(
+                "regenerating restarted before the bodies were welded: try again".to_owned(),
+            );
         }
     }
 
-    /// The IO lane's answer to the export it was writing.
-    pub(crate) fn export_written(&mut self, result: Result<(), String>) {
+    /// The IO lane's answer to the export it was writing `to`.
+    pub(crate) fn export_written(&mut self, to: &Chosen, result: Result<(), String>) {
         if self.export.exporting != Some(Exporting::Writing) {
             return;
         }
         self.export.exporting = None;
-        if let Err(error) = result {
-            self.export.error = Some(error);
+        match result {
+            Ok(()) => self.toast = Some(format!("Exported {}", chosen_name(to))),
+            Err(error) => self.export_failed(error),
         }
+    }
+
+    /// The export on its way failed for `error`: the banner says why
+    /// until dismissed, and a toast says it failed.
+    fn export_failed(&mut self, error: String) {
+        self.export.error = Some(error);
+        self.toast = Some("Couldn't export".to_owned());
+    }
+}
+
+/// The file name of what the user `chose`, as a toast names it.
+fn chosen_name(chosen: &Chosen) -> String {
+    match chosen {
+        Chosen::Path(path) => path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .display()
+            .to_string(),
+        Chosen::File(picked) => picked.name.clone(),
+        Chosen::Browser(name) => name.clone(),
     }
 }

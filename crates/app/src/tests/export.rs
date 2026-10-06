@@ -150,6 +150,7 @@ fn an_export_is_welded_then_written_by_the_io_lane() {
         to: Chosen::Path(path.clone()),
         result: Ok(()),
     }));
+    assert_eq!(varde.toast.message(), Some("Exported plate.3mf"));
     let doc = document(&varde);
     assert_eq!(doc.export_state(), None);
     assert_eq!(doc.export_error(), None);
@@ -174,6 +175,7 @@ fn a_failed_export_shows_why_until_dismissed() {
         to: Chosen::Path("/d/plate.3mf".into()),
         result: Err("plate.3mf already exists".to_owned()),
     }));
+    assert_eq!(varde.toast.message(), Some("Couldn't export"));
     let doc = document(&varde);
     assert_eq!(doc.export_error(), Some("plate.3mf already exists"));
     assert!(doc.exportable());

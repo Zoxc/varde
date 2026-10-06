@@ -135,6 +135,10 @@ fn saving_a_new_design_asks_for_a_name_and_keeps_it_in_browser_storage() {
             offered: false,
         }),
     }));
+    assert_eq!(
+        varde.toast.message(),
+        Some("Saved bracket_1 to browser storage")
+    );
     let doc = document(&varde);
     assert_eq!(doc.name, "bracket_1");
     assert_eq!(

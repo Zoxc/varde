@@ -165,6 +165,11 @@ while a newer one is still in flight shows nothing, and the newer one
 succeeding leaves no banner behind. Except a Save As failing while only
 Saves are in flight: they write the design's own file, not the one the
 Save As was to write, so its error shows.
+Each save's answer also shows as a toast (see `features.md`), as the
+mock's save button does: "Saved <name>" ("Saved <name> to browser
+storage" for a design kept there) or "Couldn't save <name>" when its
+error shows; a Download says "Downloaded <name>.vrdp" or that it
+couldn't. Auto-saves show none.
 
 A design never saved has no name (`Doc::unnamed`: no file of its own,
 and not known by the name of a file it was opened from): the toolbar's
@@ -271,7 +276,8 @@ As does. The status bar says "Exporting…" until the IO lane answers.
 Errors (a body that doesn't weld, by name; nothing visible left to
 write; the file there; the write failing) show in a "Couldn't export"
 banner until dismissed or another export starts, the message after the
-dash in lower case as the save banner's are. An export closed or quit
+dash in lower case as the save banner's are. A toast says "Exported <file>"
+once it's written or downloaded, or "Couldn't export" with the banner. An export closed or quit
 before the bodies are welded is dropped: closing doesn't wait for it,
 and bodies welded while quitting aren't sent, since they'd come after
 the flush the window closes on; one already with the IO lane is written
