@@ -1,5 +1,6 @@
 //! A context menu: content that asks for its menu when it's right-clicked,
-//! and shows it where it was clicked while the app has it open.
+//! and shows it where it was clicked while the app has it open, or below
+//! it when it was opened otherwise (from the keyboard).
 
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
@@ -8,8 +9,9 @@ use iced::{Element, Event, Length, Point, Rectangle, Size, Vector};
 use crate::Message;
 
 /// `content`, sending `on_open` when it's right-clicked. While `menu` is
-/// given it shows over everything, where `content` was last right-clicked,
-/// kept within the window; a press off it sends `on_close`.
+/// given it shows over everything, where `content` was right-clicked to
+/// open it, else below `content`'s left end, kept within the window; a
+/// press off it sends `on_close`.
 pub(crate) struct ContextMenu<'a> {
     content: Element<'a, Message>,
     menu: Option<Element<'a, Message>>,
@@ -34,7 +36,8 @@ impl<'a> ContextMenu<'a> {
 }
 
 /// Where the content was last right-clicked, in its own coordinates
-/// (those of a scrolled list's content, within one).
+/// (those of a scrolled list's content, within one), until the menu is
+/// closed.
 #[derive(Default)]
 struct State {
     at: Option<Point>,
@@ -59,6 +62,11 @@ impl Widget<Message, iced::Theme, iced::Renderer> for ContextMenu<'_> {
     fn diff(&self, tree: &mut Tree) {
         let elements: Vec<_> = std::iter::once(&self.content).chain(&self.menu).collect();
         tree.diff_children(&elements);
+        // Closed: the next opening, if not by a right-click, isn't at the
+        // last one.
+        if self.menu.is_none() {
+            tree.state.downcast_mut::<State>().at = None;
+        }
     }
 
     fn size(&self) -> Size<Length> {
@@ -167,9 +175,11 @@ impl Widget<Message, iced::Theme, iced::Renderer> for ContextMenu<'_> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
-        // Not right-clicked since the tree was made: at its top left.
+        // Not opened by a right-click: below its left end.
+        let bounds = layout.bounds();
+        let below = Point::new(bounds.x, bounds.y + bounds.height);
         let at = tree.state.downcast_ref::<State>().at;
-        let at = at.unwrap_or(layout.position()) + translation;
+        let at = at.unwrap_or(below) + translation;
         let mut children = tree.children.iter_mut();
         let content = self.content.as_widget_mut().overlay(
             children.next()?,

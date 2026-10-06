@@ -846,6 +846,7 @@ impl Doc {
         if !matches!(
             message,
             Look::OpenMenu(_)
+                | Look::KeyMenu(_)
                 | Look::PreviewOpacity(..)
                 | Look::PreviewColor(..)
                 | Look::Escape
@@ -1001,6 +1002,15 @@ impl Doc {
                 }
             }
             Look::OpenMenu(menu) => self.open_menu(menu),
+            Look::KeyMenu(menu) => {
+                self.panel = match menu {
+                    RowMenu::Feature(_) => Panel::Timeline,
+                    RowMenu::Body(_) | RowMenu::Sketch(_) => Panel::Objects,
+                    RowMenu::Link(_) | RowMenu::Item(_) => Panel::Sketch,
+                }
+                .for_sketching(self.sketch.is_some());
+                self.open_menu(menu);
+            }
             Look::CloseMenu => {}
             Look::PreviewOpacity(id, opacity) => self.preview_opacity(id, opacity),
             Look::PreviewColor(id, tint) => self.preview_color(id, tint),
@@ -1233,6 +1243,26 @@ impl Doc {
         self.row_menu = Some(menu);
     }
 
+    /// The row whose context menu the context menu key opens: the
+    /// feature selected in the Timeline, else the last sketch selected in
+    /// Objects, else the first body selected or holding what's selected
+    /// in the model; in a sketch, the first point or curve selected.
+    pub(crate) fn menu_target(&self) -> Option<RowMenu> {
+        if let Some(session) = &self.sketch {
+            return (session.selection.iter())
+                .copied()
+                .find(|&id| self.holds(id))
+                .map(RowMenu::Item);
+        }
+        if let Some(id) = self.selected_feature {
+            return Some(RowMenu::Feature(id));
+        }
+        if let Some(id) = self.selected_sketches().last() {
+            return Some(RowMenu::Sketch(id));
+        }
+        self.selected_bodies().first().copied().map(RowMenu::Body)
+    }
+
     /// Previews `opacity` for the body `id` while its context menu's
     /// slider is dragged, if that menu is open and the document editable;
     /// [`Edit::CommitOpacity`] commits it on letting go, and
@@ -1333,6 +1363,7 @@ impl Doc {
                 .with_measure(self.measure.is_some())
                 .with_rail(self.rail.state())
                 .with_rename(self.rename_target())
+                .with_menu(self.menu_target())
                 .with_edited(self.edited())
                 .with_history(
                     self.editor.can_undo() || self.proposing(),

@@ -8935,7 +8935,13 @@ is editable. The rows of Objects have one too (`RowMenu::Body`,
 `RowMenu::Sketch`), selecting the row alone as a click would unless
 it's already part of the selection, which is then kept: Edit sketch for a sketch,
 Hide or Show where the row has an eye, a body's Opacity (not a merged
-one's, drawn as its holder is), and Delete. Opacity is a slider from 10
+one's, drawn as its holder is), and Delete. The context menu key or `Shift F10`
+(`DocumentKeys::menu`, `Doc::menu_target`) opens the menu of what's
+selected (`Look::KeyMenu`): the Timeline's feature, else the last
+sketch selected in Objects, else the first body of the model
+selection, in a sketch the first point or curve selected, showing the
+row's tab; a menu not opened by a right-click shows below its row's
+left end. Opacity is a slider from 10
 to 100 % in steps of 5 with the percentage beside it, wrapped in
 `MouseOnly` (`view/src/mouse_only.rs`) so it's only dragged: iced's
 slider also steps on arrow keys and `Ctrl`-wheel, with no release to

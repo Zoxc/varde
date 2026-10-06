@@ -4585,6 +4585,50 @@ fn objects_have_context_menus() {
     assert_eq!(doc.row_menu, None);
 }
 
+/// The context menu key, or Shift F10, opens the menu of what's
+/// selected, showing its tab: the Timeline's feature, else an Objects
+/// row, else the body of what's selected in the model.
+#[test]
+fn the_menu_key_opens_the_selection_s_menu() {
+    use iced::keyboard::{Key, Modifiers, key::Named};
+
+    let (mut doc, _) = example();
+    let body = doc.editor.document().bodies()[0].id;
+    let sketch = doc.editor.document().features()[0].id;
+    let sent = |doc: &Doc, key: Named, modifiers| {
+        let bindings = varde_view::document_bindings(doc.keys().unwrap());
+        varde_view::pressed(bindings, &Key::Named(key), modifiers)
+    };
+    assert_eq!(doc.keys().unwrap().menu, None);
+    assert!(sent(&doc, Named::ContextMenu, Modifiers::empty()).is_none());
+
+    doc.look(Look::ClickBody { body, add: false });
+    assert_eq!(doc.keys().unwrap().menu, Some(RowMenu::Body(body)));
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    let Some(varde_view::Message::Look(look)) = sent(&doc, Named::F10, Modifiers::SHIFT) else {
+        panic!("Shift F10 opens no menu");
+    };
+    assert!(sent(&doc, Named::F10, Modifiers::empty()).is_none());
+    doc.look(look);
+    assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
+    assert_eq!(doc.panel, Panel::Objects);
+    doc.look(Look::Escape);
+
+    doc.look(Look::ClickObject {
+        row: varde_view::ObjectRow::Sketch(sketch),
+        add: false,
+    });
+    assert_eq!(doc.keys().unwrap().menu, Some(RowMenu::Sketch(sketch)));
+    doc.look(Look::SelectFeature(sketch));
+    let Some(varde_view::Message::Look(look)) = sent(&doc, Named::ContextMenu, Modifiers::empty())
+    else {
+        panic!("the menu key opens no menu");
+    };
+    doc.look(look);
+    assert_eq!(doc.row_menu, Some(RowMenu::Feature(sketch)));
+    assert_eq!(doc.panel, Panel::Timeline);
+}
+
 /// What the viewport draws of the world's origin objects in `doc`.
 fn origin_drawn(doc: &Doc) -> varde_render::OriginShown {
     let state = doc.state(

@@ -572,6 +572,10 @@ pub enum Look {
     /// Opens the context menu of a row of the side panel: right-clicking
     /// it. A feature in the Timeline is selected too.
     OpenMenu(RowMenu),
+    /// Opens the context menu of a row of the side panel from the
+    /// keyboard, showing its tab: as [`Look::OpenMenu`], but the menu
+    /// shows at the row rather than where it was last right-clicked.
+    KeyMenu(RowMenu),
     /// Closes the row's context menu: a press off it.
     CloseMenu,
     /// Shows the body as `Opacity` says while its context menu's slider is
@@ -1085,7 +1089,7 @@ pub enum Unsaved {
 }
 
 /// A row of the side panel whose context menu is open.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RowMenu {
     /// A feature in the Timeline, which is selected with it.
     Feature(FeatureId),

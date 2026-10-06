@@ -171,3 +171,26 @@ fn a_press_off_the_menu_closes_it_and_none_reaches_what_s_under_it() {
     assert!(sent.is_empty());
     assert!(captured);
 }
+
+#[test]
+fn a_menu_opened_otherwise_shows_below_it() {
+    let nowhere = Event::Mouse(mouse::Event::CursorLeft);
+    let mut laid = Laid::new(area(true), WINDOW);
+    let (bounds, ..) = overlay(&mut laid, Vector::ZERO, nowhere.clone(), Point::ORIGIN);
+    assert_eq!(bounds.position(), Point::new(0.0, 20.0));
+    // Right-clicked, then closed: opened again from the keyboard, it's
+    // below the content again.
+    laid.replace(area(false), WINDOW);
+    update(
+        &mut laid,
+        press(mouse::Button::Right),
+        Point::new(30.0, 10.0),
+    );
+    laid.replace(area(true), WINDOW);
+    let (bounds, ..) = overlay(&mut laid, Vector::ZERO, nowhere.clone(), Point::ORIGIN);
+    assert_eq!(bounds.position(), Point::new(30.0, 10.0));
+    laid.replace(area(false), WINDOW);
+    laid.replace(area(true), WINDOW);
+    let (bounds, ..) = overlay(&mut laid, Vector::ZERO, nowhere, Point::ORIGIN);
+    assert_eq!(bounds.position(), Point::new(0.0, 20.0));
+}

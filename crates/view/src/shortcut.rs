@@ -37,6 +37,10 @@ enum Key {
     Down,
     /// `F2`.
     F2,
+    /// `F10`.
+    F10,
+    /// The context menu key.
+    Menu,
     /// No key: a tool the UI mock gives none, reached from the toolbar
     /// and the rail. Never pressed, and shown as nothing.
     None,
@@ -90,6 +94,13 @@ impl Shortcut {
     pub const DELETE: Self = Self::named(Key::Delete);
     /// Renames the feature, sketch or body selected.
     pub const RENAME: Self = Self::named(Key::F2);
+    /// Opens the context menu of what's selected.
+    pub const MENU: Self = Self::named(Key::Menu);
+    /// [`Shortcut::MENU`]'s other key, for keyboards without one.
+    pub const MENU_F10: Self = Self {
+        shift: true,
+        ..Self::named(Key::F10)
+    };
     /// Only labels the key: the app matches it itself, with any
     /// modifiers, since what it does depends on what's open (see
     /// `escape_key` there).
@@ -200,6 +211,8 @@ impl Shortcut {
             Key::Up => "↑".into(),
             Key::Down => "↓".into(),
             Key::F2 => "F2".into(),
+            Key::F10 => "F10".into(),
+            Key::Menu => "Menu".into(),
             Key::None => "".into(),
         };
         format!("{command}{shift}{key}")
@@ -228,7 +241,9 @@ impl Shortcut {
             | (Key::Tab, KeyPress::Named(Named::Tab))
             | (Key::Up, KeyPress::Named(Named::ArrowUp))
             | (Key::Down, KeyPress::Named(Named::ArrowDown))
-            | (Key::F2, KeyPress::Named(Named::F2)) => true,
+            | (Key::F2, KeyPress::Named(Named::F2))
+            | (Key::F10, KeyPress::Named(Named::F10))
+            | (Key::Menu, KeyPress::Named(Named::ContextMenu)) => true,
             (Key::Space, KeyPress::Character(c)) => c == " ",
             _ => false,
         };
@@ -375,6 +390,11 @@ pub struct DocumentKeys {
     /// one sketch selected in Objects or the one body selected, outside
     /// sketches and operations.
     pub rename: Option<varde_document::Named>,
+    /// The row whose context menu the context menu key opens: the
+    /// feature selected in the Timeline, else the sketch or body selected
+    /// in Objects or the body of what's selected in the model, or in a
+    /// sketch the point or curve selected.
+    pub menu: Option<crate::RowMenu>,
     /// Whether anything is selected in the sketch being edited.
     pub geometry_selected: bool,
     /// Whether a tool drawing shapes is in use in the sketch being edited.
@@ -463,6 +483,7 @@ impl DocumentKeys {
             sketching: sketch.is_some(),
             selected,
             rename: None,
+            menu: None,
             geometry_selected: sketch.is_some_and(|sketch| !sketch.selection.is_empty()),
             drawing: sketch.is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool.draws())),
             tool: sketch.is_some_and(|sketch| sketch.tool.is_some() || sketch.constraining),
@@ -547,6 +568,12 @@ impl DocumentKeys {
     /// The same keys with `F2` renaming `rename`, if anything.
     pub fn with_rename(self, rename: Option<varde_document::Named>) -> Self {
         Self { rename, ..self }
+    }
+
+    /// The same keys with the context menu key opening `menu`'s, if
+    /// anything's.
+    pub fn with_menu(self, menu: Option<crate::RowMenu>) -> Self {
+        Self { menu, ..self }
     }
 
     pub fn with_edited(self, edited: bool) -> Self {
@@ -971,7 +998,9 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
 /// redo, starting a
 /// sketch, clearing the selection, outside a sketch editing and deleting
 /// the feature selected in the Timeline, if there is one, renaming what
-/// `F2` renames ([`DocumentKeys::rename`]), and in a sketch
+/// `F2` renames ([`DocumentKeys::rename`]), opening the context menu of
+/// what's selected ([`DocumentKeys::menu`]) on the context menu key or
+/// `Shift F10`, and in a sketch
 /// its tools, deleting what's selected, construction, the Constrain tool,
 /// the constraints that fit the selection, turning dimensions between
 /// driving and reference, `Tab` (see `tab_binding`), placing the shape
@@ -1011,7 +1040,14 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
                 keys.editable,
             )
         });
-    let feature = feature.chain(objects).chain(rename);
+    let menu = (keys.menu)
+        .filter(|_| !keys.operating())
+        .into_iter()
+        .flat_map(|target| {
+            [Shortcut::MENU, Shortcut::MENU_F10]
+                .map(|shortcut| Binding::new(shortcut, Message::Look(Look::KeyMenu(target)), true))
+        });
+    let feature = feature.chain(objects).chain(rename).chain(menu);
     let sketch = keys.sketching.then(|| {
         Tool::ALL
             .map(|tool| tool_binding(tool, keys))
