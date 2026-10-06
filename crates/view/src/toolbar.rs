@@ -930,12 +930,18 @@ pub(crate) fn picks_origin_planes(state: &DocumentState<'_>) -> bool {
     let Some(motion) = &state.motion else {
         return state.picking_plane.is_some();
     };
-    match motion.picking {
-        MotionPick::Tool => {
-            (motion.split.as_ref()).is_some_and(|split| split.mode == SplitMode::Face)
-        }
+    let split_face = (motion.split.as_ref()).is_some_and(|split| split.mode == SplitMode::Face);
+    motion_picks_origin_planes(motion.kind, motion.picking, split_face)
+}
+
+/// Whether an operation of `kind` picking `picking` takes an origin
+/// plane, offered on the toolbar and clicked in the viewport: a split's
+/// tool by face (`split_face`), or a reference that may be a plane.
+pub fn motion_picks_origin_planes(kind: MotionKind, picking: MotionPick, split_face: bool) -> bool {
+    match picking {
+        MotionPick::Tool => split_face,
         MotionPick::Reference => matches!(
-            motion.kind,
+            kind,
             MotionKind::Mirror
                 | MotionKind::Align
                 | MotionKind::Scale

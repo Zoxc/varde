@@ -106,6 +106,7 @@ fn viewport<'a>(
         snaps: false,
         planes: None,
         hovered_origin: None,
+        origin_planes: false,
         sketches: Vec::new(),
         hovered_sketch: None,
         marked: Vec::new(),

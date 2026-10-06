@@ -1476,8 +1476,11 @@ on), its plane to pick, clicks picking the plane if it has bodies.
 - **The axis or plane** is picked once its panel field is clicked
   (`MotionPick::Reference`): the toolbar then offers the origin axes
   ("X axis", "Y axis", "Z axis") or planes after Measure, as picking a
-  sketch's plane does (`MotionLook::OriginAxis`, `OriginPlane`), and the
-  viewport picks edges and faces (`Picks::EdgesAndFaces` for a move, a
+  sketch's plane does (`MotionLook::OriginAxis`, `OriginPlane`; the
+  viewport draws those planes and a click on one nearer than the model
+  picks it as its button does, `ModelPicking::origin_planes`,
+  `varde_view::motion_picks_origin_planes`), and the viewport picks
+  edges and faces (`Picks::EdgesAndFaces` for a move, a
   pick that never takes a vertex; faces for a mirror). A move takes a
   straight edge (`PickIndex::edge_ends`) or a round one (one with a snap
   point, a circle's or arc's centre) and a round face (its summary a

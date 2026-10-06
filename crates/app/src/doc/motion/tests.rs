@@ -1046,8 +1046,11 @@ fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
         "{shown:?}"
     );
     plates.motion(MotionLook::Picking(MotionPick::Reference));
+    // The viewport picks the origin planes too, as the toolbar offers.
+    assert!(plates.doc.model_picking().unwrap().origin_planes);
     plates.motion(MotionLook::OriginPlane(varde_document::OriginPlane::XY));
     assert!(plates.doc.motion_ready());
+    assert!(!plates.doc.model_picking().unwrap().origin_planes);
 }
 
 /// A move set up with two bodies that a combine, brought back by a redo,

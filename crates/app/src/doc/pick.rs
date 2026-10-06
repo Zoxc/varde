@@ -543,6 +543,7 @@ impl Doc {
             },
             snaps: measuring || pointing,
             hovered_origin: self.hovered_plane(),
+            origin_planes: !measuring && self.picks_origin_planes(),
             whole: {
                 let selected: Vec<_> = self.selected_sketches().collect();
                 self.placed_sketches(|feature| feature.visible && selected.contains(&feature.id))
@@ -555,7 +556,20 @@ impl Doc {
 
     /// The origin plane hovered in the viewport, while a plane is picked.
     pub(crate) fn hovered_plane(&self) -> Option<varde_document::OriginPlane> {
-        self.plane_hover.filter(|_| self.picking_plane.is_some())
+        self.plane_hover.filter(|_| self.picks_origin_planes())
+    }
+
+    /// Whether an origin plane can be picked: a sketch's plane, or an
+    /// operation's plane its toolbar offers.
+    pub(crate) fn picks_origin_planes(&self) -> bool {
+        match &self.motion {
+            Some(session) => varde_view::motion_picks_origin_planes(
+                session.kind,
+                session.picking,
+                session.split.mode == varde_view::SplitMode::Face,
+            ),
+            None => self.picking_plane.is_some(),
+        }
     }
 
     /// What the viewport draws over the model, if anything: nothing while

@@ -39,7 +39,7 @@ use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::thumbnail::{THUMBNAIL_SCALE, ThumbnailRequest};
 use crate::{
-    Edges, Edit, Look, Message, PlanePick, SketchItem, SketchLines, ViewOptions, controls,
+    Edges, Edit, Look, Message, MotionLook, PlanePick, SketchItem, SketchLines, ViewOptions, controls,
 };
 
 pub(crate) use extrude::Extruding;
@@ -111,6 +111,11 @@ pub struct ModelPicking<'a> {
     /// Picking a plane, the origin plane the app holds hovered in the
     /// viewport, if any: one the cursor is over, nearer than the model.
     pub hovered_origin: Option<OriginPlane>,
+    /// Whether the origin planes drawn are picked, nearer than the model:
+    /// picking a sketch's plane (`planes`), or an operation's plane
+    /// ([`crate::motion_picks_origin_planes`]), a click on one then
+    /// [`MotionLook::OriginPlane`] as its toolbar button.
+    pub origin_planes: bool,
     /// The finished sketches whose curves and points are picked with
     /// the model, where they're placed: those shown, outside the
     /// sessions. Where one is under the cursor nearer than the model
@@ -744,7 +749,7 @@ impl Program<'_> {
         }
         // Picking a plane, an origin plane nearer than the model is
         // hovered in its place.
-        if picking.planes.is_some() {
+        if picking.origin_planes {
             let near = pick.map(|pick| pick.at);
             let plane = (cursor.position_over(bounds))
                 .and_then(|at| self.origin_plane_at(bounds, at, near));
@@ -1011,6 +1016,16 @@ impl Program<'_> {
                         return Some(Action::capture());
                     };
                     let pick = self.pick_point(picking, bounds, at);
+                    // An operation's origin plane nearer than the model
+                    // is picked as its toolbar button picks it.
+                    if picking.origin_planes
+                        && picking.planes.is_none()
+                        && let Some(plane) =
+                            self.origin_plane_at(bounds, at, pick.map(|pick| pick.at))
+                    {
+                        let picked = Message::Look(Look::Motion(MotionLook::OriginPlane(plane)));
+                        return Some(Action::publish(picked).and_capture());
+                    }
                     if let Some(planes) = picking.planes {
                         // An origin plane nearer than the model is
                         // picked, else a face that can take the sketch;

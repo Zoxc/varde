@@ -55,6 +55,7 @@ mod testing;
 mod theme;
 mod thumbnail;
 mod toolbar;
+pub use toolbar::motion_picks_origin_planes;
 pub mod typed;
 mod view_cube;
 mod viewport;
