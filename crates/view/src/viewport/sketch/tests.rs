@@ -1816,7 +1816,7 @@ fn arched(kind: SplineKind) -> (Sketch, Id, Option<Id>) {
 }
 
 #[test]
-fn a_spline_s_handles_show_and_selected_its_ends_and_control_polygon() {
+fn a_spline_s_handles_show_and_selected_its_control_polygon() {
     let colors = Mode::Light.palette().sketching;
     let (sketch, spline, tip) = arched(SplineKind::Through);
     let (tip, middle) = (tip.unwrap(), sketch.spline(spline).unwrap().points[1]);
@@ -1859,7 +1859,8 @@ fn a_spline_s_handles_show_and_selected_its_ends_and_control_polygon() {
     }
     assert_eq!(*base(&BTreeSet::new()), expected);
 
-    // Selected, where its other fit points' handles would be too, dashed.
+    // Selected, its handle in the selection's colour; its other fit
+    // points, without handles, show none.
     let selection = BTreeSet::from([spline]);
     let mut expected = builtins(colors);
     let selected = line_style(colors.selected, SELECTED_WIDTH, false);
@@ -1867,13 +1868,6 @@ fn a_spline_s_handles_show_and_selected_its_ends_and_control_polygon() {
     let handle = line_style(colors.selected, HANDLE_WIDTH, false);
     expected.polyline(Space::Sketch, &arms, handle);
     expected.point(arms[0], end(colors.selected));
-    let fit = &sketch.spline(spline).unwrap().points;
-    for &end in fit.iter().filter(|&&point| point != middle) {
-        let would = sketch.handle_tip(spline, end).unwrap();
-        let ghost = line_style(colors.preview, HANDLE_WIDTH, true);
-        expected.polyline(Space::Sketch, &[at(end), would], ghost);
-        expected.point(would, dot(POINT_RADIUS, colors.point_fill, colors.preview));
-    }
     for point in &sketch.points {
         expected.point(
             point.at,

@@ -1091,9 +1091,9 @@ impl<'a> Sketching<'a> {
     /// tip through its fit point to as far the other side, symmetric on
     /// it, with a point at that end as at its tip, in the handles' colour,
     /// or the selection's with its spline or itself ([`Id::handle`]); and
-    /// of a spline selected, where handles would be at its fit points that
-    /// have none, dashed in the preview colour, and by control points its
-    /// control polygon, dashed in the handles' colour, as its points are.
+    /// of a spline selected by control points, its control polygon, dashed
+    /// in the handles' colour, as its points are. Fit points without a
+    /// handle show none.
     fn spline_aids(&self, layer: &mut SketchLayer, colors: SketchColors) {
         let sketch = self.sketch;
         let at = |id: Id| sketch.point(id).map(|point| point.at);
@@ -1121,14 +1121,6 @@ impl<'a> Sketching<'a> {
             }
             if !selected {
                 continue;
-            }
-            let bare = spline.points.iter().copied();
-            for end in bare.filter(|&end| !spline.has_handle(end)) {
-                if let (Some(from), Some(tip)) = (at(end), sketch.handle_tip(entry.id, end)) {
-                    let style = line(colors.preview, HANDLE_WIDTH, true);
-                    layer.polyline(Space::Sketch, &[from, tip], style);
-                    layer.point(tip, dot(POINT_RADIUS, colors.point_fill, colors.preview));
-                }
             }
             if spline.kind == SplineKind::Control {
                 let mut polygon: Vec<DVec2> =

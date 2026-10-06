@@ -1548,10 +1548,9 @@ The ends of lines a fillet or chamfer cuts off are dashed too
 (`Sketch::cut_back`, `cut_line`). A spline's handles are lines from their
 tips through their fit points to as far the other side, symmetric on
 them, in `SketchColors::spline_handle` (their tips' rims too), in the
-selection's with their spline or tip; a selected one
-shows where its ends' handles would be where it has none, dashed in the
-preview colour with a point at the tip (`Sketch::handle_tip`), and by
-control points its control polygon dashed in the construction colour.
+selection's with their spline or tip; fit points without a handle show
+none, selected or not; a selected spline by control points shows its
+control polygon dashed in the construction colour.
 Dimensions' lines (`viewport/sketch/dimensions.rs`, pure: extension lines
 out to the dimension line through the label, reaching it if it's off the
 end; an arc around an angle's corner; a radius or diameter out to the
