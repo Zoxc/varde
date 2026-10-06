@@ -9,6 +9,9 @@
          which the app starts in; shown until iced draws its first frame. */
       html, body { margin: 0; height: 100%; overflow: hidden; background: #fafafb; }
       canvas { display: block; width: 100%; height: 100%; }
+      /* winit gives the canvas a tabindex and focuses it on a click; Chrome then
+         draws its focus ring, of which a dark line shows along the top edge. */
+      canvas:focus, canvas:focus-visible { outline: none; }
     </style>
     <link data-trunk rel="icon" href="../../assets/logo.svg" />
     <link data-trunk rel="rust" data-bin="varde-web" />
