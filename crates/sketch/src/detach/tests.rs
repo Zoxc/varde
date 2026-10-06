@@ -54,3 +54,34 @@ fn only_a_point_curves_share_is_detachable() {
         );
     }
 }
+
+/// A closed arc's point detaches: its end gets a point of its own at the
+/// place, opening it, and nothing ties the two.
+#[test]
+fn detaching_a_closed_arcs_point_opens_it() {
+    let mut sketch = Sketch::default();
+    let center = point(&mut sketch, 0.0, 0.0);
+    let start = point(&mut sketch, 10.0, 0.0);
+    let end = point(&mut sketch, 0.0, 10.0);
+    let arc = crate::testing::arc(&mut sketch, center, start, end);
+    assert!(!sketch.detachable(start));
+    let closed = SketchEdit::CloseArc(arc).apply(&sketch, &DESIGN).unwrap();
+    assert!(closed.detachable(start));
+    let opened = SketchEdit::Detach(start).apply(&closed, &DESIGN).unwrap();
+    let Curve::Arc {
+        start: from,
+        end: to,
+        ..
+    } = opened.curve(arc).unwrap().curve
+    else {
+        panic!("not an arc");
+    };
+    assert_eq!(from, start);
+    assert_ne!(to, start);
+    assert_eq!(
+        opened.point(to).unwrap().at,
+        opened.point(start).unwrap().at
+    );
+    assert!(opened.constraints.is_empty());
+    assert!(opened.closable(arc));
+}
