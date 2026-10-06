@@ -847,8 +847,10 @@ fn vs_edge(in: EdgeIn) -> LineOut {
     let color = vec4<f32>(u.edge.rgb, u.model.a * part.alpha.x * crease_alpha(in));
     let s = u.viewport.z;
     let width = select(EDGE_WIDTH, CREASE_WIDTH, (in.start_edge & CREASE) != 0u);
-    return edge_segment(in, EDGE_WIDTH * 0.5 * s, width * 0.5 * s, color, vec2<f32>(0.0),
+    var out = edge_segment(in, EDGE_WIDTH * 0.5 * s, width * 0.5 * s, color, vec2<f32>(0.0),
         vec2<f32>(0.0));
+    out.slope = highlight_slope(mix(in.start, in.end, 0.5));
+    return out;
 }
 
 // The feature edges where the model hides them (depth tested Greater, so
@@ -870,12 +872,15 @@ fn vs_hidden_edge(in: EdgeIn) -> LineOut {
     var out = edge_segment(in, EDGE_WIDTH * 0.5 * s, HIDDEN_EDGE_WIDTH * 0.5 * s, color, dash,
         vec2<f32>(phase, phase + length));
     out.along -= vec2<f32>(floor(out.along.x / period) * period);
+    out.slope = highlight_slope(mix(in.start, in.end, 0.5));
     return out;
 }
 
-// Normalized depth a highlight's pixel is pulled in by per physical pixel
-// from its middle, at `at`, so a face that falls away steeply from the
-// edge or vertex it borders doesn't hide its outer pixels: HIGHLIGHT_SLOPE
+// Normalized depth a highlight's or feature edge's pixel is pulled in by
+// per physical pixel from its middle, at `at`, so a face that falls away
+// steeply from the edge or vertex it borders doesn't hide its outer pixels
+// (nor, at a bend in an edge, the pixels past a segment's end, which left
+// gaps at its joins): HIGHLIGHT_SLOPE
 // pixels' worth of the world towards the eye, so faces as steep as about
 // 18 degrees from the line of sight. The middle is pulled only as the
 // edges are, so a highlight's hidden as they are.

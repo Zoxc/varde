@@ -1438,16 +1438,15 @@ impl Renderer {
             }
         };
         // Lines drawn from the `EdgePoint` stream, over the scene.
+        // Pulled in by their distance from the edge, as the highlights'
+        // lines below are.
         let edge_pass = |label, vs| Pass {
             buffers: &edge_points,
-            ..Pass::overlay(label, vs, "fs_line")
+            ..Pass::overlay(label, vs, "fs_highlight_line")
         };
-        // The hover and the selection's lines, pulled in by their distance
-        // from the edge (`highlight_slope` in the shader).
-        let highlight_pass = |label, vs| Pass {
-            fs: "fs_highlight_line",
-            ..edge_pass(label, vs)
-        };
+        // The hover and the selection's lines (`highlight_slope` in the
+        // shader).
+        let highlight_pass = |label, vs| edge_pass(label, vs);
         // Over the faces' own pixels and no others: the same vertex
         // shader, its position invariant, at exactly their depth.
         let redrawn = |label, fs| {

@@ -638,6 +638,11 @@ neighbours are cut at the near plane before pulling (`pulled_segment`,
 shared with the finished sketches), so they agree where they meet.
 Pulling (`pulled`) only changes the depth: the line shows where it is,
 not where the pulled point would in perspective.
+Their pixels are pulled further by their distance from the segment, as
+the highlights' are (`highlight_slope`, `fs_highlight_line`), so a face
+steep to the view doesn't hide a line's outer pixels, nor at a bend the
+pixels past a segment's end that the segment after owns, which left gaps
+at the joins of curved edges.
 
 The edges the model hides are the same stream drawn again
 (`vs_hidden_edge`) with `depth_compare: Greater` against the opaque
