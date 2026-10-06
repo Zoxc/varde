@@ -4970,8 +4970,8 @@ and the Bodies list.
   drawn meanwhile; a corner under the start is its knob's, not a
   click's. The camera moving under a still cursor works its hover out
   again.
-- **Drawn**: each region section filled and outlined in the selected
-  colour on its plane (the one whose row is hovered in the hovered
+- **Drawn**: each region section filled and outlined in the profile
+  colour (`SketchColors::profile`) on its plane (the one whose row is hovered in the hovered
   colour), its seam knob, a point section's point as a dot in the
   accent, and each section's number in a chip by it (`Moving::labels`).
 - **Rows**: "Section 1" with its sketch's name ("gone" once what it

@@ -202,7 +202,7 @@ impl<'s, 'a> Regions<'s, 'a> {
             return base.layer.clone();
         }
         let mut layer = SketchLayer::default();
-        let picked = colors.selected.scale_alpha(PICKED_ALPHA);
+        let picked = colors.profile.scale_alpha(PICKED_ALPHA);
         for (index, region) in source.profiles.regions.iter().enumerate() {
             if self.picked.contains(&index) {
                 fill_region(&mut layer, region, picked);
@@ -212,7 +212,7 @@ impl<'s, 'a> Regions<'s, 'a> {
                     layer.polyline(
                         LayerSpace::Sketch,
                         &closed,
-                        line(colors.selected, OUTLINE_WIDTH, false),
+                        line(colors.profile, OUTLINE_WIDTH, false),
                     );
                 }
             } else {

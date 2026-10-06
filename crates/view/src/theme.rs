@@ -153,6 +153,10 @@ pub struct SketchColors {
     pub region: Color,
     /// The region under the cursor, over its shading.
     pub region_hovered: Color,
+    /// Profiles picked for a feature (an extrude's, a revolve's regions, a
+    /// loft's sections), filled and outlined: magenta, apart from
+    /// [`selected`](Self::selected)'s blue on picked curves.
+    pub profile: Color,
     /// The rings marking open ends that almost meet: the failed text's
     /// colour ([`Palette::danger_strong`]), as a failing feature's name in
     /// the Timeline.
@@ -445,6 +449,7 @@ const LIGHT: Palette = Palette {
         guide: color!(0xc2701d),
         region: alpha(LIGHT_SKETCH, 0.1),
         region_hovered: color!(0x3d9b35, 0.18),
+        profile: color!(0xc0368c),
         near_miss: color!(0xad2a19),
         spline_handle: color!(0x8e44c9),
         handle: LIGHT_ICONS.solid.line,
@@ -539,6 +544,7 @@ const DARK: Palette = Palette {
         guide: color!(0xf0a24a),
         region: alpha(DARK_SKETCH, 0.12),
         region_hovered: color!(0x76cc60, 0.2),
+        profile: color!(0xef7ac4),
         near_miss: color!(0xf58a7a),
         spline_handle: color!(0xc08cf2),
         handle: DARK_ICONS.solid.line,

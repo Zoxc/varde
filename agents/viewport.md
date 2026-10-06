@@ -210,8 +210,9 @@ included, hides what's behind it of them. Before
 the source sketch is chosen, every candidate's regions (the visible
 sketches with any, each on its own plane, `Space::On`) are filled in the
 live layer; after, the source's regions are
-the base layer on its plane, those picked filled stronger and outlined,
-kept until the profiles (by pointer), the picked set or the colours
+the base layer on its plane, those picked filled stronger and outlined
+in `SketchColors::profile` (magenta, apart from the blue of selected
+curves), kept until the profiles (by pointer), the picked set or the colours
 change. The region hovered is filled over them; the one hovered in the
 panel is drawn on the screen over everything (see the operation panel). Picking casts the
 cursor's ray onto each candidate's plane (`Projector::cursor`), asks

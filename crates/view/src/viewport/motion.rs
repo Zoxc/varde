@@ -1830,7 +1830,7 @@ impl<'a> Moving<'a> {
                 continue;
             };
             let lit = panel == Some(at);
-            let color = if lit { colors.hovered } else { colors.selected };
+            let color = if lit { colors.hovered } else { colors.profile };
             if let LoftShape::Region {
                 region: Some(region),
                 corners,
