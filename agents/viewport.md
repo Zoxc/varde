@@ -431,10 +431,15 @@ opaque) go:
    hovered edges' outline, the selected edges and the hovered and
    selected vertices, all under the glass in front of them, which dims
    them.
-3. Each transparent part, far to near: its back faces (front culled, lit
-   as seen from inside: `fs_mesh` flips the normal of a face that isn't
-   front facing), then its front faces, blended at its alpha, depth
-   tested, writing no depth.
+3. The transparent parts' back faces, far to near (front culled, lit as
+   seen from inside: `fs_mesh` flips the normal of a face that isn't
+   front facing), then each part's front faces, far to near: their depth
+   (`mesh_depth`), then the faces over it (`LessEqual`), so only a part's
+   nearest front faces are blended, not whichever of a concave body's
+   come last in the mesh. Blended at its alpha, depth tested, the faces
+   writing no depth. The back faces all go first so one part's depth
+   doesn't hide another's inside it, keeping the order of overlapping
+   parts nearly unseen.
 4. Their front faces' depth only (`glass_depth`), a part at a time far to
    near, each writing a stencil reference of its own (1 to 255,
    repeating) where it's the nearest of the model so far, and, with
@@ -445,7 +450,11 @@ opaque) go:
    edges much as an opaque one does, and two layers of glass give both
    layers' dashes. The depth buffer has a stencil for this:
    `Depth32FloatStencil8` where the device has it, else
-   `Depth24PlusStencil8`.
+   `Depth24PlusStencil8`. Then the finished sketches' lines and the
+   depth tested sketch layers again where glass is the nearest (stencil
+   `NotEqual` 0: `lines_over_glass`, `sketch_over_glass`), depth tested
+   against it, so what's in front of the glass isn't dimmed by it; the
+   stencil keeps them from being drawn twice where there's no glass.
 5. Their hovered and selected faces, then their edges again, so the
    edges on the nearest surface show undimmed on the glass they lie on,
    and their triangles' edges in a tessellation wireframe; then the

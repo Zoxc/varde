@@ -902,6 +902,33 @@ fn sketches_are_hidden_by_bodies_in_front_of_them() {
 }
 
 #[test]
+fn sketches_in_front_of_glass_are_drawn_over_it() {
+    // A line above a cube nearly opaque shows as it does over an opaque
+    // one, and one beneath it is hidden as by an opaque one.
+    let mut camera = Camera::default();
+    camera.look_from(View::Top);
+    let mesh = cube(2.0, Vec3::ZERO);
+    for (z, shown) in [(-1.0, false), (3.0, true)] {
+        let (from, to) = (Vec3::new(-3.0, 1.0, z), Vec3::new(5.0, 1.0, z));
+        let render = |opacity: f32| {
+            let extras = Extras {
+                sketches: lines(&[(from, to)]),
+                opacity: vec![opacity],
+                ..Extras::default()
+            };
+            render_with(&camera, &mesh, extras)
+        };
+        let (Some(glass), Some(opaque)) = (render(0.95), render(1.0)) else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        let (column, _) = on_screen(&camera, Vec3::new(1.0, 1.0, z));
+        assert_eq!(yellow_in_column(&opaque, column), shown, "z {z}");
+        assert_eq!(yellow_in_column(&glass, column), shown, "z {z}");
+    }
+}
+
+#[test]
 fn sketch_lines_keep_their_width_on_screen() {
     // Across the bottom half from the top, measured in a column left of
     // the origin, clear of the grid's axes and the origin marker.

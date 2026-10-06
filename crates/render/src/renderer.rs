@@ -1041,8 +1041,9 @@ pub struct Renderer {
     /// The faded model: its depth first, then its nearest faces blended.
     mesh_depth: wgpu::RenderPipeline,
     mesh_faded: wgpu::RenderPipeline,
-    /// Parts less than opaque: their back faces, then their front faces,
-    /// blended, not writing depth.
+    /// Parts less than opaque: all their back faces, then each one's front
+    /// faces over their depth ([`Self::mesh_depth`]), blended, not writing
+    /// depth.
     glass_back: wgpu::RenderPipeline,
     glass_front: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
@@ -1074,6 +1075,10 @@ pub struct Renderer {
     vertices_through: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     /// The edges of the mesh's triangles: [`Frame::tessellation`].
+    /// The finished sketches' lines again where glass is the nearest of
+    /// the model (the stencil isn't 0), so what's in front of it isn't
+    /// dimmed by it.
+    lines_over_glass: wgpu::RenderPipeline,
     triangle_edges: wgpu::RenderPipeline,
     origin: wgpu::RenderPipeline,
     /// The origin planes shown: [`Frame::origin`].
@@ -1083,6 +1088,8 @@ pub struct Renderer {
     /// ([`SketchScene::depth_tested`]).
     sketch_on_top: SketchPipelines,
     sketch_depth_tested: SketchPipelines,
+    /// The depth tested sketch again over glass, as [`Self::lines_over_glass`].
+    sketch_over_glass: SketchPipelines,
     /// The errors' geometry: its halo, its composite and its core.
     errors: ErrorPipelines,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -1437,6 +1444,12 @@ impl Renderer {
                 write_mask: 0xff,
             }
         };
+        // Where glass is the nearest of the model: its parts' references
+        // are never 0, which is drawn with as the reference.
+        let over_glass = tagged(
+            wgpu::CompareFunction::NotEqual,
+            wgpu::StencilOperation::Keep,
+        );
         // Lines drawn from the `EdgePoint` stream, over the scene.
         // Pulled in by their distance from the edge, as the highlights'
         // lines below are.
@@ -1574,6 +1587,11 @@ impl Renderer {
                 buffers: std::slice::from_ref(&segments),
                 ..Pass::overlay("varde sketch lines", "vs_line", "fs_line")
             }),
+            lines_over_glass: pipeline(Pass {
+                buffers: std::slice::from_ref(&segments),
+                stencil: over_glass.clone(),
+                ..Pass::overlay("varde sketch lines over glass", "vs_line", "fs_line")
+            }),
             triangle_edges: pipeline(Pass {
                 buffers: &[segments],
                 ..Pass::overlay("varde triangle edges", "vs_triangle_edge", "fs_line")
@@ -1609,20 +1627,49 @@ impl Renderer {
                     "varde sketch fills, depth tested",
                     "vs_fill",
                     "fs_fill",
-                    &[sketch_fills],
+                    std::slice::from_ref(&sketch_fills),
                 )),
                 lines: pipeline(Pass::depth_tested(
                     "varde sketch lines, depth tested",
                     "vs_sketch_line",
                     "fs_line",
-                    &[sketch_lines],
+                    std::slice::from_ref(&sketch_lines),
                 )),
                 points: pipeline(Pass::depth_tested(
                     "varde sketch points, depth tested",
                     "vs_point",
                     "fs_point",
-                    &[sketch_points],
+                    std::slice::from_ref(&sketch_points),
                 )),
+            },
+            sketch_over_glass: SketchPipelines {
+                fills: pipeline(Pass {
+                    stencil: over_glass.clone(),
+                    ..Pass::depth_tested(
+                        "varde sketch fills, over glass",
+                        "vs_fill",
+                        "fs_fill",
+                        std::slice::from_ref(&sketch_fills),
+                    )
+                }),
+                lines: pipeline(Pass {
+                    stencil: over_glass.clone(),
+                    ..Pass::depth_tested(
+                        "varde sketch lines, over glass",
+                        "vs_sketch_line",
+                        "fs_line",
+                        std::slice::from_ref(&sketch_lines),
+                    )
+                }),
+                points: pipeline(Pass {
+                    stencil: over_glass.clone(),
+                    ..Pass::depth_tested(
+                        "varde sketch points, over glass",
+                        "vs_point",
+                        "fs_point",
+                        std::slice::from_ref(&sketch_points),
+                    )
+                }),
             },
             errors: ErrorPipelines {
                 halo: [seen, hidden].map(|depth_compare| {
@@ -2330,9 +2377,16 @@ impl Renderer {
                 self.draw_highlights(pass, slot);
             }
             bind_faces(pass, mesh);
+            pass.set_pipeline(&self.glass_back);
             for &(part, step) in &draws.transparent {
                 self.alphas.set(pass, step);
-                for pipeline in [&self.glass_back, &self.glass_front] {
+                draw_faces(pass, mesh, part..part + 1);
+            }
+            // Each part's front faces over their own depth, so only the
+            // nearest are blended, not whichever come last.
+            for &(part, step) in &draws.transparent {
+                self.alphas.set(pass, step);
+                for pipeline in [&self.mesh_depth, &self.glass_front] {
                     pass.set_pipeline(pipeline);
                     draw_faces(pass, mesh, part..part + 1);
                 }
@@ -2346,6 +2400,20 @@ impl Renderer {
                 draw_faces(pass, mesh, part..part + 1);
                 if slot.hidden_edges {
                     self.draw_hidden_by_glass(pass, mesh, draws, step);
+                }
+            }
+            // What's in front of the glass, drawn under it above, again
+            // over it where it's the nearest.
+            pass.set_stencil_reference(0);
+            self.alphas.set(pass, self.alphas.opaque);
+            if let Some(lines) = slot.lines.as_ref().filter(|_| backdrop) {
+                pass.set_pipeline(&self.lines_over_glass);
+                pass.set_vertex_buffer(0, lines.segments.slice(..));
+                pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
+            }
+            if slot.sketching && slot.sketch_depth {
+                for layer in layers {
+                    self.sketch_over_glass.draw(pass, layer);
                 }
             }
             bind_faces(pass, mesh);
