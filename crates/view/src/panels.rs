@@ -2,8 +2,8 @@
 //! Sketch tab in place of the Timeline.
 
 use iced::widget::{
-    MouseArea, Row, Space, button, column, container, hover, mouse_area, opaque, row, slider,
-    space, stack, text, text_input,
+    MouseArea, Row, Space, button, column, container, hover, mouse_area, opaque, responsive, row,
+    slider, space, stack, text, text_input,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
 use std::collections::BTreeSet;
@@ -22,6 +22,7 @@ use crate::document::{shown_color, shown_opacity};
 use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
 use crate::mouse_only::MouseOnly;
+use crate::rollback::{GHOST_HEIGHT, MARKER_HEIGHT};
 use crate::shortcut::{Held, Shortcut};
 use crate::theme::{
     self, Palette, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TAB_LINE, TabLook, Tone,
@@ -129,17 +130,43 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             state.objects_folded,
             state.renaming,
         )),
-        _ => scrolled(timeline(
-            document,
-            state.selected_feature,
-            state.rollback,
-            state.row_menu,
-            editable,
-            state.unsolved,
-            state.failed,
-            state.renaming,
-            state.mode.palette(),
-        )),
+        _ => {
+            let selected = state.selected_feature;
+            let (rollback, menu) = (state.rollback, state.row_menu);
+            let (unsolved, failed) = (state.unsolved, state.failed);
+            let (renaming, palette) = (state.renaming, state.mode.palette());
+            let list = move || {
+                timeline(
+                    document, selected, rollback, menu, editable, unsolved, failed, renaming,
+                    palette,
+                )
+            };
+            // Rolled back short of the end, and not while the marker is
+            // dragged (even over where it was), the ghost marker after the list rolls to the end,
+            // sticking to the panel's foot while the list scrolls. Always
+            // in the same widgets, so a drag survives it showing.
+            let (until, editing) = rollback;
+            let rolled = !state.rolling
+                && until.is_some_and(|until| {
+                    (document.features().iter()).any(|feature| feature.id == until)
+                });
+            let ghost = rolled && editable && !editing;
+            let rows = document.features().len() as f32 * ROW_HEIGHT + MARKER_HEIGHT;
+            responsive(move |size| {
+                let room = if ghost {
+                    size.height - GHOST_HEIGHT
+                } else {
+                    size.height
+                };
+                let overflows = rows + LIST_PADDING.y() > room;
+                let list = container(scroller(list()))
+                    .height(Length::Shrink)
+                    .max_height(room.max(0.0));
+                let ghost = ghost.then(|| crate::rollback::ghost(overflows));
+                column![list, ghost].into()
+            })
+            .into()
+        }
     };
 
     // The rows, buttons and fields take their own presses: the rest
@@ -160,12 +187,23 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
 /// What a click on an empty part of the panel or the toolbar sends.
 pub(crate) const CLEAR_SELECTION: Message = Message::Look(Look::ClearSelection);
 
+/// The padding round a list in the panel.
+const LIST_PADDING: Padding = Padding {
+    top: 6.0,
+    right: 8.0,
+    bottom: 6.0,
+    left: 8.0,
+};
+
 /// `list` scrolled within the rest of the panel.
 fn scrolled<'a>(list: Element<'a, Message>) -> Element<'a, Message> {
+    scroller(list).height(Length::Fill).into()
+}
+
+/// `list` scrolled, as tall as it is.
+fn scroller<'a>(list: Element<'a, Message>) -> iced::widget::Scrollable<'a, Message> {
     // The scroller floats in the right padding.
-    chrome::scrolled(container(list).padding([6, 8]), 2.0)
-        .height(Length::Fill)
-        .into()
+    chrome::scrolled(container(list).padding(LIST_PADDING), 2.0)
 }
 
 /// A note in place of an empty list.

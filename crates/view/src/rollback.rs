@@ -5,7 +5,7 @@
 use std::sync::LazyLock;
 
 use iced::widget::canvas::{self, Action, Geometry};
-use iced::widget::{container, row, space, stack, svg, text};
+use iced::widget::{column, container, hover, mouse_area, row, rule, space, stack, svg, text};
 use iced::{
     Alignment, Color, Element, Event, Length, Padding, Point, Rectangle, Renderer, Theme, mouse,
 };
@@ -22,6 +22,10 @@ pub(crate) const MARKER_HEIGHT: f32 = 16.0;
 /// turned 45°, filled with the colour its style gives.
 const DIAMOND_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6 -6 12 12"><rect x="-3.5" y="-3.5" width="7" height="7" rx="1.5" transform="rotate(45)" fill="black"/></svg>"#;
 
+/// The [`DIAMOND_SVG`] loaded.
+static DIAMOND_HANDLE: LazyLock<svg::Handle> =
+    LazyLock::new(|| svg::Handle::from_memory(DIAMOND_SVG));
+
 /// The diamond's size on screen, its box's.
 const DIAMOND: f32 = 12.0;
 
@@ -30,8 +34,7 @@ const DIAMOND: f32 = 12.0;
 /// resolves canvas meshes only inside the last one's scissor rect and
 /// left stale lines down the list (see `notes/upstream/wgpu.md`).
 pub(crate) fn marker<'a>(label: Option<&'a str>) -> Element<'a, Message> {
-    static HANDLE: LazyLock<svg::Handle> = LazyLock::new(|| svg::Handle::from_memory(DIAMOND_SVG));
-    let diamond = svg(HANDLE.clone())
+    let diamond = svg(DIAMOND_HANDLE.clone())
         .width(DIAMOND)
         .height(DIAMOND)
         .style(|theme: &Theme, _| svg::Style {
@@ -59,6 +62,69 @@ pub(crate) fn marker<'a>(label: Option<&'a str>) -> Element<'a, Message> {
         .height(MARKER_HEIGHT)
         .align_y(Alignment::Center)
         .into()
+}
+
+/// The [`ghost`]'s height, under the list.
+pub(crate) const GHOST_HEIGHT: f32 = ROW_HEIGHT;
+
+/// The ghost marker's diamond: the marker's, outlined with dashes.
+const GHOST_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6 -6 12 12"><rect x="-3.5" y="-3.5" width="7" height="7" rx="1.5" transform="rotate(45)" fill="none" stroke="black" stroke-width="1.3" stroke-dasharray="2 1.5"/></svg>"#;
+
+/// Under the Timeline rolled back, where the marker goes at the end: a
+/// faint, outlined marker labelled "Roll to end", the marker itself when
+/// hovered, that rolls the model to the end when clicked. On the panel's
+/// colour with a rule above it if the list `overflows` and it sits
+/// under it, at the panel's foot.
+pub(crate) fn ghost<'a>(overflows: bool) -> Element<'a, Message> {
+    static HANDLE: LazyLock<svg::Handle> = LazyLock::new(|| svg::Handle::from_memory(GHOST_SVG));
+    let look = |solid: bool| -> Element<'a, Message> {
+        let diamond = if solid {
+            svg(DIAMOND_HANDLE.clone())
+        } else {
+            svg(HANDLE.clone())
+        };
+        let diamond = diamond
+            .width(DIAMOND)
+            .height(DIAMOND)
+            .style(move |theme: &Theme, _| svg::Style {
+                color: Some(accent(theme, if solid { 1.0 } else { 0.7 })),
+            });
+        let label = text("Roll to end")
+            .size(10.5)
+            .font(SEMIBOLD)
+            .style(move |theme: &Theme| text::Style {
+                color: Some(accent(theme, if solid { 1.0 } else { 0.8 })),
+            });
+        let line = container(space::horizontal())
+            .width(Length::Fill)
+            .height(2)
+            .style(move |theme: &Theme| container::Style {
+                background: Some(accent(theme, if solid { 0.6 } else { 0.25 }).into()),
+                border: iced::border::rounded(1),
+                ..container::Style::default()
+            });
+        container(
+            row![diamond, label, line]
+                .spacing(6)
+                .padding(Padding::from([0, 16]).left(14))
+                .height(GHOST_HEIGHT)
+                .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .style(|theme: &Theme| container::Style {
+            background: Some(theme::palette(theme).panel.into()),
+            ..container::Style::default()
+        })
+        .into()
+    };
+    let ghost = mouse_area(hover(look(false), look(true)))
+        .on_press(Message::Edit(Edit::SetRollback(None)))
+        .interaction(mouse::Interaction::Pointer);
+    if overflows {
+        column![rule::horizontal(1).style(theme::separator), ghost].into()
+    } else {
+        ghost.into()
+    }
 }
 
 /// `list`, the Timeline's rows of `features` with the [`marker`] after

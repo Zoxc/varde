@@ -167,6 +167,8 @@ pub struct DocumentState<'a> {
     /// Timeline's marker shows, and whether only while a feature is
     /// edited, when the marker can't be dragged.
     pub rollback: (Option<FeatureId>, bool),
+    /// Whether the Timeline's marker is being dragged.
+    pub rolling: bool,
     /// The row of the side panel whose context menu is open, if one is.
     pub row_menu: Option<RowMenu>,
     /// The world's origin, axes and planes Objects has shown.

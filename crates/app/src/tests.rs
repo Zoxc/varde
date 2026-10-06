@@ -6007,3 +6007,62 @@ fn the_rollback_marker_drags_across_rows() {
     assert_eq!(doc.rolling, None);
     assert_eq!(doc.editor.document().rollback(), Some(features[1].id));
 }
+
+/// The ghost marker, headless: rolled back, "Roll to end" sits under the
+/// Timeline, in view at the panel's foot even with more features than
+/// fit, and a click on it rolls to the end, which takes it away.
+#[test]
+fn the_ghost_marker_rolls_to_the_end() {
+    use iced::mouse::{Button, Cursor, Event};
+    let (mut doc, _requests) = example();
+    for _ in 0..40 {
+        let sketch = (doc.editor.document()).add_sketch(varde_document::Plane::Origin(
+            varde_document::OriginPlane::XY,
+        ));
+        doc.apply(sketch);
+    }
+    doc.sync();
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let ghost = |doc: &Doc, renderer: &mut _| {
+        let mut ui = shown(doc.view_in(Mode::Light), size, renderer);
+        (texts(&mut ui, renderer).into_iter())
+            .find(|t| t.text == "Roll to end" && !t.hidden())
+            .map(|t| t.bounds)
+    };
+    assert_eq!(ghost(&doc, &mut renderer), None);
+    let ids: Vec<_> = (doc.editor.document().features().iter())
+        .map(|f| f.id)
+        .collect();
+    doc.update(Edit::SetRollback(Some(ids[1])));
+    doc.sync();
+    // Not while the marker is dragged, even over where it was.
+    doc.look(Look::DragRollback(Some(ids[1])));
+    assert_eq!(ghost(&doc, &mut renderer), None);
+    doc.update(Edit::DropRollback);
+    let at = ghost(&doc, &mut renderer).expect("the ghost shows rolled back");
+    assert!(at.y + at.height <= size.height, "in view: {at:?}");
+    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
+    let mut sent = Vec::new();
+    for event in [
+        Event::ButtonPressed(Button::Left),
+        Event::ButtonReleased(Button::Left),
+    ] {
+        let _ = ui.update(
+            &[iced::Event::Mouse(event)],
+            Cursor::Available(at.center()),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+    }
+    drop(ui);
+    for message in sent {
+        if let Ui::Edit(edit) = message {
+            doc.update(edit);
+        }
+    }
+    assert_eq!(doc.editor.document().rollback(), None);
+    assert_eq!(ghost(&doc, &mut renderer), None);
+}

@@ -789,7 +789,12 @@ the rows after it faint, labelled "Rolled back" and fixed while a
 feature is edited, else dragged to the gap nearest the cursor
 (`Look::DragRollback`, the model following) and dropped on release
 (`Edit::DropRollback`, one undo step); a row's menu has Roll back (or
-forward) here. Sketch curves are flattened by
+forward) here. Rolled back short of the end (not mid-drag, even over
+where it was, nor while a feature is edited), a ghost marker under the
+list, "Roll to end" (`rollback::ghost`), rolls to the end; the list
+shrinks in a `responsive` to leave it room, so it sticks to the panel's
+foot when the list scrolls, and the widgets stay the same whether it
+shows or not, so a drag survives it appearing. Sketch curves are flattened by
 `Sketch::flatten` (lines exact, circles into `CIRCLE_SEGMENTS`, arcs their
 share) and placed on an origin plane's placement, or a sketch on a face
 at the placement regeneration found for it (`Evaluation::placements`;

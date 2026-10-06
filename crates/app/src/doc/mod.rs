@@ -1596,6 +1596,7 @@ impl Doc {
             aspect: self.aspect,
             selected_feature: self.selected_feature,
             rollback: self.rollback(),
+            rolling: self.rolling.is_some(),
             row_menu: self.row_menu,
             origin: self.origin,
             objects_selected: &self.objects_selected,
