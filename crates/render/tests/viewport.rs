@@ -2739,7 +2739,8 @@ fn tint([r, _, b, _]: [u8; 4]) -> i32 {
 #[test]
 fn a_hovered_face_is_brighter_and_only_where_it_shows() {
     // From the front, the cube's front face under the middle: hovered, it's
-    // brighter; its back face hovered, hidden behind it, changes nothing.
+    // brighter; its back face hovered, hidden behind it, is washed and
+    // striped over it (see the test of that), outside it nothing changes.
     let (camera, near, _) = cube_behind_cube();
     let front = face_facing(&near, -Vec3::Y);
     let back = face_facing(&near, Vec3::Y);
@@ -2761,8 +2762,12 @@ fn a_hovered_face_is_brighter_and_only_where_it_shows() {
         brighter(hovered_at, plain_at) > 60,
         "{hovered_at:?} hovered, {plain_at:?} not"
     );
-    assert!(behind == plain);
+    assert!(behind != plain);
     // The background around the cube is as it was.
+    assert_eq!(
+        pixel(&behind, CLIP.x + 2, CLIP.y + 2),
+        pixel(&plain, CLIP.x + 2, CLIP.y + 2)
+    );
     assert_eq!(
         pixel(&hovered, CLIP.x + 2, CLIP.y + 2),
         pixel(&plain, CLIP.x + 2, CLIP.y + 2)
@@ -2781,9 +2786,8 @@ fn a_hovered_face_drawn_through_shows_behind_what_hides_it() {
         hover_through: through,
         ..Extras::default()
     };
-    let (Some(plain), Some(behind), Some(through), Some(hovered)) = (
+    let (Some(plain), Some(through), Some(hovered)) = (
         render_with(&camera, &near, Extras::default()),
-        render_with(&camera, &near, hovering(back, false)),
         render_with(&camera, &near, hovering(back, true)),
         render_with(&camera, &near, hovering(front, false)),
     ) else {
@@ -2792,7 +2796,6 @@ fn a_hovered_face_drawn_through_shows_behind_what_hides_it() {
     };
     let (cx, cy) = CENTER;
     let [plain_at, through_at, hovered_at] = [&plain, &through, &hovered].map(|p| pixel(p, cx, cy));
-    assert!(behind == plain);
     assert!(
         brighter(through_at, plain_at) > 30,
         "{through_at:?} through, {plain_at:?} not"
@@ -2841,6 +2844,74 @@ fn a_selected_face_is_tinted_with_the_selection_colour() {
     assert!(tint(plain).abs() < 4, "{plain:?}");
     assert!(tint(selected) > 40, "{selected:?}");
     assert!(tint(both) > 40 && brighter(both, selected) > 30, "{both:?}");
+}
+
+#[test]
+fn a_selected_face_hidden_by_the_model_is_washed_and_striped() {
+    // The far cube's front face, selected, behind the opaque near one:
+    // tinted all along a row across it, more in the stripes.
+    let (camera, _, both) = cube_behind_cube();
+    let far_front = face_facing(&both, -Vec3::Y);
+    let render = |selected_faces| {
+        let extras = Extras {
+            selected_faces,
+            ..Extras::default()
+        };
+        render_with(&camera, &both, extras)
+    };
+    let (Some(plain), Some(selected)) = (render(vec![]), render(vec![far_front])) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let row = |pixels: &[[u8; 4]]| {
+        (cx - 6..cx + 6)
+            .map(|x| tint(pixel(pixels, x, cy)))
+            .collect::<Vec<_>>()
+    };
+    let (plain, selected) = (row(&plain), row(&selected));
+    assert!(plain.iter().all(|t| t.abs() < 4), "{plain:?}");
+    let least = selected.iter().copied().min().unwrap();
+    let most = selected.iter().copied().max().unwrap();
+    assert!(least > 4 && most > least + 10, "{selected:?}");
+}
+
+#[test]
+fn a_hovered_face_hidden_by_the_model_is_washed_and_striped() {
+    // The far cube's front face, hovered, behind the opaque near one:
+    // brighter all along a row across it, more in the stripes; not while
+    // the hover is drawn through, whole.
+    let (camera, _, both) = cube_behind_cube();
+    let far_front = face_facing(&both, -Vec3::Y);
+    let render = |hovered_faces, hover_through| {
+        let extras = Extras {
+            hovered_faces,
+            hover_through,
+            ..Extras::default()
+        };
+        render_with(&camera, &both, extras)
+    };
+    let (Some(plain), Some(hovered), Some(through)) = (
+        render(vec![], false),
+        render(vec![far_front], false),
+        render(vec![far_front], true),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let lift = |pixels: &[[u8; 4]]| {
+        (cx - 6..cx + 6)
+            .map(|x| i32::from(pixel(pixels, x, cy)[1]) - i32::from(pixel(&plain, x, cy)[1]))
+            .collect::<Vec<_>>()
+    };
+    let (hovered, through) = (lift(&hovered), lift(&through));
+    let least = hovered.iter().copied().min().unwrap();
+    let most = hovered.iter().copied().max().unwrap();
+    assert!(least > 2 && most > least + 10, "{hovered:?}");
+    // Drawn through, it's even: no stripes over it.
+    let spread = through.iter().max().unwrap() - through.iter().min().unwrap();
+    assert!(spread < 4, "{through:?}");
 }
 
 #[test]

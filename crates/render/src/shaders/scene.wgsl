@@ -451,6 +451,53 @@ fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @locatio
     return output(vec4<f32>(shaded(in, front, u.selected.rgb), u.hover_face.w * part.alpha.x));
 }
 
+// How the parts of a selected or hovered face something hides are drawn over it: a
+// wash of the colour the face is shown in, with diagonal stripes across it on the
+// screen SELECTED_STRIPE logical pixels apart, half of that wide, nearly
+// opaque, shaded as the face is shown.
+const SELECTED_STRIPE: f32 = 8.0;
+const SELECTED_WASH_ALPHA: f32 = 0.15;
+const SELECTED_STRIPE_ALPHA: f32 = 0.9;
+
+// A selected face where something hides it (depth tested Greater), over
+// everything: the wash with diagonal stripes, anti-aliased, in the colour
+// it's shown in, its part's tinted towards the selection's.
+@fragment
+fn fs_selected_face_hidden(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return hidden_face(in, front, tint.color.rgb, u.hover_face.w);
+}
+
+// A selected face that's hovered too, likewise from the hover's colour.
+@fragment
+fn fs_hovered_selected_face_hidden(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return hidden_face(in, front, u.hover_face.rgb, u.hover_face.w);
+}
+
+// A hovered face where something hides it, likewise in the hover's colour.
+@fragment
+fn fs_hovered_face_hidden(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return hidden_face(in, front, u.hover_face.rgb, 0.0);
+}
+
+// `base` shaded, tinted `selected` of the way towards the selection's
+// colour as the target blends the selected face over it: in what's
+// stored, encoded or not.
+fn hidden_face(in: MeshOut, front: bool, base: vec3<f32>, selected: f32) -> vec4<f32> {
+    // From where the world's origin shows, so panning carries the stripes
+    // with the model; from the middle while it's behind the eye.
+    let origin = u.view_proj * vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let anchor = select(vec2<f32>(0.0), to_pixels(origin), origin.w > 0.0);
+    let p = fragment_pixels(in.position) - anchor;
+    let period = SELECTED_STRIPE * u.viewport.z;
+    // Distance from the middle of the nearest stripe, in pixels across it.
+    let across = abs(wrapped((p.x + p.y) * inverseSqrt(2.0), period) - 0.5 * period);
+    let stripe = clamp(0.25 * period + 0.5 - across, 0.0, 1.0);
+    let alpha = mix(SELECTED_WASH_ALPHA, SELECTED_STRIPE_ALPHA, stripe) * part.alpha.x;
+    let under = output(vec4<f32>(shaded(in, front, base), 1.0)).rgb;
+    let over = output(vec4<f32>(shaded(in, front, u.selected.rgb), 1.0)).rgb;
+    return vec4<f32>(mix(under, over, selected), alpha);
+}
+
 // The second colour (the measure tool's B), kept in the sketch plane's
 // unused w's: the uniforms have no room for another vector.
 fn second_color() -> vec3<f32> {
@@ -1019,6 +1066,49 @@ fn selected_edge() -> vec4<f32> {
 fn vs_selected_edge(in: EdgeIn) -> LineOut {
     let half = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
     return highlight_segment(in, half, selected_edge());
+}
+
+// The selected edges where something hides them (depth tested Greater),
+// over everything: dashed as the hidden edges are, as wide as the
+// selected, within their rim, dashed too.
+@vertex
+fn vs_selected_outline_hidden(in: EdgeIn) -> LineOut {
+    let core = SELECTED_EDGE_WIDTH * 0.5;
+    let color = vec4<f32>(u.hover_outline.rgb, SELECTED_RIM_ALPHA);
+    return dashed_highlight(in, core + SELECTED_RIM, core, color);
+}
+
+@vertex
+fn vs_selected_edge_hidden(in: EdgeIn) -> LineOut {
+    return dashed_highlight(in, SELECTED_EDGE_WIDTH * 0.5, 0.0, selected_edge());
+}
+
+// The hovered edges where something hides them, likewise.
+@vertex
+fn vs_outline_hidden(in: EdgeIn) -> LineOut {
+    let core = HOVERED_EDGE_WIDTH * 0.5;
+    return dashed_highlight(in, core + HOVER_RIM, core, vec4<f32>(u.hover_outline.rgb, 1.0));
+}
+
+@vertex
+fn vs_hovered_edge_hidden(in: EdgeIn) -> LineOut {
+    return dashed_highlight(in, HOVERED_EDGE_WIDTH * 0.5, 0.0, vec4<f32>(u.edge.rgb, 1.0));
+}
+
+// An edge `half` logical pixels wide either side in `color`, dashed as
+// the hidden edges are, hollow `hollow` either side if that's above 0.
+fn dashed_highlight(in: EdgeIn, half: f32, hollow: f32, color: vec4<f32>) -> LineOut {
+    let s = u.viewport.z;
+    let dash = vec2<f32>(HIDDEN_DASH, HIDDEN_GAP) * s;
+    let period = dash.x + dash.y;
+    let scale = u.viewport.y / view_height();
+    let phase = wrapped(in.start_along * scale, period);
+    let length = distance(in.start, in.end) * scale;
+    var out = edge_segment(in, half * s, half * s, color, dash, vec2<f32>(phase, phase + length));
+    out.along -= vec2<f32>(floor(out.along.x / period) * period);
+    out.slope = highlight_slope(mix(in.start, in.end, 0.5));
+    out.style.w = hollow * s;
+    return out;
 }
 
 // The edges in the second colour, as wide as the selected edges, in it

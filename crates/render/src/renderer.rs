@@ -346,11 +346,13 @@ pub struct Frame<'a> {
     /// [`RenderMesh::face_ends`]): the one the cursor is over, or all of
     /// what it would select (a body's). Each is drawn again over itself
     /// towards [`Colors::hover_face`], as opaque as its part (opaque
-    /// over the faded model, [`Self::faded`]). Not a face the mesh
-    /// hasn't.
+    /// over the faded model, [`Self::faded`]); and where the model hides
+    /// it, over everything, washed and striped, unless
+    /// [`Self::hover_through`]. Not a face the mesh hasn't.
     pub hovered_faces: &'a [u32],
     /// The faces selected, by their ids likewise: drawn again over
-    /// themselves, tinted with [`Colors::selected`], over the hover.
+    /// themselves, tinted with [`Colors::selected`], over the hover; and
+    /// where the model hides them, over everything, washed and striped.
     pub selected_faces: &'a [u32],
     /// The faces in the second colour (the measure tool's B), by their
     /// ids likewise: tinted with [`Colors::second`] as the selected are
@@ -799,6 +801,11 @@ struct FaceDraw {
     /// Brightened as hovered, or tinted as selected or in the second
     /// colour.
     tint: Tint,
+    /// Its part, for its colour ([`Slot::part_tints`]).
+    part: usize,
+    /// Whether it's both hovered and selected: its hidden stripes are
+    /// then the selection's alone, from the hover's colour, as it's shown.
+    hovered: bool,
 }
 
 /// How a [`FaceDraw`] is drawn again.
@@ -885,6 +892,12 @@ const NO_STENCIL: wgpu::StencilState = wgpu::StencilState {
     read_mask: 0,
     write_mask: 0,
 };
+
+/// The stencil bits [`Renderer::draw_hidden_picks`] marks where the
+/// hovered and the selected faces are the nearest of the model with, so
+/// what they hide of themselves (a selected body's far side) isn't drawn
+/// as hidden. Above the glass's references.
+const PICK_MARKS: [u32; 2] = [0x40, 0x80];
 
 /// The errors' halo's blending: each pixel keeps the most coverage drawn
 /// there, so overlapping halos don't add up.
@@ -1073,6 +1086,20 @@ pub struct Renderer {
     outline_through: wgpu::RenderPipeline,
     hovered_edges_through: wgpu::RenderPipeline,
     vertices_through: wgpu::RenderPipeline,
+    /// What the model hides of the selected and hovered faces and edges,
+    /// over everything: the faces washed and striped, the edges dashed.
+    selected_face_hidden: wgpu::RenderPipeline,
+    hovered_selected_face_hidden: wgpu::RenderPipeline,
+    /// Marking where a hovered or selected face is the nearest in the
+    /// stencil (`PICK_MARKS`), which the hidden faces are drawn outside.
+    hovered_face_mark: wgpu::RenderPipeline,
+    selected_face_mark: wgpu::RenderPipeline,
+    selected_edges_hidden: wgpu::RenderPipeline,
+    hovered_face_hidden: wgpu::RenderPipeline,
+    hovered_edges_hidden: wgpu::RenderPipeline,
+    /// The rims of the hidden hovered and selected edges, dashed.
+    outline_hidden: wgpu::RenderPipeline,
+    selected_outline_hidden: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     /// The edges of the mesh's triangles: [`Frame::tessellation`].
     /// The finished sketches' lines again where glass is the nearest of
@@ -1444,6 +1471,23 @@ impl Renderer {
                 write_mask: 0xff,
             }
         };
+        // Tested and written as `tagged`, but only in the stencil bit
+        // `bit`, the reference.
+        use wgpu::StencilOperation::{Keep, Replace};
+        let marked = |bit: u32, compare, pass| {
+            let face = wgpu::StencilFaceState {
+                compare,
+                fail_op: Keep,
+                depth_fail_op: Keep,
+                pass_op: pass,
+            };
+            wgpu::StencilState {
+                front: face,
+                back: face,
+                read_mask: bit,
+                write_mask: bit,
+            }
+        };
         // Where glass is the nearest of the model: its parts' references
         // are never 0, which is drawn with as the reference.
         let over_glass = tagged(
@@ -1535,6 +1579,56 @@ impl Renderer {
                 cull_mode: None,
                 ..mesh.clone()
             }),
+            // Where something hides it, either side, but not where the
+            // faces so tinted are the nearest, as marked.
+            selected_face_hidden: pipeline(Pass {
+                label: "varde selected face hidden",
+                fs: "fs_selected_face_hidden",
+                blend: wgpu::BlendState::ALPHA_BLENDING,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Greater,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
+                ..mesh.clone()
+            }),
+            hovered_selected_face_hidden: pipeline(Pass {
+                label: "varde hovered selected face hidden",
+                fs: "fs_hovered_selected_face_hidden",
+                blend: wgpu::BlendState::ALPHA_BLENDING,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Greater,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
+                ..mesh.clone()
+            }),
+            hovered_face_hidden: pipeline(Pass {
+                label: "varde hovered face hidden",
+                fs: "fs_hovered_face_hidden",
+                blend: wgpu::BlendState::ALPHA_BLENDING,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Greater,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[0], wgpu::CompareFunction::NotEqual, Keep),
+                ..mesh.clone()
+            }),
+            hovered_face_mark: pipeline(Pass {
+                label: "varde hovered face mark",
+                write_mask: wgpu::ColorWrites::empty(),
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Equal,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[0], wgpu::CompareFunction::Always, Replace),
+                ..mesh.clone()
+            }),
+            selected_face_mark: pipeline(Pass {
+                label: "varde selected face mark",
+                write_mask: wgpu::ColorWrites::empty(),
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Equal,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::Always, Replace),
+                ..mesh.clone()
+            }),
             mesh: pipeline(mesh),
             // Entry points of their own, which wgpu's GL backend keys
             // programs by.
@@ -1545,6 +1639,27 @@ impl Renderer {
                 "vs_selected_outline",
             )),
             selected_edges: pipeline(highlight_pass("varde selected edges", "vs_selected_edge")),
+            // Exactly the pixels the selected edges didn't draw, as the
+            // hidden edges are the visible ones'.
+            selected_edges_hidden: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..highlight_pass("varde selected edges hidden", "vs_selected_edge_hidden")
+            }),
+            outline_hidden: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..highlight_pass("varde hover outline hidden", "vs_outline_hidden")
+            }),
+            selected_outline_hidden: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..highlight_pass(
+                    "varde selected outline hidden",
+                    "vs_selected_outline_hidden",
+                )
+            }),
+            hovered_edges_hidden: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..highlight_pass("varde hovered edges hidden", "vs_hovered_edge_hidden")
+            }),
             second_outline: pipeline(highlight_pass("varde second outline", "vs_second_outline")),
             second_edges: pipeline(highlight_pass("varde second edges", "vs_second_edge")),
             vertices: pipeline(Pass {
@@ -1931,6 +2046,9 @@ impl Renderer {
                         indices,
                         step: self.alphas.step(opacity.get(part).copied()),
                         tint,
+                        part,
+                        hovered: frame.hovered_faces.contains(&face)
+                            && frame.selected_faces.contains(&face),
                     });
                 }
             }
@@ -2392,9 +2510,9 @@ impl Renderer {
                 }
             }
             for (i, &(part, step)) in draws.transparent.iter().enumerate() {
-                // Never 0, what the stencil is cleared to; repeating only
-                // past 255 parts less than opaque.
-                pass.set_stencil_reference(i as u32 % 255 + 1);
+                // Never 0, what the stencil is cleared to, and under
+                // `PICK_MARKS`; repeating only past 63 parts less than opaque.
+                pass.set_stencil_reference(i as u32 % 63 + 1);
                 bind_faces(pass, mesh);
                 pass.set_pipeline(&self.glass_depth);
                 draw_faces(pass, mesh, part..part + 1);
@@ -2432,6 +2550,9 @@ impl Renderer {
         }
         if let Some(mesh) = mesh.filter(|_| slot.hover_through) {
             self.draw_hover_through(pass, slot, mesh);
+        }
+        if let Some(mesh) = mesh {
+            self.draw_hidden_picks(pass, slot, mesh);
         }
 
         if backdrop {
@@ -2532,6 +2653,63 @@ impl Renderer {
             pass.set_pipeline(&self.vertices);
             pass.set_vertex_buffer(0, vertices);
             pass.draw(0..POINT_VERTICES, 0..highlights.vertices.count);
+        }
+    }
+
+    /// Records drawing what the model hides of `slot`'s hovered and
+    /// selected faces and edges over everything: the faces washed and
+    /// striped, the edges dashed; the selection over the hover. The hover
+    /// not while [`Frame::hover_through`] draws it whole.
+    fn draw_hidden_picks(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot, mesh: &GpuMesh) {
+        let highlights = &slot.highlights;
+        let hover = (!slot.hover_through).then_some((
+            Tint::Hovered,
+            PICK_MARKS[0],
+            [&self.hovered_face_mark, &self.hovered_face_hidden],
+            [&self.outline_hidden, &self.hovered_edges_hidden],
+            &highlights.outlined,
+        ));
+        let selection = Some((
+            Tint::Selected,
+            PICK_MARKS[1],
+            [&self.selected_face_mark, &self.selected_face_hidden],
+            [&self.selected_outline_hidden, &self.selected_edges_hidden],
+            &highlights.selected,
+        ));
+        for (tint, mark, [marking, hidden], edges, drawn) in hover.into_iter().chain(selection) {
+            // Marking where the faces are the nearest, then striping
+            // where they're hidden, outside that: what they hide of
+            // themselves, as a selected body's far side, isn't striped.
+            // The stripes are in the colour the face is shown in, so each
+            // in its part's tint; a face both hovered and selected is
+            // striped by the selection alone, from the hover's colour.
+            bind_faces(pass, mesh);
+            pass.set_stencil_reference(mark);
+            let tinted = || (slot.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
+            pass.set_pipeline(marking);
+            for face in tinted() {
+                self.alphas.set(pass, face.step);
+                pass.draw_indexed(face.indices.clone(), 0, 0..1);
+            }
+            for face in tinted() {
+                let pipeline = match (tint, face.hovered) {
+                    (Tint::Hovered, true) => continue,
+                    (Tint::Selected, true) => &self.hovered_selected_face_hidden,
+                    _ => hidden,
+                };
+                self.set_tint(pass, slot, face.part);
+                self.alphas.set(pass, face.step);
+                pass.set_pipeline(pipeline);
+                pass.draw_indexed(face.indices.clone(), 0, 0..1);
+            }
+            pass.set_bind_group(0, &slot.bind_group, &[0]);
+            pass.set_stencil_reference(0);
+            self.alphas.set(pass, self.alphas.opaque);
+            if let Some(stream) = highlights.edges.held() {
+                for pipeline in edges {
+                    draw_stream(pass, pipeline, stream, drawn.clone());
+                }
+            }
         }
     }
 

@@ -1388,6 +1388,31 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   (`vs_outline_through`, `vs_hovered_edge_through`, `vs_vertex_through`,
   which drops the vertices not hovered): entry points of their own
   sharing the others' bodies.
+- Hidden hover and selection (`draw_hidden_picks`): after everything
+  of the model (and the hover through), what the model hides of the
+  hovered faces and outlined edges, then of the selected faces and
+  edges, over everything else, depth tested `Greater` so it takes only
+  the pixels the normal draw didn't: the faces, either side, a wash of
+  the colour the face is shown in (`Colors::hover_face`, or for a
+  selected face its part's tint, or the hover's if it's hovered too,
+  tinted `Colors::selected_tint` towards `Colors::selected`; a face both
+  hovered and selected is striped by the selection only) with diagonal
+  stripes across it on the screen, nearly opaque and shaded as the face
+  is, 8 logical pixels apart, from where
+  the world's origin shows so panning carries them with the model
+  (`fs_hovered_face_hidden`, `fs_selected_face_hidden`,
+  `fs_hovered_selected_face_hidden`), the
+  edges dashed as hidden edges are, as wide as hovered or selected ones,
+  in their colour, within their rim, dashed too (`vs_outline_hidden`,
+  `vs_hovered_edge_hidden`, `vs_selected_outline_hidden`,
+  `vs_selected_edge_hidden`).
+  The faces aren't striped where faces of the same tint are the nearest:
+  each tint first marks those pixels in a stencil bit of its own
+  (`PICK_MARKS`, depth `Equal`), so a selected body's far side, hidden
+  by its near side, isn't striped over it; the glass's stencil
+  references stay below those bits (1 to 63).
+  The hover's are left out while `Frame::hover_through` draws it whole.
+  What glass covers counts as hidden, as its depth is written by then.
 
 **Error geometry** (`Frame::errors`, a slice of `ErrorParts`: a failure's
 patches as a `RenderMesh` of triangles only, its curves as `RenderLines`,
