@@ -13,7 +13,10 @@ fn letter(d: &str) -> keyboard::Key {
 fn hovering_a_head_peeks_at_its_list_till_the_cursor_leaves_it() {
     let mut rail = Rail::default();
     rail.update(RailLook::Hover(1, true), 3, |_| 3);
-    assert_eq!(rail.state().map(|open| (open.set, open.held)), Some((1, false)));
+    assert_eq!(
+        rail.state().map(|open| (open.set, open.held)),
+        Some((1, false))
+    );
     rail.update(RailLook::Hover(1, false), 3, |_| 3);
     assert_eq!(rail.open, None);
 
@@ -130,7 +133,14 @@ fn the_arrows_go_round_the_open_list_scrolling_it_to_the_row() {
     assert_eq!((rail.open, rail.take_scroll()), (None, None));
 
     update(&mut rail, RailLook::Toggle(1));
-    assert_eq!(rail.state(), Some(RailOpen { set: 1, row: 0, held: true }));
+    assert_eq!(
+        rail.state(),
+        Some(RailOpen {
+            set: 1,
+            row: 0,
+            held: true
+        })
+    );
     assert_eq!(rail.take_scroll(), Some(0.0));
     update(&mut rail, RailLook::Up);
     assert_eq!(rail.row, 4);
@@ -149,7 +159,14 @@ fn the_arrows_go_round_the_open_list_scrolling_it_to_the_row() {
     update(&mut rail, RailLook::Open(1));
     assert_eq!(rail.row, 3);
     update(&mut rail, RailLook::Open(0));
-    assert_eq!(rail.state(), Some(RailOpen { set: 0, row: 0, held: true }));
+    assert_eq!(
+        rail.state(),
+        Some(RailOpen {
+            set: 0,
+            row: 0,
+            held: true
+        })
+    );
     update(&mut rail, RailLook::Up);
     assert_eq!(rail.row, 2);
 }

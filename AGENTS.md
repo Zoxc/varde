@@ -81,6 +81,7 @@ VARDE_TEST_SEED=7 cargo test -p varde-app some_fuzz_test   # replay one seed
 cargo test -p varde-io                      # one crate
 cargo test -p varde-io some_test_name       # one test (substring match)
 cargo clippy --workspace --all-targets
+cargo fmt --all                             # format, by rustfmt.toml: run before committing
 cargo check --workspace --target wasm32-unknown-unknown   # web-only code paths
 cargo doc --workspace --no-deps --document-private-items  # link checks, on both targets
 cd crates/web && trunk serve                # browser build

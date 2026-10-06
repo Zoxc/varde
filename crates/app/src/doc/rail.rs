@@ -74,12 +74,7 @@ impl Rail {
 
     /// Takes `message`, with `sets` sets on the rail, the list of
     /// set `i` having `rows(i)` rows.
-    pub(crate) fn update(
-        &mut self,
-        message: RailLook,
-        sets: usize,
-        rows: impl Fn(usize) -> usize,
-    ) {
+    pub(crate) fn update(&mut self, message: RailLook, sets: usize, rows: impl Fn(usize) -> usize) {
         let open_rows = self.open.map_or(0, &rows);
         match message {
             RailLook::Open(set) if set < sets => {
