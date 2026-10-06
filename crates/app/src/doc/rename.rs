@@ -110,9 +110,8 @@ impl Doc {
     /// undo, or the document was `replaced`, whose ids may name others.
     pub(crate) fn prune_renaming(&mut self, replaced: bool) {
         let document = self.editor.document();
-        self.renaming.take_if(|renaming| {
-            replaced || document.name_of(renaming.target).is_none()
-        });
+        self.renaming
+            .take_if(|renaming| replaced || document.name_of(renaming.target).is_none());
     }
 }
 

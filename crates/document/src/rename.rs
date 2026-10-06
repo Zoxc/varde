@@ -105,7 +105,10 @@ fn cut(name: &str, len: usize) -> &str {
     if name.len() <= len {
         return name;
     }
-    let end = (0..=len).rev().find(|&i| name.is_char_boundary(i)).unwrap_or(0);
+    let end = (0..=len)
+        .rev()
+        .find(|&i| name.is_char_boundary(i))
+        .unwrap_or(0);
     &name[..end]
 }
 

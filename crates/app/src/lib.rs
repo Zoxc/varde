@@ -6,11 +6,11 @@ mod doc;
 mod io;
 mod keys;
 mod message;
-mod toast;
 mod platform;
 mod recent;
 mod samples;
 mod settings;
+mod toast;
 mod welcome;
 mod when;
 
@@ -32,9 +32,9 @@ use crate::doc::{Dialog, Doc, DocId, Downloader, Focus, Leave};
 use crate::io::Io;
 use crate::keys::{document_key, welcome_key};
 use crate::message::{ForDoc, Message};
-use crate::toast::Toast;
 use crate::recent::Recent;
 use crate::settings::Settings;
+use crate::toast::Toast;
 use crate::welcome::Welcome;
 
 pub(crate) struct Varde {
@@ -1248,7 +1248,8 @@ impl<T: Send + 'static> iced::advanced::widget::Operation<T> for RevealField {
 fn focus_rename() -> Task<Message> {
     use iced::widget::operation;
 
-    operation::focus(varde_view::RENAME_FIELD).chain(operation::select_all(varde_view::RENAME_FIELD))
+    operation::focus(varde_view::RENAME_FIELD)
+        .chain(operation::select_all(varde_view::RENAME_FIELD))
 }
 
 /// Has the Save As dialog's name field take the focus, its text selected

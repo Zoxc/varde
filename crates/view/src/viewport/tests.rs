@@ -879,7 +879,10 @@ fn an_operation_picks_an_origin_plane_drawn_nearer_than_the_model() {
     let top = plate.at(glam::DVec3::new(10.0, -10.0, 10.0));
     let sent = send(&[left(true), left(false)], top);
     assert!(
-        matches!(sent[..], [Message::Look(Look::ClickModel { pick: Some(_), .. })]),
+        matches!(
+            sent[..],
+            [Message::Look(Look::ClickModel { pick: Some(_), .. })]
+        ),
         "{sent:?}"
     );
 }

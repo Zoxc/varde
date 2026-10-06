@@ -5,7 +5,7 @@ use iced::{Subscription, window};
 
 use std::time::Duration;
 
-use super::{TOAST_TICK, TICK};
+use super::{TICK, TOAST_TICK};
 use crate::Message;
 
 /// Natively the app asks before the window closes instead, see

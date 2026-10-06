@@ -29,7 +29,6 @@ pub use loft::loft_info;
 mod measure;
 mod motion;
 mod mouse_only;
-mod toast;
 mod offset_face;
 mod operation_panel;
 mod overlaps;
@@ -50,6 +49,7 @@ pub mod spline;
 mod split;
 mod status;
 mod sweep;
+mod toast;
 pub use sweep::sweep_info;
 #[cfg(test)]
 mod testing;
@@ -100,7 +100,6 @@ pub use offset_face::offset_info;
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
 };
-pub use toast::toast;
 pub use overlaps::{OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps};
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
@@ -122,6 +121,7 @@ pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
 pub use thumbnail::{
     THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailImages, ThumbnailRequest, thumbnail_shot,
 };
+pub use toast::toast;
 pub use viewport::ModelPicking;
 pub use welcome::{
     CardKey, DamagedPrompt, DeleteFromBrowserPrompt, DesignCard, Downloads, PanicNote, RecentCard,

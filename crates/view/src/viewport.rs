@@ -39,7 +39,8 @@ use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::thumbnail::{THUMBNAIL_SCALE, ThumbnailRequest};
 use crate::{
-    Edges, Edit, Look, Message, MotionLook, PlanePick, SketchItem, SketchLines, ViewOptions, controls,
+    Edges, Edit, Look, Message, MotionLook, PlanePick, SketchItem, SketchLines, ViewOptions,
+    controls,
 };
 
 pub(crate) use extrude::Extruding;

@@ -8,8 +8,8 @@ use varde_sketch::{LinkKind, Sketch};
 
 use crate::{
     Body, BodyId, CheckError, Copies, Document, EditError, FeatureId, FeatureKind, Id, LinkSource,
-    MAX_PATTERN_BODIES, Move, Named, Opacity, Operation, OutsideRef, Pattern, Plane, Removable, Snapshot,
-    Turn, sketch_face,
+    MAX_PATTERN_BODIES, Move, Named, Opacity, Operation, OutsideRef, Pattern, Plane, Removable,
+    Snapshot, Turn, sketch_face,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would

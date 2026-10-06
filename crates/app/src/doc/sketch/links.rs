@@ -78,7 +78,11 @@ impl Doc {
 
     /// Lets go of the link `link` hovered, if it still is.
     pub(crate) fn leave_link(&mut self, link: Id) {
-        if self.sketch.as_ref().is_some_and(|session| session.link_hover == Some(link)) {
+        if self
+            .sketch
+            .as_ref()
+            .is_some_and(|session| session.link_hover == Some(link))
+        {
             self.hover_link(None);
         }
     }
