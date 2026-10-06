@@ -4801,6 +4801,27 @@ fn escape_or_closing_the_menu_drops_the_opacity_preview() {
     assert_eq!(doc.opacity_preview, None);
 }
 
+/// Make opaque in the body menu sets 100 % as one undo step, keeping the
+/// menu open; on an opaque body it adds no history.
+#[test]
+fn make_opaque_resets_the_opacity_in_one_step() {
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let (body, _) = body_opacity(&doc);
+    let generation = doc.editor.generation();
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    doc.update(Edit::ResetOpacity(body));
+    assert_eq!(doc.editor.generation(), generation);
+    doc.look(Look::PreviewOpacity(body, percent(30)));
+    doc.update(Edit::CommitOpacity);
+    doc.update(Edit::ResetOpacity(body));
+    assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
+    assert_eq!(body_opacity(&doc).1, varde_document::Opacity::MAX);
+    assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 1.0));
+    doc.update(Edit::Undo);
+    assert_eq!(body_opacity(&doc).1, percent(30));
+}
+
 /// Letting go of the slider where it started, or with nothing previewed,
 /// adds no history.
 #[test]

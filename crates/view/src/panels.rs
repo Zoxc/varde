@@ -836,7 +836,8 @@ const OPACITY_STEP: f32 = 5.0;
 /// [`Opacity::MIN`] to [`Opacity::MAX`] showing `opacity`, the percentage
 /// beside it. Dragging previews, letting go commits; it takes only the
 /// mouse ([`MouseOnly`]). Unless the document is `editable`, it's faded
-/// and the app ignores it.
+/// and the app ignores it. Under it, while the body isn't opaque, an item
+/// making it so.
 fn opacity_rows<'a>(body: BodyId, opacity: Opacity, editable: bool) -> Element<'a, Message> {
     let percent = |opacity: Opacity| f32::from(opacity.percent());
     let slider = slider(
@@ -853,6 +854,14 @@ fn opacity_rows<'a>(body: BodyId, opacity: Opacity, editable: bool) -> Element<'
         .width(OPACITY_VALUE_WIDTH)
         .align_x(Alignment::End)
         .style(theme::muted_text);
+    let reset = (!opacity.is_opaque()).then(|| {
+        menu_item(
+            Icon::Body,
+            "Make opaque".into(),
+            None,
+            editable.then_some(Message::Edit(Edit::ResetOpacity(body))),
+        )
+    });
     column![
         heading,
         row![MouseOnly::new(slider), value]
@@ -861,6 +870,7 @@ fn opacity_rows<'a>(body: BodyId, opacity: Opacity, editable: bool) -> Element<'
             .padding([0, 8])
             .align_y(Alignment::Center),
     ]
+    .push(reset)
     .into()
 }
 
@@ -1872,7 +1882,8 @@ mod tests {
     }
 
     /// A body's menu has an Opacity row between Hide and Delete, the
-    /// slider's value beside it; a menu without an opacity, none.
+    /// slider's value beside it and Make opaque under it unless it's
+    /// opaque; a menu without an opacity, none.
     #[test]
     fn a_body_s_menu_has_an_opacity_row() {
         let body = Document::example().bodies()[0].id;
@@ -1892,7 +1903,10 @@ mod tests {
             shown.collect::<Vec<_>>()
         };
         let shown = menu(Some((body, Opacity::new(40).unwrap())));
-        assert_eq!(shown, ["Rename", "Hide", "Opacity", "40 %", "Delete"]);
+        let rows = ["Rename", "Hide", "Opacity", "40 %", "Make opaque", "Delete"];
+        assert_eq!(shown, rows);
+        let shown = menu(Some((body, Opacity::MAX)));
+        assert_eq!(shown, ["Rename", "Hide", "Opacity", "100 %", "Delete"]);
         assert_eq!(menu(None), ["Rename", "Hide", "Delete"]);
     }
 

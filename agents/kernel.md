@@ -8939,7 +8939,10 @@ in place of the body's own (`DocumentState::opacity_preview`,
 shortcuts are off (`Doc::keys` is `None`) and the peek key doesn't swap
 the tab (`Doc::peeks`), which would take the slider and its release with
 it. Letting go sends `Edit::CommitOpacity`, one `Command::SetOpacity`
-(none if unchanged), and leaves the menu open. The preview goes whenever
+(none if unchanged), and leaves the menu open. Under the slider, while
+the body shown isn't opaque, Make opaque sends `Edit::ResetOpacity`: one
+`Command::SetOpacity` to 100 %, dropping any preview and leaving the menu
+open too. The preview goes whenever
 the menu does (`Doc::prune_preview`), so `Esc` mid-drag drops it. `Esc` or a
 press off a menu closes it alone; any other message closes it too, and
 it goes with what its row lists. Outside a

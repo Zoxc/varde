@@ -435,6 +435,9 @@ pub enum Edit {
     /// Sets the opacity previewed ([`Look::PreviewOpacity`]) as one undo
     /// step, keeping the context menu open: letting go of the slider.
     CommitOpacity,
+    /// Makes the body fully opaque as one undo step, keeping the context
+    /// menu open: the Opaque item under its Opacity slider.
+    ResetOpacity(BodyId),
     /// Changes the design's units.
     SetUnits(LengthUnit),
     /// Changes the design's tolerance, which regenerates everything.

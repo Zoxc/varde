@@ -545,7 +545,7 @@ impl Doc {
         self.end_refusal();
         self.notice = None;
         // Letting go of the Opacity slider leaves its menu open, to go on.
-        if !matches!(message, Edit::CommitOpacity) {
+        if !matches!(message, Edit::CommitOpacity | Edit::ResetOpacity(_)) {
             self.row_menu = None;
         }
         // Any other edit, a click of the Dimension tool included, leaves
@@ -612,6 +612,14 @@ impl Doc {
             Edit::CommitOpacity => {
                 if let Some((id, opacity)) = self.opacity_preview.take() {
                     self.change(Change::SetOpacity(id, opacity));
+                }
+            }
+            Edit::ResetOpacity(id) => {
+                self.opacity_preview = None;
+                let opaque =
+                    (self.editor.document().body(id)).is_none_or(|body| body.opacity.is_opaque());
+                if !opaque {
+                    self.change(Change::SetOpacity(id, Opacity::MAX));
                 }
             }
             Edit::CommitRename => self.commit_rename(),
