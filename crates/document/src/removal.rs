@@ -94,6 +94,13 @@ impl Document {
     /// Removes what `removal` lists, and drops its bodies from the other
     /// features' excluded lists.
     pub(crate) fn remove(&mut self, removal: &Removal) {
+        // Rolled back to before a feature removed: to before the next one
+        // kept, or to the end.
+        if let Some(rollback) = self.rollback {
+            self.rollback = (self.features.iter())
+                .map(|feature| feature.id)
+                .find(|&id| id >= rollback && removal.features.binary_search(&id).is_err());
+        }
         self.features
             .retain(|feature| removal.features.binary_search(&feature.id).is_err());
         self.bodies

@@ -148,6 +148,7 @@ fn fresh_request(doc: &Doc) -> Request {
         generation: doc.editor.generation(),
         document: doc.editor.snapshot(),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
     }

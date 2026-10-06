@@ -514,19 +514,22 @@ fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
     plates.doc.look(Look::EditFeature(id));
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     plates.answer();
-    let wall = plates.face(later, |summary| matches!(summary, Summary::Cylinder { .. }));
-    plates.click_at(later, Picked::Face(wall), DVec3::new(5.0, 30.0, 2.0));
-    assert_eq!(
-        plates.doc.notice.as_deref(),
-        Some("Only a face made before the move can be picked")
+    // Rolled back to the move, the later disc isn't drawn to pick.
+    assert!(
+        plates
+            .doc
+            .feed
+            .pick_index()
+            .body_faces(later)
+            .next()
+            .is_none()
     );
     assert_eq!(
         plates.doc.motion.as_ref().unwrap().axis,
         Some(AxisRef::Origin(Axis3::Z))
     );
 
-    // A round edge, the later disc's rim, is refused for being later;
-    // the right disc's rim is taken, as a round edge.
+    // The right disc's rim is taken, as a round edge.
     let index = plates.doc.feed.pick_index();
     let rim = |body: BodyId| {
         (0..index.mesh().edge_count() as u32)
@@ -534,12 +537,7 @@ fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
             .find(|&edge| super::round_edge(index, edge))
             .expect("a rim")
     };
-    let (later_rim, right_rim) = (rim(later), rim(right));
-    plates.click_at(later, Picked::Edge(later_rim), DVec3::new(5.0, 30.0, 5.0));
-    assert_eq!(
-        plates.doc.notice.as_deref(),
-        Some("Only an edge made before the move can be picked")
-    );
+    let right_rim = rim(right);
     plates.click_at(right, Picked::Edge(right_rim), DVec3::new(25.0, 10.0, 15.0));
     let session = plates.doc.motion.as_ref().unwrap();
     assert!(

@@ -312,6 +312,7 @@ pub enum Head {
     Regenerated {
         generation: Generation,
         exclude: Option<FeatureId>,
+        until: Option<FeatureId>,
         sight: Option<u32>,
         /// Without its geometry, which follows.
         draft: Option<Drafted>,
@@ -383,6 +384,7 @@ pub enum Head {
     Failed {
         generation: Generation,
         exclude: Option<FeatureId>,
+        until: Option<FeatureId>,
         draft: Option<u64>,
         inspect: Option<u64>,
         sight: Option<u32>,
@@ -460,6 +462,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
         Response::Regenerated {
             generation,
             exclude,
+            until,
             sight,
             draft,
             mesh,
@@ -482,6 +485,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             let mut head = Head::Regenerated {
                 generation: *generation,
                 exclude: *exclude,
+                until: *until,
                 sight: *sight,
                 draft: draft.as_deref().cloned(),
                 draft_geometry: draft.as_ref().and_then(|draft| geometry(&draft.geometry)),
@@ -550,6 +554,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 let failed = Head::Failed {
                     generation: *generation,
                     exclude: *exclude,
+                    until: *until,
                     draft: draft.as_ref().map(|draft| draft.revision),
                     inspect: inspected.as_ref().map(|inspected| inspected.revision),
                     sight: *sight,
@@ -584,6 +589,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
         Response::Failed {
             generation,
             exclude,
+            until,
             draft,
             inspect,
             sight,
@@ -592,6 +598,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             Head::Failed {
                 generation: *generation,
                 exclude: *exclude,
+                until: *until,
                 draft: *draft,
                 inspect: *inspect,
                 sight: *sight,
@@ -627,6 +634,7 @@ pub fn decode_reply(
         Head::Regenerated {
             generation,
             exclude,
+            until,
             sight,
             mut draft,
             draft_geometry,
@@ -711,6 +719,7 @@ pub fn decode_reply(
                     Response::Regenerated {
                         generation,
                         exclude,
+                        until,
                         sight,
                         draft: draft.map(Box::new),
                         inspected: inspected
@@ -734,6 +743,7 @@ pub fn decode_reply(
                 Err(error) => Response::Failed {
                     generation,
                     exclude,
+                    until,
                     draft: draft.map(|draft| draft.revision),
                     inspect,
                     sight,
@@ -744,6 +754,7 @@ pub fn decode_reply(
         Head::Failed {
             generation,
             exclude,
+            until,
             draft,
             inspect,
             sight,
@@ -751,6 +762,7 @@ pub fn decode_reply(
         } => Response::Failed {
             generation,
             exclude,
+            until,
             draft,
             inspect,
             sight,

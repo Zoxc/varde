@@ -132,6 +132,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         _ => scrolled(timeline(
             document,
             state.selected_feature,
+            state.rollback,
             state.row_menu,
             editable,
             state.unsolved,
@@ -175,7 +176,9 @@ fn empty_note<'a>(note: impl text::IntoFragment<'a>) -> Element<'a, Message> {
 }
 
 /// The features in the order they were added, the `selected` one
-/// highlighted, the one `menu` is on with its context menu open, which
+/// highlighted, the rollback marker before the feature `rollback` names
+/// (at the end if none), the features after it faint, labelled and fixed
+/// while it's only there as a feature is edited, the one `menu` is on with its context menu open, which
 /// right-clicking a feature asks for, those `unsolved` or
 /// `failed` marked. Features can only be deleted if the document is
 /// `editable`. The row `renaming` is of holds the rename field.
@@ -183,6 +186,7 @@ fn empty_note<'a>(note: impl text::IntoFragment<'a>) -> Element<'a, Message> {
 fn timeline<'a>(
     document: &'a Document,
     selected: Option<FeatureId>,
+    (rollback, editing): (Option<FeatureId>, bool),
     menu: Option<RowMenu>,
     editable: bool,
     unsolved: &[FeatureId],
@@ -197,27 +201,52 @@ fn timeline<'a>(
         ));
     }
     let units = document.units();
-    column(document.features().iter().map(|feature| {
-        let unsolved = unsolved.contains(&feature.id);
-        let failed = (failed.iter()).find(|failed| failed.feature == feature.id);
-        let selected = selected == Some(feature.id);
-        if let Some(text) = renamed(renaming, Named::Feature(feature.id)) {
-            return rename_row(feature_icon(feature), text, 8.0);
-        }
-        let row = feature_row(
-            document, feature, units, selected, unsolved, failed, palette,
-        );
-        let on = RowMenu::Feature(feature.id);
-        let menu = (selected && menu == Some(on)).then(|| feature_menu(feature, editable));
-        ContextMenu::new(
-            row,
-            menu,
-            Message::Look(Look::OpenMenu(on)),
-            Message::Look(Look::CloseMenu),
-        )
-        .into()
-    }))
-    .into()
+    let features = document.features();
+    let ids: Vec<FeatureId> = features.iter().map(|feature| feature.id).collect();
+    let kept = rollback
+        .and_then(|until| ids.iter().position(|&id| id == until))
+        .unwrap_or(ids.len());
+    let label = editing.then_some("Rolled back");
+    let marker = crate::rollback::marker(label);
+    let mut rows: Vec<Element<'a, Message>> = features
+        .iter()
+        .enumerate()
+        .map(|(index, feature)| {
+            let rolled = index >= kept;
+            // Rolled to just after it, by its menu.
+            let after = ids.get(index + 1).copied();
+            let roll = (after != rollback).then(|| {
+                let label = if rolled {
+                    "Roll forward here"
+                } else {
+                    "Roll back here"
+                };
+                let roll = Message::Edit(Edit::SetRollback(after));
+                (label, (editable && !editing).then_some(roll))
+            });
+            let unsolved = unsolved.contains(&feature.id);
+            let failed = (failed.iter()).find(|failed| failed.feature == feature.id);
+            let selected = selected == Some(feature.id);
+            if let Some(text) = renamed(renaming, Named::Feature(feature.id)) {
+                return rename_row(feature_icon(feature), text, 8.0);
+            }
+            let row = feature_row(
+                document, feature, units, selected, rolled, unsolved, failed, palette,
+            );
+            let on = RowMenu::Feature(feature.id);
+            let menu =
+                (selected && menu == Some(on)).then(|| feature_menu(feature, editable, roll));
+            ContextMenu::new(
+                row,
+                menu,
+                Message::Look(Look::OpenMenu(on)),
+                Message::Look(Look::CloseMenu),
+            )
+            .into()
+        })
+        .collect();
+    rows.insert(kept, marker);
+    crate::rollback::draggable(column(rows).into(), kept, ids, editable && !editing)
 }
 
 /// The name typed for `target` if `renaming` is of it.
@@ -279,13 +308,15 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
 /// fails: ...", as its panel says it); a failure whose geometry has a box
 /// gets a Show button that frames the camera on it (a tooltip can't be
 /// clicked, so it's in the row). Hovering it shows the failure's geometry
-/// in the viewport. Clicking selects it,
-/// double-clicking edits it.
+/// in the viewport. Faint if it's hidden, or `rolled` back (after the
+/// rollback marker). Clicking selects it, double-clicking edits it.
+#[expect(clippy::too_many_arguments)]
 fn feature_row<'a>(
     document: &Document,
     feature: &'a Feature,
     units: LengthUnit,
     selected: bool,
+    rolled: bool,
     unsolved: bool,
     failed: Option<&'a varde_regen::FeatureFailure>,
     palette: &'static Palette,
@@ -313,7 +344,8 @@ fn feature_row<'a>(
     let row = SelectableRow {
         icon: feature_icon(feature),
         name: feature.name.as_str().into(),
-        faint: !feature.visible,
+        faint: !feature.visible || rolled,
+        dim: rolled,
         danger: false,
         failed: unsolved || failed.is_some(),
         note: Some(note),
@@ -337,10 +369,15 @@ fn feature_row<'a>(
 }
 
 /// The context menu of `feature` in the Timeline: edit it, rename it,
-/// show or hide a sketch or put it on another plane, or delete it, all
-/// but editing only if the document is `editable`, by the keys that do
-/// the same to the feature selected.
-fn feature_menu<'a>(feature: &Feature, editable: bool) -> Element<'a, Message> {
+/// show or hide a sketch or put it on another plane, `roll` the Timeline
+/// to just after it (its label, and what it sends if it can), or delete
+/// it, all but editing only if the document is `editable`, by the keys
+/// that do the same to the feature selected.
+fn feature_menu<'a>(
+    feature: &Feature,
+    editable: bool,
+    roll: Option<(&'static str, Option<Message>)>,
+) -> Element<'a, Message> {
     let id = feature.id;
     let edit = menu_item(
         feature_icon(feature),
@@ -373,12 +410,14 @@ fn feature_menu<'a>(feature: &Feature, editable: bool) -> Element<'a, Message> {
         Some(Shortcut::RENAME),
         editable.then_some(Message::Look(Look::StartRename(Named::Feature(id)))),
     );
+    let roll = roll.map(|(label, roll)| menu_item(Icon::Rollback, label.into(), None, roll).into());
     row_menu(
         vec![
             Some(edit.into()),
             Some(rename.into()),
             toggle,
             change_plane,
+            roll,
             Some(menu_separator().into()),
             Some(
                 menu_item(
@@ -513,6 +552,8 @@ struct SelectableRow<'a> {
     /// Whether the name is faint, as a hidden feature's is, or an item
     /// waiting on the solver.
     faint: bool,
+    /// Whether the icon is faint too, as a feature's rolled back.
+    dim: bool,
     /// Whether the name is in the danger colour, as a constraint in
     /// conflict is.
     danger: bool,
@@ -532,7 +573,11 @@ impl<'a> SelectableRow<'a> {
         let content = |hovered: bool| {
             container(
                 row![
-                    icons::icon(self.icon, icons::INLINE),
+                    if self.dim {
+                        Element::from(icons::tinted(self.icon, icons::INLINE, |p| p.faint))
+                    } else {
+                        icons::icon(self.icon, icons::INLINE)
+                    },
                     if self.failed {
                         text(self.name.clone()).style(theme::failed_text)
                     } else if self.danger {
@@ -1622,6 +1667,7 @@ fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Messa
         icon,
         name: link.source.as_str().into(),
         faint: sketch.pending.contains(&id),
+        dim: false,
         danger: link.broken.is_some(),
         failed: false,
         note,
@@ -1751,6 +1797,7 @@ fn item_row<'a>(
         icon,
         name: name.into(),
         faint: sketch.pending.contains(&id),
+        dim: false,
         danger,
         failed: false,
         note: note.map(Into::into),

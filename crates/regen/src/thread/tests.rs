@@ -20,6 +20,7 @@ fn regenerate(editor: &Editor) -> Request {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
     }

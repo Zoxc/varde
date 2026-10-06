@@ -658,6 +658,18 @@ fn shots_09_timeline() {
         let tip = Shot::new().pointer(Pointer::Over(name));
         camera.take(&doc, "09-timeline-failed-tip", tip);
         camera.take(&doc, "09-timeline-failed-tip-scale2", tip.scale(2.0));
+        // Rolled back to before the third extrude, from its menu; then the
+        // second extrude edited, rolled to just after it while it's open.
+        let ids: Vec<FeatureId> = (doc.editor.document().features().iter())
+            .map(|feature| feature.id)
+            .collect();
+        doc.update(Edit::SetRollback(Some(ids[4])));
+        answer(&mut doc, &requests);
+        camera.take(&doc, "09-timeline-rolled-back", Shot::new());
+        camera.take(&doc, "09-timeline-rolled-back-dark", Shot::new().dark());
+        doc.look(Look::EditFeature(ids[3]));
+        answer(&mut doc, &requests);
+        camera.take(&doc, "09-timeline-editing", Shot::new());
     });
 }
 
@@ -900,6 +912,7 @@ fn shots_13_status_bar() {
                 inspect: None,
                 generation: request.generation().unwrap(),
                 exclude: request.exclude(),
+                until: None,
                 error: "the kernel ran out of room splitting the faces of a body with \
                         very many curved faces; try a coarser tolerance"
                     .to_owned(),

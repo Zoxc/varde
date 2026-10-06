@@ -15,6 +15,7 @@ fn regenerate(editor: &Editor) -> Request {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
     }
@@ -27,6 +28,7 @@ fn regenerated(generation: u64) -> Head {
         sight: None,
         generation: generation.into(),
         exclude: None,
+        until: None,
         draft: None,
         draft_geometry: None,
         unsolved: Vec::new(),
@@ -80,6 +82,7 @@ fn request_round_trips() {
         generation,
         document,
         exclude,
+        until: _,
         draft,
         inspect: None,
         sight: None,
@@ -131,6 +134,7 @@ fn a_revolve_and_its_draft_round_trip() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(draft.clone())),
         inspect: None,
     };
@@ -239,6 +243,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(draft.clone())),
         inspect: None,
     };
@@ -323,6 +328,7 @@ fn request_with_a_draft_round_trips() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(draft.clone())),
         inspect: None,
     };
@@ -361,6 +367,7 @@ fn request_with_a_draft_round_trips() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(Draft {
             revision: 8,
             feature: None,
@@ -383,6 +390,7 @@ fn request_leaving_out_a_sketch_round_trips() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: Some(feature),
+        until: None,
         draft: None,
         inspect: None,
     };
@@ -833,6 +841,7 @@ fn a_pattern_and_its_draft_round_trip() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(draft.clone())),
         inspect: None,
     };
@@ -922,6 +931,7 @@ fn a_move_a_mirror_and_a_draft_round_trip() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(draft.clone())),
         inspect: None,
     };
@@ -1000,6 +1010,7 @@ fn a_combine_and_its_draft_round_trip() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(draft.clone())),
         inspect: None,
     };
@@ -1093,6 +1104,7 @@ fn failed_round_trips() {
         sight: Some(3),
         generation: Generation::from(u64::MAX),
         exclude: Some(feature),
+        until: None,
         draft: Some(2),
         inspect: Some(5),
         error: "the kernel gave up".to_owned(),
@@ -1101,6 +1113,7 @@ fn failed_round_trips() {
     let Response::Failed {
         generation,
         exclude,
+        until: _,
         draft,
         inspect,
         sight,
@@ -1279,6 +1292,7 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
         sight: None,
         generation: Generation::from(0),
         exclude: None,
+        until: None,
         draft: None,
         mesh: Arc::new(mesh),
         picking: Arc::new(picking),
@@ -1683,6 +1697,7 @@ fn damaged_encodings_never_panic() {
         sight: None,
         generation: Generation::from(3),
         exclude: None,
+        until: None,
         draft: Some(1),
         inspect: Some(2),
         error: "no".to_owned(),
@@ -1718,6 +1733,7 @@ fn huge_lengths_are_refused_without_allocating_them() {
         sight: None,
         generation: Generation::from(3),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
         error: String::new(),
@@ -2148,6 +2164,7 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
             sight: None,
             generation: 4.into(),
             exclude: None,
+            until: None,
             draft: None,
             mesh: Arc::new(mesh),
             picking: Arc::new(picking),
@@ -3260,6 +3277,7 @@ fn a_revolve_about_an_edge_round_trips() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(Draft {
             revision: 1,
             feature: Some(feature),
@@ -3320,6 +3338,7 @@ fn a_draft_s_list_of_copy_bodies_is_laid_out_again_or_refused() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(Draft {
             revision: 1,
             feature: Some(id),
@@ -3459,6 +3478,7 @@ fn a_sweep_and_a_helix_draft_round_trip() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(draft.clone())),
         inspect: None,
     };
@@ -3567,6 +3587,7 @@ fn a_loft_and_its_draft_round_trip() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(draft.clone())),
         inspect: None,
     };
@@ -3607,6 +3628,7 @@ fn a_tapered_draft_crosses_the_wire() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(Draft {
             revision: 3,
             feature: Some(editor.document().features()[1].id),

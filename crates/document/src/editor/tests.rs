@@ -923,3 +923,46 @@ fn an_amended_change_is_undone_with_the_one_before() {
         .unwrap();
     assert!(editor.can_redo());
 }
+
+/// The Timeline's rollback: set and undone as an edit, refused for a
+/// feature that isn't there, moved on to the next feature kept when its
+/// own is removed, and cleared by a new feature, which goes last.
+#[test]
+fn the_rollback_is_an_edit_kept_on_a_feature() {
+    let mut editor = Editor::new(Document::example());
+    let ids: Vec<FeatureId> = editor.document().features().iter().map(|f| f.id).collect();
+    assert!(ids.len() >= 2, "{ids:?}");
+    editor.apply(Command::SetRollback(Some(ids[1]))).unwrap();
+    assert_eq!(editor.document().rollback(), Some(ids[1]));
+    let before = editor.document().before(ids[1]);
+    assert_eq!(before.features().len(), 1);
+    assert!(before.bodies().iter().all(|body| body.created_by < ids[1]));
+    assert_eq!(before.rollback(), None);
+    before.check().unwrap();
+
+    let missing = FeatureId(editor.document().next_id);
+    let revision = editor.revision();
+    editor.apply(Command::SetRollback(Some(missing))).unwrap();
+    assert_eq!(editor.revision(), revision);
+    editor.undo();
+    assert_eq!(editor.document().rollback(), None);
+    editor.redo();
+
+    // Its feature removed: to before the next one kept, or the end.
+    let mut removed = editor.document().clone();
+    removed.remove(&removed.removal_of(&[Removable::Feature(ids[1])]));
+    let next = (removed.features().iter())
+        .map(|f| f.id)
+        .find(|&id| id > ids[1]);
+    assert_eq!(removed.rollback(), next);
+    removed.check().unwrap();
+
+    // A file naming a feature that isn't there is refused.
+    let mut wrong = editor.document().clone();
+    wrong.rollback = Some(missing);
+    assert!(matches!(wrong.check(), Err(CheckError::Rollback(id)) if id == missing));
+
+    let sketch = (editor.document()).add_sketch(Plane::Origin(crate::OriginPlane::XY));
+    editor.apply(sketch).unwrap();
+    assert_eq!(editor.document().rollback(), None);
+}

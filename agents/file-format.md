@@ -404,8 +404,11 @@ and what it comes from (`OutsideRef`: another sketch's feature id and
 item id, or an edge, face or corner of a body named as a revolve's axis
 edge, a sketch's face or an align's corner are), the design's units (a
 `varde_expr::LengthUnit`, millimetres by default), its fit tolerance (an
-`f64` in millimetres, `1e-5 ..= 1e-1`, 1 µm by default) and the next id
-bodies and features take. A document read from a file is checked
+`f64` in millimetres, `1e-5 ..= 1e-1`, 1 µm by default), the next id
+bodies and features take, and `rollback`, the feature the Timeline is
+rolled back to before (defaulted to none; checked to name a feature;
+`Command::SetRollback`, cleared by a new feature, moved to the next
+feature kept when its own is removed). A document read from a file is checked
 (`Document::check`, which runs `Sketch::check` on each sketch): body and
 feature ids increasing and below the next id, every body's opacity from
 10 to 100, every body's colour's hue below 360 and saturation at most

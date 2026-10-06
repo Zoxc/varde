@@ -14,6 +14,7 @@ fn regenerate(editor: &Editor, exclude: Option<FeatureId>) -> Request {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude,
+        until: None,
         draft: None,
         inspect: None,
     }
@@ -461,6 +462,7 @@ pub(crate) fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request 
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: draft.map(Box::new),
         inspect: None,
     }

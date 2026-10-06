@@ -637,6 +637,7 @@ impl Gpu {
             generation: editor.generation(),
             document: editor.snapshot(),
             exclude: None,
+            until: None,
             draft: None,
             inspect: None,
         });

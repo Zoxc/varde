@@ -10,6 +10,7 @@ fn regenerate(generation: u64) -> Request {
         generation: generation.into(),
         document: Arc::new(Document::default()),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
     }

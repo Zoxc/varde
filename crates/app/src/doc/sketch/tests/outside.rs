@@ -255,25 +255,14 @@ fn project_refuses_a_body_made_after_the_sketch() {
     doc.look(Look::EditFeature(profile));
     answer(&mut doc, &requests);
     doc.look(Look::SelectTool(Tool::Project));
-    let edge = pick(&doc, 0.0, 20.0);
-    doc.look(Look::ClickModel {
-        pick: Some(edge),
-        add: false,
-        double: false,
-    });
-    assert!(outside(&doc).is_empty());
-    let name = doc.editor.document().features()[0].name.clone();
-    assert_eq!(
-        doc.notice.as_deref(),
-        Some(format!("Only what's made before {name} can be projected").as_str())
+    // Rolled back to the sketch, the plate isn't drawn to pick.
+    let at = DVec2::new(200.0, 150.0 - 5.0 * 20.0);
+    assert!(
+        doc.feed
+            .pick_index()
+            .pick(&top(), SIZE, at, Picks::All)
+            .is_none()
     );
-    // A corner of it likewise.
-    let corner = pick(&doc, -29.5, -19.5);
-    doc.look(Look::ClickModel {
-        pick: Some(corner),
-        add: false,
-        double: false,
-    });
     assert!(outside(&doc).is_empty());
 }
 

@@ -254,13 +254,14 @@ struct Committed {
 const MAX_ASKED: usize = 64;
 
 /// What a request asks for, and so what its answer is of: a generation
-/// of the document, the sketch left out of the lines, the revision of the
-/// draft applied, if any, the revision of the measure taken on it, if
+/// of the document, the sketch left out of the lines, the feature rolled
+/// back to before, the revision of the draft applied, if any, the revision of the measure taken on it, if
 /// any, and how finely it's drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Asked {
     generation: Generation,
     exclude: Option<FeatureId>,
+    until: Option<FeatureId>,
     draft: Option<u64>,
     inspect: Option<u64>,
     sight: Option<u32>,
@@ -272,6 +273,7 @@ impl Asked {
         Some(Self {
             generation: response.generation()?,
             exclude: response.exclude(),
+            until: response.until(),
             draft: response.draft(),
             inspect: response.inspect(),
             sight: response.sight(),
@@ -300,15 +302,16 @@ impl MeshFeed {
     /// [`MeshFeed::request_with`] without a draft.
     #[cfg(test)]
     pub(crate) fn request(&mut self, editor: &Editor, exclude: Option<FeatureId>) {
-        self.request_with(editor, exclude, None, None);
+        self.request_with(editor, exclude, None, None, None);
     }
 
     /// Asks the lane for the document's mesh, leaving the sketch `exclude`
     /// out of the lines, with `draft` applied, the feature being set up
     /// (an extrude, a revolve) and the feature it's edited from, if any:
     /// if the editor moved on since the last request, the sketch to leave
-    /// out changed, as it does on entering or leaving one, or the draft
-    /// did. A draft differing
+    /// out changed, as it does on entering or leaving one, the feature
+    /// the model is rolled back to before, `until` ([`Document::before`]),
+    /// or the draft did. A draft differing
     /// from the one asked for last is given the next revision; without
     /// one, the model is asked for again without the last. Likewise
     /// `inspect`, the measure tool's picks, measured on the model
@@ -320,6 +323,7 @@ impl MeshFeed {
         &mut self,
         editor: &Editor,
         exclude: Option<FeatureId>,
+        until: Option<FeatureId>,
         draft: Option<(Option<FeatureId>, FeatureKind)>,
         inspect: Option<(InspectPick, Option<InspectPick>)>,
     ) {
@@ -356,6 +360,7 @@ impl MeshFeed {
         let asked = Asked {
             generation: editor.generation(),
             exclude,
+            until,
             draft: draft.as_ref().map(|draft| draft.revision),
             inspect: inspect.as_ref().map(|inspect| inspect.revision),
             sight: self.sight.as_ref().map(|sight| sight.revision),
@@ -378,6 +383,7 @@ impl MeshFeed {
                 generation: asked.generation,
                 document,
                 exclude,
+                until,
                 draft: draft.map(Box::new),
                 inspect: inspect.map(Box::new),
                 sight: self.sight.clone().map(Box::new),
@@ -571,10 +577,17 @@ impl MeshFeed {
         self.requested.is_some_and(|requested| {
             (
                 requested.exclude,
+                requested.until,
                 requested.draft,
                 requested.inspect,
                 requested.sight,
-            ) == (asked.exclude, asked.draft, asked.inspect, asked.sight)
+            ) == (
+                asked.exclude,
+                asked.until,
+                asked.draft,
+                asked.inspect,
+                asked.sight,
+            )
         }) && self.shown != Some(asked)
             && !failed
     }
@@ -713,7 +726,7 @@ impl MeshFeed {
     /// same model, so a selection changed just before doesn't hold picks
     /// back until its measures come.
     pub(crate) fn answers_request(&self) -> bool {
-        let model = |asked: Asked| (asked.generation, asked.exclude, asked.draft);
+        let model = |asked: Asked| (asked.generation, asked.exclude, asked.until, asked.draft);
         self.requested.is_some() && self.shown.map(model) == self.requested.map(model)
     }
 
@@ -829,6 +842,12 @@ impl MeshFeed {
     /// The generation of the mesh shown, if there is one yet.
     pub(crate) fn generation(&self) -> Option<Generation> {
         self.shown.map(|shown| shown.generation)
+    }
+
+    /// The feature the model shown is rolled back to before, if it is.
+    #[cfg(test)]
+    pub(crate) fn until(&self) -> Option<FeatureId> {
+        self.shown.and_then(|shown| shown.until)
     }
 
     /// The sketch left out of the lines shown, if there are lines yet.

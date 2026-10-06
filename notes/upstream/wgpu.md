@@ -117,6 +117,12 @@ an earlier camera angle, drawn in a row along the top of the viewport over
 the model and the rail's open list. It showed after leaving a sketch, while
 the camera turned back and the viewport's width changed, moving the cube.
 
+Hit again natively on GL (this VM's backend): the Timeline's rollback
+marker, then drawn by two small canvases (its diamond and its line) in the
+scrolled list, left a copy of its line under every row it was dragged
+past, and its diamond never showed, not being the last mesh drawn. The
+headless shots, on Vulkan, drew it right.
+
 **Cause.** iced draws canvas meshes into a shared 4× MSAA target with a
 resolve texture, setting a scissor rect per mesh, then composites the whole
 resolve texture onto the frame. wgpu-hal's GLES backend resolves at the end
@@ -136,7 +142,10 @@ cube's layer. Vulkan resolves the whole attachment.
 - The blit in `C::ResolveAttachment` has no `disable(SCISSOR_TEST)` before
   it.
 
-**Cost here.** None yet: no workaround in code, the bug shows on the web.
+**Cost here.** The rollback marker (`crates/view/src/rollback.rs`) is drawn
+without canvases: its line a container, its diamond an SVG. Its drag
+handling is still a canvas over the list, but one that draws nothing. The
+view cube has no workaround: it shows on the web.
 The fix is one line in wgpu-hal, `gl.disable(glow::SCISSOR_TEST)` before the
 blit (every pass sets its own scissor again in `begin_render_pass`), which
 would need a patched wgpu-hal until upstream has it. The alternative,

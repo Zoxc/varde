@@ -776,7 +776,20 @@ leaving a sketch asks again for the same generation with the new
 out, and one of the same generation as what's shown (or failed) is taken
 only if it left out the sketch asked for last and the answer applied
 didn't. So a failure holds back only the request that failed, not asking
-again with another `exclude`. Sketch curves are flattened by
+again with another `exclude`. Likewise `until`, the feature the
+Timeline is rolled back to before (`Doc::rollback`): regen evaluates
+only `Document::before(until)`, the features before it and their
+bodies, so nothing after it is computed or adjusted. It's the
+document's rollback marker (as dragged, `Doc::rolling`, until it's
+dropped), or while a feature is edited (a sketch entered, an
+operation opened from its row) the feature after it, those after it
+left out; a new operation being set up has none, as it goes last. The
+Timeline draws the marker (`view/src/rollback.rs`) between the rows,
+the rows after it faint, labelled "Rolled back" and fixed while a
+feature is edited, else dragged to the gap nearest the cursor
+(`Look::DragRollback`, the model following) and dropped on release
+(`Edit::DropRollback`, one undo step); a row's menu has Roll back (or
+forward) here. Sketch curves are flattened by
 `Sketch::flatten` (lines exact, circles into `CIRCLE_SEGMENTS`, arcs their
 share) and placed on an origin plane's placement, or a sketch on a face
 at the placement regeneration found for it (`Evaluation::placements`;

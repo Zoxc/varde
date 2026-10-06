@@ -661,7 +661,9 @@ fn a_face_joined_into_a_split_s_new_body_later_is_named_on_its_own_body() {
     plates.motion(MotionLook::SplitWith(SplitMode::Face));
     plates.answer();
     let disc_top = |summary: &Summary| matches!(summary, Summary::Plane { n, d } if n[2] > 0.5 && (d - 15.0).abs() < 1e-6);
-    click_face(&mut plates, new, disc_top, DVec3::new(-20.0, 0.0, 15.0));
+    // Rolled back to the split, the combine isn't applied: the disc
+    // stands apart.
+    click_face(&mut plates, disc, disc_top, DVec3::new(-20.0, 0.0, 15.0));
     let Some(SplitTool::Plane(PlaneRef::Face(face))) = tool(&plates) else {
         panic!("a plane face: {:?} {:?}", tool(&plates), plates.doc.notice);
     };

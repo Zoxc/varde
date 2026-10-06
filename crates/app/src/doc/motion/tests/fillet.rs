@@ -500,9 +500,9 @@ fn disc_rim(plates: &Plates, body: varde_document::BodyId, z: f64) -> varde_view
 }
 
 /// A fillet of the right disc's top rim, then a join merging the disc
-/// into the plate after it: edited, its rim is found and lit on the
-/// plate drawing it, the disc's other rim is picked on it as the
-/// disc's, the plate's own edges refused, and OK keeps it on the disc.
+/// into the plate after it: edited, the join is rolled back, so its rim
+/// is lit on the disc itself, the disc's other rim is picked on it, and
+/// OK keeps it on the disc.
 #[test]
 fn editing_a_fillet_whose_body_a_later_join_merged() {
     let mut plates = super::plates();
@@ -537,7 +537,11 @@ fn editing_a_fillet_whose_body_a_later_join_merged() {
     let holder = plates.doc.feed.pick_index().body(top.target);
     let lit = plates.doc.blend_lit();
     assert_eq!(lit.len(), 1, "its rim lit");
-    assert_ne!(holder, Some(right), "drawn by the plate");
+    assert_eq!(
+        holder,
+        Some(right),
+        "drawn by the disc, the join rolled back"
+    );
     let bottom = disc_rim(&plates, holder.unwrap(), -5.0);
     plates.doc.look(Look::ClickModel {
         pick: Some(bottom),
@@ -546,13 +550,6 @@ fn editing_a_fillet_whose_body_a_later_join_merged() {
     });
     assert_eq!(edges(&plates).len(), 2, "{:?}", plates.doc.notice);
     assert!(edges(&plates).iter().all(|edge| edge.body == right));
-    let front = super::chamfer::edge_pick(&plates, holder.unwrap(), FRONT);
-    plates.doc.look(Look::ClickModel {
-        pick: Some(front),
-        add: false,
-        double: false,
-    });
-    assert_eq!(edges(&plates).len(), 2);
     plates.answer();
     plates.doc.update(Edit::AcceptError);
     plates.doc.update(Edit::CommitMotion);

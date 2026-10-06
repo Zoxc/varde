@@ -41,6 +41,7 @@ mod projection;
 mod rail;
 mod regenerating;
 mod revolve;
+mod rollback;
 mod select;
 mod shell;
 mod shortcut;
@@ -358,6 +359,12 @@ pub enum Edit {
     /// Delete button.
     ConfirmDelete,
     ToggleFeatureVisible(FeatureId),
+    /// Rolls the Timeline back to before the feature, or to its end with
+    /// `None`: its context menu's Roll back here.
+    SetRollback(Option<FeatureId>),
+    /// Drops the Timeline's rollback marker where it's been dragged to
+    /// ([`Look::DragRollback`]), rolling the document there.
+    DropRollback,
     /// A click in the sketch being edited with its tool.
     ToolClick(ToolClick),
     /// Ends dragging geometry in the sketch being edited, where it was
@@ -569,6 +576,10 @@ pub enum Look {
     FinishSketch,
     /// Selects a feature in the Timeline.
     SelectFeature(FeatureId),
+    /// The Timeline's rollback marker dragged to before the feature, or
+    /// to the end with `None`: the model shows there until it's dropped
+    /// ([`Edit::DropRollback`]).
+    DragRollback(Option<FeatureId>),
     /// Opens the context menu of a row of the side panel: right-clicking
     /// it. A feature in the Timeline is selected too.
     OpenMenu(RowMenu),

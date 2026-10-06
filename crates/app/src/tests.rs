@@ -623,6 +623,7 @@ fn one_line() -> Response {
         generation: Generation::from(1),
         document: Arc::new(with_a_line()),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
     })
@@ -675,13 +676,12 @@ fn nothing_is_requested_until_the_lane_is_ready() {
 
     let (lane, mut responses) = lane::spawn();
     doc.lane_ready(lane);
-    // Through the regeneration's progress, to its answer.
-    let mut answered = |doc: &mut Doc| loop {
-        let response = block_on(responses.next()).unwrap();
-        let progress = matches!(response, varde_regen::Response::Progress(_));
-        doc.computed(response);
-        if !progress {
-            break;
+    // Through the regeneration's progress, and any answers for earlier
+    // generations (such as a new sight's for the last model), to the model
+    // of the generation asked.
+    let mut answered = |doc: &mut Doc| {
+        while doc.feed.generation() != Some(doc.editor.generation()) {
+            doc.computed(block_on(responses.next()).unwrap());
         }
     };
     answered(&mut doc);
@@ -1150,12 +1150,12 @@ fn a_read_only_document_refuses_edits_but_moves_the_camera() {
 #[test]
 fn a_refused_edit_is_shown() {
     // A document from a file that has used up its ids: no bodies, no
-    // features, millimetres, the default tolerance and `next_id` at
-    // `u64::MAX` as a postcard varint.
+    // features, millimetres, the default tolerance, `next_id` at
+    // `u64::MAX` as a postcard varint and no rollback.
     let mut bytes = vec![0, 0, 0];
     bytes.extend(varde_document::Tolerance::DEFAULT.fit().to_le_bytes());
     bytes.extend([0xff; 9]);
-    bytes.push(0x01);
+    bytes.extend([0x01, 0x00]);
     let full = Document::from_postcard(&bytes).unwrap();
     let mut doc = Doc::new(
         full,
@@ -2848,6 +2848,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     sight: None,
                     generation,
                     exclude,
+                    until: None,
                     draft,
                     mesh,
                     picking,
@@ -5806,6 +5807,7 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
             inspect: None,
             generation: request.generation().unwrap(),
             exclude: request.exclude(),
+            until: None,
             error: "the kernel ran out of room splitting the faces of a body with very \
                     many curved faces; try a coarser tolerance"
                 .to_owned(),
@@ -5887,4 +5889,121 @@ fn the_viewports_shape_is_kept_within_bounds() {
     assert_eq!(doc.aspect, Some(1.6));
     doc.look(Look::ViewAspect(1e9));
     assert_eq!(doc.aspect, Some(100.0));
+}
+
+/// The Timeline's rollback marker: dragged, the model is asked for as
+/// of where it is and the document is unchanged until it's dropped; a
+/// feature edited rolls the model to just after it while it's open,
+/// whatever the document says; a new operation set up shows the whole
+/// history.
+#[test]
+fn the_rollback_marker_rolls_the_model_back() {
+    let (mut doc, requests) = example();
+    let ids: Vec<FeatureId> = (doc.editor.document().features().iter())
+        .map(|feature| feature.id)
+        .collect();
+    let until =
+        |requests: &RefCell<Vec<Request>>| requests.borrow().last().and_then(Request::until);
+
+    doc.look(Look::DragRollback(Some(ids[1])));
+    assert_eq!(until(&requests), Some(ids[1]));
+    assert_eq!(doc.editor.document().rollback(), None);
+    assert_eq!(doc.rollback(), (Some(ids[1]), false));
+    doc.update(Edit::DropRollback);
+    answer(&mut doc, &requests);
+    assert_eq!(doc.editor.document().rollback(), Some(ids[1]));
+    assert_eq!(doc.rollback(), (Some(ids[1]), false));
+
+    // The sketch edited: rolled to after it, fixed while it's open.
+    doc.look(Look::EditFeature(ids[0]));
+    assert_eq!(doc.rollback(), (ids.get(1).copied(), true));
+    doc.look(Look::DragRollback(None));
+    assert_eq!(doc.rollback(), (ids.get(1).copied(), true));
+    doc.look(Look::FinishSketch);
+    answer(&mut doc, &requests);
+
+    // From a row's menu, to the end.
+    doc.update(Edit::SetRollback(None));
+    answer(&mut doc, &requests);
+    assert_eq!(doc.editor.document().rollback(), None);
+    assert_eq!(until(&requests), None);
+}
+
+/// Dragging the Timeline's rollback marker, headless: pressed at the
+/// end, it follows the cursor up over several rows, the view rebuilt
+/// at each step as the app redraws it, and the release rolls the
+/// document to the gap it was let go in.
+#[test]
+fn the_rollback_marker_drags_across_rows() {
+    use iced::mouse::{Button, Cursor, Event};
+    use iced_runtime::user_interface::{Cache, UserInterface};
+    let (mut doc, _requests) = example();
+    for _ in 0..3 {
+        let sketch = (doc.editor.document()).add_sketch(varde_document::Plane::Origin(
+            varde_document::OriginPlane::XY,
+        ));
+        doc.apply(sketch);
+    }
+    doc.sync();
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    let features = doc.editor.document().features().to_vec();
+    assert!(features.len() >= 4);
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    // Each row's middle, by its name.
+    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
+    let shown = texts(&mut ui, &renderer);
+    let middle = |name: &str| {
+        (shown.iter())
+            .find(|t| t.text == name && !t.hidden())
+            .unwrap_or_else(|| panic!("no {name}"))
+            .bounds
+            .center()
+    };
+    let last = middle(&features.last().unwrap().name);
+    let second = middle(&features[1].name);
+    // The marker, below the last row (28 px tall), its middle 8 px on.
+    let marker = iced::Point::new(last.x, last.y + 28.0 / 2.0 + 8.0);
+    let mut cache = ui.into_cache();
+    let mut step = |doc: &mut Doc, cache: Cache, event: Event, at: iced::Point| {
+        let mut ui = UserInterface::build(doc.view_in(Mode::Light), size, cache, &mut renderer);
+        let mut sent = Vec::new();
+        let _ = ui.update(
+            &[iced::Event::Mouse(event)],
+            Cursor::Available(at),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+        let cache = ui.into_cache();
+        for message in sent {
+            match message {
+                Ui::Look(look) => doc.look(look),
+                Ui::Edit(edit) => doc.update(edit),
+                _ => {}
+            }
+        }
+        cache
+    };
+    cache = step(
+        &mut doc,
+        cache,
+        Event::CursorMoved { position: marker },
+        marker,
+    );
+    cache = step(&mut doc, cache, Event::ButtonPressed(Button::Left), marker);
+    // Up half a row at a time, to just above the second row's middle.
+    let mut y = marker.y;
+    let target = second.y - 4.0;
+    while y > target {
+        y = (y - 14.0).max(target);
+        let at = iced::Point::new(marker.x, y);
+        cache = step(&mut doc, cache, Event::CursorMoved { position: at }, at);
+    }
+    assert_eq!(doc.rolling, Some(Some(features[1].id)));
+    assert_eq!(doc.editor.document().rollback(), None);
+    let at = iced::Point::new(marker.x, y);
+    let _ = step(&mut doc, cache, Event::ButtonReleased(Button::Left), at);
+    assert_eq!(doc.rolling, None);
+    assert_eq!(doc.editor.document().rollback(), Some(features[1].id));
 }

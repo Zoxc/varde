@@ -187,6 +187,9 @@ pub enum Request {
         /// A sketch left out of the lines, the one being edited, which the
         /// viewport draws over everything instead.
         exclude: Option<FeatureId>,
+        /// The Timeline rolled back to before this feature: it and those
+        /// after it aren't evaluated at all ([`Document::before`]).
+        until: Option<FeatureId>,
         /// A feature being set up and not committed yet, answered as if
         /// it were. Boxed: a feature's kind is large next to the rest.
         draft: Option<Box<Draft>>,
@@ -585,6 +588,14 @@ impl Response {
         }
     }
 
+    /// The feature the request answered rolled back to before, if any.
+    pub fn until(&self) -> Option<FeatureId> {
+        match self {
+            Response::Regenerated { until, .. } | Response::Failed { until, .. } => *until,
+            Response::Exported { .. } | Response::Progress(_) => None,
+        }
+    }
+
     /// The revision of the draft the request answered had, if any.
     pub fn draft(&self) -> Option<u64> {
         match self {
@@ -630,6 +641,14 @@ impl Request {
         }
     }
 
+    /// The feature the request rolls back to before, if any.
+    pub fn until(&self) -> Option<FeatureId> {
+        match self {
+            Request::Regenerate { until, .. } => *until,
+            Request::Export { .. } => None,
+        }
+    }
+
     /// The revision of the request's draft, if it has one.
     pub fn draft(&self) -> Option<u64> {
         match self {
@@ -662,13 +681,14 @@ impl Request {
             Request::Regenerate {
                 generation,
                 exclude,
+                until,
                 draft,
                 inspect,
                 sight,
                 ..
             } => Err((
                 *generation,
-                *exclude,
+                (*exclude, *until),
                 draft.as_ref().map(|d| d.revision),
                 inspect.as_ref().map(|i| i.revision),
                 sight.as_ref().map(|s| s.revision),
@@ -676,9 +696,10 @@ impl Request {
             Request::Export { export, .. } => Ok(*export),
         };
         move |error| match failed {
-            Err((generation, exclude, draft, inspect, sight)) => Response::Failed {
+            Err((generation, (exclude, until), draft, inspect, sight)) => Response::Failed {
                 generation,
                 exclude,
+                until,
                 draft,
                 inspect,
                 sight,
@@ -700,6 +721,8 @@ pub enum Response {
         /// The sketch left out of `sketches`, as the request asked: a
         /// request can ask again for the same generation with another one.
         exclude: Option<FeatureId>,
+        /// The feature the model was rolled back to before, as asked.
+        until: Option<FeatureId>,
         /// The revision of the [`Sight`] the request asked for the model
         /// to be drawn by: the mesh may be drawn otherwise, if too large
         /// by it.
@@ -759,6 +782,7 @@ pub enum Response {
     Failed {
         generation: Generation,
         exclude: Option<FeatureId>,
+        until: Option<FeatureId>,
         /// The revision of the request's draft, if it had one.
         draft: Option<u64>,
         /// The revision of the request's measure, if it had one.
@@ -813,17 +837,27 @@ impl Regenerator {
                 generation,
                 document,
                 exclude,
+                until,
                 draft,
                 inspect,
                 sight,
             } => {
                 self.cache.begin();
+                let rolled;
+                let document = match until {
+                    Some(until) => {
+                        rolled = document.before(until);
+                        &rolled
+                    }
+                    None => &*document,
+                };
                 let asked = (draft.as_deref(), inspect.as_deref());
                 let revision = sight.as_ref().map(|sight| sight.revision);
-                match self.regenerate(&document, exclude, asked, sight.as_deref(), report) {
+                match self.regenerate(document, exclude, asked, sight.as_deref(), report) {
                     Ok(model) => Response::Regenerated {
                         generation,
                         exclude,
+                        until,
                         sight: revision,
                         draft: model.draft.map(Box::new),
                         mesh: model.scene.mesh,
@@ -843,6 +877,7 @@ impl Regenerator {
                     Err(error) => Response::Failed {
                         generation,
                         exclude,
+                        until,
                         draft: draft.map(|draft| draft.revision),
                         inspect: inspect.map(|inspect| inspect.revision),
                         sight: revision,

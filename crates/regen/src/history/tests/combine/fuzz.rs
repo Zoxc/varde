@@ -292,6 +292,7 @@ pub(in crate::history::tests) fn wire(
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: draft.map(Box::new),
         inspect: None,
     };

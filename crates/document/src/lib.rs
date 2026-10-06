@@ -158,6 +158,12 @@ pub struct Document {
     tolerance: f64,
     /// The id the next body or feature gets.
     next_id: u64,
+    /// The feature the Timeline is rolled back to before, if it is: the
+    /// model is that of the features before it ([`Document::before`]).
+    /// Names a feature of the document. Missing in older files, which
+    /// read as none.
+    #[serde(default)]
+    rollback: Option<FeatureId>,
 }
 
 /// A new design: no bodies or features, in millimetres, to the default
@@ -170,6 +176,7 @@ impl Default for Document {
             units: LengthUnit::default(),
             tolerance: Tolerance::DEFAULT.fit(),
             next_id: 0,
+            rollback: None,
         }
     }
 }
@@ -189,6 +196,8 @@ pub struct Unchecked {
     units: LengthUnit,
     tolerance: f64,
     next_id: u64,
+    #[serde(default)]
+    rollback: Option<FeatureId>,
 }
 
 impl Unchecked {
@@ -200,6 +209,7 @@ impl Unchecked {
             units,
             tolerance,
             next_id,
+            rollback,
         } = self;
         let document = Document {
             bodies,
@@ -207,6 +217,7 @@ impl Unchecked {
             units,
             tolerance,
             next_id,
+            rollback,
         };
         document.check()?;
         Ok(document.with_sketch_faces())
@@ -241,6 +252,8 @@ impl Document {
         kind: FeatureKind,
     ) -> Result<FeatureId, EditError> {
         let id = FeatureId(self.new_id()?);
+        // A new feature goes last, so the Timeline rolls forward to show it.
+        self.rollback = None;
         self.features.push(Feature {
             id,
             name: name.into(),
@@ -257,6 +270,24 @@ impl Document {
     /// The features, in the order they were added.
     pub fn features(&self) -> &[Feature] {
         &self.features
+    }
+
+    /// The document as it was before feature `until` was added: the
+    /// features before it and the bodies they make, as the Timeline's
+    /// rollback shows it. Features are in id order, and each refers only
+    /// to those before it, so what's kept stands on its own.
+    #[must_use]
+    pub fn before(&self, until: FeatureId) -> Document {
+        let mut document = self.clone();
+        document.features.retain(|feature| feature.id < until);
+        document.bodies.retain(|body| body.created_by < until);
+        document.rollback = None;
+        document
+    }
+
+    /// The feature the Timeline is rolled back to before, if it is.
+    pub fn rollback(&self) -> Option<FeatureId> {
+        self.rollback
     }
 
     pub fn feature(&self, id: FeatureId) -> Option<&Feature> {
@@ -544,6 +575,11 @@ impl Document {
             {
                 return Err(CheckError::Held(feature.id, body));
             }
+        }
+        if let Some(rollback) = self.rollback
+            && self.feature(rollback).is_none()
+        {
+            return Err(CheckError::Rollback(rollback));
         }
         match self.features.last() {
             Some(last) if last.id.0 >= self.next_id => Err(CheckError::FeatureNextId(last.id)),
@@ -1221,6 +1257,8 @@ pub enum CheckError {
     FeatureOrder(FeatureId, FeatureId),
     /// The last feature's id isn't below the document's next id.
     FeatureNextId(FeatureId),
+    /// The Timeline is rolled back to before a feature that isn't there.
+    Rollback(FeatureId),
 }
 
 impl fmt::Display for CheckError {
@@ -1294,6 +1332,13 @@ impl fmt::Display for CheckError {
             }
             CheckError::FeatureNextId(id) => {
                 write!(f, "feature id {} is not below the next id", id.0)
+            }
+            CheckError::Rollback(id) => {
+                write!(
+                    f,
+                    "the timeline is rolled back to feature id {}, which isn't there",
+                    id.0
+                )
             }
         }
     }

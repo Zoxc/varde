@@ -163,6 +163,10 @@ pub struct DocumentState<'a> {
     pub aspect: Option<f32>,
     /// The feature selected in the Timeline, if any.
     pub selected_feature: Option<FeatureId>,
+    /// The feature the model is rolled back to before, where the
+    /// Timeline's marker shows, and whether only while a feature is
+    /// edited, when the marker can't be dragged.
+    pub rollback: (Option<FeatureId>, bool),
     /// The row of the side panel whose context menu is open, if one is.
     pub row_menu: Option<RowMenu>,
     /// The world's origin, axes and planes Objects has shown.

@@ -148,6 +148,7 @@ fn failure_ends_regenerating_and_keeps_the_last_mesh() {
         inspect: None,
         generation: request.generation().unwrap(),
         exclude: request.exclude(),
+        until: None,
         error: "the kernel failed".to_owned(),
     });
     assert_eq!(
@@ -237,6 +238,7 @@ fn sketches_are_shown_with_their_mesh() {
         inspect: None,
         generation: request.generation().unwrap(),
         exclude: request.exclude(),
+        until: None,
         error: "no".to_owned(),
     });
     assert_eq!(feed.sketches().segment_count(), 1);
@@ -309,6 +311,7 @@ fn only_the_sketch_asked_for_last_is_shown_left_out() {
         inspect: None,
         generation: editor.generation(),
         exclude: Some(feature),
+        until: None,
         error: "no".to_owned(),
     });
     assert_eq!(feed.status(&editor), MeshStatus::Current);
@@ -331,6 +334,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
         inspect: None,
         generation: request.generation().unwrap(),
         exclude: None,
+        until: None,
         error: "the worker stopped".to_owned(),
     });
     assert_eq!(
@@ -355,6 +359,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
         inspect: None,
         generation: request.generation().unwrap(),
         exclude: None,
+        until: None,
         error: "again".to_owned(),
     });
     assert_eq!(feed.status(&editor), MeshStatus::Failed("again"));
@@ -392,8 +397,8 @@ fn a_draft_is_asked_for_once_per_change_and_its_newest_answer_kept() {
     let (editor, draft) = plate_draft();
     let (mut feed, regen) = connected();
     feed.request(&editor, None);
-    feed.request_with(&editor, None, drafted(draft.clone()), None);
-    feed.request_with(&editor, None, drafted(draft.clone()), None);
+    feed.request_with(&editor, None, None, drafted(draft.clone()), None);
+    feed.request_with(&editor, None, None, drafted(draft.clone()), None);
     let mut taller = draft.clone();
     taller.1.extent = varde_document::Extent::OneSide(
         varde_expr::Value::new(
@@ -402,7 +407,7 @@ fn a_draft_is_asked_for_once_per_change_and_its_newest_answer_kept() {
         )
         .unwrap(),
     );
-    feed.request_with(&editor, None, drafted(taller), None);
+    feed.request_with(&editor, None, None, drafted(taller), None);
     assert_eq!(revisions(&regen), [None, Some(1), Some(2)]);
 
     // Answered in order, only the newest draft's answer is shown: the
@@ -417,14 +422,14 @@ fn a_draft_is_asked_for_once_per_change_and_its_newest_answer_kept() {
     assert_eq!(feed.shown_draft(), Some(2));
 
     // Without the draft, the model is asked for again, and taken.
-    feed.request_with(&editor, None, None, None);
+    feed.request_with(&editor, None, None, None, None);
     assert_eq!(revisions(&regen), [None]);
     feed.apply(handle(regen.take().pop().unwrap()));
     assert_eq!(feed.shown_draft(), None);
     assert_eq!(feed.mesh().triangle_count(), 0);
 
     // The same draft again is a new one, after another.
-    feed.request_with(&editor, None, drafted(draft), None);
+    feed.request_with(&editor, None, None, drafted(draft), None);
     assert_eq!(revisions(&regen), [Some(3)]);
 }
 
@@ -433,7 +438,13 @@ fn a_failing_draft_says_why_for_its_revision_only() {
     let (editor, (feature, mut extrude)) = plate_draft();
     extrude.regions.clear();
     let (mut feed, regen) = connected();
-    feed.request_with(&editor, None, drafted((feature, extrude.clone())), None);
+    feed.request_with(
+        &editor,
+        None,
+        None,
+        drafted((feature, extrude.clone())),
+        None,
+    );
     feed.apply(handle(regen.take().pop().unwrap()));
     assert!(feed.draft_error().is_some());
     // Answered with the model without it.
@@ -441,7 +452,7 @@ fn a_failing_draft_says_why_for_its_revision_only() {
     assert_eq!(feed.mesh().triangle_count(), 0);
     // Another draft asked for, the error is no longer its.
     extrude.flip = true;
-    feed.request_with(&editor, None, drafted((feature, extrude)), None);
+    feed.request_with(&editor, None, None, drafted((feature, extrude)), None);
     assert_eq!(feed.draft_error(), None);
     // The panel keeps the one before until the answer, or SLOW passes.
     assert!(feed.shown_draft_error().is_some());
@@ -456,20 +467,20 @@ fn a_failing_draft_says_why_for_its_revision_only() {
 fn a_draft_dropped_is_regenerating_until_the_model_without_it_shows() {
     let (editor, draft) = plate_draft();
     let (mut feed, regen) = connected();
-    feed.request_with(&editor, None, drafted(draft.clone()), None);
+    feed.request_with(&editor, None, None, drafted(draft.clone()), None);
     feed.apply(handle(regen.take().pop().unwrap()));
     assert_eq!(feed.status(&editor), MeshStatus::Current);
     assert!(feed.mesh().triangle_count() > 0);
 
     // Cancelled: the draft's model still shows, which isn't the
     // document's.
-    feed.request_with(&editor, None, None, None);
+    feed.request_with(&editor, None, None, None, None);
     assert_eq!(feed.status(&editor), MeshStatus::Regenerating);
     feed.apply(handle(regen.take().pop().unwrap()));
     assert_eq!(feed.status(&editor), MeshStatus::Current);
 
     // Another draft likewise, until its answer.
-    feed.request_with(&editor, None, drafted(draft), None);
+    feed.request_with(&editor, None, None, drafted(draft), None);
     assert_eq!(feed.status(&editor), MeshStatus::Regenerating);
     feed.apply(handle(regen.take().pop().unwrap()));
     assert_eq!(feed.status(&editor), MeshStatus::Current);
@@ -487,7 +498,7 @@ fn touched_bodies_are_kept_within_a_run_of_drafts_only() {
     join.operation = varde_document::Operation::Join(varde_document::Targets::default());
     let body = editor.document().bodies()[0].id;
     let (mut feed, regen) = connected();
-    feed.request_with(&editor, None, drafted((None, join.clone())), None);
+    feed.request_with(&editor, None, None, drafted((None, join.clone())), None);
     feed.apply(handle(regen.take().pop().unwrap()));
     assert_eq!(feed.draft_touched(), [body]);
 
@@ -495,22 +506,22 @@ fn touched_bodies_are_kept_within_a_run_of_drafts_only() {
     // list: its touch test didn't run.
     let mut refused = join.clone();
     refused.sketch = plate;
-    feed.request_with(&editor, None, drafted((None, refused)), None);
+    feed.request_with(&editor, None, None, drafted((None, refused)), None);
     feed.apply(handle(regen.take().pop().unwrap()));
     assert!(feed.draft_error().is_some());
     assert_eq!(feed.draft_touched(), [body]);
 
     // Without a draft, unanswered, then another: a new run, listing
     // nothing until its answer.
-    feed.request_with(&editor, None, None, None);
+    feed.request_with(&editor, None, None, None, None);
     regen.take();
-    feed.request_with(&editor, None, drafted((None, join.clone())), None);
+    feed.request_with(&editor, None, None, drafted((None, join.clone())), None);
     assert_eq!(feed.draft_touched(), []);
     feed.apply(handle(regen.take().pop().unwrap()));
     assert_eq!(feed.draft_touched(), [body]);
 
     // Another feature's draft, with none in between, likewise.
-    feed.request_with(&editor, None, drafted((Some(plate), join)), None);
+    feed.request_with(&editor, None, None, drafted((Some(plate), join)), None);
     assert_eq!(feed.draft_touched(), []);
 }
 
@@ -535,6 +546,7 @@ fn merged_bodies_follow_the_model_shown() {
         sight: None,
         generation: editor.generation(),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
         error: "failed".to_owned(),
@@ -651,6 +663,7 @@ fn the_parts_bodies_follow_the_mesh_shown() {
         sight: None,
         generation: request.generation().unwrap(),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
         error: "no".to_owned(),

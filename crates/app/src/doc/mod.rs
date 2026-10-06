@@ -139,6 +139,10 @@ pub(crate) struct Doc {
     pub(crate) selected_feature: Option<FeatureId>,
     /// The feature whose row in the Timeline the cursor is over, if any.
     pub(crate) hovered_feature: Option<FeatureId>,
+    /// Where the Timeline's rollback marker is being dragged to, the
+    /// feature it's before or `None` at the end, shown until it's dropped
+    /// and the document rolled there ([`Look::DragRollback`]).
+    pub(crate) rolling: Option<Option<FeatureId>>,
     /// The failures' geometry the viewport draws, see
     /// [`Doc::shown_errors`].
     errors: Arc<varde_view::ShownErrors>,
@@ -408,6 +412,7 @@ impl Doc {
             lineage,
             selected_feature: None,
             hovered_feature: None,
+            rolling: None,
             errors: Arc::default(),
             row_menu: None,
             origin: varde_render::OriginShown::DEFAULT,
@@ -504,8 +509,39 @@ impl Doc {
         // ends rather than at each of its steps.
         let camera = self.animation.as_ref().map_or(&self.camera, |a| &a.to);
         self.feed.view(camera, self.aspect);
+        let until = self.rollback().0;
         self.feed
-            .request_with(&self.editor, exclude, draft, inspect);
+            .request_with(&self.editor, exclude, until, draft, inspect);
+    }
+
+    /// The feature being edited, if one is: the sketch entered, or the
+    /// operation set up from a feature rather than a new one.
+    pub(crate) fn opened_feature(&self) -> Option<FeatureId> {
+        (self.sketch.as_ref().map(|session| session.feature))
+            .or(self.extrude.as_ref().and_then(|session| session.feature))
+            .or(self.revolve.as_ref().and_then(|session| session.feature))
+            .or(self.combine.as_ref().and_then(|session| session.feature))
+            .or(self.motion.as_ref().and_then(|session| session.feature))
+    }
+
+    /// The feature the model is rolled back to before, if it is, and
+    /// whether that's only while a feature is edited: one opened shows
+    /// the history up to it, those after it left out; a new operation
+    /// being set up, which goes last, the whole history; otherwise the
+    /// marker where it's dragged or where the document has it.
+    pub(crate) fn rollback(&self) -> (Option<FeatureId>, bool) {
+        let document = self.editor.document();
+        if let Some(opened) = self.opened_feature() {
+            let after = (document.features().iter())
+                .map(|feature| feature.id)
+                .find(|&id| id > opened);
+            return (after, true);
+        }
+        if self.operating() {
+            return (None, true);
+        }
+        let until = self.rolling.unwrap_or_else(|| document.rollback());
+        (until, false)
     }
 
     /// Whether an operation is being set up: an extrude, a revolve, a
@@ -604,6 +640,15 @@ impl Doc {
             }
             Edit::ConfirmDelete => self.confirm_delete(),
             Edit::ToggleFeatureVisible(id) => self.change(Change::ToggleFeatureVisible(id)),
+            Edit::SetRollback(until) => {
+                self.rolling = None;
+                self.change(Change::SetRollback(until));
+            }
+            Edit::DropRollback => {
+                if let Some(until) = self.rolling.take() {
+                    self.change(Change::SetRollback(until));
+                }
+            }
             Edit::ToolClick(click) => self.tool_click(click),
             Edit::DropGeometry => self.drop_geometry(),
             Edit::DeleteSelection => self.delete_selection(),
@@ -700,6 +745,7 @@ impl Doc {
                     self.apply(Command::SetFeatureVisible(id, visible));
                 }
             }
+            Change::SetRollback(until) => self.apply(Command::SetRollback(until)),
             Change::NewSketch(plane) => self.new_sketch(plane),
             Change::SetPlane {
                 feature,
@@ -1004,6 +1050,13 @@ impl Doc {
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),
             Look::FinishSketch => self.finish_sketch(),
+            // Only outside sketches and operations, as the marker shows
+            // where they put it then.
+            Look::DragRollback(until) => {
+                if self.editable() && !self.operating() && self.sketch.is_none() {
+                    self.rolling = Some(until);
+                }
+            }
             Look::SelectFeature(id) => {
                 if self.editor.document().feature(id).is_some() {
                     self.selected_feature = Some(id);
@@ -1542,6 +1595,7 @@ impl Doc {
             thumbnail: self.thumbnail_request(),
             aspect: self.aspect,
             selected_feature: self.selected_feature,
+            rollback: self.rollback(),
             row_menu: self.row_menu,
             origin: self.origin,
             objects_selected: &self.objects_selected,
@@ -1589,6 +1643,7 @@ pub(crate) enum Change {
     },
     ToggleVisible(BodyId),
     ToggleFeatureVisible(FeatureId),
+    SetRollback(Option<FeatureId>),
     SetOpacity(BodyId, Opacity),
     SetColor(BodyId, Option<Tint>),
     NewSketch(Plane),

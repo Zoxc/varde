@@ -113,6 +113,10 @@ pub enum Command {
     /// them, as one edit.
     RemoveFeatures(Vec<FeatureId>),
     SetFeatureVisible(FeatureId, bool),
+    /// Rolls the Timeline back to before the feature, or forward to its
+    /// end with `None`, see [`Document::rollback`]. A feature that isn't
+    /// there changes nothing.
+    SetRollback(Option<FeatureId>),
     /// Gives a feature or a body `name`, as it is: [`Document::rename`]
     /// makes the command with a name no other has. The name it has
     /// already, or one that isn't there, changes nothing.
@@ -902,6 +906,16 @@ impl Editor {
                 };
                 let mut next = Document::clone(document);
                 next.features[index].visible = visible;
+                next
+            }
+            Command::SetRollback(rollback) => {
+                if document.rollback == rollback
+                    || rollback.is_some_and(|id| document.feature(id).is_none())
+                {
+                    return Ok(());
+                }
+                let mut next = Document::clone(document);
+                next.rollback = rollback;
                 next
             }
             Command::Rename { target, name } => {

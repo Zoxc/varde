@@ -355,8 +355,12 @@ fn failing(doc: &Doc) -> BTreeSet<varde_document::Id> {
         .clone()
 }
 
+/// A failing extrude's sketch edited: the model is rolled back to just
+/// after the sketch, so the extrude isn't computed, nothing is marked in
+/// the sketch and its failure isn't shown. Left, the failure is back;
+/// the sketch fixed in it, the extrude regenerates.
 #[test]
-fn editing_the_sketch_of_a_failing_extrude_marks_the_curves_it_names() {
+fn editing_the_sketch_of_a_failing_extrude_rolls_its_failure_back() {
     let Touching {
         mut doc,
         requests,
@@ -367,62 +371,25 @@ fn editing_the_sketch_of_a_failing_extrude_marks_the_curves_it_names() {
         at_corner,
     } = touching_extrude();
     let geometry = failure(&doc, extrude);
-    let named = geometry.sketch_curves();
-    assert!(!named.is_empty());
-    // Not outside the sketch.
+    assert!(!geometry.sketch_curves().is_empty());
     assert!(doc.sketch.is_none());
 
     doc.look(Look::EditFeature(sketch));
     answer(&mut doc, &requests);
-    let marked = failing(&doc);
-    assert!(!marked.is_empty());
-    assert!(marked.iter().all(|id| at_corner.contains(id)), "{marked:?}");
-    assert_eq!(
-        (marked.iter())
-            .map(|id| u64::from(id.get()))
-            .collect::<Vec<_>>(),
-        named
-    );
-    // The 3D copy shows its points, where the squares touch, but not the
-    // curves the sketch marks: selected or not.
-    assert!(!geometry.points().is_empty());
-    let points_only = |doc: &Doc| {
-        let shown: Vec<_> = doc.shown_errors().shown().collect();
-        let geometry = failure(doc, extrude);
-        matches!(shown[..], [only] if !only.lines && Arc::ptr_eq(&only.geometry, &geometry))
-    };
-    assert!(points_only(&doc));
+    assert_eq!(doc.feed.until(), Some(extrude));
+    assert!(doc.feed.failed_features().is_empty());
+    assert!(failing(&doc).is_empty());
+    assert!(doc.shown_errors().is_empty());
+
+    doc.look(Look::FinishSketch);
+    answer(&mut doc, &requests);
+    assert!(doc.failure_geometry(extrude).is_some());
     doc.selected_feature = Some(extrude);
     doc.refresh_errors();
-    assert!(points_only(&doc));
-    // Left, it's drawn whole while selected; not selected, it's drawn
-    // while its sketch is edited still.
-    doc.look(Look::FinishSketch);
-    assert!(doc.sketch.is_none());
     assert!(shows(&doc, &[&failure(&doc, extrude)]));
-    doc.look(Look::EditFeature(sketch));
-    answer(&mut doc, &requests);
-    doc.selected_feature = None;
-    doc.refresh_errors();
-    assert!(points_only(&doc));
-
-    // A curve it names deleted: not found, so not marked, while the
-    // model shown still has the failure.
-    let mut edited = drawn.clone();
-    let deleted = *marked.first().unwrap();
-    edited.delete(&[deleted]);
-    doc.apply(Command::SetSketch {
-        feature: sketch,
-        sketch: Box::new(edited),
-    });
-    doc.sync();
-    assert!(doc.failure_geometry(extrude).is_some());
-    let left = failing(&doc);
-    assert!(!left.contains(&deleted));
-    assert_eq!(left.len(), marked.len() - 1);
 
     // Fixed: the second square's corner moved off the first's, the
-    // extrude regenerates, and nothing is marked.
+    // extrude regenerates.
     let mut fixed = drawn;
     let moved = fixed.add_point(DVec2::new(12.0, 12.0)).unwrap();
     for &id in &at_corner[2..] {
@@ -443,7 +410,6 @@ fn editing_the_sketch_of_a_failing_extrude_marks_the_curves_it_names() {
     doc.sync();
     answer(&mut doc, &requests);
     assert!(doc.feed.failed_features().is_empty());
-    assert!(failing(&doc).is_empty());
 }
 
 /// What moving the cursor to `at` on `ui` sends.
@@ -617,10 +583,10 @@ fn a_sketch_on_a_curved_face_shows_the_face_while_its_row_is_selected() {
 }
 
 /// A revolve about a line of no length fails, showing the line's place;
-/// while its sketch is edited, the line is marked in it and the place
-/// still shown.
+/// while its sketch is edited, the revolve is rolled back: nothing is
+/// marked or shown, until the sketch is left.
 #[test]
-fn editing_the_sketch_of_a_revolve_about_a_line_of_no_length_marks_the_line() {
+fn editing_the_sketch_of_a_revolve_about_a_line_of_no_length_rolls_it_back() {
     let mut editor = Editor::new(Document::default());
     editor
         .apply(
@@ -668,12 +634,11 @@ fn editing_the_sketch_of_a_revolve_about_a_line_of_no_length_marks_the_line() {
 
     doc.look(Look::EditFeature(sketch));
     answer(&mut doc, &requests);
-    assert_eq!(failing(&doc), BTreeSet::from([line]));
-    // Its place is shown in 3D, the line left to the sketch.
-    let shown: Vec<_> = doc.shown_errors().shown().collect();
-    assert!(
-        matches!(shown[..], [only] if !only.lines && Arc::ptr_eq(&only.geometry, &failure(&doc, revolve))),
-        "{}",
-        shown.len()
-    );
+    assert_eq!(doc.feed.until(), Some(revolve));
+    assert!(failing(&doc).is_empty());
+    assert!(doc.shown_errors().is_empty());
+
+    doc.look(Look::FinishSketch);
+    answer(&mut doc, &requests);
+    assert!(doc.failure_geometry(revolve).is_some());
 }

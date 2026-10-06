@@ -53,6 +53,7 @@ fn ask(regenerator: &mut Regenerator, editor: &Editor, inspect: Inspect) -> (Tab
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: None,
         inspect: Some(Box::new(inspect)),
     });
@@ -86,6 +87,7 @@ fn tables(editor: &Editor) -> Tables {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
     });
@@ -551,6 +553,7 @@ fn of_several_faces_of_the_same_key_the_nearest_is_measured() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: None,
         inspect: None,
     }) else {
@@ -688,6 +691,7 @@ fn a_measure_on_a_draft_is_of_the_drafted_model() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        until: None,
         draft: Some(Box::new(crate::Draft {
             revision: 1,
             feature: Some(plate),
@@ -719,6 +723,7 @@ fn a_failed_regeneration_says_which_measure_it_had() {
         generation: 4.into(),
         document: Arc::new(Document::default()),
         exclude: None,
+        until: None,
         draft: None,
         inspect: Some(Box::new(one(9, body_pick(BodyId::NEW)))),
     };
