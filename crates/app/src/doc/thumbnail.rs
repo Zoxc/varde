@@ -1,6 +1,7 @@
 //! The thumbnail each save writes with the design, for the welcome
 //! screen: the bodies and visible sketches' curves of the last model the committed document
-//! regenerated to (see [`MeshFeed::committed`]), from where Home looks,
+//! regenerated to (see [`MeshFeed::committed`]), with the curves of the sketch being edited,
+//! which that model leaves out, from where Home looks,
 //! framed to fit and cropped, on nothing, in each theme's colours. Only the viewport has the GPU,
 //! so it's rendered there on the next frame (see
 //! [`varde_view::ThumbnailRequest`]) and comes back as a message, and a
@@ -17,6 +18,7 @@ use std::time::Duration;
 
 use iced::futures::channel::oneshot;
 use iced::time::Instant;
+use varde_document::{FeatureId, FeatureKind, Generation};
 use varde_io::thumbnail::Thumbnail;
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::Camera;
@@ -61,6 +63,11 @@ struct Rendered {
 #[derive(Clone)]
 struct Of {
     mesh: Arc<RenderMesh>,
+    /// The model's sketch curves, and with them the edited sketch's.
+    model_sketches: Arc<RenderLines>,
+    /// The sketch being edited, if its curves are added, and the
+    /// generation of the document they're of.
+    edited: Option<(FeatureId, Generation)>,
     sketches: Arc<RenderLines>,
     opacity: Arc<[f32]>,
     tints: Arc<[Option<varde_render::BodyTint>]>,
@@ -72,7 +79,8 @@ impl Of {
     /// unchanged model back as the same one, natively.
     fn is(&self, other: &Of) -> bool {
         Arc::ptr_eq(&self.mesh, &other.mesh)
-            && Arc::ptr_eq(&self.sketches, &other.sketches)
+            && Arc::ptr_eq(&self.model_sketches, &other.model_sketches)
+            && self.edited == other.edited
             && self.opacity == other.opacity
             && self.tints == other.tints
     }
@@ -80,7 +88,8 @@ impl Of {
 
 impl Doc {
     /// What the thumbnail shows now: the committed model's mesh and
-    /// sketch curves, its
+    /// sketch curves, those of the sketch being edited added (if it's
+    /// visible), its
     /// parts as opaque and in the colours their bodies are. `None` before
     /// there's a model.
     fn thumbnail_of(&self) -> Option<Of> {
@@ -95,9 +104,28 @@ impl Doc {
             .map(|&body| document.body(body).map_or(1.0, |body| body.opacity.alpha()));
         let tints =
             (parts.iter()).map(|&body| (document.body(body)?.color).map(varde_view::body_tint));
+        let edited = self.sketch.as_ref().and_then(|session| {
+            let feature = document.feature(session.feature)?;
+            let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
+                return None;
+            };
+            feature
+                .visible
+                .then_some((session.feature, sketch, session.placement))
+        });
+        let mut lines = sketches.clone();
+        let edited = edited.and_then(|(feature, sketch, placement)| {
+            let mut with = RenderLines::clone(&lines);
+            // Too many points to draw: the model's alone.
+            varde_regen::push_sketch_lines(&mut with, sketch, placement).ok()?;
+            lines = Arc::new(with);
+            Some((feature, self.editor.generation()))
+        });
         Some(Of {
             mesh: mesh.clone(),
-            sketches: sketches.clone(),
+            model_sketches: sketches.clone(),
+            edited,
+            sketches: lines,
             opacity: opacity.collect(),
             tints: tints.collect(),
         })

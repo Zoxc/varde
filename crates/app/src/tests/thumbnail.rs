@@ -197,3 +197,35 @@ fn the_welcome_screen_shows_the_thumbnails_the_lane_reads() {
     assert_ne!(shown(Mode::Light), shown(Mode::Dark));
     assert_eq!(shown(Mode::Dark), varde.files.thumbnails[0].1.dark.id());
 }
+
+#[test]
+fn a_save_in_a_sketch_shows_the_sketch_edited() {
+    let (mut varde, io) = with_open_file();
+    let regen = Rc::default();
+    let doc = varde.screen.doc_mut().unwrap();
+    doc.feed.connect(Deferred(Rc::clone(&regen)));
+    doc.apply(Command::Replace(Box::new(with_a_line())));
+    doc.sync();
+    answer(doc, &regen);
+    let feature = doc.editor.document().features()[0].id;
+    doc.enter_sketch(feature);
+    doc.sync();
+    answer(doc, &regen);
+    sent(&io);
+    // The model leaves the sketch edited out of its lines: they're added.
+    assert_eq!(
+        document(&varde)
+            .feed
+            .committed()
+            .unwrap()
+            .sketches
+            .polylines()
+            .count(),
+        0
+    );
+    edit_and_save(&mut varde);
+    let request = document(&varde).thumbnail_request().unwrap();
+    assert_eq!(request.sketches.polylines().count(), 1);
+    render(&mut varde, Some(image(4)));
+    assert_eq!(thumbnail(&sent(&io)), Some(image(4)));
+}

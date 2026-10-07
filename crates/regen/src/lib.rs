@@ -1314,27 +1314,39 @@ pub fn flatten_sketches(
                 None => continue,
             },
         };
-        let cut_back = sketch.cut_back();
-        for entry in sketch.curves.iter().filter(|entry| !entry.construction) {
-            // A checked sketch's curves name its own points.
-            let Some(mut polyline) = sketch.flatten(&entry.curve) else {
-                continue;
-            };
-            // What a fillet or chamfer cuts off a line isn't drawn.
-            if let (Some(kept), &[start, end]) = (cut_back.get(&entry.id), &polyline[..]) {
-                match varde_sketch::cut_line(start, end, *kept).0 {
-                    Some(kept) => polyline = kept.to_vec(),
-                    None => continue,
-                }
-            }
-            lines.push(
-                polyline
-                    .into_iter()
-                    .map(|at| placement.to_world(at).as_vec3()),
-            )?;
-        }
+        push_sketch_lines(&mut lines, sketch, placement)?;
     }
     Ok(lines)
+}
+
+/// Adds the curves of `sketch`, placed at `placement`, to `lines` as
+/// [`flatten_sketches`] draws them: construction curves aside, and what a
+/// fillet or chamfer cuts off a line left out.
+pub fn push_sketch_lines(
+    lines: &mut RenderLines,
+    sketch: &Sketch,
+    placement: Placement,
+) -> Result<(), LinesError> {
+    let cut_back = sketch.cut_back();
+    for entry in sketch.curves.iter().filter(|entry| !entry.construction) {
+        // A checked sketch's curves name its own points.
+        let Some(mut polyline) = sketch.flatten(&entry.curve) else {
+            continue;
+        };
+        // What a fillet or chamfer cuts off a line isn't drawn.
+        if let (Some(kept), &[start, end]) = (cut_back.get(&entry.id), &polyline[..]) {
+            match varde_sketch::cut_line(start, end, *kept).0 {
+                Some(kept) => polyline = kept.to_vec(),
+                None => continue,
+            }
+        }
+        lines.push(
+            polyline
+                .into_iter()
+                .map(|at| placement.to_world(at).as_vec3()),
+        )?;
+    }
+    Ok(())
 }
 
 /// The sketches of `document` that don't solve, warm started from where

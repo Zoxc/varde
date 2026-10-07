@@ -202,8 +202,10 @@ answer without a draft, so a regeneration still on its way, or one that
 failed, leaves the one before), from where Home looks, orthographic,
 framed as large as fits `varde_view::THUMBNAIL_ROOM` (what a card has
 inside its padding) at twice that in pixels and cropped to them,
-with a margin for the edges, on nothing: no background, grid, sketch
-being edited (it's left out of the lines while edited), markers, hover or selection, each body as opaque as it is, once in
+with a margin for the edges, on nothing: no background, grid,
+markers, hover or selection (the sketch being edited, which that model
+leaves out of its lines, is added back as committed if it's visible,
+`varde_regen::push_sketch_lines`, so a save in it shows it), each body as opaque as it is, once in
 each theme's colours (the light palette's scene colours, then the
 dark's, whatever the theme now), so a card shows the one of the theme
 it's in. Only the viewport has the GPU, so the app asks for it
