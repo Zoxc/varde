@@ -312,7 +312,10 @@ impl Sketch {
     /// control points and knots), the other way through the places its
     /// knots are at, which it then passes through but between them
     /// strays a hair, with handles at its ends or at every one, whichever
-    /// keeps nearer its shape ([`through_tips`]). An open spline keeps its first and last points,
+    /// keeps nearer its shape ([`through_tips`]). Knots a spline with a
+    /// handle at every fit point would have go back to those fit points
+    /// ([`handled_params`]), not one at each knot, so converting round
+    /// and back doesn't grow it. An open spline keeps its first and last points,
     /// the rest are new, and those only it used go with what's on them,
     /// as do its handles. Nothing changes if it's `to` already.
     /// `Target` if `curve` is no spline or has no shape.
@@ -330,7 +333,9 @@ impl Sketch {
             SplineKind::Through => {
                 // A closed spline's knots are where its pieces meet,
                 // round from the first; 0 needn't be one.
-                breaks = if spline.closed {
+                breaks = if let Some(params) = handled_params(&shape) {
+                    params
+                } else if spline.closed {
                     shape.knots().to_vec()
                 } else {
                     shape.breaks()
@@ -822,6 +827,62 @@ fn through_tips(shape: &BSpline, along: &[f64], places: &[DVec2]) -> Option<Vec<
         (None, Some((_, tips))) => Some(every.into_iter().zip(tips).collect()),
         (Some(_), _) => Some(ends),
         (None, None) => None,
+    }
+}
+
+/// The parameters of the fit points of a spline with a handle at every
+/// one whose knots are `shape`'s, if they're such a spline's: each such
+/// fit point has two knots, a third of the way to its neighbours
+/// ([`Interpolation`]), which a fit point at each would double. Read back
+/// pair by pair, then checked by making the knots again from them.
+fn handled_params(shape: &BSpline) -> Option<Vec<f64>> {
+    const NEAR: f64 = 1e-9;
+    let closed = shape.closed();
+    let knots: Vec<f64> = if closed {
+        shape.knots().to_vec()
+    } else {
+        let inner = shape.knots().iter().copied();
+        inner.filter(|&k| k > 0.0 && k < 1.0).collect()
+    };
+    let m = knots.len();
+    if m == 0 || !m.is_multiple_of(2) {
+        return None;
+    }
+    let matches = |params: &[f64]| {
+        let every: Vec<usize> = (0..params.len()).collect();
+        let Some(interpolation) = Interpolation::new(params, closed, &every) else {
+            return false;
+        };
+        let mut again: Vec<f64> = interpolation.knots().to_vec();
+        if !closed {
+            again.retain(|&k| k > 0.0 && k < 1.0);
+        }
+        again.len() == m && again.iter().zip(&knots).all(|(a, b)| (a - b).abs() < NEAR)
+    };
+    if closed {
+        // The pairs start at the first knot or the second.
+        (0..2).find_map(|offset| {
+            // Knot `j` on from `offset`, counting round.
+            let at = |j: usize| {
+                let j = offset + j;
+                knots[j % m] + (j / m) as f64
+            };
+            // Fit point `i` at `a`, its first knot, and its neighbour
+            // before's second, `b`: `3a = 2t + t'`, `3b = 2t' + t`.
+            let mut params: Vec<f64> = (0..m / 2)
+                .map(|i| (2.0 * at(2 * i + m) - at(2 * i + m - 1)).rem_euclid(1.0))
+                .collect();
+            params.sort_by(f64::total_cmp);
+            matches(&params).then_some(params)
+        })
+    } else {
+        let mut params = vec![0.0];
+        for pair in knots.chunks(2) {
+            let before = *params.last()?;
+            params.push((3.0 * pair[0] - before) / 2.0);
+        }
+        params.push(1.0);
+        matches(&params).then_some(params)
     }
 }
 

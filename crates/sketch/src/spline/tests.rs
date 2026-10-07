@@ -1254,3 +1254,23 @@ fn a_spline_being_drawn_is_flattened_as_it_would_be() {
     assert!(flatten_spline(&wave()[..3], SplineKind::Control, true).is_some());
     assert!(flatten_spline(&wave()[..1], SplineKind::Through, false).is_none());
 }
+
+#[test]
+fn converting_a_spline_with_handles_round_and_back_again_doesnt_grow_it() {
+    for closed in [false, true] {
+        let (mut sketch, id) = sketch_with(&wave(), closed);
+        let fit = sketch.spline(id).unwrap().points.clone();
+        sketch.add_handles(&fit).unwrap();
+        let before = geom(&sketch, id);
+        for _ in 0..4 {
+            sketch.convert_spline(id, SplineKind::Control).unwrap();
+            sketch.convert_spline(id, SplineKind::Through).unwrap();
+            let spline = sketch.spline(id).unwrap();
+            assert_eq!(spline.points.len(), fit.len(), "{closed}");
+            assert_eq!(spline.handles.len(), fit.len(), "{closed}");
+        }
+        let after = geom(&sketch, id);
+        let both = strays(&before, &after).max(strays(&after, &before));
+        assert!(both < 1e-6, "{closed} {both}");
+    }
+}
