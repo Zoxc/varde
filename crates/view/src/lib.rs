@@ -116,7 +116,7 @@ pub use shell::shell_info;
 pub use shortcut::{
     Binding, DocumentKeys, Held, claimed, document_bindings, escapes, pressed, welcome_bindings,
 };
-pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target, closing};
+pub use snap::{Inference, Level, Own, SNAP_TOLERANCE, Snap, Target, closing};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
 pub use thumbnail::{

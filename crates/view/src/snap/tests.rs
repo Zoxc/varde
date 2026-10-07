@@ -395,3 +395,43 @@ fn a_dragged_rim_snaps_to_points() {
     assert!(!snap_rim(&d.sketch, d.circle, at(5.0, 1.3), PIXEL).snapped());
     assert!(!snap_rim(&d.sketch, d.line, at(8.3, 0.8), PIXEL).snapped());
 }
+
+/// A spline being drawn snaps to its own points placed, all but the last
+/// and the first only once a click there closes it, before the sketch's
+/// points, and to its curve through them before the sketch's curves.
+#[test]
+fn a_spline_snaps_to_itself() {
+    let d = drawn();
+    let placed = [at(7.8, 1.3), at(12.0, 5.0), at(4.0, 8.0)];
+    let targets = [None; 3];
+    let three = tool(Tool::Spline, &placed, &targets);
+    let own = |snap: Snap| (snap.at, target(snap));
+    // (8, 1), the line's end, is nearer the cursor than the first point.
+    assert_eq!(
+        own(snapped(&d.sketch, &three, 8.0, 1.1)),
+        (placed[0], Some(Target::Own(Own::Point(0))))
+    );
+    assert_eq!(
+        own(snapped(&d.sketch, &three, 12.1, 5.1)),
+        (placed[1], Some(Target::Own(Own::Point(1))))
+    );
+    assert_ne!(
+        target(snapped(&d.sketch, &three, 4.1, 8.1)),
+        Some(Target::Own(Own::Point(2)))
+    );
+    let two = tool(Tool::Spline, &placed[..2], &targets[..2]);
+    assert_eq!(
+        target(snapped(&d.sketch, &two, 8.0, 1.1)),
+        Some(Target::Point(d.end))
+    );
+    // Straight between two, on the way.
+    let on = snapped(&d.sketch, &two, 9.9, 3.3);
+    assert_eq!(target(on), Some(Target::Own(Own::Curve)));
+    assert!(on.at.distance(at(9.9, 3.15)) < 0.2, "{on:?}");
+    // Not with another tool.
+    let line = tool(Tool::Line, &placed[..1], &targets[..1]);
+    assert_eq!(
+        target(snapped(&d.sketch, &line, 8.0, 1.1)),
+        Some(Target::Point(d.end))
+    );
+}

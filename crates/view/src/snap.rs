@@ -23,9 +23,14 @@
 //! A click that isn't a point of the shape (a circle's rim, an arc's last
 //! point) snaps only to points, which it then passes through, and, for an
 //! arc, to the tangent arc.
+//!
+//! A spline being drawn also snaps to itself ([`Own`]): to the points
+//! it has placed before the sketch's points (the first only once a
+//! click there closes it, never the last), and to its curve through
+//! them where it's nearer than the sketch's curves.
 
 use glam::DVec2;
-use varde_sketch::{Curve, Id, Sketch, angle, arc_sweep, crossing};
+use varde_sketch::{Curve, Id, Sketch, angle, arc_sweep, crossing, flatten_spline};
 
 use crate::dimension::sector_holds;
 use crate::hit;
@@ -66,6 +71,18 @@ pub enum Target {
     Quadrant { round: Id, level: Level },
     /// Somewhere on a curve or an axis.
     On(Id),
+    /// The shape being drawn itself, which isn't in the sketch yet.
+    Own(Own),
+}
+
+/// What of a spline being drawn a point snapped to it is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Own {
+    /// The point it placed with this index.
+    Point(usize),
+    /// Somewhere on its curve through the points placed: only where, as
+    /// a point on its own curve is so whatever it does.
+    Curve,
 }
 
 /// Which of a circle's quadrants: level with its centre (left or right of
@@ -89,11 +106,13 @@ pub enum Inference {
 }
 
 impl Target {
-    /// The item it's on, which has to be there for it to mean anything.
-    pub fn item(self) -> Id {
+    /// The item of the sketch's it's on, which has to be there for it to
+    /// mean anything: none for the shape itself.
+    pub fn item(self) -> Option<Id> {
         match self {
-            Target::Point(id) | Target::Midpoint(id) | Target::On(id) => id,
-            Target::Quadrant { round, .. } => round,
+            Target::Point(id) | Target::Midpoint(id) | Target::On(id) => Some(id),
+            Target::Quadrant { round, .. } => Some(round),
+            Target::Own(_) => None,
         }
     }
 }
@@ -133,7 +152,7 @@ impl Snap {
     pub fn within(self, has: impl Fn(Id) -> bool) -> Snap {
         Snap {
             at: self.at,
-            target: self.target.filter(|target| has(target.item())),
+            target: (self.target).filter(|target| target.item().is_none_or(&has)),
             inference: self
                 .inference
                 .filter(|inference| inference.item().is_none_or(&has)),
@@ -148,10 +167,12 @@ impl Snap {
     /// The glyphs shown by the cursor: what the point is on, then how the
     /// shape runs.
     pub(crate) fn kinds(&self) -> Vec<ConstraintKind> {
-        let target = self.target.map(|target| match target {
-            Target::Midpoint(_) => ConstraintKind::Midpoint,
-            Target::Point(_) | Target::Quadrant { .. } | Target::On(_) => {
-                ConstraintKind::Coincident
+        // A point on its own spline isn't tied there: true whatever.
+        let target = self.target.and_then(|target| match target {
+            Target::Midpoint(_) => Some(ConstraintKind::Midpoint),
+            Target::Own(Own::Curve) => None,
+            Target::Point(_) | Target::Quadrant { .. } | Target::On(_) | Target::Own(_) => {
+                Some(ConstraintKind::Coincident)
             }
         });
         let inference = self.inference.map(|inference| match inference {
@@ -166,7 +187,7 @@ impl Snap {
 
     /// The item to highlight: what the point is on.
     pub(crate) fn highlighted(&self) -> Option<Id> {
-        self.target.map(Target::item)
+        self.target.and_then(Target::item)
     }
 
     /// The dashed guide to draw for it, in sketch coordinates, with
@@ -272,7 +293,8 @@ pub(crate) fn snap_drag(sketch: &Sketch, dragged: Id, cursor: DVec2, pixel: f64)
         (special_points(sketch).into_iter())
             .filter(|snap| {
                 snap.target
-                    .is_none_or(|target| !own.contains(&target.item()))
+                    .and_then(Target::item)
+                    .is_none_or(|item| !own.contains(&item))
             })
             .collect()
     };
@@ -389,7 +411,7 @@ fn snap_within(
         .filter(|&(at, _)| Some(at) != start)
         .map(|(at, id)| Snap::on(at, Target::Point(id)))
         .collect();
-    if let Some(snap) = near(points) {
+    if let Some(snap) = near(own_points(tool, pixel)).or_else(|| near(points)) {
         return Some(snap);
     }
     if placing == Placing::Through {
@@ -413,7 +435,17 @@ fn snap_within(
     let runs = |start: DVec2, direction: DVec2, at: DVec2| {
         (at - start).dot(direction).abs() >= MIN_RUN * pixel
     };
-    if let Some(curve) = on_curve(sketch, cursor, tolerance) {
+    let own = own_foot(tool, cursor).filter(|at| at.distance(cursor) <= tolerance);
+    let curve = on_curve(sketch, cursor, tolerance);
+    let foot_of = |curve| foot(sketch, curve, cursor);
+    if let Some(at) = own
+        && curve
+            .and_then(foot_of)
+            .is_none_or(|foot| at.distance(cursor) < foot.distance(cursor))
+    {
+        return Some(Snap::on(at, Target::Own(Own::Curve)));
+    }
+    if let Some(curve) = curve {
         let crossings = start.map_or_else(Vec::new, |start| {
             directions
                 .iter()
@@ -445,6 +477,39 @@ fn snap_within(
         })
         .collect();
     near(along)
+}
+
+/// The points the Spline tool `tool` has placed that its next click
+/// snaps to, a pixel being `pixel`: all but the last, and the first only
+/// where a click there closes the spline.
+fn own_points(tool: &ActiveTool, pixel: f64) -> Vec<Snap> {
+    if tool.tool != Tool::Spline {
+        return Vec::new();
+    }
+    let last = tool.placed.len().saturating_sub(1);
+    (tool.placed.iter().enumerate())
+        .filter(|&(index, &at)| index < last && (index > 0 || tool.closes(at, pixel)))
+        .map(|(index, &at)| Snap::on(at, Target::Own(Own::Point(index))))
+        .collect()
+}
+
+/// The place nearest `cursor` on the curve the Spline tool `tool` has
+/// placed so far, as its preview draws it short of the cursor: straight
+/// between its points while too few. None with fewer than two.
+fn own_foot(tool: &ActiveTool, cursor: DVec2) -> Option<DVec2> {
+    if tool.tool != Tool::Spline || tool.placed.len() < 2 {
+        return None;
+    }
+    let line = flatten_spline(tool.placed, tool.spline_kind(), false)
+        .unwrap_or_else(|| tool.placed.to_vec());
+    (line.windows(2))
+        .filter_map(|pair| {
+            let along = pair[1] - pair[0];
+            let t = ((cursor - pair[0]).dot(along) / along.length_squared()).clamp(0.0, 1.0);
+            let at = pair[0] + along * t;
+            at.is_finite().then_some(at)
+        })
+        .min_by(|a, b| a.distance(cursor).total_cmp(&b.distance(cursor)))
 }
 
 /// Lines' midpoints and circles' and arcs' quadrants.
@@ -595,7 +660,7 @@ fn directions(sketch: &Sketch, tool: &ActiveTool, start: DVec2) -> Vec<(Inferenc
                 .collect(),
             (None, None) => Vec::new(),
         },
-        None => Vec::new(),
+        Some(Target::Own(_)) | None => Vec::new(),
     };
     at_start.retain(|&(curve, _)| !curve.is_builtin());
     let is_line = |curve| sketch.line(curve).is_some();

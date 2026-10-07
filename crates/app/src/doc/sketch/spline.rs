@@ -7,10 +7,10 @@
 //! other (see [`propose`](super::propose)), one undo step.
 
 use varde_sketch::{
-    Add, Curve, Handle, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, SketchEdit, Spline, SplineKind,
-    control_knots, handle_tips,
+    Add, Constraint, Curve, Handle, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, SketchEdit, Spline,
+    SplineKind, control_knots, handle_tips,
 };
-use varde_view::{Target, Tool, ToolClick};
+use varde_view::{Own, Target, Tool, ToolClick};
 
 use super::Drawing;
 use super::edit::place;
@@ -152,7 +152,8 @@ impl Doc {
 
 /// The spline of `kind` that `drawing` has placed, open or `closed`, as
 /// an addition to `sketch`: its points where they snapped (see
-/// [`place`]), through fit points with a handle at each, by control
+/// [`place`]), one snapped to the spline itself a new point, coincident
+/// (`auto`) with the point placed there if it snapped to one, through fit points with a handle at each, by control
 /// points with knots from where they are.
 fn spline_add(
     sketch: &Sketch,
@@ -161,9 +162,21 @@ fn spline_add(
     closed: bool,
 ) -> Result<Add, OutOfIds> {
     let mut add = Add::new(sketch);
-    let mut points = Vec::with_capacity(drawing.placed.len());
+    let mut points: Vec<Id> = Vec::with_capacity(drawing.placed.len());
     for (&at, &target) in drawing.placed.iter().zip(&drawing.targets) {
-        points.push(place(sketch, &mut add, at, target)?);
+        let point = match target {
+            Some(Target::Own(own)) => {
+                let point = add.point(at)?;
+                if let Own::Point(index) = own
+                    && let Some(&other) = points.get(index)
+                {
+                    add.auto.push(Constraint::Coincident(point, other));
+                }
+                point
+            }
+            _ => place(sketch, &mut add, at, target)?,
+        };
+        points.push(point);
     }
     let knots = match kind {
         SplineKind::Through => Vec::new(),

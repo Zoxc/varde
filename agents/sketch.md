@@ -1784,7 +1784,14 @@ an arc ending at the start (or a circle or arc it's on), perpendicular
 then parallel to a line ending there (or it's on); none within `MIN_RUN`
 pixels of the start. A click that isn't one of the shape's points (a
 circle's rim, an arc's last point) snaps only to points, and for an arc
-the tangent arc; the Dimension tool doesn't snap. A rectangle's corners
+the tangent arc; the Dimension tool doesn't snap. A spline being drawn
+snaps to itself (`Target::Own`): to the points it has placed, before the
+sketch's points (never its last, its first only where a click closes it,
+`ActiveTool::closes`), and to its curve through them, as the preview
+draws it short of the cursor, where that's nearer than the sketch's
+curves. A point snapped to one it placed is a new point, `auto`
+coincident with it; one on its curve is only placed there, untied, as a
+point on its own curve is so whatever (`Constraint::own_point`). A rectangle's corners
 (or centre) and a polygon's centre and corner snap as a shape's points,
 with nothing inferred.
 

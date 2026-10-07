@@ -1,7 +1,7 @@
 use glam::DVec2;
 use iced::keyboard::{self, key};
 use varde_sketch::{Constraint, Curve, Id, Kind, SplineKind};
-use varde_view::{Edit, Look, Message as Ui, Target, Tool, ToolClick};
+use varde_view::{Edit, Look, Message as Ui, Own, Target, Tool, ToolClick};
 
 use crate::Message;
 use crate::doc::sketch::tests::{
@@ -472,4 +472,39 @@ fn the_dimension_tool_takes_a_handle_as_a_line() {
     select(&mut doc, line);
     doc.look(Look::SelectTool(Tool::Dimension));
     assert_eq!(drawing(&doc).unwrap().picked, [line]);
+}
+
+/// A spline snapped to itself while drawn gets a point of its own there,
+/// coincident with the point it placed there, or where it was on its
+/// curve, untied (a point on its own curve would be so whatever).
+#[test]
+fn a_spline_snapped_to_itself_is_tied_to_itself() {
+    let (mut doc, _, _) = sketching();
+    doc.look(Look::SelectTool(Tool::Spline));
+    click(&mut doc, 0.0, 0.0);
+    click(&mut doc, 10.0, 5.0);
+    click(&mut doc, 20.0, 0.0);
+    let own = |target, x, y| {
+        Edit::ToolClick(ToolClick {
+            target: Some(Target::Own(target)),
+            ..click_at(x, y)
+        })
+    };
+    doc.update(own(Own::Point(1), 10.0, 5.0));
+    doc.update(own(Own::Curve, 5.0, 3.0));
+    doc.key(enter());
+    let drawn = sketch(&doc).clone();
+    let (_, spline) = splines(&drawn).pop().unwrap();
+    assert_eq!(spline.points.len(), 5);
+    let [_, second, _, again, on] = spline.points[..] else {
+        unreachable!()
+    };
+    assert_ne!(again, second);
+    let has = |constraint| drawn.constraints.iter().any(|e| e.constraint == constraint);
+    assert!(
+        has(Constraint::Coincident(again, second)) || has(Constraint::Coincident(second, again)),
+        "{:?}",
+        drawn.constraints
+    );
+    assert_eq!(drawn.point(on).unwrap().at, DVec2::new(5.0, 3.0));
 }

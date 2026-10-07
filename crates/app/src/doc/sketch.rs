@@ -1142,7 +1142,10 @@ impl Doc {
                 // point placed isn't on what's gone.
                 if let Some(drawing) = &mut session.tool {
                     for target in &mut drawing.targets {
-                        if target.is_some_and(|target| sketch.kind(target.item()).is_none()) {
+                        if target
+                            .and_then(|target| target.item())
+                            .is_some_and(|item| sketch.kind(item).is_none())
+                        {
                             *target = None;
                         }
                     }

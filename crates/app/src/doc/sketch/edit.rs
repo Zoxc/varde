@@ -812,7 +812,8 @@ pub(super) fn place(
 /// curve or an axis, on a circle level with its centre or above it.
 fn ties(sketch: &Sketch, point: Id, target: Option<Target>) -> Vec<Constraint> {
     match target {
-        None => Vec::new(),
+        // The shape's own ties are the shape's to make.
+        None | Some(Target::Own(_)) => Vec::new(),
         Some(Target::Point(other)) => vec![Constraint::Coincident(point, other)],
         Some(Target::Midpoint(line)) => vec![Constraint::Midpoint { point, line }],
         Some(Target::On(curve)) => vec![Constraint::PointOnCurve { point, curve }],
