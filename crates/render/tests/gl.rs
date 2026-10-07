@@ -129,7 +129,8 @@ fn frame<'a>(
         tints: &[],
         sketches,
         grid: GridPlane::XY,
-        faded: false,
+        fade: 0.0,
+        fading_grid: None,
         wireframe: false,
         tessellation: false,
         shading: Shading::Regular,
@@ -282,7 +283,8 @@ fn a_closed_edge_is_joined_where_it_closes_on_gl() {
     let sketches = Arc::default();
     let render = |faded| {
         let frame = Frame {
-            faded,
+            fade: if faded { 1.0 } else { 0.0 },
+            fading_grid: None,
             // The bottom's circle, hidden, isn't drawn faded.
             hidden_edges: false,
             grid: hidden_grid(),

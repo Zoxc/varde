@@ -778,6 +778,7 @@ impl Doc {
             _ => Sketch::default(),
         };
         self.sketch = Some(SketchSession::new(id, placement, entered));
+        self.fade.start(1.0, &placement, iced::time::Instant::now());
         self.panel = Panel::Sketch;
         // The rail's sets are the sketch's now.
         self.rail.close();
@@ -804,7 +805,9 @@ impl Doc {
             to.set_projection(self.camera.projection());
             self.animate_camera(to);
         }
-        self.sketch = None;
+        if let Some(session) = self.sketch.take() {
+            (self.fade).start(0.0, &session.placement, iced::time::Instant::now());
+        }
         // The tab shown before, unless Objects was picked in the sketch.
         let before = self.panel_before_sketch.take().unwrap_or(self.panel);
         self.panel = match self.panel {

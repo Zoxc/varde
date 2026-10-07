@@ -44,6 +44,7 @@ use varde_view::{
 #[cfg(test)]
 pub(crate) use camera::CAMERA_ANIMATION;
 pub(crate) use camera::CameraAnimation;
+use camera::Fade;
 use camera::Pivot;
 #[cfg(test)]
 pub(crate) use camera::{PIVOT_FADE, PIVOT_SHOWN};
@@ -203,6 +204,9 @@ pub(crate) struct Doc {
     /// it: see [`Doc::take_focus`].
     focus: Option<Focus>,
     animation: Option<CameraAnimation>,
+    /// How faded the model is, turning with the camera into a sketch
+    /// and out of it.
+    fade: Fade,
     /// Whether the camera is to frame the first model shown, see
     /// [`Doc::fit_first_model`]: a document opened with features (from a
     /// file or as a sample), until its first model shows.
@@ -434,6 +438,7 @@ impl Doc {
             sketch_split: GEOMETRY_SHARE,
             focus: None,
             animation: None,
+            fade: Fade::default(),
             fit_on_model,
             before_sketch: None,
             panel_before_sketch: None,
@@ -556,7 +561,7 @@ impl Doc {
     /// Whether the camera is turning to a new view or the pivot's marker
     /// fading.
     pub(crate) fn animating(&self) -> bool {
-        self.animation.is_some() || self.pivot_fading()
+        self.animation.is_some() || self.fade.moving() || self.pivot_fading()
     }
 
     /// Whether the document may be edited, and so saved.
@@ -1540,6 +1545,8 @@ impl Doc {
             editor: &self.editor,
             camera: &self.camera,
             pivot: self.pivot_marker(),
+            fade: self.fade.value,
+            fading_grid: self.fade.grid.filter(|_| self.fade.moving()),
             mesh: self.feed.mesh(),
             parts: self.feed.parts(),
             opacity_preview: self.opacity_preview,

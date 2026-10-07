@@ -322,11 +322,22 @@ impl Camera {
     pub fn lerp(&self, to: &Camera, t: f32) -> Camera {
         use std::f32::consts::{PI, TAU};
         let yaw = (to.yaw - self.yaw + PI).rem_euclid(TAU) - PI;
+        let distance = self.distance * (to.distance / self.distance).powf(t);
+        // The target moves in step with the distance, not with `t`: the
+        // view then scales about the one point that stays put on screen,
+        // rather than zooming in faster than it pans and swinging what it
+        // turns to off the view and back. Without a zoom, it moves with `t`.
+        let span = to.distance - self.distance;
+        let along = if span.abs() > self.distance.min(to.distance) * 1e-3 {
+            ((distance - self.distance) / span).clamp(0.0, 1.0)
+        } else {
+            t
+        };
         Camera {
-            target: self.target.lerp(to.target, t),
+            target: self.target.lerp(to.target, along),
             yaw: self.yaw + yaw * t,
             pitch: self.pitch + (to.pitch - self.pitch) * t,
-            distance: self.distance * (to.distance / self.distance).powf(t),
+            distance,
             ..*to
         }
     }

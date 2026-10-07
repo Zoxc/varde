@@ -4,15 +4,16 @@ use std::time::Duration;
 
 use glam::Vec3;
 use iced::time::Instant;
-use varde_render::Camera;
+use varde_document::Placement;
+use varde_render::{Camera, GridPlane};
 
 use varde_expr::LengthUnit;
 
 use super::{Doc, home_camera};
 
-/// How long the camera takes to turn to a new view, every turn alike, as
-/// the UI mock's `CAM_MS`.
-pub(crate) const CAMERA_ANIMATION: Duration = Duration::from_millis(325);
+/// How long the camera takes to turn to a new view, every turn alike, and
+/// how long the model takes to fade going into a sketch or out of one.
+pub(crate) const CAMERA_ANIMATION: Duration = Duration::from_millis(250);
 
 /// How long the pivot's marker shows once picked before it fades, and how
 /// long it takes to fade, then and when the cursor leaves the view cube.
@@ -88,6 +89,43 @@ impl CameraAnimation {
             let eased = 1.0 - (1.0 - t).powi(3);
             self.from.lerp(&self.to, eased)
         })
+    }
+}
+
+/// How faded the model is, from 0 to 1, and where it's fading to, eased
+/// as the camera turns.
+#[derive(Debug, Default)]
+pub(crate) struct Fade {
+    pub(crate) value: f32,
+    /// The plane of the sketch gone into or left, whose grid fades with
+    /// the model.
+    pub(crate) grid: Option<GridPlane>,
+    to: Option<(f32, f32, Instant)>,
+}
+
+impl Fade {
+    /// Fades from where it is to `to`, from `now`, the grid onto or off
+    /// the plane of the sketch at `placement`.
+    pub(crate) fn start(&mut self, to: f32, placement: &Placement, now: Instant) {
+        self.grid = Some(varde_view::sketch_grid(placement));
+        self.to = (self.value != to).then_some((self.value, to, now));
+    }
+
+    pub(crate) fn moving(&self) -> bool {
+        self.to.is_some()
+    }
+
+    fn frame(&mut self, now: Instant) {
+        if let Some((from, to, start)) = self.to {
+            let t =
+                now.saturating_duration_since(start).as_secs_f32() / CAMERA_ANIMATION.as_secs_f32();
+            if t < 1.0 {
+                self.value = from + (to - from) * (1.0 - (1.0 - t).powi(3));
+            } else {
+                self.value = to;
+                self.to = None;
+            }
+        }
     }
 }
 
@@ -205,6 +243,7 @@ impl Doc {
     /// Moves the camera along its animation to where it is at `now`, and
     /// fades the pivot's marker.
     pub(crate) fn animation_frame(&mut self, now: Instant) {
+        self.fade.frame(now);
         if !self.cube_hovered
             && let Some(pivot) = &mut self.pivot
         {

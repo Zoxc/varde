@@ -45,6 +45,11 @@ pub struct DocumentState<'a> {
     /// The point the camera orbits, marked as it's picked and while the
     /// cursor is over the view cube, if one was picked and it shows.
     pub pivot: Option<varde_render::Pivot>,
+    /// How faded the model is, from 0 to 1: fully in a sketch, and
+    /// between as it fades going into one or out of it.
+    pub fade: f32,
+    /// The plane of the sketch the grid fades onto or off with it.
+    pub fading_grid: Option<varde_render::GridPlane>,
     /// The document's mesh, which the app gets from the regeneration side,
     /// so it may lag behind the document.
     pub mesh: &'a Arc<RenderMesh>,
@@ -841,6 +846,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.sketches,
                         state.camera,
                         state.pivot,
+                        (state.fade, state.fading_grid),
                         state.picking.clone(),
                         state.highlight,
                         state.hover_through,

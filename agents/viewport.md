@@ -126,8 +126,12 @@ their parts itself) lays them out first, then the selection, then the
 status, each in what's left, cut short, so the status gives way first.
 
 In a sketch the viewport's `Program` is given the sketch (`Sketching`, in
-`viewport/sketch.rs`): the model is drawn faded, the grid on the sketch's
-plane, and the sketch itself by the renderer over everything; the left
+`viewport/sketch.rs`): the model is drawn faded (`Frame::fade`, which
+the `Doc`'s `Fade` eases from 0 to 1 going in and back going out, over
+`CAMERA_ANIMATION` as the camera turns; on the way each part is drawn as
+glass going from its own opacity to the faded look, its hidden edges
+fading out, and the grid crossfades between the XY plane and the
+sketch's, `Frame::fading_grid`), the grid on the sketch's plane, and the sketch itself by the renderer over everything; the left
 button is the sketch's, for selecting, dragging and drawing geometry, and
 so is `Esc` while it's held (see `agents/sketch.md`), and with a drawing
 tool the modifiers, whose `Shift` turns snapping off. The `Program` sends

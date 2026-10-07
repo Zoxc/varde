@@ -49,6 +49,7 @@ pub(crate) use measure::Measuring;
 pub(crate) use motion::Moving;
 pub(crate) use revolve::Revolving;
 pub(crate) use sketch::Sketching;
+pub use sketch::sketch_grid;
 
 /// The operation being set up in the viewport, if one is: never with a
 /// sketch.
@@ -176,6 +177,7 @@ pub(crate) fn viewport<'a>(
     sketches: &Arc<RenderLines>,
     camera: &'a Camera,
     pivot: Option<Pivot>,
+    fade: (f32, Option<GridPlane>),
     picking: Option<ModelPicking<'a>>,
     highlight: Option<&Arc<ModelHighlight>>,
     hover_through: bool,
@@ -242,6 +244,7 @@ pub(crate) fn viewport<'a>(
     program.scene.errors = errors.clone();
     program.scene.hover_through = hover_through;
     program.scene.origin = origin;
+    (program.scene.fade, program.scene.fading_grid) = fade;
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -286,6 +289,8 @@ fn program<'a>(
             pivot,
             colors: palette.scene,
             sketch_plane: sketching.as_ref().map(Sketching::grid),
+            fade: if sketching.is_some() { 1.0 } else { 0.0 },
+            fading_grid: None,
             hidden_edges: true,
             wireframe: false,
             tessellation: false,
@@ -358,6 +363,11 @@ struct Scene {
     colors: Colors,
     /// The plane of the sketch being edited, if one is.
     sketch_plane: Option<GridPlane>,
+    /// How faded the model is: see [`Frame::fade`].
+    fade: f32,
+    /// The plane the grid fades onto or off with it: see
+    /// [`Frame::fading_grid`].
+    fading_grid: Option<GridPlane>,
     /// Whether the edges the model hides are drawn, dashed (the renderer
     /// ignores it in a sketch).
     hidden_edges: bool,
@@ -1297,7 +1307,8 @@ impl shader::Primitive for Primitive {
                 // A sketch being edited moves the grid onto its plane and
                 // fades the model.
                 grid: scene.sketch_plane.unwrap_or(GridPlane::XY),
-                faded: scene.sketch_plane.is_some(),
+                fade: scene.fade,
+                fading_grid: scene.fading_grid,
                 hidden_edges: scene.hidden_edges,
                 wireframe: scene.wireframe,
                 tessellation: scene.tessellation,

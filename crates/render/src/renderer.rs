@@ -177,6 +177,9 @@ const WORLD_Z: u32 = 1 << 2;
 const ORIGIN_MARKER: u32 = 1 << 3;
 /// How far a line's bit is shifted to say it's hovered, as in the shader.
 const HOVERED_SHIFT: u32 = 4;
+/// Draws the grid's axis lines alone, not its lines: the Z axis fading
+/// over a sketch's grid on the XY plane.
+const AXES_ONLY: u32 = 1 << 7;
 
 /// A quad per origin plane, an instance each: see `vs_origin_plane`.
 const PLANE_VERTICES: u32 = 6;
@@ -353,9 +356,18 @@ pub struct Frame<'a> {
     pub sketches: &'a Arc<RenderLines>,
     /// The plane the grid is drawn on.
     pub grid: GridPlane,
-    /// Whether the model is drawn faded, as it is behind a sketch being
-    /// edited: see [`Colors::faded_alpha`].
-    pub faded: bool,
+    /// How faded the model is drawn, from 0 (not at all) to 1 (as it is
+    /// behind a sketch being edited, [`Colors::faded_alpha`]), between
+    /// the two as it fades going into a sketch or out of one: each part
+    /// then goes from its own [`Self::opacity`] towards the faded model's,
+    /// and the edges the model hides fade out. NaN is 0.
+    pub fade: f32,
+    /// While [`Self::fade`] moves, the plane of the sketch the grid fades
+    /// onto or off, from its first frame to its last: it's drawn on that plane at the fade's share and
+    /// on the world's XY plane at the rest, each with its own axis lines.
+    /// The XY plane itself keeps the grid, the Z axis fading over it.
+    /// `None` draws it on [`Self::grid`] alone.
+    pub fading_grid: Option<GridPlane>,
     /// Whether the mesh's wires ([`RenderMesh::wires`]) are drawn with its
     /// edges, as creases are: [`CREASE_WIDTH`] wide at [`CREASE_ALPHA`].
     /// Changing it re-uploads nothing.
@@ -1257,6 +1269,13 @@ pub struct Slot {
     uniforms: wgpu::Buffer,
     /// Group 0: the uniforms, and the tints at a dynamic offset.
     bind_group: wgpu::BindGroup,
+    /// The uniforms again with the grid on the other plane of
+    /// [`Frame::fading_grid`]'s crossfade, and their group 0.
+    other_grid: wgpu::Buffer,
+    other_grid_group: wgpu::BindGroup,
+    /// The alpha steps the grid is drawn at, on [`Frame::grid`] and on
+    /// the other plane if it's crossfading: see [`Frame::fading_grid`].
+    grid_steps: (u32, Option<u32>),
     /// The colours the mesh's parts are drawn in, linear, an entry each
     /// [`Renderer::tint_stride`] apart: the first [`Colors::model`], then
     /// one for each other colour of [`Frame::tints`]. Written each
@@ -2104,39 +2123,43 @@ impl Renderer {
         self.format
     }
 
-    /// A slot's tints' buffer with room for `room` entries, and its group
-    /// 0 binding it with `uniforms`.
+    /// A slot's tints' buffer with room for `room` entries, and its
+    /// groups 0 binding it with `uniforms` and with `other_grid`.
     fn tints(
         &self,
         device: &wgpu::Device,
         uniforms: &wgpu::Buffer,
+        other_grid: &wgpu::Buffer,
         room: u32,
-    ) -> (wgpu::Buffer, wgpu::BindGroup) {
+    ) -> (wgpu::Buffer, wgpu::BindGroup, wgpu::BindGroup) {
         let tints = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("varde tints"),
             size: u64::from(room) * u64::from(self.tint_stride),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("varde uniforms"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniforms.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &tints,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(TINT_SIZE),
-                    }),
-                },
-            ],
-        });
-        (tints, bind_group)
+        let group = |uniforms: &wgpu::Buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("varde uniforms"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniforms.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &tints,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(TINT_SIZE),
+                        }),
+                    },
+                ],
+            })
+        };
+        let (bind_group, other_group) = (group(uniforms), group(other_grid));
+        (tints, bind_group, other_group)
     }
 
     /// Writes the colours `frame`'s parts are drawn in to `slot`'s tints,
@@ -2175,7 +2198,8 @@ impl Renderer {
         let needed = colors.len() as u32;
         if needed > slot.tint_room {
             let room = needed.next_power_of_two().min(most as u32).max(needed);
-            (slot.tints, slot.bind_group) = self.tints(device, &slot.uniforms, room);
+            (slot.tints, slot.bind_group, slot.other_grid_group) =
+                self.tints(device, &slot.uniforms, &slot.other_grid, room);
             slot.tint_room = room;
         }
         let stride = self.tint_stride as usize;
@@ -2201,10 +2225,19 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let (tints, bind_group) = self.tints(device, &uniforms, 1);
+        let other_grid = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("varde uniforms, other grid"),
+            size: size_of::<Uniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let (tints, bind_group, other_grid_group) = self.tints(device, &uniforms, &other_grid, 1);
         Slot {
             uniforms,
             bind_group,
+            other_grid,
+            other_grid_group,
+            grid_steps: (self.alphas.opaque, None),
             tints,
             tint_room: 1,
             part_tints: Vec::new(),
@@ -2256,12 +2289,20 @@ impl Renderer {
         frame: &Frame<'_>,
     ) -> Result<(), PrepareError> {
         slot.viewport = frame.viewport;
-        slot.faded = frame.faded;
-        slot.hover_through = frame.hover_through && !frame.faded;
-        slot.hidden_edges = frame.hidden_edges && !frame.faded;
+        let fade = if frame.fade.is_nan() {
+            0.0
+        } else {
+            frame.fade.clamp(0.0, 1.0)
+        };
+        let faded = fade > 0.0;
+        // Wholly faded, the model's drawn as one faded surface; on the way,
+        // its parts as glass growing fainter, and its hidden edges with it.
+        slot.faded = fade == 1.0;
+        slot.hover_through = frame.hover_through && !faded;
+        slot.hidden_edges = frame.hidden_edges && !slot.faded;
         // In a sketch, the grid's axis lines and the marker are the
         // sketch's.
-        slot.origin = if frame.faded {
+        slot.origin = if faded {
             OriginShown {
                 marker: true,
                 axes: [true, true, false],
@@ -2292,7 +2333,35 @@ impl Renderer {
             });
         }
         // Faded, every part is drawn alike.
-        let opacity = if frame.faded { &[] } else { frame.opacity };
+        let fading: Vec<f32>;
+        let opacity = if slot.faded {
+            &[]
+        } else if faded {
+            // Towards the alpha whose two layers, glass's back and front
+            // faces, cover as much as the faded model's one: the nearest
+            // only.
+            let faded_alpha = if (0.0..=1.0).contains(&frame.colors.faded_alpha) {
+                frame.colors.faded_alpha
+            } else {
+                1.0
+            };
+            let to = 1.0 - (1.0 - faded_alpha).sqrt();
+            let parts = slot.mesh.as_ref().map_or(0, |mesh| mesh.parts.len());
+            fading = (0..parts)
+                .map(|i| {
+                    let own = frame
+                        .opacity
+                        .get(i)
+                        .copied()
+                        .filter(|a| (0.0..=1.0).contains(a));
+                    let own = own.unwrap_or(1.0);
+                    own + (to - own) * fade
+                })
+                .collect();
+            &fading
+        } else {
+            frame.opacity
+        };
         if let Some(mesh) = &mut slot.mesh {
             mesh.wireframe = frame.wireframe;
             mesh.tessellation = frame.tessellation;
@@ -2399,7 +2468,7 @@ impl Renderer {
         let aspect = frame.viewport.aspect();
         let half = camera.half_extents(aspect);
         // Out of range, the model is drawn opaque rather than not at all.
-        let alpha = if frame.faded && (0.0..=1.0).contains(&colors.faded_alpha) {
+        let alpha = if slot.faded && (0.0..=1.0).contains(&colors.faded_alpha) {
             colors.faded_alpha
         } else {
             1.0
@@ -2426,7 +2495,7 @@ impl Renderer {
             1.0
         };
         let hidden_alpha = if (0.0..=1.0).contains(&colors.hidden_edge_alpha) {
-            colors.hidden_edge_alpha
+            colors.hidden_edge_alpha * (1.0 - fade)
         } else {
             0.0
         };
@@ -2487,6 +2556,65 @@ impl Renderer {
             selected: with_alpha(colors.selected, selected_edge_shade),
         };
         queue.write_buffer(&slot.uniforms, 0, bytemuck::bytes_of(&uniforms));
+
+        // Crossfading between the world's XY plane and a sketch's, each
+        // drawn at its share, the one that isn't `grid` from the other
+        // uniforms.
+        slot.grid_steps = match frame.fading_grid {
+            // On the XY plane the grid stays; the axis lines it has outside
+            // the sketch, not in it, the Z axis's, fade over it.
+            Some(plane) if plane == GridPlane::XY => {
+                let sketch = OriginShown {
+                    marker: true,
+                    axes: [true, true, false],
+                    ..OriginShown::NONE
+                };
+                let z_only = WORLD_Z | WORLD_Z << HOVERED_SHIFT;
+                let outside = frame.origin.with_hovered().mask(&plane) & z_only | AXES_ONLY;
+                let with_mask = |mask: u32| Uniforms {
+                    grid_origin: plane.origin().extend(mask as f32).to_array(),
+                    ..uniforms
+                };
+                queue.write_buffer(
+                    &slot.uniforms,
+                    0,
+                    bytemuck::bytes_of(&with_mask(sketch.mask(&plane))),
+                );
+                queue.write_buffer(&slot.other_grid, 0, bytemuck::bytes_of(&with_mask(outside)));
+                (self.alphas.opaque, Some(self.alphas.step(Some(1.0 - fade))))
+            }
+            Some(plane) => {
+                let share = |on: &GridPlane| if *on == plane { fade } else { 1.0 - fade };
+                let other = if *grid == plane { GridPlane::XY } else { plane };
+                // Each grid with its own axis lines, the XY plane's with
+                // the Z axis's, fading with it either way.
+                let on = |at: &GridPlane| {
+                    let shown = if *at == plane {
+                        OriginShown {
+                            marker: true,
+                            axes: [true, true, false],
+                            ..OriginShown::NONE
+                        }
+                    } else {
+                        frame.origin.with_hovered()
+                    };
+                    Uniforms {
+                        grid_origin: at.origin().extend(shown.mask(at) as f32).to_array(),
+                        grid_x: at.x().extend(axis_index(at.x())).to_array(),
+                        grid_y: at.y().extend(axis_index(at.y())).to_array(),
+                        ..uniforms
+                    }
+                };
+                let other_uniforms = on(&other);
+                queue.write_buffer(&slot.uniforms, 0, bytemuck::bytes_of(&on(grid)));
+                queue.write_buffer(&slot.other_grid, 0, bytemuck::bytes_of(&other_uniforms));
+                (
+                    self.alphas.step(Some(share(grid))),
+                    Some(self.alphas.step(Some(share(&other)))),
+                )
+            }
+            None => (self.alphas.opaque, None),
+        };
 
         let size = frame.target_size.map(|s| s.max(1));
         if slot.depth.as_ref().map(|d| d.size) != Some(size) {
@@ -2930,7 +3058,17 @@ impl Renderer {
         // often lie on it.
         if backdrop {
             pass.set_pipeline(&self.grid);
+            pass.set_bind_group(0, &slot.bind_group, &[0]);
+            let (step, other) = slot.grid_steps;
+            self.alphas.set(pass, step);
             pass.draw(0..3, 0..1);
+            if let Some(step) = other {
+                pass.set_bind_group(0, &slot.other_grid_group, &[0]);
+                self.alphas.set(pass, step);
+                pass.draw(0..3, 0..1);
+                pass.set_bind_group(0, &slot.bind_group, &[0]);
+            }
+            self.alphas.set(pass, self.alphas.opaque);
         }
 
         // Under the finished sketches, which often lie on them, unless

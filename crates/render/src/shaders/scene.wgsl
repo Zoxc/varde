@@ -235,7 +235,8 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
         u.axes[2].rgb,
     );
     var color = u.grid.rgb;
-    var alpha = lines * fade * valid;
+    // The axis lines alone, see `AXES_ONLY` in renderer.rs.
+    var alpha = select(lines * fade * valid, 0.0, (mask & 128u) != 0u);
     var out_depth = clamp(depth, 0.0, 1.0);
     for (var i = 0u; i < 3u; i++) {
         let line = axes[i];
@@ -248,7 +249,8 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
     }
 
     var out: GridOut;
-    out.color = output(vec4<f32>(color, alpha));
+    // At its share while crossfading from one plane to another.
+    out.color = output(vec4<f32>(color, alpha * part.alpha.x));
     out.depth = out_depth;
     return out;
 }
