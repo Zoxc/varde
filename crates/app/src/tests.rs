@@ -5751,13 +5751,13 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
             .bounds
             .center_y()
     };
-    assert!((y("Default") - y("Edges")).abs() < 1.0);
+    assert!((y("Feature edges") - y("Edges")).abs() < 1.0);
     assert!(!open.iter().any(|t| t.text == "Shaded"));
     hover(&mut varde, &mut renderer, "Perspective");
     assert!(
         !shown(&varde, &mut renderer)
             .iter()
-            .any(|t| t.text == "Default")
+            .any(|t| t.text == "Feature edges")
     );
     hover(&mut varde, &mut renderer, "Shading");
     let open = shown(&varde, &mut renderer);

@@ -247,7 +247,7 @@ fn shading_choices<'a>(chosen: Shading) -> Vec<Element<'a, Message>> {
 /// The edges drawn, in the Edges submenu, `chosen` ticked.
 fn edges_choices<'a>(chosen: Edges) -> Vec<Element<'a, Message>> {
     [
-        (Edges::Default, "Default"),
+        (Edges::Default, "Feature edges"),
         (Edges::Wireframe, "Wireframe"),
         (Edges::Tessellation, "Tessellation"),
     ]

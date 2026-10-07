@@ -106,7 +106,7 @@ opens it to the menu's left as it's hovered or clicked
 `MENU_ITEM_HEIGHT` tall); hovering another item closes it. Its choices
 have icons, the one chosen ticked at its right (`choice_item`). Shading:
 Shaded, Flat shaded, Metal or Flat metal (`Frame::shading`, see
-"Shading" below). Edges (`Edges`): Default, the feature edges only;
+"Shading" below). Edges (`Edges`): Feature edges (`Edges::Default`), those only;
 Wireframe, with the mesh's wires too, every patch's edges that aren't
 feature edges (`Frame::wireframe`); or Tessellation, with every
 triangle's edges (`Frame::tessellation`). The app keeps those for every
