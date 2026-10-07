@@ -435,6 +435,13 @@ pub struct DocumentKeys {
     /// closed (`Some(true)`) or opened (`Some(false)`), see
     /// [`crate::spline::closings`], with no drawing tool in use.
     pub closing: Option<bool>,
+    /// Whether clicks on splines add points to them (see
+    /// [`SketchState::inserting`]).
+    pub inserting: bool,
+    /// Whether spline points are selected in the sketch being edited, and
+    /// they can be taken out of their splines (`Some(true)`) or not
+    /// (`Some(false)`), see [`crate::spline::removals`].
+    pub removing: Option<bool>,
     /// Whether the Mirror tool has picked what it mirrors and can go on
     /// to the line to mirror about.
     pub mirror_picked: bool,
@@ -535,6 +542,13 @@ impl DocumentKeys {
                     return None;
                 }
                 crate::spline::closings(sketch.sketch, sketch.selection).map(|(close, _)| close)
+            }),
+            inserting: sketch.is_some_and(|sketch| sketch.inserting),
+            removing: sketch.and_then(|sketch| {
+                if sketch.tool.is_some_and(|tool| tool.tool.draws()) {
+                    return None;
+                }
+                crate::spline::removals(sketch.sketch, sketch.selection).map(|found| found.is_ok())
             }),
             handles: sketch.is_some_and(|sketch| {
                 crate::spline::handles(sketch.sketch, sketch.selection).is_some()
@@ -1042,6 +1056,27 @@ pub fn close_binding(keys: DocumentKeys) -> Binding {
         keys.editable
             && keys.sketching
             && (keys.tool_closes || (keys.closing.is_some() && !keys.drawing)),
+    )
+}
+
+/// Adding points to splines by clicking them, or stopping: the toolbar's,
+/// without a key (a double-click on a spline adds one too), in a sketch
+/// that can be changed and no drawing tool is in use.
+pub fn insert_point_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::NONE,
+        Message::Look(Look::ToggleInsertPoint),
+        keys.editable && keys.sketching && !keys.drawing,
+    )
+}
+
+/// Taking the spline points selected out of their splines: the
+/// toolbar's, without a key, while they can be.
+pub fn remove_point_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::NONE,
+        Message::Edit(Edit::RemoveSplinePoints),
+        keys.editable && keys.sketching && !keys.drawing && keys.removing == Some(true),
     )
 }
 

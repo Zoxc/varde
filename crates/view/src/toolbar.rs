@@ -18,9 +18,10 @@ use crate::shortcut::{
     Binding, Shortcut, align_binding, chamfer_binding, circular_pattern_binding, close_binding,
     comb_binding, combine_binding, constrain_binding, constraint_binding, draft_binding,
     extrude_binding, file_bindings, fillet_binding, handles_binding, history_bindings,
-    loft_binding, measure_binding, mirror_binding, move_binding, offset_face_binding,
-    pattern_binding, plane_binding, revolve_binding, scale_binding, shell_binding, sketch_binding,
-    split_binding, sweep_binding, switch_binding, tool_binding,
+    insert_point_binding, loft_binding, measure_binding, mirror_binding, move_binding,
+    offset_face_binding, pattern_binding, plane_binding, remove_point_binding, revolve_binding,
+    scale_binding, shell_binding, sketch_binding, split_binding, sweep_binding, switch_binding,
+    tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
@@ -436,6 +437,27 @@ fn close_op(close: bool, binding: Binding) -> Element<'static, Message> {
     tipped_op(icon, label, binding, false)
 }
 
+/// Remove point, taking the spline points selected out of their splines,
+/// or disabled saying `why` it can't.
+fn remove_op(why: Option<&'static str>, binding: Binding) -> Element<'static, Message> {
+    let Some(why) = why else {
+        return tipped_op(Icon::RemovePoint, "Remove point", binding, false);
+    };
+    let button = button(
+        row![
+            icons::icon(Icon::RemovePoint, icons::INLINE),
+            text("Remove point")
+        ]
+        .spacing(6)
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
+    )
+    .height(28)
+    .padding([0, 7])
+    .style(theme::flat_button(false, theme::Tone::Text));
+    crate::chrome::tip(button, text(format!("Remove point: {why}")))
+}
+
 /// The icon of the drawing tool `tool`.
 pub(crate) fn tool_icon(tool: Tool) -> Icon {
     match tool {
@@ -494,8 +516,13 @@ fn ops<'a>(
         }
         // With anything selected, and no drawing tool, likewise the
         // constraints that fit it, and with splines among it switching
-        // them, handles and the curvature comb before them.
-        if keys.geometry_selected && !keys.drawing {
+        // them, handles, the curvature comb and adding points before
+        // them; while adding points, Add point stays, to stop it.
+        if (keys.geometry_selected || keys.inserting) && !keys.drawing {
+            let insert = || {
+                let binding = insert_point_binding(keys);
+                tipped_op(Icon::InsertPoint, "Add point", binding, keys.inserting)
+            };
             let splines = keys.splines_selected.then(|| {
                 [
                     tipped_op(Icon::Convert, "Convert", switch_binding(keys), false),
@@ -503,11 +530,18 @@ fn ops<'a>(
                     tipped_op(Icon::Comb, "Comb", comb_binding(keys), sketch.comb),
                 ]
             });
+            let insert = (keys.splines_selected || keys.inserting).then(insert);
+            // Spline points selected: taking them out, or why it can't.
+            let remove = (keys.removing)
+                .zip(crate::spline::removals(sketch.sketch, sketch.selection))
+                .map(|(_, found)| remove_op(found.err(), remove_point_binding(keys)));
             // Closing or opening, for arcs as for splines.
             let close = keys
                 .closing
                 .map(|close| close_op(close, close_binding(keys)));
             let curves = (splines.into_iter().flatten())
+                .chain(insert)
+                .chain(remove)
                 .chain(close)
                 .collect::<Vec<_>>();
             let gap = (!curves.is_empty()).then(separator);

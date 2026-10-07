@@ -1372,11 +1372,22 @@ bar says why (`EditError::Sketch`).
   or failing any, the ends of the open splines through fit points
   selected; if they all have them, it deletes their tips. A
   double-click on a spline without a tool (`Edit::InsertSplinePoint`)
-  proposes `InsertPoint` there. `U` (`Look::ToggleComb`,
+  proposes `InsertPoint` there; hovering one without a tool rings the
+  place it would go (`Sketch::nearest_on`), and while the sketch has a
+  spline the status bar says so. Add point (`Look::ToggleInsertPoint`,
+  `SketchSession::inserting`, no key) makes one click do it, until
+  `Esc`, a tool or the Constrain tool puts it down; the status bar then
+  asks for the click. Remove point (`Edit::RemoveSplinePoints`, no key)
+  deletes the spline points selected as one `Delete`, offered while any
+  are (`spline::removals`) and disabled, saying why in its tooltip,
+  where one is on a curve not a spline of its own (deleting it would
+  take that curve) or a spline would be left with fewer than
+  `SplineKind::least`, which would delete it whole. `U` (`Look::ToggleComb`,
   `SketchSession::comb`, `SketchState::comb`) shows the curvature comb of
   the splines selected, or hides it, in any sketch. With splines selected
-  and no drawing tool the toolbar offers Convert, Handles and Comb (and
-  Constrain) in place of the tools. `Shift O` (`Edit::ToggleClosed`,
+  and no drawing tool the toolbar offers Convert, Handles, Comb and Add
+  point (and Constrain) in place of the tools, Add point staying while
+  it's on, and Remove point with spline points selected. `Shift O` (`Edit::ToggleClosed`,
   `spline::closings`) closes the open splines and arcs selected that
   can be (`CloseSpline`, `CloseArc`), or failing any, opens the closed
   splines selected, or one of whose points is, at that point or else

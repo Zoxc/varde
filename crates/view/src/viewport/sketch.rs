@@ -148,6 +148,9 @@ pub(crate) struct Sketching<'a> {
     profiles: Option<&'a Arc<Profiles>>,
     /// Whether the curvature comb of the splines selected shows.
     comb: bool,
+    /// Whether a click on a spline adds a point to it (see
+    /// [`SketchState::inserting`]).
+    inserting: bool,
 }
 
 /// The items drawn otherwise than free, by why.
@@ -346,6 +349,7 @@ impl<'a> Sketching<'a> {
             aim: sketch.aim,
             profiles: sketch.profiles.and_then(|found| found.as_ref().ok()),
             comb: sketch.comb,
+            inserting: sketch.inserting && editable && sketch.tool.is_none(),
         }
     }
 
@@ -475,7 +479,10 @@ impl<'a> Sketching<'a> {
                 if let Some(pointed) = self.point_to(input, under, modifiers) {
                     return Some(pointed);
                 }
-                (changed || self.tool.is_some()).then(Action::request_redraw)
+                // The place a point would go follows the cursor along a
+                // spline.
+                let on_spline = self.spline_hovered(hover).is_some();
+                (changed || on_spline || self.tool.is_some()).then(Action::request_redraw)
             }
             mouse::Event::CursorLeft => {
                 input.cursor = None;
@@ -551,12 +558,11 @@ impl<'a> Sketching<'a> {
                 let press = input.press.take()?;
                 let add = modifiers.command();
                 // A second click on a spline, soon after the first and
-                // near it, adds a point to it.
-                let double = !press.moved && double_click(&mut input.last_select, press.from);
-                let spline = press
-                    .hit
-                    .and_then(Selectable::item)
-                    .filter(|&id| self.editable && self.sketch.kind(id) == Some(Kind::Spline));
+                // near it, adds a point to it, as one click does while
+                // adding points.
+                let double = !press.moved
+                    && (double_click(&mut input.last_select, press.from) || self.inserting);
+                let spline = self.spline_hovered(press.hit);
                 let message = match press.area() {
                     _ if double && let (Some(spline), Some(at)) = (spline, press.at) => {
                         Message::Edit(Edit::InsertSplinePoint { spline, at })
@@ -722,6 +728,12 @@ impl<'a> Sketching<'a> {
             _ => return hit::hit(self.sketch, cursor.at, tolerance),
         };
         item.map(Selectable::Item)
+    }
+
+    /// The spline `hit` is, if it is one and points can be added to it.
+    fn spline_hovered(&self, hit: Option<Selectable>) -> Option<Id> {
+        (hit.and_then(Selectable::item))
+            .filter(|&id| self.editable && self.sketch.kind(id) == Some(Kind::Spline))
     }
 
     /// The region under `cursor`, highlighted, see
@@ -1472,6 +1484,16 @@ impl<'a> Sketching<'a> {
         });
         for id in hover.into_iter().chain(listed) {
             self.highlight(&mut layer, id, colors.hovered);
+        }
+        // Where a point added to the spline hovered would go, without a
+        // tool: a double-click, or a click while adding points.
+        let ghost = (self.tool.is_none())
+            .then(|| self.spline_hovered(hover))
+            .flatten()
+            .zip(cursor)
+            .and_then(|(spline, cursor)| self.sketch.nearest_on(spline, cursor.at));
+        if let Some(ghost) = ghost {
+            layer.point(ghost, ring(colors.hovered));
         }
         // Where a drawing tool's click, or a point or rim dragged, snaps is
         // marked round the cursor, whatever it snapped to.

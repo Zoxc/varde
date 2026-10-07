@@ -74,6 +74,9 @@ pub(crate) struct SketchSession {
     pub(crate) expanded: BTreeSet<Id>,
     /// Whether the curvature comb of the splines selected shows.
     pub(crate) comb: bool,
+    /// Whether clicks on splines add points to them: the toolbar's Add
+    /// point, put down with the tools.
+    pub(crate) inserting: bool,
     /// The item hovered in a list or by its glyph, if any.
     pub(crate) hovered: Option<Selectable>,
     /// The sketch with the edits waiting on the solver applied, while
@@ -129,6 +132,7 @@ impl SketchSession {
             folded: BTreeSet::new(),
             expanded: BTreeSet::new(),
             comb: false,
+            inserting: false,
             hovered: None,
             waiting: None,
             analyses: Analyses::default(),
@@ -856,6 +860,7 @@ impl Doc {
                 Some(drawing) if drawing.started() => drawing.restart(),
                 Some(_) => session.tool = None,
                 None if session.constraining => session.constraining = false,
+                None if session.inserting => session.inserting = false,
                 None => self.finish_sketch(),
             }
         } else {
@@ -927,6 +932,7 @@ impl Doc {
             session.drag = None;
             session.tool = None;
             session.constraining = !session.constraining && editable;
+            session.inserting = false;
         }
     }
 
@@ -937,6 +943,7 @@ impl Doc {
             session.drag = None;
             session.tool = None;
             session.constraining = false;
+            session.inserting = false;
         }
     }
 
@@ -1010,6 +1017,7 @@ impl Doc {
         };
         session.drag = None;
         session.constraining = false;
+        session.inserting = false;
         session.snap = None;
         session.aim = None;
         session.tool = match &session.tool {
@@ -1078,6 +1086,7 @@ impl Doc {
             session.tool = None;
             session.drag = None;
             session.constraining = false;
+            session.inserting = false;
             session.value = None;
             session.label = None;
         }
@@ -1238,6 +1247,7 @@ impl Doc {
             aim: session.aim.map(|click| click.at),
             profiles: session.profiles.as_ref().map(|found| &found.profiles),
             comb: session.comb,
+            inserting: session.inserting,
             failing: &session.failing,
             links: &session.links,
             link_menu: match self.row_menu {

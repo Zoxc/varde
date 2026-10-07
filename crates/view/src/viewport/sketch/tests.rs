@@ -2004,3 +2004,28 @@ fn a_double_click_on_a_spline_adds_a_point_there() {
         [Message::Look(Look::ClickGeometry { .. })]
     ));
 }
+
+#[test]
+fn while_adding_points_one_click_on_a_spline_adds_one() {
+    let (sketch, spline, _) = arched(SplineKind::Through);
+    let none = BTreeSet::new();
+    let mut sketching = sketching(&sketch, &none, None, true);
+    sketching.inserting = true;
+    let viewport = shown(sketching);
+    let mut state = Interaction::default();
+    let on = sketch.nearest_on(spline, DVec2::new(-3.0, 3.0)).unwrap();
+    let sent = click(&viewport, &mut state, screen_at(on.x, on.y));
+    assert!(
+        matches!(
+            sent[..],
+            [Message::Edit(Edit::InsertSplinePoint { spline: on_it, at })]
+                if on_it == spline && at.distance(on) < 0.2
+        ),
+        "{sent:?}"
+    );
+    // Off the spline, a click selects as ever.
+    assert!(matches!(
+        click(&viewport, &mut state, screen_at(3.0, -3.0))[..],
+        [Message::Look(Look::ClickGeometry { hit: None, .. })]
+    ));
+}

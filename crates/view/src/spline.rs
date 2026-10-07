@@ -2,7 +2,8 @@
 //! between their kinds ([`conversions`]) and giving fit points handles or
 //! taking them away ([`handles`]), and when the Spline tool's spline can
 //! end or closes, and closing curves selected or opening them
-//! ([`closings`]). Pure, shared by the keys, the toolbar and the app.
+//! ([`closings`]), and taking spline points selected out of their
+//! splines ([`removals`]). Pure, shared by the keys, the toolbar and the app.
 
 use std::collections::BTreeSet;
 
@@ -224,6 +225,61 @@ pub fn closings(
         }
     }
     (!opening.is_empty()).then_some((false, opening))
+}
+
+/// Taking the spline points among `selection` in `sketch` out of their
+/// splines, as one [`SketchEdit::Delete`] of them: `None` if none are
+/// selected, else why it can't be, where a point is on a curve that
+/// isn't one of the splines it's a point of (deleting it would take that
+/// curve too), or a spline would be left with fewer points than its kind
+/// needs ([`SplineKind::least`]), which would delete it whole.
+pub fn removals(
+    sketch: &Sketch,
+    selection: &BTreeSet<Selectable>,
+) -> Option<Result<SketchEdit, &'static str>> {
+    let on_spline = |point: Id| {
+        sketch.curves.iter().any(|entry| match &entry.curve {
+            Curve::Spline(spline) => spline.points.contains(&point),
+            _ => false,
+        })
+    };
+    let points: BTreeSet<Id> = (selection.iter())
+        .filter_map(|target| target.item())
+        .filter(|&id| on_spline(id))
+        .collect();
+    if points.is_empty() {
+        return None;
+    }
+    for entry in &sketch.curves {
+        let lost = entry
+            .curve
+            .points()
+            .filter(|id| points.contains(id))
+            .count();
+        if lost == 0 {
+            continue;
+        }
+        let Curve::Spline(spline) = &entry.curve else {
+            return Some(Err("A point selected is on a curve that isn't a spline"));
+        };
+        let own = spline
+            .points
+            .iter()
+            .filter(|id| points.contains(id))
+            .count();
+        if own != lost {
+            return Some(Err("A point selected is a spline's handle"));
+        }
+        let least = spline.kind.least(spline.closed);
+        if spline.points.len().saturating_sub(lost) < least {
+            return Some(Err(match (spline.kind, spline.closed) {
+                (_, true) => "A closed spline needs 3 points",
+                (SplineKind::Through, false) => "A spline through fit points needs 2",
+                (SplineKind::Control, false) => "A spline by control points needs 4",
+            }));
+        }
+    }
+    Some(Ok(SketchEdit::Delete(points.into_iter().collect())))
 }
 
 #[cfg(test)]

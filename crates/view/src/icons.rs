@@ -160,6 +160,9 @@ icons! {
     CloseCurve => r#"<path d="M12 4c5 0 8 3 8 7s-4 9-8 9-8-4-8-9c0-3 3-7 8-7z"/><circle cx="12" cy="4" r="1.5"/>"#,
     OpenCurve => r#"<path d="M14.5 4.5c3.5 1 5.5 3.5 5.5 6.5 0 5-4 9-8 9s-8-4-8-9c0-3 2-5.5 5.5-6.5"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="14.5" cy="4.5" r="1.5"/>"#,
     Comb => r#"<path d="M3 18c4-9 14-9 18 0"/><path d="M6.5 13.4L5 9.5M12 11.3V6.5M17.5 13.4L19 9.5"/>"#,
+    // A curve with a point on it, a plus or a minus by it.
+    InsertPoint => r#"<path d="M3 19c3-9 9-12 12-12"/><circle cx="9.5" cy="10.5" r="1.5"/><path class="a" d="M18 3v6M15 6h6"/>"#,
+    RemovePoint => r#"<path d="M3 19c3-9 9-12 12-12"/><circle cx="9.5" cy="10.5" r="1.5"/><path class="a" d="M15 6h6"/>"#,
     // The tool sets on the rail, the mock's `cat-*`: what each leaves
     // behind.
     CatCreate => r#"<path class="r" d="M5 17.5a7 3 0 0 1 14 0" stroke-dasharray="1.6 1.8"/><path d="M5 6.5v11a7 3 0 0 0 14 0v-11"/><ellipse class="a" cx="12" cy="6.5" rx="7" ry="3"/>"#,
@@ -293,6 +296,8 @@ impl Icon {
             | Icon::Convert
             | Icon::Handles
             | Icon::Comb
+            | Icon::InsertPoint
+            | Icon::RemovePoint
             | Icon::CloseCurve
             | Icon::OpenCurve
             | Icon::CatDraw

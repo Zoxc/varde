@@ -430,6 +430,10 @@ pub enum Edit {
         spline: Id,
         at: DVec2,
     },
+    /// Takes the spline points selected in the sketch being edited out of
+    /// their splines, if they all can be (see [`spline::removals`]): the
+    /// toolbar's Remove point.
+    RemoveSplinePoints,
     /// Adds the extrude being set up, or changes the one being edited, as
     /// one undo step, and ends its session: OK, or `Enter`.
     CommitExtrude,
@@ -750,6 +754,9 @@ pub enum Look {
     ToggleSplineKind,
     /// Shows the curvature comb of the splines selected, or hides it.
     ToggleComb,
+    /// Starts adding points to splines, each click on one adding one
+    /// there, or stops: the toolbar's Add point.
+    ToggleInsertPoint,
     /// Ends picking what the Mirror tool mirrors: its next click picks the
     /// line to mirror about. `Enter`, once it has picked something.
     MirrorAbout,

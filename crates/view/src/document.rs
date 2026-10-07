@@ -24,7 +24,8 @@ use varde_sketch::{
 };
 
 use crate::chrome::{
-    self, Hint, chord_hint, dialog, dialog_button, key_hint, mouse_hint, small_button, step_hint,
+    self, Hint, chord_hint, dialog, dialog_button, double_hint, key_hint, mouse_hint, small_button,
+    step_hint,
 };
 use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::{DocumentKeys, Held, Shortcut};
@@ -371,6 +372,9 @@ pub struct SketchState<'a> {
     pub profiles: Option<&'a Result<Arc<Profiles>, TooComplex>>,
     /// Whether the curvature comb of the splines selected shows.
     pub comb: bool,
+    /// Whether clicks on splines add points to them (the toolbar's Add
+    /// point), with no tool in use.
+    pub inserting: bool,
     /// The curves a failing feature using the sketch names, as the model
     /// shown found it: drawn red within the halo the failures' geometry
     /// has in the model. Ids the sketch doesn't hold as curves are
@@ -485,6 +489,7 @@ impl<'a> SketchState<'a> {
             aim: None,
             profiles: None,
             comb: false,
+            inserting: false,
             failing: &NONE,
             links: &[],
             link_menu: None,
@@ -1258,6 +1263,16 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
         .flatten()
         .collect();
     }
+    if sketch.inserting && editable {
+        return vec![
+            step_hint(MouseButton::Left, "Click a spline to add a point"),
+            key_hint(Shortcut::ESCAPE, "Stop adding points"),
+        ];
+    }
+    // Adding a point by a double-click, while there's a spline to add to.
+    let insert = (editable
+        && (sketch.sketch.curves.iter()).any(|entry| entry.curve.kind() == Kind::Spline))
+    .then(|| double_hint(MouseButton::Left, "Add point on spline"));
     let selection = (!sketch.selection.is_empty()).then(|| {
         let edits = editable.then(|| {
             [
@@ -1294,6 +1309,7 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
             .chain(comb)
     });
     std::iter::once(mouse_hint(MouseButton::Left, "Select"))
+        .chain(insert)
         .chain(selection.into_iter().flatten())
         .chain([key_hint(Shortcut::ESCAPE, "Finish")])
         .collect()

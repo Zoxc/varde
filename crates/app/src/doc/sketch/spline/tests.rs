@@ -307,6 +307,61 @@ fn a_double_click_on_a_spline_adds_a_point_and_delete_takes_one() {
 }
 
 #[test]
+fn remove_point_takes_fit_points_out_while_enough_stay() {
+    let (mut doc, _, _) = sketching();
+    let id = draw_wave(&mut doc);
+    let before = sketch(&doc).clone();
+    let points = before.spline(id).unwrap().points.clone();
+    doc.look(Look::ClickGeometry {
+        hit: Some(points[1].into()),
+        add: false,
+    });
+    doc.look(Look::ClickGeometry {
+        hit: Some(points[3].into()),
+        add: true,
+    });
+    doc.update(Edit::RemoveSplinePoints);
+    let kept = &sketch(&doc).spline(id).unwrap().points;
+    assert_eq!(kept, &[points[0], points[2], points[4]]);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+    // All but one would leave too few: nothing changes.
+    for &point in &points[1..] {
+        doc.look(Look::ClickGeometry {
+            hit: Some(point.into()),
+            add: true,
+        });
+    }
+    doc.update(Edit::RemoveSplinePoints);
+    assert_eq!(sketch(&doc), &before);
+}
+
+#[test]
+fn add_point_adds_one_each_click_until_put_down() {
+    let (mut doc, _, _) = sketching();
+    let id = draw_wave(&mut doc);
+    doc.look(Look::ToggleInsertPoint);
+    assert!(doc.sketch.as_ref().unwrap().inserting);
+    // The viewport sends a click on a spline as a point added.
+    for x in [2.5, 7.5] {
+        let near = sketch(&doc).nearest_on(id, at(x, 3.0)).unwrap();
+        doc.update(Edit::InsertSplinePoint {
+            spline: id,
+            at: near,
+        });
+    }
+    assert_eq!(sketch(&doc).spline(id).unwrap().points.len(), 7);
+    assert!(doc.sketch.as_ref().unwrap().inserting);
+    // Escape puts it down, and leaves the sketch only after.
+    doc.look(Look::Escape);
+    assert!(!doc.sketch.as_ref().unwrap().inserting);
+    assert!(doc.sketch.is_some());
+    // A tool taken up puts it down too.
+    doc.look(Look::ToggleInsertPoint);
+    doc.look(Look::SelectTool(Tool::Line));
+    assert!(!doc.sketch.as_ref().unwrap().inserting);
+}
+
+#[test]
 fn z_converts_the_splines_selected_and_back() {
     let (mut doc, _, _) = sketching();
     let id = draw_bare_wave(&mut doc);

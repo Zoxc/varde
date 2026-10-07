@@ -147,3 +147,34 @@ fn an_end_dropped_on_the_other_previews_it_closed() {
     let target = Some(Target::Point(through[0]));
     assert!(closed_by_drop(&three, through[2], target).is_none());
 }
+
+#[test]
+fn spline_points_come_out_while_their_splines_keep_enough() {
+    let (mut sketch, [through, by], other) = splines();
+    let fit = sketch.spline(through).unwrap().points.clone();
+    let control = sketch.spline(by).unwrap().points.clone();
+    // Nothing of a spline's: nothing to remove.
+    assert_eq!(removals(&sketch, &crate::testing::items([other])), None);
+    assert_eq!(removals(&sketch, &crate::testing::items([through])), None);
+    // A fit point of three, the curves selected with it ignored.
+    assert_eq!(
+        removals(&sketch, &crate::testing::items([fit[1], other])),
+        Some(Ok(SketchEdit::Delete(vec![fit[1]])))
+    );
+    // Two of three would leave one; any control point would leave three.
+    assert_eq!(
+        removals(&sketch, &crate::testing::items([fit[0], fit[1]])),
+        Some(Err("A spline through fit points needs 2"))
+    );
+    assert_eq!(
+        removals(&sketch, &crate::testing::items([control[1]])),
+        Some(Err("A spline by control points needs 4"))
+    );
+    // A fit point a line ends at stays, as deleting it would take the line.
+    let far = point(&mut sketch, 20.0, 0.0);
+    line(&mut sketch, fit[2], far);
+    assert_eq!(
+        removals(&sketch, &crate::testing::items([fit[2]])),
+        Some(Err("A point selected is on a curve that isn't a spline"))
+    );
+}

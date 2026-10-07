@@ -197,6 +197,30 @@ impl Doc {
         }
     }
 
+    /// Takes the spline points selected out of their splines, if they
+    /// all can be (see [`varde_view::spline::removals`]).
+    pub(crate) fn remove_spline_points(&mut self) {
+        let Some((sketch, session)) = self.editable_sketch().zip(self.sketch.as_ref()) else {
+            return;
+        };
+        if let Some(Ok(edit)) = varde_view::spline::removals(sketch, &session.selection) {
+            self.propose(edit);
+        }
+    }
+
+    /// Starts adding points to splines by clicking them, putting down the
+    /// tool in use, or stops, in a sketch that can be changed.
+    pub(crate) fn toggle_insert_point(&mut self) {
+        let editable = self.editable_sketch().is_some();
+        if let Some(session) = &mut self.sketch {
+            let inserting = !session.inserting && editable;
+            session.drag = None;
+            session.tool = None;
+            session.constraining = false;
+            session.inserting = inserting;
+        }
+    }
+
     /// Shows the curvature comb of the splines selected, or hides it.
     pub(crate) fn toggle_comb(&mut self) {
         if let Some(session) = &mut self.sketch {
