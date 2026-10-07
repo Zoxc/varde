@@ -1524,19 +1524,21 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   selected face its part's tint, or the hover's if it's hovered too,
   tinted `Colors::selected_tint` towards `Colors::selected`; a face both
   hovered and selected is striped by the selection only) with diagonal
-  stripes across it on the screen, shaded as the face is (a hovered
-  face's wash 0.15 opaque and stripes 0.9, a selected face's 0.4 and
-  0.5), 8 logical pixels apart, from where
+  stripes across it on the screen, shaded as the face is, 8 logical
+  pixels apart, from where
   the world's origin shows so panning carries them with the model
   (`fs_hovered_face_hidden`, `fs_selected_face_hidden`,
-  `fs_hovered_selected_face_hidden`); a selected face's pattern also
-  edged, the edge of what's striped rather than of the face: 2 logical
-  pixels within it, solid, in its stripes' colour. The scene's pass is
-  split before what's drawn over everything of the model to draw the
-  pattern as an opaque mask into `Slot::pattern_target` (a
-  `CoverageTarget`, as the errors' halo's; `draw_pattern`,
-  `fs_selected_face_pattern`, `fs_hovered_selected_face_pattern`), and
-  `fs_pattern_edge` draws the edge from it over the stripes; the
+  `fs_hovered_selected_face_hidden`), within an edge where the pattern
+  ends (the edge of what's striped rather than of the face, and between
+  a hovered and a selected face's), inside it, in its stripes' colour.
+  How it's drawn is `Colors::pattern` (`PatternStyle`: the wash 0.2
+  opaque, the stripes and edge 0.5, the edge 3 logical pixels wide),
+  passed in the uniforms' spare w's. The scene's pass is split before
+  what's drawn over everything of the model to draw the pattern as a
+  mask into `Slot::pattern_target` (a `CoverageTarget`, as the errors'
+  halo's; `draw_pattern`, `fs_*_face_pattern`), its alpha telling the
+  hover's from the selection's, and `fs_pattern_edge` draws the edge
+  from it after the selection's stripes; the
   edges dashed as hidden edges are, as wide as hovered or selected ones,
   in their colour, within their rim, dashed too (`vs_outline_hidden`,
   `vs_hovered_edge_hidden`, `vs_selected_outline_hidden`,

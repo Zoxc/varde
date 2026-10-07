@@ -422,6 +422,7 @@ const LIGHT: Palette = Palette {
         // darker, show on it and apart from the near black edges.
         selected_tint: 0.3,
         selected_edge_shade: -0.3,
+        pattern: varde_render::PatternStyle::DEFAULT,
         // The construction colour: the measure tool's B, apart from A in
         // the accent.
         second: srgb(LIGHT_CONSTRUCTION),
@@ -519,6 +520,7 @@ const DARK: Palette = Palette {
         // A deep teal, darker than a selected face's tint to show on it,
         // and apart from the light edges.
         selected_edge_shade: -0.6,
+        pattern: varde_render::PatternStyle::DEFAULT,
         second: srgb(DARK_CONSTRUCTION),
         error: srgb(ERROR),
         error_halo: ERROR_HALO,

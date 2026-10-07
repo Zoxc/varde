@@ -41,6 +41,7 @@ const COLORS: Colors = Colors {
     selected: Srgb([0.04, 0.58, 0.68]),
     selected_tint: 0.6,
     selected_edge_shade: 0.0,
+    pattern: varde_render::PatternStyle::DEFAULT,
     second: Srgb([1.0, 0.5, 0.0]),
     error: Srgb([0.9, 0.1, 0.1]),
     error_halo: Srgba([0.9, 0.1, 0.1, 0.3]),
@@ -2885,9 +2886,10 @@ fn a_selected_face_hidden_by_the_model_is_washed_and_striped() {
     assert!(least > 4 && most > least + 5, "{selected:?}");
     let first = whole.iter().position(|&t| t > 4).unwrap();
     let last = whole.iter().rposition(|&t| t > 4).unwrap();
-    let edge = |at: std::ops::Range<usize>| whole[at].iter().copied().max().unwrap();
-    assert!(edge(first..first + 3) > most + 30, "{whole:?}");
-    assert!(edge(last - 2..last + 1) > most + 30, "{whole:?}");
+    let max = |at: std::ops::Range<usize>| whole[at].iter().copied().max().unwrap();
+    let inside = max(first + 6..last - 5);
+    assert!(max(first..first + 3) > inside + 5, "{whole:?}");
+    assert!(max(last - 2..last + 1) > inside + 5, "{whole:?}");
 }
 
 #[test]
@@ -2922,7 +2924,7 @@ fn a_hovered_face_hidden_by_the_model_is_washed_and_striped() {
     let (hovered, through) = (lift(&hovered), lift(&through));
     let least = hovered.iter().copied().min().unwrap();
     let most = hovered.iter().copied().max().unwrap();
-    assert!(least > 2 && most > least + 10, "{hovered:?}");
+    assert!(least > 2 && most > least + 5, "{hovered:?}");
     // Drawn through, it's even: no stripes over it.
     let spread = through.iter().max().unwrap() - through.iter().min().unwrap();
     assert!(spread < 4, "{through:?}");

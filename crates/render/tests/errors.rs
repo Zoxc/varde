@@ -43,6 +43,7 @@ const COLORS: Colors = Colors {
     selected: Srgb([0.04, 0.58, 0.68]),
     selected_tint: 0.6,
     selected_edge_shade: 0.0,
+    pattern: varde_render::PatternStyle::DEFAULT,
     second: Srgb([1.0, 0.5, 0.0]),
     error: Srgb([1.0, 0.0, 0.0]),
     error_halo: Srgba([1.0, 0.0, 0.0, 0.3]),

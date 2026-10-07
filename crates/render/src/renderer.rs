@@ -516,6 +516,27 @@ impl Srgb {
 /// colour's lightness ([`Srgb::tinted`]).
 pub const TINT_CHROMA: f32 = 0.6;
 
+/// How what the model hides of the hovered and selected faces is drawn: a
+/// wash with diagonal stripes, within an edge where it ends, in the stripes'
+/// colour. Out of range values are clamped.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PatternStyle {
+    /// How wide the edge is, in logical pixels, from 0 to 16.
+    pub edge_width: f32,
+    /// How opaque the wash is, from 0 to 1.
+    pub wash: f32,
+    /// How opaque the stripes and the edge are, from 0 to 1.
+    pub stripes: f32,
+}
+
+impl PatternStyle {
+    pub const DEFAULT: PatternStyle = PatternStyle {
+        edge_width: 3.0,
+        wash: 0.2,
+        stripes: 0.5,
+    };
+}
+
 /// Scene colours, from the UI theme.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Colors {
@@ -569,6 +590,9 @@ pub struct Colors {
     /// black, through 0, the accent itself, to 1, white, of the way in
     /// linear light. Out of range or NaN is 0.
     pub selected_edge_shade: f32,
+    /// How what the model hides of the hovered and selected faces is
+    /// drawn: see [`PatternStyle`].
+    pub pattern: PatternStyle,
     /// The second colour, for the second of two picks (the measure
     /// tool's B), where the first is in [`Self::selected`]: faces tinted
     /// with it as the selected are with theirs, and edges drawn in it,
@@ -603,10 +627,10 @@ struct Uniforms {
     /// xyz: orbit target, w: how far in front of the eye a perspective
     /// view starts, [`Camera::near`]. Not `target`, which WGSL reserves.
     focus: [f32; 4],
-    /// Unit vector towards the camera.
+    /// Unit vector towards the camera; w: [`PatternStyle::wash`].
     backward: [f32; 4],
     /// xy: viewport size in physical pixels, z: physical pixels per logical
-    /// pixel.
+    /// pixel, w: [`PatternStyle::stripes`].
     viewport: [f32; 4],
     /// xy: the viewport's top left corner on the target, in physical
     /// pixels, where fragment positions count from; z: [`Frame::shading`]
@@ -640,7 +664,7 @@ struct Uniforms {
     sketch_x: [f32; 4],
     sketch_y: [f32; 4],
     /// [`Colors::hover_face`], with w [`Colors::selected_tint`],
-    /// [`Colors::hover_outline`], with w = 1, and [`Colors::selected`],
+    /// [`Colors::hover_outline`], with w [`PatternStyle::edge_width`], and [`Colors::selected`],
     /// with w [`Colors::selected_edge_shade`].
     hover_face: [f32; 4],
     hover_outline: [f32; 4],
@@ -1186,10 +1210,11 @@ pub struct Renderer {
     /// The rims of the hidden hovered and selected edges, dashed.
     outline_hidden: wgpu::RenderPipeline,
     selected_outline_hidden: wgpu::RenderPipeline,
-    /// The selected faces' pattern as a mask into
+    /// The hovered and selected faces' pattern as a mask into
     /// [`Slot::pattern_target`], and its edge from that over the frame.
     selected_face_pattern: wgpu::RenderPipeline,
     hovered_selected_face_pattern: wgpu::RenderPipeline,
+    hovered_face_pattern: wgpu::RenderPipeline,
     pattern_edge: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     /// The edges of the mesh's triangles: [`Frame::tessellation`].
@@ -1762,6 +1787,15 @@ impl Renderer {
                 depth_compare: wgpu::CompareFunction::Greater,
                 cull_mode: None,
                 stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
+                ..mesh.clone()
+            }),
+            hovered_face_pattern: pipeline(Pass {
+                label: "varde hovered face pattern",
+                fs: "fs_hovered_face_pattern",
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Greater,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[0], wgpu::CompareFunction::NotEqual, Keep),
                 ..mesh.clone()
             }),
             pattern_edge: pipeline(Pass {
@@ -2397,6 +2431,16 @@ impl Renderer {
             0.0
         };
         let second = linear(colors.second);
+        let unit = |v: f32| if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
+        let pattern = PatternStyle {
+            edge_width: if colors.pattern.edge_width.is_nan() {
+                0.0
+            } else {
+                colors.pattern.edge_width.clamp(0.0, 16.0)
+            },
+            wash: unit(colors.pattern.wash),
+            stripes: unit(colors.pattern.stripes),
+        };
         let uniforms = Uniforms {
             view_proj: scene::view_projection(camera, aspect, grid, bounds.flatten())
                 .to_cols_array_2d(),
@@ -2404,12 +2448,12 @@ impl Renderer {
             right: camera.right().extend(half.x).to_array(),
             up: camera.up().extend(half.y).to_array(),
             focus: camera.target().extend(camera.near()).to_array(),
-            backward: camera.backward().extend(0.0).to_array(),
+            backward: camera.backward().extend(pattern.wash).to_array(),
             viewport: [
                 frame.viewport.width,
                 frame.viewport.height,
                 frame.scale_factor,
-                0.0,
+                pattern.stripes,
             ],
             viewport_origin: [
                 frame.viewport.x,
@@ -2439,7 +2483,7 @@ impl Renderer {
             sketch_x: sketch_plane.x().extend(second[1]).to_array(),
             sketch_y: sketch_plane.y().extend(second[2]).to_array(),
             hover_face: with_alpha(colors.hover_face, selected_tint),
-            hover_outline: linear(colors.hover_outline),
+            hover_outline: with_alpha(colors.hover_outline, pattern.edge_width),
             selected: with_alpha(colors.selected, selected_edge_shade),
         };
         queue.write_buffer(&slot.uniforms, 0, bytemuck::bytes_of(&uniforms));
@@ -2678,8 +2722,8 @@ impl Renderer {
         pass
     }
 
-    /// Records drawing `slot`'s selected faces' pattern where the model
-    /// hides them into `pattern`'s mask, as [`Self::draw_hidden_picks`]
+    /// Records drawing `slot`'s hovered and selected faces' pattern where
+    /// the model hides them into `pattern`'s mask, as [`Self::draw_hidden_picks`]
     /// draws it, with `depth` holding the model's depth.
     fn draw_pattern(
         &self,
@@ -2699,23 +2743,38 @@ impl Renderer {
         let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Store);
         let mut pass = self.begin(slot, encoder, target, depth, load, clip);
         bind_faces(&mut pass, mesh);
-        pass.set_stencil_reference(PICK_MARKS[1]);
-        let selected =
-            || (slot.faces.iter()).filter(|f| f.tint == Tint::Selected && !f.indices.is_empty());
-        pass.set_pipeline(&self.selected_face_mark);
-        for face in selected() {
-            self.alphas.set(&mut pass, face.step);
-            pass.draw_indexed(face.indices.clone(), 0, 0..1);
-        }
-        for face in selected() {
-            pass.set_pipeline(if face.hovered {
-                &self.hovered_selected_face_pattern
-            } else {
-                &self.selected_face_pattern
-            });
-            self.set_tint(&mut pass, slot, face.part);
-            self.alphas.set(&mut pass, face.step);
-            pass.draw_indexed(face.indices.clone(), 0, 0..1);
+        // The hover's, unless drawn whole, then the selection's over it.
+        let hover = (!slot.hover_through).then_some((
+            Tint::Hovered,
+            PICK_MARKS[0],
+            &self.hovered_face_mark,
+            &self.hovered_face_pattern,
+        ));
+        let selection = Some((
+            Tint::Selected,
+            PICK_MARKS[1],
+            &self.selected_face_mark,
+            &self.selected_face_pattern,
+        ));
+        for (tint, mark, marking, drawn) in hover.into_iter().chain(selection) {
+            pass.set_stencil_reference(mark);
+            let tinted = || (slot.faces.iter()).filter(|f| f.tint == tint && !f.indices.is_empty());
+            pass.set_pipeline(marking);
+            for face in tinted() {
+                self.alphas.set(&mut pass, face.step);
+                pass.draw_indexed(face.indices.clone(), 0, 0..1);
+            }
+            for face in tinted() {
+                let pipeline = match (tint, face.hovered) {
+                    (Tint::Hovered, true) => continue,
+                    (Tint::Selected, true) => &self.hovered_selected_face_pattern,
+                    _ => drawn,
+                };
+                pass.set_pipeline(pipeline);
+                self.set_tint(&mut pass, slot, face.part);
+                self.alphas.set(&mut pass, face.step);
+                pass.draw_indexed(face.indices.clone(), 0, 0..1);
+            }
         }
     }
 
@@ -3170,7 +3229,8 @@ impl Renderer {
                 pass.set_pipeline(pipeline);
                 pass.draw_indexed(face.indices.clone(), 0, 0..1);
             }
-            // The selected faces' pattern's edge, from its mask.
+            // The hovered and selected faces' pattern's edge, from its
+            // mask, over both.
             if tint == Tint::Selected
                 && let Some(pattern) = pattern
             {
@@ -3333,10 +3393,15 @@ fn draw_stream(
     pass.draw(0..LINE_VERTICES, 0..points.end - points.start - 1);
 }
 
-/// Whether `slot` has selected faces to draw, whose pattern is edged.
+/// Whether `slot` has hovered or selected faces to draw where hidden,
+/// whose pattern is edged.
 fn patterned(slot: &Slot) -> bool {
-    slot.mesh.is_some()
-        && (slot.faces.iter()).any(|f| f.tint == Tint::Selected && !f.indices.is_empty())
+    let drawn = |f: &FaceDraw| match f.tint {
+        Tint::Selected => true,
+        Tint::Hovered => !slot.hover_through,
+        Tint::Second => false,
+    };
+    slot.mesh.is_some() && (slot.faces.iter()).any(|f| drawn(f) && !f.indices.is_empty())
 }
 
 /// The pipelines drawing the errors' geometry ([`Frame::errors`]), each
