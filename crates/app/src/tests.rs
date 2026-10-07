@@ -4107,10 +4107,10 @@ fn a_recovered_design_is_known_by_its_name() {
 #[test]
 fn a_tab_clicked_while_peeking_is_shown() {
     let (mut varde, _) = with_open_file();
-    assert_eq!(document(&varde).panel, Panel::Objects);
-    let _ = varde.update(Message::PeekPanel(true));
-    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectPanel(Panel::Timeline))));
     assert_eq!(document(&varde).panel, Panel::Timeline);
+    let _ = varde.update(Message::PeekPanel(true));
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectPanel(Panel::Objects))));
+    assert_eq!(document(&varde).panel, Panel::Objects);
     assert!(!varde.peeking);
 }
 

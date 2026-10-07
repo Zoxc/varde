@@ -65,6 +65,7 @@ fn unticked_a_pattern_makes_a_body_per_copy_and_warns_of_overlaps() {
         assert_eq!((body.name.as_str(), body.created_by), (name, id));
     }
     // Objects lists them; the model shows each, 8 apart.
+    plates.doc.panel = varde_view::Panel::Objects;
     plates.answer();
     assert!(shows(&plates, "Body 4") && shows(&plates, "Body 5"));
     let [low, _] = plates.bounds(right);

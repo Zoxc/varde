@@ -464,6 +464,7 @@ fn esc_leaves_no_trace() {
 #[test]
 fn the_copy_button_copies_the_value_with_its_unit_at_full_precision() {
     let (mut doc, requests) = example();
+    doc.panel = varde_view::Panel::Objects;
     doc.update(Edit::SetUnits(varde_document::LengthUnit::In));
     answer(&mut doc, &requests);
     doc.look(Look::StartMeasure);

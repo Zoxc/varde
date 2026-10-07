@@ -1204,10 +1204,10 @@ impl GeometryGroup {
 /// in a sketch Sketch and Objects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Panel {
+    #[default]
     Timeline,
     /// The sketch being edited: its geometry and constraints.
     Sketch,
-    #[default]
     Objects,
 }
 
