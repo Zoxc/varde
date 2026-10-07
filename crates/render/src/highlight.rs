@@ -71,18 +71,7 @@ pub(crate) struct Built {
     pub(crate) outlined: Range<u32>,
     pub(crate) selected: Range<u32>,
     pub(crate) second: Range<u32>,
-    pub(crate) face_outlines: Vec<FaceOutline>,
     pub(crate) vertices: Vec<VertexInstance>,
-}
-
-/// A selected face's boundary edges in [`Built::edges`], drawn where the
-/// model hides them in the colour its stripes are: its points, its part,
-/// and whether it's hovered too.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FaceOutline {
-    pub(crate) points: Range<u32>,
-    pub(crate) part: usize,
-    pub(crate) hovered: bool,
 }
 
 impl Highlights {
@@ -90,9 +79,7 @@ impl Highlights {
     /// polyline in the stream (see [`joined`]), so one's rim doesn't draw
     /// over the other's pixels where they meet. The outlined and selected
     /// edges are kept apart, so an edge both isn't joined to itself.
-    /// `faces` are the selected faces to outline, each with whether it's
-    /// hovered too; ids the mesh hasn't are left out.
-    pub(crate) fn build(&self, mesh: &RenderMesh, faces: &[(u32, bool)]) -> Built {
+    pub(crate) fn build(&self, mesh: &RenderMesh) -> Built {
         let mut stream = EdgeStream::with_capacity(0);
         let start = stream.len();
         for (edge, polyline) in joined(mesh, &self.outlined) {
@@ -118,7 +105,6 @@ impl Highlights {
             }
         }
         let second = start..stream.len();
-        let face_outlines = face_outlines(mesh, faces, &mut stream);
         let vertices = self
             .vertices
             .iter()
@@ -135,62 +121,9 @@ impl Highlights {
             outlined,
             selected,
             second,
-            face_outlines,
             vertices,
         }
     }
-}
-
-/// The edges bounding each of `faces` in `mesh`, pushed onto `stream`
-/// joined, each face's apart from the rest.
-fn face_outlines(
-    mesh: &RenderMesh,
-    faces: &[(u32, bool)],
-    stream: &mut EdgeStream,
-) -> Vec<FaceOutline> {
-    if faces.is_empty() {
-        return Vec::new();
-    }
-    let mut sorted: Vec<u32> = faces.iter().map(|&(face, _)| face).collect();
-    sorted.sort_unstable();
-    sorted.dedup();
-    let mut edges = vec![Vec::new(); sorted.len()];
-    for (edge, sides) in mesh.edge_faces().iter().enumerate() {
-        let Ok(edge) = u32::try_from(edge) else {
-            break;
-        };
-        for (i, &side) in sides.iter().enumerate() {
-            if i == 1 && side == sides[0] {
-                continue;
-            }
-            if let Ok(at) = sorted.binary_search(&side) {
-                edges[at].push(edge);
-            }
-        }
-    }
-    let part_ends: Vec<usize> = mesh.parts().map(|part| part.faces.end).collect();
-    let mut outlines = Vec::new();
-    for &(face, hovered) in faces {
-        let Ok(at) = sorted.binary_search(&face) else {
-            continue;
-        };
-        let part = part_ends.partition_point(|&end| end <= face as usize);
-        if edges[at].is_empty() || part >= part_ends.len() {
-            continue;
-        }
-        stream.separate();
-        let start = stream.len();
-        for (edge, polyline) in joined(mesh, &edges[at]) {
-            stream.push(edge, mesh.positions(), &polyline);
-        }
-        let points = start..stream.len();
-        outlines.push(FaceOutline {
-            points,
-            part,
-            hovered,
-        });
-    }
-    outlines
 }
 
 /// `edges` of `mesh`, each once, joined end to end into polylines of its

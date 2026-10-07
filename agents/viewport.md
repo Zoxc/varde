@@ -1525,15 +1525,18 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   tinted `Colors::selected_tint` towards `Colors::selected`; a face both
   hovered and selected is striped by the selection only) with diagonal
   stripes across it on the screen, shaded as the face is (a hovered
-  face's wash 0.15 opaque and stripes 0.9, a selected face's 0.3 and
-  0.6), 8 logical pixels apart, from where
+  face's wash 0.15 opaque and stripes 0.9, a selected face's 0.4 and
+  0.5), 8 logical pixels apart, from where
   the world's origin shows so panning carries them with the model
   (`fs_hovered_face_hidden`, `fs_selected_face_hidden`,
-  `fs_hovered_selected_face_hidden`); a selected face also outlined
-  where hidden by the edges bounding it (`Highlights::build`'s
-  `face_outlines`, from `Frame::selected_faces`), solid, 1.5 logical
-  pixels wide, unlit in its stripes' colour (`fs_face_outline_hidden`,
-  `fs_hovered_face_outline_hidden`); the
+  `fs_hovered_selected_face_hidden`); a selected face's pattern also
+  edged, the edge of what's striped rather than of the face: 2 logical
+  pixels within it, solid, in its stripes' colour. The scene's pass is
+  split before what's drawn over everything of the model to draw the
+  pattern as an opaque mask into `Slot::pattern_target` (a
+  `CoverageTarget`, as the errors' halo's; `draw_pattern`,
+  `fs_selected_face_pattern`, `fs_hovered_selected_face_pattern`), and
+  `fs_pattern_edge` draws the edge from it over the stripes; the
   edges dashed as hidden edges are, as wide as hovered or selected ones,
   in their colour, within their rim, dashed too (`vs_outline_hidden`,
   `vs_hovered_edge_hidden`, `vs_selected_outline_hidden`,

@@ -465,12 +465,12 @@ fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @locatio
 // screen SELECTED_STRIPE logical pixels apart, half of that wide, shaded as
 // the face is shown. A hovered face's wash is faint and its stripes nearly
 // opaque; a selected face's are SELECTED_WASH_ALPHA and SELECTED_STRIPE_ALPHA
-// as opaque, within an outline in the stripes' colour (`fs_face_outline_hidden`).
+// as opaque, its pattern edged in the stripes' colour (`fs_pattern_edge`).
 const SELECTED_STRIPE: f32 = 8.0;
 const HOVERED_WASH_ALPHA: f32 = 0.15;
 const HOVERED_STRIPE_ALPHA: f32 = 0.9;
-const SELECTED_WASH_ALPHA: f32 = 0.3;
-const SELECTED_STRIPE_ALPHA: f32 = 0.6;
+const SELECTED_WASH_ALPHA: f32 = 0.4;
+const SELECTED_STRIPE_ALPHA: f32 = 0.5;
 
 // A selected face where something hides it (depth tested Greater), over
 // everything: the wash with diagonal stripes, anti-aliased, in the colour
@@ -518,42 +518,57 @@ fn hidden_face(
     return vec4<f32>(mix(under, over, selected), alpha);
 }
 
-// How wide a selected face's outline is where something hides it, in
-// logical pixels.
-const FACE_OUTLINE_WIDTH: f32 = 1.5;
-
-// The edges bounding a selected face where something hides them (depth
-// tested Greater), solid, FACE_OUTLINE_WIDTH wide; their colour is the
-// fragment shader's. Entry points of their own for the hovered and not.
-@vertex
-fn vs_face_outline_hidden(in: EdgeIn) -> LineOut {
-    return highlight_segment(in, FACE_OUTLINE_WIDTH * 0.5 * u.viewport.z, vec4<f32>(1.0));
-}
-
-@vertex
-fn vs_hovered_face_outline_hidden(in: EdgeIn) -> LineOut {
-    return highlight_segment(in, FACE_OUTLINE_WIDTH * 0.5 * u.viewport.z, vec4<f32>(1.0));
-}
-
-// The outline in the colour of the face's stripes, unlit: its part's
-// tinted towards the selection's, at the part's alpha.
+// The selected faces' pattern again, as a mask: where it's drawn, the colour
+// of its stripes, opaque, into a target of its own (`PATTERN_EDGE` there),
+// drawn as the pattern is, then its edge drawn over the frame from that
+// (`fs_pattern_edge`): the edge of what's hidden, not of the face.
 @fragment
-fn fs_face_outline_hidden(in: LineOut) -> HighlightOut {
-    return face_outline(in, tint.color.rgb);
+fn fs_selected_face_pattern(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(hidden_face(in, front, tint.color.rgb, u.hover_face.w, 1.0, 1.0).rgb, 1.0);
 }
 
-// A face hovered too, likewise from the hover's colour.
 @fragment
-fn fs_hovered_face_outline_hidden(in: LineOut) -> HighlightOut {
-    return face_outline(in, u.hover_face.rgb);
+fn fs_hovered_selected_face_pattern(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(hidden_face(in, front, u.hover_face.rgb, u.hover_face.w, 1.0, 1.0).rgb, 1.0);
 }
 
-fn face_outline(in: LineOut, base: vec3<f32>) -> HighlightOut {
-    var out = highlight_line(in);
-    let under = output(vec4<f32>(base, 1.0)).rgb;
-    let over = output(vec4<f32>(u.selected.rgb, 1.0)).rgb;
-    out.color = vec4<f32>(mix(under, over, u.hover_face.w), out.color.a * part.alpha.x);
-    return out;
+// How wide the edge of a selected face's pattern is, in logical pixels.
+const PATTERN_EDGE: f32 = 2.0;
+
+// The pattern's edge over the frame, once: within the mask (`coverage`),
+// where it's no more than PATTERN_EDGE from its outside, in its colour,
+// opaque but for the mask's own anti-aliasing. What's read is as stored,
+// encoded or not, so it's written as it is.
+@fragment
+fn fs_pattern_edge(in: FullscreenOut) -> @location(0) vec4<f32> {
+    let at = vec2<i32>(in.position.xy);
+    let here = textureLoad(coverage, at, 0);
+    if here.a <= 0.0 {
+        discard;
+    }
+    let size = vec2<i32>(textureDimensions(coverage));
+    let radius = PATTERN_EDGE * u.viewport.z;
+    let reach = i32(ceil(radius));
+    var edge = false;
+    for (var y = -reach; y <= reach && !edge; y++) {
+        for (var x = -reach; x <= reach; x++) {
+            let off = vec2<f32>(f32(x), f32(y));
+            if dot(off, off) > radius * radius {
+                continue;
+            }
+            let p = at + vec2<i32>(x, y);
+            let inside = all(p >= vec2<i32>(0)) && all(p < size);
+            if !inside || textureLoad(coverage, p, 0).a < 0.5 {
+                edge = true;
+                break;
+            }
+        }
+    }
+    if !edge {
+        discard;
+    }
+    // The resolved colour is the samples' average over transparent.
+    return vec4<f32>(here.rgb / here.a, here.a);
 }
 
 // The second colour (the measure tool's B), kept in the sketch plane's
@@ -1850,14 +1865,14 @@ fn vs_error_halo_point(
     return error_point(index, at, radius, vec4<f32>(0.0, 0.0, 0.0, part.alpha.x));
 }
 
-// The halo's coverage, as large as the target and read at the pixel's own
-// texel.
-@group(0) @binding(2) var halo: texture_2d<f32>;
+// The errors' halo's coverage, or the selected faces' pattern's mask, as
+// large as the target and read at the pixel's own texel.
+@group(0) @binding(2) var coverage: texture_2d<f32>;
 
 // The halo over the frame, once: its colour at its alpha times the
 // coverage.
 @fragment
 fn fs_error_halo(in: FullscreenOut) -> @location(0) vec4<f32> {
-    let coverage = textureLoad(halo, vec2<i32>(in.position.xy), 0).r;
-    return output(vec4<f32>(errors.halo.rgb, errors.halo.a * coverage));
+    let covered = textureLoad(coverage, vec2<i32>(in.position.xy), 0).r;
+    return output(vec4<f32>(errors.halo.rgb, errors.halo.a * covered));
 }

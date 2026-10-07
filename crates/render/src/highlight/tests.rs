@@ -36,7 +36,7 @@ fn outlined_selected_and_second_edges_are_apart_in_the_stream() {
         second_edges: vec![0],
         vertices: Vec::new(),
     };
-    let built = highlights.build(&mesh(), &[]);
+    let built = highlights.build(&mesh());
     assert_eq!(built.outlined, 1..6);
     assert_eq!(built.selected, 7..9);
     assert_eq!(built.second, 10..13);
@@ -73,7 +73,7 @@ fn ids_the_mesh_has_not_and_plain_vertices_are_left_out() {
             },
         ],
     };
-    let built = highlights.build(&mesh(), &[]);
+    let built = highlights.build(&mesh());
     assert!(built.outlined.is_empty());
     assert_eq!(built.selected.len(), 3);
     assert_eq!(built.vertices.len(), 1);
@@ -120,7 +120,7 @@ fn outlined_edges_that_meet_are_joined_either_way_round() {
         outlined: vec![1, 4, 2, 0, 3, 2],
         ..Highlights::default()
     };
-    let built = highlights.build(&mesh, &[]);
+    let built = highlights.build(&mesh);
     let edges: Vec<u32> = built.edges.iter().map(|point| point.edge).collect();
     let (none, only) = (u32::MAX, 1 << 31);
     // Round the square from its lowest edge, named by it, closed, so with
@@ -138,24 +138,8 @@ fn outlined_edges_that_meet_are_joined_either_way_round() {
         outlined: vec![0, 3],
         ..Highlights::default()
     };
-    let built = highlights.build(&mesh, &[]);
+    let built = highlights.build(&mesh);
     let points: Vec<[f32; 3]> = built.edges[1..4].iter().map(|p| p.position).collect();
     assert_eq!(points, [square[3], square[0], square[1]]);
     assert_eq!(built.outlined, 1..4);
-}
-
-#[test]
-fn a_selected_face_is_outlined_by_the_edges_bounding_it() {
-    let mesh = mesh();
-    let built = Highlights::default().build(&mesh, &[(0, true), (7, false)]);
-    // Face 7 isn't the mesh's.
-    assert_eq!(built.face_outlines.len(), 1);
-    let outline = &built.face_outlines[0];
-    assert_eq!((outline.part, outline.hovered), (0, true));
-    // Both edges, three points and two, apart.
-    let edges: Vec<u32> = built.edges[outline.points.start as usize..outline.points.end as usize]
-        .iter()
-        .map(|point| point.edge)
-        .collect();
-    assert!(edges.contains(&0) && edges.contains(&1), "{edges:?}");
 }

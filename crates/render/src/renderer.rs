@@ -10,7 +10,7 @@ use varde_kernel::{Aabb, CREASE, EdgePoint, EdgeStream, MeshUpload, RenderLines,
 use wgpu::util::DeviceExt;
 
 use crate::Camera;
-use crate::highlight::{FaceOutline, Highlights, VertexInstance};
+use crate::highlight::{Highlights, VertexInstance};
 use crate::scene::{self, GRID_FADE_HEIGHTS, GridPlane};
 use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene, Srgba};
 
@@ -1186,10 +1186,11 @@ pub struct Renderer {
     /// The rims of the hidden hovered and selected edges, dashed.
     outline_hidden: wgpu::RenderPipeline,
     selected_outline_hidden: wgpu::RenderPipeline,
-    /// A selected face's outline where something hides it, in the colour
-    /// of its stripes; and of one hovered too.
-    face_outline_hidden: wgpu::RenderPipeline,
-    hovered_face_outline_hidden: wgpu::RenderPipeline,
+    /// The selected faces' pattern as a mask into
+    /// [`Slot::pattern_target`], and its edge from that over the frame.
+    selected_face_pattern: wgpu::RenderPipeline,
+    hovered_selected_face_pattern: wgpu::RenderPipeline,
+    pattern_edge: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     /// The edges of the mesh's triangles: [`Frame::tessellation`].
     /// The finished sketches' lines again where glass is the nearest of
@@ -1276,9 +1277,6 @@ pub struct Slot {
     /// [`Frame::highlights`] as uploaded, and its `Arc` like `source`.
     highlights: HighlightBuffers,
     highlights_source: Weak<Highlights>,
-    /// The selected faces outlined where hidden, each with whether it's
-    /// hovered too, as [`HighlightBuffers`] were last written with.
-    outlined_faces: Vec<(u32, bool)>,
     /// [`Frame::errors`] as uploaded, and their sources like `source`.
     errors: ErrorBuffers,
     error_sources: Vec<Weak<dyn Any + Send + Sync>>,
@@ -1286,7 +1284,10 @@ pub struct Slot {
     /// there are errors and again when the target is resized while there
     /// are; kept while there are none, so showing and hiding them (a
     /// hover) makes no texture.
-    error_target: Option<ErrorTarget>,
+    error_target: Option<CoverageTarget>,
+    /// The selected faces' pattern's mask, made the first time some are
+    /// selected and kept like `error_target`.
+    pattern_target: Option<CoverageTarget>,
 }
 
 impl Renderer {
@@ -1744,6 +1745,34 @@ impl Renderer {
                 stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
                 ..mesh.clone()
             }),
+            // The pattern's mask: where it's drawn, opaque.
+            selected_face_pattern: pipeline(Pass {
+                label: "varde selected face pattern",
+                fs: "fs_selected_face_pattern",
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Greater,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
+                ..mesh.clone()
+            }),
+            hovered_selected_face_pattern: pipeline(Pass {
+                label: "varde hovered selected face pattern",
+                fs: "fs_hovered_selected_face_pattern",
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Greater,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::NotEqual, Keep),
+                ..mesh.clone()
+            }),
+            pattern_edge: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Always,
+                layout: Some(&errors_layout),
+                ..Pass::overlay(
+                    "varde selected pattern edge",
+                    "vs_fullscreen",
+                    "fs_pattern_edge",
+                )
+            }),
             hovered_face_hidden: pipeline(Pass {
                 label: "varde hovered face hidden",
                 fs: "fs_hovered_face_hidden",
@@ -1797,19 +1826,6 @@ impl Renderer {
                 ..highlight_pass(
                     "varde selected outline hidden",
                     "vs_selected_outline_hidden",
-                )
-            }),
-            face_outline_hidden: pipeline(Pass {
-                depth_compare: wgpu::CompareFunction::Greater,
-                fs: "fs_face_outline_hidden",
-                ..highlight_pass("varde face outline hidden", "vs_face_outline_hidden")
-            }),
-            hovered_face_outline_hidden: pipeline(Pass {
-                depth_compare: wgpu::CompareFunction::Greater,
-                fs: "fs_hovered_face_outline_hidden",
-                ..highlight_pass(
-                    "varde hovered face outline hidden",
-                    "vs_hovered_face_outline_hidden",
                 )
             }),
             hovered_edges_hidden: pipeline(Pass {
@@ -2177,10 +2193,10 @@ impl Renderer {
             faces: Vec::new(),
             highlights: HighlightBuffers::default(),
             highlights_source: Weak::new(),
-            outlined_faces: Vec::new(),
             errors: ErrorBuffers::default(),
             error_sources: Vec::new(),
             error_target: None,
+            pattern_target: None,
         }
     }
 
@@ -2262,27 +2278,17 @@ impl Renderer {
         slot.draws = PartDraws::new(parts, opacity, &slot.part_tints, &self.alphas, frame.camera);
 
         // What's hovered and selected names the mesh's faces, edges and
-        // vertices, so it's written again with the mesh too; and the
-        // selected faces' outlines with them.
-        let outlined_faces: Vec<(u32, bool)> = (frame.selected_faces.iter())
-            .map(|&face| (face, frame.hovered_faces.contains(&face)))
-            .collect();
+        // vertices, so it's written again with the mesh too.
         if new_mesh
             || !std::ptr::eq(
                 slot.highlights_source.as_ptr(),
                 Arc::as_ptr(frame.highlights),
             )
-            || slot.outlined_faces != outlined_faces
         {
             slot.highlights_source = Arc::downgrade(frame.highlights);
-            let written = (slot.highlights).write(
-                device,
-                queue,
-                frame.mesh,
-                frame.highlights,
-                &outlined_faces,
-            );
-            slot.outlined_faces = outlined_faces;
+            let written = slot
+                .highlights
+                .write(device, queue, frame.mesh, frame.highlights);
             result = result.and(written);
         }
         // The failures shown keep their `Arc`s while they're unchanged.
@@ -2442,12 +2448,23 @@ impl Renderer {
         if slot.depth.as_ref().map(|d| d.size) != Some(size) {
             slot.depth = Some(self.create_targets(device, size));
         }
+        if patterned(slot) && slot.pattern_target.as_ref().map(|t| t.size) != Some(size) {
+            slot.pattern_target = Some(CoverageTarget::new(
+                device,
+                &self.errors.layout,
+                &slot.uniforms,
+                ("varde selected pattern", self.format),
+                size,
+                self.samples,
+            ));
+        }
         if slot.errors.any() {
             if slot.error_target.as_ref().map(|t| t.size) != Some(size) {
-                slot.error_target = Some(ErrorTarget::new(
+                slot.error_target = Some(CoverageTarget::new(
                     device,
                     &self.errors.layout,
                     &slot.uniforms,
+                    ("varde error halo", HALO_FORMAT),
                     size,
                     self.samples,
                 ));
@@ -2500,7 +2517,10 @@ impl Renderer {
         // depth tested against the model, so its depth is kept for them,
         // and the sketch being edited after them, so they don't hide it.
         let errors = slot.error_target.as_ref().filter(|_| slot.errors.any());
-        let depth_store = if errors.is_some() {
+        // So is the selected faces' pattern's mask, before what's drawn
+        // over everything of the model.
+        let pattern = slot.pattern_target.as_ref().filter(|_| patterned(slot));
+        let depth_store = if errors.is_some() || pattern.is_some() {
             wgpu::StoreOp::Store
         } else {
             wgpu::StoreOp::Discard
@@ -2518,6 +2538,19 @@ impl Renderer {
             clip,
         );
         self.draw_scene(&mut pass, slot, backdrop);
+        if let Some(target) = pattern {
+            drop(pass);
+            self.draw_pattern(slot, encoder, depth, target, clip);
+            let load = (wgpu::LoadOp::Load, depth_store);
+            let color = (
+                "varde scene",
+                depth.color(),
+                wgpu::LoadOp::Load,
+                wgpu::StoreOp::Store,
+            );
+            pass = self.begin(slot, encoder, color, depth, load, clip);
+        }
+        self.draw_scene_top(&mut pass, slot, backdrop, pattern);
         if let Some(errors) = errors {
             drop(pass);
             self.draw_errors(slot, encoder, depth, errors, clip);
@@ -2645,6 +2678,47 @@ impl Renderer {
         pass
     }
 
+    /// Records drawing `slot`'s selected faces' pattern where the model
+    /// hides them into `pattern`'s mask, as [`Self::draw_hidden_picks`]
+    /// draws it, with `depth` holding the model's depth.
+    fn draw_pattern(
+        &self,
+        slot: &Slot,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &DepthTarget,
+        pattern: &CoverageTarget,
+        clip: ClipRect,
+    ) {
+        let Some(mesh) = &slot.mesh else { return };
+        let target = (
+            "varde selected pattern",
+            pattern.color(),
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            wgpu::StoreOp::Store,
+        );
+        let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Store);
+        let mut pass = self.begin(slot, encoder, target, depth, load, clip);
+        bind_faces(&mut pass, mesh);
+        pass.set_stencil_reference(PICK_MARKS[1]);
+        let selected =
+            || (slot.faces.iter()).filter(|f| f.tint == Tint::Selected && !f.indices.is_empty());
+        pass.set_pipeline(&self.selected_face_mark);
+        for face in selected() {
+            self.alphas.set(&mut pass, face.step);
+            pass.draw_indexed(face.indices.clone(), 0, 0..1);
+        }
+        for face in selected() {
+            pass.set_pipeline(if face.hovered {
+                &self.hovered_selected_face_pattern
+            } else {
+                &self.selected_face_pattern
+            });
+            self.set_tint(&mut pass, slot, face.part);
+            self.alphas.set(&mut pass, face.step);
+            pass.draw_indexed(face.indices.clone(), 0, 0..1);
+        }
+    }
+
     /// Records drawing `slot`'s errors over the scene in `depth`'s colour, with
     /// `depth` holding the model's depth: their halo's coverage into
     /// `error_target`'s, seen and hidden, then composited over the target
@@ -2655,7 +2729,7 @@ impl Renderer {
         slot: &Slot,
         encoder: &mut wgpu::CommandEncoder,
         depth: &DepthTarget,
-        error_target: &ErrorTarget,
+        error_target: &CoverageTarget,
         clip: ClipRect,
     ) {
         let steps = [self.alphas.opaque, self.alphas.step(Some(ERROR_HIDDEN))];
@@ -2905,8 +2979,21 @@ impl Renderer {
         if let Some(mesh) = mesh.filter(|_| slot.hover_through) {
             self.draw_hover_through(pass, slot, mesh);
         }
-        if let Some(mesh) = mesh {
-            self.draw_hidden_picks(pass, slot, mesh);
+    }
+
+    /// Records drawing the rest of `slot`'s scene into `pass` after
+    /// [`Self::draw_scene`], over everything of the model: what it hides
+    /// of the hover and selection, the selection's pattern edged from
+    /// `pattern`'s mask if given, and the markers.
+    fn draw_scene_top(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        slot: &Slot,
+        backdrop: bool,
+        pattern: Option<&CoverageTarget>,
+    ) {
+        if let Some(mesh) = &slot.mesh {
+            self.draw_hidden_picks(pass, slot, mesh, pattern);
         }
 
         // Over the model, which can't hide them while one is picked.
@@ -3035,7 +3122,13 @@ impl Renderer {
     /// selected faces and edges over everything: the faces washed and
     /// striped, the edges dashed; the selection over the hover. The hover
     /// not while [`Frame::hover_through`] draws it whole.
-    fn draw_hidden_picks(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot, mesh: &GpuMesh) {
+    fn draw_hidden_picks(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        slot: &Slot,
+        mesh: &GpuMesh,
+        pattern: Option<&CoverageTarget>,
+    ) {
         let highlights = &slot.highlights;
         let hover = (!slot.hover_through).then_some((
             Tint::Hovered,
@@ -3077,27 +3170,14 @@ impl Renderer {
                 pass.set_pipeline(pipeline);
                 pass.draw_indexed(face.indices.clone(), 0, 0..1);
             }
-            // The selected faces' outlines where hidden, in their
-            // stripes' colour.
+            // The selected faces' pattern's edge, from its mask.
             if tint == Tint::Selected
-                && let Some(stream) = highlights.edges.held()
+                && let Some(pattern) = pattern
             {
-                for outline in &highlights.face_outlines {
-                    let pipeline = if outline.hovered {
-                        &self.hovered_face_outline_hidden
-                    } else {
-                        &self.face_outline_hidden
-                    };
-                    self.set_tint(pass, slot, outline.part);
-                    // At its part's alpha, as its face is drawn.
-                    let Some(face) = (slot.faces.iter())
-                        .find(|f| f.tint == Tint::Selected && f.part == outline.part)
-                    else {
-                        continue;
-                    };
-                    self.alphas.set(pass, face.step);
-                    draw_stream(pass, pipeline, stream, outline.points.clone());
-                }
+                self.alphas.set(pass, self.alphas.opaque);
+                pass.set_pipeline(&self.pattern_edge);
+                pass.set_bind_group(0, &pattern.group, &[]);
+                pass.draw(0..3, 0..1);
             }
             pass.set_bind_group(0, &slot.bind_group, &[0]);
             pass.set_stencil_reference(0);
@@ -3253,6 +3333,12 @@ fn draw_stream(
     pass.draw(0..LINE_VERTICES, 0..points.end - points.start - 1);
 }
 
+/// Whether `slot` has selected faces to draw, whose pattern is edged.
+fn patterned(slot: &Slot) -> bool {
+    slot.mesh.is_some()
+        && (slot.faces.iter()).any(|f| f.tint == Tint::Selected && !f.indices.is_empty())
+}
+
 /// The pipelines drawing the errors' geometry ([`Frame::errors`]), each
 /// kind where it shows (`[0]`, depth `LessEqual`) and where the model hides
 /// it (`[1]`, `Greater`, drawn at [`ERROR_HIDDEN`]).
@@ -3265,7 +3351,7 @@ struct ErrorPipelines {
     composite: wgpu::RenderPipeline,
     /// The geometry itself, over that.
     core: [ErrorLayer; 2],
-    /// Group 0 of the composite and the core: [`ErrorTarget::group`].
+    /// Group 0 of the composite and the core: [`CoverageTarget::group`].
     layout: wgpu::BindGroupLayout,
 }
 
@@ -3618,7 +3704,6 @@ struct HighlightBuffers {
     outlined: Range<u32>,
     selected: Range<u32>,
     second: Range<u32>,
-    face_outlines: Vec<FaceOutline>,
     vertices: Instances,
 }
 
@@ -3631,9 +3716,8 @@ impl HighlightBuffers {
         queue: &wgpu::Queue,
         mesh: &RenderMesh,
         highlights: &Highlights,
-        faces: &[(u32, bool)],
     ) -> Result<(), PrepareError> {
-        let built = highlights.build(mesh, faces);
+        let built = highlights.build(mesh);
         let too_large = |bytes, limit| PrepareError::HighlightsTooLarge { bytes, limit };
         let (d, q) = (device, queue);
         let written = (self.edges)
@@ -3646,7 +3730,6 @@ impl HighlightBuffers {
                 outlined: built.outlined,
                 selected: built.selected,
                 second: built.second,
-                face_outlines: built.face_outlines,
                 ..std::mem::take(self)
             },
             Err(_) => HighlightBuffers::default(),
@@ -3809,11 +3892,12 @@ impl BuiltErrors {
     }
 }
 
-/// What the errors are drawn with beside the scene's own: the target
-/// their halo is drawn into (see [`HALO_FORMAT`]) and their colours.
-struct ErrorTarget {
+/// A target of the frame's size drawn into beside the scene and read
+/// back over it: the errors' halo's (see [`HALO_FORMAT`]), with their
+/// colours, or the selected faces' pattern's mask (the colours unused).
+struct CoverageTarget {
     view: wgpu::TextureView,
-    /// The multisampled halo, resolving to `view`, as the scene's colour.
+    /// The multisampled target, resolving to `view`, as the scene's colour.
     samples: Option<wgpu::TextureView>,
     /// [`ErrorUniforms`], written each frame there are errors.
     uniforms: wgpu::Buffer,
@@ -3823,14 +3907,15 @@ struct ErrorTarget {
     size: [u32; 2],
 }
 
-impl ErrorTarget {
+impl CoverageTarget {
     fn new(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         scene: &wgpu::Buffer,
+        (label, format): (&str, wgpu::TextureFormat),
         size: [u32; 2],
         samples: u32,
-    ) -> ErrorTarget {
+    ) -> CoverageTarget {
         let [width, height] = size;
         let texture = |label, samples, usage| {
             device
@@ -3844,20 +3929,15 @@ impl ErrorTarget {
                     mip_level_count: 1,
                     sample_count: samples,
                     dimension: wgpu::TextureDimension::D2,
-                    format: HALO_FORMAT,
+                    format,
                     usage,
                     view_formats: &[],
                 })
                 .create_view(&Default::default())
         };
         let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        let view = texture(
-            "varde error halo",
-            1,
-            attachment | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        let samples =
-            (samples > 1).then(|| texture("varde error halo samples", samples, attachment));
+        let view = texture(label, 1, attachment | wgpu::TextureUsages::TEXTURE_BINDING);
+        let samples = (samples > 1).then(|| texture(label, samples, attachment));
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("varde error colours"),
             size: size_of::<ErrorUniforms>() as u64,
@@ -3882,7 +3962,7 @@ impl ErrorTarget {
                 },
             ],
         });
-        ErrorTarget {
+        CoverageTarget {
             view,
             samples,
             uniforms,
@@ -3892,7 +3972,7 @@ impl ErrorTarget {
     }
 }
 
-impl ErrorTarget {
+impl CoverageTarget {
     /// The halo's target drawn into and what it resolves to, if anything.
     fn color(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
         match &self.samples {

@@ -2853,7 +2853,8 @@ fn a_selected_face_is_tinted_with_the_selection_colour() {
 #[test]
 fn a_selected_face_hidden_by_the_model_is_washed_and_striped() {
     // The far cube's front face, selected, behind the opaque near one:
-    // tinted all along a row across it, more in the stripes.
+    // tinted all along a row across it, more in the stripes, most at the
+    // edge of what's hidden.
     let (camera, _, both) = cube_behind_cube();
     let far_front = face_facing(&both, -Vec3::Y);
     let render = |selected_faces| {
@@ -2873,11 +2874,20 @@ fn a_selected_face_hidden_by_the_model_is_washed_and_striped() {
             .map(|x| tint(pixel(pixels, x, cy)))
             .collect::<Vec<_>>()
     };
+    // Edged where the pattern ends, either side, in the stripes' colour.
+    let whole: Vec<i32> = (0..SIZE[0])
+        .map(|x| tint(pixel(&selected, x, cy)))
+        .collect();
     let (plain, selected) = (row(&plain), row(&selected));
     assert!(plain.iter().all(|t| t.abs() < 4), "{plain:?}");
     let least = selected.iter().copied().min().unwrap();
     let most = selected.iter().copied().max().unwrap();
-    assert!(least > 4 && most > least + 10, "{selected:?}");
+    assert!(least > 4 && most > least + 5, "{selected:?}");
+    let first = whole.iter().position(|&t| t > 4).unwrap();
+    let last = whole.iter().rposition(|&t| t > 4).unwrap();
+    let edge = |at: std::ops::Range<usize>| whole[at].iter().copied().max().unwrap();
+    assert!(edge(first..first + 3) > most + 30, "{whole:?}");
+    assert!(edge(last - 2..last + 1) > most + 30, "{whole:?}");
 }
 
 #[test]
