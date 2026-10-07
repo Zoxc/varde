@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use varde_sketch::Selectable;
 
 use glam::Vec3;
 use iced::futures::StreamExt;
@@ -2935,7 +2936,7 @@ fn restoring_recovered_changes_lets_go_of_the_refusal_and_hover() {
     let point = sketch.points[0].id;
     let session = varde.screen.doc_mut().unwrap().sketch.as_mut().unwrap();
     assert_eq!(session.feature, theirs);
-    session.hovered = Some(point);
+    session.hovered = Some(Selectable::Item(point));
     session.refusal = Some(Refusal::Failed("worker".to_owned()));
 
     let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
@@ -5328,11 +5329,11 @@ fn geometry_selected_is_what_the_sketch_holds() {
 
     let selection = |doc: &Doc| doc.sketch.as_ref().unwrap().selection.clone();
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
     doc.look(Look::ClickGeometry {
-        hit: Some(b),
+        hit: Some(Selectable::Item(b)),
         add: false,
     });
     assert_eq!(selection(&doc).into_iter().collect::<Vec<_>>(), [b]);
@@ -5348,7 +5349,7 @@ fn geometry_selected_is_what_the_sketch_holds() {
     doc.sync();
     assert!(selection(&doc).is_empty());
     doc.look(Look::ClickGeometry {
-        hit: Some(b),
+        hit: Some(Selectable::Item(b)),
         add: false,
     });
     assert!(selection(&doc).is_empty());

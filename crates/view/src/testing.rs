@@ -3,7 +3,7 @@
 
 use glam::DVec2;
 use varde_expr::{LengthUnit, Value};
-use varde_sketch::{Curve, Design, Dimension, Handle, Id, Measure, Sketch, Spline};
+use varde_sketch::{Curve, Design, Dimension, Handle, Id, Measure, Selectable, Sketch, Spline};
 
 use crate::typed::{DEFAULT_SIDES, Field};
 use crate::{ActiveTool, Target, Tool};
@@ -205,4 +205,9 @@ impl<'a> Laid<'a> {
         );
         self.renderer.screenshot(size, 1.0, base.background_color)
     }
+}
+
+/// The items `ids` as a selection.
+pub(crate) fn items<const N: usize>(ids: [Id; N]) -> std::collections::BTreeSet<Selectable> {
+    ids.into_iter().map(Selectable::Item).collect()
 }

@@ -1,4 +1,5 @@
 use std::f64::consts::{FRAC_PI_2, PI};
+use varde_sketch::Selectable;
 
 use varde_expr::LengthUnit;
 
@@ -25,7 +26,7 @@ fn each_tool_offers_its_fields_once_its_shape_has_a_point() {
     // The Offset tool's distance, once it has its chain.
     let offset = testing::tool(Tool::Offset, &[], &[]);
     assert!(offset.fields().is_empty());
-    let chain = [Id::X_AXIS];
+    let chain = [Selectable::Item(Id::X_AXIS)];
     let picked = ActiveTool {
         picked: &chain,
         ..offset

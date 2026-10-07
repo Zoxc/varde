@@ -7,7 +7,9 @@ use std::f64::consts::{PI, TAU};
 
 use glam::DVec2;
 use varde_expr::{LengthUnit, format};
-use varde_sketch::{Curve, Dimension, Id, Kind, Measure, Role, Side, Sketch, arc_sweep};
+use varde_sketch::{
+    Curve, Dimension, Id, Kind, Measure, Role, Selectable, Side, Sketch, arc_sweep,
+};
 
 /// Under this sine of the angle between them, two lines picked are
 /// parallel, and dimensioned by the distance between them rather than
@@ -29,21 +31,24 @@ enum Extent {
 /// lines, or a circle or an arc and a point, a line or another circle or
 /// arc, by its edge (see [`edge_distance`]); not an axis alone, nor the
 /// origin and axes among themselves.
-fn measurable(sketch: &Sketch, picked: &[Id]) -> bool {
+fn measurable(sketch: &Sketch, picked: &[Selectable]) -> bool {
     let plays = |id, role: Role| sketch.kind(id).is_some_and(|kind| role.admits(kind));
-    // A handle picked as a line ([`Id::handle`]): its angle, from the X
-    // axis or with a line or another handle.
-    if picked.iter().any(|id| id.handle_tip().is_some()) {
-        let direction = |id: Id| {
-            let tip = id.handle_tip();
-            tip.is_some_and(|tip| sketch.handle(tip).is_some()) || sketch.line(id).is_some()
+    // A handle picked as a line, or by its mirrored end: its angle, from
+    // the X axis or with a line or another handle.
+    if picked.iter().any(|target| target.handle_tip().is_some()) {
+        let direction = |target: Selectable| match target {
+            Selectable::Item(id) => sketch.line(id).is_some(),
+            _ => sketch.selectable(target),
         };
         return match *picked {
             [one] => direction(one),
-            [a, b] => a != b && direction(a) && direction(b),
+            [a, b] => a.id() != b.id() && direction(a) && direction(b),
             _ => false,
         };
     }
+    let Some(picked) = items(picked) else {
+        return false;
+    };
     match *picked {
         [one] if sketch.handle(one).is_some() => true,
         [one] => plays(one, Role::Curve) && !one.is_builtin(),
@@ -58,6 +63,11 @@ fn measurable(sketch: &Sketch, picked: &[Id]) -> bool {
         }
         _ => false,
     }
+}
+
+/// The items of `picked`, if it's only items.
+fn items(picked: &[Selectable]) -> Option<Vec<Id>> {
+    picked.iter().map(|target| target.item()).collect()
 }
 
 /// The distance from the edge of a circle or an arc to the other of `a`
@@ -84,7 +94,7 @@ fn edge_distance(sketch: &Sketch, a: Id, b: Id) -> Option<Measure> {
 
 /// Whether picking `id` after `picked` makes something to measure
 /// together, rather than starting afresh from `id`.
-pub fn joins(sketch: &Sketch, picked: &[Id], id: Id) -> bool {
+pub fn joins(sketch: &Sketch, picked: &[Selectable], id: Selectable) -> bool {
     match *picked {
         [first] => measurable(sketch, &[first, id]),
         _ => false,
@@ -92,11 +102,11 @@ pub fn joins(sketch: &Sketch, picked: &[Id], id: Id) -> bool {
 }
 
 /// Whether `id` can start a pick: a point, a line, a circle or an arc,
-/// or a spline's handle as a line ([`Id::handle`]).
-pub fn pickable(sketch: &Sketch, id: Id) -> bool {
-    if let Some(tip) = id.handle_tip() {
-        return sketch.handle(tip).is_some();
-    }
+/// or a spline's handle as a line or by its mirrored end.
+pub fn pickable(sketch: &Sketch, target: Selectable) -> bool {
+    let Selectable::Item(id) = target else {
+        return sketch.selectable(target);
+    };
     sketch
         .kind(id)
         .is_some_and(|kind| kind != Kind::Spline && Role::Geometry.admits(kind))
@@ -104,8 +114,8 @@ pub fn pickable(sketch: &Sketch, id: Id) -> bool {
 
 /// Whether `picked` is a circle or an arc alone, whose dimension can be
 /// its radius or its diameter.
-pub fn round(sketch: &Sketch, picked: &[Id]) -> bool {
-    matches!(*picked, [one] if sketch.kind(one).is_some_and(|kind| Role::Round.admits(kind)))
+pub fn round(sketch: &Sketch, picked: &[Selectable]) -> bool {
+    matches!(*picked, [Selectable::Item(one)] if sketch.kind(one).is_some_and(|kind| Role::Round.admits(kind)))
 }
 
 /// What the Dimension tool measures of the items `picked` of `sketch`
@@ -125,13 +135,13 @@ pub fn round(sketch: &Sketch, picked: &[Id]) -> bool {
 ///   other;
 /// - a circle or an arc and a point, a line or another circle or arc:
 ///   the gap from its edge, see [`Measure::EdgeDistance`];
-/// - a spline's handle, by its tip or as a line ([`Id::handle`]), its
+/// - a spline's handle, by its tip, as a line or by its mirrored end, its
 ///   angle from the X axis (counter-clockwise; its length is its fit
 ///   point's and its tip's distance); as a line with a line or another
 ///   handle, the angle between them as two lines'.
 pub fn measure(
     sketch: &Sketch,
-    picked: &[Id],
+    picked: &[Selectable],
     at: DVec2,
     switched: bool,
 ) -> Option<(Measure, Side)> {
@@ -139,13 +149,21 @@ pub fn measure(
         return None;
     }
     let point = |id| sketch.point(id).map(|point| point.at);
-    // Handles picked as lines are named by their tips.
-    let tip = |id: Id| id.handle_tip().unwrap_or(id);
-    let measure = match *picked {
-        [one] if one.handle_tip().is_some() => Measure::Angle(Id::X_AXIS, tip(one)),
-        [a, b] if a.handle_tip().is_some() || b.handle_tip().is_some() => {
-            return angle(sketch, tip(a), tip(b), at);
+    // Handles picked as lines or by their mirrored ends are named by
+    // their tips.
+    match *picked {
+        [one] if one.handle_tip().is_some() => {
+            let measure = Measure::Angle(Id::X_AXIS, one.id());
+            let side = sketch.side(&measure);
+            return Some((measure, side));
         }
+        [a, b] if a.handle_tip().is_some() || b.handle_tip().is_some() => {
+            return angle(sketch, a.id(), b.id(), at);
+        }
+        _ => {}
+    }
+    let picked = items(picked)?;
+    let measure = match *picked {
         [one] if sketch.handle(one).is_some() => Measure::Angle(Id::X_AXIS, one),
         [one] => match sketch.curve(one)?.curve {
             Curve::Line { start, end } => along(
@@ -280,7 +298,7 @@ pub fn name(measure: &Measure) -> &'static str {
 /// distance straight, the first angle under a half turn between two
 /// lines; and the value measured, as a size. `None` for what doesn't
 /// measure anything.
-pub fn selected(sketch: &Sketch, selected: &[Id]) -> Option<(Measure, f64)> {
+pub fn selected(sketch: &Sketch, selected: &[Selectable]) -> Option<(Measure, f64)> {
     // A place nowhere: no line runs to it (straight, `extent`), nor is
     // it in any angle (the first, `angle`).
     let (measure, side) = measure(sketch, selected, DVec2::NAN, false)?;
@@ -399,10 +417,40 @@ pub fn size_note(
 }
 
 /// Where the point `at` is, in `units`, as its row in the Geometry list
-/// notes it: "10 mm, -5 mm".
-pub fn point_note(at: DVec2, units: LengthUnit) -> String {
-    let unit = Some(units.into());
-    format!("{}, {}", format(at.x, unit), format(at.y, unit))
+/// notes it: "10 mm, -5 mm", in at most `room` characters if it can be. Each
+/// coordinate is rounded to as many of the unit's decimals as fit, the
+/// same for both, without trailing zeros, and marked `≈` where what's
+/// shown isn't its value exactly. Past `room` even whole, it's whole.
+pub fn point_note(at: DVec2, units: LengthUnit, room: usize) -> String {
+    let symbol = units.symbol();
+    let mut note = String::new();
+    for decimals in (0..=units.decimals()).rev() {
+        let [x, y] = [at.x, at.y].map(|value| rounded(value / units.mm(), decimals));
+        note = format!("{x} {symbol}, {y} {symbol}");
+        if note.chars().count() <= room {
+            break;
+        }
+    }
+    note
+}
+
+/// `value` to `decimals`, without trailing zeros, with a true minus
+/// sign, after a `≈` if that isn't `value` exactly (`≈−3`).
+fn rounded(value: f64, decimals: usize) -> String {
+    let mut text = format!("{value:.decimals$}");
+    if text.contains('.') {
+        text.truncate(text.trim_end_matches('0').trim_end_matches('.').len());
+    }
+    if text == "-0" {
+        text = "0".to_owned();
+    }
+    let exact = text.parse::<f64>().is_ok_and(|shown| shown == value);
+    let text = text.replace('-', "\u{2212}");
+    if exact {
+        text
+    } else {
+        format!("\u{2248}{text}")
+    }
 }
 
 /// What `dimension` shows on its label in `sketch` in a design in

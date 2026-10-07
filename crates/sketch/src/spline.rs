@@ -397,15 +397,6 @@ const COMB_PER_SEGMENT: usize = 16;
 const COMB_FLAT: f64 = 1e-9;
 
 impl Sketch {
-    /// Whether `id` names something of the sketch's that can be selected:
-    /// an item ([`Sketch::kind`]), or a handle as a line ([`Id::handle`]).
-    pub fn selectable(&self, id: Id) -> bool {
-        self.kind(id).is_some()
-            || id
-                .handle_tip()
-                .is_some_and(|tip| self.handle(tip).is_some())
-    }
-
     /// The spline `curve`, if it's one of the sketch's.
     pub fn spline(&self, curve: Id) -> Option<&Spline> {
         match &self.curve(curve)?.curve {

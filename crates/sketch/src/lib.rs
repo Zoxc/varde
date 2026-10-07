@@ -38,6 +38,7 @@ mod offset;
 mod origin;
 mod profile;
 mod propose;
+mod selectable;
 mod sets;
 mod shape;
 mod solve;
@@ -63,6 +64,7 @@ pub use profile::{
     OpenEnd, Piece, Profiles, Region, RegionRef, RegionRefError, TooComplex,
 };
 pub use propose::{Accepted, DragSession, Rejected, propose};
+pub use selectable::Selectable;
 pub use solve::{Analysis, Budget, DEFAULT_ITERATIONS, Failure, Goal, Solution, analyse, solve};
 pub use spline::{
     BSpline, Handle, Interpolation, MAX_COMB_TEETH, MAX_SPLINE_POINTS, MIN_KNOT_GAP, MIN_SPAN,
@@ -394,8 +396,7 @@ impl Sketch {
     }
 
     /// A new id. Fails, leaving the sketch as it was, once the ids have
-    /// run out, into those reserved for handles and the origin and axes
-    /// ([`Id::handle`]): `next_id` may come from
+    /// run out, short of the origin's and axes': `next_id` may come from
     /// a file, so it can be anything.
     pub(crate) fn new_id(&mut self) -> Result<Id, OutOfIds> {
         if self.next_id >= origin::LAST_ID {

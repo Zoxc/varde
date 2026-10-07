@@ -1,4 +1,5 @@
 use varde_document::OriginPlane;
+use varde_sketch::Selectable;
 
 use super::*;
 use crate::projection::top_camera;
@@ -63,14 +64,14 @@ fn drawn() -> Drawn {
 fn points_come_before_the_curves_they_are_on() {
     let d = drawn();
     let hit = |x, y, tolerance| hit(&d.sketch, DVec2::new(x, y), tolerance);
-    assert_eq!(hit(0.2, 0.1, 0.5), Some(d.a));
-    assert_eq!(hit(9.9, 0.0, 0.5), Some(d.b));
-    assert_eq!(hit(5.0, 0.3, 0.5), Some(d.line));
+    assert_eq!(hit(0.2, 0.1, 0.5), Some(Selectable::Item(d.a)));
+    assert_eq!(hit(9.9, 0.0, 0.5), Some(Selectable::Item(d.b)));
+    assert_eq!(hit(5.0, 0.3, 0.5), Some(Selectable::Item(d.line)));
     // The circle's centre is its point, the circle its edge.
-    assert_eq!(hit(20.0, 0.0, 0.5), Some(d.c));
-    assert_eq!(hit(25.2, 0.0, 0.5), Some(d.circle));
-    assert_eq!(hit(20.0, -4.7, 0.5), Some(d.circle));
-    assert_eq!(hit(30.0, 30.4, 0.5), Some(d.lone));
+    assert_eq!(hit(20.0, 0.0, 0.5), Some(Selectable::Item(d.c)));
+    assert_eq!(hit(25.2, 0.0, 0.5), Some(Selectable::Item(d.circle)));
+    assert_eq!(hit(20.0, -4.7, 0.5), Some(Selectable::Item(d.circle)));
+    assert_eq!(hit(30.0, 30.4, 0.5), Some(Selectable::Item(d.lone)));
     // Nothing within the tolerance.
     assert_eq!(hit(5.0, 1.0, 0.5), None);
     assert_eq!(hit(20.0, 2.0, 0.5), None);
@@ -81,18 +82,30 @@ fn points_come_before_the_curves_they_are_on() {
 fn the_nearest_wins() {
     let d = drawn();
     // Both ends of the line are within 6, the nearer wins.
-    assert_eq!(hit(&d.sketch, DVec2::new(4.0, 0.0), 6.0), Some(d.a));
-    assert_eq!(hit(&d.sketch, DVec2::new(6.0, 0.0), 6.0), Some(d.b));
+    assert_eq!(
+        hit(&d.sketch, DVec2::new(4.0, 0.0), 6.0),
+        Some(Selectable::Item(d.a))
+    );
+    assert_eq!(
+        hit(&d.sketch, DVec2::new(6.0, 0.0), 6.0),
+        Some(Selectable::Item(d.b))
+    );
     // Between the line and the circle, off their points.
-    assert_eq!(hit(&d.sketch, DVec2::new(8.0, 2.5), 3.0), Some(d.line));
-    assert_eq!(hit(&d.sketch, DVec2::new(14.0, 2.5), 3.0), Some(d.circle));
+    assert_eq!(
+        hit(&d.sketch, DVec2::new(8.0, 2.5), 3.0),
+        Some(Selectable::Item(d.line))
+    );
+    assert_eq!(
+        hit(&d.sketch, DVec2::new(14.0, 2.5), 3.0),
+        Some(Selectable::Item(d.circle))
+    );
 }
 
 #[test]
 fn an_arc_is_hit_only_where_it_runs() {
     let d = drawn();
     let on = |angle: f64| DVec2::new(0.0, 20.0) + varde_sketch::angle::from_angle(angle) * 5.0;
-    assert_eq!(hit(&d.sketch, on(0.8), 0.2), Some(d.arc));
+    assert_eq!(hit(&d.sketch, on(0.8), 0.2), Some(Selectable::Item(d.arc)));
     // On its circle, but past its end.
     assert_eq!(hit(&d.sketch, on(3.9), 0.2), None);
 }
@@ -126,11 +139,14 @@ fn a_box_dragged_right_selects_what_is_inside() {
         BoxMode::Inside
     );
     // Around the line and its points.
-    let mut line = vec![d.a, d.b, d.line];
+    let mut line = [d.a, d.b, d.line].map(Selectable::Item).to_vec();
     line.sort();
     assert_eq!(select(screen(-1.0, 1.0), screen(11.0, -1.0)), line);
     // Half the circle isn't the circle, but its centre.
-    assert_eq!(select(screen(14.0, 6.0), screen(21.0, -6.0)), [d.c]);
+    assert_eq!(
+        select(screen(14.0, 6.0), screen(21.0, -6.0)),
+        [Selectable::Item(d.c)]
+    );
     // Upside down, it's the same box.
     assert_eq!(select(screen(-1.0, -1.0), screen(11.0, 1.0)), line);
 }
@@ -145,15 +161,21 @@ fn a_box_dragged_left_selects_what_it_touches() {
         ids
     };
     // Across the middle of the line, missing its points.
-    assert_eq!(select(screen(6.0, 1.0), screen(4.0, -1.0)), [d.line]);
+    assert_eq!(
+        select(screen(6.0, 1.0), screen(4.0, -1.0)),
+        [Selectable::Item(d.line)]
+    );
     // Across the circle's edge, and its centre.
-    let mut both = vec![d.c, d.circle];
+    let mut both = [d.c, d.circle].map(Selectable::Item).to_vec();
     both.sort();
     assert_eq!(select(screen(21.0, 6.0), screen(14.0, -6.0)), both);
     // Inside the circle, touching nothing.
     assert!(select(screen(23.0, 1.0), screen(21.0, -1.0)).is_empty());
     // A segment passing through without an end inside.
-    assert_eq!(select(screen(4.0, 26.0), screen(2.0, 22.0)), [d.arc]);
+    assert_eq!(
+        select(screen(4.0, 26.0), screen(2.0, 22.0)),
+        [Selectable::Item(d.arc)]
+    );
 }
 
 #[test]
@@ -191,16 +213,16 @@ fn the_origin_and_axes_are_hit_after_the_sketch_s_own() {
     let d = drawn();
     let hit = |x, y| hit(&d.sketch, DVec2::new(x, y), 0.5);
     // `a` is at the origin: the sketch's point first.
-    assert_eq!(hit(0.1, 0.1), Some(d.a));
+    assert_eq!(hit(0.1, 0.1), Some(Selectable::Item(d.a)));
     let empty = Sketch::default();
     assert_eq!(
         super::hit(&empty, DVec2::new(0.2, -0.1), 0.5),
-        Some(Id::ORIGIN)
+        Some(Selectable::Item(Id::ORIGIN))
     );
     // The line along the x axis before the axis, the axis past its end.
-    assert_eq!(hit(5.0, 0.3), Some(d.line));
-    assert_eq!(hit(-7.0, 0.3), Some(Id::X_AXIS));
-    assert_eq!(hit(0.4, -7.0), Some(Id::Y_AXIS));
+    assert_eq!(hit(5.0, 0.3), Some(Selectable::Item(d.line)));
+    assert_eq!(hit(-7.0, 0.3), Some(Selectable::Item(Id::X_AXIS)));
+    assert_eq!(hit(0.4, -7.0), Some(Selectable::Item(Id::Y_AXIS)));
 }
 
 #[test]
@@ -236,27 +258,109 @@ fn a_handle_is_hit_by_its_tip_along_both_arms_before_curves() {
     // On the tip's arm and on the mirrored one, as a line of its own.
     assert_eq!(
         hit(&sketch, DVec2::new(13.0, 10.2), 0.5),
-        Some(Id::handle(tip))
+        Some(Selectable::HandleLine(tip))
     );
     assert_eq!(
         hit(&sketch, DVec2::new(7.0, 9.8), 0.5),
-        Some(Id::handle(tip))
+        Some(Selectable::HandleLine(tip))
     );
     assert_eq!(
         overlaps(&sketch, DVec2::new(7.0, 9.8), 0.5),
-        [Id::handle(tip)]
+        [Selectable::HandleLine(tip)]
     );
     // At the fit point, where the spline runs along it, the handle
     // first; off its arms, the spline.
     assert_eq!(
         hit(&sketch, DVec2::new(10.4, 10.1), 0.25),
-        Some(Id::handle(tip))
+        Some(Selectable::HandleLine(tip))
     );
     assert_eq!(
         overlaps(&sketch, DVec2::new(10.4, 10.1), 0.25),
-        [Id::handle(tip), id]
+        [Selectable::HandleLine(tip), Selectable::Item(id)]
     );
     let flat = sketch.flatten(&sketch.curve(id).unwrap().curve).unwrap();
     let along = flat[flat.len() / 4];
-    assert_eq!(hit(&sketch, along, 0.25), Some(id));
+    assert_eq!(hit(&sketch, along, 0.25), Some(Selectable::Item(id)));
+}
+
+#[test]
+fn a_handle_s_ends_go_before_arms() {
+    use varde_sketch::{Handle, Spline};
+    let mut sketch = Sketch::default();
+    let mut point = |x, y| sketch.add_point(DVec2::new(x, y)).unwrap();
+    let (a, b, c, tip) = (
+        point(0.0, 0.0),
+        point(10.0, 10.0),
+        point(20.0, 0.0),
+        point(14.0, 10.0),
+    );
+    let (d, e, f, across) = (
+        point(0.0, 20.0),
+        point(6.3, 9.0),
+        point(12.0, 20.0),
+        point(6.3, 13.0),
+    );
+    for (ends, at, tip) in [([a, b, c], b, tip), ([d, e, f], e, across)] {
+        let mut spline = Spline::through(ends.to_vec(), false);
+        spline.handles.push(Handle { at, tip });
+        sketch.add_curve(Curve::Spline(spline), false).unwrap();
+    }
+    // By the first handle's mirrored end at (6, 10), nearer the second's
+    // arm from (6.3, 5) to (6.3, 13): the end, as an end of its own.
+    assert_eq!(
+        hit(&sketch, DVec2::new(6.2, 10.2), 0.5),
+        Some(Selectable::HandleEnd(tip))
+    );
+    // Along the second's arm, away from any end, the second.
+    assert_eq!(
+        hit(&sketch, DVec2::new(6.2, 11.5), 0.5),
+        Some(Selectable::HandleLine(across))
+    );
+    // Along the first's arm, nearing its tip at (14, 10) but farther than
+    // the tolerance, the tip: an end reaches farther than an arm.
+    assert_eq!(
+        hit(&sketch, DVec2::new(13.3, 10.1), 0.5),
+        Some(Selectable::Item(tip))
+    );
+    // Farther still, the arm.
+    assert_eq!(
+        hit(&sketch, DVec2::new(12.5, 10.1), 0.5),
+        Some(Selectable::HandleLine(tip))
+    );
+}
+
+#[test]
+fn a_handle_s_mirrored_end_is_hit_listed_and_boxed_as_a_point() {
+    let mut sketch = Sketch::default();
+    let (_, fit, tip) = crate::testing::handled_spline(&mut sketch);
+    // The tip at (13, 7) about the fit point at (10, 4): the end at (7, 1).
+    let end = DVec2::new(7.0, 1.0);
+    assert_eq!(sketch.handle_end(tip), Some(end));
+    assert_eq!(
+        hit(&sketch, end + DVec2::new(0.1, 0.0), 0.5),
+        Some(Selectable::HandleEnd(tip))
+    );
+    // The tip is the point it is.
+    assert_eq!(
+        hit(&sketch, DVec2::new(13.1, 7.0), 0.5),
+        Some(Selectable::Item(tip))
+    );
+    // Listed before the handle as a line.
+    assert_eq!(
+        overlaps(&sketch, end, 0.1),
+        [Selectable::HandleEnd(tip), Selectable::HandleLine(tip)]
+    );
+    // A box round it holds it; one round its fit point alone doesn't.
+    let boxed = |a: DVec2, b: DVec2| {
+        let (a, b) = (screen(a.x, a.y), screen(b.x, b.y));
+        in_box(&sketch, &top(), ScreenBox::new(a, b), BoxMode::Inside)
+    };
+    assert_eq!(
+        boxed(DVec2::new(6.0, 2.0), DVec2::new(8.0, 0.0)),
+        [Selectable::HandleEnd(tip)]
+    );
+    assert_eq!(
+        boxed(DVec2::new(9.0, 5.0), DVec2::new(11.0, 3.0)),
+        [Selectable::Item(fit[1])]
+    );
 }

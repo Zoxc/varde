@@ -22,7 +22,7 @@ use varde_document::{
 };
 use varde_expr::Value;
 use varde_render::{Camera, Projection};
-use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, SketchEdit, TooComplex};
+use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, Selectable, SketchEdit, TooComplex};
 use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{
     ActiveTool, CURVED_FACE, GeometryGroup, LinkRow, Naming, Panel, PlanePick, RowMenu, Shown,
@@ -51,7 +51,7 @@ pub(crate) struct SketchSession {
     pub(crate) tool: Option<Drawing>,
     /// The items selected, which the viewport and the Geometry list show.
     /// Only ever items the sketch holds, see [`Doc::prune`].
-    pub(crate) selection: BTreeSet<Id>,
+    pub(crate) selection: BTreeSet<Selectable>,
     /// The points and curves the Constraints list lists what's on, all
     /// when none: see [`follow_selection`].
     pub(crate) listed_on: BTreeSet<Id>,
@@ -75,7 +75,7 @@ pub(crate) struct SketchSession {
     /// Whether the curvature comb of the splines selected shows.
     pub(crate) comb: bool,
     /// The item hovered in a list or by its glyph, if any.
-    pub(crate) hovered: Option<Id>,
+    pub(crate) hovered: Option<Selectable>,
     /// The sketch with the edits waiting on the solver applied, while
     /// there are any: what's shown, and what tools draw on.
     pub(crate) waiting: Option<Waiting>,
@@ -219,7 +219,7 @@ pub(crate) struct Drawing {
     /// tool's to mirror, the chain the Offset tool offsets, or the corner
     /// Fillet or Chamfer is on, as its point and its lines (see
     /// [`Tool::pick`](varde_view::Tool::pick)).
-    pub(crate) picked: Vec<Id>,
+    pub(crate) picked: Vec<Selectable>,
     /// Whether the Mirror tool has what it mirrors and waits for the line
     /// to mirror about.
     pub(crate) about: bool,
@@ -866,7 +866,7 @@ impl Doc {
     /// Takes a click in the sketch without a tool, on `hit` if anything:
     /// selects it alone, or nothing, or with `add` adds it to the
     /// selection or takes it out.
-    pub(crate) fn click_geometry(&mut self, hit: Option<Id>, add: bool) {
+    pub(crate) fn click_geometry(&mut self, hit: Option<Selectable>, add: bool) {
         let hit = hit.filter(|&id| self.holds(id));
         let Some(session) = &mut self.sketch else {
             return;
@@ -885,7 +885,7 @@ impl Doc {
 
     /// Selects the items `ids` a box was dragged over, those the sketch
     /// holds: alone, or with `add` as well as what's selected.
-    pub(crate) fn select_box(&mut self, ids: Vec<Id>, add: bool) {
+    pub(crate) fn select_box(&mut self, ids: Vec<Selectable>, add: bool) {
         let held: Vec<_> = ids.into_iter().filter(|&id| self.holds(id)).collect();
         let Some(session) = &mut self.sketch else {
             return;
@@ -897,13 +897,13 @@ impl Doc {
     }
 
     /// Whether the sketch being edited, as it's worked on, holds `id`.
-    pub(crate) fn holds(&self, id: Id) -> bool {
+    pub(crate) fn holds(&self, id: Selectable) -> bool {
         self.working_sketch()
             .is_some_and(|sketch| sketch.selectable(id))
     }
 
     /// Lets go of the item `id` hovered, if it still is.
-    pub(crate) fn leave_item(&mut self, id: Id) {
+    pub(crate) fn leave_item(&mut self, id: Selectable) {
         if let Some(session) = &mut self.sketch {
             session.hovered.take_if(|&mut hovered| hovered == id);
         }
@@ -911,7 +911,7 @@ impl Doc {
 
     /// Hovers the item `id` of a list or glyph, or none, if the sketch
     /// holds it.
-    pub(crate) fn hover_item(&mut self, id: Option<Id>) {
+    pub(crate) fn hover_item(&mut self, id: Option<Selectable>) {
         let id = id.filter(|&id| self.holds(id));
         if let Some(session) = &mut self.sketch {
             session.hovered = id;
@@ -951,7 +951,7 @@ impl Doc {
     /// Unfolds a curve's row of the Geometry list to show its points
     /// under it, or folds it.
     pub(crate) fn toggle_expanded(&mut self, id: Id) {
-        let held = self.holds(id);
+        let held = self.holds(id.into());
         if let Some(session) = &mut self.sketch
             && !session.expanded.remove(&id)
             && held
@@ -992,11 +992,13 @@ impl Doc {
             use varde_view::dimension::{joins, pickable};
 
             let selection = self.sketch.iter().flat_map(|session| &session.selection);
-            let selected: Vec<_> = selection.copied().collect();
+            let selected: Vec<Selectable> = selection.copied().collect();
+            let item_ids: Vec<Id> = selected.iter().filter_map(|target| target.item()).collect();
+            let items = |picked: Vec<Id>| picked.into_iter().map(Selectable::Item).collect();
             match (tool, selected.as_slice()) {
-                (Tool::Mirror, _) => shape::mirrorable(sketch, &selected),
-                (Tool::Offset, _) => shape::offsettable(sketch, &selected),
-                (Tool::Fillet | Tool::Chamfer, _) => shape::cornered(sketch, &selected),
+                (Tool::Mirror, _) => items(shape::mirrorable(sketch, &item_ids)),
+                (Tool::Offset, _) => items(shape::offsettable(sketch, &item_ids)),
+                (Tool::Fillet | Tool::Chamfer, _) => items(shape::cornered(sketch, &item_ids)),
                 (Tool::Dimension, &[one]) if pickable(sketch, one) => selected,
                 (Tool::Dimension, &[first, second]) if joins(sketch, &[first], second) => selected,
                 _ => Vec::new(),
@@ -1055,8 +1057,7 @@ impl Doc {
             RowMenu::Sketch(id) => !replaced && document.feature(id).is_some(),
             RowMenu::Body(id) => !replaced && document.body(id).is_some(),
             RowMenu::Item(id) => {
-                !replaced
-                    && (self.edited_sketch()).is_some_and(|(_, sketch)| sketch.kind(id).is_some())
+                !replaced && (self.edited_sketch()).is_some_and(|(_, sketch)| sketch.selectable(id))
             }
             RowMenu::Link(id) => {
                 !replaced
@@ -1457,16 +1458,21 @@ fn facing_turn(now: &Camera, placement: Placement) -> (Vec3, Vec3) {
 /// nothing is. While only constraints and dimensions are selected it
 /// stays as it was, less what's gone, so one picked from the list, or a
 /// second click on it, finds it where it was.
-fn follow_selection(selection: &BTreeSet<Id>, listed_on: &mut BTreeSet<Id>, sketch: &Sketch) {
+fn follow_selection(
+    selection: &BTreeSet<Selectable>,
+    listed_on: &mut BTreeSet<Id>,
+    sketch: &Sketch,
+) {
     let geometry = |id: &Id| {
         sketch
             .kind(*id)
             .is_some_and(|kind| Role::Geometry.admits(kind))
     };
-    // A handle as a line, by its tip, which its constraints name.
+    // A handle as a line or by its mirrored end, by its tip, which its
+    // constraints name.
     let selected: BTreeSet<Id> = selection
         .iter()
-        .map(|id| id.handle_tip().unwrap_or(*id))
+        .map(|target| target.id())
         .filter(geometry)
         .collect();
     if selected.is_empty() && !selection.is_empty() {

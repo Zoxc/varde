@@ -1,4 +1,5 @@
 use glam::DVec2;
+use varde_sketch::Selectable;
 use varde_sketch::{Curve, Handle, Side, Spline};
 
 use super::*;
@@ -69,8 +70,8 @@ fn drawn() -> Drawn {
     }
 }
 
-fn set(ids: &[Id]) -> BTreeSet<Id> {
-    ids.iter().copied().collect()
+fn set(ids: &[Id]) -> BTreeSet<Selectable> {
+    ids.iter().copied().map(Selectable::Item).collect()
 }
 
 #[test]
@@ -249,10 +250,10 @@ fn sets_hold_what_they_are_made_of() {
 #[test]
 fn the_origin_and_axes_are_constrained_to_as_they_can_be() {
     let d = drawn();
-    let fitting = |ids: &[Id]| ConstraintKind::fitting(&d.sketch, &ids.iter().copied().collect());
+    let fitting = |ids: &[Id]| ConstraintKind::fitting(&d.sketch, &set(ids));
     // A point to the origin, and a line to an axis.
     assert_eq!(
-        Coincident.make(&d.sketch, &BTreeSet::from([d.lone, Id::ORIGIN])),
+        Coincident.make(&d.sketch, &set(&[d.lone, Id::ORIGIN])),
         Some(vec![Constraint::Coincident(d.lone, Id::ORIGIN)])
     );
     assert!(fitting(&[d.flat, Id::X_AXIS]).starts_with(&[Parallel, Perpendicular]));
@@ -295,17 +296,17 @@ fn a_handle_picked_as_a_line_is_held_as_one() {
     let drawn = drawn();
     let sketch = &drawn.sketch;
     let tip = sketch.spline(drawn.spline).unwrap().handles[0].tip;
-    let handle = Id::handle(tip);
+    let handle = Selectable::HandleLine(tip);
     // Alone, nearly horizontal: horizontal first, then vertical, named
     // by its tip.
-    let fitting = ConstraintKind::fitting(sketch, &set(&[handle]));
+    let fitting = ConstraintKind::fitting(sketch, &BTreeSet::from([handle]));
     assert_eq!(fitting, [Horizontal, Vertical]);
     assert_eq!(
-        Horizontal.make(sketch, &set(&[handle])),
+        Horizontal.make(sketch, &BTreeSet::from([handle])),
         Some(vec![Constraint::Horizontal(tip)])
     );
     // With a line, parallel, nearly so already, before perpendicular.
-    let picked = set(&[drawn.flat, handle]);
+    let picked = BTreeSet::from([Selectable::Item(drawn.flat), handle]);
     let fitting = ConstraintKind::fitting(sketch, &picked);
     assert_eq!(fitting[..2], [Parallel, Perpendicular]);
     assert_eq!(
@@ -324,5 +325,21 @@ fn a_handle_picked_as_a_line_is_held_as_one() {
     );
     assert_eq!(Parallel.make(sketch, &set(&[drawn.flat, tip])), None);
     // With a point, nothing.
-    assert_eq!(Horizontal.make(sketch, &set(&[drawn.lone, handle])), None);
+    assert_eq!(
+        Horizontal.make(
+            sketch,
+            &BTreeSet::from([Selectable::Item(drawn.lone), handle])
+        ),
+        None
+    );
+    // By its mirrored end it's the same handle, and picked both ways, one.
+    let end = Selectable::HandleEnd(tip);
+    assert_eq!(
+        Horizontal.make(sketch, &BTreeSet::from([end])),
+        Some(vec![Constraint::Horizontal(tip)])
+    );
+    assert_eq!(
+        Horizontal.make(sketch, &BTreeSet::from([handle, end])),
+        Some(vec![Constraint::Horizontal(tip)])
+    );
 }

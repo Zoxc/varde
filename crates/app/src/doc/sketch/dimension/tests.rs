@@ -3,6 +3,7 @@ use iced::time::{Duration, Instant};
 use iced::{Event, Size, mouse};
 use iced_runtime::user_interface::{Cache, UserInterface};
 use varde_expr::LengthUnit;
+use varde_sketch::Selectable;
 use varde_sketch::{Curve, Measure, Rejected, Side};
 use varde_view::{ConstraintKind, Edit, Look, Message as Ui, Mode, Tool};
 
@@ -19,7 +20,7 @@ use crate::tests::{pressed, typing};
 /// modifier held if `reference`.
 fn tool_click(doc: &mut Answered, x: f64, y: f64, hit: Option<Id>, reference: bool) {
     doc.update(Edit::ToolClick(ToolClick {
-        hit,
+        hit: hit.map(Selectable::Item),
         reference,
         ..click_at(x, y)
     }));
@@ -270,7 +271,7 @@ fn selected_dimensions_turn_between_driving_and_reference() {
     enter(&mut doc, "10");
     let id = sketch(&doc).dimensions[0].id;
     doc.look(Look::ClickGeometry {
-        hit: Some(id),
+        hit: Some(Selectable::Item(id)),
         add: false,
     });
     assert_eq!(selection(&doc), [id]);
@@ -296,7 +297,7 @@ fn selected_dimensions_turn_between_driving_and_reference() {
 fn a_driving_dimension_over_constraining_is_refused_and_can_be_a_reference() {
     let (mut doc, line) = line_to_dimension();
     doc.look(Look::ClickGeometry {
-        hit: Some(line[2]),
+        hit: Some(Selectable::Item(line[2])),
         add: false,
     });
     doc.update(Edit::Constrain(ConstraintKind::Fix));
@@ -317,7 +318,7 @@ fn a_driving_dimension_over_constraining_is_refused_and_can_be_a_reference() {
     // Made driving, it's refused, and stays a reference.
     let id = sketch(&doc).dimensions[0].id;
     doc.look(Look::ClickGeometry {
-        hit: Some(id),
+        hit: Some(Selectable::Item(id)),
         add: false,
     });
     doc.update(Edit::ToggleReference);
@@ -436,7 +437,7 @@ fn the_peek_key_places_references_in_the_dimension_tool_rather_than_peeking() {
 fn typing_in_the_value_field_fires_no_shortcuts() {
     let (mut doc, line) = line_to_dimension();
     doc.look(Look::ClickGeometry {
-        hit: Some(line[2]),
+        hit: Some(Selectable::Item(line[2])),
         add: false,
     });
     pick(&mut doc, 5.0, 0.0, line[2]);
@@ -509,7 +510,7 @@ fn the_dimension_tool_starts_from_what_s_selected() {
     let (mut doc, [start, end, line]) = line_to_dimension();
     doc.look(Look::SelectTool(Tool::Dimension));
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
     doc.look(Look::SelectTool(Tool::Dimension));
@@ -525,7 +526,7 @@ fn the_dimension_tool_starts_from_what_s_selected() {
         doc.look(Look::ClearSelection);
         for id in selected {
             doc.look(Look::ClickGeometry {
-                hit: Some(id),
+                hit: Some(Selectable::Item(id)),
                 add: true,
             });
         }
@@ -588,8 +589,9 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(300);
 
 /// Whether `sent` has a click on the row of `id`.
 fn clicked_row(sent: &[Ui], id: Id) -> bool {
-    sent.iter()
-        .any(|message| matches!(message, Ui::Look(Look::ClickRow(row)) if *row == id))
+    sent.iter().any(
+        |message| matches!(message, Ui::Look(Look::ClickRow(row)) if *row == Selectable::Item(id)),
+    )
 }
 
 #[test]
@@ -599,7 +601,7 @@ fn a_dimension_s_row_double_clicked_opens_the_field_in_it() {
     // Constraints before the dimension in the list.
     for id in [other[2], line[2]] {
         doc.look(Look::ClickGeometry {
-            hit: Some(id),
+            hit: Some(Selectable::Item(id)),
             add: false,
         });
         doc.update(Edit::Constrain(ConstraintKind::Horizontal));
@@ -619,7 +621,7 @@ fn a_dimension_s_row_double_clicked_opens_the_field_in_it() {
         doc.look(Look::ClearSelection);
         if let Some(selected) = selected {
             doc.look(Look::ClickGeometry {
-                hit: Some(selected),
+                hit: Some(Selectable::Item(selected)),
                 add: false,
             });
         }
@@ -638,14 +640,14 @@ fn a_dimension_s_row_double_clicked_opens_the_field_in_it() {
             doc.look(Look::ClearSelection);
             if let Some(selected) = selected {
                 doc.look(Look::ClickGeometry {
-                    hit: Some(selected),
+                    hit: Some(Selectable::Item(selected)),
                     add: false,
                 });
             }
             let (sent, cache, [first, _]) = click_screen(&doc, row, Cache::default());
             assert!(clicked_row(&sent, id), "{sent:?}");
             doc.look(Look::ClickGeometry {
-                hit: Some(id),
+                hit: Some(Selectable::Item(id)),
                 add: false,
             });
             let (sent, _, [_, second]) = click_screen(&doc, row, cache);
@@ -669,7 +671,7 @@ fn construction_in_the_dimension_tool_is_the_selection_s() {
     let (mut doc, [.., line]) = line_to_dimension();
     doc.look(Look::SelectTool(Tool::Dimension));
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
     doc.look(Look::SelectTool(Tool::Dimension));

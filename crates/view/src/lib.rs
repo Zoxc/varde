@@ -69,7 +69,7 @@ use glam::DVec2;
 use varde_document::{BodyId, FaceRef, FeatureId, Opacity, OriginPlane, Tint, Tolerance};
 use varde_expr::LengthUnit;
 use varde_render::{Projection, Shading, View};
-use varde_sketch::{Id, Sketch};
+use varde_sketch::{Id, Selectable, Sketch};
 
 pub use chamfer::chamfer_info;
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
@@ -375,7 +375,7 @@ pub enum Edit {
     DeleteSelection,
     /// Deletes a point or curve of the sketch being edited from its row's
     /// context menu: the selection if it's among it, else it alone.
-    DeleteItem(Id),
+    DeleteItem(Selectable),
     /// Gives each curve made from a point the curves share a point of its
     /// own, coincident with it, from the point's row's context menu.
     DetachPoint(Id),
@@ -600,24 +600,24 @@ pub enum Look {
     /// nothing, or with `add` (`Ctrl`, or `Cmd` on macOS) adds it to the
     /// selection or takes it out.
     ClickGeometry {
-        hit: Option<Id>,
+        hit: Option<Selectable>,
         add: bool,
     },
     /// Selects the items of the sketch being edited that a box dragged
     /// over them selects: those alone, or with `add` as well.
     SelectBox {
-        ids: Vec<Id>,
+        ids: Vec<Selectable>,
         add: bool,
     },
     /// A row of the sketch's Geometry or Constraints list, or a constraint's
     /// glyph, clicked: selects its item alone, or with `Ctrl` (`Cmd` on
     /// macOS) held, which the app knows, adds it to the selection or takes
     /// it out.
-    ClickRow(Id),
+    ClickRow(Selectable),
     /// An item of the sketch being edited hovered in a list or by its
     /// glyph, or none: the viewport highlights it, or what a constraint
     /// ties together.
-    HoverItem(Option<Id>),
+    HoverItem(Option<Selectable>),
     /// A link's row of the Sketch tab clicked: selects what it made, as
     /// [`Look::ClickRow`] selects an item.
     ClickLink(Id),
@@ -627,7 +627,7 @@ pub enum Look {
     /// The cursor left the row or glyph of the sketch item `id`: it's no
     /// longer hovered, unless another was since, as with
     /// [`Look::LeaveFeature`].
-    LeaveItem(Id),
+    LeaveItem(Selectable),
     /// The cursor left a link's row: it's no longer hovered, unless
     /// another was since, as with [`Look::LeaveFeature`].
     LeaveLink(Id),
@@ -789,7 +789,7 @@ pub enum Look {
     /// which dropping it ties it to. Shown until it's dropped
     /// ([`Edit::DropGeometry`]) or `Esc` puts it back.
     DragGeometry {
-        id: Id,
+        id: Selectable,
         from: DVec2,
         to: DVec2,
         target: Option<Target>,
@@ -1052,7 +1052,7 @@ pub struct ToolClick {
     /// chain, the curve under it, points aside, for Mirror's line to
     /// mirror about the line (see [`ActiveTool::about`]), and for Fillet
     /// and Chamfer picking their corner the point where lines make one.
-    pub hit: Option<Id>,
+    pub hit: Option<Selectable>,
     /// A pixel's size at `at`, in sketch units, above zero: a shape
     /// smaller than that can't have been meant, and is refused.
     pub pixel: f64,
@@ -1117,7 +1117,7 @@ pub enum RowMenu {
     /// A link in the Sketch tab of the sketch being edited.
     Link(Id),
     /// A point or curve in the Sketch tab's Geometry list.
-    Item(Id),
+    Item(Selectable),
 }
 
 /// A group of the Sketch tab's Geometry list, which can be folded.

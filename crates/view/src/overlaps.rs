@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use iced::widget::{Space, button, checkbox, column, container, mouse_area, pin, row, stack, text};
 use iced::{Alignment, Element, Length};
 use varde_document::Document;
-use varde_sketch::{Id, Sketch};
+use varde_sketch::{Selectable, Sketch};
 
 use crate::pick::{Pick, Picked};
 use crate::select::{Selection, SketchItem};
@@ -50,7 +50,7 @@ pub struct Overlaps {
 #[derive(Debug, Clone, PartialEq)]
 pub enum OverlapItems {
     /// Of the sketch being edited.
-    Sketch(Vec<Id>),
+    Sketch(Vec<Selectable>),
     /// Of the model shown.
     Model(Vec<Pick>),
     /// Of the model shown and of the finished sketches picked with it
@@ -146,7 +146,7 @@ fn list_height(rows: usize) -> f64 {
 /// kept open); its tick adds it or takes it out alone.
 pub(crate) fn view<'a>(
     overlaps: &Overlaps,
-    sketch: Option<(&Sketch, &BTreeSet<Id>)>,
+    sketch: Option<(&Sketch, &BTreeSet<Selectable>)>,
     model_selection: &Selection,
     ticks: Option<&[OverlapTick]>,
     document: &Document,
@@ -183,7 +183,7 @@ pub(crate) fn view<'a>(
         OverlapItems::Sketch(ids) => (ids.iter())
             .map(|&id| {
                 sketch
-                    .and_then(|sketch| sketch.name(id))
+                    .and_then(|sketch| sketch.selectable_name(id))
                     .unwrap_or_default()
             })
             .collect(),
@@ -301,7 +301,10 @@ mod tests {
 
     #[test]
     fn the_list_goes_beside_the_cursor_or_back_inside_the_viewport() {
-        let items = OverlapItems::Sketch(vec![Id::ORIGIN, Id::X_AXIS]);
+        let items = OverlapItems::Sketch(vec![
+            varde_sketch::Id::ORIGIN.into(),
+            varde_sketch::Id::X_AXIS.into(),
+        ]);
         let beside = Overlaps::new(DVec2::new(20.0, 30.0), [800.0, 600.0], items.clone());
         assert_eq!(beside.at, DVec2::new(30.0, 40.0));
         assert_eq!(beside.held, DVec2::new(20.0, 30.0));

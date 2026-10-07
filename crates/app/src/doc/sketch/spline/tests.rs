@@ -1,5 +1,6 @@
 use glam::DVec2;
 use iced::keyboard::{self, key};
+use varde_sketch::Selectable;
 use varde_sketch::{Constraint, Curve, Id, Kind, SplineKind};
 use varde_view::{Edit, Look, Message as Ui, Own, Target, Tool, ToolClick};
 
@@ -64,7 +65,7 @@ fn draw_bare_wave(doc: &mut Answered) -> Id {
         .collect();
     for (i, &tip) in tips.iter().enumerate() {
         doc.look(Look::ClickGeometry {
-            hit: Some(tip),
+            hit: Some(Selectable::Item(tip)),
             add: i > 0,
         });
     }
@@ -83,9 +84,9 @@ fn shift_key(doc: &mut Answered, key: &str) {
     }
 }
 
-fn select(doc: &mut Answered, id: Id) {
+fn select(doc: &mut Answered, id: impl Into<Selectable>) {
     doc.look(Look::ClickGeometry {
-        hit: Some(id),
+        hit: Some(id.into()),
         add: false,
     });
 }
@@ -362,7 +363,7 @@ fn trim_extend_and_offset_take_splines() {
     doc.key(letter("t"));
     let near = before.nearest_on(id, at(2.0, 2.0)).unwrap();
     doc.update(Edit::ToolClick(ToolClick {
-        hit: Some(id),
+        hit: Some(Selectable::Item(id)),
         ..click_at(near.x, near.y)
     }));
     let trimmed = sketch(&doc).clone();
@@ -380,7 +381,7 @@ fn trim_extend_and_offset_take_splines() {
     let walled = sketch(&doc).clone();
     doc.key(letter("j"));
     doc.update(Edit::ToolClick(ToolClick {
-        hit: Some(id),
+        hit: Some(Selectable::Item(id)),
         ..click_at(19.5, 0.0)
     }));
     let extended = sketch(&doc).clone();
@@ -393,7 +394,7 @@ fn trim_extend_and_offset_take_splines() {
     doc.look(Look::Escape);
     doc.key(letter("o"));
     doc.update(Edit::ToolClick(ToolClick {
-        hit: Some(id),
+        hit: Some(Selectable::Item(id)),
         ..click_at(10.0, 1.0)
     }));
     // In a chain with nothing: picked alone.
@@ -412,7 +413,7 @@ fn a_handle_is_selected_dragged_constrained_and_deleted_as_a_line() {
     let (mut doc, _, _) = sketching();
     let id = draw_wave(&mut doc);
     let handle = sketch(&doc).spline(id).unwrap().handles[1];
-    let line = Id::handle(handle.tip);
+    let line = Selectable::HandleLine(handle.tip);
     let (fit, tip) = (
         sketch(&doc).point(handle.at).unwrap().at,
         sketch(&doc).point(handle.tip).unwrap().at,
@@ -460,7 +461,7 @@ fn the_dimension_tool_takes_a_handle_as_a_line() {
     let (mut doc, _, _) = sketching();
     let id = draw_wave(&mut doc);
     let tip = sketch(&doc).spline(id).unwrap().handles[1].tip;
-    let line = Id::handle(tip);
+    let line = Selectable::HandleLine(tip);
     doc.look(Look::SelectTool(Tool::Dimension));
     doc.update(Edit::ToolClick(ToolClick {
         hit: Some(line),
@@ -472,6 +473,43 @@ fn the_dimension_tool_takes_a_handle_as_a_line() {
     select(&mut doc, line);
     doc.look(Look::SelectTool(Tool::Dimension));
     assert_eq!(drawing(&doc).unwrap().picked, [line]);
+}
+
+/// A handle's mirrored end is selected alone, dragged with the tip
+/// mirroring it through the solver's drag, and deleted as its tip is.
+#[test]
+fn a_handle_s_mirrored_end_is_selected_dragged_and_deleted() {
+    let (mut doc, _, _) = sketching();
+    let id = draw_wave(&mut doc);
+    let handle = sketch(&doc).spline(id).unwrap().handles[1];
+    let end = Selectable::HandleEnd(handle.tip);
+    let fit = sketch(&doc).point(handle.at).unwrap().at;
+    let mirrored = sketch(&doc).handle_end(handle.tip).unwrap();
+    select(&mut doc, end);
+    assert_eq!(
+        doc.sketch.as_ref().unwrap().selection,
+        [end].into_iter().collect()
+    );
+    // Dragged, the end follows the cursor and the tip mirrors it.
+    let before = sketch(&doc).clone();
+    let to = mirrored + DVec2::new(1.0, -2.0);
+    doc.look(Look::DragGeometry {
+        id: end,
+        from: mirrored,
+        to,
+        target: None,
+    });
+    doc.update(Edit::DropGeometry);
+    let dragged = sketch(&doc);
+    assert!(dragged.handle_end(handle.tip).unwrap().distance(to) < 1e-6);
+    let tip = dragged.point(handle.tip).unwrap().at;
+    assert!(tip.distance(2.0 * fit - to) < 1e-6, "{tip}");
+    assert_eq!(undo_to(&mut doc, &before), 1);
+    // Deleted, the handle goes, its fit point stays.
+    select(&mut doc, end);
+    doc.update(Edit::DeleteSelection);
+    let spline = sketch(&doc).spline(id).unwrap();
+    assert!(!spline.has_handle(handle.at) && spline.points.contains(&handle.at));
 }
 
 /// A spline snapped to itself while drawn gets a point of its own there,

@@ -495,7 +495,10 @@ impl DocumentKeys {
             tool: sketch.is_some_and(|sketch| sketch.tool.is_some() || sketch.constraining),
             dimensions_selected: sketch.is_some_and(|sketch| {
                 let mut selected = sketch.selection.iter();
-                selected.any(|&id| sketch.sketch.dimension(id).is_some())
+                selected.any(|&id| {
+                    id.item()
+                        .is_some_and(|id| sketch.sketch.dimension(id).is_some())
+                })
             }),
             round_picked: sketch.is_some_and(|sketch| {
                 sketch.tool.is_some_and(|tool| {

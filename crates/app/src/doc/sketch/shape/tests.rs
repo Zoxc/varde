@@ -1,6 +1,7 @@
 use glam::DVec2;
 use iced::keyboard::{self, key};
 use varde_document::EditError as DocumentError;
+use varde_sketch::Selectable;
 use varde_sketch::{Constraint, Curve, EditError, Measure};
 use varde_view::{Edit, Look, Tool, ToolClick};
 
@@ -23,7 +24,7 @@ fn draw(doc: &mut Answered, (x0, y0): (f64, f64), (x1, y1): (f64, f64)) -> Id {
 /// Clicks the tool in use at `x`, `y` with `hit` under the cursor.
 fn click_hit(doc: &mut Answered, x: f64, y: f64, hit: Id) {
     doc.update(Edit::ToolClick(ToolClick {
-        hit: Some(hit),
+        hit: Some(Selectable::Item(hit)),
         ..click_at(x, y)
     }));
 }
@@ -94,7 +95,7 @@ fn mirror_takes_the_selection_then_the_line() {
     let slanted = draw(&mut doc, (1.0, 0.0), (5.0, 3.0));
     let before = sketch(&doc).clone();
     doc.look(Look::ClickGeometry {
-        hit: Some(slanted),
+        hit: Some(Selectable::Item(slanted)),
         add: false,
     });
     doc.shift_key("m");
@@ -307,7 +308,7 @@ fn offset_starts_from_the_selection_and_says_why_it_can_t() {
     let chain = rectangle(&mut doc);
     let before = sketch(&doc).clone();
     doc.look(Look::ClickGeometry {
-        hit: Some(chain[1]),
+        hit: Some(Selectable::Item(chain[1])),
         add: false,
     });
     doc.look(Look::SelectTool(Tool::Offset));
@@ -450,11 +451,11 @@ fn chamfer_cuts_as_far_as_typed_along_each_or_at_an_angle() {
     let before = sketch(&doc).clone();
     // Taken up with the corner's lines selected, it has the corner.
     doc.look(Look::ClickGeometry {
-        hit: Some(right),
+        hit: Some(Selectable::Item(right)),
         add: false,
     });
     doc.look(Look::ClickGeometry {
-        hit: Some(top),
+        hit: Some(Selectable::Item(top)),
         add: true,
     });
     doc.shift_key("b");
@@ -515,7 +516,7 @@ fn chamfer_cuts_as_far_as_typed_along_each_or_at_an_angle() {
 
     // Deleting it gives the corner back.
     doc.look(Look::ClickGeometry {
-        hit: Some(made[0].id),
+        hit: Some(Selectable::Item(made[0].id)),
         add: false,
     });
     doc.update(Edit::DeleteSelection);

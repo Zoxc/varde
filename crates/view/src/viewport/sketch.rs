@@ -23,8 +23,8 @@ use varde_expr::LengthUnit;
 use varde_kernel::RenderLines;
 use varde_render::{Camera, GridPlane, LineStyle, PointStyle, SketchLayer, Space, Srgba};
 use varde_sketch::{
-    Curve, DimensionEntry, Id, Kind, Measure, NearMiss, Profiles, Region, Side, Sketch, SplineKind,
-    cut_line, foot,
+    Curve, DimensionEntry, Id, Kind, Measure, NearMiss, Profiles, Region, Selectable, Side, Sketch,
+    SplineKind, cut_line, foot,
 };
 
 use crate::document::tied_items;
@@ -119,7 +119,7 @@ const COMB_LENGTH: f64 = 48.0;
 pub(crate) struct Sketching<'a> {
     sketch: &'a Sketch,
     placement: Placement,
-    selection: &'a BTreeSet<Id>,
+    selection: &'a BTreeSet<Selectable>,
     /// The tool in use, if the sketch is editable and one is.
     tool: Option<ActiveTool<'a>>,
     /// Whether geometry can be dragged.
@@ -128,7 +128,7 @@ pub(crate) struct Sketching<'a> {
     states: States,
     /// The item hovered in a list or by its glyph, highlighted: a
     /// constraint by what it ties together.
-    hovered: Option<Id>,
+    hovered: Option<Selectable>,
     /// Whether the constraints' glyphs are shown.
     glyphs: bool,
     /// The design's units, which dimensions show in.
@@ -170,7 +170,7 @@ pub(crate) struct Input {
     /// Where the cursor is over the viewport, if it is, in its pixels.
     cursor: Option<DVec2>,
     /// The item under the cursor.
-    hover: Option<Id>,
+    hover: Option<Selectable>,
     /// The left button held down, if it is.
     press: Option<Press>,
     /// When and where a tool was last pressed, unless that ended a
@@ -248,7 +248,7 @@ struct Press {
     /// Where it went down on the sketch, if over it.
     at: Option<DVec2>,
     /// What it went down on.
-    hit: Option<Id>,
+    hit: Option<Selectable>,
     /// Where the point it went down on was then, if a point: dragged, it
     /// snaps ([`snap::snap_drag`]).
     point: Option<DVec2>,
@@ -298,7 +298,7 @@ impl Press {
 #[derive(Debug, Clone)]
 struct Drawn {
     sketch: Sketch,
-    selection: BTreeSet<Id>,
+    selection: BTreeSet<Selectable>,
     states: States,
     colors: SketchColors,
     label_drag: Option<(Id, DVec2)>,
@@ -514,14 +514,17 @@ impl<'a> Sketching<'a> {
                     to: from,
                     at: under.map(|cursor| cursor.at),
                     hit,
-                    point: hit
+                    point: (hit.and_then(Selectable::item))
                         .and_then(|id| self.sketch.point(id))
                         .map(|point| point.at),
                     moved: false,
                     // The origin and axes stay where they are, and so does
                     // what a link made.
                     grab: self.editable
-                        && hit.is_some_and(|id| !id.is_builtin() && !self.sketch.is_linked(id)),
+                        && hit.is_some_and(|hit| {
+                            let id = hit.id();
+                            !id.is_builtin() && !self.sketch.is_linked(id)
+                        }),
                     when: Instant::now(),
                     held: false,
                 });
@@ -549,6 +552,7 @@ impl<'a> Sketching<'a> {
                 let double = !press.moved && double_click(&mut input.last_select, press.from);
                 let spline = press
                     .hit
+                    .and_then(Selectable::item)
                     .filter(|&id| self.editable && self.sketch.kind(id) == Some(Kind::Spline));
                 let message = match press.area() {
                     _ if double && let (Some(spline), Some(at)) = (spline, press.at) => {
@@ -629,7 +633,7 @@ impl<'a> Sketching<'a> {
         if Held::FREE.is_held(modifiers) {
             return None;
         }
-        let id = press.hit?;
+        let id = press.hit?.item()?;
         if let Some(point) = press.point {
             return Some((
                 point,
@@ -699,9 +703,9 @@ impl<'a> Sketching<'a> {
     /// placing its copy, or Fillet or Chamfer theirs, which go where the
     /// cursor is, nor with Project or Intersect, which pick outside the
     /// sketch.
-    fn hit(&self, cursor: Cursor) -> Option<Id> {
+    fn hit(&self, cursor: Cursor) -> Option<Selectable> {
         let tolerance = HIT_TOLERANCE * cursor.pixel;
-        match self.tool {
+        let item = match self.tool {
             _ if self.releases() || self.picks_outside() => None,
             Some(tool) if tool.tool.corners() => {
                 hit::hit_corner(self.sketch, cursor.at, CORNER_TOLERANCE * cursor.pixel)
@@ -712,14 +716,15 @@ impl<'a> Sketching<'a> {
             Some(tool) if tool.tool == Tool::Mirror && tool.about => {
                 hit::hit_line(self.sketch, cursor.at, tolerance)
             }
-            _ => hit::hit(self.sketch, cursor.at, tolerance),
-        }
+            _ => return hit::hit(self.sketch, cursor.at, tolerance),
+        };
+        item.map(Selectable::Item)
     }
 
     /// The region under `cursor`, highlighted, see
     /// [`Profiles::region_at`]: only without a tool, and with no item
     /// `hover`ed, which is highlighted instead.
-    fn region(&self, hover: Option<Id>, cursor: Cursor) -> Option<usize> {
+    fn region(&self, hover: Option<Selectable>, cursor: Cursor) -> Option<usize> {
         if hover.is_some() || self.tool.is_some() {
             return None;
         }
@@ -959,6 +964,11 @@ impl<'a> Sketching<'a> {
         (!lines.points().is_empty()).then(|| Arc::new(lines))
     }
 
+    /// Whether the item `id` is selected.
+    fn selected(&self, id: Id) -> bool {
+        self.selection.contains(&Selectable::Item(id))
+    }
+
     /// The curvature combs of the splines selected, if they show.
     fn combs(&self) -> Vec<Vec<[DVec2; 2]>> {
         if !self.comb {
@@ -966,7 +976,7 @@ impl<'a> Sketching<'a> {
         }
         let selected = self.selection.iter();
         selected
-            .filter_map(|&id| self.sketch.curvature_comb(id))
+            .filter_map(|&target| self.sketch.curvature_comb(target.item()?))
             .collect()
     }
 
@@ -1010,7 +1020,7 @@ impl<'a> Sketching<'a> {
         // The origin and axes: selected, in a conflict, or else their own
         // colour.
         let builtin_color = |id: Id| {
-            if self.selection.contains(&id) {
+            if self.selected(id) {
                 colors.selected
             } else if states.conflicts.contains(&id) {
                 colors.conflict
@@ -1034,7 +1044,7 @@ impl<'a> Sketching<'a> {
             let curves = sketch
                 .curves
                 .iter()
-                .filter(|entry| self.selection.contains(&entry.id) == selected);
+                .filter(|entry| self.selected(entry.id) == selected);
             for entry in curves {
                 let Some(polyline) = sketch.flatten(&entry.curve) else {
                     continue;
@@ -1090,7 +1100,7 @@ impl<'a> Sketching<'a> {
             let points = sketch
                 .points
                 .iter()
-                .filter(|point| self.selection.contains(&point.id) == selected);
+                .filter(|point| self.selected(point.id) == selected);
             for point in points {
                 let fill = if selected {
                     colors.selected
@@ -1119,7 +1129,10 @@ impl<'a> Sketching<'a> {
     /// What shows how splines are shaped: each handle as a line from its
     /// tip through its fit point to as far the other side, symmetric on
     /// it, with a point at that end as at its tip, in the handles' colour,
-    /// or the selection's with its spline or itself ([`Id::handle`]); and
+    /// or the selection's with its spline or itself
+    /// ([`Selectable::HandleLine`]), its mirrored end's point filled in the
+    /// selection's colour while that's selected
+    /// ([`Selectable::HandleEnd`]); and
     /// of a spline selected by control points, its control polygon, dashed
     /// in the handles' colour, as its points are. Fit points without a
     /// handle show none.
@@ -1130,7 +1143,7 @@ impl<'a> Sketching<'a> {
             let Curve::Spline(spline) = &entry.curve else {
                 continue;
             };
-            let selected = self.selection.contains(&entry.id);
+            let selected = self.selected(entry.id);
             let color = if selected {
                 colors.selected
             } else {
@@ -1138,14 +1151,22 @@ impl<'a> Sketching<'a> {
             };
             for handle in &spline.handles {
                 if let Some(arms) = handle_arms(sketch, handle.tip) {
-                    let color = if self.selection.contains(&Id::handle(handle.tip)) {
+                    let line_selected =
+                        self.selection.contains(&Selectable::HandleLine(handle.tip));
+                    let color = if line_selected {
                         colors.selected
                     } else {
                         color
                     };
                     let style = line(color, HANDLE_WIDTH, false);
                     layer.polyline(Space::Sketch, &arms, style);
-                    layer.point(arms[0], dot(POINT_RADIUS, colors.point_fill, color));
+                    // Its mirrored end selected is filled, as its tip is.
+                    let fill = if self.selection.contains(&Selectable::HandleEnd(handle.tip)) {
+                        colors.selected
+                    } else {
+                        colors.point_fill
+                    };
+                    layer.point(arms[0], dot(POINT_RADIUS, fill, color));
                 }
             }
             if !selected {
@@ -1214,7 +1235,7 @@ impl<'a> Sketching<'a> {
     fn look(&self, id: Id) -> GlyphLook {
         if self.states.conflicts.contains(&id) {
             GlyphLook::Conflict
-        } else if self.selection.contains(&id) {
+        } else if self.selected(id) {
             GlyphLook::Selected
         } else if self.states.pending.contains(&id) {
             GlyphLook::Pending
@@ -1322,7 +1343,7 @@ impl<'a> Sketching<'a> {
                 Field::Sides => Some(f64::from(tool.sides)),
                 Field::Distance if tool.tool == Tool::Offset => self
                     .sketch
-                    .offset_side(tool.picked, at)
+                    .offset_side(&tool_items(&tool), at)
                     .map(|(reach, _)| reach),
                 _ => outline.as_ref().and_then(|outline| outline.value(field)),
             };
@@ -1401,16 +1422,20 @@ impl<'a> Sketching<'a> {
         let still = input.press.is_none_or(|press| !press.moved);
         let hover = if drawing {
             snap.and_then(|snap| snap.highlighted())
+                .map(Selectable::Item)
         } else {
             input.hover.filter(|_| still)
         };
         // What a list's row, a glyph or a label hovered stands for: a
         // constraint or a dimension by what it ties together, and a
         // dimension itself.
-        let listed = self
-            .hovered
-            .into_iter()
-            .flat_map(|id| tied_items(self.sketch, id));
+        let listed = self.hovered.into_iter().flat_map(|target| match target {
+            Selectable::Item(id) => tied_items(self.sketch, id)
+                .into_iter()
+                .map(Selectable::Item)
+                .collect(),
+            _ => vec![target],
+        });
         for id in hover.into_iter().chain(listed) {
             self.highlight(&mut layer, id, colors.hovered);
         }
@@ -1433,13 +1458,14 @@ impl<'a> Sketching<'a> {
         {
             fill_region(&mut layer, region, colors.region_hovered);
         }
-        let hovered = self.hovered.and_then(|id| self.sketch.dimension(id));
+        let hovered =
+            (self.hovered.and_then(Selectable::item)).and_then(|id| self.sketch.dimension(id));
         if let Some(lines) = hovered.and_then(|entry| self.dimension_lines(entry)) {
             draw_lines(&mut layer, &lines, colors.hovered);
         }
         if let Some(projector) = projector {
             for dimension in dimension_arrows {
-                let color = if self.hovered == Some(dimension.id) {
+                let color = if self.hovered == Some(dimension.id.into()) {
                     colors.hovered
                 } else {
                     dimension.color
@@ -1451,7 +1477,9 @@ impl<'a> Sketching<'a> {
                 layer.point((miss.a + miss.b) / 2.0, ring);
             }
         }
-        let under = input.hover.filter(|_| still).zip(cursor);
+        let under = (input.hover.and_then(Selectable::item))
+            .filter(|_| still)
+            .zip(cursor);
         match self.tool {
             Some(tool) if tool.tool == Tool::Dimension => {
                 for &id in tool.picked {
@@ -1530,7 +1558,7 @@ impl<'a> Sketching<'a> {
                 if let Some((hovered, cursor)) = under {
                     for id in placing.pick(sketch, hovered, cursor.at) {
                         if id != hovered {
-                            self.highlight(layer, id, colors.hovered);
+                            self.highlight(layer, id.into(), colors.hovered);
                         }
                     }
                 }
@@ -1554,7 +1582,7 @@ impl<'a> Sketching<'a> {
                 if let Some((a, b)) = about.filter(|(a, b)| a != b) {
                     let reflect = |p: DVec2| 2.0 * foot(p, a, b) - p;
                     let style = line(colors.preview, CURVE_WIDTH, false);
-                    for &id in tool.picked {
+                    for id in tool_items(tool) {
                         if let Some(entry) = sketch.curve(id)
                             && let Some(polyline) = sketch.flatten(&entry.curve)
                         {
@@ -1595,16 +1623,26 @@ impl<'a> Sketching<'a> {
         Some((measure, side, at))
     }
 
-    /// Draws the point or curve `id` highlighted in `color`, as under the
-    /// cursor, into `layer`: the origin and axes too, and a spline's
-    /// handle as a line ([`Id::handle`]).
-    fn highlight(&self, layer: &mut SketchLayer, id: Id, color: Color) {
-        if let Some(arms) = id
-            .handle_tip()
-            .and_then(|tip| handle_arms(self.sketch, tip))
-        {
-            layer.polyline(Space::Sketch, &arms, line(color, HOVERED_WIDTH, false));
-        } else if let Some(axis) = axis(id) {
+    /// Draws `target` highlighted in `color`, as under the cursor, into
+    /// `layer`: a point or a curve, the origin and axes too, a spline's
+    /// handle as a line, or its mirrored end as a point.
+    fn highlight(&self, layer: &mut SketchLayer, target: Selectable, color: Color) {
+        let id = match target {
+            Selectable::Item(id) => id,
+            Selectable::HandleLine(tip) => {
+                if let Some(arms) = handle_arms(self.sketch, tip) {
+                    layer.polyline(Space::Sketch, &arms, line(color, HOVERED_WIDTH, false));
+                }
+                return;
+            }
+            Selectable::HandleEnd(tip) => {
+                if let Some(end) = self.sketch.handle_end(tip) {
+                    layer.point(end, dot(HOVERED_POINT_RADIUS, color, color));
+                }
+                return;
+            }
+        };
+        if let Some(axis) = axis(id) {
             for half in axis {
                 layer.axis_polyline(Space::Sketch, &half, line(color, HOVERED_WIDTH, false));
             }
@@ -1618,6 +1656,12 @@ impl<'a> Sketching<'a> {
             layer.polyline(Space::Sketch, &polyline, style);
         }
     }
+}
+
+/// The items `tool` has picked, by their ids: what Offset and Mirror
+/// work on.
+fn tool_items(tool: &ActiveTool<'_>) -> Vec<Id> {
+    tool.picked.iter().map(|target| target.id()).collect()
 }
 
 /// The handle whose tip is `tip` as drawn: from the place mirroring its
@@ -1780,7 +1824,7 @@ fn glyph<'a>(id: Id, kind: ConstraintKind, look: GlyphLook) -> Element<'a, Messa
         .into()
     };
     chip(id, icon, GLYPH_PADDING, look)
-        .on_press(Message::Look(Look::ClickRow(id)))
+        .on_press(Message::Look(Look::ClickRow(id.into())))
         .interaction(mouse::Interaction::Pointer)
         .into()
 }
@@ -1832,8 +1876,8 @@ fn chip<'a>(
             _ => theme::glyph(theme, look == GlyphLook::Conflict),
         });
     mouse_area(chip)
-        .on_enter(Message::Look(Look::HoverItem(Some(id))))
-        .on_exit(Message::Look(Look::LeaveItem(id)))
+        .on_enter(Message::Look(Look::HoverItem(Some(id.into()))))
+        .on_exit(Message::Look(Look::LeaveItem(id.into())))
 }
 
 /// The shape `tool` is drawing, with the cursor `at` its next point if
@@ -1890,13 +1934,12 @@ fn preview(
 /// makes nothing.
 fn placed(tool: &ActiveTool<'_>, sketch: &Sketch, at: DVec2) -> Vec<Vec<DVec2>> {
     if tool.tool == Tool::Offset {
-        let copy = sketch
-            .offset_side(tool.picked, at)
-            .and_then(|(reach, side)| {
-                let typed = tool.value_in(Field::Distance).map(|value| value.value);
-                let distance = typed.unwrap_or(reach);
-                sketch.offset_preview(tool.picked, distance, side).ok()
-            });
+        let chain = tool_items(tool);
+        let copy = sketch.offset_side(&chain, at).and_then(|(reach, side)| {
+            let typed = tool.value_in(Field::Distance).map(|value| value.value);
+            let distance = typed.unwrap_or(reach);
+            sketch.offset_preview(&chain, distance, side).ok()
+        });
         return copy.unwrap_or_default();
     }
     typed::corner_outline(tool, sketch, at).map_or_else(Vec::new, |made| made.polylines())

@@ -72,7 +72,7 @@ impl LengthUnit {
     }
 
     /// Decimals [`format()`] shows: a few micrometres at most.
-    fn decimals(self) -> usize {
+    pub fn decimals(self) -> usize {
         match self {
             LengthUnit::Mm => 3,
             LengthUnit::Cm => 4,

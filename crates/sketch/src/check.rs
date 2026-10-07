@@ -285,9 +285,8 @@ pub enum SketchError {
     NextId(Id),
     /// The id names items in two lists.
     Shared(Id),
-    /// The sketch's next id is past the ids it can give out, into those
-    /// reserved for handles as lines ([`Id::handle`]) and the origin's and
-    /// axes'.
+    /// The sketch's next id is past the ids it can give out, which end
+    /// well short of the origin's and axes'.
     NextIdReserved(u32),
     /// The item names the origin or an axis as it can't be: a curve made
     /// from the origin, a constraint or dimension on them alone, or one

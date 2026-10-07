@@ -2,6 +2,7 @@
 //! lighting, removing and counting for profiles.
 
 use std::cell::RefCell;
+use varde_sketch::Selectable;
 
 use glam::{DVec2, DVec3};
 use varde_document::{Command, FaceRef, FeatureKind, OriginPlane, OutsideRef, Plane, Sketch};
@@ -117,7 +118,11 @@ fn links_are_listed_by_source_and_select_and_light_from_their_rows() {
     let made = edited(&doc).link(rows[1].link).unwrap().clone();
     let selection = &doc.sketch.as_ref().unwrap().selection;
     assert_eq!(selection.len(), made.points.len() + made.curves.len());
-    assert!(made.curves.iter().all(|curve| selection.contains(curve)));
+    assert!(
+        made.curves
+            .iter()
+            .all(|curve| selection.contains(&Selectable::Item(*curve)))
+    );
 
     // Hovered, what it comes from is lit in the model.
     doc.look(Look::HoverLink(Some(rows[0].link)));
@@ -182,7 +187,7 @@ fn delete_on_any_of_a_link_s_items_deletes_the_link_with_the_rest_selected() {
     let [projected, intersected] = [0, 1].map(|i| before.links[i].clone());
     // One curve of the projected edge's, by the Delete key.
     doc.look(Look::ClickGeometry {
-        hit: Some(projected.curves[0]),
+        hit: Some(Selectable::Item(projected.curves[0])),
         add: false,
     });
     doc.key(iced::keyboard::Key::Named(
@@ -210,16 +215,16 @@ fn delete_on_any_of_a_link_s_items_deletes_the_link_with_the_rest_selected() {
         sketch: Box::new(own),
     });
     doc.look(Look::ClickGeometry {
-        hit: Some(point),
+        hit: Some(Selectable::Item(point)),
         add: false,
     });
     doc.look(Look::ClickGeometry {
-        hit: Some(intersected.points[0]),
+        hit: Some(Selectable::Item(intersected.points[0])),
         add: true,
     });
     for &item in &projected.points {
         doc.look(Look::ClickGeometry {
-            hit: Some(item),
+            hit: Some(Selectable::Item(item)),
             add: true,
         });
     }

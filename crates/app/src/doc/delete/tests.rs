@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use varde_sketch::Selectable;
 
 use iced::keyboard::{self, key};
 use varde_document::{BodyId, FeatureId};
@@ -561,7 +562,7 @@ fn a_sketch_s_selection_shows_with_what_it_measures() {
         .find(|entry| matches!(entry.curve, varde_sketch::Curve::Circle { .. }))
         .map(|entry| (entry.id, entry.name()))
         .unwrap();
-    doc.look(Look::ClickRow(circle.0));
+    doc.look(Look::ClickRow(Selectable::Item(circle.0)));
     let bar = status_bar(&doc);
     let at = bar.iter().position(|text| *text == circle.1);
     let at = at.unwrap_or_else(|| panic!("{bar:?}"));

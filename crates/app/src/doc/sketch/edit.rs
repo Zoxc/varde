@@ -11,8 +11,8 @@ use std::sync::Arc;
 use glam::DVec2;
 use varde_document::{EditError, Sketch};
 use varde_sketch::{
-    Add, Constraint, Curve, Design, Dimension, Id, Kind, Measure, OutOfIds, Shape, Side,
-    SketchEdit, arc_through, tangent_between,
+    Add, Constraint, Curve, Design, Dimension, Id, Kind, Measure, OutOfIds, Selectable, Shape,
+    Side, SketchEdit, arc_through, tangent_between,
 };
 use varde_solve::Request;
 use varde_view::typed::{self, Field, Outline};
@@ -136,13 +136,20 @@ impl Doc {
     }
 
     /// Drags the item `id`, grabbed at `from`, to `to`: a point, or a line
-    /// with its ends, moves as the cursor does, and a circle or an arc
-    /// takes the cursor's distance from its centre as its radius. Each
+    /// with its ends, moves as the cursor does, a handle's mirrored end
+    /// too (its tip moving the other way), and a circle or an arc takes
+    /// the cursor's distance from its centre as its radius. Each
     /// step goes to the solver, and the sketch is shown as it last
     /// converged. A step that would put anything past the coordinate limit
     /// is left out. Not while edits wait on the solver: the drag starts
     /// once they're answered.
-    pub(crate) fn drag_geometry(&mut self, id: Id, from: DVec2, to: DVec2, target: Option<Target>) {
+    pub(crate) fn drag_geometry(
+        &mut self,
+        id: Selectable,
+        from: DVec2,
+        to: DVec2,
+        target: Option<Target>,
+    ) {
         if !self.editable() || self.proposing() {
             return;
         }
@@ -250,9 +257,10 @@ impl Doc {
         self.delete_items(selected);
     }
 
-    /// Deletes the point or curve `id` from its row's context menu: the
-    /// whole selection if it's among it, as `Delete` would, else it alone.
-    pub(crate) fn delete_item(&mut self, id: Id) {
+    /// Deletes the point or curve `id` (or a handle by its mirrored end)
+    /// from its row's context menu: the whole selection if it's among it,
+    /// as `Delete` would, else it alone.
+    pub(crate) fn delete_item(&mut self, id: Selectable) {
         let Some(session) = &self.sketch else {
             return;
         };
@@ -275,11 +283,15 @@ impl Doc {
     }
 
     /// Deletes `items` and what depends on them.
-    fn delete_items(&mut self, items: Vec<Id>) {
-        // The origin and axes are always there; a handle goes by its tip.
+    fn delete_items(&mut self, items: Vec<Selectable>) {
+        // The origin and axes are always there; a handle goes by its tip,
+        // picked as a line or by its mirrored end.
         let mut ids: Vec<Id> = Vec::new();
-        for id in items.into_iter().filter(|id| !id.is_builtin()) {
-            let id = id.handle_tip().unwrap_or(id);
+        for id in items
+            .into_iter()
+            .map(Selectable::id)
+            .filter(|id| !id.is_builtin())
+        {
             if !ids.contains(&id) {
                 ids.push(id);
             }
@@ -333,13 +345,16 @@ impl Doc {
         // counts for profiles; the rest selected as ever.
         let face = (self.sketch_face())
             .and_then(|id| sketch.link(id))
-            .filter(|link| link.items().any(|item| session.selection.contains(&item)));
+            .filter(|link| {
+                link.items()
+                    .any(|item| session.selection.contains(&item.into()))
+            });
         let face_items: Vec<Id> = face.map_or_else(Vec::new, |link| link.items().collect());
         let selected: Vec<_> = sketch
             .curves
             .iter()
             .filter(|entry| {
-                session.selection.contains(&entry.id) && !face_items.contains(&entry.id)
+                session.selection.contains(&entry.id.into()) && !face_items.contains(&entry.id)
             })
             .collect();
         let construction = selected.iter().any(|entry| !entry.construction);
@@ -881,15 +896,24 @@ fn handle_dragged(sketch: &Sketch, tip: Id, from: DVec2, to: DVec2) -> Option<Sk
     })
 }
 
-/// The move of the item `id` of `sketch`, grabbed at `from`, dragged to
-/// `to`, see [`Doc::drag_geometry`]. `None` if `id` names nothing that can
-/// be dragged; whether it stays within the coordinate limit is for
-/// applying it to tell.
-fn dragged(sketch: &Sketch, id: Id, from: DVec2, to: DVec2) -> Option<SketchEdit> {
-    if let Some(tip) = id.handle_tip() {
-        return handle_dragged(sketch, tip, from, to);
-    }
+/// The move of `id` of `sketch`, grabbed at `from`, dragged to `to`, see
+/// [`Doc::drag_geometry`]. `None` if `id` names nothing that can be
+/// dragged; whether it stays within the coordinate limit is for applying
+/// it to tell.
+fn dragged(sketch: &Sketch, id: Selectable, from: DVec2, to: DVec2) -> Option<SketchEdit> {
     let delta = to - from;
+    let id = match id {
+        Selectable::Item(id) => id,
+        Selectable::HandleLine(tip) => return handle_dragged(sketch, tip, from, to),
+        // The end follows the cursor, mirroring the tip in its fit point.
+        Selectable::HandleEnd(tip) => {
+            sketch.handle(tip)?;
+            return Some(SketchEdit::Move {
+                points: vec![(tip, sketch.point(tip)?.at - delta)],
+                radii: Vec::new(),
+            });
+        }
+    };
     let mut radii = Vec::new();
     let mut points: Vec<(Id, DVec2)> = match sketch.kind(id)? {
         Kind::Point => vec![(id, sketch.point(id)?.at + delta)],

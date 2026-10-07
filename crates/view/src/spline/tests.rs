@@ -34,7 +34,7 @@ fn splines() -> (Sketch, [Id; 2], Id) {
 #[test]
 fn the_splines_selected_convert_to_the_other_kind() {
     let (sketch, [through, by], other) = splines();
-    let selection = BTreeSet::from([through, by, other]);
+    let selection = crate::testing::items([through, by, other]);
     assert_eq!(
         conversions(&sketch, &selection),
         [
@@ -48,7 +48,7 @@ fn the_splines_selected_convert_to_the_other_kind() {
             },
         ]
     );
-    assert!(conversions(&sketch, &BTreeSet::from([other])).is_empty());
+    assert!(conversions(&sketch, &crate::testing::items([other])).is_empty());
 }
 
 #[test]
@@ -56,13 +56,13 @@ fn handles_go_on_fit_points_selected_or_all_a_spline_s_and_come_off() {
     let (mut sketch, [through, by], other) = splines();
     let fit = sketch.spline(through).unwrap().points.clone();
     // The fit point selected.
-    let middle = BTreeSet::from([fit[1]]);
+    let middle = crate::testing::items([fit[1]]);
     assert_eq!(
         handles(&sketch, &middle),
         Some(SketchEdit::AddHandles(vec![fit[1]]))
     );
     // The spline selected: all its fit points.
-    let whole = BTreeSet::from([through]);
+    let whole = crate::testing::items([through]);
     assert_eq!(
         handles(&sketch, &whole),
         Some(SketchEdit::AddHandles(fit.clone()))
@@ -83,7 +83,7 @@ fn handles_go_on_fit_points_selected_or_all_a_spline_s_and_come_off() {
             },
         ];
     }
-    let ends = BTreeSet::from([fit[0], fit[2]]);
+    let ends = crate::testing::items([fit[0], fit[2]]);
     assert_eq!(
         handles(&sketch, &ends),
         Some(SketchEdit::Delete(tips.clone()))
@@ -94,7 +94,7 @@ fn handles_go_on_fit_points_selected_or_all_a_spline_s_and_come_off() {
         Some(SketchEdit::AddHandles(vec![fit[1]]))
     );
     // One with and one without: the one without gets one.
-    let both = BTreeSet::from([fit[0], fit[1]]);
+    let both = crate::testing::items([fit[0], fit[1]]);
     assert_eq!(
         handles(&sketch, &both),
         Some(SketchEdit::AddHandles(vec![fit[1]]))
@@ -102,10 +102,10 @@ fn handles_go_on_fit_points_selected_or_all_a_spline_s_and_come_off() {
     // Nothing for control points, lines or nothing.
     let control = sketch.spline(by).unwrap().points[1];
     for selection in [
-        BTreeSet::from([by]),
-        BTreeSet::from([control]),
-        BTreeSet::from([other]),
-        BTreeSet::new(),
+        crate::testing::items([by]),
+        crate::testing::items([control]),
+        crate::testing::items([other]),
+        crate::testing::items([]),
     ] {
         assert_eq!(handles(&sketch, &selection), None, "{selection:?}");
     }

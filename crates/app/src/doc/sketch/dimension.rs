@@ -239,7 +239,7 @@ impl Doc {
     /// or with `add` adds it to the selection or takes it out, and grabs
     /// it to drag if the sketch can be changed.
     pub(crate) fn press_label(&mut self, id: Id, add: bool) {
-        self.click_geometry(Some(id), add);
+        self.click_geometry(Some(id.into()), add);
         let editable = self
             .editable_sketch()
             .is_some_and(|s| s.dimension(id).is_some());
@@ -291,7 +291,7 @@ impl Doc {
         let selected: Vec<_> = session
             .selection
             .iter()
-            .filter_map(|&id| sketch.dimension(id))
+            .filter_map(|&target| sketch.dimension(target.item()?))
             .collect();
         let driving = !selected.iter().any(|entry| entry.dimension.driving);
         let edits: Vec<_> = selected

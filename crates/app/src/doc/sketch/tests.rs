@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
+use varde_sketch::Selectable;
 
 use glam::DVec2;
 use iced::keyboard::{self, key};
@@ -100,7 +101,7 @@ pub(super) fn click(doc: &mut Answered, x: f64, y: f64) {
 pub(super) fn click_on(doc: &mut Answered, x: f64, y: f64, point: Option<Id>) {
     doc.update(Edit::ToolClick(ToolClick {
         target: point.map(varde_view::Target::Point),
-        hit: point,
+        hit: point.map(Selectable::Item),
         ..click_at(x, y)
     }));
 }
@@ -489,7 +490,7 @@ pub(super) fn with_shapes() -> (Answered, [Id; 5]) {
     (doc, [a, b, line, c, circle])
 }
 
-pub(super) fn selection(doc: &Doc) -> Vec<Id> {
+pub(super) fn selection(doc: &Doc) -> Vec<Selectable> {
     doc.sketch
         .as_ref()
         .unwrap()
@@ -503,23 +504,23 @@ pub(super) fn selection(doc: &Doc) -> Vec<Id> {
 fn clicks_and_boxes_select_and_ctrl_adds() {
     let (mut doc, [a, b, line, c, circle]) = with_shapes();
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
     assert_eq!(selection(&doc), [line]);
     doc.look(Look::ClickGeometry {
-        hit: Some(a),
+        hit: Some(Selectable::Item(a)),
         add: false,
     });
     assert_eq!(selection(&doc), [a]);
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: true,
     });
     assert_eq!(selection(&doc), [a, line]);
     // Again takes it out.
     doc.look(Look::ClickGeometry {
-        hit: Some(a),
+        hit: Some(Selectable::Item(a)),
         add: true,
     });
     assert_eq!(selection(&doc), [line]);
@@ -535,17 +536,17 @@ fn clicks_and_boxes_select_and_ctrl_adds() {
     assert!(selection(&doc).is_empty());
 
     doc.look(Look::SelectBox {
-        ids: vec![b, line],
+        ids: vec![Selectable::Item(b), Selectable::Item(line)],
         add: false,
     });
     assert_eq!(selection(&doc), [b, line]);
     doc.look(Look::SelectBox {
-        ids: vec![c, circle],
+        ids: vec![Selectable::Item(c), Selectable::Item(circle)],
         add: true,
     });
     assert_eq!(selection(&doc), [b, line, c, circle]);
     doc.look(Look::SelectBox {
-        ids: vec![c],
+        ids: vec![Selectable::Item(c)],
         add: false,
     });
     assert_eq!(selection(&doc), [c]);
@@ -562,16 +563,19 @@ fn a_row_of_the_overlaps_listed_is_hovered_and_chosen() {
     };
     let hovered = |doc: &Doc| doc.sketch.as_ref().unwrap().hovered;
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
-    doc.look(Look::OpenOverlaps(list(vec![a, line])));
+    doc.look(Look::OpenOverlaps(list(vec![
+        Selectable::Item(a),
+        Selectable::Item(line),
+    ])));
     doc.look(Look::HoverOverlap(Some(1)));
-    assert_eq!(hovered(&doc), Some(line));
+    assert_eq!(hovered(&doc), Some(Selectable::Item(line)));
     // Moving up a row, the one entered tells it first.
     doc.look(Look::HoverOverlap(Some(0)));
     doc.look(Look::LeaveOverlap(1));
-    assert_eq!(hovered(&doc), Some(a));
+    assert_eq!(hovered(&doc), Some(Selectable::Item(a)));
     doc.look(Look::ChooseOverlap {
         index: 0,
         add: false,
@@ -582,18 +586,30 @@ fn a_row_of_the_overlaps_listed_is_hovered_and_chosen() {
 
     // Closed by a click away, or `Esc`, the selection as it was; `Esc`
     // doesn't leave the sketch too.
-    doc.look(Look::OpenOverlaps(list(vec![a, line])));
+    doc.look(Look::OpenOverlaps(list(vec![
+        Selectable::Item(a),
+        Selectable::Item(line),
+    ])));
     doc.look(Look::HoverOverlap(Some(1)));
     doc.look(Look::CloseOverlaps);
     assert!(doc.overlaps.is_none());
-    assert_eq!((selection(&doc), hovered(&doc)), (vec![a], None));
-    doc.look(Look::OpenOverlaps(list(vec![a, line])));
+    assert_eq!(
+        (selection(&doc), hovered(&doc)),
+        (vec![Selectable::Item(a)], None)
+    );
+    doc.look(Look::OpenOverlaps(list(vec![
+        Selectable::Item(a),
+        Selectable::Item(line),
+    ])));
     doc.look(Look::Escape);
     assert!(doc.overlaps.is_none() && doc.sketch.is_some());
     assert_eq!(selection(&doc), [a]);
     // With `Ctrl` held, chosen adds, the list kept open and its row
     // hovered; again it takes it out; its tick does the same.
-    doc.look(Look::OpenOverlaps(list(vec![a, line])));
+    doc.look(Look::OpenOverlaps(list(vec![
+        Selectable::Item(a),
+        Selectable::Item(line),
+    ])));
     doc.look(Look::HoverOverlap(Some(1)));
     doc.look(Look::ChooseOverlap {
         index: 1,
@@ -601,7 +617,7 @@ fn a_row_of_the_overlaps_listed_is_hovered_and_chosen() {
     });
     assert_eq!(selection(&doc), [a, line]);
     assert!(doc.overlaps.is_some());
-    assert_eq!(hovered(&doc), Some(line));
+    assert_eq!(hovered(&doc), Some(Selectable::Item(line)));
     doc.look(Look::ChooseOverlap {
         index: 1,
         add: true,
@@ -626,7 +642,7 @@ fn space_clears_the_selection_in_a_sketch_and_the_timeline_s_outside() {
     let (mut doc, [_, _, line, ..]) = with_shapes();
     let space = || keyboard::Key::Named(key::Named::Space);
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
     doc.key(space());
@@ -646,7 +662,7 @@ fn space_puts_down_the_tool_in_a_sketch() {
     let (mut doc, [_, _, line, ..]) = with_shapes();
     let space = || keyboard::Key::Named(key::Named::Space);
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
     doc.look(Look::SelectTool(Tool::Line));
@@ -666,7 +682,7 @@ fn space_puts_down_the_tool_in_a_sketch() {
 fn h_and_v_toggle_their_constraint_on_a_line() {
     let (mut doc, [_, _, line, ..]) = with_shapes();
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
     let horizontal = |doc: &Doc| {
@@ -716,7 +732,7 @@ fn a_constraint_applied_again_toggles_off() {
     doc.sync();
     doc.lane.answer(&mut doc.doc);
     doc.look(Look::SelectBox {
-        ids: vec![a, b],
+        ids: vec![Selectable::Item(a), Selectable::Item(b)],
         add: false,
     });
     let perpendicular = |doc: &Doc| sketch(doc).constraints.len();
@@ -789,22 +805,27 @@ fn a_shared_point_is_detached_from_its_row_s_menu() {
 #[test]
 fn a_row_s_menu_deletes_it_or_the_selection_it_is_in() {
     let (mut doc, [a, b, line, _, circle]) = with_shapes();
-    doc.look(Look::OpenMenu(varde_view::RowMenu::Item(circle)));
-    assert_eq!(doc.row_menu, Some(varde_view::RowMenu::Item(circle)));
+    doc.look(Look::OpenMenu(varde_view::RowMenu::Item(Selectable::Item(
+        circle,
+    ))));
+    assert_eq!(
+        doc.row_menu,
+        Some(varde_view::RowMenu::Item(Selectable::Item(circle)))
+    );
     // Not selected: it alone.
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
-    doc.update(Edit::DeleteItem(circle));
+    doc.update(Edit::DeleteItem(Selectable::Item(circle)));
     assert!(sketch(&doc).kind(circle).is_none());
     assert!(sketch(&doc).kind(line).is_some());
     // Selected: the selection, the line and the point added to it.
     doc.look(Look::ClickGeometry {
-        hit: Some(a),
+        hit: Some(Selectable::Item(a)),
         add: true,
     });
-    doc.update(Edit::DeleteItem(a));
+    doc.update(Edit::DeleteItem(Selectable::Item(a)));
     assert!(sketch(&doc).kind(line).is_none() && sketch(&doc).kind(a).is_none());
     assert!(sketch(&doc).kind(b).is_none());
 }
@@ -822,7 +843,7 @@ fn the_geometry_list_folds_and_unfolds() {
     // A curve deleted is folded away with it.
     doc.look(Look::ToggleExpanded(circle));
     doc.look(Look::ClickGeometry {
-        hit: Some(circle),
+        hit: Some(Selectable::Item(circle)),
         add: false,
     });
     doc.update(Edit::DeleteSelection);
@@ -836,7 +857,7 @@ fn delete_removes_the_selection_and_what_depends_on_it() {
     let delete = || keyboard::Key::Named(key::Named::Delete);
     assert!(press_in(&doc, delete()).is_none());
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
     doc.key(delete());
@@ -846,7 +867,7 @@ fn delete_removes_the_selection_and_what_depends_on_it() {
     assert!(selection(&doc).is_empty());
     // Deleting a centre takes its circle.
     doc.look(Look::ClickGeometry {
-        hit: Some(c),
+        hit: Some(Selectable::Item(c)),
         add: false,
     });
     doc.update(Edit::DeleteSelection);
@@ -874,7 +895,7 @@ fn delete_and_backspace_reach_the_app_with_geometry_selected() {
     let (mut doc, [_, _, line, _, _]) = with_shapes();
     assert!(delete_keys(&doc).is_empty());
     doc.look(Look::ClickGeometry {
-        hit: Some(line),
+        hit: Some(Selectable::Item(line)),
         add: false,
     });
     let sent = delete_keys(&doc);
@@ -902,14 +923,14 @@ fn x_turns_the_selected_curves_construction_and_back() {
             .collect::<Vec<_>>()
     };
     doc.look(Look::SelectBox {
-        ids: vec![a, line],
+        ids: vec![Selectable::Item(a), Selectable::Item(line)],
         add: false,
     });
     doc.update(Edit::ToggleConstruction);
     assert_eq!(construction(&doc), [true, false]);
     // Mixed, they all turn construction; all construction, all normal.
     doc.look(Look::ClickGeometry {
-        hit: Some(circle),
+        hit: Some(Selectable::Item(circle)),
         add: true,
     });
     doc.update(Edit::ToggleConstruction);
@@ -926,13 +947,13 @@ fn a_drag_shows_as_it_goes_and_commits_one_step_when_dropped() {
     let (mut doc, [a, b, line, ..]) = with_shapes();
     let before = sketch(&doc).clone();
     doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(10.0, 1.0),
         target: None,
     });
     doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(12.0, 3.0),
         target: None,
@@ -946,7 +967,7 @@ fn a_drag_shows_as_it_goes_and_commits_one_step_when_dropped() {
 
     // A line moves with both ends.
     doc.look(Look::DragGeometry {
-        id: line,
+        id: Selectable::Item(line),
         from: at(5.0, 0.0),
         to: at(6.0, -1.0),
         target: None,
@@ -967,7 +988,7 @@ fn a_point_dropped_where_it_snapped_is_tied_there() {
     let (mut doc, [_, b, _, c, circle]) = with_shapes();
     let before = sketch(&doc).clone();
     doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(18.0, 0.0),
         target: Some(varde_view::Target::On(circle)),
@@ -983,7 +1004,7 @@ fn a_point_dropped_where_it_snapped_is_tied_there() {
     assert_eq!(undo_to(&mut doc, &before), 1);
 
     doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(20.0, 0.0),
         target: Some(varde_view::Target::Point(c)),
@@ -1001,7 +1022,7 @@ fn a_rim_dropped_on_a_point_passes_through_it() {
     let (mut doc, [_, b, _, c, circle]) = with_shapes();
     let before = sketch(&doc).clone();
     doc.look(Look::DragGeometry {
-        id: circle,
+        id: Selectable::Item(circle),
         from: at(22.0, 0.0),
         to: at(10.0, 0.0),
         target: Some(varde_view::Target::Point(b)),
@@ -1039,7 +1060,7 @@ fn an_arc_dropped_on_its_own_end_closes() {
         panic!("{arc:?}");
     };
     doc.look(Look::DragGeometry {
-        id: end,
+        id: Selectable::Item(end),
         from: at(0.0, 3.0),
         to: at(3.0, 0.0),
         target: Some(varde_view::Target::Point(start)),
@@ -1082,7 +1103,7 @@ fn a_fit_point_dragged_takes_its_handle_along() {
     doc.sync();
     doc.lane.answer(&mut doc.doc);
     doc.look(Look::DragGeometry {
-        id: fit[1],
+        id: Selectable::Item(fit[1]),
         from: at(10.0, 10.0),
         to: at(12.0, 7.0),
         target: None,
@@ -1097,7 +1118,7 @@ fn a_fit_point_dragged_takes_its_handle_along() {
 fn a_circle_or_an_arc_dragged_by_its_edge_changes_radius() {
     let (mut doc, [.., c, circle]) = with_shapes();
     doc.look(Look::DragGeometry {
-        id: circle,
+        id: Selectable::Item(circle),
         from: at(22.0, 0.0),
         to: at(20.0, 5.0),
         target: None,
@@ -1122,7 +1143,7 @@ fn a_circle_or_an_arc_dragged_by_its_edge_changes_radius() {
         panic!("{arc:?}");
     };
     doc.look(Look::DragGeometry {
-        id: arc.id,
+        id: Selectable::Item(arc.id),
         from: at(0.0, 1.0),
         to: at(0.0, 3.0),
         target: None,
@@ -1139,7 +1160,7 @@ fn escape_or_an_undo_puts_a_drag_back() {
     let before = sketch(&doc).clone();
     let drag = |doc: &mut Answered| {
         doc.look(Look::DragGeometry {
-            id: b,
+            id: Selectable::Item(b),
             from: at(10.0, 0.0),
             to: at(10.0, 4.0),
             target: None,
@@ -1165,21 +1186,21 @@ fn a_drag_past_the_coordinate_limit_stops_short() {
     let (mut doc, [a, _, line, ..]) = with_shapes();
     let max = f64::from(MAX_COORD);
     doc.look(Look::DragGeometry {
-        id: line,
+        id: Selectable::Item(line),
         from: at(0.0, 0.0),
         to: at(max - 20.0, 0.0),
         target: None,
     });
     // The far end would go past it, so the line stays where it was.
     doc.look(Look::DragGeometry {
-        id: line,
+        id: Selectable::Item(line),
         from: at(0.0, 0.0),
         to: at(max - 5.0, 0.0),
         target: None,
     });
     assert_eq!(position(shown(&doc), a), at(max - 20.0, 0.0));
     doc.look(Look::DragGeometry {
-        id: a,
+        id: Selectable::Item(a),
         from: at(0.0, 0.0),
         to: at(f64::NAN, 0.0),
         target: None,
@@ -1192,7 +1213,7 @@ fn nothing_is_dragged_with_a_tool_or_read_only() {
     let (mut doc, [_, b, ..]) = with_shapes();
     doc.look(Look::SelectTool(Tool::Point));
     doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(10.0, 4.0),
         target: None,
@@ -1201,7 +1222,7 @@ fn nothing_is_dragged_with_a_tool_or_read_only() {
     doc.look(Look::SelectTool(Tool::Point));
     doc.read_only = Some("read-only".to_owned());
     doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(10.0, 4.0),
         target: None,
@@ -1209,7 +1230,7 @@ fn nothing_is_dragged_with_a_tool_or_read_only() {
     assert!(doc.sketch.as_ref().unwrap().drag.is_none());
     // Selecting still works.
     doc.look(Look::ClickGeometry {
-        hit: Some(b),
+        hit: Some(Selectable::Item(b)),
         add: false,
     });
     assert_eq!(selection(&doc), [b]);
@@ -1290,7 +1311,7 @@ fn cancelling_a_drag_that_moved_nothing_stays_in_the_sketch() {
     doc.look(Look::CancelDrag);
     assert!(doc.sketch.is_some());
     doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(10.0, 4.0),
         target: None,
@@ -1322,7 +1343,7 @@ fn replacing_the_document_lets_go_of_ids_in_the_sketch() {
 
     let select_and_chain = |doc: &mut Answered| {
         doc.look(Look::ClickGeometry {
-            hit: Some(a),
+            hit: Some(Selectable::Item(a)),
             add: false,
         });
         doc.look(Look::SelectTool(Tool::Line));
@@ -1332,7 +1353,7 @@ fn replacing_the_document_lets_go_of_ids_in_the_sketch() {
         assert_eq!(selection(doc), [a]);
     };
     let let_go = |doc: &Doc| {
-        assert_eq!(selection(doc), []);
+        assert!(selection(doc).is_empty());
         let drawing = drawing(doc).unwrap();
         assert_eq!((drawing.chain, drawing.placed.len()), (None, 0));
     };
@@ -1349,13 +1370,13 @@ fn replacing_the_document_lets_go_of_ids_in_the_sketch() {
     // Back past the chain's line, to the replacement, then before it.
     doc.update(Edit::Undo);
     doc.look(Look::ClickGeometry {
-        hit: Some(a),
+        hit: Some(Selectable::Item(a)),
         add: false,
     });
     doc.update(Edit::Undo);
     let_go(&doc);
     doc.look(Look::ClickGeometry {
-        hit: Some(a),
+        hit: Some(Selectable::Item(a)),
         add: false,
     });
     doc.update(Edit::Redo);
@@ -1415,13 +1436,13 @@ fn profiles_are_found_once_per_sketch_shown() {
         x: 0.0,
         y: 0.0,
     });
-    doc.look(Look::HoverItem(Some(b)));
+    doc.look(Look::HoverItem(Some(Selectable::Item(b))));
     doc.look(Look::HoverItem(None));
     assert!(Arc::ptr_eq(&first, &found_profiles(&doc)));
 
     // A drag's steps are, and so is letting go of it.
     doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(10.0, 3.0),
         target: None,
@@ -1634,7 +1655,7 @@ fn the_sketch_toolbar_fits_at_1280_px() {
         vec![a, b, c, d],
     ] {
         doc.look(Look::SelectBox {
-            ids: picked,
+            ids: picked.into_iter().map(Selectable::Item).collect(),
             add: false,
         });
         let shown = fits(&doc);
@@ -1659,7 +1680,7 @@ fn the_sketch_toolbar_fits_at_1280_px() {
         .unwrap()
         .id;
     doc.look(Look::ClickGeometry {
-        hit: Some(spline),
+        hit: Some(Selectable::Item(spline)),
         add: false,
     });
     let splines = fits(&doc);
@@ -1709,11 +1730,11 @@ fn an_empty_sketch_keeps_the_view_close() {
 fn moving_up_the_list_hovers_the_row_entered() {
     let (mut doc, [a, b, ..]) = with_shapes();
     let hovered = |doc: &Doc| doc.sketch.as_ref().unwrap().hovered;
-    doc.look(Look::HoverItem(Some(b)));
+    doc.look(Look::HoverItem(Some(Selectable::Item(b))));
     // Moving up a row, the one entered tells it before the one left.
-    doc.look(Look::HoverItem(Some(a)));
-    doc.look(Look::LeaveItem(b));
-    assert_eq!(hovered(&doc), Some(a));
-    doc.look(Look::LeaveItem(a));
+    doc.look(Look::HoverItem(Some(Selectable::Item(a))));
+    doc.look(Look::LeaveItem(Selectable::Item(b)));
+    assert_eq!(hovered(&doc), Some(Selectable::Item(a)));
+    doc.look(Look::LeaveItem(Selectable::Item(a)));
     assert_eq!(hovered(&doc), None);
 }

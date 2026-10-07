@@ -20,14 +20,10 @@ use crate::{Constraint, Curve, Id, Measure, Point, Sketch, SplineKind};
 /// The lowest of the ids the built-in items take.
 pub(crate) const FIRST_BUILTIN: u32 = u32::MAX - 2;
 
-/// The lowest of the ids a sketch never gives out: from here to the
-/// built-in items', [`Id::handle`]'s, and the built-in items' own.
-pub(crate) const FIRST_RESERVED: u32 = 1 << 31;
-
 /// The ids a sketch gives out end before here (`OutOfIds`,
-/// `NextIdReserved` past it): further on, a tip's
-/// [`Id::handle`] would be a built-in item's.
-pub(crate) const LAST_ID: u32 = FIRST_BUILTIN & !FIRST_RESERVED;
+/// `NextIdReserved` past it), well short of the built-in items'. Where it
+/// is is kept so the sketches [`Sketch::check`] accepts stay the same.
+pub(crate) const LAST_ID: u32 = (1 << 31) - 3;
 
 impl Id {
     /// The sketch's origin, a point at zero.
@@ -40,20 +36,6 @@ impl Id {
     /// Whether it names the origin or an axis, which every sketch has.
     pub fn is_builtin(self) -> bool {
         self.0 >= FIRST_BUILTIN
-    }
-
-    /// The id naming the handle whose tip is `tip` as a line, apart from
-    /// its tip: for selecting it in the view. No item has it, and nothing
-    /// stored names it; what's made of a handle names its tip
-    /// ([`Sketch::direction`](crate::Sketch::direction)).
-    pub fn handle(tip: Id) -> Id {
-        Id(tip.0 | FIRST_RESERVED)
-    }
-
-    /// The tip of the handle the id names as a line ([`Id::handle`]), if
-    /// it's such an id.
-    pub fn handle_tip(self) -> Option<Id> {
-        (self.0 >= FIRST_RESERVED && !self.is_builtin()).then_some(Id(self.0 & !FIRST_RESERVED))
     }
 
     /// Whether it names an axis: an endless line, where a line of the
@@ -88,10 +70,6 @@ impl Sketch {
         match id {
             Id::X_AXIS => Some("X axis".into()),
             Id::Y_AXIS => Some("Y axis".into()),
-            _ if let Some(tip) = id.handle_tip() => {
-                let (curve, _) = self.handle(tip)?;
-                Some(format!("Handle of {}", self.curve(curve)?.name()))
-            }
             _ => match self.point(id) {
                 Some(point) => Some(self.point_name(point)),
                 None => self.curve(id).map(|entry| entry.name()),
@@ -100,9 +78,11 @@ impl Sketch {
     }
 
     /// The name of `point` as the user sees it: by its role in the first
-    /// circle, arc or spline by control points it's one of ("Centre of
-    /// Arc 1", "Start of Arc 1", "End of Arc 1", "Control point 2 of
-    /// Spline 1"), else [`Point::name`] ("Point 3", "Origin").
+    /// circle, arc or spline by control points it's one of, or as a
+    /// handle's tip ("Centre of Arc 1", "Start of Arc 1", "End of Arc 1",
+    /// "Control point 2 of Spline 1", "End 1 of Handle 1 of Spline 2", see
+    /// [`Spline::handle_number`](crate::Spline::handle_number)), else
+    /// [`Point::name`] ("Point 3", "Origin").
     pub fn point_name(&self, point: &Point) -> String {
         let id = point.id;
         let role = self.curves.iter().find_map(|entry| {
@@ -115,6 +95,7 @@ impl Sketch {
                     let at = spline.points.iter().position(|&p| p == id)?;
                     format!("Control point {}", at + 1)
                 }
+                Curve::Spline(spline) => format!("End 1 of Handle {}", spline.handle_number(id)?),
                 _ => return None,
             };
             Some(format!("{role} of {}", entry.name()))

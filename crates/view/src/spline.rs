@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use glam::DVec2;
-use varde_sketch::{Curve, Id, Sketch, SketchEdit, Spline, SplineKind};
+use varde_sketch::{Curve, Id, Selectable, Sketch, SketchEdit, Spline, SplineKind};
 
 use crate::{ActiveTool, SNAP_TOLERANCE, Tool};
 
@@ -51,23 +51,24 @@ impl ActiveTool<'_> {
 /// The splines among `selection` in `sketch`, and what they are.
 fn selected_splines<'a>(
     sketch: &'a Sketch,
-    selection: &'a BTreeSet<Id>,
+    selection: &'a BTreeSet<Selectable>,
 ) -> impl Iterator<Item = (Id, &'a Spline)> + 'a {
-    selection
-        .iter()
-        .filter_map(|&id| Some((id, sketch.spline(id)?)))
+    selection.iter().filter_map(|&target| {
+        let id = target.item()?;
+        Some((id, sketch.spline(id)?))
+    })
 }
 
 /// Whether any splines are among `selection` in `sketch`: what the
 /// spline commands (converting, handles, the comb) are offered for.
-pub fn any_selected(sketch: &Sketch, selection: &BTreeSet<Id>) -> bool {
+pub fn any_selected(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> bool {
     selected_splines(sketch, selection).next().is_some()
 }
 
 /// Switching each spline among `selection` in `sketch` to the other kind:
 /// through fit points to by control points, and back. Empty if none are
 /// selected.
-pub fn conversions(sketch: &Sketch, selection: &BTreeSet<Id>) -> Vec<SketchEdit> {
+pub fn conversions(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> Vec<SketchEdit> {
     selected_splines(sketch, selection)
         .map(|(spline, shape)| SketchEdit::Convert {
             spline,
@@ -85,7 +86,7 @@ pub fn conversions(sketch: &Sketch, selection: &BTreeSet<Id>) -> Vec<SketchEdit>
 /// without a handle get one ([`SketchEdit::AddHandles`]); if they all
 /// have, their handles go, by deleting the tips. `None` for nothing to
 /// give handles to.
-pub fn handles(sketch: &Sketch, selection: &BTreeSet<Id>) -> Option<SketchEdit> {
+pub fn handles(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> Option<SketchEdit> {
     let through = || {
         sketch.curves.iter().filter_map(|entry| match &entry.curve {
             Curve::Spline(spline) if spline.kind == SplineKind::Through => Some((entry.id, spline)),
@@ -95,7 +96,8 @@ pub fn handles(sketch: &Sketch, selection: &BTreeSet<Id>) -> Option<SketchEdit> 
     // Each fit point with the splines it's taken on.
     let mut points: Vec<(Id, Vec<Id>)> = selection
         .iter()
-        .filter_map(|&point| {
+        .filter_map(|&target| {
+            let point = target.item()?;
             let on: Vec<Id> = through()
                 .filter(|(_, spline)| spline.points.contains(&point))
                 .map(|(id, _)| id)

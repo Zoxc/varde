@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 
 use glam::DVec2;
-use varde_sketch::{Constraint, Id, Kind, Sketch};
+use varde_sketch::{Constraint, Id, Kind, Selectable, Sketch};
 
 use crate::icons::Icon;
 
@@ -121,7 +121,7 @@ impl ConstraintKind {
     /// names a curve and one of its own points, nor the origin and axes as
     /// they can't be ([`Constraint::fits_builtins`]), which
     /// [`Sketch::check`] refuses.
-    pub fn make(self, sketch: &Sketch, selected: &BTreeSet<Id>) -> Option<Vec<Constraint>> {
+    pub fn make(self, sketch: &Sketch, selected: &BTreeSet<Selectable>) -> Option<Vec<Constraint>> {
         let picked = Picked::of(sketch, selected);
         let Picked {
             points,
@@ -254,7 +254,7 @@ impl ConstraintKind {
     /// several items together before what holds one alone, and of two
     /// that could, the one the geometry is nearer to already (horizontal
     /// or vertical, parallel or perpendicular, concentric or not).
-    pub fn fitting(sketch: &Sketch, selected: &BTreeSet<Id>) -> Vec<ConstraintKind> {
+    pub fn fitting(sketch: &Sketch, selected: &BTreeSet<Selectable>) -> Vec<ConstraintKind> {
         use ConstraintKind::*;
         let picked = Picked::of(sketch, selected);
         let mut order = vec![
@@ -323,20 +323,21 @@ struct Picked {
     /// Circles and arcs.
     rounds: Vec<Id>,
     splines: Vec<Id>,
-    /// Handles selected as lines ([`Id::handle`]), by their tips.
+    /// Handles selected as lines or by their mirrored ends, by their tips.
     handles: Vec<Id>,
 }
 
 impl Picked {
-    fn of(sketch: &Sketch, selected: &BTreeSet<Id>) -> Self {
+    fn of(sketch: &Sketch, selected: &BTreeSet<Selectable>) -> Self {
         let mut picked = Picked::default();
-        for &id in selected {
-            if let Some(tip) = id.handle_tip() {
-                if sketch.handle(tip).is_some() {
-                    picked.handles.push(tip);
+        for &target in selected {
+            let Selectable::Item(id) = target else {
+                // A handle as a line, or by its mirrored end: by its tip.
+                if sketch.selectable(target) {
+                    picked.handles.push(target.id());
                 }
                 continue;
-            }
+            };
             match sketch.kind(id) {
                 Some(Kind::Point) => picked.points.push(id),
                 Some(Kind::Line) => picked.lines.push(id),
@@ -345,6 +346,9 @@ impl Picked {
                 Some(Kind::Constraint | Kind::Dimension) | None => {}
             }
         }
+        // A handle picked both ways is one.
+        picked.handles.sort();
+        picked.handles.dedup();
         picked
     }
 

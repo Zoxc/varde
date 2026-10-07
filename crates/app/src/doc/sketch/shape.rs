@@ -9,7 +9,7 @@
 
 use varde_document::Sketch;
 use varde_expr::Value;
-use varde_sketch::{Id, Kind, SketchEdit};
+use varde_sketch::{Id, Kind, Selectable, SketchEdit};
 use varde_view::typed::{self, Field};
 use varde_view::{Tool, ToolClick};
 
@@ -42,7 +42,10 @@ pub(super) fn still_picked(sketch: &Sketch, drawing: &Drawing) -> bool {
         return true;
     }
     match drawing.tool {
-        Tool::Offset => sketch.is_chain(&drawing.picked),
+        Tool::Offset => {
+            let chain: Vec<Id> = drawing.picked.iter().map(|picked| picked.id()).collect();
+            sketch.is_chain(&chain)
+        }
         _ => match drawing.active().corner() {
             Some((at, [a, b])) => sketch.corner_of(a, b) == Some(at),
             None => !drawing.tool.corners(),
@@ -97,7 +100,7 @@ impl Doc {
             return;
         };
         let placing = drawing.tool.places() && !drawing.picked.is_empty();
-        let hit = click.hit.filter(|&id| sketch.kind(id).is_some());
+        let hit = (click.hit.and_then(Selectable::item)).filter(|&id| sketch.kind(id).is_some());
         let edit = match (drawing.tool, hit) {
             _ if placing => self.placed(sketch, &drawing, click),
             (_, None) => None,
@@ -109,16 +112,20 @@ impl Doc {
                 .nearer_end(hit, click.at)
                 .map(|end| SketchEdit::Extend { curve: hit, end }),
             (Tool::Mirror, Some(hit)) if drawing.about => Some(SketchEdit::Mirror {
-                ids: drawing.picked.clone(),
+                ids: drawing.picked.iter().map(|picked| picked.id()).collect(),
                 about: hit,
             }),
             (Tool::Mirror, Some(hit)) => {
                 if !mirrorable(sketch, &[hit]).is_empty() {
-                    match drawing.picked.iter().position(|&id| id == hit) {
+                    match drawing
+                        .picked
+                        .iter()
+                        .position(|&id| id == Selectable::Item(hit))
+                    {
                         Some(index) => {
                             drawing.picked.remove(index);
                         }
-                        None => drawing.picked.push(hit),
+                        None => drawing.picked.push(hit.into()),
                     }
                     self.set_drawing(drawing);
                 }
@@ -127,7 +134,7 @@ impl Doc {
             (tool, Some(hit)) => {
                 let picked = tool.pick(sketch, hit, click.at);
                 if !picked.is_empty() {
-                    drawing.picked = picked;
+                    drawing.picked = picked.into_iter().map(Selectable::Item).collect();
                     self.set_drawing(drawing);
                 }
                 return;
@@ -164,9 +171,10 @@ impl Doc {
             Value::new(&varde_expr::format(reach, ask.unit()), &ask).ok()
         };
         if drawing.tool == Tool::Offset {
-            let (reach, side) = sketch.offset_side(&drawing.picked, click.at)?;
+            let chain: Vec<Id> = drawing.picked.iter().map(|picked| picked.id()).collect();
+            let (reach, side) = sketch.offset_side(&chain, click.at)?;
             return Some(SketchEdit::Offset {
-                chain: drawing.picked.clone(),
+                chain,
                 distance: typed_or(Field::Distance, reach)?,
                 side,
             });

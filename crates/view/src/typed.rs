@@ -12,8 +12,8 @@ use glam::DVec2;
 use varde_expr::{Ask, Error, ErrorKind, Quantity, Span, Value};
 use varde_sketch::angle::{atan2, from_angle, to_angle};
 use varde_sketch::{
-    ArcPoints, Design, Id, Measure, Setback, Sketch, SplineKind, arc_sweep, arc_through,
-    flatten_spline,
+    ArcPoints, Design, Id, Measure, Selectable, Setback, Sketch, SplineKind, arc_sweep,
+    arc_through, flatten_spline,
 };
 
 use crate::{ActiveTool, Snap, Tool, ToolClick};
@@ -127,7 +127,11 @@ impl<'a> ActiveTool<'a> {
     /// lines, the first the one a chamfer's first distance runs along.
     pub fn corner(&self) -> Option<(Id, [Id; 2])> {
         match *self.picked {
-            [at, a, b] if self.tool.corners() => Some((at, [a, b])),
+            [
+                Selectable::Item(at),
+                Selectable::Item(a),
+                Selectable::Item(b),
+            ] if self.tool.corners() => Some((at, [a, b])),
             _ => None,
         }
     }

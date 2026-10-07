@@ -1,4 +1,5 @@
 use std::time::Duration;
+use varde_sketch::Selectable;
 
 use glam::DVec2;
 use iced::keyboard;
@@ -34,7 +35,7 @@ fn proposed(lane: &SolveLane) -> Vec<Revision> {
 /// Selects `ids` alone.
 fn select(doc: &mut Doc, ids: &[Id]) {
     doc.look(Look::SelectBox {
-        ids: ids.to_vec(),
+        ids: ids.iter().copied().map(Selectable::Item).collect(),
         add: false,
     });
 }
@@ -226,7 +227,7 @@ fn a_drag_shows_only_what_the_solver_converged_on() {
     let before = sketch(&t).clone();
 
     t.doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(12.0, 3.0),
         target: None,
@@ -257,7 +258,7 @@ fn a_drag_shows_only_what_the_solver_converged_on() {
 
     // The next drag is a new session.
     t.doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(10.0, 5.0),
         target: None,
@@ -275,7 +276,7 @@ fn a_drag_cancelled_or_cut_short_commits_nothing() {
     let before = sketch(&t).clone();
     let drag = |t: &mut crate::doc::sketch::tests::Answered| {
         t.look(Look::DragGeometry {
-            id: b,
+            id: Selectable::Item(b),
             from: at(10.0, 0.0),
             to: at(10.0, 4.0),
             target: None,
@@ -443,9 +444,12 @@ fn hovering_a_glyph_or_row_and_clicking_it() {
     select(&mut t, &[line]);
     t.update(Edit::Constrain(ConstraintKind::Horizontal));
     let horizontal = sketch(&t).constraints[0].id;
-    t.look(Look::HoverItem(Some(horizontal)));
-    assert_eq!(t.sketch_state().unwrap().hovered, Some(horizontal));
-    t.look(Look::ClickRow(horizontal));
+    t.look(Look::HoverItem(Some(Selectable::Item(horizontal))));
+    assert_eq!(
+        t.sketch_state().unwrap().hovered,
+        Some(Selectable::Item(horizontal))
+    );
+    t.look(Look::ClickRow(Selectable::Item(horizontal)));
     assert_eq!(selection(&t), [horizontal]);
     t.update(Edit::DeleteSelection);
     assert!(sketch(&t).constraints.is_empty());
@@ -459,14 +463,14 @@ fn hovering_a_glyph_or_row_and_clicking_it() {
 fn a_dropped_drag_shows_the_move_while_it_waits() {
     let (mut t, [_, b, ..]) = with_shapes();
     t.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(12.0, 3.0),
         target: None,
     });
     // The last step isn't answered before the drop.
     t.doc.look(Look::DragGeometry {
-        id: b,
+        id: Selectable::Item(b),
         from: at(10.0, 0.0),
         to: at(15.0, 3.0),
         target: None,

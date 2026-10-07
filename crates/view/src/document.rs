@@ -19,7 +19,8 @@ use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::{BodyTint, Camera};
 use varde_sketch::{
-    Analysis, Failure, Id, Kind, LinkKind, Measure, Profiles, Rejected, Side, Sketch, TooComplex,
+    Analysis, Failure, Id, Kind, LinkKind, Measure, Profiles, Rejected, Selectable, Side, Sketch,
+    TooComplex,
 };
 
 use crate::chrome::{
@@ -318,7 +319,7 @@ pub struct SketchState<'a> {
     /// they're drawn faded.
     pub pending: &'a BTreeSet<Id>,
     /// The items selected.
-    pub selection: &'a BTreeSet<Id>,
+    pub selection: &'a BTreeSet<Selectable>,
     /// The points and curves the Constraints list lists the constraints
     /// and dimensions on, all of them when none: those selected, kept
     /// while only constraints and dimensions are, so the list stays as it
@@ -344,7 +345,7 @@ pub struct SketchState<'a> {
     /// it panicked, or its worker stopped.
     pub solver_error: Option<&'a str>,
     /// The item hovered in a list or by its glyph, if any.
-    pub hovered: Option<Id>,
+    pub hovered: Option<Selectable>,
     /// Whether the constraints' glyphs are shown.
     pub glyphs: bool,
     /// Whether the sketch doesn't solve, as regenerating found: a file's
@@ -382,7 +383,7 @@ pub struct SketchState<'a> {
     pub link_menu: Option<Id>,
     /// The point or curve whose Geometry row's context menu is open, if
     /// one's is.
-    pub item_menu: Option<Id>,
+    pub item_menu: Option<Selectable>,
     /// The Geometry list's groups folded.
     pub folded: &'a BTreeSet<crate::GeometryGroup>,
     /// The curves whose Geometry rows are unfolded, listing their points.
@@ -448,7 +449,7 @@ impl<'a> SketchState<'a> {
     /// committed, analysed or not, with no glyphs.
     pub(crate) fn plain(
         sketch: &'a Sketch,
-        selection: &'a BTreeSet<Id>,
+        selection: &'a BTreeSet<Selectable>,
         tool: Option<ActiveTool<'a>>,
     ) -> Self {
         static NONE: BTreeSet<Id> = BTreeSet::new();
@@ -461,7 +462,10 @@ impl<'a> SketchState<'a> {
             sketch,
             pending: &NONE,
             selection,
-            listed_on: selection,
+            // Leaked: a test's state lives as long as its test.
+            listed_on: Box::leak(Box::new(
+                selection.iter().map(|target| target.id()).collect(),
+            )),
             tool,
             constraining: false,
             split: 0.5,
@@ -553,7 +557,7 @@ pub struct ActiveTool<'a> {
     /// tool's to mirror, the chain the Offset tool offsets, or the corner
     /// Fillet or Chamfer is on, as its point and its lines (see
     /// [`Tool::pick`](crate::Tool::pick)).
-    pub picked: &'a [Id],
+    pub picked: &'a [Selectable],
     /// Whether the Mirror tool has what it mirrors and waits for the line
     /// to mirror about.
     pub about: bool,
@@ -594,12 +598,14 @@ impl ActiveTool<'_> {
             (Tool::Spline, 0) => "Click first fit point",
             (Tool::Spline, _) if self.control => "Click next control point",
             (Tool::Spline, _) => "Click next fit point",
-            (Tool::Dimension, _) => match self.picked {
+            (Tool::Dimension, _) => match *self.picked {
                 [] => "Click what to measure",
                 // A handle's angle, or with its fit point its length.
-                [one] if sketch.handle(*one).is_some() => "Click to place, or pick another",
-                [one] if sketch.point(*one).is_some() => "Click a point or a line",
-                [one] if sketch.line(*one).is_some() => "Click to place, or pick another",
+                [one] if sketch.handle(one.id()).is_some() => "Click to place, or pick another",
+                [Selectable::Item(one)] if sketch.point(one).is_some() => "Click a point or a line",
+                [Selectable::Item(one)] if sketch.line(one).is_some() => {
+                    "Click to place, or pick another"
+                }
                 _ => "Click to place",
             },
             (Tool::Trim, _) => "Click the piece to trim away",
@@ -1321,7 +1327,7 @@ fn reference_hint(sketch: &SketchState<'_>) -> Option<&'static str> {
     let mut selected = sketch
         .selection
         .iter()
-        .filter_map(|&id| sketch.sketch.dimension(id))
+        .filter_map(|&target| sketch.sketch.dimension(target.item()?))
         .peekable();
     selected.peek()?;
     Some(if selected.any(|entry| entry.dimension.driving) {
@@ -1975,12 +1981,13 @@ fn sketch_selection<'a>(sketch: &SketchState<'a>) -> Option<Element<'a, Message>
     if sketch.tool.is_some() || sketch.constraining || sketch.value.is_some() {
         return None;
     }
-    let ids: Vec<Id> = sketch.selection.iter().copied().collect();
-    let rectangle = crate::dimension::rectangle(sketch.sketch, &ids);
+    let ids: Vec<Selectable> = sketch.selection.iter().copied().collect();
+    let items: Option<Vec<Id>> = ids.iter().map(|target| target.item()).collect();
+    let rectangle = items.and_then(|items| crate::dimension::rectangle(sketch.sketch, &items));
     let title = match ids[..] {
         [] => return None,
         _ if rectangle.is_some() => "Rectangle".to_owned(),
-        [one] => (sketch.sketch.name(one)).unwrap_or_else(|| "1 selected".to_owned()),
+        [one] => (sketch.sketch.selectable_name(one)).unwrap_or_else(|| "1 selected".to_owned()),
         _ => format!("{} selected", ids.len()),
     };
     let measured = match rectangle {

@@ -1,4 +1,5 @@
 use varde_document::Command;
+use varde_sketch::Selectable;
 use varde_sketch::{Constraint, Curve, Side, Spline};
 use varde_view::{Edit, Inference, Level, Look, Target, Tool, ToolClick};
 
@@ -280,11 +281,11 @@ fn the_snap_shows_until_the_click_takes_it() {
 fn the_origin_and_axes_are_selected_but_never_deleted() {
     let (mut doc, _, _) = sketching();
     doc.look(Look::ClickGeometry {
-        hit: Some(Id::ORIGIN),
+        hit: Some(Selectable::Item(Id::ORIGIN)),
         add: false,
     });
     doc.look(Look::ClickGeometry {
-        hit: Some(Id::X_AXIS),
+        hit: Some(Selectable::Item(Id::X_AXIS)),
         add: true,
     });
     let selection = &doc.sketch.as_ref().unwrap().selection;
@@ -306,7 +307,7 @@ fn a_snap_to_what_an_undo_takes_is_let_go_of() {
     // Aimed through the point, which the undo takes.
     doc.look(Look::Aim(ToolClick {
         target: Some(Target::Point(point)),
-        hit: Some(point),
+        hit: Some(Selectable::Item(point)),
         ..click_at(5.0, 0.0)
     }));
     doc.update(Edit::Undo);

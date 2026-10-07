@@ -7,7 +7,7 @@ use glam::DVec2;
 
 use super::*;
 use crate::testing::{at, circle, constrain, dimension, line, point, quadrilateral};
-use crate::{Constraint, Curve, Handle, Measure, Side, Spline};
+use crate::{Constraint, Curve, Handle, Measure, Selectable, Side, Spline};
 
 fn settle(sketch: &Sketch) -> Result<Solution, Failure> {
     solve(sketch, &Goal::Settle, &Budget::default())
@@ -1193,9 +1193,17 @@ fn handles_are_held_as_lines_are() {
     constrain(&mut sketch, Constraint::Horizontal(tips[0]));
     constrain(&mut sketch, Constraint::Parallel(slanted, tips[1]));
     constrain(&mut sketch, Constraint::Perpendicular(tips[1], tips[2]));
-    let named = sketch.name(Id::handle(tips[0])).unwrap();
+    let line = Selectable::HandleLine(tips[0]);
+    let named = sketch.selectable_name(line).unwrap();
     assert!(named.starts_with("Handle of Spline"), "{named}");
-    assert!(sketch.selectable(Id::handle(tips[0])) && !sketch.selectable(Id::handle(fit[1])));
+    let end = sketch
+        .selectable_name(Selectable::HandleEnd(tips[0]))
+        .unwrap();
+    assert!(end.starts_with("End 2 of Handle 1 of Spline"), "{end}");
+    let tip = sketch.name(tips[1]).unwrap();
+    assert!(tip.starts_with("End 1 of Handle 2 of Spline"), "{tip}");
+    assert!(sketch.selectable(line) && !sketch.selectable(Selectable::HandleLine(fit[1])));
+    assert!(!sketch.selectable(Selectable::HandleEnd(fit[1])));
     let solved = settle(&sketch).unwrap().sketch;
     let analysis = analyse(&solved);
     assert!(analysis.solved && analysis.redundant.is_empty());

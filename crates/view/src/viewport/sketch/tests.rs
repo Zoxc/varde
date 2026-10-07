@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use varde_sketch::Selectable;
 
 use iced::Size;
 use iced::widget::shader::Program as _;
@@ -43,7 +44,7 @@ fn drawn() -> (Sketch, [Id; 3]) {
 /// with `selection` and `tool` in use if there is one.
 fn sketching<'a>(
     sketch: &'a Sketch,
-    selection: &'a BTreeSet<Id>,
+    selection: &'a BTreeSet<Selectable>,
     tool: Option<ActiveTool<'a>>,
     editable: bool,
 ) -> Sketching<'a> {
@@ -54,7 +55,7 @@ fn sketching<'a>(
 /// The viewport's program showing [`sketching`] through [`top_camera`].
 fn viewport<'a>(
     sketch: &'a Sketch,
-    selection: &'a BTreeSet<Id>,
+    selection: &'a BTreeSet<Selectable>,
     tool: Option<ActiveTool<'a>>,
     editable: bool,
 ) -> Program<'a> {
@@ -153,13 +154,13 @@ fn a_click_selects_what_it_hits_and_ctrl_adds() {
     let mut state = Interaction::default();
 
     let hits = |messages: Vec<Message>| match messages.as_slice() {
-        [Message::Look(Look::ClickGeometry { hit, add })] => (*hit, *add),
+        [Message::Look(Look::ClickGeometry { hit, add })] => (hit.and_then(Selectable::item), *add),
         other => panic!("{other:?}"),
     };
     // A few pixels off counts.
     let near_a = screen_at(-5.0, 0.3);
     assert_eq!(hits(click(&viewport, &mut state, near_a)), (Some(a), false));
-    assert_eq!(state.sketch.hover, Some(a));
+    assert_eq!(state.sketch.hover, Some(Selectable::Item(a)));
     assert_eq!(
         hits(click(&viewport, &mut state, screen_at(1.0, 0.0))),
         (Some(line), false)
@@ -197,7 +198,14 @@ fn a_press_held_still_over_overlapping_items_lists_them() {
     let [Message::Look(Look::OpenOverlaps(list))] = &messages[..] else {
         panic!("{messages:?}");
     };
-    assert_eq!(list.items, OverlapItems::Sketch(vec![a, line, Id::X_AXIS]));
+    assert_eq!(
+        list.items,
+        OverlapItems::Sketch(vec![
+            Selectable::Item(a),
+            Selectable::Item(line),
+            Selectable::Item(Id::X_AXIS)
+        ])
+    );
     // Let go of: nothing more, no drag.
     assert!(feed(&viewport, &mut state, on_a, &[release()]).0.is_empty());
 
@@ -226,7 +234,7 @@ fn a_box_selects_inside_to_the_right_and_touching_to_the_left() {
 
     let boxed = |messages: Vec<Message>| match messages.as_slice() {
         [Message::Look(Look::SelectBox { ids, add: false })] => {
-            let mut ids = ids.clone();
+            let mut ids: Vec<Id> = ids.iter().filter_map(|id| id.item()).collect();
             ids.sort();
             ids
         }
@@ -278,7 +286,7 @@ fn geometry_is_dragged_and_dropped() {
     else {
         panic!("{messages:?}");
     };
-    assert_eq!(*id, b);
+    assert_eq!(*id, Selectable::Item(b));
     assert!(from.abs_diff_eq(DVec2::new(5.0, 0.0), 1e-3), "{from}");
     assert!(to.abs_diff_eq(DVec2::new(5.0, 3.0), 1e-3), "{to}");
 
@@ -289,7 +297,7 @@ fn geometry_is_dragged_and_dropped() {
     let (messages, _) = feed(&viewport, &mut state, nudged, &[moved(nudged), release()]);
     assert!(matches!(
         messages.as_slice(),
-        [Message::Look(Look::ClickGeometry { hit: Some(hit), .. })] if *hit == b
+        [Message::Look(Look::ClickGeometry { hit: Some(hit), .. })] if *hit == Selectable::Item(b)
     ));
 }
 
@@ -344,7 +352,7 @@ fn read_only_geometry_is_boxed_rather_than_dragged() {
     );
     assert!(matches!(
         messages.as_slice(),
-        [Message::Look(Look::SelectBox { ids, .. })] if ids == &[b]
+        [Message::Look(Look::SelectBox { ids, .. })] if ids == &[Selectable::Item(b)]
     ));
 }
 
@@ -473,7 +481,7 @@ fn the_cursor_shows_what_the_left_button_does() {
         mouse::Interaction::None
     );
     feed(&selecting, &mut state, on_a, &[moved(on_a)]);
-    assert_eq!(state.sketch.hover, Some(a));
+    assert_eq!(state.sketch.hover, Some(Selectable::Item(a)));
     assert_eq!(
         interaction(&selecting, &state, on_a),
         mouse::Interaction::Pointer
@@ -557,7 +565,7 @@ fn the_sketch_is_uploaded_again_only_when_it_changes() {
     );
     assert!(Arc::ptr_eq(&base, &orbited));
     // For the selection, the theme and the sketch.
-    let selected = BTreeSet::from([a]);
+    let selected = testing::items([a]);
     let (reselected, _) = layers(&self::sketching(&sketch, &selected, None, true), &state);
     assert!(*reselected != *base);
     let dark = Mode::Dark.palette().sketching;
@@ -579,7 +587,7 @@ fn construction_is_dashed_and_the_selection_drawn_over_the_rest() {
     let line = |start, end| Curve::Line { start, end };
     let normal = sketch.add_curve(line(a, b), false).unwrap();
     sketch.add_curve(line(b, c), true).unwrap();
-    let selection = BTreeSet::from([normal, a]);
+    let selection = testing::items([normal, a]);
     let (base, _) = layers(
         &sketching(&sketch, &selection, None, true),
         &Interaction::default(),
@@ -784,7 +792,7 @@ fn what_a_hovered_constraint_ties_together_is_highlighted() {
         .unwrap();
     let none = BTreeSet::new();
     let state = SketchState {
-        hovered: Some(level),
+        hovered: Some(Selectable::Item(level)),
         ..SketchState::plain(&sketch, &none, None)
     };
     let (_, live) = layers(&Sketching::new(state, true), &Interaction::default());
@@ -796,7 +804,7 @@ fn what_a_hovered_constraint_ties_together_is_highlighted() {
     assert_eq!(live, expected);
     // A row of geometry hovered highlights it.
     let state = SketchState {
-        hovered: Some(line),
+        hovered: Some(Selectable::Item(line)),
         ..SketchState::plain(&sketch, &none, None)
     };
     let (_, live) = layers(&Sketching::new(state, true), &Interaction::default());
@@ -822,7 +830,7 @@ fn the_dimension_tool_clicks_what_it_is_on_and_alt_makes_a_reference() {
     let on = tool_click(click(&viewport, &mut state, screen_at(1.0, 0.0)));
     assert_eq!(
         (on.hit, on.point(), on.reference),
-        (Some(line), None, false)
+        (Some(Selectable::Item(line)), None, false)
     );
     // What's under the cursor shows, a line too.
     let (_, live) = layers(&viewport.sketching.clone().unwrap(), &state);
@@ -950,7 +958,7 @@ fn a_hovered_dimension_s_arrows_are_in_the_hover_colour_too() {
     let (sketch, [.., id]) = dimensioned();
     let none = BTreeSet::new();
     let state = SketchState {
-        hovered: Some(id),
+        hovered: Some(Selectable::Item(id)),
         ..SketchState::plain(&sketch, &none, None)
     };
     let sketching = Sketching::new(state, true);
@@ -959,7 +967,7 @@ fn a_hovered_dimension_s_arrows_are_in_the_hover_colour_too() {
     let projector = Projector::new(&top_camera(), OriginPlane::XY.placement(), SIZE, SIZE).unwrap();
     let mut expected = SketchLayer::default();
     for item in tied_items(&sketch, id) {
-        sketching.highlight(&mut expected, item, colors.hovered);
+        sketching.highlight(&mut expected, Selectable::Item(item), colors.hovered);
     }
     let lines = sketching.dimension_lines(&sketch.dimensions[0]).unwrap();
     draw_lines(&mut expected, &lines, colors.hovered);
@@ -1204,7 +1212,7 @@ fn found(sketch: &Sketch) -> Result<Arc<varde_sketch::Profiles>, varde_sketch::T
 /// `sketch` as the viewport shows it with `profiles`, and `tool` in use.
 fn profiled<'a>(
     sketch: &'a Sketch,
-    selection: &'a BTreeSet<Id>,
+    selection: &'a BTreeSet<Selectable>,
     tool: Option<ActiveTool<'a>>,
     profiles: Option<&'a Result<Arc<varde_sketch::Profiles>, varde_sketch::TooComplex>>,
 ) -> Sketching<'a> {
@@ -1434,7 +1442,7 @@ fn the_shape_tools_click_curves_and_show_what_they_would_do() {
     let by_a = screen_at(-4.6, 0.1);
     assert_eq!(
         tool_click(click(&viewport, &mut state, by_a)).hit,
-        Some(across)
+        Some(Selectable::Item(across))
     );
     let (_, live) = layers(&sketching(&sketch, &selection, Some(trim), true), &state);
     let mut expected = SketchLayer::default();
@@ -1459,7 +1467,7 @@ fn the_shape_tools_click_curves_and_show_what_they_would_do() {
     let by_end = screen_at(4.0, 0.1);
     assert_eq!(
         tool_click(click(&viewport, &mut state, by_end)).hit,
-        Some(across)
+        Some(Selectable::Item(across))
     );
     let (_, live) = layers(&sketching(&sketch, &selection, Some(extend), true), &state);
     let mut expected = SketchLayer::default();
@@ -1480,7 +1488,7 @@ fn the_shape_tools_click_curves_and_show_what_they_would_do() {
 
     // Mirror, choosing its line, takes the line under the cursor over the
     // point there, and shows the picks' images in it.
-    let picked = [across];
+    let picked = [Selectable::Item(across)];
     let mirror = ActiveTool {
         picked: &picked,
         about: true,
@@ -1491,7 +1499,7 @@ fn the_shape_tools_click_curves_and_show_what_they_would_do() {
     let on_cutter = screen_at(0.1, 2.8);
     assert_eq!(
         tool_click(click(&viewport, &mut state, on_cutter)).hit,
-        Some(cutter)
+        Some(Selectable::Item(cutter))
     );
     let (_, live) = layers(&sketching(&sketch, &selection, Some(mirror), true), &state);
     let mut expected = SketchLayer::default();
@@ -1533,7 +1541,7 @@ fn offset_picks_the_chain_clicked_and_shows_its_copy_through_the_cursor() {
     let mut state = Interaction::default();
     let by_corner = screen_at(-3.7, -4.1);
     let clicked = tool_click(click(&viewport, &mut state, by_corner));
-    assert_eq!(clicked.hit, Some(sides[0]));
+    assert_eq!(clicked.hit, Some(Selectable::Item(sides[0])));
     let (_, live) = layers(&sketching(&sketch, &selection, Some(picking), true), &state);
     let mut expected = SketchLayer::default();
     let hovered = line_style(colors.hovered, HOVERED_WIDTH, false);
@@ -1547,7 +1555,11 @@ fn offset_picks_the_chain_clicked_and_shows_its_copy_through_the_cursor() {
     // Picked: the cursor 2 outside, the loop's copy 2 out, and where it
     // aims said on every move, for its distance's field.
     let offsetting = ActiveTool {
-        picked: &sides,
+        picked: &sides
+            .iter()
+            .copied()
+            .map(Selectable::Item)
+            .collect::<Vec<_>>(),
         ..picking
     };
     let viewport = self::viewport(&sketch, &selection, Some(offsetting), true);
@@ -1692,7 +1704,7 @@ fn fillet_and_chamfer_pick_a_corner_and_show_what_they_make() {
         let mut state = Interaction::default();
         let by_corner = screen_at(0.8, 0.3);
         let clicked = tool_click(click(&viewport, &mut state, by_corner));
-        assert_eq!(clicked.hit, Some(corner));
+        assert_eq!(clicked.hit, Some(Selectable::Item(corner)));
         assert_eq!(sketch.corner_lines(corner, clicked.at), Some([a, b]));
         let (_, live) = layers(&sketching(&sketch, &selection, Some(picking), true), &state);
         let mut expected = SketchLayer::default();
@@ -1707,7 +1719,7 @@ fn fillet_and_chamfer_pick_a_corner_and_show_what_they_make() {
 
     // Picked, the fillet whose middle is as far in as the cursor, placed
     // where the button's let go.
-    let picked = [corner, a, b];
+    let picked = [corner, a, b].map(Selectable::Item);
     let filleting = ActiveTool {
         picked: &picked,
         ..testing::tool(Tool::Fillet, &[], &[])
@@ -1824,7 +1836,7 @@ fn a_spline_s_handles_show_and_selected_its_control_polygon() {
     let curve = sketch
         .flatten(&sketch.curve(spline).unwrap().curve)
         .unwrap();
-    let base = |selection: &BTreeSet<Id>| {
+    let base = |selection: &BTreeSet<Selectable>| {
         layers(
             &sketching(&sketch, selection, None, true),
             &Interaction::default(),
@@ -1861,7 +1873,7 @@ fn a_spline_s_handles_show_and_selected_its_control_polygon() {
 
     // Selected, its handle in the selection's colour; its other fit
     // points, without handles, show none.
-    let selection = BTreeSet::from([spline]);
+    let selection = testing::items([spline]);
     let mut expected = builtins(colors);
     let selected = line_style(colors.selected, SELECTED_WIDTH, false);
     expected.polyline(Space::Sketch, &curve, selected);
@@ -1881,7 +1893,7 @@ fn a_spline_s_handles_show_and_selected_its_control_polygon() {
     let curve = sketch
         .flatten(&sketch.curve(spline).unwrap().curve)
         .unwrap();
-    let selection = BTreeSet::from([spline]);
+    let selection = testing::items([spline]);
     let (layer, _) = layers(
         &sketching(&sketch, &selection, None, true),
         &Interaction::default(),
@@ -1910,7 +1922,7 @@ fn a_spline_s_handles_show_and_selected_its_control_polygon() {
 fn the_curvature_comb_of_a_spline_selected_shows_scaled_to_the_view() {
     let colors = Mode::Light.palette().sketching;
     let (sketch, spline, _) = arched(SplineKind::Through);
-    let selection = BTreeSet::from([spline]);
+    let selection = testing::items([spline]);
     let live = |comb: bool, camera: &Camera| {
         let mut state = SketchState::plain(&sketch, &selection, None);
         state.comb = comb;
@@ -1968,7 +1980,7 @@ fn a_double_click_on_a_spline_adds_a_point_there() {
     let at = screen_at(on.x, on.y);
     assert!(matches!(
         click(&viewport, &mut state, at)[..],
-        [Message::Look(Look::ClickGeometry { hit: Some(hit), .. })] if hit == spline
+        [Message::Look(Look::ClickGeometry { hit: Some(hit), .. })] if hit == Selectable::Item(spline)
     ));
     let second = click(&viewport, &mut state, at);
     let [

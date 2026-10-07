@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
+use varde_sketch::Selectable;
 
 use iced::keyboard::{self, key};
 use varde_document::{
@@ -1023,7 +1024,7 @@ fn plate_with_the_hole_deleted_waiting() -> (Doc, FeatureId, Requests, crate::te
         .unwrap()
         .id;
     doc.look(Look::SelectBox {
-        ids: vec![circle],
+        ids: vec![Selectable::Item(circle)],
         add: false,
     });
     doc.update(Edit::DeleteSelection);
@@ -1210,7 +1211,7 @@ fn recovery_restored_while_the_sketch_edits_wait_frees_ok() {
         .unwrap()
         .id;
     doc.look(Look::SelectBox {
-        ids: vec![circle],
+        ids: vec![Selectable::Item(circle)],
         add: false,
     });
     doc.update(Edit::DeleteSelection);
@@ -1274,7 +1275,7 @@ fn an_edit_the_solver_rejects_while_waiting_frees_ok_and_keeps_the_pick() {
         .id;
     let constrain = |doc: &mut Doc| {
         doc.look(Look::SelectBox {
-            ids: vec![line],
+            ids: vec![Selectable::Item(line)],
             add: false,
         });
         doc.update(Edit::Constrain(varde_view::ConstraintKind::Horizontal));
@@ -1316,7 +1317,7 @@ fn ok_waits_for_a_solver_lane_not_started_yet() {
         .unwrap()
         .id;
     doc.look(Look::SelectBox {
-        ids: vec![circle],
+        ids: vec![Selectable::Item(circle)],
         add: false,
     });
     doc.update(Edit::DeleteSelection);
@@ -1704,7 +1705,7 @@ fn restoring_drops_the_session_and_the_changes_waiting() {
         .unwrap()
         .id;
     doc.look(Look::SelectBox {
-        ids: vec![circle],
+        ids: vec![Selectable::Item(circle)],
         add: false,
     });
     doc.update(Edit::DeleteSelection);
@@ -1894,7 +1895,7 @@ fn a_delete_waiting_behind_sketch_edits_asks_once_it_is_made() {
         .unwrap()
         .id;
     doc.look(Look::SelectBox {
-        ids: vec![circle],
+        ids: vec![Selectable::Item(circle)],
         add: false,
     });
     doc.update(Edit::DeleteSelection);
@@ -1948,7 +1949,7 @@ fn a_delete_between_sketch_edits() -> (Doc, crate::tests::SolveLane, FeatureId, 
     let (circle, line) = (find(&doc, true), find(&doc, false));
     for id in [circle, line] {
         doc.look(Look::SelectBox {
-            ids: vec![id],
+            ids: vec![Selectable::Item(id)],
             add: false,
         });
         doc.update(Edit::DeleteSelection);

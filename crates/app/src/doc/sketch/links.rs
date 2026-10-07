@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use varde_document::{Document, FeatureKind, OutsideRef, PointRef, sketch_face};
-use varde_sketch::{Id, SketchEdit};
+use varde_sketch::{Id, Selectable, SketchEdit};
 use varde_view::{LinkRow, ModelHighlight, Picked};
 
 use super::super::Doc;
@@ -64,7 +64,7 @@ impl Doc {
             return;
         };
         if let Some(session) = &mut self.sketch {
-            session.selection = made.items().collect();
+            session.selection = made.items().map(Selectable::Item).collect();
         }
     }
 

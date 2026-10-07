@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use varde_sketch::Selectable;
 
 use super::*;
 use crate::testing::{at, dimension, handled_spline, line, point};
@@ -40,8 +41,14 @@ fn shapes() -> (Sketch, [Id; 6], [Id; 2]) {
     (sketch, [slope, lone, parallel, steep, circle, arc], [a, b])
 }
 
-fn measured(sketch: &Sketch, picked: &[Id], x: f64, y: f64) -> Option<Measure> {
-    measure(sketch, picked, at(x, y), false).map(|(measure, _)| measure)
+fn measured<T: Into<Selectable> + Copy>(
+    sketch: &Sketch,
+    picked: &[T],
+    x: f64,
+    y: f64,
+) -> Option<Measure> {
+    let picked: Vec<Selectable> = picked.iter().map(|&id| id.into()).collect();
+    measure(sketch, &picked, at(x, y), false).map(|(measure, _)| measure)
 }
 
 #[test]
@@ -85,7 +92,13 @@ fn two_items_measure_what_lies_between_them() {
         measured(&sketch, &[a, b], 15.0, 2.0),
         Some(Measure::VerticalDistance(a, b))
     );
-    let (point_line, side) = measure(&sketch, &[lone, slope], at(0.0, 0.0), false).unwrap();
+    let (point_line, side) = measure(
+        &sketch,
+        &[Selectable::Item(lone), Selectable::Item(slope)],
+        at(0.0, 0.0),
+        false,
+    )
+    .unwrap();
     assert_eq!(point_line, Measure::Distance(lone, slope));
     assert_eq!(side, sketch.side(&point_line));
     assert_eq!(
@@ -109,12 +122,28 @@ fn two_items_measure_what_lies_between_them() {
         "its own end"
     );
     assert_eq!(measured(&sketch, &[a, b, lone], 5.0, 8.0), None);
-    assert!(joins(&sketch, &[a], lone));
-    assert!(joins(&sketch, &[slope], steep));
-    assert!(!joins(&sketch, &[slope], b));
+    assert!(joins(
+        &sketch,
+        &[Selectable::Item(a)],
+        Selectable::Item(lone)
+    ));
+    assert!(joins(
+        &sketch,
+        &[Selectable::Item(slope)],
+        Selectable::Item(steep)
+    ));
+    assert!(!joins(
+        &sketch,
+        &[Selectable::Item(slope)],
+        Selectable::Item(b)
+    ));
     // A circle with the rest measures from its edge: see
     // `a_circle_picked_with_other_geometry_measures_from_its_edge`.
-    assert!(!joins(&sketch, &[a, lone], b));
+    assert!(!joins(
+        &sketch,
+        &[Selectable::Item(a), Selectable::Item(lone)],
+        Selectable::Item(b)
+    ));
 }
 
 #[test]
@@ -127,7 +156,13 @@ fn an_angle_is_the_one_the_label_is_in_or_across_the_corner_from() {
     let (a, b) = (line(&mut sketch, o, x), line(&mut sketch, o, e));
     let degrees = |toward: f64| {
         let at = varde_sketch::angle::from_angle(toward.to_radians()) * 3.0;
-        let (measure, side) = measure(&sketch, &[a, b], at, false).unwrap();
+        let (measure, side) = measure(
+            &sketch,
+            &[Selectable::Item(a), Selectable::Item(b)],
+            at,
+            false,
+        )
+        .unwrap();
         sketch.measure(&measure, side).unwrap().to_degrees()
     };
     // Between the lines, and across the corner from there.
@@ -142,14 +177,26 @@ fn an_angle_is_the_one_the_label_is_in_or_across_the_corner_from() {
 fn a_circle_is_measured_by_its_diameter_an_arc_by_its_radius_or_switched() {
     let (sketch, [.., circle, arc], _) = shapes();
     let round = |id, switched| measure(&sketch, &[id], at(0.0, 0.0), switched).unwrap().0;
-    assert_eq!(round(circle, false), Measure::Diameter(circle));
-    assert_eq!(round(circle, true), Measure::Radius(circle));
-    assert_eq!(round(arc, false), Measure::Radius(arc));
-    assert_eq!(round(arc, true), Measure::Diameter(arc));
-    assert!(super::round(&sketch, &[circle]) && super::round(&sketch, &[arc]));
+    assert_eq!(
+        round(Selectable::Item(circle), false),
+        Measure::Diameter(circle)
+    );
+    assert_eq!(
+        round(Selectable::Item(circle), true),
+        Measure::Radius(circle)
+    );
+    assert_eq!(round(Selectable::Item(arc), false), Measure::Radius(arc));
+    assert_eq!(round(Selectable::Item(arc), true), Measure::Diameter(arc));
+    assert!(
+        super::round(&sketch, &[Selectable::Item(circle)])
+            && super::round(&sketch, &[Selectable::Item(arc)])
+    );
     let (_, [slope, ..], [a, _]) = shapes();
-    assert!(!super::round(&sketch, &[slope]) && !super::round(&sketch, &[a]));
-    assert!(pickable(&sketch, circle) && pickable(&sketch, a));
+    assert!(
+        !super::round(&sketch, &[Selectable::Item(slope)])
+            && !super::round(&sketch, &[Selectable::Item(a)])
+    );
+    assert!(pickable(&sketch, Selectable::Item(circle)) && pickable(&sketch, Selectable::Item(a)));
 }
 
 #[test]
@@ -205,21 +252,27 @@ fn a_spline_s_handle_measures_its_angle_alone_and_its_length_with_its_point() {
 fn a_handle_picked_as_a_line_measures_angles_as_a_line() {
     let mut sketch = Sketch::default();
     let (_, fit, tip) = handled_spline(&mut sketch);
-    let handle = Id::handle(tip);
+    let handle = Selectable::HandleLine(tip);
     let (a, b) = (
         point(&mut sketch, 0.0, -10.0),
         point(&mut sketch, 10.0, -10.0),
     );
     let flat = line(&mut sketch, a, b);
     assert!(pickable(&sketch, handle));
-    assert!(joins(&sketch, &[flat], handle));
+    assert!(joins(&sketch, &[Selectable::Item(flat)], handle));
     // Alone, from the X axis; with a line, the angle between them, its
     // handle named by its tip.
     assert_eq!(
         measured(&sketch, &[handle], 16.0, 9.0),
         Some(Measure::Angle(Id::X_AXIS, tip))
     );
-    let (measure, side) = measure(&sketch, &[flat, handle], at(12.0, 1.0), false).unwrap();
+    let (measure, side) = measure(
+        &sketch,
+        &[Selectable::Item(flat), handle],
+        at(12.0, 1.0),
+        false,
+    )
+    .unwrap();
     let Measure::Angle(x, y) = measure else {
         panic!("{measure:?}");
     };
@@ -231,7 +284,15 @@ fn a_handle_picked_as_a_line_measures_angles_as_a_line() {
         "{value}"
     );
     // Not with a point.
-    assert!(!joins(&sketch, &[fit[0]], handle));
+    assert!(!joins(&sketch, &[Selectable::Item(fit[0])], handle));
+    // By its mirrored end, as by its line; not with itself.
+    let end = Selectable::HandleEnd(tip);
+    assert!(pickable(&sketch, end));
+    assert_eq!(
+        measured(&sketch, &[end], 16.0, 9.0),
+        Some(Measure::Angle(Id::X_AXIS, tip))
+    );
+    assert!(!joins(&sketch, &[handle], end));
 }
 
 #[test]
@@ -300,7 +361,8 @@ fn an_arc_s_sector_holds_both_its_ends() {
 fn a_selection_measures_as_its_dimension_would() {
     let (sketch, [slope, lone, parallel, steep, circle, arc], [a, _]) = shapes();
     let shown = |ids: &[Id]| {
-        selected(&sketch, ids)
+        let ids: Vec<Selectable> = ids.iter().copied().map(Selectable::Item).collect();
+        selected(&sketch, &ids)
             .map(|(measure, value)| shown_measure(&measure, value, LengthUnit::Mm))
     };
     assert_eq!(shown(&[slope]).as_deref(), Some("Length 11.18 mm"));
@@ -387,11 +449,34 @@ fn a_circle_picked_with_other_geometry_measures_from_its_edge() {
         measured(&sketch, &[circle, arc], 47.0, 0.0),
         Some(Measure::EdgeDistance(arc, circle))
     );
-    assert!(joins(&sketch, &[lone], circle));
+    assert!(joins(
+        &sketch,
+        &[Selectable::Item(lone)],
+        Selectable::Item(circle)
+    ));
     let center = match sketch.curve(circle).unwrap().curve {
         Curve::Circle { center, .. } => center,
         _ => unreachable!(),
     };
     assert_eq!(measured(&sketch, &[circle, center], 30.0, 10.0), None);
-    assert!(!joins(&sketch, &[circle], center));
+    assert!(!joins(
+        &sketch,
+        &[Selectable::Item(circle)],
+        Selectable::Item(center)
+    ));
+}
+
+#[test]
+fn a_point_s_note_is_rounded_to_fit_marked_where_it_is_not_exact() {
+    let at = DVec2::new(-12345.678, 2.75);
+    assert_eq!(point_note(at, LengthUnit::Mm, 40), "−12345.678 mm, 2.75 mm");
+    assert_eq!(point_note(at, LengthUnit::Mm, 21), "≈−12345.7 mm, ≈2.8 mm");
+    assert_eq!(point_note(at, LengthUnit::Mm, 20), "≈−12346 mm, ≈3 mm");
+    // Past the room even whole, whole.
+    assert_eq!(point_note(at, LengthUnit::Mm, 5), "≈−12346 mm, ≈3 mm");
+    // What the unit's decimals can't show is never exact.
+    assert_eq!(
+        point_note(DVec2::new(1.0 / 3.0, 0.0), LengthUnit::Mm, 40),
+        "≈0.333 mm, 0 mm"
+    );
 }

@@ -14,7 +14,7 @@ use varde_document::{
 use varde_expr::LengthUnit;
 use varde_render::{BodyTint, OriginShown};
 
-use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, LinkKind, Sketch};
+use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, LinkKind, Selectable, Sketch};
 
 use crate::chrome::{self, ChipSize, Edge, edged, icon_button, key_chip};
 use crate::context_menu::ContextMenu;
@@ -1311,6 +1311,9 @@ pub(crate) enum GeometryRow {
     /// A point of the sketch's own, by its place in its points: under the
     /// curve it makes if `child`, else one no curve has.
     Point { at: usize, child: bool },
+    /// The mirrored end of a handle ([`Selectable::HandleEnd`]), under its
+    /// spline, after its tip, by the tip's place in the points.
+    HandleEnd(usize),
     /// A link, by its place among `links`.
     Link(usize),
 }
@@ -1347,8 +1350,17 @@ pub(crate) fn geometry_rows(
         on_curves.extend(entry.curve.points());
         tree.push(GeometryRow::Curve(i));
         if expanded.contains(&entry.id) {
-            let points = entry.curve.points().filter_map(place);
-            tree.extend(points.map(|at| GeometryRow::Point { at, child: true }));
+            let handles = match &entry.curve {
+                Curve::Spline(spline) => &spline.handles[..],
+                _ => &[],
+            };
+            for at in entry.curve.points().filter_map(place) {
+                tree.push(GeometryRow::Point { at, child: true });
+                let id = sketch.points[at].id;
+                if handles.iter().any(|handle| handle.tip == id) {
+                    tree.push(GeometryRow::HandleEnd(at));
+                }
+            }
         }
     }
     let loose = (sketch.points.iter().enumerate())
@@ -1436,17 +1448,22 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
             let danger = conflicts.contains(&entry.id);
             let open = sketch.expanded.contains(&entry.id);
             // Folded, its points' rows don't show their selection.
-            let holds_selected =
-                !open && (entry.curve.points()).any(|point| sketch.selection.contains(&point));
+            let holds_selected = !open
+                && (sketch.selection.iter()).any(|&target| match target {
+                    Selectable::Item(id) => entry.curve.points().any(|point| point == id),
+                    Selectable::HandleEnd(tip) => entry.curve.points().any(|point| point == tip),
+                    Selectable::HandleLine(_) => false,
+                });
             let expander = Expander::Toggle {
                 open,
                 on_press: Message::Look(Look::ToggleExpanded(entry.id)),
             };
             let item = Item {
-                id: entry.id,
+                id: entry.id.into(),
                 icon: curve_icon(entry),
                 name: entry.name(),
                 note,
+                at: None,
                 driven,
                 danger,
                 holds_selected,
@@ -1456,10 +1473,11 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
         GeometryRow::Point { at, child } => {
             let point = &sketch.sketch.points[at];
             let item = Item {
-                id: point.id,
+                id: point.id.into(),
                 icon: Icon::Point,
                 name: sketch.sketch.point_name(point),
-                note: Some(dimension::point_note(point.at, sketch.units)),
+                note: None,
+                at: Some(point.at),
                 driven: false,
                 danger: conflicts.contains(&point.id),
                 holds_selected: false,
@@ -1470,6 +1488,21 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
                 TREE_INDENT
             };
             geometry_item(sketch, item, Expander::Leaf, indent)
+        }
+        GeometryRow::HandleEnd(at) => {
+            let tip = sketch.sketch.points[at].id;
+            let target = Selectable::HandleEnd(tip);
+            let item = Item {
+                id: target,
+                icon: Icon::Point,
+                name: (sketch.sketch.selectable_name(target)).unwrap_or_default(),
+                note: None,
+                at: sketch.sketch.handle_end(tip),
+                driven: false,
+                danger: conflicts.contains(&tip),
+                holds_selected: false,
+            };
+            geometry_item(sketch, item, Expander::Leaf, 2.0 * TREE_INDENT)
         }
         GeometryRow::Link(at) => link_row(sketch, &sketch.links[at]),
     };
@@ -1556,10 +1589,12 @@ fn tree_header<'a>(
 
 /// A point or curve as a row of the Geometry list.
 struct Item {
-    id: Id,
+    id: Selectable,
     icon: Icon,
     name: String,
     note: Option<String>,
+    /// Where a point is, noted in place of `note` as fits the row.
+    at: Option<glam::DVec2>,
     /// Whether a driving dimension sets the size in the note: it's shown
     /// in the dimension colour, not faint.
     driven: bool,
@@ -1569,6 +1604,10 @@ struct Item {
     /// selected row's tint follows the name.
     holds_selected: bool,
 }
+
+/// About how wide a character of a row's note is, in pixels, at its size:
+/// a digit's width, with some to spare.
+const NOTE_CHAR_WIDTH: f32 = 7.0;
 
 /// The side of the dot on a folded curve's row with a point selected.
 const SELECTED_POINT_SIZE: f32 = 7.0;
@@ -1585,12 +1624,17 @@ fn geometry_item<'a>(
 ) -> Element<'a, Message> {
     let id = item.id;
     let selected = sketch.selection.contains(&id);
-    let faint = sketch.pending.contains(&id);
+    let faint = sketch.pending.contains(&id.id());
     let content = move |hovered: bool, expander: Element<'a, Message>| {
         let name: Element<'a, Message> = if item.danger {
-            text(item.name.clone()).style(theme::danger_text).into()
+            text(item.name.clone())
+                .style(theme::danger_text)
+                .wrapping(text::Wrapping::None)
+                .into()
         } else {
-            name(item.name.clone(), !faint).into()
+            name(item.name.clone(), !faint)
+                .wrapping(text::Wrapping::None)
+                .into()
         };
         let holds_selected = item.holds_selected.then(|| {
             container(Space::new())
@@ -1602,24 +1646,51 @@ fn geometry_item<'a>(
                     ..container::Style::default()
                 })
         });
-        let note = item.note.clone().map(|note| {
-            let note = text(note).size(11.5);
+        // A note too long for the room left is cut at the row's edge
+        // rather than wrapped over the next; a point's coordinates are
+        // rounded to fit first.
+        let style = move |theme: &iced::Theme| {
             if item.driven {
-                note.style(|theme| text::Style {
+                text::Style {
                     color: Some(theme::palette(theme).icons.dimension.accent),
-                })
+                }
             } else {
-                note.style(theme::faint_text)
+                theme::faint_text(theme)
             }
-        });
+        };
+        let note_text = move |note: String| {
+            let note = text(note)
+                .size(11.5)
+                .wrapping(text::Wrapping::None)
+                .style(style);
+            container(note)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::End)
+                .align_y(Alignment::Center)
+                .clip(true)
+        };
+        let note: Option<Element<'a, Message>> = match (item.at, item.note.clone()) {
+            (Some(at), _) => {
+                let units = sketch.units;
+                Some(
+                    responsive(move |size| {
+                        let room = (size.width / NOTE_CHAR_WIDTH).max(0.0) as usize;
+                        note_text(dimension::point_note(at, units, room)).into()
+                    })
+                    .into(),
+                )
+            }
+            (None, Some(note)) => Some(note_text(note).into()),
+            (None, None) => None,
+        };
         container(
             row![
                 expander,
                 icons::icon(item.icon, icons::INLINE),
                 name,
                 holds_selected,
-                space::horizontal(),
-                note,
+                note.unwrap_or_else(|| space::horizontal().into()),
             ]
             .spacing(6)
             .height(ROW_HEIGHT)
@@ -1636,9 +1707,10 @@ fn geometry_item<'a>(
     .on_enter(Message::Look(Look::HoverItem(Some(id))))
     .on_exit(Message::Look(Look::LeaveItem(id)));
     let menu = (sketch.item_menu == Some(id)).then(|| {
-        let editable = sketch.editable && !id.is_builtin();
-        let detach = sketch.sketch.detachable(id).then(|| {
-            let message = Message::Edit(Edit::DetachPoint(id));
+        let editable = sketch.editable && !id.id().is_builtin();
+        let detachable = id.item().filter(|&point| sketch.sketch.detachable(point));
+        let detach = detachable.map(|point| {
+            let message = Message::Edit(Edit::DetachPoint(point));
             let item = menu_item(
                 Icon::Split,
                 "Detach".into(),
@@ -1692,7 +1764,10 @@ fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Messa
     let id = link.link;
     let made = sketch.sketch.link(id);
     let selected = made.is_some_and(|made| {
-        !made.points.is_empty() && made.items().all(|item| sketch.selection.contains(&item))
+        !made.points.is_empty()
+            && made
+                .items()
+                .all(|item| sketch.selection.contains(&item.into()))
     });
     let icon = match link.kind {
         LinkKind::Project => Icon::Project,
@@ -1841,11 +1916,11 @@ fn item_row<'a>(
         failed: false,
         note: note.map(Into::into),
         indent: 24.0,
-        selected: sketch.selection.contains(&id),
+        selected: sketch.selection.contains(&id.into()),
     };
-    row.view(Message::Look(Look::ClickRow(id)))
-        .on_enter(Message::Look(Look::HoverItem(Some(id))))
-        .on_exit(Message::Look(Look::LeaveItem(id)))
+    row.view(Message::Look(Look::ClickRow(id.into())))
+        .on_enter(Message::Look(Look::HoverItem(Some(id.into()))))
+        .on_exit(Message::Look(Look::LeaveItem(id.into())))
 }
 
 /// The sketch's constraints and dimensions on the geometry selected, or
@@ -1956,7 +2031,9 @@ fn listed<'a>(sketch: &SketchState<'a>) -> Vec<Listed<'a>> {
     let mut shown: Vec<_> = constraints
         .chain(dimensions)
         .filter(|listed| {
-            on.is_empty() || selection.contains(&listed.id()) || on.iter().any(|&id| listed.on(id))
+            on.is_empty()
+                || selection.contains(&listed.id().into())
+                || on.iter().any(|&id| listed.on(id))
         })
         .collect();
     // Stable, so by id within each.
@@ -2382,6 +2459,47 @@ mod tests {
                 GeometryRow::Link(1),
                 GeometryRow::Header(GeometryGroup::Intersected, 1),
             ]
+        );
+    }
+
+    #[test]
+    fn a_spline_unfolded_lists_its_handle_s_tip_then_its_mirrored_end() {
+        let mut sketch = Sketch::default();
+        let (spline, fit, tip) = crate::testing::handled_spline(&mut sketch);
+        let place = |id: Id| {
+            sketch
+                .points
+                .iter()
+                .position(|point| point.id == id)
+                .unwrap()
+        };
+        let rows = geometry_rows(&sketch, &[], &BTreeSet::new(), &BTreeSet::from([spline]));
+        let child = |id| GeometryRow::Point {
+            at: place(id),
+            child: true,
+        };
+        assert_eq!(
+            rows,
+            [
+                GeometryRow::Header(GeometryGroup::Own, 6),
+                GeometryRow::Curve(0),
+                child(fit[0]),
+                child(fit[1]),
+                child(fit[2]),
+                child(tip),
+                GeometryRow::HandleEnd(place(tip)),
+            ]
+        );
+        // Named as the two ends of one handle.
+        let name = sketch.curve(spline).unwrap().name();
+        let tip_point = &sketch.points[place(tip)];
+        assert_eq!(
+            sketch.point_name(tip_point),
+            format!("End 1 of Handle 1 of {name}")
+        );
+        assert_eq!(
+            sketch.selectable_name(Selectable::HandleEnd(tip)),
+            Some(format!("End 2 of Handle 1 of {name}"))
         );
     }
 }
