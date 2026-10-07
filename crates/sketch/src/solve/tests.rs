@@ -1186,6 +1186,19 @@ fn a_handle_s_length_and_angle_are_dimensioned() {
 }
 
 #[test]
+fn a_handle_s_length_is_its_whole_line_s() {
+    let (mut sketch, fit, tips, _) = wave(false, &[0]);
+    dimension(&mut sketch, Measure::Length(tips[0]), "8");
+    let solved = settle(&sketch).unwrap().sketch;
+    let analysis = analyse(&solved);
+    assert!(analysis.solved && analysis.redundant.is_empty());
+    let half = at(&solved, tips[0]).distance(at(&solved, fit[0]));
+    assert!((half - 4.0).abs() < 1e-9, "{half}");
+    let measured = solved.measure(&Measure::Length(tips[0]), Side::Positive);
+    assert!((measured.unwrap() - 8.0).abs() < 1e-9);
+}
+
+#[test]
 fn handles_are_held_as_lines_are() {
     let (mut sketch, fit, tips, _) = wave(false, &[0, 2, 4]);
     let (a, b) = (point(&mut sketch, 0.0, -9.0), point(&mut sketch, 4.0, -6.0));

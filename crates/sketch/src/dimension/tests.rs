@@ -159,10 +159,12 @@ fn check_refuses_dimensions_of_the_wrong_kinds() {
     reference(Measure::Distance(a, round), round, Role::PointOrLine);
     reference(Measure::HorizontalDistance(a, bottom), bottom, Role::Point);
     reference(Measure::VerticalDistance(round, p), round, Role::Point);
-    reference(Measure::Length(a), a, Role::Line);
+    reference(Measure::Length(round), round, Role::LineOrHandle);
     reference(Measure::Angle(bottom, round), round, Role::LineOrHandle);
     // A point, but no handle's tip.
     let (result, from) = with(Measure::Angle(bottom, p));
+    assert_eq!(result, Err(SketchError::Unfit(from)));
+    let (result, from) = with(Measure::Length(a));
     assert_eq!(result, Err(SketchError::Unfit(from)));
     reference(Measure::Radius(bottom), bottom, Role::Round);
     reference(Measure::Diameter(Id(99)), Id(99), Role::Round);

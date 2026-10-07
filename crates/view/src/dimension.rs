@@ -136,9 +136,9 @@ pub fn round(sketch: &Sketch, picked: &[Selectable]) -> bool {
 /// - a circle or an arc and a point, a line or another circle or arc:
 ///   the gap from its edge, see [`Measure::EdgeDistance`];
 /// - a spline's handle, by its tip, as a line or by its mirrored end: as
-///   a line, its length (its fit point's and its tip's distance), or its
-///   horizontal or vertical extent; with a line or another handle, the
-///   angle between them as two lines'.
+///   a line, its length, its whole line's from its mirrored end to its
+///   tip; with a line or another handle, the angle between them as two
+///   lines'.
 pub fn measure(
     sketch: &Sketch,
     picked: &[Selectable],
@@ -153,7 +153,7 @@ pub fn measure(
     // their tips.
     match *picked {
         [one] if one.handle_tip().is_some() => {
-            let measure = handle_length(sketch, one.id(), at)?;
+            let measure = Measure::Length(one.id());
             let side = sketch.side(&measure);
             return Some((measure, side));
         }
@@ -164,7 +164,7 @@ pub fn measure(
     }
     let picked = items(picked)?;
     let measure = match *picked {
-        [one] if sketch.handle(one).is_some() => handle_length(sketch, one, at)?,
+        [one] if sketch.handle(one).is_some() => Measure::Length(one),
         [one] => match sketch.curve(one)?.curve {
             Curve::Line { start, end } => along(
                 extent(point(start)?, point(end)?, at),
@@ -201,20 +201,6 @@ pub fn measure(
     };
     let side = sketch.side(&measure);
     Some((measure, side))
-}
-
-/// The length of the handle whose tip is `tip`, as a line's with its
-/// label at `at`: the distance from its fit point to its tip.
-fn handle_length(sketch: &Sketch, tip: Id, at: DVec2) -> Option<Measure> {
-    let (_, handle) = sketch.handle(tip)?;
-    let point = |id| sketch.point(id).map(|point| point.at);
-    let extent = extent(point(handle.at)?, point(tip)?, at);
-    Some(along(
-        extent,
-        handle.at,
-        tip,
-        Measure::Distance(handle.at, tip),
-    ))
 }
 
 /// `aligned`, the measure between the points `a` and `b` straight, or

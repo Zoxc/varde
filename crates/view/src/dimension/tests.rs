@@ -235,8 +235,14 @@ fn a_spline_s_handle_measures_its_length_alone_and_with_its_point() {
     let (spline, fit, tip) = handled_spline(&mut sketch);
     assert_eq!(
         measured(&sketch, &[tip], 11.0, 6.0),
-        Some(Measure::Distance(fit[1], tip))
+        Some(Measure::Length(tip))
     );
+    // Its whole line's, twice its fit point's distance from its tip.
+    let whole = sketch
+        .measure(&Measure::Length(tip), Side::Positive)
+        .unwrap();
+    let half = sketch.measure(&Measure::Distance(fit[1], tip), Side::Positive);
+    assert!((whole - 2.0 * half.unwrap()).abs() < 1e-9);
     assert_eq!(
         measured(&sketch, &[fit[1], tip], 11.0, 6.0),
         Some(Measure::Distance(fit[1], tip))
@@ -262,7 +268,7 @@ fn a_handle_picked_as_a_line_measures_angles_as_a_line() {
     // handle named by its tip.
     assert_eq!(
         measured(&sketch, &[handle], 11.0, 6.0),
-        Some(Measure::Distance(fit[1], tip))
+        Some(Measure::Length(tip))
     );
     let (measure, side) = measure(
         &sketch,
@@ -288,7 +294,7 @@ fn a_handle_picked_as_a_line_measures_angles_as_a_line() {
     assert!(pickable(&sketch, end));
     assert_eq!(
         measured(&sketch, &[end], 11.0, 6.0),
-        Some(Measure::Distance(fit[1], tip))
+        Some(Measure::Length(tip))
     );
     assert!(!joins(&sketch, &[handle], end));
 }

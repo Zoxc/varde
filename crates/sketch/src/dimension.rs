@@ -40,7 +40,8 @@ pub enum Measure {
     /// How far the second point is above the first ([`Side::Positive`])
     /// or below ([`Side::Negative`]).
     VerticalDistance(Id, Id),
-    /// A line's length.
+    /// A line's length, or a spline's handle's, named by its tip: its
+    /// whole line, from its mirrored end to its tip ([`Sketch::span`]).
     Length(Id),
     /// Counter-clockwise from the first line's direction (start to end),
     /// reversed where the side is [`Side::Negative`], to the second
@@ -80,7 +81,7 @@ impl Measure {
             Measure::HorizontalDistance(a, b) | Measure::VerticalDistance(a, b) => {
                 [Some((a, Point)), Some((b, Point))]
             }
-            Measure::Length(line) => [Some((line, Line)), None],
+            Measure::Length(line) => [Some((line, LineOrHandle)), None],
             Measure::Angle(a, b) => [Some((a, LineOrHandle)), Some((b, LineOrHandle))],
             Measure::Radius(round) | Measure::Diameter(round) => [Some((round, Round)), None],
             // Which go together is `fits`'s to say: a point may be a
@@ -126,7 +127,8 @@ impl Measure {
     /// Whether the items it names in `sketch`, each already playing its
     /// role (see [`items`](Measure::items)), are what it measures: an
     /// offset's an offset pair ([`Sketch::offset_pair`]), and a point an
-    /// angle names a handle's tip, one of `tips` ([`Sketch::tips`]).
+    /// angle or a length names a handle's tip, one of `tips`
+    /// ([`Sketch::tips`]).
     pub fn fits(&self, sketch: &Sketch, tips: &HashSet<Id>) -> bool {
         match *self {
             Measure::Offset(a, b) => sketch.offset_pair([a, b]).is_some(),
@@ -138,6 +140,7 @@ impl Measure {
                     .is_some_and(|entry| entry.curve.points().any(|id| id == other));
                 round != other && sketch.kind(other) != Some(crate::Kind::Spline) && !own
             }
+            Measure::Length(id) => sketch.line(id).is_some() || tips.contains(&id),
             Measure::Angle(a, b) => [a, b]
                 .into_iter()
                 .all(|id| sketch.line(id).is_some() || tips.contains(&id)),
@@ -346,7 +349,7 @@ impl Sketch {
             Measure::HorizontalDistance(a, b) => (at(b)?.x - at(a)?.x) * side.sign(),
             Measure::VerticalDistance(a, b) => (at(b)?.y - at(a)?.y) * side.sign(),
             Measure::Length(line) => {
-                let (start, end) = self.line(line)?;
+                let (start, end) = self.span(line)?;
                 start.distance(end)
             }
             Measure::Angle(a, b) => self.angle(a, b, side)?,
@@ -390,7 +393,7 @@ impl Sketch {
         let at = |id| self.point(id).map(|point| point.at);
         match *measure {
             Measure::Distance(a, b) => at(a).is_some_and(|a| Some(a) == at(b)),
-            Measure::Length(line) => self.line(line).is_some_and(|(start, end)| start == end),
+            Measure::Length(line) => self.span(line).is_some_and(|(start, end)| start == end),
             _ => false,
         }
     }
@@ -438,7 +441,7 @@ impl Sketch {
     /// `None` if an item is missing or of another kind.
     pub fn anchor(&self, measure: &Measure) -> Option<DVec2> {
         let at = |id| self.point(id).map(|point| point.at);
-        let middle = |id| self.line(id).map(|(start, end)| start.midpoint(end));
+        let middle = |id| self.span(id).map(|(start, end)| start.midpoint(end));
         let anchor = match *measure {
             Measure::Distance(a, b) => self.distance(a, b)?.1,
             Measure::HorizontalDistance(a, b) | Measure::VerticalDistance(a, b) => {

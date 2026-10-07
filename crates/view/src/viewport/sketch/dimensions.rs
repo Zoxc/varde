@@ -41,7 +41,7 @@ pub(crate) fn lines(sketch: &Sketch, measure: &Measure, side: Side, label: DVec2
     let at = |id| sketch.point(id).map(|point| point.at);
     let mut lines = match *measure {
         Measure::Length(line) => {
-            let (start, end) = sketch.line(line)?;
+            let (start, end) = sketch.span(line)?;
             aligned(start, end, label)?
         }
         Measure::Distance(a, b) => match (at(a), at(b)) {

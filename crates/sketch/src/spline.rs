@@ -297,6 +297,19 @@ impl Sketch {
         Some((self.point(handle.at)?.at, self.point(handle.tip)?.at))
     }
 
+    /// A line's start and end, or a handle's whole line, named by its
+    /// tip: from its mirrored end, across its fit point, to its tip. What
+    /// a length is measured along ([`Measure::Length`](crate::Measure::Length)).
+    /// `None` for anything else, or a point missing.
+    pub fn span(&self, id: Id) -> Option<(DVec2, DVec2)> {
+        if let Some(line) = self.line(id) {
+            return Some(line);
+        }
+        let (_, handle) = self.handle(id)?;
+        let (at, tip) = (self.point(handle.at)?.at, self.point(handle.tip)?.at);
+        Some((2.0 * at - tip, tip))
+    }
+
     /// The shape of `spline`, where the sketch has its points: `None` if
     /// it names a point the sketch doesn't have, or its points make no
     /// sound spline (as [`Sketch::check`] rules out for its knots and

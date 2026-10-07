@@ -944,14 +944,23 @@ impl System {
             },
             Measure::HorizontalDistance(a, b) => offset(a, b, 0)?,
             Measure::VerticalDistance(a, b) => offset(a, b, 1)?,
-            Measure::Length(id) => {
-                let line = line(id)?;
-                Residual::Distance {
+            // A handle's whole line is twice its fit point's distance
+            // from its tip.
+            Measure::Length(id) => match line(id) {
+                Some(line) => Residual::Distance {
                     a: line.start,
                     b: line.end,
                     value,
+                },
+                None => {
+                    let half = self.direction(sketch, id)?;
+                    Residual::Distance {
+                        a: half.start,
+                        b: half.end,
+                        value: value / 2.0,
+                    }
                 }
-            }
+            },
             Measure::Angle(a, b) => Residual::Angle {
                 a: self.direction(sketch, a)?,
                 b: self.direction(sketch, b)?,

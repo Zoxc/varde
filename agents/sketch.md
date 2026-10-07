@@ -88,8 +88,10 @@ parameters, two a third of the way either side for a point with a handle
 so it stays C², natural ends without handles. `Sketch::spline_shape`
 gives a spline's `BSpline`. `Curve::points` gives a spline's points then
 its tips; `Curve::ends` an open one's first and last. A handle's length
-and angle can be dimensioned (a distance between its fit point and tip,
-an angle naming the tip: `Sketch::handle` finds a handle by its tip,
+and angle can be dimensioned (its whole line's length, from its mirrored
+end to its tip, as `Measure::Length` of its tip, `Sketch::span` giving
+the line, or a distance between its fit point and tip; an angle naming
+the tip: `Sketch::handle` finds a handle by its tip,
 `Sketch::direction` a line or a handle as what an angle is measured
 along).
 
@@ -1349,9 +1351,9 @@ bar says why (`EditError::Sketch`).
   the splines selected, or hides it, in any sketch. With splines selected
   and no drawing tool the toolbar offers Convert, Handles and Comb (and
   Constrain) in place of the tools. The
-  Dimension tool takes a handle's tip alone as its length, as a line's
-  (`Measure::Distance(fit, tip)`, or its horizontal or vertical extent);
-  with its fit point, as two points, the same.
+  Dimension tool takes a handle's tip alone as its whole line's length
+  (`Measure::Length(tip)`, mirrored end to tip); with its fit point, as
+  two points, their distance, half that.
 - **Construction**: `X` turns the tool's next shapes into construction
   geometry, or without a tool drawing shapes (the Dimension tool draws
   none) the curves selected: all construction unless they all are, then
