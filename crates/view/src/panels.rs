@@ -1565,7 +1565,8 @@ struct Item {
     driven: bool,
     danger: bool,
     /// Whether a point of the curve's is selected while its rows are
-    /// folded away: a round dot in a selected row's colour follows the name.
+    /// folded away: a round dot between the accent and a hovered
+    /// selected row's tint follows the name.
     holds_selected: bool,
 }
 
@@ -1596,7 +1597,7 @@ fn geometry_item<'a>(
                 .width(SELECTED_POINT_SIZE)
                 .height(SELECTED_POINT_SIZE)
                 .style(|theme| container::Style {
-                    background: Some(theme::palette(theme).accent_soft.into()),
+                    background: Some(theme::selection_mark(theme::palette(theme)).into()),
                     border: iced::border::rounded(SELECTED_POINT_SIZE / 2.0),
                     ..container::Style::default()
                 })

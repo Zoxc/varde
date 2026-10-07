@@ -1814,6 +1814,15 @@ pub fn hovered_row(theme: &Theme) -> container::Style {
     }
 }
 
+/// Halfway between the accent and a hovered selected row's tint (the soft
+/// accent deepened) made opaque over the panel, for marks that stand for
+/// a selection in a list.
+pub fn selection_mark(p: &Palette) -> Color {
+    let soft = p.accent_soft;
+    let hovered = mix(Color { a: 1.0, ..soft }, p.panel, (soft.a * 1.75).min(1.0));
+    mix(p.accent, hovered, 0.5)
+}
+
 /// A selected list row, like a feature in the Timeline.
 pub fn selected_row(theme: &Theme) -> container::Style {
     let p = palette(theme);
