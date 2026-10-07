@@ -55,8 +55,12 @@ fn drawn() -> Drawn {
         .unwrap();
     let mut point = |x, y| sketch.add_point(DVec2::new(x, y)).unwrap();
     let (on, last, tip) = (point(15.0, 5.0), point(18.0, 3.0), point(13.0, 1.3));
+    let from = sketch.point(b).unwrap().at;
+    let end = sketch
+        .add_point(2.0 * from - DVec2::new(13.0, 1.3))
+        .unwrap();
     let mut through = Spline::through(vec![b, on, last], false);
-    through.handles.push(Handle { at: b, tip });
+    through.handles.push(Handle { at: b, tip, end });
     let spline = sketch.add_curve(Curve::Spline(through), false).unwrap();
     Drawn {
         sketch,
@@ -331,15 +335,5 @@ fn a_handle_picked_as_a_line_is_held_as_one() {
             &BTreeSet::from([Selectable::Item(drawn.lone), handle])
         ),
         None
-    );
-    // By its mirrored end it's the same handle, and picked both ways, one.
-    let end = Selectable::HandleEnd(tip);
-    assert_eq!(
-        Horizontal.make(sketch, &BTreeSet::from([end])),
-        Some(vec![Constraint::Horizontal(tip)])
-    );
-    assert_eq!(
-        Horizontal.make(sketch, &BTreeSet::from([handle, end])),
-        Some(vec![Constraint::Horizontal(tip)])
     );
 }

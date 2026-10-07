@@ -32,6 +32,10 @@ impl Id {
     pub const X_AXIS: Id = Id(u32::MAX - 1);
     /// The sketch's y axis.
     pub const Y_AXIS: Id = Id(u32::MAX - 2);
+    /// No item: a handle's end read from before ends were points (see
+    /// [`Sketch::add_handle_ends`](crate::Sketch::add_handle_ends)), one
+    /// of the ids never given out.
+    pub const MISSING: Id = Id(LAST_ID);
 
     /// Whether it names the origin or an axis, which every sketch has.
     pub fn is_builtin(self) -> bool {
@@ -95,7 +99,14 @@ impl Sketch {
                     let at = spline.points.iter().position(|&p| p == id)?;
                     format!("Control point {}", at + 1)
                 }
-                Curve::Spline(spline) => format!("End 1 of Handle {}", spline.handle_number(id)?),
+                Curve::Spline(spline) => {
+                    let handle = spline
+                        .handles
+                        .iter()
+                        .find(|handle| handle.arms().contains(&id))?;
+                    let end = if handle.tip == id { 1 } else { 2 };
+                    format!("End {end} of Handle {}", spline.handle_number(handle.tip)?)
+                }
                 _ => return None,
             };
             Some(format!("{role} of {}", entry.name()))

@@ -136,8 +136,8 @@ impl Doc {
     }
 
     /// Drags the item `id`, grabbed at `from`, to `to`: a point, or a line
-    /// with its ends, moves as the cursor does, a handle's mirrored end
-    /// too (its tip moving the other way), and a circle or an arc takes
+    /// with its ends, moves as the cursor does, a handle's end too (its
+    /// tip moving the other way), and a circle or an arc takes
     /// the cursor's distance from its centre as its radius. Each
     /// step goes to the solver, and the sketch is shown as it last
     /// converged. A step that would put anything past the coordinate limit
@@ -257,8 +257,7 @@ impl Doc {
         self.delete_items(selected);
     }
 
-    /// Deletes the point or curve `id` (or a handle by its mirrored end)
-    /// from its row's context menu: the whole selection if it's among it,
+    /// Deletes the point or curve `id` from its row's context menu: the whole selection if it's among it,
     /// as `Delete` would, else it alone.
     pub(crate) fn delete_item(&mut self, id: Selectable) {
         let Some(session) = &self.sketch else {
@@ -285,7 +284,7 @@ impl Doc {
     /// Deletes `items` and what depends on them.
     fn delete_items(&mut self, items: Vec<Selectable>) {
         // The origin and axes are always there; a handle goes by its tip,
-        // picked as a line or by its mirrored end.
+        // picked as a line.
         let mut ids: Vec<Id> = Vec::new();
         for id in items
             .into_iter()
@@ -879,9 +878,10 @@ fn tangent(sketch: &Sketch, curve: Id, new: Id, shape: Shape) -> Option<Constrai
 
 /// The move of the handle whose tip is `tip`, grabbed as a line at
 /// `from`, dragged to `to`: turned about its fit point to point at `to`
-/// (away from it, grabbed on the arm mirroring its tip), its length kept.
+/// (away from it, grabbed on its end's arm), its length kept, its end
+/// mirroring its tip.
 fn handle_dragged(sketch: &Sketch, tip: Id, from: DVec2, to: DVec2) -> Option<SketchEdit> {
-    sketch.handle(tip)?;
+    let (_, handle) = sketch.handle(tip)?;
     let (at, tip_at) = sketch.direction(tip)?;
     let arm = tip_at - at;
     let sign = if (from - at).dot(arm) < 0.0 {
@@ -890,8 +890,9 @@ fn handle_dragged(sketch: &Sketch, tip: Id, from: DVec2, to: DVec2) -> Option<Sk
         1.0
     };
     let toward = ((to - at) * sign).try_normalize()?;
+    let arm = toward * arm.length();
     Some(SketchEdit::Move {
-        points: vec![(tip, at + toward * arm.length())],
+        points: vec![(tip, at + arm), (handle.end, at - arm)],
         radii: Vec::new(),
     })
 }
@@ -905,15 +906,25 @@ fn dragged(sketch: &Sketch, id: Selectable, from: DVec2, to: DVec2) -> Option<Sk
     let id = match id {
         Selectable::Item(id) => id,
         Selectable::HandleLine(tip) => return handle_dragged(sketch, tip, from, to),
-        // The end follows the cursor, mirroring the tip in its fit point.
-        Selectable::HandleEnd(tip) => {
-            sketch.handle(tip)?;
-            return Some(SketchEdit::Move {
-                points: vec![(tip, sketch.point(tip)?.at - delta)],
-                radii: Vec::new(),
-            });
-        }
     };
+    // A handle's tip or end follows the cursor, the other mirroring it
+    // in its fit point.
+    let mirrored = (sketch.splines())
+        .flat_map(|(_, spline)| &spline.handles)
+        .find_map(|handle| match handle.arms() {
+            [tip, end] if tip == id => Some(end),
+            [tip, end] if end == id => Some(tip),
+            _ => None,
+        });
+    if let Some(other) = mirrored {
+        return Some(SketchEdit::Move {
+            points: vec![
+                (id, sketch.point(id)?.at + delta),
+                (other, sketch.point(other)?.at - delta),
+            ],
+            radii: Vec::new(),
+        });
+    }
     let mut radii = Vec::new();
     let mut points: Vec<(Id, DVec2)> = match sketch.kind(id)? {
         Kind::Point => vec![(id, sketch.point(id)?.at + delta)],
@@ -949,14 +960,13 @@ fn dragged(sketch: &Sketch, id: Selectable, from: DVec2, to: DVec2) -> Option<Sk
         }
         Kind::Constraint | Kind::Dimension => return None,
     };
-    // A fit point's handle goes with it, its tip moved as far.
+    // A fit point's handle goes with it, its tip and end moved as far.
     let tips: Vec<(Id, DVec2)> = (sketch.splines())
         .flat_map(|(_, spline)| &spline.handles)
-        .filter(|handle| {
-            points.iter().any(|&(point, _)| point == handle.at)
-                && points.iter().all(|&(point, _)| point != handle.tip)
-        })
-        .filter_map(|handle| Some((handle.tip, sketch.point(handle.tip)?.at + delta)))
+        .filter(|handle| points.iter().any(|&(point, _)| point == handle.at))
+        .flat_map(|handle| handle.arms())
+        .filter(|&arm| points.iter().all(|&(point, _)| point != arm))
+        .filter_map(|arm| Some((arm, sketch.point(arm)?.at + delta)))
         .collect();
     points.extend(tips);
     Some(SketchEdit::Move { points, radii })

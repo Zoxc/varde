@@ -1311,9 +1311,6 @@ pub(crate) enum GeometryRow {
     /// A point of the sketch's own, by its place in its points: under the
     /// curve it makes if `child`, else one no curve has.
     Point { at: usize, child: bool },
-    /// The mirrored end of a handle ([`Selectable::HandleEnd`]), under its
-    /// spline, after its tip, by the tip's place in the points.
-    HandleEnd(usize),
     /// A link, by its place among `links`.
     Link(usize),
 }
@@ -1350,16 +1347,8 @@ pub(crate) fn geometry_rows(
         on_curves.extend(entry.curve.points());
         tree.push(GeometryRow::Curve(i));
         if expanded.contains(&entry.id) {
-            let handles = match &entry.curve {
-                Curve::Spline(spline) => &spline.handles[..],
-                _ => &[],
-            };
             for at in entry.curve.points().filter_map(place) {
                 tree.push(GeometryRow::Point { at, child: true });
-                let id = sketch.points[at].id;
-                if handles.iter().any(|handle| handle.tip == id) {
-                    tree.push(GeometryRow::HandleEnd(at));
-                }
             }
         }
     }
@@ -1451,7 +1440,6 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
             let holds_selected = !open
                 && (sketch.selection.iter()).any(|&target| match target {
                     Selectable::Item(id) => entry.curve.points().any(|point| point == id),
-                    Selectable::HandleEnd(tip) => entry.curve.points().any(|point| point == tip),
                     Selectable::HandleLine(_) => false,
                 });
             let expander = Expander::Toggle {
@@ -1488,21 +1476,6 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
                 TREE_INDENT
             };
             geometry_item(sketch, item, Expander::Leaf, indent)
-        }
-        GeometryRow::HandleEnd(at) => {
-            let tip = sketch.sketch.points[at].id;
-            let target = Selectable::HandleEnd(tip);
-            let item = Item {
-                id: target,
-                icon: Icon::Point,
-                name: (sketch.sketch.selectable_name(target)).unwrap_or_default(),
-                note: None,
-                at: sketch.sketch.handle_end(tip),
-                driven: false,
-                danger: conflicts.contains(&tip),
-                holds_selected: false,
-            };
-            geometry_item(sketch, item, Expander::Leaf, 2.0 * TREE_INDENT)
         }
         GeometryRow::Link(at) => link_row(sketch, &sketch.links[at]),
     };
@@ -2463,9 +2436,10 @@ mod tests {
     }
 
     #[test]
-    fn a_spline_unfolded_lists_its_handle_s_tip_then_its_mirrored_end() {
+    fn a_spline_unfolded_lists_its_handle_s_tip_then_its_end() {
         let mut sketch = Sketch::default();
         let (spline, fit, tip) = crate::testing::handled_spline(&mut sketch);
+        let (_, handle) = sketch.handle(tip).unwrap();
         let place = |id: Id| {
             sketch
                 .points
@@ -2487,7 +2461,7 @@ mod tests {
                 child(fit[1]),
                 child(fit[2]),
                 child(tip),
-                GeometryRow::HandleEnd(place(tip)),
+                child(handle.end),
             ]
         );
         // Named as the two ends of one handle.
@@ -2498,8 +2472,8 @@ mod tests {
             format!("End 1 of Handle 1 of {name}")
         );
         assert_eq!(
-            sketch.selectable_name(Selectable::HandleEnd(tip)),
-            Some(format!("End 2 of Handle 1 of {name}"))
+            sketch.point_name(&sketch.points[place(handle.end)]),
+            format!("End 2 of Handle 1 of {name}")
         );
     }
 }

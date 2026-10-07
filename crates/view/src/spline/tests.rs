@@ -1,5 +1,4 @@
 use glam::DVec2;
-use varde_sketch::Handle;
 
 use super::*;
 use crate::testing::{self, at, line, point};
@@ -71,17 +70,10 @@ fn handles_go_on_fit_points_selected_or_all_a_spline_s_and_come_off() {
     let tips: Vec<Id> = [(1.0, 1.0), (11.0, 1.0)]
         .map(|(x, y)| point(&mut sketch, x, y))
         .to_vec();
+    let first = crate::testing::handle(&mut sketch, fit[0], tips[0]);
+    let last = crate::testing::handle(&mut sketch, fit[2], tips[1]);
     if let Some(Curve::Spline(spline)) = sketch.curve_mut(through).map(|e| &mut e.curve) {
-        spline.handles = vec![
-            Handle {
-                at: fit[0],
-                tip: tips[0],
-            },
-            Handle {
-                at: fit[2],
-                tip: tips[1],
-            },
-        ];
+        spline.handles = vec![first, last];
     }
     let ends = crate::testing::items([fit[0], fit[2]]);
     assert_eq!(

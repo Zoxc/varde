@@ -1089,9 +1089,11 @@ impl<'a> Sketching<'a> {
         style.fixed = true;
         layer.point(DVec2::ZERO, style);
         self.spline_aids(&mut layer, colors);
-        // Handles' tips and control points, in the handles' colour.
+        // Handles' tips and ends and control points, in the handles'
+        // colour.
         let mut tips = sketch.tips();
         for (_, spline) in sketch.splines() {
+            tips.extend(spline.handles.iter().map(|handle| handle.end));
             if spline.kind == SplineKind::Control {
                 tips.extend(spline.points.iter().copied());
             }
@@ -1127,12 +1129,9 @@ impl<'a> Sketching<'a> {
     }
 
     /// What shows how splines are shaped: each handle as a line from its
-    /// tip through its fit point to as far the other side, symmetric on
-    /// it, with a point at that end as at its tip, in the handles' colour,
-    /// or the selection's with its spline or itself
-    /// ([`Selectable::HandleLine`]), its mirrored end's point filled in the
-    /// selection's colour while that's selected
-    /// ([`Selectable::HandleEnd`]); and
+    /// end through its fit point to its tip, in the handles' colour, or
+    /// the selection's with its spline or itself
+    /// ([`Selectable::HandleLine`]); and
     /// of a spline selected by control points, its control polygon, dashed
     /// in the handles' colour, as its points are. Fit points without a
     /// handle show none.
@@ -1160,13 +1159,6 @@ impl<'a> Sketching<'a> {
                     };
                     let style = line(color, HANDLE_WIDTH, false);
                     layer.polyline(Space::Sketch, &arms, style);
-                    // Its mirrored end selected is filled, as its tip is.
-                    let fill = if self.selection.contains(&Selectable::HandleEnd(handle.tip)) {
-                        colors.selected
-                    } else {
-                        colors.point_fill
-                    };
-                    layer.point(arms[0], dot(POINT_RADIUS, fill, color));
                 }
             }
             if !selected {
@@ -1625,19 +1617,13 @@ impl<'a> Sketching<'a> {
 
     /// Draws `target` highlighted in `color`, as under the cursor, into
     /// `layer`: a point or a curve, the origin and axes too, a spline's
-    /// handle as a line, or its mirrored end as a point.
+    /// handle as a line.
     fn highlight(&self, layer: &mut SketchLayer, target: Selectable, color: Color) {
         let id = match target {
             Selectable::Item(id) => id,
             Selectable::HandleLine(tip) => {
                 if let Some(arms) = handle_arms(self.sketch, tip) {
                     layer.polyline(Space::Sketch, &arms, line(color, HOVERED_WIDTH, false));
-                }
-                return;
-            }
-            Selectable::HandleEnd(tip) => {
-                if let Some(end) = self.sketch.handle_end(tip) {
-                    layer.point(end, dot(HOVERED_POINT_RADIUS, color, color));
                 }
                 return;
             }
@@ -1664,13 +1650,12 @@ fn tool_items(tool: &ActiveTool<'_>) -> Vec<Id> {
     tool.picked.iter().map(|target| target.id()).collect()
 }
 
-/// The handle whose tip is `tip` as drawn: from the place mirroring its
-/// tip in its fit point, through the fit point, to its tip. `None` if
-/// `tip` is no handle's tip.
+/// The handle whose tip is `tip` as drawn: from its end through its fit
+/// point to its tip. `None` if `tip` is no handle's tip.
 pub(crate) fn handle_arms(sketch: &Sketch, tip: Id) -> Option<[DVec2; 3]> {
-    sketch.handle(tip)?;
-    let (at, tip) = sketch.direction(tip)?;
-    Some([2.0 * at - tip, at, tip])
+    let (_, handle) = sketch.handle(tip)?;
+    let at = |id| sketch.point(id).map(|point| point.at);
+    Some([at(handle.end)?, at(handle.at)?, at(handle.tip)?])
 }
 
 /// The axis `id` names, if it names one, as drawn: as far as a sketch

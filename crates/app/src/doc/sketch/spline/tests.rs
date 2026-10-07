@@ -475,16 +475,16 @@ fn the_dimension_tool_takes_a_handle_as_a_line() {
     assert_eq!(drawing(&doc).unwrap().picked, [line]);
 }
 
-/// A handle's mirrored end is selected alone, dragged with the tip
-/// mirroring it through the solver's drag, and deleted as its tip is.
+/// A handle's end is selected alone, dragged with the tip mirroring it,
+/// and deleted as its tip is.
 #[test]
-fn a_handle_s_mirrored_end_is_selected_dragged_and_deleted() {
+fn a_handle_s_end_is_selected_dragged_and_deleted() {
     let (mut doc, _, _) = sketching();
     let id = draw_wave(&mut doc);
     let handle = sketch(&doc).spline(id).unwrap().handles[1];
-    let end = Selectable::HandleEnd(handle.tip);
+    let end = Selectable::Item(handle.end);
     let fit = sketch(&doc).point(handle.at).unwrap().at;
-    let mirrored = sketch(&doc).handle_end(handle.tip).unwrap();
+    let mirrored = sketch(&doc).point(handle.end).unwrap().at;
     select(&mut doc, end);
     assert_eq!(
         doc.sketch.as_ref().unwrap().selection,
@@ -501,7 +501,7 @@ fn a_handle_s_mirrored_end_is_selected_dragged_and_deleted() {
     });
     doc.update(Edit::DropGeometry);
     let dragged = sketch(&doc);
-    assert!(dragged.handle_end(handle.tip).unwrap().distance(to) < 1e-6);
+    assert!(dragged.point(handle.end).unwrap().at.distance(to) < 1e-6);
     let tip = dragged.point(handle.tip).unwrap().at;
     assert!(tip.distance(2.0 * fit - to) < 1e-6, "{tip}");
     assert_eq!(undo_to(&mut doc, &before), 1);

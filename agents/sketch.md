@@ -71,10 +71,17 @@ A **spline** (`spline.rs`, `Curve::Spline(Spline)`, "Spline 1") is a
 cubic non-rational B-spline, open (clamped) or `closed` (periodic), its
 parameter from 0 to 1. `SplineKind::Through` passes through its
 `points`, fit points, at their chord-length parameters (`chord_params`),
-found again whenever they move; `Handle { at, tip }` puts a handle at a
-fit point, the tip an ordinary point, setting the derivative there to
-`3 / h (tip - at)` (`h` the mean parameter span beside it), so a handle
-a third of the chord long is the pull it'd have anyway.
+found again whenever they move; `Handle { at, tip, end }` puts a handle
+at a fit point, the tip an ordinary point, setting the derivative there
+to `3 / h (tip - at)` (`h` the mean parameter span beside it), so a
+handle a third of the chord long is the pull it'd have anyway. Its end
+is an ordinary point too, mirroring the tip in the fit point, which the
+solver holds (`Residual::Mirrored`, one per coordinate, left out where
+all three are fixed; fixing a spline fixes its fit points and tips, not
+the ends the mirror holds); new handles take both (`Sketch::new_handle`).
+A handle read from before ends were points has `end` defaulted to
+`Id::MISSING` (an id never given out); `Unchecked::check` gives each one
+a new point first (`Sketch::add_handle_ends`), so old files read.
 `SplineKind::Control` is pulled towards its control points, touching an
 open one's ends, over `knots` it keeps (as `BSpline::clamped` or
 `BSpline::periodic` take them, at least `MIN_KNOT_GAP` apart;
@@ -87,11 +94,11 @@ fixed beforehand (what the solver holds through a solve): knots at the
 parameters, two a third of the way either side for a point with a handle
 so it stays C², natural ends without handles. `Sketch::spline_shape`
 gives a spline's `BSpline`. `Curve::points` gives a spline's points then
-its tips; `Curve::ends` an open one's first and last. A handle's length
-and angle can be dimensioned (its whole line's length, from its mirrored
-end to its tip, as `Measure::Length` of its tip, `Sketch::span` giving
-the line, or a distance between its fit point and tip; an angle naming
-the tip: `Sketch::handle` finds a handle by its tip,
+its handles' tips and ends; `Curve::ends` an open one's first and last.
+A handle's length and angle can be dimensioned (its whole line's
+length, from its end to its tip, as `Measure::Length` of its tip,
+`Sketch::span` giving the line, or as two points' distance; an angle
+naming the tip: `Sketch::handle` finds a handle by its tip,
 `Sketch::direction` a line or a handle as what an angle is measured
 along).
 
@@ -1351,9 +1358,10 @@ bar says why (`EditError::Sketch`).
   the splines selected, or hides it, in any sketch. With splines selected
   and no drawing tool the toolbar offers Convert, Handles and Comb (and
   Constrain) in place of the tools. The
-  Dimension tool takes a handle's tip alone as its whole line's length
-  (`Measure::Length(tip)`, mirrored end to tip); with its fit point, as
-  two points, their distance, half that.
+  Dimension tool takes a handle alone (as a line, or by its tip or end)
+  as a line: its whole length (`Measure::Length(tip)`, end to tip), or
+  placed off its ends its horizontal or vertical extent from its end to
+  its tip; two of its points, as two points, their distance.
 - **Construction**: `X` turns the tool's next shapes into construction
   geometry, or without a tool drawing shapes (the Dimension tool draws
   none) the curves selected: all construction unless they all are, then
@@ -1412,11 +1420,11 @@ bar says why (`EditError::Sketch`).
   have the letter (Trim `T`, Fillet `F`, Point `P`, Circle `C`, New
   sketch `S`, the sets `E` and `R`). A spline takes a point on it (Coincident), a tangent or a
   smooth join at an end (`Sketch::joint`) and a fix; with a spline
-  selected nothing else is offered. A handle selected as a line or by
-  its mirrored end (`Selectable::HandleLine`/`HandleEnd`, below; both
-  ways it's one), alone or with lines only
+  selected nothing else is offered. A handle selected as a line
+  (`Selectable::HandleLine`, below), alone or with lines only
   (`Picked::with_handles`), takes horizontal, vertical, parallel and
-  perpendicular, named by its tip; its tip selected is a point as any. The Constrain tool (`K`,
+  perpendicular, named by its tip; its tip or end selected is a point as
+  any. The Constrain tool (`K`,
   `SketchSession::constraining`, never with a drawing tool) lists in the
   toolbar, after its own button and in place of the tools, the kinds that
   fit the selection (`ConstraintKind::fitting`),
@@ -1489,11 +1497,8 @@ bar says why (`EditError::Sketch`).
   (`Curve::points`; a point shared is under each), then the points no
   curve has. Under an unfolded spline, a handle's tip ("End 1 of Handle 1
   of Spline 2", `Sketch::point_name`, numbered by `Spline::handle_number`
-  in its fit points' order) is followed by a row for its mirrored end
-  (`GeometryRow::HandleEnd`, "End 2 of Handle 1 of Spline 2"; neither is named as the main one,
-  `Sketch::selectable_name`), noted with where it is
-  (`Sketch::handle_end`) as a point's row is; it selects and hovers
-  `Selectable::HandleEnd`, and its menu deletes the handle. A folded curve with one of its points selected shows a round
+  in its fit points' order) is followed by its end ("End 2 of Handle 1
+  of Spline 2"), each a point's row. A folded curve with one of its points selected shows a round
   dot in a selected row's colour after its name. A curve's note is its size (`dimension::size_note`: a
   line's length, a circle's diameter, an arc's radius, or the other of
   the two a driving dimension measures), in the Dimension icons' accent
@@ -1611,11 +1616,9 @@ on the CPU. Construction curves are dashed, points are discs with a rim,
 and what's selected is drawn over the rest in the selection colour.
 The ends of lines a fillet or chamfer cuts off are dashed too
 (`Sketch::cut_back`, `cut_line`). A spline's handles are lines from their
-tips through their fit points to as far the other side, symmetric on
-them, in `SketchColors::spline_handle` (their tips' rims too), in the
-selection's with their spline or as a line; the point at the mirrored end
-is filled in the selection's colour while it's selected, and hovered it
-alone is lit, as a tip is; fit points without a handle show
+ends through their fit points to their tips, in
+`SketchColors::spline_handle` (their tips' and ends' rims too), in the
+selection's with their spline or as a line; fit points without a handle show
 none, selected or not; a selected spline by control points shows its
 control polygon dashed in the construction colour.
 Dimensions' lines (`viewport/sketch/dimensions.rs`, pure: extension lines
@@ -1831,10 +1834,9 @@ Pure functions, tested headless:
   and is the size under which the tools refuse a shape.
 - `hit` finds the nearest point within the tolerance, the origin
   included, and failing one the nearest handle end within twice the
-  tolerance over a handle's arm (`END_REACH`; its tip as the point, its
-  mirrored end as `Selectable::HandleEnd(tip)`, `handle_ends`, so
-  nearing an end along its arm, or another handle's arm across it, the
-  end is hit), failing one the nearest spline handle as drawn, both
+  tolerance over a handle's arm (`END_REACH`; its tip or end, points,
+  `handle_ends`, so nearing an end along its arm, or another handle's
+  arm across it, the end is hit), failing one the nearest spline handle as drawn, both
   arms, as a line of its own (`Selectable::HandleLine(tip)`, before the curves, so
   where a spline runs along its handle by the fit point the handle is
   hit), failing one the nearest curve as drawn (lines and circles
@@ -1843,24 +1845,23 @@ Pure functions, tested headless:
   `varde_sketch::Selectable` (`crates/sketch/src/selectable.rs`, next to
   the naming, so `Sketch::selectable_name` and `Sketch::selectable` know
   it): `Item(id)` (built-ins too; ordered first, so items sort as their
-  ids), `HandleLine(tip)` or `HandleEnd(tip)`. It's never stored: the
+  ids) or `HandleLine(tip)`. It's never stored: the
   hit results, the selection, the hover, the overlaps list, the tools'
   picks (`ActiveTool::picked`) and the `Look`/`Edit` messages carrying
   them (`ClickGeometry`, `SelectBox`, `ClickRow`, `HoverItem`,
   `LeaveItem`, `DragGeometry`, `DeleteItem`, `RowMenu::Item`) take it,
-  and only ids reach `SketchEdit`s: a handle's part by its tip
+  and only ids reach `SketchEdit`s: a handle by its tip
   (`Selectable::id`), as what's made of a handle names it.
-  `selectable_name` calls a line "Handle of Spline 1" and an end
-  "End 2 of Handle 1 of Spline 1" (the tip being End 1). Ids from `LAST_ID` (2³¹ − 3)
+  `selectable_name` calls it "Handle of Spline 1". Ids from `LAST_ID` (2³¹ − 3)
   up are still never given out (`OutOfIds`, `NextIdReserved` past it),
   where they ended when handles took ids of their own, so the sketches
-  `check` accepts stay the same. Deleting a handle's part deletes its
-  tip; dragging its line turns it about its fit point, its length kept
-  (`handle_dragged`); dragging its mirrored end moves it as a point
-  (unsnapped), the tip moving the other way, through the solver's drag
-  as the tip's would; the Dimension tool picks either (`pickable`),
-  alone its length as a line's, with a line or another handle the
-  angle between them.
+  `check` accepts stay the same (`LAST_ID` itself is `Id::MISSING`).
+  Deleting a handle, or its tip or end, deletes both; dragging its line
+  turns it about its fit point, its length kept, its end mirroring its
+  tip (`handle_dragged`); dragging its tip or end moves the other the
+  other way; the Dimension tool picks it as a line (`pickable`), alone
+  its length as a line's, with a line or another handle the angle
+  between them.
   With Trim or Extend, or Offset picking its chain, the viewport hits
   curves alone (`hit_curve`), so a click by a line's end is the line, and
   Mirror choosing its line lines and axes alone (`hit_line`), Fillet and
@@ -1869,11 +1870,9 @@ Pure functions, tested headless:
   Pressing the origin or an axis without a tool selects it but never
   drags it.
 - `overlaps` finds everything within the tolerance, as `hit` would
-  each: points, the origin included, then handles' mirrored ends, then
-  handles, then curves, then
+  each: points, the origin included, then handles, then curves, then
   axes, each
   nearest first. A press held still lists them.
-- `in_box` projects points, handles' mirrored ends (as points) and
-  flattened curves and tests them against the box on the screen: wholly
+- `in_box` projects points and flattened curves and tests them against the box on the screen: wholly
   inside, or touching (any segment meeting it).
   What's behind the eye is never inside.

@@ -162,10 +162,12 @@ pub fn spline_chain(splines: usize, fit: usize, on: usize) -> (Sketch, Id) {
         for (at, toward) in [(0, 1), (fit - 1, fit - 2)] {
             let from = place(start + at);
             let tip = from + (from - place(start + toward)) * -0.3;
+            let end = sketch.add_point(2.0 * from - tip).unwrap();
             let tip = sketch.add_point(tip).unwrap();
             spline.handles.push(Handle {
                 at: points[at],
                 tip,
+                end,
             });
             if i == 0 && at == 0 {
                 constraints.extend([Constraint::Fix(points[0]), Constraint::Fix(tip)]);

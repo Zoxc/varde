@@ -14,6 +14,14 @@ pub(crate) fn point(sketch: &mut Sketch, x: f64, y: f64) -> Id {
     sketch.add_point(DVec2::new(x, y)).unwrap()
 }
 
+/// A handle at the fit point `at` with its tip `tip`, its end a new
+/// point mirroring the tip.
+pub(crate) fn handle(sketch: &mut Sketch, at: Id, tip: Id) -> crate::Handle {
+    let (from, to) = (sketch.point(at).unwrap().at, sketch.point(tip).unwrap().at);
+    let end = sketch.add_point(2.0 * from - to).unwrap();
+    crate::Handle { at, tip, end }
+}
+
 /// New points at `places`, as [`point`] adds them one by one, but
 /// numbered from the highest found once: a sketch of thousands of points
 /// would otherwise look through them all for each.

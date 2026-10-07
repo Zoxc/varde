@@ -187,10 +187,11 @@ fn spline_add(
     if kind == SplineKind::Through
         && let Some(tips) = handle_tips(&drawing.placed, closed)
     {
-        for (&at, tip) in points.iter().zip(tips) {
+        for ((&at, &from), tip) in points.iter().zip(&drawing.placed).zip(tips) {
             handles.push(Handle {
                 at,
                 tip: add.point(tip)?,
+                end: add.point(2.0 * from - tip)?,
             });
         }
     }

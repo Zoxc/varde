@@ -8,7 +8,7 @@ use std::f64::consts::{PI, TAU};
 use glam::DVec2;
 use varde_expr::{LengthUnit, format};
 use varde_sketch::{
-    Curve, Dimension, Id, Kind, Measure, Role, Selectable, Side, Sketch, arc_sweep,
+    Curve, Dimension, Handle, Id, Kind, Measure, Role, Selectable, Side, Sketch, arc_sweep,
 };
 
 /// Under this sine of the angle between them, two lines picked are
@@ -27,14 +27,14 @@ enum Extent {
 
 /// Whether the items `picked` of `sketch` measure something together: a
 /// line alone, a circle or an arc alone, a spline's handle alone (by its
-/// tip), two points, a point and a line that doesn't end at it, two
+/// tip or its end), two points, a point and a line that doesn't end at it, two
 /// lines, or a circle or an arc and a point, a line or another circle or
 /// arc, by its edge (see [`edge_distance`]); not an axis alone, nor the
 /// origin and axes among themselves.
 fn measurable(sketch: &Sketch, picked: &[Selectable]) -> bool {
     let plays = |id, role: Role| sketch.kind(id).is_some_and(|kind| role.admits(kind));
-    // A handle picked as a line, or by its mirrored end: its angle, from
-    // the X axis or with a line or another handle.
+    // A handle picked as a line: its length, or its angle with a line or
+    // another handle.
     if picked.iter().any(|target| target.handle_tip().is_some()) {
         let direction = |target: Selectable| match target {
             Selectable::Item(id) => sketch.line(id).is_some(),
@@ -50,7 +50,7 @@ fn measurable(sketch: &Sketch, picked: &[Selectable]) -> bool {
         return false;
     };
     match *picked {
-        [one] if sketch.handle(one).is_some() => true,
+        [one] if handle_of(sketch, one).is_some() => true,
         [one] => plays(one, Role::Curve) && !one.is_builtin(),
         [a, b] if a != b && !(a.is_builtin() && b.is_builtin()) => {
             if let Some(edge) = edge_distance(sketch, a, b) {
@@ -102,7 +102,7 @@ pub fn joins(sketch: &Sketch, picked: &[Selectable], id: Selectable) -> bool {
 }
 
 /// Whether `id` can start a pick: a point, a line, a circle or an arc,
-/// or a spline's handle as a line or by its mirrored end.
+/// or a spline's handle as a line.
 pub fn pickable(sketch: &Sketch, target: Selectable) -> bool {
     let Selectable::Item(id) = target else {
         return sketch.selectable(target);
@@ -135,10 +135,10 @@ pub fn round(sketch: &Sketch, picked: &[Selectable]) -> bool {
 ///   other;
 /// - a circle or an arc and a point, a line or another circle or arc:
 ///   the gap from its edge, see [`Measure::EdgeDistance`];
-/// - a spline's handle, by its tip, as a line or by its mirrored end: as
-///   a line, its length, its whole line's from its mirrored end to its
-///   tip; with a line or another handle, the angle between them as two
-///   lines'.
+/// - a spline's handle, as a line or by its tip or its end alone, as a
+///   line: its length, from its end to its tip, or the same way its
+///   horizontal or vertical extent; as a line with a line or another
+///   handle, the angle between them as two lines'.
 pub fn measure(
     sketch: &Sketch,
     picked: &[Selectable],
@@ -149,11 +149,10 @@ pub fn measure(
         return None;
     }
     let point = |id| sketch.point(id).map(|point| point.at);
-    // Handles picked as lines or by their mirrored ends are named by
-    // their tips.
+    // Handles picked as lines are named by their tips.
     match *picked {
         [one] if one.handle_tip().is_some() => {
-            let measure = Measure::Length(one.id());
+            let measure = handle_length(sketch, one.id(), at)?;
             let side = sketch.side(&measure);
             return Some((measure, side));
         }
@@ -164,7 +163,7 @@ pub fn measure(
     }
     let picked = items(picked)?;
     let measure = match *picked {
-        [one] if sketch.handle(one).is_some() => Measure::Length(one),
+        [one] if handle_of(sketch, one).is_some() => handle_length(sketch, one, at)?,
         [one] => match sketch.curve(one)?.curve {
             Curve::Line { start, end } => along(
                 extent(point(start)?, point(end)?, at),
@@ -201,6 +200,27 @@ pub fn measure(
     };
     let side = sketch.side(&measure);
     Some((measure, side))
+}
+
+/// The handle whose tip or end is `id`.
+fn handle_of(sketch: &Sketch, id: Id) -> Option<Handle> {
+    let (_, handle) = sketch.handle(id).or_else(|| sketch.handle_by_end(id))?;
+    Some(handle)
+}
+
+/// The length of the handle whose tip or end is `id`, as a line's with
+/// its label at `at`: its whole length, named by its tip, or its
+/// horizontal or vertical extent from its end to its tip.
+fn handle_length(sketch: &Sketch, id: Id, at: DVec2) -> Option<Measure> {
+    let handle = handle_of(sketch, id)?;
+    let point = |id| sketch.point(id).map(|point| point.at);
+    let extent = extent(point(handle.end)?, point(handle.tip)?, at);
+    Some(along(
+        extent,
+        handle.end,
+        handle.tip,
+        Measure::Length(handle.tip),
+    ))
 }
 
 /// `aligned`, the measure between the points `a` and `b` straight, or

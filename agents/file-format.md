@@ -389,8 +389,10 @@ then part of the format, and a picked point; never a placement, which
 regenerating finds), and the `varde_sketch::Sketch`, whose points, lines, circles, arcs
 (a fillet an arc and a chamfer a line with a `Corner`: the two lines and
 the point they meet at), splines (through fit points or by control
-points, open or closed, their points and handle tips by id, by control
-points their knots), constraints (a tangent with a spline, and a smooth
+points, open or closed, their points and handles' tips and ends by id
+(a handle saved before ends were points reads with `Id::MISSING` and is
+given one on reading, `Sketch::add_handle_ends`), by control points
+their knots), constraints (a tangent with a spline, and a smooth
 join, naming the spline's end they're at) and dimensions carry ids from the
 sketch's own `next_id`,
 below the three kept for the origin and axes, which aren't stored but

@@ -289,14 +289,19 @@ fn a_handle_picked_as_a_line_measures_angles_as_a_line() {
     );
     // Not with a point.
     assert!(!joins(&sketch, &[Selectable::Item(fit[0])], handle));
-    // By its mirrored end, as by its line; not with itself.
-    let end = Selectable::HandleEnd(tip);
+    // By its end alone, as by its line.
+    let (_, made) = sketch.handle(tip).unwrap();
+    let end = Selectable::Item(made.end);
     assert!(pickable(&sketch, end));
     assert_eq!(
         measured(&sketch, &[end], 11.0, 6.0),
         Some(Measure::Length(tip))
     );
-    assert!(!joins(&sketch, &[handle], end));
+    // Off its ends, its extent, from its end to its tip.
+    assert_eq!(
+        measured(&sketch, &[end], 30.0, 4.0),
+        Some(Measure::VerticalDistance(made.end, tip))
+    );
 }
 
 #[test]

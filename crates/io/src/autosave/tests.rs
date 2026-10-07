@@ -111,8 +111,13 @@ fn a_spline_s_handle_is_read_back() {
     let fit = [(0.0, 0.0), (10.0, 5.0), (20.0, 0.0)]
         .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
     let tip = sketch.add_point(DVec2::new(13.0, 8.0)).unwrap();
+    let end = sketch.add_point(DVec2::new(7.0, 2.0)).unwrap();
     let mut through = Spline::through(fit.to_vec(), false);
-    through.handles.push(Handle { at: fit[1], tip });
+    through.handles.push(Handle {
+        at: fit[1],
+        tip,
+        end,
+    });
     sketch.add_curve(Curve::Spline(through), false).unwrap();
     let mut editor = Editor::new(Document::default());
     editor
@@ -141,4 +146,33 @@ fn a_spline_s_handle_is_read_back() {
     let mut held = Held::new(file);
     held.append(None, None, &document).unwrap();
     assert_eq!(held.read().unwrap().unwrap().document, document);
+}
+
+/// A handle saved before handles' ends were points, its fields by name as
+/// files have them, reads with no end
+/// ([`Id::MISSING`](varde_sketch::Id::MISSING)), for the document's check
+/// to give it one.
+#[test]
+fn a_handle_saved_without_an_end_reads() {
+    use glam::DVec2;
+    use varde_sketch::{Handle, Id, Sketch};
+
+    #[derive(serde::Serialize)]
+    struct Old {
+        at: Id,
+        tip: Id,
+    }
+    let mut sketch = Sketch::default();
+    let at = sketch.add_point(DVec2::ZERO).unwrap();
+    let tip = sketch.add_point(DVec2::ONE).unwrap();
+    let bytes = rmp_serde::to_vec_named(&Old { at, tip }).unwrap();
+    let read: Handle = rmp_serde::from_slice(&bytes).unwrap();
+    assert_eq!(
+        read,
+        Handle {
+            at,
+            tip,
+            end: Id::MISSING
+        }
+    );
 }

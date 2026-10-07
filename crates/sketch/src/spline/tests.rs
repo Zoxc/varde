@@ -483,7 +483,7 @@ fn converting_keeps_the_shape() {
         sketch.convert_spline(id, SplineKind::Through).unwrap();
         assert_eq!(sketch.check(&DESIGN), Ok(()));
         let again = geom(&sketch, id);
-        assert_eq!(sketch.points.len(), if closed { 6 } else { 8 });
+        assert_eq!(sketch.points.len(), if closed { 6 } else { 10 });
         for t in params(50) {
             assert!(before.at(t).distance(again.at(t)) < 1e-8, "{closed} {t}");
         }
@@ -649,7 +649,9 @@ fn check_refuses_splines_that_cant_be() {
     let base = spline_of(&mut sketch, 5, SplineKind::Through, false);
     let tip = point(&mut sketch, 3.0, 3.0);
     let other = point(&mut sketch, 4.0, 4.0);
-    let handle = |at| Handle { at, tip };
+    let end = point(&mut sketch, 5.0, 5.0);
+    let second_end = point(&mut sketch, 6.0, 6.0);
+    let handle = |at| Handle { at, tip, end };
     // A handle is at one of its points, once.
     let good = Spline {
         handles: vec![handle(base.points[1])],
@@ -671,6 +673,7 @@ fn check_refuses_splines_that_cant_be() {
                 Handle {
                     at: base.points[1],
                     tip: other,
+                    end: second_end,
                 },
             ],
             ..base.clone()
@@ -690,6 +693,7 @@ fn check_refuses_splines_that_cant_be() {
         handles: vec![Handle {
             at: base.points[0],
             tip: base.points[2],
+            end,
         }],
         ..base.clone()
     };
@@ -737,6 +741,7 @@ fn check_refuses_splines_that_cant_be() {
             handles: vec![Handle {
                 at: control.points[0],
                 tip,
+                end: tip,
             }],
             ..control.clone()
         },
@@ -764,8 +769,9 @@ fn deleting_a_fit_point_keeps_the_spline_while_it_can() {
     let (mut sketch, id) = sketch_with(&wave(), false);
     let tip = point(&mut sketch, 3.0, 5.0);
     let second = sketch.points[1].id;
+    let handle = crate::testing::handle(&mut sketch, second, tip);
     if let Curve::Spline(spline) = &mut sketch.curve_mut(id).unwrap().curve {
-        spline.handles.push(Handle { at: second, tip });
+        spline.handles.push(handle);
     }
     assert_eq!(sketch.check(&DESIGN), Ok(()));
     // Its handle's point goes, and the handle with its tip.
@@ -792,8 +798,9 @@ fn deleting_a_tip_takes_the_handle_and_a_control_point_new_knots() {
     let (mut sketch, id) = sketch_with(&wave(), false);
     let tip = point(&mut sketch, 3.0, 5.0);
     let second = sketch.points[1].id;
+    let handle = crate::testing::handle(&mut sketch, second, tip);
     if let Curve::Spline(spline) = &mut sketch.curve_mut(id).unwrap().curve {
-        spline.handles.push(Handle { at: second, tip });
+        spline.handles.push(handle);
     }
     sketch.delete(&[tip]);
     let Curve::Spline(spline) = &sketch.curve(id).unwrap().curve else {
@@ -1210,10 +1217,8 @@ fn the_curvature_comb_turns_as_the_spline_and_stays_bounded() {
         .iter()
         .map(|&at| {
             let tip = sketch.point(at).unwrap().at + v(0.3, 0.1);
-            Handle {
-                at,
-                tip: point(&mut sketch, tip.x, tip.y),
-            }
+            let tip = point(&mut sketch, tip.x, tip.y);
+            crate::testing::handle(&mut sketch, at, tip)
         })
         .collect();
     let spline = Spline {

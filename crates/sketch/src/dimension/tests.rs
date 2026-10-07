@@ -433,12 +433,14 @@ fn lengths_are_at_least_a_micrometre_and_angles_short_of_a_turn() {
 
 #[test]
 fn a_handle_s_angle_is_measured_and_goes_with_the_handle() {
-    use crate::{Handle, Spline};
+    use crate::Spline;
     let mut sketch = Sketch::default();
     let fit = [(0.0, 0.0), (10.0, 5.0), (20.0, 0.0)].map(|(x, y)| point(&mut sketch, x, y));
     let tip = point(&mut sketch, 10.0 + 3.0, 5.0 + 3.0);
     let mut through = Spline::through(fit.to_vec(), false);
-    through.handles.push(Handle { at: fit[1], tip });
+    through
+        .handles
+        .push(crate::testing::handle(&mut sketch, fit[1], tip));
     sketch.add_curve(Curve::Spline(through), false).unwrap();
     // The tip is a line's end too, which keeps it.
     let other = point(&mut sketch, 30.0, 8.0);

@@ -1,33 +1,28 @@
-//! What the view can hover and select in a sketch: its items, and the
-//! parts of a spline's handle that aren't items of their own. Never
+//! What the view can hover and select in a sketch: its items, and a
+//! spline's handle as a line, which isn't an item of its own. Never
 //! stored: what's made of a handle names its tip
 //! ([`Sketch::direction`]).
 
-use glam::DVec2;
-
-use crate::{Id, Sketch, Spline};
+use crate::{Handle, Id, Sketch, Spline};
 
 /// Something of a sketch's the view can hover and select: an item,
-/// built-ins included ([`Id::ORIGIN`], ...), or a part of the handle
-/// whose tip is the id that has no id of its own.
+/// built-ins included ([`Id::ORIGIN`], ...), or the handle whose tip is
+/// the id as a line, which has no id of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Selectable {
     /// A point, curve, constraint, dimension or link, by its id.
     Item(Id),
     /// The handle whose tip this is, as a line: from its tip through its
-    /// fit point to as far the other side.
+    /// fit point to its end.
     HandleLine(Id),
-    /// The end of the handle whose tip this is the other side of its fit
-    /// point, mirroring the tip: no point, but grabbed and shown as one.
-    HandleEnd(Id),
 }
 
 impl Selectable {
-    /// The id it's stored by: the item's, or for a handle's part its
-    /// tip's, as what's made of a handle names it.
+    /// The id it's stored by: the item's, or for a handle its tip's, as
+    /// what's made of a handle names it.
     pub fn id(self) -> Id {
         match self {
-            Selectable::Item(id) | Selectable::HandleLine(id) | Selectable::HandleEnd(id) => id,
+            Selectable::Item(id) | Selectable::HandleLine(id) => id,
         }
     }
 
@@ -39,11 +34,11 @@ impl Selectable {
         }
     }
 
-    /// The tip of the handle it's a part of, if it's one.
+    /// The tip of the handle it is, if it's one.
     pub fn handle_tip(self) -> Option<Id> {
         match self {
             Selectable::Item(_) => None,
-            Selectable::HandleLine(tip) | Selectable::HandleEnd(tip) => Some(tip),
+            Selectable::HandleLine(tip) => Some(tip),
         }
     }
 }
@@ -54,7 +49,7 @@ impl From<Id> for Selectable {
     }
 }
 
-/// An item is its id; a handle's part is none.
+/// An item is its id; a handle is none.
 impl PartialEq<Id> for Selectable {
     fn eq(&self, id: &Id) -> bool {
         *self == Selectable::Item(*id)
@@ -63,20 +58,20 @@ impl PartialEq<Id> for Selectable {
 
 impl Sketch {
     /// Whether `target` names something of the sketch's: an item
-    /// ([`Sketch::kind`]), or a part of a handle it has.
+    /// ([`Sketch::kind`]), or a handle it has.
     pub fn selectable(&self, target: Selectable) -> bool {
         match target {
             Selectable::Item(id) => self.kind(id).is_some(),
-            Selectable::HandleLine(tip) | Selectable::HandleEnd(tip) => self.handle(tip).is_some(),
+            Selectable::HandleLine(tip) => self.handle(tip).is_some(),
         }
     }
 
     /// The name of `target` as the user sees it: an item's
-    /// ([`Sketch::name`]), "Handle of Spline 1" for a handle as a line,
-    /// "End 2 of Handle 2 of Spline 1" for its mirrored end, the
-    /// handle numbered among its spline's by its fit point's place
-    /// ([`Spline::handle_number`]), as its tip's name has it ("End 1 of
-    /// Handle 2 of Spline 1", see [`Sketch::point_name`]).
+    /// ([`Sketch::name`]), or "Handle of Spline 1" for a handle as a
+    /// line. Its tip and end are points, "End 1 of Handle 2 of Spline 1"
+    /// and "End 2 of ..." ([`Sketch::point_name`]), the handle numbered
+    /// among its spline's by its fit point's place
+    /// ([`Spline::handle_number`]).
     pub fn selectable_name(&self, target: Selectable) -> Option<String> {
         match target {
             Selectable::Item(id) => self.name(id),
@@ -84,23 +79,15 @@ impl Sketch {
                 let (curve, _) = self.handle(tip)?;
                 Some(format!("Handle of {}", self.curve(curve)?.name()))
             }
-            Selectable::HandleEnd(tip) => {
-                let (curve, _) = self.handle(tip)?;
-                let number = self.spline(curve)?.handle_number(tip)?;
-                Some(format!(
-                    "End 2 of Handle {number} of {}",
-                    self.curve(curve)?.name()
-                ))
-            }
         }
     }
 
-    /// Where the mirrored end of the handle whose tip is `tip` is: as far
-    /// the other side of its fit point as the tip.
-    pub fn handle_end(&self, tip: Id) -> Option<DVec2> {
-        let (at, tip_at) = self.direction(tip)?;
-        self.handle(tip)?;
-        Some(2.0 * at - tip_at)
+    /// The handle whose end (not its tip) is `end`, with its spline.
+    pub fn handle_by_end(&self, end: Id) -> Option<(Id, Handle)> {
+        self.splines().find_map(|(id, spline)| {
+            let handle = spline.handles.iter().find(|handle| handle.end == end)?;
+            Some((id, *handle))
+        })
     }
 }
 

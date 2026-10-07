@@ -95,3 +95,58 @@ fn a_document_encodes_as_before() {
         ]
     );
 }
+
+/// A handle from before handles' ends were points reads with
+/// [`Id::MISSING`](varde_sketch::Id::MISSING) for its end, and is given
+/// one when the document is checked: a new point mirroring its tip.
+#[test]
+fn a_handle_read_without_an_end_is_given_one() {
+    use glam::DVec2;
+    use varde_sketch::{Curve, Id, Sketch, Spline};
+
+    use crate::{Command, Editor, FeatureKind, OriginPlane, Plane};
+
+    let mut sketch = Sketch::default();
+    let fit = [(0.0, 0.0), (10.0, 5.0), (20.0, 0.0)]
+        .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+    let mut through = Spline::through(fit.to_vec(), false);
+    through.handles.push(
+        sketch
+            .new_handle(fit[1], DVec2::new(10.0, 5.0), DVec2::new(13.0, 8.0))
+            .unwrap(),
+    );
+    sketch.add_curve(Curve::Spline(through), false).unwrap();
+    let mut editor = Editor::new(Document::default());
+    editor
+        .apply(Command::AddSketch {
+            name: "Sketch 1".into(),
+            plane: Plane::Origin(OriginPlane::XY),
+        })
+        .unwrap();
+    let feature = editor.document().features()[0].id;
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    // As an old file has it: no end, nor its point.
+    let mut old = editor.document().clone();
+    let FeatureKind::Sketch { sketch, .. } = &mut old.features[0].kind else {
+        unreachable!()
+    };
+    let Curve::Spline(spline) = &mut sketch.curves[0].curve else {
+        unreachable!()
+    };
+    let end = std::mem::replace(&mut spline.handles[0].end, Id::MISSING);
+    let tip = spline.handles[0].tip;
+    sketch.points.retain(|point| point.id != end);
+
+    let read = Document::from_postcard(&old.to_postcard()).unwrap();
+    let FeatureKind::Sketch { sketch, .. } = &read.features()[0].kind else {
+        unreachable!()
+    };
+    let (_, handle) = sketch.handle(tip).unwrap();
+    assert_ne!(handle.end, Id::MISSING);
+    assert_eq!(sketch.point(handle.end).unwrap().at, DVec2::new(7.0, 2.0));
+}

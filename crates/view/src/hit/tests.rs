@@ -243,7 +243,7 @@ fn fillet_and_chamfer_hit_the_corners_where_lines_meet() {
 
 #[test]
 fn a_handle_is_hit_by_its_tip_along_both_arms_before_curves() {
-    use varde_sketch::{Handle, Spline};
+    use varde_sketch::Spline;
     let mut sketch = Sketch::default();
     let mut point = |x, y| sketch.add_point(DVec2::new(x, y)).unwrap();
     let (a, b, c, tip) = (
@@ -253,7 +253,9 @@ fn a_handle_is_hit_by_its_tip_along_both_arms_before_curves() {
         point(14.0, 10.0),
     );
     let mut spline = Spline::through(vec![a, b, c], false);
-    spline.handles.push(Handle { at: b, tip });
+    spline
+        .handles
+        .push(crate::testing::handle(&mut sketch, b, tip));
     let id = sketch.add_curve(Curve::Spline(spline), false).unwrap();
     // On the tip's arm and on the mirrored one, as a line of its own.
     assert_eq!(
@@ -285,7 +287,7 @@ fn a_handle_is_hit_by_its_tip_along_both_arms_before_curves() {
 
 #[test]
 fn a_handle_s_ends_go_before_arms() {
-    use varde_sketch::{Handle, Spline};
+    use varde_sketch::Spline;
     let mut sketch = Sketch::default();
     let mut point = |x, y| sketch.add_point(DVec2::new(x, y)).unwrap();
     let (a, b, c, tip) = (
@@ -302,14 +304,17 @@ fn a_handle_s_ends_go_before_arms() {
     );
     for (ends, at, tip) in [([a, b, c], b, tip), ([d, e, f], e, across)] {
         let mut spline = Spline::through(ends.to_vec(), false);
-        spline.handles.push(Handle { at, tip });
+        spline
+            .handles
+            .push(crate::testing::handle(&mut sketch, at, tip));
         sketch.add_curve(Curve::Spline(spline), false).unwrap();
     }
-    // By the first handle's mirrored end at (6, 10), nearer the second's
-    // arm from (6.3, 5) to (6.3, 13): the end, as an end of its own.
+    // By the first handle's end at (6, 10), nearer the second's arm from
+    // (6.3, 5) to (6.3, 13): the end, a point.
+    let (_, first) = sketch.handle(tip).unwrap();
     assert_eq!(
         hit(&sketch, DVec2::new(6.2, 10.2), 0.5),
-        Some(Selectable::HandleEnd(tip))
+        Some(Selectable::Item(first.end))
     );
     // Along the second's arm, away from any end, the second.
     assert_eq!(
@@ -330,15 +335,16 @@ fn a_handle_s_ends_go_before_arms() {
 }
 
 #[test]
-fn a_handle_s_mirrored_end_is_hit_listed_and_boxed_as_a_point() {
+fn a_handle_s_end_is_hit_listed_and_boxed_as_a_point() {
     let mut sketch = Sketch::default();
     let (_, fit, tip) = crate::testing::handled_spline(&mut sketch);
     // The tip at (13, 7) about the fit point at (10, 4): the end at (7, 1).
+    let (_, handle) = sketch.handle(tip).unwrap();
     let end = DVec2::new(7.0, 1.0);
-    assert_eq!(sketch.handle_end(tip), Some(end));
+    assert_eq!(sketch.point(handle.end).unwrap().at, end);
     assert_eq!(
         hit(&sketch, end + DVec2::new(0.1, 0.0), 0.5),
-        Some(Selectable::HandleEnd(tip))
+        Some(Selectable::Item(handle.end))
     );
     // The tip is the point it is.
     assert_eq!(
@@ -348,7 +354,7 @@ fn a_handle_s_mirrored_end_is_hit_listed_and_boxed_as_a_point() {
     // Listed before the handle as a line.
     assert_eq!(
         overlaps(&sketch, end, 0.1),
-        [Selectable::HandleEnd(tip), Selectable::HandleLine(tip)]
+        [Selectable::Item(handle.end), Selectable::HandleLine(tip)]
     );
     // A box round it holds it; one round its fit point alone doesn't.
     let boxed = |a: DVec2, b: DVec2| {
@@ -357,7 +363,7 @@ fn a_handle_s_mirrored_end_is_hit_listed_and_boxed_as_a_point() {
     };
     assert_eq!(
         boxed(DVec2::new(6.0, 2.0), DVec2::new(8.0, 0.0)),
-        [Selectable::HandleEnd(tip)]
+        [Selectable::Item(handle.end)]
     );
     assert_eq!(
         boxed(DVec2::new(9.0, 5.0), DVec2::new(11.0, 3.0)),

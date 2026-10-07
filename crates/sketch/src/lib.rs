@@ -180,7 +180,7 @@ impl Curve {
     }
 
     /// The points the curve is made from, each once: a spline's fit or
-    /// control points, then its handles' tips.
+    /// control points, then its handles' tips and ends.
     pub fn points(&self) -> impl Iterator<Item = Id> + Clone + '_ {
         let (own, spline) = match self {
             &Curve::Line { start, end } => ([Some(start), Some(end), None], None),
@@ -246,6 +246,7 @@ impl Curve {
                     handles.push(Handle {
                         at: map(handle.at)?,
                         tip: map(handle.tip)?,
+                        end: map(handle.end)?,
                     });
                 }
                 Curve::Spline(Spline {
@@ -479,7 +480,8 @@ impl Sketch {
     /// lone point stays), and constraints and dimensions on anything
     /// deleted. A spline losing points keeps the rest where it still has
     /// enough ([`SplineKind::least`]), and loses its handles on them (or
-    /// their tips, the handle going with the tip), else it goes too.
+    /// their tips or ends, the handle going with either), else it goes
+    /// too.
     /// Ids naming nothing, and the origin and axes, which are
     /// always there, are ignored. Keeps the lists sorted, and a sketch that
     /// passed [`Sketch::check`] passing it.
@@ -505,7 +507,7 @@ impl Sketch {
                 kept_splines.push((index, kept));
             }
         }
-        // The tips of handles gone, unless something else is made from
+        // The tips and ends of handles gone, unless something else is made from
         // them.
         let mut dropped = Vec::new();
         for (index, (spline, tips)) in kept_splines {

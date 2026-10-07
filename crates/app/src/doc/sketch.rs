@@ -1468,8 +1468,7 @@ fn follow_selection(
             .kind(*id)
             .is_some_and(|kind| Role::Geometry.admits(kind))
     };
-    // A handle as a line or by its mirrored end, by its tip, which its
-    // constraints name.
+    // A handle as a line, by its tip, which its constraints name.
     let selected: BTreeSet<Id> = selection
         .iter()
         .map(|target| target.id())

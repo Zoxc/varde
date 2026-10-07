@@ -323,7 +323,7 @@ struct Picked {
     /// Circles and arcs.
     rounds: Vec<Id>,
     splines: Vec<Id>,
-    /// Handles selected as lines or by their mirrored ends, by their tips.
+    /// Handles selected as lines, by their tips.
     handles: Vec<Id>,
 }
 
@@ -332,7 +332,7 @@ impl Picked {
         let mut picked = Picked::default();
         for &target in selected {
             let Selectable::Item(id) = target else {
-                // A handle as a line, or by its mirrored end: by its tip.
+                // A handle as a line: by its tip.
                 if sketch.selectable(target) {
                     picked.handles.push(target.id());
                 }

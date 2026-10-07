@@ -1814,11 +1814,9 @@ fn arched(kind: SplineKind) -> (Sketch, Id, Option<Id>) {
     match kind {
         SplineKind::Through => {
             let at = sketch.add_point(DVec2::new(2.0, 4.5)).unwrap();
+            let handle = crate::testing::handle(&mut sketch, points[1], at);
             if let Some(Curve::Spline(shape)) = sketch.curve_mut(spline).map(|e| &mut e.curve) {
-                shape.handles.push(varde_sketch::Handle {
-                    at: points[1],
-                    tip: at,
-                });
+                shape.handles.push(handle);
             }
             tip = Some(at);
         }
@@ -1843,11 +1841,12 @@ fn a_spline_s_handles_show_and_selected_its_control_polygon() {
         )
         .0
     };
-    // Its handle as a line from its tip through its fit point to as far
-    // the other side, it and its tip in the handles' colour.
-    let arms = [2.0 * at(middle) - at(tip), at(middle), at(tip)];
+    // Its handle as a line from its end through its fit point to its
+    // tip, it and its tip and end in the handles' colour.
+    let (_, made) = sketch.handle(tip).unwrap();
+    let arms = [at(made.end), at(middle), at(tip)];
     let rim = |id| {
-        if id == tip {
+        if made.arms().contains(&id) {
             colors.spline_handle
         } else {
             colors.point
@@ -1861,8 +1860,6 @@ fn a_spline_s_handles_show_and_selected_its_control_polygon() {
     );
     let handle = line_style(colors.spline_handle, HANDLE_WIDTH, false);
     expected.polyline(Space::Sketch, &arms, handle);
-    let end = |color| dot(POINT_RADIUS, colors.point_fill, color);
-    expected.point(arms[0], end(colors.spline_handle));
     for point in &sketch.points {
         expected.point(
             point.at,
@@ -1879,7 +1876,6 @@ fn a_spline_s_handles_show_and_selected_its_control_polygon() {
     expected.polyline(Space::Sketch, &curve, selected);
     let handle = line_style(colors.selected, HANDLE_WIDTH, false);
     expected.polyline(Space::Sketch, &arms, handle);
-    expected.point(arms[0], end(colors.selected));
     for point in &sketch.points {
         expected.point(
             point.at,

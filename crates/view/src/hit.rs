@@ -9,9 +9,9 @@ use crate::projection::Projector;
 
 /// What's under the cursor at `at`, in sketch coordinates, within
 /// `tolerance` sketch units: the nearest point, the origin included,
-/// or failing one, the nearest handle end ([`handle_ends`]: its tip, or
-/// its mirrored end, [`Selectable::HandleEnd`]), over an arm within
-/// [`END_REACH`] times the tolerance,
+/// or failing one, the nearest handle end ([`handle_ends`]: its tip or
+/// its end, both points), over an arm within [`END_REACH`] times the
+/// tolerance,
 /// or failing one, the nearest spline handle as drawn
 /// ([`Selectable::HandleLine`], see [`handles`]), so a handle along its
 /// spline is the handle, or
@@ -48,8 +48,8 @@ pub(crate) fn hit(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Selectab
 
 /// Everything under the cursor at `at` within `tolerance` sketch units,
 /// as [`hit`] would find each on its own: the points, the origin
-/// included, then the handles' mirrored ends, then the handles, then the
-/// curves, then the axes, each nearest first.
+/// included (handles' tips and ends among them), then the handles, then
+/// the curves, then the axes, each nearest first.
 pub(crate) fn overlaps(sketch: &Sketch, at: DVec2, tolerance: f64) -> Vec<Selectable> {
     if !at.is_finite() {
         return Vec::new();
@@ -58,9 +58,6 @@ pub(crate) fn overlaps(sketch: &Sketch, at: DVec2, tolerance: f64) -> Vec<Select
         .map(|point| (point.id.into(), point.at.distance(at)))
         .chain([(Id::ORIGIN.into(), at.length())])
         .collect();
-    let mut ends = handle_ends(sketch, at);
-    // The tips are among the points.
-    ends.retain(|(target, _)| target.item().is_none());
     let curves: Vec<_> = (sketch.curves.iter())
         .filter_map(|entry| Some((entry.id.into(), curve_distance(sketch, &entry.curve, at)?)))
         .collect();
@@ -68,7 +65,7 @@ pub(crate) fn overlaps(sketch: &Sketch, at: DVec2, tolerance: f64) -> Vec<Select
         (Id::X_AXIS.into(), at.y.abs()),
         (Id::Y_AXIS.into(), at.x.abs()),
     ];
-    [points, ends, handles(sketch, at), curves, axes]
+    [points, handles(sketch, at), curves, axes]
         .into_iter()
         .flat_map(|mut kind| {
             kind.retain(|&(_, distance)| distance <= tolerance);
@@ -171,15 +168,14 @@ pub(crate) fn curve_distance(sketch: &Sketch, curve: &Curve, at: DVec2) -> Optio
 }
 
 /// The splines' handles, each as a line ([`Selectable::HandleLine`]), and how far
-/// `at` is from it as drawn: from its tip through its fit point to as
-/// far the other side.
+/// `at` is from it as drawn: from its end through its fit point to its
+/// tip.
 fn handles(sketch: &Sketch, at: DVec2) -> Vec<(Selectable, f64)> {
     let mut found = Vec::new();
     for (_, spline) in sketch.splines() {
         for handle in &spline.handles {
-            if let (Some(from), Some(tip)) = (sketch.point(handle.at), sketch.point(handle.tip)) {
-                let (from, tip) = (from.at, tip.at);
-                let distance = segment_distance(at, 2.0 * from - tip, tip);
+            if let (Some(end), Some(tip)) = (sketch.point(handle.end), sketch.point(handle.tip)) {
+                let distance = segment_distance(at, end.at, tip.at);
                 found.push((Selectable::HandleLine(handle.tip), distance));
             }
         }
@@ -192,24 +188,13 @@ fn handles(sketch: &Sketch, at: DVec2) -> Vec<(Selectable, f64)> {
 /// the arm is hit until the cursor is all but on the end.
 const END_REACH: f64 = 2.0;
 
-/// The ends of the splines' handles, and how far `at` is from each: its tip,
-/// as the item it is, and as far the other side of its fit point, its
-/// mirrored end ([`Selectable::HandleEnd`]), which is no point.
+/// The ends of the splines' handles, its tip and its end, and how far
+/// `at` is from each.
 fn handle_ends(sketch: &Sketch, at: DVec2) -> Vec<(Selectable, f64)> {
-    let mut found = Vec::new();
-    for (_, spline) in sketch.splines() {
-        for handle in &spline.handles {
-            if let (Some(from), Some(tip)) = (sketch.point(handle.at), sketch.point(handle.tip)) {
-                let (from, tip) = (from.at, tip.at);
-                found.push((handle.tip.into(), at.distance(tip)));
-                found.push((
-                    Selectable::HandleEnd(handle.tip),
-                    at.distance(2.0 * from - tip),
-                ));
-            }
-        }
-    }
-    found
+    (sketch.splines())
+        .flat_map(|(_, spline)| spline.handles.iter().flat_map(|handle| handle.arms()))
+        .filter_map(|id| Some((id.into(), at.distance(sketch.point(id)?.at))))
+        .collect()
 }
 
 /// How far `p` is from the segment from `a` to `b`.
@@ -306,8 +291,7 @@ impl ScreenBox {
 }
 
 /// The items of `sketch`, shown by `projector`, that the box `area` on the
-/// screen selects in `mode`: points inside it, handles' mirrored ends as
-/// the points they're shown as, and curves as drawn, wholly inside it or
+/// screen selects in `mode`: points inside it, and curves as drawn, wholly inside it or
 /// touching it. What's behind the eye is never inside.
 pub(crate) fn in_box(
     sketch: &Sketch,
@@ -319,13 +303,6 @@ pub(crate) fn in_box(
         let shown = projector.project(point.at)?;
         area.contains(shown).then_some(point.id.into())
     });
-    let ends = (sketch.splines())
-        .flat_map(|(_, spline)| &spline.handles)
-        .filter_map(|handle| {
-            let shown = projector.project(sketch.handle_end(handle.tip)?)?;
-            area.contains(shown)
-                .then_some(Selectable::HandleEnd(handle.tip))
-        });
     let curves = sketch.curves.iter().filter_map(|entry| {
         let polyline = sketch.flatten(&entry.curve)?;
         let mut segments = polyline
@@ -340,7 +317,7 @@ pub(crate) fn in_box(
         };
         selected.then_some(entry.id.into())
     });
-    points.chain(ends).chain(curves).collect()
+    points.chain(curves).collect()
 }
 
 #[cfg(test)]

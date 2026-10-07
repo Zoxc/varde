@@ -2,7 +2,7 @@ use glam::DVec2;
 
 use super::*;
 use crate::testing::{DESIGN, arc, at, circle, constrain, line, point};
-use crate::{Budget, Goal, Handle, SketchError, Spline, analyse, solve};
+use crate::{Budget, Goal, SketchError, Spline, analyse, solve};
 
 /// A spline through `places`, with a handle at each of `handles`, its
 /// tip at the fit point's place and the offset: its id, its fit points
@@ -27,7 +27,8 @@ fn spline_through(
     for &(i, (dx, dy)) in handles {
         let from = at(sketch, fit[i]);
         let tip = point(sketch, from.x + dx, from.y + dy);
-        made.handles.push(Handle { at: fit[i], tip });
+        made.handles
+            .push(crate::testing::handle(sketch, fit[i], tip));
         tips.push(tip);
     }
     let id = sketch.add_curve(Curve::Spline(made), false).unwrap();
@@ -115,10 +116,11 @@ fn a_tangent_or_smooth_join_is_made_at_the_end_nearer_and_on_its_side() {
     // Smooth needs a handle at a spline's end through fit points.
     assert_eq!(sketch.smooth(joined, s), None);
     let tip = sketch.add_point(DVec2::new(3.0, 0.0)).unwrap();
+    let handle = crate::testing::handle(&mut sketch, fit[0], tip);
     let Curve::Spline(made) = &mut sketch.curve_mut(s).unwrap().curve else {
         unreachable!()
     };
-    made.handles.push(Handle { at: fit[0], tip });
+    made.handles.push(handle);
     assert_eq!(
         sketch.smooth(joined, s),
         Some(Constraint::Smooth {

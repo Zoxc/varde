@@ -53,13 +53,30 @@ impl SplineKind {
 
 /// A handle at a fit point: an ordinary point, its tip, whose direction
 /// from the fit point sets the spline's tangent there and whose distance
-/// how strongly it follows it (see [`Interpolation`]). So dragging,
-/// fixing and dimensioning one is as for any point.
+/// how strongly it follows it (see [`Interpolation`]), and another, its
+/// end, mirroring the tip in the fit point, held there by the solver. So
+/// dragging, fixing and dimensioning either is as for any point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Handle {
     /// The fit point it's at.
     pub at: Id,
     pub tip: Id,
+    /// As far the other side of `at` as `tip`. Defaulted to
+    /// [`Id::MISSING`] for a handle from before ends were points, which
+    /// [`Sketch::add_handle_ends`] gives one.
+    #[serde(default = "missing")]
+    pub end: Id,
+}
+
+fn missing() -> Id {
+    Id::MISSING
+}
+
+impl Handle {
+    /// Its tip and its end.
+    pub fn arms(&self) -> [Id; 2] {
+        [self.tip, self.end]
+    }
 }
 
 /// A spline by its points, see [`SplineKind`].
@@ -93,10 +110,10 @@ impl Spline {
         }
     }
 
-    /// Its fit or control points, then its handles' tips.
+    /// Its fit or control points, then its handles' tips and ends.
     pub fn all_points(&self) -> impl Iterator<Item = Id> + Clone + '_ {
-        let tips = self.handles.iter().map(|handle| handle.tip);
-        self.points.iter().copied().chain(tips)
+        let arms = self.handles.iter().flat_map(Handle::arms);
+        self.points.iter().copied().chain(arms)
     }
 
     /// An open spline's first and last points, where it starts and ends
@@ -224,10 +241,10 @@ impl Spline {
     }
 
     /// The spline without the points `deleted`, for [`Sketch::delete`]:
-    /// its handles at them or with their tips among them gone, and by
-    /// control points its knots found anew ([`control_knots`]) from where
-    /// `at` says the rest are. With the tips of the handles that went
-    /// but weren't deleted themselves. `None` if too few points are
+    /// its handles at them or with their tips or ends among them gone,
+    /// and by control points its knots found anew ([`control_knots`])
+    /// from where `at` says the rest are. With the tips and ends of the
+    /// handles that went but weren't deleted themselves. `None` if too few points are
     /// left.
     pub(crate) fn without(
         &self,
@@ -243,10 +260,9 @@ impl Spline {
         if points.len() < self.kind.least(self.closed) {
             return None;
         }
-        let (handles, gone): (Vec<Handle>, Vec<Handle>) = self
-            .handles
-            .iter()
-            .partition(|handle| !deleted.contains(&handle.at) && !deleted.contains(&handle.tip));
+        let (handles, gone): (Vec<Handle>, Vec<Handle>) = self.handles.iter().partition(|handle| {
+            !deleted.contains(&handle.at) && handle.arms().iter().all(|id| !deleted.contains(id))
+        });
         let knots = match self.kind {
             SplineKind::Through => Vec::new(),
             SplineKind::Control if points.len() == self.points.len() => self.knots.clone(),
@@ -255,7 +271,7 @@ impl Spline {
                 control_knots(&places, self.closed)
             }
         };
-        let dropped = gone.iter().map(|handle| handle.tip);
+        let dropped = gone.iter().flat_map(Handle::arms);
         let dropped = dropped.filter(|tip| !deleted.contains(tip)).collect();
         let spline = Spline {
             points,
@@ -306,8 +322,7 @@ impl Sketch {
             return Some(line);
         }
         let (_, handle) = self.handle(id)?;
-        let (at, tip) = (self.point(handle.at)?.at, self.point(handle.tip)?.at);
-        Some((2.0 * at - tip, tip))
+        Some((self.point(handle.end)?.at, self.point(handle.tip)?.at))
     }
 
     /// The shape of `spline`, where the sketch has its points: `None` if
@@ -381,8 +396,7 @@ impl Sketch {
         }
         let mut handles = Vec::new();
         for (i, tip) in tips {
-            let tip = self.add_point(tip)?;
-            handles.push(Handle { at: points[i], tip });
+            handles.push(self.new_handle(points[i], places[i], tip)?);
         }
         let old: Vec<Id> = spline.all_points().collect();
         let entry = self.curve_mut(curve).ok_or(target)?;
@@ -438,6 +452,48 @@ impl Sketch {
         tip.is_finite().then_some(tip)
     }
 
+    /// Gives each handle read without an end ([`Id::MISSING`], from
+    /// before ends were points) one, a new point mirroring its tip in its
+    /// fit point. One whose fit point or tip is missing is left for
+    /// [`Sketch::check`] to refuse.
+    pub fn add_handle_ends(&mut self) -> Result<(), OutOfIds> {
+        for index in 0..self.curves.len() {
+            let Curve::Spline(spline) = &self.curves[index].curve else {
+                continue;
+            };
+            for i in 0..spline.handles.len() {
+                let Curve::Spline(spline) = &self.curves[index].curve else {
+                    break;
+                };
+                let handle = spline.handles[i];
+                let at = |id| self.point(id).map(|point| point.at);
+                if handle.end != Id::MISSING {
+                    continue;
+                }
+                let (Some(from), Some(tip)) = (at(handle.at), at(handle.tip)) else {
+                    continue;
+                };
+                let end = self.add_point(2.0 * from - tip)?;
+                if let Curve::Spline(spline) = &mut self.curves[index].curve {
+                    spline.handles[i].end = end;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A new handle at the fit point `at`, which is at `from`, its tip
+    /// a new point at `tip` and its end one mirroring it.
+    pub fn new_handle(&mut self, at: Id, from: DVec2, tip: DVec2) -> Result<Handle, OutOfIds> {
+        let tip_id = self.add_point(tip)?;
+        let end = self.add_point(2.0 * from - tip)?;
+        Ok(Handle {
+            at,
+            tip: tip_id,
+            end,
+        })
+    }
+
     /// Gives the fit points `points` handles, each on every spline
     /// through fit points it's a fit point of without one, its tip where
     /// the spline keeps its tangent ([`Sketch::handle_tip`]). `Target`
@@ -464,12 +520,13 @@ impl Sketch {
             }
         }
         for (curve, at, place) in added {
-            let tip = self.add_point(place)?;
+            let from = self.point(at).ok_or(EditError::Target(at))?.at;
+            let handle = self.new_handle(at, from, place)?;
             let Some(Curve::Spline(spline)) = self.curve_mut(curve).map(|entry| &mut entry.curve)
             else {
                 return Err(EditError::Target(curve));
             };
-            spline.handles.push(Handle { at, tip });
+            spline.handles.push(handle);
         }
         Ok(())
     }
@@ -581,12 +638,13 @@ impl Sketch {
             .copied()
             .collect();
         let ends = [ids[0], ids[ids.len() - 1]];
-        for (at, tip) in ends.into_iter().zip(end_tips(&shape, &along, &new_places)) {
+        let end_places = [new_places[0], new_places[new_places.len() - 1]];
+        let tips = end_tips(&shape, &along, &new_places);
+        for ((at, from), tip) in ends.into_iter().zip(end_places).zip(tips) {
             if let Some(tip) = tip
                 && !spline.points.contains(&at)
             {
-                let tip = self.add_point(tip)?;
-                handles.push(Handle { at, tip });
+                handles.push(self.new_handle(at, from, tip)?);
             }
         }
         Ok(Spline {

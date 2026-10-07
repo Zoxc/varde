@@ -34,15 +34,28 @@ pub(crate) fn spline(sketch: &mut Sketch, places: &[(f64, f64)]) -> (Id, Vec<Id>
 }
 
 /// A spline through (0, 0), (10, 4) and (20, 0) with a handle at its
-/// middle fit point, its tip at (13, 7): the spline, its fit points and
-/// the tip.
+/// middle fit point, its tip at (13, 7) and its end at (7, 1): the
+/// spline, its fit points and the tip.
 pub(crate) fn handled_spline(sketch: &mut Sketch) -> (Id, Vec<Id>, Id) {
     let (spline, fit) = spline(sketch, &[(0.0, 0.0), (10.0, 4.0), (20.0, 0.0)]);
     let tip = point(sketch, 13.0, 7.0);
+    let end = point(sketch, 7.0, 1.0);
     if let Some(Curve::Spline(shape)) = sketch.curve_mut(spline).map(|entry| &mut entry.curve) {
-        shape.handles.push(Handle { at: fit[1], tip });
+        shape.handles.push(Handle {
+            at: fit[1],
+            tip,
+            end,
+        });
     }
     (spline, fit, tip)
+}
+
+/// A handle at the fit point `at` with its tip `tip`, its end a new
+/// point mirroring the tip.
+pub(crate) fn handle(sketch: &mut Sketch, at: Id, tip: Id) -> Handle {
+    let (from, to) = (sketch.point(at).unwrap().at, sketch.point(tip).unwrap().at);
+    let end = sketch.add_point(2.0 * from - to).unwrap();
+    Handle { at, tip, end }
 }
 
 /// A plate from (-`x`, -`y`) to (`x`, `y`) with a hole of `radius` at the

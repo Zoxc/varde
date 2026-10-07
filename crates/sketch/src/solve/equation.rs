@@ -288,6 +288,9 @@ pub(crate) enum Residual {
         start: PointSlots,
         end: PointSlots,
     },
+    /// `a + b - 2 center`, of one coordinate: `a` and `b` as far either
+    /// side of `center`, as a handle's tip and end of its fit point.
+    Mirrored { a: Slot, b: Slot, center: Slot },
     /// `slot - at`: a fixed number staying where it is. Only for the
     /// analysis: when solving, what's fixed is a constant instead.
     Fix { slot: Slot, at: f64 },
@@ -532,6 +535,7 @@ impl Residual {
                 point(end, f);
             }
             Residual::Fix { slot, .. } => f(slot),
+            Residual::Mirrored { a, b, center } => [a, b, center].into_iter().for_each(f),
             Residual::Distance { a, b, .. } => {
                 point(a, f);
                 point(b, f);
@@ -733,6 +737,9 @@ impl Residual {
                 (point(end) - center).length() - (point(start) - center).length()
             }
             Residual::Fix { slot, at } => value(slot) - R::constant(at),
+            Residual::Mirrored { a, b, center } => {
+                value(a) + value(b) - value(center) * R::constant(2.0)
+            }
             Residual::Distance { a, b, value } => {
                 (point(b) - point(a)).length() - R::constant(value)
             }

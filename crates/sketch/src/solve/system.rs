@@ -332,6 +332,24 @@ impl System {
                 system.push(entry.id, Residual::ArcRadius { center, start, end });
             }
         }
+        // A handle's end mirrors its tip in its fit point.
+        for (id, spline) in sketch.splines() {
+            for handle in &spline.handles {
+                let slots = |id| system.point(sketch, id);
+                if let (Some(center), Some(a), Some(b)) =
+                    (slots(handle.at), slots(handle.tip), slots(handle.end))
+                {
+                    for axis in 0..2 {
+                        let (a, b, center) = (a[axis], b[axis], center[axis]);
+                        // Nothing to hold where all three are fixed.
+                        let constant = |slot| matches!(slot, Slot::Const(_));
+                        if ![a, b, center].into_iter().all(constant) {
+                            system.push(id, Residual::Mirrored { a, b, center });
+                        }
+                    }
+                }
+            }
+        }
         let mirrored = mirrored_corners(sketch, &images);
         for entry in &sketch.curves {
             let Some(corner) = entry.corner else {
@@ -889,6 +907,14 @@ impl System {
                                 });
                             } else {
                                 slots.extend(end);
+                            }
+                        }
+                        // A spline's handles' ends mirror their tips:
+                        // held by those equations, not fixed again.
+                        Curve::Spline(ref spline) => {
+                            let ends: Vec<Id> = spline.handles.iter().map(|h| h.end).collect();
+                            for id in entry.curve.points().filter(|id| !ends.contains(id)) {
+                                slots.extend(point(id)?);
                             }
                         }
                         _ => {

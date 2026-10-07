@@ -201,16 +201,24 @@ pub struct Unchecked {
 }
 
 impl Unchecked {
-    /// The document, if it passes [`Document::check`].
+    /// The document, if it passes [`Document::check`], its sketches'
+    /// handles read without ends given them first
+    /// ([`Sketch::add_handle_ends`](varde_sketch::Sketch::add_handle_ends)).
     pub fn check(self) -> Result<Document, CheckError> {
         let Unchecked {
             bodies,
-            features,
+            mut features,
             units,
             tolerance,
             next_id,
             rollback,
         } = self;
+        for feature in &mut features {
+            if let FeatureKind::Sketch { sketch, .. } = &mut feature.kind {
+                // Out of ids, it's left for the check to refuse.
+                let _ = sketch.add_handle_ends();
+            }
+        }
         let document = Document {
             bodies,
             features,

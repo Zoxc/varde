@@ -7,7 +7,7 @@ use glam::DVec2;
 
 use super::*;
 use crate::testing::{at, circle, constrain, dimension, line, point, quadrilateral};
-use crate::{Constraint, Curve, Handle, Measure, Selectable, Side, Spline};
+use crate::{Constraint, Curve, Measure, Selectable, Side, Spline};
 
 fn settle(sketch: &Sketch) -> Result<Solution, Failure> {
     solve(sketch, &Goal::Settle, &Budget::default())
@@ -968,7 +968,9 @@ fn wave(closed: bool, handles: &[usize]) -> (Sketch, Vec<Id>, Vec<Id>, Id) {
         .map(|&i| {
             let (x, y) = places[i];
             let tip = point(&mut sketch, x + 3.0, y + 1.0);
-            spline.handles.push(Handle { at: fit[i], tip });
+            spline
+                .handles
+                .push(crate::testing::handle(&mut sketch, fit[i], tip));
             tip
         })
         .collect();
@@ -1209,14 +1211,12 @@ fn handles_are_held_as_lines_are() {
     let line = Selectable::HandleLine(tips[0]);
     let named = sketch.selectable_name(line).unwrap();
     assert!(named.starts_with("Handle of Spline"), "{named}");
-    let end = sketch
-        .selectable_name(Selectable::HandleEnd(tips[0]))
-        .unwrap();
+    let (_, first) = sketch.handle(tips[0]).unwrap();
+    let end = sketch.name(first.end).unwrap();
     assert!(end.starts_with("End 2 of Handle 1 of Spline"), "{end}");
     let tip = sketch.name(tips[1]).unwrap();
     assert!(tip.starts_with("End 1 of Handle 2 of Spline"), "{tip}");
     assert!(sketch.selectable(line) && !sketch.selectable(Selectable::HandleLine(fit[1])));
-    assert!(!sketch.selectable(Selectable::HandleEnd(fit[1])));
     let solved = settle(&sketch).unwrap().sketch;
     let analysis = analyse(&solved);
     assert!(analysis.solved && analysis.redundant.is_empty());
