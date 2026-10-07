@@ -1802,6 +1802,16 @@ pub fn glyph(theme: &Theme, conflict: bool) -> container::Style {
     }
 }
 
+/// The chip of a selected constraint's glyph, or a dimension's label,
+/// outlined in the selection colour.
+pub fn selected_glyph(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: outline(p.sketching.selected, GLYPH_RADIUS),
+        ..glyph(theme, false)
+    }
+}
+
 /// Corner radius of a constraint's [`glyph`].
 const GLYPH_RADIUS: f32 = 4.0;
 

@@ -1738,7 +1738,8 @@ click would go (`Sketching::fields`, see Typed values), a layer of their
 own for the same reason as the value field's, since the snap's glyph
 comes and goes as the field is typed in. The first holds the
 constraints' glyphs (`Sketching::glyphs`, unless hidden): each an SVG icon
-16 px square on a chip (`theme::glyph`, outlined red in a conflict; the
+16 px square on a chip (`theme::glyph`, outlined red in a conflict and in the selection
+colour when selected, `theme::selected_glyph`, as is a dimension's label; the
 icon in the Constraint category's colours while free, as the rail
 draws it, in the selection colour when selected, faded while waiting), a `mouse_area`
 selecting it on a click and hovering it. Where it goes is

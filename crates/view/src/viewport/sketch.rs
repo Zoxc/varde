@@ -1827,7 +1827,10 @@ fn chip<'a>(
 ) -> MouseArea<'a, Message> {
     let chip = container(content)
         .padding(padding)
-        .style(move |theme| theme::glyph(theme, look == GlyphLook::Conflict));
+        .style(move |theme| match look {
+            GlyphLook::Selected => theme::selected_glyph(theme),
+            _ => theme::glyph(theme, look == GlyphLook::Conflict),
+        });
     mouse_area(chip)
         .on_enter(Message::Look(Look::HoverItem(Some(id))))
         .on_exit(Message::Look(Look::LeaveItem(id)))
