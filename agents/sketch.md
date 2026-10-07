@@ -952,7 +952,9 @@ sketch axis (`±x`, `±y`) nearest the view's up put up on screen, in
 quarter turns so the axes stay square. The camera keeps world Z up
 unless it looks straight down or up, so that turn only counts for a
 plane square to Z; a side plane shows world Z up either way. It frames
-what's drawn of the sketch. Home in a sketch (`Doc::sketch_camera`)
+what's drawn of the sketch; an empty one keeps the view's zoom and
+looks at its target brought onto the plane, so a new sketch stays where
+the view was. Home in a sketch (`Doc::sketch_camera`)
 resets instead: from the placement's normal, its `y` up.
 
 **Change plane** (`Look::ChangePlane(feature)`): from a sketch's

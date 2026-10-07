@@ -1366,8 +1366,9 @@ impl Doc {
 }
 
 /// The camera in `projection` looking straight at `sketch` on `placement`,
-/// framing what's drawn of it, its points and its curves, or where Home
-/// looks brought onto the plane if it has none. With a view `now`, it
+/// framing what's drawn of it, its points and its curves, or if it has
+/// none, where `now` (else Home) looks brought onto the plane, at `now`'s
+/// zoom. With a view `now`, it
 /// looks from the side of the plane `now` looks from, and keeps up on
 /// screen as near as it can to `now`'s (see [`facing_turn`]); else from
 /// the placement's normal with its `y` up.
@@ -1403,10 +1404,17 @@ fn facing(
             let size = (high - low).max_element() as f32 * FRAME_MARGIN;
             camera.set_view_height(size.max(Camera::default().view_height()));
         }
+        // Nothing drawn: where the view looks (Home's without one)
+        // brought onto the plane, at the view's zoom, so a new sketch
+        // doesn't jump away from what was being looked at.
         None => {
+            let target = now.map_or(HOME_TARGET, |now| now.target());
             let normal = placement.normal.as_vec3();
-            let above = normal.dot(HOME_TARGET - placement.origin.as_vec3());
-            camera.set_target(HOME_TARGET - normal * above);
+            let above = normal.dot(target - placement.origin.as_vec3());
+            camera.set_target(target - normal * above);
+            if let Some(now) = now {
+                camera.set_view_height(now.view_height());
+            }
         }
     }
     camera

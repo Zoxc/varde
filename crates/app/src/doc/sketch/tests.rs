@@ -1689,6 +1689,23 @@ fn a_sketch_is_framed_to_its_size_however_far_home_is() {
 }
 
 #[test]
+fn an_empty_sketch_keeps_the_view_close() {
+    // Zoomed in on a point off the plane, a new sketch on XY keeps the
+    // zoom and looks at that point brought onto the plane.
+    let mut now = Camera::default();
+    now.set_target(glam::Vec3::new(30.0, -20.0, 5.0));
+    now.set_view_height(2.0);
+    let xy = OriginPlane::XY.placement();
+    let camera = facing(Projection::default(), Some(&now), xy, &Sketch::default());
+    assert!((camera.view_height() - 2.0).abs() < 1e-4);
+    assert!(
+        camera
+            .target()
+            .abs_diff_eq(glam::Vec3::new(30.0, -20.0, 0.0), 1e-3)
+    );
+}
+
+#[test]
 fn moving_up_the_list_hovers_the_row_entered() {
     let (mut doc, [a, b, ..]) = with_shapes();
     let hovered = |doc: &Doc| doc.sketch.as_ref().unwrap().hovered;
