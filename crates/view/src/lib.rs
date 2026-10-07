@@ -416,6 +416,14 @@ pub enum Edit {
     /// or the ends of the splines selected, or takes them away where they
     /// all have them.
     ToggleHandles,
+    /// Closes the shape the Spline or Line tool is drawing, or else the
+    /// curves selected in the sketch being edited, or opens them (see
+    /// [`spline::closings`]).
+    ToggleClosed,
+    /// Closes the curve of a Geometry row, or opens it, or a closed
+    /// spline at the point of the row: from its context menu (see
+    /// [`spline::closings`]).
+    ToggleClosedItem(Selectable),
     /// Adds a point to the spline `spline` where it passes nearest `at`,
     /// in sketch coordinates: a double-click on it.
     InsertSplinePoint {

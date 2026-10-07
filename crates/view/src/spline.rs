@@ -1,14 +1,15 @@
 //! What the spline commands do to what's selected: switching splines
 //! between their kinds ([`conversions`]) and giving fit points handles or
 //! taking them away ([`handles`]), and when the Spline tool's spline can
-//! end or closes. Pure, shared by the keys, the toolbar and the app.
+//! end or closes, and closing curves selected or opening them
+//! ([`closings`]). Pure, shared by the keys, the toolbar and the app.
 
 use std::collections::BTreeSet;
 
 use glam::DVec2;
 use varde_sketch::{Curve, Id, Selectable, Sketch, SketchEdit, Spline, SplineKind};
 
-use crate::{ActiveTool, SNAP_TOLERANCE, Tool};
+use crate::{ActiveTool, SNAP_TOLERANCE, Target, Tool};
 
 impl ActiveTool<'_> {
     /// The kind of spline the Spline tool draws.
@@ -24,6 +25,18 @@ impl ActiveTool<'_> {
     /// spline open: two through fit points, four control points.
     pub fn spline_ends(&self) -> bool {
         self.tool == Tool::Spline && self.placed.len() >= self.spline_kind().least(false)
+    }
+
+    /// Whether the tool can close what it's drawing without a click on
+    /// its first point (the Close key or button): the Spline tool once it
+    /// has enough points to close, the Line tool once its chain has two
+    /// lines.
+    pub fn can_close(&self) -> bool {
+        match self.tool {
+            Tool::Spline => self.placed.len() >= self.spline_kind().least(true),
+            Tool::Line => self.chained >= 2,
+            _ => false,
+        }
     }
 
     /// Whether the Spline tool's click at `at`, a pixel being `pixel`
@@ -134,6 +147,83 @@ pub fn handles(sketch: &Sketch, selection: &BTreeSet<Selectable>) -> Option<Sket
         .map(|handle| handle.tip)
         .collect();
     Some(SketchEdit::Delete(tips.into_iter().collect()))
+}
+
+/// The sketch as dropping its point `point`, dragged and snapped to
+/// `target`, the other end of its arc or spline (see
+/// [`crate::closing`]), leaves it: the point at the other end, the curve
+/// closed there ([`Sketch::close_arc`], [`Sketch::close_spline`], an
+/// open spline only with enough points left to close), with the closed
+/// curve's id. For the drag's preview; `None` if the drop closes nothing.
+pub fn closed_by_drop(sketch: &Sketch, point: Id, target: Option<Target>) -> Option<(Id, Sketch)> {
+    let Some(Target::Point(other)) = target else {
+        return None;
+    };
+    let entry = (sketch.curves.iter())
+        .find(|entry| crate::closing(sketch, entry.id, point) == Some(other))?;
+    let mut closed = sketch.clone();
+    closed.point_mut(point)?.at = sketch.point(other)?.at;
+    match &entry.curve {
+        Curve::Arc { .. } => closed.close_arc(entry.id).ok()?,
+        Curve::Spline(spline) if spline.points.len() > spline.kind.least(true) => {
+            closed.close_spline(entry.id).ok()?
+        }
+        _ => return None,
+    }
+    Some((entry.id, closed))
+}
+
+/// What closing or opening the curves selected in `sketch` does, and
+/// whether it closes them: where any open spline or arc among
+/// `selection` can be closed, closing each that can
+/// ([`SketchEdit::CloseSpline`], [`SketchEdit::CloseArc`]); else opening
+/// each closed spline selected, or a closed spline one of whose points is
+/// selected, at its point selected or else its first
+/// ([`SketchEdit::OpenSpline`]), and each closed arc selected
+/// ([`SketchEdit::Detach`] of its point). `None` for nothing to close or
+/// open.
+pub fn closings(
+    sketch: &Sketch,
+    selection: &BTreeSet<Selectable>,
+) -> Option<(bool, Vec<SketchEdit>)> {
+    let items: Vec<Id> = selection
+        .iter()
+        .filter_map(|target| target.item())
+        .collect();
+    let closing: Vec<SketchEdit> = (items.iter())
+        .filter_map(|&id| match &sketch.curve(id)?.curve {
+            Curve::Spline(_) if sketch.spline_closable(id) => Some(SketchEdit::CloseSpline(id)),
+            Curve::Arc { .. } if sketch.closable(id) => Some(SketchEdit::CloseArc(id)),
+            _ => None,
+        })
+        .collect();
+    if !closing.is_empty() {
+        return Some((true, closing));
+    }
+    let mut opening = Vec::new();
+    for (id, spline) in sketch.splines().filter(|(_, spline)| spline.closed) {
+        let picked = items.iter().find(|item| spline.points.contains(item));
+        let at = match (items.contains(&id), picked) {
+            (_, Some(&at)) => at,
+            (true, None) => match spline.points.first() {
+                Some(&first) => first,
+                None => continue,
+            },
+            (false, None) => continue,
+        };
+        if sketch.spline_openable(id, at) {
+            opening.push(SketchEdit::OpenSpline { spline: id, at });
+        }
+    }
+    for &id in &items {
+        if let Some(Curve::Arc { start, end, .. }) = sketch.curve(id).map(|entry| &entry.curve)
+            && start == end
+            && sketch.detachable(*start)
+        {
+            opening.push(SketchEdit::Detach(*start));
+        }
+    }
+    (!opening.is_empty()).then_some((false, opening))
 }
 
 #[cfg(test)]

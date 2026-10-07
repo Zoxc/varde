@@ -259,7 +259,9 @@ fn check_edit(edit: &SketchEdit) -> Result<(), Error> {
         SketchEdit::AddLink { .. }
         | SketchEdit::SetLinkProfiles { .. }
         | SketchEdit::Detach(_)
-        | SketchEdit::CloseArc(_) => Ok(()),
+        | SketchEdit::CloseArc(_)
+        | SketchEdit::CloseSpline(_)
+        | SketchEdit::OpenSpline { .. } => Ok(()),
         SketchEdit::Relink(found) => {
             check_count(found.len(), varde_sketch::MAX_LINKS)?;
             match (found.iter()).find(|(_, shape)| !shape.fits(MAX)) {

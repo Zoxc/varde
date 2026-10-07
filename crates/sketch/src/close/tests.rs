@@ -8,7 +8,7 @@ use std::f64::consts::PI;
 use glam::DVec2;
 
 use super::*;
-use crate::testing::{DESIGN, arc, dimension, line, point, propose_it};
+use crate::testing::{DESIGN, arc, dimension, line, point, propose_it, spline};
 use crate::{Constraint, Measure, SketchEdit};
 
 /// A quarter arc of radius 10 about the origin's right, from (10, 0) to
@@ -124,4 +124,82 @@ fn a_closed_arc_trims_as_a_circle() {
     assert!(at(from).x < 0.0 && at(to).x > 0.0);
     // The point it ran round from is no curve's now.
     assert!(trimmed.point(start).is_none());
+}
+
+/// Closed, an open spline whose ends are apart runs on from its last
+/// point round to its first, keeping its points; opened at one of them,
+/// it starts there and ends at a new point at the same place.
+#[test]
+fn a_spline_closes_and_opens() {
+    let mut sketch = Sketch::default();
+    let (id, fit) = spline(&mut sketch, &[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)], false);
+    assert!(sketch.spline_closable(id));
+    let closed = SketchEdit::CloseSpline(id).apply(&sketch, &DESIGN).unwrap();
+    let curve = closed.spline(id).unwrap();
+    assert!(curve.closed);
+    assert_eq!(curve.points, fit);
+    assert!(!closed.spline_closable(id));
+    assert!(propose_it(&closed, &SketchEdit::Add(crate::Add::new(&closed))).is_ok());
+    assert!(!closed.spline_openable(id, Id(9999)));
+    let edit = SketchEdit::OpenSpline {
+        spline: id,
+        at: fit[1],
+    };
+    let open = edit.apply(&closed, &DESIGN).unwrap();
+    let curve = open.spline(id).unwrap();
+    assert!(!curve.closed);
+    assert_eq!(curve.points[..3], [fit[1], fit[2], fit[0]]);
+    let end = curve.points[3];
+    assert_eq!(open.point(end).unwrap().at, DVec2::new(10.0, 0.0));
+    assert!(!open.spline_openable(id, fit[1]));
+}
+
+/// Ends at the same place, or tied by a coincident, are made one point
+/// as the spline closes; with too few points left it can't.
+#[test]
+fn meeting_ends_close_into_one_point() {
+    let mut sketch = Sketch::default();
+    let places = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 0.0)];
+    let (id, fit) = spline(&mut sketch, &places, false);
+    let other = point(&mut sketch, 20.0, 0.0);
+    let joined = line(&mut sketch, fit[3], other);
+    let closed = SketchEdit::CloseSpline(id).apply(&sketch, &DESIGN).unwrap();
+    assert_eq!(closed.spline(id).unwrap().points, fit[..3]);
+    assert!(closed.point(fit[3]).is_none());
+    assert_eq!(
+        closed
+            .curve(joined)
+            .unwrap()
+            .curve
+            .points()
+            .collect::<Vec<_>>(),
+        [fit[0], other]
+    );
+
+    let mut sketch = Sketch::default();
+    let places = [(0.0, 0.0), (10.0, 0.0), (5.0, 1.0)];
+    let (id, fit) = spline(&mut sketch, &places, false);
+    crate::testing::constrain(&mut sketch, Constraint::Coincident(fit[0], fit[2]));
+    assert!(!sketch.spline_closable(id));
+    assert!(SketchEdit::CloseSpline(id).apply(&sketch, &DESIGN).is_err());
+}
+
+/// By control points, a spline closed and opened gets knots for what it
+/// is now.
+#[test]
+fn a_control_spline_closes_with_its_knots() {
+    let mut sketch = Sketch::default();
+    let places = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+    let (id, _) = spline(&mut sketch, &places, false);
+    sketch
+        .convert_spline(id, crate::SplineKind::Control)
+        .unwrap();
+    let closed = SketchEdit::CloseSpline(id).apply(&sketch, &DESIGN).unwrap();
+    let curve = closed.spline(id).unwrap();
+    assert!(curve.closed && curve.fits());
+    let at = curve.points[0];
+    let open = SketchEdit::OpenSpline { spline: id, at }
+        .apply(&closed, &DESIGN)
+        .unwrap();
+    assert!(open.spline(id).unwrap().fits());
 }

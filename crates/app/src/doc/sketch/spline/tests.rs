@@ -546,3 +546,87 @@ fn a_spline_snapped_to_itself_is_tied_to_itself() {
     );
     assert_eq!(drawn.point(on).unwrap().at, DVec2::new(5.0, 3.0));
 }
+
+/// `Shift O` closes the Spline tool's spline once it has three points,
+/// as a click on its first point does, and the Line tool's chain once it
+/// has two lines; short of that it does nothing.
+#[test]
+fn shift_o_closes_the_shape_being_drawn() {
+    let (mut doc, _, _) = sketching();
+    let before = sketch(&doc).clone();
+    doc.key(letter("n"));
+    click(&mut doc, 0.0, 0.0);
+    click(&mut doc, 10.0, 0.0);
+    assert!(!doc.keys().unwrap().tool_closes);
+    click(&mut doc, 5.0, 8.0);
+    assert!(doc.keys().unwrap().tool_closes);
+    shift_key(&mut doc, "o");
+    let [(_, spline)] = &splines(sketch(&doc))[..] else {
+        panic!("one spline");
+    };
+    assert!(spline.closed);
+    assert_eq!(spline.points.len(), 3);
+    assert!(drawing(&doc).unwrap().placed.is_empty());
+    assert_eq!(undo_to(&mut doc, &before), 1);
+
+    doc.look(Look::SelectTool(Tool::Line));
+    for (x, y) in [(0.0, 0.0), (10.0, 0.0)] {
+        click(&mut doc, x, y);
+    }
+    assert!(!doc.keys().unwrap().tool_closes);
+    click(&mut doc, 5.0, 8.0);
+    assert!(doc.keys().unwrap().tool_closes);
+    shift_key(&mut doc, "o");
+    let drawn = sketch(&doc);
+    assert_eq!(drawn.curves.len(), before.curves.len() + 3);
+    assert_eq!(drawn.profiles().unwrap().regions.len(), 1);
+    assert!(drawing(&doc).unwrap().placed.is_empty());
+}
+
+/// `Shift O` with no tool closes the open splines selected, then opens
+/// them again at their first point, or at a point of theirs selected.
+#[test]
+fn shift_o_closes_and_opens_the_splines_selected() {
+    let (mut doc, _, _) = sketching();
+    let id = draw_wave(&mut doc);
+    let before = sketch(&doc).clone();
+    let fit = before.spline(id).unwrap().points.clone();
+    select(&mut doc, id);
+    assert_eq!(doc.keys().unwrap().closing, Some(true));
+    shift_key(&mut doc, "o");
+    let closed = sketch(&doc).spline(id).unwrap().clone();
+    assert!(closed.closed);
+    assert_eq!(closed.points, fit);
+    assert_eq!(doc.keys().unwrap().closing, Some(false));
+    // Opened at its third point, from that point's row's menu.
+    doc.update(Edit::ToggleClosedItem(Selectable::Item(fit[2])));
+    let open = sketch(&doc).spline(id).unwrap().clone();
+    assert!(!open.closed);
+    assert_eq!(open.points[0], fit[2]);
+    assert_eq!(open.points.len(), fit.len() + 1);
+    assert_eq!(undo_to(&mut doc, &before), 2);
+}
+
+/// An open spline's end dropped on its other end closes it, the two ends
+/// one point.
+#[test]
+fn a_spline_dropped_on_its_own_end_closes() {
+    let (mut doc, _, _) = sketching();
+    let id = draw_wave(&mut doc);
+    let before = sketch(&doc).clone();
+    let fit = before.spline(id).unwrap().points.clone();
+    let (first, last) = (fit[0], *fit.last().unwrap());
+    doc.look(Look::DragGeometry {
+        id: Selectable::Item(last),
+        from: at(20.0, 0.0),
+        to: at(0.0, 0.0),
+        target: Some(Target::Point(first)),
+    });
+    doc.update(Edit::DropGeometry);
+    let closed = sketch(&doc);
+    let spline = closed.spline(id).unwrap();
+    assert!(spline.closed);
+    assert_eq!(spline.points, fit[..fit.len() - 1]);
+    assert!(closed.point(last).is_none());
+    assert_eq!(undo_to(&mut doc, &before), 1);
+}

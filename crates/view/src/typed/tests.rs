@@ -388,22 +388,23 @@ fn a_spline_runs_through_the_points_placed_to_the_cursor() {
     let placed = [at(0.0, 0.0), at(4.0, 3.0), at(8.0, 0.0)];
     let tool = testing::tool(Tool::Spline, &placed, &[]);
     assert!(tool.fields().is_empty());
-    let outline = outline(&tool, at(12.0, 2.0)).unwrap();
+    let drawn_to = outline(&tool, at(12.0, 2.0)).unwrap();
     let points = [placed.as_slice(), &[at(12.0, 2.0)]].concat();
     assert_eq!(
-        outline,
+        drawn_to,
         Outline::Spline {
             points: points.clone(),
-            kind: SplineKind::Through
+            kind: SplineKind::Through,
+            closed: false,
         }
     );
-    let drawn = outline.polylines();
+    let drawn = drawn_to.polylines();
     assert_eq!(
         drawn,
         [flatten_spline(&points, SplineKind::Through, false).unwrap()]
     );
-    assert_eq!(outline.construction(), None);
-    assert_eq!(outline.aimed(at(12.0, 2.0)), at(12.0, 2.0));
+    assert_eq!(drawn_to.construction(), None);
+    assert_eq!(drawn_to.aimed(at(12.0, 2.0)), at(12.0, 2.0));
     // By control points: its control polygon, and short of four, straight
     // between them.
     let control = ActiveTool {
@@ -414,6 +415,19 @@ fn a_spline_runs_through_the_points_placed_to_the_cursor() {
     let short = super::outline(&control, at(8.0, 0.0)).unwrap();
     assert_eq!(short.polylines(), [placed.to_vec()]);
     assert_eq!(short.construction(), Some(placed.to_vec()));
+    // On the first point, closed, as the click there makes it; short of
+    // three, open still.
+    let closing = super::outline(&tool, placed[0]).unwrap();
+    assert_eq!(
+        closing.polylines(),
+        [flatten_spline(&placed, SplineKind::Through, true).unwrap()]
+    );
+    let two = ActiveTool {
+        placed: &placed[..2],
+        ..tool
+    };
+    let open = super::outline(&two, placed[0]).unwrap();
+    assert!(matches!(open, Outline::Spline { closed: false, .. }));
     // Nothing placed, nothing drawn.
     let empty = testing::tool(Tool::Spline, &[], &[]);
     assert_eq!(super::outline(&empty, at(1.0, 1.0)), None);

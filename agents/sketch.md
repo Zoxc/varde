@@ -31,6 +31,17 @@ the sketch's own, no fillet) makes one: the end's other curves are made
 from the start, the end goes with what's on it, and what no longer fits
 (a tangent at the end) goes too. A closed arc trims as a circle does,
 needing two cuts, and is an open arc after, its point gone unless kept.
+`SketchEdit::CloseSpline` (`Sketch::spline_closable`: an open spline
+of the sketch's own with enough points to close) runs a spline on from
+its last point round to its first; where its ends meet (a coincident
+ties them, or they're within a millionth of their distance from the
+origin, as a drag's solve leaves them) the last is merged into the
+first as an arc's end is (`merge_into`), its handle going to the first
+if that has none. `SketchEdit::OpenSpline { spline, at }`
+(`Sketch::spline_openable`) starts a closed one at its point `at`,
+ending it at a new point there, tied to nothing. By control points
+both find its knots anew (`control_knots`); both drop what no longer
+fits.
 
 **Angles** (`angle.rs`): every `sin`, `cos`, `tan`, `atan2`, `acos`,
 `exp`, `ln` and `hypot` in the crate goes through `crate::angle`, which
@@ -1129,7 +1140,9 @@ bar says why (`EditError::Sketch`).
   the shape has all it needs, and `Drawing::targets` what each snapped to:
   - Line: each click after the first adds a line from the last point,
     sharing it (`Chain`); clicking the chain's first point once it has two
-    lines or more closes the loop and ends the chain; `Esc` or a
+    lines or more closes the loop and ends the chain, as `Shift O`
+    (`Shortcut::CLOSE`, `Edit::ToggleClosed`, `Doc::close_chain`, the
+    chain's length in `ActiveTool::chained`) does; `Esc` or a
     double-click ends an open one.
   - Circle: centre, then a point on it.
   - Arc: start, end, then a point on it; stored counter-clockwise with its
@@ -1153,7 +1166,9 @@ bar says why (`EditError::Sketch`).
     pixel of the last, on a point of the sketch's it has already, or past
     `MAX_SPLINE_POINTS`; nothing is proposed until it ends. A click on its
     first point (within `SNAP_TOLERANCE` pixels, `ActiveTool::closes`)
-    once it has three ends it closed; a double-click, or `Enter`
+    once it has three ends it closed, as `Shift O` does
+    (`ActiveTool::can_close`, which also has the toolbar offer Close
+    after Constrain and the status bar its key); a double-click, or `Enter`
     (`Edit::PlaceShape`, `Doc::end_spline_here`), once it has enough
     (`ActiveTool::spline_ends`: two fit points, four control points) ends
     it open where it is. The spline is an `Add` of its points placed as
@@ -1167,7 +1182,10 @@ bar says why (`EditError::Sketch`).
     points, the points placed kept. The preview (`typed::outline`'s
     `Outline::Spline`) is the spline through the points placed and the
     cursor (`flatten_spline`), straight between them while too few, with
-    its control polygon dashed by control points. It has no fields.
+    its control polygon dashed by control points; with the cursor
+    snapped to the first point once it can close, the closed spline the
+    click there makes (`Outline::Spline::closed`), its snap's glyph
+    Close's icon rather than Coincident's. It has no fields.
   - Trim (`T`), Extend (`J`), Offset (`O`), Mirror (`Shift M`), Fillet
     (`F`) and Chamfer (`Shift B`), the shape tools
     (`doc/sketch/shape.rs`, `Doc::shape_click`), don't snap (`Tool::draws`
@@ -1358,7 +1376,15 @@ bar says why (`EditError::Sketch`).
   `SketchSession::comb`, `SketchState::comb`) shows the curvature comb of
   the splines selected, or hides it, in any sketch. With splines selected
   and no drawing tool the toolbar offers Convert, Handles and Comb (and
-  Constrain) in place of the tools. The
+  Constrain) in place of the tools. `Shift O` (`Edit::ToggleClosed`,
+  `spline::closings`) closes the open splines and arcs selected that
+  can be (`CloseSpline`, `CloseArc`), or failing any, opens the closed
+  splines selected, or one of whose points is, at that point or else
+  their first (`OpenSpline`), and the closed arcs selected (`Detach` of
+  their point), a proposal each; the toolbar offers it as Close or Open
+  wherever that's possible, arcs too, and a curve's or point's Geometry
+  row's context menu likewise (`Edit::ToggleClosedItem`, the selection
+  if the row's among it). The
   Dimension tool takes a handle alone (as a line, or by its tip or end)
   as a line: its whole length (`Measure::Length(tip)`, end to tip), or
   placed off its ends its horizontal or vertical extent from its end to
@@ -1397,8 +1423,13 @@ bar says why (`EditError::Sketch`).
   an axis, a quadrant's): an `Add` proposed on the drag's last solution
   in place of the `Move`, so still one undo step (with no solution yet,
   after the `Move`, a step of its own). On an arc's other end it's
-  `CloseArc` instead, as two coincident ends of an arc are redundant; a
-  spline's two points are coincident. A circle's rim dragged snaps
+  `CloseArc` instead, as two coincident ends of an arc are redundant;
+  on an open spline's other end `CloseSpline`, its ends made one, where
+  it keeps enough points to close (more than three), else its two points
+  are coincident; while it's dragged there the viewport's base layer draws
+  the sketch as the drop leaves it (`spline::closed_by_drop`,
+  `Sketching::drag_closing`): the curve closed, the point merged away,
+  its region filled from the closed sketch's profiles. A circle's rim dragged snaps
   likewise, but only to points, as a circle's rim drawn does
   (`snap::snap_rim`: another point or the origin, not its centre), its
   radius reaching there; dropped, the point is on the circle

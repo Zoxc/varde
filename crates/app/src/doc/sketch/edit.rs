@@ -128,6 +128,36 @@ impl Doc {
         }
     }
 
+    /// Closes the Line tool's chain, `drawing`, with a line from its last
+    /// point back to its first, as a click on the first does, and ends
+    /// it. Nothing without a chain of two lines or more, or where a line
+    /// joins the two already.
+    pub(super) fn close_chain(&mut self, mut drawing: Drawing) {
+        let Some(sketch) = self.editable_sketch() else {
+            return;
+        };
+        let Some(chain) = drawing.chain.filter(|chain| chain.lines >= 2) else {
+            return;
+        };
+        let (start, end) = (chain.last, chain.first);
+        let joined = |entry: &varde_sketch::CurveEntry| match entry.curve {
+            Curve::Line { start: a, end: b } => [a, b] == [start, end] || [b, a] == [start, end],
+            _ => false,
+        };
+        if start == end || sketch.curves.iter().any(joined) {
+            return;
+        }
+        let mut add = Add::new(sketch);
+        if let Err(out) = add.curve(Curve::Line { start, end }, drawing.construction) {
+            self.refuse(out.into());
+            return;
+        }
+        if self.propose(SketchEdit::Add(add)) {
+            drawing.restart();
+            self.set_drawing(drawing);
+        }
+    }
+
     /// Puts `drawing` in place of the tool in use.
     pub(super) fn set_drawing(&mut self, drawing: Drawing) {
         if let Some(session) = &mut self.sketch {
@@ -977,15 +1007,26 @@ fn dragged(sketch: &Sketch, id: Selectable, from: DVec2, to: DVec2) -> Option<Sk
 /// gets ([`ties`]), so one that restates the rest is dropped; or, on the
 /// other end of an arc it's an end of, the arc closed
 /// ([`SketchEdit::CloseArc`]), as two coincident ends of one would be
-/// redundant.
+/// redundant; likewise an open spline's, closed with its ends made one
+/// ([`SketchEdit::CloseSpline`]) where it keeps enough points to close.
 fn snapped(sketch: &Sketch, point: Id, target: Target) -> Option<SketchEdit> {
-    if let Target::Point(other) = target
-        && let Some(arc) = (sketch.curves.iter()).find(|entry| {
-            entry.curve.kind() == Kind::Arc
-                && varde_view::closing(sketch, entry.id, point) == Some(other)
-        })
-    {
-        return Some(SketchEdit::CloseArc(arc.id));
+    if let Target::Point(other) = target {
+        let closes = |entry: &&varde_sketch::CurveEntry| {
+            varde_view::closing(sketch, entry.id, point) == Some(other)
+        };
+        for entry in sketch.curves.iter().filter(closes) {
+            match &entry.curve {
+                Curve::Arc { .. } => return Some(SketchEdit::CloseArc(entry.id)),
+                // Its ends made one, it must keep enough to close.
+                Curve::Spline(spline)
+                    if spline.points.len() > spline.kind.least(true)
+                        && !sketch.is_linked(entry.id) =>
+                {
+                    return Some(SketchEdit::CloseSpline(entry.id));
+                }
+                _ => {}
+            }
+        }
     }
     let auto = ties(sketch, point, Some(target));
     (!auto.is_empty()).then(|| {

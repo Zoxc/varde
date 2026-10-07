@@ -125,3 +125,25 @@ fn the_spline_tool_ends_with_enough_points_and_closes_on_its_first() {
     let line = testing::tool(Tool::Line, &placed, &[]);
     assert!(!line.spline_ends() && !line.closes(at(0.0, 0.0), 0.1));
 }
+
+/// An open spline's end dropped on its other end previews it closed, its
+/// last point merged into its first; with three points it can't close,
+/// and on any other point it closes nothing.
+#[test]
+fn an_end_dropped_on_the_other_previews_it_closed() {
+    let mut sketch = Sketch::default();
+    let places = [(0.0, 0.0), (5.0, 3.0), (10.0, 0.0), (5.0, -3.0)];
+    let (_, fit) = testing::spline(&mut sketch, &places);
+    let target = Some(Target::Point(fit[0]));
+    let (id, dropped) = closed_by_drop(&sketch, fit[3], target).unwrap();
+    let closed = dropped.spline(id).unwrap();
+    assert!(closed.closed);
+    assert_eq!(closed.points, fit[..3]);
+    assert!(dropped.point(fit[3]).is_none());
+    assert_eq!(dropped.profiles().unwrap().regions.len(), 1);
+    assert!(closed_by_drop(&sketch, fit[3], Some(Target::Point(fit[1]))).is_none());
+    let (three, _, _) = splines();
+    let through = three.splines().next().unwrap().1.points.clone();
+    let target = Some(Target::Point(through[0]));
+    assert!(closed_by_drop(&three, through[2], target).is_none());
+}

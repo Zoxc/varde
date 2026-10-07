@@ -6,9 +6,11 @@
 //! curvature comb. Each change is a [`SketchEdit`], proposed like any
 //! other (see [`propose`](super::propose)), one undo step.
 
+use std::collections::BTreeSet;
+
 use varde_sketch::{
-    Add, Constraint, Curve, Handle, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, SketchEdit, Spline,
-    SplineKind, control_knots, handle_tips,
+    Add, Constraint, Curve, Handle, Id, MAX_SPLINE_POINTS, OutOfIds, Selectable, Sketch,
+    SketchEdit, Spline, SplineKind, control_knots, handle_tips,
 };
 use varde_view::{Own, Target, Tool, ToolClick};
 
@@ -131,6 +133,59 @@ impl Doc {
         };
         if let Some(edit) = varde_view::spline::handles(sketch, &session.selection) {
             self.propose(edit);
+        }
+    }
+
+    /// Closes the shape the drawing tool is drawing where it can (the
+    /// Spline tool's spline, the Line tool's chain back to its first
+    /// point), or with no drawing tool closes or opens the curves
+    /// selected (see [`varde_view::spline::closings`]), a proposal each.
+    pub(crate) fn toggle_closed(&mut self) {
+        let drawing = self
+            .sketch
+            .as_ref()
+            .and_then(|session| session.tool.clone());
+        if let Some(drawing) = drawing.filter(|drawing| drawing.tool.draws()) {
+            if drawing.active().can_close() {
+                match drawing.tool {
+                    Tool::Spline => self.end_spline(drawing, true),
+                    Tool::Line => self.close_chain(drawing),
+                    _ => {}
+                }
+            }
+            return;
+        }
+        let Some(sketch) = self.editable_sketch() else {
+            return;
+        };
+        let Some(session) = &self.sketch else {
+            return;
+        };
+        if let Some((_, edits)) = varde_view::spline::closings(sketch, &session.selection) {
+            for edit in edits {
+                self.propose(edit);
+            }
+        }
+    }
+
+    /// Closes or opens the curve of a Geometry row, `item`, from its
+    /// context menu, or the selection if it's among it, as the key does.
+    pub(crate) fn toggle_closed_item(&mut self, item: Selectable) {
+        let Some(sketch) = self.editable_sketch() else {
+            return;
+        };
+        let Some(session) = &self.sketch else {
+            return;
+        };
+        let items = if session.selection.contains(&item) {
+            session.selection.clone()
+        } else {
+            BTreeSet::from([item])
+        };
+        if let Some((_, edits)) = varde_view::spline::closings(sketch, &items) {
+            for edit in edits {
+                self.propose(edit);
+            }
         }
     }
 

@@ -575,6 +575,9 @@ pub struct ActiveTool<'a> {
     /// Whether the Spline tool draws by control points, rather than
     /// through fit points.
     pub control: bool,
+    /// How many lines the Line tool's chain has drawn, 0 without one: a
+    /// chain of two or more can close.
+    pub chained: usize,
 }
 
 impl ActiveTool<'_> {
@@ -1201,6 +1204,7 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
         let end = tool
             .spline_ends()
             .then(|| key_hint(Shortcut::ENTER, "End spline"));
+        let close = tool.can_close().then(|| key_hint(Shortcut::CLOSE, "Close"));
         let kind = (tool.tool == Tool::Spline).then(|| {
             let label = if tool.control {
                 "Through points"
@@ -1227,6 +1231,7 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
             place,
             centered,
             end,
+            close,
             kind,
             Some(key_hint(Shortcut::CONSTRUCTION, "Construction")),
             Some(key_hint(Shortcut::ESCAPE, escape)),

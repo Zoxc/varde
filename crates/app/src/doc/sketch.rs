@@ -276,6 +276,7 @@ impl Drawing {
             sides: self.sides,
             centered: self.centered,
             control: self.control,
+            chained: self.chain.map_or(0, |chain| chain.lines),
         }
     }
 

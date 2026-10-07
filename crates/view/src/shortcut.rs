@@ -140,6 +140,9 @@ impl Shortcut {
     /// Shows the curvature comb of the splines selected, or hides it: a
     /// letter no tool or constraint has (cUrvature).
     pub const COMB: Self = Self::plain('u');
+    /// Closes the shape the Spline or Line tool is drawing, or the curves
+    /// selected, or opens them: with Shift, as `O` is Offset's (clOse).
+    pub const CLOSE: Self = Self::shifted('o');
 
     const fn plain(key: char) -> Self {
         assert!(key.is_ascii_lowercase() || key.is_ascii_digit());
@@ -425,6 +428,13 @@ pub struct DocumentKeys {
     /// Whether handles can be given to, or taken from, what's selected in
     /// the sketch being edited (see [`crate::spline::handles`]).
     pub handles: bool,
+    /// Whether the drawing tool can close its shape (see
+    /// [`ActiveTool::can_close`](crate::ActiveTool::can_close)).
+    pub tool_closes: bool,
+    /// Whether the curves selected in the sketch being edited can be
+    /// closed (`Some(true)`) or opened (`Some(false)`), see
+    /// [`crate::spline::closings`], with no drawing tool in use.
+    pub closing: Option<bool>,
     /// Whether the Mirror tool has picked what it mirrors and can go on
     /// to the line to mirror about.
     pub mirror_picked: bool,
@@ -517,6 +527,14 @@ impl DocumentKeys {
             splines_selected: sketch.is_some_and(|sketch| {
                 !sketch.tool.is_some_and(|tool| tool.tool.draws())
                     && crate::spline::any_selected(sketch.sketch, sketch.selection)
+            }),
+            tool_closes: sketch
+                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.can_close())),
+            closing: sketch.and_then(|sketch| {
+                if sketch.tool.is_some_and(|tool| tool.tool.draws()) {
+                    return None;
+                }
+                crate::spline::closings(sketch.sketch, sketch.selection).map(|(close, _)| close)
             }),
             handles: sketch.is_some_and(|sketch| {
                 crate::spline::handles(sketch.sketch, sketch.selection).is_some()
@@ -1015,6 +1033,18 @@ pub fn handles_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
+/// Closing the shape the tool draws, or closing or opening the curves
+/// selected: while either can be, in a sketch that can be changed.
+pub fn close_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::CLOSE,
+        Message::Edit(Edit::ToggleClosed),
+        keys.editable
+            && keys.sketching
+            && (keys.tool_closes || (keys.closing.is_some() && !keys.drawing)),
+    )
+}
+
 /// Showing the splines' curvature comb, or hiding it: in any sketch, as
 /// it changes nothing.
 pub fn comb_binding(keys: DocumentKeys) -> Binding {
@@ -1096,6 +1126,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
                 enter_binding(keys),
                 switch_binding(keys),
                 handles_binding(keys),
+                close_binding(keys),
                 comb_binding(keys),
             ])
             .chain(
@@ -1618,6 +1649,8 @@ mod tests {
             spline_ends: true,
             splines_selected: true,
             handles: true,
+            tool_closes: true,
+            closing: Some(true),
             constraints: ConstraintKind::ALL.into_iter().collect(),
             ..keys(true)
         };

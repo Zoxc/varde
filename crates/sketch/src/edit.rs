@@ -165,6 +165,12 @@ pub enum SketchEdit {
     /// The arc's end made its start, so it runs all the way round, see
     /// [`Sketch::closable`].
     CloseArc(Id),
+    /// The spline made to run on from its last point round to its first,
+    /// see [`Sketch::spline_closable`].
+    CloseSpline(Id),
+    /// The closed spline made to start at its point `at` and end at a new
+    /// point there, see [`Sketch::spline_openable`].
+    OpenSpline { spline: Id, at: Id },
 }
 
 impl SketchEdit {
@@ -273,6 +279,8 @@ impl SketchEdit {
             }
             SketchEdit::Detach(point) => next.detach(*point)?,
             SketchEdit::CloseArc(arc) => next.close_arc(*arc)?,
+            SketchEdit::CloseSpline(spline) => next.close_spline(*spline)?,
+            SketchEdit::OpenSpline { spline, at } => next.open_spline(*spline, *at)?,
         }
         // Only a link's own edits change what it made; deleting a link
         // takes it whole.

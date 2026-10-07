@@ -1692,10 +1692,25 @@ fn geometry_item<'a>(
             );
             [item.into(), menu_separator().into()]
         });
+        let closing = crate::spline::closings(sketch.sketch, &BTreeSet::from([id]));
+        let close = closing.map(|(close, _)| {
+            let (icon, label) = if close {
+                (Icon::CloseCurve, "Close")
+            } else {
+                (Icon::OpenCurve, "Open")
+            };
+            let message = Message::Edit(Edit::ToggleClosedItem(id));
+            let item = menu_item(
+                icon,
+                label.into(),
+                selected.then_some(Shortcut::CLOSE),
+                sketch.editable.then_some(message),
+            );
+            [item.into(), menu_separator().into()]
+        });
         row_menu(
-            detach
-                .into_iter()
-                .flatten()
+            (close.into_iter().flatten())
+                .chain(detach.into_iter().flatten())
                 .chain([menu_item(
                     Icon::Trash,
                     "Delete".into(),

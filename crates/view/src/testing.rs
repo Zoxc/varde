@@ -113,6 +113,7 @@ pub(crate) fn tool<'a>(
         sides: DEFAULT_SIDES,
         centered: false,
         control: false,
+        chained: 0,
     }
 }
 

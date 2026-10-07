@@ -308,6 +308,9 @@ struct Drawn {
     /// changes.
     profiles: Option<Arc<Profiles>>,
     comb: bool,
+    /// The sketch drawn as a drop closing a curve leaves it, see
+    /// [`Sketching::drag_closing`].
+    closing: Option<Sketch>,
 }
 
 impl<'a> Sketching<'a> {
@@ -891,6 +894,8 @@ impl<'a> Sketching<'a> {
         colors: SketchColors,
         modifiers: Modifiers,
     ) -> (Arc<SketchLayer>, SketchLayer) {
+        let projector = Projector::new(camera, self.placement(), bounds.width, bounds.height);
+        let closing = self.drag_closing(input, projector.as_ref(), modifiers);
         let mut base = input.base.borrow_mut();
         let current = base.as_ref().is_some_and(|base| {
             let drawn = &base.drawn;
@@ -902,11 +907,26 @@ impl<'a> Sketching<'a> {
                 && drawn.placement == self.placement
                 && drawn.profiles.as_ref().map(Arc::as_ptr) == self.profiles.map(Arc::as_ptr)
                 && drawn.comb == self.comb
+                && drawn.closing == closing
         });
         let base = match &mut *base {
             Some(base) if current => base,
             base => {
-                let (layer, arrows) = self.base_layer(colors);
+                // Dropped on the other end of its curve, the sketch as the
+                // drop leaves it: the curve closed, the point gone, the
+                // region filled.
+                let profiles = closing
+                    .as_ref()
+                    .map(|closed| closed.profiles().ok().map(Arc::new));
+                let (layer, arrows) = match (&closing, &profiles) {
+                    (Some(closed), Some(profiles)) => Sketching {
+                        sketch: closed,
+                        profiles: profiles.as_ref(),
+                        ..self.clone()
+                    }
+                    .base_layer(colors),
+                    _ => self.base_layer(colors),
+                };
                 let drawn = Drawn {
                     sketch: self.sketch.clone(),
                     selection: self.selection.clone(),
@@ -916,6 +936,7 @@ impl<'a> Sketching<'a> {
                     placement: self.placement,
                     profiles: self.profiles.cloned(),
                     comb: self.comb,
+                    closing,
                 };
                 base.insert(Base {
                     drawn,
@@ -926,12 +947,27 @@ impl<'a> Sketching<'a> {
                 })
             }
         };
-        let projector = Projector::new(camera, self.placement(), bounds.width, bounds.height);
         let mut live = self.live_layer(input, projector.as_ref(), colors, &base.arrows, modifiers);
         if let Some(projector) = &projector {
             combs(&mut live, &base.combs, projector.pixel(), colors.guide);
         }
         (base.layer.clone(), live)
+    }
+
+    /// A point dragged onto the other end of its arc or spline (see
+    /// [`crate::spline::closed_by_drop`]): the sketch as dropping it there
+    /// leaves it, drawn in place of the one shown.
+    fn drag_closing(
+        &self,
+        input: &Input,
+        projector: Option<&Projector>,
+        modifiers: Modifiers,
+    ) -> Option<Sketch> {
+        let press = input.press.filter(|press| press.moved && press.grab)?;
+        let cursor = projector?.cursor(input.cursor?)?;
+        let (_, snap) = self.drag_snap(&press, cursor, modifiers)?;
+        crate::spline::closed_by_drop(self.sketch, press.hit?.item()?, snap.target)
+            .map(|(_, closed)| closed)
     }
 
     /// The failing curves of the base layer last built, placed in the
@@ -1214,9 +1250,15 @@ impl<'a> Sketching<'a> {
         if !snap.snapped() {
             return None;
         }
-        let icons = snap.kinds().into_iter().map(|kind| {
-            icons::tinted(kind.icon(), SNAP_ICON, |palette| palette.sketching.guide).into()
-        });
+        // On the Spline tool's first point, once that closes it, Close's
+        // icon rather than Coincident's.
+        let closes =
+            tool.tool == Tool::Spline && tool.can_close() && tool.placed.first() == Some(&snap.at);
+        let kinds = if closes { Vec::new() } else { snap.kinds() };
+        let close = closes.then_some(icons::Icon::CloseCurve);
+        let icons = (close.into_iter())
+            .chain(kinds.into_iter().map(|kind| kind.icon()))
+            .map(|icon| icons::tinted(icon, SNAP_ICON, |palette| palette.sketching.guide).into());
         let chip = container(iced::widget::Row::with_children(icons).spacing(2))
             .padding(GLYPH_PADDING)
             .style(|theme| theme::glyph(theme, false));

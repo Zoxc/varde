@@ -156,6 +156,9 @@ icons! {
     OffsetConstraint => r#"<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>"#,
     Convert => r#"<path d="M4 8h14l-3-3M20 16H6l3 3"/>"#,
     Handles => r#"<path d="M3 19c3-8 8-12 18-13"/><path d="M4.5 9.5l10 4"/><circle cx="4.5" cy="9.5" r="1.5"/><circle cx="14.5" cy="13.5" r="1.5"/>"#,
+    // A loop joined at a point, and one left open at it.
+    CloseCurve => r#"<path d="M12 4c5 0 8 3 8 7s-4 9-8 9-8-4-8-9c0-3 3-7 8-7z"/><circle cx="12" cy="4" r="1.5"/>"#,
+    OpenCurve => r#"<path d="M14.5 4.5c3.5 1 5.5 3.5 5.5 6.5 0 5-4 9-8 9s-8-4-8-9c0-3 2-5.5 5.5-6.5"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="14.5" cy="4.5" r="1.5"/>"#,
     Comb => r#"<path d="M3 18c4-9 14-9 18 0"/><path d="M6.5 13.4L5 9.5M12 11.3V6.5M17.5 13.4L19 9.5"/>"#,
     // The tool sets on the rail, the mock's `cat-*`: what each leaves
     // behind.
@@ -290,6 +293,8 @@ impl Icon {
             | Icon::Convert
             | Icon::Handles
             | Icon::Comb
+            | Icon::CloseCurve
+            | Icon::OpenCurve
             | Icon::CatDraw
             | Icon::SeRegion => IconCategory::Sketch,
             Icon::Trim

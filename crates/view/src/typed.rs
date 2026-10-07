@@ -249,11 +249,13 @@ pub enum Outline {
         corner: DVec2,
         ends: [DVec2; 2],
     },
-    /// An open spline of `kind` through or by `points`, the last where
-    /// the cursor is.
+    /// A spline of `kind` through or by `points`: open, the last where
+    /// the cursor is, or `closed` with the cursor on the first point
+    /// once there are enough to close, as the click there makes it.
     Spline {
         points: Vec<DVec2>,
         kind: SplineKind,
+        closed: bool,
     },
 }
 
@@ -272,9 +274,11 @@ impl Outline {
             Outline::Rectangle { corners, .. } => vec![closed(corners)],
             Outline::Polygon { corners, .. } => vec![closed(corners)],
             // Short of the points it takes, straight between them.
-            Outline::Spline { points, kind } => {
-                vec![flatten_spline(points, *kind, false).unwrap_or_else(|| points.clone())]
-            }
+            Outline::Spline {
+                points,
+                kind,
+                closed,
+            } => vec![flatten_spline(points, *kind, *closed).unwrap_or_else(|| points.clone())],
         }
     }
 
@@ -286,7 +290,12 @@ impl Outline {
             Outline::Spline {
                 points,
                 kind: SplineKind::Control,
-            } => Some(points.clone()),
+                closed,
+            } => Some(if *closed {
+                self::closed(points)
+            } else {
+                points.clone()
+            }),
             Outline::Polygon { center, radius, .. } => {
                 Some(varde_sketch::flatten_circle(*center, *radius))
             }
@@ -420,10 +429,17 @@ pub fn outline(tool: &ActiveTool, at: DVec2) -> Option<Outline> {
                 center,
             }
         }
-        (Tool::Spline, placed) if !placed.is_empty() => Outline::Spline {
-            points: placed.iter().copied().chain([at]).collect(),
-            kind: tool.spline_kind(),
-        },
+        // The cursor snapped to the first point closes it.
+        (Tool::Spline, placed) if !placed.is_empty() => {
+            let kind = tool.spline_kind();
+            let closed = placed.len() >= kind.least(true) && placed[0] == at;
+            let last = (!closed).then_some(at);
+            Outline::Spline {
+                points: placed.iter().copied().chain(last).collect(),
+                kind,
+                closed,
+            }
+        }
         (Tool::Polygon, &[center]) => {
             let radius = typed(Field::Diameter).map_or(center.distance(at), |d| d / 2.0);
             let first = toward(center) * radius;

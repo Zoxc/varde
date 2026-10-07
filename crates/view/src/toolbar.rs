@@ -15,12 +15,12 @@ use varde_sketch::Curve;
 use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
-    Binding, Shortcut, align_binding, chamfer_binding, circular_pattern_binding, comb_binding,
-    combine_binding, constrain_binding, constraint_binding, draft_binding, extrude_binding,
-    file_bindings, fillet_binding, handles_binding, history_bindings, loft_binding,
-    measure_binding, mirror_binding, move_binding, offset_face_binding, pattern_binding,
-    plane_binding, revolve_binding, scale_binding, shell_binding, sketch_binding, split_binding,
-    sweep_binding, switch_binding, tool_binding,
+    Binding, Shortcut, align_binding, chamfer_binding, circular_pattern_binding, close_binding,
+    comb_binding, combine_binding, constrain_binding, constraint_binding, draft_binding,
+    extrude_binding, file_bindings, fillet_binding, handles_binding, history_bindings,
+    loft_binding, measure_binding, mirror_binding, move_binding, offset_face_binding,
+    pattern_binding, plane_binding, revolve_binding, scale_binding, shell_binding, sketch_binding,
+    split_binding, sweep_binding, switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
@@ -425,6 +425,17 @@ fn location_told(location: Location) -> (&'static str, &'static str, &'static st
     }
 }
 
+/// The button closing the shape drawn or the curves selected, or with
+/// `close` false opening them.
+fn close_op(close: bool, binding: Binding) -> Element<'static, Message> {
+    let (icon, label) = if close {
+        (Icon::CloseCurve, "Close")
+    } else {
+        (Icon::OpenCurve, "Open")
+    };
+    tipped_op(icon, label, binding, false)
+}
+
 /// The icon of the drawing tool `tool`.
 pub(crate) fn tool_icon(tool: Tool) -> Icon {
     match tool {
@@ -490,10 +501,19 @@ fn ops<'a>(
                     tipped_op(Icon::Convert, "Convert", switch_binding(keys), false),
                     tipped_op(Icon::Handles, "Handles", handles_binding(keys), false),
                     tipped_op(Icon::Comb, "Comb", comb_binding(keys), sketch.comb),
-                    separator(),
                 ]
             });
-            return (splines.into_iter().flatten())
+            // Closing or opening, for arcs as for splines.
+            let close = keys
+                .closing
+                .map(|close| close_op(close, close_binding(keys)));
+            let curves = (splines.into_iter().flatten())
+                .chain(close)
+                .collect::<Vec<_>>();
+            let gap = (!curves.is_empty()).then(separator);
+            return curves
+                .into_iter()
+                .chain(gap)
                 .chain([constrain, separator()])
                 .chain(fitting())
                 .collect();
@@ -512,8 +532,14 @@ fn ops<'a>(
                 active == Some(tool),
             )
         });
-        // Constrain last, as the mock's bar has it.
-        return tools.into_iter().chain([constrain]).collect();
+        // Constrain last, as the mock's bar has it, and Close after it
+        // while the Spline or Line tool's shape can close.
+        let close = keys
+            .tool_closes
+            .then(|| [separator(), close_op(true, close_binding(keys))]);
+        return (tools.into_iter().chain([constrain]))
+            .chain(close.into_iter().flatten())
+            .collect();
     }
     let sketch = bound_op(
         Icon::Sketch,

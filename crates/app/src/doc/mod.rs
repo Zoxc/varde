@@ -663,6 +663,8 @@ impl Doc {
             Edit::PlaceShape => self.place_shape(),
             Edit::ConvertSplines => self.convert_splines(),
             Edit::ToggleHandles => self.toggle_handles(),
+            Edit::ToggleClosed => self.toggle_closed(),
+            Edit::ToggleClosedItem(item) => self.toggle_closed_item(item),
             Edit::InsertSplinePoint { spline, at } => self.insert_spline_point(spline, at),
             Edit::CommitExtrude => self.commit_extrude(false),
             Edit::CommitRevolve => self.commit_revolve(false),
