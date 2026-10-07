@@ -295,6 +295,26 @@ pub(crate) fn snap_drag(sketch: &Sketch, dragged: Id, cursor: DVec2, pixel: f64)
         .unwrap_or(Snap::free(cursor))
 }
 
+/// Where the rim of the circle `circle` of `sketch`, dragged, snaps with
+/// the cursor at `cursor`, a pixel being `pixel`: as a circle's rim drawn
+/// does, only to points, another point of the sketch or the origin, not
+/// its own centre. Free where nothing's near, or `circle` is no circle.
+pub(crate) fn snap_rim(sketch: &Sketch, circle: Id, cursor: DVec2, pixel: f64) -> Snap {
+    let Some(&Curve::Circle { center, .. }) = sketch.curve(circle).map(|entry| &entry.curve) else {
+        return Snap::free(cursor);
+    };
+    let tolerance = SNAP_TOLERANCE * pixel;
+    (sketch.points.iter())
+        .filter(|point| point.id != center)
+        .map(|point| (point.at, point.id))
+        .chain([(DVec2::ZERO, Id::ORIGIN)])
+        .filter(|&(at, id)| id != center && at.is_finite())
+        .map(|(at, id)| (at.distance(cursor), Snap::on(at, Target::Point(id))))
+        .filter(|&(distance, _)| distance <= tolerance)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map_or(Snap::free(cursor), |(_, snap)| snap)
+}
+
 /// The points of the curve `curve` of `sketch` its point `point`,
 /// dragged, snaps to: an arc's other end from it ([`closing`]), or, of
 /// a spline of three points or more, open or closed, every other fit or

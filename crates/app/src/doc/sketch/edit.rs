@@ -205,16 +205,24 @@ impl Doc {
     /// Proposes the geometry dragged where it was dropped: the move to
     /// where the cursor was, from where the solver last converged, so the
     /// drag commits as one undo step what it showed, solved. A point
-    /// snapped is tied to what it snapped to ([`snapped`]): on that
+    /// snapped is tied to what it snapped to ([`snapped`]), a circle's rim
+    /// put through the point it snapped to ([`rim_snapped`]): on that
     /// solution, still one step, or after the move where there's none.
     pub(crate) fn drop_geometry(&mut self) {
         let Some(drag) = self.sketch.as_mut().and_then(|session| session.drag.take()) else {
             return;
         };
         let tie = match drag.edit {
-            SketchEdit::Move { ref points, .. } => (drag.target)
-                .zip(points.first())
-                .and_then(|(target, &(point, _))| snapped(&drag.start, point, target)),
+            SketchEdit::Move {
+                ref points,
+                ref radii,
+            } => match (drag.target, points.first(), radii.first()) {
+                (Some(target), Some(&(point, _)), _) => snapped(&drag.start, point, target),
+                (Some(target), None, Some(&(circle, _))) => {
+                    rim_snapped(&drag.start, circle, target)
+                }
+                _ => None,
+            },
             _ => None,
         };
         match (tie, drag.solution) {
@@ -951,6 +959,17 @@ fn snapped(sketch: &Sketch, point: Id, target: Target) -> Option<SketchEdit> {
             ..Add::new(sketch)
         })
     })
+}
+
+/// The edit putting the circle `circle` of `sketch`, its rim dragged,
+/// through `target`, the point it snapped to: an `auto` point on it, as
+/// a circle's rim drawn there gets ([`through`]).
+fn rim_snapped(sketch: &Sketch, circle: Id, target: Target) -> Option<SketchEdit> {
+    let auto = through(circle, Some(target))?;
+    Some(SketchEdit::Add(Add {
+        auto: vec![auto],
+        ..Add::new(sketch)
+    }))
 }
 
 #[cfg(test)]

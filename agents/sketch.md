@@ -1381,7 +1381,11 @@ bar says why (`EditError::Sketch`).
   in place of the `Move`, so still one undo step (with no solution yet,
   after the `Move`, a step of its own). On an arc's other end it's
   `CloseArc` instead, as two coincident ends of an arc are redundant; a
-  spline's two points are coincident.
+  spline's two points are coincident. A circle's rim dragged snaps
+  likewise, but only to points, as a circle's rim drawn does
+  (`snap::snap_rim`: another point or the origin, not its centre), its
+  radius reaching there; dropped, the point is on the circle
+  (`rim_snapped`, an `auto` `PointOnCurve`), the same one undo step.
 - **Constraints**: the selection's geometry is constrained by a
   `ConstraintKind` (`varde-view`, `constrain.rs`): `make` builds the
   constraints it makes of the selection (several items tie the first to

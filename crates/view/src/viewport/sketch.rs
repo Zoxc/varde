@@ -596,20 +596,14 @@ impl<'a> Sketching<'a> {
                 .zip(press.at)
                 .zip(projector.cursor(to))
                 .map(|((id, from), cursor)| {
-                    let snapped = press
-                        .point
-                        .filter(|_| !Held::FREE.is_held(modifiers))
-                        .map(|point| {
-                            (
-                                point,
-                                snap::snap_drag(self.sketch, id, cursor.at, cursor.pixel),
-                            )
-                        })
+                    let snapped = self
+                        .drag_snap(press, cursor, modifiers)
                         .filter(|(_, snap)| snap.snapped());
                     // Snapped, the point goes where it snapped rather than
-                    // keep the offset it was grabbed at.
+                    // keep the offset it was grabbed at (a rim's radius
+                    // takes only where the cursor is).
                     let (from, to, target) = match snapped {
-                        Some((point, snap)) => (point, snap.at, snap.target),
+                        Some((grabbed, snap)) => (grabbed, snap.at, snap.target),
                         None => (from, cursor.at, None),
                     };
                     Message::Look(Look::DragGeometry {
@@ -620,6 +614,36 @@ impl<'a> Sketching<'a> {
                     })
                 });
         Some(capture(message))
+    }
+
+    /// Where what `press` drags snaps with the cursor at `cursor`, with
+    /// where it was grabbed: a point as [`snap::snap_drag`] has it, a
+    /// circle's rim as [`snap::snap_rim`]. `None` for anything else, or
+    /// with [`Held::FREE`] among `modifiers`.
+    fn drag_snap(
+        &self,
+        press: &Press,
+        cursor: Cursor,
+        modifiers: Modifiers,
+    ) -> Option<(DVec2, Snap)> {
+        if Held::FREE.is_held(modifiers) {
+            return None;
+        }
+        let id = press.hit?;
+        if let Some(point) = press.point {
+            return Some((
+                point,
+                snap::snap_drag(self.sketch, id, cursor.at, cursor.pixel),
+            ));
+        }
+        let rim = self
+            .sketch
+            .curve(id)
+            .filter(|entry| entry.curve.kind() == Kind::Circle)?;
+        Some((
+            press.at?,
+            snap::snap_rim(self.sketch, rim.id, cursor.at, cursor.pixel),
+        ))
     }
 
     /// Follows the cursor moved to `to` from `previous` with the label of
@@ -1390,13 +1414,13 @@ impl<'a> Sketching<'a> {
         for id in hover.into_iter().chain(listed) {
             self.highlight(&mut layer, id, colors.hovered);
         }
-        // Where a drawing tool's click, or a point dragged, snaps is
+        // Where a drawing tool's click, or a point or rim dragged, snaps is
         // marked round the cursor, whatever it snapped to.
         let dragged = (input.press)
             .filter(|press| press.moved && press.grab && !Held::FREE.is_held(modifiers))
-            .and_then(|press| Some((press.hit?, press.point?)))
             .zip(cursor)
-            .map(|((id, _), cursor)| snap::snap_drag(self.sketch, id, cursor.at, cursor.pixel));
+            .and_then(|(press, cursor)| self.drag_snap(&press, cursor, modifiers))
+            .map(|(_, snap)| snap);
         let spot = snap.filter(|_| drawing).or(dragged).filter(Snap::snapped);
         if let Some(spot) = spot {
             layer.point(spot.at, snap_disc(colors.point));

@@ -994,6 +994,35 @@ fn a_point_dropped_where_it_snapped_is_tied_there() {
     assert_eq!(undo_to(&mut doc, &before), 1);
 }
 
+/// A circle's rim dropped where it snapped to a point passes through it,
+/// in the drop's one undo step.
+#[test]
+fn a_rim_dropped_on_a_point_passes_through_it() {
+    let (mut doc, [_, b, _, c, circle]) = with_shapes();
+    let before = sketch(&doc).clone();
+    doc.look(Look::DragGeometry {
+        id: circle,
+        from: at(22.0, 0.0),
+        to: at(10.0, 0.0),
+        target: Some(varde_view::Target::Point(b)),
+    });
+    doc.update(Edit::DropGeometry);
+    let tied = sketch(&doc);
+    assert_eq!(
+        tied.curve(circle).unwrap().curve,
+        Curve::Circle {
+            center: c,
+            radius: 10.0
+        }
+    );
+    let on = varde_sketch::Constraint::PointOnCurve {
+        point: b,
+        curve: circle,
+    };
+    assert!(tied.constraints.iter().any(|entry| entry.constraint == on));
+    assert_eq!(undo_to(&mut doc, &before), 1);
+}
+
 /// An arc's end dropped on its other end closes it: still an arc, its
 /// end its start now, round the whole circle.
 #[test]

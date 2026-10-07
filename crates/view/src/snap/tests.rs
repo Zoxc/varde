@@ -378,3 +378,20 @@ fn a_line_doesnt_snap_to_its_own_start() {
         "{origin:?}"
     );
 }
+
+/// A circle's rim dragged snaps to points, not its own centre, nor to
+/// curves.
+#[test]
+fn a_dragged_rim_snaps_to_points() {
+    let d = drawn();
+    let near = snap_rim(&d.sketch, d.circle, at(8.3, 0.8), PIXEL);
+    assert_eq!(
+        (near.at, target(near)),
+        (at(8.0, 1.0), Some(Target::Point(d.end)))
+    );
+    let origin = snap_rim(&d.sketch, d.circle, at(0.2, -0.3), PIXEL);
+    assert_eq!(target(origin), Some(Target::Point(Id::ORIGIN)));
+    assert!(!snap_rim(&d.sketch, d.circle, at(20.2, 0.1), PIXEL).snapped());
+    assert!(!snap_rim(&d.sketch, d.circle, at(5.0, 1.3), PIXEL).snapped());
+    assert!(!snap_rim(&d.sketch, d.line, at(8.3, 0.8), PIXEL).snapped());
+}
