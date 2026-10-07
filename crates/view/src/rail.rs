@@ -22,8 +22,8 @@ use crate::shortcut::{
     Binding, DocumentKeys, Shortcut, align_binding, chamfer_binding, circular_pattern_binding,
     combine_binding, constrain_binding, constraint_binding, draft_binding, extrude_binding,
     fillet_binding, loft_binding, measure_binding, mirror_binding, move_binding,
-    offset_face_binding, pattern_binding, revolve_binding, scale_binding, shell_binding,
-    sketch_binding, split_binding, sweep_binding, tool_binding,
+    offset_face_binding, params_binding, pattern_binding, revolve_binding, scale_binding,
+    shell_binding, sketch_binding, split_binding, sweep_binding, tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
@@ -131,6 +131,8 @@ pub(crate) enum Entry {
     OffsetFace,
     Draft,
     Measure,
+    /// Opening the parameters' popup, or closing it.
+    Params,
     /// A sketch's tool.
     Tool(Tool),
     /// The Constrain tool.
@@ -161,6 +163,7 @@ impl Entry {
             Entry::OffsetFace => Icon::OffsetFace,
             Entry::Draft => Icon::Draft,
             Entry::Measure => Icon::Measure,
+            Entry::Params => Icon::Params,
             Entry::Tool(tool) => tool_icon(tool),
             Entry::Constrain => Icon::Constrain,
             Entry::Constraint(kind) => kind.icon(),
@@ -188,6 +191,7 @@ impl Entry {
             Entry::OffsetFace => "Offset face",
             Entry::Draft => "Draft",
             Entry::Measure => "Measure",
+            Entry::Params => "Parameters",
             Entry::Tool(tool) => tool.label(),
             Entry::Constrain => "Constrain",
             Entry::Constraint(kind) => kind.label(),
@@ -226,6 +230,7 @@ impl Entry {
             Entry::OffsetFace => offset_face_binding(keys),
             Entry::Draft => draft_binding(keys),
             Entry::Measure => measure_binding(keys),
+            Entry::Params => params_binding(),
             Entry::Tool(tool) => tool_binding(tool, keys),
             Entry::Constrain => constrain_binding(keys),
             Entry::Constraint(kind) => {
@@ -256,6 +261,7 @@ impl Entry {
             Entry::OffsetFace => using.motion == Some(crate::MotionKind::OffsetFace),
             Entry::Draft => using.motion == Some(crate::MotionKind::Draft),
             Entry::Measure => using.measuring,
+            Entry::Params => using.params,
             Entry::Tool(tool) => using.tool == Some(tool),
             Entry::Constrain => using.constraining,
             Entry::Constraint(_) => false,
@@ -274,6 +280,8 @@ struct Using {
     /// The move, mirror or pattern being set up, if one is.
     motion: Option<crate::MotionKind>,
     measuring: bool,
+    /// Whether the parameters' popup is open.
+    params: bool,
     /// The sketch's tool, if one is.
     tool: Option<Tool>,
     constraining: bool,
@@ -291,6 +299,7 @@ impl Using {
             combining: state.combine.is_some(),
             motion: state.motion.as_ref().map(|motion| motion.kind),
             measuring: state.measure.is_some(),
+            params: state.params.is_some(),
             tool: sketch.and_then(|s| s.tool).map(|t| t.tool),
             constraining: sketch.is_some_and(|s| s.constraining),
         }
@@ -326,8 +335,8 @@ const MODEL: [ToolSet; 4] = [
         name: "Modify",
         icon: Icon::CatModify,
         // Fillet, Chamfer, Shell and Draft, then Scale before Combine,
-        // Offset face after it and Split body last, as the icon mock's
-        // Modify group orders them.
+        // Offset face after it and Split body, as the icon mock's Modify
+        // group orders them, and Parameters last, as the model mock's.
         entries: &[
             Entry::Fillet,
             Entry::Chamfer,
@@ -337,6 +346,7 @@ const MODEL: [ToolSet; 4] = [
             Entry::Combine,
             Entry::OffsetFace,
             Entry::Split,
+            Entry::Params,
         ],
     },
     ToolSet {

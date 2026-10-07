@@ -125,6 +125,9 @@ pub struct TypedField<'a> {
     /// which the preview and an extrude's handle show while the text is
     /// refused.
     pub value: Option<f64>,
+    /// The design's parameters, whose names are offered as they're typed
+    /// (see the `suggest` module).
+    pub params: crate::ParamsIn<'a>,
 }
 
 /// What an extrude or a revolve does with its solid, see
@@ -392,6 +395,7 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
     let sections = Sections {
         width: PANEL_WIDTH,
         parts: [header.into(), body.into(), footer],
+        well: true,
     };
     opaque(sections)
 }
@@ -399,7 +403,7 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
 /// A square icon button of the head, `icon` in it, with the id `id`
 /// naming it, sending `message`, or disabled without one; `primary` is
 /// OK's look. Hovering it tells `tip`.
-fn head_button<'a>(
+pub(crate) fn head_button<'a>(
     icon: Icon,
     id: iced::widget::Id,
     primary: bool,
@@ -516,12 +520,22 @@ fn fail_button(
 /// viewport is too short to leave it [`PANEL_ROOM`] below that. The layer takes only what's over the panel
 /// and lets the rest through.
 pub(crate) fn placed(panel: Element<'_, Message>) -> Element<'_, Message> {
-    Element::new(Placed { panel })
+    placed_from(panel, PANEL_MARGIN)
+}
+
+/// `panel` placed as [`placed`] places one, but `right` in from the
+/// viewport's right: the parameters' popup, left of an operation's
+/// panel. It keeps [`PANEL_MARGIN`] from the viewport's left, and gets
+/// narrower where it has to.
+pub(crate) fn placed_from(panel: Element<'_, Message>, right: f32) -> Element<'_, Message> {
+    Element::new(Placed { panel, right })
 }
 
 /// See [`placed`].
 struct Placed<'a> {
     panel: Element<'a, Message>,
+    /// How far in from the viewport's right the panel's right edge is.
+    right: f32,
 }
 
 impl Placed<'_> {
@@ -556,7 +570,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Placed<'_> {
         let size = limits.resolve(Length::Fill, Length::Fill, Size::ZERO);
         let top = Self::top(size.height);
         let room = Size::new(
-            (size.width - 2.0 * PANEL_MARGIN).max(0.0),
+            (size.width - self.right - PANEL_MARGIN).max(0.0),
             (size.height - top - PANEL_BOTTOM).max(0.0),
         );
         let panel = self.panel.as_widget_mut().layout(
@@ -564,7 +578,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Placed<'_> {
             renderer,
             &layout::Limits::new(Size::ZERO, room),
         );
-        let x = (size.width - PANEL_MARGIN - panel.size().width).max(0.0);
+        let x = (size.width - self.right - panel.size().width).max(0.0);
         layout::Node::with_children(size, vec![panel.move_to((x, top))])
     }
 
@@ -915,7 +929,8 @@ pub(crate) fn ordered_row<'a>(
 }
 
 /// A typed value's field, named `label`, with the id `id`, showing why its
-/// text is refused under it. It sends `input` of the text typed, if the
+/// text is refused under it, and offering the design's parameters' names
+/// as they're typed (see the `suggest` module). It sends `input` of the text typed, if the
 /// document can be changed; `Enter` in it sends `submit` (OK), `Esc`
 /// `cancel`, whatever has the focus: once, however many of a panel's
 /// fields send it (`OnEscape`).
@@ -935,9 +950,17 @@ pub(crate) fn value_field<'a>(
         .padding([6, 8])
         .width(Length::Fill)
         .style(theme::field_input(field_text.error.is_some()));
-    let field_input = match input {
-        Some(input) => field_input.on_input(input).on_submit(submit),
-        None => field_input,
+    let field_input: Element<'a, Message> = match input {
+        Some(on_input) => {
+            let on_input = std::rc::Rc::new(on_input);
+            let typing = std::rc::Rc::clone(&on_input);
+            let typed = field_input
+                .on_input(move |text| typing(text))
+                .on_submit(submit);
+            let params = field_text.params;
+            crate::suggest::suggesting(typed, field_text.text, params, Some(&*on_input))
+        }
+        None => field_input.into(),
     };
     let field_input = OnEscape::new(field_input, cancel);
     let error = field_text.error.map(|error| {
@@ -1102,9 +1125,13 @@ pub(crate) fn message_text<'a>(
 /// A column can't do this: it lays its children out in order, so the
 /// footer would get only what the body leaves, and a body filling the
 /// rest would make the panel always as tall as it may be.
-struct Sections<'a> {
-    width: f32,
-    parts: [Element<'a, Message>; 3],
+pub(crate) struct Sections<'a> {
+    pub(crate) width: f32,
+    pub(crate) parts: [Element<'a, Message>; 3],
+    /// Whether the body sits in the recessed well; without it, the
+    /// panel's colour goes on under the head, as the parameters' popup
+    /// has it.
+    pub(crate) well: bool,
 }
 
 /// How far in from the card's sides and bottom its parts are: inside its
@@ -1289,7 +1316,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Sections<'_> {
             p.panel,
         );
         // The well, from the body's top to the card's border.
-        if let Some(body) = layout.children().nth(1) {
+        if let Some(body) = layout.children().nth(1).filter(|_| self.well) {
             let top = body.bounds().y;
             let well = Rectangle {
                 x: card.x + BORDER,

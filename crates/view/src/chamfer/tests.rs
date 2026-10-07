@@ -25,7 +25,8 @@ fn value(text: &str, ask: &varde_expr::Ask) -> Value {
 /// first, and the status bar the count, the kind and tangent chains.
 #[test]
 fn a_chamfer_s_notes() {
-    let design = Document::example().design();
+    let example = Document::example();
+    let design = example.design();
     let length = Chamfer::distance_ask(&design);
     let angle = Chamfer::angle_ask(&design);
     let mut chamfer = Chamfer {

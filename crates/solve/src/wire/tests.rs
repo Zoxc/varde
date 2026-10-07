@@ -33,18 +33,80 @@ fn constrain(drawn: &Drawn, constraint: Constraint) -> SketchEdit {
 }
 
 #[test]
+fn parameters_past_their_limits_are_refused() {
+    let drawn = drawn();
+    let long = "x".repeat(MAX_NAME_LEN + 1);
+    let many: Vec<(String, String)> = (0..=MAX_PARAMS)
+        .map(|i| (format!("p{i}"), "1".to_owned()))
+        .collect();
+    let long_text = "1".repeat(MAX_LEN + 1);
+    let lists = [
+        vec![(long.as_str(), "1")],
+        vec![("p", long_text.as_str())],
+        many.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect(),
+    ];
+    for list in lists {
+        let posted: Posted<&Sketch, &SketchEdit, Vec<(&str, &str)>> = Posted::Analyse {
+            revision: Revision::from(1),
+            sketch: &drawn.sketch,
+            units: LengthUnit::Mm,
+            params: list,
+        };
+        let bytes = postcard::to_stdvec(&posted).unwrap();
+        assert!(matches!(decode_request(&bytes), Err(Error::TooMany { .. })));
+    }
+}
+
+#[test]
+fn a_dimension_naming_a_parameter_is_checked_with_the_parameters_sent() {
+    let drawn = drawn();
+    let params = Params::evaluate([("width", "4 mm")], LengthUnit::Mm);
+    let ask = Measure::Length(drawn.line).ask(&design(LengthUnit::Mm, &params));
+    let mut sketch = (*drawn.sketch).clone();
+    sketch
+        .add_dimension(Dimension {
+            measure: Measure::Length(drawn.line),
+            value: Value::new("width", &ask).unwrap(),
+            driving: true,
+            label: DVec2::ZERO,
+            side: Side::Positive,
+        })
+        .unwrap();
+    let sketch = Arc::new(sketch);
+    let mut request = analyse_at(3, &sketch);
+    // Without the parameter the sketch is refused; with it, it's taken.
+    assert!(matches!(
+        decode_request(&encode_request(&request, true)),
+        Err(Error::Sketch(_))
+    ));
+    if let Request::Analyse { params: p, .. } = &mut request {
+        *p = Arc::new(params);
+    }
+    decode_request(&encode_request(&request, true)).unwrap();
+}
+
+#[test]
 fn requests_round_trip() {
     let drawn = drawn();
     let edit = constrain(&drawn, Constraint::Fix(drawn.start));
     let mut request = propose_on(2, &drawn.sketch, edit.clone());
-    if let Request::Propose { units, .. } = &mut request {
+    let params = Arc::new(Params::evaluate(
+        [("width", "2 * depth"), ("depth", "5"), ("bad", "nope")],
+        LengthUnit::In,
+    ));
+    if let Request::Propose {
+        units, params: p, ..
+    } = &mut request
+    {
         *units = LengthUnit::In;
+        *p = Arc::clone(&params);
     }
     let Posted::Propose {
         base,
         sketch,
         edit: decoded,
         units,
+        params: resolved,
     } = decode_request(&encode_request(&request, true)).unwrap()
     else {
         panic!("not a proposal");
@@ -53,6 +115,8 @@ fn requests_round_trip() {
         (base, &sketch, decoded, units),
         (Revision::from(2), &*drawn.sketch, edit, LengthUnit::In)
     );
+    // Resolved again on the worker's side, errors and all.
+    assert_eq!(resolved, *params);
 
     let request = drag(4, &drawn.sketch, drawn.end, DVec2::new(1.0, 2.0));
     for with_sketch in [true, false] {
@@ -67,7 +131,10 @@ fn requests_round_trip() {
             panic!("not a drag");
         };
         assert_eq!(session, 4);
-        assert_eq!(sketch.as_ref(), with_sketch.then_some(&*drawn.sketch));
+        assert_eq!(
+            sketch.as_ref().map(|(sketch, _)| sketch),
+            with_sketch.then_some(&*drawn.sketch)
+        );
         assert_eq!(points, [(drawn.end, DVec2::new(1.0, 2.0))]);
         assert!(radii.is_empty());
         assert_eq!(units, LengthUnit::Mm);
@@ -133,6 +200,7 @@ fn an_unmoved_drag_step_is_no_response() {
         points: Vec::new(),
         radii: vec![(drawn.circle, -1.0)],
         units: LengthUnit::Mm,
+        params: Arc::default(),
     };
     assert!(through(&mut solver, &none, true).is_none());
     // A worker without the session, as a new one is, can't step it.
@@ -297,7 +365,9 @@ fn a_rejection_must_name_items_of_the_sketch_the_edit_makes() {
     add.constraints.push(Constraint::Horizontal(drawn.line));
     add.constraints.push(Constraint::Fix(drawn.start));
     let edit = SketchEdit::Add(add);
-    let applied = edit.apply(&drawn.sketch, &design(LengthUnit::Mm)).unwrap();
+    let applied = edit
+        .apply(&drawn.sketch, &design(LengthUnit::Mm, Params::EMPTY))
+        .unwrap();
     let new = applied.constraints[1].id;
     let past = {
         let mut more = applied.clone();
@@ -380,6 +450,7 @@ fn a_request_out_of_bounds_is_an_error() {
             points: Vec::new(),
             radii: vec![(drawn.circle, value)],
             units: LengthUnit::Mm,
+            params: Arc::default(),
         };
         assert!(matches!(
             decode_request(&encode_request(&radius, false)),
@@ -410,6 +481,7 @@ fn a_request_out_of_bounds_is_an_error() {
         points: vec![(drawn.end, DVec2::ZERO); MAX_POINTS + 1],
         radii: Vec::new(),
         units: LengthUnit::Mm,
+        params: Arc::default(),
     };
     assert_eq!(
         decode_request(&encode_request(&many, false)).unwrap_err(),
@@ -466,7 +538,7 @@ fn malformed_bytes_are_refused_never_a_panic() {
     let (dimensioned, id) = dimensioned(&drawn, "2 * 6");
     let value = Value::new(
         "3 in",
-        &Measure::Length(drawn.line).ask(&design(LengthUnit::Mm)),
+        &Measure::Length(drawn.line).ask(&design(LengthUnit::Mm, Params::EMPTY)),
     )
     .unwrap();
     let requests = [
@@ -522,7 +594,7 @@ fn errors_display() {
 fn dimensioned(drawn: &Drawn, text: &str) -> (Arc<Sketch>, Id) {
     let mut sketch = (*drawn.sketch).clone();
     let measure = Measure::Length(drawn.line);
-    let value = Value::new(text, &measure.ask(&design(LengthUnit::Mm))).unwrap();
+    let value = Value::new(text, &measure.ask(&design(LengthUnit::Mm, Params::EMPTY))).unwrap();
     let id = sketch
         .add_dimension(Dimension {
             measure,
@@ -541,7 +613,7 @@ fn dimensions_and_their_edits_cross() {
     let (sketch, id) = dimensioned(&drawn, "5 + 5");
     let value = Value::new(
         "12",
-        &Measure::Length(drawn.line).ask(&design(LengthUnit::Mm)),
+        &Measure::Length(drawn.line).ask(&design(LengthUnit::Mm, Params::EMPTY)),
     )
     .unwrap();
     let mut solver = Solver::default();
@@ -701,7 +773,7 @@ fn a_driving_rejection_must_name_dimensions_it_involves() {
         .push(sketch.dimension(id).unwrap().dimension.clone());
     let edit = SketchEdit::Add(add);
     let new = edit
-        .apply(&sketch, &design(LengthUnit::Mm))
+        .apply(&sketch, &design(LengthUnit::Mm, Params::EMPTY))
         .unwrap()
         .dimensions[1]
         .id;
@@ -754,7 +826,7 @@ fn a_rejection_may_name_a_chamfer_whose_corner_implies_equations() {
             false,
         )
         .unwrap();
-    let design = design(LengthUnit::Mm);
+    let design = design(LengthUnit::Mm, Params::EMPTY);
     let ask = Measure::Length(drawn.line).ask(&design);
     let chamfer = SketchEdit::Chamfer {
         at: drawn.start,

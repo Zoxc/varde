@@ -22,6 +22,7 @@ pub mod name;
 mod offset_face;
 mod opacity;
 mod outside;
+mod param;
 mod pattern;
 mod plane;
 mod removal;
@@ -53,6 +54,7 @@ pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
 pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
 pub use outside::{LinkError, LinkSource, OutsideRef, sketch_face};
+pub use param::{Param, ParamError, ParamUses};
 pub use pattern::{Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternKind};
 pub use plane::{FaceRef, FaceSetError, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
@@ -74,7 +76,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 // The types and limits the model's API names, so that clients editing a
 // document need only this crate.
-pub use varde_expr::LengthUnit;
+pub use varde_expr::{LengthUnit, Params};
 pub use varde_kernel::mesh::{FaceKey, PartKey};
 pub use varde_kernel::{MAX_COORD, Tolerance};
 pub use varde_sketch::{Design, Id, RegionRef, Sketch, SketchError};
@@ -164,6 +166,16 @@ pub struct Document {
     /// read as none.
     #[serde(default)]
     rollback: Option<FeatureId>,
+    /// The design's parameters, see [`Param`]. Missing in older files,
+    /// which read as none.
+    #[serde(default)]
+    params: Vec<Param>,
+    /// `params` resolved in `units`, kept in step with both: not stored,
+    /// but worked out again as a document is read. Shared, so that copies
+    /// of the document and the panels reading values with it
+    /// ([`Document::params_shared`]) don't copy it.
+    #[serde(skip)]
+    resolved: Arc<Params>,
 }
 
 /// A new design: no bodies or features, in millimetres, to the default
@@ -177,6 +189,8 @@ impl Default for Document {
             tolerance: Tolerance::DEFAULT.fit(),
             next_id: 0,
             rollback: None,
+            params: Vec::new(),
+            resolved: Arc::default(),
         }
     }
 }
@@ -198,6 +212,8 @@ pub struct Unchecked {
     next_id: u64,
     #[serde(default)]
     rollback: Option<FeatureId>,
+    #[serde(default)]
+    params: Vec<Param>,
 }
 
 impl Unchecked {
@@ -212,6 +228,7 @@ impl Unchecked {
             tolerance,
             next_id,
             rollback,
+            params,
         } = self;
         for feature in &mut features {
             if let FeatureKind::Sketch { sketch, .. } = &mut feature.kind {
@@ -219,6 +236,10 @@ impl Unchecked {
                 let _ = sketch.add_handle_ends();
             }
         }
+        // Checked before resolving, which takes whatever it's given but
+        // bounds the work by the checked limits.
+        param::check_params(&params)?;
+        let resolved = param::resolve(&params, units);
         let document = Document {
             bodies,
             features,
@@ -226,6 +247,8 @@ impl Unchecked {
             tolerance,
             next_id,
             rollback,
+            params,
+            resolved,
         };
         document.check()?;
         Ok(document.with_sketch_faces())
@@ -324,12 +347,13 @@ impl Document {
         Tolerance::new(self.tolerance).unwrap_or_default()
     }
 
-    /// What the document's sketches are checked against: [`MAX_COORD`]
-    /// and its units.
-    pub fn design(&self) -> Design {
+    /// What the document's sketches and values are checked against:
+    /// [`MAX_COORD`], its units and its parameters, resolved.
+    pub fn design(&self) -> Design<'_> {
         Design {
             max: f64::from(MAX_COORD),
             units: self.units,
+            params: &self.resolved,
         }
     }
 
@@ -344,7 +368,13 @@ impl Document {
     }
 
     /// Checks what a file or a [`Command`] could get wrong, and
-    /// [`Editor::apply`] refuses a command that does: body ids are in
+    /// [`Editor::apply`] refuses a command that does: the parameters are
+    /// at most [`MAX_PARAMS`](varde_expr::MAX_PARAMS), each named as
+    /// [`check_name`](varde_expr::check_name) takes, no name twice, each
+    /// text at most [`MAX_LEN`](varde_expr::MAX_LEN) bytes (an expression
+    /// may be in error: only values using it may not, which their
+    /// features' checks find, every value read with the parameters,
+    /// [`Document::design`]); body ids are in
     /// increasing order and below `next_id`, so bodies added later get new
     /// ids and come last, where an edit adds them, and the same for
     /// feature ids; no name is longer than [`MAX_NAME_LEN`]; every body's
@@ -409,6 +439,11 @@ impl Document {
     /// checked against their sketches here (see [`Revolve::check_axis`],
     /// [`Sweep::check_curves`] and [`Loft::check_names`]).
     pub fn check(&self) -> Result<(), CheckError> {
+        param::check_params(&self.params)?;
+        debug_assert!(
+            self.resolved == param::resolve(&self.params, self.units),
+            "the resolved parameters are kept in step"
+        );
         // Orders first: features and bodies are found by binary search.
         if let Some(pair) = self
             .features
@@ -1267,6 +1302,11 @@ pub enum CheckError {
     FeatureNextId(FeatureId),
     /// The Timeline is rolled back to before a feature that isn't there.
     Rollback(FeatureId),
+    /// The parameter at this index is wrong, see [`ParamError`].
+    Param(usize, ParamError),
+    /// There are this many parameters, over
+    /// [`MAX_PARAMS`](varde_expr::MAX_PARAMS).
+    Params(usize),
 }
 
 impl fmt::Display for CheckError {
@@ -1348,6 +1388,12 @@ impl fmt::Display for CheckError {
                     id.0
                 )
             }
+            CheckError::Param(index, why) => write!(f, "parameter {}: {why}", index + 1),
+            CheckError::Params(count) => write!(
+                f,
+                "there are {count} parameters, over the limit of {}",
+                varde_expr::MAX_PARAMS
+            ),
         }
     }
 }
@@ -1373,6 +1419,7 @@ impl std::error::Error for CheckError {
             CheckError::FaceDraft(_, why) => Some(why),
             CheckError::Sweep(_, why) => Some(why),
             CheckError::Loft(_, why) => Some(why),
+            CheckError::Param(_, why) => Some(why),
             _ => None,
         }
     }
@@ -1397,6 +1444,27 @@ pub enum EditError {
     /// sketch face ([`sketch_face`]) of this sketch feature, which stays
     /// while the sketch is on its face.
     SketchFace(FeatureId),
+    /// A parameter command would leave this value in error: a feature's
+    /// that uses the parameter (directly or through others) or, renaming
+    /// one, a parameter's text the new name takes over
+    /// [`MAX_LEN`](varde_expr::MAX_LEN).
+    Value(ValueOf, varde_expr::Error),
+    /// [`Command::RemoveParam`] was asked to remove this parameter, which
+    /// a feature value or another parameter uses.
+    ParamUsed(String),
+    /// A parameter command changes dimensions of this sketch feature's
+    /// sketch, which then doesn't solve, see
+    /// [`varde_sketch::revalue`].
+    Unsolved(FeatureId, varde_sketch::Rejected),
+}
+
+/// Whose value an [`EditError::Value`] is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ValueOf {
+    /// One of this feature's values.
+    Feature(FeatureId),
+    /// The text of the parameter at this index.
+    Param(usize),
 }
 
 impl fmt::Display for EditError {
@@ -1409,6 +1477,16 @@ impl fmt::Display for EditError {
                 f.write_str("sketches are added and set by their own commands")
             }
             EditError::SketchFace(_) => f.write_str("the sketch face can't be removed"),
+            EditError::Value(ValueOf::Feature(id), why) => {
+                write!(f, "feature {}: a value would be in error: {why}", id.0)
+            }
+            EditError::Value(ValueOf::Param(index), why) => {
+                write!(f, "parameter {}: {why}", index + 1)
+            }
+            EditError::ParamUsed(name) => write!(f, "the parameter '{name}' is in use"),
+            EditError::Unsolved(id, why) => {
+                write!(f, "feature {}: the sketch wouldn't solve: {why}", id.0)
+            }
         }
     }
 }
@@ -1416,9 +1494,14 @@ impl fmt::Display for EditError {
 impl std::error::Error for EditError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            EditError::OutOfIds | EditError::SketchKind | EditError::SketchFace(_) => None,
+            EditError::OutOfIds
+            | EditError::SketchKind
+            | EditError::SketchFace(_)
+            | EditError::ParamUsed(_) => None,
             EditError::Invalid(why) => Some(why),
+            EditError::Value(_, why) => Some(why),
             EditError::Sketch(_, why) => Some(why),
+            EditError::Unsolved(_, why) => Some(why),
         }
     }
 }

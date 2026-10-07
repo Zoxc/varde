@@ -37,8 +37,8 @@ fn malformed_bytes_are_refused() {
 fn deserializing_a_document_checks_it() {
     let mut bytes = with_body().to_postcard();
     // The next id, now 0, which the body's id 1 isn't below: before the
-    // rollback, none.
-    let next = bytes.len() - 2;
+    // rollback, none, and the parameters, none.
+    let next = bytes.len() - 3;
     assert_eq!(bytes[next + 1], 0);
     bytes[next] = 0;
     assert!(postcard::from_bytes::<Document>(&bytes).is_err());
@@ -90,8 +90,9 @@ fn a_document_encodes_as_before() {
             // empty: no links, and no link sources.
             1, 0, 8, 83, 107, 101, 116, 99, 104, 32, 49, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             // Millimetres, the tolerance, 0.001 as an f64, the next id,
-            // and no rollback.
-            0, 0xfc, 0xa9, 0xf1, 0xd2, 0x4d, 0x62, 0x50, 0x3f, 1, 0
+            // no rollback and no parameters (the resolved ones aren't
+            // stored).
+            0, 0xfc, 0xa9, 0xf1, 0xd2, 0x4d, 0x62, 0x50, 0x3f, 1, 0, 0
         ]
     );
 }

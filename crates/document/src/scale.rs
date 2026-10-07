@@ -72,13 +72,13 @@ impl Scale {
     /// What a factor is checked against in `design`: a number from
     /// `1 / `[`MAX_SCALE_FACTOR`] to [`MAX_SCALE_FACTOR`]
     /// ([`Ask::factor`]).
-    pub fn factor_ask(design: &Design) -> Ask {
-        Ask::factor(design.units, MAX_SCALE_FACTOR)
+    pub fn factor_ask<'p>(design: &Design<'p>) -> Ask<'p> {
+        Ask::factor(design.units, MAX_SCALE_FACTOR).with_params(design.params)
     }
 
     /// What an edge length is checked against in `design`: a length as
     /// an extrude's distance ([`Extent::ask`]).
-    pub fn length_ask(design: &Design) -> Ask {
+    pub fn length_ask<'p>(design: &Design<'p>) -> Ask<'p> {
         Extent::ask(design)
     }
 
@@ -117,7 +117,7 @@ impl Scale {
 
     /// Its typed values and what each is checked against in `design`:
     /// the factors, or the edge length.
-    pub(crate) fn values_mut(&mut self, design: &Design) -> Vec<(&mut Value, Ask)> {
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
         let factor = Scale::factor_ask(design);
         match &mut self.factor {
             ScaleFactor::Uniform(value) => vec![(value, factor)],

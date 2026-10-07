@@ -817,7 +817,9 @@ fn a_pattern_and_its_draft_round_trip() {
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
-    let design = editor.document().design();
+    // A copy, as the edits below change the document.
+    let held = editor.document().clone();
+    let design = held.design();
     let row = |step: &str| Pattern {
         bodies: vec![plate],
         kind: PatternKind::Linear {
@@ -895,7 +897,9 @@ fn a_move_a_mirror_and_a_draft_round_trip() {
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
-    let design = editor.document().design();
+    // A copy, as the edits below change the document.
+    let held = editor.document().clone();
+    let design = held.design();
     let length = |text: &str| Value::new(text, &Move::offset_ask(&design)).unwrap();
     let moved = Move {
         bodies: vec![plate],
@@ -3319,7 +3323,9 @@ fn a_draft_s_list_of_copy_bodies_is_laid_out_again_or_refused() {
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
-    let design = editor.document().design();
+    // A copy, as the edits below change the document.
+    let held = editor.document().clone();
+    let design = held.design();
     let row = |copies: Copies| Pattern {
         bodies: vec![plate],
         kind: PatternKind::Linear {

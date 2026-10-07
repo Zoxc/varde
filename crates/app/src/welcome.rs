@@ -756,7 +756,7 @@ fn offered(
     name: &str,
 ) -> Option<Recovery> {
     match recovered {
-        Ok(offer) => offer.map(Recovery::Offered),
+        Ok(offer) => offer.map(|offer| Recovery::Offered(Box::new(offer))),
         Err(error) => {
             log::error!("Ignored what was auto-saved of {name}: {error}");
             error.kept.then_some(Recovery::Kept)

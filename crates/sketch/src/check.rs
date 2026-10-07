@@ -4,19 +4,23 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use varde_expr::LengthUnit;
+use varde_expr::{LengthUnit, Params};
 
 use crate::origin::LAST_ID;
 use crate::{Constraint, Curve, Id, Role, Sketch};
 
 /// What a sketch is checked against, from the design it's part of: the
-/// coordinate limit, and the design's units, in which bare numbers in
-/// dimensions' expressions are read.
+/// coordinate limit, the design's units, in which bare numbers in
+/// dimensions' expressions are read, and its parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Design {
+pub struct Design<'a> {
     /// How far from zero a coordinate may be, and the largest radius.
     pub max: f64,
     pub units: LengthUnit,
+    /// The design's parameters, resolved: what names in dimensions'
+    /// expressions (and features' values) are read with
+    /// ([`Measure::ask`](crate::Measure::ask)).
+    pub params: &'a Params,
 }
 
 /// One of a sketch's lists of items, as [`SketchError::TooMany`] names it.

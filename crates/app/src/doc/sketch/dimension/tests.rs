@@ -796,3 +796,73 @@ fn values_typed_while_new_units_wait_are_read_in_the_units_shown() {
     doc.update(Edit::Undo);
     assert!((length(sketch(&doc), line) - 20.0).abs() < 1e-9);
 }
+
+/// What Tab in the value field does on the screen shown headless, the
+/// field focused with its caret at the end, as after typing: the
+/// messages the widgets send, and whether they left the key to the app.
+fn tab_in_field(doc: &Doc) -> (Vec<Ui>, bool) {
+    use iced::advanced::widget::operation::focusable;
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = UserInterface::build(
+        doc.view_in(Mode::Light),
+        Size::new(1280.0, 800.0),
+        Cache::default(),
+        &mut renderer,
+    );
+    ui.operate(&renderer, &mut focusable::focus(varde_view::VALUE_FIELD));
+    let tab = typing(keyboard::Key::Named(key::Named::Tab), None);
+    let mut sent = Vec::new();
+    let (_, statuses) = ui.update(
+        std::slice::from_ref(&tab),
+        mouse::Cursor::Unavailable,
+        &mut renderer,
+        &mut iced::advanced::clipboard::Null,
+        &mut sent,
+    );
+    (sent, statuses == [iced::event::Status::Ignored])
+}
+
+#[test]
+fn a_parameter_s_name_is_offered_taken_with_tab_and_followed() {
+    let (mut doc, line) = line_to_dimension();
+    pick(&mut doc, 5.0, 0.0, line[2]);
+    place(&mut doc, 5.0, 3.0);
+    enter(&mut doc, "10");
+    doc.apply(varde_document::Command::AddParam {
+        name: "width".into(),
+        text: "25 mm".into(),
+    });
+    // In the Constraints list, as the field over the viewport is placed
+    // by the camera.
+    let id = sketch(&doc).dimensions[0].id;
+    doc.look(Look::EditDimension { id, in_list: true });
+    doc.look(Look::ValueInput("wi".to_owned()));
+    let (sent, left) = tab_in_field(&doc);
+    assert!(!left, "Tab is the field's");
+    let [Ui::Look(Look::ValueInput(text))] = sent.as_slice() else {
+        panic!("{sent:?}");
+    };
+    assert_eq!(text, "width");
+    doc.look(Look::ValueInput(text.clone()));
+    doc.update(Edit::SubmitValue);
+    let dimension = &sketch(&doc).dimensions[0].dimension;
+    assert_eq!(
+        (dimension.value.text.as_str(), dimension.value.value),
+        ("width", 25.0)
+    );
+    assert!((length(sketch(&doc), line) - 25.0).abs() < 1e-9);
+
+    // Changing the parameter solves the sketch again then and there.
+    doc.apply(varde_document::Command::SetParam {
+        index: 0,
+        text: "30 mm".into(),
+    });
+    assert!(doc.edit_error.is_none(), "{:?}", doc.edit_error);
+    assert!((length(sketch(&doc), line) - 30.0).abs() < 1e-9);
+
+    // With nothing to offer, Tab is the app's, as before.
+    doc.look(Look::EditDimension { id, in_list: true });
+    doc.look(Look::ValueInput("2 * x".to_owned()));
+    let (sent, left) = tab_in_field(&doc);
+    assert!(sent.is_empty() && left, "{sent:?}");
+}

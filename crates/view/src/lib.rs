@@ -33,6 +33,7 @@ mod offset_face;
 mod operation_panel;
 mod overlaps;
 mod panels;
+mod params;
 mod pick;
 mod plane_pick;
 #[cfg(any(test, feature = "probe"))]
@@ -49,6 +50,7 @@ mod snap;
 pub mod spline;
 mod split;
 mod status;
+mod suggest;
 mod sweep;
 mod toast;
 pub use sweep::sweep_info;
@@ -102,6 +104,7 @@ pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
 };
 pub use overlaps::{OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps};
+pub use params::{ParamDraft, ParamEdit, ParamField, ParamsLook, ParamsState, param_name_id};
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
@@ -118,6 +121,7 @@ pub use shortcut::{
 };
 pub use snap::{Inference, Level, Own, SNAP_TOLERANCE, Snap, Target, closing};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
+pub use suggest::{MAX_SUGGESTIONS, ParamsIn, Suggestion, suggest, take as take_suggestion};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
 pub use thumbnail::{
     THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailImages, ThumbnailRequest, thumbnail_shot,
@@ -322,6 +326,8 @@ pub enum File {
 /// menu and banner that lead to more.
 #[derive(Debug, Clone)]
 pub enum Edit {
+    /// Changes the design's parameters, see [`ParamEdit`].
+    Param(ParamEdit),
     /// Hides why the last save failed.
     DismissSaveError,
     /// Hides why the last export failed.
@@ -585,6 +591,11 @@ pub enum Look {
     StartMeasure,
     /// Changes the measure tool, see [`MeasureLook`].
     Measure(MeasureLook),
+    /// Opens the parameters' popup, or closes it: the Modify set's
+    /// Parameters tool, or the popup's Close.
+    ToggleParams,
+    /// Changes the parameters' popup, see [`ParamsLook`].
+    Params(ParamsLook),
     /// Leaves the sketch being edited.
     FinishSketch,
     /// Selects a feature in the Timeline.

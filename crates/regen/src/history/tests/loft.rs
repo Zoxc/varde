@@ -334,7 +334,8 @@ fn a_transition_piece_joins_two_bosses() {
         new_body(),
     );
     let upper = editor.document().bodies().last().unwrap().id;
-    let ask = Move::offset_ask(&editor.document().design());
+    let held = editor.document().clone();
+    let ask = Move::offset_ask(&held.design());
     let offset = |z: &str| {
         [
             Value::new("0", &ask).unwrap(),

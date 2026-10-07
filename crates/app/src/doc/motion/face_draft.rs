@@ -44,7 +44,7 @@ impl MotionSession {
     /// Opens the draft `draft` in this session: its faces, neutral plane,
     /// angle, Flip and Tangent faces.
     pub(super) fn open_face_draft(&mut self, draft: &FaceDraft) {
-        let ask = FaceDraft::angle_ask(&self.design);
+        let ask = FaceDraft::angle_ask(&self.read_in.design());
         self.fields[MotionField::Angle.index()] = TypedText::of(&draft.angle, &ask);
         self.plane = Some(draft.neutral);
         self.flip = draft.flip;

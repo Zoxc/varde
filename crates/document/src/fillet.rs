@@ -29,7 +29,7 @@ pub struct Fillet {
 impl Fillet {
     /// What its radius is checked against in `design`: a length as an
     /// extrude's distance ([`Extent::ask`]).
-    pub fn radius_ask(design: &Design) -> Ask {
+    pub fn radius_ask<'p>(design: &Design<'p>) -> Ask<'p> {
         Extent::ask(design)
     }
 
@@ -57,7 +57,7 @@ impl Fillet {
     }
 
     /// Its typed values and what each is checked against in `design`.
-    pub(crate) fn values_mut(&mut self, design: &Design) -> Vec<(&mut Value, Ask)> {
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
         vec![(&mut self.radius, Fillet::radius_ask(design))]
     }
 }

@@ -2,14 +2,14 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use varde_expr::LengthUnit;
+use varde_expr::{LengthUnit, exact};
 use varde_kernel::Tolerance;
-use varde_sketch::{LinkKind, Sketch};
+use varde_sketch::{Budget, LinkKind, Sketch, Unrevalued};
 
 use crate::{
     Body, BodyId, CheckError, Copies, Document, EditError, FeatureId, FeatureKind, Id, LinkSource,
-    MAX_PATTERN_BODIES, Move, Named, Opacity, Operation, OutsideRef, Pattern, Plane, Removable,
-    Snapshot, Tint, Turn, sketch_face,
+    MAX_PATTERN_BODIES, Named, Opacity, Operation, OutsideRef, Param, Pattern, Plane, Removable,
+    Snapshot, Tint, ValueOf, param, sketch_face,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
@@ -124,11 +124,48 @@ pub enum Command {
         target: Named,
         name: String,
     },
-    /// Changes the design's units. Every dimension's expression first has
-    /// the old units written in after its bare numbers
-    /// ([`Sketch::pin_units`]), so it means what it did, and no value or
-    /// geometry changes.
+    /// Changes the design's units. Every dimension's, feature value's and
+    /// parameter's expression first has the old units written in after
+    /// its bare numbers ([`Sketch::pin_units`],
+    /// [`Value::pin_units`](varde_expr::Value::pin_units),
+    /// [`Params::pin_units`](varde_expr::Params::pin_units)), so it means
+    /// what it did, and no value or geometry changes. One the units would
+    /// take too long is replaced by its value ([`varde_expr::exact`]); a
+    /// parameter's in error, which has none, stays as it is.
     SetUnits(LengthUnit),
+    /// Adds a parameter, `name = text`, after the others. Its name must
+    /// be one [`varde_expr::check_name`] takes, no other parameter's; its
+    /// text may be in error, as nothing uses it yet.
+    AddParam {
+        name: String,
+        text: String,
+    },
+    /// Sets the expression of the parameter at `index`, without the
+    /// whitespace around it, and evaluates every feature value and sketch
+    /// dimension naming a parameter again, the geometry following: a
+    /// sketch whose driving dimensions change is solved again here, within
+    /// the solver's iteration bound ([`varde_sketch::revalue`]), in the
+    /// same undo step. Refused, as [`EditError::Value`], where a value
+    /// that uses it, directly or through other parameters, would be in
+    /// error, and as [`EditError::Unsolved`] where a sketch wouldn't
+    /// solve. One that isn't there changes nothing.
+    SetParam {
+        index: usize,
+        text: String,
+    },
+    /// Renames the parameter at `index`, rewriting every use of it in
+    /// feature values, sketch dimensions and other parameters
+    /// ([`varde_expr::rename`]).
+    /// Refused as [`EditError::Value`] where that takes an expression
+    /// over [`varde_expr::MAX_LEN`]. One that isn't there changes nothing.
+    RenameParam {
+        index: usize,
+        name: String,
+    },
+    /// Removes the parameter at `index`: refused, as
+    /// [`EditError::ParamUsed`], while a feature value, a sketch
+    /// dimension or another parameter uses it. One that isn't there changes nothing.
+    RemoveParam(usize),
     /// Changes the design's tolerance, see [`Document::tolerance`].
     SetTolerance(Tolerance),
     /// Replaces the whole document, e.g. with unsaved changes recovered
@@ -506,6 +543,145 @@ impl Document {
         self.drop_excluded(bodies);
     }
 
+    /// The document with feature `feature`'s kind set to `kind`, as
+    /// [`Command::SetFeature`] does; `None` if that changes nothing.
+    fn with_kind(
+        &self,
+        feature: FeatureId,
+        mut kind: Box<FeatureKind>,
+    ) -> Result<Option<Document>, EditError> {
+        let Some((index, old)) = self
+            .feature_index(feature)
+            .map(|index| (index, &self.features[index].kind))
+        else {
+            return Ok(None);
+        };
+        if matches!(old, FeatureKind::Sketch { .. }) || matches!(*kind, FeatureKind::Sketch { .. })
+        {
+            return Err(EditError::SketchKind);
+        }
+        planned_new_body(Some(old), &mut kind);
+        let kept = old.new_body();
+        let copies = match &mut *kind {
+            FeatureKind::Pattern(pattern) => {
+                let planned = planned_copies(Some(old), pattern);
+                // Every copy kept: the list as it'll be, for
+                // telling an edit that changes nothing.
+                if let Some(made) = (planned.as_ref())
+                    .and_then(|planned| planned.iter().copied().collect::<Option<Vec<_>>>())
+                {
+                    pattern.copies = Copies::Separate(made);
+                }
+                planned
+            }
+            _ => None,
+        };
+        if *old == *kind {
+            return Ok(None);
+        }
+        let mut next = self.clone();
+        let makes_body = kind.new_body().is_some();
+        let dropped = self.copies_dropped(feature, &kind);
+        next.features[index].kind = *kind;
+        next.remove_bodies(&dropped);
+        if let Some(planned) = copies {
+            next.make_copies(feature, planned)?;
+        }
+        match (kept, makes_body) {
+            (Some(body), false) => {
+                if let Some(at) = next.body_index(body) {
+                    next.bodies.remove(at);
+                }
+                next.drop_excluded(&[body]);
+            }
+            (None, true) => match next.features[index].kind.new_body() {
+                // Made again with the id it held.
+                Some(held) if held != BodyId::NEW => next.restore_body(feature, held),
+                _ => {
+                    let body = next.add_body(feature)?;
+                    next.set_new_body(feature, body);
+                }
+            },
+            _ => {}
+        }
+        next.check_new(index, &next.features[index].kind)?;
+        Ok(Some(next))
+    }
+
+    /// The document with `params` for its parameters, resolved, and every
+    /// feature value and sketch dimension naming a parameter evaluated
+    /// again, as the parameter commands do, each sketch whose dimensions
+    /// change solved again ([`varde_sketch::revalue`]) within `budget`; with `renamed`, the old name and the new, each use of
+    /// the old in feature values (and in `params`, which the caller
+    /// renames) written as the new first. `None` if nothing changes.
+    fn with_params(
+        &self,
+        params: Vec<Param>,
+        renamed: Option<(&str, &str)>,
+        budget: &Budget,
+    ) -> Result<Option<Document>, EditError> {
+        if params == self.params {
+            return Ok(None);
+        }
+        param::check_params(&params).map_err(EditError::Invalid)?;
+        let mut next = self.clone();
+        next.resolved = param::resolve(&params, self.units);
+        next.params = params;
+        let design = next.design();
+        let mut changed = Vec::new();
+        let mut sketches = Vec::new();
+        for (index, feature) in next.features.iter().enumerate() {
+            if let FeatureKind::Sketch { sketch, .. } = &feature.kind {
+                let error = |why| EditError::Value(ValueOf::Feature(feature.id), why);
+                let mut renamed_sketch = None;
+                if let Some((old, new)) = renamed {
+                    let mut copy = sketch.clone();
+                    for entry in &mut copy.dimensions {
+                        let value = &mut entry.dimension.value;
+                        value.text = varde_expr::rename(&value.text, old, new).map_err(error)?;
+                    }
+                    renamed_sketch = Some(copy);
+                }
+                let base = renamed_sketch.as_ref().unwrap_or(sketch);
+                // Solved within the caller's bound, as a proposal is, but
+                // here and now: the change is one undo step.
+                let solved = match varde_sketch::revalue(base, &design, budget) {
+                    Ok(solved) => solved.or(renamed_sketch),
+                    Err(Unrevalued::Value(_, why)) => return Err(error(why)),
+                    Err(Unrevalued::Rejected(why)) => {
+                        return Err(EditError::Unsolved(feature.id, why));
+                    }
+                };
+                if let Some(solved) = solved.filter(|solved| solved != sketch) {
+                    sketches.push((index, solved));
+                }
+                continue;
+            }
+            let mut kind = feature.kind.clone();
+            for (value, ask) in kind.values_mut(&design) {
+                let error = |why| EditError::Value(ValueOf::Feature(feature.id), why);
+                if let Some((old, new)) = renamed {
+                    value.text = varde_expr::rename(&value.text, old, new).map_err(error)?;
+                }
+                if !varde_expr::names(&value.text).is_empty() {
+                    value.value = varde_expr::evaluate(&value.text, &ask).map_err(error)?;
+                }
+            }
+            if kind != feature.kind {
+                changed.push((feature.id, Box::new(kind)));
+            }
+        }
+        for (index, sketch) in sketches {
+            next.set_sketch(index, sketch, None);
+        }
+        for (feature, kind) in changed {
+            if let Some(set) = next.with_kind(feature, kind)? {
+                next = set;
+            }
+        }
+        Ok(Some(next))
+    }
+
     /// Checks what [`Command::AddFeature`] and [`Command::SetFeature`]
     /// require of `kind`, feature `index` of this document, beyond
     /// [`Document::check`]: a revolve's axis is a line of its sketch, a
@@ -681,7 +857,17 @@ impl Editor {
     /// leaving the document, its history, revision and generation as they
     /// were. One that would change nothing leaves them as they were too.
     pub fn apply(&mut self, command: Command) -> Result<(), EditError> {
-        self.change(command, true)
+        self.change(command, true, &Budget::default())
+    }
+
+    /// Applies `command` as [`Editor::apply`] does, sketches it solves
+    /// again (as a parameter's change does) solved within `budget`: one
+    /// that runs out refuses the command as one that won't solve does,
+    /// [`EditError::Unsolved`] with [`Failure::OutOfTime`](varde_sketch::Failure::OutOfTime). For the UI
+    /// thread, which must not wait on the solver unbounded; the caller
+    /// keeps the clock, as the web has no `std::time::Instant`.
+    pub fn apply_within(&mut self, command: Command, budget: &Budget) -> Result<(), EditError> {
+        self.change(command, true, budget)
     }
 
     /// Applies `command` as [`Editor::apply`] does, but folded into the
@@ -692,11 +878,17 @@ impl Editor {
     /// generation as with any change. Refused as [`Editor::apply`]
     /// refuses, leaving everything as it was.
     pub fn amend(&mut self, command: Command) -> Result<(), EditError> {
-        self.change(command, false)
+        self.change(command, false, &Budget::default())
     }
 
-    /// [`Editor::apply`], or, unless `own_step`, [`Editor::amend`].
-    fn change(&mut self, command: Command, own_step: bool) -> Result<(), EditError> {
+    /// [`Editor::apply`], or, unless `own_step`, [`Editor::amend`], with
+    /// sketches solved within `budget`.
+    fn change(
+        &mut self,
+        command: Command,
+        own_step: bool,
+        budget: &Budget,
+    ) -> Result<(), EditError> {
         // Each edit works on a private copy, so a refused one leaves `self`
         // as it was, and one that would change nothing returns before
         // copying.
@@ -819,65 +1011,10 @@ impl Editor {
                 next.check_new(index, &next.features[index].kind)?;
                 next
             }
-            Command::SetFeature { feature, mut kind } => {
-                let Some((index, old)) = document
-                    .feature_index(feature)
-                    .map(|index| (index, &document.features[index].kind))
-                else {
-                    return Ok(());
-                };
-                if matches!(old, FeatureKind::Sketch { .. })
-                    || matches!(*kind, FeatureKind::Sketch { .. })
-                {
-                    return Err(EditError::SketchKind);
-                }
-                planned_new_body(Some(old), &mut kind);
-                let kept = old.new_body();
-                let copies = match &mut *kind {
-                    FeatureKind::Pattern(pattern) => {
-                        let planned = planned_copies(Some(old), pattern);
-                        // Every copy kept: the list as it'll be, for
-                        // telling an edit that changes nothing.
-                        if let Some(made) = (planned.as_ref())
-                            .and_then(|planned| planned.iter().copied().collect::<Option<Vec<_>>>())
-                        {
-                            pattern.copies = Copies::Separate(made);
-                        }
-                        planned
-                    }
-                    _ => None,
-                };
-                if *old == *kind {
-                    return Ok(());
-                }
-                let mut next = Document::clone(document);
-                let makes_body = kind.new_body().is_some();
-                let dropped = document.copies_dropped(feature, &kind);
-                next.features[index].kind = *kind;
-                next.remove_bodies(&dropped);
-                if let Some(planned) = copies {
-                    next.make_copies(feature, planned)?;
-                }
-                match (kept, makes_body) {
-                    (Some(body), false) => {
-                        if let Some(at) = next.body_index(body) {
-                            next.bodies.remove(at);
-                        }
-                        next.drop_excluded(&[body]);
-                    }
-                    (None, true) => match next.features[index].kind.new_body() {
-                        // Made again with the id it held.
-                        Some(held) if held != BodyId::NEW => next.restore_body(feature, held),
-                        _ => {
-                            let body = next.add_body(feature)?;
-                            next.set_new_body(feature, body);
-                        }
-                    },
-                    _ => {}
-                }
-                next.check_new(index, &next.features[index].kind)?;
-                next
-            }
+            Command::SetFeature { feature, kind } => match document.with_kind(feature, kind)? {
+                Some(next) => next,
+                None => return Ok(()),
+            },
             Command::RemoveFeature(id) => {
                 let removal = document.removal(Removable::Feature(id));
                 if removal.is_empty() {
@@ -934,93 +1071,81 @@ impl Editor {
                 }
                 let mut next = Document::clone(document);
                 let before = document.design();
-                let angle = Turn::ask(&before);
-                let offset = Move::offset_ask(&before);
-                let angle_ask = Move::angle_ask(&before);
                 for feature in &mut next.features {
-                    match &mut feature.kind {
-                        FeatureKind::Sketch { sketch, .. } => sketch.pin_units(&before),
-                        FeatureKind::Extrude(extrude) => {
-                            for (value, ask) in extrude.values_mut(&before) {
-                                value.pin_units(&ask);
-                            }
-                        }
-                        FeatureKind::Revolve(revolve) => {
-                            for value in revolve.extent.values_mut() {
-                                value.pin_units(&angle);
-                            }
-                        }
-                        FeatureKind::Move(moved) => {
-                            let (offsets, angle) = moved.values_mut();
-                            for value in offsets {
-                                value.pin_units(&offset);
-                            }
-                            if let Some(value) = angle {
-                                value.pin_units(&angle_ask);
-                            }
-                        }
-                        FeatureKind::Pattern(pattern) => {
-                            for (value, ask) in pattern.values_mut(&before) {
-                                value.pin_units(&ask);
-                            }
-                        }
-                        FeatureKind::Align(align) => {
-                            if let Some(value) = &mut align.offset {
-                                value.pin_units(&offset);
-                            }
-                            if let Some(value) = &mut align.turn {
-                                value.pin_units(&angle_ask);
-                            }
-                        }
-                        // Factors have no unit, but are pinned as a
-                        // pattern's count is: a bare number added to a
-                        // length inside one took the units.
-                        FeatureKind::Scale(scale) => {
-                            for (value, ask) in scale.values_mut(&before) {
-                                value.pin_units(&ask);
-                            }
-                        }
-                        FeatureKind::Chamfer(chamfer) => {
-                            for (value, ask) in chamfer.values_mut(&before) {
-                                value.pin_units(&ask);
-                            }
-                        }
-                        FeatureKind::Shell(shell) => {
-                            for (value, ask) in shell.values_mut(&before) {
-                                value.pin_units(&ask);
-                            }
-                        }
-                        FeatureKind::Fillet(fillet) => {
-                            for (value, ask) in fillet.values_mut(&before) {
-                                value.pin_units(&ask);
-                            }
-                        }
-                        FeatureKind::OffsetFace(offset) => {
-                            for (value, ask) in offset.values_mut(&before) {
-                                value.pin_units(&ask);
-                            }
-                        }
-                        FeatureKind::FaceDraft(draft) => {
-                            for (value, ask) in draft.values_mut(&before) {
-                                value.pin_units(&ask);
-                            }
-                        }
-                        // Turns have no unit, but are pinned as a
-                        // scale's factors are.
-                        FeatureKind::Sweep(sweep) => {
-                            for (value, ask) in sweep.values_mut(&before) {
-                                value.pin_units(&ask);
-                            }
-                        }
-                        // No values.
-                        FeatureKind::Combine(_)
-                        | FeatureKind::Mirror(_)
-                        | FeatureKind::Split(_)
-                        | FeatureKind::Loft(_) => {}
+                    if let FeatureKind::Sketch { sketch, .. } = &mut feature.kind {
+                        sketch.pin_units(&before);
+                    }
+                    // Counts, factors and turns have no unit, but are
+                    // pinned all the same: a bare number added to a length
+                    // inside one took the units.
+                    for (value, ask) in feature.kind.values_mut(&before) {
+                        value.pin_units(&ask);
+                    }
+                }
+                for (param, result) in next.params.iter_mut().zip(document.resolved.iter()) {
+                    if let (_, Ok(resolved)) = result {
+                        param.text = (document.resolved)
+                            .pin_units(&param.text, document.units)
+                            .unwrap_or_else(|_| exact(resolved.value, resolved.quantity));
                     }
                 }
                 next.units = units;
+                next.resolved = param::resolve(&next.params, units);
                 next
+            }
+            Command::AddParam { name, text } => {
+                let mut params = document.params.clone();
+                params.push(Param {
+                    name,
+                    text: text.trim().to_owned(),
+                });
+                match document.with_params(params, None, budget)? {
+                    Some(next) => next,
+                    None => return Ok(()),
+                }
+            }
+            Command::SetParam { index, text } => {
+                let mut params = document.params.clone();
+                let Some(param) = params.get_mut(index) else {
+                    return Ok(());
+                };
+                param.text = text.trim().to_owned();
+                match document.with_params(params, None, budget)? {
+                    Some(next) => next,
+                    None => return Ok(()),
+                }
+            }
+            Command::RenameParam { index, name } => {
+                let Some(old) = document.params.get(index).map(|param| param.name.as_str()) else {
+                    return Ok(());
+                };
+                if old == name {
+                    return Ok(());
+                }
+                let mut params = document.params.clone();
+                for (at, param) in params.iter_mut().enumerate() {
+                    param.text = varde_expr::rename(&param.text, old, &name)
+                        .map_err(|why| EditError::Value(ValueOf::Param(at), why))?;
+                }
+                params[index].name = name.clone();
+                match document.with_params(params, Some((old, &name)), budget)? {
+                    Some(next) => next,
+                    None => return Ok(()),
+                }
+            }
+            Command::RemoveParam(index) => {
+                let Some(param) = document.params.get(index) else {
+                    return Ok(());
+                };
+                if document.param_used(&param.name) {
+                    return Err(EditError::ParamUsed(param.name.clone()));
+                }
+                let mut params = document.params.clone();
+                params.remove(index);
+                match document.with_params(params, None, budget)? {
+                    Some(next) => next,
+                    None => return Ok(()),
+                }
             }
             Command::SetTolerance(tolerance) => {
                 if tolerance == document.tolerance() {

@@ -11,6 +11,7 @@ mod feed;
 mod measure;
 mod motion;
 mod overlaps;
+mod params;
 mod pick;
 mod rail;
 mod regions;
@@ -108,6 +109,8 @@ pub(crate) struct Doc {
     pub(crate) renaming: Option<rename::Renaming>,
     /// Whether the rename field is to take the focus, as it just opened.
     rename_focus: bool,
+    /// The parameters' popup.
+    pub(crate) params: params::Params,
     /// Where the newest sketch on a face was placed when its face was
     /// picked, until a model places it: see [`Doc::placement`].
     placed: Option<sketch::Placed>,
@@ -275,8 +278,9 @@ pub(crate) struct Origin {
 /// closing keeps it.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Recovery {
-    /// Unsaved changes, offered to be restored.
-    Offered(Offer),
+    /// Unsaved changes, offered to be restored: boxed, as they hold a
+    /// whole document.
+    Offered(Box<Offer>),
     /// What can't be read, kept for whatever can still be got out of it
     /// until the user discards it (see [`varde_io::RecoveryError::kept`]):
     /// the IO lane refuses auto-saves meanwhile.
@@ -403,6 +407,7 @@ impl Doc {
             toast: None,
             renaming: None,
             rename_focus: false,
+            params: params::Params::default(),
             placed: None,
             refused_edit: None,
             name,
@@ -492,6 +497,7 @@ impl Doc {
         self.prune_preview();
         self.follow_placement();
         self.refresh_links();
+        self.refresh_param_uses();
     }
 
     /// Asks for the model if the document changed, the sketch left out of
@@ -588,9 +594,19 @@ impl Doc {
         }
     }
 
-    /// Applies `command`, keeping why it failed, if it did.
+    /// Applies `command`, keeping why it failed, if it did. Sketches it
+    /// solves again (a parameter's change) get the time a proposal gets
+    /// on the solver lane, [`varde_solve::PROPOSAL_TIME`], as this runs on
+    /// the UI thread: one that runs out refuses the command.
     pub(crate) fn apply(&mut self, command: Command) {
-        self.edit(|editor| editor.apply(command));
+        // iced's clock, which the web has too.
+        let end = iced::time::Instant::now().checked_add(varde_solve::PROPOSAL_TIME);
+        let expired = move || end.is_some_and(|end| iced::time::Instant::now() >= end);
+        let budget = varde_sketch::Budget {
+            expired: &expired,
+            ..varde_sketch::Budget::default()
+        };
+        self.edit(|editor| editor.apply_within(command, &budget));
     }
 
     /// Takes `message`, asking something of the document itself. What
@@ -599,6 +615,10 @@ impl Doc {
         // Anything else asked of the document renames first.
         if !matches!(message, Edit::CommitRename) {
             self.commit_rename();
+        }
+        // And what's typed in the parameters' popup.
+        if !matches!(message, Edit::Param(_)) {
+            self.commit_param_typing();
         }
         self.end_refusal();
         self.notice = None;
@@ -625,6 +645,7 @@ impl Doc {
         }
         match message {
             Edit::ToggleFileMenu => self.file_menu = !self.file_menu,
+            Edit::Param(message) => self.params_edit(message),
             Edit::DismissSaveError => self.dismiss_save_error(),
             Edit::DismissExportError => self.dismiss_export_error(),
             Edit::DismissDamage => self.dismiss_damage(),
@@ -767,6 +788,7 @@ impl Doc {
             Change::SetUnits(units) => self.apply(Command::SetUnits(units)),
             Change::SetTolerance(tolerance) => self.apply(Command::SetTolerance(tolerance)),
             Change::Rename(command) => self.apply(command),
+            Change::Param(command) => self.make_param_now(command),
         }
     }
 
@@ -774,7 +796,7 @@ impl Doc {
     /// An action in the sketch ends what the solver last refused showing.
     pub(crate) fn look(&mut self, message: Look) {
         let asked = self.delete_asked();
-        if !self.rename_look(&message) {
+        if !self.rename_look(&message) && !self.params_message(&message) {
             self.look_at(message);
         }
         // The delete prompt cancelled: what waits on the solver, held while
@@ -1209,6 +1231,8 @@ impl Doc {
             Look::EditDimension { id, in_list } => self.edit_dimension(id, in_list),
             // Taken by `Doc::rename_look`.
             Look::StartRename(_) | Look::RenameInput(_) | Look::CancelRename => {}
+            // Taken by `Doc::params_message`.
+            Look::ToggleParams | Look::Params(_) => {}
             Look::ValueInput(text) => self.value_input(text),
             Look::CancelValue => self.close_value(),
             Look::SwitchRound => self.switch_round(),
@@ -1624,6 +1648,7 @@ impl Doc {
             combinable: self.combinable(),
             motion: self.motion_state(),
             measure: self.measure_state(),
+            params: self.params_state(),
             unsolved: self.feed.unsolved(),
             failed: self.feed.failed_features(),
             merged: self.feed.merged_bodies(),
@@ -1673,6 +1698,8 @@ pub(crate) enum Change {
     SetTolerance(Tolerance),
     /// Renames a feature, sketch or body: [`Command::Rename`].
     Rename(Command),
+    /// Adds, changes, renames or removes a parameter.
+    Param(Command),
 }
 
 /// A prompt over a screen, see [`Doc::dialog`] and

@@ -8,18 +8,27 @@
 //! the text where a bare number took it, for when the design's units
 //! change; [`format()`] shows a value back in a unit.
 //!
+//! Values may use a design's parameters by name, `height / 2`
+//! ([`Params`], looked up through the [`Ask`]); [`names`], [`uses`] and
+//! [`rename`] find and rewrite the names in a text.
+//!
 //! The input is text from a form or a file, so everything is bounded: at
 //! most [`MAX_LEN`] bytes and [`MAX_DEPTH`] nested brackets and signs,
+//! at most [`MAX_PARAMS`] parameters, resolved without recursion,
 //! every step's result is checked finite, and the result is checked
 //! against the caller's [`Ask`].
 
 mod eval;
+mod params;
 mod parse;
 
 use std::f64::consts::PI;
 use std::fmt;
 
 pub use eval::{evaluate, pin_units};
+pub use params::{
+    MAX_NAME_LEN, MAX_PARAMS, NameError, Params, Resolved, check_name, names, rename, uses,
+};
 
 /// The most bytes of text an expression may have.
 pub const MAX_LEN: usize = 256;
@@ -198,8 +207,11 @@ impl Quantity {
 /// asked for: `40 / 2` asked as a length is 20 of the design's units, `90
 /// deg - 15` is 75°. Anything else must come out as the quantity asked
 /// for: `2 mm * 3 mm` is an area, refused where a length is asked for.
+///
+/// Names are the design's parameters, `params`: none unless
+/// [`Ask::with_params`] gives them.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Ask {
+pub struct Ask<'a> {
     pub quantity: Quantity,
     /// The design's length unit.
     pub units: LengthUnit,
@@ -214,11 +226,13 @@ pub struct Ask {
     pub under: bool,
     /// Whether the value must be a whole number, such as a count.
     pub whole: bool,
+    /// The design's parameters, which names in the text are.
+    pub params: &'a Params,
 }
 
-impl Ask {
+impl Ask<'static> {
     /// A length within `max` millimetres of zero, bare numbers in `units`.
-    pub fn length(units: LengthUnit, max: f64) -> Ask {
+    pub fn length(units: LengthUnit, max: f64) -> Ask<'static> {
         Ask {
             quantity: Quantity::Length,
             units,
@@ -227,12 +241,13 @@ impl Ask {
             min: None,
             under: false,
             whole: false,
+            params: Params::EMPTY,
         }
     }
 
     /// An angle within `max` radians of zero, bare numbers in degrees
     /// (and in `units` where added to a length inside it).
-    pub fn angle(units: LengthUnit, max: f64) -> Ask {
+    pub fn angle(units: LengthUnit, max: f64) -> Ask<'static> {
         Ask {
             quantity: Quantity::Angle,
             ..Ask::length(units, max)
@@ -240,7 +255,7 @@ impl Ask {
     }
 
     /// A plain number within `max` of zero.
-    pub fn number(units: LengthUnit, max: f64) -> Ask {
+    pub fn number(units: LengthUnit, max: f64) -> Ask<'static> {
         Ask {
             quantity: Quantity::Number,
             ..Ask::length(units, max)
@@ -250,12 +265,28 @@ impl Ask {
     /// A factor: a plain number from `1 / max` to `max` (`max` at least
     /// 1), such as a scale's. It has no unit, but a bare number added to
     /// a length inside it takes `units`, as any number's does.
-    pub fn factor(units: LengthUnit, max: f64) -> Ask {
+    pub fn factor(units: LengthUnit, max: f64) -> Ask<'static> {
         Ask::number(units, max).positive().at_least(1.0 / max)
+    }
+}
+
+impl<'a> Ask<'a> {
+    /// The same, with names in the text the parameters `params`.
+    pub fn with_params<'b>(self, params: &'b Params) -> Ask<'b> {
+        Ask {
+            quantity: self.quantity,
+            units: self.units,
+            max: self.max,
+            positive: self.positive,
+            min: self.min,
+            under: self.under,
+            whole: self.whole,
+            params,
+        }
     }
 
     /// The same, but the value must be above zero.
-    pub fn positive(self) -> Ask {
+    pub fn positive(self) -> Ask<'a> {
         Ask {
             positive: true,
             ..self
@@ -263,7 +294,7 @@ impl Ask {
     }
 
     /// The same, but the value must be at least `min`, in model units.
-    pub fn at_least(self, min: f64) -> Ask {
+    pub fn at_least(self, min: f64) -> Ask<'a> {
         Ask {
             min: Some(min),
             ..self
@@ -272,7 +303,7 @@ impl Ask {
 
     /// The same, but the value must be under `max` rather than at most
     /// it: an angle short of a turn.
-    pub fn under_max(self) -> Ask {
+    pub fn under_max(self) -> Ask<'a> {
         Ask {
             under: true,
             ..self
@@ -280,7 +311,7 @@ impl Ask {
     }
 
     /// The same, but the value must be a whole number: a count.
-    pub fn whole(self) -> Ask {
+    pub fn whole(self) -> Ask<'a> {
         Ask {
             whole: true,
             ..self
@@ -305,7 +336,7 @@ pub struct Value {
 impl Value {
     /// Evaluates `text` for `ask`, keeping it without the whitespace
     /// around it.
-    pub fn new(text: &str, ask: &Ask) -> Result<Value, Error> {
+    pub fn new(text: &str, ask: &Ask<'_>) -> Result<Value, Error> {
         let value = evaluate(text, ask)?;
         Ok(Value {
             text: text.trim().to_owned(),
@@ -524,7 +555,7 @@ pub enum ErrorKind {
     Unexpected(String),
     /// A comma, as a decimal point in some locales.
     Comma,
-    /// A word that isn't a unit.
+    /// A word that isn't a unit, after a number or a bracket.
     UnknownUnit(String),
     /// The end, or an operator or `)`, where a number was expected.
     ExpectedNumber,
@@ -534,6 +565,9 @@ pub enum ErrorKind {
     BadNumber,
     /// A unit after something that already has units: `(1 in) mm`.
     UnitOnUnit,
+    /// A unit after a parameter's name, `count mm`: a parameter's units
+    /// are its own.
+    UnitOnParam(String),
     /// Adding or subtracting values of different kinds.
     Mismatch {
         add: bool,
@@ -571,6 +605,25 @@ pub enum ErrorKind {
         stored: f64,
         evaluated: f64,
     },
+    /// A name no parameter has, and the one it may be a misspelling of.
+    UnknownName {
+        name: String,
+        suggestion: Option<String>,
+    },
+    /// A use of a parameter that's in error itself.
+    BrokenParam(String),
+    /// A parameter that uses itself, through others or not: the span is
+    /// the use that leads round.
+    Cycle,
+    /// A parameter that comes to an area or a mix of units: a parameter
+    /// is a length, an angle or a number.
+    ParamKind(Kind),
+    /// A parameter's name that can't be one.
+    BadName(NameError),
+    /// A parameter named as an earlier one is.
+    Duplicate(String),
+    /// A parameter past [`MAX_PARAMS`].
+    TooManyParams,
 }
 
 impl fmt::Display for ErrorKind {
@@ -586,6 +639,10 @@ impl fmt::Display for ErrorKind {
             ErrorKind::Unclosed => write!(f, "missing ')'"),
             ErrorKind::BadNumber => write!(f, "number too large"),
             ErrorKind::UnitOnUnit => write!(f, "that already has a unit"),
+            ErrorKind::UnitOnParam(name) => write!(
+                f,
+                "a parameter takes no unit after it: multiply by one, as '{name} * 1 mm'"
+            ),
             ErrorKind::Mismatch { add, left, right } => {
                 let verb = if *add { "add" } else { "subtract" };
                 if left == right {
@@ -614,6 +671,23 @@ impl fmt::Display for ErrorKind {
                 f,
                 "the stored value {stored} doesn't match its expression, {evaluated}"
             ),
+            ErrorKind::UnknownName { name, suggestion } => {
+                write!(f, "unknown parameter '{name}'")?;
+                match suggestion {
+                    Some(suggestion) => write!(f, ", did you mean '{suggestion}'?"),
+                    None => Ok(()),
+                }
+            }
+            ErrorKind::BrokenParam(name) => write!(f, "the parameter '{name}' has an error"),
+            ErrorKind::Cycle => write!(f, "a parameter can't use itself, even through others"),
+            ErrorKind::ParamKind(kind) => write!(
+                f,
+                "that's {}: a parameter is a length, an angle or a number",
+                kind.name()
+            ),
+            ErrorKind::BadName(error) => error.fmt(f),
+            ErrorKind::Duplicate(name) => write!(f, "there's already a parameter '{name}'"),
+            ErrorKind::TooManyParams => write!(f, "too many parameters, at most {MAX_PARAMS}"),
         }
     }
 }

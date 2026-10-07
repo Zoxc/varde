@@ -216,7 +216,8 @@ fn a_relinked_sketch_refused_shows_its_links_broken_and_asks_no_more() {
     doc.sync();
     // The model's answer relinks the sketch as the document refuses it:
     // with a link it has no source for.
-    let design = doc.editor.document().design();
+    let copy = doc.editor.document().clone();
+    let design = copy.design();
     let mut refused = false;
     for request in requests.take() {
         let mut response = varde_regen::handle(request);

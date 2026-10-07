@@ -28,6 +28,7 @@ fn state_of<'a>(
     picked: &'a BTreeSet<usize>,
 ) -> RevolveState<'a> {
     let field = |value| TypedField {
+        params: crate::ParamsIn::NONE,
         text: "",
         error: None,
         value,

@@ -397,6 +397,12 @@ impl Varde {
             true => Task::batch([task, focus_rename()]),
             false => task,
         };
+        // A parameter just added has its name take the focus, its text
+        // selected.
+        let task = match self.screen.doc_mut().and_then(Doc::take_param_focus) {
+            Some(index) => Task::batch([task, focus_param(index)]),
+            None => task,
+        };
         // What the document has to say shows as a toast.
         if let Some(message) = self.screen.doc_mut().and_then(Doc::take_toast) {
             self.toast.show(message, iced::time::Instant::now());
@@ -1270,6 +1276,15 @@ fn focus_rename() -> Task<Message> {
 
     operation::focus(varde_view::RENAME_FIELD)
         .chain(operation::select_all(varde_view::RENAME_FIELD))
+}
+
+/// Has the name field of the parameter at `index` take the focus, its
+/// text selected to overtype.
+fn focus_param(index: usize) -> Task<Message> {
+    use iced::widget::operation;
+
+    let id = varde_view::param_name_id(index);
+    operation::focus(id.clone()).chain(operation::select_all(id))
 }
 
 /// Has the Save As dialog's name field take the focus, its text selected

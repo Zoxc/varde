@@ -7,6 +7,7 @@ use crate::testing::Laid;
 
 fn field(text: &str) -> TypedField<'_> {
     TypedField {
+        params: crate::ParamsIn::NONE,
         text,
         error: None,
         value: Some(0.0),

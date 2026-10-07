@@ -677,6 +677,7 @@ fn dimensioned(text: &str, units: LengthUnit) -> Sketch {
     let design = Design {
         max: f64::from(crate::MAX_COORD),
         units,
+        params: varde_expr::Params::EMPTY,
     };
     let measure = Measure::Length(line);
     let value = varde_expr::Value::new(text, &measure.ask(&design)).unwrap();
@@ -792,7 +793,9 @@ fn a_link_is_added_with_its_source_and_goes_with_its_link() {
         .unwrap();
     editor.apply(editor.document().add_sketch(XY)).unwrap();
     let second = editor.document().features()[1].id;
-    let design = editor.document().design();
+    // A copy, as the edits below change the document.
+    let held = editor.document().clone();
+    let design = held.design();
     let linked = SketchEdit::AddLink {
         kind: LinkKind::Project,
     }

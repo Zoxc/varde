@@ -1356,7 +1356,11 @@ impl<'a> Sketching<'a> {
             // By the cursor, with the tool's other fields.
             ValueTarget::Field(_) => return None,
         };
-        let content = column![panels::value_field("", field.text), field_error(field)].spacing(2);
+        let content = column![
+            panels::value_field("", field.text, field.params),
+            field_error(field)
+        ]
+        .spacing(2);
         let chip = container(content)
             .padding(2)
             .style(|theme| theme::glyph(theme, false));
@@ -1393,11 +1397,12 @@ impl<'a> Sketching<'a> {
                 None => measured.map_or_else(String::new, |value| varde_expr::format(value, unit)),
             };
             let value: Element<'a, Message> = match open {
-                Some(open) if *open.target == ValueTarget::Field(field) => {
-                    column![panels::value_field(&shown, open.text), field_error(open)]
-                        .spacing(2)
-                        .into()
-                }
+                Some(open) if *open.target == ValueTarget::Field(field) => column![
+                    panels::value_field(&shown, open.text, open.params),
+                    field_error(open)
+                ]
+                .spacing(2)
+                .into(),
                 _ => text(shown)
                     .size(LABEL_SIZE)
                     .style(if typed.is_some() {

@@ -117,7 +117,7 @@ impl Doc {
 
 /// Whether `message` only hovers, scrolls or moves the camera, which
 /// leaves the rename field open.
-fn passive(message: &Look) -> bool {
+pub(super) fn passive(message: &Look) -> bool {
     matches!(
         message,
         Look::HoverItem(_)

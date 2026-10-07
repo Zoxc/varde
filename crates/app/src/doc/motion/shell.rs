@@ -38,7 +38,7 @@ impl MotionSession {
     /// Opens the shell `shell` in this session: its body, faces,
     /// thickness and direction.
     pub(super) fn open_shell(&mut self, shell: &Shell) {
-        let ask = Shell::thickness_ask(&self.design);
+        let ask = Shell::thickness_ask(&self.read_in.design());
         self.fields[MotionField::Thickness.index()] = TypedText::of(&shell.thickness, &ask);
         self.direction = ShellDirection::of(shell.outward);
         self.faces = Refs::of(&shell.open);

@@ -1152,11 +1152,11 @@ fn a_read_only_document_refuses_edits_but_moves_the_camera() {
 fn a_refused_edit_is_shown() {
     // A document from a file that has used up its ids: no bodies, no
     // features, millimetres, the default tolerance, `next_id` at
-    // `u64::MAX` as a postcard varint and no rollback.
+    // `u64::MAX` as a postcard varint, no rollback and no parameters.
     let mut bytes = vec![0, 0, 0];
     bytes.extend(varde_document::Tolerance::DEFAULT.fit().to_le_bytes());
     bytes.extend([0xff; 9]);
-    bytes.extend([0x01, 0x00]);
+    bytes.extend([0x01, 0x00, 0x00]);
     let full = Document::from_postcard(&bytes).unwrap();
     let mut doc = Doc::new(
         full,
@@ -1181,12 +1181,12 @@ fn a_refused_edit_is_shown() {
 fn a_read_only_document_keeps_offering_what_was_recovered() {
     let read_only = Access::ReadOnly(ReadOnly::InUse);
     let origin = Origin {
-        recovered: Some(Recovery::Offered(Offer {
+        recovered: Some(Recovery::Offered(Box::new(Offer {
             document: Document::default(),
             design_changed: false,
             damage: None,
             newer_base: false,
-        })),
+        }))),
         ..Origin::new(Target::None, read_only, "Design".to_owned())
     };
     let mut doc = Doc::new(Document::default(), origin);
@@ -5585,6 +5585,40 @@ fn a_click_on_an_empty_part_of_the_panel_or_toolbar_clears_the_selection() {
     }
     doc.look(Look::ClearSelection);
     assert_eq!(doc.selected_feature, None);
+}
+
+#[test]
+fn the_toolbar_s_parameters_open_and_close_their_popup() {
+    let (mut doc, _) = example();
+    // Wide enough for the bar to show it whole: at 1280 px it's cut off.
+    let size = iced::Size::new(1440.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut click_parameters = |doc: &Doc| {
+        let view = doc.view(
+            false,
+            Mode::Light,
+            ViewOptions::default(),
+            Offers::default(),
+        );
+        let mut ui = shown(view, size, &mut renderer);
+        let on_screen = texts(&mut ui, &renderer);
+        // With nothing selected, at the end of the model bar.
+        let button = (on_screen.iter())
+            .find(|t| t.text == "Parameters" && t.bounds.y < 40.0)
+            .expect("the toolbar has Parameters")
+            .bounds;
+        clicked(&mut ui, &mut renderer, button.center())
+    };
+    let sent = click_parameters(&doc);
+    let [Ui::Look(look @ Look::ToggleParams)] = sent.as_slice() else {
+        panic!("{sent:?}");
+    };
+    doc.look(look.clone());
+    assert!(doc.params_state().is_some());
+    let sent = click_parameters(&doc);
+    assert!(matches!(sent.as_slice(), [Ui::Look(Look::ToggleParams)]));
+    doc.look(Look::ToggleParams);
+    assert!(doc.params_state().is_none());
 }
 
 #[test]

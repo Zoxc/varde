@@ -234,7 +234,9 @@ fn patterns_round_trip() {
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
-    let design = editor.document().design();
+    // A copy, as the edits below change the document.
+    let held = editor.document().clone();
+    let design = held.design();
     let count = |text: &str| Value::new(text, &Pattern::count_ask(&design)).unwrap();
     let row = Pattern {
         bodies: vec![plate],
@@ -2376,7 +2378,9 @@ fn join_to_original_reads_from_older_files_and_is_checked() {
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
     let plate = editor.document().bodies()[0].id;
-    let design = editor.document().design();
+    // A copy, as the edits below change the document.
+    let held = editor.document().clone();
+    let design = held.design();
     let row = |copies: Copies| Pattern {
         bodies: vec![plate],
         kind: PatternKind::Linear {
@@ -2757,7 +2761,7 @@ fn scaled_plate() -> Document {
     use varde_document::{EdgeRef, FaceKey, PartKey, PointRef, Scale, ScaleFactor};
     use varde_expr::Value;
     let mut editor = Editor::new(Document::example());
-    let document = editor.document();
+    let document = editor.document().clone();
     let plate = document.bodies()[0].id;
     let maker = document.features()[1].id.get();
     let design = document.design();
@@ -5310,4 +5314,81 @@ fn links_round_trip_and_read_from_older_files() {
     };
     assert_eq!(sketch.links.len(), 1);
     assert_eq!(sources[0].source, OutsideRef::Edge(edge));
+}
+
+/// A file written before designs had parameters reads as having none, and
+/// one with parameters keeps them, resolved again as it's read, the values
+/// using them as they were.
+#[test]
+fn parameters_read_from_older_files_and_round_trip() {
+    use varde_document::{Extent, FeatureKind, ParamError};
+    use varde_expr::Value;
+    let example = Document::example();
+    // The field taken out, as an older build wrote it: the document's
+    // map of seven fields made six.
+    let raw = record_msgpack(&example);
+    let mut header = vec![0x87, 0xa6];
+    header.extend_from_slice(b"bodies");
+    let at = (raw.windows(header.len()))
+        .position(|window| window == header)
+        .expect("the document's map");
+    let mut field = vec![0xa6];
+    field.extend_from_slice(b"params");
+    field.push(0x90);
+    let end = (raw.windows(field.len()))
+        .position(|window| window == field)
+        .expect("its parameters");
+    let mut older = raw[..end].to_vec();
+    older.extend_from_slice(&raw[end + field.len()..]);
+    older[at] = 0x86;
+    let (read, _) = from_msgpack::<Document>(&older).unwrap();
+    assert_eq!(read, example);
+    assert!(read.params().is_empty());
+
+    // Parameters, one used by the extrude, one in error and unused.
+    let mut editor = Editor::new(example);
+    for (name, text) in [("a", "12 mm"), ("b", "nothing")] {
+        editor
+            .apply(Command::AddParam {
+                name: name.into(),
+                text: text.into(),
+            })
+            .unwrap();
+    }
+    let extrude = editor.document().features()[1].id;
+    let FeatureKind::Extrude(mut changed) = editor.document().features()[1].kind.clone() else {
+        panic!("the extrude");
+    };
+    let value = Value::new("a * 2", &Extent::ask(&editor.document().design())).unwrap();
+    changed.extent = Extent::OneSide(value);
+    editor
+        .apply(Command::SetFeature {
+            feature: extrude,
+            kind: Box::new(changed.into()),
+        })
+        .unwrap();
+    let document = editor.document();
+    let (bytes, _) = to_bytes(document, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(&read, document);
+    assert_eq!(read.params_resolved(), document.params_resolved());
+    assert!(read.params_resolved().get("b").unwrap().is_err());
+
+    // A name twice is refused, saying which.
+    let mut raw = record_msgpack(document);
+    let mut name = vec![0xa4];
+    name.extend_from_slice(b"name");
+    name.extend_from_slice(&[0xa1, b'b']);
+    let at = (raw.windows(name.len()))
+        .position(|window| window == name)
+        .expect("the second name");
+    raw[at + name.len() - 1] = b'a';
+    let error = from_msgpack::<Document>(&raw).unwrap_err();
+    assert!(
+        matches!(
+            std::error::Error::source(&error).and_then(|why| why.downcast_ref()),
+            Some(CheckError::Param(1, ParamError::Duplicate))
+        ),
+        "{error}"
+    );
 }

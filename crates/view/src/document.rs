@@ -214,6 +214,8 @@ pub struct DocumentState<'a> {
     /// The measure tool, while it's in use: never with a sketch or an
     /// operation being set up.
     pub measure: Option<crate::MeasureState<'a>>,
+    /// The parameters' popup, while it's open.
+    pub params: Option<crate::ParamsState<'a>>,
     /// The sketches that don't solve, as regenerating found.
     pub unsolved: &'a [FeatureId],
     /// The features that failed and why, as regenerating found, in the
@@ -432,6 +434,9 @@ pub struct ValueField<'a> {
     /// Whether it's in the Constraints list, rather than over the
     /// viewport at the label.
     pub in_list: bool,
+    /// The design's parameters, whose names are offered as they're typed
+    /// (see the `suggest` module).
+    pub params: crate::ParamsIn<'a>,
 }
 
 /// What the value field sets the value of.
@@ -830,6 +835,13 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
     let refused = (state.refused_edit)
         .map(|refused| container(refused_banner(refused)).style(theme::toolbar));
 
+    let panel = (state.extrude.as_ref().map(crate::extrude::panel))
+        .or_else(|| state.revolve.as_ref().map(crate::revolve::panel))
+        .or_else(|| state.combine.as_ref().map(crate::combine::panel))
+        .or_else(|| state.motion.as_ref().map(crate::motion::panel))
+        .or_else(|| state.measure.as_ref().map(crate::measure::panel));
+    // The parameters' popup, left of the operation's panel if one shows.
+    let params = (state.params).map(|params| crate::params::popup(params, panel.is_some()));
     let content = column![
         toolbar::toolbar(&state),
         banners,
@@ -858,11 +870,8 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                             .sketch
                             .map(|sketch| viewport::Sketching::new(sketch, editable)),
                         operating(&state),
-                        (state.extrude.as_ref().map(crate::extrude::panel))
-                            .or_else(|| state.revolve.as_ref().map(crate::revolve::panel))
-                            .or_else(|| state.combine.as_ref().map(crate::combine::panel))
-                            .or_else(|| state.motion.as_ref().map(crate::motion::panel))
-                            .or_else(|| state.measure.as_ref().map(crate::measure::panel)),
+                        panel,
+                        params,
                         crate::rail::rail(&state),
                         state.overlaps.map(|overlaps| crate::overlaps::view(
                             overlaps,
@@ -920,7 +929,7 @@ fn operating<'a>(state: &DocumentState<'a>) -> Option<viewport::Operating<'a>> {
     let revolving = state.revolve.clone().map(viewport::Revolving::new);
     let measuring = state.measure.clone().map(viewport::Measuring::new);
     let moving = state.motion.clone().map(viewport::Moving::new);
-    (extruding.map(viewport::Operating::Extrude))
+    (extruding.map(|extruding| viewport::Operating::Extrude(Box::new(extruding))))
         .or_else(|| revolving.map(viewport::Operating::Revolve))
         .or_else(|| moving.map(viewport::Operating::Motion))
         .or_else(|| measuring.map(viewport::Operating::Measure))

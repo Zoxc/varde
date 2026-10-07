@@ -12,18 +12,22 @@
 //! Each is posted as one `ArrayBuffer`, transferred, not copied, and
 //! copied out on the other side only if it's within `MAX_MESSAGE_BYTES`.
 //! A [`Posted`] is a [`Request`] whose drag step may leave out the
-//! session's sketch, which the worker has from the session's first step. A
+//! session's sketch, which the worker has from the session's first step,
+//! and whose design's parameters cross as each one's name and text, which
+//! the worker resolves again ([`Params::evaluate`]). A
 //! [`Reply`] is a [`Response`], or [`Reply::Unmoved`] for a drag step that
 //! didn't converge, which the page must still hear of to post the next
 //! request. A drag step's solution crosses as its points' places and its
 //! circles' radii alone, the rest being the session's sketch.
 //!
 //! Both sides check what they get. The worker, a request
-//! ([`decode_request`]): its sketch passes [`Sketch::check`] against
-//! [`MAX_COORD`] and the units it carries, and what the edit or the drag
+//! ([`decode_request`]): its parameters are at most [`MAX_PARAMS`], each
+//! name at most [`MAX_NAME_LEN`] bytes and each text at most [`MAX_LEN`],
+//! its sketch passes [`Sketch::check`]
+//! against [`MAX_COORD`] and the units and parameters it carries, and what the edit or the drag
 //! step names is bounded in count, every place, radius and label finite
 //! and within [`MAX_COORD`], every value finite and its text within
-//! [`MAX_LEN`](varde_expr::MAX_LEN), every new spline's counts and knots
+//! [`MAX_LEN`], every new spline's counts and knots
 //! as they can be ([`Spline::fits`](varde_sketch::Spline::fits)). The
 //! page, a reply ([`decode_reply`]) against the request it answers: it
 //! must answer that request, or it's refused, as an undecodable one is. A
@@ -41,13 +45,14 @@ use std::sync::Arc;
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
 use varde_document::{DecodeError, LengthUnit, MAX_COORD, Revision, codec};
-use varde_expr::Value;
+use varde_expr::{MAX_LEN, MAX_NAME_LEN, MAX_PARAMS, Params, Value};
 use varde_sketch::{
     Analysis, Constraint, Curve, Id, Kind, MAX_CONSTRAINTS, MAX_CURVES, MAX_DIMENSIONS, MAX_POINTS,
     Measure, OffsetPair, Rejected, Setback, Sketch, SketchEdit, SketchError,
 };
 
 use crate::{MAX, Request, Response, Solver, Tag, design};
+use varde_document::Design;
 
 /// The most bytes a request or a reply may have. A sketch at its limits
 /// is far smaller; the bound keeps a broken message from being copied
@@ -55,20 +60,23 @@ use crate::{MAX, Request, Response, Solver, Tag, design};
 #[cfg(target_arch = "wasm32")]
 pub const MAX_MESSAGE_BYTES: usize = 1 << 28;
 
-/// A [`Request`] as it crosses to the worker: `S` is the sketch, and `E`
-/// the edit, borrowed to encode and owned once decoded.
+/// A [`Request`] as it crosses to the worker: `S` is the sketch, `E` the
+/// edit, and `P` the design's parameters, borrowed to encode and owned
+/// once decoded: each one's name and text as it crosses, resolved once
+/// checked.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum Posted<S, E> {
+pub enum Posted<S, E, P> {
     Propose {
         base: Revision,
         sketch: S,
         edit: E,
         units: LengthUnit,
+        params: P,
     },
-    /// `sketch` is left out once the worker has the session.
+    /// `sketch` and `params` are left out once the worker has the session.
     Drag {
         session: u64,
-        sketch: Option<S>,
+        sketch: Option<(S, P)>,
         points: Vec<(Id, DVec2)>,
         radii: Vec<(Id, f64)>,
         units: LengthUnit,
@@ -77,13 +85,17 @@ pub enum Posted<S, E> {
         revision: Revision,
         sketch: S,
         units: LengthUnit,
+        params: P,
     },
 }
 
-/// A request as the worker decodes it.
-pub type Decoded = Posted<Sketch, SketchEdit>;
+/// The design's parameters as they cross: each one's name and text.
+type Sources = Vec<(String, String)>;
 
-impl<S, E> Posted<S, E> {
+/// A request as the worker decodes it, its parameters resolved.
+pub type Decoded = Posted<Sketch, SketchEdit, Params>;
+
+impl<S, E, P> Posted<S, E, P> {
     pub fn tag(&self) -> Tag {
         match self {
             Posted::Propose { base, .. } => Tag::Propose(*base),
@@ -102,14 +114,25 @@ impl Decoded {
                 sketch,
                 edit,
                 units,
-            } => Some(crate::propose(base, &sketch, &edit, units)),
+                params,
+            } => Some(crate::propose(
+                base,
+                &sketch,
+                &edit,
+                &design(units, &params),
+            )),
             Posted::Drag {
                 session,
                 sketch,
                 points,
                 radii,
                 units,
-            } => solver.drag(session, sketch.as_ref(), points, radii, units),
+            } => {
+                let started =
+                    (sketch.as_ref()).map(|(sketch, params)| (sketch, design(units, params)));
+                let started = (started.as_ref()).map(|(sketch, design)| (*sketch, design));
+                solver.drag(session, started, points, radii)
+            }
             Posted::Analyse {
                 revision, sketch, ..
             } => Some(crate::analyse(revision, &sketch)),
@@ -120,17 +143,19 @@ impl Decoded {
 /// Encodes `request` to post to the worker, leaving out a drag step's
 /// sketch unless `with_sketch`.
 pub fn encode_request(request: &Request, with_sketch: bool) -> Vec<u8> {
-    let posted: Posted<&Sketch, &SketchEdit> = match request {
+    let posted: Posted<&Sketch, &SketchEdit, Vec<(&str, &str)>> = match request {
         Request::Propose {
             base,
             sketch,
             edit,
             units,
+            params,
         } => Posted::Propose {
             base: *base,
             sketch,
             edit,
             units: *units,
+            params: sources(params),
         },
         Request::Drag {
             session,
@@ -138,9 +163,10 @@ pub fn encode_request(request: &Request, with_sketch: bool) -> Vec<u8> {
             points,
             radii,
             units,
+            params,
         } => Posted::Drag {
             session: *session,
-            sketch: with_sketch.then_some(&**sketch),
+            sketch: with_sketch.then(|| (&**sketch, sources(params))),
             points: points.clone(),
             radii: radii.clone(),
             units: *units,
@@ -149,13 +175,20 @@ pub fn encode_request(request: &Request, with_sketch: bool) -> Vec<u8> {
             revision,
             sketch,
             units,
+            params,
         } => Posted::Analyse {
             revision: *revision,
             sketch,
             units: *units,
+            params: sources(params),
         },
     };
     postcard::to_stdvec(&posted).expect("requests always serialize")
+}
+
+/// Each of `params`' names and texts, as they cross.
+fn sources(params: &Params) -> Vec<(&str, &str)> {
+    params.sources().collect()
 }
 
 /// Decodes a request, checking it (see the module docs) and refusing
@@ -163,36 +196,87 @@ pub fn encode_request(request: &Request, with_sketch: bool) -> Vec<u8> {
 /// so a request refused here is a bug: the worker throws, and the page
 /// answers the request as it does for any worker that stops.
 pub fn decode_request(bytes: &[u8]) -> Result<Decoded, Error> {
-    let posted: Decoded = codec::from_postcard_exact(bytes).map_err(Error::Request)?;
-    match &posted {
+    let posted: Posted<Sketch, SketchEdit, Sources> =
+        codec::from_postcard_exact(bytes).map_err(Error::Request)?;
+    Ok(match posted {
         Posted::Propose {
+            base,
             sketch,
             edit,
             units,
-            ..
+            params,
         } => {
-            check_sketch(sketch, *units)?;
-            check_edit(edit)?;
+            let params = resolve(&params, units)?;
+            check_sketch(&sketch, &design(units, &params))?;
+            check_edit(&edit)?;
+            Posted::Propose {
+                base,
+                sketch,
+                edit,
+                units,
+                params,
+            }
         }
         Posted::Drag {
+            session,
             sketch,
             points,
             radii,
             units,
-            ..
         } => {
-            if let Some(sketch) = sketch {
-                check_sketch(sketch, *units)?;
+            let sketch = match sketch {
+                Some((sketch, params)) => {
+                    let params = resolve(&params, units)?;
+                    check_sketch(&sketch, &design(units, &params))?;
+                    Some((sketch, params))
+                }
+                None => None,
+            };
+            check_targets(&points, &radii)?;
+            Posted::Drag {
+                session,
+                sketch,
+                points,
+                radii,
+                units,
             }
-            check_targets(points, radii)?;
         }
-        Posted::Analyse { sketch, units, .. } => check_sketch(sketch, *units)?,
-    }
-    Ok(posted)
+        Posted::Analyse {
+            revision,
+            sketch,
+            units,
+            params,
+        } => {
+            let params = resolve(&params, units)?;
+            check_sketch(&sketch, &design(units, &params))?;
+            Posted::Analyse {
+                revision,
+                sketch,
+                units,
+                params,
+            }
+        }
+    })
 }
 
-fn check_sketch(sketch: &Sketch, units: LengthUnit) -> Result<(), Error> {
-    sketch.check(&design(units)).map_err(Error::Sketch)
+/// The parameters `sources` name, resolved in `units`, once their counts
+/// and lengths are checked.
+fn resolve(sources: &Sources, units: LengthUnit) -> Result<Params, Error> {
+    check_count(sources.len(), MAX_PARAMS)?;
+    for (name, text) in sources {
+        check_count(name.len(), MAX_NAME_LEN)?;
+        check_count(text.len(), MAX_LEN)?;
+    }
+    Ok(Params::evaluate(
+        sources
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str())),
+        units,
+    ))
+}
+
+fn check_sketch(sketch: &Sketch, design: &Design) -> Result<(), Error> {
+    sketch.check(design).map_err(Error::Sketch)
 }
 
 /// Checks the counts and the numbers of `edit`. Whether what it names is
@@ -446,7 +530,7 @@ fn check_reply(reply: Reply<Sketch, Analysis>, asked: &Request) -> Result<Option
             },
             _,
         ) => {
-            check_sketch(&sketch, asked.units())?;
+            check_sketch(&sketch, &asked.design())?;
             check_analysis(&analysis, &sketch)?;
             Response::Accepted {
                 base,
@@ -454,16 +538,8 @@ fn check_reply(reply: Reply<Sketch, Analysis>, asked: &Request) -> Result<Option
                 analysis: Arc::new(analysis),
             }
         }
-        (
-            Reply::Rejected { base, why },
-            Request::Propose {
-                sketch,
-                edit,
-                units,
-                ..
-            },
-        ) => {
-            check_rejected(&why, sketch, edit, *units)?;
+        (Reply::Rejected { base, why }, Request::Propose { sketch, edit, .. }) => {
+            check_rejected(&why, sketch, edit, &asked.design())?;
             Response::Rejected { base, why }
         }
         (
@@ -472,10 +548,10 @@ fn check_reply(reply: Reply<Sketch, Analysis>, asked: &Request) -> Result<Option
                 points,
                 radii,
             },
-            Request::Drag { sketch, units, .. },
+            Request::Drag { sketch, .. },
         ) => Response::Dragged {
             session,
-            solution: Arc::new(solution(sketch, points, radii, *units)?),
+            solution: Arc::new(solution(sketch, points, radii, &asked.design())?),
         },
         (Reply::Unmoved { .. }, _) => return Ok(None),
         (Reply::Analysed { revision, analysis }, Request::Analyse { sketch, .. }) => {
@@ -552,7 +628,7 @@ fn check_rejected(
     why: &Rejected,
     sketch: &Sketch,
     edit: &SketchEdit,
-    units: LengthUnit,
+    design: &Design,
 ) -> Result<(), Error> {
     if let Rejected::Driving {
         dimensions,
@@ -566,9 +642,7 @@ fn check_rejected(
     if involved.is_empty() {
         return Ok(());
     }
-    let applied = edit
-        .apply(sketch, &design(units))
-        .map_err(|_| Error::Items)?;
+    let applied = edit.apply(sketch, design).map_err(|_| Error::Items)?;
     if !check_involved(involved, &applied) {
         return Err(Error::Items);
     }
@@ -583,13 +657,13 @@ fn check_rejected(
 }
 
 /// `sketch` with its points at `points` and its circles' radii `radii`, in
-/// order, if there's one for each and the result passes its checks in a
-/// design of `units`.
+/// order, if there's one for each and the result passes its checks in
+/// `design`.
 fn solution(
     sketch: &Sketch,
     points: Vec<DVec2>,
     radii: Vec<f64>,
-    units: LengthUnit,
+    design: &Design,
 ) -> Result<Sketch, Error> {
     let mut solution = sketch.clone();
     let mut circles: Vec<_> = solution
@@ -609,7 +683,7 @@ fn solution(
     for (point, at) in solution.points.iter_mut().zip(points) {
         point.at = at;
     }
-    check_sketch(&solution, units)?;
+    check_sketch(&solution, design)?;
     Ok(solution)
 }
 

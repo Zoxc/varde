@@ -1,15 +1,46 @@
 //! Evaluating the tree: every step checked finite and for units, bare
 //! numbers given the design's length unit or degrees where they meet a
-//! length or an angle, the result checked against the [`Ask`].
+//! length or an angle, parameters looked up, the result checked against
+//! the [`Ask`] (or, for a parameter's own text, taken as whatever
+//! quantity it comes to).
 
 use crate::parse::{Expr, Node, Op, parse};
-use crate::{AngleUnit, Ask, Error, ErrorKind, Kind, LengthUnit, MAX_LEN, Quantity, Span, Unit};
+use crate::{
+    AngleUnit, Ask, Error, ErrorKind, Kind, LengthUnit, MAX_LEN, Params, Quantity, Resolved, Span,
+    Unit,
+};
 
 /// Evaluates `text` for `ask`, in model units: millimetres for lengths,
 /// radians for angles.
 pub fn evaluate(text: &str, ask: &Ask) -> Result<f64, Error> {
     let expr = parse(text)?;
-    Evaluator::new(ask).result(&expr)
+    Evaluator::new(ask.units, ask.params).result(&expr, ask)
+}
+
+/// Evaluates a parameter's `text` in a design in `units`, with the
+/// parameters it may use: a length, an angle or a number, whichever it
+/// comes to. Bare numbers alone are a number, so `50` is a number, not a
+/// length; `50 mm` is a length.
+pub(crate) fn evaluate_param(
+    text: &str,
+    units: LengthUnit,
+    params: &Params,
+) -> Result<Resolved, Error> {
+    let expr = parse(text)?;
+    Evaluator::new(units, params).free(&expr)
+}
+
+/// [`pin_units`] for a parameter's `text`, as [`Params::pin_units`]
+/// gives it.
+pub(crate) fn pin_param_units(
+    text: &str,
+    units: LengthUnit,
+    params: &Params,
+) -> Result<String, Error> {
+    let expr = parse(text)?;
+    let mut evaluator = Evaluator::new(units, params);
+    evaluator.free(&expr)?;
+    evaluator.pinned(text)
 }
 
 /// `text` with the design's length unit written in after each bare number
@@ -21,47 +52,28 @@ pub fn evaluate(text: &str, ask: &Ask) -> Result<f64, Error> {
 /// with [`format()`](crate::format()) instead.
 pub fn pin_units(text: &str, ask: &Ask) -> Result<String, Error> {
     let expr = parse(text)?;
-    let mut evaluator = Evaluator::new(ask);
-    evaluator.result(&expr)?;
-    let mut pinned = text.to_owned();
-    // Pinned parts don't overlap, so inserting from the last keeps the
-    // earlier ones' spans.
-    evaluator
-        .pins
-        .sort_by_key(|pin| std::cmp::Reverse(pin.span.start));
-    for pin in &evaluator.pins {
-        pinned.insert_str(pin.span.end, &format!(" {}", ask.units.symbol()));
-        if pin.wrap {
-            pinned.insert(pin.span.end, ')');
-            pinned.insert(pin.span.start, '(');
-        }
-    }
-    if pinned.len() > MAX_LEN {
-        return Err(Error {
-            kind: ErrorKind::TooLong,
-            span: Span::new(0, text.len()),
-        });
-    }
-    Ok(pinned)
+    let mut evaluator = Evaluator::new(ask.units, ask.params);
+    evaluator.result(&expr, ask)?;
+    evaluator.pinned(text)
 }
 
 /// Powers of length and angle: a length is `{ length: 1, angle: 0 }`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Dim {
+pub(crate) struct Dim {
     length: i16,
     angle: i16,
 }
 
 impl Dim {
-    const NONE: Dim = Dim {
+    pub(crate) const NONE: Dim = Dim {
         length: 0,
         angle: 0,
     };
-    const LENGTH: Dim = Dim {
+    pub(crate) const LENGTH: Dim = Dim {
         length: 1,
         angle: 0,
     };
-    const ANGLE: Dim = Dim {
+    pub(crate) const ANGLE: Dim = Dim {
         length: 0,
         angle: 1,
     };
@@ -96,12 +108,13 @@ impl Dim {
 }
 
 /// A value on the way: `bare` if no unit went into it, so it may still
-/// take the design's.
+/// take the design's. A parameter's value isn't bare, whatever it is: its
+/// units were settled where it was defined.
 #[derive(Debug, Clone, Copy)]
-struct Quant {
-    value: f64,
-    dim: Dim,
-    bare: bool,
+pub(crate) struct Quant {
+    pub(crate) value: f64,
+    pub(crate) dim: Dim,
+    pub(crate) bare: bool,
 }
 
 /// A bare part that took the design's length unit, and whether it needs
@@ -112,21 +125,68 @@ struct Pin {
 }
 
 struct Evaluator<'a> {
-    ask: &'a Ask,
+    /// The design's length unit, which bare numbers take.
+    units: LengthUnit,
+    params: &'a Params,
     pins: Vec<Pin>,
 }
 
 impl<'a> Evaluator<'a> {
-    fn new(ask: &'a Ask) -> Self {
+    fn new(units: LengthUnit, params: &'a Params) -> Self {
         Evaluator {
-            ask,
+            units,
+            params,
             pins: Vec::new(),
         }
     }
 
+    /// The text evaluated, with the design's length unit written in where
+    /// bare parts took it, see [`pin_units`].
+    fn pinned(mut self, text: &str) -> Result<String, Error> {
+        let mut pinned = text.to_owned();
+        // Pinned parts don't overlap, so inserting from the last keeps the
+        // earlier ones' spans.
+        self.pins
+            .sort_by_key(|pin| std::cmp::Reverse(pin.span.start));
+        for pin in &self.pins {
+            pinned.insert_str(pin.span.end, &format!(" {}", self.units.symbol()));
+            if pin.wrap {
+                pinned.insert(pin.span.end, ')');
+                pinned.insert(pin.span.start, '(');
+            }
+        }
+        if pinned.len() > MAX_LEN {
+            return Err(Error {
+                kind: ErrorKind::TooLong,
+                span: Span::new(0, text.len()),
+            });
+        }
+        Ok(pinned)
+    }
+
+    /// A parameter's value: whatever quantity it comes to, a number if
+    /// it's bare, but not an area or a mix of units.
+    fn free(&mut self, expr: &Expr) -> Result<Resolved, Error> {
+        let quant = self.eval(expr)?;
+        let quantity = match quant.dim {
+            Dim::NONE => Quantity::Number,
+            Dim::LENGTH => Quantity::Length,
+            Dim::ANGLE => Quantity::Angle,
+            dim => {
+                return Err(Error {
+                    kind: ErrorKind::ParamKind(dim.kind()),
+                    span: expr.span,
+                });
+            }
+        };
+        Ok(Resolved {
+            value: quant.value,
+            quantity,
+        })
+    }
+
     /// The whole expression's value, as asked for.
-    fn result(&mut self, expr: &Expr) -> Result<f64, Error> {
-        let ask = self.ask;
+    fn result(&mut self, expr: &Expr, ask: &Ask) -> Result<f64, Error> {
         let quant = self.eval(expr)?;
         let want = match ask.quantity {
             Quantity::Length => Dim::LENGTH,
@@ -201,14 +261,16 @@ impl<'a> Evaluator<'a> {
                 dim: Dim::NONE,
                 bare: true,
             }),
+            Node::Name(name) => self.params.quant(name, span),
             Node::Group(inner) => self.eval(inner),
             &Node::Unit(ref inner, unit) => {
                 let quant = self.eval(inner)?;
                 if !quant.bare {
-                    return Err(Error {
-                        kind: ErrorKind::UnitOnUnit,
-                        span,
-                    });
+                    let kind = match &inner.node {
+                        Node::Name(name) => ErrorKind::UnitOnParam(name.clone()),
+                        _ => ErrorKind::UnitOnUnit,
+                    };
+                    return Err(Error { kind, span });
                 }
                 Ok(Quant {
                     value: finite(quant.value * unit.factor(), span)?,
@@ -284,7 +346,7 @@ impl<'a> Evaluator<'a> {
                 span: expr.span,
                 wrap: needs_brackets(expr),
             });
-            self.ask.units.mm()
+            self.units.mm()
         } else {
             AngleUnit::Deg.rad()
         };
@@ -306,7 +368,7 @@ fn adoptable(dim: Dim) -> bool {
 /// `-x mm` is `-(x mm)`, the same value.
 fn needs_brackets(expr: &Expr) -> bool {
     match &expr.node {
-        Node::Number(_) | Node::Group(_) => false,
+        Node::Number(_) | Node::Name(_) | Node::Group(_) => false,
         Node::Neg(inner) => needs_brackets(inner),
         Node::Unit(..) | Node::Binary(..) => true,
     }

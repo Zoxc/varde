@@ -223,6 +223,7 @@ impl Doc {
                 points: points.clone(),
                 radii: radii.clone(),
                 units: self.editor.document().units(),
+                params: self.editor.document().params_shared(),
             });
         }
         if let Some(sketch) = &mut self.sketch {

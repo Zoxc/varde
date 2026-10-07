@@ -12,7 +12,7 @@ use std::f64::consts::PI;
 
 use glam::DVec3;
 use varde_document::{
-    AxisLine, Design, Document, EdgeRef, FeatureId, FeatureKind, MAX_REVOLVE_REGIONS, Revolve,
+    AxisLine, Document, EdgeRef, FeatureId, FeatureKind, MAX_REVOLVE_REGIONS, Revolve,
     RevolveError, Turn,
 };
 use varde_expr::{AngleUnit, Unit};
@@ -22,7 +22,7 @@ use varde_view::{
 };
 
 use super::extrude::is_sketch;
-use super::regions::{BodyTargets, RegionPick, TypedText};
+use super::regions::{BodyTargets, ReadIn, RegionPick, TypedText};
 use super::{Doc, Focus, OUT_OF_DATE};
 
 /// The revolve being set up, while one is: [`Doc::revolve`].
@@ -66,12 +66,12 @@ pub(crate) struct RevolveSession {
     /// revolve's to start with.
     pub(crate) targets: BodyTargets,
     /// The design as the fields' texts were last read, whose units bare
-    /// lengths in them are in: see [`RevolveSession::follow_units`].
+    /// lengths in them are in: see [`RevolveSession::follow_design`].
     /// The panel's row the cursor is over, if any.
     pub(crate) hover: Option<PanelHover>,
     /// The knob being dragged in the viewport, if one is.
     pub(crate) grabbed: Option<Angle>,
-    design: Design,
+    read_in: ReadIn,
 }
 
 /// The angles a new revolve's fields start with, in radians: half a turn
@@ -106,7 +106,7 @@ impl RevolveSession {
             ignored_flip: false,
             operation: OperationKind::NewBody,
             targets: BodyTargets::default(),
-            design: document.design(),
+            read_in: ReadIn::of(document),
         }
     }
 
@@ -223,17 +223,17 @@ impl RevolveSession {
 
     /// Keeps each angle where the design's units changed since its field
     /// was read, as the document does its own: only lengths inside an
-    /// angle's expression take the units.
-    fn follow_units(&mut self, document: &Document) {
-        let design = document.design();
-        if design == self.design {
+    /// angle's expression take the units. One naming parameters is read
+    /// again where they changed ([`TypedText::follow`]).
+    fn follow_design(&mut self, document: &Document) {
+        let Some(before) = self.read_in.follow(document) else {
             return;
-        }
-        let ask = Turn::ask(&self.design);
+        };
+        let ask = Turn::ask(&before.design());
+        let now = Turn::ask(&self.read_in.design());
         for field in &mut self.fields {
-            field.follow_units(&ask);
+            field.follow(&ask, &now);
         }
-        self.design = design;
     }
 
     /// The flip to store: the one set up where the extent takes it,
@@ -646,7 +646,7 @@ impl Doc {
             self.revolve = None;
             return;
         }
-        session.follow_units(document);
+        session.follow_design(document);
         session.targets.prune(document);
         session.prune_edge(document);
     }
@@ -686,7 +686,10 @@ impl Doc {
             resolution: document.tolerance().resolution(),
             picking: session.picking,
             extent: session.extent,
-            fields: [session.fields[0].field(), session.fields[1].field()],
+            fields: [
+                session.fields[0].field(self.params_in()),
+                session.fields[1].field(self.params_in()),
+            ],
             flip: session.flip,
             operation: session.operation,
             targets: self.body_targets(session.operation, session.feature, &session.targets),

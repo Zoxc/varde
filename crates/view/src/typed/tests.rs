@@ -79,6 +79,21 @@ fn fields_read_expressions_of_their_kind() {
         ErrorKind::NotWhole
     );
     assert!(read(Field::Sides, "1e300").is_err());
+
+    // Every field reads the design's parameters, the sides too.
+    let params = varde_expr::Params::evaluate(
+        [("count", "6"), ("size", "20 mm"), ("turn", "30 deg")],
+        LengthUnit::Mm,
+    );
+    let design = Design {
+        params: &params,
+        ..testing::DESIGN
+    };
+    let read = |field, text| super::read(&tool, field, text, &design);
+    assert_eq!(read(Field::Sides, "count + 1").unwrap().value, 7.0);
+    assert_eq!(read(Field::Length, "size / 2").unwrap().value, 10.0);
+    assert!((read(Field::Angle, "turn * 3").unwrap().value - FRAC_PI_2).abs() < 1e-12);
+    assert_eq!(read(Field::Diameter, "size").unwrap().value, 20.0);
 }
 
 #[test]

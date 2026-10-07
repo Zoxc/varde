@@ -20,7 +20,8 @@ fn face(part: PartKey) -> FaceRef {
 /// the side.
 #[test]
 fn an_offset_face_s_notes() {
-    let design = Document::example().design();
+    let example = Document::example();
+    let design = example.design();
     let ask = OffsetFace::distance_ask(&design);
     let mut offset = OffsetFace {
         faces: vec![face(PartKey::EndCap)],

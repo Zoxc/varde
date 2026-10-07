@@ -29,17 +29,21 @@ use varde_sketch::{
 };
 use varde_view::{THUMBNAIL_SCALE, ThumbnailRequest, thumbnail_shot};
 
-/// A sketch being drawn, with the design its dimensions are read in.
+/// A sketch being drawn, with the design its dimensions are read in
+/// (without parameters, which dimensions don't use yet).
 struct Draw {
     sketch: Sketch,
-    design: Design,
+    design: Design<'static>,
 }
 
 impl Draw {
     fn new(editor: &Editor) -> Draw {
         Draw {
             sketch: Sketch::default(),
-            design: editor.document().design(),
+            design: Design {
+                params: varde_document::Params::EMPTY,
+                ..editor.document().design()
+            },
         }
     }
 

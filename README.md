@@ -30,6 +30,9 @@ sketches and editable features. It runs natively and in the browser.
 - Extrudes and revolves that make, join, cut or intersect bodies, in an
   editable timeline, on planes or flat faces.
 - Combining, moving, mirroring, patterning, aligning and scaling bodies.
+- Named parameters (`wall = 2 mm`) kept in one table, the Modify set's
+  Parameters tool: type a name in any feature's length or angle and it
+  follows the parameter as it changes.
 - Exact solids: rational quadratic patches with conic edges, so planes,
   arcs, cylinders and cones are exact and booleans are robust.
 - Measuring faces, edges, points and bodies, and the distance and angle

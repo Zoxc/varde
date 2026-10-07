@@ -151,22 +151,23 @@ impl PathPart {
 impl Sweep {
     /// What its twist is checked against in `design`: an angle within
     /// [`MAX_TWIST_TURNS`] turns either way, bare numbers in degrees.
-    pub fn twist_ask(design: &Design) -> Ask {
-        Ask::angle(design.units, MAX_TWIST_TURNS * TAU)
+    pub fn twist_ask<'p>(design: &Design<'p>) -> Ask<'p> {
+        Ask::angle(design.units, MAX_TWIST_TURNS * TAU).with_params(design.params)
     }
 
     /// What a helix's pitch is checked against in `design`: a length as
     /// an extrude's distance ([`Extent::ask`]).
-    pub fn pitch_ask(design: &Design) -> Ask {
+    pub fn pitch_ask<'p>(design: &Design<'p>) -> Ask<'p> {
         Extent::ask(design)
     }
 
     /// What a helix's turns are checked against in `design`: a number
     /// from [`MIN_HELIX_TURNS`] to [`MAX_HELIX_TURNS`].
-    pub fn turns_ask(design: &Design) -> Ask {
+    pub fn turns_ask<'p>(design: &Design<'p>) -> Ask<'p> {
         Ask::number(design.units, MAX_HELIX_TURNS)
             .positive()
             .at_least(MIN_HELIX_TURNS)
+            .with_params(design.params)
     }
 
     /// The sketches its path's parts name, sorted without repeats.
@@ -268,7 +269,7 @@ impl Sweep {
     }
 
     /// Its typed values and what each is checked against in `design`.
-    pub(crate) fn values_mut(&mut self, design: &Design) -> Vec<(&mut Value, Ask)> {
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
         let mut values = Vec::new();
         if let Some(twist) = &mut self.twist {
             values.push((twist, Sweep::twist_ask(design)));

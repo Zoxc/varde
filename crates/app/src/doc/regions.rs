@@ -8,12 +8,12 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use varde_document::{
-    BodyId, Command, Document, FeatureId, FeatureKind, Operation, Placement, RegionRef, Sketch,
-    Targets,
+    BodyId, Command, Design, Document, FeatureId, FeatureKind, LengthUnit, MAX_COORD, Operation,
+    Params, Placement, RegionRef, Sketch, Targets,
 };
 use varde_expr::{Ask, Value};
 use varde_sketch::{MAX_WORK, Profiles};
-use varde_view::{BodyTarget, Candidate, OperationKind, TypedField};
+use varde_view::{BodyTarget, Candidate, OperationKind, ParamsIn, TypedField};
 
 use super::Doc;
 use super::extrude::is_sketch;
@@ -448,6 +448,43 @@ impl BodyTargets {
     }
 }
 
+/// The design a session's typed fields were last read in: its units,
+/// which bare numbers in them took, and its parameters, which names in
+/// them are, shared with the document they're from.
+#[derive(Debug, Clone)]
+pub(crate) struct ReadIn {
+    units: LengthUnit,
+    params: Arc<Params>,
+}
+
+impl ReadIn {
+    pub(crate) fn of(document: &Document) -> ReadIn {
+        ReadIn {
+            units: document.units(),
+            params: document.params_shared(),
+        }
+    }
+
+    /// What fields are read with: as [`Document::design`] gives it.
+    pub(crate) fn design(&self) -> Design<'_> {
+        Design {
+            max: f64::from(MAX_COORD),
+            units: self.units,
+            params: &self.params,
+        }
+    }
+
+    /// Takes `document`'s units and parameters: what it read in before,
+    /// if either changed, for the fields to follow them
+    /// ([`TypedText::follow`]).
+    pub(crate) fn follow(&mut self, document: &Document) -> Option<ReadIn> {
+        let before = std::mem::replace(self, ReadIn::of(document));
+        let same = before.units == self.units
+            && (Arc::ptr_eq(&before.params, &self.params) || before.params == self.params);
+        (!same).then_some(before)
+    }
+}
+
 /// A typed value's field: the text as typed, the value it last gave, and
 /// why the text is refused, if it is.
 #[derive(Debug, Clone, PartialEq)]
@@ -485,12 +522,13 @@ impl TypedText {
         }
     }
 
-    /// The field as the view shows it.
-    pub(crate) fn field(&self) -> TypedField<'_> {
+    /// The field as the view shows it, offering `params`' names.
+    pub(crate) fn field<'a>(&'a self, params: ParamsIn<'a>) -> TypedField<'a> {
         TypedField {
             text: &self.text,
             error: self.error.as_ref(),
             value: self.value.as_ref().map(|value| value.value),
+            params,
         }
     }
 
@@ -517,6 +555,20 @@ impl TypedText {
             if self.error.is_none() {
                 self.text = value.text.clone();
             }
+        }
+    }
+
+    /// Follows the design it was read in for `before` changing to the
+    /// one `now` asks in: the units as [`TypedText::follow_units`] does,
+    /// and a text naming parameters is read again where they changed, so
+    /// `height / 2` gives half the new height, or is refused with why.
+    pub(crate) fn follow(&mut self, before: &Ask, now: &Ask) {
+        if before.units != now.units {
+            self.follow_units(before);
+        }
+        if before.params != now.params && !varde_expr::names(&self.text).is_empty() {
+            let text = std::mem::take(&mut self.text);
+            self.input(text, now);
         }
     }
 }

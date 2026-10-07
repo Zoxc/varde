@@ -36,7 +36,7 @@ impl MotionSession {
     /// Opens the fillet `fillet` in this session: its edges, radius and
     /// Tangent chain.
     pub(super) fn open_fillet(&mut self, fillet: &Fillet) {
-        let ask = Fillet::radius_ask(&self.design);
+        let ask = Fillet::radius_ask(&self.read_in.design());
         self.fields[MotionField::Radius.index()] = TypedText::of(&fillet.radius, &ask);
         self.blend = BlendSetup::of(&fillet.edges, fillet.chains);
         self.blend_body();

@@ -8,6 +8,7 @@ fn num(value: f64) -> Node {
 fn shape(expr: &Expr) -> String {
     match &expr.node {
         Node::Number(value) => format!("{value}"),
+        Node::Name(name) => name.clone(),
         Node::Group(inner) => format!("({})", shape(inner)),
         Node::Unit(inner, unit) => format!("[{} {}]", shape(inner), unit.symbol()),
         Node::Neg(inner) => format!("-{}", shape(inner)),
@@ -134,6 +135,12 @@ fn errors_with_spans() {
         ("1 ^ 2", ErrorKind::Unexpected("^".into()), (2, 3)),
         ("1 mm mm", ErrorKind::UnitOnUnit, (5, 7)),
         ("1e400", ErrorKind::BadNumber, (0, 5)),
+        ("(1) yd", ErrorKind::UnknownUnit("yd".into()), (4, 6)),
+        (
+            "width height",
+            ErrorKind::Unexpected("height".into()),
+            (6, 12),
+        ),
     ];
     for (text, kind, (start, end)) in cases {
         let error = error(text);
@@ -172,4 +179,18 @@ fn depth_limit() {
     // Long chains aren't nesting.
     let chain = vec!["1"; MAX_LEN / 2].join("+");
     assert!(parse(&chain).is_ok());
+}
+
+#[test]
+fn names_where_a_unit_is_not_expected() {
+    assert_eq!(parsed("width"), "width");
+    assert_eq!(parsed("2 * width_2 + _x"), "{{2 * width_2} + _x}");
+    assert_eq!(parsed("-a / (b)"), "{-a / (b)}");
+    // A unit after a name parses; evaluating refuses it.
+    assert_eq!(parsed("a mm"), "[a mm]");
+    // Unit words are units anywhere, names never.
+    assert_eq!(error("deg").kind, ErrorKind::ExpectedNumber);
+    assert_eq!(error("1 + MM").kind, ErrorKind::ExpectedNumber);
+    let spans = name_spans("a + 2 mm * b_1");
+    assert_eq!(spans, [Span::new(0, 1), Span::new(11, 14)]);
 }

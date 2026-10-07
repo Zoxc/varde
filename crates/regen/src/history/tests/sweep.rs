@@ -690,7 +690,9 @@ fn a_helix_s_axis_is_resolved() {
         OriginPlane::XZ,
         rectangle((55.0, 0.0), (56.0, 1.0)),
     );
-    let design = editor.document().design();
+    // A copy, as the edits below change the document.
+    let held = editor.document().clone();
+    let design = held.design();
     let base = swept(
         &editor,
         profile,

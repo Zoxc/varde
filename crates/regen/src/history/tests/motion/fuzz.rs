@@ -511,7 +511,8 @@ fn random_align(evaluation: &Evaluation, bodies: &[BodyId], rng: &mut Rng) -> Op
             }
         }
     }
-    let design = varde_document::Document::default().design();
+    let blank = varde_document::Document::default();
+    let design = blank.design();
     let primaries = from.primary.is_some();
     let offset = (primaries && rng.below(2) == 0).then(|| {
         Value::new(

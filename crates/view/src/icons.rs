@@ -148,6 +148,9 @@ icons! {
     // The icon mock's draft: a wall leaning in from its foot, the
     // pull dashed through it, the drafted side in the accent.
     Draft => r#"<path class="r" d="M12 2v20" stroke-dasharray="2 2"/><path class="t" d="M6 20L9 4h6l3 16z"/><path class="a" d="M6 20L9 4"/>"#,
+    // The model mock's parameters: names down the left, their values in
+    // boxes, the boxes in the accent.
+    Params => r#"<path d="M3.5 6.5h5M3.5 12h5M3.5 17.5h5"/><rect class="a" x="11.5" y="4.5" width="9" height="4" rx="1.2"/><rect class="a" x="11.5" y="10" width="9" height="4" rx="1.2"/><rect class="a" x="11.5" y="15.5" width="9" height="4" rx="1.2"/>"#,
     // The icon mock's split body: a box cut by a dashed plane.
     Split => r#"<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M2 15L22 9" stroke-dasharray="2.5 2"/>"#,
     Align => r#"<path class="a" d="M4 3v18"/><rect class="t" x="7" y="5" width="13" height="5" rx="1"/><rect x="7" y="14" width="8" height="5" rx="1"/>"#,
@@ -318,6 +321,7 @@ impl Icon {
             | Icon::Shell
             | Icon::OffsetFace
             | Icon::Draft
+            | Icon::Params
             | Icon::ScUniform
             | Icon::ScAxes
             | Icon::ScEdge

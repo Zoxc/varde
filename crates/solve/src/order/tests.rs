@@ -12,6 +12,7 @@ fn propose(base: u64) -> Request {
         sketch: Arc::new(Sketch::default()),
         edit: SketchEdit::Delete(Vec::new()),
         units: LengthUnit::Mm,
+        params: Arc::default(),
     }
 }
 
@@ -20,6 +21,7 @@ fn analyse(revision: u64) -> Request {
         revision: revision.into(),
         sketch: Arc::new(Sketch::default()),
         units: LengthUnit::Mm,
+        params: Arc::default(),
     }
 }
 
@@ -34,6 +36,7 @@ fn drag(session: u64, step: usize) -> Request {
         points: vec![(point, DVec2::ZERO); step],
         radii: Vec::new(),
         units: LengthUnit::Mm,
+        params: Arc::default(),
     }
 }
 

@@ -8907,7 +8907,7 @@ would). Two sides typed over the limit already, a knob only moves back
 towards it. If the design's units change while the session is open, each
 distance's value is pinned as the document pins its own
 (`Value::pin_units` with the units it was read in,
-`ExtrudeSession::follow_units`, from `prune_extrude` as the change is
+`ExtrudeSession::follow_design`, from `prune_extrude` as the change is
 applied), so a bare "20" typed in millimetres becomes "20 mm" rather
 than disagreeing with the document, and OK, checked against the
 document's design, isn't blocked by the change; a refused text stays as

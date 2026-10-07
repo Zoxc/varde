@@ -63,7 +63,7 @@ pub use profile::{
     MAX_NEAR_MISSES, MAX_NEAR_PAIRS, MAX_REGION_CURVES, MAX_SPLITS, MAX_WORK, MergeError, NearMiss,
     OpenEnd, Piece, Profiles, Region, RegionRef, RegionRefError, TooComplex,
 };
-pub use propose::{Accepted, DragSession, Rejected, propose};
+pub use propose::{Accepted, DragSession, Rejected, Unrevalued, propose, revalue};
 pub use selectable::Selectable;
 pub use solve::{Analysis, Budget, DEFAULT_ITERATIONS, Failure, Goal, Solution, analyse, solve};
 pub use spline::{

@@ -410,8 +410,18 @@ edge, a sketch's face or an align's corner are), the design's units (a
 bodies and features take, and `rollback`, the feature the Timeline is
 rolled back to before (defaulted to none; checked to name a feature;
 `Command::SetRollback`, cleared by a new feature, moved to the next
-feature kept when its own is removed). A document read from a file is checked
-(`Document::check`, which runs `Sketch::check` on each sketch): body and
+feature kept when its own is removed), and `params`, the design's
+parameters (defaulted to none, so older files read as having none; each a
+`Param`, its `name` and its expression `text` as typed; what they come to
+isn't stored but resolved again from the list as the document is read,
+`Document::params_resolved`). A document read from a file is checked
+(`Document::check`, which runs `Sketch::check` on each sketch): at most
+`varde_expr::MAX_PARAMS` (1000) parameters, each named as
+`varde_expr::check_name` takes (a word of ASCII letters, digits and `_`
+not starting with a digit, at most 64 bytes, not a unit's name), no name
+twice, each text at most `MAX_LEN` (256) bytes (`CheckError::Param`,
+`CheckError::Params`; a parameter's expression may be in error, only
+values using it may not); body and
 feature ids increasing and below the next id, every body's opacity from
 10 to 100, every body's colour's hue below 360 and saturation at most
 30 %, every body made by an

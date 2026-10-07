@@ -1626,12 +1626,12 @@ fn shots_25_damage() {
                 damage: damage(DamageKind::NewestDamaged),
                 entry: false,
             }),
-            recovered: Some(Recovery::Offered(Offer {
+            recovered: Some(Recovery::Offered(Box::new(Offer {
                 document: Document::default(),
                 design_changed: true,
                 damage: Some(damage(DamageKind::Bridged)),
                 newer_base: true,
-            })),
+            }))),
             ..Origin::new(Target::None, Access::Edit, "part".to_owned())
         });
         camera.take(&doc, "25-newest-damaged", Shot::new());
@@ -2195,5 +2195,55 @@ fn shots_34_body_colour() {
         let hovered = Shot::new().pointer(Pointer::Over("Colour"));
         camera.take(&doc, "34-body-colour", hovered);
         camera.take(&doc, "34-body-colour-dark", hovered.dark());
+    });
+}
+
+/// Scenario 35: the parameters' popup, a parameter the extrude selected
+/// uses marked and one in error, in light and dark, and left of the
+/// extrude's panel as it's edited.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_35_params() {
+    shooting(|camera| {
+        let (mut doc, requests) = example();
+        for (name, text) in [("height", "10 mm"), ("wall", "height / 5"), ("bad", "nope")] {
+            doc.apply(Command::AddParam {
+                name: name.into(),
+                text: text.into(),
+            });
+        }
+        let document = doc.editor.document();
+        let (extrude, mut kind) = (document.features().iter())
+            .find_map(|feature| match &feature.kind {
+                FeatureKind::Extrude(extrude) => Some((feature.id, extrude.clone())),
+                _ => None,
+            })
+            .unwrap();
+        let ask = varde_document::Extent::ask(&document.design());
+        let value = varde_expr::Value::new("height", &ask).unwrap();
+        kind.extent = varde_document::Extent::OneSide(value);
+        doc.apply(Command::SetFeature {
+            feature: extrude,
+            kind: Box::new(kind.into()),
+        });
+        doc.sync();
+        answer(&mut doc, &requests);
+        framed(&mut doc);
+        doc.look(Look::ToggleParams);
+        doc.look(Look::SelectFeature(extrude));
+        let field = varde_view::ParamField::Expression;
+        doc.look(Look::Params(varde_view::ParamsLook::Input {
+            index: 1,
+            field,
+            text: "height * 2".into(),
+        }));
+        doc.update(Edit::Param(varde_view::ParamEdit::Commit {
+            index: 1,
+            field,
+        }));
+        camera.take(&doc, "35-params", Shot::new());
+        camera.take(&doc, "35-params-dark", Shot::new().dark());
+        doc.look(Look::EditFeature(extrude));
+        camera.take(&doc, "35-params-beside", Shot::new());
     });
 }

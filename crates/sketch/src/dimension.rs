@@ -160,8 +160,9 @@ impl Measure {
     /// zero and under a turn, or a length of at least [`MIN_LENGTH`] and
     /// at most the design's `max` (twice that for a diameter, as a radius
     /// may be `max`).
-    pub fn ask(&self, design: &Design) -> Ask {
-        match self {
+    /// Names in its text are `design`'s parameters.
+    pub fn ask<'p>(&self, design: &Design<'p>) -> Ask<'p> {
+        let ask = match self {
             Measure::Angle(..) => Ask::angle(design.units, TAU).positive().under_max(),
             Measure::Diameter(_) => Ask::length(design.units, 2.0 * design.max)
                 .positive()
@@ -169,7 +170,8 @@ impl Measure {
             _ => Ask::length(design.units, design.max)
                 .positive()
                 .at_least(MIN_LENGTH),
-        }
+        };
+        ask.with_params(design.params)
     }
 }
 

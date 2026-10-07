@@ -284,7 +284,14 @@ controls (over them in a short viewport, `operation_panel::placed`) and
 it), `opaque` so clicks and the wheel on it don't reach the scene;
 the labels' layer under it (a split's pieces' and the measured
 distance's) stays, empty, for the others, so the panel's widget state
-survives labels coming and going.
+survives labels coming and going. The parameters' popup
+(`crates/view/src/params.rs`, see `agents/features.md`, Parameters;
+opened by the rail's tool or the model bar's Parameters button, last
+after Measure with nothing selected, lit while it's open) is
+the layer over it, placed the same way (`operation_panel::placed_from`)
+but 540 px wide and, while an operation's panel shows, left of it
+(`PANEL_MARGIN + PANEL_WIDTH + PANEL_MARGIN` in from the right); a
+narrow viewport narrows it, 12 px clear of its left.
 
 A move's handles (`viewport/motion.rs`, `Moving`; their look and
 what they set in `agents/features.md`, Move and mirror) are drawn in the
@@ -1913,7 +1920,10 @@ it has got, on the example's extrude (light, dark) and drawing the model
 at scale 2, `DocumentState::regenerating` set on `Doc::state`; the
 operations' knobs (`shots_33`) on the example's plate: a chamfer of its
 top front edge, Equal and Two distances, a fillet of it, a shell and an
-offset of its top, a draft of its front, a scale (also dark at scale 2).
+offset of its top, a draft of its front, a scale (also dark at scale 2);
+the parameters' popup (`shots_35`): three parameters, one the extrude
+selected uses marked, one in error, light and dark, and left of the
+extrude's panel as it's edited.
 Shots are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

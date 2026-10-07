@@ -62,7 +62,7 @@ impl MotionSession {
     /// Opens the offset face `offset` in this session: its faces,
     /// distance, side and Tangent faces.
     pub(super) fn open_offset_face(&mut self, offset: &OffsetFace) {
-        let ask = OffsetFace::distance_ask(&self.design);
+        let ask = OffsetFace::distance_ask(&self.read_in.design());
         self.fields[MotionField::Distance.index()] = TypedText::of(&offset.distance, &ask);
         self.flip = offset.inward;
         self.tangent = offset.tangent;

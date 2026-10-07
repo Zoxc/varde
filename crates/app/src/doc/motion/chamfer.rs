@@ -15,7 +15,10 @@ use crate::doc::regions::TypedText;
 
 /// What `field` of a chamfer is read with in `design`, if it's one of
 /// its own: a distance as an extrude's, the angle above 0 and under 90°.
-pub(super) fn chamfer_ask(field: MotionField, design: &Design) -> Option<varde_expr::Ask> {
+pub(super) fn chamfer_ask<'p>(
+    field: MotionField,
+    design: &Design<'p>,
+) -> Option<varde_expr::Ask<'p>> {
     match field {
         MotionField::ChamferDistance | MotionField::ChamferSecond => {
             Some(Chamfer::distance_ask(design))
@@ -66,7 +69,7 @@ impl MotionSession {
     /// Opens the chamfer `chamfer` in this session: its edges, Tangent
     /// chain, type, values and Flip sides.
     pub(super) fn open_chamfer(&mut self, chamfer: &Chamfer) {
-        let design = &self.design;
+        let design = &self.read_in.design();
         let distance = Chamfer::distance_ask(design);
         let mut set = |field: MotionField, value: &Value, ask: &varde_expr::Ask| {
             self.fields[field.index()] = TypedText::of(value, ask);

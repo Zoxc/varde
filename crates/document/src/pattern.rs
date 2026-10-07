@@ -121,23 +121,26 @@ impl PatternKind {
 impl Pattern {
     /// What a count is checked against in `design`: a whole number from 2
     /// to [`MAX_PATTERN_COUNT`].
-    pub fn count_ask(design: &Design) -> Ask {
+    pub fn count_ask<'p>(design: &Design<'p>) -> Ask<'p> {
         Ask::number(design.units, f64::from(MAX_PATTERN_COUNT))
             .whole()
             .at_least(2.0)
+            .with_params(design.params)
     }
 
     /// What a linear pattern's spacing is checked against in `design`: a
     /// length within [`MAX_COORD`] of zero, bare numbers in its units
     /// (zero is refused apart, see [`Pattern::check_own`]).
-    pub fn spacing_ask(design: &Design) -> Ask {
-        Ask::length(design.units, f64::from(MAX_COORD))
+    pub fn spacing_ask<'p>(design: &Design<'p>) -> Ask<'p> {
+        Ask::length(design.units, f64::from(MAX_COORD)).with_params(design.params)
     }
 
     /// What a circular pattern's angle is checked against in `design`:
     /// above zero and at most a turn, bare numbers in degrees.
-    pub fn angle_ask(design: &Design) -> Ask {
-        Ask::angle(design.units, TAU).positive()
+    pub fn angle_ask<'p>(design: &Design<'p>) -> Ask<'p> {
+        Ask::angle(design.units, TAU)
+            .positive()
+            .with_params(design.params)
     }
 
     /// How many copies it makes of each body, the original among them, if
@@ -278,7 +281,7 @@ impl Pattern {
 
     /// Its values: the count, and the spacing or angle, with the ask
     /// each is checked against in `design`.
-    pub(crate) fn values_mut(&mut self, design: &Design) -> [(&mut Value, Ask); 2] {
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> [(&mut Value, Ask<'p>); 2] {
         match &mut self.kind {
             PatternKind::Linear { count, spacing, .. } => [
                 (count, Pattern::count_ask(design)),

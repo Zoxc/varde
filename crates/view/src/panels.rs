@@ -2064,7 +2064,7 @@ fn dimension_row<'a>(
             row![
                 icons::icon(Icon::Dimension, icons::INLINE),
                 text(what),
-                value_field("", field.text),
+                value_field("", field.text, field.params),
                 after,
             ]
             .spacing(8)
@@ -2090,14 +2090,20 @@ fn dimension_row<'a>(
 /// The value field: `text` as typed, `placeholder` shown while there's
 /// none, sending what's typed, `Enter` taking it and `Esc` closing it,
 /// whatever has the focus.
-pub(crate) fn value_field<'a>(placeholder: &str, text: &'a str) -> Element<'a, Message> {
+pub(crate) fn value_field<'a>(
+    placeholder: &str,
+    text: &'a str,
+    params: crate::ParamsIn<'a>,
+) -> Element<'a, Message> {
+    let on_input = |text| Message::Look(Look::ValueInput(text));
     let input = text_input(placeholder, text)
         .id(VALUE_FIELD)
-        .on_input(|text| Message::Look(Look::ValueInput(text)))
+        .on_input(on_input)
         .on_submit(Message::Edit(Edit::SubmitValue))
         .size(12)
         .padding([2, 4])
         .width(96);
+    let input = crate::suggest::suggesting(input, text, params, Some(&on_input));
     OnEscape::new(input, Message::Look(Look::CancelValue)).into()
 }
 
@@ -2344,6 +2350,7 @@ mod tests {
         let design = varde_sketch::Design {
             max: 1e6,
             units: LengthUnit::Mm,
+            params: varde_expr::Params::EMPTY,
         };
         let row = |link: Id, kind: LinkKind| LinkRow {
             link,

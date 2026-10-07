@@ -207,9 +207,38 @@ points handles' tips (`Sketch::tips`), labels within
 bounds, and every dimension's expression re-evaluated, in the design's
 units, to its stored value, which must be what its measure asks
 (`Measure::ask`: a length at least `MIN_LENGTH`, a micrometre, and
-within the limit, an angle above zero and under a turn). So it takes a `Design { max, units }`, the document's from
+within the limit, an angle above zero and under a turn). So it takes a `Design { max, units, params }`, the document's from
 `Document::design`. The document's editor runs it on every edit, so a
-sketch in the document always passes it.
+sketch in the document always passes it. A design's parameters
+(`params`, see "Parameters" in `agents/features.md`) are what names in
+dimensions read: `Measure::ask(design)` passes them on, so a dimension
+`width` is checked to come to its stored value with `width` as it is, and
+one naming no parameter, or one in error, fails the check.
+
+**Dimensions and parameters.** A dimension's value may name parameters
+(`width / 2`), typed in the value field as any value (whose names are
+offered as they're typed, see Suggestions in `agents/features.md`).
+When a parameter command changes what one comes to, the document solves
+the sketch again then and there: `revalue(&sketch, &design, &budget)`
+(`propose.rs`) evaluates each dimension naming a parameter again, moves
+the driving ones that change from their old values to the new in steps
+as a `SetDimension` does (all together, `continuation`), then settles
+and checks the result; `None` where nothing changes, `Unrevalued::Value`
+for a dimension in error, `Unrevalued::Rejected` for a sketch that won't
+solve. `Document::with_params` runs it on every sketch within the
+budget the command was applied with, in the same command as the
+parameter change, so one undo step takes back both; a refusal refuses
+the command (`EditError::Value`, `EditError::Unsolved`).
+`Editor::apply` gives the solver's default iterations and no clock;
+the app applies every command through `Editor::apply_within` with a
+deadline of `varde_solve::PROPOSAL_TIME` on iced's clock
+(`iced::time::Instant`, which the page has too), as it runs on the UI
+thread: one running out is `EditError::Unsolved(id,
+Rejected::Unsolved(Failure::OutOfTime))`, the command refused. A rename rewrites the dimensions' texts
+(`varde_expr::rename`) without solving, the values unchanged. Sketch edits
+waiting on the solver go first: parameter commands wait behind them
+(`Change::Param`), so a proposal is solved with the parameters it was
+made with.
 
 `Sketch::delete` removes items with what depends on them: curves made from
 a deleted point, the fillets and chamfers on a deleted line, points only
@@ -869,7 +898,10 @@ has the details.
   `Accepted` or `Rejected`, tagged with `base`; `Drag { session, sketch,
   points, radii }` answers `Dragged { session, solution }` only when the
   step converged; `Analyse { revision, sketch }` answers `Analysed`. Each
-  carries the design's `units` too, which sketches are checked in. A
+  carries the design's `units` and resolved `params` too (the document's
+  `params_shared` when sent), which sketches are checked in
+  (`Request::design`); a `DragSession` keeps a copy of them for its
+  steps. A
   request that panics, or that a worker died on, is `Failed` with its
   `Tag`.
 - **The `Solver`** answers them (`Solver::handle`), keeping the drag
@@ -886,7 +918,11 @@ has the details.
 - **On the web** the requests wait on the page in a `varde_lane::mailbox`
   holding the same `Order`, one with the worker at a time. The page posts
   a drag session's sketch only with the first step a worker gets of it, and
-  checks every reply against the request it had (`wire.rs`): sketches
+  checks every reply against the request it had (`wire.rs`). The
+  parameters cross as each one's name and text (`Params::sources`), with
+  the drag session's sketch only for a drag, and the worker resolves them
+  again (`Params::evaluate`) once their count, names' and texts' lengths
+  are within `MAX_PARAMS`, `MAX_NAME_LEN` and `MAX_LEN`: sketches
   checked, ids named in an analysis or a rejection those of the sketch
   sent or of the one the edit makes, a drag solution a place per point and
   a radius per circle. The worker checks what it's sent the same way.

@@ -9,9 +9,10 @@ use crate::typed::{DEFAULT_SIDES, Field};
 use crate::{ActiveTool, Target, Tool};
 
 /// A design in millimetres.
-pub(crate) const DESIGN: Design = Design {
+pub(crate) const DESIGN: Design<'static> = Design {
     max: 1e6,
     units: LengthUnit::Mm,
+    params: varde_expr::Params::EMPTY,
 };
 
 pub(crate) fn at(x: f64, y: f64) -> DVec2 {

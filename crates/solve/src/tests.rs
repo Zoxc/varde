@@ -31,7 +31,7 @@ pub(crate) fn drawn() -> Drawn {
         )
         .unwrap();
     let horizontal = sketch.add_constraint(Constraint::Horizontal(line)).unwrap();
-    assert_eq!(sketch.check(&design(LengthUnit::Mm)), Ok(()));
+    assert_eq!(sketch.check(&design(LengthUnit::Mm, Params::EMPTY)), Ok(()));
     Drawn {
         sketch: Arc::new(sketch),
         start,
@@ -48,6 +48,7 @@ pub(crate) fn propose_on(base: u64, sketch: &Arc<Sketch>, edit: SketchEdit) -> R
         sketch: Arc::clone(sketch),
         edit,
         units: LengthUnit::Mm,
+        params: Arc::default(),
     }
 }
 
@@ -58,6 +59,7 @@ pub(crate) fn drag(session: u64, sketch: &Arc<Sketch>, point: Id, to: DVec2) -> 
         points: vec![(point, to)],
         radii: Vec::new(),
         units: LengthUnit::Mm,
+        params: Arc::default(),
     }
 }
 
@@ -66,6 +68,7 @@ pub(crate) fn analyse_at(revision: u64, sketch: &Arc<Sketch>) -> Request {
         revision: revision.into(),
         sketch: Arc::clone(sketch),
         units: LengthUnit::Mm,
+        params: Arc::default(),
     }
 }
 
@@ -217,20 +220,20 @@ fn a_step_of_an_unknown_session_without_its_sketch_is_not_answered() {
     let to = DVec2::new(12.0, 4.0);
     assert!(
         solver
-            .drag(1, None, vec![(drawn.end, to)], Vec::new(), LengthUnit::Mm)
+            .drag(1, None, vec![(drawn.end, to)], Vec::new())
             .is_none()
     );
     // Nor once another session is in progress.
     solver.handle(drag(1, &drawn.sketch, drawn.end, to));
     assert!(
         solver
-            .drag(2, None, vec![(drawn.end, to)], Vec::new(), LengthUnit::Mm)
+            .drag(2, None, vec![(drawn.end, to)], Vec::new())
             .is_none()
     );
     // Which goes on.
     assert!(
         solver
-            .drag(1, None, vec![(drawn.end, to)], Vec::new(), LengthUnit::Mm)
+            .drag(1, None, vec![(drawn.end, to)], Vec::new())
             .is_some()
     );
 }
@@ -258,6 +261,7 @@ fn circles_are_dragged_by_their_radius() {
         points: Vec::new(),
         radii: vec![(drawn.circle, 5.0)],
         units: LengthUnit::Mm,
+        params: Arc::default(),
     }) else {
         panic!("the drag didn't move");
     };

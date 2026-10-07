@@ -86,8 +86,10 @@ pub enum Turn {
 impl Turn {
     /// What an angle is checked against in `design`: above zero and at
     /// most a turn, bare numbers in degrees.
-    pub fn ask(design: &Design) -> Ask {
-        Ask::angle(design.units, TAU).positive()
+    pub fn ask<'p>(design: &Design<'p>) -> Ask<'p> {
+        Ask::angle(design.units, TAU)
+            .positive()
+            .with_params(design.params)
     }
 
     /// Its angles.

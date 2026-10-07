@@ -296,6 +296,64 @@ fn steps(measure: &Measure, old: f64, new: f64) -> u32 {
     }
 }
 
+/// Why [`revalue`] couldn't keep a sketch in step with its design's
+/// parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Unrevalued {
+    /// This dimension's expression is in error with them, such as a name
+    /// no parameter has, or a value out of range.
+    Value(Id, varde_expr::Error),
+    /// The sketch with the new values doesn't solve, see [`Rejected`].
+    Rejected(Rejected),
+}
+
+impl fmt::Display for Unrevalued {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Unrevalued::Value(_, why) => write!(f, "a dimension would be in error: {why}"),
+            Unrevalued::Rejected(why) => write!(f, "the sketch wouldn't solve: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for Unrevalued {}
+
+/// `sketch` with each dimension whose expression names a parameter
+/// evaluated again in `design`, as its parameters have changed, and
+/// solved: driving dimensions move from their old values to the new as a
+/// [`SketchEdit::SetDimension`] does ([`propose`]), all at once. `None`
+/// where no value changes. The same `budget` bounds each solve, as for a
+/// proposal.
+pub fn revalue(
+    sketch: &Sketch,
+    design: &Design,
+    budget: &Budget,
+) -> Result<Option<Sketch>, Unrevalued> {
+    let mut applied = sketch.clone();
+    let mut targets = Vec::new();
+    for entry in &mut applied.dimensions {
+        let dimension = &mut entry.dimension;
+        if varde_expr::names(&dimension.value.text).is_empty() {
+            continue;
+        }
+        let value = varde_expr::evaluate(&dimension.value.text, &dimension.measure.ask(design))
+            .map_err(|why| Unrevalued::Value(entry.id, why))?;
+        if value == dimension.value.value {
+            continue;
+        }
+        if dimension.driving {
+            targets.push((entry.id, dimension.value.value, value));
+        }
+        dimension.value.value = value;
+    }
+    if applied == *sketch {
+        return Ok(None);
+    }
+    let continued = continuation(applied, &targets, budget).map_err(Unrevalued::Rejected)?;
+    let settled = settle(&continued, design, budget).map_err(Unrevalued::Rejected)?;
+    Ok(Some(settled.sketch))
+}
+
 /// `sketch` solved, within the design's limit and with nothing redundant.
 fn settle(sketch: &Sketch, design: &Design, budget: &Budget) -> Result<Accepted, Rejected> {
     let solved = solve(sketch, &Goal::Settle, budget)
@@ -323,14 +381,23 @@ fn settle(sketch: &Sketch, design: &Design, budget: &Budget) -> Result<Accepted,
 #[derive(Debug, Clone, PartialEq)]
 pub struct DragSession {
     sketch: Sketch,
-    design: Design,
+    /// The design's limit, units and parameters, which each step's
+    /// solution is checked against.
+    max: f64,
+    units: varde_expr::LengthUnit,
+    params: varde_expr::Params,
 }
 
 impl DragSession {
     /// Starts dragging `sketch`, which is to have passed [`Sketch::check`]
     /// against `design`, whose coordinate limit each step keeps within.
-    pub fn new(sketch: Sketch, design: Design) -> DragSession {
-        DragSession { sketch, design }
+    pub fn new(sketch: Sketch, design: &Design) -> DragSession {
+        DragSession {
+            sketch,
+            max: design.max,
+            units: design.units,
+            params: design.params.clone(),
+        }
     }
 
     /// The last solution that converged, or the sketch it started from.
@@ -352,7 +419,11 @@ impl DragSession {
             .map_err(Rejected::Unsolved)?
             .sketch;
         solved
-            .check(&self.design)
+            .check(&Design {
+                max: self.max,
+                units: self.units,
+                params: &self.params,
+            })
             .map_err(|why| Rejected::Edit(why.into()))?;
         self.sketch = solved;
         Ok(&self.sketch)

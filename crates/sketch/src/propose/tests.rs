@@ -13,6 +13,7 @@ use crate::testing::{
     self, DESIGN, at, circle, constrain, dimension, line, point, propose_it, value,
 };
 use crate::{Add, Constraint, Curve, Dimension, SketchError};
+use varde_expr::{LengthUnit, Value};
 
 const MAX: f64 = DESIGN.max;
 
@@ -265,7 +266,7 @@ fn a_drag_steps_from_one_solution_to_the_next() {
             curve: around,
         },
     );
-    let mut session = DragSession::new(sketch.clone(), DESIGN);
+    let mut session = DragSession::new(sketch.clone(), &DESIGN);
     let budget = Budget::default();
     let target = DVec2::new(0.0, 20.0);
     let reached = at(
@@ -289,7 +290,7 @@ fn a_drag_steps_from_one_solution_to_the_next() {
     // A target that isn't a number, past the limit, or out of time moves
     // nothing, keeping the last solution.
     let lone = point(&mut sketch, 1.0, 1.0);
-    let mut free = DragSession::new(sketch, DESIGN);
+    let mut free = DragSession::new(sketch, &DESIGN);
     for (to, budget) in [
         (DVec2::new(f64::NAN, 0.0), Budget::default()),
         (DVec2::new(2.0 * MAX, 0.0), Budget::default()),
@@ -324,7 +325,7 @@ fn a_drag_never_flips_a_tangency() {
     let tangent = sketch.tangent(flat, round).unwrap();
     constrain(&mut sketch, tangent);
     constrain(&mut sketch, Constraint::Fix(flat));
-    let mut session = DragSession::new(sketch, DESIGN);
+    let mut session = DragSession::new(sketch, &DESIGN);
     let budget = Budget::default();
     let up = session
         .step(vec![(center, DVec2::new(1.0, 4.0))], Vec::new(), &budget)
@@ -570,4 +571,41 @@ fn continuation_takes_bounded_steps() {
     assert_eq!(steps(&angle, 0.1, 0.1 + 0.9 * ANGLE_STEP), 1);
     assert_eq!(steps(&angle, 0.1 + 1.1 * ANGLE_STEP, 0.1), 2);
     assert_eq!(steps(&angle, 0.1, 6.2), CONTINUATION_STEPS);
+}
+
+#[test]
+fn a_dimension_naming_a_parameter_follows_it() {
+    let (mut sketch, corners, [base, ..]) = dimensioned();
+    let params = |width: &str| varde_expr::Params::evaluate([("width", width)], LengthUnit::Mm);
+    let ten = params("10 mm");
+    let design = |params| Design { params, ..DESIGN };
+    let ask = Measure::Length(base).ask(&design(&ten));
+    sketch.dimensions[0].dimension.value = Value::new("width", &ask).unwrap();
+    sketch.check(&design(&ten)).unwrap();
+    // Without the parameter, the name is unknown.
+    assert!(sketch.check(&DESIGN).is_err());
+    let budget = Budget::default();
+    assert_eq!(revalue(&sketch, &design(&ten), &budget), Ok(None));
+
+    let twelve = params("12 mm");
+    let moved = revalue(&sketch, &design(&twelve), &budget)
+        .unwrap()
+        .unwrap();
+    assert_eq!(moved.dimensions[0].dimension.value.value, 12.0);
+    assert_eq!(moved.dimensions[0].dimension.value.text, "width");
+    assert!((at(&moved, corners[1]) - DVec2::new(12.0, 0.0)).length() < 1e-9);
+    moved.check(&design(&twelve)).unwrap();
+
+    // No triangle has sides 1, 8, 6; nor is a number a length.
+    let one = params("1 mm");
+    assert!(matches!(
+        revalue(&sketch, &design(&one), &budget),
+        Err(Unrevalued::Rejected(_))
+    ));
+    let number = params("10");
+    let id = sketch.dimensions[0].id;
+    assert!(matches!(
+        revalue(&sketch, &design(&number), &budget),
+        Err(Unrevalued::Value(at, _)) if at == id
+    ));
 }

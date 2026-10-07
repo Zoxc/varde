@@ -21,7 +21,8 @@ fn edge(curve: u64) -> EdgeRef {
 /// the edges, the radius with its unit and the tangent chain.
 #[test]
 fn a_fillet_s_notes() {
-    let design = Document::example().design();
+    let example = Document::example();
+    let design = example.design();
     let ask = Fillet::radius_ask(&design);
     let mut fillet = Fillet {
         edges: vec![edge(0), edge(1)],

@@ -4,9 +4,10 @@ use super::*;
 use crate::{Constraint, ConstraintEntry, CurveEntry, Point, Side};
 
 const MAX: f64 = 100.0;
-const DESIGN: Design = Design {
+const DESIGN: Design<'static> = Design {
     max: MAX,
     units: LengthUnit::Mm,
+    params: Params::EMPTY,
 };
 
 /// Points 0 and 1, line 2 between them, circle 3 around point 0 and a

@@ -134,10 +134,11 @@ impl Operation {
 impl Extent {
     /// What a distance is checked against in `design`: a length at least
     /// [`MIN_LENGTH`] and at most [`MAX_COORD`], bare numbers in its units.
-    pub fn ask(design: &Design) -> Ask {
+    pub fn ask<'p>(design: &Design<'p>) -> Ask<'p> {
         Ask::length(design.units, f64::from(MAX_COORD))
             .positive()
             .at_least(MIN_LENGTH)
+            .with_params(design.params)
     }
 
     /// Its distances.
@@ -164,8 +165,10 @@ impl Extent {
 impl Extrude {
     /// What a taper is checked against in `design`: an angle under a
     /// right angle either way, bare numbers in degrees.
-    pub fn taper_ask(design: &Design) -> Ask {
-        Ask::angle(design.units, FRAC_PI_2).under_max()
+    pub fn taper_ask<'p>(design: &Design<'p>) -> Ask<'p> {
+        Ask::angle(design.units, FRAC_PI_2)
+            .under_max()
+            .with_params(design.params)
     }
 
     /// Its taper, if its walls lean: none for no taper or one of zero
@@ -176,9 +179,9 @@ impl Extrude {
 
     /// Its typed values and what each is checked against in `design`:
     /// its distances and its taper.
-    pub(crate) fn values_mut(&mut self, design: &Design) -> Vec<(&mut Value, Ask)> {
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
         let length = Extent::ask(design);
-        let mut values: Vec<(&mut Value, Ask)> = self
+        let mut values: Vec<(&mut Value, Ask<'p>)> = self
             .extent
             .values_mut()
             .map(|value| (value, length))

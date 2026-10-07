@@ -46,8 +46,11 @@ pub struct FaceDraft {
 impl FaceDraft {
     /// What its angle is checked against in `design`: above zero and
     /// under a right angle, bare numbers in degrees.
-    pub fn angle_ask(design: &Design) -> Ask {
-        Ask::angle(design.units, FRAC_PI_2).positive().under_max()
+    pub fn angle_ask<'p>(design: &Design<'p>) -> Ask<'p> {
+        Ask::angle(design.units, FRAC_PI_2)
+            .positive()
+            .under_max()
+            .with_params(design.params)
     }
 
     /// The body its faces are on: the first face's (all are on one).
@@ -106,7 +109,7 @@ impl FaceDraft {
     }
 
     /// Its typed values and what each is checked against in `design`.
-    pub(crate) fn values_mut(&mut self, design: &Design) -> Vec<(&mut Value, Ask)> {
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
         vec![(&mut self.angle, FaceDraft::angle_ask(design))]
     }
 }

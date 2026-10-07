@@ -13,6 +13,7 @@ use crate::viewport::{Interaction, ModelPicking, Operating, Program, program};
 
 fn field(value: f64) -> TypedField<'static> {
     TypedField {
+        params: crate::ParamsIn::NONE,
         text: "",
         error: None,
         value: Some(value),

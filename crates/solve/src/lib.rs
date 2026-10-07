@@ -65,7 +65,7 @@ use std::time::Duration;
 
 use glam::DVec2;
 use serde::{Deserialize, Serialize};
-use varde_document::{Design, LengthUnit, MAX_COORD, Revision};
+use varde_document::{Design, LengthUnit, MAX_COORD, Params, Revision};
 use varde_sketch::{Analysis, Budget, DragSession, Id, Rejected, Sketch, SketchEdit};
 
 /// Carries [`Request`]s to a lane without waiting for them to be handled;
@@ -81,9 +81,10 @@ pub const PROPOSAL_TIME: Duration = Duration::from_secs(2);
 /// solution: a few frames, so a slow step doesn't hold up the next.
 pub const DRAG_TIME: Duration = Duration::from_millis(100);
 
-/// Work for the solver. Each carries the design's `units`, which checking
-/// a sketch reads its dimensions' expressions in: a sketch sent has passed
-/// [`Sketch::check`] against [`MAX_COORD`] and them ([`design`]).
+/// Work for the solver. Each carries the design's `units` and `params`,
+/// resolved, which checking a sketch reads its dimensions' expressions
+/// with: a sketch sent has passed [`Sketch::check`] against [`MAX_COORD`]
+/// and them ([`design`]).
 #[derive(Debug, Clone)]
 pub enum Request {
     /// Applies `edit` to `sketch`, the committed sketch as of revision
@@ -95,6 +96,7 @@ pub enum Request {
         sketch: Arc<Sketch>,
         edit: SketchEdit,
         units: LengthUnit,
+        params: Arc<Params>,
     },
     /// A step of the drag `session`: drags `points` and circles' `radii`
     /// towards their targets, from the last step's solution, see
@@ -111,6 +113,7 @@ pub enum Request {
         points: Vec<(Id, DVec2)>,
         radii: Vec<(Id, f64)>,
         units: LengthUnit,
+        params: Arc<Params>,
     },
     /// Analyses `sketch`, the committed sketch as of `revision`, e.g. on
     /// entering it. A newer analysis replaces one still waiting.
@@ -118,6 +121,7 @@ pub enum Request {
         revision: Revision,
         sketch: Arc<Sketch>,
         units: LengthUnit,
+        params: Arc<Params>,
     },
 }
 
@@ -149,6 +153,20 @@ impl Request {
             | Request::Drag { units, .. }
             | Request::Analyse { units, .. } => *units,
         }
+    }
+
+    /// The design's parameters it carries.
+    pub fn params(&self) -> &Params {
+        match self {
+            Request::Propose { params, .. }
+            | Request::Drag { params, .. }
+            | Request::Analyse { params, .. } => params,
+        }
+    }
+
+    /// What its sketch is checked against, see [`design`].
+    pub fn design(&self) -> Design<'_> {
+        design(self.units(), self.params())
     }
 }
 
@@ -193,10 +211,15 @@ impl Response {
 /// The coordinate limit solutions keep within, the document's.
 const MAX: f64 = MAX_COORD as f64;
 
-/// What sketches are checked against in a design of `units`, as the
-/// document does ([`Document::design`](varde_document::Document::design)).
-pub fn design(units: LengthUnit) -> Design {
-    Design { max: MAX, units }
+/// What sketches are checked against in a design of `units` and
+/// `params`, as the document does
+/// ([`Document::design`](varde_document::Document::design)).
+pub fn design(units: LengthUnit, params: &Params) -> Design<'_> {
+    Design {
+        max: MAX,
+        units,
+        params,
+    }
 }
 
 /// Answers requests, keeping the drag in progress between its steps: a
@@ -217,14 +240,21 @@ impl Solver {
                 sketch,
                 edit,
                 units,
-            } => Some(propose(base, &sketch, &edit, units)),
+                params,
+            } => Some(propose(base, &sketch, &edit, &design(units, &params))),
             Request::Drag {
                 session,
                 sketch,
                 points,
                 radii,
                 units,
-            } => self.drag(session, Some(&sketch), points, radii, units),
+                params,
+            } => self.drag(
+                session,
+                Some((&sketch, &design(units, &params))),
+                points,
+                radii,
+            ),
             Request::Analyse {
                 revision, sketch, ..
             } => Some(analyse(revision, &sketch)),
@@ -232,20 +262,20 @@ impl Solver {
     }
 
     /// A step of the drag `session`, from where its last step left off,
-    /// or from `sketch` if the session is new: a session other than the
-    /// one in progress replaces it. Without a sketch to start a new
+    /// or from `sketch` in its design if the session is new: a session
+    /// other than the one in progress replaces it. Without a sketch to start a new
     /// session from, or if the step doesn't converge within [`DRAG_TIME`],
     /// `None`.
     pub(crate) fn drag(
         &mut self,
         session: u64,
-        sketch: Option<&Sketch>,
+        sketch: Option<(&Sketch, &Design)>,
         points: Vec<(Id, DVec2)>,
         radii: Vec<(Id, f64)>,
-        units: LengthUnit,
     ) -> Option<Response> {
         if self.drag.as_ref().is_none_or(|(id, _)| *id != session) {
-            let started = DragSession::new(sketch?.clone(), design(units));
+            let (sketch, design) = sketch?;
+            let started = DragSession::new(sketch.clone(), design);
             self.drag = Some((session, started));
         }
         let (_, drag) = self.drag.as_mut()?;
@@ -259,9 +289,9 @@ impl Solver {
 }
 
 /// The proposal of `edit` on `sketch`, the committed sketch of `base`.
-fn propose(base: Revision, sketch: &Sketch, edit: &SketchEdit, units: LengthUnit) -> Response {
+fn propose(base: Revision, sketch: &Sketch, edit: &SketchEdit, design: &Design) -> Response {
     let expired = clock::deadline(PROPOSAL_TIME);
-    match varde_sketch::propose(sketch, edit, &design(units), &budget(&expired)) {
+    match varde_sketch::propose(sketch, edit, design, &budget(&expired)) {
         Ok(accepted) => Response::Accepted {
             base,
             sketch: Arc::new(accepted.sketch),

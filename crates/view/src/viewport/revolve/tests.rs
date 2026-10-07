@@ -53,6 +53,7 @@ fn state<'a>(
 ) -> RevolveState<'a> {
     let feature = feature();
     let field = TypedField {
+        params: crate::ParamsIn::NONE,
         text: "90",
         error: None,
         value: Some(std::f64::consts::FRAC_PI_2),

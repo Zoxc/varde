@@ -1183,12 +1183,12 @@ fn recovery_restored_while_the_sketch_edits_wait_frees_ok() {
     let (plate_doc, sketch, _) = plate();
     let document = plate_doc.editor.document().clone();
     let origin = crate::doc::Origin {
-        recovered: Some(crate::doc::Recovery::Offered(varde_io::Offer {
+        recovered: Some(crate::doc::Recovery::Offered(Box::new(varde_io::Offer {
             document: document.clone(),
             design_changed: false,
             damage: None,
             newer_base: false,
-        })),
+        }))),
         ..crate::doc::Origin::new(
             crate::doc::Target::None,
             varde_io::Access::Edit,
@@ -1676,12 +1676,12 @@ fn restoring_drops_the_session_and_the_changes_waiting() {
     let sketch = opened.features()[0].id;
     let units = opened.units();
     let origin = crate::doc::Origin {
-        recovered: Some(crate::doc::Recovery::Offered(varde_io::Offer {
+        recovered: Some(crate::doc::Recovery::Offered(Box::new(varde_io::Offer {
             document: recovered.clone(),
             design_changed: false,
             damage: None,
             newer_base: false,
-        })),
+        }))),
         ..crate::doc::Origin::new(
             crate::doc::Target::None,
             varde_io::Access::Edit,
@@ -3339,4 +3339,58 @@ fn a_failure_and_add_anyway_hold_while_a_toggled_body_is_on_its_way() {
     answer(&mut doc, &requests);
     let state = doc.extrude_state().unwrap();
     assert!(state.error.is_none() && !state.accept && state.ready);
+}
+
+#[test]
+fn a_distance_naming_a_parameter_follows_it_while_the_session_is_open() {
+    let (mut doc, sketch, requests) = plate();
+    doc.apply(Command::AddParam {
+        name: "height".into(),
+        text: "30 mm".into(),
+    });
+    doc.sync();
+    key_in(&mut doc, key("x"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text: "height / 2".into(),
+        },
+    );
+    let field = |doc: &Doc| doc.extrude.as_ref().unwrap().fields[0].clone();
+    assert_eq!(field(&doc).value.unwrap().value, 15.0);
+    // The parameter changes: the field reads it again, and OK takes it.
+    doc.apply(Command::SetParam {
+        index: 0,
+        text: "10 mm".into(),
+    });
+    doc.sync();
+    assert_eq!(field(&doc).value.unwrap().value, 5.0);
+    assert_eq!(field(&doc).text, "height / 2");
+    assert!(doc.extrude_state().unwrap().ready);
+    answer(&mut doc, &requests);
+    // One it can't read any more is refused, with why.
+    doc.apply(Command::SetParam {
+        index: 0,
+        text: "nope +".into(),
+    });
+    doc.sync();
+    let error = field(&doc).error.unwrap();
+    assert_eq!(
+        error.kind,
+        varde_expr::ErrorKind::BrokenParam("height".into())
+    );
+    assert!(!doc.extrude_state().unwrap().ready);
+    // And back: OK makes the extrude by the new height.
+    doc.apply(Command::SetParam {
+        index: 0,
+        text: "8 mm".into(),
+    });
+    doc.sync();
+    answer(&mut doc, &requests);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.edit_error, None);
+    assert_eq!(extrudes(&doc)[0].span(), Some((0.0, 4.0)));
 }

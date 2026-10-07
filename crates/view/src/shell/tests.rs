@@ -20,7 +20,8 @@ fn face(part: PartKey) -> FaceRef {
 /// status bar the faces removed (or closed) and the direction.
 #[test]
 fn a_shell_s_notes() {
-    let design = Document::example().design();
+    let example = Document::example();
+    let design = example.design();
     let ask = Shell::thickness_ask(&design);
     let mut shell = Shell {
         body: Document::example().bodies()[0].id,

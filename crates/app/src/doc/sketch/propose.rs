@@ -332,6 +332,9 @@ impl Doc {
                 sketch,
                 edit: proposal.edit.clone(),
                 units: proposal.units,
+                // Parameter changes wait behind proposals, so these are
+                // the ones the edit was made with.
+                params: self.editor.document().params_shared(),
             });
             self.proposals.in_flight = Some((revision, proposal));
         }
@@ -522,6 +525,7 @@ impl Doc {
             revision,
             sketch: Arc::new(sketch.clone()),
             units: self.editor.document().units(),
+            params: self.editor.document().params_shared(),
         });
         self.proposals.analysing = Some((revision, session.feature));
     }

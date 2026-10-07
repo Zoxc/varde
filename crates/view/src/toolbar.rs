@@ -764,6 +764,15 @@ fn ops<'a>(
             .chain([separator(), measure])
             .collect();
     }
+    // The design's parameters, by Measure, lit while their popup is
+    // open: as the rail's tool, it opens and closes it.
+    let params = op_button(
+        Icon::Params,
+        "Parameters",
+        None,
+        state.params.is_some(),
+        Some(Message::Look(Look::ToggleParams)),
+    );
     [
         sketch,
         extrude,
@@ -774,6 +783,7 @@ fn ops<'a>(
         pattern_op,
         separator(),
         measure,
+        params,
     ]
     .into_iter()
     .chain(origins)

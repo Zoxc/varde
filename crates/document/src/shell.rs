@@ -35,7 +35,7 @@ pub struct Shell {
 impl Shell {
     /// What its thickness is checked against in `design`: a length as an
     /// extrude's distance ([`Extent::ask`]).
-    pub fn thickness_ask(design: &Design) -> Ask {
+    pub fn thickness_ask<'p>(design: &Design<'p>) -> Ask<'p> {
         Extent::ask(design)
     }
 
@@ -69,7 +69,7 @@ impl Shell {
     }
 
     /// Its typed values and what each is checked against in `design`.
-    pub(crate) fn values_mut(&mut self, design: &Design) -> Vec<(&mut Value, Ask)> {
+    pub(crate) fn values_mut<'p>(&mut self, design: &Design<'p>) -> Vec<(&mut Value, Ask<'p>)> {
         vec![(&mut self.thickness, Shell::thickness_ask(design))]
     }
 }

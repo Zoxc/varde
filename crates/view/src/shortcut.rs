@@ -931,6 +931,13 @@ pub fn measure_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
+/// Opening the parameters' popup, or closing it: always, with no key, as
+/// the model mock has it. A document that can't be changed shows them
+/// without letting them be edited.
+pub fn params_binding() -> Binding {
+    Binding::new(Shortcut::NONE, Message::Look(Look::ToggleParams), true)
+}
+
 /// Taking up `tool`, or putting it down: in a sketch that can be changed.
 pub fn tool_binding(tool: Tool, keys: DocumentKeys) -> Binding {
     Binding::new(

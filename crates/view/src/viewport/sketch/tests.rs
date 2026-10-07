@@ -927,6 +927,7 @@ fn dimensions_have_lines_arrows_labels_and_the_value_field_in_place() {
     let editing = ValueTarget::Dimension(id);
     let field = |target, in_list| SketchState {
         value: Some(ValueField {
+            params: crate::ParamsIn::NONE,
             target,
             text: "10",
             error: None,
@@ -1128,6 +1129,7 @@ fn a_drawing_tool_s_fields_show_by_where_it_aims() {
     let target = ValueTarget::Field(Field::Angle);
     let open = SketchState {
         value: Some(ValueField {
+            params: crate::ParamsIn::NONE,
             target: &target,
             text: "",
             error: None,

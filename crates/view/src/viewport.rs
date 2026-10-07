@@ -55,7 +55,8 @@ pub use sketch::sketch_grid;
 /// sketch.
 #[derive(Debug, Clone)]
 pub(crate) enum Operating<'a> {
-    Extrude(Extruding<'a>),
+    // Boxed: the largest by far, with its fields.
+    Extrude(Box<Extruding<'a>>),
     Revolve(Revolving<'a>),
     /// The measure tool: not an operation, but drawn over the model as
     /// one is, while the cursor picks the model as outside the sessions.
@@ -158,7 +159,8 @@ impl ModelPicking<'_> {
 /// the sketch being edited, with the layer of widgets anchored to it, or
 /// setting up an operation, an extrude's regions and handle or a
 /// revolve's regions and axis, and `panel`, floating
-/// over the viewport's right under the controls, and the tool `rail`
+/// over the viewport's right under the controls, the parameters' popup
+/// `params`, already placed, and the tool `rail`
 /// over its left, and the list of what `overlaps` where the left button
 /// was held, over all of them. `pivot`, the point the camera orbits if one was picked,
 /// is marked, and `highlight` (its hover over what hides it too if
@@ -188,6 +190,7 @@ pub(crate) fn viewport<'a>(
     sketching: Option<Sketching<'a>>,
     operating: Option<Operating<'a>>,
     panel: Option<Element<'a, Message>>,
+    params: Option<Element<'a, Message>>,
     rail: Element<'a, Message>,
     overlaps: Option<Element<'a, Message>>,
     thumbnail: Option<&Arc<ThumbnailRequest>>,
@@ -262,6 +265,7 @@ pub(crate) fn viewport<'a>(
         .push(rail)
         .push(controls)
         .extend(panel)
+        .extend(params)
         .extend(overlaps)
         .into()
 }

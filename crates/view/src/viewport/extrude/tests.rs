@@ -54,6 +54,7 @@ fn state<'a>(
     grabbed: Option<Distance>,
 ) -> ExtrudeState<'a> {
     let field = TypedField {
+        params: crate::ParamsIn::NONE,
         text: "10",
         error: None,
         value: Some(10.0),
@@ -73,6 +74,7 @@ fn state<'a>(
         fields: [field; 2],
         flip: false,
         taper: TypedField {
+            params: crate::ParamsIn::NONE,
             text: "0°",
             error: None,
             value: Some(0.0),
@@ -103,7 +105,9 @@ fn shown(state: ExtrudeState<'_>) -> Program<'_> {
         None,
         Mode::Light.palette(),
         None,
-        Some(crate::viewport::Operating::Extrude(Extruding::new(state))),
+        Some(crate::viewport::Operating::Extrude(Box::new(
+            Extruding::new(state),
+        ))),
     )
 }
 
@@ -404,7 +408,9 @@ fn a_knob_is_grabbed_behind_the_model_but_not_read_only() {
         None,
         Mode::Light.palette(),
         None,
-        Some(crate::viewport::Operating::Extrude(Extruding::new(state))),
+        Some(crate::viewport::Operating::Extrude(Box::new(
+            Extruding::new(state),
+        ))),
     );
     assert!(grabs(&viewport));
 }

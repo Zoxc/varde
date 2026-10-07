@@ -255,7 +255,7 @@ fn link_geometry_is_fixed_in_the_solver() {
         propose_it(&sketch, &moved),
         Err(Rejected::Edit(EditError::Linked(link.points[0])))
     );
-    let mut session = crate::DragSession::new(accepted.sketch.clone(), DESIGN);
+    let mut session = crate::DragSession::new(accepted.sketch.clone(), &DESIGN);
     let dragged = session
         .step(
             vec![(free, DVec2::new(4.0, 4.0))],

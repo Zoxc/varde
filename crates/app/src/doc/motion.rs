@@ -67,7 +67,7 @@ use self::sweep::SweepSetup;
 use super::camera::fitting_length;
 use super::combine::pickable;
 use super::feed::Merges;
-use super::regions::TypedText;
+use super::regions::{ReadIn, TypedText};
 use super::{Doc, Focus, OUT_OF_DATE};
 
 /// The move, mirror or pattern being set up, while one is:
@@ -156,7 +156,7 @@ pub(crate) struct MotionSession {
     edited_bodies: Vec<BodyId>,
     /// The design as the fields' texts were last read, whose units bare
     /// lengths in them are in.
-    design: Design,
+    read_in: ReadIn,
     /// Built when what it's of changes, so the renderer uploads it only
     /// then.
     highlight: Arc<ModelHighlight>,
@@ -226,7 +226,7 @@ fn read(text: &str, ask: &Ask) -> TypedText {
 /// one's an angle as the pattern stores it, a linear one's a length above
 /// zero (the Flip direction gives it its sign) within the coordinate
 /// limit.
-fn spread_ask(kind: MotionKind, design: &Design) -> Ask {
+fn spread_ask<'p>(kind: MotionKind, design: &Design<'p>) -> Ask<'p> {
     match kind {
         MotionKind::CircularPattern => Pattern::angle_ask(design),
         _ => Pattern::spacing_ask(design).positive(),
@@ -234,7 +234,7 @@ fn spread_ask(kind: MotionKind, design: &Design) -> Ask {
 }
 
 /// What `field` of a session of `kind` is read with in `design`.
-fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
+fn field_ask<'p>(kind: MotionKind, field: MotionField, design: &Design<'p>) -> Ask<'p> {
     match field {
         MotionField::Distance if kind == MotionKind::OffsetFace => {
             varde_document::OffsetFace::distance_ask(design)
@@ -465,7 +465,7 @@ impl MotionSession {
             mode,
             hover: None,
             edited_bodies: Vec::new(),
-            design,
+            read_in: ReadIn::of(document),
             highlight: Arc::default(),
             built: None,
             pivot: None,
@@ -614,7 +614,7 @@ impl MotionSession {
     /// what `pattern` stores, else as [`MotionSession::editing`] reads
     /// them from it.
     fn take_shape(&mut self, pattern: &Pattern, shape: Option<&PatternShape>) {
-        let ask = spread_ask(self.kind, &self.design);
+        let ask = spread_ask(self.kind, &self.read_in.design());
         // A shape of the other kind's (a file swapped the kind since) is
         // never taken: its mode may be none this kind offers.
         if let Some(shape) = shape.filter(|shape| PatternMode::of(self.kind).contains(&shape.mode))
@@ -737,7 +737,7 @@ impl MotionSession {
         }
         let steps = count.value as u32 - 1;
         let spread = self.field(MotionField::Spread).value.as_ref();
-        let design = &self.design;
+        let design = &self.read_in.design();
         let circular = |angle: &Value| Pattern {
             bodies: Vec::new(),
             kind: PatternKind::Circular {
@@ -1186,17 +1186,18 @@ impl MotionSession {
     }
 
     /// Keeps each value where the design's units changed since its field
-    /// was read, as the document does its own.
-    fn follow_units(&mut self, document: &Document) {
-        let design = document.design();
-        if design == self.design {
+    /// was read, as the document does its own, and reads one naming
+    /// parameters again where they changed ([`TypedText::follow`]).
+    fn follow_design(&mut self, document: &Document) {
+        let Some(before) = self.read_in.follow(document) else {
             return;
+        };
+        let (before, now) = (before.design(), self.read_in.design());
+        let asks = MotionField::ALL.map(|field| field_ask(self.kind, field, &before));
+        let now = MotionField::ALL.map(|field| field_ask(self.kind, field, &now));
+        for ((field, ask), now) in self.fields.iter_mut().zip(&asks).zip(&now) {
+            field.follow(ask, now);
         }
-        let asks = MotionField::ALL.map(|field| field_ask(self.kind, field, &self.design));
-        for (field, ask) in self.fields.iter_mut().zip(&asks) {
-            field.follow_units(ask);
-        }
-        self.design = design;
     }
 
     /// The draft previewing it while the axis or plane isn't picked: the
@@ -2172,7 +2173,7 @@ impl Doc {
             return;
         }
         session.prune(document);
-        session.follow_units(document);
+        session.follow_design(document);
         self.follow_motion_merges();
     }
 
@@ -2555,7 +2556,7 @@ impl Doc {
                 };
                 session.centre(pivot.at, line)
             });
-        let fields = MotionField::ALL.map(|field| session.field(field).field());
+        let fields = MotionField::ALL.map(|field| session.field(field).field(self.params_in()));
         Some(MotionState {
             kind: session.kind,
             editing,

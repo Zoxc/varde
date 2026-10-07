@@ -78,13 +78,14 @@ impl Field {
     /// What it asks for in `design`: what its dimension's measure asks
     /// (see [`Measure::ask`]), or for the sides a whole number from
     /// [`MIN_SIDES`] to [`MAX_SIDES`].
-    pub fn ask(self, design: &Design) -> Ask {
+    pub fn ask<'p>(self, design: &Design<'p>) -> Ask<'p> {
         // Only the kind of measure matters to what it asks.
         let any = Id::ORIGIN;
         match self {
             Field::Sides => Ask::number(design.units, f64::from(MAX_SIDES))
                 .at_least(f64::from(MIN_SIDES))
-                .whole(),
+                .whole()
+                .with_params(design.params),
             Field::Angle => Measure::Angle(any, any).ask(design),
             Field::Diameter => Measure::Diameter(any).ask(design),
             Field::Radius => Measure::Radius(any).ask(design),

@@ -1244,6 +1244,7 @@ impl Doc {
                 text: &field.text,
                 error: field.error.as_ref(),
                 in_list: field.in_list,
+                params: self.params_in(),
             }),
             label_drag: session.label.map(|label| (label.id, label.by)),
             snap: session.snap,

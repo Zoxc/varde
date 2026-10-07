@@ -1,13 +1,18 @@
-//! Text to a small tree: numbers, `+ - * /`, signs, brackets, and a unit
-//! after a number or a bracketed group.
+//! Text to a small tree: numbers, parameter names, `+ - * /`, signs,
+//! brackets, and a unit after a number or a bracketed group.
 //!
 //! ```text
 //! sum     := product (("+" | "-") product)*
 //! product := signed (("*" | "/") signed)*
 //! signed  := ("-" | "+") signed | unitful
 //! unitful := primary unit?
-//! primary := number | "(" sum ")"
+//! primary := number | name | "(" sum ")"
 //! ```
+//!
+//! A word (`[A-Za-z_][A-Za-z0-9_]*`) right after a number or a `)` is a
+//! unit, or an unknown one: `2 yd` is refused, not 2 times `yd`. Anywhere
+//! else a word that isn't a unit is a parameter's name; unit words are
+//! never names ([`check_name`](crate::check_name)).
 //!
 //! A unit binds tightest, so `-5 mm` is `-(5 mm)` and `2 * 3 in` is
 //! `2 * (3 in)`. Numbers use `.` for decimals, with an optional exponent
@@ -26,6 +31,8 @@ pub(crate) struct Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Node {
     Number(f64),
+    /// A parameter, by name.
+    Name(String),
     /// A bracketed expression.
     Group(Box<Expr>),
     /// A number or group with a unit after it.
@@ -75,6 +82,8 @@ pub(crate) fn parse(text: &str) -> Result<Expr, Error> {
 enum Tok {
     Number(f64),
     Unit(Unit),
+    /// A word that isn't a unit, its text at the token's span.
+    Name,
     Plus,
     Minus,
     Star,
@@ -89,8 +98,42 @@ struct Token {
     span: Span,
 }
 
+/// The spans of the parameter names in `text`, in order: renaming a
+/// parameter rewrites them. Lexing goes on past what doesn't lex, so a
+/// text in error still shows every name it uses.
+pub(crate) fn name_spans(text: &str) -> Vec<Span> {
+    if text.len() > MAX_LEN {
+        return Vec::new();
+    }
+    let mut spans = Vec::new();
+    let _ = lex_into(text, true, &mut |token| {
+        if token.tok == Tok::Name {
+            spans.push(token.span);
+        }
+    });
+    spans
+}
+
 fn lex(text: &str) -> Result<Vec<Token>, Error> {
     let mut tokens = Vec::new();
+    lex_into(text, false, &mut |token| tokens.push(token))?;
+    Ok(tokens)
+}
+
+/// Lexes `text`, handing each token to `emit` until the first error, or
+/// past errors when `past_errors`, skipping what's in error.
+fn lex_into(text: &str, past_errors: bool, emit: &mut dyn FnMut(Token)) -> Result<(), Error> {
+    // The previous token, for whether a word is a unit after it.
+    let mut last: Option<Tok> = None;
+    macro_rules! fail {
+        ($error:expr) => {{
+            if !past_errors {
+                return Err($error);
+            }
+            last = None;
+            continue;
+        }};
+    }
     let bytes = text.as_bytes();
     let mut chars = text.char_indices().peekable();
     while let Some((start, c)) = chars.next() {
@@ -106,10 +149,10 @@ fn lex(text: &str) -> Result<Vec<Token>, Error> {
             '"' => Tok::Unit(LengthUnit::In.into()),
             '°' => Tok::Unit(AngleUnit::Deg.into()),
             ',' => {
-                return Err(Error {
+                fail!(Error {
                     kind: ErrorKind::Comma,
                     span: Span::new(start, end),
-                });
+                })
             }
             '0'..='9' | '.' => {
                 end = number_end(bytes, start);
@@ -117,41 +160,51 @@ fn lex(text: &str) -> Result<Vec<Token>, Error> {
                 // characters after the first.
                 while chars.next_if(|&(i, _)| i < end).is_some() {}
                 let span = Span::new(start, end);
-                let value: f64 = text[start..end].parse().map_err(|_| Error {
-                    kind: ErrorKind::Unexpected(text[start..end].to_owned()),
-                    span,
-                })?;
+                let Ok(value) = text[start..end].parse::<f64>() else {
+                    fail!(Error {
+                        kind: ErrorKind::Unexpected(text[start..end].to_owned()),
+                        span,
+                    })
+                };
                 if !value.is_finite() {
-                    return Err(Error {
+                    fail!(Error {
                         kind: ErrorKind::BadNumber,
                         span,
-                    });
+                    })
                 }
                 Tok::Number(value)
             }
-            c if c.is_ascii_alphabetic() => {
-                while chars.next_if(|&(_, c)| c.is_ascii_alphabetic()).is_some() {}
+            c if c.is_ascii_alphabetic() || c == '_' => {
+                while chars.next_if(|&(_, c)| word_char(c)).is_some() {}
                 end = chars.peek().map_or(text.len(), |&(i, _)| i);
                 let word = &text[start..end];
-                let unit = unit(word).ok_or_else(|| Error {
-                    kind: ErrorKind::UnknownUnit(word.to_owned()),
-                    span: Span::new(start, end),
-                })?;
-                Tok::Unit(unit)
+                let after_value = matches!(last, Some(Tok::Number(_) | Tok::Close));
+                match unit(word) {
+                    Some(unit) => Tok::Unit(unit),
+                    None if after_value => fail!(Error {
+                        kind: ErrorKind::UnknownUnit(word.to_owned()),
+                        span: Span::new(start, end),
+                    }),
+                    None => Tok::Name,
+                }
             }
-            c => {
-                return Err(Error {
-                    kind: ErrorKind::Unexpected(c.to_string()),
-                    span: Span::new(start, end),
-                });
-            }
+            c => fail!(Error {
+                kind: ErrorKind::Unexpected(c.to_string()),
+                span: Span::new(start, end),
+            }),
         };
-        tokens.push(Token {
+        last = Some(tok);
+        emit(Token {
             tok,
             span: Span::new(start, end),
         });
     }
-    Ok(tokens)
+    Ok(())
+}
+
+/// Whether `c` may be in a word after its first character.
+pub(crate) fn word_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
 }
 
 /// The end of the number starting at `start`: digits with at most one
@@ -179,7 +232,7 @@ fn number_end(bytes: &[u8], start: usize) -> usize {
 }
 
 /// The unit a word names, in any case.
-fn unit(word: &str) -> Option<Unit> {
+pub(crate) fn unit(word: &str) -> Option<Unit> {
     let units: [(&str, Unit); 7] = [
         ("mm", LengthUnit::Mm.into()),
         ("cm", LengthUnit::Cm.into()),
@@ -294,6 +347,10 @@ impl Parser<'_> {
         match token.tok {
             Tok::Number(value) => Ok(Expr {
                 node: Node::Number(value),
+                span: token.span,
+            }),
+            Tok::Name => Ok(Expr {
+                node: Node::Name(self.text[token.span.range()].to_owned()),
                 span: token.span,
             }),
             Tok::Open => {

@@ -129,14 +129,34 @@ impl Rng {
     }
 }
 
-/// Every ask a caller might make, bounds included.
-fn asks() -> Vec<Ask> {
+/// Parameters for the fuzz tests' names: one of each quantity, one in
+/// error, one huge.
+const FUZZ_PARAMS: [(&str, &str); 5] = [
+    ("width", "40 mm"),
+    ("count", "3"),
+    ("tilt", "15 deg"),
+    ("bad", "bad"),
+    ("huge", "1e300 mm"),
+];
+
+fn fuzz_params() -> Params {
+    Params::evaluate(FUZZ_PARAMS, LengthUnit::Mm)
+}
+
+/// Every ask a caller might make, bounds included, with `params` (those
+/// of [`FUZZ_PARAMS`]) or none.
+fn asks(params: &Params) -> Vec<Ask<'_>> {
     let mut asks = Vec::new();
     for units in LengthUnit::ALL {
-        asks.push(Ask::length(units, 1e6));
-        asks.push(Ask::length(units, f64::MAX).positive());
-        asks.push(Ask::angle(units, TAU));
-        asks.push(Ask::number(units, f64::INFINITY));
+        for ask in [
+            Ask::length(units, 1e6),
+            Ask::length(units, f64::MAX).positive(),
+            Ask::angle(units, TAU),
+            Ask::number(units, f64::INFINITY),
+        ] {
+            asks.push(ask);
+            asks.push(ask.with_params(params));
+        }
     }
     asks
 }
@@ -151,6 +171,23 @@ fn exercise(text: &str, asks: &[Ask]) {
                 assert!(!ask.positive || value > 0.0, "{text:?}");
                 if let Ok(pinned) = pin_units(text, ask) {
                     assert_eq!(evaluate(&pinned, ask), Ok(value), "{text:?} {pinned:?}");
+                }
+                // Renaming a parameter, in the text and the list,
+                // changes nothing.
+                if let Some(span) = names(text).first()
+                    && let Ok(renamed) = rename(text, &text[span.range()], "renamed_x")
+                {
+                    let name = &text[span.range()];
+                    let list = FUZZ_PARAMS.map(|(old, text)| {
+                        let text = rename(text, name, "renamed_x").unwrap();
+                        (if old == name { "renamed_x" } else { old }, text)
+                    });
+                    let params = Params::evaluate(
+                        list.iter().map(|(name, text)| (*name, text.as_str())),
+                        ask.units,
+                    );
+                    let ask = ask.with_params(&params);
+                    assert_eq!(evaluate(&renamed, &ask), Ok(value), "{text:?}");
                 }
             }
             Err(error) => {
@@ -167,7 +204,8 @@ fn exercise(text: &str, asks: &[Ask]) {
 
 #[test]
 fn arbitrary_bytes_never_panic() {
-    let asks = asks();
+    let params = fuzz_params();
+    let asks = asks(&params);
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     for _ in 0..3000 {
         let len = rng.below(MAX_LEN + 20);
@@ -181,9 +219,10 @@ fn arbitrary_tokens_never_panic() {
     const PIECES: &[&str] = &[
         "0", "1", "7", "25.4", ".5", "5.", "1e3", "1e308", "1e-320", "9e", "e", "+", "-", "*", "/",
         "(", ")", " ", "mm", "cm", "m", "in", "ft", "deg", "rad", "\"", "°", "−", "×", "÷", ",",
-        "µ", "x", "\u{a0}",
+        "µ", "x", "\u{a0}", "width", "count", "tilt", "bad", "huge", "widht", "_", "x2",
     ];
-    let asks = asks();
+    let params = fuzz_params();
+    let asks = asks(&params);
     let mut rng = Rng(0x2545_f491_4f6c_dd1d);
     for _ in 0..varde_testing::pick(8_000, 20_000) {
         let count = rng.below(40);
@@ -239,4 +278,62 @@ fn numbers_without_their_symbol() {
     assert_eq!(format_number(0.123_456_7, None), "0.123457");
     assert_eq!(full_number(12.7, inch), "0.5");
     assert_eq!(full_number(-0.0, None), "0");
+}
+
+/// Parameters made of random pieces using each other never panic, and
+/// each comes to a finite value of its kind or an error on its text.
+#[test]
+fn arbitrary_parameters_never_panic() {
+    const NAMES: &[&str] = &["a", "b", "c", "d", "e"];
+    const PIECES: &[&str] = &[
+        "a", "b", "c", "d", "e", "f", "1", "2.5", "1e300", "mm", "deg", "+", "-", "*", "/", "(",
+        ")", " ", "in", ",",
+    ];
+    let mut rng = Rng(0x0123_4567_89ab_cdef);
+    for _ in 0..varde_testing::pick(2_000, 10_000) {
+        let texts: Vec<String> = NAMES
+            .iter()
+            .map(|_| {
+                let count = 1 + rng.below(8);
+                (0..count)
+                    .map(|_| PIECES[rng.below(PIECES.len())])
+                    .collect()
+            })
+            .collect();
+        let units = LengthUnit::ALL[rng.below(LengthUnit::ALL.len())];
+        let list = NAMES.iter().zip(&texts).map(|(n, t)| (*n, t.as_str()));
+        let params = Params::evaluate(list, units);
+        for ((name, result), text) in params.iter().zip(&texts) {
+            match result {
+                Ok(resolved) => {
+                    assert!(resolved.value.is_finite(), "{name} = {text:?}");
+                    // Pinned, it comes to the same in other units.
+                    if let Ok(pinned) = params.pin_units(text, units) {
+                        let list = NAMES.iter().zip(&texts).map(|(n, t)| {
+                            (
+                                *n,
+                                if n == &name {
+                                    pinned.as_str()
+                                } else {
+                                    t.as_str()
+                                },
+                            )
+                        });
+                        let other = Params::evaluate(list, LengthUnit::Ft);
+                        if other.get(name) != Some(result) {
+                            // Only where something it uses changed with the units.
+                            let mut used = names(text);
+                            used.retain(|span| text[span.range()] != *name);
+                            assert!(!used.is_empty(), "{name} = {text:?} -> {pinned:?}");
+                        }
+                    }
+                }
+                Err(error) => {
+                    assert!(error.span.start <= error.span.end);
+                    let _ = &text[error.span.range()];
+                    assert!(!error.to_string().is_empty());
+                }
+            }
+        }
+    }
 }

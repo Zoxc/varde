@@ -2,7 +2,7 @@
 
 use glam::DVec2;
 
-use varde_expr::{LengthUnit, Value};
+use varde_expr::{LengthUnit, Params, Value};
 
 use crate::intersect::Geom;
 use crate::{
@@ -96,9 +96,10 @@ pub(crate) fn quadrilateral() -> (Sketch, [Id; 4], [Id; 4]) {
 
 /// What tests check sketches against: a limit of a kilometre and
 /// millimetres.
-pub(crate) const DESIGN: Design = Design {
+pub(crate) const DESIGN: Design<'static> = Design {
     max: 1e6,
     units: LengthUnit::Mm,
+    params: Params::EMPTY,
 };
 
 /// `text` read in millimetres as a value of `measure`.

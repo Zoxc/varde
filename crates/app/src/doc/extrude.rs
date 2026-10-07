@@ -11,7 +11,7 @@ use varde_expr::{AngleUnit, LengthUnit, Unit};
 use varde_render::Camera;
 use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind, PanelHover};
 
-use super::regions::{BodyTargets, RegionPick, TypedText};
+use super::regions::{BodyTargets, ReadIn, RegionPick, TypedText};
 use super::{Doc, Focus};
 
 /// The extrude being set up, while one is: [`Doc::extrude`].
@@ -45,8 +45,8 @@ pub(crate) struct ExtrudeSession {
     /// The panel's row the cursor is over, if any.
     pub(crate) hover: Option<PanelHover>,
     /// The design as the fields' texts were last read, whose units bare
-    /// numbers in them are in: see [`ExtrudeSession::follow_units`].
-    design: Design,
+    /// numbers in them are in: see [`ExtrudeSession::follow_design`].
+    read_in: ReadIn,
 }
 
 /// The part of the view's height a new extrude's distance starts at, at
@@ -82,7 +82,7 @@ impl ExtrudeSession {
             targets: BodyTargets::default(),
             grabbed: None,
             hover: None,
-            design: document.design(),
+            read_in: ReadIn::of(document),
         }
     }
 
@@ -131,18 +131,19 @@ impl ExtrudeSession {
     /// Keeps each distance's length where the design's units changed
     /// since its field was read, as the document does its own: the units
     /// the text was read in are written after its bare numbers. A text
-    /// that's refused stays as typed, to be read in the new units.
-    fn follow_units(&mut self, document: &Document) {
-        let design = document.design();
-        if design == self.design {
+    /// that's refused stays as typed, to be read in the new units. One
+    /// naming parameters is read again where they changed
+    /// ([`TypedText::follow`]).
+    fn follow_design(&mut self, document: &Document) {
+        let Some(before) = self.read_in.follow(document) else {
             return;
-        }
-        let ask = Extent::ask(&self.design);
+        };
+        let (before, now) = (before.design(), self.read_in.design());
+        let (ask, now_ask) = (Extent::ask(&before), Extent::ask(&now));
         for field in &mut self.fields {
-            field.follow_units(&ask);
+            field.follow(&ask, &now_ask);
         }
-        self.taper.follow_units(&Extrude::taper_ask(&self.design));
-        self.design = design;
+        (self.taper).follow(&Extrude::taper_ask(&before), &Extrude::taper_ask(&now));
     }
 
     /// The flip to store: the one set up where the extent takes it,
@@ -422,7 +423,7 @@ impl Doc {
             self.extrude = None;
             return;
         }
-        session.follow_units(document);
+        session.follow_design(document);
         session.targets.prune(document);
     }
 
@@ -449,9 +450,12 @@ impl Doc {
             picked: &session.regions.picked,
             missing: session.regions.missing,
             extent: session.extent,
-            fields: [session.fields[0].field(), session.fields[1].field()],
+            fields: [
+                session.fields[0].field(self.params_in()),
+                session.fields[1].field(self.params_in()),
+            ],
             flip: session.flip,
-            taper: session.taper.field(),
+            taper: session.taper.field(self.params_in()),
             operation: session.operation,
             targets: self.body_targets(session.operation, session.feature, &session.targets),
             grabbed: session.grabbed,

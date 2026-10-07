@@ -26,6 +26,7 @@ fn plate() -> Arc<Profiles> {
 
 fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> ExtrudeState<'a> {
     let field = |value| TypedField {
+        params: crate::ParamsIn::NONE,
         text: "",
         error: None,
         value,

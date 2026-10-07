@@ -5,19 +5,19 @@ use crate::LengthUnit;
 
 const MAX: f64 = 1e6;
 
-fn mm() -> Ask {
+fn mm() -> Ask<'static> {
     Ask::length(LengthUnit::Mm, MAX)
 }
 
-fn inches() -> Ask {
+fn inches() -> Ask<'static> {
     Ask::length(LengthUnit::In, MAX)
 }
 
-fn angle() -> Ask {
+fn angle() -> Ask<'static> {
     Ask::angle(LengthUnit::Mm, TAU)
 }
 
-fn number() -> Ask {
+fn number() -> Ask<'static> {
     Ask::number(LengthUnit::Mm, MAX)
 }
 
