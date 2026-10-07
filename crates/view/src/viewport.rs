@@ -717,7 +717,8 @@ impl Program<'_> {
 
     /// What of the model shows at `at`, in the window's pixels.
     /// The origin plane drawn under the screen point `at`, if one is, and
-    /// nearer than the point `near` of the model if there's one there:
+    /// nearer than the point `near` of the model if there's one there,
+    /// unless they're drawn over it ([`OriginShown::planes_on_top`]):
     /// the nearest along the cursor's ray, of the squares the renderer
     /// draws ([`PLANE_REACH`], [`PLANE_GAP`], [`PLANE_SIDES`]).
     fn origin_plane_at(
@@ -732,6 +733,7 @@ impl Program<'_> {
         let (from, direction) = projector.ray(pixel)?;
         let reach = f64::from(PLANE_REACH * camera.view_height());
         let along = |point: DVec3| (point - from).dot(direction) / direction.length_squared();
+        let near = near.filter(|_| !self.scene.origin.planes_on_top);
         let limit = near.map_or(f64::INFINITY, along);
         let drawn = self.scene.origin.planes;
         (OriginPlane::ALL.into_iter().zip(drawn))

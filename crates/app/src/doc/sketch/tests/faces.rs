@@ -26,9 +26,9 @@ type Requests = Rc<RefCell<Vec<Request>>>;
 /// The screen the tests click in.
 const SIZE: iced::Size = iced::Size::new(1280.0, 800.0);
 
-/// Over the middle of the viewport, the example plate's top shows from
-/// Home.
-const OVER_TOP: iced::Point = iced::Point::new(780.0, 450.0);
+/// Right of the viewport's middle, the example plate's top shows from
+/// Home, clear of the origin planes drawn over it while a plane is picked.
+const OVER_TOP: iced::Point = iced::Point::new(1000.0, 450.0);
 
 fn letter(c: &str) -> iced::keyboard::Key {
     iced::keyboard::Key::Character(c.into())

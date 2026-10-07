@@ -592,13 +592,16 @@ normal to with a firmer rim, anti-aliased without MSAA (the quad grown
 a couple of pixels past its edges, `fs_origin_plane` fading its coverage
 over the last pixel by the derivatives of where it is in the square), depth tested without writing depth, drawn
 after the grid and under the finished sketches; the depth range takes
-their box in (`planes_bounds`). Picking a sketch's plane, a click on a
-plane drawn nearer than the model picks it as its toolbar button does
-(`Program::origin_plane_at`, `Edit::PlanePicked`).
+their box in (`planes_bounds`). While a tool offers them
+(`OriginShown::planes_on_top`, set by `origin_drawn`) they're drawn over
+the model instead, not depth tested, after its highlights and before the
+origin marker, so the model can't hide them. A click on a plane drawn
+nearer than the model, or anywhere on it while drawn on top, picks it as
+its toolbar button does (`Program::origin_plane_at`, `Edit::PlanePicked`).
 
 Hover. An origin object's row hovered (`Look::HoverOrigin`, left with
 `Look::LeaveOrigin`) and, picking a sketch's plane, the origin plane the
-cursor is over nearer than the model (`Look::HoverPlane`, in place of the
+cursor is over nearer than the model, or at all while drawn on top (`Look::HoverPlane`, in place of the
 model's hover, only while a plane is picked: `Doc::hovered_plane`) are
 `OriginShown::hovered`: drawn whether shown or not, a plane at 30 % with
 a solid rim twice as wide (its instance 3 on), an axis's line twice as

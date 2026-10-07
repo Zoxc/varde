@@ -838,7 +838,8 @@ fn a_left_click_on_the_model_selects_and_a_drag_still_orbits() {
 
 /// While an operation picks a plane (a mirror's), an origin plane
 /// drawn under the cursor, nearer than the model, is hovered and a click
-/// picks it as its toolbar button does; elsewhere the model is clicked.
+/// picks it as its toolbar button does; elsewhere the model is clicked,
+/// unless the planes are drawn over it.
 #[test]
 fn an_operation_picks_an_origin_plane_drawn_nearer_than_the_model() {
     use iced::widget::shader::Program as _;
@@ -882,6 +883,24 @@ fn an_operation_picks_an_origin_plane_drawn_nearer_than_the_model() {
         matches!(
             sent[..],
             [Message::Look(Look::ClickModel { pick: Some(_), .. })]
+        ),
+        "{sent:?}"
+    );
+    // Drawn over the model, the plane is picked there too.
+    program.scene.origin.planes_on_top = true;
+    let send = |events: &[Event], at: Point| -> Vec<Message> {
+        let mut state = Interaction::default();
+        let cursor = mouse::Cursor::Available(at);
+        (events.iter())
+            .filter_map(|event| program.update(&mut state, event, Plate::bounds(), cursor))
+            .filter_map(|action| action.into_inner().0)
+            .collect()
+    };
+    let sent = send(&[left(true), left(false)], top);
+    assert!(
+        matches!(
+            sent[..],
+            [Message::Look(Look::Motion(MotionLook::OriginPlane(_)))]
         ),
         "{sent:?}"
     );

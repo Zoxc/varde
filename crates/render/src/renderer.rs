@@ -61,6 +61,9 @@ pub struct OriginShown {
     /// Those selected, by [`OriginPart::index`]: drawn as the one hovered
     /// is.
     pub selected: [bool; OriginPart::COUNT],
+    /// Whether the planes are drawn over the model rather than hidden by
+    /// it: while one is picked, so each can be seen and picked.
+    pub planes_on_top: bool,
 }
 
 /// One of the world's origin objects, as [`OriginShown`] has them.
@@ -108,6 +111,7 @@ impl OriginShown {
         planes: [false; 3],
         hovered: None,
         selected: [false; OriginPart::COUNT],
+        planes_on_top: false,
     };
     /// None of them.
     pub const NONE: OriginShown = OriginShown {
@@ -116,6 +120,7 @@ impl OriginShown {
         planes: [false; 3],
         hovered: None,
         selected: [false; OriginPart::COUNT],
+        planes_on_top: false,
     };
 
     /// Whether `part` is drawn emphasised: hovered or selected.
@@ -1191,6 +1196,8 @@ pub struct Renderer {
     origin: wgpu::RenderPipeline,
     /// The origin planes shown: [`Frame::origin`].
     origin_planes: wgpu::RenderPipeline,
+    /// The origin planes drawn over the model: [`OriginShown::planes_on_top`].
+    origin_planes_on_top: wgpu::RenderPipeline,
     /// The sketch being edited: its fills, lines and points, drawn over
     /// everything, and the same hidden by the model in front of them
     /// ([`SketchScene::depth_tested`]).
@@ -1846,6 +1853,14 @@ impl Renderer {
                 "vs_origin_plane",
                 "fs_origin_plane",
             )),
+            origin_planes_on_top: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Always,
+                ..Pass::overlay(
+                    "varde origin planes on top",
+                    "vs_origin_plane",
+                    "fs_origin_plane",
+                )
+            }),
             sketch_on_top: SketchPipelines {
                 fills: pipeline(Pass::on_top(
                     "varde sketch fills",
@@ -2753,15 +2768,10 @@ impl Renderer {
             pass.draw(0..3, 0..1);
         }
 
-        // Under the finished sketches, which often lie on them.
-        if backdrop {
-            pass.set_pipeline(&self.origin_planes);
-            // The hovered one's instance is 3 on, see `vs_origin_plane`.
-            for (plane, _) in (0..).zip(slot.origin.planes).filter(|(_, shown)| *shown) {
-                let hovered = slot.origin.emphasised(OriginPart::Plane(plane as usize));
-                let instance = if hovered { plane + 3 } else { plane };
-                pass.draw(0..PLANE_VERTICES, instance..instance + 1);
-            }
+        // Under the finished sketches, which often lie on them, unless
+        // drawn over the model, below.
+        if backdrop && !slot.origin.planes_on_top {
+            self.draw_origin_planes(pass, slot, &self.origin_planes);
         }
 
         if let Some(lines) = slot.lines.as_ref().filter(|_| backdrop) {
@@ -2867,11 +2877,32 @@ impl Renderer {
             self.draw_hidden_picks(pass, slot, mesh);
         }
 
+        // Over the model, which can't hide them while one is picked.
+        if backdrop && slot.origin.planes_on_top {
+            self.draw_origin_planes(pass, slot, &self.origin_planes_on_top);
+        }
+
         if backdrop {
             pass.set_pipeline(&self.origin);
             // The pivot's marker is the second instance.
             let first = if slot.origin.marker { 0 } else { 1 };
             pass.draw(0..ORIGIN_VERTICES, first..MARKERS);
+        }
+    }
+
+    /// Records drawing the origin planes `slot` shows with `pipeline`.
+    fn draw_origin_planes(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        slot: &Slot,
+        pipeline: &wgpu::RenderPipeline,
+    ) {
+        pass.set_pipeline(pipeline);
+        // The hovered one's instance is 3 on, see `vs_origin_plane`.
+        for (plane, _) in (0..).zip(slot.origin.planes).filter(|(_, shown)| *shown) {
+            let hovered = slot.origin.emphasised(OriginPart::Plane(plane as usize));
+            let instance = if hovered { plane + 3 } else { plane };
+            pass.draw(0..PLANE_VERTICES, instance..instance + 1);
         }
     }
 

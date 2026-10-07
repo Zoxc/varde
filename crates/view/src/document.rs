@@ -244,11 +244,12 @@ impl DocumentState<'_> {
 
     /// What the viewport draws of the world's origin, axes and planes:
     /// what Objects has shown, and the planes while a tool offers them
-    /// ([`toolbar::picks_origin_planes`]).
+    /// ([`toolbar::picks_origin_planes`]), drawn over the model then.
     pub fn origin_drawn(&self) -> varde_render::OriginShown {
         let mut origin = self.origin;
         if toolbar::picks_origin_planes(self) {
             origin.planes = [true; 3];
+            origin.planes_on_top = true;
         }
         origin.hovered = self.origin_hover.map(crate::OriginObject::part);
         for row in self.objects_selected {
