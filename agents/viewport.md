@@ -2,8 +2,8 @@
 
 The document screen docks the toolbar above and the side panel left of the
 viewport, which fills the rest. The viewport is a `shader` widget whose
-primitive calls `varde_render::Renderer`, which opens its own render pass with
-a depth buffer and composites onto iced's frame (`LoadOp::Load`). iced then
+primitive calls `varde_render::Renderer`, which draws the scene into targets
+of its own and composites it onto iced's frame (`LoadOp::Load`). iced then
 draws the UI on top: in a sketch the layer of widgets anchored to the
 sketch (`anchors.rs`, below), and the camera controls in the viewport's
 top-right corner (`controls.rs`: the view cube, and Home under it at its
@@ -11,6 +11,23 @@ right, wrapped in a `mouse_area` so clicks on it don't reach the
 viewport; the cube's `mouse_area` only says when the cursor enters or
 leaves it, `Look::HoverCube`). Neither takes events off its widgets, so
 they reach the scene.
+
+The scene is multisampled, 4 samples a pixel (`sample_count`, falling
+back to 1 where the target's, depth's or halo's format isn't sure to take
+4; WebGL2 takes 4 for all three): faces have no anti-aliasing of their
+own, and their silhouette, where no edge line is drawn over it (a
+cylinder's side, a hidden edge, a faded model), would show stairs. A
+slot's `DepthTarget`, the frame's size, holds the multisampled depth and
+colour and a single sampled colour they resolve to. Each pass clears the
+colour to transparent and resolves (the scene's, the errors'), and a last
+pass (`composite.wgsl`, a full-screen triangle reading its own texel,
+scissored to the clip) blends the resolved scene over iced's frame
+premultiplied: alpha blending over transparent leaves it premultiplied,
+so a preview's model over transparent comes out as before. The error
+halo's target is multisampled the same way (`ErrorTarget::samples`),
+since its pass shares the scene's depth, and resolves to the texture the
+errors' composite reads. The shader-made anti-aliasing of lines, points
+and the grid stays: MSAA only adds to it.
 
 iced builds the widget's pipeline (`viewport::Pipeline`, and with it the
 `Renderer`'s render pipelines) the first time it prepares one of its

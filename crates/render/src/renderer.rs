@@ -29,6 +29,22 @@ fn depth_format(device: &wgpu::Device) -> wgpu::TextureFormat {
     }
 }
 
+/// How many samples a pixel of the scene takes: 4 where every format it
+/// draws to is sure to take them (WebGL2 included), else 1. Faces have no
+/// anti-aliasing of their own, and where no edge line is drawn over their
+/// silhouette it would show stairs without.
+fn sample_count(device: &wgpu::Device, formats: &[wgpu::TextureFormat]) -> u32 {
+    let four = formats.iter().all(|format| {
+        let features = format.guaranteed_format_features(device.features());
+        features.flags.sample_count_supported(4)
+            && (format.is_depth_stencil_format()
+                || features
+                    .flags
+                    .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE))
+    });
+    if four { 4 } else { 1 }
+}
+
 /// Which of the world's origin objects a [`Frame`] draws: the origin
 /// marker, the X, Y and Z axis lines, and the XY, XZ and YZ planes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -920,9 +936,29 @@ struct GpuLines {
     bounds: Option<Aabb>,
 }
 
+/// A slot's targets, the size of the frame: the depth, the colour the
+/// scene is drawn into, multisampled when [`Renderer::samples`] is above
+/// 1, and what that resolves to, single sampled, which is composited over
+/// the frame's target last.
 struct DepthTarget {
     view: wgpu::TextureView,
+    /// The multisampled colour, resolving to `resolved`; `None` drawing
+    /// into `resolved` itself.
+    color: Option<wgpu::TextureView>,
+    resolved: wgpu::TextureView,
+    /// Group 0 of [`Renderer::composite`]: `resolved`.
+    composite: wgpu::BindGroup,
     size: [u32; 2],
+}
+
+impl DepthTarget {
+    /// The colour target drawn into and what it resolves to, if anything.
+    fn color(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
+        match &self.color {
+            Some(color) => (color, Some(&self.resolved)),
+            None => (&self.resolved, None),
+        }
+    }
 }
 
 /// A pipeline's stencil state when it neither tests nor writes it.
@@ -1088,6 +1124,11 @@ impl std::error::Error for PrepareError {}
 /// [`Slot`]. Call [`Renderer::prepare`] to upload a frame into a slot, then
 /// [`Renderer::render`] to record its draw commands.
 pub struct Renderer {
+    /// The samples a pixel of the scene takes, see [`sample_count`].
+    samples: u32,
+    /// The scene, resolved, over the frame's target, premultiplied.
+    composite: wgpu::RenderPipeline,
+    composite_layout: wgpu::BindGroupLayout,
     background: wgpu::RenderPipeline,
     grid: wgpu::RenderPipeline,
     mesh: wgpu::RenderPipeline,
@@ -1249,6 +1290,9 @@ impl Renderer {
         // points, not its pipeline constants, so on one module they'd get
         // the on-top program.
         let depth_shader = module("varde scene, sketch depth tested");
+        let depth_format = depth_format(device);
+        let samples = sample_count(device, &[format, depth_format, HALO_FORMAT]);
+        let (composite, composite_layout) = composite_pipeline(device, format);
 
         // A uniform buffer of at least `size` bytes, at a dynamic offset
         // if `dynamic`, seen by both stages.
@@ -1303,7 +1347,6 @@ impl Renderer {
         // it's bound once for all of them.
         let part_layout = uniform_layout("varde part", size_of::<PartUniforms>(), true);
         let alphas = Alphas::new(device, &part_layout);
-        let depth_format = depth_format(device);
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("varde scene"),
@@ -1426,7 +1469,10 @@ impl Renderer {
                     stencil: pass.stencil,
                     bias: Default::default(),
                 }),
-                multisample: Default::default(),
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    ..Default::default()
+                },
                 multiview: None,
                 cache: None,
             })
@@ -1958,6 +2004,9 @@ impl Renderer {
                 layout: errors_group,
             },
             bind_group_layout,
+            samples,
+            composite,
+            composite_layout,
             alphas,
             tint_stride,
             depth_format,
@@ -2345,7 +2394,7 @@ impl Renderer {
 
         let size = frame.target_size.map(|s| s.max(1));
         if slot.depth.as_ref().map(|d| d.size) != Some(size) {
-            slot.depth = Some(create_depth(device, self.depth_format, size));
+            slot.depth = Some(self.create_targets(device, size));
         }
         if slot.errors.any() {
             if slot.error_target.as_ref().map(|t| t.size) != Some(size) {
@@ -2354,6 +2403,7 @@ impl Renderer {
                     &self.errors.layout,
                     &slot.uniforms,
                     size,
+                    self.samples,
                 ));
             }
             if let Some(target) = &slot.error_target {
@@ -2408,10 +2458,14 @@ impl Renderer {
         } else {
             wgpu::StoreOp::Discard
         };
+        // The scene is drawn over transparent, into a target of its own
+        // (multisampled, see `sample_count`), and composited over `target`
+        // last, premultiplied: blending over transparent leaves it so.
+        let clear = wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT);
         let mut pass = self.begin(
             slot,
             encoder,
-            ("varde scene", target, wgpu::LoadOp::Load),
+            ("varde scene", depth.color(), clear, depth_store),
             depth,
             (wgpu::LoadOp::Clear(1.0), depth_store),
             clip,
@@ -2419,21 +2473,96 @@ impl Renderer {
         self.draw_scene(&mut pass, slot, backdrop);
         if let Some(errors) = errors {
             drop(pass);
-            self.draw_errors(slot, encoder, target, depth, errors, clip);
+            self.draw_errors(slot, encoder, depth, errors, clip);
         } else {
             self.draw_sketch(&mut pass, slot);
+            drop(pass);
+        }
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("varde composite"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
+        pass.set_pipeline(&self.composite);
+        pass.set_bind_group(0, &depth.composite, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// A slot's targets of `size`: see [`DepthTarget`].
+    fn create_targets(&self, device: &wgpu::Device, size: [u32; 2]) -> DepthTarget {
+        let [width, height] = size;
+        let texture = |label, samples, format, usage| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: samples,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        let view = texture("varde depth", self.samples, self.depth_format, attachment);
+        let color = (self.samples > 1)
+            .then(|| texture("varde scene samples", self.samples, self.format, attachment));
+        let resolved = texture(
+            "varde scene",
+            1,
+            self.format,
+            attachment | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let composite = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("varde composite"),
+            layout: &self.composite_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&resolved),
+            }],
+        });
+        DepthTarget {
+            view,
+            color,
+            resolved,
+            composite,
+            size,
         }
     }
 
     /// Begins a pass of `slot`'s frame drawing into the colour target
-    /// `target` (its label, view and load) and `depth`, its depth loaded
+    /// `target` (its label, view and what that resolves to, load and
+    /// store) and `depth`, its depth loaded
     /// and stored as `depth_ops` say (the stencil cleared, never kept),
     /// within `clip`, with the uniforms bound and parts drawn opaque.
     fn begin<'p>(
         &self,
         slot: &Slot,
         encoder: &'p mut wgpu::CommandEncoder,
-        (label, target, load): (&str, &wgpu::TextureView, wgpu::LoadOp<wgpu::Color>),
+        (label, (target, resolve), load, store): (
+            &str,
+            (&wgpu::TextureView, Option<&wgpu::TextureView>),
+            wgpu::LoadOp<wgpu::Color>,
+            wgpu::StoreOp,
+        ),
         depth: &DepthTarget,
         (depth_load, depth_store): (wgpu::LoadOp<f32>, wgpu::StoreOp),
         clip: ClipRect,
@@ -2443,11 +2572,8 @@ impl Renderer {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load,
-                    store: wgpu::StoreOp::Store,
-                },
+                resolve_target: resolve,
+                ops: wgpu::Operations { load, store },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth.view,
@@ -2472,7 +2598,7 @@ impl Renderer {
         pass
     }
 
-    /// Records drawing `slot`'s errors over what's in `target`, with
+    /// Records drawing `slot`'s errors over the scene in `depth`'s colour, with
     /// `depth` holding the model's depth: their halo's coverage into
     /// `error_target`'s, seen and hidden, then composited over the target
     /// once, then the errors themselves, a kind at a time, hidden then
@@ -2481,7 +2607,6 @@ impl Renderer {
         &self,
         slot: &Slot,
         encoder: &mut wgpu::CommandEncoder,
-        target: &wgpu::TextureView,
         depth: &DepthTarget,
         error_target: &ErrorTarget,
         clip: ClipRect,
@@ -2494,8 +2619,9 @@ impl Renderer {
             encoder,
             (
                 "varde error halo",
-                &error_target.view,
+                error_target.color(),
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                wgpu::StoreOp::Store,
             ),
             depth,
             load,
@@ -2505,7 +2631,12 @@ impl Renderer {
         drop(pass);
 
         let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Discard);
-        let target = ("varde errors", target, wgpu::LoadOp::Load);
+        let target = (
+            "varde errors",
+            depth.color(),
+            wgpu::LoadOp::Load,
+            wgpu::StoreOp::Store,
+        );
         let mut pass = self.begin(slot, encoder, target, depth, load, clip);
         pass.set_pipeline(&self.errors.composite);
         pass.set_bind_group(0, &error_target.group, &[]);
@@ -3594,6 +3725,8 @@ impl BuiltErrors {
 /// their halo is drawn into (see [`HALO_FORMAT`]) and their colours.
 struct ErrorTarget {
     view: wgpu::TextureView,
+    /// The multisampled halo, resolving to `view`, as the scene's colour.
+    samples: Option<wgpu::TextureView>,
     /// [`ErrorUniforms`], written each frame there are errors.
     uniforms: wgpu::Buffer,
     /// Group 0 of the composite and the core: the scene's uniforms, the
@@ -3608,23 +3741,35 @@ impl ErrorTarget {
         layout: &wgpu::BindGroupLayout,
         scene: &wgpu::Buffer,
         size: [u32; 2],
+        samples: u32,
     ) -> ErrorTarget {
         let [width, height] = size;
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("varde error halo"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: HALO_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&Default::default());
+        let texture = |label, samples, usage| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: samples,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: HALO_FORMAT,
+                    usage,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        let view = texture(
+            "varde error halo",
+            1,
+            attachment | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let samples =
+            (samples > 1).then(|| texture("varde error halo samples", samples, attachment));
         let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("varde error colours"),
             size: size_of::<ErrorUniforms>() as u64,
@@ -3651,6 +3796,7 @@ impl ErrorTarget {
         });
         ErrorTarget {
             view,
+            samples,
             uniforms,
             group,
             size,
@@ -3658,30 +3804,70 @@ impl ErrorTarget {
     }
 }
 
-fn create_depth(
+impl ErrorTarget {
+    /// The halo's target drawn into and what it resolves to, if anything.
+    fn color(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {
+        match &self.samples {
+            Some(samples) => (samples, Some(&self.view)),
+            None => (&self.view, None),
+        }
+    }
+}
+
+/// The composite of a slot's resolved scene over the frame's target of
+/// `format`, premultiplied, and its group 0's layout: the scene.
+fn composite_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
-    [width, height]: [u32; 2],
-) -> DepthTarget {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("varde depth"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("varde composite"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/composite.wgsl").into()),
     });
-
-    DepthTarget {
-        view: texture.create_view(&Default::default()),
-        size: [width, height],
-    }
+    let group = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("varde composite"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        }],
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("varde composite"),
+        bind_group_layouts: &[&group],
+        push_constant_ranges: &[],
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("varde composite"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview: None,
+        cache: None,
+    });
+    (pipeline, group)
 }
 
 #[cfg(test)]
