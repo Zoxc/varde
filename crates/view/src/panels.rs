@@ -947,7 +947,7 @@ impl ObjectMenu {
 }
 
 /// How far the Opacity slider moves at a time, in percent.
-const OPACITY_STEP: f32 = 5.0;
+const OPACITY_STEP: f32 = 1.0;
 
 /// The Opacity and Colour part of a body's context menu, `parts`, under
 /// one wash while `hovered`. Entering and leaving it tell the app, which

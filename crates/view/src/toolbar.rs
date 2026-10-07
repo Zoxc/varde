@@ -19,8 +19,8 @@ use crate::shortcut::{
     combine_binding, constrain_binding, constraint_binding, draft_binding, extrude_binding,
     file_bindings, fillet_binding, handles_binding, history_bindings, loft_binding,
     measure_binding, mirror_binding, move_binding, offset_face_binding, pattern_binding,
-    revolve_binding, scale_binding, shell_binding, sketch_binding, split_binding, sweep_binding,
-    switch_binding, tool_binding,
+    plane_binding, revolve_binding, scale_binding, shell_binding, sketch_binding, split_binding,
+    sweep_binding, switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
@@ -543,10 +543,11 @@ fn ops<'a>(
         // Picking a plane in the viewport comes with picking, so the
         // origin planes are offered here.
         let planes = OriginPlane::ALL.map(|plane| {
-            op(
+            bound_op(
                 plane_icon(plane),
                 plane_label(plane),
-                editable.then_some(Message::Edit(Edit::PlanePicked(plane))),
+                plane_binding(plane, keys),
+                false,
             )
         });
         // Only Sketch, which backs out: Extrude and Revolve take no plane.

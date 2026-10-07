@@ -5,7 +5,7 @@
 use std::borrow::Cow;
 
 use iced::keyboard::{Key as KeyPress, Modifiers, key::Named};
-use varde_document::FeatureId;
+use varde_document::{FeatureId, OriginPlane};
 
 use crate::{
     CombineState, ConstraintKind, ConstraintSet, Edit, ExtrudeState, File, Look, Message,
@@ -24,7 +24,7 @@ pub struct Shortcut {
 /// The key of a [`Shortcut`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Key {
-    /// An ASCII lower case letter.
+    /// An ASCII lower case letter, or a digit.
     Letter(char),
     Enter,
     /// `Delete`, or `Backspace`, which macOS calls delete.
@@ -89,6 +89,9 @@ impl Shortcut {
     pub const FILLET: Self = Self::plain('f');
     /// No key: what a tool the UI mock gives none is bound to, never
     /// pressed (the mirror's).
+    /// Picking an origin plane while picking the plane for a sketch: `1`
+    /// XY, `2` XZ, `3` YZ, as the toolbar orders them.
+    pub const PLANES: [Self; 3] = [Self::plain('1'), Self::plain('2'), Self::plain('3')];
     pub const NONE: Self = Self::named(Key::None);
     pub const ENTER: Self = Self::named(Key::Enter);
     pub const DELETE: Self = Self::named(Key::Delete);
@@ -139,7 +142,7 @@ impl Shortcut {
     pub const COMB: Self = Self::plain('u');
 
     const fn plain(key: char) -> Self {
-        assert!(key.is_ascii_lowercase());
+        assert!(key.is_ascii_lowercase() || key.is_ascii_digit());
         Self::named(Key::Letter(key))
     }
 
@@ -435,6 +438,8 @@ pub struct DocumentKeys {
     /// Whether sketches are selected in Objects, and no feature in the
     /// Timeline: `Delete` removes them.
     pub objects_deletable: bool,
+    /// Whether the plane for a sketch is being picked.
+    pub picking_plane: bool,
     /// Whether an extrude is being set up.
     pub extruding: bool,
     /// Whether the extrude being set up can be committed.
@@ -484,6 +489,7 @@ impl DocumentKeys {
             selected,
             rename: None,
             menu: None,
+            picking_plane: false,
             geometry_selected: sketch.is_some_and(|sketch| !sketch.selection.is_empty()),
             drawing: sketch.is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool.draws())),
             tool: sketch.is_some_and(|sketch| sketch.tool.is_some() || sketch.constraining),
@@ -628,6 +634,14 @@ impl DocumentKeys {
         }
     }
 
+    /// The same keys with the plane for a sketch being picked if `picking`.
+    pub fn with_picking_plane(self, picking_plane: bool) -> Self {
+        Self {
+            picking_plane,
+            ..self
+        }
+    }
+
     /// The same keys with the measure tool in use if `measuring`.
     pub fn with_measure(self, measuring: bool) -> Self {
         Self { measuring, ..self }
@@ -673,6 +687,20 @@ pub fn sketch_binding(keys: DocumentKeys) -> Binding {
         Message::Look(Look::PickPlane)
     };
     Binding::new(Shortcut::SKETCH, message, keys.editable && !keys.sketching)
+}
+
+/// Picking the origin `plane` for a sketch, while one is picked: its key of
+/// [`Shortcut::PLANES`], in a document that can be changed.
+pub fn plane_binding(plane: OriginPlane, keys: DocumentKeys) -> Binding {
+    let index = OriginPlane::ALL
+        .iter()
+        .position(|&p| p == plane)
+        .unwrap_or(0);
+    Binding::new(
+        Shortcut::PLANES[index],
+        Message::Edit(Edit::PlanePicked(plane)),
+        keys.editable,
+    )
 }
 
 /// Starting a new extrude, or backing out of the one being set up:
@@ -1116,8 +1144,13 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             keys.editable && keys.motion_ready,
         )
     });
-    crate::rail::letter_bindings(keys)
+    let planes = keys
+        .picking_plane
+        .then(|| OriginPlane::ALL.map(|plane| plane_binding(plane, keys)));
+    planes
         .into_iter()
+        .flatten()
+        .chain(crate::rail::letter_bindings(keys))
         .chain(file_bindings(keys.editable, keys.edited))
         .chain(history_bindings(keys))
         .chain([sketch_binding(keys), space_binding(keys)])
@@ -1411,6 +1444,21 @@ mod tests {
             ..keys(true)
         };
         assert!(sketch(sketching).is_none());
+    }
+
+    #[test]
+    fn picking_a_plane_takes_the_origin_planes_by_number() {
+        let none = Modifiers::empty();
+        let two = KeyPress::Character("2".into());
+        let picking = DocumentKeys {
+            picking_plane: true,
+            ..keys(true)
+        };
+        assert!(matches!(
+            pressed(document_bindings(picking), &two, none),
+            Some(Message::Edit(Edit::PlanePicked(OriginPlane::XZ)))
+        ));
+        assert!(pressed(document_bindings(keys(true)), &two, none).is_none());
     }
 
     #[test]

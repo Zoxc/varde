@@ -1434,6 +1434,7 @@ impl Doc {
                     self.motion_state().as_ref(),
                 )
                 .with_measure(self.measure.is_some())
+                .with_picking_plane(self.picking_plane.is_some())
                 .with_rail(self.rail.state())
                 .with_rename(self.rename_target())
                 .with_menu(self.menu_target())
