@@ -462,36 +462,47 @@ fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @locatio
 
 // How the parts of a selected or hovered face something hides are drawn over it: a
 // wash of the colour the face is shown in, with diagonal stripes across it on the
-// screen SELECTED_STRIPE logical pixels apart, half of that wide, nearly
-// opaque, shaded as the face is shown.
+// screen SELECTED_STRIPE logical pixels apart, half of that wide, shaded as
+// the face is shown. A hovered face's wash is faint and its stripes nearly
+// opaque; a selected face's are SELECTED_WASH_ALPHA and SELECTED_STRIPE_ALPHA
+// as opaque, within an outline in the stripes' colour (`fs_face_outline_hidden`).
 const SELECTED_STRIPE: f32 = 8.0;
-const SELECTED_WASH_ALPHA: f32 = 0.15;
-const SELECTED_STRIPE_ALPHA: f32 = 0.9;
+const HOVERED_WASH_ALPHA: f32 = 0.15;
+const HOVERED_STRIPE_ALPHA: f32 = 0.9;
+const SELECTED_WASH_ALPHA: f32 = 0.3;
+const SELECTED_STRIPE_ALPHA: f32 = 0.6;
 
 // A selected face where something hides it (depth tested Greater), over
 // everything: the wash with diagonal stripes, anti-aliased, in the colour
 // it's shown in, its part's tinted towards the selection's.
 @fragment
 fn fs_selected_face_hidden(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return hidden_face(in, front, tint.color.rgb, u.hover_face.w);
+    return hidden_face(in, front, tint.color.rgb, u.hover_face.w, SELECTED_WASH_ALPHA, SELECTED_STRIPE_ALPHA);
 }
 
 // A selected face that's hovered too, likewise from the hover's colour.
 @fragment
 fn fs_hovered_selected_face_hidden(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return hidden_face(in, front, u.hover_face.rgb, u.hover_face.w);
+    return hidden_face(in, front, u.hover_face.rgb, u.hover_face.w, SELECTED_WASH_ALPHA, SELECTED_STRIPE_ALPHA);
 }
 
 // A hovered face where something hides it, likewise in the hover's colour.
 @fragment
 fn fs_hovered_face_hidden(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return hidden_face(in, front, u.hover_face.rgb, 0.0);
+    return hidden_face(in, front, u.hover_face.rgb, 0.0, HOVERED_WASH_ALPHA, HOVERED_STRIPE_ALPHA);
 }
 
 // `base` shaded, tinted `selected` of the way towards the selection's
 // colour as the target blends the selected face over it: in what's
-// stored, encoded or not.
-fn hidden_face(in: MeshOut, front: bool, base: vec3<f32>, selected: f32) -> vec4<f32> {
+// stored, encoded or not. The wash `wash` as opaque, the stripes `stripes`.
+fn hidden_face(
+    in: MeshOut,
+    front: bool,
+    base: vec3<f32>,
+    selected: f32,
+    wash: f32,
+    stripes: f32,
+) -> vec4<f32> {
     // From where the world's origin shows, so panning carries the stripes
     // with the model; from the middle while it's behind the eye.
     let origin = u.view_proj * vec4<f32>(0.0, 0.0, 0.0, 1.0);
@@ -501,10 +512,48 @@ fn hidden_face(in: MeshOut, front: bool, base: vec3<f32>, selected: f32) -> vec4
     // Distance from the middle of the nearest stripe, in pixels across it.
     let across = abs(wrapped((p.x + p.y) * inverseSqrt(2.0), period) - 0.5 * period);
     let stripe = clamp(0.25 * period + 0.5 - across, 0.0, 1.0);
-    let alpha = mix(SELECTED_WASH_ALPHA, SELECTED_STRIPE_ALPHA, stripe) * part.alpha.x;
+    let alpha = mix(wash, stripes, stripe) * part.alpha.x;
     let under = output(vec4<f32>(shaded(in, front, base), 1.0)).rgb;
     let over = output(vec4<f32>(shaded(in, front, u.selected.rgb), 1.0)).rgb;
     return vec4<f32>(mix(under, over, selected), alpha);
+}
+
+// How wide a selected face's outline is where something hides it, in
+// logical pixels.
+const FACE_OUTLINE_WIDTH: f32 = 1.5;
+
+// The edges bounding a selected face where something hides them (depth
+// tested Greater), solid, FACE_OUTLINE_WIDTH wide; their colour is the
+// fragment shader's. Entry points of their own for the hovered and not.
+@vertex
+fn vs_face_outline_hidden(in: EdgeIn) -> LineOut {
+    return highlight_segment(in, FACE_OUTLINE_WIDTH * 0.5 * u.viewport.z, vec4<f32>(1.0));
+}
+
+@vertex
+fn vs_hovered_face_outline_hidden(in: EdgeIn) -> LineOut {
+    return highlight_segment(in, FACE_OUTLINE_WIDTH * 0.5 * u.viewport.z, vec4<f32>(1.0));
+}
+
+// The outline in the colour of the face's stripes, unlit: its part's
+// tinted towards the selection's, at the part's alpha.
+@fragment
+fn fs_face_outline_hidden(in: LineOut) -> HighlightOut {
+    return face_outline(in, tint.color.rgb);
+}
+
+// A face hovered too, likewise from the hover's colour.
+@fragment
+fn fs_hovered_face_outline_hidden(in: LineOut) -> HighlightOut {
+    return face_outline(in, u.hover_face.rgb);
+}
+
+fn face_outline(in: LineOut, base: vec3<f32>) -> HighlightOut {
+    var out = highlight_line(in);
+    let under = output(vec4<f32>(base, 1.0)).rgb;
+    let over = output(vec4<f32>(u.selected.rgb, 1.0)).rgb;
+    out.color = vec4<f32>(mix(under, over, u.hover_face.w), out.color.a * part.alpha.x);
+    return out;
 }
 
 // The second colour (the measure tool's B), kept in the sketch plane's

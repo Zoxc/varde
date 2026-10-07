@@ -10,7 +10,7 @@ use varde_kernel::{Aabb, CREASE, EdgePoint, EdgeStream, MeshUpload, RenderLines,
 use wgpu::util::DeviceExt;
 
 use crate::Camera;
-use crate::highlight::{Highlights, VertexInstance};
+use crate::highlight::{FaceOutline, Highlights, VertexInstance};
 use crate::scene::{self, GRID_FADE_HEIGHTS, GridPlane};
 use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene, Srgba};
 
@@ -1186,6 +1186,10 @@ pub struct Renderer {
     /// The rims of the hidden hovered and selected edges, dashed.
     outline_hidden: wgpu::RenderPipeline,
     selected_outline_hidden: wgpu::RenderPipeline,
+    /// A selected face's outline where something hides it, in the colour
+    /// of its stripes; and of one hovered too.
+    face_outline_hidden: wgpu::RenderPipeline,
+    hovered_face_outline_hidden: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     /// The edges of the mesh's triangles: [`Frame::tessellation`].
     /// The finished sketches' lines again where glass is the nearest of
@@ -1272,6 +1276,9 @@ pub struct Slot {
     /// [`Frame::highlights`] as uploaded, and its `Arc` like `source`.
     highlights: HighlightBuffers,
     highlights_source: Weak<Highlights>,
+    /// The selected faces outlined where hidden, each with whether it's
+    /// hovered too, as [`HighlightBuffers`] were last written with.
+    outlined_faces: Vec<(u32, bool)>,
     /// [`Frame::errors`] as uploaded, and their sources like `source`.
     errors: ErrorBuffers,
     error_sources: Vec<Weak<dyn Any + Send + Sync>>,
@@ -1792,6 +1799,19 @@ impl Renderer {
                     "vs_selected_outline_hidden",
                 )
             }),
+            face_outline_hidden: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Greater,
+                fs: "fs_face_outline_hidden",
+                ..highlight_pass("varde face outline hidden", "vs_face_outline_hidden")
+            }),
+            hovered_face_outline_hidden: pipeline(Pass {
+                depth_compare: wgpu::CompareFunction::Greater,
+                fs: "fs_hovered_face_outline_hidden",
+                ..highlight_pass(
+                    "varde hovered face outline hidden",
+                    "vs_hovered_face_outline_hidden",
+                )
+            }),
             hovered_edges_hidden: pipeline(Pass {
                 depth_compare: wgpu::CompareFunction::Greater,
                 ..highlight_pass("varde hovered edges hidden", "vs_hovered_edge_hidden")
@@ -2157,6 +2177,7 @@ impl Renderer {
             faces: Vec::new(),
             highlights: HighlightBuffers::default(),
             highlights_source: Weak::new(),
+            outlined_faces: Vec::new(),
             errors: ErrorBuffers::default(),
             error_sources: Vec::new(),
             error_target: None,
@@ -2241,17 +2262,27 @@ impl Renderer {
         slot.draws = PartDraws::new(parts, opacity, &slot.part_tints, &self.alphas, frame.camera);
 
         // What's hovered and selected names the mesh's faces, edges and
-        // vertices, so it's written again with the mesh too.
+        // vertices, so it's written again with the mesh too; and the
+        // selected faces' outlines with them.
+        let outlined_faces: Vec<(u32, bool)> = (frame.selected_faces.iter())
+            .map(|&face| (face, frame.hovered_faces.contains(&face)))
+            .collect();
         if new_mesh
             || !std::ptr::eq(
                 slot.highlights_source.as_ptr(),
                 Arc::as_ptr(frame.highlights),
             )
+            || slot.outlined_faces != outlined_faces
         {
             slot.highlights_source = Arc::downgrade(frame.highlights);
-            let written = slot
-                .highlights
-                .write(device, queue, frame.mesh, frame.highlights);
+            let written = (slot.highlights).write(
+                device,
+                queue,
+                frame.mesh,
+                frame.highlights,
+                &outlined_faces,
+            );
+            slot.outlined_faces = outlined_faces;
             result = result.and(written);
         }
         // The failures shown keep their `Arc`s while they're unchanged.
@@ -3046,6 +3077,28 @@ impl Renderer {
                 pass.set_pipeline(pipeline);
                 pass.draw_indexed(face.indices.clone(), 0, 0..1);
             }
+            // The selected faces' outlines where hidden, in their
+            // stripes' colour.
+            if tint == Tint::Selected
+                && let Some(stream) = highlights.edges.held()
+            {
+                for outline in &highlights.face_outlines {
+                    let pipeline = if outline.hovered {
+                        &self.hovered_face_outline_hidden
+                    } else {
+                        &self.face_outline_hidden
+                    };
+                    self.set_tint(pass, slot, outline.part);
+                    // At its part's alpha, as its face is drawn.
+                    let Some(face) = (slot.faces.iter())
+                        .find(|f| f.tint == Tint::Selected && f.part == outline.part)
+                    else {
+                        continue;
+                    };
+                    self.alphas.set(pass, face.step);
+                    draw_stream(pass, pipeline, stream, outline.points.clone());
+                }
+            }
             pass.set_bind_group(0, &slot.bind_group, &[0]);
             pass.set_stencil_reference(0);
             self.alphas.set(pass, self.alphas.opaque);
@@ -3565,6 +3618,7 @@ struct HighlightBuffers {
     outlined: Range<u32>,
     selected: Range<u32>,
     second: Range<u32>,
+    face_outlines: Vec<FaceOutline>,
     vertices: Instances,
 }
 
@@ -3577,8 +3631,9 @@ impl HighlightBuffers {
         queue: &wgpu::Queue,
         mesh: &RenderMesh,
         highlights: &Highlights,
+        faces: &[(u32, bool)],
     ) -> Result<(), PrepareError> {
-        let built = highlights.build(mesh);
+        let built = highlights.build(mesh, faces);
         let too_large = |bytes, limit| PrepareError::HighlightsTooLarge { bytes, limit };
         let (d, q) = (device, queue);
         let written = (self.edges)
@@ -3591,6 +3646,7 @@ impl HighlightBuffers {
                 outlined: built.outlined,
                 selected: built.selected,
                 second: built.second,
+                face_outlines: built.face_outlines,
                 ..std::mem::take(self)
             },
             Err(_) => HighlightBuffers::default(),
