@@ -2449,9 +2449,10 @@ impl Renderer {
     }
 
     /// Records the frame last prepared into `slot` as [`Self::render`]
-    /// does, with the background, the grid, the finished sketches and the
-    /// origin and pivot markers only if `backdrop`: without, the model
-    /// alone, over what `target` holds (a preview's, see `preview.rs`).
+    /// does, with the background, the grid and the origin and pivot
+    /// markers only if `backdrop`: without, the model and the finished
+    /// sketches alone, over what `target` holds (a preview's, see
+    /// `preview.rs`).
     pub(crate) fn record(
         &self,
         slot: &Slot,
@@ -2774,7 +2775,7 @@ impl Renderer {
             self.draw_origin_planes(pass, slot, &self.origin_planes);
         }
 
-        if let Some(lines) = slot.lines.as_ref().filter(|_| backdrop) {
+        if let Some(lines) = &slot.lines {
             pass.set_pipeline(&self.lines);
             pass.set_vertex_buffer(0, lines.segments.slice(..));
             pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
@@ -2846,7 +2847,7 @@ impl Renderer {
             pass.set_stencil_reference(0);
             pass.set_bind_group(0, &slot.bind_group, &[0]);
             self.alphas.set(pass, self.alphas.opaque);
-            if let Some(lines) = slot.lines.as_ref().filter(|_| backdrop) {
+            if let Some(lines) = &slot.lines {
                 pass.set_pipeline(&self.lines_over_glass);
                 pass.set_vertex_buffer(0, lines.segments.slice(..));
                 pass.draw(0..LINE_VERTICES, 0..lines.segment_count);

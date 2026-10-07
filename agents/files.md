@@ -194,14 +194,16 @@ could be taken. The new file joins the recent files.
 
 **Thumbnails.** A Save or Save As writes the design's thumbnail with
 it, as the record's two `PREVIEW` blocks (see `file-format.md`), for the
-welcome screen's recent file cards: the bodies of the last model the
-committed document regenerated to (`MeshFeed::committed`: the newest
+welcome screen's recent file cards: the bodies and the visible
+sketches' curves (in the sketch line colour, so a design of sketches
+alone has one too) of the last model the committed document
+regenerated to (`MeshFeed::committed`: the newest
 answer without a draft, so a regeneration still on its way, or one that
 failed, leaves the one before), from where Home looks, orthographic,
 framed as large as fits `varde_view::THUMBNAIL_ROOM` (what a card has
-inside its padding) at twice that in pixels and cropped to the model,
-with a margin for the edges, on nothing: no background, grid, sketches,
-markers, hover or selection, each body as opaque as it is, once in
+inside its padding) at twice that in pixels and cropped to them,
+with a margin for the edges, on nothing: no background, grid, sketch
+being edited (it's left out of the lines while edited), markers, hover or selection, each body as opaque as it is, once in
 each theme's colours (the light palette's scene colours, then the
 dark's, whatever the theme now), so a card shows the one of the theme
 it's in. Only the viewport has the GPU, so the app asks for it

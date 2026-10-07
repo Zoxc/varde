@@ -1,5 +1,5 @@
 //! The thumbnail each save writes with the design, for the welcome
-//! screen: the bodies of the last model the committed document
+//! screen: the bodies and visible sketches' curves of the last model the committed document
 //! regenerated to (see [`MeshFeed::committed`]), from where Home looks,
 //! framed to fit and cropped, on nothing, in each theme's colours. Only the viewport has the GPU,
 //! so it's rendered there on the next frame (see
@@ -18,7 +18,7 @@ use std::time::Duration;
 use iced::futures::channel::oneshot;
 use iced::time::Instant;
 use varde_io::thumbnail::Thumbnail;
-use varde_kernel::RenderMesh;
+use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::Camera;
 use varde_view::{ThumbnailImages, ThumbnailRequest};
 
@@ -56,11 +56,12 @@ struct Rendered {
     image: Option<Thumbnail>,
 }
 
-/// What a thumbnail shows: a mesh, its parts as opaque as `opacity` says
+/// What a thumbnail shows: a mesh and sketch curves, its parts as opaque as `opacity` says
 /// and in the colours `tints` gives them.
 #[derive(Clone)]
 struct Of {
     mesh: Arc<RenderMesh>,
+    sketches: Arc<RenderLines>,
     opacity: Arc<[f32]>,
     tints: Arc<[Option<varde_render::BodyTint>]>,
 }
@@ -71,17 +72,23 @@ impl Of {
     /// unchanged model back as the same one, natively.
     fn is(&self, other: &Of) -> bool {
         Arc::ptr_eq(&self.mesh, &other.mesh)
+            && Arc::ptr_eq(&self.sketches, &other.sketches)
             && self.opacity == other.opacity
             && self.tints == other.tints
     }
 }
 
 impl Doc {
-    /// What the thumbnail shows now: the committed model's mesh, its
+    /// What the thumbnail shows now: the committed model's mesh and
+    /// sketch curves, its
     /// parts as opaque and in the colours their bodies are. `None` before
     /// there's a model.
     fn thumbnail_of(&self) -> Option<Of> {
-        let (mesh, parts) = self.feed.committed()?;
+        let super::feed::Shown {
+            mesh,
+            sketches,
+            parts,
+        } = self.feed.committed()?;
         let document = self.editor.document();
         let opacity = parts
             .iter()
@@ -90,6 +97,7 @@ impl Doc {
             (parts.iter()).map(|&body| (document.body(body)?.color).map(varde_view::body_tint));
         Some(Of {
             mesh: mesh.clone(),
+            sketches: sketches.clone(),
             opacity: opacity.collect(),
             tints: tints.collect(),
         })
@@ -114,6 +122,7 @@ impl Doc {
         let (send, answer) = oneshot::channel();
         let request = ThumbnailRequest::new(
             of.mesh.clone(),
+            of.sketches.clone(),
             of.opacity.clone(),
             of.tints.clone(),
             &Camera::default(),

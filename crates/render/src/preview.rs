@@ -1,4 +1,4 @@
-//! A design's preview: its model alone, drawn offscreen on nothing
+//! A design's preview: its model and finished sketches alone, drawn offscreen on nothing
 //! (transparent), framed to fit, in one or more sets of colours (a theme's
 //! each), and read back as straight alpha sRGB RGBA, for a thumbnail such
 //! as the welcome screen's.
@@ -60,12 +60,19 @@ impl std::fmt::Display for PreviewError {
 
 impl std::error::Error for PreviewError {}
 
-/// The shot of `mesh` from `from`'s direction, made orthographic, framing
-/// it as large as fits within `max` pixels less `margin` on each side, and
+/// The shot of `mesh` and `sketches` from `from`'s direction, made
+/// orthographic, framing them as large as fits within `max` pixels less `margin` on each side, and
 /// cropped to it: the image is only as wide or tall as the model is, plus
 /// the margins, so it has no empty space but them. `None` for a mesh with
-/// no vertices, or `max` with no room inside the margins.
-pub fn frame(mesh: &RenderMesh, from: &Camera, max: [u32; 2], margin: u32) -> Option<PreviewShot> {
+/// no vertices and no sketch lines, or `max` with no room inside the
+/// margins.
+pub fn frame(
+    mesh: &RenderMesh,
+    sketches: &RenderLines,
+    from: &Camera,
+    max: [u32; 2],
+    margin: u32,
+) -> Option<PreviewShot> {
     let room = max.map(|side| side.checked_sub(margin.checked_mul(2)?).filter(|&r| r > 0));
     let [Some(room_x), Some(room_y)] = room else {
         return None;
@@ -73,7 +80,7 @@ pub fn frame(mesh: &RenderMesh, from: &Camera, max: [u32; 2], margin: u32) -> Op
     let (right, up, backward) = (from.right(), from.up(), from.backward());
     let mut low = Vec3::INFINITY;
     let mut high = Vec3::NEG_INFINITY;
-    for &position in mesh.positions() {
+    for &position in mesh.positions().iter().chain(sketches.points()) {
         let p = Vec3::from(position);
         let seen = Vec3::new(p.dot(right), p.dot(up), p.dot(backward));
         low = low.min(seen);
@@ -100,10 +107,10 @@ pub fn frame(mesh: &RenderMesh, from: &Camera, max: [u32; 2], margin: u32) -> Op
     Some(PreviewShot { camera, size })
 }
 
-/// Draws `mesh` as `shot` frames it, its parts as opaque as `opacity` says
+/// Draws `mesh` and the finished `sketches` as `shot` frames them, its parts as opaque as `opacity` says
 /// (see [`Frame::opacity`]) and in the colours `tints` gives them (see
 /// [`Frame::tints`]), once in each of `colors`, with nothing behind
-/// it: no background, grid, sketches or markers, nothing hovered or
+/// it: no background, grid, sketch being edited or markers, nothing hovered or
 /// selected. Lines are as wide as `scale_factor` physical pixels to a
 /// logical one make them.
 ///
@@ -120,6 +127,7 @@ pub fn render_preview(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     mesh: &Arc<RenderMesh>,
+    sketches: &Arc<RenderLines>,
     opacity: &[f32],
     tints: &[Option<BodyTint>],
     shot: &PreviewShot,
@@ -178,7 +186,7 @@ pub fn render_preview(
             mesh,
             opacity,
             tints,
-            sketches: &Arc::new(RenderLines::default()),
+            sketches,
             grid: GridPlane::XY,
             faded: false,
             wireframe: false,

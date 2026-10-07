@@ -641,7 +641,13 @@ impl Gpu {
             draft: None,
             inspect: None,
         });
-        let varde_regen::Response::Regenerated { mesh, picking, .. } = response else {
+        let varde_regen::Response::Regenerated {
+            mesh,
+            picking,
+            sketches,
+            ..
+        } = response
+        else {
             panic!("the design doesn't regenerate");
         };
         let opacity: Arc<[f32]> = (picking.bodies().iter())
@@ -650,13 +656,14 @@ impl Gpu {
         let tints: Arc<[_]> = (picking.bodies().iter())
             .map(|&body| (document.body(body)?.color).map(varde_view::body_tint))
             .collect();
-        let shot = thumbnail_shot(&mesh, &Camera::default()).expect("a model to frame");
+        let shot = thumbnail_shot(&mesh, &sketches, &Camera::default()).expect("a model to frame");
         let (send, read) = std::sync::mpsc::channel();
         varde_render::render_preview(
             &self.renderer,
             &self.device,
             &self.queue,
             &mesh,
+            &sketches,
             &opacity,
             &tints,
             &shot,

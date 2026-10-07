@@ -790,7 +790,7 @@ impl Doc {
     /// the last the committed document regenerated to (a merged body in
     /// its holder).
     fn committed_centre(&self, session: &MotionSession) -> Option<DVec3> {
-        let (mesh, parts) = self.feed.committed()?;
+        let crate::doc::feed::Shown { mesh, parts, .. } = self.feed.committed()?;
         let shown = self.shown_bodies(&session.bodies);
         let positions = mesh.positions();
         let indices = mesh.indices();

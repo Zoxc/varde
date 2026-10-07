@@ -24,7 +24,14 @@ fn shown(shot: &PreviewShot, point: Vec3) -> [f32; 2] {
 #[test]
 fn the_model_fills_the_image_within_its_margins() {
     let mesh = block(DVec3::new(4.0, 1.0, 1.0));
-    let shot = frame(&mesh, &Camera::default(), [400, 300], 5).unwrap();
+    let shot = frame(
+        &mesh,
+        &RenderLines::default(),
+        &Camera::default(),
+        [400, 300],
+        5,
+    )
+    .unwrap();
     assert_eq!(shot.camera.projection(), Projection::Orthographic);
     assert!(
         shot.size[0] <= 400 && shot.size[1] <= 300,
@@ -60,21 +67,92 @@ fn the_model_fills_the_image_within_its_margins() {
 #[test]
 fn a_tall_model_crops_the_width() {
     let mesh = block(DVec3::new(1.0, 1.0, 6.0));
-    let shot = frame(&mesh, &Camera::default(), [400, 300], 4).unwrap();
+    let shot = frame(
+        &mesh,
+        &RenderLines::default(),
+        &Camera::default(),
+        [400, 300],
+        4,
+    )
+    .unwrap();
     assert_eq!(shot.size[1], 300);
     assert!(shot.size[0] < 200, "{:?}", shot.size);
+}
+
+#[test]
+fn sketch_lines_alone_are_framed() {
+    let mut sketches = RenderLines::default();
+    sketches
+        .push([
+            Vec3::ZERO,
+            Vec3::new(3.0, 0.0, 0.0),
+            Vec3::new(3.0, 2.0, 0.0),
+        ])
+        .unwrap();
+    let shot = frame(
+        &RenderMesh::default(),
+        &sketches,
+        &Camera::default(),
+        [400, 300],
+        4,
+    )
+    .unwrap();
+    for &p in sketches.points() {
+        let [x, y] = shown(&shot, Vec3::from(p));
+        assert!(x > 3.0 && x < shot.size[0] as f32 - 3.0, "{x} {shot:?}");
+        assert!(y > 3.0 && y < shot.size[1] as f32 - 3.0, "{y} {shot:?}");
+    }
+    // A mesh's bounds and the lines' are framed together.
+    let mesh = block(DVec3::ONE);
+    let both = frame(&mesh, &sketches, &Camera::default(), [400, 300], 4).unwrap();
+    let alone = frame(
+        &mesh,
+        &RenderLines::default(),
+        &Camera::default(),
+        [400, 300],
+        4,
+    )
+    .unwrap();
+    assert!(
+        both.camera.view_height() / both.size[1] as f32
+            > alone.camera.view_height() / alone.size[1] as f32
+    );
 }
 
 #[test]
 fn nothing_to_frame_has_no_shot() {
     let mesh = block(DVec3::ONE);
     assert_eq!(
-        frame(&RenderMesh::default(), &Camera::default(), [400, 300], 4),
+        frame(
+            &RenderMesh::default(),
+            &RenderLines::default(),
+            &Camera::default(),
+            [400, 300],
+            4
+        ),
         None
     );
     // No room inside the margins.
-    assert_eq!(frame(&mesh, &Camera::default(), [8, 300], 4), None);
-    assert_eq!(frame(&mesh, &Camera::default(), [400, 300], u32::MAX), None);
+    assert_eq!(
+        frame(
+            &mesh,
+            &RenderLines::default(),
+            &Camera::default(),
+            [8, 300],
+            4
+        ),
+        None
+    );
+    assert_eq!(
+        frame(
+            &mesh,
+            &RenderLines::default(),
+            &Camera::default(),
+            [400, 300],
+            u32::MAX
+        ),
+        None
+    );
 }
 
 #[test]

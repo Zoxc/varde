@@ -1340,6 +1340,7 @@ impl shader::Primitive for Primitive {
                 device,
                 queue,
                 &thumbnail.mesh,
+                &thumbnail.sketches,
                 &thumbnail.opacity,
                 &thumbnail.tints,
                 &thumbnail.shot,

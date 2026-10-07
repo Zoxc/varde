@@ -3340,7 +3340,14 @@ fn a_preview_is_the_model_alone_on_nothing() {
     };
     let mesh = Arc::new(block(Vec3::ZERO, Vec3::new(4.0, 1.0, 1.0)));
     let margin = 4;
-    let shot = varde_render::frame(&mesh, &Camera::default(), [300, 200], margin).unwrap();
+    let shot = varde_render::frame(
+        &mesh,
+        &RenderLines::default(),
+        &Camera::default(),
+        [300, 200],
+        margin,
+    )
+    .unwrap();
     // Drawn once in each set of colours: the grey model, and a red one.
     let red = Colors {
         model: Srgb([0.8, 0.2, 0.2]),
@@ -3356,6 +3363,7 @@ fn a_preview_is_the_model_alone_on_nothing() {
             &device,
             &queue,
             &mesh,
+            &Arc::new(RenderLines::default()),
             &[],
             &[],
             &shot,
@@ -3625,4 +3633,51 @@ fn tinting_keeps_the_lightness() {
         saturation: f32::NAN,
     });
     assert_eq!(nan, grey);
+}
+
+#[test]
+fn a_preview_of_sketch_lines_alone_draws_them() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let mesh = Arc::new(RenderMesh::default());
+    let sketches = Arc::new(lines(&[
+        (Vec3::ZERO, Vec3::new(4.0, 0.0, 0.0)),
+        (Vec3::new(4.0, 0.0, 0.0), Vec3::new(4.0, 3.0, 0.0)),
+    ]));
+    let shot = varde_render::frame(&mesh, &sketches, &Camera::default(), [300, 200], 6).unwrap();
+    let (send, read) = std::sync::mpsc::channel();
+    varde_render::render_preview(
+        &renderer(&device, wgpu::TextureFormat::Rgba8Unorm),
+        &device,
+        &queue,
+        &mesh,
+        &sketches,
+        &[],
+        &[],
+        &shot,
+        &[COLORS],
+        2.0,
+        move |images| {
+            let _ = send.send(images);
+        },
+    )
+    .unwrap();
+    let images = read
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap()
+        .unwrap();
+    let image = &images[0];
+    assert_eq!([image.width, image.height], shot.size);
+    let drawn = image
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[3] > 128)
+        .count();
+    assert!(drawn > 100, "{drawn} pixels drawn");
+    // The corners stay clear: no background or grid.
+    assert_eq!(image.rgba[3], 0);
 }

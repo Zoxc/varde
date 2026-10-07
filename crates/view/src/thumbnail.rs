@@ -7,7 +7,7 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use varde_kernel::RenderMesh;
+use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::{BodyTint, Camera, Colors, PreviewImage, PreviewShot};
 
 use crate::theme::Mode;
@@ -25,13 +25,16 @@ pub const THUMBNAIL_SCALE: u32 = 2;
 const MARGIN: u32 = 6;
 
 /// A thumbnail for the viewport to render, taken by its first frame
-/// drawn: `mesh`, its parts as opaque as `opacity` says and in the
+/// drawn: `mesh` and the finished `sketches`' curves, its parts as opaque as `opacity` says and in the
 /// colours `tints` gives them, as `shot`
 /// frames it, in each theme's colours. What it's handed to is called with
 /// the pixels read back, or with `None` should that fail, and dropped
 /// uncalled should it not be drawn at all.
 pub struct ThumbnailRequest {
     pub mesh: Arc<RenderMesh>,
+    /// The visible sketches' curves, drawn with the model, so a design of
+    /// sketches alone has a thumbnail too.
+    pub sketches: Arc<RenderLines>,
     pub opacity: Arc<[f32]>,
     /// The colour of each of its parts, see `varde_render::Frame::tints`.
     pub tints: Arc<[Option<BodyTint>]>,
@@ -50,22 +53,23 @@ pub struct ThumbnailImages {
 type Done = Box<dyn FnOnce(Option<ThumbnailImages>) + Send>;
 
 impl ThumbnailRequest {
-    /// The thumbnail of `mesh`, its parts as opaque as `opacity` says and
+    /// The thumbnail of `mesh` and `sketches`, its parts as opaque as `opacity` says and
     /// in the colours `tints` gives them,
     /// looking from where the home camera does, framed to fit
     /// [`THUMBNAIL_ROOM`] at [`THUMBNAIL_SCALE`] and cropped to the model,
-    /// handing its pixels to `done`. `None` for a mesh with nothing to
-    /// frame.
+    /// handing its pixels to `done`. `None` with nothing to frame.
     pub fn new(
         mesh: Arc<RenderMesh>,
+        sketches: Arc<RenderLines>,
         opacity: Arc<[f32]>,
         tints: Arc<[Option<BodyTint>]>,
         home: &Camera,
         done: impl FnOnce(Option<ThumbnailImages>) + Send + 'static,
     ) -> Option<Arc<ThumbnailRequest>> {
-        let shot = thumbnail_shot(&mesh, home)?;
+        let shot = thumbnail_shot(&mesh, &sketches, home)?;
         Some(Arc::new(ThumbnailRequest {
             mesh,
+            sketches,
             opacity,
             tints,
             shot,
@@ -91,12 +95,16 @@ impl ThumbnailRequest {
     }
 }
 
-/// How a thumbnail frames `mesh`, looking from where `home` does: to fit
-/// [`THUMBNAIL_ROOM`] at [`THUMBNAIL_SCALE`], cropped to the model. `None`
-/// for a mesh with nothing to frame.
-pub fn thumbnail_shot(mesh: &RenderMesh, home: &Camera) -> Option<PreviewShot> {
+/// How a thumbnail frames `mesh` and `sketches`, looking from where `home`
+/// does: to fit [`THUMBNAIL_ROOM`] at [`THUMBNAIL_SCALE`], cropped to them.
+/// `None` with nothing to frame.
+pub fn thumbnail_shot(
+    mesh: &RenderMesh,
+    sketches: &RenderLines,
+    home: &Camera,
+) -> Option<PreviewShot> {
     let room = THUMBNAIL_ROOM.map(|side| side * THUMBNAIL_SCALE);
-    varde_render::frame(mesh, home, room, MARGIN)
+    varde_render::frame(mesh, sketches, home, room, MARGIN)
 }
 
 impl fmt::Debug for ThumbnailRequest {

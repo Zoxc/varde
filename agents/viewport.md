@@ -1778,18 +1778,18 @@ document terminates it.
 
 A save's thumbnail (see "Thumbnails" in `files.md`) is drawn by the
 viewport, which has the GPU: `DocumentState::thumbnail` hands the
-viewport a `ThumbnailRequest` (`view/src/thumbnail.rs`: the mesh, its
-parts' opacities, and the `varde_render::PreviewShot` that
+viewport a `ThumbnailRequest` (`view/src/thumbnail.rs`: the mesh, the
+visible sketches' lines, its parts' opacities, and the `varde_render::PreviewShot` that
 `varde_render::frame` worked out: the home camera made orthographic,
-targeting the middle of the mesh's extent across the view, zoomed so it
+targeting the middle of the mesh's and lines' extent across the view, zoomed so it
 fills the room less the margin, and the image cropped to it). The first
 frame prepared with it takes its callback (once) and calls
 `varde_render::render_preview` beside the frame with
 `ThumbnailRequest::COLORS`, the light and the dark palette's scene
 colours: for each, a slot and a texture of its own, in the pipeline's
-format, cleared transparent, the model drawn by `Renderer::record`
-without the backdrop (background, grid, finished sketches, origin and
-pivot markers), lines at a scale of two, then copied into one buffer,
+format, cleared transparent, the model and the finished sketches drawn
+by `Renderer::record` without the backdrop (background, grid, origin and
+pivot markers; a frame's finished sketches are drawn either way), lines at a scale of two, then copied into one buffer,
 an image after another, and mapped once; the callback gets the images
 in order (`ThumbnailImages`). Natively it waits for the GPU there, a
 small image's worth; on the web the buffer maps on a later submit, which

@@ -243,8 +243,19 @@ fn body_chord(camera: &Camera, aspect: f64, aabb: Aabb) -> Option<f64> {
 /// bodies of its parts, and what it's of.
 struct Committed {
     mesh: Arc<RenderMesh>,
+    sketches: Arc<RenderLines>,
     picking: Arc<Picking>,
     generation: Generation,
+}
+
+/// The model a committed document regenerated to, see
+/// [`MeshFeed::committed`].
+pub(crate) struct Shown<'a> {
+    pub(crate) mesh: &'a Arc<RenderMesh>,
+    /// The visible sketches' curves, less any left out as edited.
+    pub(crate) sketches: &'a Arc<RenderLines>,
+    /// The body each part of `mesh` shows.
+    pub(crate) parts: &'a [BodyId],
 }
 
 /// How many of the documents asked about [`MeshFeed`] keeps for their
@@ -540,6 +551,7 @@ impl MeshFeed {
                 if draft.is_none() {
                     self.committed = Some(Committed {
                         mesh: self.mesh.clone(),
+                        sketches: self.sketches.clone(),
                         picking: self.picking.clone(),
                         generation: asked.generation,
                     });
@@ -874,12 +886,12 @@ impl MeshFeed {
         self.shown.is_some_and(|shown| shown.draft.is_some())
     }
 
-    /// The mesh of the newest model shown without a draft, the last the
+    /// The mesh and sketch curves of the newest model shown without a draft, the last the
     /// committed document regenerated to, with the body each of its parts
     /// is of: none once the document was replaced whole until a model of
     /// it shows, as for [`MeshFeed::parts`]. `None` before there's been
     /// one.
-    pub(crate) fn committed(&self) -> Option<(&Arc<RenderMesh>, &[BodyId])> {
+    pub(crate) fn committed(&self) -> Option<Shown<'_>> {
         let committed = self.committed.as_ref()?;
         let current = self
             .replaced
@@ -889,7 +901,11 @@ impl MeshFeed {
         } else {
             &[]
         };
-        Some((&committed.mesh, parts))
+        Some(Shown {
+            mesh: &committed.mesh,
+            sketches: &committed.sketches,
+            parts,
+        })
     }
 
     /// Counts the models shown: see [`varde_view::Pick::model`].
