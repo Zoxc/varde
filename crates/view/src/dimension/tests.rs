@@ -230,15 +230,13 @@ fn labels_show_values_in_the_design_s_units_references_in_brackets() {
 }
 
 #[test]
-fn a_spline_s_handle_measures_its_angle_alone_and_its_length_with_its_point() {
+fn a_spline_s_handle_measures_its_length_alone_and_with_its_point() {
     let mut sketch = Sketch::default();
     let (spline, fit, tip) = handled_spline(&mut sketch);
     assert_eq!(
-        measured(&sketch, &[tip], 16.0, 9.0),
-        Some(Measure::Angle(Id::X_AXIS, tip))
+        measured(&sketch, &[tip], 11.0, 6.0),
+        Some(Measure::Distance(fit[1], tip))
     );
-    let angle = sketch.measure(&Measure::Angle(Id::X_AXIS, tip), Side::Positive);
-    assert!((angle.unwrap() - 45f64.to_radians()).abs() < 1e-9);
     assert_eq!(
         measured(&sketch, &[fit[1], tip], 11.0, 6.0),
         Some(Measure::Distance(fit[1], tip))
@@ -260,11 +258,11 @@ fn a_handle_picked_as_a_line_measures_angles_as_a_line() {
     let flat = line(&mut sketch, a, b);
     assert!(pickable(&sketch, handle));
     assert!(joins(&sketch, &[Selectable::Item(flat)], handle));
-    // Alone, from the X axis; with a line, the angle between them, its
+    // Alone, its length; with a line, the angle between them, its
     // handle named by its tip.
     assert_eq!(
-        measured(&sketch, &[handle], 16.0, 9.0),
-        Some(Measure::Angle(Id::X_AXIS, tip))
+        measured(&sketch, &[handle], 11.0, 6.0),
+        Some(Measure::Distance(fit[1], tip))
     );
     let (measure, side) = measure(
         &sketch,
@@ -289,8 +287,8 @@ fn a_handle_picked_as_a_line_measures_angles_as_a_line() {
     let end = Selectable::HandleEnd(tip);
     assert!(pickable(&sketch, end));
     assert_eq!(
-        measured(&sketch, &[end], 16.0, 9.0),
-        Some(Measure::Angle(Id::X_AXIS, tip))
+        measured(&sketch, &[end], 11.0, 6.0),
+        Some(Measure::Distance(fit[1], tip))
     );
     assert!(!joins(&sketch, &[handle], end));
 }

@@ -1349,9 +1349,9 @@ bar says why (`EditError::Sketch`).
   the splines selected, or hides it, in any sketch. With splines selected
   and no drawing tool the toolbar offers Convert, Handles and Comb (and
   Constrain) in place of the tools. The
-  Dimension tool takes a handle's tip alone as its angle from the X axis
-  (`Measure::Angle(Id::X_AXIS, tip)`); with its fit point, as two points,
-  its length.
+  Dimension tool takes a handle's tip alone as its length, as a line's
+  (`Measure::Distance(fit, tip)`, or its horizontal or vertical extent);
+  with its fit point, as two points, the same.
 - **Construction**: `X` turns the tool's next shapes into construction
   geometry, or without a tool drawing shapes (the Dimension tool draws
   none) the curves selected: all construction unless they all are, then
@@ -1857,7 +1857,7 @@ Pure functions, tested headless:
   (`handle_dragged`); dragging its mirrored end moves it as a point
   (unsnapped), the tip moving the other way, through the solver's drag
   as the tip's would; the Dimension tool picks either (`pickable`),
-  alone its angle from the X axis, with a line or another handle the
+  alone its length as a line's, with a line or another handle the
   angle between them.
   With Trim or Extend, or Offset picking its chain, the viewport hits
   curves alone (`hit_curve`), so a click by a line's end is the line, and
