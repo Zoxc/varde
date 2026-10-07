@@ -91,6 +91,8 @@ const I = {
   sweep: '<path class="r" d="M4 18c4 0 5-12 12-12"/><circle class="t" cx="17" cy="6" r="3"/><circle class="af" cx="4.5" cy="18" r="1.8"/>',
   loft: '<rect class="t" x="3" y="15" width="10" height="5" rx="1"/><circle class="t" cx="16" cy="6" r="3.5"/><path class="a" d="M3.5 14.5l9-8.5M13 15l6.3-6.8"/>',
   box: '<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/><circle class="af" cx="12" cy="12" r="1.6"/>',
+  // Parameters: names down the left, their values in boxes.
+  params: '<path d="M3.5 6.5h5M3.5 12h5M3.5 17.5h5"/><rect class="a" x="11.5" y="4.5" width="9" height="4" rx="1.2"/><rect class="a" x="11.5" y="10" width="9" height="4" rx="1.2"/><rect class="a" x="11.5" y="15.5" width="9" height="4" rx="1.2"/>',
   shell: '<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M8 9.5l4-2 4 2v5l-4 2-4-2z"/>',
   move: '<rect class="t" x="9" y="9" width="6" height="6" rx="1"/><path class="a" d="M12 3v3.5M12 17.5V21M3 12h3.5M17.5 12H21M10 5l2-2 2 2M10 19l2 2 2-2M5 10l-2 2 2 2M19 10l2 2-2 2"/>',
   axis: '<path d="M4 20L20 4"/><circle class="af" cx="7.5" cy="16.5" r="1.7"/><circle class="af" cx="16.5" cy="7.5" r="1.7"/>',
@@ -115,7 +117,7 @@ const I = {
 const CAT = {};
 for (const [cat, names] of Object.entries({
   sketch: 'sketch line rect circle arc polygon spline cat-draw',
-  mod: 'trim extend mirror skoffset sfillet schamfer pushpull fillet chamfer shell combine offset cat-smodify cat-modify',
+  mod: 'trim extend mirror skoffset sfillet schamfer pushpull fillet chamfer shell combine offset params cat-smodify cat-modify',
   cstr: 'constrain coincident parallel perpendicular tangent equal cat-constrain',
   dim: 'dim cat-dim',
   solid: 'extrude revolve hole body paint sweep loft box move bmirror lpattern cpattern cat-create cat-transform',
@@ -368,28 +370,40 @@ const FACE_INFO = {
 
 const BRACKET_TIMELINE = [
   { id: 's1', type: 'sketch', name: 'Sketch 1', meta: 'Front' },
-  { id: 'e1', type: 'extrude', name: 'Extrude 1', meta: '50 mm', info: 'One side · 50 mm · New body', params: { regions: ['s1:0'], extent: 'one', d1: '50 mm', d2: '10 mm', flip: true, op: 'new', excl: [] } },
+  { id: 'e1', type: 'extrude', name: 'Extrude 1', meta: '50 mm', info: 'One side · 50 mm · New body', params: { regions: ['s1:0'], extent: 'one', d1: 'height', d2: '10 mm', flip: true, op: 'new', excl: [] } },
   { id: 's2', type: 'sketch', name: 'Sketch 2', meta: 'Face' },
   { id: 'h1', type: 'hole', name: 'Hole 1', meta: 'Ø16 thru', info: 'Simple · Ø16 mm · Through all' },
   { id: 's3', type: 'sketch', name: 'Sketch 3', meta: 'Face' },
   { id: 'h2', type: 'hole', name: 'Hole 2', meta: 'Ø14 thru', info: 'Simple · Ø14 mm · Through all' },
-  { id: 'f1', type: 'fillet', name: 'Fillet 1', meta: 'R2', info: '1 edge · R2 mm · Tangent chain', params: { edges: ['base-top|up-x'], radius: '2 mm', chain: true } },
+  { id: 'f1', type: 'fillet', name: 'Fillet 1', meta: 'R2', info: '1 edge · R2 mm · Tangent chain', params: { edges: ['base-top|up-x'], radius: 'r_edge', chain: true } },
   { id: 's4', type: 'sketch', name: 'Sketch 4', meta: 'XZ' },
   // Its body, the post, is made on the model page (`revolveFaces`).
   { id: 'r1', type: 'revolve', name: 'Revolve 1', meta: '360°', info: 'Full 360° · about Line 8 · Sketch 4 · New body', params: { regions: ['s4:0'], axis: 's4:l7', extent: 'full', a1: '180°', a2: '90°', flip: false, op: 'new', excl: [] } },
   // Failed (`failed`, its message): the two rounds on the upright's top
   // edges don't fit the 10 mm between them. The model page draws where.
   {
-    id: 'f2', type: 'fillet', name: 'Fillet 2', meta: 'R6', info: '2 edges · R6 mm · Tangent chain', params: { edges: ['up-top|up-x', 'back|up-top'], radius: '6 mm', chain: true },
+    id: 'f2', type: 'fillet', name: 'Fillet 2', meta: 'R6', info: '2 edges · R6 mm · Tangent chain', params: { edges: ['up-top|up-x', 'back|up-top'], radius: 'r_top', chain: true },
     failed: 'Edge 18 and Edge 15 overlap on Upright top: it’s 10 mm wide, at most R5 fits',
   },
+];
+
+// The bracket's parameters: Extrude 1 and both fillets take theirs from
+// these, and r_top (6 mm) is why Fillet 2 fails; `thick / 2` fixes it.
+const BRACKET_PARAMS = [
+  { name: 'height', text: '50 mm' },
+  { name: 'thick', text: '10 mm' },
+  { name: 'r_edge', text: '2 mm' },
+  { name: 'r_top', text: 'thick / 2 + 1 mm' },
+  { name: 'hole_d', text: '16 mm' },
+  { name: 'draft', text: '1.5 deg' },
+  { name: 'ribs', text: '3' },
 ];
 
 // `extra` holds bodies beyond the bracket's; one with `feat` is there once that feature is.
 function makeDoc(kind, name) {
   return kind === 'bracket'
-    ? { kind, name, path: '~/parts', dirty: true, T: [40, 25, 32], timeline: BRACKET_TIMELINE.map(t => ({ ...t })), extra: [], hidden: new Set(['origin', 's1', 's2', 's3', 's4']) }
-    : { kind, name, dirty: false, T: [0, 0, 0], timeline: [], extra: [], hidden: new Set() };
+    ? { kind, name, path: '~/parts', dirty: true, T: [40, 25, 32], timeline: BRACKET_TIMELINE.map(t => structuredClone(t)), extra: [], hidden: new Set(['origin', 's1', 's2', 's3', 's4']), params: BRACKET_PARAMS.map(p => ({ ...p })) }
+    : { kind, name, dirty: false, T: [0, 0, 0], timeline: [], extra: [], hidden: new Set(), params: [] };
 }
 
 // ---------------------------------------------------------------- state
@@ -409,6 +423,8 @@ const st = {
   op: null,        // solid operation being set up: { kind, pick, editing?, ...its parameters }
   web: false,      // the web build: no title bar, a bar under the file cell saying where the design is kept
   where: 'stored', // where it's kept: 'unsaved' | 'stored' | 'local' (on desktop, saved or not)
+  paramsOpen: false, // the parameters' popup open
+  suggest: true,   // panel fields offer parameter names
 };
 const root = document.documentElement;
 const $ = s => document.querySelector(s);
@@ -534,6 +550,7 @@ function notWired(id) {
 
 // Run an operation from the Alt bar. Sketch tools need a sketch first.
 function globalOp(op) {
+  if (op === 'params') { st.paramsOpen = !st.paramsOpen; return; }
   if (op.startsWith('tool:') && st.mode !== 'sketch') { st.pick = true; st.sel = null; toast('Pick a plane to sketch on first'); return; }
   if (op === 'sketch' && st.mode === 'sketch') { toast('Already in a sketch'); return; }
   page.doOp(op);
@@ -558,7 +575,7 @@ const TOOLS = {
 const G = (name, items) => [name, items.map(([icon, label, op = icon]) => ({ icon, label, op }))];
 const MODEL_GROUPS = [
   G('Create', [['sketch', 'Sketch'], ['extrude', 'Extrude'], ['revolve', 'Revolve'], ['sweep', 'Sweep'], ['loft', 'Loft'], ['hole', 'Hole'], ['box', 'Box']]),
-  G('Modify', [['pushpull', 'Press pull'], ['fillet', 'Fillet'], ['chamfer', 'Chamfer'], ['shell', 'Shell'], ['combine', 'Combine']]),
+  G('Modify', [['pushpull', 'Press pull'], ['fillet', 'Fillet'], ['chamfer', 'Chamfer'], ['shell', 'Shell'], ['combine', 'Combine'], ['params', 'Parameters']]),
   G('Transform', [['move', 'Move'], ['bmirror', 'Mirror'], ['lpattern', 'Linear pattern'], ['cpattern', 'Circular pattern']]),
   G('Construct', [['plane', 'Plane', 'offset-plane'], ['axis', 'Axis'], ['point', 'Point']]),
   G('Inspect', [['measure', 'Measure'], ['section', 'Section']]),
@@ -576,7 +593,7 @@ const GLOBAL_FLAT = [...MODEL_GROUPS, ...SKETCH_GROUPS].flatMap(([, items]) => i
 
 function gbar() {
   return `<div class="gbar">
-    ${(st.mode === 'sketch' ? SKETCH_GROUPS : MODEL_GROUPS).map(([name, items]) => `<div class="grp">
+    ${(st.mode === 'sketch' ? SKETCH_GROUPS : MODEL_GROUPS).map(([name, items]) => `<div class="pgrp">
       <div class="gl">${name}</div>
       <div class="btns">${items.map(o => `<button class="gbtn" data-act="gop:${o.op}" title="${o.label}">${icon(o.icon)}${o.label}</button>`).join('')}</div>
     </div>`).join('')}
@@ -879,6 +896,201 @@ function objects() {
   for (const s of sketches) out += row(s.id, s.name, 'sketch', 1, { sel: st.sel?.id === s.id });
   return out;
 }
+
+// ---------------------------------------------------------------- parameters
+// Named values a design shares (`wall = 2 mm`), kept in one list and typed
+// in any length or angle field in place of a number. The list is a popup
+// as an operation's panel, hidden till the Modify set's Parameters tool
+// opens it. `st.suggest` offers the names as a panel field is typed in.
+
+// An expression's value and kind ('len' in mm, 'ang' in degrees, 'n' bare),
+// or an Error with the message to show. `env(name)` gives a name's value.
+const LEN_UNITS = { mm: 1, cm: 10, m: 1000, in: 25.4 }, ANG_UNITS = { deg: 1, '°': 1 };
+function evalExpr(text, env) {
+  const toks = String(text).match(/\d+\.?\d*|\.\d+|[A-Za-z_][\w]*|°|\S/g) || [];
+  let i = 0;
+  const peek = () => toks[i], fail = m => { throw new Error(m); };
+  const add = (a, b, sign) => {
+    if (a.k !== b.k && a.k !== 'n' && b.k !== 'n') fail(`Can’t add ${a.k === 'len' ? 'a length' : 'an angle'} and ${b.k === 'len' ? 'a length' : 'an angle'}`);
+    return { v: a.v + sign * b.v, k: a.k === 'n' ? b.k : a.k };
+  };
+  function expr() {
+    let a = term();
+    while (peek() === '+' || peek() === '-') { const s = toks[i++] === '+' ? 1 : -1; a = add(a, term(), s); }
+    return a;
+  }
+  function term() {
+    let a = factor();
+    while (peek() === '*' || peek() === '/') {
+      const op = toks[i++], b = factor();
+      if (op === '*') {
+        if (a.k !== 'n' && b.k !== 'n') fail('A length times a length isn’t a length');
+        a = { v: a.v * b.v, k: a.k === 'n' ? b.k : a.k };
+      } else {
+        if (b.v === 0) fail('Divides by zero');
+        if (b.k !== 'n' && a.k !== b.k) fail('Divides by a length or angle');
+        a = { v: a.v / b.v, k: b.k === 'n' ? a.k : 'n' };
+      }
+    }
+    return a;
+  }
+  function factor() {
+    const t = toks[i++];
+    if (t === undefined) fail('Enter a value');
+    if (t === '-' || t === '+') { const f = factor(); return { ...f, v: t === '-' ? -f.v : f.v }; }
+    if (t === '(') { const e = expr(); if (toks[i++] !== ')') fail('A bracket isn’t closed'); return e; }
+    if (/^[\d.]/.test(t)) {
+      const u = peek();
+      if (u in LEN_UNITS) { i++; return { v: +t * LEN_UNITS[u], k: 'len' }; }
+      if (u in ANG_UNITS) { i++; return { v: +t, k: 'ang' }; }
+      if (/^[A-Za-z_]/.test(u || '')) fail(`Unknown unit “${u}”`);
+      return { v: +t, k: 'n' };
+    }
+    if (/^[A-Za-z_]/.test(t)) return env(t);
+    fail(`Unexpected “${t}”`);
+  }
+  const r = expr();
+  if (i < toks.length) fail(`Unexpected “${toks[i]}”`);
+  if (!Number.isFinite(r.v)) fail('Too big');
+  return r;
+}
+
+// Every parameter's value, or its error. Names refer to each other in any
+// order; a loop is an error on each parameter in it.
+function paramValues(doc = st.doc) {
+  const ps = doc?.params || [], out = new Map(), busy = new Set();
+  const get = name => {
+    if (out.has(name)) { const r = out.get(name); if (r.err) throw new Error(`“${name}” has an error`); return r; }
+    const p = ps.find(p => p.name === name);
+    if (!p) {
+      const near = ps.find(q => q.name.startsWith(name) || name.startsWith(q.name));
+      throw new Error(`No parameter “${name}”${near ? `: did you mean “${near.name}”?` : ''}`);
+    }
+    if (busy.has(name)) throw new Error(`“${name}” refers to itself`);
+    busy.add(name);
+    let r;
+    try { r = evalExpr(p.text, get); } catch (e) { r = { err: e.message }; }
+    busy.delete(name);
+    out.set(name, r);
+    if (r.err) throw new Error(`“${name}” has an error`);
+    return r;
+  };
+  for (const p of ps) { try { get(p.name); } catch { /* kept in out */ } }
+  return out;
+}
+const paramEnv = () => { const vals = paramValues(); return name => {
+  const r = vals.get(name);
+  if (r && !r.err) return r;
+  if (r) throw new Error(`“${name}” has an error`);
+  const near = (st.doc?.params || []).find(q => q.name.startsWith(name) || name.startsWith(q.name));
+  throw new Error(`No parameter “${name}”${near ? `: did you mean “${near.name}”?` : ''}`);
+}; };
+const showVal = r => r.err ? '—' : r.k === 'len' ? fmtP(r.v) + ' mm' : r.k === 'ang' ? fmtP(r.v) + '°' : fmtP(r.v);
+const fmtP = v => String(+v.toFixed(3));
+const NAME_RE = /^[A-Za-z_][\w]*$/;
+
+// What refers to `name`: features through their typed values, and other
+// parameters.
+function paramUses(name) {
+  const re = new RegExp(`\\b${name}\\b`);
+  const feats = st.doc.timeline.filter(t => t.params && Object.values(t.params).some(v => typeof v === 'string' && re.test(v))).map(t => t.name);
+  const pars = st.doc.params.filter(p => p.name !== name && re.test(p.text)).map(p => p.name);
+  return [...feats, ...pars];
+}
+
+// The table: a row each, its name and expression to edit, its value, what
+// uses it and delete; a bad one says why under it. Rows the selected
+// feature uses are marked. The add button is under it.
+function paramList() {
+  const ps = st.doc.params, vals = paramValues(), add = `<button class="padd" data-act="param-add">${icon('plus')}Parameter</button>`;
+  if (!ps.length) return `<div class="empty-note">No parameters yet.<br>Add one, then type its name in any length or angle.</div>${add}`;
+  const hot = st.sel?.kind === 'feature' && st.doc.timeline.find(t => t.id === st.sel.id);
+  const rows = ps.map((p, i) => {
+    const r = vals.get(p.name) || { err: 'Not a name' }, uses = paramUses(p.name);
+    const err = !NAME_RE.test(p.name) ? 'Letters, digits and _, not starting with a digit'
+      : ps.some((q, j) => j < i && q.name === p.name) ? 'Another parameter has this name' : r.err;
+    const lit = hot && uses.includes(hot.name);
+    return `<div class="tb-row${lit ? ' lit' : ''}${err ? ' perr' : ''}">
+      <input class="pname" id="pn-${i}" data-field="pname:${i}" value="${esc(p.name)}" spellcheck="false" autocomplete="off" aria-label="Name">
+      <input class="pexpr" id="pe-${i}" data-field="pexpr:${i}" value="${esc(p.text)}" spellcheck="false" autocomplete="off" aria-label="${esc(p.name)}">
+      <span class="pval">${err ? '—' : showVal(r)}</span>
+      <span class="puses">${uses.length ? uses.join(', ') : 'Not used'}</span>
+      <button class="px" data-act="param-del:${i}" title="Delete">${icon('close')}</button>
+      ${err ? `<div class="pnote bad">${icon('alert')}${err}</div>` : ''}</div>`;
+  }).join('');
+  return `<div class="plist"><div class="tb-head"><span>Name</span><span>Expression</span><span>Value</span><span>Used by</span><span></span></div>${rows}</div>${add}`;
+}
+const paramCount = () => {
+  const n = st.doc?.params?.length || 0, bad = [...paramValues().values()].filter(r => r.err).length;
+  return `${n}${bad ? `<span class="pbad">${icon('alert')}</span>` : ''}`;
+};
+
+// As an operation's panel, wider: an accent line over a head with the
+// tool's icon and close, the list in the recessed well under it. At the
+// viewport's right, under the view cube; left of an operation's panel
+// when one is open.
+const paramCard = () => st.paramsOpen ? `<div class="pcard${st.op ? ' beside' : ''}">
+    <div class="pc-head"><span class="hic">${icon('params')}</span><b>Parameters</b><span class="meta">${paramCount()}</span><button class="hb" data-act="params" title="Close">${icon('close')}</button></div>
+    <div class="pc-well">${paramList()}</div></div>` : '';
+
+// Names offered under the panel field being typed in: those starting with
+// the word at the caret. Clicking one, or Tab, puts it in.
+let suggest = null; // { field, start, end, names }
+function suggestFor(el) {
+  suggest = null;
+  if (!st.suggest || !el?.dataset?.field || el.dataset.field.startsWith('pname') || !st.doc?.params) return;
+  const pos = el.selectionStart, before = el.value.slice(0, pos), m = /[A-Za-z_]\w*$/.exec(before);
+  if (!m || /\d$/.test(before.slice(0, m.index)) && !/\s$/.test(before.slice(0, m.index))) return;
+  const own = el.dataset.field.startsWith('pexpr') && st.doc.params[+el.dataset.field.split(':')[1]]?.name;
+  const names = st.doc.params.filter(p => p.name.startsWith(m[0]) && p.name !== m[0] && p.name !== own);
+  if (names.length) suggest = { field: el.dataset.field, start: m.index, end: pos, names };
+}
+function suggestBox() {
+  const el = suggest && $(`[data-field="${suggest.field}"]`);
+  if (!el) return;
+  const vals = paramValues(), box = document.createElement('div');
+  box.className = 'psug';
+  box.innerHTML = suggest.names.map((p, i) => `<button class="${i ? '' : 'on'}" data-sug="${p.name}"><span class="pn">${p.name}</span><span class="meta">${showVal(vals.get(p.name) || { err: 1 })}</span></button>`).join('')
+    + `<div class="hint"><kbd>Tab</kbd> puts it in</div>`;
+  const win = $('#win').getBoundingClientRect(), r = el.getBoundingClientRect();
+  box.style.left = r.left - win.left + 'px';
+  box.style.top = r.bottom - win.top + 3 + 'px';
+  box.style.minWidth = r.width + 'px';
+  $('#win').append(box);
+}
+function takeSuggestion(name) {
+  const el = $(`[data-field="${suggest.field}"]`), v = el.value.slice(0, suggest.start) + name + el.value.slice(suggest.end);
+  const at = suggest.start + name.length;
+  el.value = v;
+  el.setSelectionRange(at, at);
+  suggest = null;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+document.addEventListener('mousedown', e => {
+  const b = e.target.closest?.('[data-sug]');
+  if (b) { e.preventDefault(); takeSuggestion(b.dataset.sug); }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Tab' && suggest && e.target.dataset?.field === suggest.field) { e.preventDefault(); e.stopPropagation(); takeSuggestion(suggest.names[0].name); }
+}, true);
+
+// Typing in the list: a name or an expression. A renamed parameter's uses
+// follow it, as they would in the app.
+document.addEventListener('input', e => {
+  const [k, i] = (e.target.dataset?.field || '').split(':');
+  if (k === 'pname') {
+    const p = st.doc.params[+i], old = p.name, now = e.target.value.trim();
+    if (NAME_RE.test(old) && NAME_RE.test(now) && !st.doc.params.some(q => q !== p && q.name === now)) {
+      const re = new RegExp(`\\b${old}\\b`, 'g');
+      for (const q of st.doc.params) if (q !== p) q.text = q.text.replace(re, now);
+      for (const t of st.doc.timeline) for (const [f, v] of Object.entries(t.params || {})) if (typeof v === 'string') t.params[f] = v.replace(re, now);
+    }
+    p.name = e.target.value;
+  } else if (k === 'pexpr') st.doc.params[+i].text = e.target.value;
+  else { suggestFor(e.target); if (!suggest) $('.psug')?.remove(); return; }
+  suggestFor(e.target);
+  render();
+});
 
 // ---------------------------------------------------------------- viewport
 // The grid's plane: the XY plane, or the sketch's being edited, as an origin
@@ -1186,6 +1398,8 @@ function render() {
   if (el) { el.focus(); el.setSelectionRange(...caret); }
   mockNav();
   page.afterRender?.();
+  if (suggest && document.activeElement?.dataset?.field !== suggest.field) suggest = null;
+  suggestBox();
 }
 
 function renderApp() {
@@ -1209,6 +1423,7 @@ function renderApp() {
         <button class="home-btn" title="Home view">${icon('home')}</button>
       </div>
       ${st.op ? page.op.panel() : ''}
+      ${paramCard()}
       ${hint}
     </div>` + (st.alt || st.gbarPinned ? gbar() : '') + statusbar() + help;
   placeRail();
@@ -1287,6 +1502,19 @@ function act(a) {
     case 'rail': st.railOpen = +v; break;
     case 'rgop': st.railOpen = null; globalOp(v); break;
     case 'tab': st.panel = v; break;
+    case 'params': st.paramsOpen = !st.paramsOpen; break;
+    case 'param-add': {
+      const ps = st.doc.params;
+      let n = 1;
+      while (ps.some(p => p.name === 'param' + n)) n++;
+      ps.push({ name: 'param' + n, text: '10 mm' });
+      st.paramsOpen = true;
+      render();
+      const el = $(`[data-field="pname:${ps.length - 1}"]`);
+      el?.focus(); el?.select();
+      return;
+    }
+    case 'param-del': st.doc.params.splice(+v, 1); break;
     case 'tl':
       if (st.mode === 'sketch' || st.op) return;
       st.pick = false;
@@ -1448,8 +1676,9 @@ const flag = f => HASH.slice(1).includes(f);
 // The switches over the window (`mockNav`), kept in the hash without
 // reloading (a hashchange would).
 function keepFlags() {
-  const parts = HASH.slice(1).filter(f => !['web', 'unsaved', 'stored', 'local', 'edited', 'clean'].includes(f));
+  const parts = HASH.slice(1).filter(f => !['web', 'unsaved', 'stored', 'local', 'edited', 'clean', 'p-nosuggest'].includes(f));
   if (st.web) parts.push('web');
+  if (!st.suggest) parts.push('p-nosuggest');
   if (st.doc && st.where !== (st.doc.kind === 'empty' ? 'unsaved' : 'stored')) parts.push(st.where);
   if (st.doc && st.doc.dirty !== (st.doc.kind !== 'empty')) parts.push(st.doc.dirty ? 'edited' : 'clean');
   HASH.splice(1, Infinity, ...parts);
@@ -1473,6 +1702,7 @@ function mockNav() {
       ? b('where:unsaved', 'Never saved', st.where === 'unsaved') + b('where:stored', 'Browser storage', st.where === 'stored') + b('where:local', 'Local', st.where === 'local')
       : b('where:unsaved', 'Never saved', st.where === 'unsaved') + b('where:stored', 'Saved', st.where !== 'unsaved');
     groups.push('<i class="brk"></i>', g('Location', where), g('Changes', b('edited:off', 'None', !st.doc.dirty) + b('edited:on', 'Edited', st.doc.dirty)));
+    groups.push('<i class="brk"></i>', g('Suggest names', b('psuggest:on', 'On', st.suggest) + b('psuggest:off', 'Off', !st.suggest)));
   }
   const nav = $('.mocknav');
   nav.innerHTML = groups.join('');
@@ -1492,6 +1722,8 @@ function start(current) {
   if (flag('projmenu')) st.projMenu = true;
   if (flag('nomouse')) st.mouseHints = false;
   if (flag('tools')) st.gbarPinned = true;
+  if (flag('params')) st.paramsOpen = true;
+  if (flag('p-nosuggest')) st.suggest = false;
   st.web = flag('web');
   st.where = flag('local') ? 'local' : flag('stored') ? 'stored' : flag('unsaved') || st.doc?.kind === 'empty' ? 'unsaved' : 'stored';
   if (st.doc && flag('edited')) st.doc.dirty = true;

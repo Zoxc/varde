@@ -41,6 +41,13 @@
   path. On both, /edited or /clean for changes not saved or none, and
   /unsaved or /stored for never saved (no name: "Not saved" on a grey pill
   in its place) or saved. The switches over the window set these too.
+  Parameters: named values (height, thick, r_edge, r_top, hole_d) typed
+  in any length or angle field; Extrude 1 and both fillets use them, and
+  r_top = thick / 2 + 1 mm is why Fillet 2 fails. Their table is in a
+  popup as an operation's panel, wider, hidden till the Modify set's
+  Parameters tool opens it (/params opens it from the address).
+  /p-nosuggest stops panel fields offering the names as you type (Tab
+  puts the first in).
   Append /still to disable animations, /dark or /light to force the theme,
   /persp for a perspective view, /projmenu to open the status bar's menu,
   /nomouse to hide the mouse hints.
@@ -264,8 +271,16 @@ const UNITS = { mm: { '': 1, mm: 1, cm: 10, m: 1000, in: 25.4 }, deg: { '': 1, '
 function readVal(o, name, errs, { unit = 'mm', min = 0, max = 10000, signed = false, int = false } = {}) {
   const s = String(o[name] ?? '').trim(), m = /^([-+]?(?:\d+\.?\d*|\.\d+))\s*([a-z°×]*)$/i.exec(s);
   const u = unit === 'mm' ? ' mm' : unit === 'deg' ? '°' : '';
-  let bad = !s ? 'Enter a value' : !m ? 'Not a number' : !(m[2].toLowerCase() in UNITS[unit]) ? `Unknown unit “${m[2]}”` : null;
-  const v = bad ? 0 : +m[1] * UNITS[unit][m[2].toLowerCase()];
+  let bad = !s ? 'Enter a value' : !m ? null : !(m[2].toLowerCase() in UNITS[unit]) ? `Unknown unit “${m[2]}”` : null;
+  let v = bad ? 0 : m ? +m[1] * UNITS[unit][m[2].toLowerCase()] : 0;
+  // Anything else is an expression, which may name the design's parameters.
+  if (s && !m) {
+    try {
+      const r = evalExpr(s, paramEnv()), want = unit === 'mm' ? 'len' : unit === 'deg' ? 'ang' : 'n';
+      if (r.k !== 'n' && r.k !== want) bad = want === 'len' ? 'Not a length' : want === 'ang' ? 'Not an angle' : 'Not a count';
+      v = r.v;
+    } catch (e) { bad = e.message; }
+  }
   if (!bad) {
     if (int && !Number.isInteger(v)) bad = 'A whole number';
     else if (signed ? Math.abs(v) > max : v > max) bad = signed ? `Within ±${max}${u}` : `At most ${max}${u}`;
@@ -1003,8 +1018,8 @@ const OPS = {
     },
     preview: edgePreview,
     row: (o, r) => ({
-      meta: o.type === 'equal' ? fmt(r.d[0]) + ' mm' : o.type === 'two' ? `${fmt(r.d[0])} × ${fmt(r.d[1])}` : `${fmt(parseFloat(o.d1))} mm ${fmt(r.a)}°`,
-      info: `${plural(o.edges.length, 'edge')} · ${labelOf(CHAMFERS, o.type)} · ${o.type === 'angle' ? `${fmt(parseFloat(o.d1))} mm at ${fmt(r.a)}°` : r.d.map(fmt).join(' × ') + ' mm'}`,
+      meta: o.type === 'equal' ? fmt(r.d[0]) + ' mm' : o.type === 'two' ? `${fmt(r.d[0])} × ${fmt(r.d[1])}` : `${fmt(r.d[o.flip ? 1 : 0])} mm ${fmt(r.a)}°`,
+      info: `${plural(o.edges.length, 'edge')} · ${labelOf(CHAMFERS, o.type)} · ${o.type === 'angle' ? `${fmt(r.d[o.flip ? 1 : 0])} mm at ${fmt(r.a)}°` : r.d.map(fmt).join(' × ') + ' mm'}`,
     }),
   },
 

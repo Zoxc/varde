@@ -520,3 +520,61 @@ kbd {
    width of the screen here, in a frame to keep it apart from the mock's
    page around it ---- */
 #win.web { --title-h: 0px; width: calc(100vw - 24px); height: calc(100vh - var(--nav-b, 40px) - 12px); border-radius: 10px; }
+
+/* ---- parameters: one table of named values in a popup as an
+   operation's panel (model.html's .opp), wider, opened by the Modify
+   set's Parameters tool; banded rows flush with its edges,
+   the add button a row under them. The fields' suggestions under them.
+   Words 12.5-13 px as the panels' controls, notes at least 12 px. */
+.pcard {
+  position: absolute; top: 166px; right: 12px; z-index: 5; width: min(540px, calc(100% - 90px)); max-height: calc(100% - 178px - var(--status-float) - 10px);
+  display: flex; flex-direction: column; overflow: hidden;
+  border-top: 3px solid var(--accent); border-radius: 8px; background: var(--panel);
+  box-shadow: 0 0 0 1px var(--line), 0 10px 28px rgba(0,0,0,.16), 0 2px 6px rgba(0,0,0,.08);
+}
+.pcard.beside { right: 312px; }
+.pc-head { flex: none; display: flex; align-items: center; gap: 7px; padding: 7px 6px 7px 9px; }
+.pc-head .hic { display: flex; }
+.pc-head b { font-size: 13px; font-weight: 600; }
+.pc-head .meta { margin-right: auto; color: var(--muted); font-size: 12.5px; display: flex; align-items: center; }
+.pc-head .hb { width: 26px; height: 26px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.pc-head .hb:hover { background: var(--hl); color: var(--text); }
+.pc-head .hb svg.i { width: 16px; height: 16px; }
+.pc-well { overflow: auto; border-top: 1px solid var(--line); }
+.pbad { display: inline-flex; color: var(--danger-text); margin-left: 3px; }
+.pbad svg { width: 14px; height: 14px; }
+
+/* the table: a header, then a row each, banded */
+.plist { display: flex; flex-direction: column; font-size: 13px; }
+.tb-head, .tb-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) 64px minmax(0, 110px) 26px; gap: 0 11px; align-items: center; padding: 4px 8px 4px 12px; }
+.tb-head { padding-block: 8px; color: var(--muted); font-size: 12px; font-weight: 600; background: color-mix(in srgb, var(--text) 6%, var(--panel)); border-bottom: 1px solid var(--line); }
+.tb-row:nth-child(odd) { background: color-mix(in srgb, var(--text) 3%, var(--panel)); }
+.tb-row.lit { box-shadow: inset 3px 0 0 var(--accent); }
+.tb-row.perr { box-shadow: inset 3px 0 0 var(--danger); }
+.plist input { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text); font: inherit; font-size: 13px; }
+.plist input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--panel); }
+.plist .pname { font-weight: 600; }
+.plist .pname:hover { background: var(--hl); }
+.plist .pexpr { background: var(--panel); border-color: var(--line); box-shadow: inset 0 1px 2px rgba(0,0,0,.06); }
+.tb-row.perr .pexpr { border-color: var(--danger); }
+.pval { color: var(--muted); font-size: 12.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.puses { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.px { flex: none; border: 0; background: none; width: 24px; height: 24px; border-radius: 5px; color: var(--faint); cursor: pointer; display: grid; place-items: center; opacity: 0; }
+.tb-row:hover .px, .px:focus-visible { opacity: 1; }
+.px:hover { color: var(--danger-text); background: var(--hl); }
+.px svg { width: 14px; height: 14px; }
+.pnote { grid-column: 1 / -1; display: flex; align-items: center; gap: 5px; padding: 3px 2px 0; color: var(--muted); font-size: 12px; }
+.pnote.bad { color: var(--danger-text); }
+.pnote svg { width: 14px; height: 14px; flex: none; }
+.padd { display: flex; align-items: center; gap: 5px; width: 100%; padding: 10px 12px; border: 0; border-top: 1px solid var(--line); background: var(--panel); color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.padd:hover { background: var(--accent-soft); }
+.padd svg { width: 15px; height: 15px; }
+.pcard .empty-note + .padd { border-top: 0; }
+
+/* names offered under a field */
+.psug { position: absolute; z-index: 60; padding: 3px; border-radius: 7px; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(0,0,0,.16); }
+.psug button { display: flex; width: 100%; gap: 12px; justify-content: space-between; padding: 5px 8px; border: 0; border-radius: 5px; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.psug button.on, .psug button:hover { background: var(--accent-soft); }
+.psug .pn { font-weight: 600; }
+.psug .meta { color: var(--muted); font-size: 12.5px; }
+.psug .hint { padding: 3px 8px 2px; color: var(--muted); font-size: 12px; }
