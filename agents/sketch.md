@@ -1009,8 +1009,9 @@ entered and the status bar says why (`Doc::notice`).
 (`varde_view::plane_note`): "XY", or the face by the feature that made
 it and the part of it ("on Extrude 1's end", "start", "side"; "on a
 face of Revolve 1" for other parts), by its body if that feature is
-gone ("on Body 1"), else "on a face". The status bar's says "on XY" or
-the same.
+gone ("on Body 1"), else "on a face". The status bar names neither the
+sketch nor its plane: it says the sketch's standing and profile count,
+both hidden while anything is selected, then notes and refusals.
 
 **The selection's box** in the status bar shows in a sketch while no
 tool is in use (nor Constrain, nor the value field): one item by name

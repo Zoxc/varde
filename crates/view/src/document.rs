@@ -1754,50 +1754,55 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         );
     }
     if let Some(sketch) = &state.sketch {
-        let standing = standing(sketch).map(|(standing, trouble)| {
-            text(format!("{standing} ·"))
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(if trouble {
+        // A selection has the bar's box of its own: the sketch's standing
+        // and profiles make way for it.
+        let selected = !sketch.selection.is_empty();
+        let piece = |line: String, style: fn(&iced::Theme) -> text::Style| {
+            text(line).size(12).wrapping(Wrapping::None).style(style)
+        };
+        let standing = (!selected).then(|| standing(sketch)).flatten();
+        let mut pieces: Vec<_> = (standing.into_iter())
+            .map(|(standing, trouble)| {
+                let style = if trouble {
                     theme::danger_text
                 } else {
                     theme::muted_text
-                })
-        });
-        let refusal = edit_refused(sketch.refusal, sketch.solver_error, sketch.sketch).map(|why| {
-            text(format!("· {why}"))
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(theme::danger_text)
-        });
-        let checking = sketch.checking.then(|| {
-            text("· Checking…")
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(theme::muted_text)
-        });
-        return Some(
-            row![
-                text(sketch.name)
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .font(theme::SEMIBOLD),
-                standing,
-                text(format!(
-                    "{}{}{}",
-                    profile_count(sketch).map_or_else(String::new, |count| format!("{count} · ")),
-                    crate::plane_pick::on_plane(state.editor.document(), &sketch.plane),
-                    status_suffix(state)
-                ))
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(theme::muted_text),
-                refusal,
-                checking,
-            ]
-            .spacing(4)
-            .into(),
-        );
+                };
+                piece(standing, style)
+            })
+            .chain(
+                (!selected)
+                    .then(|| profile_count(sketch))
+                    .flatten()
+                    .map(|count| piece(count, theme::muted_text)),
+            )
+            .chain(
+                status_notes(state)
+                    .into_iter()
+                    .map(|note| piece(note, theme::muted_text)),
+            )
+            .chain(
+                edit_refused(sketch.refusal, sketch.solver_error, sketch.sketch)
+                    .map(|why| piece(why.into_owned(), theme::danger_text)),
+            )
+            .chain(
+                sketch
+                    .checking
+                    .then(|| piece("Checking…".to_owned(), theme::muted_text)),
+            )
+            .map(Element::from)
+            .collect();
+        if pieces.is_empty() {
+            return None;
+        }
+        let mut line = Vec::with_capacity(pieces.len() * 2);
+        for (i, element) in pieces.drain(..).enumerate() {
+            if i > 0 {
+                line.push(piece("·".to_owned(), theme::muted_text).into());
+            }
+            line.push(element);
+        }
+        return Some(row(line).spacing(4).into());
     }
     if let Some(extrude) = &state.extrude {
         let regions = match extrude.picked.len() {
