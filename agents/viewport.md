@@ -29,6 +29,13 @@ since its pass shares the scene's depth, and resolves to the texture the
 errors' composite reads. The shader-made anti-aliasing of lines, points
 and the grid stays: MSAA only adds to it.
 
+iced redraws the whole window for any change in it (a button's hover),
+so the scene's passes run only when a prepare changed something: an
+upload, a target made, the bytes written to the uniforms, tints or live
+sketch layer (`Slot::written`), or what the draws read of the slot
+(`SlotState`). Otherwise `record` composites the resolved target it
+drew last for the same clip (`Slot::drawn`) again.
+
 iced builds the widget's pipeline (`viewport::Pipeline`, and with it the
 `Renderer`'s render pipelines) the first time it prepares one of its
 primitives. On the web that compiles and links every shader program on

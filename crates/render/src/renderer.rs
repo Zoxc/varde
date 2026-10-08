@@ -1,6 +1,6 @@
 use std::any::Any;
 use std::ops::Range;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
@@ -880,7 +880,7 @@ enum Triangles {
 
 /// A face of the mesh drawn again over itself, hovered or selected: see
 /// [`Frame::hovered_faces`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct FaceDraw {
     indices: Range<u32>,
     /// Its part's alpha's step, see [`Alphas`].
@@ -922,7 +922,7 @@ struct GpuPart {
 
 /// Which parts of a frame's mesh are drawn how, worked out in
 /// [`Renderer::prepare`] from [`Frame::opacity`].
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 struct PartDraws {
     /// The runs of opaque parts, one after another, each drawn at once.
     opaque: Vec<Range<usize>>,
@@ -1351,6 +1351,55 @@ pub struct Slot {
     /// The selected faces' pattern's mask, made the first time some are
     /// selected and kept like `error_target`.
     pattern_target: Option<CoverageTarget>,
+    /// The bytes the last prepare wrote to the uniforms, tints and live
+    /// sketch layer, to tell whether the next one changed them.
+    written: Vec<u8>,
+    /// The clip the scene's resolved target holds the frame last prepared
+    /// for, drawn: a frame prepared alike (a redraw of the window for
+    /// something else, a hover that changes nothing here) is only
+    /// composited again. `None` until it's drawn.
+    drawn: Mutex<Option<ClipRect>>,
+}
+
+/// What [`Renderer::prepare`] leaves in a [`Slot`] for the draws, beside
+/// its buffers: two alike draw the same.
+#[derive(PartialEq)]
+struct SlotState {
+    grid_steps: (u32, Option<u32>),
+    sketching: bool,
+    sketch_depth: bool,
+    viewport: Viewport,
+    faded: bool,
+    hover_through: bool,
+    draws: PartDraws,
+    hidden_edges: bool,
+    origin: OriginShown,
+    faces: Vec<FaceDraw>,
+    lines: Option<(bool, bool)>,
+}
+
+impl Slot {
+    fn state(&self) -> SlotState {
+        SlotState {
+            grid_steps: self.grid_steps,
+            sketching: self.sketching,
+            sketch_depth: self.sketch_depth,
+            viewport: self.viewport,
+            faded: self.faded,
+            hover_through: self.hover_through,
+            draws: self.draws.clone(),
+            hidden_edges: self.hidden_edges,
+            origin: self.origin,
+            faces: self.faces.clone(),
+            lines: (self.mesh.as_ref()).map(|mesh| (mesh.wireframe, mesh.tessellation)),
+        }
+    }
+}
+
+/// Writes `bytes` to `buffer` and appends them to `written`.
+fn write(queue: &wgpu::Queue, buffer: &wgpu::Buffer, bytes: &[u8], written: &mut Vec<u8>) {
+    queue.write_buffer(buffer, 0, bytes);
+    written.extend_from_slice(bytes);
 }
 
 impl Renderer {
@@ -2210,6 +2259,7 @@ impl Renderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &Frame<'_>,
+        written: &mut Vec<u8>,
     ) {
         let parts = slot.mesh.as_ref().map_or(0, |mesh| mesh.parts.len());
         let model = frame.colors.model;
@@ -2246,7 +2296,7 @@ impl Renderer {
         for (color, entry) in colors.iter().zip(bytes.chunks_exact_mut(stride)) {
             entry[..TINT_SIZE as usize].copy_from_slice(bytemuck::bytes_of(color));
         }
-        queue.write_buffer(&slot.tints, 0, &bytes);
+        write(queue, &slot.tints, &bytes, written);
     }
 
     /// Binds `slot`'s group 0 with `part`'s colour, the model's if it's
@@ -2303,6 +2353,8 @@ impl Renderer {
             error_sources: Vec::new(),
             error_target: None,
             pattern_target: None,
+            written: Vec::new(),
+            drawn: Mutex::new(None),
         }
     }
 
@@ -2327,6 +2379,11 @@ impl Renderer {
         queue: &wgpu::Queue,
         frame: &Frame<'_>,
     ) -> Result<(), PrepareError> {
+        let before = slot.state();
+        // Whether something was uploaded or made, which the comparisons
+        // below don't see.
+        let mut changed = false;
+        let mut written = Vec::with_capacity(slot.written.len());
         slot.viewport = frame.viewport;
         let fade = if frame.fade.is_nan() {
             0.0
@@ -2353,6 +2410,7 @@ impl Renderer {
 
         let mut result = Ok(());
         if !std::ptr::eq(slot.lines_source.as_ptr(), Arc::as_ptr(frame.sketches)) {
+            changed = true;
             slot.lines_source = Arc::downgrade(frame.sketches);
             slot.lines = upload_lines(device, frame.sketches).unwrap_or_else(|error| {
                 result = Err(error);
@@ -2365,6 +2423,7 @@ impl Renderer {
         // which the same mesh would hit again.
         let new_mesh = !std::ptr::eq(slot.source.as_ptr(), Arc::as_ptr(frame.mesh));
         if new_mesh {
+            changed = true;
             slot.source = Arc::downgrade(frame.mesh);
             slot.mesh = upload_mesh(device, frame.mesh).unwrap_or_else(|error| {
                 result = Err(error);
@@ -2406,6 +2465,7 @@ impl Renderer {
             mesh.tessellation = frame.tessellation;
             if frame.tessellation && matches!(mesh.triangles, Triangles::Unbuilt) {
                 // Like the mesh's, a failure isn't tried again.
+                changed = true;
                 mesh.triangles = match triangle_edges(device, frame.mesh, &mesh.parts) {
                     Ok(triangles) => triangles,
                     Err(error) => {
@@ -2415,7 +2475,7 @@ impl Renderer {
                 };
             }
         }
-        self.write_tints(slot, device, queue, frame);
+        self.write_tints(slot, device, queue, frame, &mut written);
         let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
         slot.draws = PartDraws::new(parts, opacity, &slot.part_tints, &self.alphas, frame.camera);
 
@@ -2427,6 +2487,7 @@ impl Renderer {
                 Arc::as_ptr(frame.highlights),
             )
         {
+            changed = true;
             slot.highlights_source = Arc::downgrade(frame.highlights);
             let written = slot
                 .highlights
@@ -2439,6 +2500,7 @@ impl Renderer {
                 .zip(frame.errors)
                 .all(|(kept, error)| Weak::ptr_eq(kept, &error.source));
         if !same_errors {
+            changed = true;
             slot.error_sources = frame.errors.iter().map(|e| e.source.clone()).collect();
             let written = slot.errors.write(device, queue, frame.errors);
             result = result.and(written);
@@ -2472,11 +2534,16 @@ impl Renderer {
         if let Some(sketch) = &frame.sketch {
             let mut sketch_result = Ok(());
             if !std::ptr::eq(slot.sketch_source.as_ptr(), Arc::as_ptr(sketch.base)) {
+                changed = true;
                 slot.sketch_source = Arc::downgrade(sketch.base);
                 if let Err(error) = slot.sketch_base.write(device, queue, sketch.base) {
                     sketch_result = Err(error);
                 }
             }
+            let live = sketch.live;
+            written.extend_from_slice(bytemuck::cast_slice(&live.lines));
+            written.extend_from_slice(bytemuck::cast_slice(&live.points));
+            written.extend_from_slice(bytemuck::cast_slice(&live.fills));
             if let Err(error) = slot.sketch_live.write(device, queue, sketch.live) {
                 sketch_result = sketch_result.and(Err(error));
             }
@@ -2594,7 +2661,8 @@ impl Renderer {
             hover_outline: with_alpha(colors.hover_outline, pattern.edge_width),
             selected: with_alpha(colors.selected, selected_edge_shade),
         };
-        queue.write_buffer(&slot.uniforms, 0, bytemuck::bytes_of(&uniforms));
+        let mut uniform_bytes = Vec::new();
+        uniform_bytes.extend_from_slice(bytemuck::bytes_of(&uniforms));
 
         // Crossfading between the world's XY plane and a sketch's, each
         // drawn at its share, the one that isn't `grid` from the other
@@ -2614,12 +2682,16 @@ impl Renderer {
                     grid_origin: plane.origin().extend(mask as f32).to_array(),
                     ..uniforms
                 };
-                queue.write_buffer(
-                    &slot.uniforms,
-                    0,
-                    bytemuck::bytes_of(&with_mask(sketch.mask(&plane))),
+                uniform_bytes.clear();
+                uniform_bytes
+                    .extend_from_slice(bytemuck::bytes_of(&with_mask(sketch.mask(&plane))));
+                let other = with_mask(outside);
+                write(
+                    queue,
+                    &slot.other_grid,
+                    bytemuck::bytes_of(&other),
+                    &mut written,
                 );
-                queue.write_buffer(&slot.other_grid, 0, bytemuck::bytes_of(&with_mask(outside)));
                 (self.alphas.opaque, Some(self.alphas.step(Some(1.0 - fade))))
             }
             Some(plane) => {
@@ -2645,8 +2717,10 @@ impl Renderer {
                     }
                 };
                 let other_uniforms = on(&other);
-                queue.write_buffer(&slot.uniforms, 0, bytemuck::bytes_of(&on(grid)));
-                queue.write_buffer(&slot.other_grid, 0, bytemuck::bytes_of(&other_uniforms));
+                uniform_bytes.clear();
+                uniform_bytes.extend_from_slice(bytemuck::bytes_of(&on(grid)));
+                let bytes = bytemuck::bytes_of(&other_uniforms);
+                write(queue, &slot.other_grid, bytes, &mut written);
                 (
                     self.alphas.step(Some(share(grid))),
                     Some(self.alphas.step(Some(share(&other)))),
@@ -2654,12 +2728,15 @@ impl Renderer {
             }
             None => (self.alphas.opaque, None),
         };
+        write(queue, &slot.uniforms, &uniform_bytes, &mut written);
 
         let size = frame.target_size.map(|s| s.max(1));
         if slot.depth.as_ref().map(|d| d.size) != Some(size) {
+            changed = true;
             slot.depth = Some(self.create_targets(device, size));
         }
         if patterned(slot) && slot.pattern_target.as_ref().map(|t| t.size) != Some(size) {
+            changed = true;
             slot.pattern_target = Some(CoverageTarget::new(
                 device,
                 &self.errors.layout,
@@ -2671,6 +2748,7 @@ impl Renderer {
         }
         if slot.errors.any() {
             if slot.error_target.as_ref().map(|t| t.size) != Some(size) {
+                changed = true;
                 slot.error_target = Some(CoverageTarget::new(
                     device,
                     &self.errors.layout,
@@ -2688,9 +2766,18 @@ impl Renderer {
                     core: linear(colors.error),
                     halo: [r, g, b, a],
                 };
-                queue.write_buffer(&target.uniforms, 0, bytemuck::bytes_of(&uniforms));
+                write(
+                    queue,
+                    &target.uniforms,
+                    bytemuck::bytes_of(&uniforms),
+                    &mut written,
+                );
             }
         }
+        if changed || written != slot.written || before != slot.state() {
+            *slot.drawn.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        slot.written = written;
         result
     }
 
@@ -2724,6 +2811,47 @@ impl Renderer {
         if clip.width == 0 || clip.height == 0 {
             return;
         }
+        let mut drawn = slot.drawn.lock().unwrap_or_else(|e| e.into_inner());
+        // Drawn already: composited again alone. A preview's, without
+        // the backdrop, is always drawn.
+        let fresh = !(backdrop && *drawn == Some(clip));
+        *drawn = backdrop.then_some(clip);
+        drop(drawn);
+        if fresh {
+            self.record_scene(slot, encoder, depth, clip, backdrop);
+        }
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("varde composite"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
+        pass.set_pipeline(&self.composite);
+        pass.set_bind_group(0, &depth.composite, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// Records drawing `slot`'s scene into `depth`'s resolved colour, as
+    /// [`Self::record`] says.
+    fn record_scene(
+        &self,
+        slot: &Slot,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &DepthTarget,
+        clip: ClipRect,
+        backdrop: bool,
+    ) {
         // The errors are drawn in passes of their own after the scene's,
         // depth tested against the model, so its depth is kept for them,
         // and the sketch being edited after them, so they don't hide it.
@@ -2769,26 +2897,6 @@ impl Renderer {
             self.draw_sketch(&mut pass, slot);
             drop(pass);
         }
-
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("varde composite"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-        pass.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
-        pass.set_pipeline(&self.composite);
-        pass.set_bind_group(0, &depth.composite, &[]);
-        pass.draw(0..3, 0..1);
     }
 
     /// A slot's targets of `size`: see [`DepthTarget`].
