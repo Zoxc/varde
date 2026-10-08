@@ -390,9 +390,32 @@ fn project_commits_links_the_model_fills_and_undo_takes_back() {
     assert!(near(a, DVec2::new(-25.0, 30.0)) && near(b, DVec2::new(25.0, 30.0)));
     let [a, b] = line_ends(&sketch, 1);
     assert!(near(a, DVec2::new(-30.0, 20.0)) && near(b, DVec2::new(30.0, 20.0)));
-    // Construction, as they don't count for profiles, and fixed.
+    // Counting for profiles, so not construction.
     let line = sketch.links[1].curves[0];
-    assert!(sketch.curve(line).unwrap().construction);
+    assert!(sketch.links.iter().all(|link| link.profiles));
+    assert!(!sketch.curve(line).unwrap().construction);
+
+    // X on a line of a link turns the whole link, out of profiles and
+    // back.
+    let toggled = |doc: &Doc| {
+        let link = &edited(doc).links[1];
+        (link.profiles, edited(doc).curve(line).unwrap().construction)
+    };
+    doc.look(Look::ClickGeometry {
+        hit: Some(varde_sketch::Selectable::Item(line)),
+        add: false,
+    });
+    doc.update(Edit::ToggleConstruction);
+    doc.lane.answer(&mut doc.doc);
+    assert_eq!(doc.edit_error, None);
+    assert_eq!(toggled(&doc), (false, true));
+    assert!(edited(&doc).links[0].profiles);
+    doc.update(Edit::ToggleConstruction);
+    doc.lane.answer(&mut doc.doc);
+    assert_eq!(toggled(&doc), (true, false));
+    doc.update(Edit::Undo);
+    doc.update(Edit::Undo);
+    assert_eq!(edited(&doc), &sketch);
 
     // One undo takes back the edge's link with its geometry: the found
     // geometry was no step of its own.

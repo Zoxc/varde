@@ -109,7 +109,7 @@ fn links_are_listed_by_source_and_select_and_light_from_their_rows() {
         (rows[1].kind, rows[1].source.as_str()),
         (LinkKind::Intersect, "Face of Body 1")
     );
-    assert!(rows.iter().all(|row| row.broken.is_none() && !row.profiles));
+    assert!(rows.iter().all(|row| row.broken.is_none() && row.profiles));
     let state = doc.sketch_state().unwrap();
     assert_eq!(state.links.len(), 2);
 
@@ -131,13 +131,13 @@ fn links_are_listed_by_source_and_select_and_light_from_their_rows() {
     doc.look(Look::HoverLink(None));
     assert!(doc.highlight().is_none());
 
-    // Its menu has its curves count for profiles, then removes it.
+    // Its menu makes its curves construction, then removes it.
     doc.look(Look::OpenMenu(RowMenu::Link(rows[0].link)));
     assert_eq!(doc.sketch_state().unwrap().link_menu, Some(rows[0].link));
-    doc.update(Edit::SetLinkProfiles(rows[0].link, true));
+    doc.update(Edit::SetLinkProfiles(rows[0].link, false));
     let link = edited(&doc).link(rows[0].link).unwrap().clone();
-    assert!(link.profiles);
-    assert!(!edited(&doc).curve(link.curves[0]).unwrap().construction);
+    assert!(!link.profiles);
+    assert!(edited(&doc).curve(link.curves[0]).unwrap().construction);
     doc.update(Edit::RemoveLink(rows[0].link));
     assert!(edited(&doc).link(rows[0].link).is_none());
     assert!(edited(&doc).curve(link.curves[0]).is_none());

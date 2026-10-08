@@ -147,9 +147,9 @@ pub enum SketchEdit {
     /// side moving to make room.
     /// [`EditError::Target`] where it has a point there already.
     InsertPoint { spline: Id, near: DVec2 },
-    /// A new link of `kind`, making nothing yet: its geometry comes once
-    /// what it comes from is found ([`SketchEdit::Relink`]). Its id is
-    /// the sketch's `next_id`.
+    /// A new link of `kind`, making nothing yet, its curves counting for
+    /// profiles: its geometry comes once what it comes from is found
+    /// ([`SketchEdit::Relink`]). Its id is the sketch's `next_id`.
     AddLink { kind: LinkKind },
     /// Links given the geometry found for them, each as
     /// `Sketch::relink` does: moved in place, keeping the ids of what
@@ -267,7 +267,8 @@ impl SketchEdit {
             SketchEdit::AddHandles(points) => next.add_handles(points)?,
             SketchEdit::InsertPoint { spline, near } => next.insert_spline_point(*spline, *near)?,
             SketchEdit::AddLink { kind } => {
-                next.add_link(*kind)?;
+                let link = next.add_link(*kind)?;
+                next.set_link_profiles(link, true)?;
             }
             SketchEdit::Relink(found) => {
                 for (link, shape) in found {

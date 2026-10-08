@@ -371,29 +371,43 @@ impl Doc {
             self.set_drawing(drawing);
             return;
         }
-        // The sketch face, any of it selected, turns whole, by whether it
-        // counts for profiles; the rest selected as ever.
-        let face = (self.sketch_face())
-            .and_then(|id| sketch.link(id))
+        // A link, any of it selected, turns whole, by whether it counts
+        // for profiles, as its curves can't on their own; the sketch
+        // face apart, by itself; the rest selected as ever.
+        let face_id = self.sketch_face();
+        let touched: Vec<_> = (sketch.links.iter())
             .filter(|link| {
                 link.items()
                     .any(|item| session.selection.contains(&item.into()))
-            });
-        let face_items: Vec<Id> = face.map_or_else(Vec::new, |link| link.items().collect());
+            })
+            .collect();
+        let none_linked = touched.is_empty();
+        let linked: Vec<Id> = touched.iter().flat_map(|link| link.items()).collect();
+        let (face, links): (Vec<_>, Vec<_>) = (touched.iter())
+            .map(|link| (link.id, link.profiles))
+            .partition(|&(id, _)| Some(id) == face_id);
         let selected: Vec<_> = sketch
             .curves
             .iter()
             .filter(|entry| {
-                session.selection.contains(&entry.id.into()) && !face_items.contains(&entry.id)
+                session.selection.contains(&entry.id.into()) && !linked.contains(&entry.id)
             })
             .collect();
-        let construction = selected.iter().any(|entry| !entry.construction);
+        let construction = selected.iter().any(|entry| !entry.construction)
+            || links.iter().any(|&(_, profiles)| profiles);
         let ids: Vec<Id> = selected.iter().map(|entry| entry.id).collect();
-        let face = face.map(|link| (link.id, link.profiles));
-        if !ids.is_empty() || face.is_none() {
+        if !ids.is_empty() || none_linked {
             self.propose(SketchEdit::SetConstruction { ids, construction });
         }
-        if let Some((link, profiles)) = face {
+        for (link, profiles) in links {
+            if profiles == construction {
+                self.propose(SketchEdit::SetLinkProfiles {
+                    link,
+                    profiles: !construction,
+                });
+            }
+        }
+        if let Some(&(link, profiles)) = face.first() {
             self.propose(SketchEdit::SetLinkProfiles {
                 link,
                 profiles: !profiles,

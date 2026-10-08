@@ -322,7 +322,8 @@ take them as any; the `Link` (its own id from the same counter, naming
 no item, so `Sketch::kind` knows nothing of it) lists them in the order
 its `LinkShape` has them, and says whether its curves count for profiles
 (`profiles`; they're construction geometry where they don't, which
-`check` holds). What a link comes from isn't the sketch's: the document
+`check` holds). `SketchEdit::AddLink` (the Project and Intersect tools)
+adds one counting for profiles; the sketch face starts construction. What a link comes from isn't the sketch's: the document
 keeps it beside the sketch (`FeatureKind::Sketch::sources`, a
 `LinkSource` per link, see `agents/features.md`). A `LinkShape` is the
 geometry without ids (points, and curves naming them by placeholders
@@ -1326,7 +1327,9 @@ bar says why (`EditError::Sketch`).
   only "Construction", ticked while it's out of profiles
   (`Edit::SetLinkProfiles`), and `X` turns it so too while any of it is
   selected (`Doc::toggle_construction`, beside the other curves
-  selected); it starts construction. It can't be removed: no Remove,
+  selected); it starts construction. Any other link with some of it
+  selected turns whole under `X` too, with the curves selected, all
+  construction unless they all are (a link's curve alone can't). It can't be removed: no Remove,
   `Edit::RemoveLink` and the Project tool's second click refused with a
   notice (`links::SKETCH_FACE_STAYS`), deleting a selection leaves it,
   and the document refuses any sketch set without it
