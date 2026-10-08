@@ -21,14 +21,15 @@ pub(super) fn radius_field(design: &Design, camera: &Camera) -> TypedText {
 
 impl MotionSession {
     /// The fillet as set up, if it's whole: its edges, and its radius as
-    /// it last read.
+    /// it last read, while its field takes it (not dragged to zero).
     pub(super) fn fillet(&self) -> Option<Fillet> {
-        if self.blend.edges.refs.is_empty() {
+        let radius = self.field(MotionField::Radius);
+        if self.blend.edges.refs.is_empty() || radius.error.is_some() {
             return None;
         }
         Some(Fillet {
             edges: self.blend.edges.refs.clone(),
-            radius: self.field(MotionField::Radius).value.clone()?,
+            radius: radius.value.clone()?,
             chains: self.blend.chains,
         })
     }

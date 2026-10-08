@@ -129,10 +129,11 @@ impl Doc {
     /// Types where knob `index` of the handle was dragged to, `value` in
     /// its field's own units snapped to steps of `step`, into its field,
     /// as the knob says: a value the field refuses changes nothing. An
-    /// offset face's sign is its side; others' values must be above zero
-    /// (an align's offset and turn may be anything), one dragged to zero
-    /// or past it standing at a step, a draft's angle under a quarter
-    /// turn.
+    /// offset face's sign is its side; a chamfer's or fillet's size
+    /// dragged to zero or past it reads zero, which its field refuses, so
+    /// the model shows without it; others' values must be above zero (an
+    /// align's offset and turn may be anything), one dragged to zero or
+    /// past it standing at a step, a draft's angle under a quarter turn.
     pub(super) fn drag_knob(&mut self, index: usize, value: f64, step: f64) {
         let Some(session) = &self.motion else {
             return;
@@ -142,7 +143,10 @@ impl Doc {
             return;
         };
         let kind = session.kind;
+        let dropped = kind.blends() && value <= 0.0;
+        let value = if dropped { 0.0 } else { value };
         let positive = !matches!(kind, MotionKind::OffsetFace | MotionKind::Align)
+            && !kind.blends()
             && !(kind == MotionKind::Sweep && knob.field == MotionField::Twist)
             && knob.snap != KnobSnap::Count;
         // Dragged to zero or past it, as near it as the snap goes.
@@ -160,7 +164,7 @@ impl Doc {
             // A whole count, of two or more (the field's ask says how
             // many at most).
             _ if knob.snap == KnobSnap::Count => value < 2.0 || value.fract() != 0.0,
-            _ => value <= 0.0,
+            _ => value <= 0.0 && !dropped,
         };
         if !value.is_finite() || refused {
             return;
@@ -191,7 +195,7 @@ impl Doc {
         };
         let mut field = session.fields[knob.field.index()].clone();
         field.input(text, &ask);
-        if field.error.is_some() {
+        if field.error.is_some() && !dropped {
             return;
         }
         session.fields[knob.field.index()] = field;
@@ -355,9 +359,15 @@ impl Doc {
         Some((at, [into(first, second)?, into(second, first)?]))
     }
 
-    /// The value field `field` last read, in its own units, if it reads.
+    /// The value field `field` last read, in its own units, if it reads:
+    /// zero for a chamfer's or fillet's size it refuses, as the model then
+    /// shows it.
     fn knob_value(session: &MotionSession, field: MotionField) -> Option<f64> {
-        session.field(field).value.as_ref().map(|value| value.value)
+        let typed = session.field(field);
+        if session.kind.blends() && typed.error.is_some() {
+            return Some(0.0);
+        }
+        typed.value.as_ref().map(|value| value.value)
     }
 
     /// A shell's knob: along its first face removed, into the body (out

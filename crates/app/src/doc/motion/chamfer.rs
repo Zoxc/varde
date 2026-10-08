@@ -51,7 +51,11 @@ impl MotionSession {
         if self.blend.edges.refs.is_empty() {
             return None;
         }
-        let value = |field: MotionField| self.field(field).value.clone();
+        // A size its field refuses (dragged to zero) leaves it out.
+        let value = |field: MotionField| {
+            let typed = self.field(field);
+            typed.error.is_none().then(|| typed.value.clone()).flatten()
+        };
         let distance = value(MotionField::ChamferDistance)?;
         let distances = match self.chamfer_type {
             ChamferType::Equal => ChamferSize::Equal(distance),
