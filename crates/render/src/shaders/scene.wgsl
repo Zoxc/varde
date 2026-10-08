@@ -516,8 +516,16 @@ fn hidden_face(in: MeshOut, front: bool, base: vec3<f32>, selected: f32) -> vec4
 // drawn over the frame from that (`fs_pattern_edge`): the edge of what's
 // hidden, not of the face. The hover's is told from the selection's by its
 // alpha, PATTERN_HOVERED, the selection's 1, with the colour scaled by it
-// so the samples' average over transparent divides back to it.
+// so the samples' average over transparent divides back to it. Where the
+// faces show, the mask holds PATTERN_SHOWN (`fs_face_shown`), so the edge
+// follows the faces' ends, not where something in front cuts them off.
 const PATTERN_HOVERED: f32 = 0.5;
+const PATTERN_SHOWN: f32 = 0.2;
+
+@fragment
+fn fs_face_shown() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0, 0.0, 0.0, PATTERN_SHOWN);
+}
 
 fn pattern(color: vec3<f32>, kind: f32) -> vec4<f32> {
     return vec4<f32>(color * kind, kind);
@@ -538,22 +546,26 @@ fn fs_hovered_face_pattern(in: MeshOut, @builtin(front_facing) front: bool) -> @
     return pattern(hidden_face(in, front, u.hover_face.rgb, 0.0).rgb, PATTERN_HOVERED);
 }
 
-// Which pattern a texel of the mask is of: 0 none, 1 the hover's, 2 the
-// selection's.
+// Which pattern a texel of the mask is of: -1 none, 0 a face showing, 1
+// the hover's, 2 the selection's.
 fn pattern_kind(alpha: f32) -> i32 {
+    if alpha < 0.5 * PATTERN_SHOWN {
+        return -1;
+    }
     return i32(round(alpha / PATTERN_HOVERED));
 }
 
 // The pattern's edge over the frame, once: within the mask (`coverage`),
-// where it's no further than the edge's width from outside it or from the
-// other's pattern, in its colour at the stripes' alpha. What's read is as
+// where it's no further than the edge's width from outside both it and
+// the faces showing, in its colour (none where the hover's meets the
+// selection's, or where the face shows on) at the stripes' alpha. What's read is as
 // stored, encoded or not, so it's written as it is.
 @fragment
 fn fs_pattern_edge(in: FullscreenOut) -> @location(0) vec4<f32> {
     let at = vec2<i32>(in.position.xy);
     let here = textureLoad(coverage, at, 0);
     let kind = pattern_kind(here.a);
-    if kind == 0 {
+    if kind <= 0 {
         discard;
     }
     let size = vec2<i32>(textureDimensions(coverage));
@@ -568,7 +580,7 @@ fn fs_pattern_edge(in: FullscreenOut) -> @location(0) vec4<f32> {
             }
             let p = at + vec2<i32>(x, y);
             let inside = all(p >= vec2<i32>(0)) && all(p < size);
-            if !inside || pattern_kind(textureLoad(coverage, p, 0).a) != kind {
+            if !inside || pattern_kind(textureLoad(coverage, p, 0).a) < 0 {
                 edge = true;
                 break;
             }

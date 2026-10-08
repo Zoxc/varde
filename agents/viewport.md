@@ -1554,7 +1554,7 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   mask into `Slot::pattern_target` (a `CoverageTarget`, as the errors'
   halo's; `draw_pattern`, `fs_*_face_pattern`), its alpha telling the
   hover's from the selection's, and `fs_pattern_edge` draws the edge
-  from it after the selection's stripes; the
+  from it (only where the faces end: the mask also holds where they show, `fs_face_shown`, so no edge where the hover's meets the selection's or where something in front cuts a face off) after the selection's stripes; the
   edges dashed as hidden edges are, as wide as hovered or selected ones,
   in their colour, within their rim, dashed too (`vs_outline_hidden`,
   `vs_hovered_edge_hidden`, `vs_selected_outline_hidden`,

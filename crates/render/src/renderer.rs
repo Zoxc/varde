@@ -1057,6 +1057,21 @@ struct Pass<'a> {
     layout: Option<&'a wgpu::PipelineLayout>,
 }
 
+/// Where a face shows, into the pattern's mask: the greater of it and
+/// what's there, so it never covers the pattern.
+const SHOWN_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+};
+
 impl<'a> Pass<'a> {
     /// Triangles drawn over the scene without writing depth, blended and
     /// not culled.
@@ -1216,6 +1231,10 @@ pub struct Renderer {
     /// stencil (`PICK_MARKS`), which the hidden faces are drawn outside.
     hovered_face_mark: wgpu::RenderPipeline,
     selected_face_mark: wgpu::RenderPipeline,
+    /// The marks again into the pattern's mask, where the faces show, so
+    /// its edge isn't drawn where the face goes on but shows.
+    hovered_face_shown: wgpu::RenderPipeline,
+    selected_face_shown: wgpu::RenderPipeline,
     selected_edges_hidden: wgpu::RenderPipeline,
     hovered_face_hidden: wgpu::RenderPipeline,
     hovered_edges_hidden: wgpu::RenderPipeline,
@@ -1848,6 +1867,26 @@ impl Renderer {
             selected_face_mark: pipeline(Pass {
                 label: "varde selected face mark",
                 write_mask: wgpu::ColorWrites::empty(),
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Equal,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[1], wgpu::CompareFunction::Always, Replace),
+                ..mesh.clone()
+            }),
+            hovered_face_shown: pipeline(Pass {
+                label: "varde hovered face shown",
+                fs: "fs_face_shown",
+                blend: SHOWN_BLEND,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Equal,
+                cull_mode: None,
+                stencil: marked(PICK_MARKS[0], wgpu::CompareFunction::Always, Replace),
+                ..mesh.clone()
+            }),
+            selected_face_shown: pipeline(Pass {
+                label: "varde selected face shown",
+                fs: "fs_face_shown",
+                blend: SHOWN_BLEND,
                 depth_write: false,
                 depth_compare: wgpu::CompareFunction::Equal,
                 cull_mode: None,
@@ -2875,13 +2914,13 @@ impl Renderer {
         let hover = (!slot.hover_through).then_some((
             Tint::Hovered,
             PICK_MARKS[0],
-            &self.hovered_face_mark,
+            &self.hovered_face_shown,
             &self.hovered_face_pattern,
         ));
         let selection = Some((
             Tint::Selected,
             PICK_MARKS[1],
-            &self.selected_face_mark,
+            &self.selected_face_shown,
             &self.selected_face_pattern,
         ));
         for (tint, mark, marking, drawn) in hover.into_iter().chain(selection) {
