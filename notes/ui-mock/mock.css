@@ -19,6 +19,8 @@
   --c-solid: #8a6fc4;
   --c-cons: #e0861a;
   --c-insp: #13a08f;
+  --c-link: #8e44c9;
+  --c-handle: #8a6d3b;
   --i-sketch: #0a95ad; --i-mod: #cf3f30; --i-cstr: #8a3fd0; --i-dim: #5f6b80;
   --i-solid: #c0409a; --i-cons: #c39000; --i-insp: #2f9a47; --i-file: #2f6fd8;
   --ia-sketch: #e88a00; --ia-mod: #2f6fd8; --ia-cstr: #e88a00; --ia-dim: #e88a00;
@@ -64,6 +66,8 @@
   --c-solid: #a896d6;
   --c-cons: #f0a24a;
   --c-insp: #3fcfbd;
+  --c-link: #c08cf2;
+  --c-handle: #c9a66b;
   --i-sketch: #3cc3d9; --i-mod: #ff7a66; --i-cstr: #b48cff; --i-dim: #a6b2c6;
   --i-solid: #ef77c2; --i-cons: #f0c43c; --i-insp: #62cf7c; --i-file: #78aaff;
   --ia-sketch: #ffad33; --ia-mod: #78aaff; --ia-cstr: #ffad33; --ia-dim: #ffad33;
@@ -456,6 +460,11 @@ kbd {
 }
 .sk-visible { stroke-width: 1.2; opacity: .8; }
 .sk-cons { stroke: var(--c-cons); stroke-width: 1.2; stroke-dasharray: 5 3; }
+/* What a link made (projected or intersected), and a spline's handles. */
+.sk-link { stroke: var(--c-link); }
+.sk-link-pt { stroke: var(--c-link); }
+.sk-handle { stroke: var(--c-handle); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.sk-handle-tip { fill: var(--halo); stroke: var(--c-handle); stroke-width: 1; vector-effect: non-scaling-stroke; }
 
 /* A construction curve's row in the Geometry list: a rail of three 3px
    dashes 4px left of its icon (at 24px), centred on it, and the icon in
@@ -465,6 +474,7 @@ kbd {
   background: linear-gradient(var(--c-cons) 0 3px, transparent 0) 0 0 / 2px 6px repeat-y;
 }
 svg.i.cons { --cc: var(--c-cons); --ca: var(--c-cons); }
+svg.i.link { --cc: var(--c-link); --ca: var(--c-link); }
 
 .cube-wrap { position: absolute; top: 10px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .home-btn { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); display: grid; place-items: center; }

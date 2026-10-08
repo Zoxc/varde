@@ -185,9 +185,8 @@ pub struct SketchColors {
     /// The rail along a handle's axis while it's hovered or dragged: ink,
     /// the text mixed 80% into the panel.
     pub rail: Color,
-    /// What a link made (projected or intersected geometry): the Modify
-    /// tools' reference tone, as Project's and Intersect's icons draw
-    /// what they work from.
+    /// What a link made (projected or intersected geometry): purple, apart
+    /// from the sketch's own curves and construction.
     pub link: Color,
 }
 
@@ -452,7 +451,7 @@ const LIGHT: Palette = Palette {
         region_hovered: color!(0x3d9b35, 0.18),
         profile: color!(0xc0368c),
         near_miss: color!(0xad2a19),
-        spline_handle: color!(0x8e44c9),
+        spline_handle: color!(0x8a6d3b),
         handle: LIGHT_ICONS.solid.line,
         handle_accent: LIGHT_ICONS.solid.accent,
         handle_hovered: mix(LIGHT_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
@@ -464,7 +463,7 @@ const LIGHT: Palette = Palette {
         count_handle: LIGHT_COUNT,
         count_handle_hovered: mix(LIGHT_COUNT, Color::WHITE, HANDLE_HOVERED),
         rail: mix(LIGHT_TEXT, LIGHT_PANEL, 0.8),
-        link: LIGHT_ICONS.modify.reference,
+        link: color!(0x8e44c9),
     },
 };
 
@@ -548,7 +547,7 @@ const DARK: Palette = Palette {
         region_hovered: color!(0x76cc60, 0.2),
         profile: color!(0xef7ac4),
         near_miss: color!(0xf58a7a),
-        spline_handle: color!(0xc08cf2),
+        spline_handle: color!(0xc9a66b),
         handle: DARK_ICONS.solid.line,
         handle_accent: DARK_ICONS.solid.accent,
         handle_hovered: mix(DARK_ICONS.solid.line, Color::WHITE, HANDLE_HOVERED),
@@ -560,7 +559,7 @@ const DARK: Palette = Palette {
         count_handle: DARK_COUNT,
         count_handle_hovered: mix(DARK_COUNT, Color::WHITE, HANDLE_HOVERED),
         rail: mix(DARK_TEXT, DARK_PANEL, 0.8),
-        link: DARK_ICONS.modify.reference,
+        link: color!(0xc08cf2),
     },
 };
 

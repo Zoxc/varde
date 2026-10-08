@@ -333,7 +333,9 @@ const SKETCHES = {
     plane: 'side', closed: [[0, 0], [80, 0], [80, 10], [10, 10], [10, 70], [0, 70]], circles: [],
     dims: [{ a: [0, -9], b: [80, -9], t: '80' }, { a: [-9, 0], b: [-9, 70], t: '70' }, { a: [89, 0], b: [89, 10], t: '10' }, { a: [0, 79], b: [10, 79], t: '10' }],
     cons: [{ at: 2, a: [0, 0], b: [80, 10] }, { at: 5, c: [10, 10], r: 10 }],
-    summary: '6 lines · 4 dimensions',
+    // A line projected from elsewhere in the design, and a spline beside the upright.
+    links: [{ at: 8, a: [25, 25], b: [70, 25] }], splines: [{ at: 9, p: [[25, 38], [38, 52], [55, 42], [70, 58]] }],
+    summary: '7 lines · 1 spline · 4 dimensions',
   },
   s2: {
     plane: 'base-top', circles: [{ c: [50, 25], r: 8 }], cons: [{ at: 0, a: [20, 25], b: [80, 25] }],
@@ -858,8 +860,9 @@ function side() {
     <div class="list">${shown === 'sketch' ? geometry() : shown === 'timeline' ? timeline() : objects()}</div>`;
 }
 
-// The sketch's curves: its closed outline's lines, its circles and its
-// construction curves, each at its place (`at`) among the others.
+// The sketch's curves: its closed outline's lines, its circles, its
+// construction curves, its links (projected or intersected lines) and its
+// splines, each at its place (`at`) among the others.
 function sketchCurves(id) {
   const s = SKETCHES[id];
   if (!s) return [];
@@ -869,17 +872,21 @@ function sketchCurves(id) {
   c.forEach((p, i) => out.push({ kind: 'line', size: len(p, c[(i + 1) % c.length]) }));
   for (const k of s.circles || []) out.push({ kind: 'circle', size: 'Ø' + fmtP(2 * k.r) + ' mm' });
   for (const k of s.cons || []) out.splice(k.at, 0, { kind: k.r ? 'circle' : 'line', size: k.r ? 'Ø' + fmtP(2 * k.r) + ' mm' : len(k.a, k.b), cons: true });
-  const n = { line: 0, circle: 0 };
-  for (const k of out) k.name = (k.kind === 'line' ? 'Line ' : 'Circle ') + ++n[k.kind];
+  for (const k of s.links || []) out.splice(k.at, 0, { kind: 'line', size: len(k.a, k.b), link: true });
+  for (const k of s.splines || []) out.splice(k.at, 0, { kind: 'spline', size: k.p.length + ' points' });
+  const n = { line: 0, circle: 0, spline: 0 }, names = { line: 'Line ', circle: 'Circle ', spline: 'Spline ' };
+  for (const k of out) k.name = names[k.kind] + ++n[k.kind];
   return out;
 }
 
 // The Sketch tab: the sketch's Geometry list, construction curves marked
-// with a dashed rail by their icon, which is in the construction colour.
+// with a dashed rail by their icon, which is in the construction colour;
+// a link's icon is in the link colour.
 function geometry() {
   const curves = sketchCurves(st.sketch.id);
   const header = (label, n) => `<div class="row group"><span class="ic">${icon('chev')}</span><span class="name">${label} <span class="meta">${n}</span></span></div>`;
-  const row = k => `<div class="row${k.cons ? ' cons' : ''}" style="padding-left:24px"><span class="ic">${icon(k.kind, k.cons ? 'i cons' : 'i')}</span><span class="name">${k.name}</span><span class="meta">${k.size}</span></div>`;
+  const tint = k => k.cons ? ' cons' : k.link ? ' link' : '';
+  const row = k => `<div class="row${k.cons ? ' cons' : ''}" style="padding-left:24px"><span class="ic">${icon(k.kind, 'i' + tint(k))}</span><span class="name">${k.name}</span><span class="meta">${k.size}</span></div>`;
   return header('Geometry', curves.length) + curves.map(row).join('');
 }
 
@@ -1269,6 +1276,30 @@ function sketchGeomSvg(id, planeKey, withDims) {
   for (const c of s.cons || []) {
     if (c.r) out += `<polygon class="sk sk-cons${extra}" points="${pts(circ(f, c.c[0], c.c[1], c.r))}"/>`;
     else { const [a, b] = [at(c.a), at(c.b)]; out += `<line class="sk sk-cons${extra}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`; }
+  }
+  // Links are solid while they count for profiles, as these do.
+  for (const c of s.links || []) {
+    const [a, b] = [at(c.a), at(c.b)];
+    out += `<line class="sk sk-link${extra}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`;
+    if (withDims) out += [a, b].map(([x, y]) => `<circle class="sk-pt sk-link-pt" cx="${x}" cy="${y}" r="1"/>`).join('');
+  }
+  // A spline through its fit points (Catmull-Rom, as cubic Béziers), and
+  // while edited a handle at each: a line to its tip along the tangent.
+  for (const c of s.splines || []) {
+    const p = c.p, tan = i => [0, 1].map(j => (p[Math.min(i + 1, p.length - 1)][j] - p[Math.max(i - 1, 0)][j]) / 6);
+    const off = (q, t, k) => [q[0] + k * t[0], q[1] + k * t[1]];
+    let d = 'M' + at(p[0]).join(',');
+    for (let i = 0; i + 1 < p.length; i++) {
+      d += 'C' + [off(p[i], tan(i), 1), off(p[i + 1], tan(i + 1), -1), p[i + 1]].map(q => at(q).join(',')).join(' ');
+    }
+    out += `<path class="sk${extra}" d="${d}"/>`;
+    if (withDims) {
+      p.forEach((q, i) => {
+        const [x, y] = at(q), [tx, ty] = at(off(q, tan(i), 1.5));
+        out += `<line class="sk-handle" x1="${x}" y1="${y}" x2="${tx}" y2="${ty}"/><circle class="sk-handle-tip" cx="${tx}" cy="${ty}" r=".8"/>`;
+      });
+      out += p.map(q => pt(f(...q))).join('');
+    }
   }
   if (withDims) {
     for (const d of s.dims || []) {

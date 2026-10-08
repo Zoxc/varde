@@ -1621,7 +1621,7 @@ refused what it found, `MeshFeed::broken`). An
   document can be changed. In the viewport points the constraints leave
   free have their rims in `SketchColors::point`, the orange the drawing
   tools' icons draw points in; a link's curves and points'
-  rims are in `SketchColors::link`, the Modify tools' reference tone,
+  rims are in `SketchColors::link`, purple,
   curves dashed unless they count for profiles, as construction ones.
 - **The Constraints list** (lower half of the Sketch tab) shows the
   constraints and dimensions on the points and curves selected (a
