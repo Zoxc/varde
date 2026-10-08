@@ -883,6 +883,19 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.thumbnail,
                         Some(state.aspect.unwrap_or(0.0)),
                     ),
+                    (state.options.names)
+                        .then_some(state.picking.as_ref())
+                        .flatten()
+                        .map(|picking| crate::names::overlay(
+                            picking.index,
+                            state.model_selection.bodies().collect(),
+                            state.model_selection.targets().collect(),
+                            (state.model_selection.items())
+                                .filter_map(|item| item.body())
+                                .collect(),
+                            *state.camera,
+                            state.editor.document(),
+                        )),
                     status::status_bar(status(&state)),
                     state.regenerating.map(crate::regenerating::regenerating),
                 ],

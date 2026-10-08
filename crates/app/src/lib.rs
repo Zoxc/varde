@@ -553,6 +553,10 @@ impl Varde {
                 self.options.hidden_edges = !self.options.hidden_edges;
                 self.with_doc(|doc, _| doc.view_menu = false);
             }
+            Message::Ui(Ui::ToggleNames) => {
+                self.options.names = !self.options.names;
+                self.with_doc(|doc, _| doc.view_menu = false);
+            }
             Message::Ui(Ui::SetEdges(edges)) => {
                 self.options.edges = edges;
                 self.with_doc(|doc, _| doc.view_menu = false);
@@ -1079,6 +1083,7 @@ fn while_quitting(message: &Message) -> bool {
             | Message::Ui(
                 Ui::Look(_)
                     | Ui::ToggleHiddenEdges
+                    | Ui::ToggleNames
                     | Ui::SetEdges(_)
                     | Ui::SetShading(_)
                     | Ui::Copy(_)

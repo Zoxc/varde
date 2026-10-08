@@ -29,6 +29,7 @@ pub use loft::loft_info;
 mod measure;
 mod motion;
 mod mouse_only;
+mod names;
 mod offset_face;
 mod operation_panel;
 mod overflow_tip;
@@ -188,6 +189,9 @@ pub enum Message {
     /// Shows the edges the model hides, dashed, or hides them: the view
     /// options menu's Hidden edges.
     ToggleHiddenEdges,
+    /// Shows the names overlay or hides it: the view options menu's
+    /// Names.
+    ToggleNames,
     /// Draws the model's edges as `Edges` says, from the view options
     /// menu's Edges submenu.
     SetEdges(Edges),
@@ -209,6 +213,8 @@ pub struct ViewOptions {
     pub mouse_hints: bool,
     /// Whether the viewport shows the edges the model hides, dashed.
     pub hidden_edges: bool,
+    /// Whether the viewport shows the names overlay.
+    pub names: bool,
     /// Which of the model's edges the viewport draws.
     pub edges: Edges,
     /// How the viewport lights the model's faces.
@@ -221,6 +227,7 @@ impl Default for ViewOptions {
         ViewOptions {
             mouse_hints: true,
             hidden_edges: true,
+            names: false,
             edges: Edges::Default,
             shading: Shading::Regular,
             theme: ThemeChoice::default(),

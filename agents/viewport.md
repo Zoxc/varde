@@ -121,6 +121,26 @@ document (`Varde::options`, a `ViewOptions`, Mouse hints and Hidden
 edges on and the defaults chosen to start with, not saved), and any
 choice or toggle closes the menu.
 
+The view options menu's last toggle, Names, turns on the names
+overlay (`names.rs`, `ViewOptions::names`, not saved): a canvas over the
+viewport labelling the faces, edges between two faces and corners
+selected, whether the model hides them or not, and of a body selected
+whole every one that shows and nothing hides, on a side turned to the
+eye. A label holds the keys references store for it (a face's, an
+edge's two, a corner's three; a selected vertex is a mesh vertex, so
+it's matched by its corner, `PickIndex::vertex_corner`), each feature's
+name and short part name with a chevron between, in an outlined badge
+in its kind's colour, joined by a curved leader to a mark drawn at what
+it names: a disc lying on a face, a stroke along an edge, a ring at a
+corner. Each label takes the free place nearest its anchor (rings of
+candidates, nearest first), apart from those placed before it (the
+outermost first), clear of the status bar, and outside the screen hull
+of the bodies selected or holding what is unless there's no room
+there; text widths are measured. The label under the cursor glows and
+is drawn over the rest, and what it names is highlighted faintly; the
+canvas redraws on a move only when which label that is changes. Being
+a canvas, it leaves stale shapes on GL (see `notes/upstream/wgpu.md`).
+
 A press on what's empty of the side panel (the tab strip right of the
 tabs, below or between a tab's rows) or of the toolbar (its middle,
 between the operations and Undo) clears the selection, as `Space` does

@@ -193,6 +193,7 @@ pub fn view_menu<'a>(
                 "Hidden edges",
                 Message::ToggleHiddenEdges
             ),
+            toggle(options.names, "Names", Message::ToggleNames),
         ]
         .width(180),
     )
