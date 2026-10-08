@@ -712,6 +712,10 @@ pub struct DeletePrompt<'a> {
     pub worked: Vec<&'a Feature>,
     /// The bodies that go that those worked on, in the bodies' order.
     pub worked_on: Vec<&'a Body>,
+    /// Whether the features depending on it can stay instead, naming what
+    /// goes, which then fails them until they're given another: Delete
+    /// only, beside Delete all.
+    pub keeping: bool,
 }
 
 /// A sketch edit the solver refused after its sketch was left, which
@@ -1650,7 +1654,8 @@ fn name_prompt(prompt: NamePrompt<'_>) -> Element<'_, Message> {
 /// whole screen like [`unsaved_prompt`]: [`delete_question`], then the
 /// features, in the Timeline's order, and the bodies, scrolling past
 /// about ten rows, [`delete_warning`] if there's one, and Cancel and
-/// Delete.
+/// Delete, or, if the features depending on it can stay, Cancel, Delete
+/// only (it, keeping them) and Delete all.
 fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
     /// The rows shown before the list scrolls.
     const ROWS: f32 = 10.5;
@@ -1683,17 +1688,34 @@ fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
         Some(Message::Look(Look::CancelDelete)),
     );
     let delete = dialog_button(
-        "Delete",
+        if prompt.keeping {
+            "Delete all"
+        } else {
+            "Delete"
+        },
         theme::danger_button,
         Some(Message::Edit(Edit::ConfirmDelete)),
     );
+    let only = prompt.keeping.then(|| {
+        dialog_button(
+            "Delete only",
+            theme::secondary_button,
+            Some(Message::Edit(Edit::ConfirmDeleteOnly)),
+        )
+    });
+    let note = prompt.keeping.then(|| {
+        text(delete_only_note(prompt))
+            .size(12)
+            .style(theme::muted_text)
+    });
     dialog(
         column![
             text(question).size(14).font(theme::SEMIBOLD),
             list,
             warning,
+            note,
             Space::new().height(4),
-            row![space::horizontal(), cancel, delete].spacing(8),
+            row![space::horizontal(), cancel, only, delete].spacing(8),
         ]
         .spacing(8),
     )
@@ -1740,6 +1762,20 @@ fn delete_question(prompt: &DeletePrompt<'_>) -> String {
         "Delete {} with the {} that {tie} it?",
         prompt.name,
         parts.join(" and ")
+    )
+}
+
+/// What Delete only does, under the list: "Delete only keeps the
+/// features that depend on Sketch 1; they fail until they're given
+/// another." A body goes with the feature making it either way.
+fn delete_only_note(prompt: &DeletePrompt<'_>) -> String {
+    let what = match (prompt.body, prompt.features.first()) {
+        (true, Some(maker)) => maker.name.as_str(),
+        _ => prompt.name,
+    };
+    format!(
+        "Delete only keeps the features that depend on {what}; they fail until they're given \
+         another."
     )
 }
 
@@ -2768,6 +2804,7 @@ mod tests {
                 bodies,
                 worked: Vec::new(),
                 worked_on: Vec::new(),
+                keeping: false,
             }
         }
         let document = varde_document::Document::example();
@@ -2841,6 +2878,7 @@ mod tests {
             bodies: vec![&body],
             worked,
             worked_on,
+            keeping: false,
         };
         assert_eq!(delete_warning(&prompt(vec![], vec![])), None);
         assert_eq!(

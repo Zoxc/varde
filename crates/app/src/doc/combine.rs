@@ -235,7 +235,11 @@ impl Doc {
         self.revolve = None;
         self.motion = None;
         self.selected_feature = Some(id);
-        self.combine = Some(CombineSession::editing(id, combine));
+        let mut session = CombineSession::editing(id, combine);
+        // One kept when its maker was deleted names a body that isn't
+        // there, to be picked again.
+        session.prune(document);
+        self.combine = Some(session);
     }
 
     /// Takes `message`, changing the combine being set up.

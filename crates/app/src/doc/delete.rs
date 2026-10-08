@@ -1,6 +1,8 @@
 //! Deleting a feature or a body, and asking first when more goes with it,
 //! or when a join, cut or intersect that stays worked only on bodies that
-//! go: see [`Doc::remove`].
+//! go: see [`Doc::remove`]. When features depend on it, the prompt offers
+//! to delete it alone, keeping them to fail until they're given another
+//! ([`Doc::confirm_delete`]).
 
 use varde_document::{
     BodyId, Command, Document, FeatureId, Generation, Operation, Removable, Removal,
@@ -45,6 +47,7 @@ impl Doc {
         self.change(Change::Remove {
             targets,
             confirmed: None,
+            only: false,
         });
     }
 
@@ -54,15 +57,23 @@ impl Doc {
     /// a delete that waited behind edits on the solver, it's made at once,
     /// in its turn, before what waits behind it. Otherwise, while edits
     /// wait on the solver, it waits behind them, and asks again if more
-    /// would go by then.
-    pub(crate) fn confirm_delete(&mut self) {
+    /// would go by then. With `only`, Delete only, it removes just what
+    /// was asked for, keeping the features that depend on it
+    /// ([`Document::breaking_removal`]).
+    pub(crate) fn confirm_delete(&mut self, only: bool) {
         let Some(deleting) = self.deleting.take() else {
             return;
         };
         if deleting.generation == self.editor.generation() {
+            let removal = if only {
+                self.editor.document().breaking_removal(&deleting.targets)
+            } else {
+                deleting.removal
+            };
             let change = Change::Remove {
                 targets: deleting.targets,
-                confirmed: Some(deleting.removal),
+                confirmed: Some(removal),
+                only,
             };
             if self.proposals.take_asking() {
                 self.make(change);
@@ -80,10 +91,24 @@ impl Doc {
     }
 
     /// Removes `target` now, as [`Doc::remove`] says, without asking if
-    /// the user said yes to removing all that goes with it, `confirmed`.
-    pub(super) fn remove_now(&mut self, targets: Vec<Removable>, confirmed: Option<Removal>) {
+    /// the user said yes to removing all that goes with it, `confirmed`;
+    /// with `only`, removing just `targets` and the bodies they make, if
+    /// that's still what `confirmed` is, keeping what depends on them.
+    pub(super) fn remove_now(
+        &mut self,
+        targets: Vec<Removable>,
+        confirmed: Option<Removal>,
+        only: bool,
+    ) {
         if !self.editable() || targets.is_empty() {
             return;
+        }
+        if only {
+            let removal = self.editor.document().breaking_removal(&targets);
+            if confirmed.as_ref() == Some(&removal) {
+                self.apply(Command::RemoveOnly(removal.features));
+                return;
+            }
         }
         let removal = self.editor.document().removal_of(&targets);
         // A body goes quietly only with the feature making it alone: a
@@ -210,6 +235,7 @@ impl Doc {
             Removable::Body(id) => &document.body(id)?.name,
         };
         let (worked, worked_on) = self.worked(&deleting.removal);
+        let only = document.breaking_removal(&deleting.targets);
         Some(DeletePrompt {
             name,
             body: matches!(deleting.targets[..], [Removable::Body(_), ..]),
@@ -228,6 +254,7 @@ impl Doc {
                 .iter()
                 .filter_map(|&id| document.body(id))
                 .collect(),
+            keeping: only.features.len() < deleting.removal.features.len(),
         })
     }
 }

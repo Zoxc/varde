@@ -8203,6 +8203,9 @@ Commands:
   from other features' excluded lists, holding its id (`Targets::held`);
   one that starts gets the body back with the id it held, else adds a
   body.
+- `RemoveOnly(ids)` applies `Document::breaking_removal`: just those
+  features and their bodies, keeping the later ones that use them,
+  naming what's gone (the delete prompt's Delete only).
 - `RemoveFeature` and `RemoveBody` apply `Document::removal(Removable)`:
   the feature (a body's maker, for a body) and every later feature using
   one removed (`FeatureKind::uses`, a list: an extrude's sketch), in timeline
@@ -9047,6 +9050,25 @@ once (`agents/sketch.md`, Proposals). Confirmed while edits wait
 otherwise, the delete waits behind them too, and is made then if the
 same set goes, else asks again (`Doc::remove_now`). A read-only
 document asks nothing and deletes nothing.
+
+When the removal takes features beyond the target's own
+(`DeletePrompt::keeping`: `Document::breaking_removal` takes fewer
+features than `removal_of`), the prompt offers Delete only beside
+Delete all (the danger button, `Edit::ConfirmDelete`), with a note
+under the list: "Delete only keeps the features that depend on
+*Sketch 1*; they fail until they're given another."
+(`delete_only_note`, naming a body's maker for a body).
+`Edit::ConfirmDeleteOnly` applies `Command::RemoveOnly`: the target (a
+body's maker for a body) and the bodies it makes, one undo step,
+waiting behind solver edits as Delete does and asking again if that
+set changed by then. The features kept name a sketch or body that isn't
+there, which `Document::check` takes (as a sketch's face: the id below
+`next_id`), and regenerating fails them ("its sketch isn't there", "a
+body it names isn't there", from `own_solids`). Edited, a combine lets
+go of the bodies that aren't there (`CombineSession::prune`), a move
+and the like shows them gone, and a region pick whose sketch is gone
+(`RegionPick::editing`) has no source, so another sketch's regions may
+be picked, which drops the old references listed as missing.
 
 **Tolerance** (`view/src/toolbar.rs`): the file menu has a "Tolerance"
 heading under Units with 0.1 µm, 1 µm and 10 µm, each sending

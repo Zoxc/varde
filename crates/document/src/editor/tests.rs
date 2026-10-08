@@ -287,6 +287,55 @@ fn removing_a_sketch_removes_the_extrudes_using_it_and_their_bodies() {
 }
 
 #[test]
+fn removing_only_a_sketch_keeps_the_extrudes_using_it() {
+    let mut editor = Editor::new(with_body());
+    let (second, body) = extrude_again(&mut editor);
+    let document = editor.document().clone();
+    let [sketch, first, _] = [0, 1, 2].map(|index| document.features[index].id);
+    let first_body = document.bodies[0].id;
+
+    // The sketch alone; a body takes its maker and that's bodies.
+    let removal = document.breaking_removal(&[Removable::Feature(sketch)]);
+    assert_eq!(
+        removal,
+        Removal {
+            features: vec![sketch],
+            bodies: vec![],
+        }
+    );
+    let removal = document.breaking_removal(&[Removable::Body(first_body)]);
+    assert_eq!(
+        removal,
+        Removal {
+            features: vec![first],
+            bodies: vec![first_body],
+        }
+    );
+    assert!(
+        document
+            .breaking_removal(&[Removable::Feature(FeatureId(document.next_id))])
+            .is_empty()
+    );
+
+    // The extrudes stay, naming a sketch that isn't there, which the
+    // check takes; one undo step.
+    editor.apply(Command::RemoveOnly(vec![sketch])).unwrap();
+    let after = editor.document();
+    let ids: Vec<_> = after.features.iter().map(|f| f.id).collect();
+    assert_eq!(ids, [first, second]);
+    assert_eq!(extrude_of(after, second).sketch, sketch);
+    assert_eq!(after.bodies.len(), 2);
+    assert_eq!(after.check(), Ok(()));
+    assert!(Document::from_postcard(&after.to_postcard()).is_ok());
+    editor.undo();
+    assert_eq!(*editor.document(), document);
+    assert_eq!(
+        editor.document().removal(Removable::Body(body)).features,
+        [second]
+    );
+}
+
+#[test]
 fn check_refuses_long_names() {
     let mut document = with_body();
     document.bodies[0].name = "é".repeat(crate::MAX_NAME_LEN / 2);

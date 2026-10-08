@@ -137,14 +137,17 @@ impl RegionPick {
     }
 
     /// The regions of `sketch` of `document` that `regions`, an edited
-    /// feature's references, find, counting those they don't.
+    /// feature's references, find, counting those they don't. With the
+    /// sketch gone (deleted, the feature kept), none are found, and
+    /// another sketch's may be picked, which lets go of them.
     pub(crate) fn editing(
         document: &Document,
         sketch: FeatureId,
         regions: &[RegionRef],
         most: usize,
     ) -> Self {
-        let mut pick = Self::new(Some(sketch), most);
+        let gone = document.feature(sketch).is_none();
+        let mut pick = Self::new((!gone).then_some(sketch), most);
         pick.refresh(document);
         let found = pick
             .found(sketch)
@@ -216,6 +219,12 @@ impl RegionPick {
     pub(crate) fn choose(&mut self, sketch: FeatureId) -> bool {
         if self.source.is_some_and(|source| source != sketch) || self.found(sketch).is_none() {
             return false;
+        }
+        if self.source.is_none() {
+            // An edited feature's regions that weren't found were of a
+            // sketch that's gone, and mean nothing in this one.
+            self.lost.clear();
+            self.missing = 0;
         }
         self.source = Some(sketch);
         true

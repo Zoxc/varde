@@ -484,7 +484,11 @@ fn run(seed: u64, steps: usize) {
                     if rng.below(3) == 0 {
                         doc.look(Look::CancelDelete);
                     } else {
-                        doc.update(Edit::ConfirmDelete);
+                        doc.update(if rng.below(2) == 0 {
+                            Edit::ConfirmDelete
+                        } else {
+                            Edit::ConfirmDeleteOnly
+                        });
                     }
                 }
             }

@@ -276,7 +276,8 @@ pub fn note_merge(merged: &mut Vec<(BodyId, BodyId)>, bodies: &[BodyId]) {
 /// bodies the features before a combine, move or mirror made), or why
 /// the feature naming them fails: one a join or a combine consumed
 /// fails it, naming the body holding it (the user meant that body as it
-/// was, not the one it went into), and so does one whose maker failed.
+/// was, not the one it went into), and so does one whose maker failed,
+/// or one that isn't there (its maker deleted, the feature kept).
 pub(crate) fn own_solids(
     document: &Document,
     mut bodies: impl Iterator<Item = BodyId>,
@@ -291,6 +292,9 @@ pub(crate) fn own_solids(
     else {
         return Ok(());
     };
+    if document.body(body).is_none() {
+        return Err(message::BODY_GONE.into());
+    }
     let consumed = (evaluation.merged.iter()).find(|(consumed, _)| *consumed == body);
     Err(match consumed {
         Some(&(_, holder)) => message::consumed(name(body), name(holder)),

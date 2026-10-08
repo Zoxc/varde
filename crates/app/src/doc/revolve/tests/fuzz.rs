@@ -370,7 +370,11 @@ fn run(seed: u64, steps: usize) {
                 // A delete prompt asked: confirmed or not.
                 if lathe.doc.deleting.is_some() {
                     if rng.below(2) == 0 {
-                        lathe.doc.update(Edit::ConfirmDelete);
+                        lathe.doc.update(if rng.below(2) == 0 {
+                            Edit::ConfirmDelete
+                        } else {
+                            Edit::ConfirmDeleteOnly
+                        });
                     } else {
                         lathe.doc.look(Look::CancelDelete);
                     }
@@ -471,7 +475,11 @@ fn run(seed: u64, steps: usize) {
                 // Deleted from the Timeline's menu, mid-session or not.
                 lathe.doc.update(Edit::RemoveFeature(*rng.pick(&features)));
                 if lathe.doc.deleting.is_some() {
-                    lathe.doc.update(Edit::ConfirmDelete);
+                    lathe.doc.update(if rng.below(2) == 0 {
+                        Edit::ConfirmDelete
+                    } else {
+                        Edit::ConfirmDeleteOnly
+                    });
                 }
             }
             _ => {}

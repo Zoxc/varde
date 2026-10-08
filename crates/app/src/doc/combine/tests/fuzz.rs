@@ -304,14 +304,22 @@ fn run(seed: u64, steps: usize) {
                 // Deleted from the Timeline's menu, mid-session or not.
                 plates.doc.update(Edit::RemoveFeature(rng.pick(&features)));
                 if plates.doc.deleting.is_some() {
-                    plates.doc.update(Edit::ConfirmDelete);
+                    plates.doc.update(if rng.below(2) == 0 {
+                        Edit::ConfirmDelete
+                    } else {
+                        Edit::ConfirmDeleteOnly
+                    });
                 }
             }
             36 => {
                 plates.doc.update(Edit::RemoveBody(rng.pick(&bodies)));
                 if plates.doc.deleting.is_some() {
                     if rng.below(2) == 0 {
-                        plates.doc.update(Edit::ConfirmDelete);
+                        plates.doc.update(if rng.below(2) == 0 {
+                            Edit::ConfirmDelete
+                        } else {
+                            Edit::ConfirmDeleteOnly
+                        });
                     } else {
                         plates.doc.look(Look::CancelDelete);
                     }
@@ -327,7 +335,11 @@ fn run(seed: u64, steps: usize) {
                 key_in(&mut plates.doc, key);
                 if plates.doc.deleting.is_some() {
                     if rng.below(2) == 0 {
-                        plates.doc.update(Edit::ConfirmDelete);
+                        plates.doc.update(if rng.below(2) == 0 {
+                            Edit::ConfirmDelete
+                        } else {
+                            Edit::ConfirmDeleteOnly
+                        });
                     } else {
                         plates.doc.look(Look::CancelDelete);
                     }

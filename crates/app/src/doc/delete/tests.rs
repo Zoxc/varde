@@ -82,6 +82,38 @@ fn deleting_a_sketch_an_extrude_uses_asks_first() {
 }
 
 #[test]
+fn delete_only_keeps_what_depends_on_it_failing() {
+    let (mut doc, requests) = crate::tests::example();
+    let document = doc.editor.document();
+    let [sketch, extrude] = [0, 1].map(|k| document.features()[k].id);
+    let before = document.clone();
+    doc.update(Edit::RemoveFeature(sketch));
+    let prompt = doc.delete_prompt().expect("the prompt shows");
+    assert!(prompt.keeping);
+    let _ = doc.view_in(Mode::default());
+
+    // The sketch goes alone; the extrude stays, its body too, and fails.
+    doc.update(Edit::ConfirmDeleteOnly);
+    assert!(doc.deleting.is_none());
+    assert_eq!(names(&doc), (vec!["Extrude 1"], vec!["Body 1"]));
+    doc.sync();
+    crate::tests::answer(&mut doc, &requests);
+    let failed: Vec<_> = (doc.feed.failed_features().iter())
+        .map(|failure| (failure.feature, failure.message.as_str()))
+        .collect();
+    assert_eq!(failed, [(extrude, "its sketch isn't there")]);
+    let _ = doc.view_in(Mode::default());
+    doc.update(Edit::Undo);
+    assert_eq!(*doc.editor.document(), before);
+
+    // Nothing depends on the extrude: nothing to keep, so no prompt.
+    doc.update(Edit::RemoveFeature(extrude));
+    assert!(doc.deleting.is_none());
+    doc.update(Edit::Undo);
+    assert_eq!(*doc.editor.document(), before);
+}
+
+#[test]
 fn deleting_what_nothing_depends_on_doesnt_ask() {
     let (mut doc, sketch, extrude, body) = example();
     let before = doc.editor.document().clone();

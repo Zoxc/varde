@@ -371,8 +371,12 @@ pub enum Edit {
     /// step, as [`Edit::RemoveFeature`] does one.
     RemoveObjects,
     /// Removes what the delete prompt lists, as one undo step: its
-    /// Delete button.
+    /// Delete (or Delete all) button.
     ConfirmDelete,
+    /// Removes only what the delete prompt was asked to, keeping the
+    /// features that depend on it, as one undo step: its Delete only
+    /// button (see [`DeletePrompt::keeping`]).
+    ConfirmDeleteOnly,
     ToggleFeatureVisible(FeatureId),
     /// Rolls the Timeline back to before the feature, or to its end with
     /// `None`: its context menu's Roll back here.

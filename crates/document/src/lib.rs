@@ -784,7 +784,7 @@ impl Document {
 
     /// Checks `extrude`, feature `index`, see [`Document::check`].
     fn check_extrude(&self, index: usize, extrude: &Extrude) -> Result<(), ExtrudeError> {
-        if self.sketch_before(index, extrude.sketch).is_none() {
+        if !self.sketch_ref_before(index, extrude.sketch) {
             return Err(ExtrudeError::Sketch(extrude.sketch));
         }
         extrude.check_own(&self.design())?;
@@ -799,7 +799,7 @@ impl Document {
 
     /// Checks `revolve`, feature `index`, see [`Document::check`].
     fn check_revolve(&self, index: usize, revolve: &Revolve) -> Result<(), RevolveError> {
-        if self.sketch_before(index, revolve.sketch).is_none() {
+        if !self.sketch_ref_before(index, revolve.sketch) {
             return Err(RevolveError::Sketch(revolve.sketch));
         }
         revolve.check_own(&self.design())?;
@@ -858,13 +858,11 @@ impl Document {
     /// parts, and its operation as an extrude's.
     fn check_loft(&self, index: usize, loft: &Loft) -> Result<(), LoftError> {
         if let Some(section) =
-            (loft.sections.iter()).find(|s| self.sketch_before(index, s.sketch()).is_none())
+            (loft.sections.iter()).find(|s| !self.sketch_ref_before(index, s.sketch()))
         {
             return Err(LoftError::Sketch(section.sketch()));
         }
-        if let Some(rail) =
-            (loft.rails.iter()).find(|r| self.sketch_before(index, r.sketch).is_none())
-        {
+        if let Some(rail) = (loft.rails.iter()).find(|r| !self.sketch_ref_before(index, r.sketch)) {
             return Err(LoftError::RailSketch(rail.sketch));
         }
         loft.check_own()?;
@@ -880,16 +878,17 @@ impl Document {
     }
 
     /// Checks `combine`, feature `index`, see [`Document::check`]: its own
-    /// parts, and every body it names there and made by a feature before
-    /// it. A body that isn't there is refused, unlike a sketch's face's:
+    /// parts, and every body it names made by a feature before it, or
+    /// not there with an id no later body can take, as a sketch's face's:
     /// removing a body's maker removes the combine too
-    /// ([`Document::removal`]), and an edit that would leave it naming a
-    /// body that's gone otherwise (setting the maker to stop making it)
-    /// is refused.
+    /// ([`Document::removal`]), unless the user chose to keep it
+    /// ([`Document::breaking_removal`]), and an edit can stop a body
+    /// being made (setting its maker to join); regenerating then fails
+    /// the combine until it's given another.
     fn check_combine(&self, index: usize, combine: &Combine) -> Result<(), CombineError> {
         combine.check_own()?;
         for body in combine.bodies() {
-            if !self.made_before(index, body) {
+            if !self.body_before(index, body) {
                 return Err(CombineError::Body(body));
             }
         }
@@ -908,7 +907,7 @@ impl Document {
         bodies: &[BodyId],
         referred: Option<motion::Referred<'_>>,
     ) -> Result<(), MotionError> {
-        if let Some(&body) = bodies.iter().find(|&&body| !self.made_before(index, body)) {
+        if let Some(&body) = bodies.iter().find(|&&body| !self.body_before(index, body)) {
             return Err(MotionError::Body(body));
         }
         if let Some(referred) = referred {
@@ -962,7 +961,7 @@ impl Document {
     /// moved side on that body, every one on the target side on another;
     /// and each named as a move's axis is ([`Document::check_motion`]).
     fn check_align(&self, index: usize, align: &Align) -> Result<(), AlignError> {
-        if !self.made_before(index, align.body) {
+        if !self.body_before(index, align.body) {
             return Err(AlignError::Body(align.body));
         }
         for named in align.from.named() {
@@ -1005,7 +1004,7 @@ impl Document {
     /// edge length's edge named as a move's axis is
     /// ([`Document::check_motion`]).
     fn check_scale(&self, index: usize, scale: &Scale) -> Result<(), ScaleError> {
-        if let Some(&body) = (scale.bodies.iter()).find(|&&body| !self.made_before(index, body)) {
+        if let Some(&body) = (scale.bodies.iter()).find(|&&body| !self.body_before(index, body)) {
             return Err(ScaleError::Body(body));
         }
         self.check_scale_refs(index, scale)
@@ -1036,7 +1035,7 @@ impl Document {
     /// body, while it keeps both pieces, a body it makes (the id it holds
     /// otherwise is [`Document::check`]'s, as every held id).
     fn check_split(&self, index: usize, split: &Split) -> Result<(), SplitError> {
-        if !self.made_before(index, split.body) {
+        if !self.body_before(index, split.body) {
             return Err(SplitError::Body(split.body));
         }
         self.check_split_tool(index, &split.tool)?;
@@ -1058,17 +1057,17 @@ impl Document {
     /// document takes; its own parts are [`Split::check_own`]'s.
     pub fn check_split_tool(&self, index: usize, tool: &SplitTool) -> Result<(), SplitError> {
         match tool {
-            SplitTool::Body(tool) if !self.made_before(index, *tool) => {
+            SplitTool::Body(tool) if !self.body_before(index, *tool) => {
                 return Err(SplitError::ToolBody(*tool));
             }
-            SplitTool::Face(face) if !self.made_before(index, face.body) => {
+            SplitTool::Face(face) if !self.body_before(index, face.body) => {
                 return Err(SplitError::FaceBody(face.body));
             }
             SplitTool::Plane(PlaneRef::Face(face)) if !self.body_before(index, face.body) => {
                 return Err(SplitError::RefBody(face.body));
             }
             SplitTool::Regions { sketch, .. } | SplitTool::Chain { sketch, .. }
-                if self.sketch_before(index, *sketch).is_none() =>
+                if !self.sketch_ref_before(index, *sketch) =>
             {
                 return Err(SplitError::Sketch(*sketch));
             }
@@ -1097,7 +1096,7 @@ impl Document {
         body: BodyId,
         faces: &[FaceRef],
     ) -> Result<(), FaceSetError> {
-        if !self.made_before(index, body) {
+        if !self.body_before(index, body) {
             return Err(FaceSetError::Body(body));
         }
         match (faces.iter()).find(|face| !self.maker_before(index, face.maker())) {
@@ -1122,7 +1121,7 @@ impl Document {
             return Ok(());
         };
         face.check_own().map_err(FaceDraftError::Neutral)?;
-        if !self.made_before(index, face.body) {
+        if !self.body_before(index, face.body) {
             return Err(FaceDraftError::NeutralBody(face.body));
         }
         if !self.maker_before(index, face.maker()) {
@@ -1133,7 +1132,7 @@ impl Document {
 
     /// Checks `sweep`, feature `index`, see [`Document::check`].
     fn check_sweep(&self, index: usize, sweep: &Sweep) -> Result<(), SweepError> {
-        if self.sketch_before(index, sweep.sketch).is_none() {
+        if !self.sketch_ref_before(index, sweep.sketch) {
             return Err(SweepError::Sketch(sweep.sketch));
         }
         sweep.check_own(&self.design())?;
@@ -1170,13 +1169,13 @@ impl Document {
                             if chain.sketch == profile {
                                 return Err(SweepError::OwnSketch);
                             }
-                            if self.sketch_before(index, chain.sketch).is_none() {
+                            if !self.sketch_ref_before(index, chain.sketch) {
                                 return Err(SweepError::PathSketch(chain.sketch));
                             }
                         }
                         PathPart::Edges { edges, .. } => {
                             for edge in edges {
-                                if !self.made_before(index, edge.body) {
+                                if !self.body_before(index, edge.body) {
                                     return Err(SweepError::EdgeBody(edge.body));
                                 }
                                 if let Some(&maker) =
@@ -1191,7 +1190,7 @@ impl Document {
             }
             PathRef::Helix(helix) => {
                 if let Some(referred) = helix.axis.refers() {
-                    if !self.made_before(index, referred.body()) {
+                    if !self.body_before(index, referred.body()) {
                         return Err(SweepError::AxisBody(referred.body()));
                     }
                     if let Some(&maker) =
@@ -1205,12 +1204,16 @@ impl Document {
         Ok(())
     }
 
-    /// Whether `body` is there and made by a feature before feature
-    /// `index`.
-    fn made_before(&self, index: usize, body: BodyId) -> bool {
-        self.body(body)
-            .and_then(|body| self.feature_index(body.created_by))
-            .is_some_and(|maker| maker < index)
+    /// Whether `sketch`, which feature `index` names as a sketch, is a
+    /// sketch feature before it, or isn't there with an id below
+    /// `next_id`, as a body it depends on is ([`Document::body_before`]): deleting a
+    /// feature can leave those naming it, which regenerating then fails,
+    /// to be given another ([`Document::breaking_removal`]).
+    fn sketch_ref_before(&self, index: usize, sketch: FeatureId) -> bool {
+        match self.feature_index(sketch) {
+            Some(_) => self.sketch_before(index, sketch).is_some(),
+            None => sketch.0 < self.next_id,
+        }
     }
 
     /// The sketch feature before feature `index` whose id is `sketch`.
@@ -1232,7 +1235,7 @@ impl Document {
         sketch: FeatureId,
         operation: &Operation,
     ) -> Result<(), Uses> {
-        if self.sketch_before(index, sketch).is_none() {
+        if !self.sketch_ref_before(index, sketch) {
             return Err(Uses::Sketch(sketch));
         }
         let id = self.features[index].id;
@@ -1245,8 +1248,13 @@ impl Document {
         if !excluded.windows(2).all(|pair| pair[0] < pair[1]) {
             return Err(Uses::ExcludedOrder);
         }
+        // Removing a body drops it from the lists, so they never name one
+        // that isn't there.
         for &body in excluded {
-            if !self.made_before(index, body) {
+            if !self
+                .body(body)
+                .is_some_and(|body| self.maker_before(index, body.created_by))
+            {
                 return Err(Uses::Excluded(body));
             }
         }
@@ -1488,6 +1496,9 @@ pub enum EditError {
     /// sketch, which then doesn't solve, see
     /// [`varde_sketch::revalue`].
     Unsolved(FeatureId, varde_sketch::Rejected),
+    /// [`Command::SetFeature`] would stop this body being made, which this
+    /// later feature names ([`FeatureKind::bodies`]).
+    Named(FeatureId, BodyId),
 }
 
 /// Whose value an [`EditError::Value`] is about.
@@ -1519,6 +1530,9 @@ impl fmt::Display for EditError {
             EditError::Unsolved(id, why) => {
                 write!(f, "feature {}: the sketch wouldn't solve: {why}", id.0)
             }
+            EditError::Named(id, body) => {
+                write!(f, "feature {} names body {}, which would go", id.0, body.0)
+            }
         }
     }
 }
@@ -1529,7 +1543,8 @@ impl std::error::Error for EditError {
             EditError::OutOfIds
             | EditError::SketchKind
             | EditError::SketchFace(_)
-            | EditError::ParamUsed(_) => None,
+            | EditError::ParamUsed(_)
+            | EditError::Named(..) => None,
             EditError::Invalid(why) => Some(why),
             EditError::Value(_, why) => Some(why),
             EditError::Sketch(_, why) => Some(why),

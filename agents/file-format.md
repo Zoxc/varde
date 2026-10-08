@@ -524,5 +524,9 @@ of two lines ending at its point, every spline's point count (at most
 expression giving its stored value exactly when evaluated in the
 document's units, a value
 its measure can be (a length at least a micrometre, an angle under a
-turn). Ids
+turn). Wherever a feature names a sketch before it or a body made by
+an earlier feature (but an operation's excluded bodies), the sketch or
+body may instead not be there, with an id below the next id: the
+delete prompt's Delete only (`Command::RemoveOnly`) keeps the features
+naming what it deletes, and regenerating fails them. Ids
 running out refuses the edit instead of overflowing.

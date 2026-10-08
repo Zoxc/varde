@@ -1267,13 +1267,14 @@ pub struct Combine {
   CombineError)`): `Combine::check_own` (cheap, for a panel on every
   view) wants 1 to 256 tools (`Tools(n)`), sorted without repeats
   (`ToolOrder`) and the target not among them (`TargetIsTool`); then
-  every body named must be there and made by a feature before the
-  combine (`Body(id)`). Unlike a sketch's face, a body that isn't there
-  is refused: removing a body or its maker removes the combine with it
-  (below), and `SetFeature` making the maker stop making the body (an
-  extrude turned from a new body into a join) is refused while a combine
-  names it (`EditError::Invalid(Combine(.., Body))`), rather than
-  deleting the combine behind the user's back. `MAX_FEATURE_BODIES` is
+  every body named must be made by a feature before the combine, or
+  not there with an id below `next_id`, as a sketch's face
+  (`Body(id)`): removing a body or its maker removes the combine with
+  it (below) unless the delete prompt's Delete only keeps it, failing
+  ("a body it names isn't there"). `SetFeature` making the maker stop
+  making the body (an extrude turned from a new body into a join) is
+  refused while a later feature names it (`EditError::Named`), rather
+  than deleting the combine behind the user's back. `MAX_FEATURE_BODIES` is
   shared with the later body features (move, mirror, pattern).
 - **Removal**: `FeatureKind::bodies()` lists the bodies a feature names
   (a combine's target, then tools); `Document::removal` takes a later

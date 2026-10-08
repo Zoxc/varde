@@ -93,6 +93,30 @@ impl Document {
         all
     }
 
+    /// What removing just `targets` takes, changing nothing: each
+    /// feature, a body's maker for a body (a pattern with all its copy
+    /// bodies for one of them), and the bodies those make. The later
+    /// features [`Document::removal`] would take stay, naming a sketch or
+    /// a body that isn't there, which regenerating fails until they're
+    /// given another ([`Command::RemoveOnly`] applies exactly this).
+    ///
+    /// [`Command::RemoveOnly`]: crate::Command::RemoveOnly
+    pub fn breaking_removal(&self, targets: &[Removable]) -> Removal {
+        let mut features: Vec<FeatureId> = (targets.iter())
+            .filter_map(|&target| match target {
+                Removable::Feature(id) => self.feature(id).map(|feature| feature.id),
+                Removable::Body(id) => self.body(id).map(|body| body.created_by),
+            })
+            .collect();
+        features.sort_unstable();
+        features.dedup();
+        let bodies = (self.bodies.iter())
+            .filter(|body| features.binary_search(&body.created_by).is_ok())
+            .map(|body| body.id)
+            .collect();
+        Removal { features, bodies }
+    }
+
     /// Removes what `removal` lists, and drops its bodies from the other
     /// features' excluded lists.
     pub(crate) fn remove(&mut self, removal: &Removal) {

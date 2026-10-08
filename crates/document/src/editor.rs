@@ -87,9 +87,8 @@ pub enum Command {
     /// (`varde_sketch::Profiles::reference`), not the old ones. One that
     /// made a new body and still does keeps the body; one that stops
     /// making it removes it, dropping it from the other features'
-    /// excluded lists (but refused while a combine names it, as a target
-    /// or a tool: removing it would leave the combine naming a body that
-    /// isn't there), holding its id ([`FeatureKind::held_body`]); one
+    /// excluded lists (but refused while a later feature names it, as a
+    /// combine's target or tool: [`EditError::Named`]), holding its id ([`FeatureKind::held_body`]); one
     /// that starts making one gets back the body whose id it held, else
     /// adds one as [`Command::AddFeature`] does. The id is filled in
     /// whatever the command held. A split's new body goes the same
@@ -112,6 +111,10 @@ pub enum Command {
     /// Removes the features, with all [`Document::removal_of`] lists for
     /// them, as one edit.
     RemoveFeatures(Vec<FeatureId>),
+    /// Removes the features and the bodies they make, keeping the later
+    /// features that use them, which then name what isn't there: what
+    /// [`Document::breaking_removal`] lists.
+    RemoveOnly(Vec<FeatureId>),
     SetFeatureVisible(FeatureId, bool),
     /// Rolls the Timeline back to before the feature, or forward to its
     /// end with `None`, see [`Document::rollback`]. A feature that isn't
@@ -604,6 +607,16 @@ impl Document {
             },
             _ => {}
         }
+        // The check takes a body that isn't there, as a removal that
+        // keeps what names it leaves it, but an edit doesn't take it away
+        // from under a later feature.
+        for later in &next.features[index + 1..] {
+            if let Some(body) = (later.kind.bodies().into_iter())
+                .find(|&body| self.body(body).is_some() && next.body(body).is_none())
+            {
+                return Err(EditError::Named(later.id, body));
+            }
+        }
         next.check_new(index, &next.features[index].kind)?;
         Ok(Some(next))
     }
@@ -1027,6 +1040,16 @@ impl Editor {
             Command::RemoveFeatures(ids) => {
                 let targets: Vec<_> = ids.into_iter().map(Removable::Feature).collect();
                 let removal = document.removal_of(&targets);
+                if removal.is_empty() {
+                    return Ok(());
+                }
+                let mut next = Document::clone(document);
+                next.remove(&removal);
+                next
+            }
+            Command::RemoveOnly(ids) => {
+                let targets: Vec<_> = ids.into_iter().map(Removable::Feature).collect();
+                let removal = document.breaking_removal(&targets);
                 if removal.is_empty() {
                     return Ok(());
                 }

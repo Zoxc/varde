@@ -3,7 +3,7 @@
 //! file lists them wrong.
 
 use super::*;
-use crate::{Combine, CombineError, Copies, MAX_PATTERN_BODIES};
+use crate::{Combine, Copies, MAX_PATTERN_BODIES};
 
 /// `pattern` with its copies as bodies of their own, none listed yet.
 fn separate(mut pattern: Pattern) -> Pattern {
@@ -173,10 +173,7 @@ fn copy_bodies_are_named_by_later_features_and_go_with_the_pattern() {
                 kind: Box::new(kind),
             })
             .unwrap_err();
-        assert_eq!(
-            error,
-            EditError::Invalid(CheckError::Combine(combined, CombineError::Body(made[1])))
-        );
+        assert_eq!(error, EditError::Named(combined, made[1]));
         assert_eq!(*editor.document(), held);
     }
     // A higher count drops nothing.

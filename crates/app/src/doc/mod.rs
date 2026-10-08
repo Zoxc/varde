@@ -665,7 +665,8 @@ impl Doc {
                 let sketches = self.selected_sketches().map(Removable::Feature).collect();
                 self.remove_all(sketches);
             }
-            Edit::ConfirmDelete => self.confirm_delete(),
+            Edit::ConfirmDelete => self.confirm_delete(false),
+            Edit::ConfirmDeleteOnly => self.confirm_delete(true),
             Edit::ToggleFeatureVisible(id) => self.change(Change::ToggleFeatureVisible(id)),
             Edit::SetRollback(until) => {
                 self.rolling = None;
@@ -762,7 +763,11 @@ impl Doc {
     /// Makes `change` now, on the document as it is.
     pub(crate) fn make(&mut self, change: Change) {
         match change {
-            Change::Remove { targets, confirmed } => self.remove_now(targets, confirmed),
+            Change::Remove {
+                targets,
+                confirmed,
+                only,
+            } => self.remove_now(targets, confirmed, only),
             Change::ToggleVisible(id) => {
                 if let Some(body) = self.editor.document().body(id) {
                     let visible = !body.visible;
@@ -1684,10 +1689,12 @@ impl Doc {
 pub(crate) enum Change {
     /// Removes `target` and what goes with it, asking first if more goes
     /// than `confirmed`, what the user said yes to, if anything, see
-    /// [`Doc::remove`].
+    /// [`Doc::remove`]; with `only`, just `targets`, if that's what
+    /// `confirmed` is, see [`Doc::confirm_delete`].
     Remove {
         targets: Vec<Removable>,
         confirmed: Option<Removal>,
+        only: bool,
     },
     ToggleVisible(BodyId),
     ToggleFeatureVisible(FeatureId),

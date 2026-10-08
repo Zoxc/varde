@@ -151,15 +151,13 @@ fn tools_are_bounded_sorted_and_not_the_target() {
         combine(a, &[b, missing], BodyOp::Union),
         CombineError::Body(missing),
     );
-    let gone = BodyId(1);
-    assert!(editor.document().body(gone).is_none(), "a feature's id");
-    refused(
-        &mut editor,
-        combine(gone, &[b], BodyOp::Union),
-        CombineError::Body(gone),
-    );
     // Nothing was added.
     assert_eq!(editor.document().features.len(), 4);
+    // One gone, with an id no later body can take, is taken, as deleting
+    // its maker but keeping the combine leaves it.
+    let gone = BodyId(1);
+    assert!(editor.document().body(gone).is_none(), "a feature's id");
+    add(&mut editor, combine(gone, &[b], BodyOp::Union)).unwrap();
 }
 
 /// A combine's bodies are made before it: one set in place of an earlier
@@ -196,10 +194,7 @@ fn a_maker_named_by_a_combine_keeps_making_its_body() {
             })
             .unwrap_err();
         assert!(
-            matches!(
-                error,
-                EditError::Invalid(CheckError::Combine(feature, CombineError::Body(_))) if feature == id
-            ),
+            matches!(error, EditError::Named(feature, _) if feature == id),
             "{error:?}"
         );
         assert_eq!(*editor.document(), before);

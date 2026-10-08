@@ -44,7 +44,7 @@ impl Document {
         edges: &[EdgeRef],
     ) -> Result<(), BlendEdgesError> {
         for edge in edges {
-            if !self.made_before(index, edge.body) {
+            if !self.body_before(index, edge.body) {
                 return Err(BlendEdgesError::Body(edge.body));
             }
             if let Some(&maker) = (edge.makers().iter()).find(|&&m| !self.maker_before(index, m)) {

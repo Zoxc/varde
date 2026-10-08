@@ -1109,6 +1109,10 @@ pub(crate) fn no_solid(body: &str) -> String {
     format!("{body} has no solid: the feature making it failed")
 }
 
+/// Why a feature naming a body fails when the body isn't there: its
+/// maker was deleted, the feature kept.
+pub(crate) const BODY_GONE: &str = "a body it names isn't there";
+
 /// `message`, why a feature failed with the body named `body`, with
 /// the way past it when the feature works on other bodies too: leaving
 /// that one out (unticked, it stays as it is and the others are still
