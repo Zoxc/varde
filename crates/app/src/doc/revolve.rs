@@ -285,9 +285,8 @@ impl RevolveSession {
     /// Types into `angle`'s field where its knob is dragged to: `to`
     /// radians about the axis from the sketch plane. One side's angle is
     /// how far round either way, a turn back past the plane flipping it;
-    /// symmetric's twice it; two sides' each how far its own way. Nothing
-    /// changes for an angle the field doesn't take (none, or past a turn),
-    /// nor for a drag that takes two sides further over a turn than they
+    /// symmetric's twice it; two sides' each how far its own way, a whole
+    /// turn at most. Nothing changes for none, nor for a drag that takes two sides further over a turn than they
     /// were.
     fn drag(&mut self, angle: Angle, to: f64, document: &Document) {
         let (turn, flip) = match (self.extent, angle) {
@@ -299,9 +298,12 @@ impl RevolveSession {
         if !(turn > 0.0 && turn.is_finite()) {
             return;
         }
+        // Past what the field takes, as near as it goes.
+        let ask = Turn::ask(&document.design());
+        let turn = turn.min(ask.max).max(ask.min.unwrap_or(0.0));
         let text = varde_expr::format(turn, Some(Unit::Angle(AngleUnit::Deg)));
         let mut field = self.fields[angle.index()].clone();
-        field.input(text, &Turn::ask(&document.design()));
+        field.input(text, &ask);
         if field.error.is_some() {
             return;
         }

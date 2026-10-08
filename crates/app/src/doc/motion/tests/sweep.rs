@@ -943,6 +943,14 @@ fn a_sweep_s_knobs_turn_its_end_or_climb_its_helix() {
         value: 3000f64.to_radians(),
         step: 1.0,
     });
+    // Past the most twist, the most.
+    let most = varde_document::MAX_TWIST_TURNS * std::f64::consts::TAU;
+    assert!((twist(plates).unwrap() - most).abs() < 1e-9);
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: -30f64.to_radians(),
+        step: 1.0,
+    });
     assert!((twist(plates).unwrap() + 30f64.to_radians()).abs() < 1e-12);
     plates.answer();
     let knob = knobs(plates)[0];

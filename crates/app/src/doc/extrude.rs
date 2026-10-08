@@ -215,8 +215,9 @@ impl ExtrudeSession {
 
     /// Moves the knob of `distance` to `to`, in millimetres along the
     /// sketch plane's normal: one side's goes past the plane by flipping.
-    /// A knob on the plane changes nothing, and so does one where the
-    /// field refuses the distance, or where the extrude's own check would
+    /// A knob on the plane changes nothing; one past what the field takes
+    /// stands at its least or most. Nothing changes where the field still
+    /// refuses the distance, or where the extrude's own check would
     /// refuse it and didn't before (two sides together over the limit):
     /// the knob stops there. Already over the limit, it only moves back
     /// towards it.
@@ -230,9 +231,12 @@ impl ExtrudeSession {
         if !(length > 0.0 && length.is_finite()) {
             return;
         }
+        // Past what the field takes, as near as it goes.
+        let ask = Extent::ask(&document.design());
+        let length = length.min(ask.max).max(ask.min.unwrap_or(0.0));
         let text = varde_expr::format(length, Some(Unit::Length(document.units())));
         let mut field = self.fields[distance.index()].clone();
-        field.input(text, &Extent::ask(&document.design()));
+        field.input(text, &ask);
         if field.error.is_some() {
             return;
         }

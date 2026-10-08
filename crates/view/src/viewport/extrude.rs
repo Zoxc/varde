@@ -177,15 +177,22 @@ impl<'a> Extruding<'a> {
     /// Where on the handle's axis the screen position `at` drags a knob:
     /// the point of the axis nearest the cursor's ray, in millimetres from
     /// the handle's origin, snapped to the design's units' round steps
-    /// ([`snap_step`]). `None` without a handle, looking along its axis, or
-    /// past [`MAX_COORD`].
+    /// ([`snap_step`]), never on the plane and within [`MAX_COORD`]. `None`
+    /// without a handle or looking along its axis.
     fn drag_to(&self, at: DVec2, camera: &Camera, bounds: Rectangle) -> Option<f64> {
         let handle = self.handle.as_ref()?;
         let projector = Projector::new(camera, handle.placement(), bounds.width, bounds.height)?;
         let t = projector.along_line(handle.origin, handle.normal, at)?;
         let step = snap_step(projector.pixel(), self.state.units)?;
-        let t = (t / step).round() * step;
-        (t.is_finite() && t.abs() <= f64::from(MAX_COORD)).then_some(t)
+        let limit = (f64::from(MAX_COORD) / step).floor() * step;
+        let snapped = ((t / step).round() * step).clamp(-limit, limit);
+        // On the plane, a step off it, the side the cursor is.
+        let t = if snapped == 0.0 {
+            step.copysign(t)
+        } else {
+            snapped
+        };
+        t.is_finite().then_some(t)
     }
 
     /// What the renderer draws of the extrude with `input` as it is, all

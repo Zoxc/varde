@@ -47,7 +47,7 @@
 
 use glam::DVec3;
 use varde_document::{EdgeRef, FaceRef, Generation, PlaneRef};
-use varde_expr::{AngleUnit, Unit};
+use varde_expr::{AngleUnit, Ask, Unit};
 use varde_regen::SweepFound;
 use varde_view::{
     ChamferType, KnobPath, KnobRadius, KnobScale, KnobSnap, KnobTone, MotionField, MotionKind,
@@ -128,12 +128,10 @@ impl Doc {
 
     /// Types where knob `index` of the handle was dragged to, `value` in
     /// its field's own units snapped to steps of `step`, into its field,
-    /// as the knob says: a value the field refuses changes nothing. An
-    /// offset face's sign is its side; a chamfer's or fillet's size
+    /// as the knob says. Past what the field takes, it stands as near as
+    /// the snap goes ([`clamped`]), but a chamfer's or fillet's size
     /// dragged to zero or past it reads zero, which its field refuses, so
-    /// the model shows without it; others' values must be above zero (an
-    /// align's offset and turn may be anything), one dragged to zero or
-    /// past it standing at a step, a draft's angle under a quarter turn.
+    /// the model shows without it. An offset face's sign is its side.
     pub(super) fn drag_knob(&mut self, index: usize, value: f64, step: f64) {
         let Some(session) = &self.motion else {
             return;
@@ -143,36 +141,24 @@ impl Doc {
             return;
         };
         let kind = session.kind;
-        let dropped = kind.blends() && value <= 0.0;
-        let value = if dropped { 0.0 } else { value };
-        let positive = !matches!(kind, MotionKind::OffsetFace | MotionKind::Align)
-            && !kind.blends()
-            && !(kind == MotionKind::Sweep && knob.field == MotionField::Twist)
-            && knob.snap != KnobSnap::Count;
-        // Dragged to zero or past it, as near it as the snap goes.
-        let value = if positive && value <= 0.0 && step > 0.0 {
-            step
-        } else {
-            value
-        };
-        let refused = match kind {
-            // Its sign is its side: through zero, never at it.
-            MotionKind::OffsetFace => value == 0.0,
-            MotionKind::Align => false,
-            // Either way round, or none.
-            MotionKind::Sweep if knob.field == MotionField::Twist => false,
-            // A whole count, of two or more (the field's ask says how
-            // many at most).
-            _ if knob.snap == KnobSnap::Count => value < 2.0 || value.fract() != 0.0,
-            _ => value <= 0.0 && !dropped,
-        };
-        if !value.is_finite() || refused {
-            return;
-        }
-        if kind == MotionKind::Draft && value >= std::f64::consts::FRAC_PI_2 {
+        if !value.is_finite() {
             return;
         }
         let document = self.editor.document();
+        let ask = field_ask(kind, knob.field, &document.design());
+        let dropped = kind.blends() && value <= 0.0;
+        // Dragged past what the field takes, as near it as the snap goes.
+        let value = if dropped {
+            0.0
+        } else if kind == MotionKind::OffsetFace {
+            // Its sign is its side: through zero, never at it.
+            if value == 0.0 {
+                return;
+            }
+            clamped(value.abs(), &ask, step).copysign(value)
+        } else {
+            clamped(value, &ask, step)
+        };
         let units = match knob.snap {
             KnobSnap::Length => Some(Unit::Length(document.units())),
             KnobSnap::Angle => Some(Unit::Angle(AngleUnit::Deg)),
@@ -189,7 +175,6 @@ impl Doc {
         if kind == MotionKind::OffsetFace && text == varde_expr::format(0.0, units) {
             return;
         }
-        let ask = field_ask(kind, knob.field, &document.design());
         let Some(session) = &mut self.motion else {
             return;
         };
@@ -842,4 +827,29 @@ fn box_corners(low: DVec3, high: DVec3) -> [DVec3; 8] {
             if k & 4 == 0 { low.z } else { high.z },
         )
     })
+}
+
+/// `value`, snapped to steps of `step`, brought within what `ask` takes:
+/// to its least or most, a step inside where it must be above zero or
+/// under its most, a whole number for a count.
+fn clamped(value: f64, ask: &Ask, step: f64) -> f64 {
+    let step = if step > 0.0 && step.is_finite() {
+        step
+    } else {
+        0.0
+    };
+    let most = if ask.under { ask.max - step } else { ask.max };
+    let mut value = value.max(-most).min(most);
+    if let Some(min) = ask.min {
+        value = value.max(min);
+    }
+    if ask.positive && value <= 0.0 {
+        value = step;
+    }
+    if ask.whole {
+        value = (value.round())
+            .max(ask.min.unwrap_or(-most).ceil())
+            .min(most.floor());
+    }
+    value
 }

@@ -195,8 +195,11 @@ fn a_draft_s_knob_turns_its_face_about_its_hinge() {
         panic!("a draft");
     };
     assert!((draft.angle.value - 5f64.to_radians()).abs() < 1e-12);
+    // Past a quarter turn, a step under it.
     drag(&mut plates, 0, 90f64.to_radians());
-    assert!((knobs(&plates)[0].value - 5f64.to_radians()).abs() < 1e-12);
+    let under = std::f64::consts::FRAC_PI_2 - 0.5;
+    let value = knobs(&plates)[0].value;
+    assert!((value - under).abs() < 1e-3, "{}", value.to_degrees());
 }
 
 /// A scale of the plate about the origin, its middle: a slider of 100
@@ -313,9 +316,9 @@ fn a_linear_pattern_s_knobs_set_its_spacing_and_count() {
     assert_eq!(pattern_drafted(&plates), (Some(4), 10.0));
     drag(&mut plates, 1, 6.0);
     assert_eq!(pattern_drafted(&plates), (Some(6), 10.0));
+    // Under two, two.
     drag(&mut plates, 1, 1.0);
-    drag(&mut plates, 1, 2.5);
-    assert_eq!(pattern_drafted(&plates), (Some(6), 10.0));
+    assert_eq!(pattern_drafted(&plates), (Some(2), 10.0));
 }
 
 /// A circular pattern of the right disc about Z: in Full 360° only the

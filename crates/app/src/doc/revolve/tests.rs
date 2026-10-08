@@ -928,10 +928,11 @@ fn dragging_a_knob_types_its_angle() {
     drag(&mut lathe, Angle::First, -PI / 2.0);
     near(span(&lathe), (-PI / 2.0, 0.0));
     assert!(lathe.doc.revolve.as_ref().unwrap().flip);
-    // Past a turn, or onto the plane, the field doesn't take it.
-    drag(&mut lathe, Angle::First, -3.0 * PI);
+    // Onto the plane changes nothing; past a turn, a whole turn.
     drag(&mut lathe, Angle::First, 0.0);
     near(span(&lathe), (-PI / 2.0, 0.0));
+    drag(&mut lathe, Angle::First, -3.0 * PI);
+    assert_eq!(lathe.last_draft().unwrap().1.span(), None, "a whole turn");
 
     // Symmetric: its knob at half the angle.
     lathe.revolve(RevolveLook::Extent(TurnKind::Symmetric));

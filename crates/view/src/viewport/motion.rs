@@ -1484,15 +1484,18 @@ impl<'a> Moving<'a> {
 
     /// The handle `drag` dragged to the screen position `at`: the
     /// message setting what it sets there, if that's changed since it was
-    /// last sent, and within what a move takes.
+    /// last sent: an arrow's offset brought within what a move takes, a
+    /// ring's turn only where it keeps the offset within it.
     fn drag(&self, drag: &mut Drag, handles: &Handles, at: DVec2) -> Option<MotionLook> {
         match drag.grip {
             Grip::Arrow(axis) => {
                 let along = handles.along(drag.centre, axis, at)?;
                 let step = snap_step(drag.pixel, self.state.units)?;
                 let to = drag.offset[axis_index(axis)] + (along - drag.at);
-                let to = (to / step).round() * step + 0.0;
-                if !(to.is_finite() && to.abs() <= f64::from(MAX_COORD)) || to == drag.sent {
+                // Past what a move takes, the last step within it.
+                let limit = (f64::from(MAX_COORD) / step).floor() * step;
+                let to = ((to / step).round() * step).clamp(-limit, limit) + 0.0;
+                if !to.is_finite() || to == drag.sent {
                     return None;
                 }
                 drag.sent = to;
