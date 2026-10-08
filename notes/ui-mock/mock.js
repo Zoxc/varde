@@ -332,15 +332,16 @@ const SKETCHES = {
   s1: {
     plane: 'side', closed: [[0, 0], [80, 0], [80, 10], [10, 10], [10, 70], [0, 70]], circles: [],
     dims: [{ a: [0, -9], b: [80, -9], t: '80' }, { a: [-9, 0], b: [-9, 70], t: '70' }, { a: [89, 0], b: [89, 10], t: '10' }, { a: [0, 79], b: [10, 79], t: '10' }],
+    cons: [{ at: 2, a: [0, 0], b: [80, 10] }, { at: 5, c: [10, 10], r: 10 }],
     summary: '6 lines · 4 dimensions',
   },
   s2: {
-    plane: 'base-top', circles: [{ c: [50, 25], r: 8 }],
+    plane: 'base-top', circles: [{ c: [50, 25], r: 8 }], cons: [{ at: 0, a: [20, 25], b: [80, 25] }],
     dims: [{ a: [50, -8], b: [80, -8], t: '30' }, { a: [88, 0], b: [88, 25], t: '25' }], labels: [{ p: [64, 37], t: 'Ø16' }],
     summary: '1 circle · 3 dimensions',
   },
   s3: {
-    plane: 'up-x', circles: [{ c: [25, 45], r: 7 }],
+    plane: 'up-x', circles: [{ c: [25, 45], r: 7 }], cons: [{ at: 1, a: [25, 10], b: [25, 70] }],
     dims: [{ a: [25, 79], b: [50, 79], t: '25' }, { a: [58, 10], b: [58, 45], t: '35' }], labels: [{ p: [37, 57], t: 'Ø14' }],
     summary: '1 circle · 3 dimensions',
   },
@@ -845,14 +846,41 @@ function info() {
 
 // ---------------------------------------------------------------- side panel
 function side() {
-  const shown = st.alt ? (st.panel === 'timeline' ? 'objects' : 'timeline') : st.panel;
+  // In a sketch, its own tab takes the Timeline's place.
+  const sk = st.mode === 'sketch', first = sk ? 'sketch' : 'timeline';
+  const shown = st.alt ? (st.panel === first ? 'objects' : first) : st.panel;
   const tab = (id, label, ic) => `
     <button class="tab${shown === id ? (st.alt ? ' peek' : ' on') : ''}" data-act="tab:${id}">
       ${icon(ic)}${label}${id !== st.panel && !st.alt ? '<kbd>Alt</kbd>' : ''}
     </button>`;
   return `
-    <div class="tabs">${tab('timeline', 'Timeline', 'rollback')}${tab('objects', 'Objects', 'body')}</div>
-    <div class="list">${shown === 'timeline' ? timeline() : objects()}</div>`;
+    <div class="tabs">${sk ? tab('sketch', 'Sketch', 'sketch') : tab('timeline', 'Timeline', 'rollback')}${tab('objects', 'Objects', 'body')}</div>
+    <div class="list">${shown === 'sketch' ? geometry() : shown === 'timeline' ? timeline() : objects()}</div>`;
+}
+
+// The sketch's curves: its closed outline's lines, its circles and its
+// construction curves, each at its place (`at`) among the others.
+function sketchCurves(id) {
+  const s = SKETCHES[id];
+  if (!s) return [];
+  const len = (a, b) => fmtP(Math.hypot(b[0] - a[0], b[1] - a[1])) + ' mm';
+  const out = [];
+  const c = s.closed || [];
+  c.forEach((p, i) => out.push({ kind: 'line', size: len(p, c[(i + 1) % c.length]) }));
+  for (const k of s.circles || []) out.push({ kind: 'circle', size: 'Ø' + fmtP(2 * k.r) + ' mm' });
+  for (const k of s.cons || []) out.splice(k.at, 0, { kind: k.r ? 'circle' : 'line', size: k.r ? 'Ø' + fmtP(2 * k.r) + ' mm' : len(k.a, k.b), cons: true });
+  const n = { line: 0, circle: 0 };
+  for (const k of out) k.name = (k.kind === 'line' ? 'Line ' : 'Circle ') + ++n[k.kind];
+  return out;
+}
+
+// The Sketch tab: the sketch's Geometry list, construction curves marked
+// with a dashed rail by their icon, which is in the construction colour.
+function geometry() {
+  const curves = sketchCurves(st.sketch.id);
+  const header = (label, n) => `<div class="row group"><span class="ic">${icon('chev')}</span><span class="name">${label} <span class="meta">${n}</span></span></div>`;
+  const row = k => `<div class="row${k.cons ? ' cons' : ''}" style="padding-left:24px"><span class="ic">${icon(k.kind, k.cons ? 'i cons' : 'i')}</span><span class="name">${k.name}</span><span class="meta">${k.size}</span></div>`;
+  return header('Geometry', curves.length) + curves.map(row).join('');
 }
 
 // The timeline with the rollback marker in it: after the last feature, or
@@ -1237,6 +1265,10 @@ function sketchGeomSvg(id, planeKey, withDims) {
   for (const c of s.circles || []) {
     out += `<polygon class="sk${extra}" points="${pts(circ(f, c.c[0], c.c[1], c.r))}"/>`;
     if (withDims) out += pt(f(...c.c));
+  }
+  for (const c of s.cons || []) {
+    if (c.r) out += `<polygon class="sk sk-cons${extra}" points="${pts(circ(f, c.c[0], c.c[1], c.r))}"/>`;
+    else { const [a, b] = [at(c.a), at(c.b)]; out += `<line class="sk sk-cons${extra}" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`; }
   }
   if (withDims) {
     for (const d of s.dims || []) {

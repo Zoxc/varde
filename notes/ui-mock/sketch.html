@@ -51,7 +51,7 @@ function sketchCam(planeKey) {
     id = 's1';
     plane = SKETCHES.s1.plane;
   }
-  Object.assign(st, { doc: d, mode: 'sketch', sketch: { id, plane } });
+  Object.assign(st, { doc: d, mode: 'sketch', sketch: { id, plane }, panel: 'sketch' });
   Object.assign(cam, sketchCam(plane));
 }
 
