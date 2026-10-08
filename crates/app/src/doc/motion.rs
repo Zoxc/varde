@@ -1796,7 +1796,7 @@ impl Doc {
                 let ask = field_ask(session.kind, field, &document.design());
                 session.fields[field.index()].input(text, &ask);
             }
-            MotionLook::DragKnob { knob, value } => self.drag_knob(knob, value),
+            MotionLook::DragKnob { knob, value, step } => self.drag_knob(knob, value, step),
             // Only as the handles offer it: a move's, while its bodies
             // are picked, turning by nothing yet or about that world
             // axis already (the offsets are worked out as turning on

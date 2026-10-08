@@ -376,7 +376,7 @@ fn dragged(
             drag.from + drag.turned
         }
     };
-    let value = snapped(&knob, knob.value_at(along, drag.pixel), drag, units)?;
+    let (value, step) = snapped(&knob, knob.value_at(along, drag.pixel), drag, units)?;
     if !value.is_finite() || value == drag.sent {
         return None;
     }
@@ -384,12 +384,13 @@ fn dragged(
     Some(MotionLook::DragKnob {
         knob: drag.index,
         value,
+        step,
     })
 }
 
 /// `value` of `knob` snapped to its steps ([`KnobSnap`]) at least 6
-/// pixels apart along its path as `drag` grabbed it.
-fn snapped(knob: &OpKnob, value: f64, drag: &Drag, units: LengthUnit) -> Option<f64> {
+/// pixels apart along its path as `drag` grabbed it, and the step.
+fn snapped(knob: &OpKnob, value: f64, drag: &Drag, units: LengthUnit) -> Option<(f64, f64)> {
     // How many pixels a unit of the value is along the path.
     let unit = knob.along(1.0, drag.pixel).abs()
         * match knob.path {
@@ -407,7 +408,7 @@ fn snapped(knob: &OpKnob, value: f64, drag: &Drag, units: LengthUnit) -> Option<
         // A unit of an angle is a radian: `unit` is the arc's radius.
         KnobSnap::Angle => angle_step(unit).to_radians(),
     };
-    Some((value / step).round() * step + 0.0)
+    Some(((value / step).round() * step + 0.0, step))
 }
 
 /// The roundest step, 1, 2 or 5 × 10ⁿ, at least 6 pixels long, a pixel

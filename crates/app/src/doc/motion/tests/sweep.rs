@@ -936,10 +936,12 @@ fn a_sweep_s_knobs_turn_its_end_or_climb_its_helix() {
     plates.motion(MotionLook::DragKnob {
         knob: 0,
         value: -30f64.to_radians(),
+        step: 1.0,
     });
     plates.motion(MotionLook::DragKnob {
         knob: 0,
         value: 3000f64.to_radians(),
+        step: 1.0,
     });
     assert!((twist(plates).unwrap() + 30f64.to_radians()).abs() < 1e-12);
     plates.answer();
@@ -949,6 +951,7 @@ fn a_sweep_s_knobs_turn_its_end_or_climb_its_helix() {
     plates.motion(MotionLook::DragKnob {
         knob: 0,
         value: 0.0,
+        step: 1.0,
     });
     assert_eq!(twist(plates), None, "no twist");
 
@@ -989,10 +992,12 @@ fn a_sweep_s_knobs_turn_its_end_or_climb_its_helix() {
     plates.motion(MotionLook::DragKnob {
         knob: 1,
         value: 2.5,
+        step: 1.0,
     });
     plates.motion(MotionLook::DragKnob {
         knob: 0,
         value: 6.0,
+        step: 1.0,
     });
     let PathRef::Helix(helix) = drafted(plates).unwrap().path else {
         panic!("a helix");

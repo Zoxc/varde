@@ -1060,10 +1060,12 @@ fn an_align_s_knobs_offset_and_turn_it() {
     plates.motion(MotionLook::DragKnob {
         knob: 0,
         value: 5.0,
+        step: 1.0,
     });
     plates.motion(MotionLook::DragKnob {
         knob: 1,
         value: 90f64.to_radians(),
+        step: 1.0,
     });
     let align = drafted(&plates).expect("an align's draft");
     assert_eq!(align.offset.map(|offset| offset.value), Some(5.0));

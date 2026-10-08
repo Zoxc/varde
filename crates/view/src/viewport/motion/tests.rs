@@ -720,7 +720,11 @@ fn a_line_knob_drags_through_zero() {
         let (messages, _) = feed(viewport, input, &[moved(at(DVec3::new(0.0, 0.0, z)))]);
         messages
     };
-    let sent = |value: f64| MotionLook::DragKnob { knob: 0, value };
+    let sent = |value: f64| MotionLook::DragKnob {
+        knob: 0,
+        value,
+        step: 2.0,
+    };
     // 2.3 mm above the face snaps to 2 mm out.
     assert_eq!(looks(&drag(&mut input, 12.3)), [Some(&sent(2.0))]);
     // The same again sends nothing.
@@ -846,7 +850,7 @@ fn an_arc_knob_turns_and_a_slider_scales() {
         ))
     };
     let (messages, _) = feed(&viewport_arc, &mut input, &[moved(turned(37.0))]);
-    let [Some(MotionLook::DragKnob { knob: 0, value })] = looks(&messages)[..] else {
+    let [Some(MotionLook::DragKnob { knob: 0, value, .. })] = looks(&messages)[..] else {
         panic!("{messages:?}");
     };
     assert!(
@@ -874,7 +878,7 @@ fn an_arc_knob_turns_and_a_slider_scales() {
         &mut input,
         &[moved(at(DVec3::new(30.4, 0.0, 0.0)))],
     );
-    let [Some(MotionLook::DragKnob { knob: 0, value })] = looks(&messages)[..] else {
+    let [Some(MotionLook::DragKnob { knob: 0, value, .. })] = looks(&messages)[..] else {
         panic!("{messages:?}");
     };
     assert!((value - 1.5).abs() < 1e-12, "{value}");

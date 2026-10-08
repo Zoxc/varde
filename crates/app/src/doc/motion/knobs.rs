@@ -127,11 +127,13 @@ impl Doc {
     }
 
     /// Types where knob `index` of the handle was dragged to, `value` in
-    /// its field's own units, into its field, as the knob says: a value
-    /// the field refuses changes nothing. An offset face's sign is its
-    /// side; others' values must be above zero (an align's offset and
-    /// turn may be anything), a draft's angle under a quarter turn.
-    pub(super) fn drag_knob(&mut self, index: usize, value: f64) {
+    /// its field's own units snapped to steps of `step`, into its field,
+    /// as the knob says: a value the field refuses changes nothing. An
+    /// offset face's sign is its side; others' values must be above zero
+    /// (an align's offset and turn may be anything), one dragged to zero
+    /// or past it standing at a step, a draft's angle under a quarter
+    /// turn.
+    pub(super) fn drag_knob(&mut self, index: usize, value: f64, step: f64) {
         let Some(session) = &self.motion else {
             return;
         };
@@ -140,6 +142,15 @@ impl Doc {
             return;
         };
         let kind = session.kind;
+        let positive = !matches!(kind, MotionKind::OffsetFace | MotionKind::Align)
+            && !(kind == MotionKind::Sweep && knob.field == MotionField::Twist)
+            && knob.snap != KnobSnap::Count;
+        // Dragged to zero or past it, as near it as the snap goes.
+        let value = if positive && value <= 0.0 && step > 0.0 {
+            step
+        } else {
+            value
+        };
         let refused = match kind {
             // Its sign is its side: through zero, never at it.
             MotionKind::OffsetFace => value == 0.0,

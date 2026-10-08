@@ -36,15 +36,20 @@ fn drafted(plates: &Plates) -> FeatureKind {
     plates.last_draft().expect("a draft").1
 }
 
+/// Knob `knob` dragged to `value`, snapped to steps of a half.
 fn drag(plates: &mut Plates, knob: usize, value: f64) {
-    plates.motion(MotionLook::DragKnob { knob, value });
+    plates.motion(MotionLook::DragKnob {
+        knob,
+        value,
+        step: 0.5,
+    });
 }
 
 /// A chamfer of the plate's top front edge: Equal, its knob from the
 /// edge along the bisector into the plate, half the bisector's sum a
 /// millimetre of distance, so on the chamfer's middle; Two distances, a
-/// knob along each face. Dragged, the distance is typed; nothing at or
-/// below zero.
+/// knob along each face. Dragged, the distance is typed; to zero or past
+/// it, a step.
 #[test]
 fn a_chamfer_s_knobs_stand_on_its_first_edge() {
     let (mut plates, plate) = plate();
@@ -73,8 +78,10 @@ fn a_chamfer_s_knobs_stand_on_its_first_edge() {
     assert!(matches!(chamfer.distances, ChamferSize::Equal(d) if d.value == 3.0));
     assert_eq!(knobs(&plates)[0].value, 3.0);
     drag(&mut plates, 0, 0.0);
+    assert_eq!(knobs(&plates)[0].value, 0.5);
+    drag(&mut plates, 0, 3.0);
     drag(&mut plates, 0, -2.0);
-    assert_eq!(knobs(&plates)[0].value, 3.0);
+    assert_eq!(knobs(&plates)[0].value, 0.5);
     // The preview answered, the knob stays where the edge was.
     plates.answer();
     assert!(near(line(&knobs(&plates)[0]).0, origin));
