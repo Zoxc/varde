@@ -1032,14 +1032,26 @@ fn color_line<'a>(
         .style(theme::color_slider(editable, handle));
     // The handle's middle runs a radius in from either end, and the rail's
     // colours with it.
-    let rail = container(
-        container(Space::new())
-            .width(Length::Fill)
-            .height(theme::COLOR_RAIL_HEIGHT)
-            .style(theme::color_rail(stops, editable)),
-    )
-    .padding([0.0, theme::SLIDER_HANDLE_RADIUS])
-    .center_y(Length::Fill);
+    let border = container(Space::new())
+        .width(Length::Fill)
+        .height(theme::COLOR_RAIL_HEIGHT)
+        .style(theme::color_rail(stops.clone(), editable));
+    // iced draws no gradients on the web: solid strips under the border.
+    let border: Element<'a, Message> = if cfg!(target_arch = "wasm32") {
+        let strips = (0..theme::COLOR_RAIL_STRIPS).map(|index| {
+            container(Space::new())
+                .width(Length::Fill)
+                .height(theme::COLOR_RAIL_HEIGHT)
+                .style(theme::color_rail_strip(stops.clone(), index, editable))
+                .into()
+        });
+        stack![Row::with_children(strips), border].into()
+    } else {
+        border.into()
+    };
+    let rail = container(border)
+        .padding([0.0, theme::SLIDER_HANDLE_RADIUS])
+        .center_y(Length::Fill);
     let slider = stack![rail, MouseOnly::new(slider)].height(2.0 * theme::SLIDER_HANDLE_RADIUS);
     value_line(slider.into(), value)
 }

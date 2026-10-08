@@ -1,5 +1,29 @@
 # iced
 
+## Gradient backgrounds draw nothing on the web
+
+**Version:** iced 0.14 (iced_wgpu 0.14).
+
+**What was hit.** The colour sliders' rails in a body's context menu, a
+`Background::Gradient` on a container, were empty in the browser build and
+right natively.
+
+**Cause.** iced_wgpu leaves its gradient quad pipeline out on wasm:
+`iced_wgpu/src/quad/gradient.rs` builds the pipeline and draws only under
+`#[cfg(not(target_arch = "wasm32"))]`, so on the web gradient quads are queued
+and silently dropped. Solid quads are unaffected.
+
+**Why it's not ours.** The gate is in iced's source, and the same style draws
+natively.
+
+**Cost here.** On the web, `color_line` in `crates/view/src/panels.rs` draws
+the rail as `theme::COLOR_RAIL_STRIPS` solid strips (`theme::color_rail_strip`)
+under the rail's border, and `theme::color_rail` leaves its gradient out
+there. `theme::tab` draws its accent line with a nested button rather than a
+gradient for the same reason.
+
+**Upstream status.** Not reported.
+
 ## Wanted
 
 ### The system's light or dark mode before the first frame
