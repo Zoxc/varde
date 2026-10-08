@@ -132,9 +132,8 @@ fn editing_the_tick_and_a_copy_body_a_later_feature_uses() {
 
 /// Picking another direction for an unjoined pattern whose copy body a
 /// later feature uses: the preview leaving the bodies where they are (a
-/// move by nothing) would drop the copy bodies, which the document
-/// refuses, so there's no draft, and no failure shown, the model as
-/// committed.
+/// move by nothing) drops the copy bodies, but the model is rolled back
+/// to the pattern, so nothing fails.
 #[test]
 fn picking_the_direction_of_a_pattern_whose_copy_a_later_feature_uses() {
     let mut plates = plates();
@@ -161,7 +160,7 @@ fn picking_the_direction_of_a_pattern_whose_copy_a_later_feature_uses() {
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     plates.motion(MotionLook::Picking(MotionPick::Reference));
-    assert_eq!(plates.doc.motion_draft(), None);
+    assert!(plates.doc.motion_draft().is_some());
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     assert!(
@@ -169,13 +168,7 @@ fn picking_the_direction_of_a_pattern_whose_copy_a_later_feature_uses() {
         "{:?}",
         screen_texts(&plates.doc)
     );
-    // The copy bodies are still there to see.
-    let [low, _] = plates.bounds(made[1]);
-    let [right_low, _] = plates.bounds(right);
-    assert!(
-        (low.x - right_low.x - 80.0).abs() < 1e-3,
-        "{low} {right_low}"
-    );
+    assert!(plates.doc.feed.failed_features().is_empty());
 }
 
 /// Unticked, a pattern making more bodies than a document may have of

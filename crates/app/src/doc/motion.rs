@@ -2230,23 +2230,12 @@ impl Doc {
 
     /// The move, mirror or pattern being set up as the regeneration lane
     /// previews it, see [`MotionSession::draft`]; none for a sweep or
-    /// loft the document refuses at its place, or for a pattern
-    /// previewed as a move by nothing while its axis is picked when that
-    /// would drop a copy body a later feature names, which would fail
-    /// that feature only for the preview: the model is then shown as
-    /// committed, rather than as a failure.
+    /// loft the document refuses at its place: the model is then shown
+    /// as committed, rather than as a failure.
     pub(crate) fn motion_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
         let session = self.motion.as_ref()?;
         let document = self.editor.document();
         let (feature, kind) = session.draft(&document.design())?;
-        if let Some(edited) = feature
-            && session.kind.pattern()
-            && !matches!(kind, FeatureKind::Pattern(_))
-            && (document.copies_dropped(edited, &kind).iter())
-                .any(|body| (document.features().iter()).any(|f| f.kind.bodies().contains(body)))
-        {
-            return None;
-        }
         if session.kind == MotionKind::Sweep && self.sweep_refused(session).is_some() {
             return None;
         }

@@ -2226,10 +2226,8 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   document lays out (keeping an edited one's copy bodies). An edit
   dropping a copy body a later feature names (fewer copies, a body
   taken out, ticked again) is allowed: that feature stays and fails.
-  No draft is sent for the move by nothing previewing an edited one
-  while its axis is picked (which has no copy bodies) when that would
-  drop such a body (`Doc::motion_draft`), so the model shows as
-  committed rather than failing a later feature only for the preview. **The overlap warning** (the mock's, linear only, as the
+  The preview never shows that: editing rolls the model back to just
+  after the feature edited (`Doc::rollback`). **The overlap warning** (the mock's, linear only, as the
   mock has it, `Doc::motion_warning`): unticked, with a spacing shorter
   than one of the bodies is long along the direction, so its own copies
   overlap ("The copies overlap (10 mm long this way): tick Join to
