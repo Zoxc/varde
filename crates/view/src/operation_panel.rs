@@ -206,6 +206,9 @@ pub enum PanelHover {
     Part(usize),
     /// A loft's section, by its place among them.
     Section(usize),
+    /// A region an edited feature names that wasn't found, by its place
+    /// among them: nothing to light.
+    Missing(usize),
 }
 
 impl PanelHover {
@@ -218,7 +221,8 @@ impl PanelHover {
             | PanelHover::Edge(_)
             | PanelHover::Face(_)
             | PanelHover::Part(_)
-            | PanelHover::Section(_) => None,
+            | PanelHover::Section(_)
+            | PanelHover::Missing(_) => None,
         }
     }
 
@@ -231,7 +235,8 @@ impl PanelHover {
             | PanelHover::Edge(_)
             | PanelHover::Face(_)
             | PanelHover::Part(_)
-            | PanelHover::Section(_) => None,
+            | PanelHover::Section(_)
+            | PanelHover::Missing(_) => None,
         }
     }
 }
@@ -292,6 +297,8 @@ pub(crate) enum Footer<'a> {
         error: Cow<'a, str>,
         show: Option<Framing>,
         accept: Option<Message>,
+        /// Whether a feature already there is edited: Edit anyway then.
+        editing: bool,
     },
 }
 
@@ -388,7 +395,8 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
             error,
             show,
             accept,
-        }) => container(fail_box(noun, error, show, accept))
+            editing,
+        }) => container(fail_box(noun, error, show, accept, editing))
             .padding(Padding::from([0.0, SIDE]).top(2.0).bottom(8.0))
             .into(),
     };
@@ -433,12 +441,14 @@ pub(crate) fn head_button<'a>(
 /// (`noun`), with the alert in the danger colour on its wash, `error`
 /// under it in muted words, scrolled past about five lines, and under
 /// that `show`'s button at the left, if there's geometry to frame, and
-/// Add anyway at the right sending `accept`, if it can be pressed.
+/// Add anyway at the right sending `accept`, if it can be pressed: Edit
+/// anyway while `editing` a feature already there.
 fn fail_box<'a>(
     noun: &'a str,
     error: Cow<'a, str>,
     show: Option<Framing>,
     accept: Option<Message>,
+    editing: bool,
 ) -> Element<'a, Message> {
     let title = container(
         row![
@@ -484,7 +494,10 @@ fn fail_box<'a>(
     });
     let add = accept.map(|accept| {
         fail_button(
-            text("Add anyway").size(CONTROL_TEXT).font(SEMIBOLD).into(),
+            text(if editing { "Edit anyway" } else { "Add anyway" })
+                .size(CONTROL_TEXT)
+                .font(SEMIBOLD)
+                .into(),
             true,
             accept,
         )
@@ -864,6 +877,29 @@ pub(crate) fn picked_row<'a>(
     ordered_row(icon, name, meta, None, remove, press, what, hovered)
 }
 
+/// The rows of an edited feature's `missing` regions that weren't found,
+/// "Missing region" in the strong danger colour, each with a cross sending `remove` of its place
+/// among them.
+pub(crate) fn missing_rows<'a>(
+    missing: usize,
+    remove: impl Fn(usize) -> Option<Message>,
+    press: Option<Message>,
+    hovered: Option<PanelHover>,
+) -> Vec<Element<'a, Message>> {
+    (0..missing)
+        .map(|index| {
+            failed_row(
+                Icon::SeRegion,
+                "Missing region",
+                remove(index),
+                press.clone(),
+                PanelHover::Missing(index),
+                hovered,
+            )
+        })
+        .collect()
+}
+
 /// A [`picked_row`] of a list whose order counts, a loft's sections:
 /// with `moves`, an up and a down chevron before its cross, each sending
 /// its message, or shown faint without one (the first row's up, the
@@ -878,6 +914,36 @@ pub(crate) fn ordered_row<'a>(
     press: Option<Message>,
     what: PanelHover,
     hovered: Option<PanelHover>,
+) -> Element<'a, Message> {
+    row_of(icon, name, meta, moves, remove, press, what, hovered, false)
+}
+
+/// A [`picked_row`] of what an edited feature names that wasn't found,
+/// its name in the strong danger colour, as a failed feature's in the
+/// Timeline.
+pub(crate) fn failed_row<'a>(
+    icon: Icon,
+    name: impl text::IntoFragment<'a>,
+    remove: Option<Message>,
+    press: Option<Message>,
+    what: PanelHover,
+    hovered: Option<PanelHover>,
+) -> Element<'a, Message> {
+    row_of(icon, name, None, None, remove, press, what, hovered, true)
+}
+
+/// An [`ordered_row`], its name in the strong danger colour if `failed`.
+#[allow(clippy::too_many_arguments)]
+fn row_of<'a>(
+    icon: Icon,
+    name: impl text::IntoFragment<'a>,
+    meta: Option<String>,
+    moves: Option<[Option<Message>; 2]>,
+    remove: Option<Message>,
+    press: Option<Message>,
+    what: PanelHover,
+    hovered: Option<PanelHover>,
+    failed: bool,
 ) -> Element<'a, Message> {
     let chevron = |glyph: Icon, message: Option<Message>| {
         let enabled = message.is_some();
@@ -908,9 +974,16 @@ pub(crate) fn ordered_row<'a>(
     let row = button(
         row![
             icons::icon(icon, icons::INLINE),
-            container(text(name).size(CONTROL_TEXT).wrapping(Wrapping::None))
-                .width(Length::Fill)
-                .clip(true),
+            container({
+                let name = text(name).size(CONTROL_TEXT).wrapping(Wrapping::None);
+                if failed {
+                    name.style(theme::failed_text)
+                } else {
+                    name
+                }
+            })
+            .width(Length::Fill)
+            .clip(true),
             meta,
             moves,
             cross,
@@ -1073,14 +1146,15 @@ pub(crate) fn joined_into<'a>(
 /// operation's own check), else the draft failing (`error`), as "Extrude
 /// fails" (`noun`) with `show`'s button, framing the camera on where
 /// or going back, if its geometry has a box, and Add anyway sending
-/// `accept` if it can be pressed, else, if `checking`, that OK waits on
-/// the solver.
+/// `accept` if it can be pressed (Edit anyway while `editing` a feature
+/// already there), else, if `checking`, that OK waits on the solver.
 pub(crate) fn footer_message<'a>(
     noun: &'a str,
     refused: Option<String>,
     error: Option<&'a str>,
     show: Option<Framing>,
     accept: Option<Message>,
+    editing: bool,
     checking: bool,
 ) -> Option<Footer<'a>> {
     match (refused, error) {
@@ -1091,12 +1165,14 @@ pub(crate) fn footer_message<'a>(
             error: sentence(&refused).into_owned().into(),
             show: None,
             accept: None,
+            editing,
         }),
         (None, Some(error)) => Some(Footer::Fails {
             noun,
             error: sentence(error),
             show,
             accept,
+            editing,
         }),
         (None, None) => {
             checking.then(|| Footer::Text(message_text("Checking the sketch…", theme::muted_text)))

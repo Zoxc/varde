@@ -285,7 +285,7 @@ impl MotionSession {
         if let Some(source) = setup.regions.source
             && !is_sketch(source)
         {
-            setup.stale_regions = Some((source, setup.regions.references().to_vec()));
+            setup.stale_regions = Some((source, setup.regions.references()));
             setup.regions = RegionPick::new(None, MAX_SWEEP_REGIONS);
         } else if setup.regions.source.is_none()
             && let Some((source, regions)) =

@@ -1700,7 +1700,8 @@ turns into **Go back** (`Framing::GoBack`, `Look::BackFromFailure`),
 turning the camera back to them; they're forgotten once the draft has
 no failure with a box, or no operation is set up. The button sits in
 the operation panel's failure box under the error, at its left, and
-Add anyway at its right, both
+Add anyway (Edit anyway while editing a feature already there,
+`Footer::Fails`'s `editing`) at its right, both
 `fail_button`s (`theme::fail_button`: a thin border on the panel's
 colour, Show's icon, `Icon::Locate` or `Icon::Back`, and words in the
 text's colour, Add anyway's in the strong danger colour), only where

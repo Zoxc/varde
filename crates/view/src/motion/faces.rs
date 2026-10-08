@@ -45,6 +45,7 @@ pub(super) fn faces_field<'a>(
         meta: face.meta.clone(),
         drop: MotionLook::DropFace(face.face),
         hover: PanelHover::Face(at),
+        failed: false,
     });
     picks_field(state, MotionPick::Faces, label, place, rows)
 }

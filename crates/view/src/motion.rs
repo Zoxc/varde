@@ -25,8 +25,9 @@ const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
 use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Footer, Framing, OperationKind, PanelHover, Parts, TypedField, field, footer_message, label,
-    message_text, operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
+    Footer, Framing, OperationKind, PanelHover, Parts, TypedField, failed_row, field,
+    footer_message, label, message_text, operation_panel, pick_field, picked_row, tile, tiles,
+    toggle, value_field,
 };
 use crate::plane_pick::face_name;
 use crate::revolve::edge_axis_name;
@@ -517,6 +518,9 @@ pub enum MotionLook {
     /// Picks the region `region` of `sketch` for a split's tool, or takes
     /// it out: clicked in the viewport.
     SplitRegion { sketch: FeatureId, region: usize },
+    /// Takes out the edited sweep's or split's `n`th region that wasn't
+    /// found: its row's cross.
+    DropMissingRegion(usize),
     /// Picks the curve `curve` of `sketch` for a split's line, or takes
     /// it out: clicked in the viewport.
     SplitCurve { sketch: FeatureId, curve: Id },
@@ -1163,6 +1167,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         state.error,
         state.show_error,
         state.accept.then_some(Message::Edit(Edit::AcceptError)),
+        state.editing.is_some(),
         state.checking,
     )
     .or_else(|| {
@@ -1197,6 +1202,8 @@ struct PickedRow {
     meta: Option<String>,
     drop: MotionLook,
     hover: PanelHover,
+    /// Whether it wasn't found: its name in the strong danger colour.
+    failed: bool,
 }
 
 /// The panel's field `label` of references picked by `pick` (a blend's
@@ -1215,15 +1222,26 @@ fn picks_field<'a>(
     let press = send(MotionLook::Picking(pick));
     let rows: Vec<_> = rows
         .map(|row| {
-            picked_row(
-                row.icon,
-                row.name,
-                row.meta,
-                send(row.drop),
-                press.clone(),
-                row.hover,
-                state.hover,
-            )
+            if row.failed {
+                failed_row(
+                    row.icon,
+                    row.name,
+                    send(row.drop),
+                    press.clone(),
+                    row.hover,
+                    state.hover,
+                )
+            } else {
+                picked_row(
+                    row.icon,
+                    row.name,
+                    row.meta,
+                    send(row.drop),
+                    press.clone(),
+                    row.hover,
+                    state.hover,
+                )
+            }
         })
         .collect();
     let place = (rows.is_empty() || on).then(|| place.to_owned());

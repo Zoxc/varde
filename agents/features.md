@@ -1009,7 +1009,13 @@ an extrude's.
 `agents/kernel.md`), sharing its parts (`app/src/doc/regions.rs`):
 `RegionPick` (the source sketch, the candidates' profiles found within
 `refresh_work()`, the regions picked and their references, found again
-when the sketch changes, the edited feature's missing ones counted),
+when the sketch changes, the edited feature's missing ones kept: listed
+after those picked as "Missing region" rows (`failed_row`, the name in
+the strong danger colour, as a failed feature's in the Timeline), each
+with a cross
+(`RegionPick::drop_missing`), and named by the feature until taken out,
+so its preview fails and Add anyway keeps it; found again as the sketch
+changes),
 `BodyTargets` (the bodies taken out and those just put back, as the
 Bodies list shows them, `Doc::body_targets`) and `TypedText` (a typed
 value's text, last value and error, read for an `Ask`, pinned to the

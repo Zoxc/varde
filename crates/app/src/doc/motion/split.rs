@@ -250,7 +250,7 @@ impl MotionSession {
         if let Some(source) = setup.regions.source
             && !is_sketch(source)
         {
-            setup.stale_regions = Some((source, setup.regions.references().to_vec()));
+            setup.stale_regions = Some((source, setup.regions.references()));
             setup.regions = RegionPick::new(None, MAX_EXTRUDE_REGIONS);
         } else if setup.regions.source.is_none()
             && let Some((source, regions)) = setup
@@ -687,6 +687,7 @@ impl Doc {
             } else {
                 SplitView::none_picked()
             },
+            missing: if regions { setup.regions.missing } else { 0 },
             lines,
             chain: (setup.chain.as_ref()).map(|(sketch, curves)| (*sketch, curves.as_slice())),
             pieces,

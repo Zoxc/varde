@@ -242,6 +242,75 @@ fn escape_leaves_no_trace() {
     assert_eq!(doc.feed.mesh().triangle_count(), 0);
 }
 
+/// An edited extrude none of whose regions are found keeps naming them,
+/// listed as missing: its preview fails, OK waits, and Add anyway keeps
+/// it, changed, failing as before; a missing one's cross takes it out.
+#[test]
+fn an_extrude_with_its_region_missing_can_be_added_anyway() {
+    let (mut doc, requests) = example();
+    let feature = doc.editor.document().features()[1].id;
+    let Some(FeatureKind::Extrude(mut lost)) = doc
+        .editor
+        .document()
+        .feature(feature)
+        .map(|f| f.kind.clone())
+    else {
+        panic!("an extrude");
+    };
+    lost.regions[0].curves = vec![varde_sketch::Id::MISSING];
+    lost.regions[0].inside = glam::DVec2::new(1e5, 1e5);
+    let kind = Box::new(FeatureKind::Extrude(lost.clone()));
+    doc.editor
+        .apply(Command::SetFeature { feature, kind })
+        .unwrap();
+
+    doc.look(Look::EditFeature(feature));
+    let session = doc.extrude.as_ref().expect("editing it");
+    assert!(session.regions.picked.is_empty());
+    assert_eq!(session.regions.missing, 1);
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text: "20".to_owned(),
+        },
+    );
+    assert_eq!(last_draft(&requests).unwrap().extrude.regions, lost.regions);
+    answer(&mut doc, &requests);
+    assert!(doc.feed.draft_error().is_some());
+    let state = doc.extrude_state().unwrap();
+    assert!(!state.ready && state.accept);
+    let texts = crate::tests::screen_texts(&doc);
+    assert!(texts.iter().any(|text| text == "Edit anyway"), "{texts:?}");
+    assert!(!texts.iter().any(|text| text == "Add anyway"));
+
+    doc.update(Edit::AcceptError);
+    assert!(doc.extrude.is_none());
+    let [kept] = extrudes(&doc)[..] else {
+        panic!("one extrude");
+    };
+    assert_eq!(kept.regions, lost.regions);
+    assert_eq!(kept.span(), Some((0.0, 20.0)));
+
+    // Listed, with no note under the list, and its cross takes it out.
+    doc.look(Look::EditFeature(feature));
+    let texts = crate::tests::screen_texts(&doc);
+    assert!(
+        texts.iter().any(|text| text == "Missing region"),
+        "{texts:?}"
+    );
+    assert!(!texts.iter().any(|text| text.contains("wasn't found")));
+    extrude(&mut doc, ExtrudeLook::DropMissing(0));
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.regions.missing, 0);
+    assert!(session.regions.references().is_empty());
+    assert!(
+        !crate::tests::screen_texts(&doc)
+            .iter()
+            .any(|text| text == "Missing region")
+    );
+}
+
 #[test]
 fn a_double_clicked_extrude_reopens_with_its_values_and_is_set_again() {
     let (mut doc, requests) = example();

@@ -117,6 +117,7 @@ impl Doc {
                 PanelHover::Region { .. } => {
                     session.kind == MotionKind::Sweep && region(&session.sweep.regions, hover)
                 }
+                PanelHover::Missing(_) => false,
             });
         }
         let session = self.combine.as_ref()?;

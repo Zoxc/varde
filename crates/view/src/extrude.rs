@@ -17,8 +17,8 @@ use crate::chrome::tip;
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, TypedField, bodies,
-    field, footer_message, message_text, operation_panel, pick_field, picked_row, tile, tiles,
-    toggle, value_field,
+    field, footer_message, message_text, missing_rows, operation_panel, pick_field, picked_row,
+    tile, tiles, toggle, value_field,
 };
 use crate::theme;
 use crate::{Edit, Look, Message, VALUE_FIELD};
@@ -115,6 +115,9 @@ pub enum ExtrudeLook {
         sketch: FeatureId,
         region: usize,
     },
+    /// Takes out the edited extrude's `n`th region that wasn't found:
+    /// its row's cross.
+    DropMissing(usize),
     Extent(ExtentKind),
     /// The text in a distance's field, as typed.
     Input {
@@ -160,7 +163,8 @@ pub struct ExtrudeState<'a> {
     pub source: Option<FeatureId>,
     /// The regions picked, by their index in the source's profiles.
     pub picked: &'a BTreeSet<usize>,
-    /// How many of the edited extrude's regions weren't found.
+    /// How many of the edited extrude's regions weren't found: listed
+    /// after those picked, each with a cross.
     pub missing: usize,
     pub extent: ExtentKind,
     /// The first distance's field, and two sides' second.
@@ -374,6 +378,12 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
                 )
             })
         })
+        .chain(missing_rows(
+            state.missing,
+            |index| send(ExtrudeLook::DropMissing(index)),
+            None,
+            state.hover,
+        ))
         .collect();
     let empty = state
         .candidates
@@ -390,13 +400,6 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         "Profile",
         pick_field(rows, Some(place.to_owned()), true, None),
     );
-    let missing = (state.missing > 0).then(|| {
-        let note = match state.missing {
-            1 => "1 region wasn't found".to_owned(),
-            n => format!("{n} regions weren't found"),
-        };
-        text(note).size(12).style(theme::danger_text)
-    });
 
     let extents = ExtentKind::ALL.map(|kind| {
         // Through all only cuts.
@@ -457,6 +460,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         state.error,
         state.show_error,
         state.accept.then_some(Message::Edit(Edit::AcceptError)),
+        state.editing.is_some(),
         state.checking,
     )
     // A cut that works but takes nothing from a body says so.
@@ -466,7 +470,6 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
 
     let body = column![
         profile,
-        missing,
         field("Extent", tiles(extents)),
         column(fields).spacing(8),
         flip,

@@ -1673,6 +1673,13 @@ impl Doc {
             MotionLook::SplitRegion { sketch, region } if session.kind == MotionKind::Split => {
                 session.split_region(sketch, region, document);
             }
+            MotionLook::DropMissingRegion(index) if session.kind == MotionKind::Split => {
+                session.split.regions.drop_missing(index);
+            }
+            MotionLook::DropMissingRegion(index) if session.kind == MotionKind::Sweep => {
+                session.sweep.regions.drop_missing(index);
+            }
+            MotionLook::DropMissingRegion(_) => {}
             MotionLook::SplitCurve { sketch, curve } if session.kind == MotionKind::Split => {
                 session.split_curve(sketch, curve, document);
             }

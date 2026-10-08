@@ -253,7 +253,7 @@ impl RevolveSession {
     /// takes, as they last read.
     fn revolve(&self, document: &Document) -> Option<Revolve> {
         let sketch = self.regions.source?;
-        if self.regions.picked.is_empty() {
+        if self.regions.references().is_empty() {
             return None;
         }
         let axis = self.axis(document)?;
@@ -266,7 +266,7 @@ impl RevolveSession {
         };
         Some(Revolve {
             sketch,
-            regions: self.regions.references().to_vec(),
+            regions: self.regions.references(),
             axis,
             extent,
             flip: self.stored_flip(),
@@ -568,6 +568,7 @@ impl Doc {
                     session.picking = RevolvePick::Axis;
                 }
             }
+            RevolveLook::DropMissing(index) => session.regions.drop_missing(index),
             RevolveLook::PickAxis { sketch, axis } => session.pick_axis(sketch, axis, document),
             RevolveLook::PickEdge { model, edge, at } => self.pick_axis_edge(model, edge, at),
             RevolveLook::Picking(picking) => session.picking = picking,

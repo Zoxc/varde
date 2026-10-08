@@ -177,11 +177,13 @@ fn the_panel_s_errors_read_as_sentences() {
     found(&shown, "Its two sides come to over a turn");
     assert!(!has(&shown, "Its outline crosses the axis"));
 
-    // What an edited revolve lost.
+    // What an edited revolve lost: its regions listed, its axis said.
     state.missing = 2;
     state.axis_missing = true;
     let shown = texts_of(&state);
-    found(&shown, "2 regions weren't found");
+    let rows = shown.iter().filter(|shown| shown.text == "Missing region");
+    assert_eq!(rows.count(), 2);
+    assert!(!has(&shown, "2 regions weren't found"));
     found(&shown, "The axis line wasn't found");
 }
 

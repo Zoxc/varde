@@ -92,6 +92,10 @@ pub(crate) struct RegionPick {
     /// regions can't be found, which leaves none picked, to find them
     /// again once they can.
     references: Vec<RegionRef>,
+    /// The edited feature's references that find no region, listed as
+    /// missing and named by the feature until taken out, so it fails and
+    /// can be added anyway; found again as the sketch changes.
+    lost: Vec<RegionRef>,
     /// How many of the edited feature's regions weren't found.
     pub(crate) missing: usize,
     /// The most regions that can be picked: the feature's limit.
@@ -125,6 +129,7 @@ impl RegionPick {
             worked_out: 0,
             picked: BTreeSet::new(),
             references: Vec::new(),
+            lost: Vec::new(),
             missing: 0,
             most,
             also: Vec::new(),
@@ -145,9 +150,14 @@ impl RegionPick {
             .found(sketch)
             .map(|found| found.profiles.resolve(regions));
         let resolved = found.unwrap_or_else(|| vec![None; regions.len()]);
-        pick.missing = resolved.iter().filter(|index| index.is_none()).count();
+        let lost = (regions.iter().zip(&resolved))
+            .filter(|(_, index)| index.is_none())
+            .map(|(reference, _)| reference.clone())
+            .collect();
         let picked = resolved.into_iter().flatten().collect();
         pick.pick(picked);
+        pick.lost = lost;
+        pick.missing = pick.lost.len();
         pick
     }
 
@@ -156,9 +166,24 @@ impl RegionPick {
         self.found.iter().find(|found| found.feature == feature)
     }
 
-    /// The references to the regions picked, as the feature stores them.
-    pub(crate) fn references(&self) -> &[RegionRef] {
-        &self.references
+    /// The references to the regions picked, as the feature stores them,
+    /// then the edited feature's that weren't found, listed as missing
+    /// until taken out ([`RegionPick::drop_missing`]): a feature naming
+    /// one fails, and Add anyway keeps it so.
+    pub(crate) fn references(&self) -> Vec<RegionRef> {
+        (self.references.iter())
+            .chain(&self.lost)
+            .cloned()
+            .collect()
+    }
+
+    /// Takes out the edited feature's `index`th region that wasn't
+    /// found, if there's one.
+    pub(crate) fn drop_missing(&mut self, index: usize) {
+        if index < self.lost.len() {
+            self.lost.remove(index);
+            self.missing = self.lost.len();
+        }
     }
 
     /// Picks the regions `picked` of the source, making their references.
@@ -177,7 +202,7 @@ impl RegionPick {
         let referenced: Vec<(usize, RegionRef)> = picked
             .into_iter()
             .filter_map(|index| Some((index, profiles.reference(index)?)))
-            .take(self.most)
+            .take(self.most.saturating_sub(self.lost.len()))
             .collect();
         self.picked = referenced.iter().map(|(index, _)| *index).collect();
         self.references = referenced
@@ -336,8 +361,26 @@ impl RegionPick {
         (self.skipped).extend(others.filter(|(id, _)| is_sketch(document, *id)));
         if remap {
             let source = self.source.and_then(|source| self.found(source));
-            match source.map(|found| found.profiles.resolve(&self.references)) {
-                Some(resolved) => self.pick(resolved.into_iter().flatten().collect()),
+            let profiles = source.map(|found| found.profiles.clone());
+            match profiles.map(|profiles| (profiles.resolve(&self.references), profiles)) {
+                Some((resolved, profiles)) => {
+                    // Those lost may be found again.
+                    let lost = profiles.resolve(&self.lost);
+                    let mut picked: BTreeSet<usize> = resolved.into_iter().flatten().collect();
+                    let lost_found = (std::mem::take(&mut self.lost).into_iter().zip(lost))
+                        .filter_map(|(reference, index)| match index {
+                            Some(index) => Some(index),
+                            None => {
+                                self.lost.push(reference);
+                                None
+                            }
+                        });
+                    picked.extend(lost_found);
+                    let lost = std::mem::take(&mut self.lost);
+                    self.pick(picked);
+                    self.lost = lost;
+                    self.missing = self.lost.len();
+                }
                 // Its regions can't be found for now: the references wait
                 // for the sketch to have them again.
                 None => self.picked.clear(),

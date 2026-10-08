@@ -151,6 +151,7 @@ pub(crate) fn panel<'a>(state: &CombineState<'a>) -> Element<'a, Message> {
             state.error,
             state.show_error,
             state.accept.then_some(Message::Edit(Edit::AcceptError)),
+            state.editing.is_some(),
             state.checking,
         )
     } else {

@@ -54,6 +54,7 @@ pub(super) fn edges_field<'a>(
         meta: edge.meta.clone(),
         drop: MotionLook::DropEdge(edge.edge),
         hover: PanelHover::Edge(at),
+        failed: false,
     });
     picks_field(state, MotionPick::Edges, "Edges", place, rows)
 }

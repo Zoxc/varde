@@ -175,6 +175,7 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             meta: rail.meta.clone(),
             drop: MotionLook::DropRail(at),
             hover: PanelHover::Part(at),
+            failed: false,
         });
         picks_field(
             state,

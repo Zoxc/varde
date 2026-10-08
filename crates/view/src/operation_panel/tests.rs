@@ -280,6 +280,7 @@ fn a_failing_draft_says_so_with_add_anyway() {
                 error: "It failed".into(),
                 show: framing,
                 accept: accept.then(cancel),
+                editing: false,
             }),
             ok: None,
             cancel: cancel(),

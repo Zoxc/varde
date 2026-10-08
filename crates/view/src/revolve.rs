@@ -17,8 +17,8 @@ use crate::extrude::{centroid, region_name};
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, TypedField, bodies,
-    field, footer_message, message_text, operation_panel, pick_field, picked_row, tile, tiles,
-    toggle, value_field,
+    field, footer_message, message_text, missing_rows, operation_panel, pick_field, picked_row,
+    tile, tiles, toggle, value_field,
 };
 use crate::pick::{PickIndex, Snapped};
 use crate::theme;
@@ -122,6 +122,9 @@ pub enum RevolveLook {
         sketch: FeatureId,
         region: usize,
     },
+    /// Takes out the edited revolve's `n`th region that wasn't found:
+    /// its row's cross.
+    DropMissing(usize),
     /// A line of the sketch `sketch`, or one of its axes, clicked while
     /// the axis is picked: the axis, from then on. It sets the sketch the
     /// revolve takes regions of, if none is yet.
@@ -181,7 +184,8 @@ pub struct RevolveState<'a> {
     pub source: Option<FeatureId>,
     /// The regions picked, by their index in the source's profiles.
     pub picked: &'a BTreeSet<usize>,
-    /// How many of the edited revolve's regions weren't found.
+    /// How many of the edited revolve's regions weren't found: listed
+    /// after those picked, each with a cross.
     pub missing: usize,
     /// The axis picked, a line of the source or one of its axes or a
     /// model edge, if one is.
@@ -501,6 +505,12 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
                 )
             })
         })
+        .chain(missing_rows(
+            state.missing,
+            |index| send(RevolveLook::DropMissing(index)),
+            pick_regions.clone(),
+            state.hover,
+        ))
         .collect();
     let empty = state
         .candidates
@@ -543,11 +553,6 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         ),
     );
     let missing = {
-        let regions = match state.missing {
-            0 => None,
-            1 => Some("1 region wasn't found".to_owned()),
-            n => Some(format!("{n} regions weren't found")),
-        };
         let axis = state.axis_missing.then(|| {
             match state.axis {
                 Some(AxisLine::Edge(_)) => "The axis edge wasn't found",
@@ -555,7 +560,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
             }
             .to_owned()
         });
-        let notes = regions.into_iter().chain(axis).map(|note| {
+        let notes = axis.into_iter().map(|note| {
             text(note)
                 .size(12)
                 .wrapping(Wrapping::WordOrGlyph)
@@ -611,6 +616,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         state.error,
         state.show_error,
         state.accept.then_some(Message::Edit(Edit::AcceptError)),
+        state.editing.is_some(),
         state.checking,
     )
     // A cut that works but takes nothing from a body says so.

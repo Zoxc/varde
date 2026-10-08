@@ -20,7 +20,9 @@ use varde_sketch::{Id, Sketch};
 use super::{MotionLook, MotionPick, MotionState};
 use crate::chrome::sentence;
 use crate::icons::Icon;
-use crate::operation_panel::{Candidate, PanelHover, pick_field, picked_row, tile, tiles};
+use crate::operation_panel::{
+    Candidate, PanelHover, missing_rows, pick_field, picked_row, tile, tiles,
+};
 use crate::theme::{self, BOLD};
 use crate::{Look, Message};
 
@@ -137,6 +139,9 @@ pub struct SplitView<'a> {
     pub candidates: Vec<Candidate<'a>>,
     pub source: Option<FeatureId>,
     pub picked: &'a BTreeSet<usize>,
+    /// While regions are picked, how many of the edited split's weren't
+    /// found: listed under the tool, each with a cross.
+    pub missing: usize,
     /// While a line is picked: the sketches whose curves show (the
     /// line's once there's one).
     pub lines: Vec<SketchLines<'a>>,
@@ -215,7 +220,14 @@ pub(super) fn body<'a>(
         )
     });
     let place = (row.is_none() || on).then(|| split.mode.place().to_owned());
-    let tool = pick_field(row.into_iter().collect(), place, on, press);
+    let missing = missing_rows(
+        split.missing,
+        |index| send(MotionLook::DropMissingRegion(index)),
+        press.clone(),
+        state.hover,
+    );
+    let rows = row.into_iter().chain(missing).collect();
+    let tool = pick_field(rows, place, on, press);
     let trim = split.keep != Keep::Both;
     let sides = [Side::Front, Side::Back].map(|side| {
         let message = send(MotionLook::Original(side)).filter(|_| !trim);

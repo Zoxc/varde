@@ -549,6 +549,7 @@ fn split_view(tool: Option<(&str, Option<&str>)>) -> SplitView<'static> {
         candidates: Vec::new(),
         source: None,
         picked: SplitView::none_picked(),
+        missing: 0,
         lines: Vec::new(),
         chain: None,
         pieces: Vec::new(),

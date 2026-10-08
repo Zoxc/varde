@@ -12,8 +12,7 @@
 use std::collections::BTreeSet;
 
 use iced::Element;
-use iced::widget::text::Wrapping;
-use iced::widget::{column, text};
+use iced::widget::column;
 use varde_document::FeatureId;
 use varde_sketch::Id;
 
@@ -27,7 +26,6 @@ use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, OperationKind, PanelHover, bodies, field, tile, tiles, toggle,
 };
-use crate::theme;
 use crate::{Look, Message};
 
 /// What a sweep's path is, its Path and Helix tiles: parts joined end
@@ -82,7 +80,8 @@ pub struct SweepView<'a> {
     pub candidates: Vec<Candidate<'a>>,
     pub source: Option<FeatureId>,
     pub picked: &'a BTreeSet<usize>,
-    /// How many of the edited sweep's regions weren't found.
+    /// How many of the edited sweep's regions weren't found: listed
+    /// after those picked, each with a cross.
     pub missing: usize,
     /// The path's parts of sketch curves, in the order they were picked.
     pub parts: Vec<SweepPart>,
@@ -133,8 +132,17 @@ pub(super) fn body<'a>(
             meta: None,
             drop: MotionLook::SweepRegion { sketch, region },
             hover: PanelHover::Region { sketch, region },
+            failed: false,
         })
     });
+    let regions = regions.chain((0..sweep.missing).map(|index| PickedRow {
+        icon: Icon::SeRegion,
+        name: "Missing region".to_owned(),
+        meta: None,
+        drop: MotionLook::DropMissingRegion(index),
+        hover: PanelHover::Missing(index),
+        failed: true,
+    }));
     let empty = (sweep.candidates.iter()).all(|candidate| candidate.profiles.regions.is_empty());
     let place = if sweep.picked.is_empty() && empty {
         "No closed regions to sweep"
@@ -142,16 +150,6 @@ pub(super) fn body<'a>(
         "Click regions"
     };
     let profile = picks_field(state, MotionPick::Regions, "Profile", place, regions);
-    let missing = (sweep.missing > 0).then(|| {
-        let note = match sweep.missing {
-            1 => "1 region wasn't found".to_owned(),
-            n => format!("{n} regions weren't found"),
-        };
-        text(note)
-            .size(12)
-            .wrapping(Wrapping::WordOrGlyph)
-            .style(theme::danger_text)
-    });
 
     let paths = SweepPath::ALL.iter().map(|&path| {
         tile(
@@ -169,6 +167,7 @@ pub(super) fn body<'a>(
                 meta: part.meta.clone(),
                 drop: MotionLook::DropPart(at),
                 hover: PanelHover::Part(at),
+                failed: false,
             });
             let edges = (sweep.edges.edges.iter().enumerate()).map(|(at, edge)| PickedRow {
                 icon: if edge.round {
@@ -180,6 +179,7 @@ pub(super) fn body<'a>(
                 meta: edge.meta.clone(),
                 drop: MotionLook::DropEdge(edge.edge),
                 hover: PanelHover::Edge(at),
+                failed: false,
             });
             let rows = parts.chain(edges);
             let field = picks_field(
@@ -247,7 +247,6 @@ pub(super) fn body<'a>(
     );
     column![
         profile,
-        missing,
         field("Along", tiles(paths)),
         path,
         field("Operation", tiles(operations)),

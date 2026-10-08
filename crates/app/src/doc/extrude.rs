@@ -163,7 +163,7 @@ impl ExtrudeSession {
     /// taper of nothing is none).
     fn extrude(&self) -> Option<Extrude> {
         let sketch = self.regions.source?;
-        if self.regions.picked.is_empty() {
+        if self.regions.references().is_empty() {
             return None;
         }
         let value = |distance: Distance| self.fields[distance.index()].value.clone();
@@ -178,7 +178,7 @@ impl ExtrudeSession {
         let taper = self.taper.value.clone()?;
         Some(Extrude {
             sketch,
-            regions: self.regions.references().to_vec(),
+            regions: self.regions.references(),
             extent,
             flip: self.stored_flip(),
             taper: (taper.value != 0.0).then_some(taper),
@@ -324,6 +324,7 @@ impl Doc {
             ExtrudeLook::PickRegion { sketch, region } => {
                 session.regions.toggle(sketch, region, false, document);
             }
+            ExtrudeLook::DropMissing(index) => session.regions.drop_missing(index),
             ExtrudeLook::Extent(kind) => {
                 // Only a cut goes through all.
                 if kind != ExtentKind::ThroughAll || session.operation == OperationKind::Cut {
