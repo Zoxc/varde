@@ -27,16 +27,17 @@ fn entries(recent: &Recent) -> Vec<RecentFile> {
 #[test]
 fn opened_moves_to_front_and_trims() {
     let mut recent = Recent::default();
-    for i in 0..10 {
+    let last = MAX as i64 + 1;
+    for i in 0..=last {
         recent.remember(format!("/{i}.vrdp").into(), UnixSeconds(i));
     }
     assert_eq!(recent.entries().len(), MAX);
-    assert_eq!(entries(&recent)[0], entry("/9.vrdp", 9));
+    assert_eq!(entries(&recent)[0], entry(&format!("/{last}.vrdp"), last));
     assert_eq!(entries(&recent)[MAX - 1], entry("/2.vrdp", 2));
 
-    recent.remember("/5.vrdp".into(), UnixSeconds(100));
+    recent.remember("/5.vrdp".into(), UnixSeconds(last + 100));
     assert_eq!(recent.entries().len(), MAX);
-    assert_eq!(entries(&recent)[0], entry("/5.vrdp", 100));
+    assert_eq!(entries(&recent)[0], entry("/5.vrdp", last + 100));
     assert_eq!(
         entries(&recent)
             .iter()

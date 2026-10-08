@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::UnixSeconds;
 
 /// The most files kept.
-pub const MAX: usize = 8;
+pub const MAX: usize = 100;
 
 /// A recently opened file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

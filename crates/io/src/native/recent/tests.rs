@@ -40,7 +40,7 @@ fn a_bad_entry_loses_only_itself() {
 
 #[test]
 fn parse_trims_to_max() {
-    let toml: String = (0..20)
+    let toml: String = (0..MAX + 10)
         .map(|i| format!("[[file]]\npath = \"/{i}.vrdp\"\nopened = {i}\n"))
         .collect();
     let entries = parse(&toml).unwrap();
