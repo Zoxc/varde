@@ -29,7 +29,7 @@ use varde_sketch::{Analysis, Design, Id, LinkKind, Rejected, SketchEdit};
 use varde_solve::{Request, Response, Tag};
 use varde_view::RefusedEdit;
 
-use super::{Refusal, Waiting};
+use super::{Refusal, ValueEdit, Waiting};
 use crate::doc::feed::SLOW;
 use crate::doc::{Change, Doc};
 
@@ -89,6 +89,12 @@ struct Proposal {
     /// [`SketchEdit::AddLink`]: committed with it by
     /// [`Command::AddLink`].
     source: Option<OutsideRef>,
+    /// The value field to open in place of committing the edit, if it's
+    /// accepted: the edit only asks whether a dimension can be driving.
+    probe: Option<Box<ValueEdit>>,
+    /// Whether the edit's dimensions were made references, refused as
+    /// driving, which a toast tells once it's committed.
+    forced: bool,
 }
 
 impl Proposals {
@@ -234,7 +240,7 @@ impl Doc {
     /// Proposes a new link of `kind` from `source`, as [`Doc::propose`]
     /// does an edit, committed with its source.
     pub(crate) fn propose_link(&mut self, kind: LinkKind, source: OutsideRef) -> bool {
-        self.propose_with(SketchEdit::AddLink { kind }, None, Some(source))
+        self.propose_with(SketchEdit::AddLink { kind }, None, Some(source), None)
     }
 
     /// Proposes `edit` as [`Doc::propose`] does, on `from` in place of the
@@ -244,7 +250,15 @@ impl Doc {
         edit: SketchEdit,
         from: Option<(Revision, Arc<Sketch>)>,
     ) -> bool {
-        self.propose_with(edit, from, None)
+        self.propose_with(edit, from, None, None)
+    }
+
+    /// Proposes `edit`, of driving dimensions alone, as [`Doc::propose`]
+    /// does, opening `field` if it's accepted in place of committing it,
+    /// or placing them as references, saying so, if they over-constrain
+    /// the sketch.
+    pub(super) fn probe(&mut self, edit: SketchEdit, field: ValueEdit) -> bool {
+        self.propose_with(edit, None, None, Some(Box::new(field)))
     }
 
     /// Proposes `edit` as [`Doc::propose_from`] does, a new link's
@@ -254,6 +268,7 @@ impl Doc {
         edit: SketchEdit,
         from: Option<(Revision, Arc<Sketch>)>,
         source: Option<OutsideRef>,
+        probe: Option<Box<ValueEdit>>,
     ) -> bool {
         let Some(sketch) = self.editable_sketch() else {
             return false;
@@ -280,6 +295,8 @@ impl Doc {
             from,
             units,
             source,
+            probe,
+            forced: false,
         }));
         self.send_proposal();
         self.refresh_waiting();
@@ -434,8 +451,50 @@ impl Doc {
             return;
         }
         let feature = proposal.feature;
+        if let Some(field) = proposal.probe {
+            match answer {
+                Answer::Accepted(..) => {
+                    if self.sketch.as_ref().is_some_and(|s| s.feature == feature) {
+                        self.open_value(*field);
+                    }
+                    self.send_proposal();
+                    return;
+                }
+                answer => {
+                    let proposal = Proposal {
+                        probe: None,
+                        ..proposal
+                    };
+                    return self.proposal_settled(base, proposal, answer);
+                }
+            }
+        }
+        self.proposal_settled(base, proposal, answer);
+    }
+
+    /// Takes the `answer` to `proposal` on `base`, no probe, as
+    /// [`Doc::proposal_answered`] does: commits it, or says why not.
+    fn proposal_settled(&mut self, base: Revision, proposal: Proposal, answer: Answer) {
+        let feature = proposal.feature;
+        if let Answer::Rejected(Rejected::Driving { .. }) = &answer
+            && let Some(reference) = self.as_reference(&proposal)
+        {
+            // A dimension placed that over-constrains the sketch is placed
+            // as a reference instead, as the refusal would suggest.
+            self.proposals
+                .queued
+                .push_front(Pending::Proposal(reference));
+            self.send_proposal();
+            return;
+        }
         let refusal = match answer {
             Answer::Accepted(sketch, analysis) => {
+                if proposal.forced {
+                    self.toast = Some(
+                        "The dimension would over-constrain the sketch: placed as a reference"
+                            .into(),
+                    );
+                }
                 let mut sketch = Arc::unwrap_or_clone(sketch);
                 // Read in other units than the design's now: its values
                 // keep what they came to, as setting the units does.
@@ -485,6 +544,41 @@ impl Doc {
             }
         }
         self.send_proposal();
+    }
+
+    /// `proposal` placing driving dimensions alone, with them placed as
+    /// references holding the geometry where it's at, if they can be.
+    fn as_reference(&self, proposal: &Proposal) -> Option<Proposal> {
+        let SketchEdit::Add(add) = &proposal.edit else {
+            return None;
+        };
+        let alone = add.points.is_empty()
+            && add.curves.is_empty()
+            && add.constraints.is_empty()
+            && add.auto.is_empty();
+        if !alone || add.dimensions.is_empty() || add.dimensions.iter().any(|d| !d.driving) {
+            return None;
+        }
+        let document = self.editor.document();
+        let sketch = match &proposal.from {
+            Some((_, from)) => &**from,
+            None => sketch_of(document, proposal.feature)?,
+        };
+        let design = document.design();
+        let mut add = add.clone();
+        for dimension in &mut add.dimensions {
+            let (value, side) = sketch
+                .held(&dimension.measure, dimension.side, &design)
+                .ok()?;
+            dimension.value = value;
+            dimension.side = side;
+            dimension.driving = false;
+        }
+        Some(Proposal {
+            edit: SketchEdit::Add(add),
+            forced: true,
+            ..proposal.clone()
+        })
     }
 
     /// The sketch edit the solver refused after its sketch was left, for

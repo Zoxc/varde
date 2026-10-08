@@ -732,8 +732,13 @@ what it measures where it's placed), checks the solution against
 `design` and analyses it: `Accepted` with the sketch and its analysis, or
 `Rejected` (the edit doesn't apply, a constraint is redundant, or it
 doesn't solve) naming the constraints and dimensions involved; one whose
-new driving dimensions are involved is `Rejected::Driving`, which could be
-added as a reference instead. `auto` constraints are tried together, and
+new driving dimensions are involved is `Rejected::Driving`. The app then
+proposes an `Add` of dimensions alone again with them as references,
+holding what they measure (`Doc::as_reference`), and says so in a toast.
+A dimension placed with the Dimension tool is first proposed driving at
+what it measures (`Doc::probe`), not committed: accepted, the value field
+opens; refused as driving, it's placed as a reference with no value
+typed. `auto` constraints are tried together, and
 if that fails one by one, each kept only if the sketch still solves with
 nothing redundant.
 

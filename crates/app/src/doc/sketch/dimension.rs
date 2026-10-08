@@ -27,7 +27,8 @@ impl Doc {
     /// there. Two items picked, or a click on one picked or on nothing,
     /// places it; an item that measures something with the one picked
     /// joins it, and any other starts afresh from it. Placing opens the
-    /// value field with what it measures now, or with the reference
+    /// value field with what it measures now, once the solver takes it as
+    /// driving (it's placed as a reference if not), or with the reference
     /// modifier held adds it as a reference at once.
     pub(super) fn dimension_click(&mut self, click: ToolClick) {
         let Some(sketch) = self.editable_sketch() else {
@@ -98,9 +99,27 @@ impl Doc {
             }
             return;
         }
+        // It's proposed driving, holding what it measures, before the
+        // field opens, so one that would over-constrain the sketch is
+        // placed as a reference at once rather than after its value is
+        // typed.
+        let probe = sketch
+            .held(&measure, side, &design)
+            .ok()
+            .map(|(value, side)| {
+                let mut add = Add::new(sketch);
+                add.dimensions.push(Dimension {
+                    measure: measure.clone(),
+                    value,
+                    driving: true,
+                    label,
+                    side,
+                });
+                add
+            });
         drawing.restart();
         self.set_drawing(drawing);
-        self.open_value(ValueEdit {
+        let field = ValueEdit {
             target: ValueTarget::New {
                 measure,
                 side,
@@ -109,7 +128,13 @@ impl Doc {
             text,
             error: None,
             in_list: false,
-        });
+        };
+        match probe {
+            Some(add) => {
+                self.probe(SketchEdit::Add(add), field);
+            }
+            None => self.open_value(field),
+        }
     }
 
     /// Opens the value field on the dimension `id`, if it's driving and

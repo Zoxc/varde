@@ -294,7 +294,7 @@ fn selected_dimensions_turn_between_driving_and_reference() {
 }
 
 #[test]
-fn a_driving_dimension_over_constraining_is_refused_and_can_be_a_reference() {
+fn a_driving_dimension_over_constraining_is_placed_as_a_reference() {
     let (mut doc, line) = line_to_dimension();
     doc.look(Look::ClickGeometry {
         hit: Some(Selectable::Item(line[2])),
@@ -303,17 +303,12 @@ fn a_driving_dimension_over_constraining_is_refused_and_can_be_a_reference() {
     doc.update(Edit::Constrain(ConstraintKind::Fix));
     pick(&mut doc, 5.0, 0.0, line[2]);
     place(&mut doc, 5.0, 3.0);
-    enter(&mut doc, "10");
-    assert!(sketch(&doc).dimensions.is_empty());
-    let refusal = doc.sketch.as_ref().unwrap().refusal.as_ref();
-    assert!(matches!(
-        refusal,
-        Some(Refusal::Rejected(Rejected::Driving { .. }))
-    ));
-    // As the hint says, placed as a reference it's accepted.
-    pick(&mut doc, 5.0, 0.0, line[2]);
-    tool_click(&mut doc, 5.0, 3.0, None, true);
+    // Refused as driving, it's placed as a reference at once, saying so,
+    // with no value to type.
+    assert!(doc.sketch.as_ref().unwrap().value.is_none());
     assert!(!sketch(&doc).dimensions[0].dimension.driving);
+    assert!(doc.sketch.as_ref().unwrap().refusal.is_none());
+    assert!(doc.take_toast().is_some());
 
     // Made driving, it's refused, and stays a reference.
     let id = sketch(&doc).dimensions[0].id;
@@ -387,11 +382,15 @@ fn units_change_how_dimensions_show_not_their_values() {
     let value = &sketch(&doc).dimensions[0].dimension.value;
     assert_eq!((value.text.as_str(), value.value), ("25.4 mm", 25.4));
     assert!((length(sketch(&doc), line) - 25.4).abs() < 1e-9);
-    // New values are read in inches, and shown so.
+    // New ones are shown in inches: this one, over-constraining the
+    // line, as a reference.
     pick(&mut doc, 5.0, 0.0, line[2]);
     place(&mut doc, 5.0, -3.0);
-    assert_eq!(field(&doc).unwrap().text, "1 in");
-    doc.look(Look::CancelValue);
+    let entry = &sketch(&doc).dimensions[1];
+    let shown = varde_view::dimension::label(sketch(&doc), &entry.dimension, LengthUnit::In);
+    assert_eq!(shown, "(1 in)");
+    doc.update(Edit::Undo);
+    // New values are read in inches.
     let id = sketch(&doc).dimensions[0].id;
     doc.look(Look::EditDimension { id, in_list: false });
     enter(&mut doc, "2");
