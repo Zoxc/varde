@@ -1439,11 +1439,8 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
             let entry = &sketch.sketch.curves[at];
             let size = dimension::size_note(sketch.sketch, entry, sketch.units);
             let (note, driven) = match size {
-                Some((size, driven)) if entry.construction => {
-                    (Some(format!("{size} · Construction")), driven)
-                }
                 Some((size, driven)) => (Some(size), driven),
-                None => (entry.construction.then(|| "Construction".to_owned()), false),
+                None => (None, false),
             };
             let danger = conflicts.contains(&entry.id);
             let open = sketch.expanded.contains(&entry.id);
@@ -1466,6 +1463,7 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
                 driven,
                 danger,
                 holds_selected,
+                construction: entry.construction,
             };
             geometry_item(sketch, item, expander, TREE_INDENT)
         }
@@ -1480,6 +1478,7 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
                 driven: false,
                 danger: conflicts.contains(&point.id),
                 holds_selected: false,
+                construction: false,
             };
             let indent = if child {
                 2.0 * TREE_INDENT
@@ -1587,11 +1586,54 @@ struct Item {
     /// folded away: a round dot between the accent and a hovered
     /// selected row's tint follows the name.
     holds_selected: bool,
+    /// Whether it's a construction curve: its icon is in the construction
+    /// colour, with a short dashed rail left of it ([`construction_rail`]).
+    construction: bool,
+}
+
+/// The dashes of a construction curve's rail, their length and the gaps
+/// between them, in pixels.
+const RAIL_DASHES: usize = 3;
+const RAIL_DASH: f32 = 3.0;
+/// How far left of the icon a construction curve's rail is, in pixels.
+const RAIL_GAP: f32 = 4.0;
+const RAIL_WIDTH: f32 = 2.0;
+
+/// The rail left of a construction curve's icon: three short dashes in
+/// the construction colour, faded, centred on the icon. `left` is where
+/// the icon starts in the row.
+fn construction_rail<'a>(left: f32) -> Element<'a, Message> {
+    let dash = || {
+        container(Space::new())
+            .width(RAIL_WIDTH)
+            .height(RAIL_DASH)
+            .style(|theme| container::Style {
+                background: Some(
+                    theme::palette(theme)
+                        .sketching
+                        .construction
+                        .scale_alpha(0.5)
+                        .into(),
+                ),
+                ..container::Style::default()
+            })
+            .into()
+    };
+    let dashes =
+        iced::widget::Column::with_children((0..RAIL_DASHES).map(|_| dash())).spacing(RAIL_DASH);
+    container(dashes)
+        .padding(Padding::ZERO.left((left - RAIL_GAP - RAIL_WIDTH).max(0.0)))
+        .height(ROW_HEIGHT)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// About how wide a character of a row's note is, in pixels, at its size:
 /// a digit's width, with some to spare.
 const NOTE_CHAR_WIDTH: f32 = 7.0;
+
+/// The room between the parts of a Geometry list row, in pixels.
+const ITEM_SPACING: f32 = 6.0;
 
 /// The side of the dot on a folded curve's row with a point selected.
 const SELECTED_POINT_SIZE: f32 = 7.0;
@@ -1668,20 +1710,30 @@ fn geometry_item<'a>(
             (None, Some(note)) => Some(note_text(note).into()),
             (None, None) => None,
         };
-        container(
-            row![
-                expander,
-                icons::icon(item.icon, icons::INLINE),
-                name,
-                holds_selected,
-                note.unwrap_or_else(|| space::horizontal().into()),
-            ]
-            .spacing(6)
-            .height(ROW_HEIGHT)
-            .align_y(Alignment::Center),
-        )
-        .padding(Padding::from([0, 8]).left(indent - EXPANDER_SIZE))
-        .style(theme::list_row(selected, hovered))
+        let icon: Element<'a, Message> = if item.construction {
+            icons::tinted(item.icon, icons::INLINE, |p| p.sketching.construction).into()
+        } else {
+            icons::icon(item.icon, icons::INLINE)
+        };
+        let left = indent - EXPANDER_SIZE;
+        let row = row![
+            expander,
+            icon,
+            name,
+            holds_selected,
+            note.unwrap_or_else(|| space::horizontal().into()),
+        ]
+        .spacing(ITEM_SPACING)
+        .height(ROW_HEIGHT)
+        .align_y(Alignment::Center);
+        let row: Element<'a, Message> = if item.construction {
+            stack![row, construction_rail(EXPANDER_SIZE + ITEM_SPACING)].into()
+        } else {
+            row.into()
+        };
+        container(row)
+            .padding(Padding::from([0, 8]).left(left))
+            .style(theme::list_row(selected, hovered))
     };
     let row = mouse_area(hover(
         content(false, expander.clone().view()),

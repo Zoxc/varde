@@ -1581,8 +1581,9 @@ bar says why (`EditError::Sketch`).
   dot in a selected row's colour after its name. A curve's note is its size (`dimension::size_note`: a
   line's length, a circle's diameter, an arc's radius, or the other of
   the two a driving dimension measures), in the Dimension icons' accent
-  where a driving dimension sets it, else faint, with "Construction"
-  after it; a point's is where it is. Its context menu
+  where a driving dimension sets it, else faint; a construction curve's
+  icon is in the construction colour, with a rail of three short faded
+  dashes left of it (`construction_rail`). A point's note is where it is. Its context menu
   (`RowMenu::Item`) deletes it (`Edit::DeleteItem`), or the selection if
   it's among it; a point two curves or more are made from, or a closed
   arc's (`Sketch::detachable`: not the origin's nor a link's) has Detach
