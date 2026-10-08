@@ -215,8 +215,9 @@ fn empty_note<'a>(note: impl text::IntoFragment<'a>) -> Element<'a, Message> {
 
 /// The features in the order they were added, the `selected` one
 /// highlighted, the rollback marker before the feature `rollback` names
-/// (at the end if none), the features after it faint, labelled and fixed
-/// while it's only there as a feature is edited, the one `menu` is on with its context menu open, which
+/// (at the end if none), the features after it faint, labelled (rolled
+/// back or forward from the document's marker) and fixed while it's only
+/// there as a feature is edited, unlabelled at the end, the one `menu` is on with its context menu open, which
 /// right-clicking a feature asks for, those `unsolved` or
 /// `failed` marked. Features can only be deleted if the document is
 /// `editable`. The row `renaming` is of holds the rename field.
@@ -244,7 +245,17 @@ fn timeline<'a>(
     let kept = rollback
         .and_then(|until| ids.iter().position(|&id| id == until))
         .unwrap_or(ids.len());
-    let label = editing.then_some("Rolled back");
+    // While a feature is edited, which way that moved the marker from
+    // where the document has it; nothing at the end where the document
+    // has it there too, as for a new feature.
+    let set = (document.rollback())
+        .and_then(|until| ids.iter().position(|&id| id == until))
+        .unwrap_or(ids.len());
+    let label = (editing && (kept < ids.len() || kept != set)).then_some(if kept > set {
+        "Rolled forward"
+    } else {
+        "Rolled back"
+    });
     let marker = crate::rollback::marker(label);
     let mut rows: Vec<Element<'a, Message>> = features
         .iter()

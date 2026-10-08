@@ -816,8 +816,11 @@ dropped), or while a feature is edited (a sketch entered, an
 operation opened from its row) the feature after it, those after it
 left out; a new operation being set up has none, as it goes last. The
 Timeline draws the marker (`view/src/rollback.rs`) between the rows,
-the rows after it faint, labelled "Rolled back" and fixed while a
-feature is edited, else dragged to the gap nearest the cursor
+the rows after it faint, labelled and fixed while a
+feature is edited ("Rolled back", or "Rolled forward" past the
+document's marker; no label at the end if the document's
+marker is there too; labelled, it's in the Create
+tools' purple rather than the accent), else dragged to the gap nearest the cursor
 (`Look::DragRollback`, the model following) and dropped on release
 (`Edit::DropRollback`, one undo step); a row's menu has Roll back (or
 forward) here. Rolled back short of the end (not mid-drag, even over

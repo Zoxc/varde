@@ -30,29 +30,39 @@ static DIAMOND_HANDLE: LazyLock<svg::Handle> =
 const DIAMOND: f32 = 12.0;
 
 /// The marker, labelled `label` if there is one, as while a feature is
-/// edited. Plain widgets, not canvases, for wgpu's GL backend, which
-/// resolves canvas meshes only inside the last one's scissor rect and
-/// left stale lines down the list (see `notes/upstream/wgpu.md`).
+/// edited, and then in the Create tools' colour rather than the accent.
+/// Plain widgets, not canvases, for wgpu's GL backend, which resolves
+/// canvas meshes only inside the last one's scissor rect and left stale
+/// lines down the list (see `notes/upstream/wgpu.md`).
 pub(crate) fn marker<'a>(label: Option<&'a str>) -> Element<'a, Message> {
+    let moved = label.is_some();
+    let color = move |theme: &Theme| {
+        let palette = theme::palette(theme);
+        if moved {
+            palette.icons.solid.line
+        } else {
+            palette.accent
+        }
+    };
     let diamond = svg(DIAMOND_HANDLE.clone())
         .width(DIAMOND)
         .height(DIAMOND)
-        .style(|theme: &Theme, _| svg::Style {
-            color: Some(theme::palette(theme).accent),
+        .style(move |theme: &Theme, _| svg::Style {
+            color: Some(color(theme)),
         });
     let label = label.map(|label| {
         text(label)
             .size(10.5)
             .font(SEMIBOLD)
-            .style(|theme: &Theme| text::Style {
-                color: Some(theme::palette(theme).accent),
+            .style(move |theme: &Theme| text::Style {
+                color: Some(color(theme)),
             })
     });
     let line = container(space::horizontal())
         .width(Length::Fill)
         .height(2)
-        .style(|theme: &Theme| container::Style {
-            background: Some(accent(theme, 0.6).into()),
+        .style(move |theme: &Theme| container::Style {
+            background: Some(faded(color(theme), 0.6).into()),
             border: iced::border::rounded(1),
             ..container::Style::default()
         });
@@ -152,10 +162,14 @@ pub(crate) fn draggable<'a>(
 
 /// The accent the marker is drawn in, a share of it for the line.
 fn accent(theme: &Theme, share: f32) -> Color {
-    let accent = theme::palette(theme).accent;
+    faded(theme::palette(theme).accent, share)
+}
+
+/// `color` with `share` of its opacity.
+fn faded(color: Color, share: f32) -> Color {
     Color {
-        a: accent.a * share,
-        ..accent
+        a: color.a * share,
+        ..color
     }
 }
 
