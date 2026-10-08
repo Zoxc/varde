@@ -1836,11 +1836,15 @@ fn group_row<'a>(label: &'a str, count: usize) -> Row<'a, Message> {
 fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Message> {
     let id = link.link;
     let made = sketch.sketch.link(id);
+    // Selected when its curves are, as a click on one in the viewport
+    // selects it without its points; a link of points alone, when they are.
     let selected = made.is_some_and(|made| {
-        !made.points.is_empty()
-            && made
-                .items()
-                .all(|item| sketch.selection.contains(&item.into()))
+        let items = if made.curves.is_empty() {
+            &made.points
+        } else {
+            &made.curves
+        };
+        !items.is_empty() && (items.iter()).all(|&item| sketch.selection.contains(&item.into()))
     });
     let icon = match link.kind {
         LinkKind::Project => Icon::Project,
