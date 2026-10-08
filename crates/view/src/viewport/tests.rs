@@ -595,12 +595,10 @@ fn a_region_with_a_hole_is_shaded_around_it() {
     assert_ne!(plate, plain_plate, "the plate is shaded");
     assert_ne!(hole, plain_hole, "the hole's inside is a region too");
     assert_eq!(outside, plain_outside, "outside isn't");
-    let [hovered_plate, around, _] = at(&shown(true, Some(spots[0])));
-    assert_ne!(hovered_plate, plate, "the plate is highlighted");
-    assert_eq!(around, hole, "its hole isn't");
-    let [beside, hovered_hole, _] = at(&shown(true, Some(spots[1])));
-    assert_eq!(beside, plate, "the plate isn't");
-    assert_ne!(hovered_hole, hole, "the hole is highlighted");
+    // Regions aren't picked in a sketch, so hovering one doesn't light it.
+    for spot in &spots[..2] {
+        assert_eq!(at(&shown(true, Some(*spot))), [plate, hole, outside]);
+    }
 }
 
 /// The messages the widget over [`cube`] seen from the top sends for

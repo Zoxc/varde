@@ -196,9 +196,6 @@ pub(crate) struct Input {
     /// The snap last sent to the app ([`Look::Snap`]), so it's sent again
     /// only when it changes.
     snap: Option<Snap>,
-    /// The region under the cursor as it last moved, so it's drawn again
-    /// when that changes.
-    region: Option<usize>,
     /// The near misses last found, and for what, so they're only paired
     /// again when the profiles or the zoom change.
     near: RefCell<Option<Near>>,
@@ -468,8 +465,6 @@ impl<'a> Sketching<'a> {
                 let under = over.and_then(|at| projector.cursor(at));
                 let hover = under.and_then(|cursor| self.hit(cursor));
                 let changed = std::mem::replace(&mut input.hover, hover) != hover;
-                let region = under.and_then(|cursor| self.region(hover, cursor));
-                let changed = changed || std::mem::replace(&mut input.region, region) != region;
                 if let Some(pointed) = self.point_to(input, under, modifiers) {
                     return Some(pointed);
                 }
@@ -480,7 +475,7 @@ impl<'a> Sketching<'a> {
             }
             mouse::Event::CursorLeft => {
                 input.cursor = None;
-                let hovered = input.hover.take().is_some() | input.region.take().is_some();
+                let hovered = input.hover.take().is_some();
                 if let Some(snapped) = self.point_to(input, None, modifiers) {
                     return Some(snapped);
                 }
@@ -728,16 +723,6 @@ impl<'a> Sketching<'a> {
     fn spline_hovered(&self, hit: Option<Selectable>) -> Option<Id> {
         (hit.and_then(Selectable::item))
             .filter(|&id| self.editable && self.sketch.kind(id) == Some(Kind::Spline))
-    }
-
-    /// The region under `cursor`, highlighted, see
-    /// [`Profiles::region_at`]: only without a tool, and with no item
-    /// `hover`ed, which is highlighted instead.
-    fn region(&self, hover: Option<Selectable>, cursor: Cursor) -> Option<usize> {
-        if hover.is_some() || self.tool.is_some() {
-            return None;
-        }
-        self.profiles?.region_at(cursor.at)
     }
 
     /// The near misses of the sketch's profiles seen through `projector`:
@@ -1504,14 +1489,6 @@ impl<'a> Sketching<'a> {
         let spot = snap.filter(|_| drawing).or(dragged).filter(Snap::snapped);
         if let Some(spot) = spot {
             layer.point(spot.at, snap_disc(colors.point));
-        }
-        let region = cursor
-            .filter(|_| still)
-            .and_then(|cursor| Some((self.profiles?, self.region(input.hover, cursor)?)));
-        if let Some((profiles, region)) = region
-            && let Some(region) = profiles.regions.get(region)
-        {
-            fill_region(&mut layer, region, colors.region_hovered);
         }
         let hovered =
             (self.hovered.and_then(Selectable::item)).and_then(|id| self.sketch.dimension(id));

@@ -1784,10 +1784,7 @@ failures show").
   their mirror images in the line hovered; Fillet's and Chamfer's corner
   hovered with its lines, then picked as selected with the fillet or
   chamfer through the cursor, or as typed, in the preview colour), the
-  dimensions' arrowheads, without a tool the region under the cursor when
-  no item is (`Profiles::region_at`, filled in
-  `SketchColors::region_hovered`; the cursor moving asks for a redraw only
-  when it's another, `Input::region`), a ring in `SketchColors::near_miss`
+  dimensions' arrowheads, a ring in `SketchColors::near_miss`
   (the Timeline's failed text's, `danger_strong`), `NEAR_MISS_RADIUS` (7)
   pixels out, between each pair of open ends within `NEAR_MISS_GAP` (6) pixels at the
   target (`Projector::pixel`), paired again only when the profiles or the

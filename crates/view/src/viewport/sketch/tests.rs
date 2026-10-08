@@ -1264,71 +1264,6 @@ fn each_region_is_shaded_on_its_own_under_the_rest() {
 }
 
 #[test]
-fn the_region_under_the_cursor_is_highlighted() {
-    let sketch = plate();
-    let none = BTreeSet::new();
-    let profiles = found(&sketch);
-    let regions = &profiles.as_ref().unwrap().regions;
-    let colors = Mode::Light.palette().sketching;
-    let highlighted = |index: usize| {
-        let mut layer = SketchLayer::default();
-        fill_region(&mut layer, &regions[index], colors.region_hovered);
-        layer
-    };
-    let plate_region = regions.iter().position(|r| !r.holes.is_empty()).unwrap();
-    let hole_region = 1 - plate_region;
-    let sketching = profiled(&sketch, &none, None, Some(&profiles));
-    let viewport = shown(sketching.clone());
-    let mut state = Interaction::default();
-    let hover = |state: &mut Interaction, x, y| {
-        let at = screen_at(x, y);
-        let action = viewport.update(state, &moved(at), bounds(), mouse::Cursor::Available(at));
-        let live = layers(&sketching, state).1;
-        (action.is_some(), live)
-    };
-    // On the plate, then in its hole, which is a region of its own.
-    assert_eq!(
-        hover(&mut state, 5.0, 4.0),
-        (true, highlighted(plate_region))
-    );
-    assert_eq!(state.sketch.region, Some(plate_region));
-    assert_eq!(
-        hover(&mut state, 5.5, 4.0),
-        (false, highlighted(plate_region))
-    );
-    assert_eq!(
-        hover(&mut state, 1.0, 1.0),
-        (true, highlighted(hole_region))
-    );
-    // Outside, nothing.
-    assert_eq!(hover(&mut state, 10.0, 0.0), (true, SketchLayer::default()));
-    assert_eq!(state.sketch.region, None);
-    // An item under the cursor is highlighted instead.
-    let (_, live) = hover(&mut state, 7.8, 0.0);
-    let mut expected = SketchLayer::default();
-    let side = [DVec2::new(8.0, -6.0), DVec2::new(8.0, 6.0)];
-    expected.polyline(
-        Space::Sketch,
-        &side,
-        line_style(colors.hovered, HOVERED_WIDTH, false),
-    );
-    assert_eq!(live, expected);
-
-    // Not with a tool, which shows what it would draw instead.
-    let tool = testing::tool(Tool::Line, &[], &[]);
-    let viewport = shown(profiled(&sketch, &none, Some(tool), Some(&profiles)));
-    let mut state = Interaction::default();
-    let at = screen_at(5.0, 4.0);
-    viewport.update(
-        &mut state,
-        &moved(at),
-        bounds(),
-        mouse::Cursor::Available(at),
-    );
-    assert_eq!(state.sketch.region, None);
-}
-
-#[test]
 fn open_ends_a_few_pixels_apart_are_marked_at_any_zoom() {
     // Two lines along x, 0.3 apart: 3 pixels through the top camera.
     let mut sketch = Sketch::default();
@@ -1379,35 +1314,6 @@ fn open_ends_a_few_pixels_apart_are_marked_at_any_zoom() {
         &near.as_ref().unwrap().profiles,
         profiles.as_ref().unwrap()
     ));
-}
-
-#[test]
-fn a_region_stays_highlighted_while_pressed_as_an_item_does() {
-    let sketch = plate();
-    let none = BTreeSet::new();
-    let profiles = found(&sketch);
-    let regions = &profiles.as_ref().unwrap().regions;
-    let plate_region = regions.iter().position(|r| !r.holes.is_empty()).unwrap();
-    let colors = Mode::Light.palette().sketching;
-    let mut highlighted = SketchLayer::default();
-    fill_region(
-        &mut highlighted,
-        &regions[plate_region],
-        colors.region_hovered,
-    );
-    let sketching = profiled(&sketch, &none, None, Some(&profiles));
-    let viewport = shown(sketching.clone());
-    let mut state = Interaction::default();
-    let at = screen_at(5.0, 4.0);
-    feed(&viewport, &mut state, at, &[moved(at), press()]);
-    assert_eq!(layers(&sketching, &state).1, highlighted);
-    // Dragging a box, it isn't.
-    let to = screen_at(6.0, 5.0);
-    feed(&viewport, &mut state, to, &[moved(to)]);
-    let unshaded = profiled(&sketch, &none, None, None);
-    let boxed = layers(&unshaded, &state).1;
-    assert!(!boxed.is_empty(), "the box");
-    assert_eq!(layers(&sketching, &state).1, boxed);
 }
 
 /// Where the viewport's cursor is in the sketch, with it at `at`.
