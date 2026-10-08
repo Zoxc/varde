@@ -52,6 +52,7 @@ const I = {
   trim: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path class="a" d="M8.2 8.4L20 17M8.2 15.6L20 7"/>',
   dim: '<path class="r" d="M4 7v10M20 7v10"/><path d="M5 12h14"/><path class="a" d="M7.5 9.5L5 12l2.5 2.5M16.5 9.5L19 12l-2.5 2.5"/>',
   constrain: '<rect class="t" x="5" y="11" width="14" height="9" rx="1.5"/><path class="a" d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  eq: '<path d="M5 9h14M5 15h14"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
   edit: '<path d="M14.5 4.5l5 5L9 20H4v-5z"/>',
   eye: '<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/>',
@@ -331,26 +332,28 @@ const PLANES = {
 const SKETCHES = {
   s1: {
     plane: 'side', closed: [[0, 0], [80, 0], [80, 10], [10, 10], [10, 70], [0, 70]], circles: [],
-    dims: [{ a: [0, -9], b: [80, -9], t: '80' }, { a: [-9, 0], b: [-9, 70], t: '70' }, { a: [89, 0], b: [89, 10], t: '10' }, { a: [0, 79], b: [10, 79], t: '10' }],
+    dims: [{ a: [0, -9], b: [80, -9], t: '80', on: 0 }, { a: [-9, 0], b: [-9, 70], t: '70', on: 5 }, { a: [89, 0], b: [89, 10], t: '10', on: 1 }, { a: [0, 79], b: [10, 79], t: '10', on: 4 },
+      // A driven (reference) dimension: it reads the upright's inner edge, which the others set.
+      { a: [17, 10], b: [17, 70], t: '60', ref: true }],
     cons: [{ at: 2, a: [0, 0], b: [80, 10] }, { at: 5, c: [10, 10], r: 10 }],
     // A line projected from elsewhere in the design, and a spline beside the upright.
     links: [{ at: 8, a: [25, 25], b: [70, 25] }], splines: [{ at: 9, p: [[25, 38], [38, 52], [55, 42], [70, 58]] }],
-    summary: '7 lines · 1 spline · 4 dimensions',
+    summary: '7 lines · 1 spline · 5 dimensions',
   },
   s2: {
-    plane: 'base-top', circles: [{ c: [50, 25], r: 8 }], cons: [{ at: 0, a: [20, 25], b: [80, 25] }],
+    plane: 'base-top', circles: [{ c: [50, 25], r: 8, dimmed: true }], cons: [{ at: 0, a: [20, 25], b: [80, 25] }],
     dims: [{ a: [50, -8], b: [80, -8], t: '30' }, { a: [88, 0], b: [88, 25], t: '25' }], labels: [{ p: [64, 37], t: 'Ø16' }],
     summary: '1 circle · 3 dimensions',
   },
   s3: {
-    plane: 'up-x', circles: [{ c: [25, 45], r: 7 }], cons: [{ at: 1, a: [25, 10], b: [25, 70] }],
+    plane: 'up-x', circles: [{ c: [25, 45], r: 7, dimmed: true }], cons: [{ at: 1, a: [25, 10], b: [25, 70] }],
     dims: [{ a: [25, 79], b: [50, 79], t: '25' }, { a: [58, 10], b: [58, 45], t: '35' }], labels: [{ p: [37, 57], t: 'Ø14' }],
     summary: '1 circle · 3 dimensions',
   },
   // A turned post's half section beside the bracket, its last line the axis Revolve 1 turns it about.
   s4: {
     plane: 'plane-xz', closed: [[115, 0], [132, 0], [132, 6], [122, 10], [122, 34], [128, 38], [128, 42], [115, 42]],
-    dims: [{ a: [115, -9], b: [132, -9], t: '17' }, { a: [137, 0], b: [137, 42], t: '42' }, { a: [115, 47], b: [128, 47], t: '13' }],
+    dims: [{ a: [115, -9], b: [132, -9], t: '17', on: 0 }, { a: [137, 0], b: [137, 42], t: '42', on: 7 }, { a: [115, 47], b: [128, 47], t: '13', on: 6 }],
     summary: '8 lines · 3 dimensions',
   },
 };
@@ -869,10 +872,10 @@ function sketchCurves(id) {
   const len = (a, b) => fmtP(Math.hypot(b[0] - a[0], b[1] - a[1])) + ' mm';
   const out = [];
   const c = s.closed || [];
-  c.forEach((p, i) => out.push({ kind: 'line', size: len(p, c[(i + 1) % c.length]) }));
-  for (const k of s.circles || []) out.push({ kind: 'circle', size: 'Ø' + fmtP(2 * k.r) + ' mm' });
-  for (const k of s.cons || []) out.splice(k.at, 0, { kind: k.r ? 'circle' : 'line', size: k.r ? 'Ø' + fmtP(2 * k.r) + ' mm' : len(k.a, k.b), cons: true });
-  for (const k of s.links || []) out.splice(k.at, 0, { kind: 'line', size: len(k.a, k.b), link: true });
+  c.forEach((p, i) => out.push({ kind: 'line', size: len(p, c[(i + 1) % c.length]), driven: !(s.dims || []).some(d => d.on === i && !d.ref) }));
+  for (const k of s.circles || []) out.push({ kind: 'circle', size: 'Ø' + fmtP(2 * k.r) + ' mm', driven: !k.dimmed });
+  for (const k of s.cons || []) out.splice(k.at, 0, { kind: k.r ? 'circle' : 'line', size: k.r ? 'Ø' + fmtP(2 * k.r) + ' mm' : len(k.a, k.b), cons: true, driven: true });
+  for (const k of s.links || []) out.splice(k.at, 0, { kind: 'line', size: len(k.a, k.b), link: true, driven: true });
   for (const k of s.splines || []) out.splice(k.at, 0, { kind: 'spline', size: k.p.length + ' points' });
   const n = { line: 0, circle: 0, spline: 0 }, names = { line: 'Line ', circle: 'Circle ', spline: 'Spline ' };
   for (const k of out) k.name = names[k.kind] + ++n[k.kind];
@@ -881,12 +884,14 @@ function sketchCurves(id) {
 
 // The Sketch tab: the sketch's Geometry list, construction curves marked
 // with a dashed rail by their icon, which is in the construction colour;
-// a link's icon is in the link colour.
+// a link's icon is in the link colour. A size the other constraints set,
+// not a driving dimension of its own, is driven: in a green pill after an
+// equals sign; one a driving dimension gives is faint.
 function geometry() {
   const curves = sketchCurves(st.sketch.id);
   const header = (label, n) => `<div class="row group"><span class="ic">${icon('chev')}</span><span class="name">${label} <span class="meta">${n}</span></span></div>`;
   const tint = k => k.cons ? ' cons' : k.link ? ' link' : '';
-  const row = k => `<div class="row${k.cons ? ' cons' : ''}" style="padding-left:24px"><span class="ic">${icon(k.kind, 'i' + tint(k))}</span><span class="name">${k.name}</span><span class="meta">${k.size}</span></div>`;
+  const row = k => `<div class="row${k.cons ? ' cons' : ''}" style="padding-left:24px"><span class="ic">${icon(k.kind, 'i' + tint(k))}</span><span class="name">${k.name}</span>${k.driven ? `<span class="meta drv"><svg class="i" viewBox="0 0 24 24">${I.eq}</svg>${k.size}</span>` : `<span class="meta">${k.size}</span>`}</div>`;
   return header('Geometry', curves.length) + curves.map(row).join('');
 }
 
@@ -1303,10 +1308,15 @@ function sketchGeomSvg(id, planeKey, withDims) {
   }
   if (withDims) {
     for (const d of s.dims || []) {
-      const a = at(d.a), b = at(d.b);
+      const a = at(d.a), b = at(d.b), m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
       out += `<line class="sk-dim" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`;
       out += `<circle class="sk-dim-end" cx="${a[0]}" cy="${a[1]}" r=".7"/><circle class="sk-dim-end" cx="${b[0]}" cy="${b[1]}" r=".7"/>`;
-      out += `<text class="sk-label" x="${(a[0] + b[0]) / 2}" y="${(a[1] + b[1]) / 2}">${d.t}</text>`;
+      if (!d.ref) { out += `<text class="sk-label" x="${m[0]}" y="${m[1]}">${d.t}</text>`; continue; }
+      // A driven dimension's label as a driven size's row: a green pill, an equals sign before it.
+      const w = d.t.length * 2.5 + 7, x = m[0] - w / 2;
+      out += `<rect class="sk-drv" x="${x}" y="${m[1] - 2.8}" width="${w}" height="5.6" rx="2.8"/>`;
+      out += `<path class="sk-drv-eq" d="M${x + 1.6} ${m[1] - 0.6}h2.6M${x + 1.6} ${m[1] + 0.6}h2.6"/>`;
+      out += `<text class="sk-label sk-drv-label" x="${m[0] + 2.3}" y="${m[1]}">${d.t}</text>`;
     }
     for (const l of s.labels || []) { const [x, y] = at(l.p); out += `<text class="sk-label" x="${x}" y="${y}">${l.t}</text>`; }
   }

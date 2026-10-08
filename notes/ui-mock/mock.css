@@ -18,6 +18,7 @@
   --c-sketch: #0a95ad;
   --c-solid: #8a6fc4;
   --c-cons: #e0861a;
+  --driven: #3a9a5b;
   --c-insp: #13a08f;
   --c-link: #8e44c9;
   --c-handle: #8a6d3b;
@@ -65,6 +66,7 @@
   --c-sketch: #39b9cf;
   --c-solid: #a896d6;
   --c-cons: #f0a24a;
+  --driven: #3a9a5b;
   --c-insp: #3fcfbd;
   --c-link: #c08cf2;
   --c-handle: #c9a66b;
@@ -404,6 +406,9 @@ kbd {
 .row .eye:hover { color: var(--text); }
 .row.group { color: var(--muted); font-weight: 600; font-size: 11.5px; }
 .row.dim .name { color: var(--faint); }
+/* A driven size: what the other constraints set, in a green pill after an equals sign. */
+.row .meta.drv { display: flex; align-items: center; gap: 3px; padding: 0 6px 0 4px; border-radius: 8px; color: var(--text); background: color-mix(in srgb, var(--driven) 15%, transparent); }
+.row .meta.drv svg { width: 12px; height: 12px; color: var(--driven); }
 /* A feature that failed: its name, and an alert after it, in red. */
 .row.failed .name, .row .bad { color: var(--danger-text); }
 .row .bad { display: flex; margin-left: -3px; }
@@ -453,6 +458,9 @@ kbd {
 .sk-pt { fill: var(--halo); stroke: var(--accent); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
 .sk-dim { stroke: var(--text); stroke-opacity: .55; vector-effect: non-scaling-stroke; }
 .sk-dim-end { fill: var(--text); fill-opacity: .6; }
+.sk-drv { fill: var(--driven); fill-opacity: .15; }
+.sk-drv-eq { stroke: var(--driven); stroke-width: .5; }
+.sk-label.sk-drv-label { stroke: none; }
 .sk-label {
   font: 600 4.2px system-ui, sans-serif; fill: var(--text);
   paint-order: stroke; stroke: var(--halo); stroke-width: 1.4px; stroke-linejoin: round;
