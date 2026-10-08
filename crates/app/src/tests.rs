@@ -4700,6 +4700,23 @@ fn origin_objects_are_shown_and_hidden() {
     doc.look(Look::LeaveOrigin(OriginObject::Plane(OriginPlane::YZ)));
     assert_eq!(origin_drawn(&doc).hovered, None);
 
+    // Toggled from its row, hovered as it is, the change shows: shown,
+    // it stays emphasised, and hidden, it's no longer drawn.
+    let yz = OriginObject::Plane(OriginPlane::YZ);
+    doc.look(Look::HoverOrigin(Some(yz)));
+    doc.look(Look::ToggleOrigin(yz));
+    assert_eq!(origin_drawn(&doc).planes, [false, false, true]);
+    assert_eq!(origin_drawn(&doc).hovered, Some(part));
+    doc.objects_selected = vec![varde_view::ObjectRow::Origin(yz)];
+    doc.look(Look::ToggleOrigin(yz));
+    assert!(doc.objects_selected.is_empty());
+    assert_eq!(
+        origin_drawn(&doc).selected,
+        [false; varde_render::OriginPart::COUNT]
+    );
+    assert_eq!(origin_drawn(&doc).planes, [false; 3]);
+    assert_eq!(origin_drawn(&doc).hovered, None);
+
     // A plane hovered in the viewport, only while one is picked.
     doc.look(Look::PickPlane);
     doc.look(Look::HoverPlane(OriginPlane::XY));

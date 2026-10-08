@@ -1204,6 +1204,15 @@ impl Doc {
             Look::ToggleOrigin(object) => {
                 let shown = object.shown(&mut self.origin);
                 *shown = !*shown;
+                // The row's hovered as its toggle's clicked, which would
+                // draw the object hidden anyway, as its selection would:
+                // hiding it drops the hover, to show the change, until the
+                // row's entered again, and deselects it.
+                if !*shown {
+                    self.origin_hover.take_if(|&mut hovered| hovered == object);
+                    let row = varde_view::ObjectRow::Origin(object);
+                    self.objects_selected.retain(|&selected| selected != row);
+                }
             }
             Look::ToggleExpanded(id) => self.toggle_expanded(id),
             Look::SelectBox { ids, add } => self.select_box(ids, add),
