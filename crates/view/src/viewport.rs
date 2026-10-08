@@ -33,7 +33,7 @@ use crate::chrome::{Hint, chord_hint, mouse_hint};
 use crate::errors::ShownErrors;
 use crate::icons::MouseButton;
 use crate::operation_panel::placed;
-use crate::overlaps::{self, OverlapItems, Overlaps};
+use crate::overlaps::{self, OverlapItem, OverlapItems, Overlaps};
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
 use crate::projection::Projector;
 use crate::shortcut::Held;
@@ -741,16 +741,31 @@ impl Program<'_> {
         at: Point,
         near: Option<DVec3>,
     ) -> Option<OriginPlane> {
+        self.origin_planes_at(bounds, at, near).first().copied()
+    }
+
+    /// The origin planes drawn under the screen point `at`, nearest along
+    /// the cursor's ray first, as [`Program::origin_plane_at`] finds them.
+    fn origin_planes_at(
+        &self,
+        bounds: Rectangle,
+        at: Point,
+        near: Option<DVec3>,
+    ) -> Vec<OriginPlane> {
         let camera = &self.scene.camera;
-        let projector = Projector::world(camera, bounds.width, bounds.height)?;
+        let Some(projector) = Projector::world(camera, bounds.width, bounds.height) else {
+            return Vec::new();
+        };
         let pixel = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
-        let (from, direction) = projector.ray(pixel)?;
+        let Some((from, direction)) = projector.ray(pixel) else {
+            return Vec::new();
+        };
         let reach = f64::from(PLANE_REACH * camera.view_height());
         let along = |point: DVec3| (point - from).dot(direction) / direction.length_squared();
         let near = near.filter(|_| !self.scene.origin.planes_on_top);
         let limit = near.map_or(f64::INFINITY, along);
         let drawn = self.scene.origin.planes;
-        (OriginPlane::ALL.into_iter().zip(drawn))
+        let mut hits = (OriginPlane::ALL.into_iter().zip(drawn))
             .filter(|(_, drawn)| *drawn)
             .filter_map(|(plane, _)| {
                 let placement = plane.placement();
@@ -766,8 +781,9 @@ impl Program<'_> {
                 let inside = within(hit.dot(x)) && within(hit.dot(y));
                 (inside && t.is_finite() && t < limit).then_some((plane, t))
             })
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(plane, _)| plane)
+            .collect::<Vec<_>>();
+        hits.sort_by(|a, b| a.1.total_cmp(&b.1));
+        hits.into_iter().map(|(plane, _)| plane).collect()
     }
 
     fn pick_point(&self, picking: &ModelPicking<'_>, bounds: Rectangle, at: Point) -> Option<Pick> {
@@ -829,7 +845,8 @@ impl Program<'_> {
 
     /// Takes a frame drawn at `now` while the left button may be held
     /// on the model: held still for [`overlaps::HOLD_DELAY`] over more
-    /// than one face, edge or vertex, it lets go and lists them
+    /// than one face, edge or vertex (picking a plane, face that can
+    /// take the sketch), it lets go and lists them
     /// ([`Look::OpenOverlaps`]); over one or none it goes on as a click.
     fn hold(
         &self,
@@ -847,7 +864,7 @@ impl Program<'_> {
         let at = state.click?;
         let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
         let size = [bounds.width, bounds.height];
-        let picks = picking.index.overlaps(
+        let mut picks = picking.index.overlaps(
             &self.scene.camera,
             size,
             at,
@@ -855,17 +872,28 @@ impl Program<'_> {
             overlaps::OVERLAP_REACH,
             overlaps::MAX_OVERLAPS,
         );
+        // Picking a plane, only the faces that can take the sketch.
+        picks.retain(|pick| picking.planes.is_none() || picking.takes(pick.target));
         // The sketches' items there with them, as the cursor picks them
         // ([`Program::sketch_point`]).
         let hidden_by = self.sketching.is_none().then_some(picking.index);
         let camera = &self.scene.camera;
         let reach = overlaps::OVERLAP_REACH;
         let hits = sketch_pick::items_near(&picking.sketches, at, camera, bounds, reach, hidden_by);
-        let items = if hits.is_empty() {
+        // The origin planes there first, nearest the eye first, while
+        // they're picked.
+        let planes = match picking.origin_planes {
+            true => self.origin_planes_at(bounds, state.click?, None),
+            false => Vec::new(),
+        };
+        let most = overlaps::MAX_OVERLAPS;
+        let items = if hits.is_empty() && planes.is_empty() {
             OverlapItems::Model(picks)
         } else {
-            let most = overlaps::MAX_OVERLAPS;
-            OverlapItems::Mixed(sketch_pick::listed_with(hits, picks, camera, size, most))
+            let mut items: Vec<OverlapItem> = planes.into_iter().map(OverlapItem::Origin).collect();
+            items.extend(sketch_pick::listed_with(hits, picks, camera, size, most));
+            items.truncate(most);
+            OverlapItems::Mixed(items)
         };
         if items.len() < 2 {
             return None;
@@ -909,10 +937,8 @@ impl Program<'_> {
                     _ => false,
                 };
                 state.click = clicks.then_some(position);
-                // Held still on the model, it lists what overlaps there,
-                // unless a plane is picked.
-                let lists = button == mouse::Button::Left
-                    && (self.picking.as_ref()).is_some_and(|picking| picking.planes.is_none());
+                // Held still on the model, it lists what overlaps there.
+                let lists = button == mouse::Button::Left && self.picking.is_some();
                 state.held = lists.then(iced::time::Instant::now);
                 Some(match state.held {
                     Some(when) => {

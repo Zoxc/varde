@@ -135,6 +135,83 @@ fn a_vertex_hovered_and_clicked_is_drawn_and_told_of() {
 }
 
 #[test]
+fn a_face_listed_while_picking_a_plane_is_picked_for_the_sketch() {
+    let (mut doc, _requests) = example();
+    doc.look(Look::PickPlane);
+    let index = doc.feed.pick_index();
+    let picks = index.overlaps(&top(), SIZE, DVec2::new(250.0, 125.0), Picks::All, 8.0, 12);
+    // The top, then the bottom under it.
+    assert_eq!(picks.len(), 2);
+    doc.look(Look::OpenOverlaps(varde_view::Overlaps {
+        held: DVec2::ZERO,
+        at: DVec2::ZERO,
+        items: varde_view::OverlapItems::Model(picks),
+    }));
+    assert!(doc.overlaps.is_some());
+    // Each row picks alone: no ticks, and Ctrl held picks all the same.
+    let ticks = doc.overlap_ticks().unwrap();
+    assert!(
+        ticks.iter().all(|tick| tick.only && !tick.ticked),
+        "{ticks:?}"
+    );
+    doc.look(Look::ChooseOverlap {
+        index: 1,
+        add: true,
+    });
+    assert!(doc.overlaps.is_none());
+    assert!(doc.picking_plane.is_none());
+    let session = doc
+        .sketch
+        .as_ref()
+        .expect("a sketch on the bottom is entered");
+    let document = doc.editor.document();
+    let plane = match &document.feature(session.feature).unwrap().kind {
+        varde_document::FeatureKind::Sketch { plane, .. } => plane,
+        kind => panic!("{kind:?}"),
+    };
+    assert!(
+        matches!(plane, varde_document::Plane::Face(face) if face.near.z.abs() < 1e-9),
+        "{plane:?}"
+    );
+}
+
+#[test]
+fn an_origin_plane_listed_while_picking_a_plane_is_hovered_and_picked() {
+    let (mut doc, _requests) = example();
+    doc.look(Look::PickPlane);
+    let index = doc.feed.pick_index();
+    let picks = index.overlaps(&top(), SIZE, DVec2::new(250.0, 125.0), Picks::All, 8.0, 12);
+    let mut items = vec![varde_view::OverlapItem::Origin(
+        varde_document::OriginPlane::XY,
+    )];
+    items.extend(picks.into_iter().map(varde_view::OverlapItem::Model));
+    doc.look(Look::OpenOverlaps(varde_view::Overlaps {
+        held: DVec2::ZERO,
+        at: DVec2::ZERO,
+        items: varde_view::OverlapItems::Mixed(items),
+    }));
+    doc.look(Look::HoverOverlap(Some(0)));
+    assert_eq!(doc.plane_hover, Some(varde_document::OriginPlane::XY));
+    doc.look(Look::HoverOverlap(None));
+    assert_eq!(doc.plane_hover, None);
+    doc.look(Look::ChooseOverlap {
+        index: 0,
+        add: false,
+    });
+    assert!(doc.overlaps.is_none());
+    let session = doc.sketch.as_ref().expect("a sketch on XY is entered");
+    let document = doc.editor.document();
+    let plane = match &document.feature(session.feature).unwrap().kind {
+        varde_document::FeatureKind::Sketch { plane, .. } => plane,
+        kind => panic!("{kind:?}"),
+    };
+    assert_eq!(
+        *plane,
+        varde_document::Plane::Origin(varde_document::OriginPlane::XY)
+    );
+}
+
+#[test]
 fn a_face_listed_where_faces_overlap_is_hovered_and_chosen() {
     let (mut doc, _requests) = example();
     let index = doc.feed.pick_index();

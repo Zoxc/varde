@@ -107,7 +107,8 @@ fn rows(items: &OverlapItems) -> Option<Vec<OverlapItem>> {
 /// new model, see [`Doc::follow_overlaps`].
 struct Row {
     item: OverlapItem,
-    named: Selected,
+    /// `None` for an origin plane, which needs no finding.
+    named: Option<Selected>,
     held: Option<HeldRef>,
     removed: bool,
 }
@@ -124,7 +125,7 @@ impl Doc {
                 self.picks()
                     && rows.iter().all(|row| match row {
                         OverlapItem::Model(pick) => pick.model == model,
-                        OverlapItem::Sketch(_) => true,
+                        OverlapItem::Sketch(_) | OverlapItem::Origin(_) => true,
                     })
             }
         };
@@ -142,6 +143,7 @@ impl Doc {
                         OverlapItem::Sketch(varde_view::SketchItem { sketch, item }) => {
                             (Some(Selected::SketchItem { sketch, item }), None)
                         }
+                        OverlapItem::Origin(_) => (None, None),
                     })
                     .unzip()
             }
@@ -173,7 +175,7 @@ impl Doc {
         let mixed = matches!(listed.list.items, OverlapItems::Mixed(_));
         let current = |item: &OverlapItem| match item {
             OverlapItem::Model(pick) => pick.model == model,
-            OverlapItem::Sketch(_) => true,
+            OverlapItem::Sketch(_) | OverlapItem::Origin(_) => true,
         };
         if items.iter().all(current) {
             return;
@@ -186,6 +188,16 @@ impl Doc {
         let index = self.feed.pick_index();
         let mut rows: Vec<Row> = Vec::new();
         for (row, &item) in items.iter().enumerate() {
+            // An origin plane is on every model.
+            if let OverlapItem::Origin(_) = item {
+                rows.push(Row {
+                    item,
+                    named: None,
+                    held: None,
+                    removed: false,
+                });
+                continue;
+            }
             let Some(named) = listed.names.get(row).copied().flatten() else {
                 continue;
             };
@@ -196,7 +208,7 @@ impl Doc {
                 {
                     rows.push(Row {
                         item,
-                        named,
+                        named: Some(named),
                         held: None,
                         removed: false,
                     });
@@ -217,7 +229,7 @@ impl Doc {
                     if !again {
                         rows.push(Row {
                             item: OverlapItem::Model(found),
-                            named,
+                            named: Some(named),
                             held,
                             removed: false,
                         });
@@ -227,7 +239,7 @@ impl Doc {
                 // of this model, never hovered nor clicked.
                 None if held.is_some_and(|held| self.motion_holds(&held)) => rows.push(Row {
                     item: OverlapItem::Model(Pick { model, ..pick }),
-                    named,
+                    named: Some(named),
                     held,
                     removed: true,
                 }),
@@ -246,12 +258,12 @@ impl Doc {
                 OverlapItems::Model(
                     (items.filter_map(|item| match item {
                         OverlapItem::Model(pick) => Some(pick),
-                        OverlapItem::Sketch(_) => None,
+                        OverlapItem::Sketch(_) | OverlapItem::Origin(_) => None,
                     }))
                     .collect(),
                 )
             };
-            listed.names = rows.iter().map(|row| Some(row.named)).collect();
+            listed.names = rows.iter().map(|row| row.named).collect();
             listed.held = rows.iter().map(|row| row.held).collect();
             listed.removed = rows.iter().map(|row| row.removed).collect();
             listed.hovered = None;
@@ -276,6 +288,11 @@ impl Doc {
         let removed = listed.removed(row);
         match rows(&listed.list.items).and_then(|rows| rows.get(row).copied()) {
             Some(OverlapItem::Sketch(item)) => self.hover_sketch(Some(item)),
+            // In the model's place, as the viewport hovers it.
+            Some(OverlapItem::Origin(plane)) => {
+                self.hover(None);
+                self.plane_hover = Some(plane);
+            }
             // Removed, it's on no model shown to highlight.
             Some(OverlapItem::Model(pick)) => self.hover((!removed).then_some(pick)),
             None => self.unhover_overlap(),
@@ -302,6 +319,7 @@ impl Doc {
         let Some(mut listed) = self.overlaps.take() else {
             return;
         };
+        let add = add && !self.picks_only(&listed, row);
         if !add {
             self.unhover_overlap();
         }
@@ -310,6 +328,29 @@ impl Doc {
                 self.drop_motion_ref(&held);
             }
             if add {
+                self.overlaps = Some(listed);
+            }
+            return;
+        }
+        // Picking a plane, a face or origin plane chosen is picked for the
+        // sketch, which closes the list.
+        if let Some(picking) = &self.picking_plane {
+            let picked = rows(&listed.list.items)
+                .and_then(|rows| rows.get(row).copied())
+                .and_then(|item| match item {
+                    OverlapItem::Model(Pick {
+                        target: Picked::Face(face),
+                        at,
+                        ..
+                    }) => (picking.pick.face_ref(self.feed.pick_index(), face, at))
+                        .map(varde_view::Edit::FacePicked),
+                    OverlapItem::Origin(plane) => Some(varde_view::Edit::PlanePicked(plane)),
+                    _ => None,
+                });
+            if let Some(picked) = picked {
+                self.unhover_overlap();
+                self.update(picked);
+            } else if add {
                 self.overlaps = Some(listed);
             }
             return;
@@ -327,6 +368,10 @@ impl Doc {
                         double: false,
                     },
                     OverlapItem::Sketch(item) => Look::ClickSketch { item, add },
+                    // As its toolbar button picks it.
+                    OverlapItem::Origin(plane) => {
+                        Look::Motion(varde_view::MotionLook::OriginPlane(plane))
+                    }
                 })
             }
         };
@@ -363,13 +408,14 @@ impl Doc {
         let rows = rows(&listed.list.items)?;
         let plain = |ticked| OverlapTick {
             ticked,
-            note: OverlapNote::None,
+            ..OverlapTick::default()
         };
         if self.picks_outside() {
             let marked = self.outside_marked();
             let ticks = rows.iter().map(|row| match row {
                 OverlapItem::Model(pick) => plain(self.outside_has(*pick)),
                 OverlapItem::Sketch(item) => plain(marked.contains(item)),
+                OverlapItem::Origin(_) => plain(false),
             });
             return Some(ticks.collect());
         }
@@ -389,6 +435,7 @@ impl Doc {
                     plain(selection.model() == Some(pick.model) && targets.contains(&pick.target))
                 }
                 OverlapItem::Sketch(item) => plain(items_selected.contains(item)),
+                OverlapItem::Origin(_) => plain(false),
             });
             return Some(ticks.collect());
         }
@@ -402,6 +449,7 @@ impl Doc {
                 return OverlapTick {
                     ticked: held.is_some_and(|held| self.motion_holds(&held)),
                     note: OverlapNote::Removed,
+                    only: false,
                 };
             }
             // As `look_at` hands a click on.
@@ -417,14 +465,27 @@ impl Doc {
             };
             OverlapTick {
                 ticked,
-                note: OverlapNote::None,
+                ..OverlapTick::default()
             }
         };
         Some(
             (rows.into_iter().enumerate())
-                .map(|(row, item)| tick(row, item))
+                .map(|(row, item)| OverlapTick {
+                    only: self.picks_only(listed, row),
+                    ..tick(row, item)
+                })
                 .collect(),
         )
+    }
+
+    /// Whether a click on the list's row `row` picks its item alone,
+    /// never adding it to others: picking a plane, and an origin plane
+    /// anywhere ([`OverlapTick::only`]).
+    fn picks_only(&self, listed: &Listed, row: usize) -> bool {
+        self.picking_plane.is_some()
+            || (rows(&listed.list.items))
+                .and_then(|rows| rows.get(row).copied())
+                .is_some_and(|item| matches!(item, OverlapItem::Origin(_)))
     }
 
     /// Which rows [`Doc::overlap_ticks`] ticks.
@@ -464,5 +525,6 @@ impl Doc {
         if self.sketch.is_none() || self.picks_outside() {
             self.hover(None);
         }
+        self.plane_hover = None;
     }
 }

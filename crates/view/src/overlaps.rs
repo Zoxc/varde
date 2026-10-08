@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use iced::widget::{Space, button, checkbox, column, container, mouse_area, pin, row, stack, text};
 use iced::{Alignment, Element, Length};
-use varde_document::Document;
+use varde_document::{Document, OriginPlane};
 use varde_sketch::{Selectable, Sketch};
 
 use crate::pick::{Pick, Picked};
@@ -66,6 +66,8 @@ pub enum OverlapItem {
     Model(Pick),
     /// A finished sketch's curve or point.
     Sketch(SketchItem),
+    /// An origin plane, listed while one can be picked.
+    Origin(OriginPlane),
 }
 
 impl Overlaps {
@@ -102,6 +104,10 @@ pub struct OverlapTick {
     /// it as it is or take it out.
     pub ticked: bool,
     pub note: OverlapNote,
+    /// Whether a click on the row picks its item alone, never adding it
+    /// to others (picking a plane, an origin plane): it has no tick, and
+    /// `Ctrl` does nothing.
+    pub only: bool,
 }
 
 /// What a row's item is to the session, where that's more than the item.
@@ -143,7 +149,8 @@ fn list_height(rows: usize) -> f64 {
 /// given: a session's own picks, named as they are to it), over a layer filling the viewport
 /// that closes it on a press anywhere else. A row clicked selects its item
 /// alone (with `Ctrl`, `Cmd` on macOS, adds it or takes it out, the list
-/// kept open); its tick adds it or takes it out alone.
+/// kept open); its tick adds it or takes it out alone. A row picking its
+/// item only alone ([`OverlapTick::only`]) has no tick.
 pub(crate) fn view<'a>(
     overlaps: &Overlaps,
     sketch: Option<(&Sketch, &BTreeSet<Selectable>)>,
@@ -174,6 +181,7 @@ pub(crate) fn view<'a>(
                 .map(|item| match item {
                     OverlapItem::Model(pick) => selected(pick, &targets),
                     OverlapItem::Sketch(item) => items_selected.contains(item),
+                    OverlapItem::Origin(_) => false,
                 })
                 .collect()
         }
@@ -202,14 +210,18 @@ pub(crate) fn view<'a>(
                     model_name(pick.target, body, OverlapNote::None)
                 }
                 OverlapItem::Sketch(item) => sketch_item_name(document, item),
+                OverlapItem::Origin(plane) => format!("{} plane", plane.name()),
             })
             .collect(),
     };
     let rows = names.into_iter().enumerate().map(|(index, name)| {
-        let tick = checkbox(checked.get(index).copied().unwrap_or(false))
-            .size(15)
-            .style(theme::tick)
-            .on_toggle(move |_| Message::Look(Look::ToggleOverlap(index)));
+        let only = (ticks.and_then(|ticks| ticks.get(index))).is_some_and(|tick| tick.only);
+        let tick = (!only).then(|| {
+            checkbox(checked.get(index).copied().unwrap_or(false))
+                .size(15)
+                .style(theme::tick)
+                .on_toggle(move |_| Message::Look(Look::ToggleOverlap(index)))
+        });
         let label = row![tick, text(name)]
             .spacing(8)
             .height(Length::Fill)

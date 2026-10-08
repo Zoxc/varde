@@ -1512,3 +1512,43 @@ fn the_viewport_tells_its_shape_once_it_changes() {
     assert!(sent(Some(shape * 1.005)).is_none(), "within the slack");
     assert!(sent(None).is_none(), "nothing listens");
 }
+
+/// While origin planes are picked, a press held still lists the origin
+/// planes drawn there before the model's faces.
+#[test]
+fn a_press_held_still_lists_the_origin_planes_there_too() {
+    use iced::widget::shader::Program as _;
+    let plate = Plate::new();
+    let camera = plate.camera;
+    let mut program = plate.program(&camera, None);
+    program.scene.origin.planes = [true; 3];
+    if let Some(picking) = &mut program.picking {
+        picking.picks = Picks::Faces;
+        picking.origin_planes = true;
+    }
+    let mut state = Interaction::default();
+    let top = plate.at(glam::DVec3::new(10.0, -10.0, 10.0));
+    let cursor = mouse::Cursor::Available(top);
+    let sent: Vec<Message> = ([left(true), later()].iter())
+        .filter_map(|event| program.update(&mut state, event, Plate::bounds(), cursor))
+        .filter_map(|action| action.into_inner().0)
+        .collect();
+    let [Message::Look(Look::OpenOverlaps(list))] = &sent[..] else {
+        panic!("{sent:?}");
+    };
+    let crate::OverlapItems::Mixed(items) = &list.items else {
+        panic!("{list:?}");
+    };
+    // The XY plane under the top, then the top and the bottom.
+    assert!(
+        matches!(
+            items[..],
+            [
+                crate::OverlapItem::Origin(OriginPlane::XY),
+                crate::OverlapItem::Model(_),
+                crate::OverlapItem::Model(_)
+            ]
+        ),
+        "{items:?}"
+    );
+}

@@ -1295,8 +1295,11 @@ status bar names it ("Line 3", "Sketch 2").
 
 **Overlaps** (`view/src/overlaps.rs`, `app/src/doc/overlaps.rs`). The
 left button held still for `HOLD_DELAY` (500 ms), in a sketch without a
-tool or on the model while the cursor picks it (not picking a plane;
-in a sketch with Project or Intersect too),
+tool or on the model while the cursor picks it (picking a plane, only the
+faces that can take the sketch; in a sketch with Project or Intersect too),
+the origin planes drawn there listed first while they're picked
+(`ModelPicking::origin_planes`, nearest the eye first, hidden or not,
+`OverlapItem::Origin` in a mixed list, "XY plane"),
 lists what's there to choose from, when that's more than one item: the
 press asks for a redraw when it's due (`Action::request_redraw_at`,
 asked again by an earlier frame, as one sooner lets go of it) and that
@@ -1352,7 +1355,14 @@ takes the chain out.
 A row clicked (`ChooseOverlap`, the app filling in `add` from
 Ctrl/Cmd held) takes a `ClickGeometry`, `ClickModel` or `ClickSketch`
 on that item, so a session (measure, combine, move) or Project and
-Intersect (refusals included) take it as their click: alone it
+Intersect (refusals included) take it as their click; picking a plane,
+a face's row picks it for the sketch (`Edit::FacePicked`), an origin
+plane's too (`Edit::PlanePicked`), closing the list; elsewhere an origin
+plane's row is `MotionLook::OriginPlane`, as its toolbar button. Hovered,
+an origin plane's row hovers it in the model's place (`Doc::plane_hover`).
+A row whose click can only pick its item alone has no tick and ignores
+Ctrl (`OverlapTick::only`, `Doc::picks_only`): every row while picking a
+plane, and an origin plane's anywhere. Alone it
 closes the list; with `add` it adds or takes out, the list kept open
 (taken out of `Doc` meanwhile, so the click doesn't close it), as does
 the tick (`ToggleOverlap`). `Esc` closes it alone; anything else done but hovering and
