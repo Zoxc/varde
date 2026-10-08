@@ -144,6 +144,9 @@ impl Piece {
 
 /// The most labels drawn: past it the overlay is only clutter.
 const MOST: usize = 300;
+/// The most points of a face, edge or curve tried for one that shows
+/// to label it at.
+const TRIES: usize = 33;
 const TEXT_SIZE: f32 = 11.0;
 const LABEL_HEIGHT: f32 = 18.0;
 const RADIUS: f32 = 3.0;
@@ -402,7 +405,9 @@ impl Names<'_> {
                     a.distance_squared(centre)
                         .total_cmp(&b.distance_squared(centre))
                 });
-                if let Some(p) = centres.into_iter().take(8).find(|p| shows(*p, picked)) {
+                // Labelled where any of it shows, not only near its
+                // centre.
+                if let Some(p) = spread(&centres, 8, TRIES).find(|p| shows(*p, picked)) {
                     let n = normal_near(face as u32, p);
                     wanted.push(Wanted {
                         kind: Kind::Face,
@@ -433,12 +438,12 @@ impl Names<'_> {
                     continue;
                 };
                 let points: Vec<_> = line.iter().map(|&i| at(i)).collect();
-                let Some(p) = halfway(&points) else {
-                    continue;
-                };
-                // One of its faces must turn towards the eye there.
+                // Labelled at the point nearest its middle that shows,
+                // one of its faces turned towards the eye there.
                 let sides = self.index.edge_faces(edge as u32).unwrap_or_default();
-                if (picked || sides.iter().any(|&f| facing(f, p))) && shows(p, picked) {
+                if let Some(p) = out_from_middle(&points)
+                    .find(|&p| (picked || sides.iter().any(|&f| facing(f, p))) && shows(p, picked))
+                {
                     // The direction of its segment through `p`.
                     let tangent = (points.windows(2))
                         .map(|w| (w[1] - w[0], (w[0] + w[1]) / 2.0))
@@ -603,12 +608,9 @@ impl Names<'_> {
                     continue;
                 };
                 let points: Vec<DVec3> = flat.into_iter().map(world).collect();
-                let Some(p) = halfway(&points) else {
+                let Some(p) = out_from_middle(&points).find(|&p| in_view(p, picked)) else {
                     continue;
                 };
-                if !in_view(p, picked) {
-                    continue;
-                }
                 let tangent = (points.windows(2))
                     .map(|w| (w[1] - w[0], (w[0] + w[1]) / 2.0))
                     .min_by(|a, b| a.1.distance_squared(p).total_cmp(&b.1.distance_squared(p)))
@@ -991,9 +993,34 @@ fn small(n: u64) -> String {
 }
 
 /// The point halfway along a polyline, by length.
-fn halfway(points: &[glam::DVec3]) -> Option<glam::DVec3> {
+/// Points along the polyline `points` to try a label at, the one
+/// halfway first, then out towards its ends, [`TRIES`] at most.
+fn out_from_middle(points: &[glam::DVec3]) -> impl Iterator<Item = glam::DVec3> + '_ {
+    let half = (TRIES / 2) as u32;
     let length: f64 = points.windows(2).map(|w| w[0].distance(w[1])).sum();
-    let mut left = length / 2.0;
+    (0..=half)
+        .flat_map(move |k| {
+            let off = f64::from(k) / f64::from(half) / 2.0;
+            [0.5 - off, 0.5 + off]
+                .into_iter()
+                .take(if k == 0 { 1 } else { 2 })
+        })
+        .filter_map(move |t| at_length(points, length * t))
+}
+
+/// Of `sorted`, the `first` few, then the rest evenly spaced, `most` in
+/// all.
+fn spread<T: Copy>(sorted: &[T], first: usize, most: usize) -> impl Iterator<Item = T> + '_ {
+    let (head, rest) = sorted.split_at(first.min(sorted.len()));
+    let step = rest
+        .len()
+        .div_ceil(most.saturating_sub(first).max(1))
+        .max(1);
+    head.iter().chain(rest.iter().step_by(step)).copied()
+}
+
+/// The point `left` along the polyline `points`.
+fn at_length(points: &[glam::DVec3], mut left: f64) -> Option<glam::DVec3> {
     for w in points.windows(2) {
         let d = w[0].distance(w[1]);
         if d >= left && d > 0.0 {
@@ -1001,7 +1028,7 @@ fn halfway(points: &[glam::DVec3]) -> Option<glam::DVec3> {
         }
         left -= d;
     }
-    points.first().copied()
+    points.last().copied()
 }
 
 /// The point of `rect`'s border nearest `p`, or its nearest side's

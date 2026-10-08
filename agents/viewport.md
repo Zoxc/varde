@@ -133,7 +133,11 @@ selected, and those connected to them (a curve's points, a spline's
 ends only; the curves a point is one of) and every one of a sketch
 selected whole (Objects) that the model doesn't hide, a curve named by its sketch, name and id (which the
 face swept from it carries as its part, "S5"), a point by its sketch
-and name, outside the hull too. A model label holds the keys references store for it (a face's, an
+and name, outside the hull too. Something counts as hidden only where
+none of it shows: a face, edge or curve is tried at up to `TRIES`
+points (a face's triangles nearest its centroid, then spread over the
+rest; along an edge or curve from its middle out to its ends) and
+labelled at the first that shows. A model label holds the keys references store for it (a face's, an
 edge's two, a corner's three; a selected vertex is a mesh vertex, so
 it's matched by its corner, `PickIndex::vertex_corner`), each feature's
 name and short part name with a chevron between, in an outlined badge
