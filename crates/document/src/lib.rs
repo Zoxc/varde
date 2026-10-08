@@ -884,7 +884,8 @@ impl Document {
     /// ([`Document::removal`]), unless the user chose to keep it
     /// ([`Document::breaking_removal`]), and an edit can stop a body
     /// being made (setting its maker to join); regenerating then fails
-    /// the combine until it's given another.
+    /// the combine until it's given another. Edits are never refused for
+    /// what later features name.
     fn check_combine(&self, index: usize, combine: &Combine) -> Result<(), CombineError> {
         combine.check_own()?;
         for body in combine.bodies() {
@@ -1496,9 +1497,6 @@ pub enum EditError {
     /// sketch, which then doesn't solve, see
     /// [`varde_sketch::revalue`].
     Unsolved(FeatureId, varde_sketch::Rejected),
-    /// [`Command::SetFeature`] would stop this body being made, which this
-    /// later feature names ([`FeatureKind::bodies`]).
-    Named(FeatureId, BodyId),
 }
 
 /// Whose value an [`EditError::Value`] is about.
@@ -1530,9 +1528,6 @@ impl fmt::Display for EditError {
             EditError::Unsolved(id, why) => {
                 write!(f, "feature {}: the sketch wouldn't solve: {why}", id.0)
             }
-            EditError::Named(id, body) => {
-                write!(f, "feature {} names body {}, which would go", id.0, body.0)
-            }
         }
     }
 }
@@ -1543,8 +1538,7 @@ impl std::error::Error for EditError {
             EditError::OutOfIds
             | EditError::SketchKind
             | EditError::SketchFace(_)
-            | EditError::ParamUsed(_)
-            | EditError::Named(..) => None,
+            | EditError::ParamUsed(_) => None,
             EditError::Invalid(why) => Some(why),
             EditError::Value(_, why) => Some(why),
             EditError::Sketch(_, why) => Some(why),

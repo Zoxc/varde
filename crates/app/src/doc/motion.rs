@@ -2051,38 +2051,15 @@ impl Doc {
         })
     }
 
-    /// Why the pattern being edited can't be set up as it is, if it
-    /// would drop a copy body (fewer copies, a body taken out, joined to
-    /// the original again) that a later feature names: the document
-    /// refuses that rather than drop the feature, so the panel says so
-    /// at once, and how to get past it, as an extrude's that would stop
-    /// making the body a combine names. A split's tool or a sweep's path
-    /// the document refuses at its place likewise.
+    /// Why the sweep or loft being set up names what the document
+    /// refuses at its place, if it does, so the panel says so at once.
     pub(crate) fn motion_held(&self) -> Option<String> {
         let session = self.motion.as_ref()?;
-        if session.kind == MotionKind::Split {
-            return self.split_held(session);
+        match session.kind {
+            MotionKind::Sweep => (self.sweep_refused(session)).map(|why| said(&why.to_string())),
+            MotionKind::Loft => (self.loft_refused(session)).map(|why| said(&why.to_string())),
+            _ => None,
         }
-        // A sweep naming what the document refuses at its place, or
-        // stopping making a body a combine names.
-        if session.kind == MotionKind::Sweep {
-            return (self
-                .sweep_refused(session)
-                .map(|why| said(&why.to_string())))
-            .or_else(|| self.held(session.feature, session.sweep.operation));
-        }
-        if session.kind == MotionKind::Loft {
-            return (self.loft_refused(session).map(|why| said(&why.to_string())))
-                .or_else(|| self.held(session.feature, session.loft.operation));
-        }
-        let edited = session.feature?;
-        let kind = session.kind()?;
-        let document = self.editor.document();
-        let (feature, body) = copy_user(document, edited, &kind)?;
-        let (feature, body) = (&feature.name, &body.name);
-        Some(format!(
-            "{feature} uses {body}, a copy this pattern would no longer make: take {body} out of {feature} or delete it first"
-        ))
     }
 
     /// What the panel warns of for the pattern being set up, if anything:
@@ -2252,21 +2229,22 @@ impl Doc {
     }
 
     /// The move, mirror or pattern being set up as the regeneration lane
-    /// previews it, see [`MotionSession::draft`]; none where that would
-    /// drop a copy body a later feature names ([`copy_user`]), which the
-    /// document refuses: the model is then shown as committed, rather
-    /// than as a failure (a pattern previewed as a move by nothing while
-    /// its axis is picked has no copy bodies).
+    /// previews it, see [`MotionSession::draft`]; none for a sweep or
+    /// loft the document refuses at its place, or for a pattern
+    /// previewed as a move by nothing while its axis is picked when that
+    /// would drop a copy body a later feature names, which would fail
+    /// that feature only for the preview: the model is then shown as
+    /// committed, rather than as a failure.
     pub(crate) fn motion_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
         let session = self.motion.as_ref()?;
         let document = self.editor.document();
         let (feature, kind) = session.draft(&document.design())?;
         if let Some(edited) = feature
-            && copy_user(document, edited, &kind).is_some()
+            && session.kind.pattern()
+            && !matches!(kind, FeatureKind::Pattern(_))
+            && (document.copies_dropped(edited, &kind).iter())
+                .any(|body| (document.features().iter()).any(|f| f.kind.bodies().contains(body)))
         {
-            return None;
-        }
-        if self.split_held(session).is_some() {
             return None;
         }
         if session.kind == MotionKind::Sweep && self.sweep_refused(session).is_some() {
@@ -2738,26 +2716,6 @@ fn plane_body(plane: &PlaneRef) -> Option<BodyId> {
 enum Reference {
     Axis(AxisRef),
     Plane(PlaneRef),
-}
-
-/// The first feature naming ([`FeatureKind::bodies`]) a copy body that
-/// setting the pattern `edited` to `kind` would drop
-/// ([`Document::copies_dropped`]), and that body: the document refuses
-/// the edit while there's one.
-fn copy_user<'a>(
-    document: &'a Document,
-    edited: FeatureId,
-    kind: &FeatureKind,
-) -> Option<(&'a varde_document::Feature, &'a varde_document::Body)> {
-    let dropped = document.copies_dropped(edited, kind);
-    if dropped.is_empty() {
-        return None;
-    }
-    (document.features().iter()).find_map(|feature| {
-        let named = feature.kind.bodies();
-        let body = dropped.iter().find(|body| named.contains(body))?;
-        Some((feature, document.body(*body)?))
-    })
 }
 
 /// `Naming`'s refusal `why` of a pick of `what` ("corner", "edge",

@@ -119,29 +119,15 @@ fn editing_the_tick_and_a_copy_body_a_later_feature_uses() {
     plates.doc.sync();
     plates.answer();
     plates.doc.look(Look::EditFeature(id));
-    // Fewer copies, or joined, would drop it.
+    // Fewer copies drop it, and the combine stays naming it.
     plates.input(MotionField::Count, "2");
-    let name = &plates
-        .doc
-        .editor
-        .document()
-        .body(made[1])
-        .unwrap()
-        .name
-        .clone();
-    let held = format!(
-        "Combine 1 uses {name}, a copy this pattern would no longer make: take {name} out of Combine 1 or delete it first"
-    );
-    assert_eq!(plates.doc.motion_held(), Some(held.clone()));
-    assert!(!plates.doc.motion_ready());
-    plates.input(MotionField::Count, "4");
-    assert_eq!(plates.doc.motion_held(), None);
     assert!(plates.doc.motion_ready());
-    plates.motion(MotionLook::Join);
-    assert_eq!(plates.doc.motion_held(), Some(held));
-    assert!(!plates.doc.motion_ready());
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.motion.is_some(), "not committed");
+    assert!(plates.doc.motion.is_none());
+    let document = plates.doc.editor.document();
+    assert!(document.body(made[1]).is_none());
+    let last = document.features().last().unwrap();
+    assert!(matches!(last.kind, FeatureKind::Combine(_)), "{last:?}");
 }
 
 /// Picking another direction for an unjoined pattern whose copy body a
@@ -352,13 +338,11 @@ fn deleting_a_copy_body_asks_first() {
     assert!(plates.doc.editor.document().feature(id).is_none());
 }
 
-/// Held back by a later combine naming a copy body, an unjoined
-/// pattern's axis is picked again, an edge of the plate: taken, nothing
-/// previewed nor failing; a count that keeps the copy lets it through,
-/// previewed along the edge, and committed the copy bodies are those
-/// the combine names.
+/// An unjoined pattern whose copy body a later combine names gets its
+/// axis picked again, an edge of the plate: previewed along the edge,
+/// and committed the copy bodies are those the combine names.
 #[test]
-fn a_held_pattern_s_axis_picked_again_commits_once_let_through() {
+fn a_pattern_s_axis_picked_again_keeps_its_copy_bodies() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
     plates.click(right);
@@ -380,8 +364,6 @@ fn a_held_pattern_s_axis_picked_again_commits_once_let_through() {
     plates.doc.sync();
     plates.answer();
     plates.doc.look(Look::EditFeature(id));
-    plates.input(MotionField::Count, "2");
-    assert!(plates.doc.motion_held().is_some());
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     plates.answer();
     let index = plates.doc.feed.pick_index();
@@ -401,16 +383,6 @@ fn a_held_pattern_s_axis_picked_again_commits_once_let_through() {
         "{:?}",
         session.axis
     );
-    assert!(plates.doc.motion_held().is_some());
-    assert_eq!(plates.doc.motion_draft(), None);
-    plates.answer();
-    assert_eq!(plates.doc.feed.draft_error(), None);
-    // The panel says why, not a failure of the model.
-    assert!(shows(&plates, "Combine 1 uses Body 5"));
-    assert!(!plates.doc.motion_ready());
-    // Three again: let through, along the edge.
-    plates.input(MotionField::Count, "3");
-    assert_eq!(plates.doc.motion_held(), None);
     let drafted = drafted(&plates).expect("a draft");
     assert!(matches!(drafted.kind.axis(), AxisRef::Edge(_)));
     plates.answer();

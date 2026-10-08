@@ -370,10 +370,7 @@ impl Doc {
     /// the undo history.
     pub(crate) fn extrude_ready(&self) -> bool {
         self.extrude.as_ref().is_some_and(|session| {
-            self.editable()
-                && !self.proposing()
-                && session.ready(&self.editor.document().design())
-                && self.held(session.feature, session.operation).is_none()
+            self.editable() && !self.proposing() && session.ready(&self.editor.document().design())
         })
     }
 
@@ -464,7 +461,6 @@ impl Doc {
             error: self.feed.shown_draft_error(),
             show_error: self.draft_framed(),
             refused: session.refused(&document.design()),
-            held: self.held(session.feature, session.operation),
             uncut: (session.operation == OperationKind::Cut)
                 .then(|| self.uncut_note())
                 .flatten(),

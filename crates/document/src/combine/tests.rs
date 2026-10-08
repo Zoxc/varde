@@ -179,24 +179,25 @@ fn a_combine_names_only_bodies_made_before_it() {
     assert_eq!(*editor.document(), before);
 }
 
-/// Setting a tool's or the target's maker to stop making it would leave
-/// the combine naming a body that isn't there: refused.
+/// Setting a tool's or the target's maker to stop making it leaves the
+/// combine naming a body that isn't there, which regenerating fails: an
+/// edit is never refused for what later features name.
 #[test]
-fn a_maker_named_by_a_combine_keeps_making_its_body() {
+fn a_maker_named_by_a_combine_may_stop_making_its_body() {
     let (mut editor, [a, b, c], [_, second, third]) = three_bodies();
     let id = add(&mut editor, combine(a, &[b, c], BodyOp::Union)).unwrap();
     let before = editor.document().clone();
     for maker in [second, third] {
-        let error = editor
+        editor
             .apply(Command::SetFeature {
                 feature: maker,
                 kind: Box::new(plate(Operation::Join(Targets::default())).into()),
             })
-            .unwrap_err();
-        assert!(
-            matches!(error, EditError::Named(feature, _) if feature == id),
-            "{error:?}"
-        );
+            .unwrap();
+        let document = editor.document();
+        assert!(document.feature(id).is_some());
+        assert_eq!(document.check(), Ok(()));
+        editor.undo();
         assert_eq!(*editor.document(), before);
     }
     // Changing it but still making the body is fine.

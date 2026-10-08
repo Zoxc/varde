@@ -546,9 +546,9 @@ fn a_new_body_kept_again_in_a_later_edit_keeps_its_id() {
 
 /// Later features naming the body are warned of with the piece they'll
 /// get; keeping one side while a later feature names the new body is
-/// refused at once, as the document would, and not previewed.
+/// allowed, that feature then failing.
 #[test]
-fn later_features_are_warned_of_and_a_named_new_body_held() {
+fn later_features_are_warned_of_and_a_named_new_body_may_go() {
     let (mut editor, id, new) = split_plates();
     let plate = editor.document().bodies()[0].id;
     for body in [plate, new] {
@@ -578,14 +578,11 @@ fn later_features_are_warned_of_and_a_named_new_body_held() {
         Some("1 later feature uses Body 1: it'll get the back piece")
     );
     assert!(shows(&plates, "it'll get the back piece"));
+    // Keeping one piece drops the new body Move 2 names, which is
+    // allowed: the move then fails.
     plates.motion(MotionLook::Keep(Keep::Front));
-    assert!(!plates.doc.motion_ready());
-    let state = plates.doc.motion_state().unwrap();
-    let refused = state.refused.clone().unwrap_or_default();
-    assert!(refused.starts_with("Move 2 uses Body 4"), "{refused}");
-    assert!(plates.last_draft().is_none(), "not previewed");
-    plates.motion(MotionLook::Keep(Keep::Both));
     assert!(plates.doc.motion_ready());
+    assert!(plates.last_draft().is_some(), "previewed");
 }
 
 /// A tool body an undo takes away is kept, said to be gone, nothing

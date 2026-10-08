@@ -553,43 +553,23 @@ fn a_body_going_drops_it_from_the_session() {
 }
 
 #[test]
-fn the_extrude_making_a_combined_body_says_why_it_stays_a_new_body() {
+fn the_extrude_making_a_combined_body_may_stop_making_it() {
     let mut plates = plates();
-    plates.commit_union(false);
+    let combine = plates.commit_union(false);
     let maker = plates.doc.editor.document().features()[3].id;
+    let body = plates.doc.editor.document().features()[3].kind.new_body();
     plates.doc.look(Look::EditFeature(maker));
-    assert!(plates.doc.extrude_state().unwrap().held.is_none());
     plates
         .doc
         .look(Look::Extrude(varde_view::ExtrudeLook::Operation(
             OperationKind::Join,
         )));
-    let state = plates.doc.extrude_state().unwrap();
-    let held = state.held.clone().expect("a note");
-    assert_eq!(
-        held,
-        "Combine 1 combines Body 2, so this stays a new body: take Body 2 out of Combine 1 or \
-         delete it first"
-    );
-    assert!(!state.ready);
-    let shown = screen_texts(&plates.doc);
-    assert!(
-        shown
-            .iter()
-            .any(|text| text.starts_with("Combine 1 combines Body 2")),
-        "{shown:?}"
-    );
-    // OK can't be pressed, and nothing is written.
-    let revision = plates.doc.editor.revision();
+    assert!(plates.doc.extrude_state().unwrap().ready);
+    // The combine stays, naming a body that isn't there.
     plates.doc.update(Edit::CommitExtrude);
-    assert_eq!(plates.doc.editor.revision(), revision);
-    // Back to a new body, it can.
-    plates
-        .doc
-        .look(Look::Extrude(varde_view::ExtrudeLook::Operation(
-            OperationKind::NewBody,
-        )));
-    assert!(plates.doc.extrude_state().unwrap().held.is_none());
+    let document = plates.doc.editor.document();
+    assert!(document.body(body.unwrap()).is_none());
+    assert!(document.feature(combine).is_some());
 }
 
 #[test]

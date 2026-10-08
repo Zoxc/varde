@@ -600,10 +600,7 @@ impl Doc {
     /// ([`Doc::extrude_ready`]).
     pub(crate) fn revolve_ready(&self) -> bool {
         self.revolve.as_ref().is_some_and(|session| {
-            self.editable()
-                && !self.proposing()
-                && session.ready(self.editor.document())
-                && self.held(session.feature, session.operation).is_none()
+            self.editable() && !self.proposing() && session.ready(self.editor.document())
         })
     }
 
@@ -697,7 +694,6 @@ impl Doc {
             error: self.feed.shown_draft_error(),
             show_error: self.draft_framed(),
             refused: session.refused(document),
-            held: self.held(session.feature, session.operation),
             uncut: (session.operation == OperationKind::Cut)
                 .then(|| self.uncut_note())
                 .flatten(),

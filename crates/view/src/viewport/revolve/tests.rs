@@ -84,7 +84,6 @@ fn state<'a>(
         error: None,
         show_error: None,
         refused: None,
-        held: None,
         uncut: None,
         checking: false,
         ready: axis.is_some() && !picked.is_empty(),

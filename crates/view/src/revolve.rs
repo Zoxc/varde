@@ -223,10 +223,6 @@ pub struct RevolveState<'a> {
     /// refuses it (two sides over a turn together, say): shown in place
     /// of [`RevolveState::error`].
     pub refused: Option<RevolveError>,
-    /// Why the edited feature can't stop making a new body, if a join,
-    /// cut or intersect is picked while a combine names its body: shown
-    /// in place of the preview's error, and OK waits.
-    pub held: Option<String>,
     /// For a cut whose preview works, which bodies it takes nothing from
     /// (it only touches them), as a note: "Body 2: nothing to cut".
     pub uncut: Option<String>,
@@ -609,7 +605,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         |body| send(RevolveLook::Target(body)),
         state.hover,
     );
-    let refused = (state.refused.map(|refused| refused.to_string())).or_else(|| state.held.clone());
+    let refused = state.refused.map(|refused| refused.to_string());
     let message = footer_message(
         "Revolve",
         refused,

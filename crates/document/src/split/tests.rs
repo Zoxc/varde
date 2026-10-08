@@ -174,8 +174,11 @@ fn editing_what_is_kept_adds_and_removes_the_new_body() {
     };
     let scaled = add(&mut editor, scale).unwrap();
     let before = editor.document().clone();
-    let refused = set(&mut editor, id, front);
-    assert_eq!(refused, Err(EditError::Named(scaled, again)));
+    // Keeping one side drops it, the scale kept naming it.
+    set(&mut editor, id, front).unwrap();
+    assert!(editor.document().body(again).is_none());
+    assert!(editor.document().feature(scaled).is_some());
+    editor.undo();
     assert_eq!(*editor.document(), before);
     // Setting what's there changes nothing.
     let revision = editor.revision();

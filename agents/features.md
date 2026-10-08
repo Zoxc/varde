@@ -1273,8 +1273,8 @@ pub struct Combine {
   it (below) unless the delete prompt's Delete only keeps it, failing
   ("a body it names isn't there"). `SetFeature` making the maker stop
   making the body (an extrude turned from a new body into a join) is
-  refused while a later feature names it (`EditError::Named`), rather
-  than deleting the combine behind the user's back. `MAX_FEATURE_BODIES` is
+  allowed too: the combine stays, failing likewise. An edit is never
+  refused for what later features name. `MAX_FEATURE_BODIES` is
   shared with the later body features (move, mirror, pattern).
 - **Removal**: `FeatureKind::bodies()` lists the bodies a feature names
   (a combine's target, then tools); `Document::removal` takes a later
@@ -1479,18 +1479,15 @@ naming used-up bodies, so failing) and edits of earlier combines, for
 the whole history and stopped before each feature
 (one seed by default, 4 with `VARDE_TESTS=full`).
 
-**An extrude or revolve making a combined body** can't stop making it
-(the document refuses the edit, above). Its panel says so at once when
-Join, Cut or Intersect is picked (`Doc::held`, `ExtrudeState::held`,
-`RevolveState::held`): "Combine 1 combines Body 2, so this stays a new
-body: take Body 2 out of Combine 1 or delete it first", in the footer
-in place of the preview's error, and OK waits.
+**An extrude or revolve making a combined body** may stop making it
+(made a join, say): the combine stays and fails ("a body it names isn't
+there") until it's given another.
 
 Tests: `app/src/doc/combine/tests.rs` (keys, viewport and Objects
 picks, the rows' crosses through the panel, the draft, Objects' faint
 rows, one undo step, `Esc` without a trace, editing, merged bodies
 picked as their holder, the highlight, read-only, the other tools, a
-body going, the held extrude, the Timeline row, the delete prompt);
+body going, the extrude that stops making a combined body, the Timeline row, the delete prompt);
 `view/src/combine/tests.rs` (the panel's texts and layout); shot
 scenario 23.
 
@@ -1950,9 +1947,9 @@ pub enum Copies { Joined /* default */, Separate(Vec<BodyId>) }  // the copy bod
   bodies), the others get new ids and names numbered on from the
   bodies; bodies of copies it no longer makes (a lower count, a body
   taken out, ticked again, set to another kind) are removed and dropped
-  from excluded lists, **refused while a later feature names one** (as
-  an extrude stopping making a body a combine names;
-  `Document::copies_dropped` says which, for the panel). Ticked again
+  from excluded lists; a later feature naming one keeps naming it, and
+  fails (as with an extrude stopping making a body a combine names;
+  `Document::copies_dropped` says which). Ticked again
   and unticked, the copies get new bodies. At most `MAX_PATTERN_BODIES`
   = 1024 copy bodies per pattern (bodies × (count − 1), a checked
   product: each is an Objects row; joined, only the count is bounded).
@@ -2226,16 +2223,13 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   own". **Ticked to begin with** (the user's decision; the mock starts
   unticked); an edited pattern opens as it's stored. Unticked, the
   pattern goes out as `Copies::Separate` of no bodies, which the
-  document lays out (keeping an edited one's copy bodies). Where the
-  edit would drop a copy body a later feature names (fewer copies, a
-  body taken out, ticked again), the panel refuses it at once
-  (`Doc::motion_held`, OK off): "Combine 1 uses Body 5, a copy this
-  pattern would no longer make: take Body 5 out of Combine 1 or delete
-  it first". No draft is sent while that holds (`Doc::motion_draft`,
-  `copy_user`): neither the refused pattern nor the move by nothing
-  previewing an edited one while its axis is picked (which has no copy
-  bodies), so the model shows as committed rather than as "Pattern
-  fails" over a later feature's missing body. **The overlap warning** (the mock's, linear only, as the
+  document lays out (keeping an edited one's copy bodies). An edit
+  dropping a copy body a later feature names (fewer copies, a body
+  taken out, ticked again) is allowed: that feature stays and fails.
+  No draft is sent for the move by nothing previewing an edited one
+  while its axis is picked (which has no copy bodies) when that would
+  drop such a body (`Doc::motion_draft`), so the model shows as
+  committed rather than failing a later feature only for the preview. **The overlap warning** (the mock's, linear only, as the
   mock has it, `Doc::motion_warning`): unticked, with a spacing shorter
   than one of the bodies is long along the direction, so its own copies
   overlap ("The copies overlap (10 mm long this way): tick Join to
@@ -2983,8 +2977,8 @@ pub enum SplitTool {
   `BodyId::NEW` or `None` from `keep` first, so a panel needn't keep the
   two in step), `SetFeature` keeps it while both are kept (switching
   `original` keeps the same body, now the other piece), removes it when
-  one side is kept (refused while a later feature names it, as an
-  extrude's new body is) but keeps its id in `new_body`
+  one side is kept (a later feature naming it stays, failing, as with
+  an extrude's new body) but keeps its id in `new_body`
   (`Split::held_body`; `Split::made_body` is the body it makes, only
   while both are kept), and when both are kept again, in the same edit
   or a later one, brings the body back with that id, so what named it
@@ -3187,10 +3181,8 @@ face picked, the origin planes on the toolbar).
   it'll get the front piece"), following Keeps and Keep as they change.
 - **Keep**: tiles Both, Front, Back (`MotionLook::Keep`, `SpBoth`,
   `SpFront`, `SpBack`). Keeping one side of an edited split whose new
-  body a later feature names is refused at once, as the document would
-  ("Move 2 uses Body 4, the piece this split would no longer keep: keep
-  both, or take Body 4 out of Move 2 or delete it first", the panel's
-  foot, `Doc::split_held`), and not previewed. Keeping both again
+  body a later feature names is allowed: that feature stays, failing
+  ("a body it names isn't there"). Keeping both again
   (in a later edit too) brings the new body back with the id the split
   held, the commands filling it in: the panel sends `BodyId::NEW` or
   none, a new split getting a new id; the preview labels it "New body"
@@ -3273,7 +3265,7 @@ says so.
 
 Tests: `document/src/split/tests.rs` (a new body made and undone, a
 trim making none, editing what's kept adding and removing the new body,
-holding its id and bringing it back with it, and refused while a scale
+holding its id and bringing it back with it, and allowed while a scale
 names it; a sketch on the new body's face across a trim and both again,
 with undo and redo and features added meanwhile getting ids of their
 own; held ids checked when read, sketch tools hiding and using their

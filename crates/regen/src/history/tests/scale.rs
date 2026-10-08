@@ -1058,8 +1058,8 @@ fn an_edge_through_upstream_edits_that_merge_or_change_it() {
         [10.0, 10.0, 30.0]
     ));
     editor.undo();
-    // Made a join, the block isn't made any more: the edit is refused
-    // or takes the scale with it, never leaves it naming nothing.
+    // Made a join, the block isn't made any more: the scale stays,
+    // naming a body that isn't there, and fails.
     let FeatureKind::Extrude(mut join) = editor.document().feature(maker).unwrap().kind.clone()
     else {
         unreachable!()
@@ -1077,7 +1077,7 @@ fn an_edge_through_upstream_edits_that_merge_or_change_it() {
             let evaluation = evaluated(document);
             if document.feature(id).is_some() {
                 let failed = failure(&evaluation, id).expect("refused");
-                assert!(failed.message.contains("is in"), "{}", failed.message);
+                assert_eq!(failed.message, "a body it names isn't there");
             }
             assert!(boxed(
                 solid_of(&evaluation, other),

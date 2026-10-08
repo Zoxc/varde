@@ -560,27 +560,6 @@ impl Doc {
             .collect()
     }
 
-    /// Why the split being edited can't keep one side as set up, if its
-    /// new body, which that would drop, is named by a later feature: the
-    /// document refuses that rather than drop the feature.
-    pub(super) fn split_held(&self, session: &MotionSession) -> Option<String> {
-        let edited = session.feature?;
-        if session.kind != MotionKind::Split || session.split.keep == Keep::Both {
-            return None;
-        }
-        let document = self.editor.document();
-        let FeatureKind::Split(stored) = &document.feature(edited)?.kind else {
-            return None;
-        };
-        let body = document.body(stored.new_body?)?;
-        let user = (document.features().iter())
-            .find(|feature| feature.kind.bodies().contains(&body.id))?;
-        let (user, body) = (&user.name, &body.name);
-        Some(format!(
-            "{user} uses {body}, the piece this split would no longer keep: keep both, or take {body} out of {user} or delete it first"
-        ))
-    }
-
     /// The panel's warning of the split being set up, if later features
     /// name its body: they get the piece keeping its id. "2 later features
     /// use Body 1: they'll get the back piece".

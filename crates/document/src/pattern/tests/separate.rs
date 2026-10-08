@@ -160,20 +160,23 @@ fn copy_bodies_are_named_by_later_features_and_go_with_the_pattern() {
     };
     let combined = add(&mut editor, combine).unwrap();
     let held = editor.document().clone();
-    // Fewer copies, or joined, would drop the body the combine names.
+    // Fewer copies, or joined, drop the body the combine names, which
+    // stays naming it.
     for pattern in [
         separate(linear(&document, &[a], "2", "25")),
         linear(&document, &[a], "3", "25"),
     ] {
         let kind = FeatureKind::Pattern(pattern);
         assert!(held.copies_dropped(id, &kind).contains(&made[1]));
-        let error = editor
+        editor
             .apply(Command::SetFeature {
                 feature: id,
                 kind: Box::new(kind),
             })
-            .unwrap_err();
-        assert_eq!(error, EditError::Named(combined, made[1]));
+            .unwrap();
+        assert!(editor.document().body(made[1]).is_none());
+        assert!(editor.document().feature(combined).is_some());
+        editor.undo();
         assert_eq!(*editor.document(), held);
     }
     // A higher count drops nothing.
