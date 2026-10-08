@@ -627,16 +627,26 @@ impl<'a> SelectableRow<'a> {
                     } else {
                         icons::icon(self.icon, icons::INLINE)
                     },
-                    if self.failed {
-                        text(self.name.clone()).style(theme::failed_text)
-                    } else if self.danger {
-                        text(self.name.clone()).style(theme::danger_text)
-                    } else {
-                        name(self.name.clone(), !self.faint)
-                    },
-                    self.failed
-                        .then(|| { icons::tinted(Icon::Alert, 14.0, |p| p.danger_strong) }),
-                    space::horizontal(),
+                    // A name too long for the room left is cut at the
+                    // row's edge rather than wrapped over the next.
+                    container(
+                        row![
+                            if self.failed {
+                                text(self.name.clone()).style(theme::failed_text)
+                            } else if self.danger {
+                                text(self.name.clone()).style(theme::danger_text)
+                            } else {
+                                name(self.name.clone(), !self.faint)
+                            }
+                            .wrapping(text::Wrapping::None),
+                            self.failed
+                                .then(|| { icons::tinted(Icon::Alert, 14.0, |p| p.danger_strong) }),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .clip(true),
                     self.note
                         .clone()
                         .map(|note| text(note).size(11.5).style(theme::faint_text)),
