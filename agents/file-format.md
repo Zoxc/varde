@@ -270,7 +270,10 @@ has one of its own (`color`, `#[serde(default)]`, so older files read as
 none: a `Tint`, a hue in degrees and a saturation percent), and the
 extrude,
 revolve or pattern that makes it: no geometry, which regenerating the feature
-history gives), its features (a name, whether it's visible, and a kind,
+history gives), its features in the Timeline's order, which ids don't
+follow (a feature added while rolled back goes in at the marker, before
+features with lower ids; older files have them in id order) (a name,
+whether it's visible, and a kind,
 stored by its variant name in `FeatureKind`: a sketch, an
 extrude,
 `crates/document/src/extrude.rs`: the sketch feature it uses, its
@@ -409,7 +412,8 @@ edge, a sketch's face or an align's corner are), the design's units (a
 `f64` in millimetres, `1e-5 ..= 1e-1`, 1 µm by default), the next id
 bodies and features take, and `rollback`, the feature the Timeline is
 rolled back to before (defaulted to none; checked to name a feature;
-`Command::SetRollback`, cleared by a new feature, moved to the next
+`Command::SetRollback`, kept by a new feature, which goes in before it,
+moved to the next
 feature kept when its own is removed), and `params`, the design's
 parameters (defaulted to none, so older files read as having none; each a
 `Param`, its `name` and its expression `text` as typed; what they come to
@@ -421,8 +425,8 @@ isn't stored but resolved again from the list as the document is read,
 not starting with a digit, at most 64 bytes, not a unit's name), no name
 twice, each text at most `MAX_LEN` (256) bytes (`CheckError::Param`,
 `CheckError::Params`; a parameter's expression may be in error, only
-values using it may not); body and
-feature ids increasing and below the next id, every body's opacity from
+values using it may not); body ids increasing, feature ids each used
+once (`CheckError::FeatureTwice`), and both below the next id, every body's opacity from
 10 to 100, every body's colour's hue below 360 and saturation at most
 30 %, every body made by an
 extrude, revolve or sweep the document holds whose operation makes it as its

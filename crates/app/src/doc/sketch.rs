@@ -542,21 +542,21 @@ impl Doc {
             },
         };
         let before = self.editor.revision();
+        let at = self.editor.document().insert_at();
         self.apply(self.editor.document().add_sketch(plane));
-        if self.editor.revision() != before {
-            // New features get the highest id, so it's the last.
-            if let Some(feature) = self.editor.document().features().last() {
-                let feature = feature.id;
-                if let Some(placement) = placed {
-                    self.placed = Some(Placed {
-                        feature,
-                        plane,
-                        placement,
-                        generation: self.editor.generation(),
-                    });
-                }
-                self.enter_sketch(feature);
+        if self.editor.revision() != before
+            && let Some(feature) = self.editor.document().features().get(at)
+        {
+            let feature = feature.id;
+            if let Some(placement) = placed {
+                self.placed = Some(Placed {
+                    feature,
+                    plane,
+                    placement,
+                    generation: self.editor.generation(),
+                });
             }
+            self.enter_sketch(feature);
         }
     }
 
@@ -599,11 +599,11 @@ impl Doc {
     }
 
     /// The naming of picks as of `feature` ([`Naming::before`]): the
-    /// history stopped there, all of it for a new feature (`None`).
+    /// history stopped there, or where a new feature (`None`) goes.
     pub(crate) fn naming_at(&self, feature: Option<FeatureId>) -> Naming {
         let document = self.editor.document();
-        let before = (feature.and_then(|id| document.feature_index(id)))
-            .unwrap_or(document.features().len());
+        let before =
+            (feature.and_then(|id| document.feature_index(id))).unwrap_or(document.insert_at());
         Naming::before(document, before, self.shown())
     }
 

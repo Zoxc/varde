@@ -5946,8 +5946,9 @@ fn the_viewports_shape_is_kept_within_bounds() {
 /// The Timeline's rollback marker: dragged, the model is asked for as
 /// of where it is and the document is unchanged until it's dropped; a
 /// feature edited rolls the model to just after it while it's open,
-/// whatever the document says; a new operation set up shows the whole
-/// history.
+/// whatever the document says; a new operation set up shows the history
+/// up to the document's marker, where it goes in, and so does a new
+/// sketch, added there.
 #[test]
 fn the_rollback_marker_rolls_the_model_back() {
     let (mut doc, requests) = example();
@@ -5971,6 +5972,22 @@ fn the_rollback_marker_rolls_the_model_back() {
     assert_eq!(doc.rollback(), (ids.get(1).copied(), true));
     doc.look(Look::DragRollback(None));
     assert_eq!(doc.rollback(), (ids.get(1).copied(), true));
+    doc.look(Look::FinishSketch);
+    answer(&mut doc, &requests);
+
+    // A new operation goes in at the marker.
+    doc.look(Look::StartExtrude);
+    assert_eq!(doc.rollback(), (Some(ids[1]), true));
+    doc.look(Look::Extrude(varde_view::ExtrudeLook::Cancel));
+
+    // A new sketch is added there, the marker staying after it.
+    doc.new_sketch(Plane::Origin(varde_document::OriginPlane::XY));
+    let document = doc.editor.document();
+    let added = document.features()[1].id;
+    assert!(!ids.contains(&added));
+    assert_eq!(document.rollback(), Some(ids[1]));
+    assert_eq!(doc.opened_feature(), Some(added));
+    assert_eq!(doc.rollback(), (Some(ids[1]), true));
     doc.look(Look::FinishSketch);
     answer(&mut doc, &requests);
 

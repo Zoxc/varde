@@ -222,11 +222,12 @@ impl MotionSession {
         })
     }
 
-    /// The feature's place in `document`: the edited one's, or the end.
+    /// The feature's place in `document`: the edited one's, or where a
+    /// new one goes.
     pub(super) fn index_in(&self, document: &Document) -> usize {
         (self.feature)
             .and_then(|id| document.feature_index(id))
-            .unwrap_or(document.features().len())
+            .unwrap_or(document.insert_at())
     }
 
     /// Notes whether `document` no longer takes its tool at feature

@@ -164,15 +164,14 @@ impl CombineSession {
     }
 }
 
-/// Whether a combine of `document` edited from `edited` (a new one, at
-/// the end, if `None`) can name `body`: it's there, made by a feature
-/// before the combine, as the document's check wants.
+/// Whether a combine of `document` edited from `edited` (a new one, where
+/// new features go, if `None`) can name `body`: it's there, made by a
+/// feature before the combine, as the document's check wants.
 pub(crate) fn pickable(document: &Document, body: BodyId, edited: Option<FeatureId>) -> bool {
-    let index = |feature: FeatureId| document.features().iter().position(|f| f.id == feature);
+    let at = edited.map_or(Some(document.insert_at()), |id| document.feature_index(id));
     document.body(body).is_some_and(|made| {
-        let maker = index(made.created_by);
-        let edited = edited.and_then(index);
-        maker.is_some_and(|maker| edited.is_none_or(|edited| maker < edited))
+        let maker = document.feature_index(made.created_by);
+        maker.is_some_and(|maker| at.is_none_or(|at| maker < at))
     })
 }
 

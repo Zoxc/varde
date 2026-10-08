@@ -176,6 +176,11 @@ pub struct Document {
     /// ([`Document::params_shared`]) don't copy it.
     #[serde(skip)]
     resolved: Arc<Params>,
+    /// Where each feature is in `features`, kept in step with it
+    /// ([`Document::reindex`]): not stored, but worked out again as a
+    /// document is read. Shared, as `resolved` is.
+    #[serde(skip)]
+    index: Arc<BTreeMap<FeatureId, usize>>,
 }
 
 /// A new design: no bodies or features, in millimetres, to the default
@@ -191,6 +196,7 @@ impl Default for Document {
             rollback: None,
             params: Vec::new(),
             resolved: Arc::default(),
+            index: Arc::default(),
         }
     }
 }
@@ -240,7 +246,7 @@ impl Unchecked {
         // bounds the work by the checked limits.
         param::check_params(&params)?;
         let resolved = param::resolve(&params, units);
-        let document = Document {
+        let mut document = Document {
             bodies,
             features,
             units,
@@ -249,7 +255,9 @@ impl Unchecked {
             rollback,
             params,
             resolved,
+            index: Arc::default(),
         };
+        document.reindex();
         document.check()?;
         Ok(document.with_sketch_faces())
     }
@@ -274,44 +282,65 @@ impl Document {
     }
 
     /// Adds a visible feature with a new id, see
-    /// [`new_id`](Document::new_id). New ids are the highest, so it goes
-    /// last, keeping the features in order. The rest of
-    /// [`Document::check`] is up to the caller, as [`Editor::apply`] does.
+    /// [`new_id`](Document::new_id), where the Timeline is rolled back to:
+    /// before [`rollback`](Document::rollback)'s feature, which stays the
+    /// one rolled back to before so the new feature is the last shown, or
+    /// last. The rest of [`Document::check`] is up to the caller, as
+    /// [`Editor::apply`] does.
     pub(crate) fn push_feature(
         &mut self,
         name: impl Into<String>,
         kind: FeatureKind,
     ) -> Result<FeatureId, EditError> {
         let id = FeatureId(self.new_id()?);
-        // A new feature goes last, so the Timeline rolls forward to show it.
-        self.rollback = None;
-        self.features.push(Feature {
-            id,
-            name: name.into(),
-            visible: true,
-            kind,
-        });
+        let at = self.insert_at();
+        self.features.insert(
+            at,
+            Feature {
+                id,
+                name: name.into(),
+                visible: true,
+                kind,
+            },
+        );
+        self.reindex();
         Ok(id)
+    }
+
+    /// Works out `index` again after `features` changed.
+    pub(crate) fn reindex(&mut self) {
+        let index = (self.features.iter().enumerate())
+            .map(|(at, feature)| (feature.id, at))
+            .collect();
+        self.index = Arc::new(index);
     }
 
     pub fn bodies(&self) -> &[Body] {
         &self.bodies
     }
 
-    /// The features, in the order they were added.
+    /// The features, in the Timeline's order: each uses only those before
+    /// it. Ids don't follow it, as a feature added while rolled back goes
+    /// in before later ones.
     pub fn features(&self) -> &[Feature] {
         &self.features
     }
 
-    /// The document as it was before feature `until` was added: the
-    /// features before it and the bodies they make, as the Timeline's
-    /// rollback shows it. Features are in id order, and each refers only
-    /// to those before it, so what's kept stands on its own.
+    /// The document as it was before feature `until`: the features before
+    /// it in the Timeline and the bodies they make, as the Timeline's
+    /// rollback shows it. Each feature refers only to those before it, so
+    /// what's kept stands on its own. All of it if `until` isn't there.
     #[must_use]
     pub fn before(&self, until: FeatureId) -> Document {
         let mut document = self.clone();
-        document.features.retain(|feature| feature.id < until);
-        document.bodies.retain(|body| body.created_by < until);
+        if let Some(at) = self.feature_index(until) {
+            document.features.truncate(at);
+            document.reindex();
+            let kept: BTreeSet<FeatureId> = document.features.iter().map(|f| f.id).collect();
+            document
+                .bodies
+                .retain(|body| kept.contains(&body.created_by));
+        }
         document.rollback = None;
         document
     }
@@ -321,16 +350,21 @@ impl Document {
         self.rollback
     }
 
+    /// Where a new feature goes in [`features`](Document::features): before
+    /// the feature rolled back to, or last.
+    pub fn insert_at(&self) -> usize {
+        (self.rollback)
+            .and_then(|rollback| self.feature_index(rollback))
+            .unwrap_or(self.features.len())
+    }
+
     pub fn feature(&self, id: FeatureId) -> Option<&Feature> {
         self.feature_index(id).map(|index| &self.features[index])
     }
 
-    /// Where feature `id` is in [`features`](Document::features), found
-    /// by binary search, as the features are in increasing id order.
+    /// Where feature `id` is in [`features`](Document::features).
     pub fn feature_index(&self, id: FeatureId) -> Option<usize> {
-        self.features
-            .binary_search_by_key(&id, |feature| feature.id)
-            .ok()
+        self.index.get(&id).copied()
     }
 
     /// The design's units, see [`Command::SetUnits`].
@@ -444,13 +478,17 @@ impl Document {
             self.resolved == param::resolve(&self.params, self.units),
             "the resolved parameters are kept in step"
         );
-        // Orders first: features and bodies are found by binary search.
-        if let Some(pair) = self
-            .features
-            .windows(2)
-            .find(|pair| pair[0].id >= pair[1].id)
-        {
-            return Err(CheckError::FeatureOrder(pair[1].id, pair[0].id));
+        // Ids first: features are found by id, bodies by binary search.
+        debug_assert!(
+            self.index.len() <= self.features.len()
+                && (self.index.iter()).all(|(&id, &at)| self.features[at].id == id),
+            "the index is kept in step"
+        );
+        if self.index.len() < self.features.len() {
+            let mut ids = BTreeSet::new();
+            let twice = (self.features.iter()).find(|feature| !ids.insert(feature.id));
+            let twice = twice.expect("an id is there twice").id;
+            return Err(CheckError::FeatureTwice(twice));
         }
         if let Some(pair) = self.bodies.windows(2).find(|pair| pair[0].id >= pair[1].id) {
             return Err(CheckError::Order(pair[1].id, pair[0].id));
@@ -624,8 +662,8 @@ impl Document {
         {
             return Err(CheckError::Rollback(rollback));
         }
-        match self.features.last() {
-            Some(last) if last.id.0 >= self.next_id => Err(CheckError::FeatureNextId(last.id)),
+        match self.index.last_key_value() {
+            Some((&last, _)) if last.0 >= self.next_id => Err(CheckError::FeatureNextId(last)),
             _ => Ok(()),
         }
     }
@@ -1177,11 +1215,8 @@ impl Document {
 
     /// The sketch feature before feature `index` whose id is `sketch`.
     pub(crate) fn sketch_before(&self, index: usize, sketch: FeatureId) -> Option<&Sketch> {
-        let before = &self.features[..index];
-        let at = before
-            .binary_search_by_key(&sketch, |feature| feature.id)
-            .ok()?;
-        match &before[at].kind {
+        let at = self.feature_index(sketch).filter(|&at| at < index)?;
+        match &self.features[at].kind {
             FeatureKind::Sketch { sketch, .. } => Some(sketch),
             _ => None,
         }
@@ -1295,9 +1330,8 @@ pub enum CheckError {
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
-    /// The first feature's id doesn't come after the second's, the one
-    /// before it.
-    FeatureOrder(FeatureId, FeatureId),
+    /// Two features have this id.
+    FeatureTwice(FeatureId),
     /// The last feature's id isn't below the document's next id.
     FeatureNextId(FeatureId),
     /// The Timeline is rolled back to before a feature that isn't there.
@@ -1375,9 +1409,7 @@ impl fmt::Display for CheckError {
                 Tolerance::MIN_FIT,
                 Tolerance::MAX_FIT
             ),
-            CheckError::FeatureOrder(id, before) => {
-                write!(f, "feature id {} doesn't come after {}", id.0, before.0)
-            }
+            CheckError::FeatureTwice(id) => write!(f, "two features have id {}", id.0),
             CheckError::FeatureNextId(id) => {
                 write!(f, "feature id {} is not below the next id", id.0)
             }

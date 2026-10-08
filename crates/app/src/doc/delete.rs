@@ -213,8 +213,9 @@ impl Doc {
         Some(DeletePrompt {
             name,
             body: matches!(deleting.targets[..], [Removable::Body(_), ..]),
-            features: (deleting.removal.features.iter())
-                .filter_map(|&id| document.feature(id))
+            // In the Timeline's order, not the removal's, which is by id.
+            features: (document.features().iter())
+                .filter(|feature| deleting.removal.features.binary_search(&feature.id).is_ok())
                 .collect(),
             bodies: (deleting.removal.bodies.iter())
                 .filter_map(|&id| document.body(id))

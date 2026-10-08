@@ -1117,7 +1117,7 @@ impl MotionSession {
             .retain(|&body| pickable(document, body, edited));
         let Some(index) = (match edited {
             Some(id) => document.feature_index(id),
-            None => Some(document.features().len()),
+            None => Some(document.insert_at()),
         }) else {
             return;
         };

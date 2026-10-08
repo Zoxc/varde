@@ -152,7 +152,7 @@ impl Doc {
         let edited = self.sketch.as_ref().map(|session| session.feature);
         let at = edited.and_then(|id| document.feature_index(id));
         let name = at.map_or("", |at| document.features()[at].name.as_str());
-        (name, at.unwrap_or(document.features().len()))
+        (name, at.unwrap_or(document.insert_at()))
     }
 
     /// Whether the tool picking outside has picked what `pick` is on, of

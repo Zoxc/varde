@@ -1,5 +1,7 @@
 //! What removing a feature or a body takes with it: [`Document::removal`].
 
+use std::collections::BTreeSet;
+
 use crate::{BodyId, Document, FeatureId, Operation};
 
 /// A feature or a body to remove, see [`Document::removal`].
@@ -9,8 +11,8 @@ pub enum Removable {
     Body(BodyId),
 }
 
-/// Everything a removal takes: the features, in the timeline's order, and
-/// the bodies they make, in the bodies' order. Empty if what was asked
+/// Everything a removal takes: the features and the bodies they make,
+/// each sorted by id. Empty if what was asked
 /// for isn't there.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Removal {
@@ -53,18 +55,18 @@ impl Document {
             return Removal::default();
         };
         // Features only use earlier ones, so one pass in order finds them
-        // all, and the list stays sorted by id for searching.
-        let mut features = vec![feature];
-        let going = |features: &[FeatureId], used: &FeatureId| features.binary_search(used).is_ok();
+        // all.
+        let mut features = BTreeSet::from([feature]);
         for later in &self.features[first + 1..] {
-            let uses = later.kind.uses().iter().any(|used| going(&features, used));
+            let uses = later.kind.uses().iter().any(|used| features.contains(used));
             let names = (later.kind.bodies().into_iter())
                 .filter_map(|body| self.body(body))
-                .any(|body| going(&features, &body.created_by));
+                .any(|body| features.contains(&body.created_by));
             if uses || names {
-                features.push(later.id);
+                features.insert(later.id);
             }
         }
+        let features: Vec<FeatureId> = features.into_iter().collect();
         let bodies = self
             .bodies
             .iter()
@@ -97,12 +99,14 @@ impl Document {
         // Rolled back to before a feature removed: to before the next one
         // kept, or to the end.
         if let Some(rollback) = self.rollback {
-            self.rollback = (self.features.iter())
+            let at = self.feature_index(rollback).unwrap_or(self.features.len());
+            self.rollback = (self.features[at..].iter())
                 .map(|feature| feature.id)
-                .find(|&id| id >= rollback && removal.features.binary_search(&id).is_err());
+                .find(|id| removal.features.binary_search(id).is_err());
         }
         self.features
             .retain(|feature| removal.features.binary_search(&feature.id).is_err());
+        self.reindex();
         self.bodies
             .retain(|body| removal.bodies.binary_search(&body.id).is_err());
         self.drop_excluded(&removal.bodies);

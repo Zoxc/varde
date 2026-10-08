@@ -390,7 +390,7 @@ impl BodyTargets {
     }
 
     /// Takes `body` out, or puts it back, if it's one of `document`'s made
-    /// before the feature `edited` (any, for a new one). `revision` is the
+    /// before the feature `edited` (where a new one goes, for `None`). `revision` is the
     /// newest draft revision given out: a body put back is listed until a
     /// touch test of a later one answers.
     pub(crate) fn toggle(
@@ -407,15 +407,11 @@ impl BodyTargets {
                 self.reticked.push((body, revision));
             }
             Err(at) => {
+                let place =
+                    edited.map_or(Some(document.insert_at()), |id| document.feature_index(id));
                 let made_before = document.body(body).is_some_and(|made| {
-                    let maker = document
-                        .features()
-                        .iter()
-                        .position(|f| f.id == made.created_by);
-                    let edited = edited.and_then(|feature| {
-                        document.features().iter().position(|f| f.id == feature)
-                    });
-                    maker.is_some_and(|maker| edited.is_none_or(|edited| maker < edited))
+                    let maker = document.feature_index(made.created_by);
+                    maker.is_some_and(|maker| place.is_none_or(|place| maker < place))
                 });
                 if made_before {
                     self.excluded.insert(at, body);
@@ -587,13 +583,13 @@ impl Doc {
             None => self.editor.document().add_feature(kind),
         };
         let before = self.editor.revision();
+        let at = self.editor.document().insert_at();
         self.apply(command);
         if self.edit_error.is_some() {
             return false;
         }
         if edited.is_none() && self.editor.revision() != before {
-            // New features get the highest id, so it's the last.
-            self.selected_feature = self.editor.document().features().last().map(|f| f.id);
+            self.selected_feature = self.editor.document().features().get(at).map(|f| f.id);
         }
         true
     }

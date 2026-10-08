@@ -479,7 +479,7 @@ fn add_sketch_numbers_past_the_sketches() {
         panic!("add_sketch adds a sketch");
     };
     assert_eq!((name.as_str(), plane), ("Sketch 8", XY));
-    // Features keep the order they were added in, which is by id.
+    // Not rolled back, features keep the order they were added in.
     let ids: Vec<_> = editor.document().features().iter().map(|f| f.id).collect();
     assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
 }
@@ -621,12 +621,15 @@ fn check_refuses_features_a_file_could_get_wrong() {
         Ok(document.clone())
     );
 
+    // The Timeline's order is the list's, not the ids'.
     let mut swapped = document.clone();
     swapped.features.swap(0, 1);
-    refused(&swapped, CheckError::FeatureOrder(first, second));
+    swapped.reindex();
+    swapped.check().unwrap();
     let mut twins = document.clone();
     twins.features[1].id = first;
-    refused(&twins, CheckError::FeatureOrder(first, first));
+    twins.reindex();
+    refused(&twins, CheckError::FeatureTwice(first));
 
     let mut reused = document.clone();
     reused.next_id = second.0;
@@ -929,7 +932,7 @@ fn an_amended_change_is_undone_with_the_one_before() {
 
 /// The Timeline's rollback: set and undone as an edit, refused for a
 /// feature that isn't there, moved on to the next feature kept when its
-/// own is removed, and cleared by a new feature, which goes last.
+/// own is removed, and kept by a new feature, which goes in before it.
 #[test]
 fn the_rollback_is_an_edit_kept_on_a_feature() {
     let mut editor = Editor::new(Document::example());
@@ -939,7 +942,7 @@ fn the_rollback_is_an_edit_kept_on_a_feature() {
     assert_eq!(editor.document().rollback(), Some(ids[1]));
     let before = editor.document().before(ids[1]);
     assert_eq!(before.features().len(), 1);
-    assert!(before.bodies().iter().all(|body| body.created_by < ids[1]));
+    assert!(before.bodies().iter().all(|body| body.created_by == ids[0]));
     assert_eq!(before.rollback(), None);
     before.check().unwrap();
 
@@ -956,7 +959,7 @@ fn the_rollback_is_an_edit_kept_on_a_feature() {
     removed.remove(&removed.removal_of(&[Removable::Feature(ids[1])]));
     let next = (removed.features().iter())
         .map(|f| f.id)
-        .find(|&id| id > ids[1]);
+        .find(|&id| ids[2..].contains(&id));
     assert_eq!(removed.rollback(), next);
     removed.check().unwrap();
 
@@ -965,7 +968,31 @@ fn the_rollback_is_an_edit_kept_on_a_feature() {
     wrong.rollback = Some(missing);
     assert!(matches!(wrong.check(), Err(CheckError::Rollback(id)) if id == missing));
 
+    // A new feature goes in where it's rolled back to, the last shown.
     let sketch = (editor.document()).add_sketch(Plane::Origin(crate::OriginPlane::XY));
     editor.apply(sketch).unwrap();
-    assert_eq!(editor.document().rollback(), None);
+    let document = editor.document();
+    assert_eq!(document.rollback(), Some(ids[1]));
+    let added = document.features()[1].id;
+    assert!(!ids.contains(&added));
+    assert_eq!(
+        &document.features()[2..],
+        &Document::example().features()[1..]
+    );
+    assert_eq!(
+        document.before(ids[1]).features().last().map(|f| f.id),
+        Some(added)
+    );
+    // Rolled to the end, the next goes last.
+    editor.apply(Command::SetRollback(None)).unwrap();
+    let sketch = (editor.document()).add_sketch(Plane::Origin(crate::OriginPlane::XY));
+    editor.apply(sketch).unwrap();
+    let last = editor.document().features().last().unwrap().id;
+    assert!(last > added);
+    // Read back in the same order.
+    let document = editor.document().clone();
+    assert_eq!(
+        Document::from_postcard(&document.to_postcard()),
+        Ok(document)
+    );
 }

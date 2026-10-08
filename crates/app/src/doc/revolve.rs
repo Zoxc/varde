@@ -211,7 +211,7 @@ impl RevolveSession {
         };
         let index = match self.feature {
             Some(id) => document.feature_index(id),
-            None => Some(document.features().len()),
+            None => Some(document.insert_at()),
         };
         if index.is_some_and(|index| document.check_edge(index, edge).is_ok()) {
             return;

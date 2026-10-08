@@ -538,18 +538,19 @@ impl Doc {
     /// The feature the model is rolled back to before, if it is, and
     /// whether that's only while a feature is edited: one opened shows
     /// the history up to it, those after it left out; a new operation
-    /// being set up, which goes last, the whole history; otherwise the
-    /// marker where it's dragged or where the document has it.
+    /// being set up, which goes in where the document's marker is, the
+    /// history up to there; otherwise the marker where it's dragged or
+    /// where the document has it.
     pub(crate) fn rollback(&self) -> (Option<FeatureId>, bool) {
         let document = self.editor.document();
         if let Some(opened) = self.opened_feature() {
-            let after = (document.features().iter())
-                .map(|feature| feature.id)
-                .find(|&id| id > opened);
+            let after = (document.feature_index(opened))
+                .and_then(|at| document.features().get(at + 1))
+                .map(|feature| feature.id);
             return (after, true);
         }
         if self.operating() {
-            return (None, true);
+            return (document.rollback(), true);
         }
         let until = self.rolling.unwrap_or_else(|| document.rollback());
         (until, false)

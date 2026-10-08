@@ -814,7 +814,9 @@ bodies, so nothing after it is computed or adjusted. It's the
 document's rollback marker (as dragged, `Doc::rolling`, until it's
 dropped), or while a feature is edited (a sketch entered, an
 operation opened from its row) the feature after it, those after it
-left out; a new operation being set up has none, as it goes last. The
+left out; a new operation being set up has the document's marker, as
+it goes in there (`Document::insert_at`; a new sketch is added there
+too, and the marker stays after it). The
 Timeline draws the marker (`view/src/rollback.rs`) between the rows,
 the rows after it faint, labelled and fixed while a
 feature is edited ("Rolled back", or "Rolled forward" past the
