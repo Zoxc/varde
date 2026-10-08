@@ -784,6 +784,23 @@ impl MeshFeed {
             .flatten()
     }
 
+    /// The newest answer's measures if they're of `picks`, or else, while
+    /// those are on their way, the measures shown before of as many picks:
+    /// what changing
+    /// the selection shows until its own come, so the status bar doesn't
+    /// empty for the moment between.
+    pub(crate) fn inspected_of_or_before(
+        &self,
+        picks: (InspectPick, Option<InspectPick>),
+    ) -> Option<&Inspected> {
+        self.inspected_of(picks).or_else(|| {
+            self.failed
+                .is_none()
+                .then_some(self.inspected.as_ref())
+                .flatten()
+        })
+    }
+
     /// The revision the newest draft was given: every later draft gets a
     /// higher one.
     pub(crate) fn revision(&self) -> u64 {

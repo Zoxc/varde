@@ -256,9 +256,10 @@ impl Doc {
     }
 
     /// The newest answer's measures of what's selected in the model, see
-    /// [`Doc::selection_inspect`]: `None` while they're on their way.
+    /// [`Doc::selection_inspect`]: while they're on their way, those of
+    /// the selection before, so a new selection's don't flicker out.
     pub(crate) fn selection_measured(&self) -> Option<&Inspected> {
-        self.feed.inspected_of(self.selection_inspect()?)
+        self.feed.inspected_of_or_before(self.selection_inspect()?)
     }
 
     /// The newest answer's outcome of the measure tool's picks, as

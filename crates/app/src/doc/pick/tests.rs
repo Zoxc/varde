@@ -768,9 +768,12 @@ fn a_join_merging_a_body_keeps_its_faces_selected_in_the_holder() {
     assert!(
         matches!(face.summary, Summary::Plane { n, d } if n[2] < -0.5 && (d - 3.0).abs() < 1e-9)
     );
-    // The status bar names the body it's in now.
+    // The status bar names the body it's in now, once the face is
+    // measured alone.
+    answer(&mut doc, &requests);
     let bar = status_bar(&doc);
-    assert_eq!(bar[..3], ["Face", "Plane", "Body 1"], "{bar:?}");
+    assert_eq!(bar[..2], ["Face", "Plane"], "{bar:?}");
+    assert!(bar.contains(&"Body 1".to_string()), "{bar:?}");
     // The join undone: the bottom is Body 2's again.
     for _ in 0..3 {
         doc.update(Edit::Undo);
