@@ -22,6 +22,7 @@ use crate::document::{shown_color, shown_opacity};
 use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
 use crate::mouse_only::MouseOnly;
+use crate::overflow_tip::OverflowTip;
 use crate::rollback::{GHOST_HEIGHT, MARKER_HEIGHT};
 use crate::shortcut::{Held, Shortcut};
 use crate::theme::{
@@ -619,6 +620,22 @@ struct SelectableRow<'a> {
 impl<'a> SelectableRow<'a> {
     /// The row, sending `on_press` when it's clicked.
     fn view(self, on_press: Message) -> MouseArea<'a, Message> {
+        let name_line = || {
+            row![
+                if self.failed {
+                    text(self.name.clone()).style(theme::failed_text)
+                } else if self.danger {
+                    text(self.name.clone()).style(theme::danger_text)
+                } else {
+                    name(self.name.clone(), !self.faint)
+                }
+                .wrapping(text::Wrapping::None),
+                self.failed
+                    .then(|| icons::tinted(Icon::Alert, 14.0, |p| p.danger_strong)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+        };
         let content = |hovered: bool| {
             container(
                 row![
@@ -628,34 +645,25 @@ impl<'a> SelectableRow<'a> {
                         icons::icon(self.icon, icons::INLINE)
                     },
                     // A name too long for the room left is cut at the
-                    // row's edge rather than wrapped over the next.
-                    container(
-                        row![
-                            if self.failed {
-                                text(self.name.clone()).style(theme::failed_text)
-                            } else if self.danger {
-                                text(self.name.clone()).style(theme::danger_text)
-                            } else {
-                                name(self.name.clone(), !self.faint)
-                            }
-                            .wrapping(text::Wrapping::None),
-                            self.failed
-                                .then(|| { icons::tinted(Icon::Alert, 14.0, |p| p.danger_strong) }),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .clip(true),
-                    self.note
-                        .clone()
-                        .map(|note| text(note).size(11.5).style(theme::faint_text)),
+                    // row's edge (or its note's) rather than wrapped over
+                    // the next, and told whole in a tooltip while hovered.
+                    OverflowTip::new(
+                        chrome::tip(
+                            container(name_line()).width(Length::Fill).clip(true),
+                            text(self.name.clone())
+                        ),
+                        name_line(),
+                    ),
+                    self.note.clone().map(|note| {
+                        container(text(note).size(11.5).style(theme::faint_text))
+                            .padding(Padding::ZERO.right(8))
+                    }),
                 ]
                 .spacing(8)
                 .height(ROW_HEIGHT)
                 .align_y(Alignment::Center),
             )
-            .padding(Padding::from([0, 8]).left(self.indent))
+            .padding(Padding::ZERO.left(self.indent))
             .style(theme::list_row(self.selected, hovered))
         };
         mouse_area(hover(content(false), content(true))).on_press(on_press)

@@ -31,6 +31,7 @@ mod motion;
 mod mouse_only;
 mod offset_face;
 mod operation_panel;
+mod overflow_tip;
 mod overlaps;
 mod panels;
 mod params;
