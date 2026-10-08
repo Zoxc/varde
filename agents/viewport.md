@@ -124,15 +124,22 @@ choice or toggle closes the menu.
 The view options menu's last toggle, Names, turns on the names
 overlay (`names.rs`, `ViewOptions::names`, not saved): a canvas over the
 viewport labelling the faces, edges between two faces and corners
-selected, whether the model hides them or not, and of a body selected
+selected, whether the model hides them or not; what's connected to
+them (a face's border edges and corners, an edge's faces and end
+corners, the edges and faces at a corner) and of a body selected
 whole every one that shows and nothing hides, on a side turned to the
-eye. A label holds the keys references store for it (a face's, an
+eye; and of the finished sketches shown, the curves and points
+selected, and those connected to them (a curve's points, a spline's
+ends only; the curves a point is one of) and every one of a sketch
+selected whole (Objects) that the model doesn't hide, a curve named by its sketch, name and id (which the
+face swept from it carries as its part, "S5"), a point by its sketch
+and name, outside the hull too. A model label holds the keys references store for it (a face's, an
 edge's two, a corner's three; a selected vertex is a mesh vertex, so
 it's matched by its corner, `PickIndex::vertex_corner`), each feature's
 name and short part name with a chevron between, in an outlined badge
 in its kind's colour, joined by a curved leader to a mark drawn at what
-it names: a disc lying on a face, a stroke along an edge, a ring at a
-corner. Each label takes the free place nearest its anchor (rings of
+it names: a disc lying on a face, a stroke along an edge or a sketch's
+curve, a ring at a corner or a sketch's point. Each label takes the free place nearest its anchor (rings of
 candidates, nearest first), apart from those placed before it (the
 outermost first), clear of the status bar, and outside the screen hull
 of the bodies selected or holding what is unless there's no room

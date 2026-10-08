@@ -11,24 +11,31 @@ use glam::{DVec2, DVec3};
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::text::Shaping;
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
-use varde_document::{BodyId, Document};
+use varde_document::{BodyId, Document, FeatureId};
 use varde_kernel::mesh::{FaceKey, PartKey};
 use varde_render::Camera;
 
 use crate::Message;
-use crate::pick::{PickIndex, Picked};
+use crate::pick::{PickIndex, Picked, Snapped};
 use crate::projection::Projector;
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme;
+use crate::{SketchItem, SketchLines};
 
 /// The overlay over a viewport showing `index`'s model from `camera`,
 /// naming everything of `bodies` and the faces, edges and corners
-/// `targets`, laid out outside `around`.
+/// `targets`, laid out outside `around`; and of the finished sketches
+/// `sketches` shown, the curves and points `items` and every one of the
+/// sketches `whole`.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn overlay<'a>(
     index: &'a PickIndex,
     bodies: Vec<BodyId>,
     targets: Vec<Picked>,
     around: Vec<BodyId>,
+    sketches: Vec<SketchLines<'a>>,
+    items: Vec<SketchItem>,
+    whole: Vec<FeatureId>,
     camera: Camera,
     document: &'a Document,
 ) -> Element<'a, Message> {
@@ -37,6 +44,9 @@ pub(crate) fn overlay<'a>(
         bodies,
         targets,
         around,
+        sketches,
+        items,
+        whole,
         camera,
         document,
     })
@@ -53,6 +63,12 @@ struct Names<'a> {
     targets: Vec<Picked>,
     /// The bodies whose outline the labels go outside.
     around: Vec<BodyId>,
+    /// The finished sketches shown, where they're placed.
+    sketches: Vec<SketchLines<'a>>,
+    /// Their curves and points named.
+    items: Vec<SketchItem>,
+    /// The sketches named whole.
+    whole: Vec<FeatureId>,
     camera: Camera,
     document: &'a Document,
 }
@@ -62,6 +78,10 @@ enum Kind {
     Face,
     Edge,
     Corner,
+    /// A finished sketch's curve.
+    Curve,
+    /// A finished sketch's point.
+    Point,
 }
 
 impl Kind {
@@ -71,6 +91,8 @@ impl Kind {
             Kind::Face => Color::from_rgb8(0x0e, 0xa5, 0xe9),
             Kind::Edge => Color::from_rgb8(0xe1, 0x1d, 0x48),
             Kind::Corner => Color::from_rgb8(0x22, 0xc5, 0x5e),
+            Kind::Curve => Color::from_rgb8(0x8b, 0x5c, 0xf6),
+            Kind::Point => Color::from_rgb8(0xd9, 0x46, 0xef),
         }
     }
 }
@@ -84,9 +106,18 @@ struct Wanted {
     normal: DVec3,
     tangent: DVec3,
     /// What it names, to highlight with the label hovered.
-    target: Picked,
+    target: Target,
     anchor: DVec2,
     words: Vec<Piece>,
+}
+
+/// What a label names, as its hover highlights it.
+enum Target {
+    Model(Picked),
+    /// A sketch's curve, in the world.
+    Line(Vec<DVec3>),
+    /// A sketch's point.
+    Point(DVec3),
 }
 
 /// A piece of a label's words, drawn in turn.
@@ -177,7 +208,16 @@ impl canvas::Program<Message> for Names<'_> {
             return Vec::new();
         };
         let wanted = self.wanted(&projector, size);
-        let hull = hull(&self.silhouette(&projector));
+        // Outside the bodies and the sketches' curves and points named.
+        let mut outline = self.silhouette(&projector);
+        for want in &wanted {
+            match &want.target {
+                Target::Line(points) => outline.extend(points.iter().map(|p| projector.show(*p))),
+                Target::Point(p) => outline.push(projector.show(*p)),
+                Target::Model(_) => {}
+            }
+        }
+        let hull = hull(&outline);
         let widths: Vec<f32> = (wanted.iter())
             .map(|want| want.words.iter().map(Piece::width).sum())
             .collect();
@@ -186,12 +226,38 @@ impl canvas::Program<Message> for Names<'_> {
         *state.rects.borrow_mut() = placed.clone();
         let hovered = state.at(cursor.position_in(bounds));
         if let Some(i) = hovered {
-            self.draw_target(
-                &mut frame,
-                &projector,
-                wanted[i].target,
-                wanted[i].kind.colour(),
-            );
+            let colour = wanted[i].kind.colour();
+            match &wanted[i].target {
+                &Target::Model(target) => self.draw_target(&mut frame, &projector, target, colour),
+                Target::Line(points) => {
+                    let path = Path::new(|b| {
+                        for (k, p) in points.iter().enumerate() {
+                            let s = projector.show(*p);
+                            let s = Point::new(s.x as f32, s.y as f32);
+                            if k == 0 {
+                                b.move_to(s);
+                            } else {
+                                b.line_to(s);
+                            }
+                        }
+                    });
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_color(Color { a: 0.35, ..colour })
+                            .with_width(6.0)
+                            .with_line_cap(canvas::LineCap::Round)
+                            .with_line_join(canvas::LineJoin::Round),
+                    );
+                }
+                Target::Point(p) => {
+                    let s = projector.show(*p);
+                    frame.fill(
+                        &Path::circle(Point::new(s.x as f32, s.y as f32), 9.0),
+                        Color { a: 0.15, ..colour },
+                    );
+                }
+            }
         }
         for (i, (want, rect)) in wanted.iter().zip(&placed).enumerate() {
             if let Some(rect) = rect
@@ -287,12 +353,13 @@ impl Names<'_> {
         let named = |face: u32| {
             (self.index.face_body(face)).is_some_and(|body| self.bodies.contains(&body))
         };
+        let (near_faces, near_edges, near_corners) = self.connected(&corners);
         let mut wanted = Vec::new();
 
         {
             for face in 0..mesh.face_count() {
                 let picked = self.targets.contains(&Picked::Face(face as u32));
-                if !named(face as u32) && !picked {
+                if !named(face as u32) && !picked && !near_faces.contains(&(face as u32)) {
                     continue;
                 }
                 let Some(key) = picking.faces().get(face).map(|f| f.key) else {
@@ -342,7 +409,7 @@ impl Names<'_> {
                         point: p,
                         normal: n,
                         tangent: if n == glam::DVec3::ZERO { n } else { across(n) },
-                        target: Picked::Face(face as u32),
+                        target: Target::Model(Picked::Face(face as u32)),
                         anchor: projector.show(p),
                         words: self.words(&[key]),
                     });
@@ -353,7 +420,10 @@ impl Names<'_> {
         {
             for edge in 0..mesh.edge_count() {
                 let picked = self.targets.contains(&Picked::Edge(edge as u32));
-                if !(self.index.edge_faces(edge as u32)).is_some_and(|[a, _]| named(a)) && !picked {
+                if !(self.index.edge_faces(edge as u32)).is_some_and(|[a, _]| named(a))
+                    && !picked
+                    && !near_edges.contains(&(edge as u32))
+                {
                     continue;
                 }
                 let Some(keys) = picking.edge_keys(mesh, edge as u32) else {
@@ -379,7 +449,7 @@ impl Names<'_> {
                         point: p,
                         normal: glam::DVec3::ZERO,
                         tangent,
-                        target: Picked::Edge(edge as u32),
+                        target: Target::Model(Picked::Edge(edge as u32)),
                         anchor: projector.show(p),
                         words: self.words(&keys),
                     });
@@ -391,7 +461,7 @@ impl Names<'_> {
             for (corner, c) in picking.corners().iter().enumerate() {
                 let p = glam::DVec3::from(c.point);
                 let picked = corners.contains(&(corner as u32));
-                if (named(c.faces[0]) || picked)
+                if (named(c.faces[0]) || picked || near_corners.contains(&(corner as u32)))
                     && (picked || c.faces.iter().any(|&f| facing(f, p)))
                     && shows(p, picked)
                 {
@@ -401,7 +471,7 @@ impl Names<'_> {
                         point: p,
                         normal: glam::DVec3::ZERO,
                         tangent: glam::DVec3::ZERO,
-                        target: Picked::Vertex(corner as u32),
+                        target: Target::Model(Picked::Vertex(corner as u32)),
                         anchor: projector.show(p),
                         words: self.words(&keys),
                     });
@@ -409,6 +479,7 @@ impl Names<'_> {
             }
         }
 
+        self.sketch_wanted(projector, size, &mut wanted);
         wanted.truncate(MOST);
         wanted
     }
@@ -433,6 +504,153 @@ impl Names<'_> {
             .filter(|p| !projector.perspective() || projector.world_depth(*p) >= projector.near())
             .map(|p| projector.show(p))
             .collect()
+    }
+
+    /// What's connected to the faces, edges and corners (`corners`, of
+    /// the vertices) selected, labelled with them as what the model
+    /// shows is: a face's border edges and its corners, an edge's faces
+    /// and the corners at its ends, the edges ending at a corner and the
+    /// faces meeting there. Faces, edges and corners, by id.
+    fn connected(&self, corners: &[u32]) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        let mesh = self.index.mesh();
+        let (mut faces, mut edges, mut ends) = (Vec::new(), Vec::new(), Vec::new());
+        let corners_of = |target: Picked| {
+            (self.index.snaps(target).into_iter()).filter_map(|(snapped, _)| match snapped {
+                Snapped::Corner(corner) => Some(corner),
+                Snapped::EdgePoint(_) => None,
+            })
+        };
+        for &target in &self.targets {
+            match target {
+                Picked::Face(face) => {
+                    edges.extend(
+                        (0..mesh.edge_count() as u32).filter(|&e| {
+                            self.index.edge_faces(e).is_some_and(|f| f.contains(&face))
+                        }),
+                    );
+                    ends.extend(corners_of(target));
+                }
+                Picked::Edge(edge) => {
+                    faces.extend(self.index.edge_faces(edge).into_iter().flatten());
+                    ends.extend(corners_of(target));
+                }
+                Picked::Vertex(_) => {}
+            }
+        }
+        for &corner in corners {
+            let Some(c) = self.index.picking().corners().get(corner as usize) else {
+                continue;
+            };
+            faces.extend(c.faces);
+            edges.extend((0..mesh.edge_count() as u32).filter(|&e| {
+                self.index
+                    .edge_faces(e)
+                    .is_some_and(|f| f.iter().any(|f| c.faces.contains(f)))
+                    && corners_of(Picked::Edge(e)).any(|end| end == corner)
+            }));
+        }
+        (faces, edges, ends)
+    }
+
+    /// The labels wanted of the finished sketches: of their curves and
+    /// points selected, those in view; of the sketches selected whole,
+    /// those in view that the model doesn't hide. A curve is named by
+    /// its sketch, its name and its id (which a face swept from it
+    /// carries, "S5"), a point by its sketch and name.
+    fn sketch_wanted(&self, projector: &Projector, size: [f32; 2], wanted: &mut Vec<Wanted>) {
+        let in_view = |p: DVec3, picked: bool| {
+            let s = projector.show(p);
+            (!projector.perspective() || projector.world_depth(p) >= projector.near())
+                && s.x >= 0.0
+                && s.y >= 0.0
+                && s.x <= f64::from(size[0])
+                && s.y <= f64::from(size[1])
+                && (picked || !self.index.hides(&self.camera, size, p))
+        };
+        for lines in &self.sketches {
+            let whole = self.whole.contains(&lines.feature);
+            let picked = |id| {
+                (self.items.iter()).any(|item| item.sketch == lines.feature && item.item == id)
+            };
+            // What's connected to the items selected: a curve's points
+            // (a spline's ends, not its control points), and the curves
+            // a point is one of.
+            let sketch = lines.sketch;
+            let mut near: Vec<varde_sketch::Id> = Vec::new();
+            for entry in &sketch.curves {
+                let shape = &entry.curve;
+                let points: Vec<_> = match shape {
+                    varde_sketch::Curve::Spline(_) => shape.ends().into_iter().flatten().collect(),
+                    _ => shape.points().collect(),
+                };
+                if picked(entry.id) {
+                    near.extend(&points);
+                }
+                if points.iter().any(|&point| picked(point)) {
+                    near.push(entry.id);
+                }
+            }
+            let sketch_name = (self.document.features().iter())
+                .find(|f| f.id == lines.feature)
+                .map_or_else(String::new, |f| f.name.clone());
+            let world = |p: glam::DVec2| lines.placement.to_world(p);
+            for entry in &lines.sketch.curves {
+                let picked = picked(entry.id);
+                if !whole && !picked && !near.contains(&entry.id) {
+                    continue;
+                }
+                let Some(flat) = lines.sketch.flatten(&entry.curve) else {
+                    continue;
+                };
+                let points: Vec<DVec3> = flat.into_iter().map(world).collect();
+                let Some(p) = halfway(&points) else {
+                    continue;
+                };
+                if !in_view(p, picked) {
+                    continue;
+                }
+                let tangent = (points.windows(2))
+                    .map(|w| (w[1] - w[0], (w[0] + w[1]) / 2.0))
+                    .min_by(|a, b| a.1.distance_squared(p).total_cmp(&b.1.distance_squared(p)))
+                    .map_or(DVec3::ZERO, |(d, _)| d.normalize_or_zero());
+                wanted.push(Wanted {
+                    kind: Kind::Curve,
+                    point: p,
+                    normal: DVec3::ZERO,
+                    tangent,
+                    anchor: projector.show(p),
+                    words: vec![
+                        Piece::Feature(sketch_name.clone()),
+                        Piece::Chevron,
+                        Piece::Part(format!("{} #{}", entry.name(), entry.id)),
+                    ],
+                    target: Target::Line(points),
+                });
+            }
+            for point in &lines.sketch.points {
+                let picked = picked(point.id);
+                if !whole && !picked && !near.contains(&point.id) {
+                    continue;
+                }
+                let p = world(point.at);
+                if !in_view(p, picked) {
+                    continue;
+                }
+                wanted.push(Wanted {
+                    kind: Kind::Point,
+                    point: p,
+                    normal: DVec3::ZERO,
+                    tangent: DVec3::ZERO,
+                    anchor: projector.show(p),
+                    words: vec![
+                        Piece::Feature(sketch_name.clone()),
+                        Piece::Chevron,
+                        Piece::Part(lines.sketch.point_name(point)),
+                    ],
+                    target: Target::Point(p),
+                });
+            }
+        }
     }
 
     /// `keys` written short, joined.
@@ -607,6 +825,23 @@ fn draw_icon(frame: &mut Frame, kind: Kind, c: Point, ink: Color) {
             stroke,
         ),
         Kind::Corner => frame.stroke(&Path::circle(c, 3.5), stroke),
+        Kind::Curve => frame.stroke(
+            &Path::new(|b| {
+                b.move_to(Point::new(c.x - 4.5, c.y + 3.0));
+                b.quadratic_curve_to(Point::new(c.x, c.y - 5.0), Point::new(c.x + 4.5, c.y + 3.0));
+            }),
+            stroke,
+        ),
+        Kind::Point => frame.stroke(
+            &Path::new(|b| {
+                b.move_to(Point::new(c.x, c.y - 4.0));
+                b.line_to(Point::new(c.x + 4.0, c.y));
+                b.line_to(Point::new(c.x, c.y + 4.0));
+                b.line_to(Point::new(c.x - 4.0, c.y));
+                b.close();
+            }),
+            stroke,
+        ),
     }
 }
 
@@ -690,7 +925,7 @@ fn draw_end(frame: &mut Frame, projector: &Projector, want: &Wanted, colour: Col
             frame.fill(&disc, Color { a: 0.35, ..colour });
             frame.stroke(&disc, stroke);
         }
-        Kind::Edge if t != DVec3::ZERO => frame.stroke(
+        Kind::Edge | Kind::Curve if t != DVec3::ZERO => frame.stroke(
             &Path::line(to(t, -9.0), to(t, 9.0)),
             Stroke {
                 width: 4.0,

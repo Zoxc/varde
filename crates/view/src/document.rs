@@ -893,6 +893,12 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                             (state.model_selection.items())
                                 .filter_map(|item| item.body())
                                 .collect(),
+                            (picking.sketches.iter())
+                                .chain(&picking.whole)
+                                .cloned()
+                                .collect(),
+                            state.model_selection.sketch_items().collect(),
+                            picking.whole.iter().map(|lines| lines.feature).collect(),
                             *state.camera,
                             state.editor.document(),
                         )),
