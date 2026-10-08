@@ -401,6 +401,7 @@ fn feature_row<'a>(
         note: Some(note),
         indent: 8.0,
         selected,
+        construction: false,
     };
     let row = row
         .view(Message::Look(Look::SelectFeature(feature.id)))
@@ -615,6 +616,10 @@ struct SelectableRow<'a> {
     /// Room left of the icon, in pixels.
     indent: f32,
     selected: bool,
+    /// Whether it's construction, as a link out of profiles: its icon in
+    /// the construction colour with a dashed rail left of it, as a
+    /// construction curve's row in the Geometry list.
+    construction: bool,
 }
 
 impl<'a> SelectableRow<'a> {
@@ -637,10 +642,12 @@ impl<'a> SelectableRow<'a> {
             .align_y(Alignment::Center)
         };
         let content = |hovered: bool| {
-            container(
+            let row = container(
                 row![
                     if self.dim {
                         Element::from(icons::tinted(self.icon, icons::INLINE, |p| p.faint))
+                    } else if self.construction {
+                        icons::tinted(self.icon, icons::INLINE, |p| p.sketching.construction).into()
                     } else {
                         icons::icon(self.icon, icons::INLINE)
                     },
@@ -663,8 +670,13 @@ impl<'a> SelectableRow<'a> {
                 .height(ROW_HEIGHT)
                 .align_y(Alignment::Center),
             )
-            .padding(Padding::ZERO.left(self.indent))
-            .style(theme::list_row(self.selected, hovered))
+            .padding(Padding::ZERO.left(self.indent));
+            let row: Element<'a, Message> = if self.construction {
+                stack![row, construction_rail(self.indent)].into()
+            } else {
+                row.into()
+            };
+            container(row).style(theme::list_row(self.selected, hovered))
         };
         mouse_area(hover(content(false), content(true))).on_press(on_press)
     }
@@ -1849,9 +1861,9 @@ fn group_row<'a>(label: &'a str, count: usize) -> Row<'a, Message> {
     .align_y(Alignment::Center)
 }
 
-/// A link's row: its kind's icon and what it comes from, "In profiles"
-/// if its curves count for them, in the danger colour with why if it's
-/// broken. Clicking selects what it made, hovering lights what it comes
+/// A link's row: its kind's icon and what it comes from, in the
+/// construction look if its curves are out of profiles, in the danger
+/// colour with why if it's broken. Clicking selects what it made, hovering lights what it comes
 /// from in the model, and its context menu removes it or has its curves
 /// count for profiles or not.
 fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Message> {
@@ -1871,10 +1883,7 @@ fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Messa
         LinkKind::Project => Icon::Project,
         LinkKind::Intersect => Icon::Intersect,
     };
-    let note = match &link.broken {
-        Some(why) => Some(why.as_str().into()),
-        None => link.profiles.then(|| "In profiles".into()),
-    };
+    let note = link.broken.as_ref().map(|why| why.as_str().into());
     let row = SelectableRow {
         icon,
         name: link.source.as_str().into(),
@@ -1885,6 +1894,7 @@ fn link_row<'a>(sketch: SketchState<'a>, link: &'a LinkRow) -> Element<'a, Messa
         note,
         indent: 24.0,
         selected,
+        construction: !link.profiles,
     }
     .view(Message::Look(Look::ClickLink(id)))
     .on_enter(Message::Look(Look::HoverLink(Some(id))))
@@ -2015,6 +2025,7 @@ fn item_row<'a>(
         note: note.map(Into::into),
         indent: 24.0,
         selected: sketch.selection.contains(&id.into()),
+        construction: false,
     };
     row.view(Message::Look(Look::ClickRow(id.into())))
         .on_enter(Message::Look(Look::HoverItem(Some(id.into()))))
