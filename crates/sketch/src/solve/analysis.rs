@@ -1,16 +1,17 @@
 //! What a solved sketch's equations say about it: the degrees of freedom
-//! left, what they fix, and which are redundant.
+//! left, what they fix, the sizes they set, and which are redundant.
 
 use std::collections::BTreeSet;
 
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::linalg::householder;
 use faer::{Conj, Mat, Par};
+use glam::DVec2;
 use serde::{Deserialize, Serialize};
 
-use crate::{Id, Sketch};
+use crate::{Curve, Id, Sketch};
 
-use super::equation::Slot;
+use super::equation::{PointSlots, Slot};
 use super::system::{Fixing, System};
 use super::{Jacobian, TOLERANCE, scale, within};
 
@@ -37,6 +38,11 @@ pub struct Analysis {
     /// The points and curves the constraints fix: every variable of theirs
     /// fixed, a curve's points included.
     pub fixed: BTreeSet<Id>,
+    /// The lines, circles and arcs whose size (a line's length, a
+    /// circle's or arc's radius) no motion the equations allow changes,
+    /// wherever it leaves them: every curve in `fixed` but a spline,
+    /// and those the constraints size but leave free to move.
+    pub sized: BTreeSet<Id>,
     /// The constraints and driving dimensions (and arcs, for the equation
     /// each implies) in a dependency among the equations: each could be told from the others,
     /// so together they're redundant, or, where they don't hold, in
@@ -74,7 +80,11 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
         .collect();
     let mut freedom = system.values.len();
     let mut fixed = vec![false; system.values.len()];
-    for component in &components {
+    // Each variable's component and column in it, and the components'
+    // null spaces, the motions their equations allow, a row per column.
+    let mut place = vec![None; system.values.len()];
+    let mut nulls = Vec::with_capacity(components.len());
+    for (number, component) in components.iter().enumerate() {
         // Where a derivative isn't a number, it's taken as zero rather
         // than analysing nothing.
         let jacobian = Jacobian::new(&system, component, None).dense(component.vars.len());
@@ -85,15 +95,57 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
             .collect();
         let dependencies = counted_dependencies(&jacobian, &implied);
         freedom -= dependencies.rank;
-        for (&var, &is_fixed) in component.vars.iter().zip(&dependencies.fixed) {
+        for (column, (&var, &is_fixed)) in
+            component.vars.iter().zip(&dependencies.fixed).enumerate()
+        {
             fixed[var] = is_fixed;
+            place[var] = Some((number, column));
         }
         for (&index, &involved) in component.equations.iter().zip(&dependencies.involved) {
             if involved {
                 redundant.insert(system.equations[index].source);
             }
         }
+        nulls.push(dependencies.null);
     }
+
+    // A size is set where its gradient has no part in the motions
+    // allowed: none of it on a variable no equation reads, and in each
+    // component, its projection on the null space next to nothing.
+    let sized_by = |gradient: &[(Slot, f64)]| {
+        let mut parts: Vec<Vec<(usize, f64)>> = vec![Vec::new(); nulls.len()];
+        let mut length = 0.0;
+        for &(slot, weight) in gradient {
+            let Slot::Var(var) = slot else { continue };
+            length += weight * weight;
+            match place[var] {
+                Some((number, column)) => parts[number].push((column, weight)),
+                None => return false,
+            }
+        }
+        let mut part = 0.0;
+        for (null, entries) in nulls.iter().zip(&parts) {
+            for k in 0..null.ncols() {
+                let along: f64 = entries
+                    .iter()
+                    .map(|&(column, weight)| null[(column, k)] * weight)
+                    .sum();
+                part += along * along;
+            }
+        }
+        part.sqrt() <= FIXED_TOLERANCE * length.sqrt().max(1.0)
+    };
+    let value = |slot: Slot| match slot {
+        Slot::Var(var) => system.values[var],
+        Slot::Const(value) => value,
+    };
+    // A distance's gradient: along the unit from `b` to `a` on `a`,
+    // against it on `b`; none where they meet.
+    let distance = |a: PointSlots, b: PointSlots| {
+        let d = DVec2::new(value(a[0]) - value(b[0]), value(a[1]) - value(b[1]));
+        d.try_normalize()
+            .map(|u| vec![(a[0], u.x), (a[1], u.y), (b[0], -u.x), (b[1], -u.y)])
+    };
 
     let slot_fixed = |slot: Slot| match slot {
         Slot::Var(var) => fixed[var],
@@ -101,6 +153,7 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
     };
     let point_fixed = |slots: [Slot; 2]| slots.into_iter().all(slot_fixed);
     let mut fixed_items = BTreeSet::new();
+    let mut sized = BTreeSet::new();
     for (point, &slots) in sketch.points.iter().zip(&system.points) {
         if point_fixed(slots) {
             fixed_items.insert(point.id);
@@ -114,10 +167,23 @@ pub fn analyse(sketch: &Sketch) -> Analysis {
         if points && radius.is_none_or(slot_fixed) {
             fixed_items.insert(entry.id);
         }
+        let ends = |a, b| Some((system.point(sketch, a)?, system.point(sketch, b)?));
+        let gradient = match entry.curve {
+            Curve::Line { start, end } => ends(start, end).and_then(|(a, b)| distance(a, b)),
+            Curve::Circle { .. } => radius.map(|slot| vec![(slot, 1.0)]),
+            Curve::Arc { center, start, .. } => {
+                ends(start, center).and_then(|(a, b)| distance(a, b))
+            }
+            Curve::Spline(_) => None,
+        };
+        if gradient.is_some_and(|gradient| sized_by(&gradient)) {
+            sized.insert(entry.id);
+        }
     }
     Analysis {
         freedom,
         fixed: fixed_items,
+        sized,
         redundant,
         solved,
     }
@@ -132,6 +198,10 @@ pub(crate) struct Dependencies {
     pub fixed: Vec<bool>,
     /// Per row: part of a linear dependency among the rows.
     pub involved: Vec<bool>,
+    /// The null space: the motions keeping the rows' linearized
+    /// equations, an orthonormal basis of them as columns, a row per
+    /// column of the Jacobian.
+    pub null: Mat<f64>,
 }
 
 /// The [`dependencies`] of the rows of `jacobian` but those `implied`
@@ -181,6 +251,7 @@ pub(crate) fn dependencies(jacobian: &Mat<f64>) -> Dependencies {
             rank: 0,
             fixed: vec![false; columns],
             involved,
+            null: Mat::identity(columns, columns),
         };
     }
     let qr = jacobian.transpose().col_piv_qr();
@@ -239,5 +310,6 @@ pub(crate) fn dependencies(jacobian: &Mat<f64>) -> Dependencies {
         rank,
         fixed,
         involved,
+        null,
     }
 }

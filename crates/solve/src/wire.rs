@@ -572,8 +572,8 @@ fn check_reply(reply: Reply<Sketch, Analysis>, asked: &Request) -> Result<Option
 /// Checks that `analysis` is of `sketch`: at most as many degrees of
 /// freedom as it has variables (its points' coordinates, circles' radii
 /// and points' parameters on splines, or where they're offset from one),
-/// what's fixed its points and curves, and what's redundant its
-/// constraints and arcs.
+/// what's fixed its points and curves, what's sized its lines, circles and
+/// arcs, and what's redundant its constraints and arcs.
 fn check_analysis(analysis: &Analysis, sketch: &Sketch) -> Result<(), Error> {
     let circles = sketch.curves.iter().filter_map(radius).count();
     let from_spline = |pair: [Id; 2]| sketch.offset_pair(pair) == Some(OffsetPair::Spline);
@@ -603,6 +603,8 @@ fn check_analysis(analysis: &Analysis, sketch: &Sketch) -> Result<(), Error> {
     let fixed = |id| matches!(sketch.kind(id), Some(kind) if kind != Kind::Constraint);
     if analysis.freedom > variables
         || !analysis.fixed.iter().all(|&id| fixed(id))
+        || !(analysis.sized.iter())
+            .all(|&id| matches!(sketch.kind(id), Some(Kind::Line | Kind::Circle | Kind::Arc)))
         || !check_involved(&analysis.redundant, sketch)
     {
         return Err(Error::Items);

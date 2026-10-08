@@ -131,6 +131,11 @@ pub struct SketchColors {
     /// Driving dimensions, their lines, arrows and labels: the Dimension
     /// tools' icon colour.
     pub dimension: Color,
+    /// What marks a driven size, one the constraints set though no
+    /// driving dimension gives it: the wash of its pill and the equals
+    /// sign in it, in the Geometry list and on a reference dimension's
+    /// label.
+    pub driven: Color,
     /// What's selected.
     pub selected: Color,
     /// What's under the cursor.
@@ -438,6 +443,7 @@ const LIGHT: Palette = Palette {
         conflict: ERROR,
         construction: LIGHT_CONSTRUCTION,
         dimension: LIGHT_ICONS.dimension.line,
+        driven: color!(0x3a9a5b),
         selected: color!(0x2f5fd8),
         hovered: color!(0x3d9b35),
         point_fill: color!(0xf4f4f7),
@@ -534,6 +540,7 @@ const DARK: Palette = Palette {
         conflict: ERROR,
         construction: DARK_CONSTRUCTION,
         dimension: DARK_ICONS.dimension.line,
+        driven: color!(0x4fb06e),
         selected: color!(0x7ea2ff),
         hovered: color!(0x76cc60),
         point_fill: color!(0x24252b),
@@ -1949,6 +1956,33 @@ pub fn rail_list_band(category: IconCategory) -> impl Fn(&Theme) -> container::S
         }
     }
 }
+
+/// The pill a driven size sits in, after an equals sign: washed in
+/// [`SketchColors::driven`], the text in the text colour. Over the
+/// viewport (a reference dimension's label) on the panel's colour, so it
+/// reads over the model too.
+pub fn driven_pill(theme: &Theme, over_viewport: bool) -> container::Style {
+    let p = palette(theme);
+    let background = if over_viewport {
+        alpha(mix(p.sketching.driven, p.panel, 0.15), 0.9)
+    } else {
+        alpha(p.sketching.driven, 0.15)
+    };
+    container::Style {
+        border: border::rounded(DRIVEN_PILL_RADIUS),
+        ..filled(background, p.text)
+    }
+}
+
+/// The equals sign before a driven size, in [`SketchColors::driven`].
+pub fn driven_mark(theme: &Theme) -> iced::widget::text::Style {
+    iced::widget::text::Style {
+        color: Some(palette(theme).sketching.driven),
+    }
+}
+
+/// Corner radius of a [`driven_pill`]: round at its ends.
+const DRIVEN_PILL_RADIUS: f32 = 8.0;
 
 /// The chip a constraint's glyph sits on over the viewport, outlined in
 /// the danger colour while the constraint is in a conflict.

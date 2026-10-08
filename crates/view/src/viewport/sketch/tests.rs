@@ -672,6 +672,7 @@ fn geometry_is_coloured_by_its_state() {
     let analysis = varde_sketch::Analysis {
         freedom: 3,
         fixed: BTreeSet::from([a]),
+        sized: BTreeSet::new(),
         redundant: BTreeSet::from([level]),
         solved: false,
     };

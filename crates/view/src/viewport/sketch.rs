@@ -1295,7 +1295,9 @@ impl<'a> Sketching<'a> {
     }
 
     /// The labels of the sketch's dimensions, each at its place: its
-    /// value, a reference's in brackets, coloured by its state. Pressing
+    /// value, coloured by its state; a reference's after an equals sign
+    /// in a green pill, as the Geometry list notes a driven size, outlined
+    /// as a driving one's chip while selected or in a conflict. Pressing
     /// one selects it and grabs it to drag, double-clicking a driving one
     /// opens the value field in its place, hovering it highlights what it
     /// measures. The one the field is open on over the viewport is left
@@ -1317,7 +1319,8 @@ impl<'a> Sketching<'a> {
             .filter_map(|entry| {
                 let at = self.label_at(entry)?;
                 let dimension = &entry.dimension;
-                let value = dimension::label(self.sketch, dimension, self.units);
+                // A reference's after an equals sign in its pill.
+                let value = dimension::shown(self.sketch, dimension, self.units);
                 let chip = label_chip(
                     entry.id,
                     value,
@@ -1414,8 +1417,9 @@ impl<'a> Sketching<'a> {
     /// (`dimension_arrows`, a hovered dimension's in the hover colour), the
     /// rings marking near misses, which depend on the zoom, and the shape
     /// the tool is drawing to where the cursor snaps, with `modifiers`
-    /// held, and the snap's guide, seen through `projector` if the
-    /// viewport shows anything.
+    /// held, and the snap's guide, and the dimension being placed (in the
+    /// driven colour while the reference modifier is held), seen through
+    /// `projector` if the viewport shows anything.
     fn live_layer(
         &self,
         input: &Input,
@@ -1533,11 +1537,19 @@ impl<'a> Sketching<'a> {
             None => {}
         }
         if let Some((measure, side, label)) = self.placing(at) {
+            // With the reference modifier held, a click places a reference:
+            // it shows in their colour until then.
+            let reference = self.value.is_none() && Held::REFERENCE.is_held(modifiers);
+            let color = if reference {
+                colors.driven
+            } else {
+                colors.preview
+            };
             let lines = dimensions::lines(self.sketch, &measure, side, label);
             if let Some(lines) = lines {
-                draw_lines(&mut layer, &lines, colors.preview);
+                draw_lines(&mut layer, &lines, color);
                 if let Some(projector) = projector {
-                    arrows(&mut layer, projector, &lines.arrows, colors.preview);
+                    arrows(&mut layer, projector, &lines.arrows, color);
                 }
             }
         }
@@ -1810,13 +1822,13 @@ impl GlyphLook {
     }
 
     /// Its colour as a dimension's among `colors`: free in the Dimension
-    /// tools' colour if `driving`, else in the construction colour, and
-    /// that faded while waiting on the solver.
+    /// tools' colour if `driving`, else in the driven colour, as its
+    /// label's pill, and that faded while waiting on the solver.
     fn dimension_color(self, colors: SketchColors, driving: bool) -> Color {
         let free = if driving {
             colors.dimension
         } else {
-            colors.construction
+            colors.driven
         };
         self.over(free, colors)
     }
@@ -1865,12 +1877,48 @@ fn label_chip<'a>(
     driving: bool,
     editable: bool,
 ) -> Element<'a, Message> {
+    // A reference's measures a driven size: an equals sign before it, in
+    // a green pill, as the Geometry list notes one. Selected or in a
+    // conflict, it's outlined and coloured as a driving one's chip is.
     let value = text(value)
         .size(LABEL_SIZE)
         .style(move |theme| text::Style {
-            color: Some(look.dimension_color(theme::palette(theme).sketching, driving)),
+            color: Some(if driving {
+                look.dimension_color(theme::palette(theme).sketching, driving)
+            } else {
+                look.over(theme::palette(theme).text, theme::palette(theme).sketching)
+            }),
         });
-    let area = chip(id, value, LABEL_PADDING, look)
+    let area = if !driving {
+        let mark = text("=").size(LABEL_SIZE).style(move |theme| text::Style {
+            color: Some(look.dimension_color(theme::palette(theme).sketching, false)),
+        });
+        let content = row![mark, value].spacing(3).align_y(Alignment::Center);
+        let pill = container(content)
+            .padding(LABEL_PADDING)
+            .style(move |theme| {
+                let pill = theme::driven_pill(theme, true);
+                match look {
+                    GlyphLook::Selected => iced::widget::container::Style {
+                        border: theme::selected_glyph(theme)
+                            .border
+                            .rounded(pill.border.radius),
+                        ..pill
+                    },
+                    GlyphLook::Conflict => iced::widget::container::Style {
+                        border: theme::glyph(theme, true).border.rounded(pill.border.radius),
+                        ..pill
+                    },
+                    GlyphLook::Free | GlyphLook::Pending => pill,
+                }
+            });
+        mouse_area(pill)
+            .on_enter(Message::Look(Look::HoverItem(Some(id.into()))))
+            .on_exit(Message::Look(Look::LeaveItem(id.into())))
+    } else {
+        chip(id, value, LABEL_PADDING, look)
+    };
+    let area = area
         .on_press(Message::Look(Look::PressLabel { id, add: false }))
         .interaction(if editable {
             mouse::Interaction::Grab

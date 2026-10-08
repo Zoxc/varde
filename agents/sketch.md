@@ -491,8 +491,12 @@ and `analyse(&Sketch)`. `notes/SketchImpl.md` ("Built so far (step 2a)",
   (`Failure`), with the constraints involved where they can be told.
 - **Analysis** (`analysis.rs`): per component, faer's dense column-pivoted
   QR of the Jacobian's transpose gives the degrees of freedom, the fixed
-  points and curves and the redundant (or, unsolved, conflicting)
-  constraints.
+  points and curves, the sized curves and the redundant (or, unsolved,
+  conflicting) constraints. A line, circle or arc is sized
+  (`Analysis::sized`) where the gradient of its size (a line's length,
+  a radius) has no part in the null space, the motions the equations
+  allow, nor on a variable no equation reads: the constraints set its
+  size even where they leave it free to move.
 
 ## Profiles (`varde-sketch`, `intersect.rs`, `profile.rs`)
 
@@ -1583,8 +1587,11 @@ bar says why (`EditError::Sketch`).
   of Spline 2"), each a point's row. A folded curve with one of its points selected shows a round
   dot in a selected row's colour after its name. A curve's note is its size (`dimension::size_note`: a
   line's length, a circle's diameter, an arc's radius, or the other of
-  the two a driving dimension measures), in the Dimension icons' accent
-  where a driving dimension sets it, else faint; a construction curve's
+  the two a driving dimension measures), faint, unless it's driven: in
+  `Analysis::sized` with no driving dimension of its own measuring it,
+  the constraints setting it, it's after an equals sign in a green pill
+  (`driven_note`, `theme::driven_pill`, `SketchColors::driven`), as a
+  reference dimension's label is over the viewport; a construction curve's
   icon is in the construction colour, with a rail of three short faded
   dashes left of it (`construction_rail`). A point's note is where it is. Its context menu
   (`RowMenu::Item`) deletes it (`Edit::DeleteItem`), or the selection if
@@ -1719,7 +1726,8 @@ failing red too within the errors' halo (`failing`, below), and
 faded while waiting on the solver. A dimension (its lines, arrows and
 label) is free in the Dimension tools' icon colour
 (`SketchColors::dimension`, `IconColors::dimension`'s line), or in the
-construction colour if it's a reference (`GlyphLook::dimension_color`),
+driven colour if it's a reference (`SketchColors::driven`, as its
+label's pill; `GlyphLook::dimension_color`),
 and selected, in a conflict or waiting as the others. Colours are the palette's
 `SketchColors`, light and dark; `conflict` is the theme's error red,
 the renderer's `Colors::error`.
@@ -1796,7 +1804,9 @@ failures show").
   `SNAP_RADIUS` (15) pixels out so it shows round the cursor, as is where
   a point dragged snaps, and the snap's guide, the points placed; the Dimension
   tool's picks and the dimension it would place with the label at the
-  cursor, or the one the value field places).
+  cursor, in the preview colour, or the driven colour while the
+  reference modifier (`Held::REFERENCE`) is held, as a click then places
+  a reference; or the one the value field places).
 
 **Input.** `Input` keeps the cursor, the item under it (hover isn't app
 state: only the viewport shows it), the left button held down and whether
@@ -1827,7 +1837,10 @@ widgets each centred where a sketch point shows (or with
 inside the viewport, and taking nothing off its widgets. Five are
 stacked: the glyphs, nudged apart; dimensions' labels
 (`Sketching::labels`), each where it's put, a chip with the value in the
-design's units (a reference's measure in brackets) coloured by state,
+design's units coloured by state (a reference's measure, which a
+driven size's, after an equals sign in a green pill as the Geometry
+list notes one, outlined and coloured as a driving one's chip while
+selected or in a conflict),
 pressed to select and grab it, double-clicked to edit it; the value
 field (`Sketching::field`) at the label it edits or places, in a layer of
 its own so its widget state stays its own; the glyph of where a drawing

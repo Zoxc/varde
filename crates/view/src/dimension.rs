@@ -477,16 +477,26 @@ fn rounded(value: f64, decimals: usize) -> String {
 /// `units`: its value, or a reference's measure of the sketch as it is,
 /// in brackets.
 pub fn label(sketch: &Sketch, dimension: &Dimension, units: LengthUnit) -> String {
-    let measure = &dimension.measure;
     if dimension.driving {
-        return shown_value(measure, dimension.value.value, units);
+        return shown_value(&dimension.measure, dimension.value.value, units);
     }
+    format!("({})", shown(sketch, dimension, units))
+}
+
+/// What `dimension` shows in `sketch` in a design in `units`, unbracketed:
+/// its value if it's driving, else its measure of the sketch as it is.
+/// A reference's label over the viewport shows this after an equals sign.
+pub fn shown(sketch: &Sketch, dimension: &Dimension, units: LengthUnit) -> String {
+    let measure = &dimension.measure;
     // Negative where the geometry has crossed to the other side: its size
     // all the same.
-    let measured = sketch
-        .measure(measure, dimension.side)
-        .map_or(dimension.value.value, f64::abs);
-    format!("({})", shown_value(measure, measured, units))
+    let value = match dimension.driving {
+        true => dimension.value.value,
+        false => sketch
+            .measure(measure, dimension.side)
+            .map_or(dimension.value.value, f64::abs),
+    };
+    shown_value(measure, value, units)
 }
 
 /// What the value field for a new dimension of `measure` on `side` starts

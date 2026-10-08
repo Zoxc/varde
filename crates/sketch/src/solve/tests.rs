@@ -26,6 +26,48 @@ fn close(a: DVec2, b: DVec2) -> bool {
 }
 
 #[test]
+fn an_analysis_tells_the_sizes_the_constraints_set_where_they_leave_the_curves_free() {
+    // A rectangle, its bottom's length dimensioned: the top's is set too,
+    // the sides' not, and nothing is fixed.
+    let (mut sketch, _, [bottom, right, top, left]) = quadrilateral();
+    for constraint in [
+        Constraint::Horizontal(bottom),
+        Constraint::Horizontal(top),
+        Constraint::Vertical(left),
+        Constraint::Vertical(right),
+    ] {
+        constrain(&mut sketch, constraint);
+    }
+    dimension(&mut sketch, Measure::Length(bottom), "10 mm");
+    let sketch = settle(&sketch).unwrap().sketch;
+    let analysis = analyse(&sketch);
+    assert!(analysis.fixed.is_empty());
+    assert_eq!(analysis.sized, BTreeSet::from([bottom, top]));
+
+    // The sides made equal to the bottom: all four, still free to move.
+    let mut square = sketch.clone();
+    constrain(&mut square, Constraint::Equal(left, bottom));
+    let square = settle(&square).unwrap().sketch;
+    let analysis = analyse(&square);
+    assert_eq!(analysis.freedom, 2);
+    assert_eq!(analysis.sized, BTreeSet::from([bottom, right, top, left]));
+
+    // A circle and an arc: sized by a dimension each, free to move.
+    let mut sketch = Sketch::default();
+    let center = point(&mut sketch, 0.0, 0.0);
+    let round = circle(&mut sketch, center, 3.0);
+    let [hub, start, end] =
+        [(10.0, 0.0), (14.0, 0.0), (10.0, 4.0)].map(|(x, y)| point(&mut sketch, x, y));
+    let bend = crate::testing::arc(&mut sketch, hub, start, end);
+    assert!(analyse(&sketch).sized.is_empty());
+    dimension(&mut sketch, Measure::Diameter(round), "6 mm");
+    dimension(&mut sketch, Measure::Radius(bend), "4 mm");
+    let analysis = analyse(&settle(&sketch).unwrap().sketch);
+    assert!(analysis.fixed.is_empty());
+    assert_eq!(analysis.sized, BTreeSet::from([round, bend]));
+}
+
+#[test]
 fn a_rectangle_loses_its_freedom_constraint_by_constraint() {
     let (mut sketch, corners, [bottom, right, top, left]) = quadrilateral();
     let fixed = analyse(&sketch);
@@ -74,6 +116,7 @@ fn a_rectangle_loses_its_freedom_constraint_by_constraint() {
     let mut everything: BTreeSet<Id> = solved.points.iter().map(|point| point.id).collect();
     everything.extend(solved.curves.iter().map(|entry| entry.id));
     assert_eq!(analysis.fixed, everything);
+    assert_eq!(analysis.sized, BTreeSet::from([bottom, right, top, left]));
     let side = 8.0 - pinned.x;
     assert!(close(at(&solved, corners[2]), pinned + DVec2::splat(side)));
 }

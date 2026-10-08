@@ -1468,8 +1468,13 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
         GeometryRow::Curve(at) => {
             let entry = &sketch.sketch.curves[at];
             let size = dimension::size_note(sketch.sketch, entry, sketch.units);
+            // Driven: the constraints set its size, though no driving
+            // dimension of its own gives it.
+            let sized = sketch
+                .analysis
+                .is_some_and(|analysis| analysis.sized.contains(&entry.id));
             let (note, driven) = match size {
-                Some((size, driven)) => (Some(size), driven),
+                Some((size, driving)) => (Some(size), sized && !driving),
                 None => (None, false),
             };
             let danger = conflicts.contains(&entry.id);
@@ -1608,8 +1613,9 @@ struct Item {
     note: Option<String>,
     /// Where a point is, noted in place of `note` as fits the row.
     at: Option<glam::DVec2>,
-    /// Whether a driving dimension sets the size in the note: it's shown
-    /// in the dimension colour, not faint.
+    /// Whether the size in the note is driven, set by the constraints
+    /// though no driving dimension of its own gives it: it's shown in a
+    /// green pill after an equals sign ([`theme::driven_pill`]), not faint.
     driven: bool,
     danger: bool,
     /// Whether a point of the curve's is selected while its rows are
@@ -1655,6 +1661,17 @@ fn construction_rail<'a>(left: f32) -> Element<'a, Message> {
         .padding(Padding::ZERO.left((left - RAIL_GAP - RAIL_WIDTH).max(0.0)))
         .height(ROW_HEIGHT)
         .align_y(Alignment::Center)
+        .into()
+}
+
+/// A driven size as a Geometry list row notes it: an equals sign before
+/// it, in a green pill ([`theme::driven_pill`]).
+fn driven_note<'a>(note: String) -> Element<'a, Message> {
+    let mark = text("=").size(11.5).style(theme::driven_mark);
+    let note = text(note).size(11.5).wrapping(text::Wrapping::None);
+    container(row![mark, note].spacing(3).align_y(Alignment::Center))
+        .padding(Padding::ZERO.left(5).right(6))
+        .style(|theme| theme::driven_pill(theme, false))
         .into()
 }
 
@@ -1705,20 +1722,16 @@ fn geometry_item<'a>(
         // A note too long for the room left is cut at the row's edge
         // rather than wrapped over the next; a point's coordinates are
         // rounded to fit first.
-        let style = move |theme: &iced::Theme| {
-            if item.driven {
-                text::Style {
-                    color: Some(theme::palette(theme).icons.dimension.accent),
-                }
-            } else {
-                theme::faint_text(theme)
-            }
-        };
         let note_text = move |note: String| {
-            let note = text(note)
-                .size(11.5)
-                .wrapping(text::Wrapping::None)
-                .style(style);
+            let note: Element<'a, Message> = if item.driven {
+                driven_note(note)
+            } else {
+                text(note)
+                    .size(11.5)
+                    .wrapping(text::Wrapping::None)
+                    .style(theme::faint_text)
+                    .into()
+            };
             container(note)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -2207,6 +2220,41 @@ pub(crate) fn value_field<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_size_the_constraints_set_is_noted_driven_and_one_a_dimension_gives_faint() {
+        use crate::testing::{dimension, plate};
+        use varde_sketch::{Analysis, Measure};
+        let mut sketch = plate(20.0, 10.0, 3.0);
+        let [bottom, right, top] = [0, 1, 2].map(|k| sketch.curves[k].id);
+        let label = glam::DVec2::new(0.0, -5.0);
+        dimension(&mut sketch, Measure::Length(bottom), "40 mm", true, label);
+        // The bottom's length given, the top's set by it, the right's
+        // free: only the top's is driven.
+        let analysis = Analysis {
+            sized: BTreeSet::from([bottom, top]),
+            solved: true,
+            ..Analysis::default()
+        };
+        let selection = BTreeSet::new();
+        let mut state = SketchState::plain(&sketch, &selection, None);
+        state.analysis = Some(&analysis);
+        let mut laid =
+            crate::testing::Laid::new(geometry(state, 400.0), iced::Size::new(300.0, 400.0));
+        let texts: Vec<String> = laid.texts().into_iter().map(|shown| shown.text).collect();
+        let after = |name: &str| {
+            let at = texts.iter().position(|text| text == name).unwrap();
+            texts[at + 1..]
+                .iter()
+                .take_while(|text| !text.starts_with("Line") && !text.starts_with("Circle"))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let [bottom, right, top] = [bottom, right, top].map(|id| sketch.curve(id).unwrap().name());
+        assert_eq!(after(&bottom), ["40 mm"]);
+        assert_eq!(after(&right), ["20 mm"]);
+        assert_eq!(after(&top), ["=", "40 mm"]);
+    }
 
     #[test]
     fn an_extrude_is_noted_by_its_distances_in_the_units() {
