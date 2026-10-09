@@ -32,9 +32,9 @@ fn a_link_starts_empty_and_takes_its_shape() {
     let (sketch, id) = linked(LinkKind::Project, &shape);
     let link = sketch.link(id).unwrap();
     assert_eq!((link.points.len(), link.curves.len()), (2, 1));
-    assert!(!link.profiles);
-    // Construction unless it counts for profiles.
-    assert!(sketch.curve(link.curves[0]).unwrap().construction);
+    // Added links count for profiles, so their curves aren't construction.
+    assert!(link.profiles);
+    assert!(!sketch.curve(link.curves[0]).unwrap().construction);
     assert_eq!(sketch.link_shape(link), Some(shape));
     assert!(sketch.is_linked(link.points[0]));
     assert_eq!(sketch.link_of(link.curves[0]).map(|l| l.id), Some(id));
@@ -281,7 +281,7 @@ fn edits_to_link_geometry_are_refused() {
     assert!(matches!(
         refused(SketchEdit::SetConstruction {
             ids: vec![link.curves[0]],
-            construction: false,
+            construction: true,
         }),
         EditError::Linked(_)
     ));
@@ -313,13 +313,14 @@ fn a_links_curves_count_for_profiles_only_when_it_says() {
     );
     let counted = SketchEdit::SetLinkProfiles {
         link: id,
-        profiles: true,
+        profiles: false,
     }
     .apply(&sketch, &DESIGN)
     .unwrap();
     let link = counted.link(id).unwrap();
-    assert!(link.profiles);
-    assert!(!counted.curve(link.curves[0]).unwrap().construction);
+    assert!(!link.profiles);
+    // Construction unless it counts for profiles.
+    assert!(counted.curve(link.curves[0]).unwrap().construction);
     assert_eq!(counted.check(&DESIGN), Ok(()));
 }
 
@@ -335,9 +336,9 @@ fn check_refuses_links_naming_what_isnt_theirs() {
     let lone = point(&mut shared, 3.0, 3.0);
     line(&mut shared, link.points[0], lone);
     assert_eq!(shared.check(&DESIGN), Err(SketchError::Link(id)));
-    // A link curve counting for profiles the link doesn't say.
+    // A link curve left out of profiles the link counts it for.
     let mut counted = sketch.clone();
-    counted.curve_mut(link.curves[0]).unwrap().construction = false;
+    counted.curve_mut(link.curves[0]).unwrap().construction = true;
     assert_eq!(counted.check(&DESIGN), Err(SketchError::Link(id)));
     // A link naming a point that isn't there.
     let mut missing = sketch.clone();
