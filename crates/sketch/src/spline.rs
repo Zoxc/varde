@@ -340,9 +340,9 @@ impl Sketch {
     /// control points and knots), the other way through the places its
     /// knots are at, which it then passes through but between them
     /// strays a hair, with handles at its ends or at every one, whichever
-    /// keeps nearer its shape ([`through_tips`]). Knots a spline with a
+    /// keeps nearer its shape (`through_tips`). Knots a spline with a
     /// handle at every fit point would have go back to those fit points
-    /// ([`handled_params`]), not one at each knot, so converting round
+    /// (`handled_params`), not one at each knot, so converting round
     /// and back doesn't grow it. An open spline keeps its first and last points,
     /// the rest are new, and those only it used go with what's on them,
     /// as do its handles. Nothing changes if it's `to` already.

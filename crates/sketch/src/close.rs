@@ -106,7 +106,7 @@ impl Sketch {
 
     /// Closes the spline `curve`, see the module: it runs on from its
     /// last point round to its first. Where its ends meet
-    /// ([`Sketch::ends_meet`]) the last is merged into the first, as an
+    /// (`Sketch::ends_meet`) the last is merged into the first, as an
     /// arc's end is, its handle going to the first if it has none. By
     /// control points its knots are found anew ([`control_knots`]).
     /// [`EditError::Target`] if it isn't

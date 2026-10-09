@@ -160,7 +160,7 @@ pub enum SketchEdit {
     /// A link's curves made to count for profiles, or not (construction
     /// geometry).
     SetLinkProfiles { link: Id, profiles: bool },
-    /// The point curves share made one of each, see [`Sketch::detach`].
+    /// The point curves share made one of each, see `Sketch::detach`.
     Detach(Id),
     /// The arc's end made its start, so it runs all the way round, see
     /// [`Sketch::closable`].
