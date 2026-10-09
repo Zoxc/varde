@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Varde CAD</title>
+    <style>
+      /* The theme's background, `LIGHT_PANEL` or `DARK_PANEL` in
+         crates/view/src/theme.rs, as the system prefers; shown until iced draws
+         its first frame. */
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #fafafb; }
+      @media (prefers-color-scheme: dark) { html, body { background: #212228; } }
+      canvas { display: block; width: 100%; height: 100%; }
+      /* winit gives the canvas a tabindex and focuses it on a click; Chrome then
+         draws its focus ring, of which a dark line shows along the top edge. */
+      canvas:focus, canvas:focus-visible { outline: none; }
+    </style>
+    <link rel="icon" href="./logo-c7636d0c07804929.svg" integrity="sha384-y5FVujs5mqydEzjVSLlVCzOOw9cY98DkYh+w49k2yhSv+PV4zaJLJ6nooM84NsQ1"/>
+    <!-- The app, and the regeneration, solver and IO Web Workers, which
+         instantiate the same module. -->
+    
+<script type="module">
+import init, * as bindings from './varde-web-65e9ce9206181784.js';
+const wasm = await init({ module_or_path: './varde-web-65e9ce9206181784_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+    <!-- Starts any of the workers, see the script. -->
+    
+  <link rel="modulepreload" href="./varde-web-65e9ce9206181784.js" crossorigin="anonymous" integrity="sha384-BTkCI0oFVHmcQI+sEwiwr2HOZ93iZiTc0oJRER7B3PlrbyuzqFyVVLY+Rz8aspvq"><link rel="preload" href="./varde-web-65e9ce9206181784_bg.wasm" crossorigin="anonymous" integrity="sha384-nH04+fOuUV3Xh76tXnBhhewFquJkDsxBsWn+BY++FxOOFar74Hnz+YaE7Acg15z3" as="fetch" type="application/wasm"></head>
+  <body></body>
+</html>

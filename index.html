@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Varde CAD</title>
+    <meta name="description" content="Experimental parametric CAD in Rust, for the desktop and the browser." />
+    <link rel="icon" href="logo.svg" type="image/svg+xml" />
+    <style>
+      :root {
+        --bg: #fafafb;
+        --fg: #1d1b22;
+        --muted: #5f5a6b;
+        --accent: #5e4a93;
+        --accent-fg: #ffffff;
+        --card: #ffffff;
+        --border: #e3e0ea;
+        --warn-bg: #fff6e0;
+        --warn-border: #e8c76a;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #17161b;
+          --fg: #ecebf0;
+          --muted: #a6a1b3;
+          --accent: #9a88c8;
+          --accent-fg: #17161b;
+          --card: #201f26;
+          --border: #34323d;
+          --warn-bg: #2d2615;
+          --warn-border: #7a6420;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      main { max-width: 44rem; margin: 0 auto; padding: 3rem 1rem 4rem; }
+      header { text-align: center; }
+      header img { width: 88px; height: 88px; }
+      h1 { margin: 0.5rem 0 0.25rem; font-size: 2.2rem; letter-spacing: -0.01em; }
+      .tagline { margin: 0; color: var(--muted); font-size: 1.1rem; }
+      .launch { text-align: center; margin: 2rem 0; }
+      .button {
+        display: inline-block;
+        padding: 0.8rem 2rem;
+        border-radius: 0.5rem;
+        background: var(--accent);
+        color: var(--accent-fg);
+        font-weight: 600;
+        font-size: 1.1rem;
+        text-decoration: none;
+      }
+      .button:hover, .button:focus-visible { filter: brightness(1.1); }
+      .button.secondary {
+        background: transparent;
+        color: var(--accent);
+        border: 2px solid var(--accent);
+        padding: calc(0.8rem - 2px) calc(2rem - 2px);
+        margin-left: 0.5rem;
+      }
+      .hint { color: var(--muted); font-size: 0.9rem; margin-top: 0.75rem; }
+      .warn {
+        background: var(--warn-bg);
+        border: 1px solid var(--warn-border);
+        border-radius: 0.5rem;
+        padding: 0.75rem 1rem;
+        margin: 2rem 0;
+      }
+      .warn p { margin: 0.25rem 0; }
+      h2 { font-size: 1.25rem; margin-top: 2.5rem; }
+      ul { padding-left: 1.25rem; }
+      li { margin: 0.3rem 0; }
+      code { font-size: 0.92em; }
+      footer { margin-top: 3rem; color: var(--muted); font-size: 0.9rem; text-align: center; }
+      a { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="logo.svg" alt="Varde logo" />
+        <h1>Varde CAD</h1>
+        <p class="tagline">Experimental parametric CAD in Rust, for the desktop and the browser.</p>
+      </header>
+
+      <div class="launch">
+        <a class="button" href="app/">Start Varde</a>
+        <a class="button secondary" href="https://github.com/Zoxc/varde">GitHub</a>
+        <p class="hint">Runs in your browser with WebGL2. Designs are kept in the browser's own storage; sample designs to try are on its start page.</p>
+      </div>
+
+      <p>
+        Varde is a parametric 3D CAD application: parts are built from constrained
+        sketches and editable features. It runs natively and in the browser.
+      </p>
+
+      <div class="warn">
+        <p><strong>Experimental.</strong> Early work in progress; it may lose your work.</p>
+        <p><strong>Unstable file format.</strong> <code>.vrdp</code> files may not open in other versions.</p>
+        <p><strong>Vibe coded.</strong> Nearly all code is written by AI agents, steered by a human.</p>
+      </div>
+
+      <h2>Features</h2>
+      <ul>
+        <li>Constrained sketches with snapping, typed sizes and dimensions that take expressions with units (<code>1 in + 3 mm</code>), solved as you edit.</li>
+        <li>Sketch tools: trim, extend, offset, mirror, fillet and chamfer, and projecting model geometry into a sketch, kept in step as the model changes.</li>
+        <li>Extrudes and revolves that make, join, cut or intersect bodies, in an editable timeline, on planes or flat faces.</li>
+        <li>Combining, moving, mirroring, patterning, aligning and scaling bodies.</li>
+        <li>Exact solids: rational quadratic patches with conic edges, so planes, arcs, cylinders and cones are exact and booleans are robust.</li>
+        <li>Measuring faces, edges, points and bodies, and the distance and angle between two.</li>
+        <li>3MF export for 3D printing.</li>
+      </ul>
+
+      <footer>
+        <p>Built from commit <code id="commit">ca00aa9f4278</code>.
+          Licensed under the GNU Affero General Public License, version 3 or later.
+          Source on <a href="https://github.com/Zoxc/varde">GitHub</a>.</p>
+      </footer>
+    </main>
+  </body>
+</html>
