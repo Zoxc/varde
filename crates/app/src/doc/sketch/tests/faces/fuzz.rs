@@ -240,12 +240,14 @@ fn check(doc: &mut Doc, requests: &Requests, last_sent: &Option<Request>, at: &s
         }
     }
 
-    // In a sketch, the camera faces it.
+    // In a sketch, the camera faces it, from either side of its plane
+    // (whichever the view was on, see `facing_turn`).
     if let Some(session) = &doc.sketch {
         let normal = session.placement.normal.as_vec3();
         settle_camera(doc);
+        let backward = doc.camera.backward();
         assert!(
-            doc.camera.backward().abs_diff_eq(normal, 1e-4),
+            backward.abs_diff_eq(normal, 1e-4) || backward.abs_diff_eq(-normal, 1e-4),
             "{at}: the camera looks along {} at a sketch facing {normal}",
             doc.camera.backward()
         );
@@ -289,6 +291,10 @@ fn run(seed: u64, steps: usize) {
         let mut escaped = false;
         // A plane taken: a new sketch, or the sketch picking was for.
         let mut taken: Option<Plane> = None;
+        // The document and revision just before it was taken: getting the
+        // pick ready (finishing a sketch, answers relinking) can change
+        // the document before, folding into the change before the pick.
+        let mut picked_from = None;
         let roll = rng.below(46);
         let what = format!("seed {seed} step {step}: roll {roll}");
         match roll {
@@ -351,6 +357,7 @@ fn run(seed: u64, steps: usize) {
                     });
                     if let Some(face) = sent {
                         taken = Some(Plane::Face(face));
+                        picked_from = Some((doc.editor.document().clone(), doc.editor.revision()));
                         doc.update(Edit::FacePicked(face));
                     }
                 }
@@ -366,12 +373,14 @@ fn run(seed: u64, steps: usize) {
                 };
                 if let Some(face) = face {
                     taken = Some(Plane::Face(face));
+                    picked_from = Some((doc.editor.document().clone(), doc.editor.revision()));
                     doc.update(Edit::FacePicked(face));
                 }
             }
             10 | 11 => {
                 let plane = *rng.pick(&[OriginPlane::XY, OriginPlane::XZ, OriginPlane::YZ]);
                 taken = Some(Plane::Origin(plane));
+                picked_from = Some((doc.editor.document().clone(), doc.editor.revision()));
                 doc.update(Edit::PlanePicked(plane));
             }
             12..=14 => {
@@ -638,7 +647,8 @@ fn run(seed: u64, steps: usize) {
             assert_eq!(after, document, "{what}: Esc changed the document");
             assert_eq!(doc.editor.revision(), revision, "{what}");
         }
-        if let (Some(plane), Some(picking_for)) = (taken, picking_for)
+        if let (Some(plane), Some(picking_for), Some((document, revision))) =
+            (taken, picking_for, picked_from)
             && doc.editor.revision() != revision
         {
             // One undo step; a change of plane keeps the drawing.
@@ -646,8 +656,8 @@ fn run(seed: u64, steps: usize) {
                 Some(id) => {
                     assert_eq!(super::plane(&doc, id), plane_of(&after, id), "{what}");
                     assert_eq!(
-                        sketch_in(&document, id),
-                        sketch_in(&after, id),
+                        drawing_in(&document, id),
+                        drawing_in(&after, id),
                         "{what}: drawing changed"
                     );
                 }
@@ -684,11 +694,26 @@ fn plane_of(document: &Document, id: FeatureId) -> Plane {
     }
 }
 
-fn sketch_in(document: &Document, id: FeatureId) -> varde_sketch::Sketch {
-    match &document.feature(id).unwrap().kind {
-        FeatureKind::Sketch { sketch, .. } => sketch.clone(),
-        _ => panic!("not a sketch"),
-    }
+/// What the user drew in the sketch `id`: its sketch less the sketch
+/// face's link, which follows the plane (`Command::SetSketchPlane`), and
+/// with `next_id` cleared, as that link coming or going spends ids.
+fn drawing_in(document: &Document, id: FeatureId) -> varde_sketch::Sketch {
+    let FeatureKind::Sketch {
+        plane,
+        sketch,
+        sources,
+    } = &document.feature(id).unwrap().kind
+    else {
+        panic!("not a sketch")
+    };
+    let mut drawing = match varde_document::sketch_face(plane, sketch, sources) {
+        Some(link) => varde_sketch::SketchEdit::Delete(vec![link])
+            .apply(sketch, &document.design())
+            .expect("the sketch face's link deletes"),
+        None => sketch.clone(),
+    };
+    drawing.next_id = 0;
+    drawing
 }
 
 /// The steps of the quick run, see [`crate::tests::fuzz_steps`].
