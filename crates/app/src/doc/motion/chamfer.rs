@@ -67,7 +67,7 @@ impl MotionSession {
             edges: self.blend.edges.refs.clone(),
             faces: self.faces.refs.clone(),
             distances,
-            chains: self.blend.chains,
+            chains: self.blend.stored,
             flip: self.flip && self.chamfer_type != ChamferType::Equal,
         })
     }
@@ -98,7 +98,7 @@ impl MotionSession {
         };
         self.chamfer_type = kind;
         self.flip = chamfer.flip;
-        self.blend = BlendSetup::of(&chamfer.edges, chamfer.chains);
+        self.blend = BlendSetup::blend_of(&chamfer.edges, chamfer.chains);
         self.faces = Refs::of(&chamfer.faces);
         self.blend_body();
     }
@@ -113,7 +113,12 @@ impl Doc {
             kind: session.chamfer_type,
             info: (session.chamfer())
                 .filter(|_| session.kind == MotionKind::Chamfer)
-                .map(|chamfer| varde_view::chamfer_info(&chamfer, units)),
+                .map(|chamfer| {
+                    // The tick, which says what clicks pick, or the
+                    // feature's stored chains.
+                    let chains = chamfer.chains || session.blend.chains;
+                    varde_view::chamfer_info(&Chamfer { chains, ..chamfer }, units)
+                }),
         }
     }
 }

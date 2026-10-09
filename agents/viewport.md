@@ -1388,8 +1388,8 @@ split's tool, a scale's edge, an align's directions; the measure tool's
 A and B (`Doc::measure_has`); never a point (the row is the edge or
 vertex) nor a face while a plane is picked for a sketch
 (`Doc::motion_tick`). An edge of a tangent chain a blend picked reads
-"Chain of Body 1" (`OverlapNote::Chain`): a click on any of its edges
-takes the chain out.
+"Chain of Body 1" (`OverlapNote::Chain`) while its Tangent chain tick
+is on: a click on any of its edges takes the chain out.
 A row clicked (`ChooseOverlap`, the app filling in `add` from
 Ctrl/Cmd held) takes a `ClickGeometry`, `ClickModel` or `ClickSketch`
 on that item, so a session (measure, combine, move) or Project and

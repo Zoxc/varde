@@ -111,7 +111,8 @@ fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
     assert!(plates.doc.motion_ready());
     let fillet = drafted(&plates).expect("a fillet's draft");
     assert_eq!(fillet.radius.value, 2.0, "the mock's 2 mm");
-    assert!(fillet.chains);
+    // The tick picks chains; the fillet stores its edges alone.
+    assert!(!fillet.chains);
     assert!(shows(&plates, "1 edge · R2 mm · Tangent chain"));
     plates.doc.look(Look::Hover(None));
     let picked = plates.doc.motion_highlight().expect("lit").clone();
@@ -196,6 +197,7 @@ fn the_radius_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     plates.input(MotionField::Radius, "1");
     assert!(plates.doc.motion_ready());
     plates.motion(MotionLook::Chain);
+    assert!(shows(&plates, "1 edge · R1 mm"));
     let fillet = drafted(&plates).expect("a draft");
     assert!(!fillet.chains);
     assert_eq!(fillet.radius.value, 1.0);
@@ -359,8 +361,8 @@ fn fillet_takes_the_edges_selected_and_f_backs_out() {
     assert_eq!(edges(&plates).len(), 1);
 }
 
-/// With Tangent chain on, the slot's top front line lights with the
-/// rest of its rim once picked; off, the line alone.
+/// With Tangent chain on, a click on the slot's top front line picks
+/// the rest of its rim with it; off, the line alone.
 #[test]
 fn a_tangent_chain_lights_whole() {
     let (mut plates, body) = slot();
@@ -382,15 +384,44 @@ fn a_tangent_chain_lights_whole() {
         add: false,
         double: false,
     });
+    assert_eq!(edges(&plates).len(), 4);
     assert_eq!(selected(&plates), rim);
+    plates.doc.look(Look::ClickModel {
+        pick: Some(line),
+        add: false,
+        double: false,
+    });
+    assert!(edges(&plates).is_empty());
     plates.motion(MotionLook::Chain);
+    plates.doc.look(Look::ClickModel {
+        pick: Some(line),
+        add: false,
+        double: false,
+    });
     assert_eq!(selected(&plates), [edge]);
+}
+
+/// An edge selected before the session takes in its tangent chain as a
+/// click would, the tick on to begin with: the slot's line, its rim.
+#[test]
+fn an_edge_selected_before_takes_in_its_chain() {
+    let (mut plates, body) = slot();
+    let line = edge_pick(&plates, body, ([0.0, -3.0, 5.0], [10.0, -3.0, 5.0]));
+    plates.doc.pick.selection = Selection::new(SelectionMode::Edges { tangent: false });
+    plates.doc.look(Look::ClickModel {
+        pick: Some(line),
+        add: true,
+        double: false,
+    });
+    plates.doc.look(Look::StartFillet);
+    assert!(plates.doc.motion.as_ref().unwrap().blend.chains);
+    assert_eq!(edges(&plates).len(), 4);
 }
 
 /// With Tangent chain on, the list of the model's overlaps names a row
 /// of an edge of a picked chain (the line picked, or another edge of its
 /// rim) as the chain, ticked, which a click on it takes out whole;
-/// with Tangent chain off, the line alone is ticked, as an edge.
+/// with Tangent chain off, each is ticked as an edge of its own.
 #[test]
 fn the_overlap_list_names_an_edge_of_a_picked_chain_as_the_chain() {
     use varde_view::OverlapNote;
@@ -411,7 +442,7 @@ fn the_overlap_list_names_an_edge_of_a_picked_chain_as_the_chain() {
         add: false,
         double: false,
     });
-    assert_eq!(edges(&plates).len(), 1);
+    assert_eq!(edges(&plates).len(), 4);
     let list = varde_view::Overlaps {
         held: glam::DVec2::ZERO,
         at: glam::DVec2::ZERO,
@@ -427,7 +458,7 @@ fn the_overlap_list_names_an_edge_of_a_picked_chain_as_the_chain() {
     plates.doc.look(Look::CloseOverlaps);
     plates.motion(MotionLook::Chain);
     plates.doc.look(Look::OpenOverlaps(list.clone()));
-    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, false]));
+    assert_eq!(plates.doc.overlap_ticked(), Some(vec![true, true]));
     assert_eq!(notes(&plates), [OverlapNote::None, OverlapNote::None]);
     plates.doc.look(Look::CloseOverlaps);
     plates.motion(MotionLook::Chain);
@@ -658,15 +689,16 @@ fn the_overlap_list_follows_each_preview() {
         [OverlapNote::None, OverlapNote::None, OverlapNote::Removed]
     );
     assert_eq!(plates.doc.overlap_ticked(), Some(vec![false, false, true]));
+    // The right edge runs on smoothly into the back's round in the
+    // preview: Tangent chain on, its row picks that edge with it.
     plates.doc.look(Look::ToggleOverlap(1));
-    assert_eq!(edges(&plates).len(), 2);
+    assert_eq!(edges(&plates).len(), 3);
 }
 
 /// Two edges of one tangent chain picked apart (the line with Tangent
-/// chain off, then an arc of its rim), then Tangent chain on: the rim
-/// lights whole as both pick it, and a click on another of its edges
-/// takes the chain out, both edges, not one of them leaving the rim lit
-/// as picked still.
+/// chain off, then an arc of its rim), then Tangent chain on: a click on
+/// another of its edges picks the rest of the rim, and another takes it
+/// all out, not one of them left lit as picked still.
 #[test]
 fn a_click_on_a_chain_takes_out_every_edge_picked_on_it() {
     let (mut plates, body) = slot();
@@ -706,11 +738,17 @@ fn a_click_on_a_chain_takes_out_every_edge_picked_on_it() {
     }
     assert_eq!(edges(&plates).len(), 2);
     plates.motion(MotionLook::Chain);
-    plates.doc.look(Look::ClickModel {
-        pick: Some(at_arc(arcs[1], &plates)),
-        add: false,
-        double: false,
-    });
+    let click = |plates: &mut Plates| {
+        let pick = at_arc(arcs[1], plates);
+        plates.doc.look(Look::ClickModel {
+            pick: Some(pick),
+            add: false,
+            double: false,
+        });
+    };
+    click(&mut plates);
+    assert_eq!(edges(&plates).len(), 4, "the rim filled in");
+    click(&mut plates);
     assert!(edges(&plates).is_empty(), "{:?}", edges(&plates));
     assert!(plates.doc.blend_lit().is_empty());
 }

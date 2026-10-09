@@ -59,11 +59,17 @@ pub(crate) trait Ref: Copy + PartialEq {
     /// The session's picks of these.
     fn refs(session: &MotionSession) -> &Refs<Self>;
     fn refs_mut(session: &mut MotionSession) -> &mut Refs<Self>;
-    /// The mesh's ones a click on `target` lights and matches: a blend's
+    /// The mesh's ones a click on `target` lights and matches: a sweep's
     /// edge with its tangent chain while it takes them in; on a shell's
     /// own preview, a face with the other pieces of the face it's part
     /// of. `doc` is the doc showing `index`.
     fn grown(doc: &Doc, session: &MotionSession, index: &PickIndex, target: u32) -> Vec<u32>;
+    /// The mesh's ones a click on `target` picks or takes out together,
+    /// each one of its own: a blend's edge with its tangent chain while
+    /// the Tangent chain tick is on.
+    fn unit(_: &MotionSession, _: &PickIndex, target: u32) -> Vec<u32> {
+        vec![target]
+    }
 }
 
 /// Several references picked, all on one body, and where they are on a
@@ -371,8 +377,10 @@ impl Doc {
             tick.ticked = has;
             let index = self.feed.pick_index();
             let chain = (session.kind.blends() || session.kind == MotionKind::Sweep)
-                && EdgeRef::target(pick.target)
-                    .is_some_and(|edge| EdgeRef::grown(self, session, index, edge).len() > 1);
+                && EdgeRef::target(pick.target).is_some_and(|edge| {
+                    EdgeRef::grown(self, session, index, edge).len() > 1
+                        || EdgeRef::unit(session, index, edge).len() > 1
+                });
             if has && chain {
                 tick.note = OverlapNote::Chain;
             }
@@ -500,6 +508,71 @@ impl Doc {
         if !self.refs_model_current() {
             return Err(OUT_OF_DATE.into());
         }
+        let index = self.feed.pick_index();
+        let unit = match (&self.motion, R::target(pick.target)) {
+            (Some(session), Some(target)) if pick.model == index.model() => {
+                R::unit(session, index, target)
+            }
+            _ => Vec::new(),
+        };
+        if unit.len() > 1 {
+            return self.refs_click_unit::<R>(pick, &unit, false);
+        }
+        self.refs_click_one::<R>(pick)
+    }
+
+    /// Takes a click on `pick` picking `unit` (`pick`'s target among
+    /// them) together: taken out if all of them are picked (unless
+    /// `only_add`), else those
+    /// that aren't picked, each refused alone but the one clicked.
+    fn refs_click_unit<R: Ref>(
+        &mut self,
+        pick: Pick,
+        unit: &[u32],
+        only_add: bool,
+    ) -> Result<(), Cow<'static, str>> {
+        let index = self.feed.pick_index();
+        let picks: Vec<Pick> = (unit.iter())
+            .filter_map(|&other| {
+                let target = R::picked(other);
+                let at = if target == pick.target {
+                    pick.at
+                } else {
+                    index.chain_point(other)?
+                };
+                Some(Pick {
+                    target,
+                    at,
+                    snap: None,
+                    ..pick
+                })
+            })
+            .collect();
+        let picked: Vec<bool> = (picks.iter())
+            .map(|&one| self.ref_picked::<R>(one).is_some())
+            .collect();
+        if picked.iter().all(|&picked| picked) && !only_add {
+            let targets: Vec<u32> = picks.iter().filter_map(|p| R::target(p.target)).collect();
+            if let Some(session) = &mut self.motion {
+                R::refs_mut(session).remove_all(pick.model, &targets);
+                session.refs_body();
+            }
+            return Ok(());
+        }
+        for (one, picked) in picks.into_iter().zip(picked) {
+            if picked {
+                continue;
+            }
+            let added = self.refs_click_one::<R>(one);
+            if one.target == pick.target {
+                added?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Takes a click on `pick` alone, as [`Doc::refs_click`] does.
+    fn refs_click_one<R: Ref>(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {
         if self.ref_picked::<R>(pick).is_some() {
             // Every one picked a click on it lights takes out: a tangent
             // chain's edges picked apart all go with it.
@@ -560,9 +633,24 @@ impl Doc {
                 })
             })
             .collect();
+        if !self.refs_model_current() {
+            return;
+        }
         for pick in picks {
-            // One refused (on another body, made later) is left out.
-            let _ = self.refs_click::<R>(pick);
+            // Each is grown as a click on it would be (a blend's edge into
+            // its tangent chain while the tick is on), but never takes out
+            // what's picked: one refused (on another body, made later) is
+            // left out.
+            let index = self.feed.pick_index();
+            let unit = match (&self.motion, R::target(pick.target)) {
+                (Some(session), Some(target)) => R::unit(session, index, target),
+                _ => Vec::new(),
+            };
+            if unit.len() > 1 {
+                let _ = self.refs_click_unit::<R>(pick, &unit, true);
+            } else if self.ref_picked::<R>(pick).is_none() {
+                let _ = self.refs_click_one::<R>(pick);
+            }
         }
     }
 
@@ -667,7 +755,13 @@ impl Ref for EdgeRef {
     }
 
     fn grown(_: &Doc, session: &MotionSession, index: &PickIndex, target: u32) -> Vec<u32> {
-        super::blend::chain_of(index, target, session.blend.chains)
+        let chains = session.kind == MotionKind::Sweep && session.blend.chains;
+        super::blend::chain_of(index, target, chains)
+    }
+
+    fn unit(session: &MotionSession, index: &PickIndex, target: u32) -> Vec<u32> {
+        let chains = session.kind.blends() && session.blend.chains;
+        super::blend::chain_of(index, target, chains)
     }
 }
 

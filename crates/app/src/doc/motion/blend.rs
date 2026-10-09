@@ -3,8 +3,9 @@
 //! each with its own size. They're picked as `refs`
 //! has it (a click picks or takes out, named as of the feature, all on
 //! one body, sorted as [`EdgeRef::order`] keeps them, lit as selected),
-//! each with its tangent chain while the Tangent chain tick takes them
-//! in. Its faces (the session's, from the faces selected as it starts, or
+//! a click taking in the edge's tangent chain, each of its edges picked,
+//! while the Tangent chain tick is on (edges selected as the session
+//! starts are taken as they are). Its faces (the session's, from the faces selected as it starts, or
 //! the feature's) stand for the edges around them: an edge picked around
 //! one is left out, lit and listed in the exclusions' purple. The
 //! session's bodies are the edges' and faces' body, never picked
@@ -26,8 +27,13 @@ use super::{Doc, MotionSession, edge_radius};
 pub(crate) struct BlendSetup {
     /// The edges, all on one body, in [`EdgeRef::order`].
     pub(crate) edges: Refs<EdgeRef>,
-    /// The Tangent chain tick: on to begin with, as the plan has it.
+    /// The Tangent chain tick: on to begin with, as the plan has it. A
+    /// blend's says what a click picks; a sweep's is stored.
     pub(crate) chains: bool,
+    /// A blend's stored `chains`, each edge taking in its tangent chain
+    /// as it's regenerated: kept for a feature that had it, never set for
+    /// a new one, whose clicks pick the chains' edges themselves.
+    pub(crate) stored: bool,
 }
 
 impl Default for BlendSetup {
@@ -35,6 +41,7 @@ impl Default for BlendSetup {
         Self {
             edges: Refs::default(),
             chains: true,
+            stored: false,
         }
     }
 }
@@ -46,6 +53,17 @@ impl BlendSetup {
         Self {
             edges: Refs::of(edges),
             chains,
+            stored: false,
+        }
+    }
+
+    /// A blend's edges `edges` and stored `chains`, picked on no model
+    /// shown, with the tick on.
+    pub(super) fn blend_of(edges: &[EdgeRef], stored: bool) -> Self {
+        Self {
+            edges: Refs::of(edges),
+            chains: true,
+            stored,
         }
     }
 }
@@ -131,7 +149,7 @@ impl Doc {
 
     /// The faces and edges of the blend being set up to light in the
     /// model shown: those it takes as selected, each edge with its
-    /// tangent chain while it takes them in, and the edges it leaves out
+    /// tangent chain where it's stored taking them in, and the edges it leaves out
     /// (around a face it names) alone, in the exclusions' purple.
     pub(super) fn blend_lit_parts(&self) -> [Vec<Picked>; 2] {
         let Some(session) = self.motion.as_ref().filter(|s| s.kind.blends()) else {
@@ -149,7 +167,7 @@ impl Doc {
             if blend_excludes(&edge, faces) {
                 out.push(Picked::Edge(at));
             } else {
-                let chain = chain_of(index, at, session.blend.chains);
+                let chain = chain_of(index, at, session.blend.stored);
                 taken.extend(chain.into_iter().map(Picked::Edge));
             }
         }

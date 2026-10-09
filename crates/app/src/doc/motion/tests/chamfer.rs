@@ -186,7 +186,8 @@ fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_chamfer() {
         varde_expr::Value::new(text, &Chamfer::distance_ask(&before.design())).unwrap()
     };
     assert!(matches!(&chamfer.distances, ChamferSize::Equal(d) if d.value == one("1 mm").value));
-    assert!(chamfer.chains && !chamfer.flip);
+    // The tick picks chains; the chamfer stores its edges alone.
+    assert!(!chamfer.chains && !chamfer.flip);
     assert!(shows(&plates, "1 edge · Equal · 1 mm · Tangent chain"));
     // Its row hovered in the panel lights it as hovered too.
     plates.doc.look(Look::Hover(None));
@@ -622,8 +623,10 @@ pub(super) fn slot() -> (Plates, BodyId) {
 }
 
 /// With Tangent chain on, the slot's top front line lights with the
-/// rest of its rim under the cursor and once picked, and a click on an
-/// arc of that rim takes the line out; off, the line alone.
+/// rest of its rim under the cursor and a click picks the rim's edges,
+/// each one of its own; off, the line alone lights and an arc's click
+/// takes the arc alone out; on again, a click on the rim fills it in,
+/// and once whole takes it all out.
 #[test]
 fn a_tangent_chain_lights_whole_and_a_click_on_it_takes_its_edge_out() {
     let (mut plates, body) = slot();
@@ -653,14 +656,12 @@ fn a_tangent_chain_lights_whole_and_a_click_on_it_takes_its_edge_out() {
         add: false,
         double: false,
     });
-    assert_eq!(edges(&plates).len(), 1);
+    assert_eq!(edges(&plates).len(), 4);
     assert_eq!(selected(&plates), rim);
-    // Off, the line alone.
+    // Off, the rim stays picked, and the line alone lights.
     plates.motion(MotionLook::Chain);
-    assert_eq!(selected(&plates), [edge]);
+    assert_eq!(selected(&plates), rim);
     assert_eq!(outlined(&plates), [edge]);
-    plates.motion(MotionLook::Chain);
-    // A click on an arc of its chain takes the line out.
     let arc = *rim
         .iter()
         .find(|&&other| {
@@ -678,11 +679,23 @@ fn a_tangent_chain_lights_whole_and_a_click_on_it_takes_its_edge_out() {
         at: DVec3::new(13.0, 0.0, 5.0),
         ..line
     };
-    plates.doc.look(Look::ClickModel {
-        pick: Some(pick),
-        add: false,
-        double: false,
-    });
+    let click = |plates: &mut Plates| {
+        plates.doc.look(Look::ClickModel {
+            pick: Some(pick),
+            add: false,
+            double: false,
+        });
+    };
+    // Off, a click on the arc takes it alone out.
+    click(&mut plates);
+    assert_eq!(edges(&plates).len(), 3);
+    assert!(!selected(&plates).contains(&arc));
+    // On, a click on it fills the rim in, and another takes it out.
+    plates.motion(MotionLook::Chain);
+    click(&mut plates);
+    assert_eq!(edges(&plates).len(), 4);
+    assert_eq!(selected(&plates), rim);
+    click(&mut plates);
     assert!(edges(&plates).is_empty());
 }
 

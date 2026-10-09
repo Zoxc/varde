@@ -3506,10 +3506,17 @@ panel.
   a click says "A chamfer's edges are all on one body: pick edges of
   Body 1"; a face picks a face (below). At most
   `MAX_BLEND_EDGES`. Kept in `EdgeRef::order`, so the list is sorted as
-  stored. Picked edges are lit as selected, the one under the cursor as
-  hovered, each with its tangent chain (`PickIndex::tangent_chain`, the
-  topology's rule regen grows chains by) while Tangent chain is on, and
-  a click on any edge of a picked edge's lit chain takes that edge out (every edge picked on that chain, where more were picked apart with Tangent chain off);
+  stored. The Tangent chain tick only says what a click picks: on, a
+  click on an edge picks every edge of its tangent chain
+  (`PickIndex::tangent_chain`, the topology's rule regen grows chains
+  by), each an edge of its own (`Ref::unit`, `Doc::refs_click`), or
+  takes them all out once all are picked; off, the edge alone. Edges
+  selected as the session starts are grown alike, never taking any out.
+  A new blend stores `chains` false, its edges being the chains'; an
+  edited one keeps the `chains` it had (`BlendSetup::stored`), which
+  also lights each of its edges with its chain. Picked edges are lit
+  as selected, the one under the cursor as hovered with what a click
+  on it picks;
   a row hovered in the panel lights its edge (`PanelHover::Edge`). The session's bodies are the edges' body, never
   picked itself (Objects' rows pick nothing); a body merged into another
   before the chamfer takes the edges on to its holder. Picks wait only

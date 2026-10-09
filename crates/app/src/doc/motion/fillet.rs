@@ -33,7 +33,7 @@ impl MotionSession {
             edges: self.blend.edges.refs.clone(),
             faces: self.faces.refs.clone(),
             radius: radius.value.clone()?,
-            chains: self.blend.chains,
+            chains: self.blend.stored,
         })
     }
 
@@ -42,7 +42,7 @@ impl MotionSession {
     pub(super) fn open_fillet(&mut self, fillet: &Fillet) {
         let ask = Fillet::radius_ask(&self.read_in.design());
         self.fields[MotionField::Radius.index()] = TypedText::of(&fillet.radius, &ask);
-        self.blend = BlendSetup::of(&fillet.edges, fillet.chains);
+        self.blend = BlendSetup::blend_of(&fillet.edges, fillet.chains);
         self.faces = Refs::of(&fillet.faces);
         self.blend_body();
     }
@@ -56,7 +56,12 @@ impl Doc {
             edges: self.blend_edges(session),
             info: (session.fillet())
                 .filter(|_| session.kind == MotionKind::Fillet)
-                .map(|fillet| varde_view::fillet_info(&fillet, units)),
+                .map(|fillet| {
+                    // The tick, which says what clicks pick, or the
+                    // feature's stored chains.
+                    let chains = fillet.chains || session.blend.chains;
+                    varde_view::fillet_info(&Fillet { chains, ..fillet }, units)
+                }),
         }
     }
 }
