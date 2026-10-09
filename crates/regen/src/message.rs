@@ -417,6 +417,24 @@ pub(crate) fn blend_edge_not_found(index: usize, count: usize) -> String {
     }
 }
 
+/// That a chamfer's or fillet's face `index` (from 0) of `count` wasn't
+/// found: "its face wasn't found" with one.
+pub(crate) fn blend_face_not_found(index: usize, count: usize) -> String {
+    offset_face_not_found(index, count)
+}
+
+/// That every edge a chamfer or fillet names is left out, around a face
+/// it names: nothing to blend.
+pub(crate) const BLEND_ALL_LEFT_OUT: &str = "every edge it names is left out: there's nothing left";
+
+/// What a chain a chamfer or fillet blends comes from: one of the edges
+/// it names, or one of the faces, by its place (from 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BlendSource {
+    Edge(usize),
+    Face(usize),
+}
+
 /// What the kernel refuses to chamfer or fillet along an edge, or at a
 /// corner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,20 +459,29 @@ pub(crate) enum BlendRefusal {
 pub(crate) fn blend_refused(
     blend: Blend,
     why: BlendRefusal,
-    which: Option<(usize, bool)>,
-    count: usize,
+    which: Option<(BlendSource, bool)>,
+    [edges, faces]: [usize; 2],
     body: &str,
 ) -> String {
-    let edge = match which {
-        Some((_, false)) if count == 1 => "its edge".to_owned(),
-        Some((index, false)) => format!("its edge {}", index.saturating_add(1)),
-        Some((_, true)) if count == 1 => "an edge in its edge's tangent chain".to_owned(),
-        Some((index, true)) => {
-            format!(
-                "an edge in its edge {}'s tangent chain",
-                index.saturating_add(1)
-            )
+    let named = |index: usize, count: usize, what: &str| {
+        if count == 1 {
+            format!("its {what}")
+        } else {
+            format!("its {what} {}", index.saturating_add(1))
         }
+    };
+    let edge = match which {
+        Some((BlendSource::Edge(index), false)) => named(index, edges, "edge"),
+        Some((BlendSource::Edge(index), true)) => {
+            format!("an edge in {}'s tangent chain", named(index, edges, "edge"))
+        }
+        Some((BlendSource::Face(index), false)) => {
+            format!("an edge of {}", named(index, faces, "face"))
+        }
+        Some((BlendSource::Face(index), true)) => format!(
+            "an edge in the tangent chain of an edge of {}",
+            named(index, faces, "face")
+        ),
         None => "an edge".to_owned(),
     };
     let word = blend.word();

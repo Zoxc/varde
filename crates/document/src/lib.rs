@@ -37,7 +37,9 @@ mod testing;
 mod tint;
 
 pub use align::{Align, AlignError, AlignRefs, DirRef, PointRef};
-pub use blend::{BlendEdgesError, MAX_BLEND_EDGES, check_blend_edges_own};
+pub use blend::{
+    BlendEdgesError, MAX_BLEND_EDGES, blend_body, blend_excludes, check_blend_edges_own,
+};
 pub use chamfer::{Chamfer, ChamferError, ChamferSize};
 pub use codec::DecodeError;
 pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
@@ -600,7 +602,7 @@ impl Document {
                     chamfer
                         .check_own(&design)
                         .map_err(|why| CheckError::Chamfer(id, why))?;
-                    self.check_blend_edges(index, &chamfer.edges)
+                    self.check_blend_edges(index, &chamfer.edges, &chamfer.faces)
                         .map_err(|why| CheckError::Chamfer(id, ChamferError::Edges(why)))?;
                 }
                 FeatureKind::Shell(shell) => {
@@ -622,7 +624,7 @@ impl Document {
                     fillet
                         .check_own(&design)
                         .map_err(|why| CheckError::Fillet(id, why))?;
-                    self.check_blend_edges(index, &fillet.edges)
+                    self.check_blend_edges(index, &fillet.edges, &fillet.faces)
                         .map_err(|why| CheckError::Fillet(id, FilletError::Edges(why)))?;
                 }
                 FeatureKind::FaceDraft(draft) => {

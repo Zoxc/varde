@@ -652,10 +652,12 @@ fn chamfer_view(edges: &[(&str, Option<&str>, bool)], kind: ChamferType) -> Cham
             name: name.to_owned(),
             meta: meta.map(str::to_owned),
             round,
+            excluded: false,
         })
         .collect();
     ChamferView {
         edges: BlendEdges {
+            faces: Vec::new(),
             edges,
             chains: true,
         },
@@ -683,7 +685,7 @@ fn a_chamfer_s_panel_is_the_mock_s() {
         "Edges",
         "Edge 1",
         "Edge 2",
-        "Click edges",
+        "Click edges or faces",
         "Type",
         "Equal",
         "Distance",
@@ -716,7 +718,7 @@ fn a_chamfer_s_panel_is_the_mock_s() {
     state.chamfer = Some(Box::new(chamfer_view(&edges, ChamferType::Two)));
     state.picking = MotionPick::Nothing;
     let shown = texts_of(&state);
-    assert!(!has(&shown, "Click edges"), "not picking");
+    assert!(!has(&shown, "Click edges or faces"), "not picking");
     let mut y = f32::MIN;
     for text in ["Distance 1", "Distance 2", "Flip sides", "Tangent chain"] {
         let at = found(&shown, text).bounds.y;
@@ -765,7 +767,7 @@ fn a_fillet_s_panel_is_the_mock_s() {
         "Edges",
         "Edge 1",
         "Edge 2",
-        "Click edges",
+        "Click edges or faces",
         "Radius",
         "Tangent chain",
     ];

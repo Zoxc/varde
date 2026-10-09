@@ -1,7 +1,7 @@
 //! A chamfer's notes in the Timeline and the status bar. Its panel is
 //! in `motion/chamfer.rs`, its edges' field in `motion/blend.rs`.
 
-use varde_document::{Chamfer, ChamferSize, LengthUnit};
+use varde_document::{Chamfer, ChamferSize, EdgeRef, FaceRef, LengthUnit, blend_excludes};
 
 use crate::panels::{angle_note, length_note};
 
@@ -33,12 +33,7 @@ fn two(chamfer: &Chamfer, units: LengthUnit) -> [String; 2] {
 /// edges · Equal · 1 mm", "2 edges · Two distances · 1 × 2 mm", "1 edge ·
 /// Distance and angle · 3 mm at 30° · Tangent chain".
 pub fn chamfer_info(chamfer: &Chamfer, units: LengthUnit) -> String {
-    let count = chamfer.edges.len();
-    let edges = if count == 1 {
-        "1 edge".to_owned()
-    } else {
-        format!("{count} edges")
-    };
+    let edges = blend_count(&chamfer.edges, &chamfer.faces);
     let size = match &chamfer.distances {
         ChamferSize::Angle(d, a) => {
             format!("{} at {}", length_note(d, units), angle_note(a.value))
@@ -59,3 +54,31 @@ pub fn chamfer_info(chamfer: &Chamfer, units: LengthUnit) -> String {
 
 #[cfg(test)]
 mod tests;
+
+/// How many faces and edges a chamfer or fillet names, for the status
+/// bar: "2 edges", "1 face · 1 edge", and those it leaves out, "1 face ·
+/// 2 left out".
+pub(crate) fn blend_count(edges: &[EdgeRef], faces: &[FaceRef]) -> String {
+    let counted = |count: usize, one: &str, many: &str| {
+        if count == 1 {
+            format!("1 {one}")
+        } else {
+            format!("{count} {many}")
+        }
+    };
+    let out = (edges.iter())
+        .filter(|edge| blend_excludes(edge, faces))
+        .count();
+    let taken = edges.len() - out;
+    let mut parts = Vec::new();
+    if !faces.is_empty() {
+        parts.push(counted(faces.len(), "face", "faces"));
+    }
+    if taken > 0 || faces.is_empty() {
+        parts.push(counted(taken, "edge", "edges"));
+    }
+    if out > 0 {
+        parts.push(format!("{out} left out"));
+    }
+    parts.join(" · ")
+}

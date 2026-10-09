@@ -9,7 +9,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::{BlendEdgesError, BodyId, Design, EdgeRef, Extent, check_blend_edges_own};
+use crate::{
+    BlendEdgesError, BodyId, Design, EdgeRef, Extent, FaceRef, blend_body, check_blend_edges_own,
+};
 
 /// A chamfer: the edges `edges` of one body cut off as `distances` says.
 /// The body keeps its id; the new faces are named after the chamfer and
@@ -23,11 +25,17 @@ use crate::{BlendEdgesError, BodyId, Design, EdgeRef, Extent, check_blend_edges_
 /// edge's first (regeneration's to work out).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Chamfer {
-    /// `1..=`[`MAX_BLEND_EDGES`](crate::MAX_BLEND_EDGES) edges, all on
+    /// Up to [`MAX_BLEND_EDGES`](crate::MAX_BLEND_EDGES) edges, all on
     /// one body a feature before it makes, in [`EdgeRef::order`] without
     /// repeats. Each is found on the body as the features before the
-    /// chamfer leave it.
+    /// chamfer leave it. One around a face of `faces` is left out.
     pub edges: Vec<EdgeRef>,
+    /// Up to [`MAX_BLEND_EDGES`](crate::MAX_BLEND_EDGES) faces of the
+    /// same body, in [`FaceRef::order`] without repeats, each standing
+    /// for the edges around it (but those `edges` names); with `edges`,
+    /// at least one of either.
+    #[serde(default)]
+    pub faces: Vec<FaceRef>,
     pub distances: ChamferSize,
     /// Whether each edge takes in the edges running on smoothly from it
     /// (its tangent chain, within 1°).
@@ -80,10 +88,10 @@ impl Chamfer {
             .with_params(design.params)
     }
 
-    /// The body its edges are on: the first edge's (all are on one in a
-    /// checked document). `None` with no edges.
+    /// The body its edges and faces are on ([`blend_body`]). `None`
+    /// with neither.
     pub fn body(&self) -> Option<BodyId> {
-        self.edges.first().map(|edge| edge.body)
+        blend_body(&self.edges, &self.faces)
     }
 
     /// The bodies it names, which it depends on: its body.
@@ -97,7 +105,7 @@ impl Chamfer {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
     pub fn check_own(&self, design: &Design) -> Result<(), ChamferError> {
-        check_blend_edges_own(&self.edges).map_err(ChamferError::Edges)?;
+        check_blend_edges_own(&self.edges, &self.faces).map_err(ChamferError::Edges)?;
         let distance = Chamfer::distance_ask(design);
         let angle = Chamfer::angle_ask(design);
         let (first, second) = match &self.distances {

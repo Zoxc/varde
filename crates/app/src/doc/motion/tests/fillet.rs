@@ -83,7 +83,7 @@ fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
         assert!(!shows(&plates, text), "{text}");
     }
     let picks = plates.doc.model_picking().expect("picking");
-    assert_eq!(picks.picks, Picks::Edges);
+    assert_eq!(picks.picks, Picks::EdgesAndFaces);
     assert!(!plates.doc.motion_ready());
     assert!(plates.last_draft().is_none(), "nothing to fillet yet");
 
@@ -91,11 +91,16 @@ fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
         plate,
         |s| matches!(s, Summary::Plane { n, .. } if n[2] > 0.5),
     );
+    // A face clicked is picked, standing for its edges, and listed; a
+    // click on it again takes it out.
     plates.click_at(plate, Picked::Face(top), DVec3::new(0.0, 15.0, 10.0));
-    assert_eq!(
-        plates.doc.notice.as_deref(),
-        Some("Only an edge can be filleted")
-    );
+    assert_eq!(plates.doc.notice, None);
+    assert_eq!(plates.doc.motion.as_ref().unwrap().faces.refs.len(), 1);
+    assert!(shows(&plates, "Face 1"));
+    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [plate]);
+    plates.click_at(plate, Picked::Face(top), DVec3::new(0.0, 15.0, 10.0));
+    assert!(plates.doc.motion.as_ref().unwrap().faces.refs.is_empty());
+    assert!(!shows(&plates, "Face 1"));
 
     let front = edge_pick(&plates, plate, FRONT);
     click_edge(&mut plates, plate, FRONT);
@@ -715,4 +720,89 @@ mod fuzz;
 /// A fillet as its session made it, [`filleted`], and its id.
 pub(super) fn made() -> (Plates, varde_document::FeatureId) {
     filleted()
+}
+
+/// Holding Ctrl while a fillet picks edges shows the model before it:
+/// the edge its preview rounds off is there again, lit, and a click
+/// takes it out; with the top face picked a click on its edge leaves it
+/// out, lit purple; letting go previews the fillet again.
+#[test]
+fn ctrl_shows_the_edges_before_the_fillet() {
+    varde_regen::testing::fillet_by_arcs();
+    let (mut plates, plate) = plate();
+    plates.doc.look(Look::StartFillet);
+    click_edge(&mut plates, plate, FRONT);
+    plates.answer();
+    assert!(
+        straight(&plates, plate, FRONT.0, FRONT.1).is_none(),
+        "rounded off"
+    );
+
+    plates.doc.hold_command(true);
+    assert!(plates.doc.blend_before());
+    assert!(
+        plates.last_draft().is_none(),
+        "a new one: the document as is"
+    );
+    plates.answer();
+    assert!(!rounded(&plates, plate, 2.0));
+    let front = edge_pick(&plates, plate, FRONT);
+    assert_eq!(plates.doc.blend_lit(), [front.target]);
+    click_edge(&mut plates, plate, FRONT);
+    assert_eq!(plates.doc.notice, None);
+    assert!(edges(&plates).is_empty(), "taken out");
+
+    let top = plates.face(
+        plate,
+        |s| matches!(s, Summary::Plane { n, .. } if n[2] > 0.5),
+    );
+    plates.click_at(plate, Picked::Face(top), DVec3::new(0.0, 15.0, 10.0));
+    plates.answer();
+    // Its edges blended in the preview or not, the model before it
+    // shows them all to click.
+    let front = edge_pick(&plates, plate, FRONT);
+    click_edge(&mut plates, plate, FRONT);
+    assert_eq!(plates.doc.notice, None);
+    assert_eq!(edges(&plates).len(), 1);
+    let [taken, out] = plates.doc.blend_lit_parts();
+    assert_eq!(out, [front.target]);
+    assert!(!taken.contains(&front.target));
+
+    plates.doc.hold_command(false);
+    assert!(!plates.doc.blend_before());
+    let fillet = drafted(&plates).expect("the preview again");
+    assert_eq!(fillet.edges.len(), 1);
+}
+
+/// An edited fillet held with Ctrl shows its body as of the feature by
+/// a move of nothing, its rounded edge there to click out.
+#[test]
+fn ctrl_shows_an_edited_fillet_s_body_before_it() {
+    varde_regen::testing::fillet_by_arcs();
+    let (mut plates, plate) = plate();
+    plates.doc.look(Look::StartFillet);
+    click_edge(&mut plates, plate, FRONT);
+    plates.answer();
+    key_in(&mut plates.doc, enter());
+    assert!(plates.doc.motion.is_none());
+    let (id, _) = plates.last_feature();
+    plates.answer();
+    plates.doc.look(Look::EditFeature(id));
+    assert!(matches!(
+        plates.last_draft(),
+        Some((_, FeatureKind::Fillet(_)))
+    ));
+    plates.answer();
+    assert!(
+        straight(&plates, plate, FRONT.0, FRONT.1).is_none(),
+        "rounded off: {:?}",
+        plates.doc.feed.draft_error()
+    );
+    plates.doc.hold_command(true);
+    assert!(matches!(plates.last_draft(), Some((Some(f), FeatureKind::Move(_))) if f == id));
+    plates.answer();
+    click_edge(&mut plates, plate, FRONT);
+    assert_eq!(plates.doc.notice, None);
+    assert!(edges(&plates).is_empty(), "taken out");
+    plates.doc.hold_command(false);
 }

@@ -29,7 +29,7 @@ pub(super) fn body<'a>(
         return column![].into();
     };
     column![
-        edges_field(state, &fillet.edges, "Click edges"),
+        edges_field(state, &fillet.edges, "Click edges or faces"),
         value(MotionField::Radius, "Radius"),
         chain_toggle(state, &fillet.edges),
     ]

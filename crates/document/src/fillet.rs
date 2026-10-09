@@ -6,7 +6,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::{BlendEdgesError, BodyId, Design, EdgeRef, Extent, check_blend_edges_own};
+use crate::{
+    BlendEdgesError, BodyId, Design, EdgeRef, Extent, FaceRef, blend_body, check_blend_edges_own,
+};
 
 /// A fillet: the edges `edges` of one body rounded off to `radius`. The
 /// body keeps its id; the new faces are named after the fillet and the
@@ -14,11 +16,17 @@ use crate::{BlendEdgesError, BodyId, Design, EdgeRef, Extent, check_blend_edges_
 /// it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fillet {
-    /// `1..=`[`MAX_BLEND_EDGES`](crate::MAX_BLEND_EDGES) edges, all on
+    /// Up to [`MAX_BLEND_EDGES`](crate::MAX_BLEND_EDGES) edges, all on
     /// one body a feature before it makes, in [`EdgeRef::order`] without
     /// repeats. Each is found on the body as the features before the
-    /// fillet leave it.
+    /// fillet leave it. One around a face of `faces` is left out.
     pub edges: Vec<EdgeRef>,
+    /// Up to [`MAX_BLEND_EDGES`](crate::MAX_BLEND_EDGES) faces of the
+    /// same body, in [`FaceRef::order`] without repeats, each standing
+    /// for the edges around it (but those `edges` names); with `edges`,
+    /// at least one of either.
+    #[serde(default)]
+    pub faces: Vec<FaceRef>,
     /// A length as an extrude's distance ([`Fillet::radius_ask`]).
     pub radius: Value,
     /// Whether each edge takes in the edges running on smoothly from it
@@ -33,10 +41,10 @@ impl Fillet {
         Extent::ask(design)
     }
 
-    /// The body its edges are on: the first edge's (all are on one in a
-    /// checked document). `None` with no edges.
+    /// The body its edges and faces are on ([`blend_body`]). `None`
+    /// with neither.
     pub fn body(&self) -> Option<BodyId> {
-        self.edges.first().map(|edge| edge.body)
+        blend_body(&self.edges, &self.faces)
     }
 
     /// The bodies it names, which it depends on: its body.
@@ -50,7 +58,7 @@ impl Fillet {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
     pub fn check_own(&self, design: &Design) -> Result<(), FilletError> {
-        check_blend_edges_own(&self.edges).map_err(FilletError::Edges)?;
+        check_blend_edges_own(&self.edges, &self.faces).map_err(FilletError::Edges)?;
         (self.radius)
             .check(&Fillet::radius_ask(design))
             .map_err(|_| FilletError::Radius)

@@ -1,36 +1,63 @@
 //! The edges a chamfer or a fillet runs along: how many there may be and
 //! the checks both kinds share.
+//!
+//! A blend names edges and faces. A face stands for the edges around it;
+//! an edge named that is also around a face named is left out (an
+//! exclusion), any other edge named is taken.
 
 use std::fmt;
 
-use crate::{BodyId, Document, EdgeError, EdgeRef, FeatureId};
+use crate::{BodyId, Document, EdgeError, EdgeRef, FaceRef, FeatureId, PlaneError};
 
-/// The most edges a chamfer or a fillet may name.
+/// The most edges, and the most faces, a chamfer or a fillet may name.
 pub const MAX_BLEND_EDGES: usize = 256;
 
-/// Checks what needs only a chamfer's or fillet's `edges`: their count
-/// (`1..=`[`MAX_BLEND_EDGES`]), each edge's own parts
-/// ([`EdgeRef::check_own`]), [`EdgeRef::order`] without repeats, and one
+/// Checks what needs only a chamfer's or fillet's `edges` and `faces`:
+/// at least one of either and at most [`MAX_BLEND_EDGES`] of each, each
+/// one's own parts ([`EdgeRef::check_own`], [`FaceRef::check_own`]),
+/// [`EdgeRef::order`] and [`FaceRef::order`] without repeats, and one
 /// body. What they name is [`Document::check_blend_edges`]'s.
-pub fn check_blend_edges_own(edges: &[EdgeRef]) -> Result<(), BlendEdgesError> {
-    let count = edges.len();
-    if !(1..=MAX_BLEND_EDGES).contains(&count) {
+pub fn check_blend_edges_own(edges: &[EdgeRef], faces: &[FaceRef]) -> Result<(), BlendEdgesError> {
+    let count = edges.len().saturating_add(faces.len());
+    if count == 0 || edges.len() > MAX_BLEND_EDGES || faces.len() > MAX_BLEND_EDGES {
         return Err(BlendEdgesError::Count(count));
     }
     for edge in edges {
         edge.check_own().map_err(BlendEdgesError::Edge)?;
     }
-    if !(edges.windows(2)).all(|pair| pair[0].order(&pair[1]).is_lt()) {
+    for face in faces {
+        face.check_own().map_err(BlendEdgesError::Face)?;
+    }
+    if !(edges.windows(2)).all(|pair| pair[0].order(&pair[1]).is_lt())
+        || !(faces.windows(2)).all(|pair| pair[0].order(&pair[1]).is_lt())
+    {
         return Err(BlendEdgesError::Order);
     }
-    if edges.iter().any(|edge| edge.body != edges[0].body) {
+    let body = blend_body(edges, faces);
+    if (edges.iter().map(|edge| edge.body))
+        .chain(faces.iter().map(|face| face.body))
+        .any(|other| Some(other) != body)
+    {
         return Err(BlendEdgesError::Bodies);
     }
     Ok(())
 }
 
+/// The body a blend's `edges` and `faces` are on: the first edge's, else
+/// the first face's (all are on one in a checked document). `None` with
+/// neither.
+pub fn blend_body(edges: &[EdgeRef], faces: &[FaceRef]) -> Option<BodyId> {
+    (edges.first().map(|edge| edge.body)).or_else(|| faces.first().map(|face| face.body))
+}
+
+/// Whether `edge` is around one of `faces`, by their keys: an edge a
+/// blend names that is also around a face it names is left out.
+pub fn blend_excludes(edge: &EdgeRef, faces: &[FaceRef]) -> bool {
+    (faces.iter()).any(|face| face.body == edge.body && edge.faces.contains(&face.key))
+}
+
 impl Document {
-    /// Checks what `edges` name as the edges of a chamfer or a fillet at
+    /// Checks what `edges` and `faces` name as the edges of a chamfer or a fillet at
     /// feature `index` (at the end for a new one, the count of features),
     /// as [`Document::check`] has it: each edge's body there and made by
     /// a feature before it (depended on, as a combine's bodies), and its
@@ -42,12 +69,15 @@ impl Document {
         &self,
         index: usize,
         edges: &[EdgeRef],
+        faces: &[FaceRef],
     ) -> Result<(), BlendEdgesError> {
-        for edge in edges {
-            if !self.body_before(index, edge.body) {
-                return Err(BlendEdgesError::Body(edge.body));
+        let named = (edges.iter().map(|edge| (edge.body, edge.makers().to_vec())))
+            .chain(faces.iter().map(|face| (face.body, vec![face.maker()])));
+        for (body, makers) in named {
+            if !self.body_before(index, body) {
+                return Err(BlendEdgesError::Body(body));
             }
-            if let Some(&maker) = (edge.makers().iter()).find(|&&m| !self.maker_before(index, m)) {
+            if let Some(&maker) = (makers.iter()).find(|&&m| !self.maker_before(index, m)) {
                 return Err(BlendEdgesError::RefMaker(maker));
             }
         }
@@ -59,12 +89,16 @@ impl Document {
 /// [`check_blend_edges_own`] and [`Document::check_blend_edges`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BlendEdgesError {
-    /// It names this many edges: none, or over [`MAX_BLEND_EDGES`].
+    /// It names this many edges and faces: none, or over
+    /// [`MAX_BLEND_EDGES`] edges or faces.
     Count(usize),
-    /// Its edges aren't in [`EdgeRef::order`], or one is repeated.
+    /// Its edges aren't in [`EdgeRef::order`], or its faces in
+    /// [`FaceRef::order`], or one is repeated.
     Order,
     /// An edge fails its own check ([`EdgeRef::check_own`]).
     Edge(EdgeError),
+    /// A face fails its own check ([`FaceRef::check_own`]).
+    Face(PlaneError),
     /// Its edges are on more than one body.
     Bodies,
     /// Its edges are on this body, which isn't there or which no feature
@@ -80,10 +114,16 @@ impl fmt::Display for BlendEdgesError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BlendEdgesError::Count(count) => {
-                write!(f, "names {count} edges, not 1 to {MAX_BLEND_EDGES}")
+                write!(
+                    f,
+                    "names {count} edges and faces, not 1 to {MAX_BLEND_EDGES} of each"
+                )
             }
-            BlendEdgesError::Order => f.write_str("its edges are out of order or repeated"),
+            BlendEdgesError::Order => {
+                f.write_str("its edges or faces are out of order or repeated")
+            }
             BlendEdgesError::Edge(why) => why.fmt(f),
+            BlendEdgesError::Face(why) => why.fmt(f),
             BlendEdgesError::Bodies => f.write_str("its edges are on more than one body"),
             BlendEdgesError::Body(body) => write!(
                 f,
@@ -103,6 +143,7 @@ impl std::error::Error for BlendEdgesError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             BlendEdgesError::Edge(why) => Some(why),
+            BlendEdgesError::Face(why) => Some(why),
             _ => None,
         }
     }

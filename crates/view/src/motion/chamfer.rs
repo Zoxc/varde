@@ -78,7 +78,7 @@ pub(super) fn body<'a>(
         return column![].into();
     };
     let send = |look: MotionLook| state.editable.then_some(Message::Look(Look::Motion(look)));
-    let edges = edges_field(state, &chamfer.edges, "Click edges");
+    let edges = edges_field(state, &chamfer.edges, "Click edges or faces");
     let types = ChamferType::ALL.iter().map(|&kind| {
         tile(
             kind.icon(),

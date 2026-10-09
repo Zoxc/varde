@@ -46,6 +46,7 @@ fn fillet(document: &Document, mut edges: Vec<EdgeRef>, size: &str) -> Fillet {
     edges.sort_by(EdgeRef::order);
     Fillet {
         edges,
+        faces: Vec::new(),
         radius: radius(document, size),
         chains: true,
     }

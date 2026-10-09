@@ -1156,8 +1156,13 @@ impl MotionSession {
     /// scale's edge with them (it must be on one it scales; its names
     /// find it on the holder) and a split's tool body: whether any moved.
     fn follow(&mut self, merges: &Merges) -> bool {
-        // A chamfer's body is its edges'; a sweep's edges follow too.
-        if self.kind.blends() || self.kind == MotionKind::Sweep {
+        // A chamfer's body is its edges' and faces'; a sweep's edges
+        // follow too.
+        if self.kind.blends() {
+            let edges = self.follow_refs::<EdgeRef>(merges);
+            return self.follow_refs::<FaceRef>(merges) || edges;
+        }
+        if self.kind == MotionKind::Sweep {
             return self.follow_refs::<EdgeRef>(merges);
         }
         // A face session's body is its faces', or a shell's the one
@@ -1389,14 +1394,14 @@ impl Doc {
             &self.camera,
             bodies,
         ));
-        // A blend's edges are those selected that it takes, and those
-        // around the faces selected; a sweep's path's edges are those
-        // selected.
+        // A blend's edges and faces are those selected that it takes (an
+        // edge selected around a face selected is left out); a sweep's
+        // path's edges are those selected.
         if kind.blends() || kind == MotionKind::Sweep {
             self.refs_selected::<EdgeRef>(0);
         }
         if kind.blends() {
-            self.face_edges_selected();
+            self.refs_selected::<FaceRef>(0);
         }
         match (kind, &picks[..]) {
             // A mirror's plane is the face selected, if a face alone is,
@@ -1719,9 +1724,9 @@ impl Doc {
                 session.refs_body();
             }
             MotionLook::ChamferType(_) | MotionLook::Chain | MotionLook::DropEdge(_) => {}
-            MotionLook::DropFace(face) if session.kind.picks_faces() => {
+            MotionLook::DropFace(face) if session.kind.picks_faces() || session.kind.blends() => {
                 session.faces.drop_ref(&face);
-                session.faces_body();
+                session.refs_body();
             }
             MotionLook::ShellDirection(direction) if session.kind == MotionKind::Shell => {
                 session.direction = direction;
@@ -1890,6 +1895,12 @@ impl Doc {
             MotionPick::Point => self.scale_point(pick),
             MotionPick::Edge => self.scale_edge(pick),
             MotionPick::Tool => self.split_tool(pick),
+            // A blend's faces are picked beside its edges.
+            MotionPick::Edges
+                if session.kind.blends() && matches!(pick.target, Picked::Face(_)) =>
+            {
+                self.refs_click::<FaceRef>(pick)
+            }
             MotionPick::Edges | MotionPick::Path => self.refs_click::<EdgeRef>(pick),
             MotionPick::Regions => Ok(()),
             MotionPick::Faces => self.refs_click::<FaceRef>(pick),
@@ -2235,7 +2246,13 @@ impl Doc {
     pub(crate) fn motion_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
         let session = self.motion.as_ref()?;
         let document = self.editor.document();
-        let (feature, kind) = session.draft(&document.design())?;
+        // Held, the command modifier shows a blend's body as of the
+        // feature, its edges there to pick again.
+        let (feature, kind) = if self.blend_before() {
+            session.unmoved(&document.design())?
+        } else {
+            session.draft(&document.design())?
+        };
         if session.kind == MotionKind::Sweep && self.sweep_refused(session).is_some() {
             return None;
         }
@@ -2261,6 +2278,9 @@ impl Doc {
         // A blend's edges wait only for a model of the document as it is,
         // as a sweep's path's do.
         if matches!(session.picking, MotionPick::Edges | MotionPick::Path) {
+            if session.kind.blends() && matches!(pick.target, Picked::Face(_)) {
+                return self.refs_take::<FaceRef>(pick);
+            }
             return self.refs_take::<EdgeRef>(pick);
         }
         if session.picking == MotionPick::Faces {
@@ -2291,9 +2311,11 @@ impl Doc {
         let Some(session) = &self.motion else {
             return;
         };
-        if session.kind.blends() || session.kind == MotionKind::Sweep {
+        let kind = session.kind;
+        if kind.blends() || kind == MotionKind::Sweep {
             self.follow_ref_marks::<EdgeRef>();
-        } else if session.kind.picks_faces() {
+        }
+        if kind.blends() || kind.picks_faces() {
             self.follow_ref_marks::<FaceRef>();
         }
         let Some(session) = &self.motion else {
@@ -2335,7 +2357,7 @@ impl Doc {
         let lit = match session.kind {
             MotionKind::Scale => [Vec::new(), self.scale_lit()],
             MotionKind::Split => [Vec::new(), self.split_lit()],
-            _ if session.kind.blends() => [self.blend_lit(), Vec::new()],
+            _ if session.kind.blends() => self.blend_lit_parts(),
             MotionKind::Sweep => [self.refs_lit::<EdgeRef>(), Vec::new()],
             MotionKind::Loft => [Vec::new(), Vec::new()],
             _ if session.kind.picks_faces() => [self.faces_lit(), Vec::new()],
@@ -2368,12 +2390,11 @@ impl Doc {
                 let [moved, target] = key.4.clone();
                 (moved, target)
             }
-            // A chamfer's edges and a shell's faces lit as selected, its
-            // body as it is.
-            _ if session.kind.blends()
-                || session.kind.picks_faces()
-                || session.kind == MotionKind::Sweep =>
-            {
+            // A chamfer's edges and faces lit as selected (those it leaves
+            // out in the second colour, purple), a shell's faces, its body
+            // as it is.
+            _ if session.kind.blends() => (key.4[0].clone(), key.4[1].clone()),
+            _ if session.kind.picks_faces() || session.kind == MotionKind::Sweep => {
                 (key.4[0].clone(), Vec::new())
             }
             _ => (
@@ -2420,7 +2441,9 @@ impl Doc {
             (Some((target, false)), MotionPick::Nothing) if panel_edge.is_some() => vec![target],
             (Some((_, false)), MotionPick::Nothing | MotionPick::Regions) | (None, _) => Vec::new(),
         };
-        let highlight = Arc::new(index.highlight_with(&hover, &picked, &second));
+        let mut highlight = index.highlight_with(&hover, &picked, &second);
+        highlight.second_excluded = session.kind.blends();
+        let highlight = Arc::new(highlight);
         if let Some(session) = &mut self.motion {
             session.highlight = highlight;
             session.built = Some(key);

@@ -573,7 +573,10 @@ impl Varde {
                 }
                 self.peeking = peeking;
             }
-            Message::CommandHeld(held) => self.command = held,
+            Message::CommandHeld(held) => {
+                self.command = held;
+                self.with_doc(|doc, _| doc.hold_command(held));
+            }
             Message::StorageState { persisted, space } => {
                 self.files.storage.persisted = persisted.or(self.files.storage.persisted);
                 self.files.storage.space = space.or(self.files.storage.space);

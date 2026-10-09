@@ -149,20 +149,24 @@ fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_chamfer() {
     // Equal is the same either way round.
     assert!(!shows(&plates, "Flip sides"));
     let picks = plates.doc.model_picking().expect("picking");
-    assert_eq!(picks.picks, Picks::Edges);
+    assert_eq!(picks.picks, Picks::EdgesAndFaces);
     assert!(!plates.doc.motion_ready());
     assert!(plates.last_draft().is_none(), "nothing to chamfer yet");
 
-    // A face is no edge.
     let top = plates.face(
         plate,
         |s| matches!(s, Summary::Plane { n, .. } if n[2] > 0.5),
     );
+    // A face clicked is picked, standing for its edges, and listed; a
+    // click on it again takes it out.
     plates.click_at(plate, Picked::Face(top), DVec3::new(0.0, 15.0, 10.0));
-    assert_eq!(
-        plates.doc.notice.as_deref(),
-        Some("Only an edge can be chamfered")
-    );
+    assert_eq!(plates.doc.notice, None);
+    assert_eq!(plates.doc.motion.as_ref().unwrap().faces.refs.len(), 1);
+    assert!(shows(&plates, "Face 1"));
+    assert_eq!(plates.doc.motion.as_ref().unwrap().bodies, [plate]);
+    plates.click_at(plate, Picked::Face(top), DVec3::new(0.0, 15.0, 10.0));
+    assert!(plates.doc.motion.as_ref().unwrap().faces.refs.is_empty());
+    assert!(!shows(&plates, "Face 1"));
 
     // The front edge hovered lights; clicked, it's picked, lit as
     // selected and listed with its length.

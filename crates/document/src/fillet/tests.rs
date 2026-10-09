@@ -51,6 +51,7 @@ fn two_edges(document: &Document, body: BodyId, maker: FeatureId) -> Fillet {
     edges.sort_by(EdgeRef::order);
     Fillet {
         edges,
+        faces: Vec::new(),
         radius: radius(document, "2 mm"),
         chains: true,
     }
@@ -212,6 +213,7 @@ fn its_own_parts_are_checked() {
         &mut editor,
         Fillet {
             edges: Vec::new(),
+            faces: Vec::new(),
             ..good.clone()
         },
         FilletError::Edges(BlendEdgesError::Count(0)),
@@ -253,11 +255,11 @@ fn bodies_and_makers_are_checked() {
     document.check().unwrap();
     let index = document.feature_index(id).unwrap();
     assert_eq!(
-        document.check_blend_edges(index, &fillet_of(document, id).edges),
+        document.check_blend_edges(index, &fillet_of(document, id).edges, &[]),
         Ok(())
     );
     assert_eq!(
-        document.check_blend_edges(1, &fillet_of(document, id).edges),
+        document.check_blend_edges(1, &fillet_of(document, id).edges, &[]),
         Err(BlendEdgesError::Body(b))
     );
 }
@@ -341,7 +343,7 @@ fn wrong_fillets_are_refused_when_read() {
     assert_eq!(
         read(&|f| f.edges.reverse()),
         Err(format!(
-            "feature {n}: its edges are out of order or repeated"
+            "feature {n}: its edges or faces are out of order or repeated"
         ))
     );
     assert_eq!(
@@ -376,6 +378,6 @@ fn errors_say_what_is_wrong() {
     );
     assert_eq!(
         FilletError::Edges(BlendEdgesError::Count(300)).to_string(),
-        "names 300 edges, not 1 to 256"
+        "names 300 edges and faces, not 1 to 256 of each"
     );
 }

@@ -128,6 +128,9 @@ pub struct ModelHighlight {
     /// drawn as selected.
     pub second_faces: Vec<u32>,
     pub highlights: Arc<Highlights>,
+    /// Whether the second colour is the exclusions' purple, for the
+    /// edges a blend leaves out, rather than the measure tool's B.
+    pub second_excluded: bool,
 }
 
 impl ModelHighlight {

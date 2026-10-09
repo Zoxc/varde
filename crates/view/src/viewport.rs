@@ -292,6 +292,10 @@ fn program<'a>(
             camera: *camera,
             pivot,
             colors: palette.scene,
+            excluded: {
+                let purple = palette.sketching.handle;
+                varde_render::Srgb([purple.r, purple.g, purple.b])
+            },
             sketch_plane: sketching.as_ref().map(Sketching::grid),
             fade: if sketching.is_some() { 1.0 } else { 0.0 },
             fading_grid: None,
@@ -365,6 +369,10 @@ struct Scene {
     /// The point the camera orbits, marked, if one was picked.
     pivot: Option<Pivot>,
     colors: Colors,
+    /// The second colour while the highlight's second edges are a
+    /// blend's exclusions ([`ModelHighlight::second_excluded`]): purple,
+    /// the Create tools' handles' colour (an extrude's).
+    excluded: varde_render::Srgb,
     /// The plane of the sketch being edited, if one is.
     sketch_plane: Option<GridPlane>,
     /// How faded the model is: see [`Frame::fade`].
@@ -1365,7 +1373,14 @@ impl shader::Primitive for Primitive {
                 },
                 target_size: [target.width, target.height],
                 scale_factor: scale,
-                colors: scene.colors,
+                colors: if drawn.highlight.second_excluded {
+                    Colors {
+                        second: scene.excluded,
+                        ..scene.colors
+                    }
+                } else {
+                    scene.colors
+                },
             },
         );
         // `prepare` can't send a message, so this can't reach the UI.

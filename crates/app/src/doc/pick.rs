@@ -534,6 +534,8 @@ impl Doc {
                 match session.picking {
                     MotionPick::Reference if session.kind.takes_axis() => Picks::EdgesAndFaces,
                     MotionPick::Align(_) => Picks::EdgesAndFaces,
+                    // A blend's faces stand for their edges.
+                    MotionPick::Edges if session.kind.blends() => Picks::EdgesAndFaces,
                     MotionPick::Edge | MotionPick::Edges | MotionPick::Path => Picks::Edges,
                     _ => Picks::Faces,
                 }

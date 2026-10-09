@@ -7,6 +7,7 @@ use varde_render::Camera;
 use varde_view::{FilletView, MotionField, MotionKind};
 
 use super::blend::BlendSetup;
+use super::refs::Refs;
 use super::{BLEND_SHARE, Doc, MotionSession, length_field};
 use crate::doc::camera::fitting_length;
 use crate::doc::regions::TypedText;
@@ -20,26 +21,29 @@ pub(super) fn radius_field(design: &Design, camera: &Camera) -> TypedText {
 }
 
 impl MotionSession {
-    /// The fillet as set up, if it's whole: its edges, and its radius as
+    /// The fillet as set up, if it's whole: its edges or faces, and its radius as
     /// it last read, while its field takes it (not dragged to zero).
     pub(super) fn fillet(&self) -> Option<Fillet> {
         let radius = self.field(MotionField::Radius);
-        if self.blend.edges.refs.is_empty() || radius.error.is_some() {
+        let none = self.blend.edges.refs.is_empty() && self.faces.refs.is_empty();
+        if none || radius.error.is_some() {
             return None;
         }
         Some(Fillet {
             edges: self.blend.edges.refs.clone(),
+            faces: self.faces.refs.clone(),
             radius: radius.value.clone()?,
             chains: self.blend.chains,
         })
     }
 
-    /// Opens the fillet `fillet` in this session: its edges, radius and
-    /// Tangent chain.
+    /// Opens the fillet `fillet` in this session: its edges, faces,
+    /// radius and Tangent chain.
     pub(super) fn open_fillet(&mut self, fillet: &Fillet) {
         let ask = Fillet::radius_ask(&self.read_in.design());
         self.fields[MotionField::Radius.index()] = TypedText::of(&fillet.radius, &ask);
         self.blend = BlendSetup::of(&fillet.edges, fillet.chains);
+        self.faces = Refs::of(&fillet.faces);
         self.blend_body();
     }
 }

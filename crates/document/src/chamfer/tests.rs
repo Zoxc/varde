@@ -4,8 +4,8 @@ use varde_kernel::mesh::{FaceKey, PartKey};
 use super::*;
 use crate::testing::{extrude_again, with_body};
 use crate::{
-    BlendEdgesError, CheckError, Command, Document, EdgeError, EditError, Editor, FeatureId,
-    FeatureKind, LengthUnit, MAX_BLEND_EDGES, Removable,
+    BlendEdgesError, CheckError, Command, Document, EdgeError, EditError, Editor, FaceRef,
+    FeatureId, FeatureKind, LengthUnit, MAX_BLEND_EDGES, Removable,
 };
 
 /// The example's body and another plate: the editor, the bodies and
@@ -55,6 +55,7 @@ fn two_edges(document: &Document, body: BodyId, maker: FeatureId) -> Chamfer {
     edges.sort_by(EdgeRef::order);
     Chamfer {
         edges,
+        faces: Vec::new(),
         distances: ChamferSize::Equal(distance(document, "1 mm")),
         chains: true,
         flip: false,
@@ -273,6 +274,7 @@ fn its_own_parts_are_checked() {
         &mut editor,
         Chamfer {
             edges: Vec::new(),
+            faces: Vec::new(),
             ..good.clone()
         },
         ChamferError::Edges(BlendEdgesError::Count(0)),
@@ -311,12 +313,12 @@ fn bodies_and_makers_are_checked() {
     document.check().unwrap();
     let index = document.feature_index(id).unwrap();
     assert_eq!(
-        document.check_blend_edges(index, &chamfer_of(document, id).edges),
+        document.check_blend_edges(index, &chamfer_of(document, id).edges, &[]),
         Ok(())
     );
     // Made by the chamfer itself or later: refused.
     assert_eq!(
-        document.check_blend_edges(1, &chamfer_of(document, id).edges),
+        document.check_blend_edges(1, &chamfer_of(document, id).edges, &[]),
         Err(BlendEdgesError::Body(b))
     );
 }
@@ -411,13 +413,13 @@ fn wrong_chamfers_are_refused_when_read() {
     assert_eq!(
         read(&|c| c.edges.reverse()),
         Err(format!(
-            "feature {n}: its edges are out of order or repeated"
+            "feature {n}: its edges or faces are out of order or repeated"
         ))
     );
     assert_eq!(
         read(&|c| c.edges.clear()),
         Err(format!(
-            "feature {n}: names 0 edges, not 1 to {MAX_BLEND_EDGES}"
+            "feature {n}: names 0 edges and faces, not 1 to {MAX_BLEND_EDGES} of each"
         ))
     );
 }
@@ -459,4 +461,76 @@ fn zero() -> Value {
         text: "0".into(),
         value: 0.0,
     }
+}
+
+/// The top `maker` made on `body`, named at `near`.
+fn top_face(body: BodyId, maker: FeatureId, near: DVec3) -> FaceRef {
+    FaceRef {
+        body,
+        key: key(maker, PartKey::EndCap),
+        near,
+    }
+}
+
+/// A chamfer may name faces, standing for the edges around them, with or
+/// without edges: one face alone is taken, an edge around it too (left
+/// out in regenerating), and faces are checked as the edges are: on the
+/// edges' body, in order, made before it, at least one of either.
+#[test]
+fn faces_are_named_and_checked() {
+    let (mut editor, [a, b], [first, second]) = two_bodies();
+    let document = editor.document().clone();
+    let top = top_face(a, first, DVec3::new(5.0, 5.0, 10.0));
+    let face_only = Chamfer {
+        edges: Vec::new(),
+        faces: vec![top],
+        ..two_edges(&document, a, first)
+    };
+    assert_eq!(face_only.body(), Some(a));
+    add(&mut editor, face_only.clone()).unwrap();
+    let with_edges = Chamfer {
+        faces: vec![top],
+        ..two_edges(&document, a, first)
+    };
+    add(&mut editor, with_edges.clone()).unwrap();
+    refused(
+        &mut editor,
+        Chamfer {
+            faces: Vec::new(),
+            ..face_only.clone()
+        },
+        ChamferError::Edges(BlendEdgesError::Count(0)),
+    );
+    refused(
+        &mut editor,
+        Chamfer {
+            faces: vec![top_face(b, second, DVec3::new(5.0, 5.0, 10.0))],
+            ..with_edges.clone()
+        },
+        ChamferError::Edges(BlendEdgesError::Bodies),
+    );
+    let mut two = vec![top, top_face(a, first, DVec3::new(1.0, 1.0, 10.0))];
+    two.sort_by(FaceRef::order);
+    two.reverse();
+    refused(
+        &mut editor,
+        Chamfer {
+            faces: two,
+            ..face_only.clone()
+        },
+        ChamferError::Edges(BlendEdgesError::Order),
+    );
+    refused(
+        &mut editor,
+        Chamfer {
+            faces: vec![top_face(a, FeatureId(999), DVec3::ZERO)],
+            ..face_only
+        },
+        ChamferError::Edges(BlendEdgesError::RefMaker(FeatureId(999))),
+    );
+    let document = editor.document().clone();
+    assert_eq!(
+        Document::from_postcard(&document.to_postcard()),
+        Ok(document)
+    );
 }

@@ -133,6 +133,7 @@ pub(super) fn body<'a>(
             drop: MotionLook::SweepRegion { sketch, region },
             hover: PanelHover::Region { sketch, region },
             failed: false,
+            excluded: false,
         })
     });
     let regions = regions.chain((0..sweep.missing).map(|index| PickedRow {
@@ -142,6 +143,7 @@ pub(super) fn body<'a>(
         drop: MotionLook::DropMissingRegion(index),
         hover: PanelHover::Missing(index),
         failed: true,
+        excluded: false,
     }));
     let empty = (sweep.candidates.iter()).all(|candidate| candidate.profiles.regions.is_empty());
     let place = if sweep.picked.is_empty() && empty {
@@ -168,6 +170,7 @@ pub(super) fn body<'a>(
                 drop: MotionLook::DropPart(at),
                 hover: PanelHover::Part(at),
                 failed: false,
+                excluded: false,
             });
             let edges = (sweep.edges.edges.iter().enumerate()).map(|(at, edge)| PickedRow {
                 icon: if edge.round {
@@ -180,6 +183,7 @@ pub(super) fn body<'a>(
                 drop: MotionLook::DropEdge(edge.edge),
                 hover: PanelHover::Edge(at),
                 failed: false,
+                excluded: false,
             });
             let rows = parts.chain(edges);
             let field = picks_field(

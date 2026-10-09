@@ -915,7 +915,17 @@ pub(crate) fn ordered_row<'a>(
     what: PanelHover,
     hovered: Option<PanelHover>,
 ) -> Element<'a, Message> {
-    row_of(icon, name, meta, moves, remove, press, what, hovered, false)
+    row_of(
+        icon,
+        name,
+        meta,
+        moves,
+        remove,
+        press,
+        what,
+        hovered,
+        RowTone::Plain,
+    )
 }
 
 /// A [`picked_row`] of what an edited feature names that wasn't found,
@@ -929,10 +939,54 @@ pub(crate) fn failed_row<'a>(
     what: PanelHover,
     hovered: Option<PanelHover>,
 ) -> Element<'a, Message> {
-    row_of(icon, name, None, None, remove, press, what, hovered, true)
+    row_of(
+        icon,
+        name,
+        None,
+        None,
+        remove,
+        press,
+        what,
+        hovered,
+        RowTone::Failed,
+    )
 }
 
-/// An [`ordered_row`], its name in the strong danger colour if `failed`.
+/// A [`picked_row`] of what a blend names to leave out (an edge around a
+/// face it names), its name in the exclusions' purple.
+pub(crate) fn excluded_row<'a>(
+    icon: Icon,
+    name: impl text::IntoFragment<'a>,
+    meta: Option<String>,
+    remove: Option<Message>,
+    press: Option<Message>,
+    what: PanelHover,
+    hovered: Option<PanelHover>,
+) -> Element<'a, Message> {
+    row_of(
+        icon,
+        name,
+        meta,
+        None,
+        remove,
+        press,
+        what,
+        hovered,
+        RowTone::Excluded,
+    )
+}
+
+/// The colour of a row's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowTone {
+    Plain,
+    /// The strong danger colour: not found.
+    Failed,
+    /// The exclusions' purple: left out.
+    Excluded,
+}
+
+/// An [`ordered_row`], its name in the colour `tone` says.
 #[allow(clippy::too_many_arguments)]
 fn row_of<'a>(
     icon: Icon,
@@ -943,7 +997,7 @@ fn row_of<'a>(
     press: Option<Message>,
     what: PanelHover,
     hovered: Option<PanelHover>,
-    failed: bool,
+    tone: RowTone,
 ) -> Element<'a, Message> {
     let chevron = |glyph: Icon, message: Option<Message>| {
         let enabled = message.is_some();
@@ -976,10 +1030,10 @@ fn row_of<'a>(
             icons::icon(icon, icons::INLINE),
             container({
                 let name = text(name).size(CONTROL_TEXT).wrapping(Wrapping::None);
-                if failed {
-                    name.style(theme::failed_text)
-                } else {
-                    name
+                match tone {
+                    RowTone::Plain => name,
+                    RowTone::Failed => name.style(theme::failed_text),
+                    RowTone::Excluded => name.style(theme::excluded_text),
                 }
             })
             .width(Length::Fill)

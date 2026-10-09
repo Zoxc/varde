@@ -141,8 +141,8 @@ they share with the newer kinds is here. The kernel math of each is in
 
   Each takes the selection when started (`Doc::start_motion`,
   `Doc::start_revolve`, `Doc::start_measure`): a blend the edges
-  selected and those around the faces selected
-  (`Doc::face_edges_selected`), keeping to the first one's body; a face
+  and faces selected (an edge selected around a face selected is left
+  out, see "Chamfer"), keeping to the first one's body; a face
   session the faces; a draft with two faces or more the first, if flat,
   as its neutral plane and the rest as its faces; a sweep the edges as
   its path; a mirror the face alone selected as its plane (a face that
@@ -3332,7 +3332,8 @@ split isn't built.
 
 ```rust
 pub struct Chamfer {
-    pub edges: Vec<EdgeRef>,       // 1..=MAX_BLEND_EDGES (256), one body, EdgeRef::order, no repeats
+    pub edges: Vec<EdgeRef>,       // ..=MAX_BLEND_EDGES (256), one body, EdgeRef::order, no repeats
+    #[serde(default)] pub faces: Vec<FaceRef>,  // ..=256, the same body, FaceRef::order, no repeats
     pub distances: ChamferSize,
     pub chains: bool,              // take in each edge's tangent chain
     #[serde(default)] pub flip: bool,  // first faces are the second keys'
@@ -3356,18 +3357,27 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   point's coordinates by `total_cmp`) without repeats, so a set of
   edges has one form; two picks of edges between the same two faces at
   different points are two edges.
+- **Faces**: a face named stands for the edges around it. An edge named
+  that is also around a face named (one of its keys the face's, on the
+  same body: `blend_excludes`) is **left out**, an exclusion; there's no
+  list of exclusions, it follows from the two lists. With faces, edges
+  may be none; a face's edges' first face is the face (the one across
+  with `flip`). Older files have no `faces` and read as none.
 - **Checks** (`CheckError::Chamfer(id, ChamferError)`):
   `Chamfer::check_own(design)` (cheap): its edges by
-  `check_blend_edges_own` (`Edges(BlendEdgesError)`: 1..=256 edges,
-  `Count`; each edge's own check, `Edge(EdgeError)`; in order without
-  repeats, `Order`; one body, `Bodies`), distances (`Distance`) and the
-  angle (`Angle`) by their asks. `Document::check_blend_edges(index,
-  edges)` (public, for the panel; a fillet's edges are checked by the
+  `check_blend_edges_own(edges, faces)` (`Edges(BlendEdgesError)`: one
+  edge or face at least and at most 256 of each, `Count`; each edge's
+  own check, `Edge(EdgeError)`, each face's, `Face(PlaneError)`; each
+  list in order without repeats, `Order`; one body, `Bodies`), distances
+  (`Distance`) and the angle (`Angle`) by their asks.
+  `Document::check_blend_edges(index, edges, faces)` (public, for the
+  panel; a fillet's edges are checked by the
   same two, `crates/document/src/blend.rs`): the body there and made
   before (`Body`: depended on, as a combine's bodies), and every key's
   feature before it, or not there with an id below the next
   (`RefMaker`, as a sketch's face's).
-- **Dependencies**: `FeatureKind::bodies()` is the edges' body, so
+- **Dependencies**: `FeatureKind::bodies()` is the edges' and faces'
+  body (`blend_body`: the first edge's, else the first face's), so
   removing it or its maker removes the chamfer. The features that made
   its edges' faces are **not** followed: removing a join whose wall an
   edge ran along leaves the chamfer, which then fails ("its edge wasn't
@@ -3382,7 +3392,16 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   one drawing it keeps (`inspect::topology`), and each edge is found on
   it by `Topology::edge(faces, near)`; one not found fails the chamfer
   before the kernel: "its edge wasn't found", or with several "its edge
-  2 of 3 wasn't found" (its place in the list).
+  2 of 3 wasn't found" (its place in the list); each face as a region
+  by `Topology::face` ("its face 2 of 3 wasn't found").
+- **Faces and exclusions**: an edge named whose chain runs along a
+  face named is left out and never grown into; the other edges named
+  come first, then each face's chains in index order, named by their
+  regions' keys (as a grown chain), first face the face. Everything
+  named left out leaves nothing to blend, which fails ("every edge it
+  names is left out: there's nothing left"), the body as it was. Refusals about a face's edge say "an edge of its
+  face 2" ("an edge in the tangent chain of an edge of its face 2"
+  grown).
 - What the chamfer shares with the fillet is in
   `crates/regen/src/history/blend.rs` (`find_edges`, `plan`,
   `refused`): finding the edges, growing the chains, their first faces
@@ -3473,18 +3492,19 @@ panel.
   Scale, Combine, Split body), again backing out; or editing
   one (`Look::EditFeature`: double-click, `Enter`, "Edit chamfer"),
   which opens with its edges, type, values, Flip sides and Tangent
-  chain. A new one takes the edges selected in the model shown that a
-  click would take (as the mock's takes a hole's rims selected), the
+  chain. A new one takes the edges and faces selected in the model
+  shown that a click would take (an edge selected around a face
+  selected so left out) (as the mock's takes a hole's rims selected), the
   first one's body deciding. Nothing takes the focus: clicks pick
   edges.
-- **Edges** (`MotionPick::Edges`, the viewport picking edges only):
+- **Edges** (`MotionPick::Edges`, the viewport picking edges and faces):
   a click on an edge picks it, named as of the feature
   (`Naming::edge_ref`) on the body holding it there (`Merges::holder`),
   made before it; a click on an edge picked (found again on the model
   shown by its names) takes it out. Once one is picked, the others must
   be on its body: another body's edges don't light under the cursor and
   a click says "A chamfer's edges are all on one body: pick edges of
-  Body 1"; a face says "Only an edge can be chamfered". At most
+  Body 1"; a face picks a face (below). At most
   `MAX_BLEND_EDGES`. Kept in `EdgeRef::order`, so the list is sorted as
   stored. Picked edges are lit as selected, the one under the cursor as
   hovered, each with its tangent chain (`PickIndex::tangent_chain`, the
@@ -3500,7 +3520,38 @@ panel.
   after another. Edges of faces the chamfer itself makes (on its
   preview) are refused by their names, as made later. The Edges field clicked turns picking off
   (`MotionPick::Nothing`) and on.
-- **The rows**: "Edge 2" by the edge's place in the list (as
+- **Faces**: from the selection the session starts with, or the
+  edited feature's, and picked by clicks beside the edges (the
+  viewport picking `Picks::EdgesAndFaces` while a blend's edges are
+  picked; a click on a face picked takes it out, as an edge's does,
+  through `Refs<FaceRef>`), all on the edges' body; a face's row's
+  cross takes it out too (`MotionLook::DropFace`). The field's
+  placeholder and the hint say "Click edges or faces", "Pick edges or
+  faces". Faces are kept in
+  `MotionSession::faces` (the face sessions' list), lit as selected
+  while found on the model shown. An edge picked around a face of the
+  list (`blend_excludes`) is left out: lit alone (no tangent chain) in
+  the exclusions' purple, the Create tools' handles' colour
+  (`sketching.handle`, an extrude's), drawn as the
+  highlight's second colour (`ModelHighlight::second_excluded` turns
+  the viewport's second colour purple), and its row's name purple
+  (`theme::excluded_text`). A click on it takes it out of the list,
+  which brings the edge back in.
+- **Ctrl held** (`Held::BEFORE`, `Cmd` on macOS; `Doc::blend_before`,
+  `Doc::hold_command` from `Message::CommandHeld`) while picking edges
+  shows the model before the blend instead of its preview: a new one's
+  the document as it is, an edited one's a move of nothing of its body
+  (`MotionSession::unmoved`, as when it isn't whole), so the edges the
+  preview blends away light and click again, named as of the feature: a
+  picked face's edge to leave it out (purple), a picked edge to take it
+  out. `refs_model_current` takes that model (no draft for a new one, a
+  draft of the session's run for an edited one). Letting go shows the
+  preview again. The status bar hints "Ctrl: Show edges before the
+  fillet" (or chamfer). Ctrl means nothing else here: a click in a
+  session ignores the add key, which only the selection outside
+  sessions (and the overlap list's choice, passed on as a click) uses.
+- **The rows**: the faces first, "Face 2" by place (`Icon::SeFace`),
+  then "Edge 2" by the edge's place in the list (as
   regeneration's messages count them, "its edge 2 of 3 wasn't found"),
   the mock's `se-edge` icon (`Icon::SeEdge`), or its rim icon
   (`Icon::SeRim`) for a closed round edge; beside it what the model
@@ -3523,7 +3574,7 @@ panel.
   smoothly"), on to begin with: **the mock has this tick on the
   fillet's panel only**; the plan has it on both, so the chamfer's
   panel has it too, last.
-- **Whole and ready**: edges, and the type's values ("pick the edges
+- **Whole and ready**: edges or faces, and the type's values ("pick the edges
   to chamfer" otherwise); `Chamfer::check_own` refuses as the panel's
   foot ("Chamfer fails"). Edges the document no longer takes at the
   feature's place (`Document::check_chamfer_edges`, their body not held)
@@ -3552,14 +3603,14 @@ The Timeline shows the model mock's chamfer icon (`Icon::BChamfer`;
 `Icon::Chamfer` is the sketch tool's) and note (`view/src/chamfer.rs`:
 "1 mm", "1 × 2" along the face of the edges' first key first, so Flip
 sides swaps them, "3 mm 30°", as the mock's rows), the status bar's
-info "2 edges · Equal · 1 mm · Tangent chain", "1 × 2 mm" for two
+info "2 edges · Equal · 1 mm · Tangent chain" (with faces "1 face ·
+1 edge · 2 left out ...", `blend_count`), "1 × 2 mm" for two
 distances.
 
 Departures from the mock: the Tangent chain tick (above); edges named
 by their place; no bands drawn over the model (the mock's preview draws
 each edge's chamfer as a band on the faces; here the preview is the
-model regenerated with the chamfer). Known gaps: an edge cut off in the
-preview can't be clicked to take it out (its row's cross does); the
+model regenerated with the chamfer). Known gaps: the
 rows' measures are the model shown's (an edited chamfer's preview holds
 the features after it); two picked edges of one tangent chain are both
 kept (regen chamfers the chain once).
@@ -3893,7 +3944,8 @@ regen's `testing` feature (`varde_regen::testing::shell_by_boxes`).
 
 ```rust
 pub struct Fillet {
-    pub edges: Vec<EdgeRef>,   // as a chamfer's: 1..=MAX_BLEND_EDGES, one body, EdgeRef::order, no repeats
+    pub edges: Vec<EdgeRef>,   // as a chamfer's: ..=MAX_BLEND_EDGES, one body, EdgeRef::order, no repeats
+    #[serde(default)] pub faces: Vec<FaceRef>,  // as a chamfer's: each stands for its edges
     pub radius: Value,         // a length as an extrude's
     pub chains: bool,          // take in each edge's tangent chain
 }
@@ -3906,8 +3958,9 @@ pub struct Fillet {
   as an extrude's (`Fillet::radius_ask` = `Extent::ask`); one radius
   per fillet (constant-radius fillets, as decided), so unequal radii
   meet only across features. Its edges are as a chamfer's: all on one
-  body, kept in `EdgeRef::order` without repeats; with no first faces
-  there's no Flip. The plan's struct, as built.
+  body, kept in `EdgeRef::order` without repeats, and its faces too
+  (each standing for the edges around it, an edge named around one left
+  out, as "Chamfer" says); with no first faces there's no Flip. The plan's struct, as built.
 - **Checks** (`CheckError::Fillet(id, FilletError)`):
   `Fillet::check_own(design)` (cheap): its edges by
   `check_blend_edges_own` (`Edges(BlendEdgesError)`, the chamfer's
@@ -3995,7 +4048,8 @@ mock's fillet panel: Edges, Radius, Tangent chain.
   handling. A new one takes the edges selected that a click would
   take, the first one's body deciding. Nothing takes the focus: clicks
   pick edges.
-- **Edges**: as the chamfer's, in the fillet's words: a face clicked
+- **Edges**: as the chamfer's (Ctrl held showing the model before it
+  too), in the fillet's words: a face clicked
   says "Only an edge can be filleted", another body's edge "A fillet's
   edges are all on one body: pick edges of Body 1"; rows "Edge 2" with
   the length, diameter or radius beside them, a cross taking one out,
@@ -4010,7 +4064,7 @@ mock's fillet panel: Edges, Radius, Tangent chain.
   Edge 2: under 3 mm" under the field (its own estimate of the room
   beside each edge) is regeneration's here: the kernel's refusal ("the
   fillet doesn't fit along its edge 2: ..."), in the foot.
-- **Whole and ready**: edges and a radius ("pick the edges to fillet"
+- **Whole and ready**: edges or faces and a radius ("pick the edges to fillet"
   otherwise); `Fillet::check_own` refuses as the panel's foot ("Fillet
   fails"); edges the document no longer takes at the feature's place
   (`Document::check_blend_edges`, their body not held) kept and said to
@@ -4039,8 +4093,7 @@ Departures from the mock: no Fillet on the toolbar (above); edges named
 by their place; no bands drawn over the faces (the mock's preview draws
 each edge's round as a band; here the preview is the model regenerated
 with the fillet); the mock's own "too big" estimate left to the kernel.
-Known gaps: as the chamfer's (an edge rounded off in the preview can't
-be clicked to take it out, its row's cross does; the rows' measures are
+Known gaps: as the chamfer's (the rows' measures are
 the model shown's; two picked edges of one tangent chain both kept).
 
 Tests: `document/src/fillet/tests.rs` (added and undone, edited, its own

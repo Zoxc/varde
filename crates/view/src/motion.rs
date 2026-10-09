@@ -25,7 +25,7 @@ const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
 use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Footer, Framing, OperationKind, PanelHover, Parts, TypedField, failed_row, field,
+    Footer, Framing, OperationKind, PanelHover, Parts, TypedField, excluded_row, failed_row, field,
     footer_message, label, message_text, operation_panel, pick_field, picked_row, tile, tiles,
     toggle, value_field,
 };
@@ -1204,6 +1204,9 @@ struct PickedRow {
     hover: PanelHover,
     /// Whether it wasn't found: its name in the strong danger colour.
     failed: bool,
+    /// Whether it's left out (a blend's edge around a face it names): its
+    /// name in the exclusions' purple.
+    excluded: bool,
 }
 
 /// The panel's field `label` of references picked by `pick` (a blend's
@@ -1222,7 +1225,17 @@ fn picks_field<'a>(
     let press = send(MotionLook::Picking(pick));
     let rows: Vec<_> = rows
         .map(|row| {
-            if row.failed {
+            if row.excluded {
+                excluded_row(
+                    row.icon,
+                    row.name,
+                    row.meta,
+                    send(row.drop),
+                    press.clone(),
+                    row.hover,
+                    state.hover,
+                )
+            } else if row.failed {
                 failed_row(
                     row.icon,
                     row.name,
@@ -1255,7 +1268,7 @@ pub use scale::{ScaleMode, ScaleView};
 mod split;
 pub use split::{SketchLines, SplitMode, SplitPiece, SplitView};
 mod blend;
-pub use blend::{BlendEdge, BlendEdges};
+pub use blend::{BlendEdge, BlendEdges, BlendFace};
 mod chamfer;
 pub use chamfer::{ChamferType, ChamferView};
 mod faces;

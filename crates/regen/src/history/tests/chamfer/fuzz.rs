@@ -79,6 +79,7 @@ fn random_chamfer(document: &Document, rng: &mut Rng) -> Option<Chamfer> {
     edges.dedup_by(|a, b| a.order(b).is_eq());
     Some(Chamfer {
         edges,
+        faces: Vec::new(),
         distances: random_size(document, rng),
         chains: rng.below(3) != 0,
         flip: rng.below(2) == 0,

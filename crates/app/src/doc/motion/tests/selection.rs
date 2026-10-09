@@ -10,7 +10,7 @@ use varde_view::{
 };
 
 use super::Plates;
-use super::chamfer::{BACK, FRONT, RIGHT, edge_pick, edges, plate, straight};
+use super::chamfer::{FRONT, RIGHT, edge_pick, edges, plate};
 use super::face_session::picked_faces;
 use super::near;
 
@@ -251,26 +251,21 @@ fn sketch_of(plates: &Plates) -> FeatureId {
         .id
 }
 
-/// A fillet or chamfer started with faces selected takes the edges
-/// around them: the plate's top has four straight ones and the hole's
-/// rim.
+/// A fillet or chamfer started with faces selected takes the faces,
+/// which stand for the edges around them, and no edges of its own.
 #[test]
-fn a_blend_takes_the_edges_around_the_faces_selected() {
+fn a_blend_takes_the_faces_selected() {
     for start in [Look::StartChamfer, Look::StartFillet] {
         let (mut plates, plate) = plate();
         let pick = top_face(&plates, plate);
         select(&mut plates, SelectionMode::Faces, &[pick]);
         plates.doc.look(start);
-        let picked = edges(&plates);
-        assert!(picked.len() >= 5, "{picked:?}");
-        assert!(picked.iter().all(|edge| edge.body == plate));
-        let straight = [FRONT, BACK, RIGHT].map(|ends| {
-            let edge = straight(&plates, plate, ends.0, ends.1).unwrap();
-            plates.doc.feed.pick_index().chain_point(edge).unwrap()
-        });
-        for at in straight {
-            assert!(picked.iter().any(|edge| near(edge.near, at)), "{at}");
-        }
+        let session = plates.doc.motion.as_ref().unwrap();
+        assert!(edges(&plates).is_empty());
+        assert_eq!(session.faces.refs.len(), 1);
+        assert_eq!(session.faces.refs[0].body, plate);
+        assert_eq!(session.bodies, [plate]);
+        assert!(session.kind().is_some(), "whole with a face alone");
     }
 }
 
@@ -498,9 +493,9 @@ fn measure_takes_what_is_selected() {
     assert!(measure.inspect().is_some_and(|(_, b)| b.is_some()));
 }
 
-/// A fillet or chamfer started with edges and faces selected takes the
-/// edges and those around the faces; with edges on two bodies, each
-/// keeps to the first one's body.
+/// A fillet or chamfer started with edges and faces selected takes both:
+/// an edge selected around a face selected is left out, listed and lit
+/// in the exclusions' purple.
 #[test]
 fn a_blend_takes_edges_and_faces_selected_together() {
     let (mut plates, plate) = plate();
@@ -508,11 +503,28 @@ fn a_blend_takes_edges_and_faces_selected_together() {
     let rim = rim(&plates, plate);
     select(&mut plates, SelectionMode::Any, &[rim, top]);
     plates.doc.look(Look::StartFillet);
-    let picked = edges(&plates);
-    assert!(picked.len() >= 5, "{picked:?}");
-    let back = straight(&plates, plate, BACK.0, BACK.1).unwrap();
-    let at = plates.doc.feed.pick_index().chain_point(back).unwrap();
-    assert!(picked.iter().any(|edge| near(edge.near, at)));
+    assert_eq!(edges(&plates).len(), 1);
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert_eq!(session.faces.refs.len(), 1);
+    let listed = plates.doc.blend_edges(session);
+    assert_eq!(listed.faces.len(), 1);
+    assert!(listed.edges[0].excluded, "{listed:?}");
+    let [taken, out] = plates.doc.blend_lit_parts();
+    assert_eq!(out, [rim.target]);
+    assert!(!taken.contains(&rim.target));
+    assert!(taken.contains(&top.target));
+    plates.doc.refresh_motion_highlight();
+    let highlight = plates.doc.motion_highlight().unwrap();
+    assert!(highlight.second_excluded);
+    assert!(
+        highlight
+            .highlights
+            .second_edges
+            .contains(&match rim.target {
+                Picked::Edge(edge) => edge,
+                other => panic!("{other:?}"),
+            })
+    );
 }
 
 /// The plate with a sketch on XZ beside it: a rectangle from (10, 0) to

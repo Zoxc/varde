@@ -31,6 +31,7 @@ fn a_chamfer_s_notes() {
     let angle = Chamfer::angle_ask(&design);
     let mut chamfer = Chamfer {
         edges: vec![edge(0)],
+        faces: Vec::new(),
         distances: ChamferSize::Equal(value("1", &length)),
         chains: true,
         flip: false,

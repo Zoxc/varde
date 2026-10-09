@@ -4,14 +4,19 @@
 //! has it (a click picks or takes out, named as of the feature, all on
 //! one body, sorted as [`EdgeRef::order`] keeps them, lit as selected),
 //! each with its tangent chain while the Tangent chain tick takes them
-//! in. The session's bodies are the edges' body, never picked
+//! in. Its faces (the session's, from the faces selected as it starts, or
+//! the feature's) stand for the edges around them: an edge picked around
+//! one is left out, lit and listed in the exclusions' purple. The
+//! session's bodies are the edges' and faces' body, never picked
 //! themselves, so a body merged into another before the feature takes
-//! the edges with it on to the holder.
+//! them with it on to the holder.
 
 use glam::DVec3;
-use varde_document::{Document, EdgeRef};
+use varde_document::{Document, EdgeRef, FaceRef, blend_body, blend_excludes};
 use varde_expr::Unit;
-use varde_view::{BlendEdge, BlendEdges, MotionKind, Pick, PickIndex, Picked};
+use varde_view::{
+    BlendEdge, BlendEdges, BlendFace, MotionKind, MotionPick, Pick, PickIndex, Picked,
+};
 
 use super::refs::Refs;
 use super::{Doc, MotionSession, edge_radius};
@@ -45,11 +50,37 @@ impl BlendSetup {
     }
 }
 
+impl Doc {
+    /// Whether the model shown is the blend's body as of the feature
+    /// rather than its preview: while the command modifier is held in a
+    /// fillet or chamfer picking its edges, so those it blends away can
+    /// be clicked (a face's edge to leave it out, an edge to take it out).
+    /// A new one shows the document as it is, an edited one a move of
+    /// nothing of its body ([`MotionSession::unmoved`]).
+    pub(crate) fn blend_before(&self) -> bool {
+        self.command_held
+            && self.motion.as_ref().is_some_and(|session| {
+                session.kind.blends() && session.picking == MotionPick::Edges
+            })
+    }
+
+    /// Notes the command modifier `held` or let go, showing a blend's
+    /// body before it or its preview again.
+    pub(crate) fn hold_command(&mut self, held: bool) {
+        if held != self.command_held {
+            self.command_held = held;
+            self.request_model();
+        }
+    }
+}
+
 impl MotionSession {
-    /// Keeps the bodies the edges' body, which the session's own rules
-    /// (gone, merged) follow.
+    /// Keeps the bodies the edges' and faces' body, which the session's
+    /// own rules (gone, merged) follow.
     pub(super) fn blend_body(&mut self) {
-        self.bodies = self.blend.edges.body().into_iter().collect();
+        self.bodies = blend_body(&self.blend.edges.refs, &self.faces.refs)
+            .into_iter()
+            .collect();
     }
 
     /// What's still to be done before it can be committed, the words for
@@ -60,24 +91,25 @@ impl MotionSession {
             MotionKind::Fillet => "pick the edges to fillet",
             _ => "pick the edges",
         };
-        self.blend.edges.refs.is_empty().then_some(words)
+        (self.blend.edges.refs.is_empty() && self.faces.refs.is_empty()).then_some(words)
     }
 
-    /// The words for its edges being gone, if they are, the UI mock's.
+    /// The words for its edges or faces being gone, if they are, the UI
+    /// mock's.
     pub(super) fn blend_gone(&self) -> Option<&'static str> {
         let edges = &self.blend.edges;
-        (edges.gone && !edges.refs.is_empty()).then_some("A picked edge is gone")
+        let any = !edges.refs.is_empty() || !self.faces.refs.is_empty();
+        (edges.gone && any).then_some("A picked edge is gone")
     }
 
-    /// Notes whether `document` no longer takes the edges at feature
-    /// `index`, or no longer holds their body.
+    /// Notes whether `document` no longer takes the edges and faces at
+    /// feature `index`, or no longer holds their body.
     pub(super) fn prune_blend(&mut self, document: &Document, index: usize) {
-        let edges = &mut self.blend.edges;
-        edges.gone = !edges.refs.is_empty()
-            && (edges
-                .body()
-                .is_some_and(|body| document.body(body).is_none())
-                || document.check_blend_edges(index, &edges.refs).is_err());
+        let (edges, faces) = (&self.blend.edges.refs, &self.faces.refs);
+        let body = blend_body(edges, faces);
+        self.blend.edges.gone = body.is_some()
+            && (body.is_some_and(|body| document.body(body).is_none())
+                || document.check_blend_edges(index, edges, faces).is_err());
     }
 }
 
@@ -97,21 +129,64 @@ impl Doc {
         }
     }
 
-    /// The edges of the blend being set up to light in the model shown.
-    pub(super) fn blend_lit(&self) -> Vec<Picked> {
-        match &self.motion {
-            Some(session) if session.kind.blends() => self.refs_lit::<EdgeRef>(),
-            _ => Vec::new(),
+    /// The faces and edges of the blend being set up to light in the
+    /// model shown: those it takes as selected, each edge with its
+    /// tangent chain while it takes them in, and the edges it leaves out
+    /// (around a face it names) alone, in the exclusions' purple.
+    pub(super) fn blend_lit_parts(&self) -> [Vec<Picked>; 2] {
+        let Some(session) = self.motion.as_ref().filter(|s| s.kind.blends()) else {
+            return [Vec::new(), Vec::new()];
+        };
+        let index = self.feed.pick_index();
+        let model = index.model();
+        let faces = &session.faces.refs;
+        let mut taken: Vec<Picked> = (session.faces.found(model))
+            .filter_map(|(_, at)| at.map(Picked::Face))
+            .collect();
+        let mut out: Vec<Picked> = Vec::new();
+        for (edge, at) in session.blend.edges.found(model) {
+            let Some(at) = at else { continue };
+            if blend_excludes(&edge, faces) {
+                out.push(Picked::Edge(at));
+            } else {
+                let chain = chain_of(index, at, session.blend.chains);
+                taken.extend(chain.into_iter().map(Picked::Edge));
+            }
         }
+        for lit in [&mut taken, &mut out] {
+            lit.sort_unstable();
+            lit.dedup();
+        }
+        [taken, out]
     }
 
-    /// The edges of the blend being set up as the panel lists them:
-    /// "Edge 2" by its place, with what the model shown measures of it
-    /// where it's found there (a straight edge's length, a circle's
-    /// diameter, an arc's radius).
+    /// What of the blend being set up lights as selected
+    /// ([`Doc::blend_lit_parts`]'s first).
+    #[cfg(test)]
+    pub(super) fn blend_lit(&self) -> Vec<Picked> {
+        let [taken, _] = self.blend_lit_parts();
+        taken
+    }
+
+    /// The faces and edges of the blend being set up as the panel lists
+    /// them: "Face 2" and "Edge 2" by their places, each edge with what
+    /// the model shown measures of it where it's found there (a straight
+    /// edge's length, a circle's diameter, an arc's radius) and whether
+    /// it's left out. A sweep's path has no faces.
     pub(super) fn blend_edges(&self, session: &MotionSession) -> BlendEdges {
         let index = self.feed.pick_index();
         let length = Some(Unit::Length(self.editor.document().units()));
+        let face_refs: &[FaceRef] = if session.kind.blends() {
+            &session.faces.refs
+        } else {
+            &[]
+        };
+        let faces = (face_refs.iter().enumerate())
+            .map(|(at, &face)| BlendFace {
+                face,
+                name: format!("Face {}", at + 1),
+            })
+            .collect();
         let edges = (session.blend.edges.found(index.model()))
             .enumerate()
             .map(|(at, (edge, found))| {
@@ -122,10 +197,12 @@ impl Doc {
                     name: format!("Edge {}", at + 1),
                     meta,
                     round,
+                    excluded: blend_excludes(&edge, face_refs),
                 }
             })
             .collect();
         BlendEdges {
+            faces,
             edges,
             chains: session.blend.chains,
         }

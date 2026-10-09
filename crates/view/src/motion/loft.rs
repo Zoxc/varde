@@ -176,6 +176,7 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             drop: MotionLook::DropRail(at),
             hover: PanelHover::Part(at),
             failed: false,
+            excluded: false,
         });
         picks_field(
             state,

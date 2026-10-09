@@ -65,6 +65,7 @@ fn random_fillet(document: &Document, rng: &mut Rng) -> Option<Fillet> {
     edges.dedup_by(|a, b| a.order(b).is_eq());
     Some(Fillet {
         edges,
+        faces: Vec::new(),
         radius: radius(document, RADII[rng.below(RADII.len())]),
         chains: rng.below(3) != 0,
     })

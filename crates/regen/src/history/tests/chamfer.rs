@@ -16,7 +16,7 @@
 use std::cell::RefCell;
 
 use glam::DVec3;
-use varde_document::{Chamfer, ChamferSize, EdgeRef};
+use varde_document::{Chamfer, ChamferSize, EdgeRef, FaceRef};
 use varde_kernel::mesh::{FaceKey, Form};
 use varde_kernel::topology::blend_edge;
 use varde_kernel::{BlendError, ChamferChain, Topology};
@@ -98,6 +98,7 @@ fn chamfer(document: &Document, mut edges: Vec<EdgeRef>, size: &str) -> Chamfer 
     edges.sort_by(EdgeRef::order);
     Chamfer {
         edges,
+        faces: Vec::new(),
         distances: ChamferSize::Equal(distance(document, size)),
         chains: true,
         flip: false,
@@ -370,6 +371,90 @@ fn a_block_s_edges_are_chamfered() {
         evaluation.failed
     );
     assert_near(solid_of(&evaluation, body).volume(), ALL_TWELVE);
+}
+
+/// The cube's top face, named at its middle.
+fn top_face(solid: &Solid, body: BodyId) -> FaceRef {
+    FaceRef {
+        body,
+        key: key_on(solid, DVec3::Z, 10.0),
+        near: DVec3::new(5.0, 5.0, 10.0),
+    }
+}
+
+/// A face stands for the edges around it: the top alone is chamfered as
+/// its loop is, each chain's first face the top (so two distances put
+/// the first along it), and an edge named around it is left out, never
+/// grown into.
+#[test]
+fn a_face_s_edges_are_chamfered_but_those_left_out() {
+    with_wedges();
+    let (mut editor, body, solid) = cube();
+    let document = editor.document().clone();
+    let top = Chamfer {
+        faces: vec![top_face(&solid, body)],
+        ..chamfer(&document, Vec::new(), "1")
+    };
+    let id = add(&mut editor, top.clone());
+    let evaluation = evaluated(editor.document());
+    assert!(
+        failure(&evaluation, id).is_none(),
+        "{:?}",
+        evaluation.failed
+    );
+    assert_near(solid_of(&evaluation, body).volume(), TOP_LOOP);
+    // Two distances, the first along the top.
+    let two = Chamfer {
+        distances: ChamferSize::Two(distance(&document, "1"), distance(&document, "3")),
+        chains: false,
+        ..chamfer(&document, vec![front_top(&solid, body)], "1")
+    };
+    set(&mut editor, id, two.clone());
+    let one = solid_of(&evaluated(editor.document()), body).clone();
+    set(
+        &mut editor,
+        id,
+        Chamfer {
+            edges: Vec::new(),
+            faces: top.faces.clone(),
+            ..two
+        },
+    );
+    let evaluation = evaluated(editor.document());
+    let all = solid_of(&evaluation, body);
+    assert_near(face_min(all, TOP, 1), face_min(&one, TOP, 1));
+    assert_near(face_min(all, TOP, 1), 1.0);
+    // The front top edge named too: left out.
+    super::super::chamfer::CHAMFERER.set(Some(recording));
+    let left_out = Chamfer {
+        edges: vec![front_top(&solid, body)],
+        ..top
+    };
+    set(&mut editor, id, left_out.clone());
+    let evaluation = evaluated(editor.document());
+    assert!(failure(&evaluation, id).is_none());
+    let handed = HANDED.with_borrow(Clone::clone);
+    assert_eq!(handed.len(), 3);
+    let front = front_top(&solid, body);
+    assert!(
+        handed
+            .iter()
+            .all(|chain| chain.name != blend_edge(front.faces, 0))
+    );
+    // All its edges left out: nothing to chamfer, which fails, the body
+    // as it was.
+    HANDED.with_borrow_mut(Vec::clear);
+    let mut edges = top_loop(&solid, body);
+    edges.sort_by(EdgeRef::order);
+    set(&mut editor, id, Chamfer { edges, ..left_out });
+    let evaluation = evaluated(editor.document());
+    let failed = failure(&evaluation, id).expect("nothing left to chamfer");
+    assert_eq!(
+        failed.message,
+        "every edge it names is left out: there's nothing left"
+    );
+    assert!(HANDED.with_borrow(Vec::is_empty));
+    assert_near(solid_of(&evaluation, body).volume(), 1000.0);
 }
 
 thread_local! {

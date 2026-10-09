@@ -3252,6 +3252,7 @@ fn chamfered_plate() -> Document {
     let size = Value::new("1", &Chamfer::distance_ask(&document.design())).unwrap();
     let chamfer = Chamfer {
         edges: vec![edge],
+        faces: Vec::new(),
         distances: ChamferSize::Equal(size),
         chains: true,
         flip: false,
@@ -3325,12 +3326,14 @@ fn chamfered_every_way() -> Document {
     let chamfers = [
         Chamfer {
             edges: two,
+            faces: Vec::new(),
             distances: ChamferSize::Two(distance("1"), distance("2.5 mm")),
             chains: true,
             flip: true,
         },
         Chamfer {
             edges: vec![edge(4, [-30.0, -1.25, 10.0])],
+            faces: Vec::new(),
             distances: ChamferSize::Angle(distance("0.75"), angle),
             chains: false,
             flip: false,
@@ -3481,11 +3484,13 @@ fn filleted_plate() -> Document {
     let fillets = [
         Fillet {
             edges: two,
+            faces: Vec::new(),
             radius: radius("1.75"),
             chains: true,
         },
         Fillet {
             edges: vec![edge(4, [-30.0, -1.25, 10.0])],
+            faces: Vec::new(),
             radius: radius("0.625 mm"),
             chains: false,
         },

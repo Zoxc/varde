@@ -347,15 +347,17 @@ point), sorted by body, keys and point, its size (equal: one typed
 length and its value in millimetres; two: two lengths, the first along
 each edge's first face; or a length and an angle, as a revolve's,
 `ChamferSize`), whether tangent chains are taken in and `flip` (the
-edges' first faces their second keys', `#[serde(default)]`, false).
-Chamfers are new, so no older record holds one; or a shell,
+edges' first faces their second keys', `#[serde(default)]`, false)
+and its `faces` (each as a sketch's face, sorted by body, key and
+point, each standing for the edges around it, an edge listed around one
+left out; `#[serde(default)]`, none). Chamfers are new, so no older record holds one; or a shell,
 `crates/document/src/shell.rs`: the body's id, the faces it opens (each
 as a sketch's face: a body's id, a face key and a picked point), sorted
 by body, key and point, its thickness (a typed length and its value in
 millimetres) and `outward` (the walls outside the faces,
 `#[serde(default)]`, false). Shells are new, so no older record holds
 one; or a fillet, `crates/document/src/fillet.rs`: its edges as a
-chamfer's, its radius (a typed length and its value in millimetres)
+chamfer's, its `faces` as a chamfer's, its radius (a typed length and its value in millimetres)
 and whether tangent chains are taken in. Fillets are new, so no older
 record holds one; or an offset face, `crates/document/src/offset_face.rs`:
 the faces it moves (each as a sketch's face), sorted by body, key and
@@ -475,8 +477,10 @@ must be its new body, and so the one it keeps both pieces for); every
 id held for a body a feature made before (a split's new body while it
 keeps a side, a join's, cut's or intersect's `held`) below the next id,
 no body's and held once;
-a chamfer's 1 to 256 edges on one body there and made by an earlier
-feature, sorted without repeats, each edge's keys sorted and different,
+a chamfer's at most 256 edges and at most 256 faces, at least one of
+either, on one body there and made by an earlier feature, each list
+sorted without repeats (a face's point and key's feature as a
+shell's), each edge's keys sorted and different,
 its point finite and within the coordinate limit, and its keys'
 features (if there) before the chamfer, or with ids below the next id;
 its distances lengths as an extrude's, its angle above 0 and under
@@ -486,7 +490,7 @@ open faces on that body, sorted without repeats, each point finite and
 within the coordinate limit, and each key's feature (if there) before
 the shell, or with an id below the next id; its thickness a length as
 an extrude's;
-a fillet's edges as a chamfer's, its radius a length as an
+a fillet's edges and faces as a chamfer's, its radius a length as an
 extrude's;
 an offset face's 1 to 256 faces all on one body made by an earlier
 feature, sorted without repeats, each point finite and within the

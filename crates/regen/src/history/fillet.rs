@@ -19,7 +19,7 @@
 use varde_document::{Document, FeatureId, Fillet};
 use varde_kernel::{BlendError, Budget, FilletChain, Solid, Tolerance, Topology};
 
-use super::blend::{find_edges, plan, refused};
+use super::blend::{find_edges, find_faces, plan, refused};
 use super::in_place::InPlace;
 use super::{Evaluation, Failed};
 use crate::cache::Cache;
@@ -288,14 +288,27 @@ pub(super) fn evaluate_fillet(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    // A checked document's fillet has edges, all on one body.
+    // A checked document's fillet has edges or faces, all on one body.
     let Some(body) = fillet.body() else {
         return Ok(());
     };
     let place = InPlace::of(document, body, evaluation, cache)?;
     let (solid, topology) = (&*place.solid, &*place.topology);
     let found = find_edges(&place, &fillet.edges)?;
-    let planned = plan(solid, topology, &fillet.edges, &found, fillet.chains, false);
+    let faces = find_faces(&place, &fillet.faces)?;
+    let planned = plan(
+        solid,
+        topology,
+        &fillet.edges,
+        &found,
+        &faces,
+        fillet.chains,
+        false,
+    );
+    // Every edge it names left out: nothing to fillet.
+    if planned.is_empty() {
+        return Err(message::BLEND_ALL_LEFT_OUT.to_owned().into());
+    }
     let chains: Vec<FilletChain> = (planned.iter())
         .map(|planned| FilletChain {
             chain: planned.chain,
@@ -310,7 +323,7 @@ pub(super) fn evaluate_fillet(
     }
     let key = keyer.finish();
     let fillet_by = filleter();
-    let count = fillet.edges.len();
+    let counts = [fillet.edges.len(), fillet.faces.len()];
     place.replace(
         key,
         evaluation,
@@ -326,7 +339,7 @@ pub(super) fn evaluate_fillet(
                 tolerance,
                 budget,
             )
-            .map_err(|error| refused(Blend::Fillet, error, &place, &planned, tolerance, count))
+            .map_err(|error| refused(Blend::Fillet, error, &place, &planned, tolerance, counts))
         },
     )
 }

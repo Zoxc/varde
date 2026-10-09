@@ -14,6 +14,13 @@
 //! is handed over once: the edges picked first, in the feature's order,
 //! then those grown into, each taken by the first edge reaching it.
 //!
+//! The feature's faces are found as regions ("its face 2 of 3 wasn't
+//! found") and stand for the edges around them. An edge the feature
+//! names that runs along one of its faces is left out (an exclusion),
+//! and no tangent chain grows into it; any other edge it names is
+//! picked, then each face's edges in index order, the face their first
+//! face (the region across with `flip`), named by their regions' keys.
+//!
 //! Each chain's **first face** (what a chamfer's two-distance cut's first
 //! distance and an angled cut's distance and angle are taken along; a
 //! fillet has no use for it): for a picked edge, the region its
@@ -30,7 +37,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use varde_document::EdgeRef;
+use varde_document::{EdgeRef, FaceRef};
 use varde_kernel::mesh::FaceKey;
 use varde_kernel::topology::blend_edge;
 use varde_kernel::{BlendError, Evidence, Solid, Tolerance, Topology};
@@ -39,7 +46,7 @@ use super::Failed;
 use super::in_place::InPlace;
 use crate::ErrorGeometry;
 use crate::error_geometry::KernelFailure;
-use crate::message::{self, Blend, BlendRefusal};
+use crate::message::{self, Blend, BlendRefusal, BlendSource};
 
 /// The chains of `own`'s topology `edges` are found as, in their order:
 /// one not found fails ("its edge 2 of 3 wasn't found").
@@ -53,20 +60,42 @@ pub(super) fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, F
         .collect()
 }
 
+/// The regions of `own`'s topology `faces` are found as, in their order:
+/// one not found fails ("its face 2 of 3 wasn't found").
+pub(super) fn find_faces(own: &InPlace, faces: &[FaceRef]) -> Result<Vec<u32>, Failed> {
+    let count = faces.len();
+    (faces.iter().enumerate())
+        .map(|(i, face)| {
+            (own.topology.face(&own.solid, &face.key, face.near))
+                .map_err(|_| message::blend_face_not_found(i, count).into())
+        })
+        .collect()
+}
+
 /// One chain to blend as it's worked out: which, its faces' name and
-/// first face, and which of the feature's edges it comes from and
-/// whether it was grown into, for the messages.
+/// first face, and which of the feature's edges or faces it comes from
+/// and whether it was grown into, for the messages.
 pub(super) struct Planned {
     pub(super) chain: u32,
     pub(super) name: u64,
     /// The region of its two that is its first face.
     pub(super) first: u32,
-    pub(super) edge: usize,
+    pub(super) source: BlendSource,
     pub(super) grown: bool,
 }
 
-/// The chains `edges`, found as the chains `found` of `topology` (of
-/// `solid`), come to, with tangent chains grown when `chains` and the
+/// A chain blended for what the feature names, before tangent chains
+/// grow from it: its pair of keys and first region.
+struct Seed {
+    chain: u32,
+    pair: [FaceKey; 2],
+    first: u32,
+    source: BlendSource,
+}
+
+/// The chains `edges` and the faces' edges come to, `edges` found as the
+/// chains `found` of `topology` (of `solid`) and the faces as the
+/// regions `faces`, with tangent chains grown when `chains` and the
 /// first faces the other way round when `flip`, as the module's docs
 /// say.
 pub(super) fn plan(
@@ -74,6 +103,7 @@ pub(super) fn plan(
     topology: &Topology,
     edges: &[EdgeRef],
     found: &[u32],
+    faces: &[u32],
     chains: bool,
     flip: bool,
 ) -> Vec<Planned> {
@@ -81,17 +111,54 @@ pub(super) fn plan(
     let all = topology.chains();
     let key_of = |region: u32| regions[region as usize].key;
     let sides_of = |chain: u32| all[chain as usize].regions;
-    // Each picked edge's first region.
-    let firsts: Vec<u32> = (edges.iter().zip(found))
-        .map(|(edge, &chain)| first_region(topology, sides_of(chain), edge, flip))
-        .collect();
-    let mut planned: Vec<Planned> = Vec::new();
-    // Each chain taken, and how many chains taken have each pair: kept
-    // as they go, so a long tangent chain costs its length once.
+    let other_side = |chain: u32, side: u32| {
+        let sides = sides_of(chain);
+        if sides[0] == side { sides[1] } else { sides[0] }
+    };
+    // An edge named around a face named is left out, and never grown
+    // into.
     let mut taken = vec![false; all.len()];
+    let on_face = |chain: u32| sides_of(chain).iter().any(|side| faces.contains(side));
+    let mut seeds: Vec<Seed> = Vec::new();
+    for (i, (edge, &chain)) in edges.iter().zip(found).enumerate() {
+        if on_face(chain) {
+            taken[chain as usize] = true;
+        } else {
+            seeds.push(Seed {
+                chain,
+                pair: edge.faces,
+                first: first_region(topology, sides_of(chain), edge, flip),
+                source: BlendSource::Edge(i),
+            });
+        }
+    }
+    // Each face's edges in index order, its first face the face (the
+    // other side with `flip`).
+    for (i, &face) in faces.iter().enumerate() {
+        for (chain, sides) in all
+            .iter()
+            .enumerate()
+            .map(|(c, chain)| (c as u32, chain.regions))
+        {
+            if !sides.contains(&face) || taken[chain as usize] {
+                continue;
+            }
+            let mut pair = sides.map(key_of);
+            pair.sort();
+            seeds.push(Seed {
+                chain,
+                pair,
+                first: if flip { other_side(chain, face) } else { face },
+                source: BlendSource::Face(i),
+            });
+        }
+    }
+    let mut planned: Vec<Planned> = Vec::new();
+    // How many chains taken have each pair: kept as they go, so a long
+    // tangent chain costs its length once.
     let mut pairs: BTreeMap<[FaceKey; 2], u32> = BTreeMap::new();
     let mut add =
-        |planned: &mut Vec<Planned>, chain: u32, pair: [FaceKey; 2], first, edge, grown| {
+        |planned: &mut Vec<Planned>, chain: u32, pair: [FaceKey; 2], first, source, grown| {
             if std::mem::replace(&mut taken[chain as usize], true) {
                 return;
             }
@@ -101,13 +168,20 @@ pub(super) fn plan(
                 chain,
                 name: blend_edge(pair, *ordinal),
                 first,
-                edge,
+                source,
                 grown,
             });
             *ordinal += 1;
         };
-    for (i, (edge, &chain)) in edges.iter().zip(found).enumerate() {
-        add(&mut planned, chain, edge.faces, firsts[i], i, false);
+    for seed in &seeds {
+        add(
+            &mut planned,
+            seed.chain,
+            seed.pair,
+            seed.first,
+            seed.source,
+            false,
+        );
     }
     if chains {
         let roots = topology.tangent_chains(solid);
@@ -117,19 +191,14 @@ pub(super) fn plan(
             members.entry(root).or_default().push(chain as u32);
         }
         let mut grown: Vec<bool> = vec![false; all.len()];
-        for (i, &chain) in found.iter().enumerate() {
-            let root = roots[chain as usize];
-            // An earlier edge of the same tangent chain took it all.
+        for seed in &seeds {
+            let root = roots[seed.chain as usize];
+            // An earlier seed of the same tangent chain took it all.
             if std::mem::replace(&mut grown[root as usize], true) {
                 continue;
             }
-            let picked = sides_of(chain);
-            let first = firsts[i];
-            let second = if picked[0] == first {
-                picked[1]
-            } else {
-                picked[0]
-            };
+            let first = seed.first;
+            let second = other_side(seed.chain, first);
             for &other in &members[&root] {
                 let sides = sides_of(other);
                 let other_first = if sides.contains(&first) {
@@ -143,7 +212,7 @@ pub(super) fn plan(
                 };
                 let mut pair = sides.map(key_of);
                 pair.sort();
-                add(&mut planned, other, pair, other_first, i, true);
+                add(&mut planned, other, pair, other_first, seed.source, true);
             }
         }
     }
@@ -169,8 +238,8 @@ fn first_region(topology: &Topology, sides: [u32; 2], edge: &EdgeRef, flip: bool
     }
 }
 
-/// Why the kernel's chamfer or fillet, `blend`, of `own` with `count`
-/// edges planned as `planned` gave no solid, in words, with what to
+/// Why the kernel's chamfer or fillet, `blend`, of `own` naming `counts`
+/// edges and faces, planned as `planned`, gave no solid, in words, with what to
 /// draw: the edge a refusal is about, or the failure's evidence.
 pub(super) fn refused(
     blend: Blend,
@@ -178,13 +247,13 @@ pub(super) fn refused(
     own: &InPlace,
     planned: &[Planned],
     tolerance: &Tolerance,
-    count: usize,
+    counts: [usize; 2],
 ) -> Failed {
     let about = |chain: u32| planned.iter().find(|p| p.chain == chain);
     let edge_failed = |chain: u32, why: BlendRefusal| {
-        let which = about(chain).map(|p| (p.edge, p.grown));
+        let which = about(chain).map(|p| (p.source, p.grown));
         Failed {
-            message: message::blend_refused(blend, why, which, count, own.name),
+            message: message::blend_refused(blend, why, which, counts, own.name),
             geometry: chain_geometry(&own.solid, &own.topology, chain, tolerance),
         }
     };
@@ -195,7 +264,7 @@ pub(super) fn refused(
         BlendError::TooBig { chain } => edge_failed(chain, BlendRefusal::TooBig),
         BlendError::End { chain } => edge_failed(chain, BlendRefusal::End),
         BlendError::Corner { .. } => {
-            message::blend_refused(blend, BlendRefusal::Corner, None, count, own.name).into()
+            message::blend_refused(blend, BlendRefusal::Corner, None, counts, own.name).into()
         }
         BlendError::Failed(failure) => {
             let words = message::blending(blend, own.name, failure.error);

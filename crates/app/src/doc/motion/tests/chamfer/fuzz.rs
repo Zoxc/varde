@@ -140,22 +140,25 @@ fn check_session(plates: &Plates, what: &str) {
         let kind = document.feature(id).map(|feature| &feature.kind);
         assert!(matches!(kind, Some(FeatureKind::Chamfer(_))), "{what}");
     }
-    let edges = &session.blend.edges.refs;
+    let (edges, faces) = (&session.blend.edges.refs, &session.faces.refs);
     assert!(
         edges.windows(2).all(|pair| pair[0].order(&pair[1]).is_lt()),
         "{what}: {edges:?}"
     );
     assert!(
-        edges.iter().all(|edge| edge.body == edges[0].body),
-        "{what}: {edges:?}"
+        faces.windows(2).all(|pair| pair[0].order(&pair[1]).is_lt()),
+        "{what}: {faces:?}"
+    );
+    let body = varde_document::blend_body(edges, faces);
+    assert!(
+        (edges.iter().map(|edge| edge.body))
+            .chain(faces.iter().map(|face| face.body))
+            .all(|other| Some(other) == body),
+        "{what}: {edges:?} {faces:?}"
     );
     assert_eq!(
         session.bodies,
-        edges
-            .first()
-            .map(|edge| edge.body)
-            .into_iter()
-            .collect::<Vec<_>>(),
+        body.into_iter().collect::<Vec<_>>(),
         "{what}"
     );
     check_lit(plates, what);
@@ -173,7 +176,7 @@ fn check_session(plates: &Plates, what: &str) {
         .and_then(|id| features.iter().position(|feature| feature.id == id))
         .unwrap_or(features.len());
     document
-        .check_blend_edges(index, &chamfer.edges)
+        .check_blend_edges(index, &chamfer.edges, &chamfer.faces)
         .unwrap_or_else(|why| panic!("{what}: {why}: {chamfer:?}"));
     let body = chamfer.body().unwrap();
     assert!(
@@ -200,11 +203,8 @@ fn check_lit(plates: &Plates, what: &str) {
     if lit.is_empty() || !current {
         return;
     }
-    let body = session
-        .blend
-        .edges
-        .body()
-        .unwrap_or_else(|| panic!("{what}: lit {lit:?} with no edges"));
+    let body = varde_document::blend_body(&session.blend.edges.refs, &session.faces.refs)
+        .unwrap_or_else(|| panic!("{what}: lit {lit:?} with no edges or faces"));
     let merged = plates.doc.feed.merged_bodies();
     let shown = (merged.iter())
         .find(|(consumed, _)| *consumed == body)

@@ -192,6 +192,10 @@ pub(crate) struct Doc {
     /// The move, mirror or pattern being set up, if one is: never with a
     /// sketch or another operation.
     pub(crate) motion: Option<MotionSession>,
+    /// Whether the command modifier (`Ctrl`, `Cmd` on macOS) is held:
+    /// a fillet or chamfer picking its edges then shows the model as of
+    /// the feature rather than its preview ([`Doc::blend_before`]).
+    pub(crate) command_held: bool,
     /// How each pattern committed in this run was set up (its mode, Flip
     /// and spread as typed), which its stored values can't always tell:
     /// taken again on editing it while it still gives them, see
@@ -438,6 +442,7 @@ impl Doc {
             revolve: None,
             combine: None,
             motion: None,
+            command_held: false,
             pattern_shapes: HashMap::new(),
             measure: None,
             sketch_split: GEOMETRY_SHARE,

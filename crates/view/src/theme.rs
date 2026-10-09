@@ -2099,6 +2099,14 @@ pub fn failed_text(theme: &Theme) -> text::Style {
     }
 }
 
+/// The exclusions' purple (the Create tools' handles' colour), for what a blend
+/// names to leave out: an edge around a face it names.
+pub fn excluded_text(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).sketching.handle),
+    }
+}
+
 /// The warning colour, for what may go wrong but isn't wrong yet.
 pub fn warning_text(theme: &Theme) -> text::Style {
     text::Style {

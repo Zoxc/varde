@@ -9,6 +9,7 @@ use varde_render::Camera;
 use varde_view::{ChamferType, ChamferView, MotionField, MotionKind};
 
 use super::blend::BlendSetup;
+use super::refs::Refs;
 use super::{BLEND_SHARE, Doc, MotionSession, length_field};
 use crate::doc::camera::fitting_length;
 use crate::doc::regions::TypedText;
@@ -44,11 +45,11 @@ pub(super) fn chamfer_fields(design: &Design, camera: &Camera) -> [TypedText; 3]
 }
 
 impl MotionSession {
-    /// The chamfer as set up, if it's whole: its edges, and its type's
+    /// The chamfer as set up, if it's whole: its edges or faces, and its type's
     /// values as they last read. Equal is the same either way round, so
     /// it's stored unflipped.
     pub(super) fn chamfer(&self) -> Option<Chamfer> {
-        if self.blend.edges.refs.is_empty() {
+        if self.blend.edges.refs.is_empty() && self.faces.refs.is_empty() {
             return None;
         }
         // A size its field refuses (dragged to zero) leaves it out.
@@ -64,13 +65,14 @@ impl MotionSession {
         };
         Some(Chamfer {
             edges: self.blend.edges.refs.clone(),
+            faces: self.faces.refs.clone(),
             distances,
             chains: self.blend.chains,
             flip: self.flip && self.chamfer_type != ChamferType::Equal,
         })
     }
 
-    /// Opens the chamfer `chamfer` in this session: its edges, Tangent
+    /// Opens the chamfer `chamfer` in this session: its edges, faces, Tangent
     /// chain, type, values and Flip sides.
     pub(super) fn open_chamfer(&mut self, chamfer: &Chamfer) {
         let design = &self.read_in.design();
@@ -97,6 +99,7 @@ impl MotionSession {
         self.chamfer_type = kind;
         self.flip = chamfer.flip;
         self.blend = BlendSetup::of(&chamfer.edges, chamfer.chains);
+        self.faces = Refs::of(&chamfer.faces);
         self.blend_body();
     }
 }

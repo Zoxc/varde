@@ -1098,6 +1098,10 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                 },
                 (crate::MotionPick::Point, _) => "Pick the point",
                 (crate::MotionPick::Edge, _) => "Pick the edge",
+                (
+                    crate::MotionPick::Edges,
+                    crate::MotionKind::Chamfer | crate::MotionKind::Fillet,
+                ) => "Pick edges or faces",
                 (crate::MotionPick::Edges, _) => "Pick edges",
                 (crate::MotionPick::Faces, crate::MotionKind::Shell) => "Pick faces to remove",
                 (crate::MotionPick::Faces, crate::MotionKind::OffsetFace) => "Pick faces to move",
@@ -1126,8 +1130,18 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             Some(step_hint(MouseButton::Left, what))
         });
         let pick = pick.flatten();
+        // A blend picking its edges shows the model before it while the
+        // key is held, the edges its preview blends away there to click.
+        let before = (motion.editable && motion.picking == crate::MotionPick::Edges)
+            .then_some(motion.kind)
+            .and_then(|kind| match kind {
+                crate::MotionKind::Fillet => Some("Show edges before the fillet"),
+                crate::MotionKind::Chamfer => Some("Show edges before the chamfer"),
+                _ => None,
+            })
+            .map(|label| key_hint(Held::BEFORE, label));
         let ok = motion.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-        [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
+        [pick, before, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
             .into_iter()
             .flatten()
             .collect()

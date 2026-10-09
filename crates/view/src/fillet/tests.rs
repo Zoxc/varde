@@ -26,6 +26,7 @@ fn a_fillet_s_notes() {
     let ask = Fillet::radius_ask(&design);
     let mut fillet = Fillet {
         edges: vec![edge(0), edge(1)],
+        faces: Vec::new(),
         radius: Value::new("2", &ask).unwrap(),
         chains: true,
     };

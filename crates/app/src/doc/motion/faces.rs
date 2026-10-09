@@ -29,6 +29,7 @@ pub(super) fn limit(kind: MotionKind) -> usize {
         MotionKind::Shell => MAX_SHELL_FACES,
         MotionKind::OffsetFace => MAX_OFFSET_FACES,
         MotionKind::Draft => MAX_DRAFT_FACES,
+        kind if kind.blends() => varde_document::MAX_BLEND_EDGES,
         _ => 0,
     }
 }

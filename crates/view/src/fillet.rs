@@ -17,12 +17,7 @@ pub(crate) fn fillet_note(fillet: &Fillet, units: LengthUnit) -> String {
 /// What the status bar says of a selected fillet, as the UI mock's row:
 /// "2 edges · R2 mm · Tangent chain".
 pub fn fillet_info(fillet: &Fillet, units: LengthUnit) -> String {
-    let count = fillet.edges.len();
-    let edges = if count == 1 {
-        "1 edge".to_owned()
-    } else {
-        format!("{count} edges")
-    };
+    let edges = crate::chamfer::blend_count(&fillet.edges, &fillet.faces);
     let chain = if fillet.chains {
         " · Tangent chain"
     } else {

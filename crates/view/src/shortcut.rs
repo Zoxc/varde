@@ -1322,6 +1322,15 @@ impl Held {
         mac_label: "Shift",
     };
 
+    /// Held in a fillet or chamfer picking its edges to show the model
+    /// before it rather than its preview, the edges it blends away there
+    /// to click again. `Ctrl`, `Cmd` on macOS.
+    pub const BEFORE: Self = Self {
+        is_held: Modifiers::command,
+        label: "Ctrl",
+        mac_label: "Cmd",
+    };
+
     /// Held to orbit with the right mouse button, which pans otherwise.
     pub const ORBIT: Self = Self {
         is_held: Modifiers::shift,

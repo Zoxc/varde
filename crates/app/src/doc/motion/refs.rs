@@ -293,7 +293,13 @@ impl Doc {
         let document = self.editor.document();
         let merged = self.feed.merged_before(document, session.feature);
         let held = merged.holder(named.body()).unwrap_or(named.body());
-        if let Some(body) = R::refs(session).body()
+        // A blend's edges and faces are all on one body.
+        let picked = if kind.blends() {
+            varde_document::blend_body(&session.blend.edges.refs, &session.faces.refs)
+        } else {
+            R::refs(session).body()
+        };
+        if let Some(body) = picked
             && body != held
         {
             let name = (document.body(body)).map_or("one body", |body| body.name.as_str());
@@ -335,7 +341,10 @@ impl Doc {
             return None;
         }
         let kind = session.kind;
-        if kind.blends() || kind == MotionKind::Sweep {
+        // A blend's faces beside its edges.
+        if kind.blends() && matches!(pick.target, Picked::Face(_)) {
+            Some(self.ref_picked::<FaceRef>(pick).is_some())
+        } else if kind.blends() || kind == MotionKind::Sweep {
             Some(self.ref_picked::<EdgeRef>(pick).is_some())
         } else if kind.picks_faces() {
             Some(self.ref_picked::<FaceRef>(pick).is_some())
@@ -425,7 +434,8 @@ impl Doc {
     pub(crate) fn motion_ref_at(&self, pick: Pick) -> Option<HeldRef> {
         let session = self.motion.as_ref()?;
         self.motion_has(pick)?;
-        if session.kind.blends() || session.kind == MotionKind::Sweep {
+        let face = matches!(pick.target, Picked::Face(_));
+        if (session.kind.blends() && !face) || session.kind == MotionKind::Sweep {
             let at = self.ref_picked::<EdgeRef>(pick)?;
             Some(HeldRef::Edge(*EdgeRef::refs(session).refs.get(at)?))
         } else {
@@ -553,44 +563,6 @@ impl Doc {
         for pick in picks {
             // One refused (on another body, made later) is left out.
             let _ = self.refs_click::<R>(pick);
-        }
-    }
-
-    /// Picks the edges around the faces selected in the model shown, for
-    /// a blend just started with faces selected: each edge between two
-    /// faces once, though it bounds two of them.
-    pub(super) fn face_edges_selected(&mut self) {
-        let index = self.feed.pick_index();
-        let model = index.model();
-        if self.pick.selection.model() != Some(model) {
-            return;
-        }
-        let faces: Vec<u32> = (self.pick.selection.targets())
-            .filter_map(|target| match target {
-                Picked::Face(face) => Some(face),
-                _ => None,
-            })
-            .collect();
-        let chains = u32::try_from(index.mesh().edge_count()).unwrap_or(u32::MAX);
-        let picks: Vec<Pick> = (0..chains)
-            .filter_map(|edge| {
-                let sides = index.edge_faces(edge)?;
-                let face = *faces.iter().find(|face| sides.contains(face))?;
-                Some(Pick {
-                    model,
-                    target: Picked::Edge(edge),
-                    body: index.face_body(face)?,
-                    at: index.chain_point(edge)?,
-                    snap: None,
-                })
-            })
-            .collect();
-        for pick in picks {
-            // One a tangent chain picked already isn't taken out again.
-            if self.ref_picked::<EdgeRef>(pick).is_none() {
-                // One refused (on another body, made later) is left out.
-                let _ = self.refs_click::<EdgeRef>(pick);
-            }
         }
     }
 
