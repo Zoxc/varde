@@ -1,6 +1,6 @@
 # Sketch links
 
-A sketch's links (`agents/sketch.md`, Links) take geometry from outside
+A sketch's links (`agents/sketch/model.md`, Links) take geometry from outside
 it: another sketch's point or curve, or a model edge, face or corner,
 projected onto its plane or cut by it. The sketch holds what each link
 made; the feature holds where each comes from (`FeatureKind::Sketch::
@@ -114,7 +114,7 @@ never makes a step of its own, so it never fights undo or the redo
 history. It's a new revision, so the file has unsaved changes, and a
 proposal in flight is proposed again on it. A link just added holds
 nothing; the next answer fills it, folded into the change that added it.
-A link whose shape changed keeps what ids it can (`agents/sketch.md`,
+A link whose shape changed keeps what ids it can (`agents/sketch/model.md`,
 Links); the constraints and dimensions on what it no longer makes go
 with it, which the status bar says ("Sketch 2's links changed shape,
 removing 1 constraint on what they no longer make").

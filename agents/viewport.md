@@ -46,7 +46,7 @@ same primitive type that draws nothing, from the IO lane's first answer
 on (after the screen has shown), and the pipelines are ready by then.
 
 The tool rail (`rail.rs`) floats over the viewport's left edge: a card
-per tool set of the mode (see "The tool rail" in `agents/sketch.md`), 48
+per tool set of the mode (see "The tool rail" in `agents/sketch/editing.md`), 48
 px wide, 6 px in from the viewport's left and top and apart, each a head
 with the set's icon (`theme::rail_head`, highlighted on hover and while
 its set is open, in the selection's colour, `accent_soft`, while it's
@@ -171,7 +171,7 @@ glass going from its own opacity to the faded look, its hidden edges
 fading out, and the grid crossfades between the XY plane and the
 sketch's, `Frame::fading_grid`), the grid on the sketch's plane, and the sketch itself by the renderer over everything; the left
 button is the sketch's, for selecting, dragging and drawing geometry, and
-so is `Esc` while it's held (see `agents/sketch.md`), and with a drawing
+so is `Esc` while it's held (see `agents/sketch/editing.md`), and with a drawing
 tool the modifiers, whose `Shift` turns snapping off. The `Program` sends
 the left button and cursor moves to the sketch, unless the camera is being
 dragged, and the other buttons and the wheel to the camera. It sets the
@@ -229,7 +229,7 @@ fading from when it leaves.
 A banner can sit on top of the viewport, between the toolbar's banners
 and it, over the viewport's column only: a sketch edit the solver
 refused after its sketch was left ("An edit of Sketch 1 wasn't kept",
-in the warning colour, with Dismiss; see `agents/sketch.md`). It takes
+in the warning colour, with Dismiss; see `agents/sketch/editing.md`). It takes
 height from the viewport rather than covering the scene, and sits on the
 panel's colour, as the toolbar's banners sit on the window's. A banner's
 detail fills what's left of its row and wraps, so its actions stay on a
@@ -244,7 +244,7 @@ widget that captured, or set a cursor, would hide the scene's (iced's
 stack "levitates" the cursor for the layers below one that sets it).
 There are five: the constraints' glyphs, each nudged a little up and
 right of its anchor and apart from those before it (`Anchors::nudged`, see
-`agents/sketch.md`); dimensions' labels, where they're put; the value
+`agents/sketch/viewport.md`); dimensions' labels, where they're put; the value
 field a dimension's value is typed in, alone in its layer so its focus and
 text stay its own as labels come and go; the glyph of where a drawing
 tool's click snaps, by the cursor, which the `Program` tells the app as
@@ -1259,7 +1259,7 @@ or the other, `ModelPick::sketch_hover`), and the click
 frame of their own over the model, depth tested as the sketches are.
 
 In a sketch, Project and Intersect pick the model and the other visible
-sketches the same way (see `agents/sketch.md`): `ModelPicking` is given
+sketches the same way (see `agents/sketch/editing.md`): `ModelPicking` is given
 then, with `Picks::All` and every other visible sketch, the left button
 goes to the model's picking rather than the sketch's
 (`Program::picks_outside`; its release goes where its press went,
@@ -1294,7 +1294,7 @@ selecting and a click elsewhere nothing, and only such a face hovered is
 highlighted (`Doc::shown_hover`) or gets the pointer
 (`ModelPicking::takes`, `PlanePick::takes`: flat, and for a sketch whose
 plane is changed, of a body made before it); the status bar says why
-another isn't (see `agents/sketch.md`). A pick of a model no longer shown (its count
+another isn't (see `agents/sketch/editing.md`). A pick of a model no longer shown (its count
 differs) is dropped, and the hover is dropped once the model changes or
 the cursor stops picking (`Doc::prune_picks`, after answers, edits and
 looks); a hover names nothing else (no document change, no request).
@@ -1667,7 +1667,7 @@ on, for not being flat). While a sketch is edited, a
 failure of a feature using it that names its curves is drawn without
 its curves (`ShownError::lines` false), selected or not, as long as it
 has points or patches: the sketch marks those curves itself, red within
-the same halo (`agents/sketch.md`, "Failing curves"), and the copy in
+the same halo (`agents/sketch/viewport.md`, "Failing curves"), and the copy in
 its plane would draw them twice, and late while a drag moves them; but
 its points (where a profile touches itself, an open gap's ends, an axis
 line of no length's place) are the

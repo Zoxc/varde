@@ -359,7 +359,7 @@ impl ConstraintKind {
     /// a letter of its name, or with Shift where a tool or the rail's sets
     /// have the letter (Trim `T`, Fillet `F`, Point `P`, Circle `C`, New
     /// sketch `S`, the sets `E` and `R`).
-    /// Recorded in `agents/sketch.md` and `README.md`. None for equal
+    /// Recorded in `agents/sketch/editing.md` and `README.md`. None for equal
     /// offsets, which only the Offset tool makes.
     pub fn shortcut(self) -> Option<Shortcut> {
         Some(match self {

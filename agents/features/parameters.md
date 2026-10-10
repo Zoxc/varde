@@ -3,7 +3,7 @@
 `crates/expr/src/params.rs`, `crates/document/src/param.rs`; the UI in
 `crates/view/src/params.rs` and `crates/app/src/doc/params.rs`; names
 offered as they're typed in `crates/view/src/suggest.rs`. Sketch
-dimensions take them too (`agents/sketch.md`, Dimensions and
+dimensions take them too (`agents/sketch/model.md`, Dimensions and
 parameters).
 
 - **Expressions.** A word (`[A-Za-z_][A-Za-z0-9_]*`) right after a

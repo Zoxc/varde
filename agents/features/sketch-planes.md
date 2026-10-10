@@ -153,7 +153,7 @@ reads it from there; the extrude and revolve sessions' candidates
 handle and axis are drawn on) leave out a sketch with none. A sketch on a face that
 failed to be placed is still listed in the Timeline, red with its
 reason, and isn't drawn; entering it asks for another plane first (Change
-plane, `agents/sketch.md`), which `SetSketchPlane` puts it on, a face's
+plane, `agents/sketch/editing.md`), which `SetSketchPlane` puts it on, a face's
 placement worked out at the pick as for a new sketch. Before the first
 answer, or read-only, it isn't entered: the status bar says "Can't edit
 Sketch 2: <reason>" (`Doc::notice`, until the next thing asked).

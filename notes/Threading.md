@@ -19,7 +19,7 @@ proposed and committed once accepted, one in flight and the rest queued
 (other changes queue behind them), dropped newest first by undo, waited
 for by Save and closing; drags are sessions of the lane's, committed on
 release as a proposed move; drag steps stay in the lane (see
-"Dragging"). `agents/sketch.md` says how. Per-feature caching and
+"Dragging"). `agents/sketch/editing.md` says how. Per-feature caching and
 cancellation are still open, see step 8 of the plan; manifold isn't wired
 in yet. The design below is
 kept as it was decided, including for what's built: where the code differs,

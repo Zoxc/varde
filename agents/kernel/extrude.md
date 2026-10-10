@@ -19,7 +19,7 @@ whoever builds a profile (regen) turns lines into `Conic2::line`, arcs
 into exact conics of at most 90° and splines into fitted chains (in
 runs of Bézier spans, see "Pieces to conics" below), and
 merges regions (`varde_sketch::Profiles::merge`, exact, by the pieces'
-shared vertices; see `agents/sketch.md`). A sketch piece's ends are put at
+shared vertices; see `agents/sketch/profiles.md`). A sketch piece's ends are put at
 its vertices (`Profiles::vertices`), so segments close to the bit. `Profile::check` holds what needs no tolerance: at least
 one loop, at most `MAX_PROFILE_SEGMENTS` (`1 << 16`) segments, loops of
 two or more segments, each segment within the patch bounds with its ends

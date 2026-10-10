@@ -61,7 +61,7 @@ pub enum SketchEdit {
     /// they still mean something: those on an end taken away go with it,
     /// and a line's length, equal length, midpoint and distance from its
     /// midpoint go, what's on the endless line through it stays; a point
-    /// on a spline stays on the part it's on. See `agents/sketch.md`.
+    /// on a spline stays on the part it's on. See `agents/sketch/proposals.md`.
     Trim { curve: Id, near: DVec2 },
     /// The line, arc or open spline `curve` lengthened past its point
     /// `end` to the first curve it meets, which its new end is on
@@ -98,7 +98,7 @@ pub enum SketchEdit {
     /// offset, each held as far from it by an equal offset. Refused if
     /// the curves aren't a chain ([`EditError::NotAChain`]), nothing's
     /// left ([`EditError::NothingLeft`]), or a spline's copy would fold
-    /// ([`EditError::TooTight`]). See `agents/sketch.md`.
+    /// ([`EditError::TooTight`]). See `agents/sketch/proposals.md`.
     Offset {
         chain: Vec<Id>,
         distance: Value,

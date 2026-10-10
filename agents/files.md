@@ -146,7 +146,7 @@ saved one, so edits made while saving keep the document edited. The title
 and the status bar say "Saving…" while a save is in flight. A Save or Save
 As asked for while sketch edits wait on the solver waits for them too (it
 counts as in flight) and is sent once they're answered or undone, so what's
-on screen is saved; auto-saves don't wait (see `agents/sketch.md`). Saving
+on screen is saved; auto-saves don't wait (see `agents/sketch/editing.md`). Saving
 takes the
 `.vrdp`'s own lock like opening does, waiting at most two seconds (a
 tenth of that in `varde-io`'s tests) for another program to let go of

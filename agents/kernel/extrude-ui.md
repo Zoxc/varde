@@ -329,7 +329,7 @@ is dropped in `sync` once the generation moves (undo, recovery), and a
 stale one is neither shown nor applied. A delete asked for while edits
 wait on the solver waits behind them and asks when made, in its turn:
 nothing behind it moves until it's answered, and Delete makes it at
-once (`agents/sketch.md`, Proposals). Confirmed while edits wait
+once (`agents/sketch/editing.md`, Proposals). Confirmed while edits wait
 otherwise, the delete waits behind them too, and is made then if the
 same set goes, else asks again (`Doc::remove_now`). A read-only
 document asks nothing and deletes nothing.

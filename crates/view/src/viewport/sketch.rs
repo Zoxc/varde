@@ -2,7 +2,7 @@
 //! (selecting, box selecting, dragging geometry and drawing with the
 //! tools), `Esc` while the button is held, the cursor, and the layers the
 //! renderer draws of it, and the constraints' glyphs over it. See
-//! `agents/sketch.md`.
+//! `agents/sketch/viewport.md`.
 
 mod dimensions;
 mod glyphs;

@@ -46,7 +46,7 @@ the relevant one before changing that area, and keep it in step when behaviour
 it describes changes:
 
 - `agents/viewport.md`: the viewport widget, `MeshFeed`, the regeneration lanes.
-- `agents/sketch.md`: the sketch model, editing it, drawing it and the input
+- `agents/sketch/`: the sketch model, editing it, drawing it and the input
   on it in the viewport, hit testing and the drawing tools.
 - `agents/files.md`: the IO lane, sidecar locks, auto-save, recovery, saving,
   closing and quitting.
@@ -130,7 +130,7 @@ have no UI code; `render` has no iced dependency.
   - `solve`: one lane per open document for the sketch solver: proposals and
     analyses queued in order, drag steps latest wins, the two taking turns; the
     lane keeps the drag session. Every sketch edit is proposed through it and
-    committed once accepted (`Doc::propose`, see `agents/sketch.md`).
+    committed once accepted (`Doc::propose`, see `agents/sketch/editing.md`).
   - `io`: one ordered-queue lane for the whole app; *all* file system access
     goes through it. It owns open `DocumentFile`s (app holds `FileId`s), the
     `.design.vrdp.autosave` sidecar lock, auto-save, crash recovery, the store of
