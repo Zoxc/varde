@@ -489,3 +489,36 @@ fn a_point_s_note_is_rounded_to_fit_marked_where_it_is_not_exact() {
         "≈0.333 mm, 0 mm"
     );
 }
+
+/// Shown as the settings say: to the decimals chosen and angles in
+/// radians, in the status bar, the labels and the point notes; but the
+/// text a new dimension's field starts with keeps every unit's decimals
+/// and degrees, since it becomes the dimension's value.
+#[test]
+fn values_are_shown_as_set_but_fields_keep_their_precision() {
+    let (sketch, [slope, _, _, steep, _, _], _) = shapes();
+    let (angle, turn) =
+        selected(&sketch, &[Selectable::Item(slope), Selectable::Item(steep)]).unwrap();
+    let default = shown_measure(&angle, turn, LengthUnit::Mm);
+    varde_expr::Shown {
+        angle: varde_expr::AngleUnit::Rad,
+        decimals: Some(1),
+    }
+    .set();
+    let set = shown_measure(&angle, turn, LengthUnit::Mm);
+    assert!(set.ends_with(" rad") && set != default, "{set} {default}");
+    let (length, value) = selected(&sketch, &[Selectable::Item(slope)]).unwrap();
+    assert_eq!(
+        shown_measure(&length, value, LengthUnit::Mm),
+        "Length 11.2 mm"
+    );
+    let at = DVec2::new(-12345.678, 2.75);
+    assert_eq!(point_note(at, LengthUnit::Mm, 40), "≈−12345.7 mm, ≈2.8 mm");
+    let field = measured_text(&sketch, &length, Side::Positive, LengthUnit::Mm);
+    assert_eq!(field, "11.18 mm");
+    varde_expr::Shown::default().set();
+    assert_eq!(
+        shown_measure(&length, value, LengthUnit::Mm),
+        "Length 11.18 mm"
+    );
+}

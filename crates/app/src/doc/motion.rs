@@ -754,7 +754,8 @@ impl MotionSession {
                 };
                 let limit = f64::from(varde_kernel::MAX_COORD);
                 if self.mode != PatternMode::Total && spread.value * f64::from(steps) > limit {
-                    let limit = varde_expr::format(limit, Some(Unit::Length(design.units)));
+                    let limit = varde_expr::Shown::current()
+                        .format(limit, Some(Unit::Length(design.units)));
                     return Err(format!("The pattern runs past {limit}"));
                 }
                 let (text, value) = match self.mode {
@@ -800,7 +801,8 @@ impl MotionSession {
                     }
                     (PatternMode::Spacing, Some(spread)) => {
                         let past = || {
-                            let step = varde_expr::format(spread.value, Some(DEGREES));
+                            let step =
+                                varde_expr::Shown::current().format(spread.value, Some(DEGREES));
                             format!("{} copies {step} apart go past a full turn", steps + 1)
                         };
                         if spread.value * f64::from(steps) > TAU {
@@ -2108,7 +2110,7 @@ impl Doc {
         // The mock's slack, for copies end to end.
         (spacing.value.abs() < long - 1e-6).then(|| {
             let units = self.editor.document().units();
-            let long = varde_expr::format(long, Some(Unit::Length(units)));
+            let long = varde_expr::Shown::current().format(long, Some(Unit::Length(units)));
             format!(
                 "The copies overlap ({long} long this way): tick Join to original to merge them"
             )

@@ -85,3 +85,60 @@ fn dir_abbreviates_home() {
     );
     assert_eq!(display_dir(Path::new("/srv/a.vrdp"), None), "/srv");
 }
+
+fn written(request: Option<IoRequest>) -> Option<Vec<RecentFile>> {
+    match request {
+        Some(IoRequest::WriteRecent { entries }) => Some(entries),
+        None => None,
+        Some(request) => panic!("not a recent files write: {request:?}"),
+    }
+}
+
+/// By default the list keeps [`MAX`], as before it was a setting.
+#[test]
+fn keeps_max_by_default() {
+    assert_eq!(Recent::default().keep, MAX);
+    assert_eq!(MAX, 100);
+}
+
+/// Lowering how many are kept drops the oldest and stores the list;
+/// raising it again brings none back, and drops nothing.
+#[test]
+fn keeping_fewer_trims_the_list() {
+    let mut recent = Recent::default();
+    let stored: Vec<_> = (0..40)
+        .map(|i| listed(&format!("/{i}.vrdp"), 100 - i))
+        .collect();
+    assert_eq!(written(recent.loaded(stored, None)), None);
+    let kept = written(recent.keep(25)).unwrap();
+    assert_eq!(kept.len(), 25);
+    assert_eq!(kept[0], entry("/0.vrdp", 100));
+    assert_eq!(kept[24], entry("/24.vrdp", 76));
+    assert_eq!(written(recent.keep(10)).unwrap().len(), 10);
+    // Nothing more to drop.
+    assert_eq!(written(recent.keep(10)), None);
+    assert_eq!(written(recent.keep(100)), None);
+    assert_eq!(recent.entries().len(), 10);
+    // Opening more keeps the setting's count.
+    for i in 0..30 {
+        let _ = recent.opened(format!("/new{i}.vrdp").into(), UnixSeconds(200 + i));
+    }
+    assert_eq!(recent.entries().len(), 40);
+    // More than MAX is MAX.
+    assert_eq!(written(recent.keep(1000)), None);
+    assert_eq!(recent.keep, MAX);
+}
+
+/// Kept fewer before the stored list arrives, it's trimmed on arrival
+/// and stored so; nothing's written before.
+#[test]
+fn keeping_fewer_before_loading_trims_on_arrival() {
+    let mut recent = Recent::default();
+    assert_eq!(written(recent.keep(10)), None);
+    let stored: Vec<_> = (0..50)
+        .map(|i| listed(&format!("/{i}.vrdp"), 100 - i))
+        .collect();
+    let kept = written(recent.loaded(stored, None)).unwrap();
+    assert_eq!(kept.len(), 10);
+    assert_eq!(kept[9], entry("/9.vrdp", 91));
+}

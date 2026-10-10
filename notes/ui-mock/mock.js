@@ -1580,8 +1580,8 @@ systemDark.addEventListener('change', () => { if (st.theme === 'system') { apply
 // The settings page: on the model and sketch pages in the viewport's place,
 // on the welcome screen in the recent designs' (notes/Settings.md). A tab
 // per section over a column with the open one, a card of rows, a row per
-// setting: what it is and does on the left, its control on the right. Rows
-// tagged Proposed aren't in the app yet.
+// setting: what it is and does on the left, its control on the right. A row
+// tagged Proposed would be one not in the app yet: none are now.
 const settingsButton = (cls = 'op icon') => `<button class="${cls}${st.settings ? ' on' : ''}" data-act="settings" data-tip="Settings" data-key="Ctrl ," data-tip-at="below">${icon('gear')}</button>`;
 const SET_LEN = { mm: 1, cm: 10, m: 1000, in: 25.4, ft: 304.8 };
 const DRAGS = [['orbit', 'Orbit'], ['pan', 'Pan'], ['zoom', 'Zoom'], ['none', 'Nothing']];
@@ -1599,7 +1599,7 @@ function settingsPage() {
   const sections = [
     ['appearance', 'Appearance', '', [
       row('Theme', 'Light or dark, or as the system is set', seg('theme', [['system', 'System', 'contrast'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']])),
-      row('Interface scale', 'The size of everything but the model', seg('uiScale', [['90', '90%'], ['100', '100%'], ['125', '125%'], ['150', '150%']]), true),
+      row('Interface scale', 'The size of everything but the model', seg('uiScale', [['90', '90%'], ['100', '100%'], ['125', '125%'], ['150', '150%']])),
     ]],
     ['view', 'View', 'How the viewport draws the model. The status bar\'s menu changes the same settings.', [
       row('Projection', 'Perspective shrinks what is farther away', seg('persp', [[false, 'Orthographic', 'ortho'], [true, 'Perspective', 'persp']])),
@@ -1609,25 +1609,25 @@ function settingsPage() {
       row('Names', 'The names of bodies, sketches and planes over the view', sw('names')),
       row('Mouse hints', 'What the mouse buttons do, in the status bar', sw('mouseHints')),
     ]],
-    ['units', 'Units', `For new designs. Shown as <b class="sample">${len} · ${ang}</b>`, [
-      row('Length', 'For sizes typed without a unit, and shown', seg('lenUnit', [['mm', 'mm'], ['cm', 'cm'], ['m', 'm'], ['in', 'in'], ['ft', 'ft']])),
-      row('Angle', 'For angles typed without a unit, and shown', seg('angUnit', [['deg', 'Degrees'], ['rad', 'Radians']])),
+    ['units', 'Units', `Length for new designs; a design opened keeps its own. Angles and decimals for every design. Shown as <b class="sample">${len} · ${ang}</b>`, [
+      row('Length', 'For new designs: sizes typed without a unit, and shown', seg('lenUnit', [['mm', 'mm'], ['cm', 'cm'], ['m', 'm'], ['in', 'in'], ['ft', 'ft']])),
+      row('Angle', 'How angles are shown; typed without a unit, they\'re degrees', seg('angUnit', [['deg', 'Degrees'], ['rad', 'Radians']])),
       row('Decimal places', 'At most, after the point; trailing zeros are left out', step('places', 0, 6)),
     ]],
     ['input', 'Mouse', '', [
-      row(`${mouse('l')} Left drag`, 'Outside a sketch; a click always selects', seg('leftDrag', DRAGS), true),
-      row(`${mouse('m')} Middle drag`, 'Turning, panning or zooming the view', seg('middleDrag', DRAGS), true),
-      row(`${mouse('r')} Right drag`, 'With Shift held, it orbits', seg('rightDrag', DRAGS), true),
-      row('Rotation', 'How a drag turns the view', seg('orbitKind', [['turntable', 'Turntable'], ['over', 'Turntable, over the top'], ['trackball', 'Trackball']]), true),
-      row('Rotation point', 'What the view orbits about', seg('pivot', [['click', 'Clicked'], ['press', 'Under the pointer'], ['center', 'View centre']]), true),
-      ...(st.pivot === 'click' ? [row('Set rotation point with', 'On the model or grid; elsewhere, the centre again', seg('pivotClick', [['middle', 'Middle click'], ['middle2', 'Middle double-click'], ['shiftmiddle', 'Shift + middle click']]), true)] : []),
-      row('Zoom direction', 'Which way the wheel zooms in', seg('zoomDir', [['natural', 'Wheel up'], ['inverted', 'Wheel down']]), true),
-      row('Zoom to pointer', 'Zoom about the point under the pointer, else the middle', sw('zoomCursor'), true),
-      row('Snap to grid', 'Sketch tools snap to the grid unless Shift is held', sw('gridSnap'), true),
+      row(`${mouse('l')} Left drag`, 'Outside a sketch; a click always selects', seg('leftDrag', DRAGS)),
+      row(`${mouse('m')} Middle drag`, 'Turning, panning or zooming the view', seg('middleDrag', DRAGS)),
+      row(`${mouse('r')} Right drag`, 'With Shift held, it orbits', seg('rightDrag', DRAGS)),
+      row('Rotation', 'How a drag turns the view', seg('orbitKind', [['turntable', 'Turntable'], ['over', 'Over the top']])),
+      row('Rotation point', 'What the view orbits about', seg('pivot', [['click', 'Clicked'], ['press', 'Under the pointer'], ['center', 'View centre']])),
+      ...(st.pivot === 'click' ? [row('Set rotation point with', 'On the model or grid; elsewhere, the centre again', seg('pivotClick', [['middle', 'Middle click'], ['middle2', 'Middle double-click'], ['shiftmiddle', 'Shift + middle click']]))] : []),
+      row('Zoom direction', 'Which way the wheel zooms in', seg('zoomDir', [['natural', 'Wheel up'], ['inverted', 'Wheel down']])),
+      row('Zoom to pointer', 'Zoom about the point under the pointer, else the middle', sw('zoomCursor')),
+      row('Snapping', 'Sketch tools snap to points, curves and directions unless Shift is held; off, only while it is', sw('gridSnap')),
     ]],
     ...(st.web ? [] : [['files', 'Files', '', [
-      row('Auto-save', 'Changes go to the recovery file after a pause in editing', seg('autosave', [['0', 'Off'], ['3', '3 s'], ['10', '10 s'], ['30', '30 s']]), true),
-      row('Recent designs', 'How many the welcome screen keeps', seg('recentN', [['10', '10'], ['25', '25'], ['50', '50'], ['100', '100']]), true),
+      row('Auto-save', 'Changes go to the recovery file after a pause in editing', seg('autosave', [['0', 'Off'], ['3', '3 s'], ['10', '10 s'], ['30', '30 s']])),
+      row('Recent designs', 'How many the welcome screen keeps', seg('recentN', [['10', '10'], ['25', '25'], ['50', '50'], ['100', '100']])),
     ]]]),
   ];
   const open = sections.find(([id]) => id === st.setTab) || sections[0];
@@ -1651,10 +1651,10 @@ const SET_SAID = {
   hiddenEdges: ['Hidden edges'], names: ['Names'], mouseHints: ['Mouse hints'],
   lenUnit: ['Length unit', v => v], angUnit: ['Angle unit', { deg: 'Degrees', rad: 'Radians' }], places: ['Decimal places', v => v],
   leftDrag: ['Left drag', DRAG_SAID], middleDrag: ['Middle drag', DRAG_SAID], rightDrag: ['Right drag', DRAG_SAID],
-  orbitKind: ['Rotation', { turntable: 'Turntable', over: 'Turntable, over the top', trackball: 'Trackball' }],
+  orbitKind: ['Rotation', { turntable: 'Turntable', over: 'Turntable, over the top' }],
   pivot: ['Rotation point', { click: 'Clicked', press: 'Under the pointer', center: 'View centre' }],
   pivotClick: ['Set rotation point with', { middle: 'Middle click', middle2: 'Middle double-click', shiftmiddle: 'Shift + middle click' }], zoomDir: ['Zoom direction', { natural: 'Wheel up', inverted: 'Wheel down' }],
-  zoomCursor: ['Zoom to pointer'], gridSnap: ['Snap to grid'],
+  zoomCursor: ['Zoom to pointer'], gridSnap: ['Snapping'],
   autosave: ['Auto-save', { 0: 'Off', 3: '3 s', 10: '10 s', 30: '30 s' }], recentN: ['Recent designs', v => v],
 };
 const saidOf = (k, v) => { const f = SET_SAID[k][1]; return !f ? (v ? 'On' : 'Off') : typeof f === 'function' ? f(v) : f[v]; };

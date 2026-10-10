@@ -26,7 +26,7 @@ fn two(chamfer: &Chamfer, units: LengthUnit) -> [String; 2] {
         return [String::new(), String::new()];
     };
     let (a, b) = if chamfer.flip { (b, a) } else { (a, b) };
-    [a, b].map(|value| varde_expr::format_number(value.value, Some(units.into())))
+    [a, b].map(|value| varde_expr::Shown::current().format_number(value.value, Some(units.into())))
 }
 
 /// What the status bar says of a selected chamfer, as the UI mock's: "2

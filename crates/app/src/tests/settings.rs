@@ -3,12 +3,14 @@
 
 use iced::keyboard::{self, key};
 use varde_document::LengthUnit;
+use varde_expr::AngleUnit;
 use varde_io::Request as IoRequest;
 use varde_io::settings::{Settings as Stored, Theme};
 use varde_render::Projection;
+use varde_render::Rotation;
 use varde_view::{
-    Message as Ui, SettingChange, SettingsPage, SettingsState, SettingsTab, ThemeChoice,
-    ViewOptions, Welcome as WelcomeUi,
+    DragAction, Look, Message as Ui, PivotClick, RotationPoint, Setting, SettingChange,
+    SettingsPage, SettingsState, SettingsTab, ThemeChoice, ViewOptions, Welcome as WelcomeUi,
 };
 
 use super::{document, press, sent, shown, texts, with_files};
@@ -241,6 +243,7 @@ fn the_settings_are_stored() {
             shading: varde_io::settings::Shading::Flat,
             edges: varde_io::settings::Edges::Wireframe,
             length_unit: LengthUnit::Cm,
+            ..Stored::default()
         }
     );
     assert_eq!(crate::settings::stored_of(varde.options), last);
@@ -342,4 +345,255 @@ fn a_new_design_takes_the_settings() {
         document(&varde).camera.projection(),
         Projection::Orthographic
     );
+}
+
+/// What the app does where nothing's set is what it did before these
+/// were settings.
+#[test]
+fn the_newer_settings_default_to_the_app_as_it_was() {
+    let varde = Varde::new();
+    assert_eq!(varde.scale_factor(), 1.0);
+    let options = varde.options;
+    assert_eq!(options.shown(), varde_expr::Shown::default());
+    assert_eq!(options.mouse, varde_view::MouseOptions::default());
+    assert_eq!(
+        crate::auto_save_pause(&options),
+        Some(crate::doc::AUTO_SAVE_IDLE)
+    );
+    assert_eq!(usize::from(options.recent_designs), varde_io::recent::MAX);
+    assert!(varde_view::changed_settings(options).is_empty());
+}
+
+fn set(varde: &mut Varde, setting: Setting) {
+    let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::Set(setting))));
+}
+
+/// Each of the page's own settings is stored as set, and comes back as
+/// the next session starts; values the page doesn't offer are ignored.
+#[test]
+fn the_pages_own_settings_are_stored() {
+    let (mut varde, requests) = with_files();
+    let _ = varde.update(Message::Io(varde_io::Response::SettingsLoaded {
+        settings: Stored::default(),
+    }));
+    let _ = sent(&requests);
+    let steps = [
+        Setting::InterfaceScale(150),
+        Setting::AngleUnit(AngleUnit::Rad),
+        Setting::Decimals(Some(2)),
+        Setting::LeftDrag(DragAction::Pan),
+        Setting::MiddleDrag(DragAction::Zoom),
+        Setting::RightDrag(DragAction::Nothing),
+        Setting::Rotation(Rotation::OverTheTop),
+        Setting::RotationPoint(RotationPoint::Pointer),
+        Setting::PivotClick(PivotClick::MiddleDouble),
+        Setting::WheelDownZoomsIn(true),
+        Setting::ZoomToPointer(false),
+        Setting::SketchSnap(false),
+        Setting::AutoSave(30),
+        Setting::RecentDesigns(25),
+    ];
+    for step in steps {
+        set(&mut varde, step);
+    }
+    let written = written(&requests);
+    assert_eq!(written.len(), steps.len());
+    let last = *written.last().unwrap();
+    use varde_io::settings as io;
+    assert_eq!(
+        last,
+        Stored {
+            interface_scale: io::InterfaceScale::Larger,
+            angle_unit: io::AngleUnit::Rad,
+            decimals: io::Decimals::Places(2),
+            left_drag: io::Drag::Pan,
+            middle_drag: io::Drag::Zoom,
+            right_drag: io::Drag::Nothing,
+            rotation: io::Rotation::OverTheTop,
+            rotation_point: io::RotationPoint::Pointer,
+            set_rotation_point: io::SetRotationPoint::MiddleDoubleClick,
+            zoom_direction: io::ZoomDirection::WheelDown,
+            zoom_to_pointer: false,
+            sketch_snap: false,
+            auto_save: io::AutoSave::Seconds30,
+            recent_designs: io::RecentDesigns::TwentyFive,
+            ..Stored::default()
+        }
+    );
+    // Not offered, not taken nor stored.
+    for odd in [
+        Setting::InterfaceScale(110),
+        Setting::InterfaceScale(0),
+        Setting::Decimals(Some(7)),
+        Setting::Decimals(Some(u8::MAX)),
+        Setting::AutoSave(5),
+        Setting::AutoSave(u16::MAX),
+        Setting::RecentDesigns(0),
+        Setting::RecentDesigns(1000),
+    ] {
+        let before = varde.options;
+        set(&mut varde, odd);
+        assert_eq!(varde.options, before, "{odd:?}");
+    }
+    assert!(sent(&requests).is_empty());
+
+    let (mut next, _) = with_files();
+    let _ = next.update(Message::Io(varde_io::Response::SettingsLoaded {
+        settings: last,
+    }));
+    assert_eq!(next.options, varde.options);
+    assert_eq!(next.scale_factor(), 1.5);
+}
+
+/// Set, the interface scale is the app's scale factor, and values are
+/// shown as the units' settings say from then on.
+#[test]
+fn the_scale_and_the_values_shown_follow_the_settings() {
+    let (mut varde, _) = with_files();
+    set(&mut varde, Setting::InterfaceScale(90));
+    assert!((varde.scale_factor() - 0.9).abs() < 1e-6);
+    set(&mut varde, Setting::AngleUnit(AngleUnit::Rad));
+    set(&mut varde, Setting::Decimals(Some(1)));
+    let shown = varde_expr::Shown::current();
+    assert_eq!(
+        shown.format(std::f64::consts::PI / 8.0, Some(AngleUnit::Deg.into())),
+        "0.4 rad"
+    );
+    let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::AskReset)));
+    let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::Reset)));
+    assert_eq!(varde_expr::Shown::current(), varde_expr::Shown::default());
+    assert_eq!(varde.scale_factor(), 1.0);
+}
+
+/// Over the top, the document's camera turns on past straight down;
+/// back to a turntable, it's set right side up and stops there again.
+#[test]
+fn the_rotation_set_turns_the_camera() {
+    let (mut varde, _) = with_files();
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    let orbit = |varde: &mut Varde| {
+        for _ in 0..4 {
+            let _ = varde.update(Message::Ui(Ui::Look(Look::Orbit {
+                yaw: 0.0,
+                pitch: 0.6,
+                about: None,
+            })));
+        }
+    };
+    orbit(&mut varde);
+    assert!(!document(&varde).camera.upside_down());
+    let at_the_top = document(&varde).camera;
+    orbit(&mut varde);
+    assert_eq!(document(&varde).camera, at_the_top, "a turntable stops");
+
+    set(&mut varde, Setting::Rotation(Rotation::OverTheTop));
+    orbit(&mut varde);
+    assert!(document(&varde).camera.upside_down());
+    let eye = document(&varde).camera.eye();
+    set(&mut varde, Setting::Rotation(Rotation::Turntable));
+    let camera = document(&varde).camera;
+    assert!(!camera.upside_down());
+    assert!(camera.eye().abs_diff_eq(eye, 1e-3));
+}
+
+/// A clicked rotation point is forgotten once the point is set to be
+/// another, and an orbit turns about the point a drag names.
+#[test]
+fn the_rotation_point_set_is_the_one_turned_about() {
+    let (mut varde, _) = with_files();
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    let pivot = glam::Vec3::new(5.0, 0.0, 0.0);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SetPivot(Some(pivot)))));
+    assert!(document(&varde).pivot_marker().is_some());
+    set(&mut varde, Setting::RotationPoint(RotationPoint::Centre));
+    assert!(document(&varde).pivot_marker().is_none());
+
+    // Named by the drag, the point stays where it shows; unnamed, the
+    // view turns about its middle, the target.
+    let about = glam::Vec3::new(-3.0, 2.0, 1.0);
+    let before = document(&varde).camera;
+    let _ = varde.update(Message::Ui(Ui::Look(Look::Orbit {
+        yaw: 0.3,
+        pitch: 0.2,
+        about: Some(about),
+    })));
+    let after = document(&varde).camera;
+    let along = |camera: &varde_render::Camera| {
+        let offset = about - camera.target();
+        [camera.right(), camera.up()].map(|axis| offset.dot(axis))
+    };
+    let [a, b] = [along(&before), along(&after)];
+    assert!((a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3);
+    let target = after.target();
+    let _ = varde.update(Message::Ui(Ui::Look(Look::Orbit {
+        yaw: 0.3,
+        pitch: 0.2,
+        about: None,
+    })));
+    assert_eq!(document(&varde).camera.target(), target);
+}
+
+/// Fewer recent designs kept trims the list, stored so.
+#[test]
+fn fewer_recent_designs_trims_the_list() {
+    let (mut varde, requests) = with_files();
+    let entries = (0..30)
+        .map(|i| varde_io::recent::Listed {
+            entry: varde_io::recent::RecentFile {
+                path: format!("/d/{i}.vrdp").into(),
+                opened: varde_io::UnixSeconds(1000 - i),
+            },
+            available: true,
+        })
+        .collect();
+    let _ = varde.update(Message::Io(varde_io::Response::RecentLoaded {
+        entries,
+        home: None,
+    }));
+    let _ = varde.update(Message::Io(varde_io::Response::SettingsLoaded {
+        settings: Stored::default(),
+    }));
+    let _ = sent(&requests);
+    set(&mut varde, Setting::RecentDesigns(10));
+    assert_eq!(varde.files.recent.entries().len(), 10);
+    let recent = sent(&requests)
+        .into_iter()
+        .find_map(|request| match request {
+            IoRequest::WriteRecent { entries } => Some(entries),
+            _ => None,
+        })
+        .expect("the list stored");
+    assert_eq!(recent.len(), 10);
+    assert_eq!(recent[0].path, std::path::PathBuf::from("/d/0.vrdp"));
+    // Stored settings keeping fewer trim it as they arrive too.
+    let _ = varde.update(Message::Io(varde_io::Response::SettingsLoaded {
+        settings: Stored::default(),
+    }));
+    assert_eq!(varde.files.recent.entries().len(), 10, "none come back");
+}
+
+/// The Mouse tab's hints follow the buttons in the status bar.
+#[test]
+fn the_status_bar_hints_follow_the_mouse_settings() {
+    let (mut varde, _) = with_files();
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    let mut renderer = varde_view::probe::renderer();
+    let size = iced::Size::new(1400.0, 800.0);
+    let hints = |varde: &Varde, renderer: &mut iced::Renderer| {
+        let view = document(varde).view(false, Mode::Light, varde.options, varde.files.offers());
+        let mut ui = shown(view, size, renderer);
+        texts(&mut ui, renderer)
+            .into_iter()
+            .map(|shown| shown.text)
+            .collect::<Vec<_>>()
+    };
+    let before = hints(&varde, &mut renderer);
+    assert!(before.iter().any(|text| text == "Drag to orbit"));
+    assert!(before.iter().any(|text| text == "Click to set pivot"));
+    set(&mut varde, Setting::LeftDrag(DragAction::Zoom));
+    set(&mut varde, Setting::RotationPoint(RotationPoint::Pointer));
+    let after = hints(&varde, &mut renderer);
+    assert!(after.iter().any(|text| text == "Drag to zoom"), "{after:?}");
+    assert!(!after.iter().any(|text| text == "Drag to orbit"));
+    assert!(!after.iter().any(|text| text == "Click to set pivot"));
 }

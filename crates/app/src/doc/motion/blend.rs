@@ -250,7 +250,7 @@ fn measured(
 ) -> (Option<String>, bool) {
     if let Some([from, to]) = index.edge_ends(edge, &reference.faces) {
         return (
-            Some(varde_expr::format(DVec3::distance(from, to), unit)),
+            Some(varde_expr::Shown::current().format(DVec3::distance(from, to), unit)),
             false,
         );
     }
@@ -259,11 +259,14 @@ fn measured(
     };
     let closed = (index.picking().closed().get(edge as usize)).is_some_and(|&closed| closed);
     if closed {
-        let diameter = varde_expr::format(2.0 * radius, unit);
+        let diameter = varde_expr::Shown::current().format(2.0 * radius, unit);
         (Some(format!("Ø{diameter}")), true)
     } else {
         (
-            Some(format!("R{}", varde_expr::format(radius, unit))),
+            Some(format!(
+                "R{}",
+                varde_expr::Shown::current().format(radius, unit)
+            )),
             false,
         )
     }

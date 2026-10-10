@@ -122,7 +122,8 @@ edges on and the defaults chosen to start with), stores them with the
 settings (`settings.toml`, see `files.md`), and any choice or toggle
 closes the menu. The projection is the app's too
 (`Message::SetProjection`): every document's camera takes it
-(`Doc::set_projection`), one opened or made as it shows.
+(`Doc::set_projection`, through `Doc::take_options` with the rotation
+settings), one opened or made as it shows.
 
 **The settings page.** The gear at the toolbar's right end (`settings::settings_button`, on
 while the page is open), the welcome screen's Settings at its foot, and
@@ -143,14 +144,43 @@ natively, under the header on the web.
 
 The page (`view/src/settings.rs`, `settings::page`) is a head with
 Reset to defaults and the close button over a tab per section
-(Appearance, View, Units, `SettingsTab`), the open one a card of rows:
-the theme; the projection, shading, edges, Hidden edges, Names and
+(Appearance, View, Units, Mouse and natively Files, `SettingsTab`,
+`SettingsTab::shown`), the open one a card of rows: the theme and the
+interface scale; the projection, shading, edges, Hidden edges, Names and
 Mouse hints, the view options menu's messages, so a change in either
-shows in both; and the length unit new designs start in. The foot says
-where they're kept. Reset to defaults is off with every setting the
-default; otherwise it asks first (`SettingsPage::AskReset`) in a popup
-listing each setting it changes (`changed_settings`), Enter resetting
+shows in both; the length unit new designs start in, the angle unit and
+decimal places values are shown in (a sample in the note); the mouse's
+settings (below); and the auto-save pause and recent designs kept
+(`files.md`). The settings only the page sets come as
+`SettingsPage::Set(Setting)`, `Varde::set` ignoring values the page
+doesn't offer. Every one defaults to what the app did before it was a
+setting. The foot says where they're kept. Reset to defaults is off with
+every setting the default; otherwise it asks first
+(`SettingsPage::AskReset`) in a popup listing each setting it changes
+(`changed_settings`; on the web not the Files tab's), Enter resetting
 (`reset_key`) and Escape cancelling.
+
+The interface scale (90, 100, 125 or 150 %, `ViewOptions::interface_scale`)
+is iced's application scale factor (`Varde::scale_factor`), over the
+system's: everything is laid out larger or smaller, the viewport taking
+the room it's given as ever, its model drawn at the window's pixels. The
+web goes through the same `iced_winit` path, the page's device pixel
+ratio times the setting.
+
+Values are shown as the Units tab says (`varde_expr::Shown`): angles in
+degrees or radians, and lengths and angles to at most a chosen count of
+decimals, 0 to 6, or Auto, the default, each unit's own count
+(`LengthUnit::decimals`, 3 for degrees), which shows exactly what the app
+always did. Only what's read takes it: labels, readouts, the status bar,
+the Timeline's notes, the parameters' values, errors that quote a value.
+Text that becomes a value keeps `varde_expr::format`'s per-unit decimals
+and degrees whatever the settings: a field filled in to be taken (a new
+dimension's, a knob's or a handle's drag, a tool's default), and a
+dimension made where the geometry is. Bare numbers typed for an angle
+stay degrees too, since a design's texts must evaluate as they did
+(`Value::check`). The app sets the UI thread's `Shown::current` as the
+settings change and before each view, so the view's functions read it
+without being handed it; other threads (the lanes) keep the defaults.
 
 The view options menu's last toggle, Names, turns on the names
 overlay (`names.rs`, `ViewOptions::names`, stored with the settings): a canvas over the
@@ -203,26 +233,60 @@ fading out, and the grid crossfades between the XY plane and the
 sketch's, `Frame::fading_grid`), the grid on the sketch's plane, and the sketch itself by the renderer over everything; the left
 button is the sketch's, for selecting, dragging and drawing geometry, and
 so is `Esc` while it's held (see `agents/sketch/editing.md`), and with a drawing
-tool the modifiers, whose `Shift` turns snapping off. The `Program` sends
+tool the modifiers, whose `Shift` turns snapping off (on, with the
+settings' Snapping off: `Sketching::snaps`). The `Program` sends
 the left button and cursor moves to the sketch, unless the camera is being
 dragged, and the other buttons and the wheel to the camera. It sets the
 cursor: grabbing or moving while the camera is dragged, grabbing while
 geometry is, and over the viewport a crosshair with a sketch tool or a
 pointer over an item to select. Drags map to camera moves in
 `DragKind::for_button`, from the button, the modifiers the widget tracks
-from `ModifiersChanged` and whether a sketch is open: middle and `Shift` +
-right orbit, right pans, left orbits outside a sketch and while its
-Project or Intersect picks outside it; `viewport::hints` (given
-`document::left_orbits`) and `README.md` follow it. The wheel zooms
+from `ModifiersChanged`, whether a sketch is open and the settings' Mouse
+tab (`MouseOptions`, `Program::mouse`), each button Orbit, Pan, Zoom or
+Nothing: by default middle and `Shift` + right orbit, right pans, left
+orbits outside a sketch and while its Project or Intersect picks outside
+it. `Shift` + right orbits whatever the right button is set to, and in a
+sketch the left button is always the sketch's. A button set to Nothing
+still clicks: the middle one to set the point orbited about, the left
+one to select (`DragKind::Still`). A zoom drag zooms in going up
+(`ZOOM_PER_DRAG_PIXEL`) about where it started. `viewport::hints` (given
+`document::left_orbits`) follows the settings, by default as it always
+was; `README.md` doesn't describe the mouse. The wheel zooms
 towards the cursor, as the mock does: `Look::Zoom` carries the cursor's offset from the viewport's
 middle in fractions of its height, and `Camera::zoom_at` moves the
 target towards the point at the target's depth there by the proportion
 the distance changes, so that point stays under the cursor in either
-projection. A native wheel notch is a line (`ZOOM_PER_LINE`) and touchpads
+projection; with Zoom to pointer off the offset is zero, zooming about
+the middle, and Zoom direction Wheel down turns the wheel's way round. A native wheel notch is a line (`ZOOM_PER_LINE`) and touchpads
 give pixels; browsers give a notch as pixels too, tens of them, so on the
 web a pixel zooms less and one event at most a line.
 
-A middle click, the cursor let go within `CLICK_SLOP` (3 px) of where
+How a drag turns the view is the Rotation setting (`Doc::rotation`, given
+by `Doc::take_options`, `Camera::turn`): Turntable, the default, yaws
+about Z and pitches up to `Camera::PITCH_LIMIT`, straight down or up;
+Turntable over the top pitches on past it (the pitch kept within a half
+turn), the view upside down, the yaw then turning the other way so what's
+under the pointer follows the drag. The camera's basis comes from yaw and
+pitch alone and stays whole past the top, so the view cube and every user
+of `Camera::up` take it as is. `Camera::lerp` turns the pitch the short
+way round where either end is upside down, never over the top between
+upright ones; a turntable's turn, and switching back to Turntable, first
+right the view (`Camera::upright`: the eye kept, the view rolled a half
+turn). A free trackball isn't offered: it needs a roll, or an orientation
+other than yaw and pitch, which `Camera`, its animations, the view cube's
+faces and `Camera::face` don't have.
+
+What the view orbits about is the Rotation point setting
+(`RotationPoint`): Clicked, the default, below; Under the pointer, the
+point on the model or grid where each orbit drag starts
+(`Interaction::orbit_about`, sent with each `Look::Orbit` as `about`,
+the view's middle off them); View centre, always the target. Set to
+either of the last two, the document forgets a clicked pivot and the
+middle click sets none.
+
+With Clicked, a middle click (by the Set rotation point with setting,
+`PivotClick`: any, the default; a double-click, `last_middle`; or one
+with `Shift` held), the cursor let go within `CLICK_SLOP` (3 px) of where
 it was pressed, picks the point the camera orbits (until the cursor
 leaves that, a middle drag doesn't orbit): `viewport/pivot.rs` casts the
 cursor's ray (`Projector::ray`) at the model's mesh, the nearest hit
@@ -232,12 +296,13 @@ the sketch's in a sketch) where the grid shows, within
 `GRID_FADE_HEIGHTS` view heights of the target seen on it, so a click
 near the horizon doesn't fly off; it sends `Look::SetPivot` with the
 point, or `None` off them all. The status bar hints it after Zoom, by
-the wheel's icon ("Click to set pivot", `viewport::hints`). The
+the wheel's icon ("Click to set pivot", or the double-click's or
+`Shift`'s, `viewport::hints`). The
 app's `Doc` keeps it (`doc/camera.rs`'s `Pivot`), pans to bring it to
 the middle of the view (`Camera::center_on`, across the view only, so
 the zoom stays; animated as the view cube's turns are), and orbits about
 it
-(`Camera::orbit_about`, which turns the target about the pivot with
+(`Camera::orbit_about`, `turn_about` as the Rotation setting turns, which turns the target about the pivot with
 the view, so the pivot stays where it shows on screen); `None`, and
 Home, go back to orbiting the target. Home outside a sketch looks from
 its default direction framing the model shown, its bodies and sketches

@@ -151,6 +151,9 @@ pub(crate) struct Sketching<'a> {
     /// Whether a click on a spline adds a point to it (see
     /// [`SketchState::inserting`]).
     inserting: bool,
+    /// Whether tools snap without [`Held::FREE`] held, as the settings
+    /// say: if not, only with it.
+    snaps: bool,
 }
 
 /// The items drawn otherwise than free, by why.
@@ -347,11 +350,25 @@ impl<'a> Sketching<'a> {
             profiles: sketch.profiles.and_then(|found| found.as_ref().ok()),
             comb: sketch.comb,
             inserting: sketch.inserting && editable && sketch.tool.is_none(),
+            snaps: true,
         }
     }
 
     pub(crate) fn placement(&self) -> Placement {
         self.placement
+    }
+
+    /// The same, its tools snapping without [`Held::FREE`] held if
+    /// `snaps`, else only with it.
+    pub(crate) fn snapping(self, snaps: bool) -> Self {
+        Sketching { snaps, ..self }
+    }
+
+    /// Whether tools snap with `modifiers` held: unless [`Held::FREE`]
+    /// is among them, or only if it is where the settings turned snapping
+    /// off.
+    fn snaps(&self, modifiers: Modifiers) -> bool {
+        self.snaps != Held::FREE.is_held(modifiers)
     }
 
     /// Where the grid and the sketch are drawn: on the sketch's plane.
@@ -575,7 +592,7 @@ impl<'a> Sketching<'a> {
 
     /// Moves the button held down, `press`, to `to`: past
     /// [`DRAG_DISTANCE`] it drags what it went down on, or a box. A point
-    /// dragged snaps unless [`Held::FREE`] is among `modifiers`.
+    /// dragged snaps as [`Sketching::snaps`] says with `modifiers`.
     fn drag(
         &self,
         press: &mut Press,
@@ -621,14 +638,14 @@ impl<'a> Sketching<'a> {
     /// Where what `press` drags snaps with the cursor at `cursor`, with
     /// where it was grabbed: a point as [`snap::snap_drag`] has it, a
     /// circle's rim as [`snap::snap_rim`]. `None` for anything else, or
-    /// with [`Held::FREE`] among `modifiers`.
+    /// where [`Sketching::snaps`] says not with `modifiers`.
     fn drag_snap(
         &self,
         press: &Press,
         cursor: Cursor,
         modifiers: Modifiers,
     ) -> Option<(DVec2, Snap)> {
-        if Held::FREE.is_held(modifiers) {
+        if !self.snaps(modifiers) {
             return None;
         }
         let id = press.hit?.item()?;
@@ -753,11 +770,11 @@ impl<'a> Sketching<'a> {
 
     /// Where the drawing tool's next click snaps to with the cursor at
     /// `cursor`, see [`snap::snap`], if it snaps to anything: not without
-    /// a drawing tool, nor while [`Held::FREE`] is held among
+    /// a drawing tool, nor where [`Sketching::snaps`] says not with
     /// `modifiers`.
     fn snap(&self, cursor: Cursor, modifiers: Modifiers) -> Option<Snap> {
         let tool = self.tool.filter(|tool| tool.tool.draws())?;
-        if Held::FREE.is_held(modifiers) {
+        if !self.snaps(modifiers) {
             return None;
         }
         Some(snap::snap(self.sketch, &tool, cursor.at, cursor.pixel)).filter(Snap::snapped)
@@ -1378,10 +1395,11 @@ impl<'a> Sketching<'a> {
                     .map(|(reach, _)| reach),
                 _ => outline.as_ref().and_then(|outline| outline.value(field)),
             };
-            let unit = field.quantity().unit(self.units);
+            let format = varde_expr::Shown::current();
+            let unit = format.unit(field.quantity(), self.units);
             let shown = match typed {
-                Some(value) => varde_expr::format(value.value, unit),
-                None => measured.map_or_else(String::new, |value| varde_expr::format(value, unit)),
+                Some(value) => format.format(value.value, unit),
+                None => measured.map_or_else(String::new, |value| format.format(value, unit)),
             };
             let value: Element<'a, Message> = match open {
                 Some(open) if *open.target == ValueTarget::Field(field) => column![
@@ -1485,7 +1503,7 @@ impl<'a> Sketching<'a> {
         // Where a drawing tool's click, or a point or rim dragged, snaps is
         // marked round the cursor, whatever it snapped to.
         let dragged = (input.press)
-            .filter(|press| press.moved && press.grab && !Held::FREE.is_held(modifiers))
+            .filter(|press| press.moved && press.grab && self.snaps(modifiers))
             .zip(cursor)
             .and_then(|(press, cursor)| self.drag_snap(&press, cursor, modifiers))
             .map(|(_, snap)| snap);

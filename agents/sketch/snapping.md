@@ -29,7 +29,10 @@ point on its own curve is so whatever (`Constraint::own_point`). A rectangle's c
 with nothing inferred.
 
 The viewport computes the snap as the cursor moves, unless `Held::FREE`
-(`Shift`) is held, and sends `Look::Snap` when it changes (on every move
+(`Shift`) is held (with the settings' Snapping off, only while it's
+held: `Sketching::snaps`, `MouseOptions::sketch_snap`; a point dragged
+alike, and the status bar's hint says "Snap" then rather than "Don't
+snap"), and sends `Look::Snap` when it changes (on every move
 along a curve, since the place moves), so the app has it for the glyph;
 the click carries the snap it had. While the shape has fields it sends
 `Look::Aim` instead, and with the cursor off the sketch sends nothing, so

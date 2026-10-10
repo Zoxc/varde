@@ -337,3 +337,114 @@ fn arbitrary_parameters_never_panic() {
         }
     }
 }
+
+/// Shown as the settings have it by default, values are as `format()`
+/// shows them, to each unit's decimals, angles in degrees.
+#[test]
+fn shown_by_default_as_format() {
+    let shown = Shown::default();
+    assert_eq!(shown, Shown::current());
+    // (Every angle is shown in the setting's unit: the app's are all
+    // degrees.)
+    let units = [None, Some(Unit::Angle(AngleUnit::Deg))]
+        .into_iter()
+        .chain(LengthUnit::ALL.map(|unit| Some(unit.into())));
+    for unit in units {
+        for value in [
+            0.0,
+            -0.0,
+            1.0,
+            12.345_678_9,
+            -1e-7,
+            1234.5,
+            std::f64::consts::FRAC_PI_8,
+        ] {
+            assert_eq!(shown.format(value, unit), format(value, unit));
+            assert_eq!(shown.format_number(value, unit), format_number(value, unit));
+            assert_eq!(shown.full(value, unit), full(value, unit));
+        }
+    }
+    assert_eq!(
+        shown.format_power(1_234.567_89, LengthUnit::Cm, Power::Area),
+        format_power(1_234.567_89, LengthUnit::Cm, Power::Area)
+    );
+    assert_eq!(
+        shown.unit(Quantity::Angle, LengthUnit::In),
+        Quantity::Angle.unit(LengthUnit::In)
+    );
+}
+
+/// The decimals and angle unit chosen change what's shown, but neither
+/// `format()`, which fills in fields and dimensions, nor how bare angles
+/// are read.
+#[test]
+fn shown_in_chosen_decimals_and_angles() {
+    let radians = Shown {
+        angle: AngleUnit::Rad,
+        decimals: None,
+    };
+    let eighth = std::f64::consts::PI / 8.0;
+    assert_eq!(
+        radians.format(eighth, Some(AngleUnit::Deg.into())),
+        "0.3927 rad"
+    );
+    assert_eq!(
+        radians.format(eighth, Some(LengthUnit::Mm.into())),
+        "0.393 mm"
+    );
+    assert_eq!(
+        radians.unit(Quantity::Angle, LengthUnit::Mm),
+        Some(AngleUnit::Rad.into())
+    );
+    assert_eq!(
+        radians.full(eighth, Some(AngleUnit::Deg.into())),
+        format!("{eighth} rad")
+    );
+    for (decimals, length, angle) in [
+        (0, "12 mm", "22°"),
+        (1, "12.3 mm", "22.5°"),
+        (2, "12.35 mm", "22.5°"),
+        (6, "12.345679 mm", "22.5°"),
+        // More than a setting may show is taken as the most.
+        (200, "12.345679 mm", "22.5°"),
+    ] {
+        let shown = Shown {
+            angle: AngleUnit::Deg,
+            decimals: Some(decimals),
+        };
+        assert_eq!(
+            shown.format(12.345_678_9, Some(LengthUnit::Mm.into())),
+            length
+        );
+        assert_eq!(shown.format(eighth, Some(AngleUnit::Deg.into())), angle);
+        // Plain numbers keep theirs.
+        assert_eq!(shown.format(0.123_456_789, None), "0.123457");
+    }
+    let whole = Shown {
+        angle: AngleUnit::Deg,
+        decimals: Some(0),
+    };
+    assert_eq!(whole.format(-0.4, Some(LengthUnit::Mm.into())), "0 mm");
+    assert_eq!(
+        whole.format_number(25.4 * 1.75, Some(LengthUnit::In.into())),
+        "2"
+    );
+    assert_eq!(
+        whole.format_power(150.0, LengthUnit::Cm, Power::Area),
+        "2 cm²"
+    );
+    // This thread's, once set, and no other's.
+    Shown {
+        angle: AngleUnit::Rad,
+        decimals: Some(1),
+    }
+    .set();
+    assert_eq!(Shown::current().decimals, Some(1));
+    let other = std::thread::spawn(Shown::current).join().unwrap();
+    assert_eq!(other, Shown::default());
+    // `format()` and reading are as they were.
+    assert_eq!(format(eighth, Some(AngleUnit::Deg.into())), "22.5°");
+    let ask = Ask::angle(LengthUnit::Mm, std::f64::consts::TAU);
+    assert_eq!(evaluate("90", &ask), Ok(std::f64::consts::FRAC_PI_2));
+    Shown::default().set();
+}

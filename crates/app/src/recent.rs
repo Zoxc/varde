@@ -10,16 +10,46 @@ use varde_io::recent::{Listed, MAX, RecentFile};
 use varde_io::{Request as IoRequest, UnixSeconds};
 
 /// The recent files, newest first.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Recent {
     entries: Vec<Listed>,
+    /// The most entries kept, as the settings say: at most [`MAX`].
+    keep: usize,
     /// Whether the stored list has arrived.
     loaded: bool,
     /// The user's home directory, abbreviated to `~` when showing paths.
     home: Option<PathBuf>,
 }
 
+impl Default for Recent {
+    fn default() -> Self {
+        Recent {
+            entries: Vec::new(),
+            keep: MAX,
+            loaded: false,
+            home: None,
+        }
+    }
+}
+
 impl Recent {
+    /// Keeps at most `keep` entries, up to [`MAX`], from now on, the
+    /// oldest beyond them dropped now: returning the write storing the
+    /// list if that changed it, once it's complete.
+    #[must_use = "the write stores the list"]
+    pub(crate) fn keep(&mut self, keep: usize) -> Option<IoRequest> {
+        self.keep = keep.min(MAX);
+        self.trim().then(|| self.write()).flatten()
+    }
+
+    /// Drops the entries past [`Recent::keep`]'s count, saying whether
+    /// there were any.
+    fn trim(&mut self) -> bool {
+        let trimmed = self.entries.len() > self.keep;
+        self.entries.truncate(self.keep);
+        trimmed
+    }
+
     /// Newest first.
     pub(crate) fn entries(&self) -> &[Listed] {
         &self.entries
@@ -33,7 +63,8 @@ impl Recent {
 
     /// Takes the stored list, each file with whether it's there.
     /// Files opened before it arrived stay in front of it; if there were
-    /// any, the list changed, and this returns the write storing it.
+    /// any, or it holds more than are kept, the list changed, and this
+    /// returns the write storing it.
     #[must_use = "the write stores the list"]
     pub(crate) fn loaded(
         &mut self,
@@ -47,6 +78,7 @@ impl Recent {
         for listed in opened.into_iter().rev() {
             self.remember(listed.entry.path, listed.entry.opened);
         }
+        let changed = self.trim() || changed;
         if changed { self.write() } else { None }
     }
 
@@ -71,7 +103,7 @@ impl Recent {
     }
 
     /// Moves `path`, opened at `now`, to the front and drops the oldest
-    /// entries beyond [`MAX`].
+    /// entries beyond those kept.
     fn remember(&mut self, path: PathBuf, now: UnixSeconds) {
         self.entries.retain(|listed| listed.entry.path != path);
         let entry = RecentFile { path, opened: now };
@@ -82,7 +114,7 @@ impl Recent {
                 available: true,
             },
         );
-        self.entries.truncate(MAX);
+        self.trim();
     }
 }
 

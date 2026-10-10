@@ -10,7 +10,7 @@ use crate::panels::length_note;
 pub(crate) fn fillet_note(fillet: &Fillet, units: LengthUnit) -> String {
     format!(
         "R{}",
-        varde_expr::format_number(fillet.radius.value, Some(units.into()))
+        varde_expr::Shown::current().format_number(fillet.radius.value, Some(units.into()))
     )
 }
 

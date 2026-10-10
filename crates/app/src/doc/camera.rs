@@ -177,13 +177,15 @@ impl Doc {
         });
     }
 
-    /// Orbits the camera by these angles about the pivot, or its target if
-    /// none was picked.
-    pub(crate) fn orbit(&mut self, yaw: f32, pitch: f32) {
+    /// Orbits the camera by these angles, as the settings turn it, about
+    /// the point `about` picked for the drag, if one was, else the pivot,
+    /// or its target if none was picked.
+    pub(crate) fn orbit(&mut self, yaw: f32, pitch: f32, about: Option<Vec3>) {
         self.animation = None;
-        match self.pivot {
-            Some(pivot) => self.camera.orbit_about(pivot.at, yaw, pitch),
-            None => self.camera.orbit(yaw, pitch),
+        let rotation = self.rotation;
+        match about.or(self.pivot.map(|pivot| pivot.at)) {
+            Some(at) => self.camera.turn_about(rotation, at, yaw, pitch),
+            None => self.camera.turn(rotation, yaw, pitch),
         }
     }
 

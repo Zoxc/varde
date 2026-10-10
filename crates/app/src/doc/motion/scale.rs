@@ -453,7 +453,7 @@ impl Doc {
         let length = (setup.edge.is_some())
             .then(|| self.scale_length())
             .flatten()
-            .map(|length| varde_expr::format(length, Some(Unit::Length(units))));
+            .map(|length| varde_expr::Shown::current().format(length, Some(Unit::Length(units))));
         let straight = (self.scale_measured())
             .and_then(|(_, line)| line)
             .is_some_and(|[from, to]| varde_regen::along_axis(to - from).is_some());

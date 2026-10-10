@@ -397,7 +397,8 @@ fn drags_orbit_and_pan_by_button_and_mode() {
     let none = Modifiers::empty();
     let shift = Modifiers::SHIFT;
     for sketching in [false, true] {
-        let drag = |button, modifiers| DragKind::for_button(button, modifiers, sketching);
+        let mouse = MouseOptions::default();
+        let drag = |button, modifiers| DragKind::for_button(button, modifiers, sketching, &mouse);
         assert_eq!(drag(Button::Middle, none), Some(DragKind::Orbit));
         assert_eq!(drag(Button::Middle, shift), Some(DragKind::Orbit));
         assert_eq!(drag(Button::Right, shift), Some(DragKind::Orbit));
@@ -406,17 +407,76 @@ fn drags_orbit_and_pan_by_button_and_mode() {
         assert_eq!(drag(Button::Back, none), None);
     }
     // The left button orbits outside a sketch, and is for geometry inside.
+    let mouse = MouseOptions::default();
     assert_eq!(
-        DragKind::for_button(Button::Left, none, false),
+        DragKind::for_button(Button::Left, none, false, &mouse),
         Some(DragKind::Orbit)
     );
-    assert_eq!(DragKind::for_button(Button::Left, none, true), None);
-    assert_eq!(DragKind::for_button(Button::Left, shift, true), None);
+    assert_eq!(DragKind::for_button(Button::Left, none, true, &mouse), None);
+    assert_eq!(
+        DragKind::for_button(Button::Left, shift, true, &mouse),
+        None
+    );
+}
+
+/// Each button drags as the settings say; the right one orbits with
+/// `Shift` whatever it's set to, and the left one is still the sketch's
+/// in a sketch.
+#[test]
+fn drags_by_button_as_set() {
+    use keyboard::Modifiers;
+    use mouse::Button;
+
+    let none = Modifiers::empty();
+    let mouse = MouseOptions {
+        left: DragAction::Pan,
+        middle: DragAction::Zoom,
+        right: DragAction::Nothing,
+        ..MouseOptions::default()
+    };
+    let drag =
+        |button, modifiers, sketching| DragKind::for_button(button, modifiers, sketching, &mouse);
+    assert_eq!(drag(Button::Left, none, false), Some(DragKind::Pan));
+    assert_eq!(drag(Button::Left, none, true), None);
+    assert_eq!(drag(Button::Middle, none, false), Some(DragKind::Zoom));
+    assert_eq!(drag(Button::Right, none, false), None);
+    assert_eq!(
+        drag(Button::Right, Modifiers::SHIFT, true),
+        Some(DragKind::Orbit)
+    );
+    let mouse = MouseOptions {
+        left: DragAction::Nothing,
+        middle: DragAction::Pan,
+        right: DragAction::Orbit,
+        ..MouseOptions::default()
+    };
+    assert_eq!(
+        DragKind::for_button(Button::Left, none, false, &mouse),
+        None
+    );
+    assert_eq!(
+        DragKind::for_button(Button::Middle, none, false, &mouse),
+        Some(DragKind::Pan)
+    );
+    assert_eq!(
+        DragKind::for_button(Button::Right, none, true, &mouse),
+        Some(DragKind::Orbit)
+    );
 }
 
 /// What the widget with `state` does with `event` over it, in a sketch if
 /// `sketching`.
 fn handle(state: &mut Interaction, event: Event, sketching: bool) -> Option<Action<Message>> {
+    handle_with(state, event, sketching, MouseOptions::default())
+}
+
+/// [`handle`], with the mouse as `mouse` sets it.
+fn handle_with(
+    state: &mut Interaction,
+    event: Event,
+    sketching: bool,
+    mouse: MouseOptions,
+) -> Option<Action<Message>> {
     use iced::widget::shader::Program as _;
 
     let (sketch, selection) = (varde_sketch::Sketch::default(), Default::default());
@@ -430,6 +490,7 @@ fn handle(state: &mut Interaction, event: Event, sketching: bool) -> Option<Acti
         sketching.then(|| Sketching::new(state_of_sketch, true)),
         None,
     );
+    let program = Program { mouse, ..program };
     let cursor = mouse::Cursor::Available(Point::new(10.0, 10.0));
     program.update(state, &event, bounds(), cursor)
 }
@@ -604,6 +665,11 @@ fn a_region_with_a_hole_is_shaded_around_it() {
 /// The messages the widget over [`cube`] seen from the top sends for
 /// `events`, each with the cursor where it's sent.
 fn middle_button(events: &[(Event, Point)]) -> Vec<Message> {
+    middle_button_with(MouseOptions::default(), events)
+}
+
+/// [`middle_button`], with the mouse as `mouse` sets it.
+fn middle_button_with(mouse: MouseOptions, events: &[(Event, Point)]) -> Vec<Message> {
     use iced::widget::shader::Program as _;
 
     let mesh = cube();
@@ -616,6 +682,7 @@ fn middle_button(events: &[(Event, Point)]) -> Vec<Message> {
         None,
         None,
     );
+    let program = Program { mouse, ..program };
     let mut state = Interaction::default();
     let mut messages = Vec::new();
     for (event, at) in events {
@@ -660,7 +727,14 @@ fn a_middle_click_picks_the_point_to_orbit_and_a_drag_orbits() {
     // A drag orbits, from where it was pressed, and picks nothing.
     let far = Point::new(45.0, 29.0);
     let messages = middle_button(&[(press, on), moved(nudged), moved(far), (release, far)]);
-    let [Message::Look(Look::Orbit { yaw, pitch })] = messages.as_slice() else {
+    let [
+        Message::Look(Look::Orbit {
+            yaw,
+            pitch,
+            about: None,
+        }),
+    ] = messages.as_slice()
+    else {
         panic!("{messages:?}");
     };
     assert_eq!((*yaw, *pitch), (-10.0 * ORBIT_SPEED, 0.0));
@@ -1549,4 +1623,256 @@ fn a_press_held_still_lists_the_origin_planes_there_too() {
         ),
         "{items:?}"
     );
+}
+
+/// The events of a click of `button` at `at`, `modifiers` held.
+fn click_at(
+    button: mouse::Button,
+    at: Point,
+    modifiers: keyboard::Modifiers,
+) -> Vec<(Event, Point)> {
+    vec![
+        (
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)),
+            at,
+        ),
+        (Event::Mouse(mouse::Event::ButtonPressed(button)), at),
+        (Event::Mouse(mouse::Event::ButtonReleased(button)), at),
+    ]
+}
+
+/// Over the box's top in [`middle_button`]'s view.
+const ON_THE_BOX: Point = Point::new(35.0, 29.0);
+
+/// The click that sets the point orbited about is the middle click by
+/// default, with or without `Shift`; set to a double-click, one click
+/// does nothing and the second sets it; set to `Shift` and the click,
+/// only that does. With another rotation point, no click sets one.
+#[test]
+fn the_pivot_click_is_as_set() {
+    use keyboard::Modifiers;
+
+    let pivots = |messages: &[Message]| {
+        (messages.iter())
+            .filter(|message| matches!(message, Message::Look(Look::SetPivot(_))))
+            .count()
+    };
+    let middle = |modifiers| click_at(mouse::Button::Middle, ON_THE_BOX, modifiers);
+    for modifiers in [Modifiers::empty(), Modifiers::SHIFT] {
+        assert_eq!(pivots(&middle_button(&middle(modifiers))), 1);
+    }
+    let double = MouseOptions {
+        pivot_click: PivotClick::MiddleDouble,
+        ..MouseOptions::default()
+    };
+    assert_eq!(
+        pivots(&middle_button_with(double, &middle(Modifiers::empty()))),
+        0
+    );
+    let twice = [middle(Modifiers::empty()), middle(Modifiers::empty())].concat();
+    assert_eq!(pivots(&middle_button_with(double, &twice)), 1);
+    let shift = MouseOptions {
+        pivot_click: PivotClick::ShiftMiddle,
+        ..MouseOptions::default()
+    };
+    assert_eq!(
+        pivots(&middle_button_with(shift, &middle(Modifiers::empty()))),
+        0
+    );
+    assert_eq!(
+        pivots(&middle_button_with(shift, &middle(Modifiers::SHIFT))),
+        1
+    );
+    for rotation_point in [RotationPoint::Pointer, RotationPoint::Centre] {
+        let mouse = MouseOptions {
+            rotation_point,
+            ..MouseOptions::default()
+        };
+        assert_eq!(
+            pivots(&middle_button_with(mouse, &twice)),
+            0,
+            "{rotation_point:?}"
+        );
+    }
+    // A middle button set to drag nothing still clicks.
+    let still = MouseOptions {
+        middle: DragAction::Nothing,
+        ..MouseOptions::default()
+    };
+    assert_eq!(
+        pivots(&middle_button_with(still, &middle(Modifiers::empty()))),
+        1
+    );
+}
+
+/// Turning about the point under the pointer, a drag turns about the
+/// point on the model where it started, for all of it; about the view's
+/// centre, or clicked, the drag names none.
+#[test]
+fn an_orbit_turns_about_the_point_set() {
+    let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle));
+    let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle));
+    let moved = |at| (Event::Mouse(mouse::Event::CursorMoved { position: at }), at);
+    let drag = [
+        (press, ON_THE_BOX),
+        moved(Point::new(45.0, 29.0)),
+        moved(Point::new(55.0, 35.0)),
+        (release, Point::new(55.0, 35.0)),
+    ];
+    let abouts = |mouse| {
+        middle_button_with(mouse, &drag)
+            .into_iter()
+            .map(|message| match message {
+                Message::Look(Look::Orbit { about, .. }) => about,
+                message => panic!("{message:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    let pointer = MouseOptions {
+        rotation_point: RotationPoint::Pointer,
+        ..MouseOptions::default()
+    };
+    let turned = abouts(pointer);
+    assert_eq!(turned.len(), 2);
+    let at = turned[0].expect("the box under the pointer");
+    assert!(
+        at.abs_diff_eq(glam::Vec3::new(0.9375, 0.9375, 2.0), 1e-3),
+        "{at}"
+    );
+    assert_eq!(turned[1], turned[0], "the same point all drag");
+    for rotation_point in [RotationPoint::Clicked, RotationPoint::Centre] {
+        let mouse = MouseOptions {
+            rotation_point,
+            ..MouseOptions::default()
+        };
+        assert_eq!(abouts(mouse), [None, None]);
+    }
+}
+
+/// The wheel zooms in turned up and towards the pointer by default; set
+/// the other way, turned down; with zoom to pointer off, about the
+/// middle.
+#[test]
+fn the_wheel_zooms_as_set() {
+    let wheel = |y| {
+        Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Lines { x: 0.0, y },
+        })
+    };
+    let zoom = |mouse, y| {
+        let mut state = Interaction::default();
+        match handle_with(&mut state, wheel(y), false, mouse)
+            .unwrap()
+            .into_inner()
+            .0
+        {
+            Some(Message::Look(Look::Zoom { factor, x, y })) => (factor, x, y),
+            message => panic!("{message:?}"),
+        }
+    };
+    let off = (10.0 - SIZE as f32 / 2.0) / SIZE as f32;
+    assert_eq!(
+        zoom(MouseOptions::default(), 1.0),
+        (ZOOM_PER_LINE, off, off)
+    );
+    let down = MouseOptions {
+        wheel_down_zooms_in: true,
+        ..MouseOptions::default()
+    };
+    assert_eq!(zoom(down, -1.0), (ZOOM_PER_LINE, off, off));
+    assert_eq!(zoom(down, 1.0).0, ZOOM_PER_LINE.powf(-1.0));
+    let middle = MouseOptions {
+        zoom_to_pointer: false,
+        ..MouseOptions::default()
+    };
+    assert_eq!(zoom(middle, 1.0), (ZOOM_PER_LINE, 0.0, 0.0));
+}
+
+/// A button set to zoom zooms in dragged up and out dragged down, about
+/// where the drag started.
+#[test]
+fn a_zoom_drag_zooms() {
+    let mouse = MouseOptions {
+        right: DragAction::Zoom,
+        ..MouseOptions::default()
+    };
+    let mut state = Interaction::default();
+    let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right));
+    assert!(handle_with(&mut state, press, false, mouse).is_some());
+    assert!(matches!(state.drag, Some((DragKind::Zoom, _))));
+    let mut factors = Vec::new();
+    for y in [0.0, -10.0] {
+        let moved = Event::Mouse(mouse::Event::CursorMoved {
+            position: Point::new(10.0, y),
+        });
+        let action = handle_with(&mut state, moved, false, mouse).unwrap();
+        if let Some(Message::Look(Look::Zoom { factor, x, y })) = action.into_inner().0 {
+            let off = (10.0 - SIZE as f32 / 2.0) / SIZE as f32;
+            assert_eq!((x, y), (off, off), "about where it started");
+            factors.push(factor);
+        }
+    }
+    assert_eq!(factors.len(), 2);
+    assert!(factors[0] < 1.0 && factors[1] < 1.0, "up, in: {factors:?}");
+    let moved = Event::Mouse(mouse::Event::CursorMoved {
+        position: Point::new(10.0, 30.0),
+    });
+    let action = handle_with(&mut state, moved, false, mouse).unwrap();
+    let Some(Message::Look(Look::Zoom { factor, .. })) = action.into_inner().0 else {
+        panic!("a zoom");
+    };
+    assert!(factor > 1.0, "down, out");
+}
+
+/// The status bar's mouse hints say what the buttons do as set: by
+/// default as they always have.
+#[test]
+fn the_hints_follow_the_buttons() {
+    let said = |sketching, mouse: MouseOptions| hint_texts(hints(sketching, &mouse));
+    assert_eq!(
+        said(false, MouseOptions::default()),
+        ["Drag to orbit", "Pan", "Zoom", "Click to set pivot"]
+    );
+    assert_eq!(
+        said(true, MouseOptions::default()),
+        ["Shift", "Orbit", "Pan", "Zoom", "Click to set pivot"]
+    );
+    let mouse = MouseOptions {
+        left: DragAction::Pan,
+        middle: DragAction::Zoom,
+        right: DragAction::Orbit,
+        pivot_click: PivotClick::MiddleDouble,
+        ..MouseOptions::default()
+    };
+    assert_eq!(
+        said(false, mouse),
+        ["Drag to pan", "Orbit", "Drag to zoom", "Zoom", "Set pivot"]
+    );
+    // The right button orbits already: no Shift.
+    assert_eq!(
+        said(true, mouse),
+        ["Orbit", "Drag to zoom", "Zoom", "Set pivot"]
+    );
+    let mouse = MouseOptions {
+        left: DragAction::Nothing,
+        right: DragAction::Nothing,
+        rotation_point: RotationPoint::Centre,
+        ..MouseOptions::default()
+    };
+    assert_eq!(said(false, mouse), ["Zoom"]);
+    let shift = MouseOptions {
+        pivot_click: PivotClick::ShiftMiddle,
+        ..MouseOptions::default()
+    };
+    assert_eq!(
+        said(false, shift),
+        ["Drag to orbit", "Pan", "Zoom", "Shift", "Set pivot"]
+    );
+}
+
+/// The texts `hints` show, laid out headless.
+fn hint_texts(hints: Vec<Hint<'_>>) -> Vec<String> {
+    let row = iced::widget::row(hints.into_iter().map(|hint| hint.element));
+    let mut shown = crate::testing::Laid::new(row, iced::Size::new(2000.0, 40.0));
+    shown.texts().into_iter().map(|shown| shown.text).collect()
 }

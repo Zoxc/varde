@@ -146,7 +146,10 @@ impl<'a> ParamsState<'a> {
                 let expression = self.draft(index, ParamField::Expression);
                 let result = resolved.result(index);
                 let value = match result {
-                    Some(Ok(value)) => varde_expr::format(value.value, value.quantity.unit(units)),
+                    Some(Ok(value)) => {
+                        let shown = varde_expr::Shown::current();
+                        shown.format(value.value, shown.unit(value.quantity, units))
+                    }
                     _ => "\u{2014}".to_owned(),
                 };
                 let (features, users) = self.uses.get(index).map_or((&[][..], &[][..]), |uses| {

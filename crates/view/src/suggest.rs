@@ -84,7 +84,10 @@ pub fn suggest<'a>(text: &str, params: ParamsIn<'a>) -> Option<Suggestion<'a>> {
         .take(MAX_SUGGESTIONS)
         .map(|(name, result)| {
             let shown = match result {
-                Ok(value) => varde_expr::format(value.value, value.quantity.unit(params.units)),
+                Ok(value) => {
+                    let shown = varde_expr::Shown::current();
+                    shown.format(value.value, shown.unit(value.quantity, params.units))
+                }
                 Err(_) => "error".to_owned(),
             };
             (name, shown)

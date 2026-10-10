@@ -14,7 +14,24 @@
 //! shading = "regular" # or "flat", "metal", "flat_metal"
 //! edges = "default" # or "wireframe", "tessellation"
 //! length_unit = "mm" # a new design's units: or "cm", "m", "in", "ft"
+//! interface_scale = 100 # percent: or 90, 125, 150
+//! angle_unit = "deg" # how angles are shown: or "rad"
+//! decimals = "auto" # places shown at most: or 0 to 6
+//! left_drag = "orbit" # or "pan", "zoom", "nothing"; outside a sketch
+//! middle_drag = "orbit" # as left_drag
+//! right_drag = "pan" # as left_drag
+//! rotation = "turntable" # or "over_the_top"
+//! rotation_point = "clicked" # or "pointer", "centre"
+//! set_rotation_point = "middle_click" # or "middle_double_click", "shift_middle_click"
+//! zoom_direction = "wheel_up" # the wheel's way that zooms in: or "wheel_down"
+//! zoom_to_pointer = true # else about the view's middle
+//! sketch_snap = true # whether sketch tools snap unless Shift is held
+//! auto_save = 3 # seconds' pause before an auto-save: or 0 (off), 10, 30
+//! recent_designs = 100 # how many the recent files list keeps: or 10, 25, 50
 //! ```
+//!
+//! Values out of these sets (another number of decimals, a scale of 110)
+//! are gone bad, and so defaulted, like any other.
 //!
 //! The file is user data, edited by hand perhaps: each key is read on its
 //! own, so one missing or gone bad gets its default and costs no other.
@@ -49,6 +66,24 @@ pub struct Settings {
     /// Stored as the unit's symbol, "mm".
     #[serde(with = "length_unit")]
     pub length_unit: LengthUnit,
+    pub interface_scale: InterfaceScale,
+    pub angle_unit: AngleUnit,
+    pub decimals: Decimals,
+    pub left_drag: Drag,
+    pub middle_drag: Drag,
+    pub right_drag: Drag,
+    pub rotation: Rotation,
+    pub rotation_point: RotationPoint,
+    pub set_rotation_point: SetRotationPoint,
+    pub zoom_direction: ZoomDirection,
+    /// Whether the wheel zooms about the point under the pointer, on
+    /// unless turned off.
+    pub zoom_to_pointer: bool,
+    /// Whether sketch tools snap unless Shift is held, on unless turned
+    /// off: off, they snap only while it's held.
+    pub sketch_snap: bool,
+    pub auto_save: AutoSave,
+    pub recent_designs: RecentDesigns,
 }
 
 impl Default for Settings {
@@ -62,6 +97,20 @@ impl Default for Settings {
             shading: Shading::default(),
             edges: Edges::default(),
             length_unit: LengthUnit::default(),
+            interface_scale: InterfaceScale::default(),
+            angle_unit: AngleUnit::default(),
+            decimals: Decimals::default(),
+            left_drag: Drag::Orbit,
+            middle_drag: Drag::Orbit,
+            right_drag: Drag::Pan,
+            rotation: Rotation::default(),
+            rotation_point: RotationPoint::default(),
+            set_rotation_point: SetRotationPoint::default(),
+            zoom_direction: ZoomDirection::default(),
+            zoom_to_pointer: true,
+            sketch_snap: true,
+            auto_save: AutoSave::default(),
+            recent_designs: RecentDesigns::default(),
         }
     }
 }
@@ -106,6 +155,288 @@ pub enum Edges {
     Default,
     Wireframe,
     Tessellation,
+}
+
+/// How large the UI is drawn, the model aside: a percentage of the
+/// system's scale. Stored as the percentage, `100`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(try_from = "u16", into = "u16")]
+pub enum InterfaceScale {
+    Small,
+    #[default]
+    Normal,
+    Large,
+    Larger,
+}
+
+impl InterfaceScale {
+    pub const ALL: [InterfaceScale; 4] = [
+        InterfaceScale::Small,
+        InterfaceScale::Normal,
+        InterfaceScale::Large,
+        InterfaceScale::Larger,
+    ];
+
+    pub fn percent(self) -> u16 {
+        match self {
+            InterfaceScale::Small => 90,
+            InterfaceScale::Normal => 100,
+            InterfaceScale::Large => 125,
+            InterfaceScale::Larger => 150,
+        }
+    }
+}
+
+impl TryFrom<u16> for InterfaceScale {
+    type Error = &'static str;
+
+    fn try_from(percent: u16) -> Result<Self, Self::Error> {
+        Self::ALL
+            .into_iter()
+            .find(|scale| scale.percent() == percent)
+            .ok_or("not an interface scale")
+    }
+}
+
+impl From<InterfaceScale> for u16 {
+    fn from(scale: InterfaceScale) -> u16 {
+        scale.percent()
+    }
+}
+
+/// The unit angles are shown in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AngleUnit {
+    #[default]
+    Deg,
+    Rad,
+}
+
+/// The most decimal places values are shown with: each unit's own
+/// ([`LengthUnit::decimals`]) unless a count is chosen. Stored as
+/// `"auto"` or the count, 0 to [`Decimals::MAX`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Decimals {
+    #[default]
+    Auto,
+    /// At most [`Decimals::MAX`].
+    Places(u8),
+}
+
+impl Decimals {
+    pub const MAX: u8 = 6;
+
+    /// `count` places, if it's at most [`Decimals::MAX`].
+    pub fn places(count: u8) -> Option<Decimals> {
+        (count <= Self::MAX).then_some(Decimals::Places(count))
+    }
+}
+
+/// In TOML, `"auto"` or the count; elsewhere (the web worker's postcard
+/// messages, which can't tell a text from a number unasked) the count, or
+/// `u8::MAX` for auto.
+impl Serialize for Decimals {
+    fn serialize<S: serde::Serializer>(&self, to: S) -> Result<S::Ok, S::Error> {
+        match (*self, to.is_human_readable()) {
+            (Decimals::Auto, true) => to.serialize_str("auto"),
+            (Decimals::Auto, false) => to.serialize_u8(u8::MAX),
+            (Decimals::Places(count), _) => to.serialize_u8(count),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Decimals {
+    fn deserialize<D: serde::Deserializer<'de>>(from: D) -> Result<Self, D::Error> {
+        use serde::de::{Error, Unexpected, Visitor};
+
+        struct Of;
+        impl Visitor<'_> for Of {
+            type Value = Decimals;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("\"auto\" or a count of decimal places, 0 to 6")
+            }
+
+            fn visit_str<E: Error>(self, text: &str) -> Result<Decimals, E> {
+                match text {
+                    "auto" => Ok(Decimals::Auto),
+                    _ => Err(E::invalid_value(Unexpected::Str(text), &self)),
+                }
+            }
+
+            fn visit_u64<E: Error>(self, count: u64) -> Result<Decimals, E> {
+                u8::try_from(count)
+                    .ok()
+                    .and_then(Decimals::places)
+                    .ok_or_else(|| E::invalid_value(Unexpected::Unsigned(count), &self))
+            }
+
+            fn visit_i64<E: Error>(self, count: i64) -> Result<Decimals, E> {
+                u64::try_from(count)
+                    .map_err(|_| E::invalid_value(Unexpected::Signed(count), &self))
+                    .and_then(|count| self.visit_u64(count))
+            }
+        }
+
+        if from.is_human_readable() {
+            from.deserialize_any(Of)
+        } else {
+            match u8::deserialize(from)? {
+                u8::MAX => Ok(Decimals::Auto),
+                count => Of.visit_u64(count.into()),
+            }
+        }
+    }
+}
+
+/// What dragging with a mouse button does in the viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Drag {
+    Orbit,
+    Pan,
+    Zoom,
+    Nothing,
+}
+
+/// How dragging turns the view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Rotation {
+    /// About the world's Z, and up and down short of over the top.
+    #[default]
+    Turntable,
+    /// The same, but on over the top, upside down.
+    OverTheTop,
+}
+
+/// What the view orbits about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RotationPoint {
+    /// The point last clicked, see [`SetRotationPoint`].
+    #[default]
+    Clicked,
+    /// The point under the pointer where each drag starts.
+    Pointer,
+    /// The middle of the view.
+    Centre,
+}
+
+/// The click that sets the point the view orbits about, with
+/// [`RotationPoint::Clicked`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SetRotationPoint {
+    #[default]
+    MiddleClick,
+    MiddleDoubleClick,
+    ShiftMiddleClick,
+}
+
+/// Which way of the wheel zooms in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZoomDirection {
+    #[default]
+    WheelUp,
+    WheelDown,
+}
+
+/// How long editing pauses before an open design is auto-saved, if it
+/// is: natively only. Stored as the seconds, `0` for off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(try_from = "u16", into = "u16")]
+pub enum AutoSave {
+    Off,
+    #[default]
+    Seconds3,
+    Seconds10,
+    Seconds30,
+}
+
+impl AutoSave {
+    pub const ALL: [AutoSave; 4] = [
+        AutoSave::Off,
+        AutoSave::Seconds3,
+        AutoSave::Seconds10,
+        AutoSave::Seconds30,
+    ];
+
+    /// The pause in seconds, 0 for off.
+    pub fn seconds(self) -> u16 {
+        match self {
+            AutoSave::Off => 0,
+            AutoSave::Seconds3 => 3,
+            AutoSave::Seconds10 => 10,
+            AutoSave::Seconds30 => 30,
+        }
+    }
+}
+
+impl TryFrom<u16> for AutoSave {
+    type Error = &'static str;
+
+    fn try_from(seconds: u16) -> Result<Self, Self::Error> {
+        Self::ALL
+            .into_iter()
+            .find(|pause| pause.seconds() == seconds)
+            .ok_or("not an auto-save pause")
+    }
+}
+
+impl From<AutoSave> for u16 {
+    fn from(pause: AutoSave) -> u16 {
+        pause.seconds()
+    }
+}
+
+/// How many files the recent files list keeps, at most
+/// [`recent::MAX`](crate::recent::MAX). Stored as the count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(try_from = "u16", into = "u16")]
+pub enum RecentDesigns {
+    Ten,
+    TwentyFive,
+    Fifty,
+    #[default]
+    Hundred,
+}
+
+impl RecentDesigns {
+    pub const ALL: [RecentDesigns; 4] = [
+        RecentDesigns::Ten,
+        RecentDesigns::TwentyFive,
+        RecentDesigns::Fifty,
+        RecentDesigns::Hundred,
+    ];
+
+    pub fn count(self) -> u16 {
+        match self {
+            RecentDesigns::Ten => 10,
+            RecentDesigns::TwentyFive => 25,
+            RecentDesigns::Fifty => 50,
+            RecentDesigns::Hundred => 100,
+        }
+    }
+}
+
+impl TryFrom<u16> for RecentDesigns {
+    type Error = &'static str;
+
+    fn try_from(count: u16) -> Result<Self, Self::Error> {
+        Self::ALL
+            .into_iter()
+            .find(|kept| kept.count() == count)
+            .ok_or("not a count of recent designs")
+    }
+}
+
+impl From<RecentDesigns> for u16 {
+    fn from(kept: RecentDesigns) -> u16 {
+        kept.count()
+    }
 }
 
 /// A length unit as its symbol: "mm". Any other text isn't one.
@@ -164,6 +495,48 @@ impl Settings {
             length_unit: key("length_unit")
                 .and_then(|value| value.as_str().and_then(length_unit_of))
                 .unwrap_or(defaults.length_unit),
+            interface_scale: key("interface_scale")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.interface_scale),
+            angle_unit: key("angle_unit")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.angle_unit),
+            decimals: key("decimals")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.decimals),
+            left_drag: key("left_drag")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.left_drag),
+            middle_drag: key("middle_drag")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.middle_drag),
+            right_drag: key("right_drag")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.right_drag),
+            rotation: key("rotation")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.rotation),
+            rotation_point: key("rotation_point")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.rotation_point),
+            set_rotation_point: key("set_rotation_point")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.set_rotation_point),
+            zoom_direction: key("zoom_direction")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.zoom_direction),
+            zoom_to_pointer: key("zoom_to_pointer")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(defaults.zoom_to_pointer),
+            sketch_snap: key("sketch_snap")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(defaults.sketch_snap),
+            auto_save: key("auto_save")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.auto_save),
+            recent_designs: key("recent_designs")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.recent_designs),
         }
     }
 

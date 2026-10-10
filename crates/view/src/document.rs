@@ -1179,7 +1179,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     } else if let Some(measure) = &state.measure {
         measure_hints(measure)
     } else if let Some(sketch) = state.sketch {
-        sketch_hints(&sketch, state.editable())
+        sketch_hints(&sketch, state.editable(), state.options.mouse.sketch_snap)
     } else if state.selected_feature.is_some() {
         let delete = state
             .editable()
@@ -1193,7 +1193,9 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     } else {
         Vec::new()
     };
-    keys.into_iter().chain(viewport::hints(sketching)).collect()
+    keys.into_iter()
+        .chain(viewport::hints(sketching, &state.options.mouse))
+        .collect()
 }
 
 /// Whether the left button orbits the camera, as outside a sketch: not
@@ -1238,9 +1240,9 @@ fn selecting_hints<'a>(selection: &crate::Selection) -> Vec<Hint<'a>> {
 
 /// The status bar's hints for the left button and the keys in `sketch`,
 /// which can be changed if `editable`: what the tool asks for, placing
-/// without snapping, typing values and how to stop it, or selecting, what
+/// without snapping (or with it, if tools don't otherwise `snap`), typing values and how to stop it, or selecting, what
 /// can be done with the selection and how to leave.
-fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
+fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool, snap: bool) -> Vec<Hint<'a>> {
     if let Some(field) = sketch.value {
         let enter = match field.target {
             ValueTarget::New { .. } | ValueTarget::Field(_) => "Place",
@@ -1314,7 +1316,11 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
         });
         return [
             Some(step_hint(MouseButton::Left, tool.step(sketch.sketch))),
-            Some(chord_hint(Held::FREE, MouseButton::Left, "Don't snap")),
+            Some(chord_hint(
+                Held::FREE,
+                MouseButton::Left,
+                if snap { "Don't snap" } else { "Snap" },
+            )),
             values,
             place,
             centered,
@@ -2134,7 +2140,8 @@ fn sketch_selection<'a>(sketch: &SketchState<'a>) -> Option<Element<'a, Message>
     let measured = match rectangle {
         Some((width, height)) => {
             let unit = Some(varde_expr::Unit::Length(sketch.units));
-            let [width, height] = [width, height].map(|size| varde_expr::format(size, unit));
+            let [width, height] =
+                [width, height].map(|size| varde_expr::Shown::current().format(size, unit));
             Some(format!("Width {width} · Height {height}"))
         }
         None => crate::dimension::selected(sketch.sketch, &ids)

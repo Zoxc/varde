@@ -9,6 +9,18 @@ pub enum Projection {
     Perspective,
 }
 
+/// How dragging turns the camera, see [`Camera::turn`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Rotation {
+    /// About the world's Z, and up or down as far as straight down or
+    /// up: Z stays up on screen.
+    #[default]
+    Turntable,
+    /// The same, but on over the top and under the bottom, the view
+    /// upside down past them.
+    OverTheTop,
+}
+
 /// A side to look at the model from, like the faces of a view cube.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
@@ -70,7 +82,8 @@ impl View {
 ///
 /// The fields are private so the methods can keep the camera finite and
 /// bounded, which the depth range relies on: yaw finite, pitch within
-/// [`Self::PITCH_LIMIT`], the target within [`Self::EXTENT`] and the
+/// [`Self::PITCH_LIMIT`] (within a half turn, turned over the top by
+/// [`Rotation::OverTheTop`]), the target within [`Self::EXTENT`] and the
 /// distance from [`Self::MIN_DISTANCE`] to [`Self::EXTENT`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -78,7 +91,9 @@ pub struct Camera {
     target: Vec3,
     /// Rotation around the world Z axis, in radians.
     yaw: f32,
-    /// Elevation above the XY plane, in radians.
+    /// Elevation above the XY plane, in radians: past
+    /// [`Self::PITCH_LIMIT`], up to a half turn either way, it's over the
+    /// top, upside down.
     pitch: f32,
     /// At least [`Self::MIN_DISTANCE`].
     distance: f32,
@@ -222,14 +237,63 @@ impl Camera {
         }
     }
 
-    /// Rotates the camera around its target by the given angles in radians.
-    /// Non-finite angles are ignored.
+    /// Rotates the camera around its target by the given angles in radians,
+    /// as a turntable: [`Self::turn`]. Non-finite angles are ignored.
     pub fn orbit(&mut self, delta_yaw: f32, delta_pitch: f32) {
+        self.turn(Rotation::Turntable, delta_yaw, delta_pitch);
+    }
+
+    /// Rotates the camera around its target by the given angles in
+    /// radians, as `rotation` turns it: yaw about the world's Z, pitch up
+    /// or down, up to [`Self::PITCH_LIMIT`] as a turntable, on over the
+    /// top otherwise. Upside down, past the top, the yaw turns the other
+    /// way, so what's in view follows the drag as it does upright. A
+    /// turntable's turn starts from the view upright, see
+    /// [`Self::upright`]. Non-finite angles are ignored.
+    pub fn turn(&mut self, rotation: Rotation, delta_yaw: f32, delta_pitch: f32) {
+        use std::f32::consts::{PI, TAU};
         if !(delta_yaw.is_finite() && delta_pitch.is_finite()) {
             return;
         }
-        self.yaw = (self.yaw + delta_yaw).rem_euclid(std::f32::consts::TAU);
-        self.pitch = (self.pitch + delta_pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+        match rotation {
+            Rotation::Turntable => {
+                self.upright();
+                self.yaw = (self.yaw + delta_yaw).rem_euclid(TAU);
+                self.pitch =
+                    (self.pitch + delta_pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+            }
+            Rotation::OverTheTop => {
+                let delta_yaw = if self.upside_down() {
+                    -delta_yaw
+                } else {
+                    delta_yaw
+                };
+                self.yaw = (self.yaw + delta_yaw).rem_euclid(TAU);
+                // Within a half turn either way. Finite angles stay finite.
+                self.pitch = (self.pitch + delta_pitch + PI).rem_euclid(TAU) - PI;
+            }
+        }
+    }
+
+    /// Whether the view is upside down, turned over the top
+    /// ([`Rotation::OverTheTop`]): the world's Z down on screen. Not
+    /// within a thousandth of a radian of straight down or up, which rounding
+    /// may take a pitch past: righting that would turn the view a half
+    /// turn about its middle.
+    pub fn upside_down(&self) -> bool {
+        self.pitch.abs() > Self::PITCH_LIMIT + UPSIDE_DOWN_SLACK
+    }
+
+    /// Turns an upside-down view ([`Self::upside_down`]) the right way up:
+    /// the eye where it is, the view rolled a half turn. Otherwise does
+    /// nothing.
+    pub fn upright(&mut self) {
+        use std::f32::consts::{PI, TAU};
+        if self.upside_down() {
+            self.pitch =
+                (PI.copysign(self.pitch) - self.pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+            self.yaw = (self.yaw + PI).rem_euclid(TAU);
+        }
     }
 
     /// Rotates the camera around `pivot` by the given angles in radians,
@@ -238,14 +302,29 @@ impl Camera {
     /// stays within [`Self::EXTENT`] of the origin, and a pivot or angles
     /// that aren't finite are ignored.
     pub fn orbit_about(&mut self, pivot: Vec3, delta_yaw: f32, delta_pitch: f32) {
+        self.turn_about(Rotation::Turntable, pivot, delta_yaw, delta_pitch);
+    }
+
+    /// [`Self::orbit_about`], turning as `rotation` does, see
+    /// [`Self::turn`].
+    pub fn turn_about(
+        &mut self,
+        rotation: Rotation,
+        pivot: Vec3,
+        delta_yaw: f32,
+        delta_pitch: f32,
+    ) {
         if !(pivot.is_finite() && delta_yaw.is_finite() && delta_pitch.is_finite()) {
             return;
         }
         // The target from the pivot, in the view's axes, which the turn
         // keeps.
+        if rotation == Rotation::Turntable {
+            self.upright();
+        }
         let offset = self.target - pivot;
         let along = [self.right(), self.up(), self.backward()].map(|axis| offset.dot(axis));
-        self.orbit(delta_yaw, delta_pitch);
+        self.turn(rotation, delta_yaw, delta_pitch);
         let turned = self.right() * along[0] + self.up() * along[1] + self.backward() * along[2];
         let target = pivot + turned;
         if target.is_finite() {
@@ -322,6 +401,21 @@ impl Camera {
     pub fn lerp(&self, to: &Camera, t: f32) -> Camera {
         use std::f32::consts::{PI, TAU};
         let yaw = (to.yaw - self.yaw + PI).rem_euclid(TAU) - PI;
+        // Upside down at either end, the pitch too turns the short way
+        // round, over the top if that's shorter; upright at both, it
+        // turns through the side between them, never over the top.
+        let over = self.upside_down() || to.upside_down();
+        let pitch = if over {
+            (to.pitch - self.pitch + PI).rem_euclid(TAU) - PI
+        } else {
+            to.pitch - self.pitch
+        };
+        let pitch = self.pitch + pitch * t;
+        let pitch = if over {
+            (pitch + PI).rem_euclid(TAU) - PI
+        } else {
+            pitch.clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT)
+        };
         let distance = self.distance * (to.distance / self.distance).powf(t);
         // The target moves in step with the distance, not with `t`: the
         // view then scales about the one point that stays put on screen,
@@ -336,7 +430,7 @@ impl Camera {
         Camera {
             target: self.target.lerp(to.target, along),
             yaw: self.yaw + yaw * t,
-            pitch: self.pitch + (to.pitch - self.pitch) * t,
+            pitch,
             distance,
             ..*to
         }
@@ -374,6 +468,10 @@ impl Camera {
         }
     }
 }
+
+/// How far past straight down or up, in radians, a pitch may be and
+/// still not be [`Camera::upside_down`].
+const UPSIDE_DOWN_SLACK: f32 = 1e-3;
 
 /// How far from vertical, as the length of its horizontal part, a unit
 /// normal [`Camera::face`] turns to may be and still count as straight up

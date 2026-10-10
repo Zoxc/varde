@@ -283,3 +283,131 @@ fn zooming_at_a_point_keeps_it_where_it_shows() {
     camera.zoom_at(1e-30, 1e30, 0.0);
     assert!(camera.target().abs().max_element() <= Camera::EXTENT);
 }
+
+/// A turntable's pitch stops at straight down or up, as it always has.
+#[test]
+fn a_turntable_stops_at_the_top() {
+    let mut camera = Camera::default();
+    let mut turned = camera;
+    for _ in 0..10 {
+        camera.orbit(0.1, 0.5);
+        turned.turn(Rotation::Turntable, 0.1, 0.5);
+    }
+    assert_eq!(camera, turned);
+    assert_eq!(camera.pitch, Camera::PITCH_LIMIT);
+    assert!(!camera.upside_down());
+}
+
+/// Over the top, the view goes on turning, upside down, its basis whole
+/// and right-handed all the way, the eye's distance and the pitch's
+/// bounds kept, and back right side up past the bottom.
+#[test]
+fn over_the_top_goes_on_upside_down() {
+    let mut camera = Camera::default();
+    let distance = camera.distance();
+    let mut last_up = camera.up();
+    let mut was_upside_down = false;
+    for _ in 0..400 {
+        camera.turn(Rotation::OverTheTop, 0.0, 0.05);
+        let (right, up, backward) = (camera.right(), camera.up(), camera.backward());
+        assert!((right.length() - 1.0).abs() < 1e-5 && (up.length() - 1.0).abs() < 1e-5);
+        assert!(right.dot(up).abs() < 1e-5 && up.dot(backward).abs() < 1e-5);
+        assert!(close(right.cross(up), backward));
+        // No jump: each step turns the up vector a little.
+        assert!(up.dot(last_up) > 0.99, "{camera:?}");
+        last_up = up;
+        assert!(camera.pitch.abs() <= std::f32::consts::PI);
+        assert!((camera.eye() - camera.target()).length() - distance < 1e-3);
+        was_upside_down |= camera.upside_down();
+        if camera.upside_down() {
+            assert!(up.z < 0.0);
+        }
+    }
+    assert!(was_upside_down);
+}
+
+/// Upside down, a sideways drag turns the view the other way about Z, so
+/// what's under the pointer moves with it as it does upright.
+#[test]
+fn upside_down_the_yaw_follows_the_drag() {
+    let point = Vec3::new(1.0, 0.0, 0.0);
+    let moves = |camera: Camera| {
+        let mut turned = camera;
+        turned.turn(Rotation::OverTheTop, -0.01, 0.0);
+        let at = |camera: &Camera| (point - camera.target()).dot(camera.right());
+        at(&turned) - at(&camera)
+    };
+    let mut upright = Camera::default();
+    upright.look_from(View::Front);
+    let mut over = upright;
+    // Over the top, and on to the back seen upside down.
+    over.turn(Rotation::OverTheTop, 0.0, std::f32::consts::PI);
+    assert!(over.upside_down());
+    let (a, b) = (moves(upright), moves(over));
+    assert!(a != 0.0 && a.signum() == b.signum(), "{a} {b}");
+}
+
+/// Righting an upside-down view keeps the eye, and a turntable's turn
+/// rights it first.
+#[test]
+fn righting_keeps_the_eye() {
+    let mut camera = Camera::default();
+    camera.turn(Rotation::OverTheTop, 0.4, 2.0);
+    assert!(camera.upside_down());
+    let eye = camera.eye();
+    let mut righted = camera;
+    righted.upright();
+    assert!(!righted.upside_down());
+    assert!(close(righted.eye(), eye));
+    assert!(righted.up().z >= 0.0);
+    let mut turned = camera;
+    turned.orbit(0.0, 0.0);
+    assert!(close(turned.eye(), eye) && !turned.upside_down());
+    // Upright already, nothing changes.
+    let before = righted;
+    righted.upright();
+    assert_eq!(righted, before);
+}
+
+/// Orbiting over the top about a pivot keeps it where it shows.
+#[test]
+fn over_the_top_about_a_pivot_keeps_it_in_place() {
+    let mut camera = Camera::default();
+    let pivot = Vec3::new(3.0, -1.0, 2.0);
+    let shows = |camera: &Camera| {
+        let clip = camera.projection_matrix(1.5, 0.1..100.0) * camera.view() * pivot.extend(1.0);
+        clip.truncate().truncate() / clip.w
+    };
+    let before = shows(&camera);
+    camera.turn_about(Rotation::OverTheTop, pivot, 0.7, 2.5);
+    assert!(camera.upside_down());
+    assert!(shows(&camera).abs_diff_eq(before, 1e-4));
+}
+
+/// Animating to or from an upside-down view turns the short way, never
+/// leaving the pitch's bounds; between upright views it never goes over
+/// the top.
+#[test]
+fn lerp_over_the_top_turns_the_short_way() {
+    let mut from = Camera::default();
+    from.turn(Rotation::OverTheTop, 0.0, 2.6);
+    let mut to = Camera::default();
+    to.turn(Rotation::OverTheTop, 0.0, -std::f32::consts::PI - 0.4);
+    assert!(from.upside_down() && to.upside_down());
+    for step in 0..=20 {
+        let t = step as f32 / 20.0;
+        let camera = from.lerp(&to, t);
+        assert!(camera.pitch.abs() <= std::f32::consts::PI);
+    }
+    // The short way, across the bottom half turn, not through level.
+    let middle = from.lerp(&to, 0.5);
+    assert!(middle.pitch.abs() > 2.5, "{}", middle.pitch);
+    let mut down = Camera::default();
+    down.look_from(View::Bottom);
+    let mut up = Camera::default();
+    up.look_from(View::Top);
+    for step in 0..=20 {
+        let camera = down.lerp(&up, step as f32 / 20.0);
+        assert!(!camera.upside_down());
+    }
+}

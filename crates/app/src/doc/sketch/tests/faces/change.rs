@@ -300,6 +300,7 @@ fn an_undo_in_the_sketch_puts_it_back_on_its_face_and_turns_to_it() {
     doc.look(Look::Orbit {
         yaw: 0.0,
         pitch: -2.0,
+        about: None,
     });
     let bottom = face_on(&doc, -DVec3::Z, 0.0);
     doc.update(Edit::FacePicked(bottom));

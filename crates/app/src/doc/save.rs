@@ -328,13 +328,15 @@ pub(crate) enum Changes {
     Discard,
 }
 
-/// How long the document must go unedited before it's auto-saved.
+/// How long the document must go unedited before it's auto-saved, unless
+/// the settings say otherwise (natively).
 pub(crate) const AUTO_SAVE_IDLE: Duration = Duration::from_secs(3);
 /// The longest edits go without an auto-save while they keep coming.
 pub(crate) const AUTO_SAVE_MAX_WAIT: Duration = Duration::from_secs(120);
 
 /// When to auto-save, told by the ticks of a timer: once the document has
-/// gone [`AUTO_SAVE_IDLE`] without an edit, and at least every
+/// gone the pause the settings say ([`AUTO_SAVE_IDLE`] by default) without
+/// an edit, and at least every
 /// [`AUTO_SAVE_MAX_WAIT`] while edits keep coming. Edits are seen at ticks,
 /// by the editor revision changing.
 #[derive(Debug, Default)]
@@ -350,9 +352,16 @@ pub(crate) struct AutoSave {
 }
 
 impl AutoSave {
-    /// Whether to auto-save `revision` at `now`, if it's `wanted` at all.
-    /// Once it says so, it's taken to be sent.
-    pub(crate) fn due(&mut self, revision: Revision, wanted: bool, now: Instant) -> bool {
+    /// Whether to auto-save `revision` at `now`, if it's `wanted` at all,
+    /// once it has gone `idle` without an edit. Once it says so, it's
+    /// taken to be sent.
+    pub(crate) fn due(
+        &mut self,
+        revision: Revision,
+        wanted: bool,
+        now: Instant,
+        idle: Duration,
+    ) -> bool {
         if !wanted || self.sent == Some(revision) {
             self.seen = None;
             self.since = None;
@@ -366,7 +375,7 @@ impl AutoSave {
             }
         };
         let since = *self.since.get_or_insert(now);
-        let idle = now.saturating_duration_since(changed) >= AUTO_SAVE_IDLE;
+        let idle = now.saturating_duration_since(changed) >= idle;
         let waited = now.saturating_duration_since(since) >= AUTO_SAVE_MAX_WAIT;
         if idle || waited {
             self.sent = Some(revision);
@@ -786,17 +795,22 @@ impl Doc {
     }
 
     /// Sends the document to be auto-saved if it's time to, see
-    /// [`AutoSave`]. Only an editable document with unsaved changes and a
-    /// file to auto-save to is, and not while offering to restore what a
-    /// crashed session auto-saved.
-    pub(crate) fn auto_save(&mut self, cx: &mut Files, now: Instant) {
+    /// [`AutoSave`], after editing has paused for `pause`, or never
+    /// without one (auto-save turned off in the settings). Only an
+    /// editable document with unsaved changes and a file to auto-save to
+    /// is, and not while offering to restore what a crashed session
+    /// auto-saved. Undone back to as saved, what was auto-saved is taken
+    /// back all the same.
+    pub(crate) fn auto_save(&mut self, cx: &mut Files, now: Instant, pause: Option<Duration>) {
         self.roll_back_auto_save(&mut cx.io);
         let file = self.auto_save_file();
-        if self
-            .persist
-            .auto_save
-            .due(self.editor.revision(), file.is_some(), now)
-            && let Some(file) = file
+        let wanted = file.is_some() && pause.is_some();
+        if self.persist.auto_save.due(
+            self.editor.revision(),
+            wanted,
+            now,
+            pause.unwrap_or(AUTO_SAVE_IDLE),
+        ) && let Some(file) = file
         {
             self.send_auto_save(&mut cx.io, file);
         }

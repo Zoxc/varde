@@ -107,7 +107,8 @@ impl<'a> Measuring<'a> {
             y: glam::DVec3::Y,
             normal: glam::DVec3::Z,
         };
-        let shown = varde_expr::format(gap.distance, Some(self.state.units.into()));
+        let shown =
+            varde_expr::Shown::current().format(gap.distance, Some(self.state.units.into()));
         let chip = container(
             text(shown)
                 .size(12)

@@ -16,7 +16,7 @@ mod renderer;
 mod scene;
 mod sketch;
 
-pub use camera::{Camera, Projection, View};
+pub use camera::{Camera, Projection, Rotation, View};
 pub use highlight::{Highlights, Vertex};
 pub use preview::{PreviewError, PreviewImage, PreviewShot, frame, render_preview};
 pub use renderer::{

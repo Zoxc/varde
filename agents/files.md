@@ -25,8 +25,15 @@ the root of OPFS). They hold what the settings page sets (`view/src/settings.rs`
 "The settings page" in `viewport.md`): the theme, Auto (iced's system
 theme, light when the system doesn't say), Light or Dark; the view
 options (the status bar's menu's too: Mouse hints, Hidden edges, Names,
-the projection, shading and edges); and the length unit a new design
-starts in (`Document::in_units`; a design opened keeps its own). The app
+the projection, shading and edges); the length unit a new design
+starts in (`Document::in_units`; a design opened keeps its own); the
+interface scale, the angle unit and decimal places values are shown in
+(app-wide, never in a design), the mouse's settings, and natively the
+auto-save pause (see "Auto-save") and how many recent designs are kept
+(10, 25, 50 or 100, the default, `varde_io::recent::MAX`: lowered, the
+list drops its oldest and is written so, `Recent::keep`, on arrival too
+if the settings came first). Values outside the sets offered (a scale of
+110 %, 7 decimals) read as the defaults. The app
 keeps them in `Varde::options`, a `ViewOptions`; `app/src/settings.rs`
 maps them to what's stored. Each is written as chosen, though not before
 the stored settings have arrived; one chosen before then wins over them,
@@ -60,9 +67,17 @@ with the design's permission bits (the umask may only take some away).
 **Auto-save.** A timer ticks every second while an editable document is
 open (natively a small thread, since iced's thread pool executor has no
 timer; on the web iced's `time::every`, on the browser's timers). Once the
-document has unsaved changes and has gone three seconds without an edit,
+document has unsaved changes and has gone three seconds without an edit
+(natively the settings' Auto-save pause: Off, 3 s, the default, 10 s or
+30 s, `auto_save_pause`; the web always 3 s),
 or two minutes have passed since the first edit not auto-saved while edits
-keep coming, the app sends the lane a snapshot to auto-save. It goes to the sidecar, never the design's own file, so Save
+keep coming, the app sends the lane a snapshot to auto-save. Off, edits
+are never auto-saved, so a crash loses those since the last save; all
+else stays: the sidecar is still made and locked (one editor per
+document), what a crashed session left is still offered, undoing back to
+the saved state still empties the sidecar of what an earlier auto-save
+put there, and restoring recovered changes still writes them back
+(`Doc::auto_save_now`). It goes to the sidecar, never the design's own file, so Save
 keeps its meaning and a synced file isn't touched on every edit. The
 sidecar is a `.vrdp` like the design, appended to through the handle the
 lane holds the lock on: `DocumentFile`'s own lock per operation would be

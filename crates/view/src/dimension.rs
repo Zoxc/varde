@@ -6,7 +6,7 @@
 use std::f64::consts::{PI, TAU};
 
 use glam::DVec2;
-use varde_expr::{LengthUnit, format};
+use varde_expr::{LengthUnit, Shown, format};
 use varde_sketch::{
     Curve, Dimension, Handle, Id, Kind, Measure, Role, Selectable, Side, Sketch, arc_sweep,
 };
@@ -386,14 +386,16 @@ pub fn rectangle(sketch: &Sketch, selected: &[Id]) -> Option<(f64, f64)> {
 /// `measure` and its `value`, in model units, as the status bar shows it
 /// in a design in `units`: "Length 40 mm", "Diameter 10 mm".
 pub fn shown_measure(measure: &Measure, value: f64, units: LengthUnit) -> String {
-    let value = format(value, measure.quantity().unit(units));
+    let shown = Shown::current();
+    let value = shown.format(value, shown.unit(measure.quantity(), units));
     format!("{} {value}", name(measure))
 }
 
 /// `value`, in model units, as a dimension of `measure` shows it in a
 /// design in `units`: "40 mm", "90°", "R 5 mm", "Ø 10 mm".
 fn shown_value(measure: &Measure, value: f64, units: LengthUnit) -> String {
-    let value = format(value, measure.quantity().unit(units));
+    let shown = Shown::current();
+    let value = shown.format(value, shown.unit(measure.quantity(), units));
     match measure {
         Measure::Radius(_) => format!("R {value}"),
         Measure::Diameter(_) => format!("Ø {value}"),
@@ -438,13 +440,18 @@ pub fn size_note(
 
 /// Where the point `at` is, in `units`, as its row in the Geometry list
 /// notes it: "10 mm, -5 mm", in at most `room` characters if it can be. Each
-/// coordinate is rounded to as many of the unit's decimals as fit, the
+/// coordinate is rounded to as many of the decimals values are shown with
+/// ([`Shown`]: the unit's own unless chosen) as fit, the
 /// same for both, without trailing zeros, and marked `≈` where what's
 /// shown isn't its value exactly. Past `room` even whole, it's whole.
 pub fn point_note(at: DVec2, units: LengthUnit, room: usize) -> String {
     let symbol = units.symbol();
     let mut note = String::new();
-    for decimals in (0..=units.decimals()).rev() {
+    let most = match Shown::current().decimals {
+        Some(places) => usize::from(places.min(Shown::MAX_DECIMALS)),
+        None => units.decimals(),
+    };
+    for decimals in (0..=most).rev() {
         let [x, y] = [at.x, at.y].map(|value| rounded(value / units.mm(), decimals));
         note = format!("{x} {symbol}, {y} {symbol}");
         if note.chars().count() <= room {

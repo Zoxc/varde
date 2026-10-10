@@ -246,7 +246,11 @@ fn write_png(path: &std::path::Path, size: Size<u32>, rgba: &[u8]) {
 /// finished.
 fn aim(doc: &mut Doc, yaw: f32, pitch: f32, zoom: f32) {
     old_home(doc);
-    doc.look(Look::Orbit { yaw, pitch });
+    doc.look(Look::Orbit {
+        yaw,
+        pitch,
+        about: None,
+    });
     doc.look(Look::Zoom {
         factor: zoom,
         x: 0.0,
@@ -851,6 +855,7 @@ fn shots_12_odd_cameras() {
         doc.look(Look::Orbit {
             yaw: 0.3,
             pitch: 0.05,
+            about: None,
         });
         camera.take(&doc, "12-grazing-perspective", Shot::new());
         doc.look(Look::SetProjection(Projection::Orthographic));
@@ -967,6 +972,7 @@ fn shots_16_pivot() {
         doc.look(Look::Orbit {
             yaw: 0.6,
             pitch: 0.3,
+            about: None,
         });
         camera.take(&doc, "16-pivot", Shot::new());
         camera.take(&doc, "16-pivot-dark-scale2", Shot::new().dark().scale(2.0));

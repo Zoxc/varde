@@ -390,7 +390,10 @@ impl Varde {
         // which the IO lane's answer would come after: so it doesn't open
         // light and turn dark. The lane's answer still follows.
         #[cfg(not(target_arch = "wasm32"))]
-        Settings::preview(varde_io::settings::read_now(), &mut app.options);
+        {
+            Settings::preview(varde_io::settings::read_now(), &mut app.options);
+            app.options_changed();
+        }
         let storage = if app.files.browser_storage {
             storage_state()
         } else {
@@ -482,8 +485,9 @@ impl Varde {
             }
             Message::Ui(Ui::File(message)) => return self.file(message),
             Message::AutoSaveTick(now) => {
+                let pause = auto_save_pause(&self.options);
                 return self.step(|doc, cx| {
-                    doc.auto_save(cx, now);
+                    doc.auto_save(cx, now, pause);
                     doc.thumbnail_overdue(cx, now)
                 });
             }
@@ -637,10 +641,15 @@ impl Varde {
     }
 
     /// Has the open document take the options as they are now: their
-    /// projection, its camera's.
+    /// projection, its camera's, and how it's turned; the values shown
+    /// as they say; and the recent files kept as many as they say.
     fn options_changed(&mut self) {
-        let projection = self.options.projection;
-        self.with_doc(|doc, _| doc.set_projection(projection));
+        let options = self.options;
+        options.shown().set();
+        self.with_doc(|doc, _| doc.take_options(&options));
+        if let Some(write) = self.files.recent.keep(usize::from(options.recent_designs)) {
+            self.files.io.send(write);
+        }
     }
 
     /// Takes `message`, from the settings page itself.
@@ -651,6 +660,7 @@ impl Varde {
             SettingsPage::SetLengthUnit(unit) => {
                 self.choose(Key::LengthUnit, |options| options.length_unit = unit);
             }
+            SettingsPage::Set(setting) => self.set(setting),
             // With nothing to reset, the button is off.
             SettingsPage::AskReset => {
                 self.page.resetting = !varde_view::changed_settings(self.options).is_empty();
@@ -666,6 +676,66 @@ impl Varde {
                     }
                 }
             }
+        }
+    }
+
+    /// Sets `setting`, from the settings page, if it's a value the page
+    /// offers: others are ignored.
+    fn set(&mut self, setting: varde_view::Setting) {
+        use varde_view::{AUTO_SAVE_PAUSES, INTERFACE_SCALES, RECENT_DESIGNS, Setting};
+        match setting {
+            Setting::InterfaceScale(percent) if INTERFACE_SCALES.contains(&percent) => {
+                self.choose(Key::InterfaceScale, |options| {
+                    options.interface_scale = percent;
+                });
+            }
+            Setting::AngleUnit(unit) => {
+                self.choose(Key::AngleUnit, |options| options.angle_unit = unit);
+            }
+            Setting::Decimals(decimals)
+                if decimals.is_none_or(|count| count <= varde_expr::Shown::MAX_DECIMALS) =>
+            {
+                self.choose(Key::Decimals, |options| options.decimals = decimals);
+            }
+            Setting::LeftDrag(action) => {
+                self.choose(Key::LeftDrag, |options| options.mouse.left = action);
+            }
+            Setting::MiddleDrag(action) => {
+                self.choose(Key::MiddleDrag, |options| options.mouse.middle = action);
+            }
+            Setting::RightDrag(action) => {
+                self.choose(Key::RightDrag, |options| options.mouse.right = action);
+            }
+            Setting::Rotation(rotation) => {
+                self.choose(Key::Rotation, |options| options.mouse.rotation = rotation);
+            }
+            Setting::RotationPoint(point) => self.choose(Key::RotationPoint, |options| {
+                options.mouse.rotation_point = point;
+            }),
+            Setting::PivotClick(click) => {
+                self.choose(Key::PivotClick, |options| options.mouse.pivot_click = click);
+            }
+            Setting::WheelDownZoomsIn(down) => self.choose(Key::ZoomDirection, |options| {
+                options.mouse.wheel_down_zooms_in = down;
+            }),
+            Setting::ZoomToPointer(on) => {
+                self.choose(Key::ZoomToPointer, |options| {
+                    options.mouse.zoom_to_pointer = on
+                });
+            }
+            Setting::SketchSnap(on) => {
+                self.choose(Key::SketchSnap, |options| options.mouse.sketch_snap = on);
+            }
+            Setting::AutoSave(seconds) if AUTO_SAVE_PAUSES.contains(&seconds) => {
+                self.choose(Key::AutoSave, |options| options.auto_save = seconds);
+            }
+            Setting::RecentDesigns(count) if RECENT_DESIGNS.contains(&count) => {
+                self.choose(Key::RecentDesigns, |options| options.recent_designs = count);
+            }
+            Setting::InterfaceScale(_)
+            | Setting::Decimals(_)
+            | Setting::AutoSave(_)
+            | Setting::RecentDesigns(_) => {}
         }
     }
 
@@ -760,8 +830,8 @@ impl Varde {
                 Task::none()
             }
             Next::Show(mut doc) => {
-                // In the projection of the settings.
-                doc.set_projection(self.options.projection);
+                // In the projection of the settings, turned as they say.
+                doc.take_options(&self.options);
                 self.screen = Screen::Document(doc);
                 Task::none()
             }
@@ -933,6 +1003,8 @@ impl Varde {
     }
 
     pub(crate) fn view(&self) -> Element<'_, Message> {
+        // The view's functions show values as the settings say.
+        self.options.shown().set();
         let settings = self.page.open.then(|| varde_view::SettingsState {
             options: self.options,
             tab: self.page.tab,
@@ -1140,6 +1212,12 @@ impl Varde {
         self.options.theme.mode(self.system)
     }
 
+    /// How large the UI is drawn, the model aside: the interface scale
+    /// chosen, over the system's.
+    fn scale_factor(&self) -> f32 {
+        self.options.scale_factor()
+    }
+
     pub(crate) fn theme(&self) -> iced::Theme {
         varde_view::iced_theme(self.mode())
     }
@@ -1164,6 +1242,16 @@ fn doc_lane<L, S: Stream>(
 
     stream::once(future::ready(Message::Doc(id, ready(lane))))
         .chain(responses.map(move |response| Message::Doc(id, answer(response))))
+}
+
+/// How long editing pauses before a document is auto-saved, as the
+/// settings say, or `None` for never: natively. The web, which has no
+/// such setting, always auto-saves after [`doc::AUTO_SAVE_IDLE`].
+fn auto_save_pause(options: &ViewOptions) -> Option<std::time::Duration> {
+    if cfg!(target_arch = "wasm32") {
+        return Some(doc::AUTO_SAVE_IDLE);
+    }
+    (options.auto_save > 0).then(|| std::time::Duration::from_secs(options.auto_save.into()))
 }
 
 /// Whether `message` still acts while the window waits for the IO lane to
@@ -1530,6 +1618,7 @@ pub fn run() -> Result {
         .title(Varde::title)
         .subscription(Varde::subscription)
         .theme(Varde::theme)
+        .scale_factor(Varde::scale_factor)
         .settings(iced::Settings {
             default_text_size: 13.into(),
             antialiasing: true,

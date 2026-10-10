@@ -756,10 +756,10 @@ pub(crate) fn move_note(moved: &varde_document::Move, units: LengthUnit) -> Stri
     let angle = moved.turn.as_ref().map(|(_, angle)| angle.value);
     let mut parts = Vec::new();
     if shift != 0.0 || angle.is_none_or(|angle| angle == 0.0) {
-        parts.push(varde_expr::format(shift, Some(units.into())));
+        parts.push(varde_expr::Shown::current().format(shift, Some(units.into())));
     }
     if let Some(angle) = angle.filter(|&angle| angle != 0.0) {
-        parts.push(varde_expr::format(angle, Some(DEGREES)));
+        parts.push(varde_expr::Shown::current().format(angle, Some(DEGREES)));
     }
     parts.join(" ")
 }
@@ -773,7 +773,7 @@ pub(crate) fn move_info(document: &Document, moved: &varde_document::Move) -> St
     if moved.offset.iter().any(|value| value.value != 0.0) {
         let symbol = format!(" {}", Unit::from(units).symbol());
         let [x, y, z] = moved.offset.each_ref().map(|value| {
-            let shown = varde_expr::format(value.value, Some(units.into()));
+            let shown = varde_expr::Shown::current().format(value.value, Some(units.into()));
             shown
                 .strip_suffix(&symbol)
                 .map(str::to_owned)
@@ -784,7 +784,7 @@ pub(crate) fn move_info(document: &Document, moved: &varde_document::Move) -> St
     if let Some((axis, angle)) = &moved.turn
         && angle.value != 0.0
     {
-        let angle = varde_expr::format(angle.value, Some(DEGREES));
+        let angle = varde_expr::Shown::current().format(angle.value, Some(DEGREES));
         parts.push(format!("{angle} about {}", axis_name(document, axis)));
     }
     if parts.is_empty() {
@@ -825,13 +825,14 @@ pub fn pattern_copies(document: &Document, pattern: &Pattern) -> String {
     let joined = if pattern.joins() { " · joined" } else { "" };
     match &pattern.kind {
         PatternKind::Linear { spacing, .. } => {
-            let step = varde_expr::format(spacing.value.abs(), Some(document.units().into()));
+            let step = varde_expr::Shown::current()
+                .format(spacing.value.abs(), Some(document.units().into()));
             let flipped = if spacing.value < 0.0 { ", flipped" } else { "" };
             format!("{count} × {step} along {axis}{flipped}{joined}")
         }
         PatternKind::Circular { .. } => {
             let step = pattern.step_degrees().unwrap_or(0.0).to_radians();
-            let step = varde_expr::format(step, Some(DEGREES));
+            let step = varde_expr::Shown::current().format(step, Some(DEGREES));
             format!("{count} × {step} about {axis}{joined}")
         }
     }
@@ -869,7 +870,7 @@ pub(crate) fn scale_note(scale: &varde_document::Scale, units: LengthUnit) -> St
         ScaleFactor::PerAxis(values) => format!("×{}", values.each_ref().map(factor).join(" · ")),
         ScaleFactor::EdgeLength { length, .. } => format!(
             "edge → {}",
-            varde_expr::format(length.value, Some(units.into()))
+            varde_expr::Shown::current().format(length.value, Some(units.into()))
         ),
     }
 }
@@ -936,7 +937,7 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
             match angle {
                 Some(angle) => format!(
                     "{bodies} · {} about {axis}",
-                    varde_expr::format(angle, Some(DEGREES))
+                    varde_expr::Shown::current().format(angle, Some(DEGREES))
                 ),
                 None => bodies,
             }

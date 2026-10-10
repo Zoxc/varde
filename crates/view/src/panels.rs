@@ -588,14 +588,14 @@ pub(crate) fn turn_info(turn: &varde_document::Turn) -> String {
     }
 }
 
-/// An angle of `radians`, in degrees: "90°".
+/// An angle of `radians`, as angles are shown: "90°".
 pub(crate) fn angle_note(radians: f64) -> String {
-    varde_expr::format(radians, Some(varde_expr::AngleUnit::Deg.into()))
+    varde_expr::Shown::current().format(radians, Some(varde_expr::AngleUnit::Deg.into()))
 }
 
 /// A distance of an extrude in `units`: "10 mm".
 pub(crate) fn length_note(value: &varde_expr::Value, units: LengthUnit) -> String {
-    varde_expr::format(value.value, Some(units.into()))
+    varde_expr::Shown::current().format(value.value, Some(units.into()))
 }
 
 /// A row of a list that's selected by clicking it: an icon, a name, and a

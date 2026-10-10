@@ -122,7 +122,7 @@ impl Value {
     fn size(label: &'static str, value: f64, units: LengthUnit, power: Power) -> Value {
         Value {
             label,
-            shown: varde_expr::format_power(value, units, power),
+            shown: varde_expr::Shown::current().format_power(value, units, power),
             copied: varde_expr::full_power(value, units, power),
         }
     }
@@ -131,13 +131,14 @@ impl Value {
         Value::size(label, value, units, Power::Length)
     }
 
-    /// An angle, in radians, shown in degrees.
+    /// An angle, in radians, shown and copied as angles are shown.
     fn angle(label: &'static str, radians: f64) -> Value {
         let degrees = Some(Unit::Angle(AngleUnit::Deg));
+        let shown = varde_expr::Shown::current();
         Value {
             label,
-            shown: varde_expr::format(radians, degrees),
-            copied: varde_expr::full(radians, degrees),
+            shown: shown.format(radians, degrees),
+            copied: shown.full(radians, degrees),
         }
     }
 
@@ -154,7 +155,7 @@ impl Value {
         };
         Value {
             label,
-            shown: join(&|x| varde_expr::format_number(x, unit)),
+            shown: join(&|x| varde_expr::Shown::current().format_number(x, unit)),
             copied: join(&|x| varde_expr::full_number(x, unit)),
         }
     }

@@ -62,9 +62,9 @@ use pick::ModelPick;
 use rail::Rail;
 pub(crate) use revolve::RevolveSession;
 use save::Persist;
+pub(crate) use save::{AUTO_SAVE_IDLE, Downloader, Leave, Target};
 #[cfg(test)]
 pub(crate) use save::{AutoSave, Picking};
-pub(crate) use save::{Downloader, Leave, Target};
 use sketch::GEOMETRY_SHARE;
 #[cfg(test)]
 pub(crate) use sketch::Refusal;
@@ -231,6 +231,8 @@ pub(crate) struct Doc {
     before_show: Option<(Camera, Option<Pivot>)>,
     /// The point picked for the camera to orbit, if one was.
     pivot: Option<Pivot>,
+    /// How dragging turns the camera, as the settings say.
+    rotation: varde_render::Rotation,
     /// Whether the cursor is over the view cube, where the pivot is
     /// marked.
     cube_hovered: bool,
@@ -455,6 +457,7 @@ impl Doc {
             panel_before_sketch: None,
             before_show: None,
             pivot: None,
+            rotation: varde_render::Rotation::default(),
             cube_hovered: false,
             pick: ModelPick::default(),
             rail: Rail::default(),
@@ -1301,7 +1304,7 @@ impl Doc {
                     session.constraint_scroll = offset;
                 }
             }
-            Look::Orbit { yaw, pitch } => self.orbit(yaw, pitch),
+            Look::Orbit { yaw, pitch, about } => self.orbit(yaw, pitch, about),
             Look::Pan { dx, dy } => {
                 self.animation = None;
                 self.camera.pan(dx, dy);
@@ -1586,6 +1589,33 @@ impl Doc {
                 self.proposals_settled(cx)
             }
             ForDoc::Thumbnail(tag, image) => self.thumbnail_rendered(cx, tag, image),
+        }
+    }
+
+    /// Takes the settings in `options` the camera follows: the projection,
+    /// how dragging turns it (a turntable rights the view, should it be
+    /// upside down) and the point it orbits (forgotten unless picked by a
+    /// click).
+    pub(crate) fn take_options(&mut self, options: &ViewOptions) {
+        use varde_render::Rotation;
+        self.set_projection(options.projection);
+        self.rotation = options.mouse.rotation;
+        if self.rotation == Rotation::Turntable {
+            self.camera.upright();
+            if let Some(animation) = &mut self.animation {
+                animation.from.upright();
+                animation.to.upright();
+            }
+            // As are the views gone back to.
+            let kept = (self.before_sketch.iter_mut())
+                .chain(self.before_show.iter_mut().map(|(camera, _)| camera));
+            kept.for_each(Camera::upright);
+        }
+        if options.mouse.rotation_point != varde_view::RotationPoint::Clicked {
+            self.pivot = None;
+            if let Some((_, pivot)) = &mut self.before_show {
+                *pivot = None;
+            }
         }
     }
 

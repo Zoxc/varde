@@ -1,19 +1,26 @@
-//! The user's settings, as stored: the theme chosen, the view options
-//! (the status bar's menu's, on the settings page too) and the units new
-//! designs start in.
+//! The user's settings, as stored: the theme chosen and the interface
+//! scale, the view options (the status bar's menu's, on the settings page
+//! too), the units new designs start in and how values are shown, what
+//! the mouse does, and natively the auto-save pause and how many recent
+//! designs are kept.
 //!
 //! The IO lane stores them (see [`varde_io::settings`]) and hands them over
 //! once read at startup; until then they're the defaults, the system's
 //! theme, the hints shown and so on. The app keeps them in its
 //! [`ViewOptions`], and this what's stored of them.
 
+use varde_expr::AngleUnit;
 use varde_io::Request as IoRequest;
 use varde_io::settings::{
-    Edges as StoredEdges, Projection as StoredProjection, Settings as Stored,
-    Shading as StoredShading, Theme,
+    AngleUnit as StoredAngleUnit, AutoSave, Decimals, Drag, Edges as StoredEdges, InterfaceScale,
+    Projection as StoredProjection, RecentDesigns, Rotation as StoredRotation,
+    RotationPoint as StoredRotationPoint, SetRotationPoint, Settings as Stored,
+    Shading as StoredShading, Theme, ZoomDirection,
 };
-use varde_render::{Projection, Shading};
-use varde_view::{Edges, ThemeChoice, ViewOptions};
+use varde_render::{Projection, Rotation, Shading};
+use varde_view::{
+    DragAction, Edges, MouseOptions, PivotClick, RotationPoint, ThemeChoice, ViewOptions,
+};
 
 /// A setting, each chosen on its own: the one chosen before the stored
 /// settings arrive wins over what they say.
@@ -27,10 +34,24 @@ pub(crate) enum Key {
     Shading,
     Edges,
     LengthUnit,
+    InterfaceScale,
+    AngleUnit,
+    Decimals,
+    LeftDrag,
+    MiddleDrag,
+    RightDrag,
+    Rotation,
+    RotationPoint,
+    PivotClick,
+    ZoomDirection,
+    ZoomToPointer,
+    SketchSnap,
+    AutoSave,
+    RecentDesigns,
 }
 
 impl Key {
-    pub(crate) const ALL: [Key; 8] = [
+    pub(crate) const ALL: [Key; 22] = [
         Key::Theme,
         Key::MouseHints,
         Key::HiddenEdges,
@@ -39,6 +60,20 @@ impl Key {
         Key::Shading,
         Key::Edges,
         Key::LengthUnit,
+        Key::InterfaceScale,
+        Key::AngleUnit,
+        Key::Decimals,
+        Key::LeftDrag,
+        Key::MiddleDrag,
+        Key::RightDrag,
+        Key::Rotation,
+        Key::RotationPoint,
+        Key::PivotClick,
+        Key::ZoomDirection,
+        Key::ZoomToPointer,
+        Key::SketchSnap,
+        Key::AutoSave,
+        Key::RecentDesigns,
     ];
 
     /// Takes this setting of `from` into `to`.
@@ -52,6 +87,20 @@ impl Key {
             Key::Shading => to.shading = from.shading,
             Key::Edges => to.edges = from.edges,
             Key::LengthUnit => to.length_unit = from.length_unit,
+            Key::InterfaceScale => to.interface_scale = from.interface_scale,
+            Key::AngleUnit => to.angle_unit = from.angle_unit,
+            Key::Decimals => to.decimals = from.decimals,
+            Key::LeftDrag => to.mouse.left = from.mouse.left,
+            Key::MiddleDrag => to.mouse.middle = from.mouse.middle,
+            Key::RightDrag => to.mouse.right = from.mouse.right,
+            Key::Rotation => to.mouse.rotation = from.mouse.rotation,
+            Key::RotationPoint => to.mouse.rotation_point = from.mouse.rotation_point,
+            Key::PivotClick => to.mouse.pivot_click = from.mouse.pivot_click,
+            Key::ZoomDirection => to.mouse.wheel_down_zooms_in = from.mouse.wheel_down_zooms_in,
+            Key::ZoomToPointer => to.mouse.zoom_to_pointer = from.mouse.zoom_to_pointer,
+            Key::SketchSnap => to.mouse.sketch_snap = from.mouse.sketch_snap,
+            Key::AutoSave => to.auto_save = from.auto_save,
+            Key::RecentDesigns => to.recent_designs = from.recent_designs,
         }
     }
 }
@@ -149,6 +198,57 @@ fn options_of(stored: Stored) -> ViewOptions {
             StoredEdges::Tessellation => Edges::Tessellation,
         },
         length_unit: stored.length_unit,
+        interface_scale: stored.interface_scale.percent(),
+        angle_unit: match stored.angle_unit {
+            StoredAngleUnit::Deg => AngleUnit::Deg,
+            StoredAngleUnit::Rad => AngleUnit::Rad,
+        },
+        decimals: match stored.decimals {
+            Decimals::Auto => None,
+            Decimals::Places(count) => Some(count),
+        },
+        mouse: MouseOptions {
+            left: drag_of(stored.left_drag),
+            middle: drag_of(stored.middle_drag),
+            right: drag_of(stored.right_drag),
+            rotation: match stored.rotation {
+                StoredRotation::Turntable => Rotation::Turntable,
+                StoredRotation::OverTheTop => Rotation::OverTheTop,
+            },
+            rotation_point: match stored.rotation_point {
+                StoredRotationPoint::Clicked => RotationPoint::Clicked,
+                StoredRotationPoint::Pointer => RotationPoint::Pointer,
+                StoredRotationPoint::Centre => RotationPoint::Centre,
+            },
+            pivot_click: match stored.set_rotation_point {
+                SetRotationPoint::MiddleClick => PivotClick::Middle,
+                SetRotationPoint::MiddleDoubleClick => PivotClick::MiddleDouble,
+                SetRotationPoint::ShiftMiddleClick => PivotClick::ShiftMiddle,
+            },
+            wheel_down_zooms_in: stored.zoom_direction == ZoomDirection::WheelDown,
+            zoom_to_pointer: stored.zoom_to_pointer,
+            sketch_snap: stored.sketch_snap,
+        },
+        auto_save: stored.auto_save.seconds(),
+        recent_designs: stored.recent_designs.count(),
+    }
+}
+
+fn drag_of(stored: Drag) -> DragAction {
+    match stored {
+        Drag::Orbit => DragAction::Orbit,
+        Drag::Pan => DragAction::Pan,
+        Drag::Zoom => DragAction::Zoom,
+        Drag::Nothing => DragAction::Nothing,
+    }
+}
+
+fn stored_drag(drag: DragAction) -> Drag {
+    match drag {
+        DragAction::Orbit => Drag::Orbit,
+        DragAction::Pan => Drag::Pan,
+        DragAction::Zoom => Drag::Zoom,
+        DragAction::Nothing => Drag::Nothing,
     }
 }
 
@@ -179,6 +279,43 @@ pub(crate) fn stored_of(options: ViewOptions) -> Stored {
             Edges::Tessellation => StoredEdges::Tessellation,
         },
         length_unit: options.length_unit,
+        // Values the page doesn't offer, which it never sets, are stored
+        // as the defaults.
+        interface_scale: InterfaceScale::try_from(options.interface_scale).unwrap_or_default(),
+        angle_unit: match options.angle_unit {
+            AngleUnit::Deg => StoredAngleUnit::Deg,
+            AngleUnit::Rad => StoredAngleUnit::Rad,
+        },
+        decimals: options
+            .decimals
+            .and_then(Decimals::places)
+            .unwrap_or_default(),
+        left_drag: stored_drag(options.mouse.left),
+        middle_drag: stored_drag(options.mouse.middle),
+        right_drag: stored_drag(options.mouse.right),
+        rotation: match options.mouse.rotation {
+            Rotation::Turntable => StoredRotation::Turntable,
+            Rotation::OverTheTop => StoredRotation::OverTheTop,
+        },
+        rotation_point: match options.mouse.rotation_point {
+            RotationPoint::Clicked => StoredRotationPoint::Clicked,
+            RotationPoint::Pointer => StoredRotationPoint::Pointer,
+            RotationPoint::Centre => StoredRotationPoint::Centre,
+        },
+        set_rotation_point: match options.mouse.pivot_click {
+            PivotClick::Middle => SetRotationPoint::MiddleClick,
+            PivotClick::MiddleDouble => SetRotationPoint::MiddleDoubleClick,
+            PivotClick::ShiftMiddle => SetRotationPoint::ShiftMiddleClick,
+        },
+        zoom_direction: if options.mouse.wheel_down_zooms_in {
+            ZoomDirection::WheelDown
+        } else {
+            ZoomDirection::WheelUp
+        },
+        zoom_to_pointer: options.mouse.zoom_to_pointer,
+        sketch_snap: options.mouse.sketch_snap,
+        auto_save: AutoSave::try_from(options.auto_save).unwrap_or_default(),
+        recent_designs: RecentDesigns::try_from(options.recent_designs).unwrap_or_default(),
     }
 }
 

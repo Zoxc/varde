@@ -28,6 +28,7 @@ mod loft;
 pub use loft::loft_info;
 mod measure;
 mod motion;
+mod mouse;
 mod mouse_only;
 mod names;
 mod offset_face;
@@ -102,6 +103,7 @@ pub use motion::{
     SweepPart, SweepPath, SweepView, align_info, axis_name, direction_name, pattern_copies,
     plane_name, point_name, scale_info, split_info,
 };
+pub use mouse::{DragAction, MouseOptions, PivotClick, Rotation, RotationPoint};
 pub use offset_face::offset_info;
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
@@ -119,7 +121,7 @@ pub use revolve::{
 };
 pub use select::{Selected, Selection, SelectionMode, SketchItem};
 pub use settings::{
-    KeptIn, SettingChange, SettingsPage, SettingsState, SettingsTab, changed_settings,
+    KeptIn, Setting, SettingChange, SettingsPage, SettingsState, SettingsTab, changed_settings,
 };
 pub use shell::shell_info;
 pub use shortcut::{
@@ -239,6 +241,45 @@ pub struct ViewOptions {
     pub theme: ThemeChoice,
     /// The units a new design starts in. A design opened keeps its own.
     pub length_unit: LengthUnit,
+    /// How large the UI is drawn, the model aside, in percent of the
+    /// system's scale: one of [`INTERFACE_SCALES`].
+    pub interface_scale: u16,
+    /// How angles are shown, in every design: see [`varde_expr::Shown`].
+    pub angle_unit: varde_expr::AngleUnit,
+    /// The most decimal places values are shown with, in every design,
+    /// up to [`varde_expr::Shown::MAX_DECIMALS`], or `None` for each
+    /// unit's own: see [`varde_expr::Shown`].
+    pub decimals: Option<u8>,
+    /// What the mouse does in the viewport.
+    pub mouse: MouseOptions,
+    /// The seconds editing pauses before a design is auto-saved, one of
+    /// [`AUTO_SAVE_PAUSES`], 0 for never: natively only.
+    pub auto_save: u16,
+    /// How many recent designs are kept, one of [`RECENT_DESIGNS`]:
+    /// natively only.
+    pub recent_designs: u16,
+}
+
+/// The interface scales the settings offer, in percent.
+pub const INTERFACE_SCALES: [u16; 4] = [90, 100, 125, 150];
+/// The auto-save pauses the settings offer, in seconds, 0 for off.
+pub const AUTO_SAVE_PAUSES: [u16; 4] = [0, 3, 10, 30];
+/// The counts of recent designs the settings offer.
+pub const RECENT_DESIGNS: [u16; 4] = [10, 25, 50, 100];
+
+impl ViewOptions {
+    /// How values are shown in these settings.
+    pub fn shown(&self) -> varde_expr::Shown {
+        varde_expr::Shown {
+            angle: self.angle_unit,
+            decimals: self.decimals,
+        }
+    }
+
+    /// The interface scale as a factor, 1 for 100 %.
+    pub fn scale_factor(&self) -> f32 {
+        f32::from(self.interface_scale) / 100.0
+    }
 }
 
 impl Default for ViewOptions {
@@ -252,6 +293,12 @@ impl Default for ViewOptions {
             projection: Projection::default(),
             theme: ThemeChoice::default(),
             length_unit: LengthUnit::default(),
+            interface_scale: 100,
+            angle_unit: varde_expr::AngleUnit::Deg,
+            decimals: None,
+            mouse: MouseOptions::default(),
+            auto_save: 3,
+            recent_designs: 100,
         }
     }
 }
@@ -912,6 +959,10 @@ pub enum Look {
     Orbit {
         yaw: f32,
         pitch: f32,
+        /// The point to turn about for this drag, picked where it
+        /// started ([`crate::RotationPoint::Pointer`]), if one was: else the one
+        /// the app has, or the view's middle.
+        about: Option<glam::Vec3>,
     },
     Pan {
         dx: f32,

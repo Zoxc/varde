@@ -1,8 +1,8 @@
 # Settings page
 
-A design for an app settings page, built but for what's tagged
-"Proposed" in the mock and the angle unit and decimal places (see
-"The settings page" in `agents/viewport.md`). The mock shows it:
+A design for an app settings page, built (see "The settings page" in
+`agents/viewport.md`) but for a trackball rotation (see "Mouse"). The
+mock shows it:
 `notes/ui-mock/` on every page, opened with the gear or `/settings` in the
 address (`model.html#bracket/settings`, `welcome.html#/settings/web`).
 
@@ -48,7 +48,10 @@ With every setting already the default, the button is off.
 
 **Appearance**
 
-- Theme: System, Light, Dark (`ThemeChoice`). Stored now.
+- Theme: System, Light, Dark (`ThemeChoice`).
+- Interface scale: 90 %, 100 % (default), 125 %, 150 %, for everything
+  but the model (iced's `scale_factor`, over the system's; the web takes
+  the same `iced_winit` path).
 
 **View**, how the viewport draws the model. These are the view options
 menu's (the status bar's `⋯`): the menu stays, a quick way to the same
@@ -62,59 +65,83 @@ settings, and a change in either shows in both.
   beside their names.
 - Hidden edges, Names, Mouse hints: switches.
 
-Only the theme and mouse hints are stored now (`varde_io::settings`); the
-rest are `ViewOptions` reset each run. Storing them adds keys to
-`settings.toml`, read each on its own as the module describes, so old
+All are stored (`varde_io::settings`), each key read on its own, so old
 files keep working.
 
-**Units**, the defaults for a new design. A live sample under the
-heading shows a length and an angle as they would be shown.
+**Units.** A live sample under the heading shows a length and an angle
+as they're shown.
 
-- Length: mm (default), cm, m, in, ft (`varde_expr::LengthUnit`). For
-  sizes typed without a unit, and how sizes are shown.
-- Angle: Degrees (default), Radians.
-- Decimal places: 0 to 6, at most, trailing zeros left out, default 3,
-  mm's now (`LengthUnit::decimals`; the app has a count per unit, 3 for
-  mm and degrees). Only what's shown; typed values keep their precision.
+- Length: mm (default), cm, m, in, ft (`varde_expr::LengthUnit`), the
+  units a new design starts in, stored in it: for sizes typed without a
+  unit, and how sizes are shown. A design opened keeps its own.
+- Angle: Degrees (default), Radians. App-wide, not stored in designs:
+  how angles are shown. Angles typed without a unit stay degrees, as a
+  design's texts must evaluate as they did.
+- Decimal places: Auto (default), or 0 to 6 with a stepper, at most,
+  trailing zeros left out. App-wide. Auto is each unit's own count, as
+  the app has always shown (`LengthUnit::decimals`: 3 for mm, 4 for cm
+  and in, 6 for m, 5 for ft; 3 for degrees, 5 for radians), so the
+  default changes nothing; the stepper starts from the length unit's.
+  Only what's shown (labels, readouts, the status bar, notes): fields
+  filled in to be taken, and dimensions made where the geometry is, keep
+  each unit's count and degrees, so the setting never changes the model
+  (`varde_expr::Shown`).
 
-Units per design mean the units are stored in the
-document, which is a `.vrdp` change and needs the user's permission
-first. Until then they could be app-wide only, with every document read
-and shown in them; the stored values stay in mm either way.
+**Mouse.** Each defaults to what the app did before it was a setting.
+
+- A drag action per button, each Orbit, Pan, Zoom or Nothing
+  (`DragKind::for_button`, `agents/viewport.md`):
+  - Left: Orbit (default). Outside a sketch only; a click still selects.
+  - Middle: Orbit (default). Set to Nothing, its click still sets the
+    rotation point.
+  - Right: Pan (default). Shift held still orbits.
+  - A zoom drag zooms in going up, about where it started.
+- **Rotation,** how a drag turns the view: Turntable (default: yaw about
+  Z and pitch clamped to `Camera::PITCH_LIMIT`, so Z stays up), Turntable
+  over the top (no pitch limit, the view can go upside down; the yaw then
+  turns the other way so the model follows the pointer; back to
+  Turntable, the view is set right side up, the eye kept). A free
+  trackball isn't built: `Camera` is yaw and pitch, with no roll, and its
+  animations, the view cube and `Camera::face` rely on that; it needs an
+  orientation (a quaternion, or a roll) in its place.
+- **Rotation point,** what the view orbits about: a clicked point
+  (default, `Look::SetPivot`, else the view's target), the point under
+  the pointer where each drag starts (no marker shown; off the model and
+  grid, the middle), or the view's centre always. Leaving Clicked forgets
+  the clicked point.
+- **Set rotation point with,** with Clicked: Middle click (default, any
+  middle click, with Shift or not), Middle double-click, Shift + middle
+  click. On the model or grid it sets the point, elsewhere back to the
+  centre. The left button is left out: its modifiers are taken (Ctrl
+  adds to the selection, Alt places a reference, a double-click selects
+  the body).
+- **Zoom direction** (wheel up zooms in, default) and **zoom to pointer**
+  (on, default, `Camera::zoom_at`; off zooms about the middle).
+- **Snapping** in sketch tools, on (default), Shift to not snap; off,
+  tools and dragged points snap only while Shift is held, the status
+  bar's hint saying "Snap". There is no grid snapping in the app to turn
+  off: this was "Snap to grid" in the first draft, but what Shift frees
+  is the snapping to points, curves and directions.
+
+The status bar's mouse hints follow the buttons as set.
+
+**Files (desktop only;** the tab isn't on the web, which always
+auto-saves after 3 s and has no recent files list).
+
+- Auto-save after a pause in editing: Off, 3 s (default), 10 s, 30 s;
+  the 2 min cap while edits keep coming stays. Off, edits are never
+  auto-saved, so a crash loses what wasn't saved; the sidecar lock,
+  recovery offers, emptying it on undoing back to the saved state, and
+  writing restored changes back all stay (`agents/files.md`).
+- Recent designs kept: 10, 25, 50, 100 (default,
+  `varde_io::recent::MAX`). Lowered, the oldest are dropped and the list
+  stored so.
 
 ## Suggested
 
-Tagged "Proposed" in the mock. Each defaults to what the app does now,
-so storing none of them changes nothing.
+Not built; others to consider:
 
-- **Interface scale:** 90 %, 100 %, 125 %, 150 %, for everything but the
-  model (iced's `scale_factor`).
-- **Mouse,** a drag action per button, each Orbit, Pan, Zoom or Nothing
-  (`DragKind::for_button`, `agents/viewport.md`):
-  - Left: Orbit (default). Outside a sketch only; a click still selects.
-  - Middle: Orbit (default).
-  - Right: Pan (default). Shift held still orbits.
-- **Rotation,** how a drag turns the view: Turntable (default, today's:
-  yaw about Z and pitch clamped to `Camera::PITCH_LIMIT`, so Z stays up),
-  Turntable over the top (no pitch limit, the view can go upside down),
-  Trackball (free, about the view's axes).
-- **Rotation point,** what the view orbits about: a clicked point
-  (default, `Look::SetPivot`, else the view's target), the point under
-  the pointer where each drag starts, or the view's centre always.
-- **Set rotation point with,** with Clicked: Middle click (default, today's), Middle
-  double-click, Shift + middle click. On the model or grid it sets the
-  point, elsewhere back to the centre. The left button is left out: its
-  modifiers are taken (Ctrl adds to the selection, Alt places a
-  reference, a double-click selects the body).
-- **Zoom direction** (wheel up zooms in, default) and **zoom to pointer**
-  (on, default, `Camera::zoom_at`; off zooms about the middle).
-- **Snap to grid** in sketch tools, on (default), Shift to not snap.
-- **Files (desktop):** auto-save after a pause in editing: Off, 3 s
-  (default, today's pause; the 2 min cap while edits keep coming stays),
-  10 s, 30 s. Recent designs kept: 10, 25, 50, 100 (default,
-  `varde_io::recent::MAX`).
-
-Others to consider:
+- Trackball rotation (see "Mouse").
 
 - Grid spacing: automatic with the zoom, or fixed.
 - Selection colour or accent colour.
@@ -132,19 +159,22 @@ Others to consider:
 - `Message::CycleTheme` becomes `SetTheme(ThemeChoice)`; a new
   `ToggleSettings` opens and closes the page. The settings set by the page
   and by the menu are the same messages.
-- Stored through `Settings::chose_*` as theme and mouse hints are now,
-  each setting with its own "chosen before loading" flag, or a set of
-  them.
+- Stored through `Settings::chose`, each setting with its own "chosen
+  before loading" flag (`settings::Key`). The page's own settings come
+  as `SettingsPage::Set(Setting)`.
 - The page is a pure view in `crates/view/src/settings.rs`.
-- Bounds: steppers clamp (decimal places 0 to 6, recent designs 0 to 30);
-  a stored value out of range reads as the default.
+- Bounds: the decimal places stepper stops at 0 and 6; a value the page
+  doesn't offer (a scale of 110 %, 7 places, a pause of 5 s) is ignored
+  as set and read as the default as stored.
 - Tests, headless: toggling and Escape; `SetTheme` stores; viewport input
   is off while open; an open operation is still there after closing;
   light and dark screenshots of the page beside the existing shots.
 
 ## Open questions
 
-1. Should units be per design (a `.vrdp` change) or app-wide?
+1. Should units be per design (a `.vrdp` change) or app-wide? The
+   length unit is per design (a new one's from the settings); the angle
+   unit and decimal places are app-wide, display only.
 2. Should Mouse hints stay in the view options menu as well as here?
 3. Should the side panel stay beside the page, or should the page fill
    everything under the toolbar?

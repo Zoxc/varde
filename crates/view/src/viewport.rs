@@ -29,9 +29,10 @@ use varde_render::{
 };
 
 use crate::anchors::Anchors;
-use crate::chrome::{Hint, chord_hint, mouse_hint};
+use crate::chrome::{Hint, chord_hint, double_hint, mouse_hint};
 use crate::errors::ShownErrors;
 use crate::icons::MouseButton;
+use crate::mouse::{DragAction, MouseOptions, PivotClick, RotationPoint};
 use crate::operation_panel::placed;
 use crate::overlaps::{self, OverlapItem, OverlapItems, Overlaps};
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
@@ -71,6 +72,9 @@ pub(crate) const CONTROLS_TOP: f32 = 10.0;
 
 const ORBIT_SPEED: f32 = 0.008;
 const ZOOM_PER_LINE: f32 = 0.9;
+/// A drag set to zoom ([`DragAction::Zoom`]) zooms in this much a pixel
+/// up, out a pixel down.
+const ZOOM_PER_DRAG_PIXEL: f32 = 0.995;
 /// Natively pixels come from touchpads, a few per event.
 #[cfg(not(target_arch = "wasm32"))]
 const ZOOM_PER_PIXEL: f32 = 0.995;
@@ -231,10 +235,12 @@ pub(crate) fn viewport<'a>(
         };
         knobs.unwrap_or_else(|| iced::widget::Space::new().into())
     });
+    let sketching = sketching.map(|sketching| sketching.snapping(options.mouse.sketch_snap));
     let mut program = Program {
         picking,
         highlight: highlight.cloned().unwrap_or_else(|| NO_HIGHLIGHT.clone()),
         aspect,
+        mouse: options.mouse,
         ..program(mesh, sketches, camera, pivot, palette, sketching, operating)
     };
     program.scene.hidden_edges = options.hidden_edges;
@@ -314,6 +320,7 @@ fn program<'a>(
         highlight: NO_HIGHLIGHT.clone(),
         sketch_colors: palette.sketching,
         aspect: None,
+        mouse: MouseOptions::default(),
     }
 }
 
@@ -349,6 +356,8 @@ struct Program<'a> {
     /// before it has: another is published ([`Look::ViewAspect`]). `None`
     /// where nothing listens, as in a thumbnail's or a test's.
     aspect: Option<f32>,
+    /// What the mouse does, as the settings say.
+    mouse: MouseOptions,
 }
 
 /// How far, as a share of it, the viewport's width over its height may
@@ -406,45 +415,94 @@ struct Scene {
 enum DragKind {
     Orbit,
     Pan,
+    Zoom,
+    /// Nothing, the button held only for its click: the middle one's,
+    /// setting the point orbited about, or the left one's, selecting.
+    Still,
 }
 
 impl DragKind {
     /// What dragging with `button` while `modifiers` are held does, if
-    /// anything, in a sketch if `sketching`. The middle button, and the
-    /// right one with [`Held::ORBIT`], orbit, the right one pans, and the
-    /// left one orbits too outside a sketch; in a sketch it's for selecting
-    /// and editing geometry instead. Keep [`hints`] and `README.md` in step.
+    /// anything, in a sketch if `sketching`, as `mouse` sets each button:
+    /// by default the middle button, and the right one with
+    /// [`Held::ORBIT`], orbit, the right one pans, and the left one orbits
+    /// too outside a sketch; in a sketch it's for selecting and editing
+    /// geometry instead. The right one with [`Held::ORBIT`] orbits
+    /// whatever it's set to. Keep [`hints`] and `README.md` in step.
     fn for_button(
         button: mouse::Button,
         modifiers: keyboard::Modifiers,
         sketching: bool,
+        mouse: &MouseOptions,
     ) -> Option<Self> {
-        match button {
-            mouse::Button::Middle => Some(DragKind::Orbit),
-            mouse::Button::Right if Held::ORBIT.is_held(modifiers) => Some(DragKind::Orbit),
-            mouse::Button::Right => Some(DragKind::Pan),
-            mouse::Button::Left if !sketching => Some(DragKind::Orbit),
-            _ => None,
+        let action = match button {
+            mouse::Button::Middle => mouse.middle,
+            mouse::Button::Right if Held::ORBIT.is_held(modifiers) => DragAction::Orbit,
+            mouse::Button::Right => mouse.right,
+            mouse::Button::Left if !sketching => mouse.left,
+            _ => DragAction::Nothing,
+        };
+        match action {
+            DragAction::Orbit => Some(DragKind::Orbit),
+            DragAction::Pan => Some(DragKind::Pan),
+            DragAction::Zoom => Some(DragKind::Zoom),
+            DragAction::Nothing => None,
         }
     }
 }
 
-/// The status bar hints for the viewport's mouse bindings, in a sketch if
-/// `sketching`, see [`DragKind::for_button`], and the middle click
-/// picking the point to orbit. Orbiting with the middle button isn't
-/// hinted: it's the wheel's icon, which zooms.
-pub fn hints<'a>(sketching: bool) -> [Hint<'a>; 4] {
-    let orbit = if sketching {
-        chord_hint(Held::ORBIT, MouseButton::Right, "Orbit")
+/// What a drag of `action` does, as a status bar hint says it: "Orbit".
+fn drag_said(action: DragAction) -> &'static str {
+    match action {
+        DragAction::Orbit => "Orbit",
+        DragAction::Pan => "Pan",
+        DragAction::Zoom => "Zoom",
+        DragAction::Nothing => "",
+    }
+}
+
+/// The status bar hints for the viewport's mouse bindings as `mouse` sets
+/// them, in a sketch if `sketching`, see [`DragKind::for_button`], and the
+/// click picking the point to orbit. Orbiting with the middle button isn't
+/// hinted: it's the wheel's icon, which zooms; panning or zooming with
+/// it is. By default: the left button's orbit (in a sketch `Shift` and
+/// the right's), the right's pan, the wheel's zoom and the middle click.
+pub fn hints<'a>(sketching: bool, mouse: &MouseOptions) -> Vec<Hint<'a>> {
+    let left = if sketching {
+        (mouse.right != DragAction::Orbit)
+            .then(|| chord_hint(Held::ORBIT, MouseButton::Right, "Orbit"))
     } else {
-        mouse_hint(MouseButton::Left, "Drag to orbit")
+        let drag = match mouse.left {
+            DragAction::Orbit => Some("Drag to orbit"),
+            DragAction::Pan => Some("Drag to pan"),
+            DragAction::Zoom => Some("Drag to zoom"),
+            DragAction::Nothing => None,
+        };
+        drag.map(|label| mouse_hint(MouseButton::Left, label))
     };
+    let right = (mouse.right != DragAction::Nothing)
+        .then(|| mouse_hint(MouseButton::Right, drag_said(mouse.right)));
+    let middle = match mouse.middle {
+        DragAction::Pan => Some("Drag to pan"),
+        DragAction::Zoom => Some("Drag to zoom"),
+        DragAction::Orbit | DragAction::Nothing => None,
+    }
+    .map(|label| mouse_hint(MouseButton::Wheel, label));
+    let pivot = (mouse.rotation_point == RotationPoint::Clicked).then(|| match mouse.pivot_click {
+        PivotClick::Middle => mouse_hint(MouseButton::Wheel, "Click to set pivot"),
+        PivotClick::MiddleDouble => double_hint(MouseButton::Wheel, "Set pivot"),
+        PivotClick::ShiftMiddle => chord_hint(Held::FREE, MouseButton::Wheel, "Set pivot"),
+    });
     [
-        orbit,
-        mouse_hint(MouseButton::Right, "Pan"),
-        mouse_hint(MouseButton::Wheel, "Zoom"),
-        mouse_hint(MouseButton::Wheel, "Click to set pivot"),
+        left,
+        right,
+        middle,
+        Some(mouse_hint(MouseButton::Wheel, "Zoom")),
+        pivot,
     ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 #[derive(Default)]
@@ -467,6 +525,15 @@ struct Interaction {
     /// The last left click on the model, when and where, to tell a
     /// double-click by.
     last_click: Option<(iced::time::Instant, DVec2)>,
+    /// The last middle click, when and where, to tell a double-click by,
+    /// where that sets the point orbited about ([`PivotClick::MiddleDouble`]).
+    last_middle: Option<(iced::time::Instant, DVec2)>,
+    /// The point on the model or grid an orbit drag turns about, picked
+    /// under the pointer where it started ([`RotationPoint::Pointer`]):
+    /// `None` for the view's middle, or as the app has it.
+    orbit_about: Option<glam::Vec3>,
+    /// Where the drag held now started: what a zoom drag zooms about.
+    drag_start: Point,
     /// The camera, the model and the cursor position the cursor's pick
     /// was last worked out for: it's worked out again as any changes.
     hover_seen: Option<(Camera, u64, Point)>,
@@ -612,7 +679,8 @@ impl shader::Program<Message> for Program<'_> {
         match state.drag {
             Some((DragKind::Orbit, _)) => mouse::Interaction::Grabbing,
             Some((DragKind::Pan, _)) => mouse::Interaction::Move,
-            None => self
+            Some((DragKind::Zoom, _)) => mouse::Interaction::ResizingVertically,
+            Some((DragKind::Still, _)) | None => self
                 .sketching
                 .as_ref()
                 .and_then(|sketching| sketching.mouse_interaction(&state.sketch, bounds, cursor))
@@ -925,6 +993,34 @@ impl Program<'_> {
         (self.sketching.as_ref()).is_some_and(Sketching::picks_outside)
     }
 
+    /// The point on the model or grid at `at` in the viewport's `bounds`,
+    /// if there's one there, to orbit about.
+    fn pivot_at(&self, bounds: Rectangle, at: Point) -> Option<glam::Vec3> {
+        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        pivot::pick(
+            &self.scene.mesh,
+            &self.scene.camera,
+            [bounds.width, bounds.height],
+            at,
+            self.sketching.as_ref().map(Sketching::placement),
+        )
+    }
+
+    /// Where a zoom with the pointer at `at` zooms about, right and down
+    /// of the viewport's middle in fractions of its height (`bounds`,
+    /// which must have some): the pointer, or with
+    /// [`MouseOptions::zoom_to_pointer`] off the middle.
+    fn zoom_offset(&self, bounds: Rectangle, at: Point) -> (f32, f32) {
+        if !self.mouse.zoom_to_pointer {
+            return (0.0, 0.0);
+        }
+        let center = bounds.center();
+        (
+            (at.x - center.x) / bounds.height,
+            (at.y - center.y) / bounds.height,
+        )
+    }
+
     /// Takes the mouse `event` as a move of the camera: orbiting, panning
     /// and zooming.
     fn camera(
@@ -937,14 +1033,24 @@ impl Program<'_> {
         match event {
             mouse::Event::ButtonPressed(button) => {
                 let position = cursor.position_over(bounds)?;
-                let kind = DragKind::for_button(button, state.modifiers, self.sketching())?;
-                state.drag = Some((kind, position));
+                let sketching = self.sketching();
                 let clicks = match button {
-                    mouse::Button::Middle => true,
-                    mouse::Button::Left => self.picking.is_some(),
+                    // Only where it sets the point orbited about.
+                    mouse::Button::Middle => self.mouse.rotation_point == RotationPoint::Clicked,
+                    mouse::Button::Left => !sketching && self.picking.is_some(),
                     _ => false,
                 };
+                let kind = DragKind::for_button(button, state.modifiers, sketching, &self.mouse)
+                    .or(clicks.then_some(DragKind::Still))?;
+                state.drag = Some((kind, position));
+                state.drag_start = position;
                 state.click = clicks.then_some(position);
+                // Turning about the point under the pointer: picked where
+                // the drag starts, for all of it.
+                state.orbit_about = (kind == DragKind::Orbit
+                    && self.mouse.rotation_point == RotationPoint::Pointer)
+                    .then(|| self.pivot_at(bounds, position))
+                    .flatten();
                 // Held still on the model, it lists what overlaps there.
                 let lists = button == mouse::Button::Left && self.picking.is_some();
                 state.held = lists.then(iced::time::Instant::now);
@@ -1014,14 +1120,18 @@ impl Program<'_> {
                 let Some(at) = click else {
                     return Some(Action::capture());
                 };
-                let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
-                let pivot = pivot::pick(
-                    &self.scene.mesh,
-                    &self.scene.camera,
-                    [bounds.width, bounds.height],
-                    at,
-                    self.sketching.as_ref().map(Sketching::placement),
-                );
+                // The click that sets the point orbited about, as the
+                // settings have it.
+                let local = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+                let sets = match self.mouse.pivot_click {
+                    PivotClick::Middle => true,
+                    PivotClick::MiddleDouble => sketch::double_click(&mut state.last_middle, local),
+                    PivotClick::ShiftMiddle => Held::FREE.is_held(state.modifiers),
+                };
+                if !sets {
+                    return Some(Action::capture());
+                }
+                let pivot = self.pivot_at(bounds, at);
                 Some(Action::publish(Message::Look(Look::SetPivot(pivot))).and_capture())
             }
             mouse::Event::CursorMoved { position } => {
@@ -1033,16 +1143,36 @@ impl Program<'_> {
                     state.click = None;
                     state.held = None;
                 }
+                // Past a click, a button held only for its click is done
+                // with: the cursor hovers again.
+                if matches!(state.drag, Some((DragKind::Still, _))) {
+                    state.drag = None;
+                    return Some(Action::capture());
+                }
                 // Uses the raw position so drags continue over UI panels.
+                let from = state.drag_start;
                 let (kind, last) = state.drag.as_mut()?;
                 let delta = position - *last;
                 *last = position;
 
                 let message = match kind {
+                    DragKind::Still => return None,
                     DragKind::Orbit => Message::Look(Look::Orbit {
                         yaw: -delta.x * ORBIT_SPEED,
                         pitch: delta.y * ORBIT_SPEED,
+                        about: state.orbit_about,
                     }),
+                    // Up zooms in, about where the drag started if
+                    // zooming follows the pointer.
+                    DragKind::Zoom if bounds.height < 1.0 => return None,
+                    DragKind::Zoom => {
+                        let (x, y) = self.zoom_offset(bounds, from);
+                        Message::Look(Look::Zoom {
+                            factor: ZOOM_PER_DRAG_PIXEL.powf(-delta.y),
+                            x,
+                            y,
+                        })
+                    }
                     // A collapsed viewport has no height to scale the pan by.
                     DragKind::Pan if bounds.height < 1.0 => return None,
                     DragKind::Pan => Message::Look(Look::Pan {
@@ -1058,21 +1188,20 @@ impl Program<'_> {
                 if bounds.height < 1.0 {
                     return None;
                 }
+                // Turned up, the wheel zooms in, unless set the other way.
+                let way = if self.mouse.wheel_down_zooms_in {
+                    -1.0
+                } else {
+                    1.0
+                };
                 let factor = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => ZOOM_PER_LINE.powf(y),
-                    mouse::ScrollDelta::Pixels { y, .. } => ZOOM_PER_PIXEL.powf(y),
+                    mouse::ScrollDelta::Lines { y, .. } => ZOOM_PER_LINE.powf(y * way),
+                    mouse::ScrollDelta::Pixels { y, .. } => ZOOM_PER_PIXEL.powf(y * way),
                 };
                 #[cfg(target_arch = "wasm32")]
                 let factor = factor.clamp(ZOOM_PER_LINE, ZOOM_PER_LINE.recip());
-                let center = bounds.center();
-                Some(
-                    Action::publish(Message::Look(Look::Zoom {
-                        factor,
-                        x: (position.x - center.x) / bounds.height,
-                        y: (position.y - center.y) / bounds.height,
-                    }))
-                    .and_capture(),
-                )
+                let (x, y) = self.zoom_offset(bounds, position);
+                Some(Action::publish(Message::Look(Look::Zoom { factor, x, y })).and_capture())
             }
             _ => None,
         }

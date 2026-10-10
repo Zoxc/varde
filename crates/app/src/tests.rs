@@ -22,8 +22,8 @@ use varde_view::{Edit, MeshStatus, Panel, RowMenu, Welcome as WelcomeUi};
 
 use super::*;
 use crate::doc::{
-    AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, PIVOT_FADE, PIVOT_SHOWN, Picking,
-    Recovery, Refusal, Target,
+    AUTO_SAVE_IDLE, AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, PIVOT_FADE, PIVOT_SHOWN,
+    Picking, Recovery, Refusal, Target,
 };
 
 #[test]
@@ -58,6 +58,7 @@ fn the_camera_orbits_the_pivot_picked_until_home() {
     doc.look(Look::Orbit {
         yaw: 0.4,
         pitch: -0.3,
+        about: None,
     });
     let after = screen(&doc.camera);
     assert!((after.0 - before.0).abs() < 1e-4 && (after.1 - before.1).abs() < 1e-4);
@@ -69,6 +70,7 @@ fn the_camera_orbits_the_pivot_picked_until_home() {
     doc.look(Look::Orbit {
         yaw: 0.4,
         pitch: -0.3,
+        about: None,
     });
     assert_eq!(doc.camera.target(), target);
     // And so does Home.
@@ -80,6 +82,7 @@ fn the_camera_orbits_the_pivot_picked_until_home() {
     doc.look(Look::Orbit {
         yaw: 0.4,
         pitch: -0.3,
+        about: None,
     });
     assert_eq!(doc.camera.target(), target);
 }
@@ -146,6 +149,7 @@ fn an_opened_document_frames_its_first_model_unless_the_camera_moved() {
     doc.look(Look::Orbit {
         yaw: 0.4,
         pitch: -0.3,
+        about: None,
     });
     let moved = doc.camera;
     answer(&mut doc, &requests);
@@ -657,6 +661,7 @@ fn computed_message_shows_a_late_model() {
     doc.look(Look::Orbit {
         yaw: 0.1,
         pitch: 0.0,
+        about: None,
     });
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Regenerating);
     assert_eq!(doc.feed.sketches().segment_count(), 0);
@@ -1144,6 +1149,7 @@ fn a_read_only_document_refuses_edits_but_moves_the_camera() {
     let _ = varde.update(Message::Ui(Ui::Look(Look::Orbit {
         yaw: 0.3,
         pitch: 0.1,
+        about: None,
     })));
     assert_ne!(document(&varde).camera, camera);
 }
@@ -1171,6 +1177,7 @@ fn a_refused_edit_is_shown() {
     doc.look(Look::Orbit {
         yaw: 0.1,
         pitch: 0.0,
+        about: None,
     });
     assert!(doc.edit_error.is_some());
     doc.update(Edit::Undo);
@@ -2373,21 +2380,66 @@ fn auto_save_waits_for_a_pause_in_editing() {
         ..AutoSave::default()
     };
     // Nothing edited.
-    assert!(!auto_save.due(Revision::from(0), true, at(0)));
-    assert!(!auto_save.due(Revision::from(0), true, at(100)));
+    assert!(!auto_save.due(Revision::from(0), true, at(0), AUTO_SAVE_IDLE));
+    assert!(!auto_save.due(Revision::from(0), true, at(100), AUTO_SAVE_IDLE));
     // Edited at 101 and 102, then left alone.
-    assert!(!auto_save.due(Revision::from(1), true, at(101)));
-    assert!(!auto_save.due(Revision::from(2), true, at(102)));
-    assert!(!auto_save.due(Revision::from(2), true, at(104)));
-    assert!(auto_save.due(Revision::from(2), true, at(105)));
+    assert!(!auto_save.due(Revision::from(1), true, at(101), AUTO_SAVE_IDLE));
+    assert!(!auto_save.due(Revision::from(2), true, at(102), AUTO_SAVE_IDLE));
+    assert!(!auto_save.due(Revision::from(2), true, at(104), AUTO_SAVE_IDLE));
+    assert!(auto_save.due(Revision::from(2), true, at(105), AUTO_SAVE_IDLE));
     // Sent: not again.
-    assert!(!auto_save.due(Revision::from(2), true, at(200)));
+    assert!(!auto_save.due(Revision::from(2), true, at(200), AUTO_SAVE_IDLE));
     // Not wanted, e.g. saved meanwhile, or read-only.
-    assert!(!auto_save.due(Revision::from(3), false, at(201)));
-    assert!(!auto_save.due(Revision::from(3), false, at(300)));
+    assert!(!auto_save.due(Revision::from(3), false, at(201), AUTO_SAVE_IDLE));
+    assert!(!auto_save.due(Revision::from(3), false, at(300), AUTO_SAVE_IDLE));
     // Wanted again: the pause counts from when it was first seen wanted.
-    assert!(!auto_save.due(Revision::from(3), true, at(301)));
-    assert!(auto_save.due(Revision::from(3), true, at(304)));
+    assert!(!auto_save.due(Revision::from(3), true, at(301), AUTO_SAVE_IDLE));
+    assert!(auto_save.due(Revision::from(3), true, at(304), AUTO_SAVE_IDLE));
+}
+
+/// The pause the settings choose: 3 s, as always, by default; 10 s or
+/// 30 s; and the two-minute cap while edits keep coming, whatever the
+/// pause.
+#[test]
+fn auto_save_waits_for_the_pause_chosen() {
+    assert_eq!(AUTO_SAVE_IDLE, SECOND * 3);
+    assert_eq!(
+        crate::auto_save_pause(&varde_view::ViewOptions::default()),
+        Some(AUTO_SAVE_IDLE)
+    );
+    for (seconds, pause) in [(3u16, 3u64), (10, 10), (30, 30)] {
+        let options = varde_view::ViewOptions {
+            auto_save: seconds,
+            ..varde_view::ViewOptions::default()
+        };
+        assert_eq!(
+            crate::auto_save_pause(&options),
+            Some(SECOND * pause as u32)
+        );
+        let start = Instant::now();
+        let at = |seconds: u64| start + SECOND * seconds as u32;
+        let mut auto_save = AutoSave {
+            sent: Some(Revision::from(0)),
+            ..AutoSave::default()
+        };
+        let idle = SECOND * pause as u32;
+        assert!(!auto_save.due(Revision::from(1), true, at(10), idle));
+        assert!(!auto_save.due(Revision::from(1), true, at(10 + pause - 1), idle));
+        assert!(auto_save.due(Revision::from(1), true, at(10 + pause), idle));
+        // Edits every second for five minutes still save every two.
+        let mut saved = Vec::new();
+        for second in 1..=300u64 {
+            if auto_save.due(Revision::from(second + 1), true, at(100 + second), idle) {
+                saved.push(second);
+            }
+        }
+        assert_eq!(saved, [121, 242], "{seconds}");
+    }
+    let off = varde_view::ViewOptions {
+        auto_save: 0,
+        ..varde_view::ViewOptions::default()
+    };
+    assert_eq!(crate::auto_save_pause(&off), None);
 }
 
 #[test]
@@ -2400,7 +2452,12 @@ fn auto_save_comes_every_two_minutes_while_edits_keep_coming() {
     let mut saved = Vec::new();
     // An edit every second for five minutes.
     for second in 1..=300u64 {
-        if auto_save.due(Revision::from(second), true, start + SECOND * second as u32) {
+        if auto_save.due(
+            Revision::from(second),
+            true,
+            start + SECOND * second as u32,
+            AUTO_SAVE_IDLE,
+        ) {
             saved.push(second);
         }
     }
@@ -2477,6 +2534,47 @@ fn an_edited_document_is_auto_saved_once_idle() {
     sent(&requests);
     tick(&mut varde, start, 60);
     assert!(sent(&requests).is_empty());
+}
+
+/// The pause chosen in the settings is the one waited for; with
+/// auto-save off nothing is auto-saved however long editing pauses, but
+/// undoing back to the saved state still takes back what an earlier
+/// auto-save left, and Save still saves.
+#[test]
+fn auto_save_follows_the_setting() {
+    let (mut varde, requests) = with_open_file();
+    varde.options.auto_save = 10;
+    let start = Instant::now();
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
+    tick(&mut varde, start, 0);
+    tick(&mut varde, start, 3);
+    tick(&mut varde, start, 9);
+    assert!(sent(&requests).is_empty());
+    tick(&mut varde, start, 10);
+    assert_eq!(auto_saves(&sent(&requests)), [(0, 1)]);
+
+    varde.options.auto_save = 0;
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
+    for seconds in [11, 14, 40, 200, 400] {
+        tick(&mut varde, start, seconds);
+    }
+    assert!(auto_saves(&sent(&requests)).is_empty());
+    // Undone back to as saved, the auto-save of the first edit is taken
+    // back all the same.
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::Undo)));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::Undo)));
+    tick(&mut varde, start, 401);
+    assert!(
+        sent(&requests)
+            .iter()
+            .any(|request| matches!(request, IoRequest::DiscardRecovery { .. }))
+    );
+    // On again, the next pause auto-saves.
+    varde.options.auto_save = 3;
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
+    tick(&mut varde, start, 402);
+    tick(&mut varde, start, 405);
+    assert_eq!(auto_saves(&sent(&requests)).len(), 1);
 }
 
 /// Undoing back to the saved state takes back what was auto-saved of the
@@ -5175,6 +5273,7 @@ fn leaving_a_sketch_turns_the_camera_back() {
     doc.look(Look::Orbit {
         yaw: 0.4,
         pitch: 0.3,
+        about: None,
     });
     let before = doc.camera;
     doc.look(Look::EditFeature(feature));
@@ -5332,6 +5431,7 @@ fn geometry_selected_is_what_the_sketch_holds() {
     doc.look(Look::Orbit {
         yaw: 1.0,
         pitch: -0.5,
+        about: None,
     });
     doc.look(Look::ResetCamera);
     settle_camera(&mut doc);

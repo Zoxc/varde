@@ -7,14 +7,17 @@
 
 use iced::widget::{Space, button, column, container, row, space, stack, text, toggler};
 use iced::{Alignment, Element, Font, Length, Padding};
-use varde_expr::LengthUnit;
-use varde_render::{Projection, Shading};
+use varde_expr::{AngleUnit, LengthUnit, Shown};
+use varde_render::{Projection, Rotation, Shading};
 
 use crate::chrome::{self, Edge, dialog_button, dialog_of_width, edged, icon_button, scrolled};
 use crate::icons::{self, Icon};
+use crate::mouse::{DragAction, PivotClick, RotationPoint};
 use crate::shortcut::{KeyName, Shortcut};
 use crate::theme::{self, Emphasis, TabLook, Tone};
-use crate::{Edges, Message, ThemeChoice, ViewOptions};
+use crate::{
+    AUTO_SAVE_PAUSES, Edges, INTERFACE_SCALES, Message, RECENT_DESIGNS, ThemeChoice, ViewOptions,
+};
 
 /// The settings page's state, as the app keeps it.
 #[derive(Debug, Clone, Copy)]
@@ -47,20 +50,34 @@ pub enum SettingsTab {
     Appearance,
     View,
     Units,
+    Mouse,
+    /// Natively only: the web has no tab for files.
+    Files,
 }
 
 impl SettingsTab {
-    pub const ALL: [SettingsTab; 3] = [
+    pub const ALL: [SettingsTab; 5] = [
         SettingsTab::Appearance,
         SettingsTab::View,
         SettingsTab::Units,
+        SettingsTab::Mouse,
+        SettingsTab::Files,
     ];
+
+    /// The tabs shown: on the web, all but Files.
+    pub fn shown() -> impl Iterator<Item = SettingsTab> {
+        Self::ALL
+            .into_iter()
+            .filter(|&tab| !(cfg!(target_arch = "wasm32") && tab == SettingsTab::Files))
+    }
 
     fn label(self) -> &'static str {
         match self {
             SettingsTab::Appearance => "Appearance",
             SettingsTab::View => "View",
             SettingsTab::Units => "Units",
+            SettingsTab::Mouse => "Mouse",
+            SettingsTab::Files => "Files",
         }
     }
 }
@@ -73,12 +90,39 @@ pub enum SettingsPage {
     Tab(SettingsTab),
     /// Chooses the units new designs start in.
     SetLengthUnit(LengthUnit),
+    /// Sets one of the settings only the page sets.
+    Set(Setting),
     /// Reset to defaults: asks first.
     AskReset,
     /// Leaves the settings as they are, the popup closed.
     CancelReset,
     /// Puts every setting back to its default, the popup closed.
     Reset,
+}
+
+/// A setting only the settings page sets, to a value. Values the page
+/// doesn't offer are ignored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Setting {
+    /// In percent, one of [`INTERFACE_SCALES`].
+    InterfaceScale(u16),
+    AngleUnit(AngleUnit),
+    /// `None` for each unit's own, else at most [`Shown::MAX_DECIMALS`].
+    Decimals(Option<u8>),
+    LeftDrag(DragAction),
+    MiddleDrag(DragAction),
+    RightDrag(DragAction),
+    Rotation(Rotation),
+    RotationPoint(RotationPoint),
+    PivotClick(PivotClick),
+    /// Whether turning the wheel down zooms in.
+    WheelDownZoomsIn(bool),
+    ZoomToPointer(bool),
+    SketchSnap(bool),
+    /// In seconds, one of [`AUTO_SAVE_PAUSES`], 0 for off.
+    AutoSave(u16),
+    /// One of [`RECENT_DESIGNS`].
+    RecentDesigns(u16),
 }
 
 /// A setting Reset to defaults changes: its name, and what it is and
@@ -103,12 +147,38 @@ pub fn changed_settings(options: ViewOptions) -> Vec<SettingChange> {
             ("Hidden edges", on_off(options.hidden_edges)),
             ("Names", on_off(options.names)),
             ("Mouse hints", on_off(options.mouse_hints)),
+            ("Interface scale", scale_said(options.interface_scale)),
             ("Length unit", options.length_unit.symbol()),
+            ("Angle unit", angle_said(options.angle_unit)),
+            ("Decimal places", decimals_said(options.decimals)),
+            ("Left drag", drag_said(options.mouse.left)),
+            ("Middle drag", drag_said(options.mouse.middle)),
+            ("Right drag", drag_said(options.mouse.right)),
+            ("Rotation", rotation_said(options.mouse.rotation)),
+            (
+                "Rotation point",
+                rotation_point_said(options.mouse.rotation_point),
+            ),
+            (
+                "Set rotation point with",
+                pivot_click_said(options.mouse.pivot_click),
+            ),
+            (
+                "Zoom direction",
+                zoom_said(options.mouse.wheel_down_zooms_in),
+            ),
+            ("Zoom to pointer", on_off(options.mouse.zoom_to_pointer)),
+            ("Snapping", on_off(options.mouse.sketch_snap)),
+            ("Auto-save", auto_save_said(options.auto_save)),
+            ("Recent designs", recent_said(options.recent_designs)),
         ]
     };
+    // The web has no Files tab: what it would set isn't listed.
+    let files = |name: &str| matches!(name, "Auto-save" | "Recent designs");
     (said(options).into_iter())
         .zip(said(defaults))
         .filter(|((_, from), (_, to))| from != to)
+        .filter(|((name, _), _)| !(cfg!(target_arch = "wasm32") && files(name)))
         .map(|((name, from), (_, to))| SettingChange { name, from, to })
         .collect()
 }
@@ -122,6 +192,94 @@ fn theme_said(theme: ThemeChoice) -> &'static str {
         ThemeChoice::Auto => "System",
         ThemeChoice::Light => "Light",
         ThemeChoice::Dark => "Dark",
+    }
+}
+
+fn scale_said(percent: u16) -> &'static str {
+    match percent {
+        90 => "90%",
+        100 => "100%",
+        125 => "125%",
+        150 => "150%",
+        _ => "Other",
+    }
+}
+
+fn angle_said(unit: AngleUnit) -> &'static str {
+    match unit {
+        AngleUnit::Deg => "Degrees",
+        AngleUnit::Rad => "Radians",
+    }
+}
+
+fn decimals_said(decimals: Option<u8>) -> &'static str {
+    const COUNTS: [&str; 7] = ["0", "1", "2", "3", "4", "5", "6"];
+    match decimals {
+        None => "Auto",
+        Some(count) => COUNTS
+            .get(usize::from(count.min(Shown::MAX_DECIMALS)))
+            .copied()
+            .unwrap_or("6"),
+    }
+}
+
+fn drag_said(action: DragAction) -> &'static str {
+    match action {
+        DragAction::Orbit => "Orbit",
+        DragAction::Pan => "Pan",
+        DragAction::Zoom => "Zoom",
+        DragAction::Nothing => "Nothing",
+    }
+}
+
+fn rotation_said(rotation: Rotation) -> &'static str {
+    match rotation {
+        Rotation::Turntable => "Turntable",
+        Rotation::OverTheTop => "Turntable, over the top",
+    }
+}
+
+fn rotation_point_said(point: RotationPoint) -> &'static str {
+    match point {
+        RotationPoint::Clicked => "Clicked",
+        RotationPoint::Pointer => "Under the pointer",
+        RotationPoint::Centre => "View centre",
+    }
+}
+
+fn pivot_click_said(click: PivotClick) -> &'static str {
+    match click {
+        PivotClick::Middle => "Middle click",
+        PivotClick::MiddleDouble => "Middle double-click",
+        PivotClick::ShiftMiddle => "Shift + middle click",
+    }
+}
+
+fn zoom_said(wheel_down_zooms_in: bool) -> &'static str {
+    if wheel_down_zooms_in {
+        "Wheel down"
+    } else {
+        "Wheel up"
+    }
+}
+
+fn auto_save_said(seconds: u16) -> &'static str {
+    match seconds {
+        0 => "Off",
+        3 => "3 s",
+        10 => "10 s",
+        30 => "30 s",
+        _ => "Other",
+    }
+}
+
+fn recent_said(count: u16) -> &'static str {
+    match count {
+        10 => "10",
+        25 => "25",
+        50 => "50",
+        100 => "100",
+        _ => "Other",
     }
 }
 
@@ -301,7 +459,7 @@ fn tabs<'a>(open: SettingsTab) -> Element<'a, Message> {
             .on_press(Message::Settings(SettingsPage::Tab(tab)))
             .into()
     };
-    let tabs: Vec<Element<'a, Message>> = SettingsTab::ALL.into_iter().map(tab).collect();
+    let tabs: Vec<Element<'a, Message>> = SettingsTab::shown().map(tab).collect();
     // The tabs hang 1 px over the strip's bottom border, as the side
     // panel's do.
     stack![
@@ -324,32 +482,44 @@ fn tabs<'a>(open: SettingsTab) -> Element<'a, Message> {
 fn section<'a>(
     tab: SettingsTab,
     options: ViewOptions,
-) -> (
-    &'static str,
-    Option<&'static str>,
-    Vec<Element<'a, Message>>,
-) {
+) -> (&'static str, Option<String>, Vec<Element<'a, Message>>) {
+    let set = |setting| Message::Settings(SettingsPage::Set(setting));
     match tab {
         SettingsTab::Appearance => (
             "Appearance",
             None,
-            vec![setting(
-                "Theme",
-                "Light or dark, or as the system is set",
-                segmented(ThemeChoice::ALL.map(|theme| {
-                    (
-                        Some(theme_icon(theme)),
-                        theme_said(theme),
-                        theme == options.theme,
-                        Message::SetTheme(theme),
-                    )
-                })),
-            )],
+            vec![
+                setting(
+                    "Theme",
+                    "Light or dark, or as the system is set",
+                    segmented(ThemeChoice::ALL.map(|theme| {
+                        (
+                            Some(theme_icon(theme)),
+                            theme_said(theme),
+                            theme == options.theme,
+                            Message::SetTheme(theme),
+                        )
+                    })),
+                ),
+                setting(
+                    "Interface scale",
+                    "The size of everything but the model",
+                    segmented(INTERFACE_SCALES.map(|percent| {
+                        (
+                            None,
+                            scale_said(percent),
+                            percent == options.interface_scale,
+                            set(Setting::InterfaceScale(percent)),
+                        )
+                    })),
+                ),
+            ],
         ),
         SettingsTab::View => (
             "View",
             Some(
-                "How the viewport draws the model. The status bar's menu changes the same settings.",
+                "How the viewport draws the model. The status bar's menu changes the same settings."
+                    .to_owned(),
             ),
             vec![
                 setting(
@@ -409,21 +579,240 @@ fn section<'a>(
         ),
         SettingsTab::Units => (
             "Units",
-            Some("For new designs. A design opened keeps its own units."),
-            vec![setting(
-                "Length",
-                "For sizes typed without a unit, and shown",
-                segmented(LengthUnit::ALL.map(|unit| {
-                    (
-                        None,
-                        unit.symbol(),
-                        unit == options.length_unit,
-                        Message::Settings(SettingsPage::SetLengthUnit(unit)),
-                    )
-                })),
-            )],
+            Some(units_note(options)),
+            vec![
+                setting(
+                    "Length",
+                    "For new designs: sizes typed without a unit, and shown",
+                    segmented(LengthUnit::ALL.map(|unit| {
+                        (
+                            None,
+                            unit.symbol(),
+                            unit == options.length_unit,
+                            Message::Settings(SettingsPage::SetLengthUnit(unit)),
+                        )
+                    })),
+                ),
+                setting(
+                    "Angle",
+                    "How angles are shown; typed without a unit, they're degrees",
+                    segmented([AngleUnit::Deg, AngleUnit::Rad].map(|unit| {
+                        (
+                            None,
+                            angle_said(unit),
+                            unit == options.angle_unit,
+                            set(Setting::AngleUnit(unit)),
+                        )
+                    })),
+                ),
+                setting(
+                    "Decimal places",
+                    "At most, after the point; trailing zeros are left out",
+                    decimals_stepper(options),
+                ),
+            ],
+        ),
+        SettingsTab::Mouse => ("Mouse", None, mouse_rows(options)),
+        SettingsTab::Files => (
+            "Files",
+            None,
+            vec![
+                setting(
+                    "Auto-save",
+                    "Changes go to the recovery file after a pause in editing",
+                    segmented(AUTO_SAVE_PAUSES.map(|seconds| {
+                        (
+                            None,
+                            auto_save_said(seconds),
+                            seconds == options.auto_save,
+                            set(Setting::AutoSave(seconds)),
+                        )
+                    })),
+                ),
+                setting(
+                    "Recent designs",
+                    "How many the welcome screen keeps",
+                    segmented(RECENT_DESIGNS.map(|count| {
+                        (
+                            None,
+                            recent_said(count),
+                            count == options.recent_designs,
+                            set(Setting::RecentDesigns(count)),
+                        )
+                    })),
+                ),
+            ],
         ),
     }
+}
+
+/// The Units section's note: what its settings are for, and a length and
+/// an angle as they're shown.
+fn units_note(options: ViewOptions) -> String {
+    let shown = options.shown();
+    let length = shown.format(12.345_67, Some(options.length_unit.into()));
+    let angle = shown.format(std::f64::consts::PI / 8.0, Some(AngleUnit::Deg.into()));
+    format!(
+        "Length for new designs; a design opened keeps its own. Angles and decimals for every design. Shown as {length} · {angle}."
+    )
+}
+
+/// The Mouse section's rows: a drag per button, how the view turns and
+/// about what, the wheel's zoom and the sketch tools' snapping.
+fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
+    let set = |setting| Message::Settings(SettingsPage::Set(setting));
+    let mouse = options.mouse;
+    let drag = |on: DragAction, setting: fn(DragAction) -> Setting| {
+        segmented(DragAction::ALL.map(|action| {
+            (
+                None,
+                drag_said(action),
+                action == on,
+                Message::Settings(SettingsPage::Set(setting(action))),
+            )
+        }))
+    };
+    let mut rows = vec![
+        setting(
+            "Left drag",
+            "Outside a sketch; a click always selects",
+            drag(mouse.left, Setting::LeftDrag),
+        ),
+        setting(
+            "Middle drag",
+            "Turning, panning or zooming the view",
+            drag(mouse.middle, Setting::MiddleDrag),
+        ),
+        setting(
+            "Right drag",
+            "With Shift held, it orbits",
+            drag(mouse.right, Setting::RightDrag),
+        ),
+        setting(
+            "Rotation",
+            "How a drag turns the view",
+            segmented([Rotation::Turntable, Rotation::OverTheTop].map(|rotation| {
+                (
+                    None,
+                    match rotation {
+                        Rotation::Turntable => "Turntable",
+                        Rotation::OverTheTop => "Over the top",
+                    },
+                    rotation == mouse.rotation,
+                    set(Setting::Rotation(rotation)),
+                )
+            })),
+        ),
+        setting(
+            "Rotation point",
+            "What the view orbits about",
+            segmented(RotationPoint::ALL.map(|point| {
+                (
+                    None,
+                    rotation_point_said(point),
+                    point == mouse.rotation_point,
+                    set(Setting::RotationPoint(point)),
+                )
+            })),
+        ),
+    ];
+    if mouse.rotation_point == RotationPoint::Clicked {
+        rows.push(setting(
+            "Set rotation point with",
+            "On the model or grid; elsewhere, the centre again",
+            segmented(PivotClick::ALL.map(|click| {
+                (
+                    None,
+                    pivot_click_said(click),
+                    click == mouse.pivot_click,
+                    set(Setting::PivotClick(click)),
+                )
+            })),
+        ));
+    }
+    rows.extend([
+        setting(
+            "Zoom direction",
+            "Which way the wheel zooms in",
+            segmented([false, true].map(|down| {
+                (
+                    None,
+                    zoom_said(down),
+                    down == mouse.wheel_down_zooms_in,
+                    set(Setting::WheelDownZoomsIn(down)),
+                )
+            })),
+        ),
+        setting(
+            "Zoom to pointer",
+            "Zoom about the point under the pointer, else the middle",
+            switch(
+                mouse.zoom_to_pointer,
+                set(Setting::ZoomToPointer(!mouse.zoom_to_pointer)),
+            ),
+        ),
+        setting(
+            "Snapping",
+            "Sketch tools snap to points, curves and directions unless Shift is held; off, only while it is",
+            switch(
+                mouse.sketch_snap,
+                set(Setting::SketchSnap(!mouse.sketch_snap)),
+            ),
+        ),
+    ]);
+    rows
+}
+
+/// The most decimal places shown: fewer or more, from each unit's own
+/// count (the length unit's) while that's what's shown, or back to it.
+fn decimals_stepper<'a>(options: ViewOptions) -> Element<'a, Message> {
+    let set = |decimals| Message::Settings(SettingsPage::Set(Setting::Decimals(decimals)));
+    let count = options.decimals.map_or_else(
+        || u8::try_from(options.length_unit.decimals()).unwrap_or(Shown::MAX_DECIMALS),
+        |count| count.min(Shown::MAX_DECIMALS),
+    );
+    let step = |label: &'static str, to: Option<u8>| {
+        button(text(label).size(12.5).width(14).align_x(Alignment::Center))
+            .height(26)
+            .padding([0, 8])
+            .style(theme::segment(false))
+            .on_press_maybe(to.map(|to| set(Some(to))))
+    };
+    let fewer = step("−", count.checked_sub(1));
+    let more = step(
+        "+",
+        count
+            .checked_add(1)
+            .filter(|&more| more <= Shown::MAX_DECIMALS),
+    );
+    let shown = container(
+        text(decimals_said(options.decimals))
+            .size(12.5)
+            .font(theme::SEMIBOLD),
+    )
+    .width(40)
+    .height(26)
+    .center_x(40)
+    .align_y(Alignment::Center);
+    let auto = options.decimals.is_none();
+    let auto =
+        button(
+            text("Auto")
+                .size(12.5)
+                .font(if auto { theme::SEMIBOLD } else { Font::DEFAULT }),
+        )
+        .height(26)
+        .padding([0, 10])
+        .style(theme::segment(auto))
+        .on_press_maybe((!auto).then(|| set(None)));
+    container(
+        row![fewer, shown, more, auto]
+            .spacing(2)
+            .align_y(Alignment::Center),
+    )
+    .padding(2)
+    .style(theme::segments)
+    .into()
 }
 
 /// A row of a section's card: the setting's `name` over a line saying

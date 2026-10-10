@@ -411,6 +411,48 @@ fn a_tool_clicks_where_it_is_pressed_as_it_snaps() {
     assert!(free.at.abs_diff_eq(DVec2::new(-5.0, 0.2), 1e-3));
 }
 
+/// With snapping turned off in the settings, a tool snaps only with
+/// `Shift` held, and a point dragged likewise.
+#[test]
+fn snapping_off_snaps_only_with_shift() {
+    let (sketch, [a, _, _]) = drawn();
+    let selection = BTreeSet::new();
+    let tool = testing::tool(Tool::Line, &[], &[]);
+    let viewport = shown(sketching(&sketch, &selection, Some(tool), true).snapping(false));
+    let mut state = Interaction::default();
+    let clicks = |messages: Vec<Message>| match messages.as_slice() {
+        [Message::Edit(Edit::ToolClick(click))]
+        | [
+            Message::Look(Look::Snap(_)),
+            Message::Edit(Edit::ToolClick(click)),
+        ] => *click,
+        other => panic!("{other:?}"),
+    };
+    let near_a = screen_at(-5.0, 0.2);
+    let free = clicks(click(&viewport, &mut state, near_a));
+    assert_eq!(free.target, None);
+    assert!(free.at.abs_diff_eq(DVec2::new(-5.0, 0.2), 1e-3));
+    let snapped = feed(
+        &viewport,
+        &mut state,
+        near_a,
+        &[
+            Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::SHIFT)),
+            moved(near_a),
+            press(),
+            release(),
+        ],
+    );
+    let snapped = clicks(snapped.0);
+    assert_eq!(snapped.point(), Some(a));
+    assert_eq!(snapped.at, DVec2::new(-5.0, 0.0));
+    // On by default, as it always was.
+    let default = sketching(&sketch, &selection, Some(tool), true);
+    assert!(default.snaps(Modifiers::empty()) && !default.snaps(Modifiers::SHIFT));
+    let off = default.snapping(false);
+    assert!(!off.snaps(Modifiers::empty()) && off.snaps(Modifiers::SHIFT));
+}
+
 #[test]
 fn the_other_buttons_and_the_wheel_move_the_camera() {
     use crate::viewport::DragKind;
