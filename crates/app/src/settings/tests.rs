@@ -89,7 +89,7 @@ fn each_setting_chosen_early_wins_once_loaded() {
         shading: StoredShading::Flat,
         edges: StoredEdges::Tessellation,
         length_unit: LengthUnit::Ft,
-        interface_scale: InterfaceScale::Small,
+        interface_scale: InterfaceScale::new(80).unwrap(),
         angle_unit: StoredAngleUnit::Rad,
         decimals: Decimals::Places(1),
         left_drag: Drag::Pan,
@@ -101,7 +101,7 @@ fn each_setting_chosen_early_wins_once_loaded() {
         zoom_direction: ZoomDirection::WheelDown,
         zoom_to_pointer: false,
         sketch_snap: false,
-        auto_save: AutoSave::Seconds30,
+        auto_save: AutoSave::Minutes10,
         recent_designs: RecentDesigns::Fifty,
     };
     // Every setting differs from its default, so each key is seen.
@@ -148,7 +148,10 @@ fn defaults_and_every_value_round_trip() {
     assert_eq!(options_of(Stored::default()), ViewOptions::default());
     assert_eq!(stored_of(ViewOptions::default()), Stored::default());
     let mut all = Vec::new();
-    for interface_scale in InterfaceScale::ALL {
+    let scales = (InterfaceScale::MIN..=InterfaceScale::MAX)
+        .step_by(InterfaceScale::STEP.into())
+        .filter_map(InterfaceScale::new);
+    for interface_scale in scales {
         for auto_save in AutoSave::ALL {
             for recent_designs in RecentDesigns::ALL {
                 all.push(Stored {
@@ -186,9 +189,9 @@ fn defaults_and_every_value_round_trip() {
     }
     // Values no setting offers are stored as the defaults.
     let odd = ViewOptions {
-        interface_scale: 110,
+        interface_scale: 112,
         decimals: Some(9),
-        auto_save: 5,
+        auto_save: 3,
         recent_designs: 1000,
         ..ViewOptions::default()
     };

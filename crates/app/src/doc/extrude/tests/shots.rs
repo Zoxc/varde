@@ -810,7 +810,7 @@ fn shots_28_view_menu() {
         let hovered = Shot::new().pointer(Pointer::Over("Metal"));
         camera.take(&doc, "28-view-menu-shading", hovered);
         doc.look(Look::ViewSubmenu(Some(ViewSubmenu::Edges)));
-        let hovered = Shot::new().pointer(Pointer::Over("Tessellation"));
+        let hovered = Shot::new().pointer(Pointer::Over("Triangles"));
         camera.take(
             &doc,
             "28-view-menu-edges-dark-scale2",

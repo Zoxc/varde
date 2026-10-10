@@ -506,8 +506,8 @@ fn an_auto_save_that_cannot_be_read_waits_for_discard() {
     // error shows either.
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let start = Instant::now();
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 10);
+    tick_thirds(&mut varde, start, 0);
+    tick_thirds(&mut varde, start, 10);
     assert!(sent(&requests).is_empty());
     assert!(document(&varde).banner_error().is_none());
 
@@ -517,8 +517,8 @@ fn an_auto_save_that_cannot_be_read_waits_for_discard() {
         sent(&requests)[..],
         [IoRequest::DiscardRecovery { file: FileId(0) }]
     ));
-    tick(&mut varde, start, 11);
-    tick(&mut varde, start, 14);
+    tick_thirds(&mut varde, start, 11);
+    tick_thirds(&mut varde, start, 14);
     assert_eq!(auto_saves(&sent(&requests)), [(0, 1)]);
 }
 
@@ -560,8 +560,8 @@ fn an_auto_save_of_no_use_is_ignored_and_auto_saved_over() {
     assert!(doc.recovered().is_none());
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let start = Instant::now();
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
+    tick_thirds(&mut varde, start, 0);
+    tick_thirds(&mut varde, start, 3);
     assert_eq!(auto_saves(&sent(&requests)), [(0, 1)]);
 }
 

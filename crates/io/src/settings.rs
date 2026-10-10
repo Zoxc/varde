@@ -14,7 +14,7 @@
 //! shading = "regular" # or "flat", "metal", "flat_metal"
 //! edges = "default" # or "wireframe", "tessellation"
 //! length_unit = "mm" # a new design's units: or "cm", "m", "in", "ft"
-//! interface_scale = 100 # percent: or 90, 125, 150
+//! interface_scale = 100 # percent: any multiple of 5 from 75 to 200
 //! angle_unit = "deg" # how angles are shown: or "rad"
 //! decimals = "auto" # places shown at most: or 0 to 6
 //! left_drag = "orbit" # or "pan", "zoom", "nothing"; outside a sketch
@@ -26,12 +26,13 @@
 //! zoom_direction = "wheel_up" # the wheel's way that zooms in: or "wheel_down"
 //! zoom_to_pointer = true # else about the view's middle
 //! sketch_snap = true # whether sketch tools snap unless Shift is held
-//! auto_save = 3 # seconds' pause before an auto-save: or 0 (off), 10, 30
+//! auto_save = 60 # seconds from the first change not auto-saved: or 300, 600, 0 (off)
 //! recent_designs = 100 # how many the recent files list keeps: or 10, 25, 50
 //! ```
 //!
-//! Values out of these sets (another number of decimals, a scale of 110)
-//! are gone bad, and so defaulted, like any other.
+//! Values out of these sets (another number of decimals, a scale of 112
+//! or 250) are gone bad, and so defaulted, like any other: so are the
+//! auto-save pauses of before, 3, 10 and 30 seconds (0, off, stays off).
 //!
 //! The file is user data, edited by hand perhaps: each key is read on its
 //! own, so one missing or gone bad gets its default and costs no other.
@@ -158,32 +159,32 @@ pub enum Edges {
 }
 
 /// How large the UI is drawn, the model aside: a percentage of the
-/// system's scale. Stored as the percentage, `100`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// system's scale, a multiple of [`InterfaceScale::STEP`] from
+/// [`InterfaceScale::MIN`] to [`InterfaceScale::MAX`]. Stored as the
+/// percentage, `100`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "u16", into = "u16")]
-pub enum InterfaceScale {
-    Small,
-    #[default]
-    Normal,
-    Large,
-    Larger,
-}
+pub struct InterfaceScale(u16);
 
 impl InterfaceScale {
-    pub const ALL: [InterfaceScale; 4] = [
-        InterfaceScale::Small,
-        InterfaceScale::Normal,
-        InterfaceScale::Large,
-        InterfaceScale::Larger,
-    ];
+    pub const MIN: u16 = 75;
+    pub const MAX: u16 = 200;
+    pub const STEP: u16 = 5;
+
+    /// `percent`, if it's one of the scales offered.
+    pub fn new(percent: u16) -> Option<InterfaceScale> {
+        ((Self::MIN..=Self::MAX).contains(&percent) && percent.is_multiple_of(Self::STEP))
+            .then_some(InterfaceScale(percent))
+    }
 
     pub fn percent(self) -> u16 {
-        match self {
-            InterfaceScale::Small => 90,
-            InterfaceScale::Normal => 100,
-            InterfaceScale::Large => 125,
-            InterfaceScale::Larger => 150,
-        }
+        self.0
+    }
+}
+
+impl Default for InterfaceScale {
+    fn default() -> Self {
+        InterfaceScale(100)
     }
 }
 
@@ -191,10 +192,7 @@ impl TryFrom<u16> for InterfaceScale {
     type Error = &'static str;
 
     fn try_from(percent: u16) -> Result<Self, Self::Error> {
-        Self::ALL
-            .into_iter()
-            .find(|scale| scale.percent() == percent)
-            .ok_or("not an interface scale")
+        Self::new(percent).ok_or("not an interface scale")
     }
 }
 
@@ -346,33 +344,45 @@ pub enum ZoomDirection {
     WheelDown,
 }
 
-/// How long editing pauses before an open design is auto-saved, if it
-/// is: natively only. Stored as the seconds, `0` for off.
+/// How long after the first change not auto-saved an open design is
+/// auto-saved, if it is: natively only. Stored as the seconds, `60`, 0
+/// for off; the pauses of before (3, 10, 30) aren't among them, so read
+/// as the default, while off stays off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(try_from = "u16", into = "u16")]
 pub enum AutoSave {
     Off,
     #[default]
-    Seconds3,
-    Seconds10,
-    Seconds30,
+    Minute,
+    Minutes5,
+    Minutes10,
 }
 
 impl AutoSave {
     pub const ALL: [AutoSave; 4] = [
         AutoSave::Off,
-        AutoSave::Seconds3,
-        AutoSave::Seconds10,
-        AutoSave::Seconds30,
+        AutoSave::Minute,
+        AutoSave::Minutes5,
+        AutoSave::Minutes10,
     ];
 
-    /// The pause in seconds, 0 for off.
+    /// The wait in minutes, 0 for off.
+    pub fn minutes(self) -> u16 {
+        match self {
+            AutoSave::Off => 0,
+            AutoSave::Minute => 1,
+            AutoSave::Minutes5 => 5,
+            AutoSave::Minutes10 => 10,
+        }
+    }
+
+    /// The wait in seconds, as stored, 0 for off.
     pub fn seconds(self) -> u16 {
         match self {
             AutoSave::Off => 0,
-            AutoSave::Seconds3 => 3,
-            AutoSave::Seconds10 => 10,
-            AutoSave::Seconds30 => 30,
+            AutoSave::Minute => 60,
+            AutoSave::Minutes5 => 300,
+            AutoSave::Minutes10 => 600,
         }
     }
 }
@@ -383,14 +393,14 @@ impl TryFrom<u16> for AutoSave {
     fn try_from(seconds: u16) -> Result<Self, Self::Error> {
         Self::ALL
             .into_iter()
-            .find(|pause| pause.seconds() == seconds)
-            .ok_or("not an auto-save pause")
+            .find(|wait| wait.seconds() == seconds)
+            .ok_or("not an auto-save wait")
     }
 }
 
 impl From<AutoSave> for u16 {
-    fn from(pause: AutoSave) -> u16 {
-        pause.seconds()
+    fn from(wait: AutoSave) -> u16 {
+        wait.seconds()
     }
 }
 

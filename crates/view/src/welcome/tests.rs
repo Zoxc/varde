@@ -487,6 +487,7 @@ fn the_settings_page_takes_the_designs_place() {
         options: crate::ViewOptions::default(),
         tab: crate::SettingsTab::Appearance,
         resetting: false,
+        scale_dragged: None,
         kept_in: crate::KeptIn::File("~/.config/varde-cad/settings.toml"),
     };
     let files = [PathBuf::from("/parts/bracket.vrdp")];

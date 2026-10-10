@@ -172,7 +172,7 @@ impl Settings {
 }
 
 /// The settings `stored` holds.
-fn options_of(stored: Stored) -> ViewOptions {
+pub(crate) fn options_of(stored: Stored) -> ViewOptions {
     ViewOptions {
         theme: match stored.theme {
             Theme::Auto => ThemeChoice::Auto,
@@ -230,7 +230,7 @@ fn options_of(stored: Stored) -> ViewOptions {
             zoom_to_pointer: stored.zoom_to_pointer,
             sketch_snap: stored.sketch_snap,
         },
-        auto_save: stored.auto_save.seconds(),
+        auto_save: stored.auto_save.minutes(),
         recent_designs: stored.recent_designs.count(),
     }
 }
@@ -282,7 +282,7 @@ pub(crate) fn stored_of(options: ViewOptions) -> Stored {
         length_unit: options.length_unit,
         // Values the page doesn't offer, which it never sets, are stored
         // as the defaults.
-        interface_scale: InterfaceScale::try_from(options.interface_scale).unwrap_or_default(),
+        interface_scale: InterfaceScale::new(options.interface_scale).unwrap_or_default(),
         angle_unit: match options.angle_unit {
             AngleUnit::Deg => StoredAngleUnit::Deg,
             AngleUnit::Rad => StoredAngleUnit::Rad,
@@ -316,7 +316,10 @@ pub(crate) fn stored_of(options: ViewOptions) -> Stored {
         },
         zoom_to_pointer: options.mouse.zoom_to_pointer,
         sketch_snap: options.mouse.sketch_snap,
-        auto_save: AutoSave::try_from(options.auto_save).unwrap_or_default(),
+        auto_save: AutoSave::ALL
+            .into_iter()
+            .find(|wait| wait.minutes() == options.auto_save)
+            .unwrap_or_default(),
         recent_designs: RecentDesigns::try_from(options.recent_designs).unwrap_or_default(),
     }
 }

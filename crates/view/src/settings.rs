@@ -5,7 +5,7 @@
 //! each setting is and does on the left, its control on the right. Reset
 //! to defaults asks first, in a popup listing what it changes.
 
-use iced::widget::{Space, button, column, container, row, space, stack, text, toggler};
+use iced::widget::{Space, button, column, container, row, slider, space, stack, text, toggler};
 use iced::{Alignment, Element, Font, Length, Padding};
 use varde_expr::{AngleUnit, LengthUnit, Shown};
 use varde_render::{Projection, Rotation, Shading};
@@ -13,10 +13,12 @@ use varde_render::{Projection, Rotation, Shading};
 use crate::chrome::{self, Edge, dialog_button, dialog_of_width, edged, icon_button, scrolled};
 use crate::icons::{self, Icon};
 use crate::mouse::{DragAction, PivotClick, RotationPoint};
+use crate::mouse_only::MouseOnly;
 use crate::shortcut::{KeyName, Shortcut};
 use crate::theme::{self, Emphasis, TabLook, Tone};
 use crate::{
-    AUTO_SAVE_PAUSES, Edges, INTERFACE_SCALES, Message, RECENT_DESIGNS, ThemeChoice, ViewOptions,
+    AUTO_SAVE_MINUTES, Edges, INTERFACE_SCALE_MAX, INTERFACE_SCALE_MIN, INTERFACE_SCALE_STEP,
+    Message, RECENT_DESIGNS, ThemeChoice, ViewOptions,
 };
 
 /// The settings page's state, as the app keeps it.
@@ -28,6 +30,9 @@ pub struct SettingsState<'a> {
     pub tab: SettingsTab,
     /// Whether Reset to defaults is asking first.
     pub resetting: bool,
+    /// The interface scale the slider is dragged to, not yet let go:
+    /// shown, but not set till then.
+    pub scale_dragged: Option<u16>,
     /// Where the settings are kept, for the foot.
     pub kept_in: KeptIn<'a>,
 }
@@ -92,6 +97,12 @@ pub enum SettingsPage {
     SetLengthUnit(LengthUnit),
     /// Sets one of the settings only the page sets.
     Set(Setting),
+    /// The interface scale's slider is dragged to this, in percent: only
+    /// its label shows it, so the page doesn't rescale under the pointer.
+    DragScale(u16),
+    /// The interface scale's slider is let go: the scale it was dragged
+    /// to is set.
+    ReleaseScale,
     /// Reset to defaults: asks first.
     AskReset,
     /// Leaves the settings as they are, the popup closed.
@@ -104,7 +115,7 @@ pub enum SettingsPage {
 /// doesn't offer are ignored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
-    /// In percent, one of [`INTERFACE_SCALES`].
+    /// In percent, see [`crate::interface_scale_offered`].
     InterfaceScale(u16),
     AngleUnit(AngleUnit),
     /// `None` for each unit's own, else at most [`Shown::MAX_DECIMALS`].
@@ -119,7 +130,13 @@ pub enum Setting {
     WheelDownZoomsIn(bool),
     ZoomToPointer(bool),
     SketchSnap(bool),
-    /// In seconds, one of [`AUTO_SAVE_PAUSES`], 0 for off.
+    /// Set rather than toggled, for a row's reset: a toggle sent with the
+    /// setting changed under it, as by the stored settings arriving or a
+    /// second click before the page redraws, would flip it the wrong way.
+    HiddenEdges(bool),
+    Names(bool),
+    MouseHints(bool),
+    /// In minutes, one of [`AUTO_SAVE_MINUTES`], 0 for off.
     AutoSave(u16),
     /// One of [`RECENT_DESIGNS`].
     RecentDesigns(u16),
@@ -195,14 +212,21 @@ fn theme_said(theme: ThemeChoice) -> &'static str {
     }
 }
 
+/// Each interface scale offered, as shown: from [`INTERFACE_SCALE_MIN`]
+/// in steps of [`INTERFACE_SCALE_STEP`].
+const SCALE_LABELS: [&str; 26] = [
+    "75%", "80%", "85%", "90%", "95%", "100%", "105%", "110%", "115%", "120%", "125%", "130%",
+    "135%", "140%", "145%", "150%", "155%", "160%", "165%", "170%", "175%", "180%", "185%", "190%",
+    "195%", "200%",
+];
+
 fn scale_said(percent: u16) -> &'static str {
-    match percent {
-        90 => "90%",
-        100 => "100%",
-        125 => "125%",
-        150 => "150%",
-        _ => "Other",
+    if !crate::interface_scale_offered(percent) {
+        return "Other";
     }
+    // Offered, so at least the least and a whole step from it.
+    let index = usize::from((percent - INTERFACE_SCALE_MIN) / INTERFACE_SCALE_STEP);
+    SCALE_LABELS.get(index).copied().unwrap_or("Other")
 }
 
 fn angle_said(unit: AngleUnit) -> &'static str {
@@ -264,12 +288,12 @@ fn zoom_said(wheel_down_zooms_in: bool) -> &'static str {
     }
 }
 
-fn auto_save_said(seconds: u16) -> &'static str {
-    match seconds {
+fn auto_save_said(minutes: u16) -> &'static str {
+    match minutes {
         0 => "Off",
-        3 => "3 s",
-        10 => "10 s",
-        30 => "30 s",
+        1 => "1 min",
+        5 => "5 min",
+        10 => "10 min",
         _ => "Other",
     }
 }
@@ -324,7 +348,7 @@ fn shading_said(shading: Shading) -> &'static str {
 
 const EDGES: [Edges; 3] = [Edges::Default, Edges::Wireframe, Edges::Tessellation];
 
-fn edges_said(edges: Edges) -> &'static str {
+pub(crate) fn edges_said(edges: Edges) -> &'static str {
     match edges {
         Edges::Default => "Features",
         Edges::Wireframe => "Patches",
@@ -382,7 +406,7 @@ pub fn page<'a>(state: SettingsState<'a>) -> Element<'a, Message> {
         44.0,
     );
 
-    let (title, note, rows) = section(state.tab, state.options);
+    let (title, note, rows) = section(state.tab, state.options, state.scale_dragged);
     let mut section = column![
         container(
             text(title.to_uppercase())
@@ -403,7 +427,7 @@ pub fn page<'a>(state: SettingsState<'a>) -> Element<'a, Message> {
         if index > 0 {
             card = card.push(chrome::hrule());
         }
-        card = card.push(row);
+        card = card.push(setting_row(row));
     }
     section = section.push(container(card).style(theme::settings_card));
     let foot = text(match state.kept_in {
@@ -483,8 +507,10 @@ fn tabs<'a>(open: SettingsTab) -> Element<'a, Message> {
 fn section<'a>(
     tab: SettingsTab,
     options: ViewOptions,
-) -> (&'static str, Option<String>, Vec<Element<'a, Message>>) {
+    scale_dragged: Option<u16>,
+) -> (&'static str, Option<String>, Vec<SettingRow<'a>>) {
     let set = |setting| Message::Settings(SettingsPage::Set(setting));
+    let d = ViewOptions::default();
     match tab {
         SettingsTab::Appearance => (
             "Appearance",
@@ -501,18 +527,15 @@ fn section<'a>(
                             Message::SetTheme(theme),
                         )
                     })),
+                    reset(options.theme, d.theme, theme_said, Message::SetTheme),
                 ),
                 setting(
                     "Interface scale",
                     "The size of everything but the model",
-                    segmented(INTERFACE_SCALES.map(|percent| {
-                        (
-                            None,
-                            scale_said(percent),
-                            percent == options.interface_scale,
-                            set(Setting::InterfaceScale(percent)),
-                        )
-                    })),
+                    scale_slider(scale_dragged.unwrap_or(options.interface_scale)),
+                    reset(options.interface_scale, d.interface_scale, scale_said, |percent| {
+                        set(Setting::InterfaceScale(percent))
+                    }),
                 ),
             ],
         ),
@@ -536,6 +559,12 @@ fn section<'a>(
                             )
                         },
                     )),
+                    reset(
+                        options.projection,
+                        d.projection,
+                        projection_said,
+                        Message::SetProjection,
+                    ),
                 ),
                 setting(
                     "Shading",
@@ -548,6 +577,7 @@ fn section<'a>(
                             Message::SetShading(shading),
                         )
                     })),
+                    reset(options.shading, d.shading, shading_said, Message::SetShading),
                 ),
                 setting(
                     "Edges",
@@ -560,21 +590,25 @@ fn section<'a>(
                             Message::SetEdges(edges),
                         )
                     })),
+                    reset(options.edges, d.edges, edges_said, Message::SetEdges),
                 ),
                 setting(
                     "Hidden edges",
                     "Edges behind the model, dashed",
                     switch(options.hidden_edges, Message::ToggleHiddenEdges),
+                    reset(options.hidden_edges, d.hidden_edges, on_off, |on| set(Setting::HiddenEdges(on))),
                 ),
                 setting(
                     "Names",
                     "The names of bodies, sketches and planes over the view",
                     switch(options.names, Message::ToggleNames),
+                    reset(options.names, d.names, on_off, |on| set(Setting::Names(on))),
                 ),
                 setting(
                     "Mouse hints",
                     "What the mouse buttons do, in the status bar",
                     switch(options.mouse_hints, Message::ToggleMouseHints),
+                    reset(options.mouse_hints, d.mouse_hints, on_off, |on| set(Setting::MouseHints(on))),
                 ),
             ],
         ),
@@ -593,6 +627,9 @@ fn section<'a>(
                             Message::Settings(SettingsPage::SetLengthUnit(unit)),
                         )
                     })),
+                    reset(options.length_unit, d.length_unit, LengthUnit::symbol, |unit| {
+                        Message::Settings(SettingsPage::SetLengthUnit(unit))
+                    }),
                 ),
                 setting(
                     "Angle",
@@ -605,11 +642,17 @@ fn section<'a>(
                             set(Setting::AngleUnit(unit)),
                         )
                     })),
+                    reset(options.angle_unit, d.angle_unit, angle_said, |unit| {
+                        set(Setting::AngleUnit(unit))
+                    }),
                 ),
                 setting(
                     "Decimal places",
                     "At most, after the point; trailing zeros are left out",
                     decimals_stepper(options),
+                    reset(options.decimals, d.decimals, decimals_said, |decimals| {
+                        set(Setting::Decimals(decimals))
+                    }),
                 ),
             ],
         ),
@@ -620,15 +663,18 @@ fn section<'a>(
             vec![
                 setting(
                     "Auto-save",
-                    "Changes go to the recovery file after a pause in editing",
-                    segmented(AUTO_SAVE_PAUSES.map(|seconds| {
+                    "Changes go to the recovery file this long after the first",
+                    segmented(AUTO_SAVE_MINUTES.map(|minutes| {
                         (
                             None,
-                            auto_save_said(seconds),
-                            seconds == options.auto_save,
-                            set(Setting::AutoSave(seconds)),
+                            auto_save_said(minutes),
+                            minutes == options.auto_save,
+                            set(Setting::AutoSave(minutes)),
                         )
                     })),
+                    reset(options.auto_save, d.auto_save, auto_save_said, |minutes| {
+                        set(Setting::AutoSave(minutes))
+                    }),
                 ),
                 setting(
                     "Recent designs",
@@ -641,6 +687,12 @@ fn section<'a>(
                             set(Setting::RecentDesigns(count)),
                         )
                     })),
+                    reset(
+                        options.recent_designs,
+                        d.recent_designs,
+                        recent_said,
+                        |count| set(Setting::RecentDesigns(count)),
+                    ),
                 ),
             ],
         ),
@@ -660,9 +712,10 @@ fn units_note(options: ViewOptions) -> String {
 
 /// The Mouse section's rows: a drag per button, how the view turns and
 /// about what, the wheel's zoom and the sketch tools' snapping.
-fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
+fn mouse_rows<'a>(options: ViewOptions) -> Vec<SettingRow<'a>> {
     let set = |setting| Message::Settings(SettingsPage::Set(setting));
     let mouse = options.mouse;
+    let d = crate::MouseOptions::default();
     let drag = |on: DragAction, setting: fn(DragAction) -> Setting| {
         segmented(DragAction::ALL.map(|action| {
             (
@@ -678,16 +731,25 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
             "Left drag",
             "Outside a sketch; a click always selects",
             drag(mouse.left, Setting::LeftDrag),
+            reset(mouse.left, d.left, drag_said, |action| {
+                set(Setting::LeftDrag(action))
+            }),
         ),
         setting(
             "Middle drag",
             "Turning, panning or zooming the view",
             drag(mouse.middle, Setting::MiddleDrag),
+            reset(mouse.middle, d.middle, drag_said, |action| {
+                set(Setting::MiddleDrag(action))
+            }),
         ),
         setting(
             "Right drag",
             "With Shift held, it orbits",
             drag(mouse.right, Setting::RightDrag),
+            reset(mouse.right, d.right, drag_said, |action| {
+                set(Setting::RightDrag(action))
+            }),
         ),
         setting(
             "Rotation",
@@ -711,6 +773,9 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
                     )
                 }),
             ),
+            reset(mouse.rotation, d.rotation, rotation_said, |rotation| {
+                set(Setting::Rotation(rotation))
+            }),
         ),
         setting(
             "Rotation point",
@@ -723,6 +788,12 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
                     set(Setting::RotationPoint(point)),
                 )
             })),
+            reset(
+                mouse.rotation_point,
+                d.rotation_point,
+                rotation_point_said,
+                |point| set(Setting::RotationPoint(point)),
+            ),
         ),
     ];
     if mouse.rotation_point == RotationPoint::Clicked {
@@ -737,6 +808,12 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
                     set(Setting::PivotClick(click)),
                 )
             })),
+            reset(
+                mouse.pivot_click,
+                d.pivot_click,
+                pivot_click_said,
+                |click| set(Setting::PivotClick(click)),
+            ),
         ));
     }
     rows.extend([
@@ -751,6 +828,12 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
                     set(Setting::WheelDownZoomsIn(down)),
                 )
             })),
+            reset(
+                mouse.wheel_down_zooms_in,
+                d.wheel_down_zooms_in,
+                zoom_said,
+                |down| set(Setting::WheelDownZoomsIn(down)),
+            ),
         ),
         setting(
             "Zoom to pointer",
@@ -759,6 +842,9 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
                 mouse.zoom_to_pointer,
                 set(Setting::ZoomToPointer(!mouse.zoom_to_pointer)),
             ),
+            reset(mouse.zoom_to_pointer, d.zoom_to_pointer, on_off, |on| {
+                set(Setting::ZoomToPointer(on))
+            }),
         ),
         setting(
             "Snapping",
@@ -767,6 +853,9 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
                 mouse.sketch_snap,
                 set(Setting::SketchSnap(!mouse.sketch_snap)),
             ),
+            reset(mouse.sketch_snap, d.sketch_snap, on_off, |on| {
+                set(Setting::SketchSnap(on))
+            }),
         ),
     ]);
     rows
@@ -824,14 +913,62 @@ fn decimals_stepper<'a>(options: ViewOptions) -> Element<'a, Message> {
     .into()
 }
 
-/// A row of a section's card: the setting's `name` over a line saying
-/// what it does, `control` right of them.
-fn setting<'a>(
-    name: &'a str,
-    does: &'a str,
+/// A row of a section's card, see [`setting_row`].
+struct SettingRow<'a> {
+    name: &'static str,
+    does: &'static str,
     control: Element<'a, Message>,
-) -> Element<'a, Message> {
-    container(
+    /// With the setting not its default: the default, as said, and what
+    /// sets it back, see [`reset`].
+    reset: Option<(&'static str, Message)>,
+}
+
+/// The row of setting `name`, saying what it `does`, with its `control`,
+/// and with `reset`, if it's changed from its default.
+fn setting<'a>(
+    name: &'static str,
+    does: &'static str,
+    control: Element<'a, Message>,
+    reset: Option<(&'static str, Message)>,
+) -> SettingRow<'a> {
+    SettingRow {
+        name,
+        does,
+        control,
+        reset,
+    }
+}
+
+/// With `value` not `default`: the default as `said`, and what sets it
+/// back, as choosing it on the page does.
+fn reset<T: Copy + PartialEq>(
+    value: T,
+    default: T,
+    said: impl Fn(T) -> &'static str,
+    message: impl FnOnce(T) -> Message,
+) -> Option<(&'static str, Message)> {
+    (value != default).then(|| (said(default), message(default)))
+}
+
+/// A row of a section's card: the setting's name over a line saying what
+/// it does, its control right of them. Changed from its default, it has
+/// an accent bar along its left and a reset arrow before the control.
+fn setting_row(row: SettingRow<'_>) -> Element<'_, Message> {
+    let SettingRow {
+        name,
+        does,
+        control,
+        reset,
+    } = row;
+    let changed = reset.is_some();
+    let reset = reset.map(|(default, message)| {
+        chrome::tip(
+            icon_button(Icon::Undo, Tone::Muted, Some(message))
+                .style(theme::flat_button(false, Tone::Muted)),
+            text(format!("Reset to {default}")),
+        )
+    });
+    let content = container(
         row![
             column![
                 text(name).font(theme::SEMIBOLD),
@@ -839,14 +976,30 @@ fn setting<'a>(
             ]
             .spacing(2)
             .width(Length::Fill),
-            control,
+            row![reset, control].spacing(6).align_y(Alignment::Center),
         ]
         .spacing(16)
         .align_y(Alignment::Center),
     )
-    .padding([9, 14])
-    .into()
+    .padding([9, 14]);
+    if changed {
+        // iced has no one-sided borders: the bar is a strip of its own,
+        // the row's padding the narrower by its width.
+        row![
+            container(Space::new())
+                .width(CHANGED_BAR)
+                .height(Length::Fill)
+                .style(theme::changed_bar),
+            content.padding(Padding::from([9, 14]).left(14.0 - CHANGED_BAR)),
+        ]
+        .into()
+    } else {
+        content.into()
+    }
 }
+
+/// The width of a changed setting's bar.
+const CHANGED_BAR: f32 = 3.0;
 
 /// A choice among a few, as one bar of buttons, each its icon, if it has
 /// one, its label, whether it's the one chosen and what it sends.
@@ -876,6 +1029,35 @@ fn segmented<'a, const N: usize>(
         .padding(2)
         .style(theme::segments)
         .into()
+}
+
+/// The interface scale's slider at `percent`, its value beside it: a
+/// drag only moves it and its label, the scale set once let go. Only the
+/// mouse moves it ([`MouseOnly`]): the keys and the wheel would, with no
+/// release to set it.
+fn scale_slider<'a>(percent: u16) -> Element<'a, Message> {
+    let percent = percent.clamp(INTERFACE_SCALE_MIN, INTERFACE_SCALE_MAX);
+    row![
+        MouseOnly::new(
+            slider(
+                INTERFACE_SCALE_MIN..=INTERFACE_SCALE_MAX,
+                percent,
+                |percent| { Message::Settings(SettingsPage::DragScale(percent)) }
+            )
+            .step(INTERFACE_SCALE_STEP)
+            .on_release(Message::Settings(SettingsPage::ReleaseScale))
+            .width(180)
+            .style(theme::slider(true))
+        ),
+        text(scale_said(percent))
+            .size(12.5)
+            .width(40)
+            .align_x(Alignment::End)
+            .wrapping(text::Wrapping::None),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 /// On or off, sending `message` to turn it the other way.

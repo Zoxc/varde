@@ -629,8 +629,6 @@ svg.i.link { --cc: var(--c-link); --ca: var(--c-link); }
 .sl { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .sl b { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .sl span { color: var(--muted); font-size: 12px; }
-.srow.prop .sl b { color: var(--muted); }
-.ptag { padding: 0 6px; border-radius: 8px; background: var(--chip); color: var(--faint); font-size: 10px; font-weight: 700; }
 .sc { flex: none; }
 .sfoot { color: var(--faint); font-size: 11.5px; margin: 0 2px; }
 .sfoot code { font-size: 11px; }
@@ -670,3 +668,15 @@ svg.i.link { --cc: var(--c-link); --ca: var(--c-link); }
 .rbtns .op.primary { border-color: transparent; }
 .shead .op:disabled { opacity: .45; cursor: default; background: none; }
 .sl b svg.mouse { width: 10px; height: 14px; margin-right: -2px; }
+/* A value along a range: the track in the accent up to the thumb, the
+   value after it. */
+.slide { display: flex; align-items: center; gap: 10px; }
+.slide input { width: 200px; accent-color: var(--fill); }
+.slide b { min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+/* A setting changed from its default: an accent bar along the row's
+   left, and a reset arrow before its control. */
+.srow.mod { box-shadow: inset 3px 0 0 var(--accent); }
+.rreset { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.rreset:hover { background: var(--hl); color: var(--text); }
+.rreset svg.i { width: 15px; height: 15px; }
+.sc { display: flex; align-items: center; gap: 6px; }

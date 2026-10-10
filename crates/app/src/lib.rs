@@ -69,14 +69,26 @@ pub(crate) struct Varde {
     warm_up: bool,
 }
 
-/// The settings page's own state: the app's, not a document's, so it
-/// stays open across opening and closing designs.
+/// The settings page's own state: the app's, not a document's, but
+/// closed by any move to another view (see [`Varde::show`]).
 #[derive(Debug, Default)]
 struct Page {
     open: bool,
     tab: varde_view::SettingsTab,
     /// Whether Reset to defaults is asking first.
     resetting: bool,
+    /// The interface scale the slider is dragged to, set once let go.
+    scale_dragged: Option<u16>,
+}
+
+impl Page {
+    /// Closes the page, with what it was asking or being dragged to.
+    fn close(&mut self) {
+        self.open = false;
+        self.resetting = false;
+        // A drag not let go on the page sets nothing.
+        self.scale_dragged = None;
+    }
 }
 
 /// The files side of the app, which both screens' steps use: the IO lane,
@@ -466,6 +478,8 @@ impl Varde {
         }
         match message {
             Message::Ui(Ui::Welcome(message)) => {
+                // Only from the welcome screen: one sent on from it once a
+                // document shows makes nothing new.
                 return self.welcome(|welcome, files| welcome.update(files, message));
             }
             Message::Picked(chosen) => {
@@ -485,9 +499,9 @@ impl Varde {
             }
             Message::Ui(Ui::File(message)) => return self.file(message),
             Message::AutoSaveTick(now) => {
-                let pause = auto_save_pause(&self.options);
+                let wait = auto_save_wait(&self.options);
                 return self.step(|doc, cx| {
-                    doc.auto_save(cx, now, pause);
+                    doc.auto_save(cx, now, wait);
                     doc.thumbnail_overdue(cx, now)
                 });
             }
@@ -591,8 +605,9 @@ impl Varde {
                 });
             }
             Message::Ui(Ui::ToggleSettings) => {
-                self.page.open = !self.page.open;
-                self.page.resetting = false;
+                let open = !self.page.open;
+                self.page.close();
+                self.page.open = open;
                 self.with_doc(|doc, _| doc.view_menu = false);
             }
             Message::Ui(Ui::Settings(message)) => self.settings_page(message),
@@ -656,7 +671,21 @@ impl Varde {
     fn settings_page(&mut self, message: varde_view::SettingsPage) {
         use varde_view::SettingsPage;
         match message {
-            SettingsPage::Tab(tab) => self.page.tab = tab,
+            SettingsPage::Tab(tab) => {
+                self.page.tab = tab;
+                self.page.scale_dragged = None;
+            }
+            // Only the slider's label follows a drag, so the page doesn't
+            // rescale under the pointer: the scale is set once let go.
+            SettingsPage::DragScale(percent) => {
+                self.page.scale_dragged =
+                    varde_view::interface_scale_offered(percent).then_some(percent);
+            }
+            SettingsPage::ReleaseScale => {
+                if let Some(percent) = self.page.scale_dragged.take() {
+                    self.set(varde_view::Setting::InterfaceScale(percent));
+                }
+            }
             SettingsPage::SetLengthUnit(unit) => {
                 self.choose(Key::LengthUnit, |options| options.length_unit = unit);
             }
@@ -682,9 +711,9 @@ impl Varde {
     /// Sets `setting`, from the settings page, if it's a value the page
     /// offers: others are ignored.
     fn set(&mut self, setting: varde_view::Setting) {
-        use varde_view::{AUTO_SAVE_PAUSES, INTERFACE_SCALES, RECENT_DESIGNS, Setting};
+        use varde_view::{AUTO_SAVE_MINUTES, RECENT_DESIGNS, Setting, interface_scale_offered};
         match setting {
-            Setting::InterfaceScale(percent) if INTERFACE_SCALES.contains(&percent) => {
+            Setting::InterfaceScale(percent) if interface_scale_offered(percent) => {
                 self.choose(Key::InterfaceScale, |options| {
                     options.interface_scale = percent;
                 });
@@ -726,8 +755,15 @@ impl Varde {
             Setting::SketchSnap(on) => {
                 self.choose(Key::SketchSnap, |options| options.mouse.sketch_snap = on);
             }
-            Setting::AutoSave(seconds) if AUTO_SAVE_PAUSES.contains(&seconds) => {
-                self.choose(Key::AutoSave, |options| options.auto_save = seconds);
+            Setting::HiddenEdges(on) => {
+                self.choose(Key::HiddenEdges, |options| options.hidden_edges = on);
+            }
+            Setting::Names(on) => self.choose(Key::Names, |options| options.names = on),
+            Setting::MouseHints(on) => {
+                self.choose(Key::MouseHints, |options| options.mouse_hints = on);
+            }
+            Setting::AutoSave(minutes) if AUTO_SAVE_MINUTES.contains(&minutes) => {
+                self.choose(Key::AutoSave, |options| options.auto_save = minutes);
             }
             Setting::RecentDesigns(count) if RECENT_DESIGNS.contains(&count) => {
                 self.choose(Key::RecentDesigns, |options| options.recent_designs = count);
@@ -832,11 +868,11 @@ impl Varde {
             Next::Show(mut doc) => {
                 // In the projection of the settings, turned as they say.
                 doc.take_options(&self.options);
-                self.screen = Screen::Document(doc);
+                self.show(Screen::Document(doc));
                 Task::none()
             }
             Next::Left(Leave::Close) => {
-                self.screen = Screen::Welcome(Welcome::default());
+                self.show(Screen::Welcome(Welcome::default()));
                 // Saved since, with another.
                 self.files.load_thumbnails();
                 // Listed after the close, so what it lets go of shows as
@@ -849,6 +885,16 @@ impl Varde {
             }
             Next::Left(Leave::Quit(window)) => self.quit(window),
         }
+    }
+
+    /// Shows `screen`: the one place the screen changes, between the
+    /// welcome screen and a document or from one document to another
+    /// (a new design, an open, a close). The settings page closes on
+    /// each, so what's moved to shows; a cancelled or failed open or
+    /// close never gets here and leaves it as it is.
+    fn show(&mut self, screen: Screen) {
+        self.screen = screen;
+        self.page.close();
     }
 
     /// Closes `window`, which quits, once the IO lane has done everything
@@ -1009,6 +1055,7 @@ impl Varde {
             options: self.options,
             tab: self.page.tab,
             resetting: self.page.resetting,
+            scale_dragged: self.page.scale_dragged,
             kept_in: match (&self.settings_shown, self.files.browser_storage) {
                 (_, true) => varde_view::KeptIn::Browser,
                 (Some(path), false) => varde_view::KeptIn::File(path),
@@ -1244,14 +1291,16 @@ fn doc_lane<L, S: Stream>(
         .chain(responses.map(move |response| Message::Doc(id, answer(response))))
 }
 
-/// How long editing pauses before a document is auto-saved, as the
-/// settings say, or `None` for never: natively. The web, which has no
-/// such setting, always auto-saves after [`doc::AUTO_SAVE_IDLE`].
-fn auto_save_pause(options: &ViewOptions) -> Option<std::time::Duration> {
+/// How long after the first change not auto-saved a document is
+/// auto-saved, as the settings say, or `None` for never: natively. The
+/// web, which has no such setting, always waits [`doc::AUTO_SAVE_WAIT`].
+fn auto_save_wait(options: &ViewOptions) -> Option<std::time::Duration> {
     if cfg!(target_arch = "wasm32") {
-        return Some(doc::AUTO_SAVE_IDLE);
+        return Some(doc::AUTO_SAVE_WAIT);
     }
-    (options.auto_save > 0).then(|| std::time::Duration::from_secs(options.auto_save.into()))
+    // At most 10 minutes as offered; bounded all the same.
+    let minutes = options.auto_save.min(60);
+    (minutes > 0).then(|| std::time::Duration::from_secs(u64::from(minutes) * 60))
 }
 
 /// Whether `message` still acts while the window waits for the IO lane to
@@ -1286,6 +1335,7 @@ fn while_quitting(message: &Message) -> bool {
                     | Ui::ToggleSettings
                     | Ui::Settings(
                         varde_view::SettingsPage::Tab(_)
+                            | varde_view::SettingsPage::DragScale(_)
                             | varde_view::SettingsPage::AskReset
                             | varde_view::SettingsPage::CancelReset
                     )

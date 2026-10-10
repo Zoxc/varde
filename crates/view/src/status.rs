@@ -247,17 +247,15 @@ fn shading_choices<'a>(chosen: Shading) -> Vec<Element<'a, Message>> {
 
 /// The edges drawn, in the Edges submenu, `chosen` ticked.
 fn edges_choices<'a>(chosen: Edges) -> Vec<Element<'a, Message>> {
-    [
-        (Edges::Default, "Feature edges"),
-        (Edges::Wireframe, "Wireframe"),
-        (Edges::Tessellation, "Tessellation"),
-    ]
-    .into_iter()
-    .map(|(edges, label)| {
-        let message = Message::SetEdges(edges);
-        choice_item(edges_icon(edges), label, edges == chosen, message).into()
-    })
-    .collect()
+    // Named as the settings page names them.
+    [Edges::Default, Edges::Wireframe, Edges::Tessellation]
+        .into_iter()
+        .map(|edges| {
+            let message = Message::SetEdges(edges);
+            let label = crate::settings::edges_said(edges);
+            choice_item(edges_icon(edges), label, edges == chosen, message).into()
+        })
+        .collect()
 }
 
 pub(crate) fn shading_icon(shading: Shading) -> Icon {

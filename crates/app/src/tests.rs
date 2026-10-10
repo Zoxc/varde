@@ -22,7 +22,7 @@ use varde_view::{Edit, MeshStatus, Panel, RowMenu, Welcome as WelcomeUi};
 
 use super::*;
 use crate::doc::{
-    AUTO_SAVE_IDLE, AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, PIVOT_FADE, PIVOT_SHOWN,
+    AUTO_SAVE_WAIT, AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, PIVOT_FADE, PIVOT_SHOWN,
     Picking, Recovery, Refusal, Target,
 };
 
@@ -2372,102 +2372,120 @@ fn nothing_is_opened_once_quitting() {
 const SECOND: Duration = Duration::from_secs(1);
 
 #[test]
-fn auto_save_waits_for_a_pause_in_editing() {
+fn auto_save_comes_a_minute_after_the_first_change() {
     let start = Instant::now();
     let at = |seconds: u64| start + SECOND * seconds as u32;
     let mut auto_save = AutoSave {
         sent: Some(Revision::from(0)),
         ..AutoSave::default()
     };
+    assert_eq!(AUTO_SAVE_WAIT, SECOND * 60);
     // Nothing edited.
-    assert!(!auto_save.due(Revision::from(0), true, at(0), AUTO_SAVE_IDLE));
-    assert!(!auto_save.due(Revision::from(0), true, at(100), AUTO_SAVE_IDLE));
-    // Edited at 101 and 102, then left alone.
-    assert!(!auto_save.due(Revision::from(1), true, at(101), AUTO_SAVE_IDLE));
-    assert!(!auto_save.due(Revision::from(2), true, at(102), AUTO_SAVE_IDLE));
-    assert!(!auto_save.due(Revision::from(2), true, at(104), AUTO_SAVE_IDLE));
-    assert!(auto_save.due(Revision::from(2), true, at(105), AUTO_SAVE_IDLE));
+    assert!(!auto_save.due(Revision::from(0), true, at(0), AUTO_SAVE_WAIT));
+    assert!(!auto_save.due(Revision::from(0), true, at(100), AUTO_SAVE_WAIT));
+    // Edited at 101 and 102, then left alone: a minute from the first.
+    assert!(!auto_save.due(Revision::from(1), true, at(101), AUTO_SAVE_WAIT));
+    assert!(!auto_save.due(Revision::from(2), true, at(102), AUTO_SAVE_WAIT));
+    assert!(!auto_save.due(Revision::from(2), true, at(160), AUTO_SAVE_WAIT));
+    assert!(auto_save.due(Revision::from(2), true, at(161), AUTO_SAVE_WAIT));
     // Sent: not again.
-    assert!(!auto_save.due(Revision::from(2), true, at(200), AUTO_SAVE_IDLE));
+    assert!(!auto_save.due(Revision::from(2), true, at(300), AUTO_SAVE_WAIT));
     // Not wanted, e.g. saved meanwhile, or read-only.
-    assert!(!auto_save.due(Revision::from(3), false, at(201), AUTO_SAVE_IDLE));
-    assert!(!auto_save.due(Revision::from(3), false, at(300), AUTO_SAVE_IDLE));
-    // Wanted again: the pause counts from when it was first seen wanted.
-    assert!(!auto_save.due(Revision::from(3), true, at(301), AUTO_SAVE_IDLE));
-    assert!(auto_save.due(Revision::from(3), true, at(304), AUTO_SAVE_IDLE));
+    assert!(!auto_save.due(Revision::from(3), false, at(301), AUTO_SAVE_WAIT));
+    assert!(!auto_save.due(Revision::from(3), false, at(400), AUTO_SAVE_WAIT));
+    // Wanted again: the wait counts from when it was first seen wanted.
+    assert!(!auto_save.due(Revision::from(3), true, at(401), AUTO_SAVE_WAIT));
+    assert!(!auto_save.due(Revision::from(3), true, at(460), AUTO_SAVE_WAIT));
+    assert!(auto_save.due(Revision::from(3), true, at(461), AUTO_SAVE_WAIT));
 }
 
-/// The pause the settings choose: 3 s, as always, by default; 10 s or
-/// 30 s; and the two-minute cap while edits keep coming, whatever the
-/// pause.
+/// The wait the settings choose: a minute by default, 5 or 10, whether
+/// edits keep coming or stop; off, never.
 #[test]
-fn auto_save_waits_for_the_pause_chosen() {
-    assert_eq!(AUTO_SAVE_IDLE, SECOND * 3);
+fn auto_save_waits_as_chosen() {
     assert_eq!(
-        crate::auto_save_pause(&varde_view::ViewOptions::default()),
-        Some(AUTO_SAVE_IDLE)
+        crate::auto_save_wait(&varde_view::ViewOptions::default()),
+        Some(AUTO_SAVE_WAIT)
     );
-    for (seconds, pause) in [(3u16, 3u64), (10, 10), (30, 30)] {
+    for minutes in [1u16, 5, 10] {
         let options = varde_view::ViewOptions {
-            auto_save: seconds,
+            auto_save: minutes,
             ..varde_view::ViewOptions::default()
         };
-        assert_eq!(
-            crate::auto_save_pause(&options),
-            Some(SECOND * pause as u32)
-        );
+        let wait = u64::from(minutes) * 60;
+        assert_eq!(crate::auto_save_wait(&options), Some(SECOND * wait as u32));
+        let wait_for = SECOND * wait as u32;
         let start = Instant::now();
         let at = |seconds: u64| start + SECOND * seconds as u32;
         let mut auto_save = AutoSave {
             sent: Some(Revision::from(0)),
             ..AutoSave::default()
         };
-        let idle = SECOND * pause as u32;
-        assert!(!auto_save.due(Revision::from(1), true, at(10), idle));
-        assert!(!auto_save.due(Revision::from(1), true, at(10 + pause - 1), idle));
-        assert!(auto_save.due(Revision::from(1), true, at(10 + pause), idle));
-        // Edits every second for five minutes still save every two.
+        // One edit, then nothing.
+        assert!(!auto_save.due(Revision::from(1), true, at(10), wait_for));
+        for second in 11..10 + wait {
+            assert!(!auto_save.due(Revision::from(1), true, at(second), wait_for));
+        }
+        assert!(auto_save.due(Revision::from(1), true, at(10 + wait), wait_for));
+        // Edits every second for half an hour: auto-saved every wait,
+        // the first edit after one seen a second later.
         let mut saved = Vec::new();
-        for second in 1..=300u64 {
-            if auto_save.due(Revision::from(second + 1), true, at(100 + second), idle) {
+        let base = 10_000;
+        for second in 1..=1800u64 {
+            if auto_save.due(
+                Revision::from(second + 1),
+                true,
+                at(base + second),
+                wait_for,
+            ) {
                 saved.push(second);
             }
         }
-        assert_eq!(saved, [121, 242], "{seconds}");
+        let expected: Vec<u64> = (1..)
+            .map(|count| count * (wait + 1))
+            .take_while(|&second| second <= 1800)
+            .collect();
+        assert_eq!(saved, expected, "{minutes}");
     }
     let off = varde_view::ViewOptions {
         auto_save: 0,
         ..varde_view::ViewOptions::default()
     };
-    assert_eq!(crate::auto_save_pause(&off), None);
+    assert_eq!(crate::auto_save_wait(&off), None);
+    // Not offered: bounded all the same.
+    let odd = varde_view::ViewOptions {
+        auto_save: u16::MAX,
+        ..varde_view::ViewOptions::default()
+    };
+    assert_eq!(crate::auto_save_wait(&odd), Some(SECOND * 3600));
 }
 
+/// The auto-save waits of before stored read as a minute; off as off.
 #[test]
-fn auto_save_comes_every_two_minutes_while_edits_keep_coming() {
-    let start = Instant::now();
-    let mut auto_save = AutoSave {
-        sent: Some(Revision::from(0)),
-        ..AutoSave::default()
-    };
-    let mut saved = Vec::new();
-    // An edit every second for five minutes.
-    for second in 1..=300u64 {
-        if auto_save.due(
-            Revision::from(second),
-            true,
-            start + SECOND * second as u32,
-            AUTO_SAVE_IDLE,
-        ) {
-            saved.push(second);
-        }
+fn old_auto_save_settings_read_as_a_minute() {
+    for (old, minutes) in [(0u16, 0u16), (3, 1), (10, 1), (30, 1)] {
+        let stored = varde_io::settings::Settings {
+            auto_save: varde_io::settings::AutoSave::try_from(old).unwrap_or_default(),
+            ..varde_io::settings::Settings::default()
+        };
+        assert_eq!(
+            crate::settings::options_of(stored).auto_save,
+            minutes,
+            "{old}"
+        );
     }
-    // The first edit after one auto-save is seen a second later.
-    assert_eq!(saved, [121, 242]);
 }
 
 /// A tick of the auto-save timer, `seconds` after `start`.
 fn tick(varde: &mut Varde, start: Instant, seconds: u32) {
     let _ = varde.update(Message::AutoSaveTick(start + SECOND * seconds));
+}
+
+/// A tick of the auto-save timer, `thirds` thirds of
+/// [`AUTO_SAVE_WAIT`] after `start`: three after the first change not
+/// auto-saved, it's auto-saved.
+fn tick_thirds(varde: &mut Varde, start: Instant, thirds: u32) {
+    tick(varde, start, thirds * 20);
 }
 
 /// The auto-saves in `sent`, as `(file, revision)`.
@@ -2488,18 +2506,18 @@ fn auto_saves(sent: &[IoRequest]) -> Vec<(u64, u64)> {
 }
 
 #[test]
-fn an_edited_document_is_auto_saved_once_idle() {
+fn an_edited_document_is_auto_saved_a_minute_after_the_first_change() {
     let (mut varde, requests) = with_open_file();
     let start = Instant::now();
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 10);
+    tick_thirds(&mut varde, start, 0);
+    tick_thirds(&mut varde, start, 10);
     assert!(sent(&requests).is_empty());
 
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    tick(&mut varde, start, 11);
-    tick(&mut varde, start, 13);
+    tick_thirds(&mut varde, start, 11);
+    tick_thirds(&mut varde, start, 13);
     assert!(sent(&requests).is_empty());
-    tick(&mut varde, start, 14);
+    tick_thirds(&mut varde, start, 14);
     let sent_now = sent(&requests);
     assert_eq!(auto_saves(&sent_now), [(0, 1)]);
     let IoRequest::AutoSave {
@@ -2512,50 +2530,50 @@ fn an_edited_document_is_auto_saved_once_idle() {
     // Auto-saving isn't saving: the document is still edited.
     assert!(document(&varde).edited());
     assert!(!varde.title().contains("Saving"));
-    tick(&mut varde, start, 30);
+    tick_thirds(&mut varde, start, 30);
     assert!(sent(&requests).is_empty());
 
     // A saved document isn't auto-saved, nor one on its way to its file.
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
-    tick(&mut varde, start, 31);
-    tick(&mut varde, start, 40);
+    tick_thirds(&mut varde, start, 31);
+    tick_thirds(&mut varde, start, 40);
     assert!(sent(&requests).is_empty());
     let _ = varde.update(saved(revision, Ok(())));
-    tick(&mut varde, start, 50);
+    tick_thirds(&mut varde, start, 50);
     assert!(sent(&requests).is_empty());
 
     // Nor once quitting, as it would come after the flush.
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    tick(&mut varde, start, 51);
+    tick_thirds(&mut varde, start, 51);
     let _ = varde.update(Message::CloseRequested(window_id()));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
     sent(&requests);
-    tick(&mut varde, start, 60);
+    tick_thirds(&mut varde, start, 60);
     assert!(sent(&requests).is_empty());
 }
 
-/// The pause chosen in the settings is the one waited for; with
-/// auto-save off nothing is auto-saved however long editing pauses, but
-/// undoing back to the saved state still takes back what an earlier
-/// auto-save left, and Save still saves.
+/// The wait chosen in the settings is the one waited for; with
+/// auto-save off nothing is auto-saved however long, but undoing back to
+/// the saved state still takes back what an earlier auto-save left, and
+/// Save still saves.
 #[test]
 fn auto_save_follows_the_setting() {
     let (mut varde, requests) = with_open_file();
-    varde.options.auto_save = 10;
+    varde.options.auto_save = 5;
     let start = Instant::now();
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
-    tick(&mut varde, start, 9);
+    tick(&mut varde, start, 60);
+    tick(&mut varde, start, 299);
     assert!(sent(&requests).is_empty());
-    tick(&mut varde, start, 10);
+    tick(&mut varde, start, 300);
     assert_eq!(auto_saves(&sent(&requests)), [(0, 1)]);
 
     varde.options.auto_save = 0;
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    for seconds in [11, 14, 40, 200, 400] {
+    for seconds in [301, 400, 1000, 2000, 4000] {
         tick(&mut varde, start, seconds);
     }
     assert!(auto_saves(&sent(&requests)).is_empty());
@@ -2563,17 +2581,19 @@ fn auto_save_follows_the_setting() {
     // back all the same.
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::Undo)));
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::Undo)));
-    tick(&mut varde, start, 401);
+    tick(&mut varde, start, 4001);
     assert!(
         sent(&requests)
             .iter()
             .any(|request| matches!(request, IoRequest::DiscardRecovery { .. }))
     );
-    // On again, the next pause auto-saves.
-    varde.options.auto_save = 3;
+    // On again, a minute after the next edit auto-saves.
+    varde.options.auto_save = 1;
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    tick(&mut varde, start, 402);
-    tick(&mut varde, start, 405);
+    tick(&mut varde, start, 4002);
+    tick(&mut varde, start, 4061);
+    assert!(auto_saves(&sent(&requests)).is_empty());
+    tick(&mut varde, start, 4062);
     assert_eq!(auto_saves(&sent(&requests)).len(), 1);
 }
 
@@ -2589,20 +2609,20 @@ fn undoing_back_to_the_saved_state_empties_what_was_auto_saved() {
     };
     let change = an_edit(document(&varde));
     edit(&mut varde, change);
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
+    tick_thirds(&mut varde, start, 0);
+    tick_thirds(&mut varde, start, 3);
     assert_eq!(auto_saves(&sent(&requests)), [(0, 1)]);
     edit(&mut varde, Edit::Undo);
-    tick(&mut varde, start, 4);
+    tick_thirds(&mut varde, start, 4);
     assert!(matches!(
         sent(&requests)[..],
         [IoRequest::DiscardRecovery { file: FileId(0) }]
     ));
-    tick(&mut varde, start, 10);
+    tick_thirds(&mut varde, start, 10);
     assert!(sent(&requests).is_empty());
     edit(&mut varde, Edit::Redo);
-    tick(&mut varde, start, 11);
-    tick(&mut varde, start, 14);
+    tick_thirds(&mut varde, start, 11);
+    tick_thirds(&mut varde, start, 14);
     assert_eq!(auto_saves(&sent(&requests)), [(0, 1)]);
 
     // Saved, then undone and redone back to it before an auto-save.
@@ -2611,8 +2631,8 @@ fn undoing_back_to_the_saved_state_empties_what_was_auto_saved() {
     let _ = varde.update(saved(revision, Ok(())));
     edit(&mut varde, Edit::Undo);
     edit(&mut varde, Edit::Redo);
-    tick(&mut varde, start, 20);
-    tick(&mut varde, start, 30);
+    tick_thirds(&mut varde, start, 20);
+    tick_thirds(&mut varde, start, 30);
     assert!(sent(&requests).is_empty());
 
     // A save failing leaves what was auto-saved: the state it was of is
@@ -2622,8 +2642,8 @@ fn undoing_back_to_the_saved_state_empties_what_was_auto_saved() {
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.update(saved(revision, Err(SaveError::Failed("full".into()))));
-    tick(&mut varde, start, 31);
-    tick(&mut varde, start, 34);
+    tick_thirds(&mut varde, start, 31);
+    tick_thirds(&mut varde, start, 34);
     assert_eq!(auto_saves(&sent(&requests)), [(0, u64::from(revision))]);
 }
 
@@ -3087,8 +3107,8 @@ fn saving_as_another_file_leaves_the_recovered_changes_behind() {
     // Auto-saves no longer wait for an answer.
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let start = Instant::now();
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 10);
+    tick_thirds(&mut varde, start, 0);
+    tick_thirds(&mut varde, start, 10);
     assert_eq!(auto_saves(&sent(&requests)), [(0, 1)]);
 }
 
@@ -3204,8 +3224,8 @@ fn a_new_design_auto_saves_to_its_entry_until_saved_as() {
     let (mut varde, requests) = with_new_design();
     let start = Instant::now();
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
+    tick_thirds(&mut varde, start, 0);
+    tick_thirds(&mut varde, start, 3);
     assert_eq!(auto_saves(&sent(&requests)), [(9, 1)]);
 
     // Save asks where, and the Save As takes the entry along.
@@ -3325,8 +3345,8 @@ fn a_failed_auto_save_is_shown() {
     let (mut varde, requests) = with_new_design();
     let start = Instant::now();
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
+    tick_thirds(&mut varde, start, 0);
+    tick_thirds(&mut varde, start, 3);
     assert_eq!(auto_saves(&sent(&requests)), [(9, 1)]);
     // Another document's, answered late: not this one's.
     let _ = varde.update(Message::Io(IoResponse::AutoSaved {
@@ -3468,8 +3488,8 @@ fn a_failed_save_as_an_entry_was_closed_for_asks_for_another() {
         Target::Entry { file: FileId(2) }
     );
     let start = Instant::now();
-    tick(&mut varde, start, 0);
-    tick(&mut varde, start, 3);
+    tick_thirds(&mut varde, start, 0);
+    tick_thirds(&mut varde, start, 3);
     assert_eq!(auto_saves(&sent(&requests)), [(2, 1)]);
 }
 
@@ -3664,8 +3684,8 @@ impl Session {
             .varde
             .update(Message::Ui(Ui::Edit(an_edit(document(&self.varde)))));
         let start = Instant::now();
-        tick(&mut self.varde, start, 0);
-        tick(&mut self.varde, start, 3);
+        tick_thirds(&mut self.varde, start, 0);
+        tick_thirds(&mut self.varde, start, 3);
         self.answer(|r| matches!(r, IoResponse::AutoSaved { result: Ok(()), .. }));
     }
 }
@@ -5879,10 +5899,13 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
     use varde_render::Shading;
     use varde_view::Edges;
     assert_eq!(varde.options.edges, Edges::Default);
-    pick(&mut varde, &mut renderer, "Edges", "Wireframe");
+    pick(&mut varde, &mut renderer, "Edges", "Patches");
     assert_eq!(varde.options.edges, Edges::Wireframe);
-    pick(&mut varde, &mut renderer, "Edges", "Tessellation");
+    pick(&mut varde, &mut renderer, "Edges", "Triangles");
     assert_eq!(varde.options.edges, Edges::Tessellation);
+    pick(&mut varde, &mut renderer, "Edges", "Features");
+    assert_eq!(varde.options.edges, Edges::Default);
+    pick(&mut varde, &mut renderer, "Edges", "Triangles");
     assert_eq!(varde.options.shading, Shading::Regular);
     pick(&mut varde, &mut renderer, "Shading", "Metal");
     assert_eq!(varde.options.shading, Shading::Metal);
@@ -5902,13 +5925,13 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
             .bounds
             .center_y()
     };
-    assert!((y("Feature edges") - y("Edges")).abs() < 1.0);
+    assert!((y("Features") - y("Edges")).abs() < 1.0);
     assert!(!open.iter().any(|t| t.text == "Shaded"));
     hover(&mut varde, &mut renderer, "Perspective");
     assert!(
         !shown(&varde, &mut renderer)
             .iter()
-            .any(|t| t.text == "Feature edges")
+            .any(|t| t.text == "Features")
     );
     hover(&mut varde, &mut renderer, "Shading");
     let open = shown(&varde, &mut renderer);

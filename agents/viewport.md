@@ -113,9 +113,10 @@ opens it to the menu's left as it's hovered or clicked
 `MENU_ITEM_HEIGHT` tall); hovering another item closes it. Its choices
 have icons, the one chosen ticked at its right (`choice_item`). Shading:
 Shaded, Flat shaded, Metal or Flat metal (`Frame::shading`, see
-"Shading" below). Edges (`Edges`): Feature edges (`Edges::Default`), those only;
-Wireframe, with the mesh's wires too, every patch's edges that aren't
-feature edges (`Frame::wireframe`); or Tessellation, with every
+"Shading" below). Edges (`Edges`, named as the settings page names them,
+`settings::edges_said`): Features (`Edges::Default`), the feature edges
+only; Patches (`Edges::Wireframe`), with the mesh's wires too, every patch's edges that aren't
+feature edges (`Frame::wireframe`); or Triangles (`Edges::Tessellation`), with every
 triangle's edges (`Frame::tessellation`). The app keeps those for every
 document (`Varde::options`, a `ViewOptions`, Mouse hints and Hidden
 edges on and the defaults chosen to start with), stores them with the
@@ -131,8 +132,12 @@ while the page is open), the welcome screen's Settings at its foot, and
 page (`Message::ToggleSettings`); Escape closes it, before what's open
 in the document backs out but after a prompt over it, and Tab does
 nothing there (`escape_key`, `Varde::page_escape`). Whether it's open is
-the app's (`Varde::page`), so it stays open across opening and closing
-designs. In a document it takes the viewport's place
+the app's (`Varde::page`), but any move to another view closes it
+(`Page::close`), so what's moved to shows: New design, Open (a picked,
+dropped or recent file, a recovered design, a sample) and Close document
+all change the screen through `Varde::show`, which closes it. A
+cancelled pick, a close cancelled at the unsaved-changes prompt and a
+failed open move nowhere and leave it open. In a document it takes the viewport's place
 (`DocumentState::settings`): the toolbar and side panel stay, the
 status bar, the rail, the operation panel and the rest floating over the
 viewport go with it. The viewport widget isn't built, but the camera,
@@ -150,7 +155,7 @@ interface scale; the projection, shading, edges, Hidden edges, Names and
 Mouse hints, the view options menu's messages, so a change in either
 shows in both; the length unit new designs start in, the angle unit and
 decimal places values are shown in (a sample in the note); the mouse's
-settings (below); and the auto-save pause and recent designs kept
+settings (below); and the auto-save wait and recent designs kept
 (`files.md`). The settings only the page sets come as
 `SettingsPage::Set(Setting)`, `Varde::set` ignoring values the page
 doesn't offer. Every one defaults to what the app did before it was a
@@ -158,10 +163,21 @@ setting. The foot says where they're kept. Reset to defaults is off with
 every setting the default; otherwise it asks first
 (`SettingsPage::AskReset`) in a popup listing each setting it changes
 (`changed_settings`; on the web not the Files tab's), Enter resetting
-(`reset_key`) and Escape cancelling.
+(`reset_key`) and Escape cancelling. A row whose setting isn't its
+default (`SettingRow::reset`, from `settings::reset`) has a 3 px accent
+bar along its left (a strip of its own, iced having no one-sided
+borders) and the undo arrow before its control, "Reset to <default>" as
+its tooltip, the default said as the popup says it; it sends what
+choosing the default on the page sends, so it's stored the same way,
+but a switch's sets it (`Setting::HiddenEdges` and the like) rather than
+toggling, which settings arriving under it would turn the wrong way.
 
-The interface scale (90, 100, 125 or 150 %, `ViewOptions::interface_scale`)
-is iced's application scale factor (`Varde::scale_factor`), over the
+The interface scale (a slider, 75 % to 200 % in steps of 5, its value
+beside it, `ViewOptions::interface_scale`) is set when the slider is let
+go: while it's dragged only its label follows (`SettingsPage::DragScale`,
+`Page::scale_dragged`; `ReleaseScale` sets it), so the page doesn't
+rescale under the pointer, and a drag left by changing tab or closing
+the page sets nothing. It is iced's application scale factor (`Varde::scale_factor`), over the
 system's: everything is laid out larger or smaller, the viewport taking
 the room it's given as ever, its model drawn at the window's pixels. The
 web goes through the same `iced_winit` path, the page's device pixel

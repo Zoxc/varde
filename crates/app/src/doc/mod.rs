@@ -62,7 +62,7 @@ use pick::ModelPick;
 use rail::Rail;
 pub(crate) use revolve::RevolveSession;
 use save::Persist;
-pub(crate) use save::{AUTO_SAVE_IDLE, Downloader, Leave, Target};
+pub(crate) use save::{AUTO_SAVE_WAIT, Downloader, Leave, Target};
 #[cfg(test)]
 pub(crate) use save::{AutoSave, Picking};
 use sketch::GEOMETRY_SHARE;

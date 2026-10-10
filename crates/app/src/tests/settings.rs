@@ -58,8 +58,7 @@ fn written(requests: &std::cell::RefCell<Vec<IoRequest>>) -> Vec<Stored> {
 }
 
 /// The gear's key opens the page and closes it, on the welcome screen and
-/// in a document, and `Esc` closes it; it stays open across opening a
-/// design, being the app's.
+/// in a document, and `Esc` closes it; New design closes it.
 #[test]
 fn ctrl_comma_toggles_the_page_and_escape_closes_it() {
     let (mut varde, _) = with_files();
@@ -94,13 +93,16 @@ fn ctrl_comma_toggles_the_page_and_escape_closes_it() {
         Some(Message::Ui(Ui::File(_)))
     ));
 
+    // A new design closes it, so the design shows.
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
     assert!(varde.screen.doc().is_some());
-    assert!(varde.page.open, "the page is the app's");
+    assert!(!varde.page.open);
     assert!(matches!(
         doc_key(&varde, ctrl_comma()),
         Some(Message::Ui(Ui::ToggleSettings))
     ));
+    toggle(&mut varde);
+    assert!(varde.page.open);
     toggle(&mut varde);
     assert!(!varde.page.open);
     assert!(matches!(
@@ -169,6 +171,7 @@ fn the_page_leaves_what_is_open_and_turns_off_the_viewports_keys() {
         options: varde.options,
         tab: SettingsTab::View,
         resetting: false,
+        scale_dragged: None,
         kept_in: varde_view::KeptIn::Browser,
     };
     let view = document(&varde).view_with(
@@ -357,8 +360,8 @@ fn the_newer_settings_default_to_the_app_as_it_was() {
     assert_eq!(options.shown(), varde_expr::Shown::default());
     assert_eq!(options.mouse, varde_view::MouseOptions::default());
     assert_eq!(
-        crate::auto_save_pause(&options),
-        Some(crate::doc::AUTO_SAVE_IDLE)
+        crate::auto_save_wait(&options),
+        Some(crate::doc::AUTO_SAVE_WAIT)
     );
     assert_eq!(usize::from(options.recent_designs), varde_io::recent::MAX);
     assert!(varde_view::changed_settings(options).is_empty());
@@ -378,7 +381,7 @@ fn the_pages_own_settings_are_stored() {
     }));
     let _ = sent(&requests);
     let steps = [
-        Setting::InterfaceScale(150),
+        Setting::InterfaceScale(155),
         Setting::AngleUnit(AngleUnit::Rad),
         Setting::Decimals(Some(2)),
         Setting::LeftDrag(DragAction::Pan),
@@ -390,7 +393,7 @@ fn the_pages_own_settings_are_stored() {
         Setting::WheelDownZoomsIn(true),
         Setting::ZoomToPointer(false),
         Setting::SketchSnap(false),
-        Setting::AutoSave(30),
+        Setting::AutoSave(5),
         Setting::RecentDesigns(25),
     ];
     for step in steps {
@@ -403,7 +406,7 @@ fn the_pages_own_settings_are_stored() {
     assert_eq!(
         last,
         Stored {
-            interface_scale: io::InterfaceScale::Larger,
+            interface_scale: io::InterfaceScale::new(155).unwrap(),
             angle_unit: io::AngleUnit::Rad,
             decimals: io::Decimals::Places(2),
             left_drag: io::Drag::Pan,
@@ -415,18 +418,23 @@ fn the_pages_own_settings_are_stored() {
             zoom_direction: io::ZoomDirection::WheelDown,
             zoom_to_pointer: false,
             sketch_snap: false,
-            auto_save: io::AutoSave::Seconds30,
+            auto_save: io::AutoSave::Minutes5,
             recent_designs: io::RecentDesigns::TwentyFive,
             ..Stored::default()
         }
     );
     // Not offered, not taken nor stored.
     for odd in [
-        Setting::InterfaceScale(110),
+        Setting::InterfaceScale(112),
+        Setting::InterfaceScale(70),
+        Setting::InterfaceScale(205),
         Setting::InterfaceScale(0),
+        Setting::InterfaceScale(u16::MAX),
         Setting::Decimals(Some(7)),
         Setting::Decimals(Some(u8::MAX)),
-        Setting::AutoSave(5),
+        Setting::AutoSave(3),
+        Setting::AutoSave(30),
+        Setting::AutoSave(60),
         Setting::AutoSave(u16::MAX),
         Setting::RecentDesigns(0),
         Setting::RecentDesigns(1000),
@@ -442,7 +450,7 @@ fn the_pages_own_settings_are_stored() {
         settings: last,
     }));
     assert_eq!(next.options, varde.options);
-    assert_eq!(next.scale_factor(), 1.5);
+    assert!((next.scale_factor() - 1.55).abs() < 1e-6);
 }
 
 /// Set, the interface scale is the app's scale factor, and values are
@@ -463,6 +471,52 @@ fn the_scale_and_the_values_shown_follow_the_settings() {
     let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::Reset)));
     assert_eq!(varde_expr::Shown::current(), varde_expr::Shown::default());
     assert_eq!(varde.scale_factor(), 1.0);
+}
+
+/// The scale's slider only moves its label while dragged, and sets the
+/// scale once let go: as the last place dragged to, stored then and only
+/// then. A drag left on the page or a tab changed sets nothing.
+#[test]
+fn the_scale_slider_sets_the_scale_when_let_go() {
+    let (mut varde, requests) = with_files();
+    let _ = varde.update(Message::Io(varde_io::Response::SettingsLoaded {
+        settings: Stored::default(),
+    }));
+    let _ = varde.update(Message::Ui(Ui::ToggleSettings));
+    let _ = sent(&requests);
+    let page = |varde: &mut Varde, message| {
+        let _ = varde.update(Message::Ui(Ui::Settings(message)));
+    };
+    for percent in [80, 135, 200] {
+        page(&mut varde, SettingsPage::DragScale(percent));
+        assert_eq!(varde.page.scale_dragged, Some(percent));
+        assert_eq!(varde.options.interface_scale, 100);
+        assert_eq!(varde.scale_factor(), 1.0);
+    }
+    assert!(written(&requests).is_empty());
+    page(&mut varde, SettingsPage::DragScale(125));
+    page(&mut varde, SettingsPage::ReleaseScale);
+    assert_eq!(varde.page.scale_dragged, None);
+    assert_eq!(varde.options.interface_scale, 125);
+    assert!((varde.scale_factor() - 1.25).abs() < 1e-6);
+    let written = written(&requests);
+    assert_eq!(written.len(), 1);
+    assert_eq!(written[0].interface_scale.percent(), 125);
+    // A release with nothing dragged sets nothing.
+    page(&mut varde, SettingsPage::ReleaseScale);
+    assert!(sent(&requests).is_empty());
+    // A value not offered isn't taken as dragged.
+    page(&mut varde, SettingsPage::DragScale(112));
+    assert_eq!(varde.page.scale_dragged, None);
+    // Dragged, then the tab changed or the page closed: nothing set.
+    page(&mut varde, SettingsPage::DragScale(75));
+    page(&mut varde, SettingsPage::Tab(SettingsTab::View));
+    page(&mut varde, SettingsPage::ReleaseScale);
+    page(&mut varde, SettingsPage::DragScale(75));
+    let _ = varde.update(Message::Ui(Ui::ToggleSettings));
+    page(&mut varde, SettingsPage::ReleaseScale);
+    assert_eq!(varde.options.interface_scale, 125);
+    assert!(sent(&requests).is_empty());
 }
 
 /// Over the top, the document's camera turns on past straight down;
@@ -645,4 +699,176 @@ fn the_status_bar_hints_follow_the_mouse_settings() {
     assert!(after.iter().any(|text| text == "Drag to zoom"), "{after:?}");
     assert!(!after.iter().any(|text| text == "Drag to orbit"));
     assert!(!after.iter().any(|text| text == "Click to set pivot"));
+}
+
+/// Open or not is the app's, but every move to another view closes it so
+/// what's moved to shows: New design, Open (a picked file, a recent
+/// design, a recovered one, a sample) and Close document. A cancelled
+/// pick, a close cancelled at the unsaved-changes prompt and a failed
+/// open leave it open.
+#[test]
+fn the_page_closes_on_every_move_to_another_view() {
+    use crate::tests::{an_edit, last_open, opened};
+    use varde_io::Response as IoResponse;
+    use varde_view::{File, Unsaved};
+    let (mut varde, requests) = with_files();
+    let _ = varde.update(Message::Io(IoResponse::RecentLoaded {
+        entries: vec![],
+        home: None,
+    }));
+    let close = |varde: &mut Varde| {
+        let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
+        // A design never saved to a file asks first.
+        if varde.screen.doc().is_some() {
+            let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
+        }
+        assert!(varde.screen.doc().is_none());
+    };
+
+    // A picked file, after a cancelled pick.
+    toggle(&mut varde);
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::Open)));
+    let _ = varde.update(Message::Picked(None));
+    assert!(varde.screen.doc().is_none());
+    assert!(varde.page.open, "a cancelled pick moves nowhere");
+    let _ = varde.update(Message::Picked(Some(varde_io::Chosen::Path(
+        "/d/picked.vrdp".into(),
+    ))));
+    let (id, path) = last_open(&requests);
+    let _ = varde.update(opened(id, path, 0, varde_io::Access::Edit));
+    assert!(varde.screen.doc().is_some());
+    assert!(!varde.page.open);
+
+    // Close document, after a close cancelled at the prompt.
+    toggle(&mut varde);
+    let edit = an_edit(document(&varde));
+    let _ = varde.update(Message::Ui(Ui::Edit(edit)));
+    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
+    let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Cancel))));
+    assert!(varde.screen.doc().is_some());
+    assert!(varde.page.open, "a cancelled close moves nowhere");
+    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
+    let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
+    assert!(varde.screen.doc().is_none());
+    assert!(!varde.page.open);
+
+    // A recent design (opened by its path), after a failed open.
+    toggle(&mut varde);
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::OpenPath(
+        "/d/gone.vrdp".into(),
+    ))));
+    let (id, path) = last_open(&requests);
+    let _ = varde.update(Message::Io(IoResponse::Opened {
+        id,
+        path: Some(path),
+        result: Err("no such file".to_owned()),
+    }));
+    assert!(varde.screen.doc().is_none());
+    assert!(varde.page.open, "a failed open moves nowhere");
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::OpenPath(
+        "/d/part.vrdp".into(),
+    ))));
+    let (id, path) = last_open(&requests);
+    let _ = varde.update(opened(id, path, 1, varde_io::Access::Edit));
+    assert!(varde.screen.doc().is_some());
+    assert!(!varde.page.open);
+    close(&mut varde);
+
+    // A recovered design, left in the store by a crash.
+    toggle(&mut varde);
+    let stored = std::path::PathBuf::from("/data/designs/a.vrdp");
+    let _ = sent(&requests);
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::OpenStored(
+        stored.clone(),
+    ))));
+    let sent_now = sent(&requests);
+    let [IoRequest::OpenRecovered { id, .. }] = &sent_now[..] else {
+        panic!("not opened: {sent_now:?}");
+    };
+    let _ = varde.update(opened(*id, stored, 2, varde_io::Access::Edit));
+    assert!(varde.screen.doc().is_some());
+    assert!(!varde.page.open);
+    close(&mut varde);
+
+    // A sample, where the build has them.
+    if !crate::samples::SAMPLES.is_empty() {
+        toggle(&mut varde);
+        let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::OpenSample(0))));
+        assert!(varde.screen.doc().is_some());
+        assert!(!varde.page.open);
+        close(&mut varde);
+    }
+
+    // New design.
+    toggle(&mut varde);
+    assert!(welcome_key((true, letter("n"))).is_some());
+    let _ = varde.update(welcome_key((true, letter("n"))).unwrap());
+    assert!(varde.screen.doc().is_some());
+    assert!(!varde.page.open);
+}
+
+/// A changed setting's reset sets just it back to its default, stored as
+/// choosing it is; the others stay as they are.
+#[test]
+fn a_rows_reset_resets_just_its_setting() {
+    let (mut varde, requests) = with_files();
+    let _ = varde.update(Message::Io(varde_io::Response::SettingsLoaded {
+        settings: Stored::default(),
+    }));
+    let _ = varde.update(Message::Ui(Ui::SetTheme(ThemeChoice::Dark)));
+    set(&mut varde, Setting::AngleUnit(AngleUnit::Rad));
+    set(&mut varde, Setting::Decimals(Some(2)));
+    set(&mut varde, Setting::InterfaceScale(150));
+    set(&mut varde, Setting::PivotClick(PivotClick::ShiftMiddle));
+    set(&mut varde, Setting::AutoSave(10));
+    let _ = varde.update(Message::Ui(Ui::ToggleNames));
+    let _ = sent(&requests);
+    let changed = varde.options;
+    let defaults = ViewOptions::default();
+    // What each row's reset sends (see `varde_view`'s settings tests),
+    // and the setting as it is after.
+    type Case = (Ui, fn(&mut ViewOptions));
+    let cases: [Case; 7] = [
+        (Ui::SetTheme(defaults.theme), |options| {
+            options.theme = ViewOptions::default().theme
+        }),
+        (
+            Ui::Settings(SettingsPage::Set(Setting::AngleUnit(AngleUnit::Deg))),
+            |options| options.angle_unit = AngleUnit::Deg,
+        ),
+        (
+            Ui::Settings(SettingsPage::Set(Setting::Decimals(None))),
+            |options| options.decimals = None,
+        ),
+        (
+            Ui::Settings(SettingsPage::Set(Setting::InterfaceScale(100))),
+            |options| options.interface_scale = 100,
+        ),
+        (
+            Ui::Settings(SettingsPage::Set(Setting::PivotClick(PivotClick::Middle))),
+            |options| options.mouse.pivot_click = PivotClick::Middle,
+        ),
+        (
+            Ui::Settings(SettingsPage::Set(Setting::AutoSave(1))),
+            |options| options.auto_save = 1,
+        ),
+        // Set, not toggled, so twice is still the default.
+        (
+            Ui::Settings(SettingsPage::Set(Setting::Names(false))),
+            |options| options.names = false,
+        ),
+    ];
+    for (reset, after) in cases {
+        varde.options = changed;
+        let _ = varde.update(Message::Ui(reset.clone()));
+        let _ = varde.update(Message::Ui(reset.clone()));
+        let mut expected = changed;
+        after(&mut expected);
+        assert_eq!(varde.options, expected, "{reset:?}");
+        assert_eq!(
+            written(&requests).last().copied(),
+            Some(crate::settings::stored_of(expected)),
+            "{reset:?}"
+        );
+    }
 }

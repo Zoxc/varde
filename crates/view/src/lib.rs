@@ -242,7 +242,9 @@ pub struct ViewOptions {
     /// The units a new design starts in. A design opened keeps its own.
     pub length_unit: LengthUnit,
     /// How large the UI is drawn, the model aside, in percent of the
-    /// system's scale: one of [`INTERFACE_SCALES`].
+    /// system's scale: a multiple of [`INTERFACE_SCALE_STEP`] from
+    /// [`INTERFACE_SCALE_MIN`] to [`INTERFACE_SCALE_MAX`], see
+    /// [`interface_scale_offered`].
     pub interface_scale: u16,
     /// How angles are shown, in every design: see [`varde_expr::Shown`].
     pub angle_unit: varde_expr::AngleUnit,
@@ -252,18 +254,30 @@ pub struct ViewOptions {
     pub decimals: Option<u8>,
     /// What the mouse does in the viewport.
     pub mouse: MouseOptions,
-    /// The seconds editing pauses before a design is auto-saved, one of
-    /// [`AUTO_SAVE_PAUSES`], 0 for never: natively only.
+    /// The minutes after the first change not auto-saved that a design
+    /// is auto-saved, one of [`AUTO_SAVE_MINUTES`], 0 for never: natively
+    /// only.
     pub auto_save: u16,
     /// How many recent designs are kept, one of [`RECENT_DESIGNS`]:
     /// natively only.
     pub recent_designs: u16,
 }
 
-/// The interface scales the settings offer, in percent.
-pub const INTERFACE_SCALES: [u16; 4] = [90, 100, 125, 150];
-/// The auto-save pauses the settings offer, in seconds, 0 for off.
-pub const AUTO_SAVE_PAUSES: [u16; 4] = [0, 3, 10, 30];
+/// The smallest interface scale the settings offer, in percent.
+pub const INTERFACE_SCALE_MIN: u16 = 75;
+/// The largest interface scale the settings offer, in percent.
+pub const INTERFACE_SCALE_MAX: u16 = 200;
+/// The steps the interface scale's slider takes, in percent.
+pub const INTERFACE_SCALE_STEP: u16 = 5;
+
+/// Whether `percent` is an interface scale the settings offer.
+pub fn interface_scale_offered(percent: u16) -> bool {
+    (INTERFACE_SCALE_MIN..=INTERFACE_SCALE_MAX).contains(&percent)
+        && percent.is_multiple_of(INTERFACE_SCALE_STEP)
+}
+
+/// The auto-save waits the settings offer, in minutes, 0 for off.
+pub const AUTO_SAVE_MINUTES: [u16; 4] = [0, 1, 5, 10];
 /// The counts of recent designs the settings offer.
 pub const RECENT_DESIGNS: [u16; 4] = [10, 25, 50, 100];
 
@@ -297,7 +311,7 @@ impl Default for ViewOptions {
             angle_unit: varde_expr::AngleUnit::Deg,
             decimals: None,
             mouse: MouseOptions::default(),
-            auto_save: 3,
+            auto_save: 1,
             recent_designs: 100,
         }
     }

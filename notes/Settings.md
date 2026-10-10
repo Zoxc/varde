@@ -27,8 +27,9 @@ address (`model.html#bracket/settings`, `welcome.html#/settings/web`).
   off. Undo, redo and save stay.
 - **Welcome, desktop:** in the recent designs' place, beside the column.
   **Welcome, web:** under the header bar, in place of the stored designs.
-- Open or not is the app's, not a document's: it stays open across
-  opening and closing designs.
+- Moving to another view closes it, so what's moved to shows: New
+  design, Open (a file, a recent design, a recovered one, a sample) and
+  Close document.
 
 ## Layout
 
@@ -43,14 +44,19 @@ Reset to defaults asks first, in a popup listing each setting it
 changes, from what it is to the default (Enter resets, Escape cancels).
 With every setting already the default, the button is off.
 
+A setting changed from its default says so in its row: an accent bar
+along the row's left, and a reset arrow before its control, "Reset to
+<default>" as its tooltip, resetting just it.
+
 ## Contents
 
 **Appearance**
 
 - Theme: System, Light, Dark (`ThemeChoice`).
-- Interface scale: 90 %, 100 % (default), 125 %, 150 %, for everything
-  but the model (iced's `scale_factor`, over the system's; the web takes
-  the same `iced_winit` path).
+- Interface scale: a slider, 75 % to 200 % in 5 % steps, the value beside
+  it, set when let go; 100 % default. For everything but the model
+  (iced's `scale_factor`, over the system's; the web takes the same
+  `iced_winit` path).
 
 **View**, how the viewport draws the model. These are the view options
 menu's (the status bar's `⋯`): the menu stays, a quick way to the same
@@ -60,6 +66,8 @@ settings, and a change in either shows in both.
 - Shading: Regular, Flat, Metal, Flat metal (`varde_render::Shading`).
 - Edges: Features, Patches, Triangles (`Edges::Default`, `Wireframe`,
   `Tessellation`).
+- The view options menu names the edges as the page does: Features,
+  Patches, Triangles (it said Feature edges, Wireframe, Tessellation).
 - Shading and edges show the menu's icons (`Icon::Shade*`, `Icon::Edges*`)
   beside their names.
 - Hidden edges, Names, Mouse hints: switches.
@@ -127,13 +135,15 @@ as they're shown.
 The status bar's mouse hints follow the buttons as set.
 
 **Files (desktop only;** the tab isn't on the web, which always
-auto-saves after 3 s and has no recent files list).
+auto-saves every minute and has no recent files list).
 
-- Auto-save after a pause in editing: Off, 3 s (default), 10 s, 30 s;
-  the 2 min cap while edits keep coming stays. Off, edits are never
-  auto-saved, so a crash loses what wasn't saved; the sidecar lock,
-  recovery offers, emptying it on undoing back to the saved state, and
-  writing restored changes back all stay (`agents/files.md`).
+- Auto-save: Off, every minute (default), 5 min, 10 min: changes not
+  saved go to the recovery file that long after the first of them, so a
+  crash loses at most that much. This replaces the 3 s pause and the
+  2 min cap. Off: edits are never auto-saved, so a crash loses what
+  wasn't saved. The sidecar lock, recovery offers, emptying it on
+  undoing back to the saved state, and writing restored changes back all
+  stay (`agents/files.md`).
 - Recent designs kept: 10, 25, 50, 100 (default,
   `varde_io::recent::MAX`). Lowered, the oldest are dropped and the list
   stored so.
@@ -163,7 +173,7 @@ Not built; others to consider:
   as `SettingsPage::Set(Setting)`.
 - The page is a pure view in `crates/view/src/settings.rs`.
 - Bounds: the decimal places stepper stops at 0 and 6; a value the page
-  doesn't offer (a scale of 110 %, 7 places, a pause of 5 s) is ignored
+  doesn't offer (a scale of 112 % or past 75 % to 200 %, 7 places, auto-save every 2 min) is ignored
   as set and read as the default as stored.
 - Tests, headless: toggling and Escape; `SetTheme` stores; viewport input
   is off while open; an open operation is still there after closing;

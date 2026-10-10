@@ -444,11 +444,11 @@ const st = {
   // The settings (notes/Settings.md). Stored in settings.toml, app-wide.
   theme: 'system', // 'system' | 'light' | 'dark'
   shading: 'regular', edges: 'default', hiddenEdges: true, names: false,
-  lenUnit: 'mm', angUnit: 'deg', places: 3, // units for new designs
+  lenUnit: 'mm', angUnit: 'deg', places: 'auto', // units for new designs
   // Proposed: not in the app yet. Each defaults to what the app does now.
   leftDrag: 'orbit', middleDrag: 'orbit', rightDrag: 'pan', orbitKind: 'turntable', pivot: 'click', pivotClick: 'middle',
   zoomDir: 'natural', zoomCursor: true,
-  gridSnap: true, autosave: '3', recentN: '100', uiScale: '100',
+  gridSnap: true, autosave: '1', recentN: '100', uiScale: '100',
 };
 const root = document.documentElement;
 const $ = s => document.querySelector(s);
@@ -1584,50 +1584,66 @@ systemDark.addEventListener('change', () => { if (st.theme === 'system') { apply
 // tagged Proposed would be one not in the app yet: none are now.
 const settingsButton = (cls = 'op icon') => `<button class="${cls}${st.settings ? ' on' : ''}" data-act="settings" data-tip="Settings" data-key="Ctrl ," data-tip-at="below">${icon('gear')}</button>`;
 const SET_LEN = { mm: 1, cm: 10, m: 1000, in: 25.4, ft: 304.8 };
+const AUTO_PLACES = { mm: 3, cm: 4, m: 6, in: 4, ft: 5, deg: 3, rad: 5 };
 const DRAGS = [['orbit', 'Orbit'], ['pan', 'Pan'], ['zoom', 'Zoom'], ['none', 'Nothing']];
 function settingsPage() {
   const seg = (key, opts) => `<div class="seg">${opts.map(([v, label, ic]) =>
     `<button class="${String(st[key]) === String(v) ? 'on' : ''}" data-act="set:${key}:${v}">${ic ? icon(ic) : ''}${label}</button>`).join('')}</div>`;
   const sw = key => `<button class="sw${st[key] ? ' on' : ''}" data-act="set:${key}:${!st[key]}" role="switch" aria-checked="${st[key]}"><i></i></button>`;
-  const step = (key, lo, hi) => `<div class="step"><button data-act="set:${key}:${Math.max(lo, st[key] - 1)}"${st[key] <= lo ? ' disabled' : ''}>−</button><b>${st[key]}</b><button data-act="set:${key}:${Math.min(hi, st[key] + 1)}"${st[key] >= hi ? ' disabled' : ''}>+</button></div>`;
-  const row = (label, desc, ctl, proposed) => `<div class="srow${proposed ? ' prop' : ''}"><div class="sl"><b>${label}${proposed ? '<span class="ptag">Proposed</span>' : ''}</b><span>${desc}</span></div><div class="sc">${ctl}</div></div>`;
+  // A value along a range, as it's dragged; let go, it's set.
+  const slider = (key, lo, hi, by, unit) => `<div class="slide"><input type="range" min="${lo}" max="${hi}" step="${by}" value="${st[key]}" data-slide="${key}" data-unit="${unit}"><b>${st[key]}${unit}</b></div>`;
+  // A count, one at a time; Auto (the decimal places' default) counts on
+  // from the length unit's own.
+  const step = (key, lo, hi) => {
+    const n = st[key] === 'auto' ? AUTO_PLACES[st.lenUnit] : st[key], down = st[key] === 'auto' ? n : n - 1, up = st[key] === 'auto' ? n : n + 1;
+    return `<div class="step"><button data-act="set:${key}:${Math.max(lo, down)}"${n <= lo && st[key] !== 'auto' ? ' disabled' : ''}>−</button><b>${st[key] === 'auto' ? 'Auto' : n}</b><button data-act="set:${key}:${Math.min(hi, up)}"${n >= hi && st[key] !== 'auto' ? ' disabled' : ''}>+</button></div>`;
+  };
+  // A row; with its setting `key` changed from the default, an accent bar
+  // along its left and a reset arrow before the control.
+  const row = (label, desc, ctl, key) => {
+    const mod = key && st[key] !== SET_DEFAULTS[key] && SET_SAID[key];
+    const btn = mod ? `<button class="rreset" data-act="set-one:${key}" data-tip="Reset to ${saidOf(key, SET_DEFAULTS[key])}" data-tip-at="below">${icon('undo')}</button>` : '';
+    return `<div class="srow${mod ? ' mod' : ''}"><div class="sl"><b>${label}</b><span>${desc}</span></div><div class="sc">${btn}${ctl}</div></div>`;
+  };
   const sec = (id, title, note, rows) => `<section><h3>${title}</h3>${note ? `<p class="snote">${note}</p>` : ''}<div class="scard">${rows.join('')}</div></section>`;
   // As the app shows values: rounded to the places, no trailing zeros.
   const trim = (v, p) => String(+v.toFixed(p));
-  const len = `${trim(12.34567 / SET_LEN[st.lenUnit], st.places)} ${st.lenUnit}`;
-  const ang = st.angUnit === 'deg' ? `${trim(22.5, st.places)}°` : `${trim(Math.PI / 8, st.places)} rad`;
+  // Auto: each unit's own places, as the app's (varde_expr's decimals()).
+  const auto = st.places === 'auto', lp = auto ? AUTO_PLACES[st.lenUnit] : st.places, ap = auto ? AUTO_PLACES[st.angUnit] : st.places;
+  const len = `${trim(12.3456789 / SET_LEN[st.lenUnit], lp)} ${st.lenUnit}`;
+  const ang = st.angUnit === 'deg' ? `${trim(22.5, ap)}°` : `${trim(Math.PI / 8, ap)} rad`;
   const sections = [
     ['appearance', 'Appearance', '', [
-      row('Theme', 'Light or dark, or as the system is set', seg('theme', [['system', 'System', 'contrast'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']])),
-      row('Interface scale', 'The size of everything but the model', seg('uiScale', [['90', '90%'], ['100', '100%'], ['125', '125%'], ['150', '150%']])),
+      row('Theme', 'Light or dark, or as the system is set', seg('theme', [['system', 'System', 'contrast'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']]), 'theme'),
+      row('Interface scale', 'The size of everything but the model', slider('uiScale', 75, 200, 5, '%'), 'uiScale'),
     ]],
     ['view', 'View', 'How the viewport draws the model. The status bar\'s menu changes the same settings.', [
-      row('Projection', 'Perspective shrinks what is farther away', seg('persp', [[false, 'Orthographic', 'ortho'], [true, 'Perspective', 'persp']])),
-      row('Shading', 'How the faces are lit', seg('shading', [['regular', 'Regular', 'shade-regular'], ['flat', 'Flat', 'shade-flat'], ['metal', 'Metal', 'shade-metal'], ['flatmetal', 'Flat metal', 'shade-flatmetal']])),
-      row('Edges', 'Which edges show besides the feature edges', seg('edges', [['default', 'Features', 'edges-default'], ['wireframe', 'Patches', 'edges-wireframe'], ['tessellation', 'Triangles', 'edges-tessellation']])),
-      row('Hidden edges', 'Edges behind the model, dashed', sw('hiddenEdges')),
-      row('Names', 'The names of bodies, sketches and planes over the view', sw('names')),
-      row('Mouse hints', 'What the mouse buttons do, in the status bar', sw('mouseHints')),
+      row('Projection', 'Perspective shrinks what is farther away', seg('persp', [[false, 'Orthographic', 'ortho'], [true, 'Perspective', 'persp']]), 'persp'),
+      row('Shading', 'How the faces are lit', seg('shading', [['regular', 'Regular', 'shade-regular'], ['flat', 'Flat', 'shade-flat'], ['metal', 'Metal', 'shade-metal'], ['flatmetal', 'Flat metal', 'shade-flatmetal']]), 'shading'),
+      row('Edges', 'Which edges show besides the feature edges', seg('edges', [['default', 'Features', 'edges-default'], ['wireframe', 'Patches', 'edges-wireframe'], ['tessellation', 'Triangles', 'edges-tessellation']]), 'edges'),
+      row('Hidden edges', 'Edges behind the model, dashed', sw('hiddenEdges'), 'hiddenEdges'),
+      row('Names', 'The names of bodies, sketches and planes over the view', sw('names'), 'names'),
+      row('Mouse hints', 'What the mouse buttons do, in the status bar', sw('mouseHints'), 'mouseHints'),
     ]],
     ['units', 'Units', `Length for new designs; a design opened keeps its own. Angles and decimals for every design. Shown as <b class="sample">${len} · ${ang}</b>`, [
-      row('Length', 'For new designs: sizes typed without a unit, and shown', seg('lenUnit', [['mm', 'mm'], ['cm', 'cm'], ['m', 'm'], ['in', 'in'], ['ft', 'ft']])),
-      row('Angle', 'How angles are shown; typed without a unit, they\'re degrees', seg('angUnit', [['deg', 'Degrees'], ['rad', 'Radians']])),
-      row('Decimal places', 'At most, after the point; trailing zeros are left out', step('places', 0, 6)),
+      row('Length', 'For new designs: sizes typed without a unit, and shown', seg('lenUnit', [['mm', 'mm'], ['cm', 'cm'], ['m', 'm'], ['in', 'in'], ['ft', 'ft']]), 'lenUnit'),
+      row('Angle', 'How angles are shown; typed without a unit, they\'re degrees', seg('angUnit', [['deg', 'Degrees'], ['rad', 'Radians']]), 'angUnit'),
+      row('Decimal places', 'At most, after the point, trailing zeros left out; Auto, as each unit has them', step('places', 0, 6), 'places'),
     ]],
     ['input', 'Mouse', '', [
-      row(`${mouse('l')} Left drag`, 'Outside a sketch; a click always selects', seg('leftDrag', DRAGS)),
-      row(`${mouse('m')} Middle drag`, 'Turning, panning or zooming the view', seg('middleDrag', DRAGS)),
-      row(`${mouse('r')} Right drag`, 'With Shift held, it orbits', seg('rightDrag', DRAGS)),
-      row('Rotation', 'How a drag turns the view', seg('orbitKind', [['turntable', 'Turntable'], ['over', 'Over the top'], ['trackball', 'Trackball']])),
-      row('Rotation point', 'What the view orbits about', seg('pivot', [['click', 'Clicked'], ['press', 'Under the pointer'], ['center', 'View centre']])),
-      ...(st.pivot === 'click' ? [row('Set rotation point with', 'On the model or grid; elsewhere, the centre again', seg('pivotClick', [['middle', 'Middle click'], ['middle2', 'Middle double-click'], ['shiftmiddle', 'Shift + middle click']]))] : []),
-      row('Zoom direction', 'Which way the wheel zooms in', seg('zoomDir', [['natural', 'Wheel up'], ['inverted', 'Wheel down']])),
-      row('Zoom to pointer', 'Zoom about the point under the pointer, else the middle', sw('zoomCursor')),
-      row('Snapping', 'Sketch tools snap to points, curves and directions unless Shift is held; off, only while it is', sw('gridSnap')),
+      row(`${mouse('l')} Left drag`, 'Outside a sketch; a click always selects', seg('leftDrag', DRAGS), 'leftDrag'),
+      row(`${mouse('m')} Middle drag`, 'Turning, panning or zooming the view', seg('middleDrag', DRAGS), 'middleDrag'),
+      row(`${mouse('r')} Right drag`, 'With Shift held, it orbits', seg('rightDrag', DRAGS), 'rightDrag'),
+      row('Rotation', 'How a drag turns the view', seg('orbitKind', [['turntable', 'Turntable'], ['over', 'Over the top'], ['trackball', 'Trackball']]), 'orbitKind'),
+      row('Rotation point', 'What the view orbits about', seg('pivot', [['click', 'Clicked'], ['press', 'Under the pointer'], ['center', 'View centre']]), 'pivot'),
+      ...(st.pivot === 'click' ? [row('Set rotation point with', 'On the model or grid; elsewhere, the centre again', seg('pivotClick', [['middle', 'Middle click'], ['middle2', 'Middle double-click'], ['shiftmiddle', 'Shift + middle click']]), 'pivotClick')] : []),
+      row('Zoom direction', 'Which way the wheel zooms in', seg('zoomDir', [['natural', 'Wheel up'], ['inverted', 'Wheel down']]), 'zoomDir'),
+      row('Zoom to pointer', 'Zoom about the point under the pointer, else the middle', sw('zoomCursor'), 'zoomCursor'),
+      row('Snapping', 'Sketch tools snap to points, curves and directions unless Shift is held; off, only while it is', sw('gridSnap'), 'gridSnap'),
     ]],
     ...(st.web ? [] : [['files', 'Files', '', [
-      row('Auto-save', 'Changes go to the recovery file after a pause in editing', seg('autosave', [['0', 'Off'], ['3', '3 s'], ['10', '10 s'], ['30', '30 s']])),
-      row('Recent designs', 'How many the welcome screen keeps', seg('recentN', [['10', '10'], ['25', '25'], ['50', '50'], ['100', '100']])),
+      row('Auto-save', 'How often changes not saved go to the recovery file', seg('autosave', [['0', 'Off'], ['1', '1 min'], ['5', '5 min'], ['10', '10 min']]), 'autosave'),
+      row('Recent designs', 'How many the welcome screen keeps', seg('recentN', [['10', '10'], ['25', '25'], ['50', '50'], ['100', '100']]), 'recentN'),
     ]]]),
   ];
   const open = sections.find(([id]) => id === st.setTab) || sections[0];
@@ -1649,13 +1665,13 @@ const SET_SAID = {
   shading: ['Shading', { regular: 'Regular', flat: 'Flat', metal: 'Metal', flatmetal: 'Flat metal' }],
   edges: ['Edges', { default: 'Features', wireframe: 'Patches', tessellation: 'Triangles' }],
   hiddenEdges: ['Hidden edges'], names: ['Names'], mouseHints: ['Mouse hints'],
-  lenUnit: ['Length unit', v => v], angUnit: ['Angle unit', { deg: 'Degrees', rad: 'Radians' }], places: ['Decimal places', v => v],
+  lenUnit: ['Length unit', v => v], angUnit: ['Angle unit', { deg: 'Degrees', rad: 'Radians' }], places: ['Decimal places', v => v === 'auto' ? 'Auto' : v],
   leftDrag: ['Left drag', DRAG_SAID], middleDrag: ['Middle drag', DRAG_SAID], rightDrag: ['Right drag', DRAG_SAID],
   orbitKind: ['Rotation', { turntable: 'Turntable', over: 'Turntable, over the top', trackball: 'Trackball' }],
   pivot: ['Rotation point', { click: 'Clicked', press: 'Under the pointer', center: 'View centre' }],
   pivotClick: ['Set rotation point with', { middle: 'Middle click', middle2: 'Middle double-click', shiftmiddle: 'Shift + middle click' }], zoomDir: ['Zoom direction', { natural: 'Wheel up', inverted: 'Wheel down' }],
   zoomCursor: ['Zoom to pointer'], gridSnap: ['Snapping'],
-  autosave: ['Auto-save', { 0: 'Off', 3: '3 s', 10: '10 s', 30: '30 s' }], recentN: ['Recent designs', v => v],
+  autosave: ['Auto-save', { 0: 'Off', 1: 'Every minute', 5: 'Every 5 min', 10: 'Every 10 min' }], recentN: ['Recent designs', v => v],
 };
 const saidOf = (k, v) => { const f = SET_SAID[k][1]; return !f ? (v ? 'On' : 'Off') : typeof f === 'function' ? f(v) : f[v]; };
 const settingsChanged = () => Object.keys(SET_DEFAULTS).filter(k => st[k] !== SET_DEFAULTS[k] && !(st.web && ['autosave', 'recentN'].includes(k)));
@@ -1668,11 +1684,11 @@ function resetPopup() {
   </div></div>`;
 }
 const SET_DEFAULTS = { theme: 'system', persp: false, shading: 'regular', edges: 'default', hiddenEdges: true, names: false, mouseHints: true,
-  lenUnit: 'mm', angUnit: 'deg', places: 3, leftDrag: 'orbit', middleDrag: 'orbit', rightDrag: 'pan', orbitKind: 'turntable', pivot: 'click', pivotClick: 'middle',
-  zoomDir: 'natural', zoomCursor: true, gridSnap: true, autosave: '3', recentN: '100', uiScale: '100' };
+  lenUnit: 'mm', angUnit: 'deg', places: 'auto', leftDrag: 'orbit', middleDrag: 'orbit', rightDrag: 'pan', orbitKind: 'turntable', pivot: 'click', pivotClick: 'middle',
+  zoomDir: 'natural', zoomCursor: true, gridSnap: true, autosave: '1', recentN: '100', uiScale: '100' };
 function setSetting(key, v) {
   const was = st[key];
-  st[key] = typeof was === 'boolean' ? v === 'true' : typeof was === 'number' ? +v : v;
+  st[key] = typeof was === 'boolean' ? v === 'true' : typeof was === 'number' || (key === 'places' && v !== 'auto') ? +v : v;
   if (key === 'theme') applyTheme();
   if (!['theme', 'persp', 'mouseHints', 'places', 'lenUnit', 'angUnit'].includes(key)) toast('Stored — not drawn in mock');
 }
@@ -1688,6 +1704,7 @@ function act(a) {
     case 'home': go('welcome.html'); return;
     case 'menu': st.menu = !st.menu; break;
     case 'stab': st.setTab = v; break;
+    case 'set-one': st[v] = SET_DEFAULTS[v]; if (v === 'theme') applyTheme(); break;
     case 'settings': st.settings = !st.settings; break;
     case 'set': { const [key, val] = v.split(':'); setSetting(key, val); break; }
     // Reset asks first, listing what it changes; with nothing to change it's off.
@@ -1870,6 +1887,15 @@ document.addEventListener('keyup', e => {
 });
 window.addEventListener('blur', () => { if (st.alt) { st.alt = false; render(); } });
 addEventListener('resize', render);
+// A slider shows its value as it's dragged, and sets it let go.
+document.addEventListener('input', e => {
+  const el = e.target.closest?.('[data-slide]');
+  if (el) el.nextElementSibling.textContent = el.value + el.dataset.unit;
+});
+document.addEventListener('change', e => {
+  const el = e.target.closest?.('[data-slide]');
+  if (el) { st[el.dataset.slide] = el.value; render(); }
+});
 // Following a link to this page with another hash starts it afresh.
 addEventListener('hashchange', () => location.reload());
 

@@ -2042,6 +2042,13 @@ pub fn list_row(selected: bool, hovered: bool) -> fn(&Theme) -> container::Style
     }
 }
 
+/// The bar along the left of a settings row whose setting isn't its
+/// default.
+pub fn changed_bar(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    filled(p.accent, p.text)
+}
+
 /// The accent colour, for what's asked of the user, like picking a plane.
 pub fn accent_text(theme: &Theme) -> text::Style {
     text::Style {

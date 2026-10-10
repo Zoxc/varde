@@ -22,7 +22,7 @@ fn toml_round_trip() {
         shading: Shading::FlatMetal,
         edges: Edges::Tessellation,
         length_unit: LengthUnit::In,
-        interface_scale: InterfaceScale::Larger,
+        interface_scale: InterfaceScale::new(185).unwrap(),
         angle_unit: AngleUnit::Rad,
         decimals: Decimals::Places(0),
         left_drag: Drag::Nothing,
@@ -34,18 +34,18 @@ fn toml_round_trip() {
         zoom_direction: ZoomDirection::WheelDown,
         zoom_to_pointer: false,
         sketch_snap: false,
-        auto_save: AutoSave::Off,
+        auto_save: AutoSave::Minutes10,
         recent_designs: RecentDesigns::Ten,
     };
     assert_eq!(
         settings.serialize(),
         "theme = \"dark\"\nmouse_hints = false\nhidden_edges = false\nnames = true\n\
          projection = \"perspective\"\nshading = \"flat_metal\"\nedges = \"tessellation\"\n\
-         length_unit = \"in\"\ninterface_scale = 150\nangle_unit = \"rad\"\ndecimals = 0\n\
+         length_unit = \"in\"\ninterface_scale = 185\nangle_unit = \"rad\"\ndecimals = 0\n\
          left_drag = \"nothing\"\nmiddle_drag = \"zoom\"\nright_drag = \"orbit\"\n\
          rotation = \"over_the_top\"\nrotation_point = \"pointer\"\n\
          set_rotation_point = \"shift_middle_click\"\nzoom_direction = \"wheel_down\"\n\
-         zoom_to_pointer = false\nsketch_snap = false\nauto_save = 0\nrecent_designs = 10\n"
+         zoom_to_pointer = false\nsketch_snap = false\nauto_save = 600\nrecent_designs = 10\n"
     );
     assert_eq!(Settings::parse(&settings.serialize()), settings);
     for length_unit in LengthUnit::ALL {
@@ -162,7 +162,8 @@ fn the_defaults_are_as_before() {
     assert_eq!(defaults.set_rotation_point, SetRotationPoint::MiddleClick);
     assert_eq!(defaults.zoom_direction, ZoomDirection::WheelUp);
     assert!(defaults.zoom_to_pointer && defaults.sketch_snap);
-    assert_eq!(defaults.auto_save.seconds(), 3);
+    assert_eq!(defaults.auto_save, AutoSave::Minute);
+    assert_eq!(defaults.auto_save.seconds(), 60);
     assert_eq!(
         usize::from(defaults.recent_designs.count()),
         crate::recent::MAX
@@ -174,7 +175,10 @@ fn the_defaults_are_as_before() {
 #[test]
 fn mouse_units_and_files_round_trip() {
     let mut all = Vec::new();
-    for interface_scale in InterfaceScale::ALL {
+    for percent in (InterfaceScale::MIN..=InterfaceScale::MAX).step_by(InterfaceScale::STEP.into())
+    {
+        let interface_scale = InterfaceScale::new(percent).unwrap();
+        assert_eq!(interface_scale.percent(), percent);
         all.push(Settings {
             interface_scale,
             ..Settings::default()
@@ -233,7 +237,13 @@ fn mouse_units_and_files_round_trip() {
 #[test]
 fn bad_mouse_units_and_files_are_defaulted() {
     for bad in [
-        "interface_scale = 110\n",
+        "interface_scale = 112\n",
+        "interface_scale = 70\n",
+        "interface_scale = 205\n",
+        "interface_scale = 0\n",
+        "interface_scale = 74\n",
+        "interface_scale = 201\n",
+        "interface_scale = 100.0\n",
         "interface_scale = -100\n",
         "interface_scale = 1e9\n",
         "interface_scale = 99999999999\n",
@@ -255,6 +265,10 @@ fn bad_mouse_units_and_files_are_defaulted() {
         "zoom_to_pointer = \"yes\"\n",
         "sketch_snap = 1\n",
         "auto_save = 5\n",
+        "auto_save = 1\n",
+        "auto_save = 61\n",
+        "auto_save = 65596\n",
+        "auto_save = 60.0\n",
         "auto_save = -3\n",
         "auto_save = \"off\"\n",
         "recent_designs = 0\n",
@@ -265,14 +279,64 @@ fn bad_mouse_units_and_files_are_defaulted() {
     }
     assert_eq!(
         Settings::parse(
-            "decimals = 9\nauto_save = 30\nrotation = \"x\"\nzoom_to_pointer = false\n"
+            "decimals = 9\nauto_save = 300\nrotation = \"x\"\nzoom_to_pointer = false\n"
         ),
         Settings {
-            auto_save: AutoSave::Seconds30,
+            auto_save: AutoSave::Minutes5,
             zoom_to_pointer: false,
             ..Settings::default()
         }
     );
+}
+
+/// Every scale offered, 75 % to 200 % in steps of 5, is one, and nothing
+/// else is: as read from the file, and as the web worker's messages carry
+/// it.
+#[test]
+fn interface_scales_are_the_steps_offered() {
+    let offered: Vec<u16> = (0..=u16::MAX)
+        .filter(|&percent| InterfaceScale::new(percent).is_some())
+        .collect();
+    let steps: Vec<u16> = (75..=200).step_by(5).collect();
+    assert_eq!(offered, steps);
+    assert_eq!(offered.len(), 26);
+    for percent in [0, 74, 76, 99, 101, 201, 205, u16::MAX] {
+        let bytes = postcard::to_allocvec(&percent).unwrap();
+        assert!(
+            postcard::from_bytes::<InterfaceScale>(&bytes).is_err(),
+            "{percent}"
+        );
+    }
+    for percent in steps {
+        let bytes = postcard::to_allocvec(&percent).unwrap();
+        assert_eq!(
+            postcard::from_bytes::<InterfaceScale>(&bytes)
+                .unwrap()
+                .percent(),
+            percent
+        );
+    }
+}
+
+/// The auto-save pauses of before read as the default of now, every
+/// minute, but off stays off.
+#[test]
+fn old_auto_save_pauses_read_as_the_default() {
+    assert_eq!(Settings::parse("auto_save = 0\n").auto_save, AutoSave::Off);
+    for old in ["3", "10", "30", "\"off\""] {
+        let toml = format!("auto_save = {old}\n");
+        assert_eq!(Settings::parse(&toml).auto_save, AutoSave::Minute, "{toml}");
+    }
+    for (seconds, wait) in [
+        (0, AutoSave::Off),
+        (60, AutoSave::Minute),
+        (300, AutoSave::Minutes5),
+        (600, AutoSave::Minutes10),
+    ] {
+        let toml = format!("auto_save = {seconds}\n");
+        assert_eq!(Settings::parse(&toml).auto_save, wait);
+        assert_eq!(wait.minutes() * 60, seconds);
+    }
 }
 
 /// The web worker's messages carry the settings in postcard, where
