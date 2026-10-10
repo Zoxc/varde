@@ -1821,6 +1821,37 @@ fn a_spline_s_handles_show_and_selected_its_control_polygon() {
         expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, rim));
     }
     assert_eq!(*layer, expected);
+
+    // Only one of its control points selected: its control polygon too.
+    let selection = testing::items([control[1]]);
+    let (layer, _) = layers(
+        &sketching(&sketch, &selection, None, true),
+        &Interaction::default(),
+    );
+    let mut expected = builtins(colors);
+    expected.polyline(
+        Space::Sketch,
+        &curve,
+        line_style(colors.curve, CURVE_WIDTH, false),
+    );
+    expected.polyline(Space::Sketch, &polygon, dashed);
+    for point in &sketch.points {
+        if point.id == control[1] {
+            continue;
+        }
+        let rim = if control.contains(&point.id) {
+            colors.spline_handle
+        } else {
+            colors.point
+        };
+        expected.point(point.at, dot(POINT_RADIUS, colors.point_fill, rim));
+    }
+    let picked = sketch.point(control[1]).unwrap().at;
+    expected.point(
+        picked,
+        dot(POINT_RADIUS, colors.selected, colors.spline_handle),
+    );
+    assert_eq!(*layer, expected);
 }
 
 #[test]
