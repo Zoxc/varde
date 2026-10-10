@@ -194,7 +194,8 @@ pub(crate) struct Doc {
     pub(crate) motion: Option<MotionSession>,
     /// Whether the command modifier (`Ctrl`, `Cmd` on macOS) is held:
     /// a fillet or chamfer picking its edges then shows the model as of
-    /// the feature rather than its preview ([`Doc::blend_before`]).
+    /// the feature rather than its preview ([`Doc::blend_before`]), another
+    /// operation the model before it ([`Doc::operation_before`]).
     pub(crate) command_held: bool,
     /// How each pattern committed in this run was set up (its mode, Flip
     /// and spread as typed), which its stored values can't always tell:
@@ -513,10 +514,16 @@ impl Doc {
     /// carries both: a draft dragged never measures again at each step.
     fn request_model(&mut self) {
         let exclude = self.sketch.as_ref().map(|session| session.feature);
+        // Held, the command modifier shows the model before the
+        // operation, what its preview covers there to see.
+        let before = self.operation_before();
         let draft = (self.extrude_draft())
             .or_else(|| self.revolve_draft())
             .or_else(|| self.combine_draft())
             .or_else(|| self.motion_draft());
+        // The draft's still known, its error and OK waiting on it kept,
+        // but not applied.
+        self.feed.hide_draft = before;
         let inspect = (self.measure.as_ref())
             .and_then(MeasureSession::inspect)
             .or_else(|| self.scale_inspect())
@@ -525,7 +532,7 @@ impl Doc {
         // ends rather than at each of its steps.
         let camera = self.animation.as_ref().map_or(&self.camera, |a| &a.to);
         self.feed.view(camera, self.aspect);
-        let until = self.rollback().0;
+        let until = (before.then(|| self.opened_feature()).flatten()).or_else(|| self.rollback().0);
         self.feed
             .request_with(&self.editor, exclude, until, draft, inspect);
     }
@@ -559,6 +566,16 @@ impl Doc {
         }
         let until = self.rolling.unwrap_or_else(|| document.rollback());
         (until, false)
+    }
+
+    /// Whether the model shown is the one before the operation being set
+    /// up rather than its preview: while the command modifier is held, so
+    /// what it covers shows (an extrude's profile, a move's bodies where
+    /// they were). A new one shows the document as it is, an edited one
+    /// the history up to it. A blend picking its edges has its own
+    /// ([`Doc::blend_before`]).
+    pub(crate) fn operation_before(&self) -> bool {
+        self.command_held && self.operating() && !self.blend_before()
     }
 
     /// Whether an operation is being set up: an extrude, a revolve, a

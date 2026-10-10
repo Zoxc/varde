@@ -1055,11 +1055,17 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
         let pick = extrude
             .editable
             .then(|| step_hint(MouseButton::Left, "Pick regions"));
+        let before = key_hint(Held::BEFORE, "Hide preview");
         let ok = extrude.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-        [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
-            .into_iter()
-            .flatten()
-            .collect()
+        [
+            pick,
+            Some(before),
+            ok,
+            Some(key_hint(Shortcut::ESCAPE, "Cancel")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     } else if let Some(revolve) = &state.revolve {
         let pick = revolve.editable.then(|| {
             let what = match revolve.picking {
@@ -1068,11 +1074,17 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             };
             step_hint(MouseButton::Left, what)
         });
+        let before = key_hint(Held::BEFORE, "Hide preview");
         let ok = revolve.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-        [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
-            .into_iter()
-            .flatten()
-            .collect()
+        [
+            pick,
+            Some(before),
+            ok,
+            Some(key_hint(Shortcut::ESCAPE, "Cancel")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     } else if let Some(combine) = &state.combine {
         let pick = combine.editable.then(|| {
             let what = match combine.picking {
@@ -1081,11 +1093,17 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             };
             step_hint(MouseButton::Left, what)
         });
+        let before = key_hint(Held::BEFORE, "Hide preview");
         let ok = combine.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
-        [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
-            .into_iter()
-            .flatten()
-            .collect()
+        [
+            pick,
+            Some(before),
+            ok,
+            Some(key_hint(Shortcut::ESCAPE, "Cancel")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     } else if let Some(motion) = &state.motion {
         let pick = motion.editable.then(|| {
             let what = match (motion.picking, motion.kind) {
@@ -1130,16 +1148,8 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             Some(step_hint(MouseButton::Left, what))
         });
         let pick = pick.flatten();
-        // A blend picking its edges shows the model before it while the
-        // key is held, the edges its preview blends away there to click.
-        let before = (motion.editable && motion.picking == crate::MotionPick::Edges)
-            .then_some(motion.kind)
-            .and_then(|kind| match kind {
-                crate::MotionKind::Fillet => Some("Show edges before the fillet"),
-                crate::MotionKind::Chamfer => Some("Show edges before the chamfer"),
-                _ => None,
-            })
-            .map(|label| key_hint(Held::BEFORE, label));
+        // Held, the key shows the model before the operation.
+        let before = Some(key_hint(Held::BEFORE, "Hide preview"));
         let ok = motion.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
         [pick, before, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
             .into_iter()

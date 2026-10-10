@@ -354,6 +354,42 @@ fn a_double_clicked_extrude_reopens_with_its_values_and_is_set_again() {
     assert_eq!(extrude.span(), Some((0.0, 10.0)));
 }
 
+/// The feature the last request waiting rolls the model back to.
+fn last_until(requests: &Requests) -> Option<FeatureId> {
+    match requests.borrow().last() {
+        Some(Request::Regenerate { until, .. }) => *until,
+        _ => panic!("no regeneration asked for"),
+    }
+}
+
+/// Holding Ctrl in an extrude shows the model before it, its preview
+/// gone so the profile under it shows: a new one's the document as it
+/// is, an edited one's the history up to it. Letting go previews it
+/// again.
+#[test]
+fn ctrl_shows_the_model_before_the_extrude() {
+    let (mut doc, sketch, requests) = plate();
+    key_in(&mut doc, key("x"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    assert!(last_draft(&requests).is_some());
+    doc.hold_command(true);
+    assert!(doc.operation_before());
+    assert!(last_draft(&requests).is_none());
+    assert_eq!(last_until(&requests), None);
+    doc.hold_command(false);
+    assert!(last_draft(&requests).is_some());
+
+    let (mut doc, requests) = example();
+    let feature = doc.editor.document().features()[1].id;
+    doc.look(Look::EditFeature(feature));
+    doc.hold_command(true);
+    assert!(last_draft(&requests).is_none());
+    assert_eq!(last_until(&requests), Some(feature));
+    doc.hold_command(false);
+    assert_eq!(last_draft(&requests).unwrap().feature, Some(feature));
+}
+
 #[test]
 fn enter_on_a_selected_extrude_edits_it() {
     let (mut doc, _) = example();
@@ -743,6 +779,42 @@ fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
     assert_eq!(doc.feed.mesh().triangle_count(), triangles);
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
     let _ = doc.view_in(Mode::default());
+}
+
+/// A failing preview hidden by Ctrl keeps its error, and OK waits as
+/// before; a draft changed while it's hidden waits for both buttons
+/// until it shows again and is answered.
+#[test]
+fn a_hidden_preview_keeps_its_error() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    doc.look(Look::StartExtrude);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Intersect));
+    extrude(&mut doc, ExtrudeLook::Flip);
+    answer(&mut doc, &requests);
+    assert!(doc.feed.draft_error().is_some());
+
+    doc.hold_command(true);
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.shown_draft(), None, "hidden");
+    assert!(doc.feed.draft_error().is_some());
+    let state = doc.extrude_state().unwrap();
+    assert!(!state.ready && state.accept);
+    assert!(state.error.is_some());
+    let revision = doc.editor.revision();
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.editor.revision(), revision);
+
+    extrude(&mut doc, ExtrudeLook::Flip);
+    answer(&mut doc, &requests);
+    assert!(!doc.extrude_state().unwrap().ready);
+    doc.update(Edit::AcceptError);
+    assert_eq!(doc.editor.revision(), revision);
+    doc.hold_command(false);
+    answer(&mut doc, &requests);
+    assert!(doc.feed.shown_draft().is_some());
+    assert_eq!(doc.feed.draft_error(), None);
+    assert!(doc.extrude_state().unwrap().ready);
 }
 
 /// Adds to `doc`'s document a sketch of a rectangle from `min` to `max`

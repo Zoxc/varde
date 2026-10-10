@@ -26,6 +26,12 @@ use varde_view::{MeshStatus, PickIndex};
 /// shown until newer ones arrive.
 #[derive(Default)]
 pub(crate) struct MeshFeed {
+    /// Whether the draft is kept but not sent, the model
+    /// shown as if there were none ([`Doc::operation_before`]): it's
+    /// still the draft, its answer kept, as far as the rest goes.
+    ///
+    /// [`Doc::operation_before`]: crate::doc::Doc::operation_before
+    pub(crate) hide_draft: bool,
     /// Builds the meshes: the document's lane, a thread natively and a Web
     /// Worker on the web. `None` until the lane has started, see
     /// [`Varde::regen_lane`]; nothing is requested until then.
@@ -368,6 +374,8 @@ impl MeshFeed {
                 }
             }
         });
+        self.draft = draft.clone();
+        let draft = draft.filter(|_| !self.hide_draft);
         let asked = Asked {
             generation: editor.generation(),
             exclude,
@@ -376,7 +384,6 @@ impl MeshFeed {
             inspect: inspect.as_ref().map(|inspect| inspect.revision),
             sight: self.sight.as_ref().map(|sight| sight.revision),
         };
-        self.draft = draft.clone();
         self.inspect = inspect.clone();
         if self.requested.is_none_or(|requested| {
             requested.generation < asked.generation
@@ -548,7 +555,10 @@ impl MeshFeed {
                 {
                     self.touched = Some((*revision, touched.clone()));
                 }
-                if draft.is_none() {
+                // A model asked for with its draft hidden is neither the
+                // committed one nor the draft's answer, which stays.
+                let hidden = draft.is_none() && self.draft.is_some();
+                if draft.is_none() && !hidden {
                     self.committed = Some(Committed {
                         mesh: self.mesh.clone(),
                         sketches: self.sketches.clone(),
@@ -556,7 +566,9 @@ impl MeshFeed {
                         generation: asked.generation,
                     });
                 }
-                self.drafted = draft.map(|draft| *draft);
+                if !hidden {
+                    self.drafted = draft.map(|draft| *draft);
+                }
                 self.inspected = inspected.map(|inspected| *inspected);
                 self.shown = Some(asked);
                 self.failed = None;
@@ -622,6 +634,13 @@ impl MeshFeed {
         (drafted.revision == revision)
             .then_some(drafted.error.as_deref())
             .flatten()
+    }
+
+    /// Whether the draft asked for last is answered, if there's one.
+    pub(crate) fn draft_answered(&self) -> bool {
+        self.draft.as_ref().is_none_or(|draft| {
+            (self.drafted.as_ref()).is_some_and(|drafted| drafted.revision == draft.revision)
+        })
     }
 
     /// Why the draft fails, as its panel says: [`MeshFeed::draft_error`],

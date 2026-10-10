@@ -650,9 +650,15 @@ impl Doc {
     /// and `Enter` (`accept` false), which wait while the preview failed,
     /// or by Accept error (`accept`), which takes only a failed one, to
     /// be fixed later. The error is the newest draft's, none while it's
-    /// unanswered: OK doesn't wait on the preview.
+    /// unanswered: OK doesn't wait on the preview, but for one hidden
+    /// ([`Doc::operation_before`]).
     pub(crate) fn commit_by(&self, ready: bool, accept: bool) -> bool {
-        ready && self.feed.draft_error().is_some() == accept
+        // With the preview hidden a changed draft isn't answered till
+        // it shows again, and a blend's body before it is another draft,
+        // its own error unknown: until then, neither.
+        let unanswered =
+            (self.operation_before() && !self.feed.draft_answered()) || self.blend_before();
+        ready && !unanswered && self.feed.draft_error().is_some() == accept
     }
 
     /// Whether the panel offers Add anyway: as [`Doc::commit_by`] takes

@@ -1324,7 +1324,8 @@ impl Held {
 
     /// Held in a fillet or chamfer picking its edges to show the model
     /// before it rather than its preview, the edges it blends away there
-    /// to click again. `Ctrl`, `Cmd` on macOS.
+    /// to click again; in any other operation to show the model before
+    /// it, what its preview covers. `Ctrl`, `Cmd` on macOS.
     pub const BEFORE: Self = Self {
         is_held: Modifiers::command,
         label: "Ctrl",

@@ -1200,7 +1200,18 @@ at other angles than its rings', so its outline steps by up to a pixel.
 
 The status bar says "New revolve · 1 region picked · about Line 3"
 (or "pick the regions to revolve", "pick the axis"), with the hints
-"Pick regions" or "Pick the axis", `Enter` OK and `Esc` Cancel. The
+"Pick regions" or "Pick the axis", "Ctrl: Hide preview", `Enter` OK
+and `Esc` Cancel. Ctrl held (`Held::BEFORE`, `Cmd` on macOS;
+`Doc::operation_before`) shows the model before the operation rather
+than its preview, so the profile under it shows: no draft, a new one's
+the document as it is, an edited one's rolled back to before it
+(`Doc::request_model`). The draft is still kept, but not sent or
+applied (`MeshFeed::hide_draft`): its answer, the error the panel says
+and OK waiting on it, stays; a draft changed while hidden waits for OK
+and Add anyway both till it shows again. Every operation does so (the extrude, the
+combine, the move's sessions), but for a fillet or chamfer picking its
+edges, which has its own (`Doc::blend_before`). Letting go previews it
+again. The
 toolbar shows it as it shows a sketch being edited: a pill on the soft
 accent with its icon and name ("New revolve" or "Revolve 1"; a name
 past 32 characters, a file's, cut short with "…" so the bar fits at
@@ -3553,8 +3564,8 @@ panel.
   picked face's edge to leave it out (purple), a picked edge to take it
   out. `refs_model_current` takes that model (no draft for a new one, a
   draft of the session's run for an edited one). Letting go shows the
-  preview again. The status bar hints "Ctrl: Show edges before the
-  fillet" (or chamfer). Ctrl means nothing else here: a click in a
+  preview again. The status bar hints "Ctrl: Hide preview", as every
+  operation's does. Ctrl means nothing else here: a click in a
   session ignores the add key, which only the selection outside
   sessions (and the overlap list's choice, passed on as a click) uses.
 - **The rows**: the faces first, "Face 2" by place (`Icon::SeFace`),
