@@ -1586,10 +1586,11 @@ bar says why (`EditError::Sketch`).
   its chevron (`Look::ToggleExpanded`, `SketchSession::expanded`, pruned
   to curves the sketch holds) to the points it's made of
   (`Curve::points`; a point shared is under each), then the points no
-  curve has. Under an unfolded spline, a handle's tip ("End 1 of Handle 1
-  of Spline 2", `Sketch::point_name`, numbered by `Spline::handle_number`
-  in its fit points' order) is followed by its end ("End 2 of Handle 1
-  of Spline 2"), each a point's row. A folded curve with one of its points selected shows a round
+  curve has. Under an unfolded spline, a handle's tip ("End 1 of Handle 1",
+  `Sketch::point_name` less the spline the row is under,
+  `geometry_point_name`, numbered by `Spline::handle_number` in its fit
+  points' order) is followed by its end ("End 2 of Handle 1"), each a
+  point's row. A folded curve with one of its points selected shows a round
   dot in a selected row's colour after its name. A curve's note is its size (`dimension::size_note`: a
   line's length, a circle's diameter, an arc's radius, or the other of
   the two a driving dimension measures), faint, unless it's driven: in

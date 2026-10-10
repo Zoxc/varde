@@ -1519,7 +1519,7 @@ fn geometry(sketch: SketchState<'_>, height: f32) -> Element<'_, Message> {
             let item = Item {
                 id: point.id.into(),
                 icon: Icon::Point,
-                name: sketch.sketch.point_name(point),
+                name: geometry_point_name(sketch.sketch, point, child),
                 note: None,
                 at: Some(point.at),
                 driven: false,
@@ -1696,6 +1696,24 @@ const ITEM_SPACING: f32 = 6.0;
 
 /// The side of the dot on a folded curve's row with a point selected.
 const SELECTED_POINT_SIZE: f32 = 7.0;
+
+/// A point's name in the Geometry list: a handle's end listed under its
+/// spline leaves the spline out ("End 1 of Handle 2"), as the row it's
+/// under says which.
+fn geometry_point_name(sketch: &Sketch, point: &varde_sketch::Point, child: bool) -> String {
+    let name = sketch.point_name(point);
+    let spline = sketch.splines().find(|(_, spline)| {
+        let mut arms = spline.handles.iter().flat_map(|handle| handle.arms());
+        arms.any(|arm| arm == point.id)
+    });
+    match spline.and_then(|(id, _)| sketch.curve(id)) {
+        Some(entry) if child => match name.strip_suffix(&format!(" of {}", entry.name())) {
+            Some(role) => role.to_owned(),
+            None => name,
+        },
+        _ => name,
+    }
+}
 
 /// `item`'s row of the Geometry list, `indent` in with `expander` before
 /// its icon, selected on a click (`Ctrl` adds it), highlighting it in the
@@ -2652,6 +2670,15 @@ mod tests {
         assert_eq!(
             sketch.point_name(&sketch.points[place(handle.end)]),
             format!("End 2 of Handle 1 of {name}")
+        );
+        // The list leaves the spline out of them, as they're under it.
+        assert_eq!(
+            geometry_point_name(&sketch, tip_point, true),
+            "End 1 of Handle 1"
+        );
+        assert_eq!(
+            geometry_point_name(&sketch, tip_point, false),
+            format!("End 1 of Handle 1 of {name}")
         );
     }
 }
