@@ -143,7 +143,11 @@ pub(crate) fn ghost<'a>(overflows: bool) -> Element<'a, Message> {
 /// the gap between rows nearest the cursor ([`Look::DragRollback`]),
 /// and the release drops it ([`Edit::DropRollback`]), wherever the
 /// cursor is then. Over the whole list rather than in the marker, so it
-/// stays the same widget, holding the drag, as the marker moves.
+/// stays the same widget, holding the drag, as the marker moves. If
+/// `draggable`, a middle click on a row rolls the model to just after
+/// it, as its menu's "Roll back here" does, unless it's there already;
+/// a `Ctrl` click does too, through the row's own click, as the app
+/// knows the keys held (see [`Look::ClickFeature`]).
 pub(crate) fn draggable<'a>(
     list: Element<'a, Message>,
     above: usize,
@@ -210,6 +214,21 @@ impl Grip {
         }
     }
 
+    /// The row at `y` in a list at `bounds`, by its index, if any: not
+    /// on the marker.
+    fn row(&self, bounds: Rectangle, y: f32) -> Option<usize> {
+        let marker = self.marker(bounds);
+        if y >= marker.y && y < marker.y + MARKER_HEIGHT {
+            return None;
+        }
+        let y = if y >= marker.y { y - MARKER_HEIGHT } else { y };
+        let row = ((y - bounds.y) / ROW_HEIGHT).floor();
+        // In range: the cast saturates and the check bounds it.
+        (row >= 0.0)
+            .then_some(row as usize)
+            .filter(|&row| row < self.features.len())
+    }
+
     /// The feature the marker under `slot` rows is before, `None` past
     /// the last.
     fn until(&self, slot: usize) -> Option<FeatureId> {
@@ -235,6 +254,19 @@ impl canvas::Program<Message> for Grip {
                 cursor.position_over(self.marker(bounds))?;
                 *dragged = Some(self.above);
                 Some(Action::capture())
+            }
+            mouse::Event::ButtonPressed(mouse::Button::Middle)
+                if self.draggable && dragged.is_none() =>
+            {
+                let position = cursor.position_over(bounds)?;
+                // Rolled to just after the row clicked.
+                let row = self.row(bounds, position.y)?;
+                let slot = row.saturating_add(1);
+                if slot == self.above {
+                    return Some(Action::capture());
+                }
+                let until = self.until(slot);
+                Some(Action::publish(Message::Edit(Edit::SetRollback(until))).and_capture())
             }
             // The raw position, so the drag goes on off the marker.
             mouse::Event::CursorMoved {
@@ -333,5 +365,21 @@ mod tests {
         assert_eq!(grip.slot(at, under + 500.0), 4);
         assert_eq!(grip.until(4), None);
         assert_eq!(grip.until(1), Some(ids(4)[1]));
+    }
+
+    #[test]
+    fn rows_clicked_by_their_index() {
+        let grip = grip(2, 4);
+        let at = bounds();
+        let marker = grip.marker(at).y;
+        assert_eq!(grip.row(at, 1.0), Some(0));
+        assert_eq!(grip.row(at, ROW_HEIGHT + 1.0), Some(1));
+        assert_eq!(grip.row(at, -1.0), None);
+        // On the marker, none; under it, the rows after.
+        assert_eq!(grip.row(at, marker + 1.0), None);
+        assert_eq!(grip.row(at, marker + MARKER_HEIGHT + 1.0), Some(2));
+        let end = marker + MARKER_HEIGHT + 2.0 * ROW_HEIGHT;
+        assert_eq!(grip.row(at, end - 1.0), Some(3));
+        assert_eq!(grip.row(at, end + 1.0), None);
     }
 }

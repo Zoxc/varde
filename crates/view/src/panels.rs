@@ -404,7 +404,10 @@ fn feature_row<'a>(
         construction: false,
     };
     let row = row
-        .view(Message::Look(Look::SelectFeature(feature.id)))
+        .view(Message::Look(Look::ClickFeature {
+            feature: feature.id,
+            roll: false,
+        }))
         .on_double_click(Message::Look(Look::EditFeature(feature.id)))
         .on_enter(Message::Look(Look::HoverFeature(Some(feature.id))))
         .on_exit(Message::Look(Look::LeaveFeature(feature.id)));

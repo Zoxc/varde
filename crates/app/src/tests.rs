@@ -6077,6 +6077,92 @@ fn the_rollback_marker_drags_across_rows() {
     assert_eq!(doc.editor.document().rollback(), Some(features[1].id));
 }
 
+/// A middle click on a Timeline row rolls the model to just after it,
+/// headless, without selecting it; a plain click selects it.
+#[test]
+fn a_middle_click_on_a_row_rolls_back_there() {
+    use iced::mouse::{Button, Cursor, Event};
+    let (mut doc, _requests) = example();
+    for _ in 0..3 {
+        let sketch = (doc.editor.document()).add_sketch(varde_document::Plane::Origin(
+            varde_document::OriginPlane::XY,
+        ));
+        doc.apply(sketch);
+    }
+    doc.sync();
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    let features = doc.editor.document().features().to_vec();
+    assert!(features.len() >= 4);
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut click = |doc: &mut Doc, name: &str, button: Button| {
+        let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
+        let at = (texts(&mut ui, &renderer).iter())
+            .find(|t| t.text == name && !t.hidden())
+            .unwrap_or_else(|| panic!("no {name}"))
+            .bounds
+            .center();
+        let mut sent = Vec::new();
+        let _ = ui.update(
+            &[
+                iced::Event::Mouse(Event::ButtonPressed(button)),
+                iced::Event::Mouse(Event::ButtonReleased(button)),
+            ],
+            Cursor::Available(at),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+        drop(ui);
+        for message in sent {
+            match message {
+                Ui::Look(look) => doc.look(look),
+                Ui::Edit(edit) => doc.update(edit),
+                _ => {}
+            }
+        }
+    };
+    click(&mut doc, &features[1].name, Button::Middle);
+    assert_eq!(doc.editor.document().rollback(), Some(features[2].id));
+    assert_eq!(doc.selected_feature, None);
+    click(&mut doc, &features[0].name, Button::Left);
+    assert_eq!(doc.editor.document().rollback(), Some(features[2].id));
+    assert_eq!(doc.selected_feature, Some(features[0].id));
+}
+
+/// Clicking a Timeline row with `Ctrl` held rolls the model to just after
+/// it rather than selecting it: the app knows the key is held, even
+/// pressed before the Timeline showed.
+#[test]
+fn a_ctrl_click_on_a_row_rolls_back_there() {
+    let (mut varde, _) = with_open_file();
+    let Screen::Document(doc) = &mut varde.screen else {
+        panic!("no document open");
+    };
+    let sketch = (doc.editor.document()).add_sketch(Plane::Origin(OriginPlane::XY));
+    doc.apply(sketch);
+    let _ = varde.update(Message::CommandHeld(true));
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectPanel(Panel::Timeline))));
+    let features: Vec<_> = (document(&varde).editor.document().features().iter())
+        .map(|f| f.id)
+        .collect();
+    assert!(features.len() >= 2);
+    let click = |feature| {
+        Message::Ui(Ui::Look(Look::ClickFeature {
+            feature,
+            roll: false,
+        }))
+    };
+    let _ = varde.update(click(features[0]));
+    let doc = document(&varde);
+    assert_eq!(doc.editor.document().rollback(), features.get(1).copied());
+    assert_eq!(doc.selected_feature, None);
+    // Let go, a click selects.
+    let _ = varde.update(Message::CommandHeld(false));
+    let _ = varde.update(click(features[0]));
+    assert_eq!(document(&varde).selected_feature, Some(features[0]));
+}
+
 /// The ghost marker, headless: rolled back, "Roll to end" sits under the
 /// Timeline, in view at the panel's foot even with more features than
 /// fit, and a click on it rolls to the end, which takes it away.

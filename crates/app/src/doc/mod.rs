@@ -1098,6 +1098,19 @@ impl Doc {
                     self.rolling = Some(until);
                 }
             }
+            Look::ClickFeature { feature, roll } => {
+                if roll && self.editable() && !self.rollback().1 && self.sketch.is_none() {
+                    let document = self.editor.document();
+                    if let Some(at) = document.feature_index(feature) {
+                        let after = document.features().get(at + 1).map(|f| f.id);
+                        if after != document.rollback() {
+                            self.update(Edit::SetRollback(after));
+                        }
+                    }
+                } else {
+                    self.look(Look::SelectFeature(feature));
+                }
+            }
             Look::SelectFeature(id) => {
                 if self.editor.document().feature(id).is_some() {
                     self.selected_feature = Some(id);

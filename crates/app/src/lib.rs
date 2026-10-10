@@ -520,6 +520,10 @@ impl Varde {
                         row,
                         add: self.command,
                     },
+                    Look::ClickFeature { feature, .. } => Look::ClickFeature {
+                        feature,
+                        roll: self.command,
+                    },
                     message => message,
                 };
                 // The delete prompt cancelled may free what waited for it.

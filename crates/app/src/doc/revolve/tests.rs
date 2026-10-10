@@ -754,8 +754,9 @@ fn a_revolve_s_timeline_row_shows_its_turn_and_a_double_click_edits_it() {
     sent.extend(clicked(&mut ui, &mut renderer, at));
     drop(ui);
     assert!(
-        sent.iter()
-            .any(|m| matches!(m, Ui::Look(Look::SelectFeature(id)) if *id == feature)),
+        sent.iter().any(
+            |m| matches!(m, Ui::Look(Look::ClickFeature { feature: id, .. }) if *id == feature)
+        ),
         "{sent:?}"
     );
     assert!(

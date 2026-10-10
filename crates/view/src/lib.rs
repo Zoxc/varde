@@ -612,6 +612,13 @@ pub enum Look {
     FinishSketch,
     /// Selects a feature in the Timeline.
     SelectFeature(FeatureId),
+    /// A feature's row in the Timeline clicked: selects it, or with
+    /// `roll` (`Ctrl`, `Cmd` on macOS, held, which the app knows) rolls
+    /// the model to just after it, where it can be rolled.
+    ClickFeature {
+        feature: FeatureId,
+        roll: bool,
+    },
     /// The Timeline's rollback marker dragged to before the feature, or
     /// to the end with `None`: the model shows there until it's dropped
     /// ([`Edit::DropRollback`]).
