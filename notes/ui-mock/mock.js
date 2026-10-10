@@ -73,6 +73,15 @@ const I = {
   chev: '<path d="M7 10l5 5 5-5"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  gear: '<path stroke-linejoin="round" d="M10.03 4.66L10.42 2.53L13.58 2.53L13.97 4.66A7.6 7.6 0 0 1 17.37 6.63L17.37 6.63L19.41 5.89L20.99 8.64L19.34 10.03A7.6 7.6 0 0 1 19.34 13.97L19.34 13.97L20.99 15.36L19.41 18.11L17.37 17.37A7.6 7.6 0 0 1 13.97 19.34L13.97 19.34L13.58 21.47L10.42 21.47L10.03 19.34A7.6 7.6 0 0 1 6.63 17.37L6.63 17.37L4.59 18.11L3.01 15.36L4.66 13.97A7.6 7.6 0 0 1 4.66 10.03L4.66 10.03L3.01 8.64L4.59 5.89L6.63 6.63A7.6 7.6 0 0 1 10.03 4.66z"/><circle cx="12" cy="12" r="3"/>',
+  // The view options' shading and edges, the app's (crates/view/src/icons.rs).
+  'shade-regular': '<circle cx="12" cy="12" r="8"/><path d="M17.6 10.5a6 6 0 0 1-7.1 7.1"/>',
+  'shade-flat': '<path d="M12 4l5.66 2.34L20 12l-2.34 5.66L12 20l-5.66-2.34L4 12l2.34-5.66z"/><path d="M4 12h16M6.34 6.34L12 12l5.66-5.66M12 12v8"/>',
+  'shade-metal': '<circle cx="12" cy="12" r="8"/><path d="M4.3 13.5c4.5 2 10.9 2 15.4 0"/><path d="M9.5 5.8q.35 2.35 2.7 2.7-2.35.35-2.7 2.7-.35-2.35-2.7-2.7 2.35-.35 2.7-2.7z"/>',
+  'shade-flatmetal': '<path d="M12 4l5.66 2.34L20 12l-2.34 5.66L12 20l-5.66-2.34L4 12l2.34-5.66z"/><path d="M4 12l8 3 8-3"/><path d="M9.5 5.8q.35 2.35 2.7 2.7-2.35.35-2.7 2.7-.35-2.35-2.7-2.7 2.35-.35 2.7-2.7z"/>',
+  'edges-default': '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
+  'edges-wireframe': '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/><path d="M8 5.25v9M16 5.25v9M4 12l8 4.5 8-4.5" stroke-width="0.9"/>',
+  'edges-tessellation': '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/><path d="M4 16.5l8-4.5M20 16.5l-8-4.5M8 5.25l8 4.5" stroke-width="0.9"/>',
   contrast: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>',
   body: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
   origin: '<path d="M5 19V5M5 19h14M5 19l8-8"/>',
@@ -430,7 +439,16 @@ const st = {
   web: false,      // the web build: no title bar, a bar under the file cell saying where the design is kept
   where: 'stored', // where it's kept: 'unsaved' | 'stored' | 'local' (on desktop, saved or not)
   paramsOpen: false, // the parameters' popup open
-  suggest: true,   // panel fields offer parameter names
+  settings: false, // the settings page open, in the viewport's place
+  setTab: 'appearance', // its tab open
+  // The settings (notes/Settings.md). Stored in settings.toml, app-wide.
+  theme: 'system', // 'system' | 'light' | 'dark'
+  shading: 'regular', edges: 'default', hiddenEdges: true, names: false,
+  lenUnit: 'mm', angUnit: 'deg', places: 3, // units for new designs
+  // Proposed: not in the app yet. Each defaults to what the app does now.
+  leftDrag: 'orbit', middleDrag: 'orbit', rightDrag: 'pan', orbitKind: 'turntable', pivot: 'click', pivotClick: 'middle',
+  zoomDir: 'natural', zoomCursor: true,
+  gridSnap: true, autosave: '3', recentN: '100', uiScale: '100',
 };
 const root = document.documentElement;
 const $ = s => document.querySelector(s);
@@ -749,7 +767,7 @@ function toolbar() {
     <button class="op icon" data-act="toast:Undo" title="Undo (Ctrl Z)">${icon('undo')}</button>
     <button class="op icon" data-act="toast:Redo" title="Redo (Ctrl Shift Z)">${icon('redo')}</button>
     <span class="sep"></span>
-    <button class="op icon" data-act="theme" data-tip="${themeSaid()[1]}" data-tip-at="below">${icon(themeSaid()[0])}</button>
+    <button class="op icon${st.settings ? ' on' : ''}" data-act="settings" data-tip="Settings" data-key="Ctrl ," data-tip-at="below">${icon('gear')}</button>
   </div>`;
 }
 
@@ -941,7 +959,7 @@ function objects() {
 // Named values a design shares (`wall = 2 mm`), kept in one list and typed
 // in any length or angle field in place of a number. The list is a popup
 // as an operation's panel, hidden till the Modify set's Parameters tool
-// opens it. `st.suggest` offers the names as a panel field is typed in.
+// opens it. A panel field offers the names as it is typed in.
 
 // An expression's value and kind ('len' in mm, 'ang' in degrees, 'n' bare),
 // or an Error with the message to show. `env(name)` gives a name's value.
@@ -1078,7 +1096,7 @@ const paramCard = () => st.paramsOpen ? `<div class="pcard${st.op ? ' beside' : 
 let suggest = null; // { field, start, end, names }
 function suggestFor(el) {
   suggest = null;
-  if (!st.suggest || !el?.dataset?.field || el.dataset.field.startsWith('pname') || !st.doc?.params) return;
+  if (!el?.dataset?.field || el.dataset.field.startsWith('pname') || !st.doc?.params) return;
   const pos = el.selectionStart, before = el.value.slice(0, pos), m = /[A-Za-z_]\w*$/.exec(before);
   if (!m || /\d$/.test(before.slice(0, m.index)) && !/\s$/.test(before.slice(0, m.index))) return;
   const own = el.dataset.field.startsWith('pexpr') && st.doc.params[+el.dataset.field.split(':')[1]]?.name;
@@ -1483,6 +1501,13 @@ function renderApp() {
     app.innerHTML = titlebar() + page.welcome() + statusbar() + help;
     return;
   }
+  // Settings take the viewport's place; the toolbar and side panel stay,
+  // and so does whatever is open (a sketch, an operation) for when it closes.
+  if (st.settings) {
+    app.innerHTML = titlebar() + toolbar() + `<div class="side">${side()}</div>
+      <div class="vp setp">${settingsPage()}</div>` + help;
+    return;
+  }
   const hint = st.doc.kind === 'empty' && !st.doc.timeline.length && st.mode === 'model' && !st.pick && !st.sel
     ? `<div class="hint-center">Select an origin plane, then <kbd>S</kbd> to sketch</div>` : '';
   app.innerHTML = titlebar() + toolbar() + `
@@ -1508,7 +1533,7 @@ function helpModal() {
     <h2>Keyboard &amp; mouse</h2>
     <div class="cols">
       <h3>Everywhere</h3>
-      ${kv('Ctrl K', 'Command palette')}${kv('?', 'This sheet')}
+      ${kv('Ctrl K', 'Command palette')}${kv('Ctrl ,', 'Settings')}${kv('?', 'This sheet')}
       ${kv('Esc', 'Back out one level')}${kv('Space', 'Clear the selection')}${kv('Q W E R T', 'Open a tool set from the rail')}${kv('Alt', 'Hold: other tab + tool bar')}${kv('Alt', 'Tap: keep the tool bar open')}
       <h3>Model</h3>
       ${kv('S', 'Sketch')}${kv('X', 'Extrude')}${kv('O', 'Revolve')}${kv('U', 'Press pull')}${kv('H', 'Hole')}${kv('F', 'Fillet')}
@@ -1541,14 +1566,115 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 1400);
 }
 
-// The theme chosen, as its button shows it: its icon and what it says.
-function themeSaid() {
-  return isDark() ? ['moon', 'Theme: Dark'] : ['sun', 'Theme: Light'];
-}
-
-// Always light or dark: the mock has no theme following the system's.
+// Whether the page is drawn dark: the theme chosen, or the system's.
 function isDark() {
   return root.dataset.theme === 'dark';
+}
+const systemDark = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  root.dataset.theme = st.theme === 'system' ? (systemDark.matches ? 'dark' : 'light') : st.theme;
+}
+systemDark.addEventListener('change', () => { if (st.theme === 'system') { applyTheme(); render(); } });
+
+// ---------------------------------------------------------------- settings
+// The settings page: on the model and sketch pages in the viewport's place,
+// on the welcome screen in the recent designs' (notes/Settings.md). A tab
+// per section over a column with the open one, a card of rows, a row per
+// setting: what it is and does on the left, its control on the right. Rows
+// tagged Proposed aren't in the app yet.
+const settingsButton = (cls = 'op icon') => `<button class="${cls}${st.settings ? ' on' : ''}" data-act="settings" data-tip="Settings" data-key="Ctrl ," data-tip-at="below">${icon('gear')}</button>`;
+const SET_LEN = { mm: 1, cm: 10, m: 1000, in: 25.4, ft: 304.8 };
+const DRAGS = [['orbit', 'Orbit'], ['pan', 'Pan'], ['zoom', 'Zoom'], ['none', 'Nothing']];
+function settingsPage() {
+  const seg = (key, opts) => `<div class="seg">${opts.map(([v, label, ic]) =>
+    `<button class="${String(st[key]) === String(v) ? 'on' : ''}" data-act="set:${key}:${v}">${ic ? icon(ic) : ''}${label}</button>`).join('')}</div>`;
+  const sw = key => `<button class="sw${st[key] ? ' on' : ''}" data-act="set:${key}:${!st[key]}" role="switch" aria-checked="${st[key]}"><i></i></button>`;
+  const step = (key, lo, hi) => `<div class="step"><button data-act="set:${key}:${Math.max(lo, st[key] - 1)}"${st[key] <= lo ? ' disabled' : ''}>−</button><b>${st[key]}</b><button data-act="set:${key}:${Math.min(hi, st[key] + 1)}"${st[key] >= hi ? ' disabled' : ''}>+</button></div>`;
+  const row = (label, desc, ctl, proposed) => `<div class="srow${proposed ? ' prop' : ''}"><div class="sl"><b>${label}${proposed ? '<span class="ptag">Proposed</span>' : ''}</b><span>${desc}</span></div><div class="sc">${ctl}</div></div>`;
+  const sec = (id, title, note, rows) => `<section><h3>${title}</h3>${note ? `<p class="snote">${note}</p>` : ''}<div class="scard">${rows.join('')}</div></section>`;
+  // As the app shows values: rounded to the places, no trailing zeros.
+  const trim = (v, p) => String(+v.toFixed(p));
+  const len = `${trim(12.34567 / SET_LEN[st.lenUnit], st.places)} ${st.lenUnit}`;
+  const ang = st.angUnit === 'deg' ? `${trim(22.5, st.places)}°` : `${trim(Math.PI / 8, st.places)} rad`;
+  const sections = [
+    ['appearance', 'Appearance', '', [
+      row('Theme', 'Light or dark, or as the system is set', seg('theme', [['system', 'System', 'contrast'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']])),
+      row('Interface scale', 'The size of everything but the model', seg('uiScale', [['90', '90%'], ['100', '100%'], ['125', '125%'], ['150', '150%']]), true),
+    ]],
+    ['view', 'View', 'How the viewport draws the model. The status bar\'s menu changes the same settings.', [
+      row('Projection', 'Perspective shrinks what is farther away', seg('persp', [[false, 'Orthographic', 'ortho'], [true, 'Perspective', 'persp']])),
+      row('Shading', 'How the faces are lit', seg('shading', [['regular', 'Regular', 'shade-regular'], ['flat', 'Flat', 'shade-flat'], ['metal', 'Metal', 'shade-metal'], ['flatmetal', 'Flat metal', 'shade-flatmetal']])),
+      row('Edges', 'Which edges show besides the feature edges', seg('edges', [['default', 'Features', 'edges-default'], ['wireframe', 'Patches', 'edges-wireframe'], ['tessellation', 'Triangles', 'edges-tessellation']])),
+      row('Hidden edges', 'Edges behind the model, dashed', sw('hiddenEdges')),
+      row('Names', 'The names of bodies, sketches and planes over the view', sw('names')),
+      row('Mouse hints', 'What the mouse buttons do, in the status bar', sw('mouseHints')),
+    ]],
+    ['units', 'Units', `For new designs. Shown as <b class="sample">${len} · ${ang}</b>`, [
+      row('Length', 'For sizes typed without a unit, and shown', seg('lenUnit', [['mm', 'mm'], ['cm', 'cm'], ['m', 'm'], ['in', 'in'], ['ft', 'ft']])),
+      row('Angle', 'For angles typed without a unit, and shown', seg('angUnit', [['deg', 'Degrees'], ['rad', 'Radians']])),
+      row('Decimal places', 'At most, after the point; trailing zeros are left out', step('places', 0, 6)),
+    ]],
+    ['input', 'Mouse', '', [
+      row(`${mouse('l')} Left drag`, 'Outside a sketch; a click always selects', seg('leftDrag', DRAGS), true),
+      row(`${mouse('m')} Middle drag`, 'Turning, panning or zooming the view', seg('middleDrag', DRAGS), true),
+      row(`${mouse('r')} Right drag`, 'With Shift held, it orbits', seg('rightDrag', DRAGS), true),
+      row('Rotation', 'How a drag turns the view', seg('orbitKind', [['turntable', 'Turntable'], ['over', 'Turntable, over the top'], ['trackball', 'Trackball']]), true),
+      row('Rotation point', 'What the view orbits about', seg('pivot', [['click', 'Clicked'], ['press', 'Under the pointer'], ['center', 'View centre']]), true),
+      ...(st.pivot === 'click' ? [row('Set rotation point with', 'On the model or grid; elsewhere, the centre again', seg('pivotClick', [['middle', 'Middle click'], ['middle2', 'Middle double-click'], ['shiftmiddle', 'Shift + middle click']]), true)] : []),
+      row('Zoom direction', 'Which way the wheel zooms in', seg('zoomDir', [['natural', 'Wheel up'], ['inverted', 'Wheel down']]), true),
+      row('Zoom to pointer', 'Zoom about the point under the pointer, else the middle', sw('zoomCursor'), true),
+      row('Snap to grid', 'Sketch tools snap to the grid unless Shift is held', sw('gridSnap'), true),
+    ]],
+    ...(st.web ? [] : [['files', 'Files', '', [
+      row('Auto-save', 'Changes go to the recovery file after a pause in editing', seg('autosave', [['0', 'Off'], ['3', '3 s'], ['10', '10 s'], ['30', '30 s']]), true),
+      row('Recent designs', 'How many the welcome screen keeps', seg('recentN', [['10', '10'], ['25', '25'], ['50', '50'], ['100', '100']]), true),
+    ]]]),
+  ];
+  const open = sections.find(([id]) => id === st.setTab) || sections[0];
+  return `<div class="settings">
+    <div class="shead"><h2>${icon('gear')}Settings</h2><span class="spacer"></span>
+      <button class="op" data-act="set-reset"${settingsChanged().length ? '' : ' disabled title="All settings are the defaults"'}>Reset to defaults</button>
+      <button class="op icon" data-act="settings" data-tip="Close" data-key="Esc" data-tip-at="below">${icon('close')}</button></div>
+    <div class="stabs">${sections.map(([id, t]) => `<button class="${id === open[0] ? 'on' : ''}" data-act="stab:${id}">${t}</button>`).join('')}</div>
+    <div class="sbody"><div class="scol">${sec(...open)}
+      <p class="sfoot">Kept in ${st.web ? '<code>settings.toml</code>, in browser storage' : '<code>~/.config/varde-cad/settings.toml</code>'}.</p></div></div>
+    ${st.resetAsk ? resetPopup() : ''}
+  </div>`;
+}
+const DRAG_SAID = { orbit: 'Orbit', pan: 'Pan', zoom: 'Zoom', none: 'Nothing' };
+// What each setting is called and its values said, for Reset's list.
+const SET_SAID = {
+  theme: ['Theme', { system: 'System', light: 'Light', dark: 'Dark' }], uiScale: ['Interface scale', v => v + '%'],
+  persp: ['Projection', { false: 'Orthographic', true: 'Perspective' }],
+  shading: ['Shading', { regular: 'Regular', flat: 'Flat', metal: 'Metal', flatmetal: 'Flat metal' }],
+  edges: ['Edges', { default: 'Features', wireframe: 'Patches', tessellation: 'Triangles' }],
+  hiddenEdges: ['Hidden edges'], names: ['Names'], mouseHints: ['Mouse hints'],
+  lenUnit: ['Length unit', v => v], angUnit: ['Angle unit', { deg: 'Degrees', rad: 'Radians' }], places: ['Decimal places', v => v],
+  leftDrag: ['Left drag', DRAG_SAID], middleDrag: ['Middle drag', DRAG_SAID], rightDrag: ['Right drag', DRAG_SAID],
+  orbitKind: ['Rotation', { turntable: 'Turntable', over: 'Turntable, over the top', trackball: 'Trackball' }],
+  pivot: ['Rotation point', { click: 'Clicked', press: 'Under the pointer', center: 'View centre' }],
+  pivotClick: ['Set rotation point with', { middle: 'Middle click', middle2: 'Middle double-click', shiftmiddle: 'Shift + middle click' }], zoomDir: ['Zoom direction', { natural: 'Wheel up', inverted: 'Wheel down' }],
+  zoomCursor: ['Zoom to pointer'], gridSnap: ['Snap to grid'],
+  autosave: ['Auto-save', { 0: 'Off', 3: '3 s', 10: '10 s', 30: '30 s' }], recentN: ['Recent designs', v => v],
+};
+const saidOf = (k, v) => { const f = SET_SAID[k][1]; return !f ? (v ? 'On' : 'Off') : typeof f === 'function' ? f(v) : f[v]; };
+const settingsChanged = () => Object.keys(SET_DEFAULTS).filter(k => st[k] !== SET_DEFAULTS[k] && !(st.web && ['autosave', 'recentN'].includes(k)));
+function resetPopup() {
+  const changed = settingsChanged();
+  return `<div class="modal-bg" data-act="set-reset"><div class="modal sreset" data-act="noop">
+    <h2>Reset ${changed.length === 1 ? 'a setting' : changed.length + ' settings'} to defaults?</h2>
+    <div class="rlist">${changed.map(k => `<div><span>${SET_SAID[k][0]}</span><s>${saidOf(k, st[k])}</s>→<b>${saidOf(k, SET_DEFAULTS[k])}</b></div>`).join('')}</div>
+    <div class="rbtns"><button class="op" data-act="set-reset">Cancel</button><button class="op primary" data-act="set-reset-ok">Reset</button></div>
+  </div></div>`;
+}
+const SET_DEFAULTS = { theme: 'system', persp: false, shading: 'regular', edges: 'default', hiddenEdges: true, names: false, mouseHints: true,
+  lenUnit: 'mm', angUnit: 'deg', places: 3, leftDrag: 'orbit', middleDrag: 'orbit', rightDrag: 'pan', orbitKind: 'turntable', pivot: 'click', pivotClick: 'middle',
+  zoomDir: 'natural', zoomCursor: true, gridSnap: true, autosave: '3', recentN: '100', uiScale: '100' };
+function setSetting(key, v) {
+  const was = st[key];
+  st[key] = typeof was === 'boolean' ? v === 'true' : typeof was === 'number' ? +v : v;
+  if (key === 'theme') applyTheme();
+  if (!['theme', 'persp', 'mouseHints', 'places', 'lenUnit', 'angUnit'].includes(key)) toast('Stored — not drawn in mock');
 }
 
 function act(a) {
@@ -1561,7 +1687,12 @@ function act(a) {
     case 'open': go('model.html', v); return;
     case 'home': go('welcome.html'); return;
     case 'menu': st.menu = !st.menu; break;
-    case 'theme': root.dataset.theme = isDark() ? 'light' : 'dark'; break;
+    case 'stab': st.setTab = v; break;
+    case 'settings': st.settings = !st.settings; break;
+    case 'set': { const [key, val] = v.split(':'); setSetting(key, val); break; }
+    // Reset asks first, listing what it changes; with nothing to change it's off.
+    case 'set-reset': st.resetAsk = !st.resetAsk; break;
+    case 'set-reset-ok': Object.assign(st, SET_DEFAULTS); st.resetAsk = false; applyTheme(); break;
     case 'help': st.help = !st.help; break;
     case 'toast': toast(v); return;
     case 'platform': st.web = v === 'web'; keepFlags(); break;
@@ -1687,7 +1818,14 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.altKey) altUsed = true;
+  if ((e.ctrlKey || e.metaKey) && e.key === ',') { e.preventDefault(); st.settings = !st.settings; render(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  // The settings page takes no tool keys: Esc closes it.
+  if (st.settings) {
+    if (e.key === 'Escape') { if (st.resetAsk) st.resetAsk = false; else st.settings = false; render(); }
+    else if (e.key === 'Enter' && st.resetAsk) act('set-reset-ok');
+    return;
+  }
   if (e.key === '?') { st.help = !st.help; render(); return; }
   if (st.help) { if (e.key === 'Escape') { st.help = false; render(); } return; }
 
@@ -1739,7 +1877,7 @@ addEventListener('hashchange', () => location.reload());
 // Opens another page of the mock, with its hash (`model.html`, 'bracket/face'),
 // in the theme picked here.
 function go(file, hash = '') {
-  const theme = root.dataset.theme;
+  const theme = st.theme === 'system' ? '' : st.theme;
   const parts = [hash, theme, st.web && 'web'].filter(Boolean).join('/');
   location.href = file + (parts ? '#' + parts : '');
 }
@@ -1749,9 +1887,8 @@ const flag = f => HASH.slice(1).includes(f);
 // The switches over the window (`mockNav`), kept in the hash without
 // reloading (a hashchange would).
 function keepFlags() {
-  const parts = HASH.slice(1).filter(f => !['web', 'unsaved', 'stored', 'local', 'edited', 'clean', 'p-nosuggest'].includes(f));
+  const parts = HASH.slice(1).filter(f => !['web', 'unsaved', 'stored', 'local', 'edited', 'clean'].includes(f));
   if (st.web) parts.push('web');
-  if (!st.suggest) parts.push('p-nosuggest');
   if (st.doc && st.where !== (st.doc.kind === 'empty' ? 'unsaved' : 'stored')) parts.push(st.where);
   if (st.doc && st.doc.dirty !== (st.doc.kind !== 'empty')) parts.push(st.doc.dirty ? 'edited' : 'clean');
   HASH.splice(1, Infinity, ...parts);
@@ -1775,7 +1912,6 @@ function mockNav() {
       ? b('where:unsaved', 'Never saved', st.where === 'unsaved') + b('where:stored', 'Browser storage', st.where === 'stored') + b('where:local', 'Local', st.where === 'local')
       : b('where:unsaved', 'Never saved', st.where === 'unsaved') + b('where:stored', 'Saved', st.where !== 'unsaved');
     groups.push('<i class="brk"></i>', g('Location', where), g('Changes', b('edited:off', 'None', !st.doc.dirty) + b('edited:on', 'Edited', st.doc.dirty)));
-    groups.push('<i class="brk"></i>', g('Suggest names', b('psuggest:on', 'On', st.suggest) + b('psuggest:off', 'Off', !st.suggest)));
   }
   const nav = $('.mocknav');
   nav.innerHTML = groups.join('');
@@ -1789,14 +1925,17 @@ const PAGES = [['welcome', 'Welcome', 'welcome.html', ''], ['model', 'Model', 'm
 function start(current) {
   if (flag('still')) root.classList.add('still');
   // Light or dark as the hash says, else as the system is to start with.
-  root.dataset.theme = flag('dark') ? 'dark' : flag('light') ? 'light'
-    : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  st.theme = flag('dark') ? 'dark' : flag('light') ? 'light' : 'system';
+  applyTheme();
+  if (flag('settings')) st.settings = true;
+  if (flag('reset')) st.resetAsk = true;
+  const tab = HASH.slice(1).find(f => f.startsWith('tab-'));
+  if (tab) st.setTab = tab.slice(4);
   if (flag('persp')) st.persp = true;
   if (flag('projmenu')) st.projMenu = true;
   if (flag('nomouse')) st.mouseHints = false;
   if (flag('tools')) st.gbarPinned = true;
   if (flag('params')) st.paramsOpen = true;
-  if (flag('p-nosuggest')) st.suggest = false;
   st.web = flag('web');
   st.where = flag('local') ? 'local' : flag('stored') ? 'stored' : flag('unsaved') || st.doc?.kind === 'empty' ? 'unsaved' : 'stored';
   if (st.doc && flag('edited')) st.doc.dirty = true;

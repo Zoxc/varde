@@ -19,7 +19,7 @@
   open it, the arrow keys to move through them. On the web, a click on a
   design opens it; drag a file over the page.
   Append /web for the web build, /still to disable animations, /dark or
-  /light to force the theme, /drag to show a file dragged over the web page.
+  /light to force the theme, /settings to open the settings, /drag to show a file dragged over the web page.
 -->
 <link rel="stylesheet" href="mock.css">
 <style>
@@ -55,6 +55,9 @@
 .cfoot button { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; text-align: left; }
 .cfoot button:hover { background: var(--hl); color: var(--text); }
 .cfoot button kbd { margin-left: auto; }
+.cfoot button.on, .foot button.on { background: var(--accent-soft); color: var(--accent); }
+/* The settings page in the recent designs' place, or under the web header. */
+.setw { position: relative; flex: 1; min-height: 360px; }
 
 /* ---- desktop: the recent designs, under a band ---- */
 .main { flex: 1; min-width: 0; overflow: auto; }
@@ -231,7 +234,8 @@ function thumb(kind) {
 // ---------------------------------------------------------------- parts
 const lockup = (cls = '') => `<div class="lockup ${cls}">${LOGO}Varde CAD</div>`;
 const fileName = name => `${name}<span class="ext">.vrdp</span>`;
-const theme = () => `<button data-act="theme">${icon(themeSaid()[0])}${themeSaid()[1]}</button>`;
+// The settings, in the recent designs' place (on the web, under the header).
+const settings = () => `<button class="${st.settings ? 'on' : ''}" data-act="settings">${icon('gear')}Settings${st.web ? '' : '<kbd>Ctrl ,</kbd>'}</button>`;
 
 // ---------------------------------------------------------------- desktop
 function desktop() {
@@ -249,11 +253,11 @@ function desktop() {
     </div>
     <div class="cfoot">
       <button data-act="help">${icon('help')}Shortcuts<kbd>?</kbd></button>
-      <button data-act="toast:Documentation — not in mock">${icon('export')}Documentation</button>${theme()}
+      <button data-act="toast:Documentation — not in mock">${icon('export')}Documentation</button>${settings()}
     </div>
   </div>
-  <div class="main"><div class="band">Recent<span class="n">${RECENT.length}</span></div>
-    <div class="pad"><div class="cards">${RECENT.map(card).join('')}</div></div></div>`;
+  ${st.settings ? `<div class="main setw">${settingsPage()}</div>` : `<div class="main"><div class="band">Recent<span class="n">${RECENT.length}</span></div>
+    <div class="pad"><div class="cards">${RECENT.map(card).join('')}</div></div></div>`}`;
 }
 
 // ---------------------------------------------------------------- web
@@ -273,12 +277,12 @@ function web() {
       <button class="btn primary" data-act="new">${icon('plus')}New design<kbd>N</kbd></button>
       <button class="btn" data-act="open:bracket">${icon('folder')}Open…<kbd>O</kbd></button>
       <button class="btn" data-act="toast:Import — not in mock">${icon('export')}Import…</button></div></div></div>
-    <div class="wrap">
+    ${st.settings ? `<div class="setw">${settingsPage()}</div>` : `<div class="wrap">
       <div class="label">In browser storage<span class="n">${STORED.length}</span></div>
       <div class="cards">${drop}${STORED.map(card).join('')}</div>
-    </div>
+    </div>`}
     <div class="foot">
-      <button data-act="toast:Documentation — not in mock">${icon('export')}Documentation</button>${theme()}
+      <button data-act="toast:Documentation — not in mock">${icon('export')}Documentation</button>${settings()}
       <button data-act="toast:Desktop app — not in mock">${icon('export')}Desktop app</button>
     </div>
   </div>`;
@@ -310,7 +314,7 @@ page.dblclick = el => {
 // Before the shared keys, on desktop: the arrow keys through the recent
 // designs, Enter to open the one selected.
 document.addEventListener('keydown', e => {
-  if (st.web || st.doc || st.help || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (st.web || st.doc || st.help || st.settings || e.ctrlKey || e.metaKey || e.altKey) return;
   const move = { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -1, ArrowRight: 1 }[e.key];
   if (move) { e.preventDefault(); st.wsel = clamp(st.wsel + move, 0, RECENT.length - 1); render(); e.stopImmediatePropagation(); return; }
   if (e.key === 'Enter') { go('model.html', RECENT[st.wsel].name); e.stopImmediatePropagation(); }

@@ -606,3 +606,67 @@ svg.i.link { --cc: var(--c-link); --ca: var(--c-link); }
 .psug .pn { font-weight: 600; }
 .psug .meta { color: var(--muted); font-size: 12.5px; }
 .psug .hint { padding: 3px 8px 2px; color: var(--muted); font-size: 12px; }
+
+/* ---- settings: in the viewport's place (or the recent designs' on the
+   welcome screen), a head with Reset and the close button over a tab
+   per section, the open one a card of rows in a column: what each is
+   left, its control right. */
+.vp.setp { background: var(--vp-top); }
+.settings { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--vp-top); }
+.shead { flex: none; display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 10px 0 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.shead h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 600; }
+.shead h2 svg.i { color: var(--muted); }
+.shead .op { color: var(--muted); }
+.sbody { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--faint) transparent; display: flex; justify-content: center; padding: 22px 24px 40px; }
+.scol { flex: 0 1 620px; min-width: 0; }
+.scol section { margin-bottom: 22px; }
+.scol h3 { margin: 0 0 6px 2px; font-size: 11px; font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; }
+.snote { margin: -2px 0 8px 2px; color: var(--muted); font-size: 12px; }
+.snote .sample { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.scard { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.srow { display: flex; align-items: center; gap: 16px; min-height: 52px; padding: 8px 14px; }
+.srow + .srow { border-top: 1px solid var(--line); }
+.sl { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sl b { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.sl span { color: var(--muted); font-size: 12px; }
+.srow.prop .sl b { color: var(--muted); }
+.ptag { padding: 0 6px; border-radius: 8px; background: var(--chip); color: var(--faint); font-size: 10px; font-weight: 700; }
+.sc { flex: none; }
+.sfoot { color: var(--faint); font-size: 11.5px; margin: 0 2px; }
+.sfoot code { font-size: 11px; }
+/* A choice among a few, as one bar of buttons. */
+.seg { display: flex; padding: 2px; gap: 2px; border-radius: 7px; background: var(--chip); }
+.seg button { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; white-space: nowrap; font-size: 12.5px; }
+.seg button svg.i { width: 14px; height: 14px; }
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(0,0,0,.08); }
+/* On or off. */
+.sw { width: 34px; height: 20px; padding: 2px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--text) 22%, var(--panel)); cursor: pointer; display: flex; }
+.sw i { width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .12s; }
+.sw.on { background: var(--fill); }
+.sw.on i { transform: translateX(14px); }
+/* A count, one at a time. */
+.step { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.step button { width: 28px; height: 26px; border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+.step button:hover:not(:disabled) { background: var(--hl); color: var(--text); }
+.step button:disabled { opacity: .4; cursor: default; }
+.step b { min-width: 28px; text-align: center; font-variant-numeric: tabular-nums; }
+@media (max-width: 1100px) { .srow { flex-wrap: wrap; } }
+
+/* A tab per section, as the side panel's. */
+.stabs { flex: none; display: flex; justify-content: center; gap: 2px; padding: 8px 24px 0; background: var(--tabstrip); border-bottom: 1px solid var(--line); }
+.stabs button { height: 30px; padding: 0 14px; margin-bottom: -1px; border: 1px solid transparent; border-bottom: 0; border-radius: 7px 7px 0 0; background: none; color: var(--muted); cursor: pointer; }
+.stabs button:hover { background: var(--hl); color: var(--text); }
+.stabs button.on { background: var(--vp-top); border-color: var(--line); color: var(--text); font-weight: 600; box-shadow: inset 0 2px 0 var(--accent); }
+/* Reset's popup: what it changes, from what it is to the default. */
+.modal.sreset { width: 400px; }
+.rlist { display: flex; flex-direction: column; gap: 2px; margin: 10px 0 16px; max-height: 300px; overflow: auto; }
+.rlist div { display: grid; grid-template-columns: 1fr auto auto auto; gap: 8px; align-items: baseline; padding: 4px 8px; border-radius: 6px; background: var(--chip); color: var(--faint); }
+.rlist span { color: var(--text); }
+.rlist s { color: var(--muted); }
+.rlist b { color: var(--text); font-weight: 600; }
+.rbtns { display: flex; justify-content: flex-end; gap: 6px; }
+.rbtns .op { border: 1px solid var(--line); }
+.rbtns .op.primary { border-color: transparent; }
+.shead .op:disabled { opacity: .45; cursor: default; background: none; }
+.sl b svg.mouse { width: 10px; height: 14px; margin-right: -2px; }
