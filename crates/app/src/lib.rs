@@ -33,7 +33,7 @@ use crate::io::Io;
 use crate::keys::{document_key, welcome_key};
 use crate::message::{ForDoc, Message};
 use crate::recent::Recent;
-use crate::settings::Settings;
+use crate::settings::{Key, Settings};
 use crate::toast::Toast;
 use crate::welcome::Welcome;
 
@@ -46,6 +46,11 @@ pub(crate) struct Varde {
     options: ViewOptions,
     /// What's stored of `options`.
     settings: Settings,
+    /// The settings page: whether it shows, and how.
+    page: Page,
+    /// Where the settings are kept, as the page's foot says it: `None`
+    /// natively without a config directory.
+    settings_shown: Option<String>,
     /// Whether the peek key is held, see [`Held::PEEK`].
     peeking: bool,
     /// Whether the command modifier (`Ctrl`, or `Cmd` on macOS) is held,
@@ -62,6 +67,16 @@ pub(crate) struct Varde {
     /// the viewport's pipelines neither holds up its first frame nor waits
     /// for the first design.
     warm_up: bool,
+}
+
+/// The settings page's own state: the app's, not a document's, so it
+/// stays open across opening and closing designs.
+#[derive(Debug, Default)]
+struct Page {
+    open: bool,
+    tab: varde_view::SettingsTab,
+    /// Whether Reset to defaults is asking first.
+    resetting: bool,
 }
 
 /// The files side of the app, which both screens' steps use: the IO lane,
@@ -81,6 +96,9 @@ struct Files {
     /// exports aren't downloaded.
     file_system_access: bool,
     recent: Recent,
+    /// The units a new design starts in: the user's setting, kept in
+    /// step with it by `Varde::update`.
+    new_units: varde_document::LengthUnit,
     /// New designs left behind by sessions that crashed, newest first.
     recovered: Vec<Recovered>,
     /// On the web, the designs saved in browser storage, newest first, as
@@ -172,6 +190,7 @@ impl Files {
             browser_storage: cfg!(target_arch = "wasm32"),
             file_system_access: varde_io::pick::file_system_access(),
             recent: Recent::default(),
+            new_units: varde_document::LengthUnit::default(),
             recovered: Vec::new(),
             browser: Vec::new(),
             browser_thumbnails: Vec::new(),
@@ -351,6 +370,8 @@ impl Varde {
             system: None,
             options: ViewOptions::default(),
             settings: Settings::default(),
+            page: Page::default(),
+            settings_shown: settings_shown(None),
             peeking: false,
             command: false,
             files,
@@ -381,6 +402,8 @@ impl Varde {
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
+        // A new design starts in the units of the settings.
+        self.files.new_units = self.options.length_unit;
         // A value field opened, or a value refused, has the field take the
         // focus once it shows.
         let task = match self.screen.doc_mut().and_then(Doc::take_focus) {
@@ -532,11 +555,8 @@ impl Varde {
                     doc.proposals_settled(cx)
                 });
             }
-            Message::Ui(Ui::CycleTheme) => {
-                self.options.theme = self.options.theme.cycled();
-                if let Some(write) = self.settings.chose_theme(self.options) {
-                    self.files.io.send(write);
-                }
+            Message::Ui(Ui::SetTheme(theme)) => {
+                self.choose(Key::Theme, |options| options.theme = theme);
             }
             Message::SystemTheme(mode) => {
                 self.system = match mode {
@@ -546,29 +566,32 @@ impl Varde {
                 };
             }
             Message::Ui(Ui::Copy(text)) => return platform::copy(text),
-            Message::Ui(Ui::ToggleMouseHints) => {
-                self.options.mouse_hints = !self.options.mouse_hints;
-                self.with_doc(|doc, _| doc.view_menu = false);
-                if let Some(write) = self.settings.chose_mouse_hints(self.options) {
-                    self.files.io.send(write);
-                }
-            }
-            Message::Ui(Ui::ToggleHiddenEdges) => {
-                self.options.hidden_edges = !self.options.hidden_edges;
-                self.with_doc(|doc, _| doc.view_menu = false);
-            }
+            Message::Ui(Ui::ToggleMouseHints) => self.choose(Key::MouseHints, |options| {
+                options.mouse_hints = !options.mouse_hints;
+            }),
+            Message::Ui(Ui::ToggleHiddenEdges) => self.choose(Key::HiddenEdges, |options| {
+                options.hidden_edges = !options.hidden_edges;
+            }),
             Message::Ui(Ui::ToggleNames) => {
-                self.options.names = !self.options.names;
-                self.with_doc(|doc, _| doc.view_menu = false);
+                self.choose(Key::Names, |options| options.names = !options.names);
             }
             Message::Ui(Ui::SetEdges(edges)) => {
-                self.options.edges = edges;
-                self.with_doc(|doc, _| doc.view_menu = false);
+                self.choose(Key::Edges, |options| options.edges = edges);
             }
             Message::Ui(Ui::SetShading(shading)) => {
-                self.options.shading = shading;
+                self.choose(Key::Shading, |options| options.shading = shading);
+            }
+            Message::Ui(Ui::SetProjection(projection)) => {
+                self.choose(Key::Projection, |options| {
+                    options.projection = projection;
+                });
+            }
+            Message::Ui(Ui::ToggleSettings) => {
+                self.page.open = !self.page.open;
+                self.page.resetting = false;
                 self.with_doc(|doc, _| doc.view_menu = false);
             }
+            Message::Ui(Ui::Settings(message)) => self.settings_page(message),
             Message::PeekPanel(peeking) => {
                 // The tab shown changes: the Timeline's rows go, or come,
                 // without an exit or an enter.
@@ -600,6 +623,50 @@ impl Varde {
             }),
         }
         Task::none()
+    }
+
+    /// Sets the setting `key` of the options with `change`, closing the
+    /// view options menu, and stores it.
+    fn choose(&mut self, key: Key, change: impl FnOnce(&mut ViewOptions)) {
+        change(&mut self.options);
+        self.with_doc(|doc, _| doc.view_menu = false);
+        self.options_changed();
+        if let Some(write) = self.settings.chose(key, self.options) {
+            self.files.io.send(write);
+        }
+    }
+
+    /// Has the open document take the options as they are now: their
+    /// projection, its camera's.
+    fn options_changed(&mut self) {
+        let projection = self.options.projection;
+        self.with_doc(|doc, _| doc.set_projection(projection));
+    }
+
+    /// Takes `message`, from the settings page itself.
+    fn settings_page(&mut self, message: varde_view::SettingsPage) {
+        use varde_view::SettingsPage;
+        match message {
+            SettingsPage::Tab(tab) => self.page.tab = tab,
+            SettingsPage::SetLengthUnit(unit) => {
+                self.choose(Key::LengthUnit, |options| options.length_unit = unit);
+            }
+            // With nothing to reset, the button is off.
+            SettingsPage::AskReset => {
+                self.page.resetting = !varde_view::changed_settings(self.options).is_empty();
+            }
+            SettingsPage::CancelReset => self.page.resetting = false,
+            SettingsPage::Reset => {
+                // Only as asked: a stray Enter resets nothing.
+                if std::mem::take(&mut self.page.resetting) {
+                    self.options = ViewOptions::default();
+                    self.options_changed();
+                    if let Some(write) = self.settings.chose_all(self.options) {
+                        self.files.io.send(write);
+                    }
+                }
+            }
+        }
     }
 
     /// Takes `message`, about the open document's file.
@@ -692,7 +759,9 @@ impl Varde {
                 }
                 Task::none()
             }
-            Next::Show(doc) => {
+            Next::Show(mut doc) => {
+                // In the projection of the settings.
+                doc.set_projection(self.options.projection);
                 self.screen = Screen::Document(doc);
                 Task::none()
             }
@@ -787,6 +856,8 @@ impl Varde {
                 if let Some(write) = self.files.recent.loaded(entries, home) {
                     self.files.io.send(write);
                 }
+                // The home directory as `~`, now it's known.
+                self.settings_shown = settings_shown(Some(&self.files));
                 self.files.load_thumbnails();
             }
             IoResponse::ThumbnailsLoaded { thumbnails } => {
@@ -801,6 +872,7 @@ impl Varde {
                 if let Some(write) = self.settings.loaded(settings, &mut self.options) {
                     self.files.io.send(write);
                 }
+                self.options_changed();
             }
             IoResponse::SettingsWritten { result } => {
                 report_failure("save the settings", result);
@@ -861,17 +933,31 @@ impl Varde {
     }
 
     pub(crate) fn view(&self) -> Element<'_, Message> {
+        let settings = self.page.open.then(|| varde_view::SettingsState {
+            options: self.options,
+            tab: self.page.tab,
+            resetting: self.page.resetting,
+            kept_in: match (&self.settings_shown, self.files.browser_storage) {
+                (_, true) => varde_view::KeptIn::Browser,
+                (Some(path), false) => varde_view::KeptIn::File(path),
+                (None, false) => varde_view::KeptIn::Nowhere,
+            },
+        });
         let view = match &self.screen {
             Screen::Welcome(welcome) => {
-                let view = welcome.view(&self.files, self.mode(), self.options.theme);
+                let view = welcome.view(&self.files, self.mode(), settings);
                 match self.warm_up {
                     true => iced::widget::stack![view, varde_view::warm_up()].into(),
                     false => view,
                 }
             }
-            Screen::Document(doc) => {
-                doc.view(self.peeking, self.mode(), self.options, self.files.offers())
-            }
+            Screen::Document(doc) => doc.view_with(
+                self.peeking,
+                self.mode(),
+                self.options,
+                self.files.offers(),
+                settings,
+            ),
         };
         let view = match self.toast.message() {
             Some(message) => iced::widget::stack![view, varde_view::toast(message)].into(),
@@ -896,10 +982,7 @@ impl Varde {
     /// Whether a shortcut of the screen takes Tab, which otherwise backs
     /// out as Escape does, see `escape_key`.
     fn tab_taken(&self) -> bool {
-        let Screen::Document(doc) = &self.screen else {
-            return false;
-        };
-        doc.keys().is_some_and(|keys| {
+        self.doc_keys().is_some_and(|keys| {
             let tab = keyboard::Key::Named(key::Named::Tab);
             varde_view::claimed(
                 varde_view::document_bindings(keys),
@@ -907,6 +990,24 @@ impl Varde {
                 keyboard::Modifiers::empty(),
             )
         })
+    }
+
+    /// What the open document's shortcuts depend on, if it has any now:
+    /// none while Reset to defaults asks, and only a few with the
+    /// settings page in the viewport's place, see [`Doc::keys`].
+    fn doc_keys(&self) -> Option<varde_view::DocumentKeys> {
+        let keys = self.screen.doc()?.keys()?;
+        (!self.page.resetting).then(|| keys.with_settings(self.page.open))
+    }
+
+    /// What `Esc` does on the settings page, if it's open: cancels Reset
+    /// to defaults while it asks, else closes the page.
+    fn page_escape(&self) -> Option<PageEscape> {
+        match (self.page.open, self.page.resetting) {
+            (false, _) => None,
+            (true, true) => Some(PageEscape::CancelReset),
+            (true, false) => Some(PageEscape::Close),
+        }
     }
 
     pub(crate) fn subscription(&self) -> Subscription<Message> {
@@ -919,19 +1020,24 @@ impl Varde {
             keyboard::listen().filter_map(peek_key),
             keyboard::listen().filter_map(command_key),
             keyboard::listen()
-                .with((dialog, self.tab_taken()))
+                .with((dialog, self.tab_taken(), self.page_escape()))
                 .filter_map(escape_key),
+            // Enter resets, as Reset to defaults asks, but not under a
+            // prompt over it.
+            only_if(self.page.resetting && dialog.is_none(), || {
+                keyboard::listen().filter_map(reset_key)
+            }),
             // The release is never seen if the window loses focus while
             // the peek key is held, e.g. to an Alt+Tab.
             window::events().filter_map(unfocused),
             match &self.screen {
                 // No key opens anything behind the prompt.
                 Screen::Welcome(welcome) => keyboard::listen()
-                    .with(welcome.dialog().is_none())
+                    .with(welcome.dialog().is_none() && !self.page.resetting)
                     .filter_map(welcome_key),
-                Screen::Document(doc) => {
-                    keyboard::listen().with(doc.keys()).filter_map(document_key)
-                }
+                Screen::Document(_) => keyboard::listen()
+                    .with(self.doc_keys())
+                    .filter_map(document_key),
             },
             // Closing waits for saves and asks about unsaved changes, see
             // `run`.
@@ -1063,8 +1169,8 @@ fn doc_lane<L, S: Stream>(
 /// Whether `message` still acts while the window waits for the IO lane to
 /// flush: the lane's own and those that only change the view, none of which
 /// can send the lane more work, see `Varde::quit`. Not an export's welded
-/// bodies, which would be sent to be written, nor a theme chosen or the
-/// mouse's hints turned on or off, which would be stored.
+/// bodies, which would be sent to be written, nor a setting chosen, which
+/// would be stored.
 fn while_quitting(message: &Message) -> bool {
     matches!(
         message,
@@ -1089,10 +1195,12 @@ fn while_quitting(message: &Message) -> bool {
             | Message::Persisted(_)
             | Message::Ui(
                 Ui::Look(_)
-                    | Ui::ToggleHiddenEdges
-                    | Ui::ToggleNames
-                    | Ui::SetEdges(_)
-                    | Ui::SetShading(_)
+                    | Ui::ToggleSettings
+                    | Ui::Settings(
+                        varde_view::SettingsPage::Tab(_)
+                            | varde_view::SettingsPage::AskReset
+                            | varde_view::SettingsPage::CancelReset
+                    )
                     | Ui::Copy(_)
             )
     )
@@ -1165,7 +1273,10 @@ fn command_key(event: keyboard::Event) -> Option<Message> {
 /// deleting nothing), and otherwise backs out of what's open, see
 /// [`Look::Escape`].
 fn escape_key(
-    ((dialog, tab_taken), event): ((Option<Dialog>, bool), keyboard::Event),
+    ((dialog, tab_taken, page), event): (
+        (Option<Dialog>, bool, Option<PageEscape>),
+        keyboard::Event,
+    ),
 ) -> Option<Message> {
     // Escape with any modifiers, unlike a shortcut.
     let keyboard::Event::KeyPressed { key, modifiers, .. } = event else {
@@ -1174,6 +1285,16 @@ fn escape_key(
     let tab = key == keyboard::Key::Named(key::Named::Tab);
     if !varde_view::escapes(&key, modifiers) || (tab && tab_taken) {
         return None;
+    }
+    // The settings page, over what's open in the document, takes it
+    // before that does, but not before a prompt over it: Escape cancels
+    // Reset's or closes the page, and Tab does nothing there.
+    if let (None, Some(page)) = (dialog, page) {
+        let message = match page {
+            PageEscape::CancelReset => Ui::Settings(varde_view::SettingsPage::CancelReset),
+            PageEscape::Close => Ui::ToggleSettings,
+        };
+        return (!tab).then_some(Message::Ui(message));
     }
     Some(Message::Ui(match dialog {
         Some(Dialog::Unsaved) => Ui::File(File::Unsaved(Unsaved::Cancel)),
@@ -1184,6 +1305,36 @@ fn escape_key(
         Some(Dialog::DeleteFromBrowser) => Ui::Welcome(varde_view::Welcome::CancelDelete),
         None => Ui::Look(Look::Escape),
     }))
+}
+
+/// What `Esc` does on the settings page, see `Varde::page_escape`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PageEscape {
+    CancelReset,
+    Close,
+}
+
+/// `Enter`, as Reset to defaults asks: resets.
+fn reset_key(event: keyboard::Event) -> Option<Message> {
+    match event {
+        keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(key::Named::Enter),
+            repeat: false,
+            ..
+        } => Some(Message::Ui(Ui::Settings(varde_view::SettingsPage::Reset))),
+        _ => None,
+    }
+}
+
+/// Where the settings are kept, as the settings page's foot says it:
+/// with the home directory as `~` once the recent `files` say where it
+/// is. `None` without a config directory.
+fn settings_shown(files: Option<&Files>) -> Option<String> {
+    let store = varde_io::settings::store()?;
+    Some(match files {
+        Some(files) => files.shown_path(&store),
+        None => store.display().to_string(),
+    })
 }
 
 /// Stops peeking once the window loses focus.

@@ -1709,7 +1709,7 @@ fn shots_26_damaged_prompt() {
     }));
     shooting(|camera| {
         let welcome = |mode| match &varde.screen {
-            Screen::Welcome(welcome) => welcome.view(&varde.files, mode, varde.options.theme),
+            Screen::Welcome(welcome) => welcome.view(&varde.files, mode, None),
             Screen::Document(_) => panic!("not on the welcome screen"),
         };
         camera.take_view(welcome, "26-damaged-prompt", Shot::new());
@@ -1729,7 +1729,7 @@ fn shots_26_damaged_prompt() {
     }));
     shooting(|camera| {
         let welcome = |mode| match &varde.screen {
-            Screen::Welcome(welcome) => welcome.view(&varde.files, mode, varde.options.theme),
+            Screen::Welcome(welcome) => welcome.view(&varde.files, mode, None),
             Screen::Document(_) => panic!("not on the welcome screen"),
         };
         camera.take_view(
@@ -1795,7 +1795,7 @@ fn shots_27_thumbnail() {
             crate::ThumbnailHandles::new(thumbnail.clone()),
         )];
         let welcome = Welcome::default();
-        let view = |mode| welcome.view(&files, mode, varde_view::ThemeChoice::Auto);
+        let view = |mode| welcome.view(&files, mode, None);
         camera.take_view(view, "27-welcome", Shot::new());
         camera.take_view(view, "27-welcome-dark", Shot::new().dark());
         camera.take_view(view, "27-welcome-scale-2", Shot::new().scale(2.0));
@@ -1816,7 +1816,7 @@ fn shots_27_thumbnail() {
                 damage: None,
             })
             .into();
-        let view = |mode| welcome.view(&files, mode, varde_view::ThemeChoice::Auto);
+        let view = |mode| welcome.view(&files, mode, None);
         camera.take_view(view, "27-welcome-web", Shot::new().size(1500.0, 900.0));
     });
 }

@@ -11,7 +11,7 @@ use varde_io::{
     Access, BrowserDesign, Chosen, Closing, Damage, DamageKind, DownloadStatus, ListedDamage,
     OpenId, Opened, PickedFrom, Recovered, RecoveryError, Request as IoRequest, UnixSeconds,
 };
-use varde_view::{Message as Ui, Mode, ThemeChoice, Welcome as WelcomeUi};
+use varde_view::{Message as Ui, Mode, Welcome as WelcomeUi};
 
 use crate::doc::{Dialog, Doc, FileDamage, Leave, Origin, Recovery, Target, design_name};
 use crate::samples::SAMPLES;
@@ -231,7 +231,8 @@ impl Welcome {
             creating: Some(files.io.create()),
             ..Origin::new(Target::None, Access::Edit, UNTITLED.to_owned())
         };
-        Next::Show(Box::new(Doc::new(Document::default(), origin)))
+        let document = Document::in_units(files.new_units);
+        Next::Show(Box::new(Doc::new(document, origin)))
     }
 
     /// Opens the sample design `index` (see [`crate::samples`]) as a new
@@ -501,12 +502,12 @@ impl Welcome {
     }
 
     /// The welcome screen, listing the recent files and the recovered
-    /// designs of `files`.
+    /// designs of `files`, or showing the `settings` page while it's open.
     pub(crate) fn view<'a>(
         &'a self,
         files: &'a Files,
         mode: Mode,
-        theme: ThemeChoice,
+        settings: Option<varde_view::SettingsState<'a>>,
     ) -> Element<'a, Ui> {
         let now = when::now();
         // Where designs are kept in browser storage, the screen is the
@@ -585,7 +586,7 @@ impl Welcome {
             damaged,
             panic,
             mode,
-            theme,
+            settings,
         })
     }
 }

@@ -46,6 +46,7 @@ mod regenerating;
 mod revolve;
 mod rollback;
 mod select;
+mod settings;
 mod shell;
 mod shortcut;
 mod snap;
@@ -117,9 +118,13 @@ pub use revolve::{
     axis_edge,
 };
 pub use select::{Selected, Selection, SelectionMode, SketchItem};
+pub use settings::{
+    KeptIn, SettingChange, SettingsPage, SettingsState, SettingsTab, changed_settings,
+};
 pub use shell::shell_info;
 pub use shortcut::{
-    Binding, DocumentKeys, Held, claimed, document_bindings, escapes, pressed, welcome_bindings,
+    Binding, DocumentKeys, Held, claimed, document_bindings, escapes, pressed, settings_binding,
+    welcome_bindings,
 };
 pub use snap::{Inference, Level, Own, SNAP_TOLERANCE, Snap, Target, closing};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
@@ -181,8 +186,17 @@ pub enum Message {
     File(File),
     Edit(Edit),
     Look(Look),
-    /// Goes on to the next [`ThemeChoice`].
-    CycleTheme,
+    /// Chooses the theme, on the settings page.
+    SetTheme(ThemeChoice),
+    /// Opens the settings page, or closes it: the gear, `Ctrl ,`, and
+    /// the page's close button.
+    ToggleSettings,
+    /// Something on the settings page itself: its tabs, the units and
+    /// Reset to defaults.
+    Settings(SettingsPage),
+    /// Views the model in `Projection`, from the view options menu or the
+    /// settings page: every document's camera takes it.
+    SetProjection(Projection),
     /// Shows the status bar's hints for the mouse, or hides them: the
     /// view options menu's Mouse hints.
     ToggleMouseHints,
@@ -203,10 +217,10 @@ pub enum Message {
     Copy(String),
 }
 
-/// What the view options menu turns on and off, and the theme button
-/// picks, kept by the app for every document. Both hints and hidden edges
-/// on to start with, the edges and shading the defaults and the theme the
-/// system's.
+/// The user's settings: what the view options menu turns on and off and
+/// the settings page sets, kept by the app for every document. Both hints
+/// and hidden edges on to start with, the edges, shading and projection
+/// the defaults, the theme the system's and new designs in millimetres.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewOptions {
     /// Whether the status bar shows the hints of the mouse.
@@ -219,7 +233,12 @@ pub struct ViewOptions {
     pub edges: Edges,
     /// How the viewport lights the model's faces.
     pub shading: Shading,
+    /// How the viewport projects the model: every document's camera
+    /// takes it.
+    pub projection: Projection,
     pub theme: ThemeChoice,
+    /// The units a new design starts in. A design opened keeps its own.
+    pub length_unit: LengthUnit,
 }
 
 impl Default for ViewOptions {
@@ -230,7 +249,9 @@ impl Default for ViewOptions {
             names: false,
             edges: Edges::Default,
             shading: Shading::Regular,
+            projection: Projection::default(),
             theme: ThemeChoice::default(),
+            length_unit: LengthUnit::default(),
         }
     }
 }

@@ -133,6 +133,8 @@ fn requests() -> Vec<Request> {
             settings: Settings {
                 theme: Theme::Dark,
                 mouse_hints: false,
+                length_unit: varde_document::LengthUnit::Ft,
+                ..Settings::default()
             },
         },
         Request::ListRecovered,
@@ -359,6 +361,7 @@ fn responses() -> Vec<Response> {
             settings: Settings {
                 theme: Theme::Light,
                 mouse_hints: true,
+                ..Settings::default()
             },
         },
         Response::SettingsWritten {

@@ -112,7 +112,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             )),
         vrule(),
         // The ops and what's empty of the bar after them, cut off where
-        // they would run under Undo, Redo and the theme's button, which
+        // they would run under Undo, Redo and the settings gear, which
         // are laid out first and so always show.
         container(
             row![
@@ -133,7 +133,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         history_button(Icon::Undo, "Undo", undo),
         history_button(Icon::Redo, "Redo", redo),
         container(vrule()).height(18).padding([0, 4]),
-        crate::chrome::theme_button(state.options.theme),
+        crate::settings::settings_button(state.settings.is_some()),
         Space::new().width(8),
     ]
     .spacing(BAR_SPACING)

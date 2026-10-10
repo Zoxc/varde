@@ -104,7 +104,7 @@ pub(super) fn welcome(varde: &Varde) -> &Welcome {
 pub(super) fn welcome_texts(varde: &Varde) -> Vec<String> {
     let mut renderer = varde_view::probe::renderer();
     let size = iced::Size::new(1280.0, 800.0);
-    let view = welcome(varde).view(&varde.files, Mode::Light, varde.options.theme);
+    let view = welcome(varde).view(&varde.files, Mode::Light, None);
     let mut ui = shown(view, size, &mut renderer);
     (texts(&mut ui, &renderer).into_iter())
         .map(|text| text.text)
@@ -178,7 +178,7 @@ fn a_damaged_file_is_asked_about_before_it_shows_and_cancel_keeps_it() {
     assert!(keys::welcome_key((true, n)).is_some());
     let escape = press(keyboard::Key::Named(key::Named::Escape), Default::default());
     assert!(matches!(
-        escape_key(((Some(Dialog::Damaged), false), escape)),
+        escape_key(((Some(Dialog::Damaged), false, None), escape)),
         Some(Message::Ui(Ui::Welcome(WelcomeUi::CancelDamaged)))
     ));
 

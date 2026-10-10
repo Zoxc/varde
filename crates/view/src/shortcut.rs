@@ -41,6 +41,8 @@ enum Key {
     F10,
     /// The context menu key.
     Menu,
+    /// `,`.
+    Comma,
     /// No key: a tool the UI mock gives none, reached from the toolbar
     /// and the rail. Never pressed, and shown as nothing.
     None,
@@ -93,6 +95,11 @@ impl Shortcut {
     /// XY, `2` XZ, `3` YZ, as the toolbar orders them.
     pub const PLANES: [Self; 3] = [Self::plain('1'), Self::plain('2'), Self::plain('3')];
     pub const NONE: Self = Self::named(Key::None);
+    /// Opens the settings page, or closes it.
+    pub const SETTINGS: Self = Self {
+        command: true,
+        ..Self::named(Key::Comma)
+    };
     pub const ENTER: Self = Self::named(Key::Enter);
     pub const DELETE: Self = Self::named(Key::Delete);
     /// Renames the feature, sketch or body selected.
@@ -219,6 +226,7 @@ impl Shortcut {
             Key::F2 => "F2".into(),
             Key::F10 => "F10".into(),
             Key::Menu => "Menu".into(),
+            Key::Comma => ",".into(),
             Key::None => "".into(),
         };
         format!("{command}{shift}{key}")
@@ -251,6 +259,7 @@ impl Shortcut {
             | (Key::F10, KeyPress::Named(Named::F10))
             | (Key::Menu, KeyPress::Named(Named::ContextMenu)) => true,
             (Key::Space, KeyPress::Character(c)) => c == " ",
+            (Key::Comma, KeyPress::Character(c)) => c == ",",
             _ => false,
         };
         is_key && command && modifiers.shift() == self.shift && !modifiers.alt()
@@ -305,6 +314,11 @@ pub fn welcome_bindings() -> [Binding; 2] {
         Binding::new(Shortcut::NEW, Message::Welcome(Welcome::NewDesign), true),
         Binding::new(Shortcut::OPEN, Message::Welcome(Welcome::Open), true),
     ]
+}
+
+/// `Ctrl ,`, on every screen: opens the settings page, or closes it.
+pub fn settings_binding() -> Binding {
+    Binding::new(Shortcut::SETTINGS, Message::ToggleSettings, true)
 }
 
 /// The file's shortcuts: Save and Save As, in that order. Save is
@@ -481,6 +495,9 @@ pub struct DocumentKeys {
     pub measuring: bool,
     /// Whether the document has changes not saved.
     pub edited: bool,
+    /// Whether the settings page shows in the viewport's place: only the
+    /// file's keys, undo, redo and the page's own key work then.
+    pub settings: bool,
     /// Whether undo can take anything back.
     pub undo: bool,
     /// Whether redo can bring anything back.
@@ -507,6 +524,7 @@ impl DocumentKeys {
             rename: None,
             menu: None,
             picking_plane: false,
+            settings: false,
             geometry_selected: sketch.is_some_and(|sketch| !sketch.selection.is_empty()),
             drawing: sketch.is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool.draws())),
             tool: sketch.is_some_and(|sketch| sketch.tool.is_some() || sketch.constraining),
@@ -619,6 +637,11 @@ impl DocumentKeys {
 
     pub fn with_edited(self, edited: bool) -> Self {
         Self { edited, ..self }
+    }
+
+    /// The same keys with the settings page showing if `settings`.
+    pub fn with_settings(self, settings: bool) -> Self {
+        Self { settings, ..self }
     }
 
     /// The same keys where undo can take something back if `undo`, and
@@ -1098,7 +1121,7 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
 }
 
 /// The document screen's shortcuts: the file's (Save, Save As), undo and
-/// redo, starting a
+/// redo, the settings page's (see [`settings_binding`]), starting a
 /// sketch, clearing the selection, outside a sketch editing and deleting
 /// the feature selected in the Timeline, if there is one, renaming what
 /// `F2` renames ([`DocumentKeys::rename`]), opening the context menu of
@@ -1113,6 +1136,14 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
 /// curvature comb. The rail's open set's keys come before them all, and
 /// its sets' keys after (see the rail's module).
 pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
+    // With the settings page in the viewport's place, none of the
+    // viewport's keys.
+    if keys.settings {
+        return (file_bindings(keys.editable, keys.edited).into_iter())
+            .chain(history_bindings(keys))
+            .chain([settings_binding()])
+            .collect();
+    }
     let feature = keys
         .selected
         .filter(|_| !keys.sketching && !keys.operating());
@@ -1238,6 +1269,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
         .chain(feature)
         .chain(sketch.into_iter().flatten())
         .chain(crate::rail::set_bindings(keys.sketching))
+        .chain([settings_binding()])
         .collect()
 }
 

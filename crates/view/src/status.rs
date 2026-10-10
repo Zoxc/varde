@@ -165,7 +165,7 @@ pub fn view_menu<'a>(
             ticked(projection == choice),
             label,
             None,
-            Some(Message::Look(Look::SetProjection(choice))),
+            Some(Message::SetProjection(choice)),
         ))
     };
     let toggle = |on, label: &'static str, message| {
@@ -260,7 +260,7 @@ fn edges_choices<'a>(chosen: Edges) -> Vec<Element<'a, Message>> {
     .collect()
 }
 
-fn shading_icon(shading: Shading) -> Icon {
+pub(crate) fn shading_icon(shading: Shading) -> Icon {
     match shading {
         Shading::Regular => Icon::ShadeRegular,
         Shading::Flat => Icon::ShadeFlat,
@@ -269,7 +269,7 @@ fn shading_icon(shading: Shading) -> Icon {
     }
 }
 
-fn edges_icon(edges: Edges) -> Icon {
+pub(crate) fn edges_icon(edges: Edges) -> Icon {
     match edges {
         Edges::Default => Icon::EdgesDefault,
         Edges::Wireframe => Icon::EdgesWireframe,

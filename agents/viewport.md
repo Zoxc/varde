@@ -118,11 +118,42 @@ Wireframe, with the mesh's wires too, every patch's edges that aren't
 feature edges (`Frame::wireframe`); or Tessellation, with every
 triangle's edges (`Frame::tessellation`). The app keeps those for every
 document (`Varde::options`, a `ViewOptions`, Mouse hints and Hidden
-edges on and the defaults chosen to start with, not saved), and any
-choice or toggle closes the menu.
+edges on and the defaults chosen to start with), stores them with the
+settings (`settings.toml`, see `files.md`), and any choice or toggle
+closes the menu. The projection is the app's too
+(`Message::SetProjection`): every document's camera takes it
+(`Doc::set_projection`), one opened or made as it shows.
+
+**The settings page.** The gear at the toolbar's right end (`settings::settings_button`, on
+while the page is open), the welcome screen's Settings at its foot, and
+`Ctrl ,` (`Shortcut::SETTINGS`, `settings_binding`) toggle the settings
+page (`Message::ToggleSettings`); Escape closes it, before what's open
+in the document backs out but after a prompt over it, and Tab does
+nothing there (`escape_key`, `Varde::page_escape`). Whether it's open is
+the app's (`Varde::page`), so it stays open across opening and closing
+designs. In a document it takes the viewport's place
+(`DocumentState::settings`): the toolbar and side panel stay, the
+status bar, the rail, the operation panel and the rest floating over the
+viewport go with it. The viewport widget isn't built, but the camera,
+the lanes and anything open (a sketch, an operation) are left as they
+are and show again as it closes; closing cancels nothing. Its keys are
+off meanwhile (`DocumentKeys::settings`): only the file's, undo, redo and
+`Ctrl ,`. On the welcome screen it's in the recent designs' place
+natively, under the header on the web.
+
+The page (`view/src/settings.rs`, `settings::page`) is a head with
+Reset to defaults and the close button over a tab per section
+(Appearance, View, Units, `SettingsTab`), the open one a card of rows:
+the theme; the projection, shading, edges, Hidden edges, Names and
+Mouse hints, the view options menu's messages, so a change in either
+shows in both; and the length unit new designs start in. The foot says
+where they're kept. Reset to defaults is off with every setting the
+default; otherwise it asks first (`SettingsPage::AskReset`) in a popup
+listing each setting it changes (`changed_settings`), Enter resetting
+(`reset_key`) and Escape cancelling.
 
 The view options menu's last toggle, Names, turns on the names
-overlay (`names.rs`, `ViewOptions::names`, not saved): a canvas over the
+overlay (`names.rs`, `ViewOptions::names`, stored with the settings): a canvas over the
 viewport labelling the faces, edges between two faces and corners
 selected, whether the model hides them or not; what's connected to
 them (a face's border edges and corners, an edge's faces and end

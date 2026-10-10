@@ -1338,10 +1338,7 @@ impl Doc {
             Look::Rail(message) => self.rail_look(message),
             Look::SetProjection(projection) => {
                 self.view_menu = false;
-                self.camera.set_projection(projection);
-                if let Some(animation) = &mut self.animation {
-                    animation.to.set_projection(projection);
-                }
+                self.set_projection(projection);
             }
         }
     }
@@ -1592,9 +1589,19 @@ impl Doc {
         }
     }
 
+    /// Views the model in `projection`, the camera turning to come in
+    /// it too if it is: the app's setting, which every document takes.
+    pub(crate) fn set_projection(&mut self, projection: Projection) {
+        self.camera.set_projection(projection);
+        if let Some(animation) = &mut self.animation {
+            animation.to.set_projection(projection);
+        }
+    }
+
     /// The document screen, showing the other panel tab if `peek`, unless
     /// the Dimension tool is in use, where the peek key places references,
     /// with the view `options`, and what the platform `offers`.
+    #[cfg(test)]
     pub(crate) fn view(
         &self,
         peek: bool,
@@ -1602,7 +1609,24 @@ impl Doc {
         options: ViewOptions,
         offers: Offers,
     ) -> Element<'_, Ui> {
-        varde_view::document(self.state(peek, mode, options, offers))
+        self.view_with(peek, mode, options, offers, None)
+    }
+
+    /// [`Doc::view`], with the `settings` page in the viewport's place
+    /// while it shows.
+    pub(crate) fn view_with<'a>(
+        &'a self,
+        peek: bool,
+        mode: Mode,
+        options: ViewOptions,
+        offers: Offers,
+        settings: Option<varde_view::SettingsState<'a>>,
+    ) -> Element<'a, Ui> {
+        let state = varde_view::DocumentState {
+            settings,
+            ..self.state(peek, mode, options, offers)
+        };
+        varde_view::document(state)
     }
 
     /// What the document screen is built from, see [`Doc::view`].
@@ -1705,6 +1729,7 @@ impl Doc {
             deleting: self.delete_prompt(),
             proposing: self.proposing(),
             rail: self.rail.state(),
+            settings: None,
         }
     }
 

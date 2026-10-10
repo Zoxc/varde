@@ -51,7 +51,7 @@ fn state<'a>(recent: Option<Vec<RecentCard<'a>>>, stored: Vec<DesignCard<'a>>) -
         damaged: None,
         panic: None,
         mode: theme::Mode::Light,
-        theme: ThemeChoice::Auto,
+        settings: None,
     }
 }
 
@@ -114,7 +114,7 @@ fn natively_the_start_buttons_are_in_a_column_beside_the_designs() {
         ],
     ));
     let shown = Laid::new(screen, WINDOW).texts();
-    for text in [APP_NAME, "Start", "New design", "Open…", "Theme: System"] {
+    for text in [APP_NAME, "Start", "New design", "Open…", "Settings"] {
         let shown = find(&shown, text);
         assert!(shown.bounds.x < COLUMN_WIDTH, "{shown:?}");
     }
@@ -393,7 +393,7 @@ fn the_page_says_the_browser_may_clear_its_storage() {
     assert!(shows(&shown, note));
     assert!(find(&shown, note).bounds.y < find(&shown, "In browser storage").bounds.y);
     assert!(shows(&shown, "1.2 MB of 2 GB used"));
-    assert!(shows(&shown, "Theme: System"));
+    assert!(shows(&shown, "Settings"));
     // Nothing to lose, or kept for good: nothing said.
     assert!(!shows(&page(true, Vec::new()), note));
     assert!(!shows(
@@ -476,4 +476,53 @@ fn the_page_lists_the_samples_below_browser_storage() {
     // None, none listed.
     let shown = Laid::new(welcome(state(None, Vec::new())), WINDOW).texts();
     assert!(!shows(&shown, "Samples"));
+}
+
+/// The settings page shows natively in the recent designs' place beside
+/// the column, on the web under the header, the foot's Settings button
+/// toggling it either way.
+#[test]
+fn the_settings_page_takes_the_designs_place() {
+    let settings = crate::SettingsState {
+        options: crate::ViewOptions::default(),
+        tab: crate::SettingsTab::Appearance,
+        resetting: false,
+        kept_in: crate::KeptIn::File("~/.config/varde-cad/settings.toml"),
+    };
+    let files = [PathBuf::from("/parts/bracket.vrdp")];
+    let desktop = || WelcomeState {
+        settings: Some(settings),
+        ..state(Some(vec![recent(&files[0])]), Vec::new())
+    };
+    let shown = Laid::new(welcome(desktop()), WINDOW).texts();
+    assert!(!shows(&shown, "Recent") && !shows(&shown, "bracket"));
+    for text in ["Theme", "System", "Dark", "Reset to defaults"] {
+        assert!(find(&shown, text).bounds.x > COLUMN_WIDTH, "{text}");
+    }
+    assert!(shows(&shown, "Kept in ~/.config/varde-cad/settings.toml."));
+    let mut laid = Laid::new(welcome(desktop()), WINDOW);
+    let button = find(&laid.texts(), "Settings").bounds.center();
+    assert!(button.x < COLUMN_WIDTH);
+    assert!(matches!(
+        click(&mut laid, button)[..],
+        [Message::ToggleSettings]
+    ));
+    let dark = find(&laid.texts(), "Dark").bounds.center();
+    assert!(matches!(
+        click(&mut laid, dark)[..],
+        [Message::SetTheme(crate::ThemeChoice::Dark)]
+    ));
+
+    let web = WelcomeState {
+        settings: Some(crate::SettingsState {
+            kept_in: crate::KeptIn::Browser,
+            ..settings
+        }),
+        ..state(None, Vec::new())
+    };
+    let shown = Laid::new(welcome(web), WINDOW).texts();
+    assert!(!shows(&shown, "In browser storage"));
+    assert!(find(&shown, "New design").bounds.y < find(&shown, "Theme").bounds.y);
+    assert!(shows(&shown, "Kept in settings.toml, in browser storage."));
+    assert!(shows(&shown, "Settings"));
 }

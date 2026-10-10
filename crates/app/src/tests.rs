@@ -1073,9 +1073,9 @@ fn the_theme_is_stored_and_auto_follows_the_system() {
         "the stored theme isn't written back"
     );
 
-    let _ = varde.update(Message::Ui(Ui::CycleTheme));
+    let _ = varde.update(Message::Ui(Ui::SetTheme(ThemeChoice::Dark)));
     assert_eq!(varde.mode(), Mode::Dark);
-    let _ = varde.update(Message::Ui(Ui::CycleTheme));
+    let _ = varde.update(Message::Ui(Ui::SetTheme(ThemeChoice::Auto)));
     assert_eq!(varde.options.theme, ThemeChoice::Auto);
     let _ = varde.update(Message::SystemTheme(iced::theme::Mode::None));
     assert_eq!(varde.mode(), Mode::Light);
@@ -4149,15 +4149,15 @@ pub(crate) fn press(key: keyboard::Key, modifiers: keyboard::Modifiers) -> keybo
 fn escape_cancels_a_prompt_or_closes_the_file_menu() {
     let escape = || press(keyboard::Key::Named(key::Named::Escape), Default::default());
     assert!(matches!(
-        escape_key(((Some(Dialog::Unsaved), false), escape())),
+        escape_key(((Some(Dialog::Unsaved), false, None), escape())),
         Some(Message::Ui(Ui::File(File::Unsaved(Unsaved::Cancel))))
     ));
     assert!(matches!(
-        escape_key(((Some(Dialog::Delete), false), escape())),
+        escape_key(((Some(Dialog::Delete), false, None), escape())),
         Some(Message::Ui(Ui::Look(Look::CancelDelete)))
     ));
     assert!(matches!(
-        escape_key(((None, false), escape())),
+        escape_key(((None, false, None), escape())),
         Some(Message::Ui(Ui::Look(Look::Escape)))
     ));
 }
@@ -4170,18 +4170,18 @@ fn tab_backs_out_as_escape_where_nothing_else_takes_it() {
     let tab = |modifiers| press(keyboard::Key::Named(key::Named::Tab), modifiers);
     let none = keyboard::Modifiers::empty();
     assert!(matches!(
-        escape_key(((None, false), tab(none))),
+        escape_key(((None, false, None), tab(none))),
         Some(Message::Ui(Ui::Look(Look::Escape)))
     ));
     assert!(matches!(
-        escape_key(((Some(Dialog::Delete), false), tab(none))),
+        escape_key(((Some(Dialog::Delete), false, None), tab(none))),
         Some(Message::Ui(Ui::Look(Look::CancelDelete)))
     ));
-    assert!(escape_key(((None, true), tab(none))).is_none());
-    assert!(escape_key(((None, false), tab(keyboard::Modifiers::SHIFT))).is_none());
+    assert!(escape_key(((None, true, None), tab(none))).is_none());
+    assert!(escape_key(((None, false, None), tab(keyboard::Modifiers::SHIFT))).is_none());
     // Escape is taken whatever Tab does.
     let escape = press(keyboard::Key::Named(key::Named::Escape), none);
-    assert!(escape_key(((None, true), escape)).is_some());
+    assert!(escape_key(((None, true, None), escape)).is_some());
 }
 
 #[test]
@@ -5695,12 +5695,11 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
     );
     let sent = clicked(&mut ui, &mut renderer, perspective.bounds.center());
     drop(ui);
-    let [Ui::Look(Look::SetProjection(Projection::Perspective))] = sent[..] else {
+    let [Ui::SetProjection(Projection::Perspective)] = sent[..] else {
         panic!("{sent:?}");
     };
-    let _ = varde.update(Message::Ui(Ui::Look(Look::SetProjection(
-        Projection::Perspective,
-    ))));
+    let _ = varde.update(Message::Ui(Ui::SetProjection(Projection::Perspective)));
+    assert_eq!(varde.options.projection, Projection::Perspective);
     assert!(!document(&varde).view_menu);
     assert_eq!(
         document(&varde).camera.projection(),
@@ -5899,6 +5898,7 @@ mod damaged;
 mod export;
 mod panicked;
 mod rename;
+mod settings;
 mod storage;
 mod thumbnail;
 

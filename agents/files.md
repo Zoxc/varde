@@ -21,11 +21,17 @@ The lane owns the open `DocumentFile`s, the app refers to them by a
 `FileId`. At startup it reads the recent files list, and the welcome screen
 shows an empty list until it arrives, and the settings
 (`varde_io::settings`, `settings.toml` next to `recent.toml`; on the web at
-the root of OPFS). They hold the theme: Auto (iced's system theme, light
-when the system doesn't say), Light or Dark, cycled by the theme button,
-and whether the status bar shows the mouse's hints (the view options
-menu's Mouse hints). Each is written as chosen, though not before the
-stored settings have arrived; one chosen before then wins over them. Each key is read on its own, so
+the root of OPFS). They hold what the settings page sets (`view/src/settings.rs`, see
+"The settings page" in `viewport.md`): the theme, Auto (iced's system
+theme, light when the system doesn't say), Light or Dark; the view
+options (the status bar's menu's too: Mouse hints, Hidden edges, Names,
+the projection, shading and edges); and the length unit a new design
+starts in (`Document::in_units`; a design opened keeps its own). The app
+keeps them in `Varde::options`, a `ViewOptions`; `app/src/settings.rs`
+maps them to what's stored. Each is written as chosen, though not before
+the stored settings have arrived; one chosen before then wins over them,
+each setting on its own (`settings::Key`), and Reset to defaults chooses
+them all. Each key is read on its own, so
 one gone bad gets its default and costs no other. Each open is tagged, and only the
 answer to the open the welcome screen is waiting for is shown. When the
 user starts a new design or opens another file instead, the app tells the

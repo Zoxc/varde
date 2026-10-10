@@ -5,10 +5,12 @@ use iced::keyboard;
 use crate::Message;
 
 /// The welcome screen's shortcuts, see [`varde_view::welcome_bindings`],
-/// if they're `on`: not while a prompt shows over it.
+/// and the settings page's, if they're `on`: not while a prompt shows
+/// over it.
 pub(crate) fn welcome_key((on, event): (bool, keyboard::Event)) -> Option<Message> {
-    on.then(|| pressed(event, varde_view::welcome_bindings()))
-        .flatten()
+    let bindings =
+        (varde_view::welcome_bindings().into_iter()).chain([varde_view::settings_binding()]);
+    on.then(|| pressed(event, bindings)).flatten()
 }
 
 /// The document screen's shortcuts, given what they depend on, see

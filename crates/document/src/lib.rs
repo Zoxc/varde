@@ -203,6 +203,17 @@ impl Default for Document {
     }
 }
 
+impl Document {
+    /// A new design in `units`: as [`Document::default`], but for them.
+    pub fn in_units(units: LengthUnit) -> Self {
+        Document {
+            units,
+            resolved: param::resolve(&[], units),
+            ..Document::default()
+        }
+    }
+}
+
 /// A [`Document`] as deserialized, before [`Document::check`]: the same
 /// fields by the same names in the same order, so it reads the same bytes.
 ///

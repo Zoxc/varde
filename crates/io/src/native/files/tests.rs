@@ -218,6 +218,7 @@ fn settings_round_trip_through_the_store() {
     let settings = Settings {
         theme: crate::settings::Theme::Light,
         mouse_hints: false,
+        ..Settings::default()
     };
     assert!(matches!(
         files.handle(Request::WriteSettings { settings }),
@@ -235,6 +236,7 @@ fn settings_without_a_store_are_the_defaults() {
     let settings = Settings {
         theme: crate::settings::Theme::Dark,
         mouse_hints: false,
+        ..Settings::default()
     };
     assert!(matches!(
         files.handle(Request::WriteSettings { settings }),

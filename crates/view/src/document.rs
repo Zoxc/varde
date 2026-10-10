@@ -234,6 +234,10 @@ pub struct DocumentState<'a> {
     /// The rail's tool set whose list is open, if one is, and the row of
     /// it the keys are on.
     pub rail: Option<crate::RailOpen>,
+    /// The settings page, while it shows in the viewport's place: the
+    /// status bar, the rail and anything else floating over the viewport
+    /// go with it.
+    pub settings: Option<crate::SettingsState<'a>>,
 }
 
 impl DocumentState<'_> {
@@ -302,6 +306,7 @@ impl DocumentState<'_> {
             .with_picking_plane(self.picking_plane.is_some())
             .with_rail(self.rail)
             .with_edited(self.edited)
+            .with_settings(self.settings.is_some())
             .with_history(
                 self.editor.can_undo() || self.proposing,
                 // Not while edits wait on the solver, which come after.
@@ -853,62 +858,12 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
             panels::side_panel(&state),
             column![
                 refused,
-                // The status bar floats over the viewport's bottom right.
-                stack![
-                    viewport::viewport(
-                        state.mesh,
-                        state.part_opacity(),
-                        state.part_tints(),
-                        state.sketches,
-                        state.camera,
-                        state.pivot,
-                        (state.fade, state.fading_grid),
-                        state.picking.clone(),
-                        state.highlight,
-                        state.hover_through,
-                        state.errors,
-                        state.origin_drawn(),
-                        state.options,
-                        state.mode.palette(),
-                        state
-                            .sketch
-                            .map(|sketch| viewport::Sketching::new(sketch, editable)),
-                        operating(&state),
-                        panel,
-                        params,
-                        crate::rail::rail(&state),
-                        state.overlaps.map(|overlaps| crate::overlaps::view(
-                            overlaps,
-                            (state.sketch.as_ref()).map(|sketch| (sketch.sketch, sketch.selection)),
-                            state.model_selection,
-                            state.overlap_ticks.as_deref(),
-                            state.editor.document(),
-                        )),
-                        state.thumbnail,
-                        Some(state.aspect.unwrap_or(0.0)),
-                    ),
-                    (state.options.names)
-                        .then_some(state.picking.as_ref())
-                        .flatten()
-                        .map(|picking| crate::names::overlay(
-                            picking.index,
-                            state.model_selection.bodies().collect(),
-                            state.model_selection.targets().collect(),
-                            (state.model_selection.items())
-                                .filter_map(|item| item.body())
-                                .collect(),
-                            (picking.sketches.iter())
-                                .chain(&picking.whole)
-                                .cloned()
-                                .collect(),
-                            state.model_selection.sketch_items().collect(),
-                            picking.whole.iter().map(|lines| lines.feature).collect(),
-                            *state.camera,
-                            state.editor.document(),
-                        )),
-                    status::status_bar(status(&state)),
-                    state.regenerating.map(crate::regenerating::regenerating),
-                ],
+                match state.settings {
+                    // In the viewport's place, which keeps its camera
+                    // and whatever is open, shown again as it closes.
+                    Some(settings) => crate::settings::page(settings),
+                    None => viewport_stack(&state, editable, panel, params),
+                },
             ],
         ]
         .height(Length::Fill),
@@ -944,6 +899,72 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         }
         (None, None) => content.into(),
     }
+}
+
+/// The viewport, with what floats over it: the names, the status bar
+/// and the regenerating card.
+fn viewport_stack<'a>(
+    state: &DocumentState<'a>,
+    editable: bool,
+    panel: Option<Element<'a, Message>>,
+    params: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    // The status bar floats over the viewport's bottom right.
+    Element::from(stack![
+        viewport::viewport(
+            state.mesh,
+            state.part_opacity(),
+            state.part_tints(),
+            state.sketches,
+            state.camera,
+            state.pivot,
+            (state.fade, state.fading_grid),
+            state.picking.clone(),
+            state.highlight,
+            state.hover_through,
+            state.errors,
+            state.origin_drawn(),
+            state.options,
+            state.mode.palette(),
+            state
+                .sketch
+                .map(|sketch| viewport::Sketching::new(sketch, editable)),
+            operating(state),
+            panel,
+            params,
+            crate::rail::rail(state),
+            state.overlaps.map(|overlaps| crate::overlaps::view(
+                overlaps,
+                (state.sketch.as_ref()).map(|sketch| (sketch.sketch, sketch.selection)),
+                state.model_selection,
+                state.overlap_ticks.as_deref(),
+                state.editor.document(),
+            )),
+            state.thumbnail,
+            Some(state.aspect.unwrap_or(0.0)),
+        ),
+        (state.options.names)
+            .then_some(state.picking.as_ref())
+            .flatten()
+            .map(|picking| crate::names::overlay(
+                picking.index,
+                state.model_selection.bodies().collect(),
+                state.model_selection.targets().collect(),
+                (state.model_selection.items())
+                    .filter_map(|item| item.body())
+                    .collect(),
+                (picking.sketches.iter())
+                    .chain(&picking.whole)
+                    .cloned()
+                    .collect(),
+                state.model_selection.sketch_items().collect(),
+                picking.whole.iter().map(|lines| lines.feature).collect(),
+                *state.camera,
+                state.editor.document(),
+            )),
+        status::status_bar(status(state)),
+        state.regenerating.map(crate::regenerating::regenerating),
+    ])
 }
 
 /// The operation being set up, as the viewport shows it, if one is.

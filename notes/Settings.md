@@ -1,6 +1,8 @@
 # Settings page
 
-A design for an app settings page, not built yet. The mock shows it:
+A design for an app settings page, built but for what's tagged
+"Proposed" in the mock and the angle unit and decimal places (see
+"The settings page" in `agents/viewport.md`). The mock shows it:
 `notes/ui-mock/` on every page, opened with the gear or `/settings` in the
 address (`model.html#bracket/settings`, `welcome.html#/settings/web`).
 

@@ -17,9 +17,9 @@ use varde_document::{APP_NAME, EXTENSION};
 
 use crate::chrome::{self, ChipSize, dialog, dialog_button, dialog_of_width};
 use crate::icons::{self, Icon, LOGO_SVG};
-use crate::shortcut::{Binding, welcome_bindings};
+use crate::shortcut::{Binding, Shortcut, welcome_bindings};
 use crate::theme::{self, Emphasis, Palette, Tone};
-use crate::{Message, ThemeChoice, Welcome};
+use crate::{Message, SettingsState, Welcome};
 
 /// Borrowed state needed to build the welcome screen.
 pub struct WelcomeState<'a> {
@@ -50,8 +50,9 @@ pub struct WelcomeState<'a> {
     /// The panic a session recorded, if one did.
     pub panic: Option<PanicNote<'a>>,
     pub mode: theme::Mode,
-    /// The theme chosen, which the theme button shows.
-    pub theme: ThemeChoice,
+    /// The settings page, while it shows: natively in the recent designs'
+    /// place, on the web under the header.
+    pub settings: Option<SettingsState<'a>>,
 }
 
 /// Asks what to do about a file found damaged as it was opened, before
@@ -232,9 +233,10 @@ pub fn welcome<'a>(mut state: WelcomeState<'a>) -> Element<'a, Message> {
 /// The width of the native screen's column.
 const COLUMN_WIDTH: f32 = 320.0;
 
-/// Natively: the column, with the logo, the Start buttons and the theme
-/// at its foot, beside the panic recorded, the recovered designs and the
-/// `recent` files, each under a band of its own.
+/// Natively: the column, with the logo, the Start buttons and the
+/// settings' button at its foot, beside the panic recorded, the recovered
+/// designs and the `recent` files, each under a band of its own, or the
+/// settings page in their place while it's open.
 fn desktop<'a>(state: WelcomeState<'a>, recent: Vec<RecentCard<'a>>) -> Element<'a, Message> {
     let [new, open] = welcome_bindings();
     let actions = column![
@@ -245,7 +247,7 @@ fn desktop<'a>(state: WelcomeState<'a>, recent: Vec<RecentCard<'a>>) -> Element<
     let error = state.error.map(|error| {
         container(text(error).style(theme::danger_text)).padding(Padding::from([6, 8]))
     });
-    let foot = theme_button(state.theme);
+    let foot = settings_button(state.settings.is_some(), true);
     let logo = container(lockup(false))
         .center_x(Length::Fill)
         .padding(Padding::from([22, 16]).bottom(18))
@@ -268,6 +270,10 @@ fn desktop<'a>(state: WelcomeState<'a>, recent: Vec<RecentCard<'a>>) -> Element<
         .height(Length::Fill)
         .style(theme::tab_strip);
 
+    if let Some(settings) = state.settings {
+        let page = crate::settings::page(settings);
+        return row![side, chrome::vrule(), page].into();
+    }
     let mut main = column![];
     if let Some(note) = state.panic {
         main = main
@@ -299,7 +305,8 @@ const PAGE_WIDTH: f32 = 920.0;
 
 /// On the web: the header bar with the logo and the Start buttons over
 /// what's kept in browser storage, the drop zone the first of its cards,
-/// and a foot with the theme and how much is used.
+/// and a foot with the settings' button and how much is used. The
+/// settings page, while it's open, shows under the header instead.
 fn web<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
     let [new, open] = welcome_bindings();
     let buttons = row![
@@ -348,17 +355,23 @@ fn web<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
         .used
         .map(|used| container(text(used).size(11).style(theme::faint_text)).padding([0, 8]));
     let foot = container(
-        row![theme_button(state.theme), used]
+        row![settings_button(state.settings.is_some(), false), used]
             .spacing(6)
             .align_y(Alignment::Center),
     )
     .center_x(Length::Fill)
     .padding(Padding::from([14, 16]).bottom(18));
 
+    let content: Element<'a, Message> = match state.settings {
+        Some(settings) => crate::settings::page(settings),
+        None => container(chrome::scrolled(content, 2.0))
+            .height(Length::Fill)
+            .into(),
+    };
     container(column![
         header,
         chrome::hrule(),
-        container(chrome::scrolled(content, 2.0)).height(Length::Fill),
+        content,
         chrome::hrule(),
         foot,
     ])
@@ -519,16 +532,21 @@ fn action_icon<'a>(icon: Icon, size: f32, emphasis: Emphasis) -> Element<'a, Mes
     }
 }
 
-/// A quiet button at the foot: an icon and a label, sending `message`, or
-/// faint without one. Both turn to the text colour on hover.
-fn foot_button<'a>(icon: Icon, label: &'a str, message: Option<Message>) -> Element<'a, Message> {
-    let enabled = message.is_some();
-    let content = |hovered: bool| {
+/// The settings' button at the foot, the gear and "Settings", and
+/// natively its key: on while the page is `open`, closing it then. Its
+/// icon turns to the text colour on hover, as its label does.
+fn settings_button<'a>(open: bool, key: bool) -> Element<'a, Message> {
+    let content = move |hovered: bool| {
         row![
-            icons::tinted(icon, icons::INLINE, move |p| {
-                theme::flat_content(p, Tone::Muted, enabled, hovered)
+            icons::tinted(Icon::Gear, icons::INLINE, move |p| {
+                if open {
+                    p.accent
+                } else {
+                    theme::flat_content(p, Tone::Muted, true, hovered)
+                }
             }),
-            text(label),
+            text("Settings"),
+            key.then(|| chrome::key_chip(Shortcut::SETTINGS, ChipSize::Small)),
         ]
         .spacing(8)
         .height(Length::Fill)
@@ -537,19 +555,12 @@ fn foot_button<'a>(icon: Icon, label: &'a str, message: Option<Message>) -> Elem
     };
     // `hover` swaps in the icon's hover colour anywhere over the button,
     // as the button's own does its text's: its padding is inside.
-    button(hover(content(false), content(enabled)))
+    button(hover(content(false), content(true)))
         .height(28)
         .padding(0)
-        .style(theme::flat_button(false, Tone::Muted))
-        .on_press_maybe(message)
+        .style(theme::flat_button(open, Tone::Muted))
+        .on_press(Message::ToggleSettings)
         .into()
-}
-
-/// The theme's button, cycling through the themes, saying which is
-/// chosen.
-fn theme_button<'a>(theme: ThemeChoice) -> Element<'a, Message> {
-    let (icon, label) = chrome::theme_said(theme);
-    foot_button(icon, label, Some(Message::CycleTheme))
 }
 
 /// The panic a session recorded, as a card: its message's first line and

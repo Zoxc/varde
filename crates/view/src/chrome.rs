@@ -1,5 +1,5 @@
 //! Window chrome shared by every screen: the floating status bar over it
-//! (`crate::status`), the theme and help buttons, and the small widgets the
+//! (`crate::status`), the help button, and the small widgets the
 //! screens share: icon buttons, key chips and the status bar's hints.
 //!
 //! The OS draws the title bar; the app sets its text in `Varde::title`.
@@ -16,7 +16,7 @@ use iced::{Alignment, Element, Font, Length, Padding};
 use crate::Message;
 use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::KeyName;
-use crate::theme::{self, Emphasis, ThemeChoice, Tone};
+use crate::theme::{self, Emphasis, Tone};
 
 /// `content` telling `tip` below it while hovered, in a small box no
 /// wider than about one and a half side panels.
@@ -145,26 +145,6 @@ pub fn edged<'a>(content: Container<'a, Message>, edge: Edge, total: f32) -> Ele
         Edge::Bottom => column![content.height(inner), hrule()].into(),
         Edge::Right => row![content.width(inner), vrule()].into(),
     }
-}
-
-/// The icon of a theme button showing that `theme` is chosen, and what
-/// it says of it.
-pub(crate) fn theme_said(theme: ThemeChoice) -> (Icon, &'static str) {
-    match theme {
-        ThemeChoice::Auto => (Icon::Contrast, "Theme: System"),
-        ThemeChoice::Light => (Icon::Sun, "Theme: Light"),
-        ThemeChoice::Dark => (Icon::Moon, "Theme: Dark"),
-    }
-}
-
-/// The theme button, showing the `theme` chosen and going on to the next,
-/// for the top-right of a screen.
-pub fn theme_button<'a>(theme: ThemeChoice) -> Element<'a, Message> {
-    let (icon, label) = theme_said(theme);
-    tip(
-        icon_button(icon, Tone::Muted, Some(Message::CycleTheme)),
-        text(label),
-    )
 }
 
 /// An icon-only button. Enabled, it is `tone` at rest and turns to the text

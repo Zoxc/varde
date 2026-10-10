@@ -10,6 +10,7 @@ fn write_and_load_through_a_file() {
     let settings = Settings {
         theme: Theme::Dark,
         mouse_hints: false,
+        ..Settings::default()
     };
     write(&store, &settings).unwrap();
     assert_eq!(load(&store), settings);
