@@ -210,14 +210,14 @@ units, to its stored value, which must be what its measure asks
 within the limit, an angle above zero and under a turn). So it takes a `Design { max, units, params }`, the document's from
 `Document::design`. The document's editor runs it on every edit, so a
 sketch in the document always passes it. A design's parameters
-(`params`, see "Parameters" in `agents/features.md`) are what names in
+(`params`, see "Parameters" in `agents/features/parameters.md`) are what names in
 dimensions read: `Measure::ask(design)` passes them on, so a dimension
 `width` is checked to come to its stored value with `width` as it is, and
 one naming no parameter, or one in error, fails the check.
 
 **Dimensions and parameters.** A dimension's value may name parameters
 (`width / 2`), typed in the value field as any value (whose names are
-offered as they're typed, see Suggestions in `agents/features.md`).
+offered as they're typed, see Suggestions in `agents/features/parameters.md`).
 When a parameter command changes what one comes to, the document solves
 the sketch again then and there: `revalue(&sketch, &design, &budget)`
 (`propose.rs`) evaluates each dimension naming a parameter again, moves
@@ -310,7 +310,7 @@ points and radius and gives the sharp corner back.
 A sketch is a feature of the document (`FeatureKind::Sketch`) on a `Plane`,
 whose `placement` maps sketch coordinates into the world: an origin
 plane's, or for a sketch on a flat face of a body the one regenerating
-finds for it (`agents/features.md`; the app reads either through
+finds for it (`agents/features/sketch-planes.md`; the app reads either through
 `Doc::placement`).
 
 **Links** (`link.rs`, `Link`, `Sketch::links`) are geometry a sketch
@@ -325,7 +325,7 @@ its `LinkShape` has them, and says whether its curves count for profiles
 `check` holds). `SketchEdit::AddLink` (the Project and Intersect tools)
 adds one counting for profiles; the sketch face starts construction. What a link comes from isn't the sketch's: the document
 keeps it beside the sketch (`FeatureKind::Sketch::sources`, a
-`LinkSource` per link, see `agents/features.md`). A `LinkShape` is the
+`LinkSource` per link, see `agents/features/sketch-links.md`). A `LinkShape` is the
 geometry without ids (points, and curves naming them by placeholders
 numbering them from 0); `Sketch::link_shape` gives what a link holds,
 `same_form` says whether two have as many points and the same curves
@@ -349,7 +349,7 @@ shapes in order. What names an id that went shows it: a revolve's axis,
 a region, a path's curve fail their feature with why, another sketch's
 link of it is broken ("it isn't in its sketch any more"), and the app
 says the constraints and dimensions that went in the status bar
-(`agents/features.md`, Following the model). `SketchEdit::SetLinkProfiles`
+(`agents/features/sketch-links.md`, Following the model). `SketchEdit::SetLinkProfiles`
 sets `profiles` and its curves' construction flag, and deleting a link's
 id deletes it with what it made. Every other edit leaving a link's items
 as they were is checked after it's applied (`Sketch::links_kept`):
@@ -369,7 +369,7 @@ link's point on the mirror line an image of its own, held symmetric,
 rather than sharing it): `SketchError::Link`.
 
 Links' geometry is made here from what regenerating finds
-(`agents/features.md`): `Sketch::project_item` projects another sketch's
+(`agents/features/sketch-links.md`): `Sketch::project_item` projects another sketch's
 point or curve through the affine map from its plane into this one's,
 exactly where it can be (a point, a line, what fillets and chamfers
 leave of it (`cut_back`), or a point where the line is square to this
@@ -1000,7 +1000,7 @@ a face alone selected in the model (`Selection::single_face`,
 `DocumentKeys::face_selected`), `S` and the button, then labelled
 "Sketch on face", send `Edit::SketchOnSelection` instead. Either way
 `Doc::new_sketch` works the placement out from the model shown first
-(see `agents/features.md`): a curved face, one not in the model shown or
+(see `agents/features/sketch-planes.md`): a curved face, one not in the model shown or
 one too far out is refused with the reason in the status bar
 (`Doc::notice`), and nothing is added; else one `AddSketch` with
 `Plane::Face`, one undo step, and the sketch is entered, the camera
@@ -1040,7 +1040,7 @@ clickable; the toolbar's tag reads "Sketch 2's plane". The plane
 picked is one `SetSketchPlane` (`Change::SetPlane`, waiting behind
 edits on the solver like any change; a face as `PlanePick::face_ref`
 names it, by the body it was made on if a later join merged that into
-another, see `agents/features.md`), the drawing kept in its own
+another, see `agents/features/sketch-planes.md`), the drawing kept in its own
 coordinates; a face's placement is worked out at the pick and kept as
 `Doc::placed` (with the plane, so an undo that takes it off drops it) as
 for a new sketch. A face refused at the pick keeps picking, the reason
@@ -1301,7 +1301,7 @@ bar says why (`EditError::Sketch`).
     shown, a sketch's by its id) proposes deleting that link, but the
     sketch face's (below), refused with a notice. The link
     holds nothing until the next model answers it, its geometry then
-    folded into the change that added it (`agents/features.md`, Sketch
+    folded into the change that added it (`agents/features/sketch-links.md`, Sketch
     links). Anything else is refused with why in the status bar (`Doc::notice`):
     "Intersect takes faces and edges, cut with the sketch's
     plane", "Only what's made before Sketch 3 can be projected" (a later
@@ -1330,7 +1330,7 @@ bar says why (`EditError::Sketch`).
   link of that face, its outline (`varde_document::sketch_face`: the
   first Project link whose source is the sketch's own face, told by the
   source alone, nothing more stored). The document gives it one
-  (`agents/features.md`, Sketch links); the app names it "Sketch face"
+  (`agents/features/sketch-links.md`, Sketch links); the app names it "Sketch face"
   in a group of its own in the Geometry list, before Projected
   (`GeometryGroup::SketchFace`, `LinkRow::sketch_face`). Its menu has
   only "Construction", ticked while it's out of profiles

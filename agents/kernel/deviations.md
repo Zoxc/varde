@@ -1081,7 +1081,7 @@
   by the real ones (one arrangement for both pieces; the half-space box,
   the extended surfaces and the open chain's tool from the body's box).
   Until then every split fails as not implemented (see "Split" in
-  `agents/features.md`).
+  `agents/features/split.md`).
 - **Chamfer built above a stand-in.** The chamfer feature's document
   and regeneration came before the kernel's chains, spines, rails and
   chamfer (kernel work put off): `blend.rs` holds `chamfer(solid,
@@ -1096,7 +1096,7 @@
   corners (`Corner`). Growing edges along tangent chains, planned with
   the kernel's chains, is regeneration's instead, from the
   existing `Topology::tangent_chains`: it needs only the topology and
-  the curves' end tangents. See "Chamfer" in `agents/features.md`.
+  the curves' end tangents. See "Chamfer" in `agents/features/chamfer.md`.
 - **Fillet built above a stand-in.** The fillet feature's document and
   regeneration came before the kernel's notch, strips, sectors, mitres
   and vertex blends (kernel work put off): `blend.rs` holds
@@ -1109,7 +1109,7 @@
   fillets only; unequal radii can only meet across features). Beside
   the chamfer's refusals, `BlendError::End { chain }`: the notch runs
   into another face at an end of the chain rather than ending on one
-  end face. See "Fillet" in `agents/features.md`.
+  end face. See "Fillet" in `agents/features/fillet.md`.
 - **Shell built above a stand-in.** The shell feature's document and
   regeneration came before the kernel's offset solid and shell (kernel
   work put off): `shell.rs` holds `shell(solid, topology, open: &[u32],
@@ -1127,7 +1127,7 @@
   the kept faces by `+thickness` and the open ones by zero, less the
   body with its open faces pushed outwards past it, the same offset
   solid's two uses. The plan's `rounded` (task of rounded shells) is not
-  in the signature yet. See "Shell" in `agents/features.md`.
+  in the signature yet. See "Shell" in `agents/features/shell.md`.
 - **Offset face built above a stand-in.** As the shell's: `shell.rs`
   also holds `offset_faces(solid, topology, faces: &[u32], distance,
   tangent, feature, tol, budget) -> Result<Solid, OffsetError>`,
@@ -1144,7 +1144,7 @@
   than three faces (`Corner { vertex }`) and `Failed`, and adds
   `PastNeighbour { region }`, `IntoBody`, `NoSurface { region }`,
   `TangentNeighbour { region }` and `OutOfRange`. See "Offset face" in
-  `agents/features.md`.
+  `agents/features/offset-face.md`.
 - **Draft built above a stand-in.** As offset face's: `shell.rs` also
   holds `draft_faces(solid, topology, faces: &[u32], neutral: DVec3,
   pull: DVec3, angle, tangent, feature, tol, budget) -> Result<Solid,
@@ -1162,7 +1162,7 @@
   `NoSurface`, `TangentNeighbour`, `Corner`, `OutOfRange`, `Failed`)
   and its own, `FacingPull { region }` (a plane square to the pull: no
   hinge) and `CannotDraft { region }` (neither flat nor a wall along
-  the pull). See "Draft" in `agents/features.md`.
+  the pull). See "Draft" in `agents/features/draft.md`.
 - **Sweep built above a stand-in.** The sweep feature's document and
   regeneration came before the kernel's path sweep (kernel work put
   off; the plan's sweep in one plane, 3D paths and helices are not
@@ -1191,7 +1191,7 @@
   the profile's plane crosses it, stays the kernel's. The planned analytic tests (paths in one plane, 3D paths,
   helices, refusals, thread counts) are in `sweep/path/tests.rs`,
   `#[ignore = "kernel sweep not built"]`. See "Sweep" in
-  `agents/features.md`.
+  `agents/features/sweep.md`.
 - **Loft built above a stand-in.** The loft feature's document and
   regeneration came before the kernel's loft (kernel work put off; the
   plan's sections and correspondence, ruled and fitted strips, smooth
@@ -1226,7 +1226,7 @@
   smooth, a closed frame, a rail, the refusals, thread counts) are in
   `loft/tests.rs`, `#[ignore = "kernel loft not built"]`; their
   references are checked against closed forms by a test that runs. See
-  "Loft" in `agents/features.md`.
+  "Loft" in `agents/features/loft.md`.
 - **Extrude taper built above a stand-in.** The taper's document,
   regeneration and panel came before the kernel's (kernel work put off):
   `extrude/taper.rs` holds `extrude_tapered(profile, frame, from, to,

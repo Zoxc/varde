@@ -53,9 +53,10 @@ it describes changes:
 - `agents/web-files.md`: the web IO worker, OPFS, pickers, downloads.
 - `agents/file-format.md`: the `.vrdp` format: its blocks, reading past
   damage, saving, previews, records and the document they hold.
-- `agents/features.md`: the features after sketches and extrudes (revolve
-  so far): their document types and checks, the commands every kind
-  shares, their regeneration and UI.
+- `agents/features/`: the features after sketches and extrudes (revolve,
+  combine, move, pattern, the blends, sweep, loft, ...): their document
+  types and checks, the commands every kind shares, their regeneration
+  and UI; a file per kind (its `README.md` lists them).
 - `agents/kernel/`: the geometry kernel: rational quadratic curves and
   patches, their splits, the fold check, exact arcs and cylinders.
 - `notes/Kernel.md`: the kernel's high-level overview (ideas, invariants,

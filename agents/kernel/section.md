@@ -1,6 +1,6 @@
 # Plane sections (`src/section.rs`)
 
-For sketches' links (`agents/features.md`, Sketch links): where a plane
+For sketches' links (`agents/features/sketch-links.md`, Sketch links): where a plane
 (a point and a unit normal, `section::Plane`) meets a solid's curves and
 faces. `crossings` solves each conic of a chain for where its signed
 distance's numerator, `d0 (1-t)² + 2 w dc t(1-t) + d1 t²`, has roots in

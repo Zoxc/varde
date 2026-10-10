@@ -46,13 +46,13 @@ operation })`:
   `Targets { excluded, held }`, the bodies taken out (sorted without
   repeats, each made by an earlier feature) and the id of the body it
   made when it was a new body (`#[serde(default)]`, see "Commands shared
-  by every kind" in `agents/features.md`).
+  by every kind" in `agents/features/commands.md`).
 
 Commands:
 
 - `AddFeature { name, kind }` (`Document::add_feature` names it
   "Extrude N"; the commands are shared by every kind, see
-  `agents/features.md`) adds it and hides its sketch; a `NewBody`
+  `agents/features/commands.md`) adds it and hides its sketch; a `NewBody`
   extrude also adds "Body N" with the id after the feature's, replacing
   whatever id the command held (`BodyId::NEW` stands for it, an id no
   body has). One undo step.
@@ -88,7 +88,7 @@ features in order and gives an `Evaluation`: each body's solid
 (`BodySolid`, in the order they were made), the bodies joins merged into
 others (`merged`, below) and the features that failed, with why and
 what to draw of where (`failed`, `FeatureFailure`s in the document's
-order; see "Failures and where they are" in `agents/features.md`). A
+order; see "Failures and where they are" in `agents/features/failures.md`). A
 failing feature changes no body, and the later ones still run.
 
 - A **sketch** gives its `Profiles` (`Sketch::profiles`; too complex fails
@@ -98,7 +98,7 @@ failing feature changes no body, and the later ones still run.
   into a kernel `Profile` (below), and calls `kernel::extrude` on the
   sketch plane's `Frame` (an origin plane's placement, or a face
   sketch's as regeneration placed it; one not placed fails it, see
-  `agents/features.md`), over `Extrude::span()`,
+  `agents/features/sketch-planes.md`), over `Extrude::span()`,
   with the document's tolerance and `Budget::DEFAULT`, faces named by
   `FeatureId::get()`: the tool solid. A tapered extrude calls
   `kernel::extrude_tapered` instead (`src/history/taper.rs`), its key
@@ -194,7 +194,7 @@ failing feature changes no body, and the later ones still run.
   intersects stay per body, as other CAD systems keep bodies apart for
   those, and an excluded body isn't merged (unticking it is how to join
   to fewer bodies). A combine consumes its tools into its target by
-  the same rule unless it keeps them (`agents/features.md`, "Combine").
+  the same rule unless it keeps them (`agents/features/combine.md`, "Combine").
   The union is worked out in steps, each one
   `kernel::boolean(running, next, Union)` cached under
   `boolean_key(op, running key, next key)`, all or nothing (nothing is

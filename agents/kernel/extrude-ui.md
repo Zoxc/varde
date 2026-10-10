@@ -93,7 +93,7 @@ operation's panel, with the parts the extrude and the revolve share:
 `Candidate`, `TypedField`, `OperationKind`, `BodyTarget`, the choices,
 ticks, typed fields, Bodies list and footer message; the app's session
 parts they share are in `app/src/doc/regions.rs`, see "UI" under
-Revolve in `agents/features.md`): a card as the tool rail's (the UI
+Revolve in `agents/features/revolve.md`): a card as the tool rail's (the UI
 mock's `.opp`), a fixed head (the operation's icon, the title on one
 line, clipped, and Cancel and OK as small square icon buttons), under
 it a recessed well holding a body that scrolls (`PANEL_BODY`) when the

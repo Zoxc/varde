@@ -213,4 +213,4 @@ evidence is kept with it (`(KernelError, Evidence)` together, not a
 side slot on `Work`). `TooComplex` carries none. Regen makes the
 evidence drawable once and keeps that in its cache
 (`ErrorGeometry`, with `Display::flatten` and `Display::sample_patch`;
-see `agents/features.md`, "Failures and where they are").
+see `agents/features/failures.md`, "Failures and where they are").

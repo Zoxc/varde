@@ -18,7 +18,7 @@ The constructors are the only way to make one:
   `k·degrees/count`, placed directly (copy `k` is never `k` steps
   composed, so no error piles up; the pattern feature passes `count` as
   the steps the span is split into: the count for a whole turn, one less
-  for a part turn, a copy at each end, see `agents/features.md`).
+  for a part turn, a copy at each end, see `agents/features/pattern.md`).
   **Angles are in degrees**: `%` on
   floats is exact, so the angle is reduced to `[−180°, 180°]` exactly
   and a multiple of 90° takes its sine and cosine as `0` and `±1`; about

@@ -165,7 +165,7 @@ while a newer one is still in flight shows nothing, and the newer one
 succeeding leaves no banner behind. Except a Save As failing while only
 Saves are in flight: they write the design's own file, not the one the
 Save As was to write, so its error shows.
-Each save's answer also shows as a toast (see `features.md`), as the
+Each save's answer also shows as a toast (see `features/commands.md`), as the
 mock's save button does: "Saved <name>" ("Saved <name> to browser
 storage" for a design kept there) or "Couldn't save <name>" when its
 error shows; a Download says "Downloaded <name>.vrdp" or that it

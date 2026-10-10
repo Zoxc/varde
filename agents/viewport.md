@@ -218,7 +218,7 @@ unless the camera was moved meanwhile (`Doc::fit_first_model`), while a
 new design starts on the origin, from `HOME_DISTANCE` (1 m) away, as Home
 with nothing shown does. Tools opening never move the camera: their
 fresh lengths fit it instead (`fitting_length`, "Fresh lengths fit the
-camera" in `agents/features.md`). A view cube face looks from its side
+camera" in `agents/features/commands.md`). A view cube face looks from its side
 at what Home looks at (the model's middle, or the sketch's in a sketch),
 keeping the zoom. Panning, zooming and the view
 cube's faces leave the pivot. Its marker (below) shows whole for
@@ -260,7 +260,7 @@ drag and the release.
 
 Setting up an extrude (`viewport/extrude.rs`, `crate::extrude`, the
 app's `doc/extrude.rs`) or a revolve (`viewport/revolve.rs`, see
-`agents/features.md`), the `Program` is given the session
+`agents/features/revolve.md`), the `Program` is given the session
 (`viewport::Operating`: `Extruding` or `Revolving`; the region picking
 and shading below is theirs alike, `viewport/regions.rs`) in place of a
 sketch: the model isn't faded and the grid
@@ -300,7 +300,7 @@ joined polyline whose segments' alphas fall
 (`SketchLayer::polyline_fading`; separate segments would overlap at
 their round ends and dot the line). The pucks, their hit testing, the shafts
 and the rails are `viewport/handle.rs`'s, shared with a revolve's handle,
-whose shaft and rail are arcs round its axis (`agents/features.md`,
+whose shaft and rail are arcs round its axis (`agents/features/revolve.md`,
 Revolve). One side has a knob at its distance (negative when flipped),
 symmetric at half of it, two sides one per side. An extrude its own check refuses
 (`ExtrudeState::refused`, two sides over the limit) has no preview, and
@@ -323,7 +323,7 @@ it), `opaque` so clicks and the wheel on it don't reach the scene;
 the labels' layer under it (a split's pieces' and the measured
 distance's) stays, empty, for the others, so the panel's widget state
 survives labels coming and going. The parameters' popup
-(`crates/view/src/params.rs`, see `agents/features.md`, Parameters;
+(`crates/view/src/params.rs`, see `agents/features/parameters.md`, Parameters;
 opened by the rail's tool or the model bar's Parameters button, last
 after Measure with nothing selected, lit while it's open) is
 the layer over it, placed the same way (`operation_panel::placed_from`)
@@ -332,7 +332,7 @@ but 540 px wide and, while an operation's panel shows, left of it
 narrow viewport narrows it, 12 px clear of its left.
 
 A move's handles (`viewport/motion.rs`, `Moving`; their look and
-what they set in `agents/features.md`, Move and mirror) are drawn in the
+what they set in `agents/features/move-mirror.md`, Move and mirror) are drawn in the
 live layer on top of the model and hit tested in the `Program`, not as
 widgets: the rings are curves on the screen. `Moving::mouse` runs
 before picking the model, as the extrude's and revolve's input does,
@@ -358,7 +358,7 @@ the model, even a session that takes the mouse before the handles are
 worked out (a split or sweep picking in its sketches).
 
 The knobs of an operation with a value to drag (`viewport/knobs.rs`,
-`MotionState::knobs`; what they are in `agents/features.md`, Operation
+`MotionState::knobs`; what they are in `agents/features/knobs.md`, Operation
 knobs) replace a move's handles for sessions that have them: drawn as
 the extrude's (`handle.rs`, in their tool's colours), they take the
 mouse first (`Moving::mouse`), hovered within 13 px of a knob or 6 px
@@ -370,7 +370,7 @@ the way round as often as it goes, nothing with the plane edge on);
 each new snapped value is sent (`MotionLook::DragKnob`). A session
 without knobs lets go of what one held (`Input::settle`), and one with
 them of a move's handles. A loft's seam knobs (its sections' starts, `SeamInput`; see
-`agents/features.md`, Loft) are drawn as the knobs' pucks and taken
+`agents/features/loft.md`, Loft) are drawn as the knobs' pucks and taken
 ahead of what the loft picks: dragged, the start goes to the section's
 corner nearest the cursor.
 
@@ -872,7 +872,7 @@ shows or not, so a drag survives it appearing. Sketch curves are flattened by
 `Sketch::flatten` (lines exact, circles into `CIRCLE_SEGMENTS`, arcs their
 share) and placed on an origin plane's placement, or a sketch on a face
 at the placement regeneration found for it (`Evaluation::placements`;
-one not placed isn't drawn: see `agents/features.md`).
+one not placed isn't drawn: see `agents/features/sketch-planes.md`).
 
 **Detail by zoom.** Each visible body is drawn as finely as the camera
 shows it: a request carries a `regen::Sight`, a `Detail` level per body
@@ -1098,10 +1098,10 @@ the session picks a point, faces, edges and vertices with
 `Moving` (`AlignView::snaps`); its directions are picked on faces and
 edges (`Picks::EdgesAndFaces`), lit while picked as A's and B's are, the
 moved side's as selected and the target's in the second colour (see
-`agents/features.md`, Align). A scale's point is picked the same way
+`agents/features/align.md`, Align). A scale's point is picked the same way
 (`MotionPick::Point`, its snap dots drawn from `ScaleView::snaps`), and
 its edge on edges alone (`MotionPick::Edge`, `Picks::Edges`), lit in the
-second colour once picked (see `agents/features.md`, Scale).
+second colour once picked (see `agents/features/scale.md`, Scale).
 
 The highlight while measuring is the session's own (the selection's
 isn't drawn and stays as it was), a `ModelHighlight` as the
@@ -1690,7 +1690,7 @@ small vector a frame, since the parts borrow), so the renderer uploads
 only when they change. The operand faces an `ErrorGeometry` names
 (`faces`) are drawn through its mesh and lines: regen copies their
 triangles from the model into it, and their outlines into its lines,
-when it resolves them (see `agents/features.md`), so the viewport draws
+when it resolves them (see `agents/features/failures.md`), so the viewport draws
 nothing of its own for them.
 
 **Show** frames the camera on the box of the draft's failure
