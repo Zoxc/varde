@@ -236,6 +236,7 @@ fn rotation_said(rotation: Rotation) -> &'static str {
     match rotation {
         Rotation::Turntable => "Turntable",
         Rotation::OverTheTop => "Turntable, over the top",
+        Rotation::Trackball => "Trackball",
     }
 }
 
@@ -691,17 +692,25 @@ fn mouse_rows<'a>(options: ViewOptions) -> Vec<Element<'a, Message>> {
         setting(
             "Rotation",
             "How a drag turns the view",
-            segmented([Rotation::Turntable, Rotation::OverTheTop].map(|rotation| {
-                (
-                    None,
-                    match rotation {
-                        Rotation::Turntable => "Turntable",
-                        Rotation::OverTheTop => "Over the top",
-                    },
-                    rotation == mouse.rotation,
-                    set(Setting::Rotation(rotation)),
-                )
-            })),
+            segmented(
+                [
+                    Rotation::Turntable,
+                    Rotation::OverTheTop,
+                    Rotation::Trackball,
+                ]
+                .map(|rotation| {
+                    (
+                        None,
+                        match rotation {
+                            Rotation::Turntable => "Turntable",
+                            Rotation::OverTheTop => "Over the top",
+                            Rotation::Trackball => "Trackball",
+                        },
+                        rotation == mouse.rotation,
+                        set(Setting::Rotation(rotation)),
+                    )
+                }),
+            ),
         ),
         setting(
             "Rotation point",

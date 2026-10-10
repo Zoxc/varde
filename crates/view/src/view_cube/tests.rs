@@ -27,6 +27,43 @@ fn head_on_letters_are_upright() {
     }
 }
 
+/// Rolled by a trackball, the cube rolls with the view: a face seen head
+/// on still fills the middle, its letter turned the other way on screen,
+/// and is the one a click there picks.
+#[test]
+fn a_rolled_view_rolls_the_cube() {
+    let roll = 0.7f32;
+    let (s, c) = roll.sin_cos();
+    for view in View::ALL {
+        let head_on = basis(view);
+        let basis = Basis {
+            right: head_on.right * c + head_on.up * s,
+            up: head_on.up * c - head_on.right * s,
+            backward: head_on.backward,
+        };
+        let center = Vec2::splat(SIZE / 2.0);
+        assert_eq!(face_at(&basis, center), Some(view), "{view:?}");
+        let faces: Vec<_> = visible_faces(&basis).collect();
+        assert_eq!(faces.len(), 1);
+        assert!(
+            faces[0].u.abs_diff_eq(Vec2::from_angle(roll), 1e-5),
+            "{view:?}"
+        );
+    }
+    // As the camera's own basis has it.
+    let mut camera = Camera::default();
+    for _ in 0..4 {
+        for (yaw, pitch) in [(0.4, 0.0), (0.0, 0.4), (-0.4, 0.0), (0.0, -0.4)] {
+            camera.turn(varde_render::Rotation::Trackball, yaw, pitch);
+        }
+    }
+    assert!(camera.roll() != 0.0);
+    let basis = Basis::new(&camera);
+    assert!(basis.right.abs_diff_eq(camera.right(), 0.0));
+    assert!(basis.up.abs_diff_eq(camera.up(), 0.0));
+    assert!(visible_faces(&basis).count() >= 1);
+}
+
 #[test]
 fn default_camera_shows_top_front_right() {
     let basis = Basis::new(&Camera::default());

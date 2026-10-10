@@ -211,7 +211,7 @@ pub(crate) struct Doc {
     /// What the value field is to do once it shows, which the app asks of
     /// it: see [`Doc::take_focus`].
     focus: Option<Focus>,
-    animation: Option<CameraAnimation>,
+    pub(crate) animation: Option<CameraAnimation>,
     /// How faded the model is, turning with the camera into a sketch
     /// and out of it.
     fade: Fade,
@@ -1594,22 +1594,28 @@ impl Doc {
 
     /// Takes the settings in `options` the camera follows: the projection,
     /// how dragging turns it (a turntable rights the view, should it be
-    /// upside down) and the point it orbits (forgotten unless picked by a
-    /// click).
+    /// upside down or rolled, and over the top unrolls it, should a
+    /// trackball have rolled it) and the point it orbits (forgotten unless
+    /// picked by a click).
     pub(crate) fn take_options(&mut self, options: &ViewOptions) {
         use varde_render::Rotation;
         self.set_projection(options.projection);
         self.rotation = options.mouse.rotation;
-        if self.rotation == Rotation::Turntable {
-            self.camera.upright();
+        let right: Option<fn(&mut Camera)> = match self.rotation {
+            Rotation::Turntable => Some(Camera::upright),
+            Rotation::OverTheTop => Some(Camera::unroll),
+            Rotation::Trackball => None,
+        };
+        if let Some(right) = right {
+            right(&mut self.camera);
             if let Some(animation) = &mut self.animation {
-                animation.from.upright();
-                animation.to.upright();
+                right(&mut animation.from);
+                right(&mut animation.to);
             }
             // As are the views gone back to.
             let kept = (self.before_sketch.iter_mut())
                 .chain(self.before_show.iter_mut().map(|(camera, _)| camera));
-            kept.for_each(Camera::upright);
+            kept.for_each(right);
         }
         if options.mouse.rotation_point != varde_view::RotationPoint::Clicked {
             self.pivot = None;

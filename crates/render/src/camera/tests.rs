@@ -411,3 +411,247 @@ fn lerp_over_the_top_turns_the_short_way() {
         assert!(!camera.upside_down());
     }
 }
+
+/// The camera's basis is unit length, square and right-handed.
+fn assert_orthonormal(camera: &Camera) {
+    let (right, up, backward) = (camera.right(), camera.up(), camera.backward());
+    for axis in [right, up, backward] {
+        assert!((axis.length() - 1.0).abs() < 1e-5, "{camera:?}");
+    }
+    assert!(right.dot(up).abs() < 1e-5, "{camera:?}");
+    assert!(up.dot(backward).abs() < 1e-5, "{camera:?}");
+    assert!(right.dot(backward).abs() < 1e-5, "{camera:?}");
+    assert!(close(right.cross(up), backward), "{camera:?}");
+}
+
+/// Where `point` shows, in normalized device coordinates.
+fn shows(camera: &Camera, point: Vec3) -> Vec2 {
+    let clip = camera.projection_matrix(1.5, 0.1..100.0) * camera.view() * point.extend(1.0);
+    clip.truncate().truncate() / clip.w
+}
+
+/// A drag round a loop, each way in turn: right, up, left, down.
+fn round(camera: &mut Camera, step: f32) {
+    for (yaw, pitch) in [(step, 0.0), (0.0, step), (-step, 0.0), (0.0, -step)] {
+        camera.turn(Rotation::Trackball, yaw, pitch);
+    }
+}
+
+/// A trackball's turn about the view's own up, from a level view, is a
+/// turntable's yaw; and up from it, its pitch.
+#[test]
+fn a_trackball_turns_as_a_turntable_from_level() {
+    let mut camera = Camera::default();
+    camera.look_from(View::Front);
+    let mut turntable = camera;
+    camera.turn(Rotation::Trackball, 0.3, 0.0);
+    turntable.turn(Rotation::Turntable, 0.3, 0.0);
+    assert!(close(camera.backward(), turntable.backward()));
+    assert!(close(camera.up(), turntable.up()));
+    assert_eq!(camera.roll(), 0.0);
+    let mut camera = Camera::default();
+    let mut turntable = camera;
+    camera.turn(Rotation::Trackball, 0.0, 0.4);
+    turntable.turn(Rotation::Turntable, 0.0, 0.4);
+    assert!(close(camera.backward(), turntable.backward()));
+    assert!(close(camera.up(), turntable.up()));
+}
+
+/// Dragging round and round rolls the view further each time, the roll
+/// within its bounds.
+#[test]
+fn a_trackball_roll_accumulates() {
+    let mut camera = Camera::default();
+    round(&mut camera, 0.3);
+    let once = camera.roll();
+    assert!(once.abs() > 0.01, "{camera:?}");
+    round(&mut camera, 0.3);
+    let twice = camera.roll();
+    assert!(twice.signum() == once.signum() && twice.abs() > once.abs() * 1.5);
+    for _ in 0..200 {
+        round(&mut camera, 0.3);
+        assert!(camera.roll().abs() <= std::f32::consts::PI);
+        assert!(camera.pitch.abs() <= Camera::PITCH_LIMIT);
+    }
+}
+
+/// Over many drags, every way, through the poles and upside down, the
+/// basis stays whole and the eye at its distance.
+#[test]
+fn trackball_axes_stay_orthonormal() {
+    let mut camera = Camera::default();
+    let distance = camera.distance();
+    // A fixed sequence of small and large turns, every direction.
+    let mut state = 0x2545_f491_u32;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        (state as f32 / u32::MAX as f32 - 0.5) * 2.0
+    };
+    for i in 0..5000 {
+        let scale = if i % 7 == 0 { 3.0 } else { 0.05 };
+        camera.turn(Rotation::Trackball, next() * scale, next() * scale);
+        assert_orthonormal(&camera);
+        assert!(((camera.eye() - camera.target()).length() - distance).abs() < 1e-3);
+    }
+    // Straight down and up exactly, too.
+    for view in [View::Top, View::Bottom] {
+        let mut camera = Camera::default();
+        camera.look_from(view);
+        camera.turn(Rotation::Trackball, 0.0, 0.0);
+        assert_orthonormal(&camera);
+        assert!(close(camera.backward(), view.normal()), "{view:?}");
+        assert!(close(camera.up(), view.up()), "{view:?}");
+        camera.turn(Rotation::Trackball, 0.2, -0.3);
+        assert_orthonormal(&camera);
+    }
+}
+
+/// About a pivot, a trackball's turn keeps it where it shows, in either
+/// projection, rolled or not.
+#[test]
+fn a_trackball_about_a_pivot_keeps_it_in_place() {
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let mut camera = Camera::default();
+        camera.set_projection(projection);
+        let pivot = Vec3::new(3.0, -1.0, 2.0);
+        let before = shows(&camera, pivot);
+        for step in 0..40 {
+            let angle = step as f32 * 0.7;
+            camera.turn_about(
+                Rotation::Trackball,
+                pivot,
+                angle.cos() * 0.2,
+                angle.sin() * 0.2,
+            );
+            assert!(
+                shows(&camera, pivot).abs_diff_eq(before, 1e-3),
+                "{projection:?}"
+            );
+        }
+        assert!(camera.roll() != 0.0);
+    }
+}
+
+/// Rolled, panning and zooming at a point follow the rolled axes: the
+/// point under the cursor stays there.
+#[test]
+fn rolled_zoom_and_pan_follow_the_view() {
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let mut camera = Camera::default();
+        camera.set_projection(projection);
+        for _ in 0..4 {
+            round(&mut camera, 0.4);
+        }
+        assert!(camera.roll().abs() > 0.1);
+        // The point at the target's depth 0.2 right, 0.1 down of the middle.
+        let at =
+            camera.target() + (camera.right() * 0.2 - camera.up() * 0.1) * camera.view_height();
+        let before = shows(&camera, at);
+        camera.zoom_at(0.5, 0.2, 0.1);
+        assert!(
+            shows(&camera, at).abs_diff_eq(before, 1e-4),
+            "{projection:?}"
+        );
+        // A pan to the right moves what shows to the right.
+        let target = camera.target();
+        let before = shows(&camera, target);
+        camera.pan(0.1, 0.0);
+        let after = shows(&camera, target);
+        assert!(after.x > before.x + 0.01 && (after.y - before.y).abs() < 1e-4);
+    }
+}
+
+/// An animation from a rolled view to a face of the view cube turns the
+/// short way about one axis, each step as far, and lands on the face
+/// upright; the other way too.
+#[test]
+fn lerp_from_a_rolled_view_slerps_to_upright() {
+    let mut from = Camera::default();
+    for _ in 0..6 {
+        round(&mut from, 0.4);
+    }
+    assert!(from.roll().abs() > 0.3);
+    let mut to = from;
+    to.look_from(View::Top);
+    assert_eq!(to.roll(), 0.0);
+    let total = from.orientation().angle_between(to.orientation());
+    assert!(total <= std::f32::consts::PI + 1e-4);
+    let mut last = from;
+    for step in 1..=20 {
+        let camera = from.lerp(&to, step as f32 / 20.0);
+        assert_orthonormal(&camera);
+        let moved = last.orientation().angle_between(camera.orientation());
+        assert!((moved - total / 20.0).abs() < 2e-3, "{moved} {total}");
+        last = camera;
+    }
+    let end = from.lerp(&to, 1.0);
+    assert!(close(end.backward(), View::Top.normal()));
+    assert!(close(end.up(), View::Top.up()));
+    let start = from.lerp(&to, 0.0);
+    assert!(close(start.up(), from.up()) && close(start.backward(), from.backward()));
+    // And back to the rolled view, as going back from a sketch does.
+    let back = to.lerp(&from, 1.0);
+    assert!(close(back.up(), from.up()) && close(back.backward(), from.backward()));
+}
+
+/// A rolled view righted keeps its eye, upright with the world's Z up on
+/// screen; unrolled, it keeps it too, upside down over the top if it was
+/// rolled more than a quarter turn.
+#[test]
+fn righting_a_rolled_view_keeps_the_eye() {
+    let mut camera = Camera::default();
+    for _ in 0..100 {
+        if camera.roll().abs() > 2.0 {
+            break;
+        }
+        round(&mut camera, 0.4);
+    }
+    assert!(camera.roll().abs() > 2.0, "{camera:?}");
+    let eye = camera.eye();
+    let mut righted = camera;
+    righted.upright();
+    assert_eq!(righted.roll(), 0.0);
+    assert!(!righted.upside_down() && righted.up().z >= 0.0);
+    assert!(righted.eye().abs_diff_eq(eye, 1e-3));
+    let mut unrolled = camera;
+    unrolled.unroll();
+    assert_eq!(unrolled.roll(), 0.0);
+    assert!(unrolled.eye().abs_diff_eq(eye, 1e-3));
+    assert!(unrolled.upside_down());
+    // The nearer of the two: up as near as it can be to as it was.
+    assert!(unrolled.up().dot(camera.up()) >= righted.up().dot(camera.up()));
+    // A turntable's turn rights it first; one over the top unrolls it.
+    let mut turned = camera;
+    turned.turn(Rotation::Turntable, 0.0, 0.0);
+    assert_eq!(turned, righted);
+    let mut turned = camera;
+    turned.turn(Rotation::OverTheTop, 0.0, 0.0);
+    assert_eq!(turned, unrolled);
+}
+
+/// A trackball ignores what isn't finite, and turns too large to tell an
+/// axis of.
+#[test]
+fn a_trackball_ignores_bad_input() {
+    let mut camera = Camera::default();
+    round(&mut camera, 0.5);
+    let before = camera;
+    for (yaw, pitch) in [
+        (f32::NAN, 0.0),
+        (0.0, f32::INFINITY),
+        (f32::NEG_INFINITY, f32::NAN),
+        (f32::MAX, f32::MAX),
+    ] {
+        camera.turn(Rotation::Trackball, yaw, pitch);
+        assert_eq!(camera, before, "{yaw} {pitch}");
+        camera.turn_about(Rotation::Trackball, Vec3::ONE, yaw, pitch);
+        assert_eq!(camera, before, "{yaw} {pitch}");
+    }
+    camera.turn_about(Rotation::Trackball, Vec3::NAN, 0.1, 0.1);
+    assert_eq!(camera, before);
+    // Large but finite turns stay whole.
+    camera.turn(Rotation::Trackball, 1e30, -3e29);
+    assert_orthonormal(&camera);
+}

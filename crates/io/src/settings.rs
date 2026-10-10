@@ -20,7 +20,7 @@
 //! left_drag = "orbit" # or "pan", "zoom", "nothing"; outside a sketch
 //! middle_drag = "orbit" # as left_drag
 //! right_drag = "pan" # as left_drag
-//! rotation = "turntable" # or "over_the_top"
+//! rotation = "turntable" # or "over_the_top", "trackball"
 //! rotation_point = "clicked" # or "pointer", "centre"
 //! set_rotation_point = "middle_click" # or "middle_double_click", "shift_middle_click"
 //! zoom_direction = "wheel_up" # the wheel's way that zooms in: or "wheel_down"
@@ -309,6 +309,8 @@ pub enum Rotation {
     Turntable,
     /// The same, but on over the top, upside down.
     OverTheTop,
+    /// Free, about the view's own axes, so the view can roll.
+    Trackball,
 }
 
 /// What the view orbits about.

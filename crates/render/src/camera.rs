@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Projection {
@@ -19,6 +19,10 @@ pub enum Rotation {
     /// The same, but on over the top and under the bottom, the view
     /// upside down past them.
     OverTheTop,
+    /// Free: a sideways drag turns the view about its own up, an upward
+    /// one about its own right, so the view can roll and the world's Z
+    /// needn't stay up on screen.
+    Trackball,
 }
 
 /// A side to look at the model from, like the faces of a view cube.
@@ -83,8 +87,9 @@ impl View {
 /// The fields are private so the methods can keep the camera finite and
 /// bounded, which the depth range relies on: yaw finite, pitch within
 /// [`Self::PITCH_LIMIT`] (within a half turn, turned over the top by
-/// [`Rotation::OverTheTop`]), the target within [`Self::EXTENT`] and the
-/// distance from [`Self::MIN_DISTANCE`] to [`Self::EXTENT`].
+/// [`Rotation::OverTheTop`]), roll within a half turn either way (zero
+/// but by [`Rotation::Trackball`]), the target within [`Self::EXTENT`]
+/// and the distance from [`Self::MIN_DISTANCE`] to [`Self::EXTENT`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
     projection: Projection,
@@ -95,6 +100,11 @@ pub struct Camera {
     /// [`Self::PITCH_LIMIT`], up to a half turn either way, it's over the
     /// top, upside down.
     pitch: f32,
+    /// How far the view is rolled about its line of sight from where yaw
+    /// and pitch put it, in radians, counterclockwise on screen: up on
+    /// screen turned towards the left. Zero but by [`Rotation::Trackball`];
+    /// otherwise within a half turn either way.
+    roll: f32,
     /// At least [`Self::MIN_DISTANCE`].
     distance: f32,
     /// Vertical field of view, in radians. In orthographic mode this only
@@ -110,6 +120,7 @@ impl Default for Camera {
             target: Vec3::ZERO,
             yaw: -60f32.to_radians(),
             pitch: 30f32.to_radians(),
+            roll: 0.0,
             distance: 9.0,
             fov_y: 45f32.to_radians(),
         }
@@ -173,12 +184,69 @@ impl Camera {
 
     /// Unit vector pointing right on screen.
     pub fn right(&self) -> Vec3 {
-        right(self.yaw)
+        self.rolled().0
     }
 
     /// Unit vector pointing up on screen.
     pub fn up(&self) -> Vec3 {
-        up(self.yaw, self.pitch)
+        self.rolled().1
+    }
+
+    /// How far the view is rolled, see [`Rotation::Trackball`]: zero
+    /// unless a trackball turned it.
+    pub fn roll(&self) -> f32 {
+        self.roll
+    }
+
+    /// Right and up on screen: yaw and pitch's, turned by the roll.
+    fn rolled(&self) -> (Vec3, Vec3) {
+        let (right, up) = (right(self.yaw), up(self.yaw, self.pitch));
+        if self.roll == 0.0 {
+            return (right, up);
+        }
+        let (s, c) = self.roll.sin_cos();
+        (right * c + up * s, up * c - right * s)
+    }
+
+    /// The view's orientation: what turns X, Y and Z to right, up and
+    /// backward.
+    fn orientation(&self) -> Quat {
+        let (right, up) = self.rolled();
+        Quat::from_mat3(&Mat3::from_cols(right, up, self.backward())).normalize()
+    }
+
+    /// Takes yaw, pitch and roll from `orientation`, see
+    /// [`Self::orientation`], within their bounds: the pitch no further
+    /// than straight down or up, rolled upside down rather than over the
+    /// top. An orientation that isn't finite is ignored.
+    fn set_orientation(&mut self, orientation: Quat) {
+        use std::f32::consts::TAU;
+        let length = orientation.length();
+        if !(length.is_finite() && length > 0.0) {
+            return;
+        }
+        let orientation = orientation / length;
+        let (right, backward) = (orientation * Vec3::X, orientation * Vec3::Z);
+        if !(right.is_finite() && backward.is_finite()) {
+            return;
+        }
+        let level = backward.truncate().length();
+        // atan2 rather than asin: exact to the poles.
+        let pitch = backward.z.atan2(level);
+        let yaw = if level > VERTICAL {
+            backward.y.atan2(backward.x)
+        } else {
+            // Straight down or up, where only yaw and roll's sum counts:
+            // all of it yaw, from where right points.
+            (-right.x).atan2(right.y)
+        };
+        let (right0, up0) = (self::right(yaw), up(yaw, pitch));
+        let roll = right.dot(up0).atan2(right.dot(right0));
+        self.yaw = yaw.rem_euclid(TAU);
+        self.pitch = pitch.clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+        // Within rounding of none, none, so a view turned back level is
+        // a turntable's again.
+        self.roll = if roll.abs() < ROLL_SLACK { 0.0 } else { roll };
     }
 
     /// Height of the visible region at the target, in world units.
@@ -249,7 +317,13 @@ impl Camera {
     /// top otherwise. Upside down, past the top, the yaw turns the other
     /// way, so what's in view follows the drag as it does upright. A
     /// turntable's turn starts from the view upright, see
-    /// [`Self::upright`]. Non-finite angles are ignored.
+    /// [`Self::upright`], and one over the top from it unrolled, see
+    /// [`Self::unroll`]. As a trackball, it turns about the view's own
+    /// axes: by `delta_yaw` about up on screen, by `delta_pitch` about
+    /// right (the opposite way, so the eye goes up), the two as one turn
+    /// about the axis between, so the view rolls as a drag goes round.
+    /// Non-finite angles are ignored, and so is a trackball turn too large
+    /// to tell its axis.
     pub fn turn(&mut self, rotation: Rotation, delta_yaw: f32, delta_pitch: f32) {
         use std::f32::consts::{PI, TAU};
         if !(delta_yaw.is_finite() && delta_pitch.is_finite()) {
@@ -263,6 +337,7 @@ impl Camera {
                     (self.pitch + delta_pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
             }
             Rotation::OverTheTop => {
+                self.unroll();
                 let delta_yaw = if self.upside_down() {
                     -delta_yaw
                 } else {
@@ -272,7 +347,19 @@ impl Camera {
                 // Within a half turn either way. Finite angles stay finite.
                 self.pitch = (self.pitch + delta_pitch + PI).rem_euclid(TAU) - PI;
             }
+            Rotation::Trackball => {
+                if let Some(turn) = self.trackball_turn(delta_yaw, delta_pitch) {
+                    self.set_orientation(turn * self.orientation());
+                }
+            }
         }
+    }
+
+    /// A trackball's turn by these angles, see [`Self::turn`], if it has
+    /// an axis that can be told.
+    fn trackball_turn(&self, delta_yaw: f32, delta_pitch: f32) -> Option<Quat> {
+        let axis = self.up() * delta_yaw - self.right() * delta_pitch;
+        (axis.is_finite() && axis.length().is_finite()).then(|| Quat::from_scaled_axis(axis))
     }
 
     /// Whether the view is upside down, turned over the top
@@ -284,16 +371,35 @@ impl Camera {
         self.pitch.abs() > Self::PITCH_LIMIT + UPSIDE_DOWN_SLACK
     }
 
-    /// Turns an upside-down view ([`Self::upside_down`]) the right way up:
-    /// the eye where it is, the view rolled a half turn. Otherwise does
-    /// nothing.
+    /// Turns an upside-down or rolled view ([`Self::upside_down`],
+    /// [`Self::roll`]) the right way up, the world's Z up on screen: the
+    /// eye where it is, the view rolled back. Otherwise does nothing.
     pub fn upright(&mut self) {
         use std::f32::consts::{PI, TAU};
+        self.roll = 0.0;
         if self.upside_down() {
             self.pitch =
                 (PI.copysign(self.pitch) - self.pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
             self.yaw = (self.yaw + PI).rem_euclid(TAU);
         }
+    }
+
+    /// Takes a rolled view's roll ([`Self::roll`]) away the shorter way:
+    /// level if rolled less than a quarter turn, else upside down, over
+    /// the top ([`Rotation::OverTheTop`]), the eye where it is either
+    /// way. Otherwise does nothing.
+    pub fn unroll(&mut self) {
+        use std::f32::consts::{FRAC_PI_2, PI, TAU};
+        if self.roll == 0.0 {
+            return;
+        }
+        if self.roll.abs() > FRAC_PI_2 {
+            // The inverse of `upright`'s turn: the same flip.
+            let sign = if self.pitch < 0.0 { -1.0 } else { 1.0 };
+            self.pitch = PI * sign - self.pitch;
+            self.yaw = (self.yaw + PI).rem_euclid(TAU);
+        }
+        self.roll = 0.0;
     }
 
     /// Rotates the camera around `pivot` by the given angles in radians,
@@ -319,8 +425,14 @@ impl Camera {
         }
         // The target from the pivot, in the view's axes, which the turn
         // keeps.
-        if rotation == Rotation::Turntable {
-            self.upright();
+        match rotation {
+            Rotation::Turntable => self.upright(),
+            Rotation::OverTheTop => self.unroll(),
+            Rotation::Trackball => {
+                if self.trackball_turn(delta_yaw, delta_pitch).is_none() {
+                    return;
+                }
+            }
         }
         let offset = self.target - pivot;
         let along = [self.right(), self.up(), self.backward()].map(|axis| offset.dot(axis));
@@ -362,9 +474,10 @@ impl Camera {
     }
 
     /// Looks at the target from `view`, keeping the distance. The same as
-    /// [`Self::face`] with the view's normal and up.
+    /// [`Self::face`] with the view's normal and up: upright, unrolled.
     pub fn look_from(&mut self, view: View) {
         (self.yaw, self.pitch) = view.angles();
+        self.roll = 0.0;
     }
 
     /// Looks straight at a plane whose `normal` points towards the camera,
@@ -376,11 +489,12 @@ impl Camera {
     /// That's enough for the origin planes, seen from their normals with
     /// their y axis up, as their placements in the document are. A normal
     /// that's zero or not finite is ignored, and so is an `up` that doesn't
-    /// say which way to turn.
+    /// say which way to turn. The view ends unrolled.
     pub fn face(&mut self, normal: Vec3, up: Vec3) {
         let Some(normal) = normal.try_normalize() else {
             return;
         };
+        self.roll = 0.0;
         if normal.truncate().length() > VERTICAL {
             self.yaw = normal.y.atan2(normal.x);
             self.pitch = normal.z.clamp(-1.0, 1.0).asin();
@@ -397,9 +511,22 @@ impl Camera {
 
     /// The camera a fraction `t` of the way from `self` to `to`, turning the
     /// short way round. Distance changes geometrically so zoom feels even.
-    /// Projection and field of view are taken from `to`.
+    /// Projection and field of view are taken from `to`. With either end
+    /// rolled ([`Rotation::Trackball`]), the view turns the shortest way
+    /// from one to the other about a single axis (a slerp).
     pub fn lerp(&self, to: &Camera, t: f32) -> Camera {
         use std::f32::consts::{PI, TAU};
+        if self.roll != 0.0 || to.roll != 0.0 {
+            // Target, distance and the rest as unrolled, then the turn.
+            let unrolled = |camera: &Camera| Camera {
+                roll: 0.0,
+                ..*camera
+            };
+            let mut camera = unrolled(self).lerp(&unrolled(to), t);
+            // `Quat::slerp` goes the short way, whichever sign each has.
+            camera.set_orientation(self.orientation().slerp(to.orientation(), t));
+            return camera;
+        }
         let yaw = (to.yaw - self.yaw + PI).rem_euclid(TAU) - PI;
         // Upside down at either end, the pitch too turns the short way
         // round, over the top if that's shorter; upright at both, it
@@ -472,6 +599,10 @@ impl Camera {
 /// How far past straight down or up, in radians, a pitch may be and
 /// still not be [`Camera::upside_down`].
 const UPSIDE_DOWN_SLACK: f32 = 1e-3;
+
+/// How small a roll, in radians, [`Rotation::Trackball`]'s turns take as
+/// none: within rounding of it.
+const ROLL_SLACK: f32 = 1e-6;
 
 /// How far from vertical, as the length of its horizontal part, a unit
 /// normal [`Camera::face`] turns to may be and still count as straight up

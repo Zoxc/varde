@@ -55,6 +55,21 @@ fn toml_round_trip() {
         };
         assert_eq!(Settings::parse(&settings.serialize()), settings);
     }
+    for rotation in [
+        Rotation::Turntable,
+        Rotation::OverTheTop,
+        Rotation::Trackball,
+    ] {
+        let settings = Settings {
+            rotation,
+            ..Settings::default()
+        };
+        assert_eq!(Settings::parse(&settings.serialize()), settings);
+    }
+    assert_eq!(
+        Settings::parse("rotation = \"trackball\"\n").rotation,
+        Rotation::Trackball
+    );
 }
 
 /// A file from before the view options and units were stored reads with
@@ -233,7 +248,7 @@ fn bad_mouse_units_and_files_are_defaulted() {
         "left_drag = \"spin\"\n",
         "middle_drag = true\n",
         "right_drag = \"Pan\"\n",
-        "rotation = \"trackball\"\n",
+        "rotation = \"arcball\"\n",
         "rotation_point = \"center\"\n",
         "set_rotation_point = \"left_click\"\n",
         "zoom_direction = \"up\"\n",

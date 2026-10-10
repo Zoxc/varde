@@ -1,8 +1,7 @@
 # Settings page
 
 A design for an app settings page, built (see "The settings page" in
-`agents/viewport.md`) but for a trackball rotation (see "Mouse"). The
-mock shows it:
+`agents/viewport.md`). The mock shows it:
 `notes/ui-mock/` on every page, opened with the gear or `/settings` in the
 address (`model.html#bracket/settings`, `welcome.html#/settings/web`).
 
@@ -100,10 +99,12 @@ as they're shown.
   Z and pitch clamped to `Camera::PITCH_LIMIT`, so Z stays up), Turntable
   over the top (no pitch limit, the view can go upside down; the yaw then
   turns the other way so the model follows the pointer; back to
-  Turntable, the view is set right side up, the eye kept). A free
-  trackball isn't built: `Camera` is yaw and pitch, with no roll, and its
-  animations, the view cube and `Camera::face` rely on that; it needs an
-  orientation (a quaternion, or a roll) in its place.
+  Turntable, the view is set right side up, the eye kept), Trackball
+  (free, about the view's own axes: a sideways drag turns about up on
+  screen, an upward one about right, so a drag round a loop rolls the
+  view; back to Turntable the view is set upright, to Over the top
+  unrolled the nearer way, upright or upside down, the eye kept either
+  way; the view cube's faces and Home turn to upright views).
 - **Rotation point,** what the view orbits about: a clicked point
   (default, `Look::SetPivot`, else the view's target), the point under
   the pointer where each drag starts (no marker shown; off the model and
@@ -140,8 +141,6 @@ auto-saves after 3 s and has no recent files list).
 ## Suggested
 
 Not built; others to consider:
-
-- Trackball rotation (see "Mouse").
 
 - Grid spacing: automatic with the zoom, or fixed.
 - Selection colour or accent colour.

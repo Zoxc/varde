@@ -267,14 +267,32 @@ about Z and pitches up to `Camera::PITCH_LIMIT`, straight down or up;
 Turntable over the top pitches on past it (the pitch kept within a half
 turn), the view upside down, the yaw then turning the other way so what's
 under the pointer follows the drag. The camera's basis comes from yaw and
-pitch alone and stays whole past the top, so the view cube and every user
+pitch (and a trackball's roll, below) and stays whole past the top, so the view cube and every user
 of `Camera::up` take it as is. `Camera::lerp` turns the pitch the short
 way round where either end is upside down, never over the top between
 upright ones; a turntable's turn, and switching back to Turntable, first
 right the view (`Camera::upright`: the eye kept, the view rolled a half
-turn). A free trackball isn't offered: it needs a roll, or an orientation
-other than yaw and pitch, which `Camera`, its animations, the view cube's
-faces and `Camera::face` don't have.
+turn). Trackball turns freely about the view's own axes: the camera
+keeps a roll beside yaw and pitch (`Camera::roll`, about the line of
+sight, zero but by a trackball, so the other two turn exactly as they
+did), `right` and `up` turned by it. A drag's yaw turns about up on
+screen and its pitch about right, the two as one turn about the axis
+between (screen-axis rotation rather than an arcball: `Look::Orbit`
+carries angles, not where on a sphere the drag is, and each step's turn
+then matches the turntable's from a level view); it composes as a
+quaternion and is taken back to yaw, pitch and roll
+(`Camera::set_orientation`: pitch within straight down and up, so upside
+down is a half-turn roll; at the poles it's all yaw), a drag round a
+loop rolling the view. With either end rolled, `Camera::lerp` slerps the
+orientation, the short way about one axis. The view cube draws from the
+rolled basis; its faces, Home and the sketch views (`Camera::look_from`,
+`Camera::face`) are unrolled, so a click turns to the upright view.
+Switching to Turntable rights a rolled view too (`upright` clears the
+roll, the eye kept); to Over the top, `Camera::unroll` takes the roll
+away the nearer way, upright, or upside down over the top past a quarter
+turn; `Doc::take_options` does it to every camera kept (the current
+one, an animation's ends, `before_sketch`, `before_show`). No camera is
+saved in documents.
 
 What the view orbits about is the Rotation point setting
 (`RotationPoint`): Clicked, the default, below; Under the pointer, the
@@ -902,8 +920,9 @@ buffers the slot keeps and grows.
 The depth range is fitted to the target, the grid around the target seen on
 its plane, and the bounds of the mesh and the lines. `Camera::face` turns
 the camera to look straight at a plane with its normal and an up
-direction, which `look_from(View)` is a case of; the camera has no roll, so
-up is only chosen freely for a vertical normal (see `notes/SketchImpl.md`).
+direction, which `look_from(View)` is a case of; it leaves the camera
+unrolled (only a trackball rolls it), so up is only chosen freely for a
+vertical normal (see `notes/SketchImpl.md`).
 
 The document mesh (the regeneration lane evaluates the feature history
 into the bodies' solids, extruding sketch regions, and tessellates the

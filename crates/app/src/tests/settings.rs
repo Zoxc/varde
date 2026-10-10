@@ -496,6 +496,55 @@ fn the_rotation_set_turns_the_camera() {
     assert!(camera.eye().abs_diff_eq(eye, 1e-3));
 }
 
+/// A trackball rolls the document's camera as a drag goes round; back to
+/// a turntable, the camera, and where it's turning to, are set upright,
+/// the eye kept, and over the top unrolled.
+#[test]
+fn a_trackball_rolls_and_a_turntable_rights_it() {
+    let (mut varde, _) = with_files();
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    set(&mut varde, Setting::Rotation(Rotation::Trackball));
+    let round = |varde: &mut Varde| {
+        for (yaw, pitch) in [(0.6, 0.0), (0.0, 0.6), (-0.6, 0.0), (0.0, -0.6)] {
+            let _ = varde.update(Message::Ui(Ui::Look(Look::Orbit {
+                yaw,
+                pitch,
+                about: None,
+            })));
+        }
+    };
+    round(&mut varde);
+    let rolled = document(&varde).camera;
+    assert!(rolled.roll().abs() > 0.05, "{rolled:?}");
+
+    // Over the top takes the roll away, the eye kept.
+    set(&mut varde, Setting::Rotation(Rotation::OverTheTop));
+    let unrolled = document(&varde).camera;
+    assert_eq!(unrolled.roll(), 0.0);
+    assert!(unrolled.eye().abs_diff_eq(rolled.eye(), 1e-3));
+
+    set(&mut varde, Setting::Rotation(Rotation::Trackball));
+    round(&mut varde);
+    round(&mut varde);
+    let rolled = document(&varde).camera;
+    assert!(rolled.roll().abs() > 0.05);
+    // Mid-turn to the top, from the rolled view.
+    let _ = varde.update(Message::Ui(Ui::Look(Look::LookFrom(
+        varde_render::View::Top,
+    ))));
+    let animation = document(&varde).animation.as_ref().unwrap();
+    assert_ne!(animation.from.roll(), 0.0);
+    assert_eq!(animation.to.roll(), 0.0);
+    set(&mut varde, Setting::Rotation(Rotation::Turntable));
+    let doc = document(&varde);
+    assert_eq!(doc.camera.roll(), 0.0);
+    assert!(!doc.camera.upside_down());
+    assert!(doc.camera.eye().abs_diff_eq(rolled.eye(), 1e-3));
+    let animation = doc.animation.as_ref().unwrap();
+    assert_eq!(animation.from.roll(), 0.0);
+    assert!(!animation.from.upside_down());
+}
+
 /// A clicked rotation point is forgotten once the point is set to be
 /// another, and an orbit turns about the point a drag names.
 #[test]

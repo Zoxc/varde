@@ -214,6 +214,7 @@ fn options_of(stored: Stored) -> ViewOptions {
             rotation: match stored.rotation {
                 StoredRotation::Turntable => Rotation::Turntable,
                 StoredRotation::OverTheTop => Rotation::OverTheTop,
+                StoredRotation::Trackball => Rotation::Trackball,
             },
             rotation_point: match stored.rotation_point {
                 StoredRotationPoint::Clicked => RotationPoint::Clicked,
@@ -296,6 +297,7 @@ pub(crate) fn stored_of(options: ViewOptions) -> Stored {
         rotation: match options.mouse.rotation {
             Rotation::Turntable => StoredRotation::Turntable,
             Rotation::OverTheTop => StoredRotation::OverTheTop,
+            Rotation::Trackball => StoredRotation::Trackball,
         },
         rotation_point: match options.mouse.rotation_point {
             RotationPoint::Clicked => StoredRotationPoint::Clicked,
