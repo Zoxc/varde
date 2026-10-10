@@ -26,7 +26,7 @@
 //! creases inside one region. The other edges are the wires, drawn only
 //! in a wireframe, if they fit within the edges' points beside them.
 //!
-//! The rules and reasons are written down in `agents/kernel.md`.
+//! The rules and reasons are written down in `agents/kernel/solid.md`.
 
 use glam::DVec3;
 

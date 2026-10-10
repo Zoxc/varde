@@ -18,7 +18,7 @@
 //! meet smoothly, at the circumcentres of triangles with an angle under
 //! 5° (refinement for quality) and, on a second try if the first fails,
 //! where short segments meet nearly straight. The rules are written down
-//! in `agents/kernel.md`.
+//! in `agents/kernel/extrude.md`.
 
 use glam::{DMat3, DVec2, DVec3};
 

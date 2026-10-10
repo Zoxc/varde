@@ -560,7 +560,7 @@ const ALONG_SIDE: f64 = 1e-6;
 /// within the march's first step it joins at once, the short way: a
 /// hairpin then fails the fit, and an arc back round beside its start
 /// can't lie in a pair certified to meet in one arc (normal cones apart
-/// keep `n_P × n_Q` in a half-space; see `agents/kernel.md`, "Chains").
+/// keep `n_P × n_Q` in a half-space; see `agents/kernel/boolean-cut.md`, "Chains").
 fn inward_sign(job: &Job, k: usize, t: DVec3) -> Option<f64> {
     let [u, v] = job.dom[k];
     // Each patch's step and the end's place in it.

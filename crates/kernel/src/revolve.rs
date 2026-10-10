@@ -18,7 +18,7 @@
 //! construction; repair then splits whatever breaks the fold or hull
 //! rules, faces of one surface are named as one, and the result passes
 //! [`Mesh::check`](crate::mesh::Mesh::check). The rules are written down
-//! in `agents/kernel.md`.
+//! in `agents/kernel/revolve.md`.
 
 use std::collections::BTreeMap;
 use std::f64::consts::{FRAC_PI_2, TAU};

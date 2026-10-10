@@ -29,7 +29,7 @@
 //! curve is polynomial and blossoming is exact, and then return to the
 //! standard form. With positive weights every curve and patch lies in the
 //! convex hull of its control points. The formulas and conventions are
-//! written down in `agents/kernel.md`.
+//! written down in `agents/kernel/patch.md`.
 
 use glam::{DVec2, DVec3};
 

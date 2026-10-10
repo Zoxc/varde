@@ -736,7 +736,7 @@ fn square(dh: f64, m: DVec3) -> f64 {
 /// length, so the first order's is about a rounding of `|d|·|∇f|`. As
 /// `Σ |d_i·∇f_i| ≤ |d|·|∇f|`, this only adds ties, and an order skipped
 /// is a part of `d` along the gradient under an angle `RHO`, too small to
-/// turn any first order that counts as real (see `agents/kernel.md`,
+/// turn any first order that counts as real (see `agents/kernel/boolean.md`,
 /// "Ties"). Where two crossing cylinders' seams meet on the cut,
 /// every first order there is zero exactly, yet `δ = (−1, 2.1e-15,
 /// 3.7e-15)` against `∇f = (0, …, 0.009)`, or `δ = (1, 0, 0)` against

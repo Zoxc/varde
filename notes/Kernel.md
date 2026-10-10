@@ -9,9 +9,9 @@ a flattened copy, and always give a valid manifold or an error. Drawing
 works on WebGL2: the GPU only ever sees triangles the kernel tessellated.
 
 This is the overview: what the kernel is, its main ideas and invariants, and
-how an operation runs. `agents/kernel.md` has the detail (every rule, limit,
+how an operation runs. `agents/kernel/` has the detail (every rule, limit,
 measurement and known gap, section by section, with the files that hold
-them); where the two differ, `agents/kernel.md` wins, and the code wins over
+them); where the two differ, `agents/kernel/` wins, and the code wins over
 both. Varde ports Manifold's structure; it doesn't link it.
 
 ## What exists
@@ -599,7 +599,7 @@ no length its point. Every result
 (profiles, tool solids, touch answers, booleans, meshes, the drawn scene) is
 cached under a 128-bit key of its inputs, bounded by size (256 MiB natively,
 64 MiB on the web), so an edit reruns only what depends on it. Drafts (an
-extrude being set up) are regenerated the same way. See `agents/kernel.md`
+extrude being set up) are regenerated the same way. See `agents/kernel/history.md`
 ("Bodies from the history") and `notes/Threading.md`.
 
 ## Limits and open areas
@@ -661,5 +661,5 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   GPU patch evaluation, and wasm threads (which would need cross-origin
   isolation; results would be identical either way).
 
-`agents/kernel.md` lists the known gaps of each part in detail, with
+`agents/kernel/` lists the known gaps of each part in detail, with
 reproductions and measurements.

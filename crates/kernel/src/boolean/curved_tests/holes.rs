@@ -5,7 +5,7 @@
 //! to the rims; the next hole of the same size in line with the first
 //! passed a few tenths of a millimetre from their sides, along them, where
 //! no split mends the band between. The clean-up now refines the plane
-//! faces a boolean cuts for their shapes (see `agents/kernel.md`,
+//! faces a boolean cuts for their shapes (see `agents/kernel/boolean-cut.md`,
 //! "Clean-up" and Known gaps).
 
 use super::*;

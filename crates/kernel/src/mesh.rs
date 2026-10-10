@@ -38,7 +38,7 @@
 //! cylinders that pass them all.
 //!
 //! The rules and the reasons for them are written down in
-//! `agents/kernel.md`.
+//! `agents/kernel/mesh.md`.
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, DefaultHasher};

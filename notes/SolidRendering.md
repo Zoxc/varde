@@ -11,7 +11,7 @@ Plan for:
 - an opacity per body, set from the body's context menu.
 
 All of it is built (`notes/SolidRenderingWork.md` tracks the steps).
-`agents/viewport.md` and `agents/kernel.md` describe what was built, in
+`agents/viewport.md` and `agents/kernel/` describe what was built, in
 detail; this note keeps the decisions and why they were made. Where it
 differs from the code, the code wins. Picking and selecting were built
 beside this plan (`view/src/pick.rs`'s `PickIndex`, `view/src/select.rs`'s

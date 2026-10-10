@@ -3,9 +3,10 @@
 The features after sketches and extrudes (revolves, combines, moves, mirrors, patterns, aligns, scales, splits, chamfers, shells, fillets, offset faces,
 drafts, sweeps and lofts), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
-described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
+described in `agents/kernel/history.md` ("The extrude feature") and
+`agents/kernel/extrude-ui.md`; what
 they share with the newer kinds is here. The kernel math of each is in
-`agents/kernel.md`.
+`agents/kernel/`.
 
 ## Commands shared by every kind
 
@@ -820,7 +821,7 @@ relinks nothing. A file whose links are out of step with the model
 undo step.
 
 The sections themselves are `varde_kernel::section`'s
-(`agents/kernel.md`, Plane sections), called with the resolution as the
+(`agents/kernel/section.md`, Plane sections), called with the resolution as the
 distance within which something lies in the plane and pieces weld.
 
 ## Revolve
@@ -1006,7 +1007,7 @@ an extrude's.
 
 **The session** (`app/src/doc/revolve.rs`, `Doc::revolve`, a
 `RevolveSession`) follows the extrude's (see "The extrude UI" in
-`agents/kernel.md`), sharing its parts (`app/src/doc/regions.rs`):
+`agents/kernel/extrude-ui.md`), sharing its parts (`app/src/doc/regions.rs`):
 `RegionPick` (the source sketch, the candidates' profiles found within
 `refresh_work()`, the regions picked and their references, found again
 when the sketch changes, the edited feature's missing ones kept: listed
@@ -2319,7 +2320,7 @@ pub enum DirRef { Origin(Axis3), Normal(FaceRef), Axis(AxisRef) }
   largest kind; serde sees through the box; "Align N"). It makes no body; the body
   keeps its id and its faces their names (a move). Its motion is worked
   out from the references at every regeneration (`Motion::align`, see
-  "Aligning" in `agents/kernel.md`), so the body follows either side's
+  "Aligning" in `agents/kernel/transform.md`), so the body follows either side's
   upstream edits. A point alone is a move between the points; a point
   and a primary pair also turn the primary onto the target's by the
   smallest rotation (a pin into a hole: its turn about its own axis
@@ -2643,7 +2644,7 @@ bounds; a sketch holds its points within the coordinate limit, so only
 rounding takes a centre found from the curve past it. Such a centre is
 as good as the arc's control point times `(2r/chord)²`: profiles build
 it from the ends' middle (see `Conic::arc_between` in
-`agents/kernel.md`) so it's the drawn centre within `1e-4` mm for a
+`agents/kernel/patch.md`) so it's the drawn centre within `1e-4` mm for a
 10 mm arc a 1e5 away (it was 0.01 off).
 
 ## Scale
@@ -2668,7 +2669,7 @@ pub enum ScaleFactor {
   the largest). It makes no body; each body keeps its id and its faces
   their names (instance 0), `x ↦ c + S·(x − c)` along the world axes
   (`Motion::scale`, see "Transforms and assembly" in
-  `agents/kernel.md`). Positive
+  `agents/kernel/transform.md`). Positive
   factors only (a negative one is a mirror, its own feature).
 - **To an edge's length**: the factor is worked out at every
   regeneration as the typed length over the edge's measured one, so an

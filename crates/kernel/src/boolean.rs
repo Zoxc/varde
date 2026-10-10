@@ -52,7 +52,7 @@
 //! curved faces keep their own surface wherever they can: their new inner
 //! edges are the patch's own curves, and along a cut of a quadric they are
 //! chosen so that the triangles there lie on it exactly too (see
-//! [`assemble`]). See `agents/kernel.md`.
+//! [`assemble`]). See `agents/kernel/boolean.md`.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -118,7 +118,7 @@ pub enum BooleanError {
     /// are named so too. Found where the result fails to repair or pass
     /// `check` and has two vertices within the clean-up's short length
     /// before repair, or two separate shells whose hulls come within the
-    /// resolution (see `agents/kernel.md`, "Results that aren't
+    /// resolution (see `agents/kernel/boolean-results.md`, "Results that aren't
     /// manifolds"); the decisions may also give it before any mesh is
     /// built, where they show a pinch.
     NotManifold,
