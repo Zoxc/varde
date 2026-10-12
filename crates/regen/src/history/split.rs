@@ -274,12 +274,8 @@ impl Building<'_> {
     fn keyer(&self, kind: &str) -> Keyer {
         let mut keyer = Keyer::new(kind);
         keyer.number(self.feature.get());
-        for corner in [self.bounds.min, self.bounds.max] {
-            for x in corner.to_array() {
-                keyer.number(x.to_bits());
-            }
-        }
-        keyer.number(self.tolerance.fit().to_bits());
+        (keyer.point(self.bounds.min).point(self.bounds.max))
+            .number(self.tolerance.fit().to_bits());
         keyer
     }
 
@@ -287,10 +283,7 @@ impl Building<'_> {
     /// `solid`.
     fn face_key(&self, kind: &str, solid: Key, face: &FaceRef) -> Key {
         let mut keyer = self.keyer(kind);
-        keyer.key(solid).value(&face.key);
-        for x in face.near.to_array() {
-            keyer.number(x.to_bits());
-        }
+        keyer.key(solid).value(&face.key).point(face.near);
         keyer.finish()
     }
 

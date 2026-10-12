@@ -198,10 +198,7 @@ pub(super) fn within(solid: &Solid, motion: &Motion) -> bool {
 /// says, at `tolerance`.
 fn moved_key(body: Key, motion: &Motion, copy: Option<Instance>, tolerance: &Tolerance) -> Key {
     let mut keyer = Keyer::new("moved");
-    keyer.key(body);
-    for bits in motion.bits() {
-        keyer.number(bits);
-    }
+    keyer.key(body).numbers(motion.bits());
     match copy {
         Some(Instance { feature, index }) => keyer.number(1).number(feature).number(index),
         None => keyer.number(0),
@@ -330,10 +327,7 @@ pub(super) fn reference_key(
     tolerance: &Tolerance,
 ) -> Key {
     let mut keyer = Keyer::new(kind);
-    keyer.key(solid).value(names);
-    for number in near.to_array() {
-        keyer.number(number.to_bits());
-    }
+    keyer.key(solid).value(names).point(near);
     keyer.number(tolerance.fit().to_bits()).finish()
 }
 

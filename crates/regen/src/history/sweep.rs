@@ -748,21 +748,14 @@ fn check_joints(pieces: &[Piece], closed: bool, tolerance: &Tolerance) -> Result
 /// Every number of `path` into `keyer`, so the tool is filed by the path
 /// as built.
 fn path_bits(keyer: &mut Keyer, path: &Path) {
-    let mut point = |keyer: &mut Keyer, p: DVec3| {
-        for number in p.to_array() {
-            keyer.number(number.to_bits());
+    let conics = |keyer: &mut Keyer, conics: &[Conic3]| {
+        keyer.number(conics.len() as u64);
+        for conic in conics {
+            (keyer.point(conic.p0).point(conic.c))
+                .number(conic.w.to_bits())
+                .point(conic.p1);
         }
     };
-    let conics =
-        |keyer: &mut Keyer, conics: &[Conic3], point: &mut dyn FnMut(&mut Keyer, DVec3)| {
-            keyer.number(conics.len() as u64);
-            for conic in conics {
-                point(keyer, conic.p0);
-                point(keyer, conic.c);
-                keyer.number(conic.w.to_bits());
-                point(keyer, conic.p1);
-            }
-        };
     match path {
         Path::Chain { pieces, closed } => {
             keyer.bytes(b"chain").number(u64::from(*closed));
@@ -771,8 +764,8 @@ fn path_bits(keyer: &mut Keyer, path: &Path) {
                 match piece {
                     Piece::Line { from, to } => {
                         keyer.bytes(b"line");
-                        point(keyer, *from);
-                        point(keyer, *to);
+                        keyer.point(*from);
+                        keyer.point(*to);
                     }
                     Piece::Arc {
                         conics: arc,
@@ -780,20 +773,20 @@ fn path_bits(keyer: &mut Keyer, path: &Path) {
                         axis,
                     } => {
                         keyer.bytes(b"arc");
-                        conics(keyer, arc, &mut point);
-                        point(keyer, *centre);
-                        point(keyer, *axis);
+                        conics(keyer, arc);
+                        keyer.point(*centre);
+                        keyer.point(*axis);
                     }
                     Piece::Curve {
                         conics: curve,
                         normal,
                     } => {
                         keyer.bytes(b"curve");
-                        conics(keyer, curve, &mut point);
+                        conics(keyer, curve);
                         match normal {
                             Some(normal) => {
                                 keyer.number(1);
-                                point(keyer, *normal);
+                                keyer.point(*normal);
                             }
                             None => {
                                 keyer.number(0);
@@ -805,8 +798,8 @@ fn path_bits(keyer: &mut Keyer, path: &Path) {
         }
         Path::Helix(helix) => {
             keyer.bytes(b"helix");
-            point(keyer, helix.point);
-            point(keyer, helix.axis);
+            keyer.point(helix.point);
+            keyer.point(helix.axis);
             keyer
                 .number(helix.pitch.to_bits())
                 .number(helix.turns.to_bits())

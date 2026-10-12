@@ -117,6 +117,24 @@ impl Keyer {
         self.bytes(&number.to_le_bytes())
     }
 
+    /// Each of `numbers`, in order.
+    pub(crate) fn numbers(&mut self, numbers: impl IntoIterator<Item = u64>) -> &mut Keyer {
+        for number in numbers {
+            self.number(number);
+        }
+        self
+    }
+
+    /// Each of `floats` by its bits, in order.
+    pub(crate) fn floats(&mut self, floats: impl IntoIterator<Item = f64>) -> &mut Keyer {
+        self.numbers(floats.into_iter().map(f64::to_bits))
+    }
+
+    /// A point or vector, by its numbers' bits.
+    pub(crate) fn point(&mut self, point: DVec3) -> &mut Keyer {
+        self.floats(point.to_array())
+    }
+
     /// Regions of a body, their count first.
     pub(crate) fn regions(&mut self, regions: &[u32]) -> &mut Keyer {
         self.number(regions.len() as u64);
@@ -129,9 +147,7 @@ impl Keyer {
     /// A sketch's placement, by its numbers' bits.
     pub(crate) fn placement(&mut self, placement: &Placement) -> &mut Keyer {
         for v in [placement.origin, placement.x, placement.y, placement.normal] {
-            for number in v.to_array() {
-                self.number(number.to_bits());
-            }
+            self.point(v);
         }
         self
     }

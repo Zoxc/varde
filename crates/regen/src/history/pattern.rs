@@ -155,10 +155,7 @@ pub(crate) fn placements(
 /// `motion.rs`'s `moved_key`, whose copies are the solid with its image.
 fn copy_key(body: Key, motion: &Motion, copy: Instance, tolerance: &Tolerance) -> Key {
     let mut keyer = Keyer::new("pattern copy");
-    keyer.key(body);
-    for bits in motion.bits() {
-        keyer.number(bits);
-    }
+    keyer.key(body).numbers(motion.bits());
     keyer
         .number(copy.feature)
         .number(copy.index)
@@ -175,9 +172,7 @@ fn pattern_key(body: Key, feature: FeatureId, motions: &[Motion], tolerance: &To
         .number(feature.get())
         .number(motions.len() as u64);
     for motion in motions {
-        for bits in motion.bits() {
-            keyer.number(bits);
-        }
+        keyer.numbers(motion.bits());
     }
     keyer.number(tolerance.fit().to_bits()).finish()
 }

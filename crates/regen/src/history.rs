@@ -1186,10 +1186,7 @@ impl Run<'_> {
             // the body under it, and a reference picked again on the same
             // edge finds it.
             Some(axis) => {
-                keyer.bytes(b"edge");
-                for number in [axis.at.x, axis.at.y, axis.along.x, axis.along.y] {
-                    keyer.number(number.to_bits());
-                }
+                (keyer.bytes(b"edge")).floats([axis.at.x, axis.at.y, axis.along.x, axis.along.y]);
             }
             // A line or axis of the sketch, whose key holds where it is.
             None => {
@@ -1330,13 +1327,10 @@ fn place_on(
     tolerance: &Tolerance,
     cache: &mut Cache,
 ) -> Result<Placement, Failed> {
-    let near = face.near.to_array().map(f64::to_bits);
     let key = Keyer::new("placement")
         .key(made.key)
         .value(&face.key)
-        .number(near[0])
-        .number(near[1])
-        .number(near[2])
+        .point(face.near)
         .number(tolerance.fit().to_bits())
         .finish();
     cache.placement(key, || {

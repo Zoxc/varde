@@ -93,10 +93,9 @@ pub(super) fn evaluate_face_draft(
     let pull = if draft.flip { -normal } else { normal };
     let angle = draft.angle.value;
     let mut keyer = place.keyer("face draft", feature, tolerance);
-    for number in neutral.to_array().into_iter().chain(pull.to_array()) {
-        keyer.number(number.to_bits());
-    }
     keyer
+        .point(neutral)
+        .point(pull)
         .number(angle.to_bits())
         .number(u64::from(draft.tangent))
         .regions(&faces);
