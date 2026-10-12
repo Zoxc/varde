@@ -114,6 +114,29 @@ struct Row {
     removed: bool,
 }
 
+impl Row {
+    /// A row whose item is on the model shown.
+    fn kept(item: OverlapItem, named: Option<Selected>, held: Option<HeldRef>) -> Self {
+        Self {
+            item,
+            named,
+            held,
+            removed: false,
+        }
+    }
+
+    /// A row whose item is gone from the model shown, kept for the
+    /// session's edge or face it is, `held`.
+    fn removed(item: OverlapItem, named: Selected, held: HeldRef) -> Self {
+        Self {
+            item,
+            named: Some(named),
+            held: Some(held),
+            removed: true,
+        }
+    }
+}
+
 impl Doc {
     /// Opens `list`, in a sketch only of its items, outside one only of
     /// the model shown while the cursor picks it. Nothing's hovered till
@@ -139,12 +162,7 @@ impl Doc {
                     }
                     OverlapItem::Origin(_) => (None, None),
                 };
-                Row {
-                    item,
-                    named,
-                    held,
-                    removed: false,
-                }
+                Row::kept(item, named, held)
             })
             .collect();
         self.overlaps = Some(Listed {
@@ -184,12 +202,7 @@ impl Doc {
         {
             // An origin plane is on every model.
             if let OverlapItem::Origin(_) = item {
-                rows.push(Row {
-                    item,
-                    named: None,
-                    held: None,
-                    removed: false,
-                });
+                rows.push(Row::kept(item, None, None));
                 continue;
             }
             let Some(named) = named else {
@@ -200,12 +213,7 @@ impl Doc {
                 if (named.sketch_item())
                     .is_some_and(|item| super::pick::sketch_holds(document, item))
                 {
-                    rows.push(Row {
-                        item,
-                        named: Some(named),
-                        held: None,
-                        removed: false,
-                    });
+                    rows.push(Row::kept(item, Some(named), None));
                 }
                 continue;
             };
@@ -220,23 +228,17 @@ impl Doc {
                             && matches!(row.item, OverlapItem::Model(pick) if pick.target == found.target)
                     });
                     if !again {
-                        rows.push(Row {
-                            item: OverlapItem::Model(found),
-                            named: Some(named),
-                            held,
-                            removed: false,
-                        });
+                        rows.push(Row::kept(OverlapItem::Model(found), Some(named), held));
                     }
                 }
                 // Its item is on no model shown now: the pick kept, as
                 // of this model, never hovered nor clicked.
-                None if held.is_some_and(|held| self.motion_holds(&held)) => rows.push(Row {
-                    item: OverlapItem::Model(Pick { model, ..pick }),
-                    named: Some(named),
-                    held,
-                    removed: true,
-                }),
-                None => {}
+                None => {
+                    if let Some(held) = held.filter(|held| self.motion_holds(held)) {
+                        let item = OverlapItem::Model(Pick { model, ..pick });
+                        rows.push(Row::removed(item, named, held));
+                    }
+                }
             }
         }
         if rows.is_empty() {
