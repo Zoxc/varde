@@ -1334,14 +1334,6 @@ fn clipped(text: String, bytes: usize) -> String {
     }
 }
 
-/// "a" or "an", before `noun`, lowercase.
-fn article(noun: &str) -> &'static str {
-    match noun.starts_with(['a', 'e', 'i', 'o', 'u']) {
-        true => "an",
-        false => "a",
-    }
-}
-
 /// `text`, which may come off the network, made safe to show on one
 /// line: line breaks, tabs and other whitespace controls as spaces,
 /// other controls and the bidi marks, embeddings, overrides and isolates

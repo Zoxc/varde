@@ -2103,7 +2103,7 @@ impl Doc {
                     session.bodies = vec![body];
                 } else if session.faces.body() != Some(body) {
                     let noun = refs::noun(kind);
-                    let a = refs::article(&noun);
+                    let a = crate::words::capital_article(&noun);
                     self.notice = Some(format!(
                         "{a} {noun}'s faces are all on one body: take them out to pick another"
                     ));
@@ -2912,11 +2912,11 @@ pub(crate) enum Reference {
 /// "face", "body") for the `kind` being set up, as words for the status
 /// bar: "Only an edge made before the scale can be picked".
 fn unnamed(why: Unnamed, what: &str, kind: MotionKind) -> Cow<'static, str> {
-    let noun = kind.noun().to_lowercase();
+    let noun = refs::noun(kind);
     match why {
         Unnamed::Missing => format!("That {what} isn't in the model").into(),
         Unnamed::Later => {
-            let article = if what.starts_with('e') { "an" } else { "a" };
+            let article = crate::words::article(what);
             format!("Only {article} {what} made before the {noun} can be picked").into()
         }
         Unnamed::Unclear => {

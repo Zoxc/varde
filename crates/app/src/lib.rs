@@ -15,6 +15,7 @@ mod settings;
 mod toast;
 mod welcome;
 mod when;
+mod words;
 
 use std::path::{Path, PathBuf};
 

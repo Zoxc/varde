@@ -54,7 +54,7 @@ pub(crate) fn sketch(doc: &Doc, args: &SketchQuery) -> Result<Read, ToolReply> {
         return Err(ToolReply::error(format!(
             "\"{}\" is {} {noun}, not a sketch",
             varde_mcp::cut(&args.name, 64),
-            crate::mcp::article(&noun)
+            crate::words::article(&noun)
         )));
     };
     let units = document.units();

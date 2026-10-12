@@ -76,7 +76,7 @@ pub(super) fn set_feature(
     {
         let why = format!(
             "{} {noun} has no field \"{}\": its fields are {}",
-            super::article(&noun),
+            crate::words::article(&noun),
             varde_mcp::cut(key, 64),
             fields.join(", ")
         );

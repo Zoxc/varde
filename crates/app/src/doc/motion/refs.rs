@@ -12,6 +12,8 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
+use crate::words::capital_article;
+
 use glam::DVec3;
 use varde_document::{AxisRef, BodyId, EdgeRef, FaceRef, PlaneRef};
 use varde_view::{
@@ -148,7 +150,7 @@ impl<R: Ref> Refs<R> {
         let limit = R::limit(kind);
         if self.refs.len() >= limit {
             let (noun, what) = (noun(kind), R::NOUN);
-            let a = article(&noun);
+            let a = capital_article(&noun);
             return Err(format!("{a} {noun} takes at most {limit} {what}s").into());
         }
         self.refs.insert(at, found);
@@ -245,16 +247,6 @@ pub(super) fn noun(kind: MotionKind) -> String {
     kind.noun().to_lowercase()
 }
 
-/// The article starting a sentence about a `noun`: "A shell", "An
-/// offset".
-pub(super) fn article(noun: &str) -> &'static str {
-    if noun.starts_with(['a', 'e', 'i', 'o', 'u']) {
-        "An"
-    } else {
-        "A"
-    }
-}
-
 impl MotionSession {
     /// Keeps its bodies those its references are on (a blend's, a face
     /// session's) as the session's own rules have it.
@@ -326,7 +318,7 @@ impl Doc {
             let what = R::NOUN;
             return Err(format!(
                 "{} {}'s {what}s are all on one body: pick {what}s of {name}",
-                article(&noun(kind)),
+                capital_article(&noun(kind)),
                 noun(kind)
             )
             .into());

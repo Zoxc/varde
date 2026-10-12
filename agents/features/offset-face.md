@@ -107,7 +107,7 @@ menu), so the panel is built in the style of the mock's shell panel.
 - **Faces**: as a shell's (`MotionPick::Faces`): a click picks or takes
   out, named as of the feature, all on the first face's body
   ("An offset face's faces are all on one body: pick faces of Body 1"; the
-  messages' article follows the noun, `refs::article`), an edge "Only a
+  messages' article follows the noun, `words::capital_article`), an edge "Only a
   face can be moved", at most `MAX_OFFSET_FACES`, sorted, lit as
   selected, a row hovered lighting its face. Its body is only its
   faces' (`faces::takes_body` is the shell's alone): with none it has
