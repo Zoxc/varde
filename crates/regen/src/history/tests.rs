@@ -7,11 +7,15 @@ use varde_document::{
     OriginPlane, Plane, Targets,
 };
 use varde_expr::Value;
+use varde_kernel_compat::measure::{EdgeShape, edge_shape};
 use varde_kernel_compat::mesh::FaceKey;
-use varde_kernel_compat::{Frame, Solid, Tolerance};
+use varde_kernel_compat::patch::Conic2;
+use varde_kernel_compat::{Frame, Loop, Segment, Solid, Tolerance};
 use varde_sketch::{Curve, Sketch};
 
+use super::revolve::{Axis, AxisError, axis_frame, axis_line, edge_ends};
 use super::*;
+use crate::why::Doing;
 
 /// The example's extrude.
 pub(crate) fn example_extrude(document: &Document) -> Extrude {

@@ -83,7 +83,8 @@ still start from `Document::default()`, empty: the example is for tests.
 
 ## Regeneration (`crates/regen`)
 
-`varde_regen::evaluate(document, cache)` (`src/history.rs`) runs the
+`varde_regen::evaluate(document, cache)` (`src/history.rs`; the extrude/revolve/sweep/loft tool run
+in `history/run.rs`, the revolve axis in `history/revolve.rs`) runs the
 features in order and gives an `Evaluation`: each body's solid
 (`BodySolid`, in the order they were made), the bodies joins merged into
 others (`merged`, below) and the features that failed, with why and

@@ -232,7 +232,7 @@ fn moved(
 /// through the origin. An edge or a face is looked for on its body
 /// through [`Evaluation::holder`] (a body with no solid is "gone") and
 /// found on its solid's topology by its names and point, as a revolve's
-/// axis edge is ([`super::edge_axis`]): an edge must be straight (the
+/// axis edge is ([`super::revolve::edge_axis`]): an edge must be straight (the
 /// line through it, directed as [`EdgeRef`] says) or round (its circle's
 /// axis through its centre, turning the way the edge runs as so
 /// directed); a face must be round, a cylinder, cone, torus or other

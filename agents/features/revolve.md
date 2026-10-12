@@ -87,7 +87,8 @@ pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
 
 ## Regeneration
 
-`crates/regen/src/history.rs`. A revolve runs as an extrude does (`Run`,
+`crates/regen/src/history/revolve.rs` (the tool run itself in
+`history/run.rs`). A revolve runs as an extrude does (`Run`,
 with a `Shape` of either kind): its regions are found again and merged
 into a kernel profile in the sketch's coordinates, then:
 

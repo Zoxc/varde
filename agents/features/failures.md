@@ -1,6 +1,7 @@
 # Failures and where they are
 
-`crates/regen/src/history.rs`, `crates/regen/src/error_geometry.rs`.
+`crates/regen/src/history.rs`, `crates/regen/src/history/evidence.rs`,
+`crates/regen/src/error_geometry.rs`.
 A feature that fails is a `FeatureFailure { feature, message, geometry:
 Option<Arc<ErrorGeometry>> }` in `Evaluation::failed` and
 `Response::Regenerated::failed`, in the document's order; a failing
