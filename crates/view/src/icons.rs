@@ -21,10 +21,17 @@ use crate::theme::{self, IconCategory, IconTone, Palette};
 /// Windows `.ico`.
 pub const LOGO_SVG: &str = include_str!("../../../assets/logo.svg");
 
-/// Declares [`Icon`] and its SVG elements from one list, so each icon is
-/// named once and [`Icon::ALL`] follows the declaration order.
+/// Declares [`Icon`], its SVG elements and its [`IconCategory`] if it has
+/// one from one list, so each icon is named once and [`Icon::ALL`]
+/// follows the declaration order.
 macro_rules! icons {
-    ($($name:ident => $paths:expr,)*) => {
+    (@category $category:ident) => {
+        Some(IconCategory::$category)
+    };
+    (@category) => {
+        None
+    };
+    ($($name:ident $(: $category:ident)? => $paths:expr,)*) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub enum Icon {
             $($name,)*
@@ -41,13 +48,22 @@ macro_rules! icons {
                     $(Icon::$name => $paths,)*
                 }
             }
+
+            /// What the icon stands for, as the icon mock files it, if
+            /// it's a tool's or an object's; the rest are drawn in the
+            /// text colour.
+            pub fn category(self) -> Option<IconCategory> {
+                match self {
+                    $(Icon::$name => icons!(@category $($category)?),)*
+                }
+            }
         }
     };
 }
 
 icons! {
     Plus => r#"<path d="M12 5v14M5 12h14"/>"#,
-    Folder => r#"<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>"#,
+    Folder: File => r#"<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>"#,
     Chev => r#"<path d="M7 10l5 5 5-5"/>"#,
     // The chevron turned up, for moving a row up a list.
     ChevUp => r#"<path d="M7 14l5-5 5 5"/>"#,
@@ -64,15 +80,15 @@ icons! {
     Gear => r#"<path stroke-linejoin="round" d="M10.03 4.66L10.42 2.53L13.58 2.53L13.97 4.66A7.6 7.6 0 0 1 17.37 6.63L17.37 6.63L19.41 5.89L20.99 8.64L19.34 10.03A7.6 7.6 0 0 1 19.34 13.97L19.34 13.97L20.99 15.36L19.41 18.11L17.37 17.37A7.6 7.6 0 0 1 13.97 19.34L13.97 19.34L13.58 21.47L10.42 21.47L10.03 19.34A7.6 7.6 0 0 1 6.63 17.37L6.63 17.37L4.59 18.11L3.01 15.36L4.66 13.97A7.6 7.6 0 0 1 4.66 10.03L4.66 10.03L3.01 8.64L4.59 5.89L6.63 6.63A7.6 7.6 0 0 1 10.03 4.66z"/><circle cx="12" cy="12" r="3"/>"#,
     Ortho => r#"<path d="M3 9h12v12H3z"/><path d="M8 4h12v12h-5M3 9l5-5M15 9l5-5M15 21l5-5"/>"#,
     Persp => r#"<path d="M3 9h12v12H3z"/><path d="M10 4h8v8h-3M3 9l7-5M15 9l3-5M15 21l3-9"/>"#,
-    Body => r#"<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>"#,
+    Body: Solid => r#"<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>"#,
     Eye => r#"<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/>"#,
     EyeOff => r#"<path d="M3 3l18 18"/><path d="M10.6 6.1A9 9 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.7 3.3M6.6 7.6C4 9.3 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3.4-.7"/>"#,
     Trash => r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#,
     // A circling arrow, for putting a setting back to its default.
     Reset => r#"<path d="M4 12a8 8 0 1 0 2.3-5.6"/><path d="M4 4v4h4"/>"#,
     Rollback => r#"<path d="M4 4v16"/><path d="M20 12H8M12 8l-4 4 4 4"/>"#,
-    Save => r#"<path d="M5 4h11l3 3v13H5z"/><path class="a" d="M8 4v5h7V4M8 20v-6h8v6"/>"#,
-    Export => r#"<path class="a" d="M12 15V3M8 7l4-4 4 4"/><path d="M4 16v4h16v-4"/>"#,
+    Save: File => r#"<path d="M5 4h11l3 3v13H5z"/><path class="a" d="M8 4v5h7V4M8 20v-6h8v6"/>"#,
+    Export: File => r#"<path class="a" d="M12 15V3M8 7l4-4 4 4"/><path d="M4 16v4h16v-4"/>"#,
     Check => r#"<path d="M5 12.5l4.5 4.5L19 7"/>"#,
     // Not in the mocks: two sheets, for copying a value.
     Copy => r#"<rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V5.5a1 1 0 0 0-1-1h-9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3"/>"#,
@@ -85,104 +101,104 @@ icons! {
     // Not in the mocks: renaming, a name's field with the text cursor in it.
     Rename => r#"<path d="M12 8H5a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h7"/><path class="a" d="M16 5v14M14 5h4M14 19h4"/>"#,
     // The tools, from the icon mock.
-    Sketch => r#"<path class="r" d="M4 20h16"/><path class="t" d="M14.5 4.5l5 5L9 20H4v-5z"/><path class="a" d="M6 13l5 5"/>"#,
-    Extrude => r#"<path class="t" d="M4 15l8 4 8-4-8-4z"/><path class="a" d="M12 11V3M9 6l3-3 3 3"/>"#,
-    Revolve => r#"<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path class="a" d="M17.5 2.5v4h4"/><path class="r" d="M12 7v10" stroke-dasharray="2 2"/>"#,
-    Sweep => r#"<path class="r" d="M4 18c4 0 5-12 12-12"/><circle class="t" cx="17" cy="6" r="3"/><circle class="af" cx="4.5" cy="18" r="1.8"/>"#,
+    Sketch: Sketch => r#"<path class="r" d="M4 20h16"/><path class="t" d="M14.5 4.5l5 5L9 20H4v-5z"/><path class="a" d="M6 13l5 5"/>"#,
+    Extrude: Solid => r#"<path class="t" d="M4 15l8 4 8-4-8-4z"/><path class="a" d="M12 11V3M9 6l3-3 3 3"/>"#,
+    Revolve: Solid => r#"<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path class="a" d="M17.5 2.5v4h4"/><path class="r" d="M12 7v10" stroke-dasharray="2 2"/>"#,
+    Sweep: Solid => r#"<path class="r" d="M4 18c4 0 5-12 12-12"/><circle class="t" cx="17" cy="6" r="3"/><circle class="af" cx="4.5" cy="18" r="1.8"/>"#,
     // The model mock's loft: a slab and a disc above it, joined by two
     // rulings.
-    Loft => r#"<rect class="t" x="3" y="15" width="10" height="5" rx="1"/><circle class="t" cx="16" cy="6" r="3.5"/><path class="a" d="M3.5 14.5l9-8.5M13 15l6.3-6.8"/>"#,
-    Plane => r#"<path class="r" d="M3 20l4-5h14l-4 5z"/><path class="t" d="M3 11l4-5h14l-4 5z"/><path class="a" d="M12 17.5V9.5M10 11.5l2-2 2 2"/>"#,
-    Line => r#"<path d="M6 18L18 6"/><circle class="a" cx="5" cy="19" r="1.6"/><circle class="a" cx="19" cy="5" r="1.6"/>"#,
-    Circle => r#"<circle class="t" cx="12" cy="12" r="8"/><path class="r" d="M12 12l5.66-5.66" stroke-dasharray="2 2"/><circle class="af" cx="12" cy="12" r="1.5"/><circle class="af" cx="17.66" cy="6.34" r="1.5"/>"#,
-    Arc => r#"<path d="M4 18A9 9 0 0 1 20 18"/><circle class="af" cx="4" cy="18" r="1.5"/><circle class="af" cx="12" cy="10" r="1.5"/><circle class="af" cx="20" cy="18" r="1.5"/>"#,
-    Rectangle => r#"<rect class="t" x="4" y="6" width="16" height="12" rx="1"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="18" r="1.5"/>"#,
-    Polygon => r#"<path class="t" d="M12 3.5l8 5.8-3 9.2H7l-3-9.2z"/><path class="r" d="M12 12.2V5.5" stroke-dasharray="2 2"/><circle class="af" cx="12" cy="12.2" r="1.4"/><circle class="af" cx="12" cy="3.5" r="1.4"/>"#,
-    Spline => r#"<path d="M3 17c3-9 6-9 9-5s6 4 9-5"/><circle class="af" cx="3" cy="17" r="1.4"/><circle class="af" cx="12" cy="12" r="1.4"/><circle class="af" cx="21" cy="7" r="1.4"/>"#,
-    Point => r#"<path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3"/><circle class="af" cx="12" cy="12" r="2"/>"#,
-    Constrain => r#"<rect class="t" x="5" y="11" width="14" height="9" rx="1.5"/><path class="a" d="M8 11V8a4 4 0 0 1 8 0v3"/>"#,
-    Coincident => r#"<path d="M4 20L20 4M4 4l16 16"/><circle class="af" cx="12" cy="12" r="2.6"/>"#,
-    Horizontal => r#"<path d="M7 5v14M17 5v14"/><path class="a" d="M7 12h10"/>"#,
-    Vertical => r#"<path d="M5 5l7 14 7-14"/><path class="a" d="M12 4v9"/>"#,
-    Parallel => r#"<path d="M6 20L12 4M13 20l6-16"/><path class="a" d="M9.5 7l2.5-3 1 3.7M16.5 7l2.5-3 1 3.7"/>"#,
-    Perpendicular => r#"<path d="M4 20h16M12 20V5"/><path class="a" d="M12 15.5h4.5V20"/>"#,
-    Tangent => r#"<circle cx="10" cy="13" r="6"/><path d="M3 7h18"/><circle class="af" cx="10" cy="7" r="2"/>"#,
-    Smooth => r#"<path d="M3 18c6 0 9-12 18-12"/><path class="a" d="M7 17l-1.2-3M11 14l-2.4-2.2M15 10l-1.8-3"/>"#,
-    Equal => r#"<path d="M5 9h14M5 15h14"/><path class="a" d="M11 6.5l2 5M11 12.5l2 5"/>"#,
-    Concentric => r#"<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle class="af" cx="12" cy="12" r="1.6"/>"#,
-    Midpoint => r#"<path d="M3 17h18"/><path class="a ta" d="M12 16.5l-3.5-6h7z"/>"#,
-    Symmetric => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><circle cx="5.5" cy="12" r="2"/><circle cx="18.5" cy="12" r="2"/><path class="a" d="M8 9.5l1.5 2.5L8 14.5M16 9.5L14.5 12l1.5 2.5"/>"#,
-    Fix => r#"<circle class="a ta" cx="12" cy="7" r="2.6"/><path d="M12 9.6V15M5 15h14"/><path class="r" d="M7.5 15l-2 4M11 15l-2 4M14.5 15l-2 4M18 15l-2 4"/>"#,
-    Dimension => r#"<path class="r" d="M4 7v10M20 7v10"/><path d="M5 12h14"/><path class="a" d="M7.5 9.5L5 12l2.5 2.5M16.5 9.5L19 12l-2.5 2.5"/>"#,
-    Trim => r#"<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path class="a" d="M8.2 8.4L20 17M8.2 15.6L20 7"/>"#,
-    Extend => r#"<path d="M3 19l7-7"/><path class="a" d="M10 12l6.5-6.5" stroke-dasharray="2 2.2"/><path class="r" d="M13 2l8 8"/><circle class="af" cx="16.5" cy="5.5" r="1.4"/>"#,
-    Mirror => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 9L3 19h6z"/><path d="M15 9l6 10h-6z"/><path class="a" d="M7 6.5C9 3 15 3 17 6.5M17.3 3.8L17 6.5l-2.6-.6"/>"#,
-    Offset => r#"<path class="r" d="M4 20c2-7 7-12 16-13"/><path d="M3 13c2-4 6-7 11-7.8"/><path class="a" d="M10.5 14.5L8 11M7.5 13.3L8 11l2.4.2"/>"#,
+    Loft: Solid => r#"<rect class="t" x="3" y="15" width="10" height="5" rx="1"/><circle class="t" cx="16" cy="6" r="3.5"/><path class="a" d="M3.5 14.5l9-8.5M13 15l6.3-6.8"/>"#,
+    Plane: Construction => r#"<path class="r" d="M3 20l4-5h14l-4 5z"/><path class="t" d="M3 11l4-5h14l-4 5z"/><path class="a" d="M12 17.5V9.5M10 11.5l2-2 2 2"/>"#,
+    Line: Sketch => r#"<path d="M6 18L18 6"/><circle class="a" cx="5" cy="19" r="1.6"/><circle class="a" cx="19" cy="5" r="1.6"/>"#,
+    Circle: Sketch => r#"<circle class="t" cx="12" cy="12" r="8"/><path class="r" d="M12 12l5.66-5.66" stroke-dasharray="2 2"/><circle class="af" cx="12" cy="12" r="1.5"/><circle class="af" cx="17.66" cy="6.34" r="1.5"/>"#,
+    Arc: Sketch => r#"<path d="M4 18A9 9 0 0 1 20 18"/><circle class="af" cx="4" cy="18" r="1.5"/><circle class="af" cx="12" cy="10" r="1.5"/><circle class="af" cx="20" cy="18" r="1.5"/>"#,
+    Rectangle: Sketch => r#"<rect class="t" x="4" y="6" width="16" height="12" rx="1"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="18" r="1.5"/>"#,
+    Polygon: Sketch => r#"<path class="t" d="M12 3.5l8 5.8-3 9.2H7l-3-9.2z"/><path class="r" d="M12 12.2V5.5" stroke-dasharray="2 2"/><circle class="af" cx="12" cy="12.2" r="1.4"/><circle class="af" cx="12" cy="3.5" r="1.4"/>"#,
+    Spline: Sketch => r#"<path d="M3 17c3-9 6-9 9-5s6 4 9-5"/><circle class="af" cx="3" cy="17" r="1.4"/><circle class="af" cx="12" cy="12" r="1.4"/><circle class="af" cx="21" cy="7" r="1.4"/>"#,
+    Point: Sketch => r#"<path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3"/><circle class="af" cx="12" cy="12" r="2"/>"#,
+    Constrain: Constraint => r#"<rect class="t" x="5" y="11" width="14" height="9" rx="1.5"/><path class="a" d="M8 11V8a4 4 0 0 1 8 0v3"/>"#,
+    Coincident: Constraint => r#"<path d="M4 20L20 4M4 4l16 16"/><circle class="af" cx="12" cy="12" r="2.6"/>"#,
+    Horizontal: Constraint => r#"<path d="M7 5v14M17 5v14"/><path class="a" d="M7 12h10"/>"#,
+    Vertical: Constraint => r#"<path d="M5 5l7 14 7-14"/><path class="a" d="M12 4v9"/>"#,
+    Parallel: Constraint => r#"<path d="M6 20L12 4M13 20l6-16"/><path class="a" d="M9.5 7l2.5-3 1 3.7M16.5 7l2.5-3 1 3.7"/>"#,
+    Perpendicular: Constraint => r#"<path d="M4 20h16M12 20V5"/><path class="a" d="M12 15.5h4.5V20"/>"#,
+    Tangent: Constraint => r#"<circle cx="10" cy="13" r="6"/><path d="M3 7h18"/><circle class="af" cx="10" cy="7" r="2"/>"#,
+    Smooth: Constraint => r#"<path d="M3 18c6 0 9-12 18-12"/><path class="a" d="M7 17l-1.2-3M11 14l-2.4-2.2M15 10l-1.8-3"/>"#,
+    Equal: Constraint => r#"<path d="M5 9h14M5 15h14"/><path class="a" d="M11 6.5l2 5M11 12.5l2 5"/>"#,
+    Concentric: Constraint => r#"<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle class="af" cx="12" cy="12" r="1.6"/>"#,
+    Midpoint: Constraint => r#"<path d="M3 17h18"/><path class="a ta" d="M12 16.5l-3.5-6h7z"/>"#,
+    Symmetric: Constraint => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><circle cx="5.5" cy="12" r="2"/><circle cx="18.5" cy="12" r="2"/><path class="a" d="M8 9.5l1.5 2.5L8 14.5M16 9.5L14.5 12l1.5 2.5"/>"#,
+    Fix: Constraint => r#"<circle class="a ta" cx="12" cy="7" r="2.6"/><path d="M12 9.6V15M5 15h14"/><path class="r" d="M7.5 15l-2 4M11 15l-2 4M14.5 15l-2 4M18 15l-2 4"/>"#,
+    Dimension: Dimension => r#"<path class="r" d="M4 7v10M20 7v10"/><path d="M5 12h14"/><path class="a" d="M7.5 9.5L5 12l2.5 2.5M16.5 9.5L19 12l-2.5 2.5"/>"#,
+    Trim: Modify => r#"<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path class="a" d="M8.2 8.4L20 17M8.2 15.6L20 7"/>"#,
+    Extend: Modify => r#"<path d="M3 19l7-7"/><path class="a" d="M10 12l6.5-6.5" stroke-dasharray="2 2.2"/><path class="r" d="M13 2l8 8"/><circle class="af" cx="16.5" cy="5.5" r="1.4"/>"#,
+    Mirror: Modify => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 9L3 19h6z"/><path d="M15 9l6 10h-6z"/><path class="a" d="M7 6.5C9 3 15 3 17 6.5M17.3 3.8L17 6.5l-2.6-.6"/>"#,
+    Offset: Modify => r#"<path class="r" d="M4 20c2-7 7-12 16-13"/><path d="M3 13c2-4 6-7 11-7.8"/><path class="a" d="M10.5 14.5L8 11M7.5 13.3L8 11l2.4.2"/>"#,
     // `notes/ui-mock-fillet-chamfer.html`'s option B: the fillet shows its
     // centre and radii, the chamfer hatches the corner it removes.
-    Fillet => r#"<path d="M4 20v-6M14 4h6"/><path class="r" d="M14 14H4M14 14V4" stroke-dasharray="1.6 2"/><path class="a" d="M4 14a10 10 0 0 1 10-10"/><circle class="af" cx="4" cy="14" r="1.5"/><circle class="af" cx="14" cy="4" r="1.5"/><circle class="af" cx="14" cy="14" r="1.3"/>"#,
-    Chamfer => r#"<path d="M4 20v-6M14 4h6"/><path class="r" d="M4 14V4h10" stroke-dasharray="1.6 2"/><path class="r" stroke-width=".9" d="M4 10l6-6M4 6l2-2"/><path class="a" d="M4 14l10-10"/><circle class="af" cx="4" cy="14" r="1.5"/><circle class="af" cx="14" cy="4" r="1.5"/>"#,
-    Project => r#"<path class="r" d="M4 7l8-4 8 4-8 4z"/><path class="a" d="M12 11v6" stroke-dasharray="2 2"/><path class="a" d="M10 15l2 2 2-2"/><path d="M5 20h14"/>"#,
-    Intersect => r#"<path d="M3 18C8 8 13 6 21 5"/><path d="M3 6c6 1 11 5 18 13"/><circle class="af" cx="11" cy="9.3" r="2"/>"#,
-    Measure => r#"<path class="t" d="M3 17L17 3l4 4L7 21z"/><path class="a" d="M7 13l2 2M10 10l2 2M13 7l2 2"/>"#,
+    Fillet: Modify => r#"<path d="M4 20v-6M14 4h6"/><path class="r" d="M14 14H4M14 14V4" stroke-dasharray="1.6 2"/><path class="a" d="M4 14a10 10 0 0 1 10-10"/><circle class="af" cx="4" cy="14" r="1.5"/><circle class="af" cx="14" cy="4" r="1.5"/><circle class="af" cx="14" cy="14" r="1.3"/>"#,
+    Chamfer: Modify => r#"<path d="M4 20v-6M14 4h6"/><path class="r" d="M4 14V4h10" stroke-dasharray="1.6 2"/><path class="r" stroke-width=".9" d="M4 10l6-6M4 6l2-2"/><path class="a" d="M4 14l10-10"/><circle class="af" cx="4" cy="14" r="1.5"/><circle class="af" cx="14" cy="4" r="1.5"/>"#,
+    Project: Modify => r#"<path class="r" d="M4 7l8-4 8 4-8 4z"/><path class="a" d="M12 11v6" stroke-dasharray="2 2"/><path class="a" d="M10 15l2 2 2-2"/><path d="M5 20h14"/>"#,
+    Intersect: Modify => r#"<path d="M3 18C8 8 13 6 21 5"/><path d="M3 6c6 1 11 5 18 13"/><circle class="af" cx="11" cy="9.3" r="2"/>"#,
+    Measure: Inspect => r#"<path class="t" d="M3 17L17 3l4 4L7 21z"/><path class="a" d="M7 13l2 2M10 10l2 2M13 7l2 2"/>"#,
     // Two overlapping boxes; the mock's tinted overlap is a fill, which
     // the line-only set leaves out.
-    Combine => r#"<rect x="3" y="3" width="11" height="11" rx="1.5"/><rect x="10" y="10" width="11" height="11" rx="1.5"/>"#,
+    Combine: Modify => r#"<rect x="3" y="3" width="11" height="11" rx="1.5"/><rect x="10" y="10" width="11" height="11" rx="1.5"/>"#,
     // The model mock's: a box with arrows four ways; a body mirrored
     // across a dashed plane.
-    Move => r#"<rect class="t" x="9" y="9" width="6" height="6" rx="1"/><path class="a" d="M12 3v3.5M12 17.5V21M3 12h3.5M17.5 12H21M10 5l2-2 2 2M10 19l2 2 2-2M5 10l-2 2 2 2M19 10l2 2-2 2"/>"#,
-    BMirror => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 8L3.5 10.5v7L9 20z"/><path d="M15 8l5.5 2.5v7L15 20z"/><path class="a" d="M7 5.5C9 2.5 15 2.5 17 5.5M17.4 2.9L17 5.5l-2.6-.5"/>"#,
+    Move: Solid => r#"<rect class="t" x="9" y="9" width="6" height="6" rx="1"/><path class="a" d="M12 3v3.5M12 17.5V21M3 12h3.5M17.5 12H21M10 5l2-2 2 2M10 19l2 2 2-2M5 10l-2 2 2 2M19 10l2 2-2 2"/>"#,
+    BMirror: Solid => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 8L3.5 10.5v7L9 20z"/><path d="M15 8l5.5 2.5v7L15 20z"/><path class="a" d="M7 5.5C9 2.5 15 2.5 17 5.5M17.4 2.9L17 5.5l-2.6-.5"/>"#,
     // The mock's patterns: copies in a row along an arrow, the last
     // dashed; copies round a dashed circle, one dashed.
-    LPattern => r#"<rect class="t" x="2.5" y="7" width="5" height="6" rx="1"/><rect x="9.5" y="7" width="5" height="6" rx="1"/><rect x="16.5" y="7" width="5" height="6" rx="1" stroke-dasharray="2 1.6"/><path class="a" d="M4 18h15M17 16l2 2-2 2"/>"#,
-    CPattern => r#"<circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="2 2.2"/><rect class="t" x="10" y="2.5" width="4" height="4" rx="1"/><rect x="17.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="17.5" width="4" height="4" rx="1"/><rect x="2.5" y="10" width="4" height="4" rx="1" stroke-dasharray="1.6 1.4"/>"#,
+    LPattern: Solid => r#"<rect class="t" x="2.5" y="7" width="5" height="6" rx="1"/><rect x="9.5" y="7" width="5" height="6" rx="1"/><rect x="16.5" y="7" width="5" height="6" rx="1" stroke-dasharray="2 1.6"/><path class="a" d="M4 18h15M17 16l2 2-2 2"/>"#,
+    CPattern: Solid => r#"<circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="2 2.2"/><rect class="t" x="10" y="2.5" width="4" height="4" rx="1"/><rect x="17.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="17.5" width="4" height="4" rx="1"/><rect x="2.5" y="10" width="4" height="4" rx="1" stroke-dasharray="1.6 1.4"/>"#,
     // A box grown from a smaller one, an arrow out of its corner.
-    Scale => r#"<rect class="r" x="3" y="11" width="10" height="10" rx="1"/><path class="a" d="M10 14l10-10M14 4h6v6"/>"#,
+    Scale: Modify => r#"<rect class="r" x="3" y="11" width="10" height="10" rx="1"/><path class="a" d="M10 14l10-10M14 4h6v6"/>"#,
     // The model mock's fillet: a block with its top edge rounded off,
     // the round in the accent with two of its rulings.
-    BFillet => r#"<path d="M7.67 10L3.34 7.5v9L12 21.5v-4M3.34 7.5L12 2.5l4.33 2.5M12 21.5l8.66-5v-4"/><path class="a" d="M7.67 10C10.06 11.38 12 14.74 12 17.5M16.33 5C18.72 6.38 20.66 9.74 20.66 12.5M16.33 5L7.67 10M20.66 12.5L12 17.5"/><path class="a" stroke-width="1" opacity=".75" d="M18.49 6.92L9.84 11.92M20.08 9.67L11.42 14.67"/>"#,
+    BFillet: Modify => r#"<path d="M7.67 10L3.34 7.5v9L12 21.5v-4M3.34 7.5L12 2.5l4.33 2.5M12 21.5l8.66-5v-4"/><path class="a" d="M7.67 10C10.06 11.38 12 14.74 12 17.5M16.33 5C18.72 6.38 20.66 9.74 20.66 12.5M16.33 5L7.67 10M20.66 12.5L12 17.5"/><path class="a" stroke-width="1" opacity=".75" d="M18.49 6.92L9.84 11.92M20.08 9.67L11.42 14.67"/>"#,
     // The model mock's chamfer: a block with its top edge cut off,
     // the new face in the accent.
-    BChamfer => r#"<path d="M7.67 10L3.34 7.5v9L12 21.5v-4M3.34 7.5L12 2.5l4.33 2.5M12 21.5l8.66-5v-4"/><path class="a" d="M7.67 10L12 17.5M16.33 5l4.33 7.5M16.33 5L7.67 10M20.66 12.5L12 17.5"/>"#,
+    BChamfer: Modify => r#"<path d="M7.67 10L3.34 7.5v9L12 21.5v-4M3.34 7.5L12 2.5l4.33 2.5M12 21.5l8.66-5v-4"/><path class="a" d="M7.67 10L12 17.5M16.33 5l4.33 7.5M16.33 5L7.67 10M20.66 12.5L12 17.5"/>"#,
     // The model mock's shell: a box with a smaller one inside it, the
     // hollow in the accent.
-    Shell => r#"<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M8 9.5l4-2 4 2v5l-4 2-4-2z"/>"#,
+    Shell: Modify => r#"<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M8 9.5l4-2 4 2v5l-4 2-4-2z"/>"#,
     // The model mock's offset face: a face with a smaller one inside it
     // (the face it was), an arrow pushing it out.
-    OffsetFace => r#"<rect class="t" x="3" y="3" width="18" height="18" rx="2"/><rect class="r" x="8" y="8" width="8" height="8" rx="1"/><path class="a" d="M16.5 12h2.5M17.5 10.5L19 12l-1.5 1.5"/>"#,
+    OffsetFace: Modify => r#"<rect class="t" x="3" y="3" width="18" height="18" rx="2"/><rect class="r" x="8" y="8" width="8" height="8" rx="1"/><path class="a" d="M16.5 12h2.5M17.5 10.5L19 12l-1.5 1.5"/>"#,
     // The icon mock's draft: a wall leaning in from its foot, the
     // pull dashed through it, the drafted side in the accent.
-    Draft => r#"<path class="r" d="M12 2v20" stroke-dasharray="2 2"/><path class="t" d="M6 20L9 4h6l3 16z"/><path class="a" d="M6 20L9 4"/>"#,
+    Draft: Modify => r#"<path class="r" d="M12 2v20" stroke-dasharray="2 2"/><path class="t" d="M6 20L9 4h6l3 16z"/><path class="a" d="M6 20L9 4"/>"#,
     // The model mock's parameters: names down the left, their values in
     // boxes, the boxes in the accent.
-    Params => r#"<path d="M3.5 6.5h5M3.5 12h5M3.5 17.5h5"/><rect class="a" x="11.5" y="4.5" width="9" height="4" rx="1.2"/><rect class="a" x="11.5" y="10" width="9" height="4" rx="1.2"/><rect class="a" x="11.5" y="15.5" width="9" height="4" rx="1.2"/>"#,
+    Params: Modify => r#"<path d="M3.5 6.5h5M3.5 12h5M3.5 17.5h5"/><rect class="a" x="11.5" y="4.5" width="9" height="4" rx="1.2"/><rect class="a" x="11.5" y="10" width="9" height="4" rx="1.2"/><rect class="a" x="11.5" y="15.5" width="9" height="4" rx="1.2"/>"#,
     // The icon mock's split body: a box cut by a dashed plane.
-    Split => r#"<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M2 15L22 9" stroke-dasharray="2.5 2"/>"#,
-    Align => r#"<path class="a" d="M4 3v18"/><rect class="t" x="7" y="5" width="13" height="5" rx="1"/><rect x="7" y="14" width="8" height="5" rx="1"/>"#,
+    Split: Modify => r#"<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M2 15L22 9" stroke-dasharray="2.5 2"/>"#,
+    Align: Solid => r#"<path class="a" d="M4 3v18"/><rect class="t" x="7" y="5" width="13" height="5" rx="1"/><rect x="7" y="14" width="8" height="5" rx="1"/>"#,
     // Not in the icon mock: the offset constraint's nested squares, arrows
     // each way, a handle on a curve, a comb's teeth over one.
-    OffsetConstraint => r#"<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>"#,
-    Convert => r#"<path d="M4 8h14l-3-3M20 16H6l3 3"/>"#,
-    Handles => r#"<path d="M3 19c3-8 8-12 18-13"/><path d="M4.5 9.5l10 4"/><circle cx="4.5" cy="9.5" r="1.5"/><circle cx="14.5" cy="13.5" r="1.5"/>"#,
+    OffsetConstraint: Constraint => r#"<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>"#,
+    Convert: Sketch => r#"<path d="M4 8h14l-3-3M20 16H6l3 3"/>"#,
+    Handles: Sketch => r#"<path d="M3 19c3-8 8-12 18-13"/><path d="M4.5 9.5l10 4"/><circle cx="4.5" cy="9.5" r="1.5"/><circle cx="14.5" cy="13.5" r="1.5"/>"#,
     // A loop joined at a point, and one left open at it.
-    CloseCurve => r#"<path d="M12 4c5 0 8 3 8 7s-4 9-8 9-8-4-8-9c0-3 3-7 8-7z"/><circle cx="12" cy="4" r="1.5"/>"#,
-    OpenCurve => r#"<path d="M14.5 4.5c3.5 1 5.5 3.5 5.5 6.5 0 5-4 9-8 9s-8-4-8-9c0-3 2-5.5 5.5-6.5"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="14.5" cy="4.5" r="1.5"/>"#,
-    Comb => r#"<path d="M3 18c4-9 14-9 18 0"/><path d="M6.5 13.4L5 9.5M12 11.3V6.5M17.5 13.4L19 9.5"/>"#,
+    CloseCurve: Sketch => r#"<path d="M12 4c5 0 8 3 8 7s-4 9-8 9-8-4-8-9c0-3 3-7 8-7z"/><circle cx="12" cy="4" r="1.5"/>"#,
+    OpenCurve: Sketch => r#"<path d="M14.5 4.5c3.5 1 5.5 3.5 5.5 6.5 0 5-4 9-8 9s-8-4-8-9c0-3 2-5.5 5.5-6.5"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="14.5" cy="4.5" r="1.5"/>"#,
+    Comb: Sketch => r#"<path d="M3 18c4-9 14-9 18 0"/><path d="M6.5 13.4L5 9.5M12 11.3V6.5M17.5 13.4L19 9.5"/>"#,
     // A curve with a point on it, a plus or a minus by it.
-    InsertPoint => r#"<path d="M3 19c3-9 9-12 12-12"/><circle cx="9.5" cy="10.5" r="1.5"/><path class="a" d="M18 3v6M15 6h6"/>"#,
-    RemovePoint => r#"<path d="M3 19c3-9 9-12 12-12"/><circle cx="9.5" cy="10.5" r="1.5"/><path class="a" d="M15 6h6"/>"#,
+    InsertPoint: Sketch => r#"<path d="M3 19c3-9 9-12 12-12"/><circle cx="9.5" cy="10.5" r="1.5"/><path class="a" d="M18 3v6M15 6h6"/>"#,
+    RemovePoint: Sketch => r#"<path d="M3 19c3-9 9-12 12-12"/><circle cx="9.5" cy="10.5" r="1.5"/><path class="a" d="M15 6h6"/>"#,
     // The tool sets on the rail, the mock's `cat-*`: what each leaves
     // behind.
-    CatCreate => r#"<path class="r" d="M5 17.5a7 3 0 0 1 14 0" stroke-dasharray="1.6 1.8"/><path d="M5 6.5v11a7 3 0 0 0 14 0v-11"/><ellipse class="a" cx="12" cy="6.5" rx="7" ry="3"/>"#,
-    CatDraw => r#"<path d="M5 20V10a7 7 0 0 1 14 0v10z"/><circle class="af" cx="5" cy="20" r="1.5"/><circle class="af" cx="19" cy="20" r="1.5"/><circle class="af" cx="12" cy="3" r="1.5"/>"#,
-    CatModify => r#"<path d="M10.5 9H3.5v11h12v-6M3.5 9l5-5h7M20.5 9v6l-5 5M10.5 9l5-5M15.5 14l5-5"/><path class="a" d="M10.5 9a5 5 0 0 1 5 5M15.5 4a5 5 0 0 1 5 5"/>"#,
-    CatSketchModify => r#"<path d="M2.5 9H15v12.5"/><path class="r" d="M19.5 9h2"/><path class="a" d="M17.25 5.5v7"/>"#,
+    CatCreate: Solid => r#"<path class="r" d="M5 17.5a7 3 0 0 1 14 0" stroke-dasharray="1.6 1.8"/><path d="M5 6.5v11a7 3 0 0 0 14 0v-11"/><ellipse class="a" cx="12" cy="6.5" rx="7" ry="3"/>"#,
+    CatDraw: Sketch => r#"<path d="M5 20V10a7 7 0 0 1 14 0v10z"/><circle class="af" cx="5" cy="20" r="1.5"/><circle class="af" cx="19" cy="20" r="1.5"/><circle class="af" cx="12" cy="3" r="1.5"/>"#,
+    CatModify: Modify => r#"<path d="M10.5 9H3.5v11h12v-6M3.5 9l5-5h7M20.5 9v6l-5 5M10.5 9l5-5M15.5 14l5-5"/><path class="a" d="M10.5 9a5 5 0 0 1 5 5M15.5 4a5 5 0 0 1 5 5"/>"#,
+    CatSketchModify: Modify => r#"<path d="M2.5 9H15v12.5"/><path class="r" d="M19.5 9h2"/><path class="a" d="M17.25 5.5v7"/>"#,
     // The mock's group turned, each element turned instead, as an icon
     // is a list of empty tags.
-    CatConstrain => r#"<rect transform="rotate(-18 12 12)" x="5" y="6" width="14" height="12" rx=".5"/><path class="a" transform="rotate(-18 12 12)" d="M5 13.5h4.5V18"/><circle class="af" transform="rotate(-18 12 12)" cx="19" cy="6" r="1.5"/>"#,
-    CatTransform => r#"<path class="r" stroke-dasharray="1.6 1.8" d="M7.5 10l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path class="r" stroke-dasharray="1.6 1.8" d="M2.74 12.75l4.76 2.75 4.76-2.75M7.5 15.5v5.5"/><path d="M16.5 3l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path d="M11.74 5.75l4.76 2.75 4.76-2.75M16.5 8.5v5.5"/>"#,
-    CatInspect => r#"<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM4.2 7.5L12 12l7.8-4.5M12 12v9"/><path class="a" d="M15.1 10.2l-2.7 10.4M18 8.5l-2.8 10.5M19.8 11l-1.4 5.3"/>"#,
-    CatDimension => r#"<rect x="3.5" y="13" width="17" height="7.5" rx="1"/><path class="r" d="M3.5 4.5v6.5M20.5 4.5v6.5"/><path class="a" d="M4.5 7.5h15M7 5.5l-2.5 2 2.5 2M17 5.5l2.5 2-2.5 2"/>"#,
+    CatConstrain: Constraint => r#"<rect transform="rotate(-18 12 12)" x="5" y="6" width="14" height="12" rx=".5"/><path class="a" transform="rotate(-18 12 12)" d="M5 13.5h4.5V18"/><circle class="af" transform="rotate(-18 12 12)" cx="19" cy="6" r="1.5"/>"#,
+    CatTransform: Solid => r#"<path class="r" stroke-dasharray="1.6 1.8" d="M7.5 10l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path class="r" stroke-dasharray="1.6 1.8" d="M2.74 12.75l4.76 2.75 4.76-2.75M7.5 15.5v5.5"/><path d="M16.5 3l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path d="M11.74 5.75l4.76 2.75 4.76-2.75M16.5 8.5v5.5"/>"#,
+    CatInspect: Inspect => r#"<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM4.2 7.5L12 12l7.8-4.5M12 12v9"/><path class="a" d="M15.1 10.2l-2.7 10.4M18 8.5l-2.8 10.5M19.8 11l-1.4 5.3"/>"#,
+    CatDimension: Dimension => r#"<rect x="3.5" y="13" width="17" height="7.5" rx="1"/><path class="r" d="M3.5 4.5v6.5M20.5 4.5v6.5"/><path class="a" d="M4.5 7.5h15M7 5.5l-2.5 2 2.5 2M17 5.5l2.5 2-2.5 2"/>"#,
     // The model mock's: a warning triangle, for what failed.
     Alert => r#"<path d="M12 3.5L21.5 20h-19z"/><path d="M12 10v4.5M12 17.2v.1"/>"#,
     // Not in the mocks: framing the camera on a failure, a viewfinder's
@@ -200,66 +216,66 @@ icons! {
     Remove => r#"<path d="M6 6l12 12M18 6L6 18" stroke-width="2.8"/>"#,
     // What's picked, on its row in the operation panel: a sketch's
     // region, an axis.
-    SeRegion => r#"<path class="fl" d="M4 6h10l6 6-6 6H4z"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="12" r="1.5"/><circle class="af" cx="4" cy="18" r="1.5"/>"#,
-    SeAxis => r#"<path d="M4 20L20 4"/><circle class="af" cx="7.5" cy="16.5" r="1.7"/><circle class="af" cx="16.5" cy="7.5" r="1.7"/>"#,
+    SeRegion: Sketch => r#"<path class="fl" d="M4 6h10l6 6-6 6H4z"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="12" r="1.5"/><circle class="af" cx="4" cy="18" r="1.5"/>"#,
+    SeAxis: Construction => r#"<path d="M4 20L20 4"/><circle class="af" cx="7.5" cy="16.5" r="1.7"/><circle class="af" cx="16.5" cy="7.5" r="1.7"/>"#,
     // The origin planes, not in the mocks: the three seen from the front
     // right, X to the left, Y to the right, Z up, the one named filled.
-    PlaneXy => r#"<path class="r" d="M12 11L6 14.5L12 18L18 14.5zM12 11L6 14.5V6.5L12 3zM12 11L18 14.5V6.5L12 3z"/><path class="a fl" d="M12 11L6 14.5L12 18L18 14.5z"/>"#,
-    PlaneXz => r#"<path class="r" d="M12 11L6 14.5L12 18L18 14.5zM12 11L6 14.5V6.5L12 3zM12 11L18 14.5V6.5L12 3z"/><path class="a fl" d="M12 11L6 14.5V6.5L12 3z"/>"#,
-    PlaneYz => r#"<path class="r" d="M12 11L6 14.5L12 18L18 14.5zM12 11L6 14.5V6.5L12 3zM12 11L18 14.5V6.5L12 3z"/><path class="a fl" d="M12 11L18 14.5V6.5L12 3z"/>"#,
-    SePlane => r#"<path class="t" d="M3 17l4-10h14l-4 10z"/><path class="a" d="M12 15V7"/>"#,
+    PlaneXy: Construction => r#"<path class="r" d="M12 11L6 14.5L12 18L18 14.5zM12 11L6 14.5V6.5L12 3zM12 11L18 14.5V6.5L12 3z"/><path class="a fl" d="M12 11L6 14.5L12 18L18 14.5z"/>"#,
+    PlaneXz: Construction => r#"<path class="r" d="M12 11L6 14.5L12 18L18 14.5zM12 11L6 14.5V6.5L12 3zM12 11L18 14.5V6.5L12 3z"/><path class="a fl" d="M12 11L6 14.5V6.5L12 3z"/>"#,
+    PlaneYz: Construction => r#"<path class="r" d="M12 11L6 14.5L12 18L18 14.5zM12 11L6 14.5V6.5L12 3zM12 11L18 14.5V6.5L12 3z"/><path class="a fl" d="M12 11L18 14.5V6.5L12 3z"/>"#,
+    SePlane: Construction => r#"<path class="t" d="M3 17l4-10h14l-4 10z"/><path class="a" d="M12 15V7"/>"#,
     // An edge, and a hole's rim, on a block: the model mock's
     // `se-edge` and `se-rim`, a chamfer's edges' rows.
-    SeEdge => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><path class="a" d="M3.5 9.5h11" stroke-width="2.6"/>"#,
-    SeRim => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><ellipse class="a" cx="11.5" cy="7" rx="3.6" ry="1.5" stroke-width="2"/>"#,
-    SeFace => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><path class="a fl" d="M3.5 9.5h11v11h-11z"/>"#,
+    SeEdge: Solid => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><path class="a" d="M3.5 9.5h11" stroke-width="2.6"/>"#,
+    SeRim: Solid => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><ellipse class="a" cx="11.5" cy="7" rx="3.6" ry="1.5" stroke-width="2"/>"#,
+    SeFace: Solid => r#"<path d="M3.5 9.5h11v11h-11zM3.5 9.5l5-5h11l-5 5M14.5 20.5l5-5v-11"/><path class="a fl" d="M3.5 9.5h11v11h-11z"/>"#,
     // The operation panel's choices, the model mock's `CHOICE_ICONS`:
     // a revolve's extents seen down its axis (the dot), the profile the
     // line out to the right; an extrude's, the profile as a slab and where
     // it goes; the booleans as circles, the body left and the tool right,
     // what's left filled, a tool taken away dashed.
-    RvFull => r#"<path d="M12 12h8"/><circle class="a" cx="12" cy="12" r="8"/><circle cx="12" cy="12" r=".9"/>"#,
-    RvOne => r#"<path d="M12 12h8"/><path class="a" d="M20 12A8 8 0 1 0 12 20"/><circle cx="12" cy="12" r=".9"/><circle class="af" cx="12" cy="20" r="1.6"/>"#,
-    RvSym => r#"<path d="M12 12h8"/><path class="a" d="M12 4A8 8 0 0 1 12 20"/><circle cx="12" cy="12" r=".9"/><circle class="af" cx="12" cy="4" r="1.6"/><circle class="af" cx="12" cy="20" r="1.6"/>"#,
-    RvTwo => r#"<path d="M12 12h8"/><path class="a" d="M8 5.07A8 8 0 0 1 17.14 18.13"/><circle cx="12" cy="12" r=".9"/><circle class="af" cx="8" cy="5.07" r="1.6"/><circle class="af" cx="17.14" cy="18.13" r="1.6"/>"#,
-    ExOne => r#"<path class="fl" d="M3 19l4-3h14l-4 3z"/><path class="a" d="M12 16.5V5M9.5 7.5L12 5l2.5 2.5"/>"#,
-    ExSym => r#"<path class="fl" d="M3 13.5l4-3h14l-4 3z"/><path class="a" d="M12 11V3.5M9.5 6L12 3.5 14.5 6M12 13.5V21M9.5 18.5L12 21l2.5-2.5"/>"#,
-    ExTwo => r#"<path class="fl" d="M3 15l4-3h14l-4 3z"/><path class="a" d="M12 12.5V3M9.5 5.5L12 3l2.5 2.5M12 15v4.5M10 17.5l2 2 2-2"/>"#,
-    ExThru => r#"<path class="r" d="M4 9h16v6H4z"/><path class="fl" d="M3 6l4-3h14l-4 3z"/><path class="a" d="M12 6v16M9.5 19.5L12 22l2.5-2.5"/>"#,
-    BoNew => r#"<circle class="r" cx="7" cy="12" r="4.8"/><circle class="fl" cx="17" cy="12" r="4.8"/>"#,
-    BoJoin => r#"<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 1 0 12 6.8z"/>"#,
-    BoCut => r#"<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 0 1 12 6.8z"/><circle class="a" cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
-    BoInt => r#"<circle class="r" cx="9" cy="12" r="6"/><circle class="r" cx="15" cy="12" r="6"/><path class="fl" d="M12 6.8A6 6 0 0 1 12 17.2A6 6 0 0 1 12 6.8z"/>"#,
+    RvFull: Solid => r#"<path d="M12 12h8"/><circle class="a" cx="12" cy="12" r="8"/><circle cx="12" cy="12" r=".9"/>"#,
+    RvOne: Solid => r#"<path d="M12 12h8"/><path class="a" d="M20 12A8 8 0 1 0 12 20"/><circle cx="12" cy="12" r=".9"/><circle class="af" cx="12" cy="20" r="1.6"/>"#,
+    RvSym: Solid => r#"<path d="M12 12h8"/><path class="a" d="M12 4A8 8 0 0 1 12 20"/><circle cx="12" cy="12" r=".9"/><circle class="af" cx="12" cy="4" r="1.6"/><circle class="af" cx="12" cy="20" r="1.6"/>"#,
+    RvTwo: Solid => r#"<path d="M12 12h8"/><path class="a" d="M8 5.07A8 8 0 0 1 17.14 18.13"/><circle cx="12" cy="12" r=".9"/><circle class="af" cx="8" cy="5.07" r="1.6"/><circle class="af" cx="17.14" cy="18.13" r="1.6"/>"#,
+    ExOne: Solid => r#"<path class="fl" d="M3 19l4-3h14l-4 3z"/><path class="a" d="M12 16.5V5M9.5 7.5L12 5l2.5 2.5"/>"#,
+    ExSym: Solid => r#"<path class="fl" d="M3 13.5l4-3h14l-4 3z"/><path class="a" d="M12 11V3.5M9.5 6L12 3.5 14.5 6M12 13.5V21M9.5 18.5L12 21l2.5-2.5"/>"#,
+    ExTwo: Solid => r#"<path class="fl" d="M3 15l4-3h14l-4 3z"/><path class="a" d="M12 12.5V3M9.5 5.5L12 3l2.5 2.5M12 15v4.5M10 17.5l2 2 2-2"/>"#,
+    ExThru: Solid => r#"<path class="r" d="M4 9h16v6H4z"/><path class="fl" d="M3 6l4-3h14l-4 3z"/><path class="a" d="M12 6v16M9.5 19.5L12 22l2.5-2.5"/>"#,
+    BoNew: Solid => r#"<circle class="r" cx="7" cy="12" r="4.8"/><circle class="fl" cx="17" cy="12" r="4.8"/>"#,
+    BoJoin: Solid => r#"<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 1 0 12 6.8z"/>"#,
+    BoCut: Solid => r#"<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 0 1 12 6.8z"/><circle class="a" cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
+    BoInt: Solid => r#"<circle class="r" cx="9" cy="12" r="6"/><circle class="r" cx="15" cy="12" r="6"/><path class="fl" d="M12 6.8A6 6 0 0 1 12 17.2A6 6 0 0 1 12 6.8z"/>"#,
     // The patterns' modes: the copies as squares, spacing measuring one
     // step and total the whole run (in the accent); round the axis (the
     // dot), a full turn, a step's arc, or the whole arc.
-    LpSpacing => r#"<rect x="2.5" y="10" width="5" height="5" rx="1"/><rect x="9.5" y="10" width="5" height="5" rx="1"/><rect class="r" x="16.5" y="10" width="5" height="5" rx="1"/><path class="a" d="M5 6.5h7M5 5v3M12 5v3"/>"#,
-    LpTotal => r#"<rect x="2.5" y="10" width="5" height="5" rx="1"/><rect x="9.5" y="10" width="5" height="5" rx="1"/><rect x="16.5" y="10" width="5" height="5" rx="1"/><path class="a" d="M5 6.5h14M5 5v3M19 5v3"/>"#,
-    CpFull => r#"<circle cx="12" cy="12" r=".9"/><circle cx="12" cy="4.5" r="2"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="19.5" r="2"/><circle cx="4.5" cy="12" r="2"/><circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="1.6 1.8"/>"#,
-    CpSpacing => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle class="r" cx="4.5" cy="12" r="2"/><path class="a" d="M17.3 8.3A7.5 7.5 0 0 0 15.7 6.7"/><path class="a" d="M12 12L19.5 12M12 12L12 4.5" stroke-width="1"/>"#,
-    CpTotal => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle cx="4.5" cy="12" r="2"/><path class="a" d="M19.5 9A7.5 7.5 0 0 0 7.5 7.5"/>"#,
+    LpSpacing: Solid => r#"<rect x="2.5" y="10" width="5" height="5" rx="1"/><rect x="9.5" y="10" width="5" height="5" rx="1"/><rect class="r" x="16.5" y="10" width="5" height="5" rx="1"/><path class="a" d="M5 6.5h7M5 5v3M12 5v3"/>"#,
+    LpTotal: Solid => r#"<rect x="2.5" y="10" width="5" height="5" rx="1"/><rect x="9.5" y="10" width="5" height="5" rx="1"/><rect x="16.5" y="10" width="5" height="5" rx="1"/><path class="a" d="M5 6.5h14M5 5v3M19 5v3"/>"#,
+    CpFull: Solid => r#"<circle cx="12" cy="12" r=".9"/><circle cx="12" cy="4.5" r="2"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="19.5" r="2"/><circle cx="4.5" cy="12" r="2"/><circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="1.6 1.8"/>"#,
+    CpSpacing: Solid => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle class="r" cx="4.5" cy="12" r="2"/><path class="a" d="M17.3 8.3A7.5 7.5 0 0 0 15.7 6.7"/><path class="a" d="M12 12L19.5 12M12 12L12 4.5" stroke-width="1"/>"#,
+    CpTotal: Solid => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle cx="4.5" cy="12" r="2"/><path class="a" d="M19.5 9A7.5 7.5 0 0 0 7.5 7.5"/>"#,
     // The chamfers' types: the corner (dashed) cut, what sets the cut in
     // the accent: two equal distances along the faces, two different
     // ones, or one distance and the cut's angle to the face.
-    ChEqual => r#"<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3M3.5 7v8M2 7h3M2 15h3"/>"#,
-    ChTwo => r#"<path class="r" d="M7 11V7h12" stroke-dasharray="1.6 1.8"/><path d="M7 22V11l12-4h3"/><path class="a" d="M7 3.5h12M7 2v3M19 2v3M3.5 7v4M2 7h3M2 11h3"/>"#,
-    ChAngle => r#"<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3"/><path class="a" d="M8.5 7A6.5 6.5 0 0 0 10.4 11.6" stroke-width="2"/>"#,
+    ChEqual: Solid => r#"<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3M3.5 7v8M2 7h3M2 15h3"/>"#,
+    ChTwo: Solid => r#"<path class="r" d="M7 11V7h12" stroke-dasharray="1.6 1.8"/><path d="M7 22V11l12-4h3"/><path class="a" d="M7 3.5h12M7 2v3M19 2v3M3.5 7v4M2 7h3M2 11h3"/>"#,
+    ChAngle: Solid => r#"<path class="r" d="M7 15V7h8" stroke-dasharray="1.6 1.8"/><path d="M7 22V15l8-8h7"/><path class="a" d="M7 3.5h8M7 2v3M15 2v3"/><path class="a" d="M8.5 7A6.5 6.5 0 0 0 10.4 11.6" stroke-width="2"/>"#,
     // A shell's directions: a wall left of the body (filled), inward or
     // outward of its face.
-    ShIn => r#"<path class="r" d="M4 4h16v16H4z"/><path class="fl" d="M4 4h16v16H4zM8 8v12h8V8z" fill-rule="evenodd"/><path class="a" d="M12 6v6M10 10l2 2 2-2"/>"#,
-    ShOut => r#"<path class="r" d="M8 8h8v12H8z"/><path class="fl" d="M4 4h16v16H4zM8 8v12h8V8z" fill-rule="evenodd"/><path class="a" d="M12 13V3M10 5l2-2 2 2"/>"#,
+    ShIn: Solid => r#"<path class="r" d="M4 4h16v16H4z"/><path class="fl" d="M4 4h16v16H4zM8 8v12h8V8z" fill-rule="evenodd"/><path class="a" d="M12 6v6M10 10l2 2 2-2"/>"#,
+    ShOut: Solid => r#"<path class="r" d="M8 8h8v12H8z"/><path class="fl" d="M4 4h16v16H4zM8 8v12h8V8z" fill-rule="evenodd"/><path class="a" d="M12 13V3M10 5l2-2 2 2"/>"#,
     // Not in the mocks: a scale's modes, drawn as the patterns' are: a
     // box grown into a dashed larger one every way, stretched along one
     // axis, and measured along an edge (the length in the accent).
-    ScUniform => r#"<rect class="r" x="3" y="3" width="18" height="18" rx="1.5" stroke-dasharray="2 1.8"/><rect x="3" y="12" width="9" height="9" rx="1"/><path class="a" d="M10 14l6.5-6.5M12.5 7.5h4v4"/>"#,
-    ScAxes => r#"<rect class="r" x="3" y="10" width="18" height="9" rx="1.5" stroke-dasharray="2 1.8"/><rect x="3" y="10" width="9" height="9" rx="1"/><path class="a" d="M14 5.5h6.5M18 3l2.5 2.5L18 8"/>"#,
-    ScEdge => r#"<rect x="3" y="10" width="12" height="11" rx="1"/><path class="r" d="M15 10h6" stroke-dasharray="1.6 1.6"/><path class="a" d="M3 5.5h18M3 3.5v4M21 3.5v4"/>"#,
+    ScUniform: Modify => r#"<rect class="r" x="3" y="3" width="18" height="18" rx="1.5" stroke-dasharray="2 1.8"/><rect x="3" y="12" width="9" height="9" rx="1"/><path class="a" d="M10 14l6.5-6.5M12.5 7.5h4v4"/>"#,
+    ScAxes: Modify => r#"<rect class="r" x="3" y="10" width="18" height="9" rx="1.5" stroke-dasharray="2 1.8"/><rect x="3" y="10" width="9" height="9" rx="1"/><path class="a" d="M14 5.5h6.5M18 3l2.5 2.5L18 8"/>"#,
+    ScEdge: Modify => r#"<rect x="3" y="10" width="12" height="11" rx="1"/><path class="r" d="M15 10h6" stroke-dasharray="1.6 1.6"/><path class="a" d="M3 5.5h18M3 3.5v4M21 3.5v4"/>"#,
     // Not in the mock: a split's pieces, cut apart by a dashed line, the
     // ones kept drawn and filled, one left out dashed.
-    SpBoth => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
-    SpFront => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="r" x="13.5" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
-    SpBack => r#"<rect class="r" x="3" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
-    SwHelix => r#"<path class="r" d="M12 2v20" stroke-dasharray="2 2"/><path d="M6 6c0-2 12-2 12 0s-12 2-12 4 12 2 12 4-12 2-12 4 12 2 12 0"/><circle class="af" cx="6" cy="6" r="1.6"/>"#,
+    SpBoth: Modify => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
+    SpFront: Modify => r#"<rect class="fl" x="3" y="6" width="7.5" height="12" rx="1"/><rect class="r" x="13.5" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
+    SpBack: Modify => r#"<rect class="r" x="3" y="6" width="7.5" height="12" rx="1" stroke-dasharray="2 1.6"/><rect class="fl" x="13.5" y="6" width="7.5" height="12" rx="1"/><path class="a" d="M12 3v18" stroke-dasharray="2 2"/>"#,
+    SwHelix: Solid => r#"<path class="r" d="M12 2v20" stroke-dasharray="2 2"/><path d="M6 6c0-2 12-2 12 0s-12 2-12 4 12 2 12 4-12 2-12 4 12 2 12 0"/><circle class="af" cx="6" cy="6" r="1.6"/>"#,
     // The options' icons, drawn in one colour: a tangent chain (a line
     // running smoothly on into an arc, its ends filled dots), flip, keep
     // the tools.
@@ -292,132 +308,15 @@ icons! {
     Agent => r#"<path d="M4 5.5h16v11H11l-4.5 3.5v-3.5H4z"/><path class="a" d="M12 7.6l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/>"#,
     Plug => r#"<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>"#,
     Stop => r##"<rect x="7" y="7" width="10" height="10" rx="1.5" fill="#000"/>"##,
-    QSummary => r#"<rect x="4.5" y="4" width="15" height="17" rx="1.5"/><path class="r" d="M9 4V2.8h6V4"/><path class="a" d="M8 10h8M8 13.5h8M8 17h5"/>"#,
-    QFeature => r#"<path d="M4 6.5h16M4 12h16M4 17.5h16"/><circle class="af" cx="9" cy="6.5" r="2"/><circle class="af" cx="15.5" cy="12" r="2"/><circle class="af" cx="7" cy="17.5" r="2"/>"#,
-    QTopology => r#"<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM4.2 7.5L12 12l7.8-4.5M12 12v9"/><circle class="af" cx="12" cy="12" r="1.6"/><circle class="af" cx="4.2" cy="7.5" r="1.6"/><circle class="af" cx="19.8" cy="16.5" r="1.6"/><path class="a" d="M12 3l7.8 4.5"/>"#,
-    QSketch => r#"<path d="M5 18.5L12 6l7 12.5z"/><circle class="af" cx="5" cy="18.5" r="1.6"/><circle class="af" cx="12" cy="6" r="1.6"/><circle class="af" cx="19" cy="18.5" r="1.6"/><path class="a" d="M5 21.5h14"/>"#,
+    QSummary: Inspect => r#"<rect x="4.5" y="4" width="15" height="17" rx="1.5"/><path class="r" d="M9 4V2.8h6V4"/><path class="a" d="M8 10h8M8 13.5h8M8 17h5"/>"#,
+    QFeature: Inspect => r#"<path d="M4 6.5h16M4 12h16M4 17.5h16"/><circle class="af" cx="9" cy="6.5" r="2"/><circle class="af" cx="15.5" cy="12" r="2"/><circle class="af" cx="7" cy="17.5" r="2"/>"#,
+    QTopology: Inspect => r#"<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM4.2 7.5L12 12l7.8-4.5M12 12v9"/><circle class="af" cx="12" cy="12" r="1.6"/><circle class="af" cx="4.2" cy="7.5" r="1.6"/><circle class="af" cx="19.8" cy="16.5" r="1.6"/><path class="a" d="M12 3l7.8 4.5"/>"#,
+    QSketch: Inspect => r#"<path d="M5 18.5L12 6l7 12.5z"/><circle class="af" cx="5" cy="18.5" r="1.6"/><circle class="af" cx="12" cy="6" r="1.6"/><circle class="af" cx="19" cy="18.5" r="1.6"/><path class="a" d="M5 21.5h14"/>"#,
     // Nothing: room for an icon, beside items that have one.
     Blank => "",
 }
 
 impl Icon {
-    /// What the icon stands for, as the icon mock files it, if it's a
-    /// tool's or an object's; the rest are drawn in the text colour.
-    pub fn category(self) -> Option<IconCategory> {
-        Some(match self {
-            Icon::Sketch
-            | Icon::Line
-            | Icon::Circle
-            | Icon::Arc
-            | Icon::Rectangle
-            | Icon::Polygon
-            | Icon::Spline
-            | Icon::Point
-            | Icon::Convert
-            | Icon::Handles
-            | Icon::Comb
-            | Icon::InsertPoint
-            | Icon::RemovePoint
-            | Icon::CloseCurve
-            | Icon::OpenCurve
-            | Icon::CatDraw
-            | Icon::SeRegion => IconCategory::Sketch,
-            Icon::Trim
-            | Icon::Extend
-            | Icon::Mirror
-            | Icon::Offset
-            | Icon::Fillet
-            | Icon::Chamfer
-            | Icon::Project
-            | Icon::Intersect
-            | Icon::Combine
-            | Icon::Scale
-            | Icon::Split
-            | Icon::BFillet
-            | Icon::BChamfer
-            | Icon::Shell
-            | Icon::OffsetFace
-            | Icon::Draft
-            | Icon::Params
-            | Icon::ScUniform
-            | Icon::ScAxes
-            | Icon::ScEdge
-            | Icon::SpBoth
-            | Icon::SpFront
-            | Icon::SpBack
-            | Icon::CatModify
-            | Icon::CatSketchModify => IconCategory::Modify,
-            Icon::Constrain
-            | Icon::Coincident
-            | Icon::Horizontal
-            | Icon::Vertical
-            | Icon::Parallel
-            | Icon::Perpendicular
-            | Icon::Tangent
-            | Icon::Smooth
-            | Icon::Equal
-            | Icon::Concentric
-            | Icon::Midpoint
-            | Icon::Symmetric
-            | Icon::Fix
-            | Icon::OffsetConstraint
-            | Icon::CatConstrain => IconCategory::Constraint,
-            Icon::Dimension | Icon::CatDimension => IconCategory::Dimension,
-            Icon::Body
-            | Icon::Extrude
-            | Icon::Revolve
-            | Icon::Sweep
-            | Icon::Loft
-            | Icon::Move
-            | Icon::BMirror
-            | Icon::LPattern
-            | Icon::CPattern
-            | Icon::Align
-            | Icon::CatCreate
-            | Icon::CatTransform
-            | Icon::RvFull
-            | Icon::SwHelix
-            | Icon::RvOne
-            | Icon::RvSym
-            | Icon::RvTwo
-            | Icon::ExOne
-            | Icon::ExSym
-            | Icon::ExTwo
-            | Icon::ExThru
-            | Icon::BoNew
-            | Icon::BoJoin
-            | Icon::BoCut
-            | Icon::BoInt
-            | Icon::LpSpacing
-            | Icon::LpTotal
-            | Icon::CpFull
-            | Icon::CpSpacing
-            | Icon::CpTotal
-            | Icon::ChEqual
-            | Icon::ChTwo
-            | Icon::ChAngle
-            | Icon::ShIn
-            | Icon::ShOut
-            | Icon::SeEdge
-            | Icon::SeRim
-            | Icon::SeFace => IconCategory::Solid,
-            Icon::Plane
-            | Icon::PlaneXy
-            | Icon::PlaneXz
-            | Icon::PlaneYz
-            | Icon::SeAxis
-            | Icon::SePlane => IconCategory::Construction,
-            Icon::Measure
-            | Icon::CatInspect
-            | Icon::QSummary
-            | Icon::QFeature
-            | Icon::QTopology
-            | Icon::QSketch => IconCategory::Inspect,
-            Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,
-            _ => return None,
-        })
-    }
-
     /// The icon's colours: its category's, or the text colour throughout.
     pub fn tone(self, palette: &Palette) -> IconTone {
         match self.category() {
