@@ -23,6 +23,8 @@ log.workspace = true
 probe = []
 
 [dev-dependencies]
+# The example design, revisions and generations by number.
+varde-document = { workspace = true, features = ["testing"] }
 # The sample designs' files, written by examples/samples.rs with their
 # thumbnails.
 varde-io.workspace = true

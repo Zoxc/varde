@@ -24,6 +24,8 @@ js-sys.workspace = true
 web-sys = { workspace = true, features = ["Performance", "WorkerGlobalScope"] }
 
 [dev-dependencies]
+# The example design, revisions and generations by number.
+varde-document = { workspace = true, features = ["testing"] }
 # Waiting on the thread lane in tests.
 varde-lane = { workspace = true, features = ["testing"] }
 futures.workspace = true

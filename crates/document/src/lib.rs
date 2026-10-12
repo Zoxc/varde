@@ -13,6 +13,7 @@ mod combine;
 mod command;
 mod edge;
 mod editor;
+#[cfg(any(test, feature = "testing"))]
 mod example;
 mod extrude;
 mod face_draft;
@@ -147,7 +148,7 @@ pub struct Body {
 
 /// The fields are private so that a document passes [`Document::check`]
 /// by construction: the ways to get one are [`Document::default`],
-/// [`Document::example`], an [`Editor`] edit, which is checked, and
+/// `Document::example` (for tests), an [`Editor`] edit, which is checked, and
 /// deserializing one, which goes through [`Unchecked::check`].
 ///
 /// Files store it by field and variant names, to be extended as `varde-io`'s

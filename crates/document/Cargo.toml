@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# `Document::example` and revisions and generations named by number, for
+# other crates' tests.
+testing = []
+
 [dependencies]
 varde-kernel-compat.workspace = true
 varde-sketch.workspace = true

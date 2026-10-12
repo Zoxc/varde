@@ -19,6 +19,7 @@ pub struct Revision(u64);
 
 /// An editor's own come from [`Editor::revision`]; this is for tests,
 /// which name one by its number.
+#[cfg(any(test, feature = "testing"))]
 impl From<u64> for Revision {
     fn from(number: u64) -> Self {
         Self(number)
@@ -39,6 +40,7 @@ pub struct Generation(u64);
 
 /// An editor's own come from [`Editor::generation`]; this is for tests,
 /// which name one by its number.
+#[cfg(any(test, feature = "testing"))]
 impl From<u64> for Generation {
     fn from(number: u64) -> Self {
         Self(number)

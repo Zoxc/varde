@@ -83,6 +83,8 @@ web-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+# The example design, revisions and generations by number.
+varde-document = { workspace = true, features = ["testing"] }
 # Waiting on the thread lane in tests.
 varde-lane = { workspace = true, features = ["testing"] }
 # Quick and full test runs (`VARDE_TESTS`).
