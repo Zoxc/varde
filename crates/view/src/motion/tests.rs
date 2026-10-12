@@ -967,3 +967,10 @@ fn a_draft_s_panel() {
     state.need = Some("pick the faces to draft");
     assert_eq!(status_info(&state), "pick the faces to draft");
 }
+
+#[test]
+fn each_motion_field_is_kept_at_its_place_in_all() {
+    for (at, field) in MotionField::ALL.into_iter().enumerate() {
+        assert_eq!(field.index(), at, "{field:?}");
+    }
+}

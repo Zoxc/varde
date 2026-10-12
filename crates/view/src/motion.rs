@@ -361,10 +361,13 @@ pub enum MotionField {
 }
 
 impl MotionField {
+    /// How many there are: the length of an array of them all.
+    pub const COUNT: usize = 20;
+
     /// The twenty, a move's in the panel's order, then a pattern's, an
     /// align's distance, a scale's, a chamfer's, a shell's, a fillet's,
     /// then a sweep's.
-    pub const ALL: [MotionField; 20] = [
+    pub const ALL: [MotionField; Self::COUNT] = [
         MotionField::Offset(Axis3::X),
         MotionField::Offset(Axis3::Y),
         MotionField::Offset(Axis3::Z),
@@ -387,7 +390,7 @@ impl MotionField {
         MotionField::Twist,
     ];
 
-    /// Where it's kept in an array of them all.
+    /// Where it's kept in an array of them all: its place in [`Self::ALL`].
     pub fn index(self) -> usize {
         match self {
             MotionField::Offset(Axis3::X) => 0,
@@ -617,7 +620,7 @@ pub struct MotionState<'a> {
     /// and Z and its angle, a pattern's count and spread, an align's
     /// distance, a scale's factors and length, a chamfer's distances
     /// and angle, a shell's thickness, a fillet's radius.
-    pub fields: [TypedField<'a>; 20],
+    pub fields: [TypedField<'a>; MotionField::COUNT],
     /// The reference's name, "Z axis", "Edge of Body 1", "XY plane",
     /// "Extrude 1's end", if there's one.
     pub reference: Option<String>,

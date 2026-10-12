@@ -89,7 +89,7 @@ pub(crate) struct MotionSession {
     /// an align's distance (and its angle, the move's), a scale's
     /// factors and length, a chamfer's distances and angle, a shell's
     /// thickness, a fillet's radius, a sweep's pitch, turns and twist.
-    pub(crate) fields: [TypedText; 20],
+    pub(crate) fields: [TypedText; MotionField::COUNT],
     /// A move's or pattern's axis: the Z axis to begin with (a linear
     /// pattern's X), as the UI mock's. A move stores it only with an
     /// angle other than zero.
