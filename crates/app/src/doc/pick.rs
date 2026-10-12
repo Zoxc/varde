@@ -8,7 +8,7 @@
 //! the sketches shown are hovered and selected with the model
 //! ([`Doc::selectable_sketches`]).
 
-use crate::doc::OperationSlot;
+use crate::doc::{OperationSession, OperationSlot};
 use std::sync::Arc;
 
 use varde_document::{BodyId, Document, FeatureId, FeatureKind};
@@ -169,17 +169,8 @@ impl Doc {
     /// Hovers the row `hover` of the operation's panel, or none: the
     /// viewport lights it up too.
     pub(crate) fn hover_panel(&mut self, hover: Option<PanelHover>) {
-        if let Some(session) = self.mode.extrude_mut() {
-            session.hover = hover;
-        }
-        if let Some(session) = self.mode.revolve_mut() {
-            session.hover = hover;
-        }
-        if let Some(session) = self.mode.combine_mut() {
-            session.hover = hover;
-        }
-        if let Some(session) = self.mode.motion_mut() {
-            session.hover = hover;
+        if let Some(session) = self.mode.operation_mut() {
+            *session.hover_mut() = hover;
         }
         self.refresh_highlight();
     }
@@ -187,11 +178,7 @@ impl Doc {
     /// Takes the cursor leaving the panel's row `left`: nothing's hovered,
     /// unless another row already is, entered before this one was left.
     pub(crate) fn leave_panel(&mut self, left: PanelHover) {
-        let hovered = (self.mode.extrude().map(|session| session.hover))
-            .or_else(|| self.mode.revolve().map(|session| session.hover))
-            .or_else(|| self.mode.combine().map(|session| session.hover))
-            .or_else(|| self.mode.motion().map(|session| session.hover))
-            .flatten();
+        let hovered = self.mode.operation().and_then(OperationSession::hover);
         if hovered == Some(left) {
             self.hover_panel(None);
         }

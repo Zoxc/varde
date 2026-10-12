@@ -39,8 +39,8 @@ use varde_io::{Access, Damage, DamageKind, LastDownload, Offer, OpenId, UnixSeco
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
 use varde_view::{
-    DocumentKeys, Edit, Look, Message as Ui, Mode, OperationState, Overlay, Panel, RowMenu, Snap,
-    ViewOptions,
+    DocumentKeys, Edit, Look, Message as Ui, Mode, OperationState, Overlay, Panel, PanelHover,
+    RowMenu, Snap, ViewOptions,
 };
 
 #[cfg(test)]
@@ -284,6 +284,25 @@ impl OperationSession {
             Self::Motion(session) => session.feature,
         }
     }
+
+    /// The row of its panel the cursor is over, see [`Doc::panel_hover`].
+    fn hover(&self) -> Option<PanelHover> {
+        match self {
+            Self::Extrude(session) => session.hover,
+            Self::Revolve(session) => session.hover,
+            Self::Combine(session) => session.hover,
+            Self::Motion(session) => session.hover,
+        }
+    }
+
+    fn hover_mut(&mut self) -> &mut Option<PanelHover> {
+        match self {
+            Self::Extrude(session) => &mut session.hover,
+            Self::Revolve(session) => &mut session.hover,
+            Self::Combine(session) => &mut session.hover,
+            Self::Motion(session) => &mut session.hover,
+        }
+    }
 }
 
 /// What owns a document's view, see [`Doc::mode`].
@@ -348,6 +367,13 @@ impl DocMode {
 
     /// The operation being set up, if it's the mode.
     pub(crate) fn operation(&self) -> Option<&OperationSession> {
+        match self {
+            Self::Operation(session) => Some(session),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn operation_mut(&mut self) -> Option<&mut OperationSession> {
         match self {
             Self::Operation(session) => Some(session),
             _ => None,
@@ -704,13 +730,7 @@ impl Doc {
         // Held, the command modifier shows the model before the
         // operation, what its preview covers there to see.
         let before = self.operation_before();
-        let draft = match self.mode.operation() {
-            Some(OperationSession::Extrude(_)) => self.extrude_draft(),
-            Some(OperationSession::Revolve(_)) => self.revolve_draft(),
-            Some(OperationSession::Combine(_)) => self.combine_draft(),
-            Some(OperationSession::Motion(_)) => self.motion_draft(),
-            None => None,
-        };
+        let draft = self.operation_draft();
         // The draft's still known, its error and OK waiting on it kept,
         // but not applied.
         self.feed.hide_draft = before;
@@ -801,13 +821,21 @@ impl Doc {
     /// The feature the operation being set up would commit, if one is
     /// and it's whole.
     pub(crate) fn operation_built(&self) -> Option<FeatureKind> {
-        let draft = match self.mode.operation()? {
+        if self.mode.motion().is_some() {
+            return self.motion_built();
+        }
+        self.operation_draft().map(|(_, kind)| kind)
+    }
+
+    /// The operation being set up as the regeneration lane previews it,
+    /// with the feature it edits: none if there's none, or it isn't whole.
+    fn operation_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
+        match self.mode.operation()? {
             OperationSession::Extrude(_) => self.extrude_draft(),
             OperationSession::Revolve(_) => self.revolve_draft(),
             OperationSession::Combine(_) => self.combine_draft(),
-            OperationSession::Motion(_) => return self.motion_built(),
-        };
-        draft.map(|(_, kind)| kind)
+            OperationSession::Motion(_) => self.motion_draft(),
+        }
     }
 
     /// The operation being set up, or else the measure tool, for the view.
