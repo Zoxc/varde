@@ -144,7 +144,7 @@ pub enum Copies { Joined /* default */, Separate(Vec<BodyId>) }  // the copy bod
   moves, mirrors and patterns take copy bodies as any body (the app's
   `merged_before` follows them merged, from the touched lists and
   combines, unchanged).
-- **Naming** (`varde_view::Naming`, `plane_pick.rs`): a face made on
+- **Naming** (`varde_view::Naming`, `naming.rs`): a face made on
   body `B` by its maker and copied by an unjoined pattern is on that
   pattern's copy body, not on `B`. `Naming::before` keeps, per unjoined
   pattern before the stop (`Separated`), the body each body whose faces

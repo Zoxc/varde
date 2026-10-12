@@ -32,6 +32,7 @@ mod motion;
 mod mouse;
 mod mouse_only;
 mod names;
+mod naming;
 mod offset_face;
 mod operation_panel;
 mod overflow_tip;
@@ -110,6 +111,7 @@ pub use motion::{
     plane_name, point_name, scale_info, split_info,
 };
 pub use mouse::{DragAction, MouseOptions, PivotClick, Rotation, RotationPoint};
+pub use naming::{Naming, Shown, Unnamed};
 pub use offset_face::offset_info;
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, Side, Sides, TypedField,
@@ -120,7 +122,7 @@ pub use params::{ParamDraft, ParamEdit, ParamField, ParamsLook, ParamsState, par
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
-pub use plane_pick::{Naming, PlanePick, Shown, Unnamed, face_name, plane_note};
+pub use plane_pick::{PlanePick, face_name, plane_note};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, rail_rows, rail_sets};
 pub use revolve::{
     Angle, EDGE_NOT_STRAIGHT, EDGE_OFF_PLANE, RevolveLook, RevolvePick, RevolveState, TurnKind,
