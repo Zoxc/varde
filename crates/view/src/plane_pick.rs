@@ -5,11 +5,11 @@
 use std::borrow::Cow;
 
 use glam::DVec3;
-use varde_document::{Document, FaceRef, FeatureId, Plane};
+use varde_document::{Document, FaceRef, FeatureId, FeatureKind, Plane};
 use varde_kernel::mesh::PartKey;
 
 use crate::document::CURVED_FACE;
-use crate::naming::{Naming, Shown};
+use crate::naming::{Naming, Shown, Unnamed};
 use crate::pick::PickIndex;
 
 /// What a plane is being picked for, and so which faces can take it.
@@ -52,7 +52,7 @@ impl PlanePick {
     ) -> Option<Self> {
         let index = document.feature_index(sketch)?;
         let feature = &document.features()[index];
-        if !matches!(feature.kind, varde_document::FeatureKind::Sketch { .. }) {
+        if !matches!(feature.kind, FeatureKind::Sketch { .. }) {
             return None;
         }
         Some(Self {
@@ -75,26 +75,18 @@ impl PlanePick {
         if index.face_placement(face).is_none() {
             return Some(CURVED_FACE.into());
         }
-        let naming = &self.naming;
-        let after =
-            (index.face_ref(face, DVec3::ZERO)).is_some_and(|raw| !naming.takes_key(&raw.key));
-        let taken = (!after)
-            .then(|| naming.face_ref(index, face, DVec3::ZERO))
-            .flatten()
-            .map(|found| naming.takes_body(found.body));
-        match (&self.sketch, taken) {
-            (_, Some(true)) => None,
-            (Some((_, name)), None) if !after && index.face_ref(face, DVec3::ZERO).is_some() => {
-                Some(
-                    format!("Which body that face is on at {name} can't be told: pick another")
-                        .into(),
-                )
+        let unnamed = (self.naming)
+            .checked_face_ref(index, face, DVec3::ZERO)
+            .err()?;
+        Some(match (&self.sketch, unnamed) {
+            (None, _) => "That face isn't in the model".into(),
+            (Some((_, name)), Unnamed::Unclear) => {
+                format!("Which body that face is on at {name} can't be told: pick another").into()
             }
-            (Some((_, name)), _) => {
-                Some(format!("{name} can only go on a face made before it").into())
+            (Some((_, name)), Unnamed::Later | Unnamed::Missing) => {
+                format!("{name} can only go on a face made before it").into()
             }
-            (None, _) => Some("That face isn't in the model".into()),
-        }
+        })
     }
 
     /// Whether face `face` of `index`'s model can take the sketch.
