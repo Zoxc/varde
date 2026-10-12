@@ -748,6 +748,42 @@ impl<'a> MotionParts<'a> {
 }
 
 impl<'a> MotionState<'a> {
+    /// What the picking asks for, for the hint bar: `None` when it
+    /// asks for nothing.
+    pub(crate) fn pick_hint(&self) -> Option<&'static str> {
+        let what = match (self.picking, self.kind) {
+            (MotionPick::Nothing, _) => return None,
+            (MotionPick::Bodies, MotionKind::Align) => "Pick the body",
+            (MotionPick::Align(slot), _) => match slot.role {
+                AlignRole::Point => "Pick the point",
+                AlignRole::Primary => "Pick the direction",
+                AlignRole::Secondary => "Pick the second direction",
+            },
+            (MotionPick::Point, _) => "Pick the point",
+            (MotionPick::Edge, _) => "Pick the edge",
+            (MotionPick::Edges, MotionKind::Chamfer | MotionKind::Fillet) => "Pick edges or faces",
+            (MotionPick::Edges, _) => "Pick edges",
+            (MotionPick::Faces, MotionKind::Shell) => "Pick faces to remove",
+            (MotionPick::Faces, MotionKind::OffsetFace) => "Pick faces to move",
+            (MotionPick::Faces, MotionKind::Draft) => "Pick faces to draft",
+            (MotionPick::Faces, _) => "Pick faces",
+            (MotionPick::Tool, _) => self
+                .split()
+                .map_or("Pick the tool", |split| split.mode.hint()),
+            (MotionPick::Regions, MotionKind::Loft) => "Pick sections: regions or points",
+            (MotionPick::Path, MotionKind::Loft) => "Pick the rails' curves",
+            (MotionPick::Regions, _) => "Pick regions",
+            (MotionPick::Path, _) => "Pick the path's curves or edges",
+            (MotionPick::Bodies, MotionKind::Split) => "Pick the body",
+            (MotionPick::Bodies, _) => "Pick bodies",
+            (MotionPick::Reference, MotionKind::LinearPattern) => "Pick the direction",
+            (MotionPick::Reference, MotionKind::Mirror) => "Pick the plane",
+            (MotionPick::Reference, MotionKind::Draft) => "Pick the neutral plane",
+            (MotionPick::Reference, _) => "Pick the axis",
+        };
+        Some(what)
+    }
+
     /// An align's own parts, for an align.
     pub fn align(&self) -> Option<&AlignView<'a>> {
         match &self.parts {

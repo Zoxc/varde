@@ -1212,59 +1212,8 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
                 operation_hints(pick, combine.ready)
             }
             OperationState::Motion(motion) => {
-                let pick = motion.editable.then(|| {
-                    let what = match (motion.picking, motion.kind) {
-                        (crate::MotionPick::Nothing, _) => return None,
-                        (crate::MotionPick::Bodies, crate::MotionKind::Align) => "Pick the body",
-                        (crate::MotionPick::Align(slot), _) => match slot.role {
-                            crate::AlignRole::Point => "Pick the point",
-                            crate::AlignRole::Primary => "Pick the direction",
-                            crate::AlignRole::Secondary => "Pick the second direction",
-                        },
-                        (crate::MotionPick::Point, _) => "Pick the point",
-                        (crate::MotionPick::Edge, _) => "Pick the edge",
-                        (
-                            crate::MotionPick::Edges,
-                            crate::MotionKind::Chamfer | crate::MotionKind::Fillet,
-                        ) => "Pick edges or faces",
-                        (crate::MotionPick::Edges, _) => "Pick edges",
-                        (crate::MotionPick::Faces, crate::MotionKind::Shell) => {
-                            "Pick faces to remove"
-                        }
-                        (crate::MotionPick::Faces, crate::MotionKind::OffsetFace) => {
-                            "Pick faces to move"
-                        }
-                        (crate::MotionPick::Faces, crate::MotionKind::Draft) => {
-                            "Pick faces to draft"
-                        }
-                        (crate::MotionPick::Faces, _) => "Pick faces",
-                        (crate::MotionPick::Tool, _) => motion
-                            .split()
-                            .map_or("Pick the tool", |split| split.mode.hint()),
-                        (crate::MotionPick::Regions, crate::MotionKind::Loft) => {
-                            "Pick sections: regions or points"
-                        }
-                        (crate::MotionPick::Path, crate::MotionKind::Loft) => {
-                            "Pick the rails' curves"
-                        }
-                        (crate::MotionPick::Regions, _) => "Pick regions",
-                        (crate::MotionPick::Path, _) => "Pick the path's curves or edges",
-                        (crate::MotionPick::Bodies, crate::MotionKind::Split) => "Pick the body",
-                        (crate::MotionPick::Bodies, _) => "Pick bodies",
-                        (crate::MotionPick::Reference, crate::MotionKind::LinearPattern) => {
-                            "Pick the direction"
-                        }
-                        (crate::MotionPick::Reference, crate::MotionKind::Mirror) => {
-                            "Pick the plane"
-                        }
-                        (crate::MotionPick::Reference, crate::MotionKind::Draft) => {
-                            "Pick the neutral plane"
-                        }
-                        (crate::MotionPick::Reference, _) => "Pick the axis",
-                    };
-                    Some(what)
-                });
-                operation_hints(pick.flatten(), motion.ready)
+                let pick = motion.editable.then(|| motion.pick_hint()).flatten();
+                operation_hints(pick, motion.ready)
             }
             OperationState::Measure(measure) => measure_hints(measure),
         }
