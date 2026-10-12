@@ -718,14 +718,11 @@ impl Files {
             },
         );
         Opened {
-            file,
-            document,
             access,
             recovered: opened.recovered,
             browser: Some(name),
-            not_copied: None,
             download,
-            damage,
+            ..Opened::editable(file, document, damage)
         }
     }
 
@@ -748,14 +745,11 @@ impl Files {
                 let download = self.dirs.last_download(&name, tail).await;
                 let recovered = folder::offer_again(&dir, design, &document).await;
                 Ok(Opened {
-                    file,
-                    document,
                     access: design.access(),
                     recovered,
                     browser: Some(name),
-                    not_copied: None,
                     download,
-                    damage,
+                    ..Opened::editable(file, document, damage)
                 })
             }
             Place::Entry(unsaved) => {

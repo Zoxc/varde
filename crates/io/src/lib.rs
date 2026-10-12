@@ -874,6 +874,8 @@ impl Opened {
     /// `document`, opened as `file` for editing with nothing to offer, as
     /// a store entry and on the web a design the user picked are: `damage`
     /// says how reading found the file.
+    /// The base the other opens fill in their access, offer and web
+    /// fields over.
     pub(crate) fn editable(file: FileId, document: Document, damage: Option<Damage>) -> Self {
         Self {
             file,

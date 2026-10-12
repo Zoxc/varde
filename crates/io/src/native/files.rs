@@ -373,14 +373,9 @@ impl Files {
                 };
                 let id = self.open.add(Some(open_id), Kind::Design(Box::new(design)));
                 Ok(Opened {
-                    file: id,
-                    document,
                     access,
                     recovered,
-                    browser: None,
-                    not_copied: None,
-                    download: None,
-                    damage,
+                    ..Opened::editable(id, document, damage)
                 })
             }
             Err(error) => Err(error.to_string()),
@@ -415,14 +410,9 @@ impl Files {
                 let document = design.file.open_found(chosen);
                 let recovered = offer(&mut design.lock, &design.file, &document);
                 Ok(Opened {
-                    file,
-                    document,
                     access: design.lock.access(),
                     recovered,
-                    browser: None,
-                    not_copied: None,
-                    download: None,
-                    damage,
+                    ..Opened::editable(file, document, damage)
                 })
             });
         Response::Opened {
