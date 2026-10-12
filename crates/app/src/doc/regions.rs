@@ -107,6 +107,44 @@ pub(crate) struct RegionPick {
     pub(crate) also: Vec<FeatureId>,
 }
 
+/// The regions picked of a sketch that's gone (an undo took it away),
+/// put by while others are offered, and picked again if it comes back
+/// before others are picked: a split's and a sweep's.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct GoneRegions(Option<(FeatureId, Vec<RegionRef>)>);
+
+impl GoneRegions {
+    /// Puts `pick`'s regions by where its source is no longer a sketch of
+    /// `document`, leaving none picked, or picks those put by again where
+    /// none are and their sketch is back.
+    pub(crate) fn follow(&mut self, pick: &mut RegionPick, document: &Document) {
+        if let Some(source) = pick.source
+            && !is_sketch(document, source)
+        {
+            self.0 = Some((source, pick.references()));
+            *pick = RegionPick::new(None, pick.most);
+        } else if pick.source.is_none()
+            && let Some((source, regions)) =
+                self.0.take_if(|(source, _)| is_sketch(document, *source))
+        {
+            *pick = RegionPick::editing(document, source, &regions, pick.most);
+        }
+    }
+
+    /// Lets go of those put by once `pick` has a source again: other
+    /// regions picked.
+    pub(crate) fn picked(&mut self, pick: &RegionPick) {
+        if pick.source.is_some() {
+            self.0 = None;
+        }
+    }
+
+    /// Whether regions are put by.
+    pub(crate) fn is_some(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
 /// A sketch's profiles, and the sketch they're of.
 #[derive(Debug, Clone)]
 pub(crate) struct Found {

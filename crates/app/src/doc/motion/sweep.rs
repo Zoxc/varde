@@ -20,7 +20,7 @@ use varde_document::{
 };
 use varde_expr::{AngleUnit, Unit, Value};
 use varde_render::Camera;
-use varde_sketch::{Id, RegionRef};
+use varde_sketch::Id;
 use varde_view::{
     MotionField, MotionKind, MotionPick, OperationKind, SketchLines, SweepPart, SweepPath,
     SweepView, sweep_info,
@@ -29,7 +29,7 @@ use varde_view::{
 use super::sketches::{chain_at, chain_through, chains_gone, count, sketch_name};
 use super::{Doc, MotionSession, length_field};
 use crate::doc::camera::fitting_length;
-use crate::doc::regions::{BodyTargets, RegionPick, TypedText};
+use crate::doc::regions::{BodyTargets, GoneRegions, RegionPick, TypedText};
 use crate::doc::revolve::sketch_of;
 
 /// A sweep's profile, path and options as picked; its model edges are
@@ -66,7 +66,7 @@ pub(crate) struct SweepSetup {
     /// sketch: put by (said to be gone) while the visible sketches'
     /// regions are offered in their place, and picked again if their
     /// sketch comes back before others are picked, as a split's.
-    stale_regions: Option<(FeatureId, Vec<RegionRef>)>,
+    stale_regions: GoneRegions,
 }
 
 impl Default for SweepSetup {
@@ -83,7 +83,7 @@ impl Default for SweepSetup {
             twist_stored: false,
             stored_parts: Vec::new(),
             chains_gone: false,
-            stale_regions: None,
+            stale_regions: GoneRegions::default(),
         }
     }
 }
@@ -282,18 +282,7 @@ impl MotionSession {
             return;
         }
         let setup = &mut self.sweep;
-        let is_sketch = |id: FeatureId| sketch_of(document, id).is_some();
-        if let Some(source) = setup.regions.source
-            && !is_sketch(source)
-        {
-            setup.stale_regions = Some((source, setup.regions.references()));
-            setup.regions = RegionPick::new(None, MAX_SWEEP_REGIONS);
-        } else if setup.regions.source.is_none()
-            && let Some((source, regions)) =
-                (setup.stale_regions).take_if(|(source, _)| is_sketch(*source))
-        {
-            setup.regions = RegionPick::editing(document, source, &regions, MAX_SWEEP_REGIONS);
-        }
+        setup.stale_regions.follow(&mut setup.regions, document);
         setup.regions.refresh(document);
         setup.targets.prune(document);
         setup.chains_gone = chains_gone(document, index, &setup.chains);
@@ -307,9 +296,7 @@ impl MotionSession {
             return;
         }
         self.sweep.regions.toggle(sketch, region, false, document);
-        if self.sweep.regions.source.is_some() {
-            self.sweep.stale_regions = None;
-        }
+        self.sweep.stale_regions.picked(&self.sweep.regions);
         if self.picking == MotionPick::Regions
             && !self.sweep.regions.picked.is_empty()
             && self.sweep_path().is_none()

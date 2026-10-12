@@ -20,7 +20,7 @@ use varde_document::{
     PlaneRef, Side, Split, SplitTool,
 };
 use varde_regen::Summary;
-use varde_sketch::{Id, RegionRef};
+use varde_sketch::Id;
 use varde_view::{
     MotionKind, MotionPick, Pick, PickIndex, Picked, SketchLines, SplitMode, SplitPiece, SplitView,
     Unnamed, plane_name, split_info,
@@ -30,7 +30,7 @@ use super::sketches::{count, sketch_name};
 use super::{Doc, Marks, MotionSession, OUT_OF_DATE, merged_in, unnamed};
 use crate::doc::combine::pickable;
 use crate::doc::feed::Merges;
-use crate::doc::regions::RegionPick;
+use crate::doc::regions::{GoneRegions, RegionPick};
 use crate::doc::revolve::sketch_of;
 
 /// A split's tool as picked for each of its "Split with" tiles, and
@@ -58,7 +58,7 @@ pub(crate) struct SplitSetup {
     /// their sketch: put by while the visible sketches' regions are
     /// offered in their place, and picked again if their sketch comes
     /// back before others are picked.
-    stale_regions: Option<(FeatureId, Vec<RegionRef>)>,
+    stale_regions: GoneRegions,
 }
 
 impl Default for SplitSetup {
@@ -72,7 +72,7 @@ impl Default for SplitSetup {
             original: Side::Front,
             keep: Keep::Both,
             gone: false,
-            stale_regions: None,
+            stale_regions: GoneRegions::default(),
         }
     }
 }
@@ -233,19 +233,7 @@ impl MotionSession {
             return;
         }
         let setup = &mut self.split;
-        let is_sketch = |id: FeatureId| sketch_of(document, id).is_some();
-        if let Some(source) = setup.regions.source
-            && !is_sketch(source)
-        {
-            setup.stale_regions = Some((source, setup.regions.references()));
-            setup.regions = RegionPick::new(None, MAX_EXTRUDE_REGIONS);
-        } else if setup.regions.source.is_none()
-            && let Some((source, regions)) = setup
-                .stale_regions
-                .take_if(|(source, _)| is_sketch(*source))
-        {
-            setup.regions = RegionPick::editing(document, source, &regions, MAX_EXTRUDE_REGIONS);
-        }
+        setup.stale_regions.follow(&mut setup.regions, document);
         if setup.mode == SplitMode::Regions {
             setup.regions.refresh(document);
         }
@@ -324,8 +312,8 @@ impl MotionSession {
             return;
         }
         self.split.regions.toggle(sketch, region, false, document);
+        self.split.stale_regions.picked(&self.split.regions);
         if self.split.regions.source.is_some() {
-            self.split.stale_regions = None;
             self.split.gone = false;
         }
     }
