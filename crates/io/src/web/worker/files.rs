@@ -21,7 +21,7 @@ use crate::autosave::{Ending, Held, to_open};
 use crate::browser::folder::{self, Design};
 use crate::browser::{self, BrowserDesign, LastDownload};
 use crate::dir::{Dir, Make, remove_if_free};
-use crate::downloads;
+use crate::downloads::{self, Downloads};
 use crate::open::{NOT_FOUND, OpenFiles};
 use crate::opfs::{lost_to_another_tab, new_name};
 use crate::store::{
@@ -669,9 +669,7 @@ impl Files {
     /// they're of another design of the name. Best effort: what's lost is
     /// only what the downloads say.
     async fn forget_downloads(&mut self, name: &str) {
-        if let Ok(root) = self.dirs.root().await {
-            let _ = downloads::update(&root, |downloads| downloads.removed(name)).await;
-        }
+        let _ = self.dirs.update_downloads(|d| d.removed(name)).await;
     }
 
     /// Opens the design `name` in browser storage, see `src/browser.rs`:
@@ -937,9 +935,7 @@ impl Files {
         let from = design.name().to_owned();
         folder::rename(&dir, design, name).await?;
         // Best effort: what's lost is only what the downloads say.
-        if let Ok(root) = self.dirs.root().await {
-            let _ = downloads::update(&root, |downloads| downloads.renamed(&from, name)).await;
-        }
+        let _ = self.dirs.update_downloads(|d| d.renamed(&from, name)).await;
         Ok(())
     }
 
@@ -950,10 +946,7 @@ impl Files {
         let Ok(dir) = self.dirs.browser().await else {
             return Vec::new();
         };
-        let downloads = match self.dirs.root().await {
-            Ok(root) => downloads::load(&root).await,
-            Err(_) => Default::default(),
-        };
+        let downloads = self.dirs.downloads().await;
         let store = self.dirs.store().await.ok();
         let (open, named) = (&self.open, &mut self.named);
         let held = |name: &str| open.values().any(|open| open.browser_name() == Some(name));
@@ -985,12 +978,10 @@ impl Files {
         };
         let (name, sum) = (design.name().to_owned(), design.tail().sum());
         let time = UnixSeconds::now();
-        let root = self.dirs.root().await.map_err(|e| e.to_string())?;
-        downloads::update(&root, |downloads| {
-            downloads.record(&name, time, (!edited).then_some(sum));
-        })
-        .await
-        .map_err(|e| format!("couldn't record the download: {e}"))?;
+        self.dirs
+            .update_downloads(|d| d.record(&name, time, (!edited).then_some(sum)))
+            .await
+            .map_err(|e| format!("couldn't record the download: {e}"))?;
         Ok(Some(LastDownload {
             time,
             latest: !edited,
@@ -1007,12 +998,9 @@ impl Files {
         let dir = self.dirs.browser().await.map_err(|e| e.to_string())?;
         let (bytes, sum) = folder::read_whole(&dir, name).await?;
         let time = UnixSeconds::now();
-        let recorded = match self.dirs.root().await {
-            Ok(root) => {
-                downloads::update(&root, |downloads| downloads.record(name, time, Some(sum))).await
-            }
-            Err(e) => Err(e),
-        };
+        let recorded = (self.dirs)
+            .update_downloads(|d| d.record(name, time, Some(sum)))
+            .await;
         Ok((bytes, recorded.map_err(|e| e.to_string())))
     }
 
@@ -1078,8 +1066,25 @@ impl Dirs {
     /// The last download recorded of the design `name`, whose file ends at
     /// `tail`.
     async fn last_download(&mut self, name: &str, tail: Tail) -> Option<LastDownload> {
-        let root = self.root().await.ok()?;
-        downloads::load(&root).await.last(name, tail.sum())
+        self.downloads().await.last(name, tail.sum())
+    }
+
+    /// The downloads recorded, none if they can't be read, see
+    /// [`downloads::load`].
+    async fn downloads(&mut self) -> Downloads {
+        match self.root().await {
+            Ok(root) => downloads::load(&root).await,
+            Err(_) => Downloads::default(),
+        }
+    }
+
+    /// Changes the downloads recorded as `change` does, see
+    /// [`downloads::update`].
+    async fn update_downloads<T>(
+        &mut self,
+        change: impl FnOnce(&mut Downloads) -> T,
+    ) -> io::Result<T> {
+        downloads::update(&self.root().await?, change).await
     }
 }
 
