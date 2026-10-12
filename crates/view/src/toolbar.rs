@@ -17,9 +17,9 @@ use crate::icons::{self, Icon};
 use crate::menu::{MENU_ITEM_SPACING, menu_item, menu_separator, ticked};
 use crate::rail::{Entry, Using};
 use crate::shortcut::{
-    Binding, Shortcut, close_binding, comb_binding, commit_binding, constrain_binding,
-    constraint_binding, file_bindings, handles_binding, history_bindings, insert_point_binding,
-    plane_binding, remove_point_binding, switch_binding, tool_binding,
+    Binding, DocumentKeys, Shortcut, close_binding, comb_binding, commit_binding,
+    constrain_binding, constraint_binding, file_bindings, handles_binding, history_bindings,
+    insert_point_binding, plane_binding, remove_point_binding, switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
@@ -38,7 +38,9 @@ const SAVE_CELL_WIDTH: f32 = 34.0;
 const BAR_SPACING: f32 = 2.0;
 
 pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
-    let operation = operation(state);
+    // Worked out once: every button shows the same snapshot.
+    let keys = state.keys();
+    let operation = operation(state, keys);
     let (context, tag): (Element<'a, Message>, _) = match (&state.sketch, &operation) {
         (Some(sketch), _) => (
             pill(
@@ -92,7 +94,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             .style(theme::tag)
     });
 
-    let [undo, redo, _] = history_bindings(state.keys());
+    let [undo, redo, _] = history_bindings(keys);
     let bar = row![
         // The rule right after the file cell, its wash meeting it.
         row![file_cell(state), vrule()],
@@ -114,7 +116,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         // are laid out first and so always show.
         container(
             row![
-                row(ops(state, operation.as_ref()))
+                row(ops(state, keys, operation.as_ref()))
                     .spacing(2)
                     .padding([0, 6])
                     .align_y(Alignment::Center),
@@ -158,9 +160,9 @@ struct Operation<'a> {
 }
 
 /// The operation being set up, if one is.
-fn operation<'a>(state: &DocumentState<'a>) -> Option<Operation<'a>> {
+fn operation<'a>(state: &DocumentState<'a>, keys: DocumentKeys) -> Option<Operation<'a>> {
     // OK sends what `Enter` does, when it does.
-    let ok = commit_binding(state.keys()).and_then(|binding| binding.sends());
+    let ok = commit_binding(keys).and_then(|binding| binding.sends());
     let (icon, name, cancel) = match state.operation.as_ref()? {
         OperationState::Motion(motion) => (
             motion.kind.icon(),
@@ -455,10 +457,10 @@ fn remove_op(why: Option<String>, binding: Binding) -> Element<'static, Message>
 /// Cancel and what it picks, its OK being in the pill.
 fn ops<'a>(
     state: &DocumentState<'a>,
+    keys: DocumentKeys,
     operation: Option<&Operation<'a>>,
 ) -> Vec<Element<'a, Message>> {
     let editable = state.editable();
-    let keys = state.keys();
     if let Some(sketch) = &state.sketch {
         let constrain = tipped_op(
             Icon::Constrain,
@@ -545,7 +547,7 @@ fn ops<'a>(
             .chain(close.into_iter().flatten())
             .collect();
     }
-    let sketch = bar_op(state, Entry::Sketch);
+    let sketch = bar_op(state, keys, Entry::Sketch);
     if state.picking_plane.is_some() {
         // Picking a plane in the viewport comes with picking, so the
         // origin planes are offered here.
@@ -618,7 +620,7 @@ fn ops<'a>(
         None => Vec::new(),
     };
     // Measure after a separator, as the mock has it.
-    let measure = bar_op(state, Entry::Measure);
+    let measure = bar_op(state, keys, Entry::Measure);
     // While an operation is set up, the bar is Cancel and what the
     // operation picks, as the mock's: the operations would leave no room
     // for the origins at 1280 px wide, and their keys still work.
@@ -637,7 +639,7 @@ fn ops<'a>(
     if let Some(bar) = selection_bar(state) {
         return (bar.into_iter())
             .map(|item| match item {
-                BarItem::Op(entry) => bar_op(state, entry),
+                BarItem::Op(entry) => bar_op(state, keys, entry),
                 BarItem::EditSketch(sketch) => op(
                     Icon::Sketch,
                     "Edit sketch",
@@ -669,8 +671,8 @@ fn ops<'a>(
         Entry::Motion(MotionKind::LinearPattern),
     ];
     std::iter::once(sketch)
-        .chain(model.map(|entry| bar_op(state, entry)))
-        .chain([separator(), measure, bar_op(state, Entry::Params)])
+        .chain(model.map(|entry| bar_op(state, keys, entry)))
+        .chain([separator(), measure, bar_op(state, keys, Entry::Params)])
         .chain(origins)
         .collect()
 }
@@ -826,8 +828,11 @@ fn sketch_items_bar(state: &DocumentState<'_>) -> Option<Vec<BarItem>> {
 
 /// The toolbar's button for `entry`, with its key, lit while it's in
 /// use, as the rail's.
-fn bar_op(state: &DocumentState<'_>, entry: Entry) -> Element<'static, Message> {
-    let keys = state.keys();
+fn bar_op(
+    state: &DocumentState<'_>,
+    keys: DocumentKeys,
+    entry: Entry,
+) -> Element<'static, Message> {
     bound_op(
         entry.icon(),
         entry.bar_label(keys),
