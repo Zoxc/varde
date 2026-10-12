@@ -407,14 +407,12 @@ fn check_volumes(plates: &Plates, what: &str) {
     }
 }
 
-/// The handle dragged to `signed` millimetres, as the viewport sends it
-/// in the design's units.
+/// The handle dragged to `signed` millimetres, as the viewport sends it.
 fn drag_to(plates: &mut Plates, signed: f64) {
-    let units = plates.doc.editor.document().units();
-    let distance = varde_expr::format(signed.abs(), Some(varde_expr::Unit::Length(units)));
-    plates.motion(MotionLook::OffsetBy {
-        distance,
-        inward: signed < 0.0,
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: signed,
+        step: 0.0,
     });
 }
 

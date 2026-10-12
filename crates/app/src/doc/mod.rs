@@ -1538,10 +1538,6 @@ impl Doc {
             Look::SetPivot(at) => self.set_pivot(at, Instant::now()),
             Look::HoverCube(over) => self.hover_cube(over, Instant::now()),
             Look::Rail(message) => self.rail_look(message),
-            Look::SetProjection(projection) => {
-                self.view_menu = false;
-                self.set_projection(projection);
-            }
         }
     }
 

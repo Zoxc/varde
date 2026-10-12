@@ -1511,7 +1511,7 @@ Without a solve lane yet the call fails (`NO_SOLVER`); a lane replaced
 so the web build shows none of it), drives three things
 (`viewport.md` has where they sit): the status bar's chip while a client
 is connected and the feature is on (`McpShown::chip`), the toolbar's
-toggle while the feature is on (`McpShown::on`, `toggle_shown`), and the
+toggle while the feature is on (`McpShown::on`), and the
 panel itself while the feature is on and `Mcp::open`.
 `Message::McpPanel` (`varde_view::McpPanel`) is the toggle (the chip
 and ✕ too; it doesn't open the panel with the feature off), Start

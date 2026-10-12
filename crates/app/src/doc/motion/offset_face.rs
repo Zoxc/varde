@@ -13,7 +13,7 @@ use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_document::{Design, FaceRef, FeatureKind, Generation, OffsetFace};
 use varde_render::Camera;
-use varde_view::{FaceHandle, MotionField, MotionKind, OffsetFaceView};
+use varde_view::{MotionField, MotionKind, OffsetFaceView};
 
 use crate::doc::camera::fitting_length;
 
@@ -79,12 +79,40 @@ impl MotionSession {
     }
 }
 
+/// An offset face's handle: an arrow from the first face's point along
+/// its outward normal, as the face is before the offset, with a knob at
+/// the distance the faces move (negative inward), which dragging sets,
+/// through zero to the other side.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct FaceHandle {
+    /// The first face's point, on the face as the offset finds it.
+    pub(super) origin: DVec3,
+    /// The face's outward normal there, unit.
+    pub(super) normal: DVec3,
+    /// How far along the normal the knob is, in millimetres: the
+    /// distance, negative inward; zero while the distance doesn't read.
+    pub(super) at: f64,
+}
+
 impl Doc {
     /// What the panel shows of the offset face being set up.
     pub(super) fn offset_face_view(&self, session: &MotionSession) -> OffsetFaceView {
         let units = self.editor.document().units();
+        OffsetFaceView {
+            faces: self.picked_faces(session),
+            inward: session.flip,
+            tangent: session.tangent,
+            info: (session.offset_face())
+                .filter(|_| session.kind == MotionKind::OffsetFace)
+                .map(|offset| varde_view::offset_info(&offset, units)),
+        }
+    }
+
+    /// The offset face's handle, once its first face is found on the
+    /// model shown.
+    pub(super) fn offset_face_handle(&self, session: &MotionSession) -> Option<FaceHandle> {
         let generation = self.editor.generation();
-        let handle = (session.anchor.as_ref())
+        (session.anchor.as_ref())
             .filter(|anchor| {
                 anchor.generation == generation && session.faces.refs.first() == Some(&anchor.face)
             })
@@ -92,16 +120,7 @@ impl Doc {
                 origin: anchor.at,
                 normal: anchor.normal,
                 at: session.signed_distance(),
-            });
-        OffsetFaceView {
-            faces: self.picked_faces(session),
-            inward: session.flip,
-            tangent: session.tangent,
-            handle,
-            info: (session.offset_face())
-                .filter(|_| session.kind == MotionKind::OffsetFace)
-                .map(|offset| varde_view::offset_info(&offset, units)),
-        }
+            })
     }
 
     /// Finds where the handle of the offset face being set up stands

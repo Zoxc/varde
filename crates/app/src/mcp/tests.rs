@@ -1267,6 +1267,12 @@ fn ui(varde: &mut Varde, message: varde_view::Message) {
     let _ = varde.update(Message::Ui(message));
 }
 
+/// The client the status bar's chip names, while the feature is on: the
+/// name it gave, `None` shown as "A client".
+fn chip<'a>(shown: &varde_view::McpShown<'a>) -> Option<Option<&'a str>> {
+    shown.client.filter(|_| shown.on)
+}
+
 /// The status bar's chip shows only while a client is connected, the
 /// toolbar's toggle only while the feature is on, and the chip opens the
 /// panel.
@@ -1275,17 +1281,20 @@ fn the_chip_shows_with_a_client_and_the_toggle_while_on() {
     use varde_view::{McpPanel, Setting, SettingsPage};
     let varde = with_example();
     let shown = varde.mcp_panel_shown().unwrap();
-    assert!(!shown.toggle_shown());
-    assert_eq!(shown.chip(), None);
+    assert!(!shown.on);
+    assert_eq!(chip(&shown), None);
 
     let mut varde = listening();
     let shown = varde.mcp_panel_shown().unwrap();
-    assert!(shown.toggle_shown() && !shown.open);
-    assert_eq!(shown.chip(), None);
+    assert!(shown.on && !shown.open);
+    assert_eq!(chip(&shown), None);
     assert!(!on_screen(&varde).iter().any(|text| text.starts_with("MCP")));
 
     started(&mut varde, "a session", Some("Claude Code"));
-    assert_eq!(varde.mcp_panel_shown().unwrap().chip(), Some("Claude Code"));
+    assert_eq!(
+        chip(&varde.mcp_panel_shown().unwrap()),
+        Some(Some("Claude Code"))
+    );
     assert!(
         on_screen(&varde)
             .iter()
@@ -1302,8 +1311,8 @@ fn the_chip_shows_with_a_client_and_the_toggle_while_on() {
         varde_view::Message::Settings(SettingsPage::Set(Setting::Mcp(false))),
     );
     let shown = varde.mcp_panel_shown().unwrap();
-    assert_eq!(shown.chip(), None);
-    assert!(!shown.toggle_shown() && !shown.open);
+    assert_eq!(chip(&shown), None);
+    assert!(!shown.on && !shown.open);
     assert!(varde.mcp.serve.is_none() && !varde.mcp.running);
     assert!(!on_screen(&varde).iter().any(|text| text == "Stopped"));
     // The toggle can't open it while off.
@@ -1322,7 +1331,7 @@ fn the_feature_on_shows_the_toggle_and_a_stopped_panel() {
         .token_loaded(Token::generate().unwrap(), false, true, 0, None);
     set(&mut varde, Setting::Mcp(true));
     let shown = varde.mcp_panel_shown().unwrap();
-    assert!(shown.toggle_shown());
+    assert!(shown.on);
     assert_eq!(shown.status, McpStatus::Off);
     assert!(varde.mcp.serve.is_none());
     panel_says(&mut varde, McpPanel::Toggle);
@@ -1462,7 +1471,7 @@ fn the_log_goes_with_the_session_the_design_and_the_server() {
     let shown = varde.mcp_panel_shown().unwrap();
     assert!(shown.rows.is_empty());
     assert_eq!(shown.status, McpStatus::Off);
-    assert!(shown.open && shown.toggle_shown());
+    assert!(shown.open && shown.on);
     let texts = on_screen(&varde);
     assert!(texts.iter().any(|text| text == "Stopped"), "{texts:?}");
     assert!(texts.iter().any(|text| text == "Start"), "{texts:?}");
@@ -1504,8 +1513,8 @@ fn untrusted_text_is_shown_on_one_line() {
     let mut varde = listening();
     started(&mut varde, "a session", Some("Evil\nClient\u{202E}\u{7}"));
     assert_eq!(
-        varde.mcp_panel_shown().unwrap().chip(),
-        Some("Evil Client\u{FFFD}\u{FFFD}")
+        chip(&varde.mcp_panel_shown().unwrap()),
+        Some(Some("Evil Client\u{FFFD}\u{FFFD}"))
     );
     let _ = called(&mut varde, "a session", 1, feature("Ext\r\nrude\u{2066}1"));
     let shown = varde.mcp_panel_shown().unwrap();
@@ -1516,7 +1525,7 @@ fn untrusted_text_is_shown_on_one_line() {
     assert!(!call.result.unwrap().contains(['\n', '\u{2066}']));
 
     started(&mut varde, "another", Some(" \t "));
-    assert_eq!(varde.mcp_panel_shown().unwrap().chip(), Some("A client"));
+    assert_eq!(chip(&varde.mcp_panel_shown().unwrap()), Some(None));
 }
 
 /// `body_topology` waits for its edge facts, its row waiting, and is

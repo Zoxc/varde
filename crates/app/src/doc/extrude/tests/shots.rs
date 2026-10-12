@@ -823,7 +823,7 @@ fn shots_28_view_menu() {
 
 /// Looks from `view` in `projection`, the turn finished, zoomed by `zoom`.
 fn look_from(doc: &mut Doc, view: View, projection: Projection, zoom: f32) {
-    doc.look(Look::SetProjection(projection));
+    doc.set_projection(projection);
     old_home(doc);
     doc.look(Look::LookFrom(view));
     doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
@@ -860,7 +860,7 @@ fn shots_12_odd_cameras() {
             about: None,
         });
         camera.take(&doc, "12-grazing-perspective", Shot::new());
-        doc.look(Look::SetProjection(Projection::Orthographic));
+        doc.set_projection(Projection::Orthographic);
         camera.take(&doc, "12-grazing", Shot::new());
         // Panned until the knob is off the screen.
         framed(&mut doc);

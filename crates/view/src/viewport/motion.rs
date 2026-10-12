@@ -29,15 +29,9 @@
 //! values. No handles while the axis is being picked, for a mirror, or
 //! in a document that can't be changed.
 //!
-//! An offset face has the extrude's handle: an arrow from its first
-//! face's point along the face's outward normal, as the face is before
-//! the offset, its knob at the distance (behind the face inward). Dragged
-//! (knob or shaft), the knob follows the cursor's ray where it passes
-//! nearest the arrow's line, snapped as the extrude's handle, through
-//! zero to the other side: the distance and Inward go to the panel
-//! ([`MotionLook::OffsetBy`](crate::motion::MotionLook::OffsetBy)), so the preview and OK follow as for a
-//! typed distance, and a typed one moves the knob. It takes the mouse
-//! ahead of picking the model's faces.
+//! An offset face's handle is an operation knob (`knobs.rs`): an arrow
+//! from its first face's point along the face's outward normal, its knob
+//! at the distance, dragged through zero to the other side.
 //!
 //! A split's origin plane is drawn as a mirror's. While its tool is a
 //! sketch's regions, they're shaded as an extrude's (`regions.rs`), those

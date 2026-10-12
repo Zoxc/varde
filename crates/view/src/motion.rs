@@ -603,9 +603,6 @@ pub enum MotionLook {
     /// An offset face's or a draft's Tangent faces: its faces take in
     /// those running on smoothly from them, or not.
     TangentFaces,
-    /// An offset face's handle dragged: the distance, as typed in its
-    /// field, and whether it's inward (past zero).
-    OffsetBy { distance: String, inward: bool },
     /// A knob of the operation's handle ([`MotionState::knobs`], by its
     /// place there) dragged to `value`, in its field's own units
     /// (millimetres, radians or a factor), snapped to steps of `step`:
@@ -1358,7 +1355,7 @@ pub use fillet::FilletView;
 mod shell;
 pub use shell::{ShellDirection, ShellView};
 mod offset_face;
-pub use offset_face::{FaceHandle, OffsetFaceView};
+pub use offset_face::OffsetFaceView;
 mod draft;
 pub use draft::DraftView;
 mod sweep;

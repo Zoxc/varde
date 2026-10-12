@@ -1891,16 +1891,7 @@ impl Doc {
             {
                 session.tangent = !session.tangent;
             }
-            // Only as the handle offers it: a distance and a side.
-            MotionLook::OffsetBy { distance, inward } if session.kind == MotionKind::OffsetFace => {
-                let ask = field_ask(session.kind, MotionField::Distance, &document.design());
-                session.fields[MotionField::Distance.index()].input(distance, &ask);
-                session.flip = inward;
-            }
-            MotionLook::DropFace(_)
-            | MotionLook::ShellDirection(_)
-            | MotionLook::TangentFaces
-            | MotionLook::OffsetBy { .. } => {}
+            MotionLook::DropFace(_) | MotionLook::ShellDirection(_) | MotionLook::TangentFaces => {}
             MotionLook::SweepRegion { sketch, region } if session.kind == MotionKind::Sweep => {
                 session.sweep_region(sketch, region, document);
             }

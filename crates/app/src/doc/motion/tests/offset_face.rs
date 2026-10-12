@@ -18,6 +18,7 @@ use varde_view::{
 
 use super::face_session::{add_box, boxes, click, face_pick, held, picked_faces as faces, shows};
 use super::{Plates, enter, near};
+use crate::doc::motion::offset_face::FaceHandle;
 use crate::tests::{key_in, screen_texts};
 
 /// The offset the last request previews, if it previews one.
@@ -28,10 +29,10 @@ fn drafted(plates: &Plates) -> Option<OffsetFace> {
     }
 }
 
-/// The handle the panel's view has, if any.
-fn handle(plates: &Plates) -> Option<varde_view::FaceHandle> {
-    let state = plates.doc.motion_state()?;
-    state.offset_face()?.handle
+/// The offset face's handle, if any.
+fn handle(plates: &Plates) -> Option<FaceHandle> {
+    let session = plates.doc.mode.motion()?;
+    plates.doc.offset_face_handle(session)
 }
 
 /// The box's top, at z 10 (or wherever the model shown has it).
@@ -169,9 +170,10 @@ fn the_offset_is_previewed_the_handle_follows_and_ok_adds_one_undo_step() {
     assert!(near(handle_now.origin, DVec3::new(20.0, 15.0, 10.0)));
 
     // The handle dragged below the face: 2 mm inward.
-    plates.motion(MotionLook::OffsetBy {
-        distance: "2 mm".to_owned(),
-        inward: true,
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: -2.0,
+        step: 0.0,
     });
     let offset = drafted(&plates).unwrap();
     assert!(offset.inward && offset.distance.value == 2.0);
@@ -327,8 +329,8 @@ fn answer_all_but_the_last(plates: &mut Plates) {
 fn inward_ticked_or_the_handle_dragged_through_zero_give_the_same_draft() {
     varde_regen::testing::offset_by_boxes();
     for (units, typed, dragged, top_at) in [
-        (varde_expr::LengthUnit::Mm, "2", "2 mm", 8.0),
-        (varde_expr::LengthUnit::In, "0.1", "0.1 in", 10.0 - 2.54),
+        (varde_expr::LengthUnit::Mm, "2", 2.0, 8.0),
+        (varde_expr::LengthUnit::In, "0.1", 2.54, 10.0 - 2.54),
     ] {
         let mut plates = boxes(false);
         let body = plates.bodies[0];
@@ -355,9 +357,10 @@ fn inward_ticked_or_the_handle_dragged_through_zero_give_the_same_draft() {
         plates.motion(MotionLook::Flip);
         assert!(!drafted(&plates).unwrap().inward);
         plates.answer();
-        plates.motion(MotionLook::OffsetBy {
-            distance: dragged.to_owned(),
-            inward: true,
+        plates.motion(MotionLook::DragKnob {
+            knob: 0,
+            value: -dragged,
+            step: 0.0,
         });
         let dragged = drafted(&plates).expect("a draft");
         assert_eq!(dragged.faces, ticked.faces);
@@ -397,13 +400,15 @@ fn a_drag_while_the_preview_is_on_its_way_and_the_first_face_changed() {
         DVec3::new(20.0, 15.0, 10.0)
     ));
     // Dragged up, then down through zero, nothing answered.
-    plates.motion(MotionLook::OffsetBy {
-        distance: "3 mm".to_owned(),
-        inward: false,
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: 3.0,
+        step: 0.0,
     });
-    plates.motion(MotionLook::OffsetBy {
-        distance: "2 mm".to_owned(),
-        inward: true,
+    plates.motion(MotionLook::DragKnob {
+        knob: 0,
+        value: -2.0,
+        step: 0.0,
     });
     // The front picked on the model shown (the top moved 1 mm out), the
     // top taken out.

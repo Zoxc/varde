@@ -890,7 +890,6 @@ fn an_offset_face_s_panel() {
         faces,
         inward: false,
         tangent: true,
-        handle: None,
         info: Some("1 face · 1 mm outward".to_owned()),
     }));
     let shown = texts_of(&state);

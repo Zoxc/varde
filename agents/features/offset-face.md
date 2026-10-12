@@ -89,8 +89,8 @@ The move's session (`MotionSession`) with `MotionKind::OffsetFace`, its
 faces picked by the face session (see the shell's UI: `faces.rs`,
 `refs.rs`, `PickedFaces`); its own parts in
 `app/src/doc/motion/offset_face.rs` and `view/src/motion/offset_face.rs`
-(`OffsetFaceView`, `FaceHandle`), its handle in
-`view/src/viewport/motion.rs`. **The model mock has no offset face
+(`OffsetFaceView`; the app's `FaceHandle`), its handle an operation
+knob (`view/src/viewport/knobs.rs`). **The model mock has no offset face
 panel** (only the `offset` icon and "Offset face" in a face's context
 menu), so the panel is built in the style of the mock's shell panel.
 
@@ -142,8 +142,7 @@ menu), so the panel is built in the style of the mock's shell panel.
   generation stay, so dragging moves only the knob. Dragged, the knob
   follows the cursor's ray where it passes nearest the arrow's line,
   snapped as the extrude's handle, **through zero to the other side**:
-  `MotionLook::DragKnob` (or `OffsetBy { distance, inward }`, which
-  tests send) sets the field to the size and Inward to the side; zero
+  `MotionLook::DragKnob` sets the field to the size and Inward to the side; zero
   itself is taken as nothing (no distance is zero), nor a distance the
   design's units show as zero (zoomed in far, the snap is finer than
   they show: "0 mm"). Dragged

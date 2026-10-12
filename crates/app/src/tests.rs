@@ -5319,7 +5319,7 @@ fn leaving_a_sketch_turns_the_camera_back() {
     doc.look(Look::EditFeature(feature));
     settle_camera(&mut doc);
     assert_ne!(doc.camera, before);
-    doc.look(Look::SetProjection(varde_render::Projection::Perspective));
+    doc.set_projection(varde_render::Projection::Perspective);
     doc.look(Look::FinishSketch);
     settle_camera(&mut doc);
     let mut expected = before;

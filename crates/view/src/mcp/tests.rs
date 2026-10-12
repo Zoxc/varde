@@ -42,7 +42,7 @@ fn panel_texts(mcp: &McpShown<'_>) -> Vec<String> {
 #[test]
 fn the_toggle_shows_while_on_and_the_chip_with_a_client() {
     let mut mcp = serving();
-    assert!(mcp.toggle_shown());
+    assert!(mcp.on);
     assert_eq!(mcp.chip(), Some("Claude Code"));
     // A client that gave no name.
     mcp.client = Some(None);
@@ -53,7 +53,7 @@ fn the_toggle_shows_while_on_and_the_chip_with_a_client() {
     // The feature off: no toggle, chip or panel, the panel open or not.
     mcp.on = false;
     mcp.client = Some(Some("Claude Code"));
-    assert!(!mcp.toggle_shown());
+    assert!(!mcp.on);
     assert_eq!(mcp.chip(), None);
     assert!(toggle(Some(&mcp)).is_none());
     assert!(panel(&mcp).is_none());

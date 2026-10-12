@@ -27,7 +27,7 @@ use crate::{Edit, Look, Message};
 
 /// How wide the popup is, in pixels, as the mock's: narrower only where
 /// the viewport is.
-pub(crate) const PARAMS_WIDTH: f32 = 540.0;
+const PARAMS_WIDTH: f32 = 540.0;
 
 /// The columns' widths: the name, the value, what uses it and the delete
 /// button; the expression takes what's left.
@@ -116,18 +116,18 @@ pub struct ParamsState<'a> {
 /// A row as shown: what the fields hold, its value, what uses it and why
 /// it's wrong, if it is.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Row {
-    pub(crate) name: String,
-    pub(crate) text: String,
+struct Row {
+    name: String,
+    text: String,
     /// The value in the design's units, or a dash.
-    pub(crate) value: String,
+    value: String,
     /// The features and other parameters using it, or "Not used".
-    pub(crate) uses: String,
-    pub(crate) error: Option<String>,
+    uses: String,
+    error: Option<String>,
     /// Whether the feature selected uses it.
-    pub(crate) lit: bool,
+    lit: bool,
     /// Whether the expression's field is what's wrong.
-    pub(crate) bad_text: bool,
+    bad_text: bool,
 }
 
 impl<'a> ParamsState<'a> {
@@ -136,7 +136,7 @@ impl<'a> ParamsState<'a> {
     }
 
     /// Each parameter's row, in order.
-    pub(crate) fn rows(&self) -> Vec<Row> {
+    fn rows(&self) -> Vec<Row> {
         let document = self.document;
         let resolved = document.params_resolved();
         let units = document.units();
@@ -213,7 +213,7 @@ pub(crate) fn popup<'a>(state: ParamsState<'a>, beside: bool) -> Element<'a, Mes
 
 /// The popup's card, see [`popup`]. It's opaque: clicks and the wheel
 /// over it don't reach the scene under it.
-pub(crate) fn card<'a>(state: ParamsState<'a>) -> Element<'a, Message> {
+fn card<'a>(state: ParamsState<'a>) -> Element<'a, Message> {
     let rows = state.rows();
     let bad = rows.iter().any(|row| row.error.is_some());
     let count = row![

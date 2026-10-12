@@ -102,9 +102,6 @@ const WELL_RADIUS: f32 = 6.0;
 pub(crate) const CONTROL_HEIGHT: f32 = 28.0;
 pub(crate) const CONTROL_TEXT: f32 = 12.5;
 
-/// How wide the measure tool's labels are, left of their values.
-pub(crate) const FIELD_INDENT: f32 = 68.0;
-
 /// No regions picked, for a view without them.
 pub static NO_REGIONS: BTreeSet<usize> = BTreeSet::new();
 
@@ -1361,10 +1358,7 @@ fn bodies<'a>(
 /// The body a join merges the bodies it's ticked for into, if it's
 /// ticked for two or more of `targets`: the first made of them, which
 /// then holds them all. A body merged away before isn't one of them.
-pub(crate) fn joined_into<'a>(
-    operation: OperationKind,
-    targets: &[BodyTarget<'a>],
-) -> Option<&'a str> {
+pub(crate) fn joined_into<'a>(operation: OperationKind, targets: &[BodyTarget<'a>]) -> Option<&'a str> {
     if operation != OperationKind::Join {
         return None;
     }

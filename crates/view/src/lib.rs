@@ -107,12 +107,12 @@ pub use measure::{
 };
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, BlendFace,
-    ChamferType, ChamferView, DraftView, FaceHandle, FilletView, KnobPath, KnobRadius, KnobScale,
-    KnobSnap, KnobTone, LoftSection, LoftShape, LoftView, MotionField, MotionKind, MotionLook,
-    MotionParts, MotionPick, MotionState, OffsetFaceView, OpKnob, PatternMode, PickedFace,
-    PickedFaces, ScaleMode, ScaleView, ShellDirection, ShellView, SketchLines, SplitMode,
-    SplitPiece, SplitView, SweepPart, SweepPath, SweepView, align_info, axis_name, direction_name,
-    pattern_copies, plane_name, point_name, scale_info, split_info,
+    ChamferType, ChamferView, DraftView, FilletView, KnobPath, KnobRadius, KnobScale, KnobSnap,
+    KnobTone, LoftSection, LoftShape, LoftView, MotionField, MotionKind, MotionLook, MotionParts,
+    MotionPick, MotionState, OffsetFaceView, OpKnob, PatternMode, PickedFace, PickedFaces,
+    ScaleMode, ScaleView, ShellDirection, ShellView, SketchLines, SplitMode, SplitPiece, SplitView,
+    SweepPart, SweepPath, SweepView, align_info, axis_name, direction_name, pattern_copies,
+    plane_name, point_name, scale_info, split_info,
 };
 pub use mouse::{DragAction, MouseOptions, PivotClick, Rotation, RotationPoint};
 pub use naming::{Naming, Shown, Unnamed};
@@ -997,8 +997,6 @@ pub enum Look {
     /// The cursor over the view cube or off it: the pivot is marked
     /// while it's over.
     HoverCube(bool),
-    /// Views in `Projection`, from the view options menu, which closes.
-    SetProjection(Projection),
     /// Opens or closes a tool set's list on the rail, see [`RailLook`].
     Rail(RailLook),
 }

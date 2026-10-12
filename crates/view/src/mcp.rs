@@ -77,15 +77,9 @@ pub struct McpAsk<'a> {
 }
 
 impl McpShown<'_> {
-    /// Whether the toolbar shows the panel's toggle: while the feature is
-    /// on.
-    pub fn toggle_shown(&self) -> bool {
-        self.on
-    }
-
     /// The chip the status bar shows, with the client's name, while one
     /// is connected.
-    pub fn chip(&self) -> Option<&str> {
+    fn chip(&self) -> Option<&str> {
         let client = self.client.filter(|_| self.on)?;
         Some(client_name(client))
     }
@@ -502,7 +496,7 @@ fn client_name(name: Option<&str>) -> &str {
 
 /// The toolbar's toggle of the panel, on while it's open, if it shows.
 pub(crate) fn toggle<'a>(mcp: Option<&McpShown<'_>>) -> Option<Element<'a, Message>> {
-    let open = mcp.filter(|mcp| mcp.toggle_shown())?.open;
+    let open = mcp.filter(|mcp| mcp.on)?.open;
     let button = icon_button(
         Icon::Agent,
         Tone::Muted,

@@ -18,7 +18,7 @@ use varde_regen::{Between, EdgeForm, Gap, Inspected, Measure, Probed, Summary};
 
 use crate::chrome::{hrule, icon_button, sentence};
 use crate::icons::Icon;
-use crate::operation_panel::{FIELD_INDENT, Parts, message_text, operation_panel};
+use crate::operation_panel::{Parts, message_text, operation_panel};
 use crate::pick::{Pick, PickIndex};
 use crate::theme::{self, SEMIBOLD, Tone};
 use crate::{Look, Message};
@@ -506,13 +506,16 @@ fn fold_header<'a>(picked: &Picked<'a>, slot: MeasureSlot, folded: bool) -> Elem
     .into()
 }
 
+/// How wide the measure tool's labels are, left of their values.
+const LABEL_WIDTH: f32 = 68.0;
+
 /// A value's row: its label as wide as a typed value's, its text, and a
 /// button copying it with its unit at full precision.
 fn value_row<'a>(value: Value) -> Element<'a, Message> {
     let label = text(value.label)
         .size(12)
         .style(theme::muted_text)
-        .width(FIELD_INDENT - 6.0);
+        .width(LABEL_WIDTH - 6.0);
     let shown = text(value.shown)
         .size(12)
         .wrapping(Wrapping::WordOrGlyph)

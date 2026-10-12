@@ -304,7 +304,7 @@ impl Doc {
 
     /// An offset face's knob, once its anchor is known.
     fn offset_face_knob(&self, session: &MotionSession) -> Option<OpKnob> {
-        let handle = self.offset_face_view(session).handle?;
+        let handle = self.offset_face_handle(session)?;
         Some(OpKnob::line(
             MotionField::Distance,
             [handle.origin, handle.normal],
