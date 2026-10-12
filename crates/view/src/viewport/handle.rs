@@ -87,12 +87,8 @@ impl<K: Copy> Puck<K> {
     /// The puck of `knob` at `at`, its arrow along the unit `out`, seen
     /// through `projector`: `None` behind the eye of a perspective view.
     pub(crate) fn new(knob: K, at: DVec3, out: DVec3, projector: &Projector) -> Option<Self> {
-        let depth = projector.world_depth(at);
-        if projector.perspective() && (depth.is_nan() || depth <= projector.near()) {
-            return None;
-        }
-        let pixel = projector.pixel_at(depth);
-        if !(pixel > 0.0 && pixel.is_finite() && at.is_finite() && out.is_finite()) {
+        let pixel = projector.pixel_at_point(at)?;
+        if !(at.is_finite() && out.is_finite()) {
             return None;
         }
         let (eye, backward) = projector.eye();

@@ -6,6 +6,7 @@
 use glam::{DVec2, DVec3};
 use varde_document::{MAX_COORD, OriginPlane, Placement};
 use varde_render::{Camera, Projection};
+use varde_sketch::angle;
 
 /// How far from along the plane, as the cosine of the angle between a
 /// cursor's ray and the plane's normal, the ray has to be to meet the
@@ -17,6 +18,11 @@ const PARALLEL: f64 = 1e-6;
 /// handle along it ([`Projector::along_line`]), as a share of the ray's
 /// length squared.
 const ALONG_LINE: f64 = 1e-6;
+
+/// How near to edge on a plane the cursor's ray may run and still turn
+/// a handle about its normal ([`Projector::angle_on_plane`]), as the
+/// cosine between the ray and the normal.
+const EDGE_ON: f64 = 1e-3;
 
 /// Maps between a sketch's plane and a viewport of a given size seen by a
 /// camera. Screen positions are in logical pixels from the viewport's top
@@ -154,6 +160,18 @@ impl Projector {
         }
     }
 
+    /// A pixel's size at the world point `at`, in world units ([`Self::pixel_at`]):
+    /// `None` behind the eye of a perspective view, or for a size that
+    /// isn't positive and finite.
+    pub(crate) fn pixel_at_point(&self, at: DVec3) -> Option<f64> {
+        let depth = self.world_depth(at);
+        if self.perspective && (depth.is_nan() || depth <= self.near) {
+            return None;
+        }
+        let pixel = self.pixel_at(depth);
+        (pixel > 0.0 && pixel.is_finite()).then_some(pixel)
+    }
+
     /// Whether it's a perspective view.
     pub(crate) fn perspective(&self) -> bool {
         self.perspective
@@ -237,6 +255,35 @@ impl Projector {
         }
         let t = (a * e - b * d) / denominator;
         t.is_finite().then_some(t)
+    }
+
+    /// The angle about `centre`, in radians from the unit `x` towards
+    /// `axis × x`, of where the ray through the screen position `pixel`
+    /// meets the plane through `centre` square to the unit `axis`: where
+    /// a handle turned about the axis goes. `None` with the ray nearer
+    /// edge on to the plane than [`EDGE_ON`] says, meeting it behind the
+    /// eye of a perspective view or at `centre`, or a position that
+    /// isn't finite.
+    pub(crate) fn angle_on_plane(
+        &self,
+        centre: DVec3,
+        axis: DVec3,
+        x: DVec3,
+        pixel: DVec2,
+    ) -> Option<f64> {
+        let (origin, ray) = self.ray(pixel)?;
+        let facing = ray.dot(axis);
+        if facing.is_nan() || facing.abs() <= EDGE_ON * ray.length() {
+            return None;
+        }
+        let t = (centre - origin).dot(axis) / facing;
+        if self.perspective && t <= 0.0 {
+            return None;
+        }
+        let p = origin + ray * t - centre;
+        let (u, v) = (p.dot(x), p.dot(axis.cross(x)));
+        let turn = angle::atan2(v, u);
+        (turn.is_finite() && (u != 0.0 || v != 0.0)).then_some(turn)
     }
 
     /// How far in front of the eye the sketch point `at` is, or of the

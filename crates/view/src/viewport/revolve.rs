@@ -26,7 +26,7 @@ use iced::widget::shader::Action;
 use iced::{Point, Rectangle, mouse};
 use varde_document::{AxisLine, FeatureId};
 use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
-use varde_sketch::{Curve, Sketch, angle};
+use varde_sketch::{Curve, Sketch};
 
 use super::handle::{self, Puck};
 use super::handle::{angle_step, wrapped};
@@ -56,10 +56,6 @@ const ARROW_LENGTH: f64 = 11.0;
 const ARROW_HALF_WIDTH: f64 = 4.5;
 /// How many degrees each step of the shaft's arc turns at most.
 const SHAFT_STEP: f64 = 3.0;
-/// How near to edge on the plane a knob turns in the cursor's ray may run
-/// and still turn it, as the cosine between the ray and the axis: a
-/// move's ring's.
-const EDGE_ON: f64 = 1e-3;
 
 /// The revolve being set up, as the viewport shows it.
 #[derive(Debug, Clone)]
@@ -270,23 +266,9 @@ impl<'a> Revolving<'a> {
         let handle = self.handle.as_ref()?;
         let &(_, from) = handle.knobs.iter().find(|(knob, _)| *knob == angle)?;
         let projector = Self::projector(camera, bounds)?;
-        let (origin, ray) = projector.ray(at)?;
-        let facing = ray.dot(handle.axis);
-        if facing.is_nan() || facing.abs() <= EDGE_ON * ray.length() {
-            return None;
-        }
-        let t = (handle.origin - origin).dot(handle.axis) / facing;
-        if projector.perspective() && t <= 0.0 {
-            return None;
-        }
-        let p = origin + ray * t - handle.origin;
         let x = handle.radial.normalize_or_zero();
-        let y = handle.axis.cross(x);
-        let (u, v) = (p.dot(x), p.dot(y));
-        if u == 0.0 && v == 0.0 {
-            return None;
-        }
-        let to = from + wrapped(angle::atan2(v, u) - from);
+        let turn = projector.angle_on_plane(handle.origin, handle.axis, x, at)?;
+        let to = from + wrapped(turn - from);
         let pixel = projector.pixel_at(projector.world_depth(handle.at(from)));
         let step = angle_step(handle.radius() / pixel).to_radians();
         let snapped = (to / step).round() * step;

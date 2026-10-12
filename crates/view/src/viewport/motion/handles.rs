@@ -48,9 +48,6 @@ const ARC_DEGREES: f64 = 40.0;
 const ARC_CLEAR: f64 = 12.0;
 /// How many segments the orb is drawn with.
 const RING_SEGMENTS: usize = 64;
-/// How near to edge on a ring's plane the cursor's ray may run and still
-/// turn it, as the cosine between the ray and the ring's axis.
-const EDGE_ON: f64 = 1e-3;
 
 /// A handle of a move: an arrow or a ring, of a world axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -354,21 +351,8 @@ impl Handles {
     /// ([`plane_axes`]): right-handed about `axis`. `None` with the plane
     /// edge on, or the ray meeting it behind the eye or at the centre.
     fn angle_at(&self, centre: DVec3, axis: Axis3, at: DVec2) -> Option<f64> {
-        let (origin, ray) = self.projector.ray(at)?;
-        let normal = axis.direction();
-        let facing = ray.dot(normal);
-        if facing.is_nan() || facing.abs() <= EDGE_ON * ray.length() {
-            return None;
-        }
-        let t = (centre - origin).dot(normal) / facing;
-        if self.projector.perspective() && t <= 0.0 {
-            return None;
-        }
-        let p = origin + ray * t - centre;
-        let (u, v) = plane_axes(axis);
-        let (x, y) = (p.dot(u), p.dot(v));
-        let turn = angle::atan2(y, x);
-        (turn.is_finite() && (x != 0.0 || y != 0.0)).then_some(turn)
+        let (u, _) = plane_axes(axis);
+        (self.projector).angle_on_plane(centre, axis.direction(), u, at)
     }
 }
 
@@ -612,14 +596,7 @@ impl<'a> Moving<'a> {
             return None;
         }
         let projector = Projector::world(camera, bounds.width, bounds.height)?;
-        let depth = projector.world_depth(centre);
-        if projector.perspective() && (depth.is_nan() || depth <= projector.near()) {
-            return None;
-        }
-        let pixel = projector.pixel_at(depth);
-        if !(pixel > 0.0 && pixel.is_finite()) {
-            return None;
-        }
+        let pixel = projector.pixel_at_point(centre)?;
         let angle = self.field(MotionField::Angle).unwrap_or(0.0);
         let rings = Axis3::ALL.map(|axis| angle == 0.0 || state.origin_axis == Some(axis));
         Some(Handles::new(centre, pixel, rings, projector))

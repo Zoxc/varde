@@ -29,10 +29,6 @@ use crate::projection::Projector;
 use crate::theme::SketchColors;
 use crate::{Look, Message};
 
-/// How near to edge on an arc's plane the cursor's ray may run and still
-/// turn its knob, as the cosine between the ray and the axis: a move's
-/// ring's.
-const EDGE_ON: f64 = 1e-3;
 /// How many segments a whole turn of an arc's shaft and rail is drawn
 /// with.
 const ARC_SEGMENTS: f64 = 96.0;
@@ -96,17 +92,6 @@ fn projector(camera: &Camera, bounds: Rectangle) -> Option<Projector> {
     Projector::world(camera, bounds.width, bounds.height)
 }
 
-/// A pixel's size at `at`, in millimetres, if there's one: not behind the
-/// eye of a perspective view.
-fn pixel_at(projector: &Projector, at: DVec3) -> Option<f64> {
-    let depth = projector.world_depth(at);
-    if projector.perspective() && (depth.is_nan() || depth <= projector.near()) {
-        return None;
-    }
-    let pixel = projector.pixel_at(depth);
-    (pixel > 0.0 && pixel.is_finite()).then_some(pixel)
-}
-
 /// The point of `knob`'s path `along` it (millimetres along a line,
 /// radians round an arc of `radius` millimetres).
 fn on_path(knob: &OpKnob, along: f64, radius: f64) -> DVec3 {
@@ -127,9 +112,9 @@ fn on_path(knob: &OpKnob, along: f64, radius: f64) -> DVec3 {
 /// `knob` as it's seen through `projector`: `None` behind the eye.
 fn shown(index: usize, knob: &OpKnob, projector: &Projector) -> Option<Shown> {
     let (pixel, radius) = match knob.path {
-        KnobPath::Line { origin, .. } => (pixel_at(projector, origin)?, 0.0),
+        KnobPath::Line { origin, .. } => (projector.pixel_at_point(origin)?, 0.0),
         KnobPath::Arc { centre, radius, .. } => {
-            let pixel = pixel_at(projector, centre)?;
+            let pixel = projector.pixel_at_point(centre)?;
             let radius = match radius {
                 KnobRadius::World(radius) => radius,
                 KnobRadius::Pixels(pixels) => pixels * pixel,
@@ -340,21 +325,7 @@ fn cursor_on(knob: &OpKnob, projector: &Projector, at: DVec2) -> Option<f64> {
             axis,
             radial,
             ..
-        } => {
-            let (origin, ray) = projector.ray(at)?;
-            let facing = ray.dot(axis);
-            if facing.is_nan() || facing.abs() <= EDGE_ON * ray.length() {
-                return None;
-            }
-            let t = (centre - origin).dot(axis) / facing;
-            if projector.perspective() && t <= 0.0 {
-                return None;
-            }
-            let p = origin + ray * t - centre;
-            let (x, y) = (p.dot(radial), p.dot(axis.cross(radial)));
-            let turn = angle::atan2(y, x);
-            (turn.is_finite() && (x != 0.0 || y != 0.0)).then_some(turn)
-        }
+        } => projector.angle_on_plane(centre, axis, radial, at),
     }
 }
 
