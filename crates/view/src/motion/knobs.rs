@@ -87,6 +87,14 @@ pub enum KnobSnap {
     Count,
 }
 
+/// The tangent of the arc round the unit `axis` from the unit `radial`
+/// (square to it), right-handed about `axis`, `angle` radians round:
+/// the way a knob there moves as its value grows.
+pub fn arc_tangent(axis: DVec3, radial: DVec3, angle: f64) -> DVec3 {
+    let (sin, cos) = angle.sin_cos();
+    axis.cross(radial) * cos - radial * sin
+}
+
 /// The colours of a knob: those of its tool's icon category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnobTone {
@@ -101,6 +109,67 @@ pub enum KnobTone {
 }
 
 impl OpKnob {
+    /// A knob on the line through `origin` along the unit `along`, its
+    /// arrow pointing along it, a millimetre a millimetre, its shaft from
+    /// zero.
+    pub fn line(
+        field: MotionField,
+        [origin, along]: [DVec3; 2],
+        value: f64,
+        snap: KnobSnap,
+        tone: KnobTone,
+    ) -> Self {
+        Self {
+            field,
+            path: KnobPath::Line { origin, along },
+            value,
+            scale: KnobScale::Times(1.0),
+            snap,
+            out: along,
+            shaft: Some(0.0),
+            tone,
+        }
+    }
+
+    /// A knob on `path`, an arc ([`KnobPath::Arc`]), a radian a radian,
+    /// its arrow along the arc's tangent at `value` ([`arc_tangent`]),
+    /// its shaft from zero.
+    pub fn arc(
+        field: MotionField,
+        path: KnobPath,
+        value: f64,
+        snap: KnobSnap,
+        tone: KnobTone,
+    ) -> Self {
+        let out = match path {
+            KnobPath::Arc { axis, radial, .. } => arc_tangent(axis, radial, value),
+            KnobPath::Line { along, .. } => along,
+        };
+        Self {
+            field,
+            path,
+            value,
+            scale: KnobScale::Times(1.0),
+            snap,
+            out,
+            shaft: Some(0.0),
+            tone,
+        }
+    }
+
+    /// It with a value mapped onto its path by `scale`.
+    pub fn with_scale(self, scale: KnobScale) -> Self {
+        Self { scale, ..self }
+    }
+
+    /// It with its shaft from `shaft`, as a value.
+    pub fn with_shaft(self, shaft: f64) -> Self {
+        Self {
+            shaft: Some(shaft),
+            ..self
+        }
+    }
+
     /// How far along its path the value `value` is: millimetres along a
     /// line, radians round an arc. `pixel` is a pixel's size at the
     /// line's origin, for a [`KnobScale::Pixels`] slider.

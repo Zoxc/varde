@@ -52,7 +52,7 @@ use varde_expr::{AngleUnit, Ask, Unit};
 use varde_regen::SweepFound;
 use varde_view::{
     ChamferType, KnobPath, KnobRadius, KnobScale, KnobSnap, KnobTone, MotionField, MotionKind,
-    OpKnob, PatternMode, ScaleMode, ShellDirection, SweepPath,
+    OpKnob, PatternMode, ScaleMode, ShellDirection, SweepPath, arc_tangent,
 };
 
 use super::{Doc, MotionSession, field_ask};
@@ -85,6 +85,25 @@ pub(crate) enum KnobAnchor {
         at: DVec3,
         normals: [DVec3; 2],
     },
+}
+
+impl KnobAnchor {
+    /// Whether it's where `session`'s knobs stand: for its first face or
+    /// edge as it is, in the document at `generation`.
+    fn current(&self, session: &MotionSession, generation: Generation) -> bool {
+        match self {
+            KnobAnchor::Face {
+                face,
+                generation: at,
+                ..
+            } => session.faces.refs.first() == Some(face) && *at == generation,
+            KnobAnchor::Edge {
+                edge,
+                generation: at,
+                ..
+            } => session.blend.edges.refs.first() == Some(edge) && *at == generation,
+        }
+    }
 }
 
 impl Doc {
@@ -206,23 +225,12 @@ impl Doc {
         let Some(session) = self.operation.motion() else {
             return;
         };
-        let current = |anchor: &KnobAnchor| match anchor {
-            KnobAnchor::Face {
-                face,
-                generation: at,
-                ..
-            } => session.faces.refs.first() == Some(face) && *at == generation,
-            KnobAnchor::Edge {
-                edge,
-                generation: at,
-                ..
-            } => session.blend.edges.refs.first() == Some(edge) && *at == generation,
-        };
         let faces = matches!(session.kind, MotionKind::Shell | MotionKind::Draft);
         let edges = matches!(session.kind, MotionKind::Chamfer | MotionKind::Fillet);
         if !(faces || edges)
             || session.feature.is_some()
-            || session.knob_anchor.as_ref().is_some_and(current)
+            || (session.knob_anchor.as_ref())
+                .is_some_and(|anchor| anchor.current(session, generation))
             || self.feed.generation() != Some(generation)
             || self.feed.predates_replacement()
             || self.feed.shows_draft()
@@ -289,33 +297,21 @@ impl Doc {
     /// An offset face's knob, once its anchor is known.
     fn offset_face_knob(&self, session: &MotionSession) -> Option<OpKnob> {
         let handle = self.offset_face_view(session).handle?;
-        Some(OpKnob {
-            field: MotionField::Distance,
-            path: KnobPath::Line {
-                origin: handle.origin,
-                along: handle.normal,
-            },
-            value: handle.at,
-            scale: KnobScale::Times(1.0),
-            snap: KnobSnap::Length,
-            out: handle.normal,
-            shaft: Some(0.0),
-            tone: KnobTone::Modify,
-        })
+        Some(OpKnob::line(
+            MotionField::Distance,
+            [handle.origin, handle.normal],
+            handle.at,
+            KnobSnap::Length,
+            KnobTone::Modify,
+        ))
     }
 
     /// The face anchor of a shell's or draft's first face, if it's known
     /// for it and the document as they are.
     fn face_anchor(&self, session: &MotionSession) -> Option<(DVec3, DVec3)> {
-        match &session.knob_anchor {
-            Some(KnobAnchor::Face {
-                face,
-                generation,
-                at,
-                normal,
-            }) if session.faces.refs.first() == Some(face)
-                && *generation == self.editor.generation() =>
-            {
+        let generation = self.editor.generation();
+        match session.knob_anchor.as_ref()? {
+            anchor @ KnobAnchor::Face { at, normal, .. } if anchor.current(session, generation) => {
                 Some((*at, *normal))
             }
             _ => None,
@@ -326,14 +322,10 @@ impl Doc {
     /// known for it and the document as they are: its point, and the
     /// ways into its first face and its second, square to it.
     fn edge_anchor(&self, session: &MotionSession) -> Option<(DVec3, [DVec3; 2])> {
-        let (at, [first, second]) = match &session.knob_anchor {
-            Some(KnobAnchor::Edge {
-                edge,
-                generation,
-                at,
-                normals,
-            }) if session.blend.edges.refs.first() == Some(edge)
-                && *generation == self.editor.generation() =>
+        let generation = self.editor.generation();
+        let (at, [first, second]) = match session.knob_anchor.as_ref()? {
+            anchor @ KnobAnchor::Edge { at, normals, .. }
+                if anchor.current(session, generation) =>
             {
                 (*at, *normals)
             }
@@ -364,16 +356,13 @@ impl Doc {
             ShellDirection::Inward => -normal,
             ShellDirection::Outward => normal,
         };
-        Some(OpKnob {
-            field: MotionField::Thickness,
-            path: KnobPath::Line { origin: at, along },
-            value: Self::knob_value(session, MotionField::Thickness)?,
-            scale: KnobScale::Times(1.0),
-            snap: KnobSnap::Length,
-            out: along,
-            shaft: Some(0.0),
-            tone: KnobTone::Modify,
-        })
+        Some(OpKnob::line(
+            MotionField::Thickness,
+            [at, along],
+            Self::knob_value(session, MotionField::Thickness)?,
+            KnobSnap::Length,
+            KnobTone::Modify,
+        ))
     }
 
     /// A draft's knob: on its first face, turning about the face's hinge
@@ -405,23 +394,19 @@ impl Doc {
         // and the normal leans up: `axis × up` is `−normal`.
         let axis = normal.cross(up).try_normalize()?;
         let angle = Self::knob_value(session, MotionField::Angle)?;
-        let (sin, cos) = angle.sin_cos();
-        let tangent = axis.cross(radial) * cos - radial * sin;
-        Some(OpKnob {
-            field: MotionField::Angle,
-            path: KnobPath::Arc {
-                centre: hinge,
-                axis,
-                radial,
-                radius: KnobRadius::World(radius),
-            },
-            value: angle,
-            scale: KnobScale::Times(1.0),
-            snap: KnobSnap::Angle,
-            out: tangent,
-            shaft: Some(0.0),
-            tone: KnobTone::Modify,
-        })
+        let path = KnobPath::Arc {
+            centre: hinge,
+            axis,
+            radial,
+            radius: KnobRadius::World(radius),
+        };
+        Some(OpKnob::arc(
+            MotionField::Angle,
+            path,
+            angle,
+            KnobSnap::Angle,
+            KnobTone::Modify,
+        ))
     }
 
     /// A chamfer's knobs: along the bisector of its first edge's faces
@@ -432,16 +417,15 @@ impl Doc {
             return Vec::new();
         };
         let knob = |field: MotionField, along: DVec3, times: f64| {
-            Some(OpKnob {
+            let value = Self::knob_value(session, field)?;
+            let knob = OpKnob::line(
                 field,
-                path: KnobPath::Line { origin: at, along },
-                value: Self::knob_value(session, field)?,
-                scale: KnobScale::Times(times),
-                snap: KnobSnap::Length,
-                out: along,
-                shaft: Some(0.0),
-                tone: KnobTone::Modify,
-            })
+                [at, along],
+                value,
+                KnobSnap::Length,
+                KnobTone::Modify,
+            );
+            Some(knob.with_scale(KnobScale::Times(times)))
         };
         let knobs = match session.chamfer_type {
             ChamferType::Equal => {
@@ -475,16 +459,15 @@ impl Doc {
         if !(times > 1e-6 && times.is_finite()) {
             return None;
         }
-        Some(OpKnob {
-            field: MotionField::Radius,
-            path: KnobPath::Line { origin: at, along },
-            value: Self::knob_value(session, MotionField::Radius)?,
-            scale: KnobScale::Times(times),
-            snap: KnobSnap::Length,
-            out: along,
-            shaft: Some(0.0),
-            tone: KnobTone::Modify,
-        })
+        let value = Self::knob_value(session, MotionField::Radius)?;
+        let knob = OpKnob::line(
+            MotionField::Radius,
+            [at, along],
+            value,
+            KnobSnap::Length,
+            KnobTone::Modify,
+        );
+        Some(knob.with_scale(KnobScale::Times(times)))
     }
 
     /// A scale's knobs: sliders from its point, [`SCALE_PIXELS`] a factor
@@ -496,19 +479,15 @@ impl Doc {
         };
         let towards = bounds.map_or(DVec3::ONE, |[low, high]| (low + high) / 2.0 - point);
         let knob = |field: MotionField, along: DVec3| {
-            Some(OpKnob {
+            let value = Self::knob_value(session, field)?;
+            let knob = OpKnob::line(
                 field,
-                path: KnobPath::Line {
-                    origin: point,
-                    along,
-                },
-                value: Self::knob_value(session, field)?,
-                scale: KnobScale::Pixels(SCALE_PIXELS),
-                snap: KnobSnap::Factor,
-                out: along,
-                shaft: Some(0.0),
-                tone: KnobTone::Modify,
-            })
+                [point, along],
+                value,
+                KnobSnap::Factor,
+                KnobTone::Modify,
+            );
+            Some(knob.with_scale(KnobScale::Pixels(SCALE_PIXELS)))
         };
         match session.scale.mode {
             ScaleMode::Uniform => {
@@ -545,37 +524,27 @@ impl Doc {
         let radial = (target.directions[1])
             .and_then(|second| (second - primary * primary.dot(second)).try_normalize())
             .unwrap_or_else(|| primary.any_orthonormal_vector());
-        let (sin, cos) = turn.sin_cos();
-        let tangent = primary.cross(radial) * cos - radial * sin;
+        let ring = KnobPath::Arc {
+            centre: point + primary * offset,
+            axis: primary,
+            radial,
+            radius: KnobRadius::Pixels(TURN_PIXELS),
+        };
         vec![
-            OpKnob {
-                field: MotionField::Distance,
-                path: KnobPath::Line {
-                    origin: point,
-                    along: primary,
-                },
-                value: offset,
-                scale: KnobScale::Times(1.0),
-                snap: KnobSnap::Length,
-                out: primary,
-                shaft: Some(0.0),
-                tone: KnobTone::Create,
-            },
-            OpKnob {
-                field: MotionField::Angle,
-                path: KnobPath::Arc {
-                    centre: point + primary * offset,
-                    axis: primary,
-                    radial,
-                    radius: KnobRadius::Pixels(TURN_PIXELS),
-                },
-                value: turn,
-                scale: KnobScale::Times(1.0),
-                snap: KnobSnap::Angle,
-                out: tangent,
-                shaft: Some(0.0),
-                tone: KnobTone::Create,
-            },
+            OpKnob::line(
+                MotionField::Distance,
+                [point, primary],
+                offset,
+                KnobSnap::Length,
+                KnobTone::Create,
+            ),
+            OpKnob::arc(
+                MotionField::Angle,
+                ring,
+                turn,
+                KnobSnap::Angle,
+                KnobTone::Create,
+            ),
         ]
     }
 
@@ -608,16 +577,13 @@ impl Doc {
         let total = session.mode == PatternMode::Total;
         let mut knobs = Vec::new();
         if let Some(spread) = spread {
-            knobs.push(OpKnob {
-                field: MotionField::Spread,
-                path: KnobPath::Line { origin, along },
-                value: spread,
-                scale: KnobScale::Times(1.0),
-                snap: KnobSnap::Length,
-                out: along,
-                shaft: Some(0.0),
-                tone: KnobTone::Create,
-            });
+            knobs.push(OpKnob::line(
+                MotionField::Spread,
+                [origin, along],
+                spread,
+                KnobSnap::Length,
+                KnobTone::Create,
+            ));
         }
         // A copy's step along the rail.
         let step = match (spread, count) {
@@ -626,19 +592,15 @@ impl Doc {
             _ => return knobs,
         };
         if let Some(count) = count.filter(|_| step > 0.0 && step.is_finite()) {
-            knobs.push(OpKnob {
-                field: MotionField::Count,
-                path: KnobPath::Line {
-                    origin: rail - along * step,
-                    along,
-                },
-                value: count,
-                scale: KnobScale::Times(step),
-                snap: KnobSnap::Count,
-                out: along,
-                shaft: Some(1.0),
-                tone: KnobTone::Count,
-            });
+            let origin = rail - along * step;
+            let knob = OpKnob::line(
+                MotionField::Count,
+                [origin, along],
+                count,
+                KnobSnap::Count,
+                KnobTone::Count,
+            );
+            knobs.push(knob.with_scale(KnobScale::Times(step)).with_shaft(1.0));
         }
         knobs
     }
@@ -680,41 +642,39 @@ impl Doc {
         };
         let (sin, cos) = span.sin_cos();
         let end = foot + (radial * cos + axis.cross(radial) * sin) * radius;
-        let tangent = axis.cross(radial) * cos - radial * sin;
+        let tangent = arc_tangent(axis, radial, span);
         let mut knobs = Vec::new();
         if let (Some(times), Some(spread)) = (times, spread)
             && times > 0.0
         {
+            let path = KnobPath::Arc {
+                centre: foot,
+                axis,
+                radial,
+                radius: KnobRadius::World(radius),
+            };
+            // Its arrow at the span, the spread times the copies' steps.
             knobs.push(OpKnob {
-                field: MotionField::Spread,
-                path: KnobPath::Arc {
-                    centre: foot,
-                    axis,
-                    radial,
-                    radius: KnobRadius::World(radius),
-                },
-                value: spread,
-                scale: KnobScale::Times(times),
-                snap: KnobSnap::Angle,
                 out: tangent,
-                shaft: Some(0.0),
-                tone: KnobTone::Create,
+                ..OpKnob::arc(
+                    MotionField::Spread,
+                    path,
+                    spread,
+                    KnobSnap::Angle,
+                    KnobTone::Create,
+                )
+                .with_scale(KnobScale::Times(times))
             });
         }
         if let Some(count) = count {
-            knobs.push(OpKnob {
-                field: MotionField::Count,
-                path: KnobPath::Line {
-                    origin: end,
-                    along: tangent,
-                },
-                value: count,
-                scale: KnobScale::Pixels(COUNT_PIXELS),
-                snap: KnobSnap::Count,
-                out: tangent,
-                shaft: Some(0.0),
-                tone: KnobTone::Count,
-            });
+            let knob = OpKnob::line(
+                MotionField::Count,
+                [end, tangent],
+                count,
+                KnobSnap::Count,
+                KnobTone::Count,
+            );
+            knobs.push(knob.with_scale(KnobScale::Pixels(COUNT_PIXELS)));
         }
         knobs
     }
@@ -734,58 +694,46 @@ impl Doc {
                 let Some(twist) = Self::knob_value(session, MotionField::Twist) else {
                     return Vec::new();
                 };
-                let (sin, cos) = twist.sin_cos();
-                let along = tangent.cross(zero) * cos - zero * sin;
-                vec![OpKnob {
-                    field: MotionField::Twist,
-                    path: KnobPath::Arc {
-                        centre: v(at),
-                        axis: tangent,
-                        radial: zero,
-                        radius: KnobRadius::Pixels(TURN_PIXELS),
-                    },
-                    value: twist,
-                    scale: KnobScale::Times(1.0),
-                    snap: KnobSnap::Angle,
-                    out: if twist < 0.0 { -along } else { along },
-                    shaft: Some(0.0),
-                    tone: KnobTone::Count,
-                }]
+                let ring = KnobPath::Arc {
+                    centre: v(at),
+                    axis: tangent,
+                    radial: zero,
+                    radius: KnobRadius::Pixels(TURN_PIXELS),
+                };
+                let knob = OpKnob::arc(
+                    MotionField::Twist,
+                    ring,
+                    twist,
+                    KnobSnap::Angle,
+                    KnobTone::Count,
+                );
+                // Its arrow the way it turns.
+                let out = if twist < 0.0 { -knob.out } else { knob.out };
+                vec![OpKnob { out, ..knob }]
             }
             (SweepPath::Helix, SweepFound::Helix { middle, foot, axis }) => {
                 let axis = v(axis);
                 let Some(pitch) = Self::knob_value(session, MotionField::Pitch) else {
                     return Vec::new();
                 };
-                let mut knobs = vec![OpKnob {
-                    field: MotionField::Pitch,
-                    path: KnobPath::Line {
-                        origin: v(foot),
-                        along: axis,
-                    },
-                    value: pitch,
-                    scale: KnobScale::Times(1.0),
-                    snap: KnobSnap::Length,
-                    out: axis,
-                    shaft: Some(0.0),
-                    tone: KnobTone::Create,
-                }];
+                let mut knobs = vec![OpKnob::line(
+                    MotionField::Pitch,
+                    [v(foot), axis],
+                    pitch,
+                    KnobSnap::Length,
+                    KnobTone::Create,
+                )];
                 if let Some(turns) = Self::knob_value(session, MotionField::Turns)
                     && pitch > 0.0
                 {
-                    knobs.push(OpKnob {
-                        field: MotionField::Turns,
-                        path: KnobPath::Line {
-                            origin: v(middle),
-                            along: axis,
-                        },
-                        value: turns,
-                        scale: KnobScale::Times(pitch),
-                        snap: KnobSnap::Factor,
-                        out: axis,
-                        shaft: Some(0.0),
-                        tone: KnobTone::Count,
-                    });
+                    let knob = OpKnob::line(
+                        MotionField::Turns,
+                        [v(middle), axis],
+                        turns,
+                        KnobSnap::Factor,
+                        KnobTone::Count,
+                    );
+                    knobs.push(knob.with_scale(KnobScale::Times(pitch)));
                 }
                 knobs
             }
