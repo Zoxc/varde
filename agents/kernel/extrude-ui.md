@@ -234,7 +234,7 @@ to 100 % in steps of 5 with the percentage beside it, wrapped in
 `MouseOnly` (`view/src/mouse_only.rs`) so it's only dragged: iced's
 slider also steps on arrow keys and `Ctrl`-wheel, with no release to
 commit after. Dragging sends `Look::PreviewOpacity` (the value through
-`Opacity::clamped`), kept in `Doc::opacity_preview` while the body's
+`Opacity::clamped`), kept in `Doc::body_look.opacity` while the body's
 menu is open and the document editable, and drawn and shown in the row
 in place of the body's own (`DocumentState::opacity_preview`,
 `shown_opacity`) without touching the document. Until it's let go the
@@ -251,7 +251,7 @@ colour of its own (`theme::body_swatch`, the theme's
 model colour tinted), a Hue slider (0 to 359°) and a Saturation one (0
 to `Tint::MAX_SATURATION`, 30 %, so bodies stay duller than the
 selection and hover), `MouseOnly` too, previewing with
-`Look::PreviewColor` into `Doc::color_preview` (`DocumentState::color_preview`,
+`Look::PreviewColor` into `Doc::body_look.color` (`DocumentState::color_preview`,
 `shown_color`) and committing on release with `Edit::CommitColor`, one
 `Command::SetColor`; dragging the hue of a body with no saturation
 starts it at `Tint::DEFAULT_SATURATION`, 17 %, so it shows; with no
@@ -268,7 +268,7 @@ their own rails are left out and their handles filled with the colour
 menu is `BODY_MENU_WIDTH`, wider than other rows' menus), each with its
 value beside it. Opacity and Colour (`look_part`) sit in one area
 (`look_area`) that sends `Look::HoverBodyLook` on entering and leaving
-it, kept in `Doc::body_look_hovered` (dropped with the menu) and washed
+it, kept in `Doc::body_look.hovered` (dropped with the menu) and washed
 as one hovered row; while it's hovered or a slider dragged, `Doc::highlight` is none, so
 the body shows as drawn without the selection over it. Either
 preview keeps the shortcuts and the peek off as the opacity's does

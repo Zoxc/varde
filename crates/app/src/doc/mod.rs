@@ -187,16 +187,8 @@ pub(crate) struct Doc {
     /// What overlaps where the left button was held still in the
     /// viewport, listed to choose from, and the row hovered.
     overlaps: Option<overlaps::Listed>,
-    /// A body's opacity previewed while its context menu's slider is
-    /// dragged: only while that menu is open ([`Doc::preview_opacity`]).
-    pub(crate) opacity_preview: Option<(BodyId, Opacity)>,
-    /// Whether the cursor is over the Opacity and Colour part of a body's
-    /// context menu: the viewport leaves the selection out meanwhile.
-    pub(crate) body_look_hovered: bool,
-    /// A body's colour previewed while its context menu's Hue or
-    /// Saturation slider is dragged: only while that menu is open
-    /// ([`Doc::preview_color`]).
-    pub(crate) color_preview: Option<(BodyId, Tint)>,
+    /// A body's look previewed from its context menu's sliders.
+    pub(crate) body_look: BodyLook,
     /// The feature the extrude, revolve, combine or motion session open
     /// built as it opened ([`Doc::operation_built`]), none if it wasn't
     /// whole: it has nothing unfinished while it builds the same. Kept,
@@ -259,6 +251,45 @@ pub(crate) struct Doc {
 /// applied to the one opened after it. Unique within the process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct DocId(u64);
+
+/// A body's look previewed from its context menu's Opacity and Colour
+/// sliders, only while that menu is open.
+#[derive(Debug, Default)]
+pub(crate) struct BodyLook {
+    /// A body's opacity previewed while the slider is dragged
+    /// ([`Doc::preview_opacity`]).
+    pub(crate) opacity: Option<(BodyId, Opacity)>,
+    /// A body's colour previewed while the Hue or Saturation slider is
+    /// dragged ([`Doc::preview_color`]).
+    pub(crate) color: Option<(BodyId, Tint)>,
+    /// Whether the cursor is over the Opacity and Colour part of the
+    /// menu: the viewport leaves the selection out meanwhile.
+    pub(crate) hovered: bool,
+}
+
+impl BodyLook {
+    /// Whether a slider is being dragged: an opacity or colour is
+    /// previewed.
+    pub(crate) fn sliding(&self) -> bool {
+        self.opacity.is_some() || self.color.is_some()
+    }
+
+    /// Drops what's previewed.
+    fn clear(&mut self) {
+        self.opacity = None;
+        self.color = None;
+    }
+
+    /// Drops what's previewed unless `menu`, the row menu open, is its
+    /// body's, and the hover unless it's a body's.
+    fn prune(&mut self, menu: Option<RowMenu>) {
+        if !matches!(menu, Some(RowMenu::Body(_))) {
+            self.hovered = false;
+        }
+        (self.opacity).take_if(|(id, _)| menu != Some(RowMenu::Body(*id)));
+        (self.color).take_if(|(id, _)| menu != Some(RowMenu::Body(*id)));
+    }
+}
 
 /// The operation being set up: one at a time, so opening one replaces
 /// another.
@@ -652,9 +683,7 @@ impl Doc {
             objects_selected: Vec::new(),
             objects_folded: [varde_view::ObjectGroup::Origin].into(),
             overlaps: None,
-            opacity_preview: None,
-            body_look_hovered: false,
-            color_preview: None,
+            body_look: BodyLook::default(),
             opened_with: None,
             command_held: false,
             pattern_shapes: HashMap::new(),
@@ -1012,12 +1041,12 @@ impl Doc {
             Edit::CommitMotion => self.commit_motion(false),
             Edit::AcceptError => self.commit_operation(true),
             Edit::CommitOpacity => {
-                if let Some((id, opacity)) = self.opacity_preview.take() {
+                if let Some((id, opacity)) = self.body_look.opacity.take() {
                     self.change(Change::SetOpacity(id, opacity));
                 }
             }
             Edit::ResetOpacity(id) => {
-                self.opacity_preview = None;
+                self.body_look.opacity = None;
                 let opaque =
                     (self.editor.document().body(id)).is_none_or(|body| body.opacity.is_opaque());
                 if !opaque {
@@ -1025,12 +1054,12 @@ impl Doc {
                 }
             }
             Edit::CommitColor => {
-                if let Some((id, tint)) = self.color_preview.take() {
+                if let Some((id, tint)) = self.body_look.color.take() {
                     self.change(Change::SetColor(id, Some(tint)));
                 }
             }
             Edit::ResetColor(id) => {
-                self.color_preview = None;
+                self.body_look.color = None;
                 let colored = (self.editor.document().body(id)).is_some_and(|b| b.color.is_some());
                 if colored {
                     self.change(Change::SetColor(id, None));
@@ -1354,7 +1383,7 @@ impl Doc {
                     self.refresh_highlight();
                 }
             }
-            Look::HoverBodyLook(hovered) => self.body_look_hovered = hovered,
+            Look::HoverBodyLook(hovered) => self.body_look.hovered = hovered,
             Look::HoverSketch(_) if self.overlaps.is_some() => {}
             Look::HoverSketch(item) => self.hover_sketch(item),
             Look::ClickSketch { item, .. } if self.picks_outside() => {
@@ -1595,7 +1624,7 @@ impl Doc {
     /// [`Doc::prune_preview`] drops it if the menu closes first.
     fn preview_opacity(&mut self, id: BodyId, opacity: Opacity) {
         if self.editable() && self.row_menu == Some(RowMenu::Body(id)) {
-            self.opacity_preview = Some((id, opacity));
+            self.body_look.opacity = Some((id, opacity));
         }
     }
 
@@ -1603,25 +1632,14 @@ impl Doc {
     /// its opacity: [`Edit::CommitColor`] commits it on letting go.
     fn preview_color(&mut self, id: BodyId, tint: Tint) {
         if self.editable() && self.row_menu == Some(RowMenu::Body(id)) {
-            self.color_preview = Some((id, tint));
+            self.body_look.color = Some((id, tint));
         }
     }
 
     /// Drops the opacity and colour previewed unless their body's context
     /// menu, and so the sliders, is still open.
     fn prune_preview(&mut self) {
-        let menu = self.row_menu;
-        if !matches!(menu, Some(RowMenu::Body(_))) {
-            self.body_look_hovered = false;
-        }
-        (self.opacity_preview).take_if(|(id, _)| menu != Some(RowMenu::Body(*id)));
-        (self.color_preview).take_if(|(id, _)| menu != Some(RowMenu::Body(*id)));
-    }
-
-    /// Whether a slider of a body's context menu is being dragged: its
-    /// opacity or colour is previewed.
-    pub(crate) fn sliding(&self) -> bool {
-        self.opacity_preview.is_some() || self.color_preview.is_some()
+        self.body_look.prune(self.row_menu);
     }
 
     /// Starts sending requests to `lane`, the document's regeneration
@@ -1712,7 +1730,7 @@ impl Doc {
     /// Opacity or a Colour slider: no key changes the document behind the prompt, or
     /// before the opacity or colour is committed.
     pub(crate) fn keys(&self) -> Option<DocumentKeys> {
-        let dragging = self.sliding();
+        let dragging = self.body_look.sliding();
         (self.dialog().is_none() && !dragging).then(|| {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_face_selected(self.selected_face().is_some())
@@ -1764,7 +1782,7 @@ impl Doc {
     /// a body's Opacity or Colour slider is dragged, which would go with its tab and so
     /// never see its release.
     pub(crate) fn peeks(&self, held: bool) -> bool {
-        held && !self.dimensioning() && !self.sliding()
+        held && !self.dimensioning() && !self.body_look.sliding()
     }
 
     /// Takes `message`, an answer for this document: the app has checked
@@ -1906,9 +1924,9 @@ impl Doc {
             fading_grid: self.fade.grid.filter(|_| self.fade.moving()),
             mesh: self.feed.mesh(),
             parts: self.feed.parts(),
-            opacity_preview: self.opacity_preview,
-            body_look_hovered: self.body_look_hovered,
-            color_preview: self.color_preview,
+            opacity_preview: self.body_look.opacity,
+            body_look_hovered: self.body_look.hovered,
+            color_preview: self.body_look.color,
             renaming: (self.renaming.as_ref())
                 .map(|renaming| (renaming.target, renaming.text.as_str())),
             sketches: self.feed.sketches(),

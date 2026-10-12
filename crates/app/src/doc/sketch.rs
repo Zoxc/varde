@@ -825,9 +825,8 @@ impl Doc {
     pub(crate) fn escape(&mut self) {
         if self.deleting.is_some() {
             self.deleting = None;
-        } else if self.sliding() {
-            self.opacity_preview = None;
-            self.color_preview = None;
+        } else if self.body_look.sliding() {
+            self.body_look.clear();
             self.row_menu = None;
         } else if self.rail.open.is_some() {
             self.rail.close();

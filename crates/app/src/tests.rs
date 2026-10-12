@@ -4895,7 +4895,7 @@ fn a_body_menu_s_look_part_hovered_hides_the_highlight() {
     assert!(doc.highlight().is_some());
     doc.look(Look::HoverBodyLook(true));
     doc.look(Look::CloseMenu);
-    assert!(!doc.body_look_hovered);
+    assert!(!doc.body_look.hovered);
     assert!(doc.highlight().is_some());
 }
 
@@ -4992,7 +4992,7 @@ fn the_opacity_slider_previews_then_commits_one_step() {
 
     // Not without the body's menu open.
     doc.look(Look::PreviewOpacity(body, percent(40)));
-    assert_eq!(doc.opacity_preview, None);
+    assert_eq!(doc.body_look.opacity, None);
 
     doc.look(Look::OpenMenu(RowMenu::Body(body)));
     for step in [30, 55, 40] {
@@ -5005,7 +5005,7 @@ fn the_opacity_slider_previews_then_commits_one_step() {
     assert!(doc.keys().is_none());
 
     doc.update(Edit::CommitOpacity);
-    assert_eq!(doc.opacity_preview, None);
+    assert_eq!(doc.body_look.opacity, None);
     assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
     assert_eq!(body_opacity(&doc).1, percent(40));
     assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 0.4));
@@ -5037,7 +5037,7 @@ fn escape_or_closing_the_menu_drops_the_opacity_preview() {
         assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 0.25));
         doc.look(close.clone());
         assert_eq!(doc.row_menu, None, "{close:?}");
-        assert_eq!(doc.opacity_preview, None, "{close:?}");
+        assert_eq!(doc.body_look.opacity, None, "{close:?}");
         assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 1.0));
         doc.update(Edit::CommitOpacity);
         assert_eq!(doc.editor.generation(), generation, "{close:?}");
@@ -5047,7 +5047,7 @@ fn escape_or_closing_the_menu_drops_the_opacity_preview() {
     doc.look(Look::OpenMenu(RowMenu::Body(body)));
     doc.look(Look::PreviewOpacity(body, percent(25)));
     doc.update(Edit::SetUnits(LengthUnit::In));
-    assert_eq!(doc.opacity_preview, None);
+    assert_eq!(doc.body_look.opacity, None);
 }
 
 /// Make opaque in the body menu sets 100 % as one undo step, keeping the
@@ -5100,7 +5100,7 @@ fn the_colour_sliders_preview_then_commit_one_step() {
 
     // Not without the body's menu open.
     doc.look(Look::PreviewColor(body, teal));
-    assert_eq!(doc.color_preview, None);
+    assert_eq!(doc.body_look.color, None);
 
     doc.look(Look::OpenMenu(RowMenu::Body(body)));
     // Nothing to take back yet.
@@ -5117,7 +5117,7 @@ fn the_colour_sliders_preview_then_commit_one_step() {
     assert!(!doc.peeks(true));
 
     doc.update(Edit::CommitColor);
-    assert_eq!(doc.color_preview, None);
+    assert_eq!(doc.body_look.color, None);
     assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
     assert_eq!(color(&doc), Some(teal));
     assert!(part_tints(&doc).iter().all(|&tint| tint == shown));
@@ -5146,7 +5146,7 @@ fn escape_drops_the_colour_preview() {
     doc.look(Look::PreviewColor(body, Tint::new(90, 30).unwrap()));
     doc.look(Look::Escape);
     assert_eq!(doc.row_menu, None);
-    assert_eq!(doc.color_preview, None);
+    assert_eq!(doc.body_look.color, None);
     assert!(part_tints(&doc).iter().all(Option::is_none));
     doc.update(Edit::CommitColor);
     assert_eq!(doc.editor.generation(), generation);
@@ -5166,7 +5166,7 @@ fn a_release_changing_nothing_adds_no_undo_step() {
     doc.look(Look::PreviewOpacity(body, before));
     doc.update(Edit::CommitOpacity);
     assert_eq!(doc.editor.generation(), generation);
-    assert_eq!(doc.opacity_preview, None);
+    assert_eq!(doc.body_look.opacity, None);
     // Undo still takes back the example.
     doc.update(Edit::Undo);
     assert!(doc.editor.document().bodies().is_empty());

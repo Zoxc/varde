@@ -603,7 +603,7 @@ impl Doc {
     /// the cursor doesn't pick it.
     pub(crate) fn highlight(&self) -> Option<&Arc<ModelHighlight>> {
         // A body's Opacity or Colour hovered or slid shows it as drawn.
-        if self.body_look_hovered || self.sliding() {
+        if self.body_look.hovered || self.body_look.sliding() {
             return None;
         }
         // A link's row hovered lights what it comes from, whatever's
