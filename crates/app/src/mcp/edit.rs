@@ -49,6 +49,20 @@ pub(crate) const UNDONE: &str = "applied, then undone by the user";
 /// built); the rest are counted.
 const LISTED: usize = 50;
 
+/// A feature tool's result for the feature `feature`: its name, id and
+/// the bodies it made.
+fn feature_made(document: &Document, feature: &Feature) -> Value {
+    let bodies: Vec<Value> = (document.bodies().iter())
+        .filter(|body| body.created_by == feature.id)
+        .map(|body| json!(body.name))
+        .collect();
+    json!({
+        "feature": feature.name,
+        "id": feature.id.get(),
+        "bodies": listed(bodies),
+    })
+}
+
 /// `made`, a result, with `notes` (the names asked for that were taken)
 /// as its `note`, if there are any.
 fn noted(made: &mut Value, notes: &[String]) {
@@ -169,34 +183,17 @@ impl Made {
                 made
             }
             Made::ParameterRemoved(name) => json!({ "removed": { "parameters": [name] } }),
-            Made::Added { .. } | Made::Set(_) => {
-                let feature = match self {
-                    Made::Set(id) => document.feature(*id),
-                    Made::Added { name, .. } => {
-                        (document.features().iter()).find(|f| f.name == *name)
-                    }
-                    _ => None,
-                };
-                let mut made = match feature {
-                    None => match self {
-                        Made::Added { name, .. } => json!({ "feature": name }),
-                        _ => json!({}),
-                    },
-                    Some(feature) => {
-                        let bodies: Vec<Value> = (document.bodies().iter())
-                            .filter(|body| body.created_by == feature.id)
-                            .map(|body| json!(body.name))
-                            .collect();
-                        json!({
-                            "feature": feature.name,
-                            "id": feature.id.get(),
-                            "bodies": listed(bodies),
-                        })
-                    }
-                };
-                if let Made::Added { notes, .. } = self {
-                    noted(&mut made, notes);
-                }
+            Made::Set(id) => {
+                (document.feature(*id)).map_or(json!({}), |feature| feature_made(document, feature))
+            }
+            Made::Added { name, notes } => {
+                let mut made = (document.features().iter())
+                    .find(|feature| feature.name == *name)
+                    .map_or_else(
+                        || json!({ "feature": name }),
+                        |feature| feature_made(document, feature),
+                    );
+                noted(&mut made, notes);
                 made
             }
             Made::NewSketch { name, notes } => {
