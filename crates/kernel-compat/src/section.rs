@@ -164,3 +164,6 @@ pub fn face_section(
 ) -> Result<Vec<Section>, SectionError> {
     Ok(Vec::new())
 }
+
+#[cfg(test)]
+mod tests;

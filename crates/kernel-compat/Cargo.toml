@@ -13,4 +13,6 @@ bytemuck.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+libm.workspace = true
+varde-testing.workspace = true
 varde-testkit.workspace = true

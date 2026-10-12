@@ -71,4 +71,6 @@ nonoverlapping, so it is zero exactly when every component is. A
 component whose factors make each product zero outright (equal
 coordinates, as along a face square to an axis) is skipped.
 `manifold/tests.rs` has a case the rounded differences call collinear and
-the exact sum doesn't.
+the exact sum doesn't. It also mutates hand-built shells (a box, a faceted
+cylinder, a torus) at random and checks `ManifoldMesh::new` against a
+plain check in integers: every mesh it can tell is taken or refused alike.

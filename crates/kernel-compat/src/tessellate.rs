@@ -93,3 +93,6 @@ impl Default for Display {
         Display::new(&Tolerance::DEFAULT)
     }
 }
+
+#[cfg(test)]
+mod tests;

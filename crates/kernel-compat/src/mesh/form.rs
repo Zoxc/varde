@@ -211,3 +211,6 @@ fn conic_cylinder_implicit(conic: &Conic3, along: DVec3, x: DVec3) -> (f64, DVec
     let (f, [k1, k0, k2]) = implicit(conic.w, [1.0 - l1 - l2, l1, l2]);
     (f, g1 * k1 + (-g1 - g2) * k0 + g2 * k2)
 }
+
+#[cfg(test)]
+mod tests;

@@ -765,3 +765,6 @@ impl std::fmt::Display for MeshError {
 }
 
 impl std::error::Error for MeshError {}
+
+#[cfg(test)]
+pub(crate) mod tests;

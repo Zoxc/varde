@@ -116,6 +116,31 @@ fn quarter_turned_frames_with_secondaries_are_exact() {
 }
 
 #[test]
+fn a_box_aligned_corner_to_corner_lands_to_the_bit() {
+    // A 2 × 3 × 4 box's top-front-left corner onto another's bottom
+    // corner, its top face against the other's bottom: every corner
+    // where it should be, to the bit.
+    let moved = datum(DVec3::new(0.0, 0.0, 4.0), DVec3::Z, Some(DVec3::X));
+    let target = datum(DVec3::new(10.0, 20.0, 30.0), DVec3::NEG_Z, Some(DVec3::Y));
+    let options = AlignOptions {
+        flip: true,
+        ..AlignOptions::default()
+    };
+    let m = align(&moved, &target, &options);
+    assert!(signed_permutation(&m) && !m.mirrors());
+    // Z stays Z (flipped onto −(−Z)), X goes to Y, so Y goes to −X.
+    for c in 0..8 {
+        let a = DVec3::new(
+            if c & 1 == 0 { 0.0 } else { 2.0 },
+            if c & 2 == 0 { 0.0 } else { 3.0 },
+            if c & 4 == 0 { 0.0 } else { 4.0 },
+        );
+        let want = DVec3::new(10.0 - a.y, 20.0 + a.x, 30.0 + a.z - 4.0);
+        assert_eq!(m.point(a), want);
+    }
+}
+
+#[test]
 fn tilted_frames_land_to_rounding() {
     let mut rng = Rng::new(33);
     for _ in 0..500 {
@@ -372,4 +397,35 @@ fn degenerate_inputs_are_refused() {
     // A flip without primaries changes nothing.
     let flipped = AlignOptions { flip: true, ..ok };
     assert_eq!(align(&pt, &pt, &flipped), Motion::IDENTITY);
+}
+
+#[test]
+fn aligning_is_deterministic() {
+    let run = || {
+        let mut rng = Rng::new(5);
+        (0..50)
+            .map(|_| {
+                let moved = datum(
+                    DVec3::ONE,
+                    random_unit(&mut rng),
+                    Some(random_unit(&mut rng)),
+                );
+                let target = datum(DVec3::ZERO, random_unit(&mut rng), None);
+                let target = Datum {
+                    secondary: Some(random_unit(&mut rng)),
+                    ..target
+                };
+                let options = AlignOptions {
+                    flip: true,
+                    offset: 0.3,
+                    degrees: 17.0,
+                };
+                align(&moved, &target, &options).bits()
+            })
+            .collect::<Vec<_>>()
+    };
+    // The same bits again, and on another thread.
+    let first = run();
+    assert_eq!(first, run());
+    assert_eq!(first, std::thread::spawn(run).join().unwrap());
 }

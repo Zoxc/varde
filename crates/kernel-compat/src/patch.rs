@@ -146,3 +146,6 @@ fn check_weight(w: f64) -> Result<(), PatchError> {
         Err(PatchError::Weight(w))
     }
 }
+
+#[cfg(test)]
+mod tests;

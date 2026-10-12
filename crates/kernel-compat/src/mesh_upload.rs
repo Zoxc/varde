@@ -341,3 +341,6 @@ impl EdgeStream {
         self.points
     }
 }
+
+#[cfg(test)]
+mod tests;

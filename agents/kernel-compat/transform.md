@@ -88,7 +88,9 @@ signed permutation, the cross product fixed), quarter-turned frames with
 secondaries exact, 500 random tilted frames (point to `1e-12`, primary to `1e-15`,
 secondaries' square parts agreeing, a rotation), frames that agree giving
 the identity, flips exactly and nearly opposite or parallel, offset and
-turn (quarter exact, 30° against `Motion::turn`) and every refusal.
+turn (quarter exact, 30° against `Motion::turn`), every refusal, a box's
+corners aligned corner to corner to the bit, and the same bits again and
+on another thread.
 
 `Solid::transformed(motion, copy, tol, budget)` moves the empty solid to
 itself and fails with `KernelError::NotImplemented` for any other (the

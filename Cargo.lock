@@ -4288,9 +4288,11 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam 0.30.10",
+ "libm",
  "serde",
  "varde-decide",
  "varde-kernel",
+ "varde-testing",
  "varde-testkit",
 ]
 

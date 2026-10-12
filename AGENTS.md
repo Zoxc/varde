@@ -63,6 +63,8 @@ it describes changes:
   `README.md` lists them).
 - `notes/Kernel.md`: the kernel's high-level overview: the facade, and
   how the Varde kernel replaces it.
+- `notes/legacy-kernel-cases.md`: the old kernel's test scenarios worth
+  building again for the Varde kernel, with their expected values.
 - `notes/Threading.md`: the threading plan (built steps and what's still open).
 - `agents/mcp.md`: the MCP server (`varde-mcp`: HTTP, the guard, JSON-RPC,
   the session, the tools, the threads) and the app's side of it: the
