@@ -31,10 +31,10 @@
 use std::sync::Arc;
 
 use varde_document::{BodyId, Document, FaceRef, FeatureId, PlaneRef, Side, Split, SplitTool};
-use varde_kernel_compat::mesh::Form;
 use varde_kernel_compat::patch::Bounds3;
 use varde_kernel_compat::{Budget, Failure, Solid, Tolerance, ToolError};
 
+use super::motion::{SPLIT_PLANE, face_plane};
 use super::{BodySolid, Evaluation, Failed, SketchOutput, face_geometry, own_solid, through_all};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
@@ -175,12 +175,10 @@ impl Building<'_> {
                 Ok((solid, key))
             }
             SplitTool::Plane(PlaneRef::Face(face)) => {
-                let made = evaluation
-                    .holding(face.body)
-                    .ok_or(message::SPLIT_PLANE_BODY_GONE)?;
-                let key = self.face_key("split plane face", made.key, face);
+                let made = evaluation.holding(face.body).ok_or(SPLIT_PLANE.body_gone)?;
+                let key = self.face_key(SPLIT_PLANE.kind, made.key, face);
                 let solid = cache.solid(key, || {
-                    let (n, d) = plane_of(&made.solid, face, &self.tolerance)?;
+                    let (n, d) = face_plane(&made.solid, face, &SPLIT_PLANE, &self.tolerance)?;
                     self.half_space(n, d)
                 })?;
                 Ok((solid, key))
@@ -339,26 +337,4 @@ fn find_sketch<'s, 'a>(
     (sketches.iter())
         .find(|sketch| sketch.id == id)
         .ok_or_else(|| message::SPLIT_SKETCH_GONE.into())
-}
-
-/// The plane of the flat face `face` names on `solid`, its unit normal
-/// out of the solid and offset, `n·x = d`, or why there's none.
-fn plane_of(
-    solid: &Solid,
-    face: &FaceRef,
-    tolerance: &Tolerance,
-) -> Result<(glam::DVec3, f64), Failed> {
-    let topology = solid.topology();
-    let region =
-        (topology.face(solid, &face.key, face.near)).map_err(|_| message::SPLIT_PLANE_NOT_FOUND)?;
-    let region = &topology.regions()[region as usize];
-    match *region_form(solid, region) {
-        Form::Plane { n, d } if n != glam::DVec3::ZERO && n.is_finite() && d.is_finite() => {
-            Ok((n, d))
-        }
-        _ => Err(Failed {
-            message: message::SPLIT_PLANE_NOT_FLAT.to_owned(),
-            geometry: face_geometry(solid, region, tolerance),
-        }),
-    }
 }

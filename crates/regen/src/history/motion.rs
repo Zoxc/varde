@@ -274,11 +274,19 @@ pub(super) fn resolve_axis(
 /// cache key's kind, and why a face fails (its body gone, the face not
 /// found, the face not flat).
 pub(super) struct PlaneWords {
-    kind: &'static str,
-    body_gone: &'static str,
+    pub(super) kind: &'static str,
+    pub(super) body_gone: &'static str,
     not_found: &'static str,
     not_flat: &'static str,
 }
+
+/// A split's plane: "its plane face wasn't found".
+pub(super) const SPLIT_PLANE: PlaneWords = PlaneWords {
+    kind: "split plane face",
+    body_gone: message::SPLIT_PLANE_BODY_GONE,
+    not_found: message::SPLIT_PLANE_NOT_FOUND,
+    not_flat: message::SPLIT_PLANE_NOT_FLAT,
+};
 
 /// A mirror's plane: "its mirror face wasn't found".
 pub(super) const MIRROR_PLANE: PlaneWords = PlaneWords {
@@ -312,7 +320,9 @@ pub(super) fn resolve_plane(
         PlaneRef::Face(face) => {
             let made = evaluation.holding(face.body).ok_or(words.body_gone)?;
             let key = reference_key(words.kind, made.key, &face.key, face.near, tolerance);
-            cache.reference(key, || face_plane(&made.solid, face, words, tolerance))
+            cache.reference(key, || {
+                face_plane(&made.solid, face, words, tolerance).map(|(n, d)| [n * d, n])
+            })
         }
     }
 }
@@ -382,23 +392,21 @@ fn face_axis(solid: &Solid, face: &FaceRef, tolerance: &Tolerance) -> Result<[DV
         })
 }
 
-/// The plane of the flat face `face` names on `solid`, see
-/// [`resolve_plane`]: the point of `n·x = d` nearest the origin, `n·d`
-/// (`n` is unit, so a face square to a world axis gives its coordinate
-/// to the bit), and `n`.
-fn face_plane(
+/// The plane of the flat face `face` names on `solid`, its unit normal
+/// out of the solid and offset, `n·x = d`, or why there's none, worded
+/// by `words`. [`resolve_plane`] takes `n·d` for its point (`n` is unit,
+/// so a face square to a world axis gives its coordinate to the bit).
+pub(super) fn face_plane(
     solid: &Solid,
     face: &FaceRef,
     words: &PlaneWords,
     tolerance: &Tolerance,
-) -> Result<[DVec3; 2], Failed> {
+) -> Result<(DVec3, f64), Failed> {
     let topology = solid.topology();
     let region = (topology.face(solid, &face.key, face.near)).map_err(|_| words.not_found)?;
     let region = &topology.regions()[region as usize];
     match *region_form(solid, region) {
-        Form::Plane { n, d } if n != DVec3::ZERO && n.is_finite() && d.is_finite() => {
-            Ok([n * d, n])
-        }
+        Form::Plane { n, d } if n != DVec3::ZERO && n.is_finite() && d.is_finite() => Ok((n, d)),
         _ => Err(Failed {
             message: words.not_flat.to_owned(),
             geometry: face_geometry(solid, region, tolerance),
