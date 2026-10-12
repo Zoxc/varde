@@ -155,7 +155,7 @@ fillet's, each with its own size); the chamfer's own parts are in
 (`ChamferView`, `ChamferType`). The panel is the model mock's chamfer
 panel.
 
-- **Starting**: `Look::StartChamfer` from `C` (`Shortcut::CHAMFER`,
+- **Starting**: `Look::StartMotion(MotionKind::Chamfer)` from `C` (`Shortcut::CHAMFER`,
   `motion_binding`, the mock's key; in sketches `C` is the Circle
   tool's), the toolbar's Chamfer after Revolve (where the mock has it,
   after Hole and Fillet, before Shell and Combine: Hole isn't built,

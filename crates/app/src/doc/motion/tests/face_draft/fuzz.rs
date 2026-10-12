@@ -386,7 +386,7 @@ fn run(seed: u64, steps: usize) {
         };
         match roll {
             0 | 1 if open && rng.below(6) != 0 => plates.answer(),
-            0 | 1 => plates.doc.look(Look::StartDraft),
+            0 | 1 => plates.doc.look(Look::StartMotion(MotionKind::Draft)),
             2 => {
                 let ids = drafts(&plates);
                 if !ids.is_empty() {
@@ -406,7 +406,7 @@ fn run(seed: u64, steps: usize) {
                         click(&mut plates, pick);
                     }
                     match rng.below(5) {
-                        0 => plates.doc.look(Look::StartDraft),
+                        0 => plates.doc.look(Look::StartMotion(MotionKind::Draft)),
                         1 => plates.motion(MotionLook::Picking(MotionPick::Reference)),
                         _ => {}
                     }
@@ -557,9 +557,9 @@ fn run(seed: u64, steps: usize) {
             37 => {
                 // A draft with an offset face or a shell being set up.
                 if rng.below(2) == 0 {
-                    plates.doc.look(Look::StartShell);
+                    plates.doc.look(Look::StartMotion(MotionKind::Shell));
                 } else {
-                    plates.doc.look(Look::StartOffsetFace);
+                    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
                 }
                 if rng.below(2) == 0
                     && let Some(pick) = random_pick(&plates, &mut rng)
@@ -569,7 +569,7 @@ fn run(seed: u64, steps: usize) {
                 if rng.below(2) == 0 {
                     plates.answer();
                 }
-                plates.doc.look(Look::StartDraft);
+                plates.doc.look(Look::StartMotion(MotionKind::Draft));
             }
             38 | 39 => {
                 if rng.below(3) == 0 {

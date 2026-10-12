@@ -96,7 +96,7 @@ the fillet's). The fillet's own parts are in `app/src/doc/motion/fillet.rs`
 and `view/src/motion/fillet.rs` (`FilletView`). The panel is the model
 mock's fillet panel: Edges, Radius, Tangent chain.
 
-- **Starting**: `Look::StartFillet` from `F` (`Shortcut::FILLET`,
+- **Starting**: `Look::StartMotion(MotionKind::Fillet)` from `F` (`Shortcut::FILLET`,
   `motion_binding`, the mock's key; in sketches `F` is the Fillet
   tool's) and the rail's Modify set (first, as the icon mock orders it:
   Fillet, Chamfer, Shell, Scale, Combine, Split body), again backing

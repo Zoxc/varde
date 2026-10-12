@@ -559,7 +559,7 @@ fn run(seed: u64, steps: usize) {
         };
         match roll {
             0 | 1 if open && rng.below(6) != 0 => plates.answer(),
-            0 | 1 => plates.doc.look(Look::StartLoft),
+            0 | 1 => plates.doc.look(Look::StartMotion(MotionKind::Loft)),
             2 => {
                 let ids = lofts(&plates);
                 if !ids.is_empty() {
@@ -769,8 +769,8 @@ fn run(seed: u64, steps: usize) {
             }
             51 => {
                 // A loft with a chamfer being set up.
-                plates.doc.look(Look::StartChamfer);
-                plates.doc.look(Look::StartLoft);
+                plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
+                plates.doc.look(Look::StartMotion(MotionKind::Loft));
             }
             _ => {
                 plates.answer();

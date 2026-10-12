@@ -130,7 +130,7 @@ has no Scale panel**: only the tool, "Scale" in its Modify group (after
 Draft, before Combine) with no key and the `scale` icon. The panel is
 built in the style of the mock's nearest one, Move's.
 
-- **Starting**: `Look::StartScale` from the rail's Modify set ("Scale",
+- **Starting**: `Look::StartMotion(MotionKind::Scale)` from the rail's Modify set ("Scale",
   before Combine as the mock orders them; no key: `motion_binding`,
   `Shortcut::NONE`, the rail's list letter `S`), again backing out; not
   on the toolbar (the mock's bar has no Scale, and it's nearly full at

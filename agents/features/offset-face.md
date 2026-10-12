@@ -94,7 +94,7 @@ faces picked by the face session (see the shell's UI: `faces.rs`,
 panel** (only the `offset` icon and "Offset face" in a face's context
 menu), so the panel is built in the style of the mock's shell panel.
 
-- **Starting**: `Look::StartOffsetFace` from the rail's Modify set
+- **Starting**: `Look::StartMotion(MotionKind::OffsetFace)` from the rail's Modify set
   (after Combine, before Split body, as the icon mock's Modify group
   orders `offset` after `combine`), again backing out; no key, as the
   mocks have none. **Not on the toolbar**, as Shell isn't: the bar

@@ -288,7 +288,7 @@ fn run(seed: u64, steps: usize) {
         };
         match roll {
             0 | 1 if open && rng.below(6) != 0 => plates.answer(),
-            0 | 1 => plates.doc.look(Look::StartSplit),
+            0 | 1 => plates.doc.look(Look::StartMotion(MotionKind::Split)),
             2 => {
                 let ids = splits(&plates);
                 if !ids.is_empty() {

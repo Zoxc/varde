@@ -134,7 +134,7 @@ fn front_edge(plates: &Plates, plate: BodyId) -> u32 {
 fn a_plate_scaled_by_two_about_the_origin_and_ok() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Scale);
     // The only body is the one scaled, about the origin to begin with.
@@ -202,7 +202,7 @@ fn a_plate_scaled_by_two_about_the_origin_and_ok() {
 #[test]
 fn a_plate_scaled_about_a_corner_picked() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     plates.motion(MotionLook::Picking(MotionPick::Point));
     assert_eq!(picking(&plates), MotionPick::Point);
     let shown = plates.doc.model_picking().expect("picking");
@@ -253,7 +253,7 @@ fn a_plate_scaled_about_a_corner_picked() {
 #[test]
 fn a_plate_scaled_per_axis() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     plates.motion(MotionLook::ScaleMode(ScaleMode::PerAxis));
     assert!(shows(&plates, "X") && shows(&plates, "Z"));
     assert!(shows(&plates, "enter a factor other than 1"));
@@ -281,7 +281,7 @@ fn a_plate_scaled_per_axis() {
 #[test]
 fn a_plate_scaled_so_an_edge_has_a_length() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     plates.motion(MotionLook::ScaleMode(ScaleMode::EdgeLength));
     assert_eq!(picking(&plates), MotionPick::Edge);
     assert!(shows(&plates, "pick the edge to give a length"));
@@ -362,7 +362,7 @@ fn a_plate_scaled_so_an_edge_has_a_length() {
 #[test]
 fn a_round_edge_offers_no_axis_and_a_length_too_far_is_refused() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     plates.motion(MotionLook::ScaleMode(ScaleMode::EdgeLength));
     let hole = rim(&plates, plate, DVec3::new(0.0, 0.0, 10.0));
     plates.click_at(plate, Picked::Edge(hole), DVec3::new(8.0, 0.0, 10.0));
@@ -431,7 +431,7 @@ fn fitted_faces_scaled_up_are_noted() {
         requests,
         bodies: [ring; 3],
     };
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     plates.input(MotionField::Factor, "25.4");
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
@@ -452,7 +452,7 @@ fn fitted_faces_scaled_up_are_noted() {
 #[test]
 fn a_scale_edited_from_the_timeline_and_cancelled() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     plates.input(MotionField::Factor, "2");
     key_in(&mut plates.doc, enter());
     plates.answer();
@@ -515,7 +515,7 @@ fn a_point_an_undo_takes_away_is_gone() {
     let [plate, ..] = plates.bodies;
     let later = super::later_disc(&mut plates);
     plates.click(plate);
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     // The point at the later disc's top rim's centre.
     plates.motion(MotionLook::Picking(MotionPick::Point));
@@ -563,7 +563,7 @@ fn an_edge_follows_its_body_a_redone_combine_merges() {
     plates.doc.update(Edit::Undo);
     plates.answer();
 
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     plates.motion(MotionLook::ScaleMode(ScaleMode::EdgeLength));
     // The disc's top rim, 2π·5 round; its body is the one scaled.
     let top = rim(&plates, right, DVec3::new(20.0, 0.0, 15.0));
@@ -600,7 +600,7 @@ mod fuzz;
 /// its id.
 pub(super) fn made() -> (Plates, varde_document::FeatureId) {
     let (mut plates, _) = plate();
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     plates.input(MotionField::Factor, "2");
     plates.answer();
     plates.doc.update(Edit::CommitMotion);

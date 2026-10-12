@@ -432,7 +432,7 @@ fn run(seed: u64, steps: usize) {
         };
         match roll {
             0 | 1 if open && rng.below(6) != 0 => plates.answer(),
-            0 | 1 => plates.doc.look(Look::StartOffsetFace),
+            0 | 1 => plates.doc.look(Look::StartMotion(MotionKind::OffsetFace)),
             2 => {
                 let ids = offsets(&plates);
                 if !ids.is_empty() {
@@ -451,7 +451,7 @@ fn run(seed: u64, steps: usize) {
                         click(&mut plates, pick);
                     }
                     if rng.below(4) == 0 {
-                        plates.doc.look(Look::StartOffsetFace);
+                        plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
                     }
                 }
             }
@@ -603,9 +603,9 @@ fn run(seed: u64, steps: usize) {
             37 => {
                 // Offset face with a shell or a chamfer being set up.
                 if rng.below(2) == 0 {
-                    plates.doc.look(Look::StartShell);
+                    plates.doc.look(Look::StartMotion(MotionKind::Shell));
                 } else {
-                    plates.doc.look(Look::StartChamfer);
+                    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
                 }
                 if rng.below(2) == 0
                     && let Some(pick) = random_pick(&plates, &mut rng)
@@ -615,7 +615,7 @@ fn run(seed: u64, steps: usize) {
                 if rng.below(2) == 0 {
                     plates.answer();
                 }
-                plates.doc.look(Look::StartOffsetFace);
+                plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
             }
             38 | 39 => {
                 if let Some(list) = random_overlaps(&plates, &mut rng) {

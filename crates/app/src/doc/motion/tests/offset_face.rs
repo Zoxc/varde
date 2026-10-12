@@ -52,7 +52,7 @@ fn offset_face_picks_faces_and_add_anyway_keeps_the_unbuilt_offset() {
         (plates, plate)
     };
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartOffsetFace);
+    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
     let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::OffsetFace);
     assert!(session.bodies.is_empty(), "its body is its faces'");
@@ -139,7 +139,7 @@ fn the_offset_is_previewed_the_handle_follows_and_ok_adds_one_undo_step() {
     let mut plates = boxes(false);
     let body = plates.bodies[0];
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartOffsetFace);
+    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
     plates.answer();
     let pick = top(&plates, body, 10.0);
     click(&mut plates, pick);
@@ -221,7 +221,7 @@ fn editing_an_offset_face_from_the_timeline() {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartOffsetFace);
+    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
     plates.answer();
     let pick = top(&plates, body, 10.0);
     click(&mut plates, pick);
@@ -265,7 +265,7 @@ fn editing_an_offset_face_from_the_timeline() {
 fn an_offset_face_s_faces_are_all_on_one_body() {
     let mut plates = boxes(true);
     let [first, second, _] = plates.bodies;
-    plates.doc.look(Look::StartOffsetFace);
+    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
     assert!(plates.doc.mode.motion().unwrap().bodies.is_empty());
     // A body's row picks nothing: its body is its faces'.
     plates.doc.look(Look::ClickBody {
@@ -334,7 +334,7 @@ fn inward_ticked_or_the_handle_dragged_through_zero_give_the_same_draft() {
         let body = plates.bodies[0];
         plates.doc.update(Edit::SetUnits(units));
         plates.answer();
-        plates.doc.look(Look::StartOffsetFace);
+        plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
         plates.answer();
         let pick = top(&plates, body, 10.0);
         click(&mut plates, pick);
@@ -387,7 +387,7 @@ fn a_drag_while_the_preview_is_on_its_way_and_the_first_face_changed() {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartOffsetFace);
+    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
     plates.answer();
     let pick = top(&plates, body, 10.0);
     click(&mut plates, pick);
@@ -440,7 +440,7 @@ fn the_overlap_list_ticks_picks_and_follows_the_offset_s_faces() {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartOffsetFace);
+    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
     plates.answer();
     let list = varde_view::Overlaps {
         held: DVec2::ZERO,
@@ -489,7 +489,7 @@ fn a_handle_found_on_a_face_moved_far_out_stands_where_it_was_exactly() {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartOffsetFace);
+    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
     plates.answer();
     let pick = face_pick(&plates, body, DVec3::X, 40.0, DVec3::new(40.0, 0.1, 0.1));
     click(&mut plates, pick);
@@ -513,7 +513,7 @@ pub(super) fn made() -> (Plates, varde_document::FeatureId) {
     varde_regen::testing::offset_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartOffsetFace);
+    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
     plates.answer();
     let pick = top(&plates, body, 10.0);
     click(&mut plates, pick);

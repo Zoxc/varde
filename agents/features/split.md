@@ -178,7 +178,7 @@ The panel is built in the style of the mock's nearest ones, Combine's
 (one body as a picked field, choices as tiles) and Mirror's (a plane or
 face picked, the origin planes on the toolbar).
 
-- **Starting**: `Look::StartSplit` from the rail's Modify set ("Split
+- **Starting**: `Look::StartMotion(MotionKind::Split)` from the rail's Modify set ("Split
   body", after Combine as the icon mock orders them; no key:
   `motion_binding`, `Shortcut::NONE`, the rail's list letter `P`), again
   backing out; not on the toolbar (the mock's bar has none). Or editing

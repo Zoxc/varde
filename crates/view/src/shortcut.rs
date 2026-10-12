@@ -779,26 +779,26 @@ pub fn combine_binding(keys: DocumentKeys) -> Binding {
 /// it. Move (`M`), the linear pattern (`P`), Chamfer (`C`) and Fillet
 /// (`F`) have the UI mock's keys; the rest none, as the mocks have them.
 pub fn motion_binding(kind: MotionKind, keys: DocumentKeys) -> Binding {
-    let (shortcut, look) = match kind {
-        MotionKind::Move => (Shortcut::MOVE, Look::StartMove),
-        MotionKind::Mirror => (Shortcut::NONE, Look::StartMirror),
-        MotionKind::LinearPattern => (Shortcut::PATTERN, Look::StartPattern),
-        MotionKind::CircularPattern => (Shortcut::NONE, Look::StartCircularPattern),
-        MotionKind::Align => (Shortcut::NONE, Look::StartAlign),
-        MotionKind::Scale => (Shortcut::NONE, Look::StartScale),
-        MotionKind::Split => (Shortcut::NONE, Look::StartSplit),
-        MotionKind::Chamfer => (Shortcut::CHAMFER, Look::StartChamfer),
-        MotionKind::Fillet => (Shortcut::FILLET, Look::StartFillet),
-        MotionKind::Shell => (Shortcut::NONE, Look::StartShell),
-        MotionKind::OffsetFace => (Shortcut::NONE, Look::StartOffsetFace),
-        MotionKind::Draft => (Shortcut::NONE, Look::StartDraft),
-        MotionKind::Sweep => (Shortcut::NONE, Look::StartSweep),
-        MotionKind::Loft => (Shortcut::NONE, Look::StartLoft),
+    let shortcut = match kind {
+        MotionKind::Move => Shortcut::MOVE,
+        MotionKind::LinearPattern => Shortcut::PATTERN,
+        MotionKind::Chamfer => Shortcut::CHAMFER,
+        MotionKind::Fillet => Shortcut::FILLET,
+        MotionKind::Mirror
+        | MotionKind::CircularPattern
+        | MotionKind::Align
+        | MotionKind::Scale
+        | MotionKind::Split
+        | MotionKind::Shell
+        | MotionKind::OffsetFace
+        | MotionKind::Draft
+        | MotionKind::Sweep
+        | MotionKind::Loft => Shortcut::NONE,
     };
     let needs_body = !matches!(kind, MotionKind::Sweep | MotionKind::Loft);
     Binding::new(
         shortcut,
-        Message::Look(look),
+        Message::Look(Look::StartMotion(kind)),
         keys.editable && !keys.sketching && (!needs_body || keys.bodies || keys.motion.is_some()),
     )
 }

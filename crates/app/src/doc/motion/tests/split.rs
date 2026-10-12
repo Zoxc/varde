@@ -133,7 +133,7 @@ fn held(editor: &Editor) -> Plates {
 fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartSplit);
+    plates.doc.look(Look::StartMotion(MotionKind::Split));
     let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Split);
     assert_eq!(session.bodies, [plate]);
@@ -216,7 +216,7 @@ fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
 #[test]
 fn a_flat_face_splits_by_its_plane_and_a_curved_one_by_its_surface() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartSplit);
+    plates.doc.look(Look::StartMotion(MotionKind::Split));
     click_face(&mut plates, plate, top, DVec3::new(20.0, 10.0, 10.0));
     let Some(SplitTool::Plane(PlaneRef::Face(face))) = tool(&plates) else {
         panic!("a plane face: {:?}", tool(&plates));
@@ -254,7 +254,7 @@ fn a_body_splits_another_its_pieces_tinted_and_labelled() {
     let mut plates = plates();
     let [plate, disc, _] = plates.bodies;
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartSplit);
+    plates.doc.look(Look::StartMotion(MotionKind::Split));
     // Three bodies and none selected: the body first.
     assert_eq!(picking(&plates), MotionPick::Bodies);
     assert!(shows(&plates, "pick the body to split"));
@@ -375,7 +375,7 @@ fn regions_of_a_sketch_and_an_open_line_split_a_body() {
     let mut editor = Editor::new(plates.doc.editor.document().clone());
     let (sketch, line) = add_tools_sketch(&mut editor);
     let mut plates = held(&editor);
-    plates.doc.look(Look::StartSplit);
+    plates.doc.look(Look::StartMotion(MotionKind::Split));
     plates.motion(MotionLook::SplitWith(SplitMode::Regions));
     assert_eq!(picking(&plates), MotionPick::Tool);
     assert!(
@@ -597,7 +597,7 @@ fn a_tool_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let [plate, _, _] = plates.bodies;
     let last = later_disc(&mut plates);
-    plates.doc.look(Look::StartSplit);
+    plates.doc.look(Look::StartMotion(MotionKind::Split));
     plates.click(plate);
     plates.motion(MotionLook::SplitWith(SplitMode::Body));
     plates.click(last);
@@ -683,7 +683,7 @@ fn a_tool_body_merged_into_the_body_split_is_let_go_of() {
     for into_tool in [false, true] {
         let mut plates = plates();
         let [plate, disc, _] = plates.bodies;
-        plates.doc.look(Look::StartSplit);
+        plates.doc.look(Look::StartMotion(MotionKind::Split));
         plates.click(plate);
         plates.motion(MotionLook::SplitWith(SplitMode::Body));
         plates.click(disc);
@@ -734,7 +734,7 @@ fn gone(plates: &Plates) -> bool {
 #[test]
 fn a_line_gone_is_picked_again_from_any_sketch() {
     let (mut plates, [(first, line), (second, other)]) = two_tools_sketches();
-    plates.doc.look(Look::StartSplit);
+    plates.doc.look(Look::StartMotion(MotionKind::Split));
     plates.motion(MotionLook::SplitWith(SplitMode::Line));
     plates.motion(MotionLook::SplitCurve {
         sketch: first,
@@ -833,7 +833,7 @@ fn a_line_gone_is_picked_again_from_any_sketch() {
 #[test]
 fn regions_gone_are_picked_again_from_any_sketch() {
     let (mut plates, [(first, _), (second, _)]) = two_tools_sketches();
-    plates.doc.look(Look::StartSplit);
+    plates.doc.look(Look::StartMotion(MotionKind::Split));
     plates.motion(MotionLook::SplitWith(SplitMode::Regions));
     plates.motion(MotionLook::SplitRegion {
         sketch: first,
@@ -882,7 +882,7 @@ fn each_tile_s_tool_is_told_gone_on_its_own() {
     let mut plates = plates();
     let [plate, disc, _] = plates.bodies;
     let last = later_disc(&mut plates);
-    plates.doc.look(Look::StartSplit);
+    plates.doc.look(Look::StartMotion(MotionKind::Split));
     plates.click(plate);
     let top = |summary: &Summary| matches!(summary, Summary::Plane { n, .. } if n[2] > 0.5);
     click_face(&mut plates, last, top, DVec3::new(0.0, 30.0, 5.0));

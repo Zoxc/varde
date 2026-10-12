@@ -128,7 +128,7 @@ fn drafted(plates: &Plates) -> Option<Align> {
 fn a_pin_aligned_by_its_rim_into_the_hole_and_ok() {
     let (mut plates, plate, pin) = pin_and_plate();
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Align);
     // Two bodies and none selected: the body is picked first.
@@ -227,7 +227,7 @@ fn face_to_face() -> (Plates, [BodyId; 2], varde_document::FeatureId) {
     let mut plates = plates_of(&editor);
     // The body selected is the one aligned.
     plates.click(below);
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     assert_eq!(plates.doc.mode.motion().unwrap().bodies, [below]);
     assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
     let at = DVec3::new(30.0, 20.0, -3.0);
@@ -290,7 +290,7 @@ fn a_plate_aligned_face_to_face_with_an_offset() {
 #[test]
 fn a_refused_pick_is_shown() {
     let (mut plates, plate, pin) = pin_and_plate();
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(pin);
     let before = plates.doc.mode.motion().unwrap().align.clone();
     // A face is no point.
@@ -413,7 +413,7 @@ fn an_align_edited_from_the_timeline_and_undone() {
 fn a_reference_an_undo_takes_away_is_said_to_be_gone() {
     let (mut plates, _, pin) = pin_and_plate();
     let later = super::later_disc(&mut plates);
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(pin);
     let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
     plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
@@ -442,7 +442,7 @@ fn a_reference_an_undo_takes_away_is_said_to_be_gone() {
 fn a_pick_after_the_body_aligned_is_gone_says_so() {
     let (mut plates, _, pin) = pin_and_plate();
     let later = super::later_disc(&mut plates);
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(later);
     assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
     plates.doc.update(Edit::Undo);
@@ -462,7 +462,7 @@ fn a_pick_after_the_body_aligned_is_gone_says_so() {
 #[test]
 fn the_status_bar_hints_what_a_click_picks() {
     let (mut plates, _, pin) = pin_and_plate();
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     let bar = crate::tests::status_bar_texts(&plates.doc, true);
     assert!(bar.iter().any(|text| text == "Pick the body"), "{bar:?}");
     assert!(!bar.iter().any(|text| text == "Pan"), "{bar:?}");
@@ -480,7 +480,7 @@ fn the_status_bar_hints_what_a_click_picks() {
 #[test]
 fn a_rim_picked_again_takes_its_axis_along() {
     let (mut plates, plate, pin) = pin_and_plate();
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(pin);
     let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
     plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
@@ -563,7 +563,7 @@ fn combined() -> (Plates, BodyId, BodyId, DVec3) {
 #[test]
 fn a_pick_on_what_was_merged_into_the_moved_body_is_named_on_it() {
     let (mut plates, plate, left, top) = combined();
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(plate);
     let moved_rim = rim(&plates, plate, top);
     plates.click_at(plate, Picked::Edge(moved_rim), top + DVec3::X * 5.0);
@@ -589,7 +589,7 @@ fn a_pick_on_what_was_merged_into_the_moved_body_is_named_on_it() {
 #[test]
 fn a_target_merged_into_the_body_picked_to_move_is_taken_out() {
     let (mut plates, plate, left, top) = combined();
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(left);
     let other = DVec3::new(-20.0, 0.0, 15.0);
     let moved_rim = rim(&plates, left, other);
@@ -617,7 +617,7 @@ fn a_target_merged_into_the_body_picked_to_move_is_taken_out() {
 fn a_target_a_later_combine_merges_into_the_moved_body_is_gone() {
     let mut plates = super::plates();
     let [_, right, left] = plates.bodies;
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(left);
     let other = DVec3::new(-20.0, 0.0, 15.0);
     let moved_rim = rim(&plates, left, other);
@@ -657,7 +657,7 @@ fn a_target_a_later_combine_merges_into_the_moved_body_is_gone() {
 fn the_moved_sides_picks_follow_the_moved_body_merged_into_the_targets() {
     let mut plates = super::plates();
     let [_, right, left] = plates.bodies;
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(left);
     let other = DVec3::new(-20.0, 0.0, 15.0);
     let moved_rim = rim(&plates, left, other);
@@ -739,7 +739,7 @@ fn an_edited_aligns_references_are_found_on_the_model_shown() {
 #[test]
 fn a_direction_picked_by_hand_on_the_points_rim_goes_with_it() {
     let (mut plates, _, pin) = pin_and_plate();
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(pin);
     let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
     plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
@@ -795,7 +795,7 @@ fn corners_picked() -> (Plates, [BodyId; 2]) {
     let (editor, [top, below]) = two_plates();
     let mut plates = plates_of(&editor);
     plates.click(below);
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     let at = DVec3::new(30.0, 20.0, -3.0);
     let (moved_corner, face) = corner(&plates, below, at);
     click_snapped(&mut plates, below, face, at, Snapped::Corner(moved_corner));
@@ -970,7 +970,7 @@ fn two_arcs_with_the_same_keys() {
     } else {
         b
     };
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     plates.click(pin);
     let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
     plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
@@ -1034,7 +1034,7 @@ fn an_align_s_knobs_offset_and_turn_it() {
     let (editor, [top, below]) = two_plates();
     let mut plates = plates_of(&editor);
     plates.click(below);
-    plates.doc.look(Look::StartAlign);
+    plates.doc.look(Look::StartMotion(MotionKind::Align));
     let at = DVec3::new(30.0, 20.0, -3.0);
     let (moved_corner, face) = corner(&plates, below, at);
     click_snapped(&mut plates, below, face, at, Snapped::Corner(moved_corner));

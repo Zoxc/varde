@@ -124,9 +124,9 @@ wire), `io/src/vrdp/tests.rs` (through a file).
 `MotionSession` for both and for patterns, aligns, scales, splits and
 chamfers, its `MotionKind` saying which; their own parts are under
 "Pattern", "Align", "Scale", "Split" and "Chamfer", "UI") is started by
-`Look::StartMove` (`M`, `Shortcut::MOVE`, the UI mock's key, the
+`Look::StartMotion(MotionKind::Move)` (`M`, `Shortcut::MOVE`, the UI mock's key, the
 toolbar's Move after Combine, the rail's Transform set) or
-`Look::StartMirror` (no key, as the mock has none: the rail only, as
+`Look::StartMotion(MotionKind::Mirror)` (no key, as the mock has none: the rail only, as
 the mock's model bar has no Mirror, which leaves room for Chamfer at
 1280 px; `Shortcut::NONE`, a binding that's never
 pressed and shows no key, so the rail's list gives it the first free

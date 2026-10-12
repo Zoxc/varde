@@ -256,7 +256,10 @@ fn sketch_of(plates: &Plates) -> FeatureId {
 /// which stand for the edges around them, and no edges of its own.
 #[test]
 fn a_blend_takes_the_faces_selected() {
-    for start in [Look::StartChamfer, Look::StartFillet] {
+    for start in [
+        Look::StartMotion(MotionKind::Chamfer),
+        Look::StartMotion(MotionKind::Fillet),
+    ] {
         let (mut plates, plate) = plate();
         let pick = top_face(&plates, plate);
         select(&mut plates, SelectionMode::Faces, &[pick]);
@@ -276,7 +279,7 @@ fn a_sweep_takes_the_edges_selected_as_its_path() {
     let (mut plates, plate) = plate();
     let picks = [FRONT, RIGHT].map(|ends| edge_pick(&plates, plate, ends));
     select(&mut plates, SelectionMode::Edges { tangent: false }, &picks);
-    plates.doc.look(Look::StartSweep);
+    plates.doc.look(Look::StartMotion(MotionKind::Sweep));
     assert_eq!(plates.doc.mode.motion().unwrap().kind, MotionKind::Sweep);
     assert_eq!(edges(&plates).len(), 2);
 }
@@ -288,7 +291,7 @@ fn a_mirror_takes_the_face_selected_as_its_plane() {
     let (mut plates, plate) = plate();
     let pick = top_face(&plates, plate);
     select(&mut plates, SelectionMode::Faces, &[pick]);
-    plates.doc.look(Look::StartMirror);
+    plates.doc.look(Look::StartMotion(MotionKind::Mirror));
     let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.bodies, [plate]);
     let Some(varde_document::PlaneRef::Face(face)) = session.plane else {
@@ -314,7 +317,7 @@ fn a_mirror_takes_the_face_selected_as_its_plane() {
         snap: None,
     };
     select(&mut plates, SelectionMode::Faces, &[pick]);
-    plates.doc.look(Look::StartMirror);
+    plates.doc.look(Look::StartMotion(MotionKind::Mirror));
     assert_eq!(plates.doc.mode.motion().unwrap().plane, None);
     assert_eq!(
         plates.doc.notice.as_deref(),
@@ -327,7 +330,10 @@ fn a_mirror_takes_the_face_selected_as_its_plane() {
 /// body.
 #[test]
 fn a_move_or_pattern_takes_the_edge_selected_as_its_axis() {
-    for start in [Look::StartMove, Look::StartPattern] {
+    for start in [
+        Look::StartMotion(MotionKind::Move),
+        Look::StartMotion(MotionKind::LinearPattern),
+    ] {
         let (mut plates, plate) = plate();
         let front = edge_pick(&plates, plate, FRONT);
         select(
@@ -347,7 +353,9 @@ fn a_move_or_pattern_takes_the_edge_selected_as_its_axis() {
     let (mut plates, plate) = plate();
     let wall = wall(&plates, plate);
     select(&mut plates, SelectionMode::Faces, &[wall]);
-    plates.doc.look(Look::StartCircularPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::CircularPattern));
     let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.bodies, [plate]);
     assert_eq!(
@@ -363,7 +371,9 @@ fn a_circular_pattern_takes_the_round_edge_selected_as_its_axis() {
     let (mut plates, plate) = plate();
     let rim = rim(&plates, plate);
     select(&mut plates, SelectionMode::Edges { tangent: false }, &[rim]);
-    plates.doc.look(Look::StartCircularPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::CircularPattern));
     let session = plates.doc.mode.motion().unwrap();
     assert!(
         matches!(session.axis, Some(AxisRef::Edge(_))),
@@ -380,7 +390,7 @@ fn a_draft_takes_the_first_face_selected_as_its_neutral_plane() {
     let top = top_face(&plates, plate);
     let front = front_face(&plates, plate);
     select(&mut plates, SelectionMode::Faces, &[top, front]);
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     let session = plates.doc.mode.motion().unwrap();
     assert!(
         matches!(session.plane, Some(PlaneRef::Face(_))),
@@ -393,7 +403,7 @@ fn a_draft_takes_the_first_face_selected_as_its_neutral_plane() {
     // One face selected: it's drafted.
     plates.motion(MotionLook::Cancel);
     select(&mut plates, SelectionMode::Faces, &[front]);
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     assert_eq!(picked_faces(&plates).len(), 1);
     assert_eq!(
         plates.doc.mode.motion().unwrap().plane,
@@ -413,7 +423,7 @@ fn a_split_takes_the_face_selected_as_its_tool() {
     let (mut plates, plate) = plate();
     let top = top_face(&plates, plate);
     select(&mut plates, SelectionMode::Faces, &[top]);
-    plates.doc.look(Look::StartSplit);
+    plates.doc.look(Look::StartMotion(MotionKind::Split));
     let session = plates.doc.mode.motion().unwrap();
     assert!(session.bodies.is_empty());
     assert_eq!(session.picking, MotionPick::Bodies);
@@ -424,7 +434,10 @@ fn a_split_takes_the_face_selected_as_its_tool() {
 /// point.
 #[test]
 fn an_align_or_scale_takes_the_vertex_selected_as_its_point() {
-    for start in [Look::StartAlign, Look::StartScale] {
+    for start in [
+        Look::StartMotion(MotionKind::Align),
+        Look::StartMotion(MotionKind::Scale),
+    ] {
         let (mut plates, plate) = plate();
         let corner = corner(&plates, plate);
         select(&mut plates, SelectionMode::Any, &[corner]);
@@ -432,7 +445,7 @@ fn an_align_or_scale_takes_the_vertex_selected_as_its_point() {
         let session = plates.doc.mode.motion().unwrap();
         assert_eq!(session.bodies, [plate]);
         let picked = match start {
-            Look::StartAlign => session.align.marks[0][0].is_some(),
+            Look::StartMotion(MotionKind::Align) => session.align.marks[0][0].is_some(),
             _ => session.scale.about != varde_document::PointRef::Origin,
         };
         assert!(picked, "{start:?}");
@@ -503,7 +516,7 @@ fn a_blend_takes_edges_and_faces_selected_together() {
     let top = top_face(&plates, plate);
     let rim = rim(&plates, plate);
     select(&mut plates, SelectionMode::Any, &[rim, top]);
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     assert_eq!(edges(&plates).len(), 1);
     let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.faces.refs.len(), 1);
@@ -640,13 +653,13 @@ fn a_revolve_takes_the_curves_selected_as_its_regions_and_axis() {
 fn a_sweep_takes_the_curves_selected_as_its_profile_or_path() {
     let mut drawn = drawn();
     select_curves(&mut drawn.plates, drawn.sketch, &drawn.rectangle);
-    drawn.plates.doc.look(Look::StartSweep);
+    drawn.plates.doc.look(Look::StartMotion(MotionKind::Sweep));
     let session = drawn.plates.doc.mode.motion().unwrap();
     assert_eq!(session.sweep.regions.picked.len(), 1);
     assert!(session.sweep.chains.is_empty());
     drawn.plates.motion(MotionLook::Cancel);
     select_curves(&mut drawn.plates, drawn.sketch, &drawn.chain);
-    drawn.plates.doc.look(Look::StartSweep);
+    drawn.plates.doc.look(Look::StartMotion(MotionKind::Sweep));
     let session = drawn.plates.doc.mode.motion().unwrap();
     assert!(session.sweep.regions.picked.is_empty());
     assert_eq!(session.sweep.chains.len(), 1, "one chain through both");
@@ -658,7 +671,7 @@ fn a_sweep_takes_the_curves_selected_as_its_profile_or_path() {
 fn a_split_takes_the_curves_selected_as_its_line() {
     let mut drawn = drawn();
     select_curves(&mut drawn.plates, drawn.sketch, &drawn.chain);
-    drawn.plates.doc.look(Look::StartSplit);
+    drawn.plates.doc.look(Look::StartMotion(MotionKind::Split));
     let session = drawn.plates.doc.mode.motion().unwrap();
     assert_eq!(session.split.mode, varde_view::SplitMode::Line);
     let (sketch, curves) = session.split.chain.clone().unwrap();

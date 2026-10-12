@@ -84,7 +84,9 @@ fn editing_the_tick_and_a_copy_body_a_later_feature_uses() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "3");
     plates.input(MotionField::Spread, "40");
     plates.motion(MotionLook::Join);
@@ -140,7 +142,9 @@ fn picking_the_direction_of_a_pattern_whose_copy_a_later_feature_uses() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "3");
     plates.input(MotionField::Spread, "40");
     plates.motion(MotionLook::Join);
@@ -179,7 +183,9 @@ fn too_many_copy_bodies_are_refused_in_the_panel() {
     let mut plates = plates();
     let [_, right, left] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.click(left);
     assert_eq!(plates.doc.mode.motion().unwrap().bodies.len(), 2);
     plates.input(MotionField::Count, "1024");
@@ -202,7 +208,9 @@ fn bodies_apart_whose_copies_miss_get_no_overlap_warning() {
     let mut plates = plates();
     let [_, right, left] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.click(left);
     plates.input(MotionField::Count, "3");
     plates.input(MotionField::Spread, "12");
@@ -229,7 +237,9 @@ fn the_overlap_warning_in_inches_and_flipped() {
         .doc
         .update(Edit::SetUnits(varde_expr::LengthUnit::In));
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "3");
     plates.motion(MotionLook::Join);
     // 0.5 in is 12.7 mm: apart.
@@ -259,7 +269,9 @@ fn the_overlap_warning_along_an_edge() {
     let mut plates = plates();
     let [plate, _, _] = plates.bodies;
     plates.click(plate);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "2");
     plates.input(MotionField::Spread, "50");
     plates.motion(MotionLook::Join);
@@ -303,7 +315,9 @@ fn deleting_a_copy_body_asks_first() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "3");
     plates.input(MotionField::Spread, "40");
     plates.motion(MotionLook::Join);
@@ -340,7 +354,9 @@ fn a_pattern_s_axis_picked_again_keeps_its_copy_bodies() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "3");
     plates.input(MotionField::Spread, "40");
     plates.motion(MotionLook::Join);

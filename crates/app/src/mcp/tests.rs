@@ -1,6 +1,7 @@
 use crate::doc::OperationSlot;
 use std::cell::RefCell;
 use std::sync::mpsc;
+use varde_view::MotionKind;
 
 use serde_json::{Value, json};
 use varde_document::{
@@ -2863,8 +2864,8 @@ fn a_client_edit_closes_what_is_open_and_clean() {
         ("the extrude", vec![Look::EditFeature(extrude)]),
         ("a new revolve", vec![Look::StartRevolve]),
         ("a new combine", vec![Look::StartCombine]),
-        ("a new move", vec![Look::StartMove]),
-        ("a new shell", vec![Look::StartShell]),
+        ("a new move", vec![Look::StartMotion(MotionKind::Move)]),
+        ("a new shell", vec![Look::StartMotion(MotionKind::Shell)]),
         ("the sketch", vec![Look::EditFeature(sketch)]),
         (
             "the sketch with a tool",

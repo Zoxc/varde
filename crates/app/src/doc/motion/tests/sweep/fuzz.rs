@@ -435,7 +435,7 @@ fn run(seed: u64, steps: usize) {
         };
         match roll {
             0 | 1 if open && rng.below(6) != 0 => plates.answer(),
-            0 | 1 => plates.doc.look(Look::StartSweep),
+            0 | 1 => plates.doc.look(Look::StartMotion(MotionKind::Sweep)),
             2 => {
                 let ids = sweeps(&plates);
                 if !ids.is_empty() {
@@ -642,13 +642,13 @@ fn run(seed: u64, steps: usize) {
             }
             46 => {
                 // A sweep with a chamfer being set up.
-                plates.doc.look(Look::StartChamfer);
+                plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
                 if rng.below(2) == 0
                     && let Some(pick) = random_edge_pick(&plates, &mut rng)
                 {
                     click(&mut plates, pick);
                 }
-                plates.doc.look(Look::StartSweep);
+                plates.doc.look(Look::StartMotion(MotionKind::Sweep));
             }
             47 | 48 => {
                 if let Some(list) = random_overlaps(&plates, &mut rng) {

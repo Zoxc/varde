@@ -1,24 +1,24 @@
 //! Setting up a move, a mirror, a pattern, an align or a scale: its
-//! session, started by `Look::StartMove` (`M`, the toolbar, the rail's
-//! Transform set), `Look::StartMirror` (the toolbar, the rail),
-//! `Look::StartPattern` (`P`, the toolbar, the rail),
-//! `Look::StartCircularPattern` (the rail), `Look::StartAlign` (the rail;
-//! an align's own parts are in `align`), `Look::StartScale` (the rail's
-//! Modify set; a scale's own parts are in `scale`) or `Look::StartSplit`
+//! session, started by `Look::StartMotion(MotionKind::Move)` (`M`, the toolbar, the rail's
+//! Transform set), `Look::StartMotion(MotionKind::Mirror)` (the toolbar, the rail),
+//! `Look::StartMotion(MotionKind::LinearPattern)` (`P`, the toolbar, the rail),
+//! `Look::StartMotion(MotionKind::CircularPattern)` (the rail), `Look::StartMotion(MotionKind::Align)` (the rail;
+//! an align's own parts are in `align`), `Look::StartMotion(MotionKind::Scale)` (the rail's
+//! Modify set; a scale's own parts are in `scale`) or `Look::StartMotion(MotionKind::Split)`
 //! (the rail's Modify set; a split's own parts are in `split`),
-//! `Look::StartChamfer` (`C`, the toolbar, the rail's Modify set; a
+//! `Look::StartMotion(MotionKind::Chamfer)` (`C`, the toolbar, the rail's Modify set; a
 //! chamfer's edges are picked as a blend's, in `blend`, its own parts in
-//! `chamfer`), `Look::StartFillet` (`F`, the rail's Modify set; a
+//! `chamfer`), `Look::StartMotion(MotionKind::Fillet)` (`F`, the rail's Modify set; a
 //! fillet's edges are picked as a chamfer's, its own parts in
-//! `fillet`), `Look::StartShell` (the rail's Modify set;
+//! `fillet`), `Look::StartMotion(MotionKind::Shell)` (the rail's Modify set;
 //! a shell's faces are picked as a face session's, in `faces`, its own
-//! parts in `shell`), `Look::StartOffsetFace` (the rail's Modify set; its
+//! parts in `shell`), `Look::StartMotion(MotionKind::OffsetFace)` (the rail's Modify set; its
 //! faces picked as a shell's, its own parts and handle in
-//! `offset_face`), `Look::StartDraft` (the rail's Modify set; its faces
+//! `offset_face`), `Look::StartMotion(MotionKind::Draft)` (the rail's Modify set; its faces
 //! picked as a shell's, its neutral plane as a mirror's plane, its own
-//! parts in `face_draft`), `Look::StartSweep` (the rail's Create set; a
+//! parts in `face_draft`), `Look::StartMotion(MotionKind::Sweep)` (the rail's Create set; a
 //! sweep's profile, path and options are in `sweep`, its model edges
-//! picked as a blend's), `Look::StartLoft` (the rail's Create set; a
+//! picked as a blend's), `Look::StartMotion(MotionKind::Loft)` (the rail's Create set; a
 //! loft's sections, rails and options are in `loft`), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
 //! in Objects), a move's or pattern's axis or a mirror's plane (an origin
@@ -1724,6 +1724,17 @@ impl Doc {
     /// Takes `message`, changing the move, mirror or pattern being set up.
     pub(crate) fn motion_look(&mut self, message: MotionLook) {
         let editable = self.editable();
+        // A loft's own, and what it shares with others (picking, the
+        // operation and bodies), all its own way; Cancel as the others'.
+        let loft = (self.mode.motion()).is_some_and(|session| session.kind == MotionKind::Loft);
+        let message = match message {
+            MotionLook::Cancel => message,
+            message if loft && editable => match self.loft_look(message) {
+                Ok(()) => return,
+                Err(message) => message,
+            },
+            message => message,
+        };
         let document = self.editor.document();
         let Some(session) = self.mode.motion_mut() else {
             return;
@@ -1733,11 +1744,6 @@ impl Doc {
                 self.mode.take_operation();
             }
             _ if !editable => {}
-            // A loft's own, and what it shares with others (picking, the
-            // operation and bodies), all its own way.
-            message if session.kind == MotionKind::Loft && loft::loft_message(&message) => {
-                self.loft_look(message);
-            }
             // An align's references are its own; others pick none.
             MotionLook::Picking(MotionPick::Align(_) | MotionPick::Nothing)
                 if session.kind != MotionKind::Align => {}

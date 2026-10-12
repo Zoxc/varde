@@ -234,10 +234,10 @@ The move's session (`MotionSession`, above) with `MotionKind::
 LinearPattern` and `CircularPattern`, following the UI mock's
 `lpattern` and `cpattern`.
 
-- **Starting**: `Look::StartPattern` (`P`, `Shortcut::PATTERN`, the
+- **Starting**: `Look::StartMotion(MotionKind::LinearPattern)` (`P`, `Shortcut::PATTERN`, the
   mock's key, outside sketches where `P` is the Point tool's; the
   toolbar's "Pattern" after Move; the rail's Transform set as "Linear
-  pattern") and `Look::StartCircularPattern` (no key, as the mock has
+  pattern") and `Look::StartMotion(MotionKind::CircularPattern)` (no key, as the mock has
   none: the rail's "Circular pattern"; not on the toolbar, which the
   mock's model bar leaves it off too and which is nearly full at
   1280 px), again backing out, the bindings as Move's

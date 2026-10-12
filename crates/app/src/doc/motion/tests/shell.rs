@@ -61,7 +61,7 @@ fn front(plates: &Plates, body: BodyId) -> Pick {
 fn shell_picks_and_toggles_faces_and_add_anyway_keeps_the_unbuilt_shell() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Shell);
     assert_eq!(session.bodies, [plate], "the only body");
@@ -189,7 +189,7 @@ fn the_hollow_is_previewed_and_ok_adds_one_undo_step() {
     let mut plates = boxes(false);
     let body = plates.bodies[0];
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     let [low, high] = plates.bounds(body);
@@ -285,7 +285,7 @@ fn the_hollow_is_previewed_and_ok_adds_one_undo_step() {
 fn a_shell_s_faces_are_all_on_one_body() {
     let mut plates = boxes(true);
     let [first, second, _] = plates.bodies;
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     let session = plates.doc.mode.motion().expect("a session");
     assert!(session.bodies.is_empty(), "two bodies: none to begin with");
     assert!(shows(
@@ -351,7 +351,7 @@ fn a_shell_s_faces_are_all_on_one_body() {
 fn shelled() -> (Editor, FeatureId) {
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     let pick = top(&plates, body);
     click(&mut plates, pick);
     plates.answer();
@@ -433,7 +433,7 @@ fn a_face_an_undo_takes_away_is_said_to_be_gone() {
     add_join(&mut plates.doc.editor);
     plates.doc.sync();
     plates.answer();
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     let boss = face_pick(&plates, plate, DVec3::Z, 15.0, DVec3::new(20.0, 0.0, 15.0));
     click(&mut plates, boss);
     assert_eq!(faces(&plates).len(), 1);
@@ -473,11 +473,11 @@ fn shell_takes_the_face_selected_and_backs_out() {
         add: true,
         double: false,
     });
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     assert_eq!(faces(&plates).len(), 1);
     assert_eq!(plates.doc.mode.motion().unwrap().bodies, [second]);
     assert!(drafted(&plates).is_some());
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     assert!(plates.doc.mode.motion().is_none());
 }
 
@@ -502,7 +502,7 @@ fn faces_selected_on_two_bodies_give_the_first_one_s_body() {
             double: false,
         });
     }
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     let picked = faces(&plates);
     assert_eq!(picked.len(), 2);
     assert!(picked.iter().all(|face| face.body == second));
@@ -530,7 +530,7 @@ fn faces_follow_their_body_a_redone_combine_merges() {
     plates.doc.update(Edit::Undo);
     plates.answer();
 
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     plates.doc.look(Look::ClickBody {
         body: second,
         add: false,
@@ -569,7 +569,7 @@ fn a_shell_s_toolbar_fits_at_1280_px() {
     use crate::tests::{shown, texts};
     use varde_view::Mode;
     let (mut plates, _) = plate();
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     let mut renderer = varde_view::probe::renderer();
     let size = iced::Size::new(1280.0, 800.0);
     let mut ui = shown(plates.doc.view_in(Mode::Light), size, &mut renderer);
@@ -596,7 +596,7 @@ fn a_removed_face_left_in_pieces_is_lit_and_taken_out_from_any() {
     varde_regen::testing::shell_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     let up = top(&plates, body);
     let picks = [
         up,

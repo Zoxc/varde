@@ -113,7 +113,9 @@ fn total_stores_the_spacing_it_comes_to_and_flip_turns_it() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "4");
     plates.motion(MotionLook::Mode(PatternMode::Total));
     plates.input(MotionField::Spread, "45");
@@ -163,7 +165,9 @@ fn a_circular_pattern_full_turn_spreads_the_copies_round_the_axis() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartCircularPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::CircularPattern));
     let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::CircularPattern);
     assert_eq!(session.axis, Some(AxisRef::Origin(Axis3::Z)));
@@ -198,7 +202,9 @@ fn a_spacing_past_a_full_turn_is_the_mock_s_error() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartCircularPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::CircularPattern));
     plates.motion(MotionLook::Mode(PatternMode::Spacing));
     // 4 copies 90° apart span 270°: three quarters.
     let pattern = drafted(&plates).expect("a draft");
@@ -228,7 +234,9 @@ fn a_spacing_past_a_full_turn_is_the_mock_s_error() {
     let pattern = drafted(&plates).expect("a draft");
     assert_eq!(pattern.step_degrees(), Some(45.0));
     // A linear one running past the limit.
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Spread, "900000");
     assert!(!plates.doc.motion_ready());
     assert!(shows(&plates, "The pattern runs past 1000000 mm"));
@@ -238,7 +246,9 @@ fn a_spacing_past_a_full_turn_is_the_mock_s_error() {
 fn editing_a_pattern_from_the_timeline_changes_it_as_one_undo_step() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.doc.look(Look::ClickBody {
         body: right,
         add: false,
@@ -310,7 +320,9 @@ fn a_spread_too_long_to_wrap_is_stored_as_its_value() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "4");
     plates.motion(MotionLook::Mode(PatternMode::Total));
     let long = format!("45{}", " + 0".repeat(63));
@@ -363,7 +375,9 @@ fn a_spread_too_long_to_wrap_is_stored_as_its_value() {
     assert_eq!(spread(&last_pattern(&plates)), -15.0);
 
     // A circular Spacing too long to multiply: refused only past a turn.
-    plates.doc.look(Look::StartCircularPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::CircularPattern));
     plates.motion(MotionLook::Mode(PatternMode::Spacing));
     plates.input(MotionField::Spread, &format!("30{}", " + 0".repeat(63)));
     let session = plates.doc.mode.motion().unwrap();
@@ -381,7 +395,9 @@ fn an_undo_swapping_the_pattern_s_kind_ends_its_session() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.doc.update(Edit::CommitMotion);
     let (id, _) = plates.last_feature();
     let design = plates.doc.editor.document().design();
@@ -416,7 +432,9 @@ fn a_pattern_s_direction_on_a_body_taken_away_is_gone() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     let later = later_disc(&mut plates);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.click(right);
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     plates.answer();
@@ -496,7 +514,9 @@ fn ok_on_a_pattern_opened_writes_nothing_however_it_was_typed() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.doc.update(Edit::CommitMotion);
     let (id, _) = plates.last_feature();
     let design = plates.doc.editor.document().design();
@@ -550,7 +570,9 @@ fn what_goes_away_while_the_axis_is_picked_is_gone() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     let later = later_disc(&mut plates);
-    plates.doc.look(Look::StartCircularPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::CircularPattern));
     plates.click(right);
     plates.click(later);
     plates.motion(MotionLook::Picking(MotionPick::Reference));

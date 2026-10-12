@@ -1240,22 +1240,7 @@ impl Doc {
             Look::Revolve(message) => self.revolve_look(message),
             Look::StartCombine => self.start_combine(),
             Look::Combine(message) => self.combine_look(message),
-            Look::StartMove => self.start_motion(varde_view::MotionKind::Move),
-            Look::StartMirror => self.start_motion(varde_view::MotionKind::Mirror),
-            Look::StartPattern => self.start_motion(varde_view::MotionKind::LinearPattern),
-            Look::StartCircularPattern => {
-                self.start_motion(varde_view::MotionKind::CircularPattern)
-            }
-            Look::StartAlign => self.start_motion(varde_view::MotionKind::Align),
-            Look::StartScale => self.start_motion(varde_view::MotionKind::Scale),
-            Look::StartSplit => self.start_motion(varde_view::MotionKind::Split),
-            Look::StartChamfer => self.start_motion(varde_view::MotionKind::Chamfer),
-            Look::StartFillet => self.start_motion(varde_view::MotionKind::Fillet),
-            Look::StartShell => self.start_motion(varde_view::MotionKind::Shell),
-            Look::StartOffsetFace => self.start_motion(varde_view::MotionKind::OffsetFace),
-            Look::StartDraft => self.start_motion(varde_view::MotionKind::Draft),
-            Look::StartSweep => self.start_motion(varde_view::MotionKind::Sweep),
-            Look::StartLoft => self.start_motion(varde_view::MotionKind::Loft),
+            Look::StartMotion(kind) => self.start_motion(kind),
             Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),
@@ -2033,20 +2018,7 @@ fn opens_operation(message: &Look) -> bool {
         Look::StartExtrude
             | Look::StartRevolve
             | Look::StartCombine
-            | Look::StartMove
-            | Look::StartMirror
-            | Look::StartPattern
-            | Look::StartCircularPattern
-            | Look::StartAlign
-            | Look::StartScale
-            | Look::StartSplit
-            | Look::StartChamfer
-            | Look::StartFillet
-            | Look::StartShell
-            | Look::StartOffsetFace
-            | Look::StartDraft
-            | Look::StartSweep
-            | Look::StartLoft
+            | Look::StartMotion(_)
             | Look::EditFeature(_)
     )
 }

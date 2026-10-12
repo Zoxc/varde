@@ -46,7 +46,7 @@ fn draft_picks_faces_and_add_anyway_keeps_the_unbuilt_draft() {
     let mut plates = held(Document::example());
     let plate = plates.bodies[0];
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Draft);
     assert!(session.bodies.is_empty(), "its body is its faces'");
@@ -148,7 +148,7 @@ fn the_draft_is_previewed_its_neutral_plane_picked_and_ok_adds_one_undo_step() {
     let mut plates = boxes(false);
     let body = plates.bodies[0];
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     let pick = front(&plates, body);
     click(&mut plates, pick);
@@ -259,7 +259,7 @@ fn editing_a_draft_from_the_timeline() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     let pick = front(&plates, body);
     click(&mut plates, pick);
@@ -313,7 +313,7 @@ fn a_neutral_face_an_undo_takes_away_is_gone() {
     let second = plates.doc.editor.document().bodies()[1].id;
     plates.answer();
 
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     let pick = front(&plates, body);
     click(&mut plates, pick);
@@ -349,7 +349,7 @@ fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     let top =
         |plates: &Plates| face_pick(plates, body, DVec3::Z, 10.0, DVec3::new(20.0, 15.0, 10.0));
@@ -400,7 +400,7 @@ fn a_neutral_face_merged_before_the_draft_is_found_on_its_holder() {
     );
     let mut plates = held(editor.document().clone());
     let [body, second, third] = plates.bodies;
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     let pick = front(&plates, body);
     click(&mut plates, pick);
@@ -450,7 +450,7 @@ fn the_neutral_face_among_the_faces_drafted_is_refused() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     let pick = front(&plates, body);
@@ -474,7 +474,7 @@ fn a_face_drafted_in_the_preview_is_refused_as_the_neutral_plane() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     let pick = front(&plates, body);
     click(&mut plates, pick);
@@ -503,7 +503,7 @@ fn units_changed_mid_session_keep_the_angle() {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     let pick = front(&plates, body);
     click(&mut plates, pick);
@@ -530,7 +530,7 @@ fn units_changed_mid_session_keep_the_angle() {
         .update(Edit::SetUnits(varde_expr::LengthUnit::In));
     assert!(!plates.doc.motion_ready());
     plates.motion(MotionLook::Cancel);
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     let pick = front(&plates, body);
     click(&mut plates, pick);
@@ -546,7 +546,7 @@ pub(super) fn made() -> (Plates, varde_document::FeatureId) {
     varde_regen::testing::draft_by_boxes();
     let mut plates = boxes(false);
     let body = plates.bodies[0];
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     plates.answer();
     let pick = front(&plates, body);
     click(&mut plates, pick);

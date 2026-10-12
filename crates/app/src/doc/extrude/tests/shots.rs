@@ -10,6 +10,7 @@
 use crate::doc::OperationSlot;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use varde_view::MotionKind;
 
 use iced::advanced::renderer::Headless as _;
 use iced::advanced::widget::operation::scrollable::{RelativeOffset, snap_to};
@@ -2086,7 +2087,7 @@ fn shots_33_op_knobs() {
         };
         let cancel = |doc: &mut Doc| doc.look(Look::Motion(MotionLook::Cancel));
 
-        doc.look(Look::StartChamfer);
+        doc.look(Look::StartMotion(MotionKind::Chamfer));
         let edge = edge_pick(&doc, front_edge.0, front_edge.1);
         click(&mut doc, edge);
         camera.take(&doc, "33-chamfer", Shot::new());
@@ -2095,21 +2096,21 @@ fn shots_33_op_knobs() {
         cancel(&mut doc);
         answer(&mut doc, &requests);
 
-        doc.look(Look::StartFillet);
+        doc.look(Look::StartMotion(MotionKind::Fillet));
         let edge = edge_pick(&doc, front_edge.0, front_edge.1);
         click(&mut doc, edge);
         camera.take(&doc, "33-fillet", Shot::new());
         cancel(&mut doc);
         answer(&mut doc, &requests);
 
-        doc.look(Look::StartShell);
+        doc.look(Look::StartMotion(MotionKind::Shell));
         let top = face_pick(&doc, [0.0, 0.0, 1.0], [18.0, 10.0, 10.0]);
         click(&mut doc, top);
         camera.take(&doc, "33-shell", Shot::new());
         cancel(&mut doc);
         answer(&mut doc, &requests);
 
-        doc.look(Look::StartOffsetFace);
+        doc.look(Look::StartMotion(MotionKind::OffsetFace));
         answer(&mut doc, &requests);
         let top = face_pick(&doc, [0.0, 0.0, 1.0], [18.0, 10.0, 10.0]);
         click(&mut doc, top);
@@ -2118,14 +2119,14 @@ fn shots_33_op_knobs() {
         cancel(&mut doc);
         answer(&mut doc, &requests);
 
-        doc.look(Look::StartDraft);
+        doc.look(Look::StartMotion(MotionKind::Draft));
         let front = face_pick(&doc, [0.0, -1.0, 0.0], [10.0, -20.0, 6.0]);
         click(&mut doc, front);
         camera.take(&doc, "33-draft", Shot::new());
         cancel(&mut doc);
         answer(&mut doc, &requests);
 
-        doc.look(Look::StartScale);
+        doc.look(Look::StartMotion(MotionKind::Scale));
         camera.take(&doc, "33-scale", Shot::new());
         camera.take(&doc, "33-scale-dark-scale2", Shot::new().dark().scale(2.0));
         cancel(&mut doc);
@@ -2133,7 +2134,7 @@ fn shots_33_op_knobs() {
 
         // A move's handles: short arrows, the rings' knobs on the orb in
         // the gaps between them, from two sides.
-        doc.look(Look::StartMove);
+        doc.look(Look::StartMotion(MotionKind::Move));
         answer(&mut doc, &requests);
         camera.take(&doc, "33-move", Shot::new());
         camera.take(&doc, "33-move-dark-scale2", Shot::new().dark().scale(2.0));
@@ -2156,7 +2157,7 @@ fn shots_33_op_knobs() {
             body: disc,
             add: false,
         });
-        doc.look(Look::StartPattern);
+        doc.look(Look::StartMotion(MotionKind::LinearPattern));
         answer(&mut doc, &requests);
         camera.take(&doc, "33-pattern-linear", Shot::new());
         cancel(&mut doc);
@@ -2165,7 +2166,7 @@ fn shots_33_op_knobs() {
             body: disc,
             add: false,
         });
-        doc.look(Look::StartCircularPattern);
+        doc.look(Look::StartMotion(MotionKind::CircularPattern));
         doc.look(Look::Motion(MotionLook::Mode(
             varde_view::PatternMode::Spacing,
         )));

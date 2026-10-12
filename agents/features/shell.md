@@ -111,7 +111,7 @@ start with no body and have only their faces'); the shell's own parts are in
 (`ShellView`, `ShellDirection`). The panel is the model mock's shell
 panel.
 
-- **Starting**: `Look::StartShell` from the rail's Modify set (after
+- **Starting**: `Look::StartMotion(MotionKind::Shell)` from the rail's Modify set (after
   Chamfer, as the icon mock orders it), again backing out; no key, as
   the mocks have none. **Not on the toolbar**: the model mock's bar has
   Shell after Chamfer, but with it the bar runs past its room at 1280

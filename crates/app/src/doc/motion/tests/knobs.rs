@@ -5,6 +5,7 @@
 
 use crate::doc::OperationSlot;
 use std::f64::consts::{FRAC_1_SQRT_2, SQRT_2};
+use varde_view::MotionKind;
 
 use glam::DVec3;
 use varde_document::{ChamferSize, Document, FeatureKind};
@@ -54,7 +55,7 @@ fn drag(plates: &mut Plates, knob: usize, value: f64) {
 #[test]
 fn a_chamfer_s_knobs_stand_on_its_first_edge() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     assert!(knobs(&plates).is_empty(), "no edge yet");
     click_edge(&mut plates, plate, FRONT);
     let [knob] = knobs(&plates)[..] else {
@@ -112,7 +113,7 @@ fn a_chamfer_s_knobs_stand_on_its_first_edge() {
 #[test]
 fn a_fillet_s_knob_is_on_the_round_s_middle() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     click_edge(&mut plates, plate, FRONT);
     let [knob] = knobs(&plates)[..] else {
         panic!("{:?}", knobs(&plates));
@@ -135,7 +136,7 @@ fn a_fillet_s_knob_is_on_the_round_s_middle() {
 fn a_shell_s_knob_goes_into_the_body_from_its_face_removed() {
     let mut plates = held(Document::example());
     let plate = plates.bodies[0];
-    plates.doc.look(Look::StartShell);
+    plates.doc.look(Look::StartMotion(MotionKind::Shell));
     let top = face_pick(&plates, plate, DVec3::Z, 10.0, DVec3::new(20.0, 15.0, 10.0));
     click(&mut plates, top);
     let [knob] = knobs(&plates)[..] else {
@@ -164,7 +165,7 @@ fn a_shell_s_knob_goes_into_the_body_from_its_face_removed() {
 fn a_draft_s_knob_turns_its_face_about_its_hinge() {
     let mut plates = held(Document::example());
     let plate = plates.bodies[0];
-    plates.doc.look(Look::StartDraft);
+    plates.doc.look(Look::StartMotion(MotionKind::Draft));
     let front = face_pick(
         &plates,
         plate,
@@ -208,7 +209,7 @@ fn a_draft_s_knob_turns_its_face_about_its_hinge() {
 #[test]
 fn a_scale_s_knob_is_a_slider_of_its_factor() {
     let (mut plates, _) = plate();
-    plates.doc.look(Look::StartScale);
+    plates.doc.look(Look::StartMotion(MotionKind::Scale));
     let [knob] = knobs(&plates)[..] else {
         panic!("{:?}", knobs(&plates));
     };
@@ -227,7 +228,7 @@ fn a_scale_s_knob_is_a_slider_of_its_factor() {
 fn an_offset_face_s_knob_sets_its_distance_and_side() {
     let mut plates = held(Document::example());
     let plate = plates.bodies[0];
-    plates.doc.look(Look::StartOffsetFace);
+    plates.doc.look(Look::StartMotion(MotionKind::OffsetFace));
     plates.answer();
     let top = face_pick(&plates, plate, DVec3::Z, 10.0, DVec3::new(20.0, 15.0, 10.0));
     click(&mut plates, top);
@@ -252,7 +253,7 @@ fn an_offset_face_s_knob_sets_its_distance_and_side() {
 #[test]
 fn no_knobs_read_only_or_editing() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     click_edge(&mut plates, plate, FRONT);
     assert_eq!(knobs(&plates).len(), 1);
     plates.doc.read_only = Some("read only".to_owned());
@@ -291,7 +292,9 @@ fn a_linear_pattern_s_knobs_set_its_spacing_and_count() {
     let [_, right, _] = plates.bodies;
     plates.answer();
     plates.click(right);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "4");
     plates.input(MotionField::Spread, "12");
     let [spacing, count] = knobs(&plates)[..] else {
@@ -332,7 +335,9 @@ fn a_circular_pattern_s_knobs_set_its_count_and_step() {
     let [_, right, _] = plates.bodies;
     plates.answer();
     plates.click(right);
-    plates.doc.look(Look::StartCircularPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::CircularPattern));
     let [count] = knobs(&plates)[..] else {
         panic!("{:?}", knobs(&plates));
     };

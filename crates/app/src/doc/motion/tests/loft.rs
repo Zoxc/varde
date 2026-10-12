@@ -201,7 +201,7 @@ fn the_rail_s_loft_picks_sections_in_order_and_add_anyway_keeps_it() {
     let (low, top, side) = (lofted.low, lofted.top, lofted.side);
     let plates = &mut lofted.plates;
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Loft);
     assert!(session.bodies.is_empty(), "a loft picks no bodies");
@@ -290,7 +290,7 @@ fn sections_reorder_and_come_out() {
     let mut lofted = lofted();
     let (low, top, side, apex) = (lofted.low, lofted.top, lofted.side, lofted.apex);
     let plates = &mut lofted.plates;
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     pick(plates, side);
@@ -359,7 +359,7 @@ fn a_click_on_a_corner_moves_the_start() {
     let mut lofted = lofted();
     let (low, top, apex) = (lofted.low, lofted.top, lofted.apex);
     let plates = &mut lofted.plates;
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     let far = point_at(plates, top, (25.0, 5.0));
@@ -421,7 +421,7 @@ fn modes_closed_and_rails() {
     let mut lofted = lofted();
     let (low, top, side, rail) = (lofted.low, lofted.top, lofted.side, lofted.rail);
     let plates = &mut lofted.plates;
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     plates.motion(MotionLook::LoftMode(LoftMode::Ruled));
@@ -495,7 +495,7 @@ fn closed_chains_and_rails_while_closed_are_refused() {
     let mut lofted = lofted();
     let (low, top, side, rail) = (lofted.low, lofted.top, lofted.side, lofted.rail);
     let plates = &mut lofted.plates;
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     plates.motion(MotionLook::Picking(MotionPick::Path));
@@ -546,7 +546,7 @@ fn two_squares_preview_and_ok_adds_one_undo_step() {
     let (plate, low, top) = (lofted.plate, lofted.low, lofted.top);
     let plates = &mut lofted.plates;
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     plates.answer();
@@ -571,7 +571,7 @@ fn editing_a_loft_from_the_timeline_cancel_and_undo() {
     let mut lofted = lofted();
     let (low, top) = (lofted.low, lofted.top);
     let plates = &mut lofted.plates;
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     let far = point_at(plates, top, (25.0, 5.0));
@@ -637,7 +637,7 @@ fn a_section_s_region_gone_is_said_to_be_gone() {
     let mut lofted = lofted();
     let (low, top, side) = (lofted.low, lofted.top, lofted.side);
     let plates = &mut lofted.plates;
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     pick(plates, side);
@@ -714,7 +714,7 @@ fn regions_with_holes_and_later_sketches_are_refused() {
     let (low, top) = (lofted.low, lofted.top);
     let plates = &mut lofted.plates;
     let holed_sketch = add_holed(plates, (40.0, 40.0), (60.0, 60.0));
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     let found = &set_up(plates).regions;
     let profiles = &found.found(holed_sketch).expect("a candidate").profiles;
     let holed = (profiles.regions.iter())
@@ -762,7 +762,7 @@ fn a_start_off_its_corners_shows_in_its_row() {
     let mut lofted = lofted();
     let (low, top) = (lofted.low, lofted.top);
     let plates = &mut lofted.plates;
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     let start = start(plates, 1).expect("a start");
@@ -979,7 +979,7 @@ fn a_start_at_a_corner_s_second_point_is_drawn() {
     let mut lofted = lofted();
     let (low, top) = (lofted.low, lofted.top);
     let plates = &mut lofted.plates;
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     let mut redrawn = sketch_of(plates.doc.editor.document(), top).clone();
@@ -1007,7 +1007,7 @@ pub(super) fn made() -> (Plates, FeatureId) {
     let mut lofted = lofted();
     let (low, top) = (lofted.low, lofted.top);
     let plates = &mut lofted.plates;
-    plates.doc.look(Look::StartLoft);
+    plates.doc.look(Look::StartMotion(MotionKind::Loft));
     pick(plates, low);
     pick(plates, top);
     plates.answer();

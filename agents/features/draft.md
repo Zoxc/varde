@@ -157,7 +157,7 @@ a mirror's; its own parts in `app/src/doc/motion/face_draft.rs` and
 panel** (only the icon mock's `draft` icon, in the Modify group after
 Shell), so the panel is built in the style of the mock's shell panel.
 
-- **Starting**: `Look::StartDraft` from the rail's Modify set (after
+- **Starting**: `Look::StartMotion(MotionKind::Draft)` from the rail's Modify set (after
   Shell, before Scale, as the icon mock's Modify group orders it; its
   letter D), again backing out; no key, as the mocks have none. **Not
   on the toolbar**, as Shell and Offset face aren't. Or editing one

@@ -370,32 +370,13 @@ impl MotionSession {
     }
 }
 
-/// Whether `message` is one [`Doc::loft_look`] takes for a loft.
-pub(super) fn loft_message(message: &MotionLook) -> bool {
-    matches!(
-        message,
-        MotionLook::Picking(_)
-            | MotionLook::LoftRegion { .. }
-            | MotionLook::LoftPoint { .. }
-            | MotionLook::LoftStart { .. }
-            | MotionLook::SectionUp(_)
-            | MotionLook::DropSection(_)
-            | MotionLook::LoftRail { .. }
-            | MotionLook::DropRail(_)
-            | MotionLook::LoftMode(_)
-            | MotionLook::Closed
-            | MotionLook::Operation(_)
-            | MotionLook::Target(_)
-    )
-}
-
 impl Doc {
     /// Takes `message` for the loft being set up, in a document that can
-    /// be changed ([`loft_message`]).
-    pub(super) fn loft_look(&mut self, message: MotionLook) {
+    /// be changed, handing back a message it doesn't take.
+    pub(super) fn loft_look(&mut self, message: MotionLook) -> Result<(), MotionLook> {
         let document = self.editor.document();
         let Some(session) = self.mode.motion_mut() else {
-            return;
+            return Ok(());
         };
         let refused = match message {
             MotionLook::Picking(picking) => {
@@ -440,12 +421,13 @@ impl Doc {
                 self.loft_target(body);
                 Ok(())
             }
-            _ => Ok(()),
+            other => return Err(other),
         };
         if let Err(why) = refused {
             self.notice = Some(why.into_owned());
         }
         self.prune_loft_now();
+        Ok(())
     }
 
     /// Notes what's gone of the loft being set up after a change to it.

@@ -260,7 +260,7 @@ fn the_types_flip_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     varde_regen::testing::chamfer_by_wedges();
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     click_edge(&mut plates, plate, FRONT);
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
@@ -354,7 +354,7 @@ fn the_types_flip_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     plates.answer();
 
     // An edge cut off in the preview is taken out by its row's cross.
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     click_edge(&mut plates, plate, FRONT);
     plates.answer();
     let edge = edges(&plates)[0];
@@ -371,7 +371,7 @@ fn the_types_flip_and_chain_are_previewed_and_ok_adds_one_undo_step() {
 fn a_chamfer_s_edges_are_all_on_one_body() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     click_edge(&mut plates, plate, FRONT);
     // The right disc's rim, about (20, 0), 15 up.
     let index = plates.doc.feed.pick_index();
@@ -434,7 +434,7 @@ fn a_chamfer_s_edges_are_all_on_one_body() {
 /// the editor and the chamfer.
 fn chamfered() -> (Editor, FeatureId) {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     click_edge(&mut plates, plate, FRONT);
     plates.answer();
     plates.doc.update(Edit::AcceptError);
@@ -515,7 +515,7 @@ fn editing_a_chamfer_from_the_timeline_cancel_and_undo() {
 fn an_edge_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let last = later_disc(&mut plates);
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     // The later disc's rim, about (0, 30), 5 up.
     let index = plates.doc.feed.pick_index();
     let snaps = index.picking().snaps();
@@ -555,7 +555,7 @@ fn chamfer_takes_the_edges_selected_and_c_backs_out() {
         });
     }
     assert!(shows(&plates, "Chamfer"));
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     assert_eq!(edges(&plates).len(), 2);
     assert!(drafted(&plates).is_some());
     key_in(&mut plates.doc, character("c"));
@@ -631,7 +631,7 @@ pub(super) fn slot() -> (Plates, BodyId) {
 #[test]
 fn a_tangent_chain_lights_whole_and_a_click_on_it_takes_its_edge_out() {
     let (mut plates, body) = slot();
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     let line = edge_pick(&plates, body, ([0.0, -3.0, 5.0], [10.0, -3.0, 5.0]));
     let Picked::Edge(edge) = line.target else {
         unreachable!()
@@ -707,11 +707,11 @@ fn a_tangent_chain_lights_whole_and_a_click_on_it_takes_its_edge_out() {
 #[test]
 fn a_chamfer_s_edges_wait_for_another_session_s_preview_to_go() {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.input(MotionField::Offset(varde_document::Axis3::Z), "100");
     plates.answer();
     plates.motion(MotionLook::Cancel);
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     let up = ([-30.0, 20.0, 110.0], [30.0, 20.0, 110.0]);
     let pick = edge_pick(&plates, plate, up);
     assert!(!plates.doc.takes_reference(pick));
@@ -760,19 +760,19 @@ fn the_toolbar_fits_at_1280_px() {
     };
     let idle = fits(&plates);
     assert!(idle.iter().any(|t| t == "Chamfer") && idle.iter().any(|t| t == "Measure"));
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     let moving = fits(&plates);
     assert!(moving.iter().any(|t| t == "Z axis") && moving.iter().any(|t| t == "Cancel"));
     plates.motion(MotionLook::Cancel);
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     let chamfering = fits(&plates);
     assert!(chamfering.iter().any(|t| t == "New chamfer"));
     assert!(!chamfering.iter().any(|t| t == "Combine"));
     // Fillet isn't on the bar (it wouldn't fit): its session's bar is
     // Cancel too.
     assert!(!idle.iter().any(|t| t == "Fillet"));
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     let filleting = fits(&plates);
     assert!(filleting.iter().any(|t| t == "New fillet"));
     assert!(filleting.iter().any(|t| t == "Cancel"));
@@ -833,7 +833,7 @@ fn edges_dont_follow_their_body_into_a_combine_that_fails() {
     plates.doc.apply(add);
     plates.doc.sync();
     plates.answer();
-    plates.doc.look(Look::StartChamfer);
+    plates.doc.look(Look::StartMotion(MotionKind::Chamfer));
     click_edge(&mut plates, plate, FRONT);
     assert_eq!(edges(&plates)[0].body, plate);
     // Right is in Left now: this one fails.

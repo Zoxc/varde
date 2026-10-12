@@ -131,7 +131,7 @@ nearest ones, the revolve's and the sweep's: Sections, "Between
 sections" as tiles (Smooth, Ruled), Closed, Rails, Operation as tiles
 and the Bodies list.
 
-- **Starting**: `Look::StartLoft` from the rail's Create set (after
+- **Starting**: `Look::StartMotion(MotionKind::Loft)` from the rail's Create set (after
   Sweep, as the mock's group orders it; its list's letter `L`), through
   `motion_binding`, with no key, as the mock has it; again, or another
   tool, backs out. **Not on the toolbar**: the mock's model bar has no

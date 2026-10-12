@@ -643,7 +643,7 @@ pub enum Look {
     /// Edits the feature: a sketch is entered, an extrude, a revolve, a
     /// combine, a move, a mirror, a pattern or an align opens its session (see
     /// [`Look::StartExtrude`], [`Look::StartRevolve`],
-    /// [`Look::StartCombine`], [`Look::StartMove`]) with its values.
+    /// [`Look::StartCombine`], [`Look::StartMotion`]) with its values.
     EditFeature(FeatureId),
     /// Starts setting up a new extrude, from the sketch selected in the
     /// Timeline if one is, or backs out of the extrude being set up.
@@ -664,49 +664,12 @@ pub enum Look {
     /// Changes the combine being set up, see [`CombineLook`]: it isn't in
     /// the document until [`Edit::CommitCombine`].
     Combine(CombineLook),
-    /// Starts setting up a new move, its bodies from what's selected in
-    /// the model if anything is, or backs out of the move being set up.
-    StartMove,
-    /// Starts setting up a new mirror, as [`Look::StartMove`] a move.
-    StartMirror,
-    /// Starts setting up a new linear pattern, as [`Look::StartMove`] a
-    /// move.
-    StartPattern,
-    /// Starts setting up a new circular pattern, as [`Look::StartMove`]
-    /// a move.
-    StartCircularPattern,
-    /// Starts setting up a new align, its body from what's selected in
-    /// the model if anything is, as [`Look::StartMove`] a move.
-    StartAlign,
-    /// Starts setting up a new scale, its bodies from what's selected in
-    /// the model if anything is, as [`Look::StartMove`] a move.
-    StartScale,
-    /// Starts setting up a new split, its body from what's selected in
-    /// the model if anything is, as [`Look::StartMove`] a move.
-    StartSplit,
-    /// Starts setting up a new chamfer, its edges those selected in the
-    /// model if any are, or backs out of the one being set up.
-    StartChamfer,
-    /// Starts setting up a new fillet, as [`Look::StartChamfer`] a
-    /// chamfer.
-    StartFillet,
-    /// Starts setting up a new shell, its faces those selected in the
-    /// model if any are (else its body the one selected, or the model's
-    /// only one), or backs out of the one being set up.
-    StartShell,
-    /// Starts setting up a new offset face, its faces those selected in
-    /// the model if any are, or backs out of the one being set up.
-    StartOffsetFace,
-    /// Starts setting up a new draft, its faces those selected in the
-    /// model if any are, or backs out of the one being set up.
-    StartDraft,
-    /// Starts setting up a new sweep, its profile's regions those of the
-    /// sketch selected in the Timeline if one is, or backs out of the one
-    /// being set up.
-    StartSweep,
-    /// Starts setting up a new loft, or backs out of the one being set
-    /// up.
-    StartLoft,
+    /// Starts setting up a new operation of the kind, its bodies, edges
+    /// or faces from what's selected in the model if anything is, or
+    /// backs out of the one being set up (see [`motion_binding`]).
+    ///
+    /// [`motion_binding`]: crate::shortcut::motion_binding
+    StartMotion(MotionKind),
     /// Changes the move, mirror, pattern, align or scale being set up, see [`MotionLook`]: it
     /// isn't in the document until [`Edit::CommitMotion`].
     Motion(MotionLook),
@@ -1037,6 +1000,30 @@ pub enum Look {
     SetProjection(Projection),
     /// Opens or closes a tool set's list on the rail, see [`RailLook`].
     Rail(RailLook),
+}
+
+impl Look {
+    /// The message with `held`, whether the command modifier (`Ctrl`, or
+    /// `Cmd` on macOS) is held, stamped onto the clicks that take it:
+    /// the view's rows and labels know nothing of the keys held, so they
+    /// send none, and a row's click becomes [`Look::ClickGeometry`].
+    pub fn with_command(self, held: bool) -> Look {
+        match self {
+            Look::ClickRow(id) => Look::ClickGeometry {
+                hit: Some(id),
+                add: held,
+            },
+            Look::ChooseOverlap { index, .. } => Look::ChooseOverlap { index, add: held },
+            Look::PressLabel { id, .. } => Look::PressLabel { id, add: held },
+            Look::ClickBody { body, .. } => Look::ClickBody { body, add: held },
+            Look::ClickObject { row, .. } => Look::ClickObject { row, add: held },
+            Look::ClickFeature { feature, .. } => Look::ClickFeature {
+                feature,
+                roll: held,
+            },
+            message => message,
+        }
+    }
 }
 
 /// A tool drawing in a sketch.

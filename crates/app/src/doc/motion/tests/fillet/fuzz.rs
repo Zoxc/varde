@@ -293,7 +293,7 @@ fn run(seed: u64, steps: usize) {
         };
         match roll {
             0 | 1 if open && rng.below(6) != 0 => plates.answer(),
-            0 | 1 => plates.doc.look(Look::StartFillet),
+            0 | 1 => plates.doc.look(Look::StartMotion(MotionKind::Fillet)),
             2 => {
                 let ids = fillets(&plates);
                 if !ids.is_empty() {
@@ -320,7 +320,7 @@ fn run(seed: u64, steps: usize) {
                         });
                     }
                     if rng.below(4) == 0 {
-                        plates.doc.look(Look::StartFillet);
+                        plates.doc.look(Look::StartMotion(MotionKind::Fillet));
                     }
                 }
             }
@@ -422,7 +422,7 @@ fn run(seed: u64, steps: usize) {
                 match rng.below(3) {
                     0 => plates.doc.look(Look::StartMeasure),
                     1 => plates.doc.look(Look::StartCombine),
-                    _ => plates.doc.look(Look::StartChamfer),
+                    _ => plates.doc.look(Look::StartMotion(MotionKind::Chamfer)),
                 }
                 if rng.below(2) == 0
                     && let Some(pick) = random_pick(&plates, &mut rng)

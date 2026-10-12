@@ -3,6 +3,7 @@
 
 use crate::doc::OperationSlot;
 use varde_document::{AxisLine, BodyOp, Combine, FeatureId, FeatureKind, OriginPlane};
+use varde_view::MotionKind;
 use varde_view::{Angle, Edit, Look, MotionField, MotionLook, MotionPick, RevolveLook, TurnKind};
 
 use super::holding;
@@ -23,22 +24,26 @@ fn transformed(regen: &mut varde_regen::Regenerator) -> Plates {
         answer(plates, regen);
     };
     plates.click(right);
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.input(MotionField::Offset(varde_document::Axis3::X), "5");
     plates.input(MotionField::Angle, "30");
     commit(&mut plates, regen);
     plates.click(right);
-    plates.doc.look(Look::StartMirror);
+    plates.doc.look(Look::StartMotion(MotionKind::Mirror));
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     plates.motion(MotionLook::OriginPlane(OriginPlane::YZ));
     commit(&mut plates, regen);
     plates.click(left);
-    plates.doc.look(Look::StartPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::LinearPattern));
     plates.input(MotionField::Count, "4");
     plates.input(MotionField::Spread, "12");
     commit(&mut plates, regen);
     plates.click(right);
-    plates.doc.look(Look::StartCircularPattern);
+    plates
+        .doc
+        .look(Look::StartMotion(MotionKind::CircularPattern));
     commit(&mut plates, regen);
     let document = plates.doc.editor.document();
     let combine = Combine {

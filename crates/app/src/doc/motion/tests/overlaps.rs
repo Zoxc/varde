@@ -6,6 +6,7 @@
 use crate::doc::OperationSlot;
 use glam::DVec3;
 use varde_regen::Summary;
+use varde_view::MotionKind;
 use varde_view::{Look, MotionLook, MotionPick, OverlapItems, Overlaps, Pick, Picked};
 
 use super::{Plates, plates};
@@ -60,7 +61,7 @@ fn a_move_ticks_its_bodies_and_its_axis_not_the_selection() {
         double: false,
     });
     assert!(!plates.doc.pick.selection.is_empty());
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     let session = plates.doc.mode.motion().expect("a move");
     assert_eq!(session.bodies, [plate], "the selection's body");
     plates.click(plate);

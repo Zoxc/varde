@@ -176,7 +176,7 @@ fn the_radius_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     varde_regen::testing::fillet_by_arcs();
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     click_edge(&mut plates, plate, FRONT);
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
@@ -222,7 +222,7 @@ fn the_radius_and_chain_are_previewed_and_ok_adds_one_undo_step() {
 /// plates holding it and the fillet.
 fn filleted() -> (Plates, varde_document::FeatureId) {
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     click_edge(&mut plates, plate, FRONT);
     plates.answer();
     plates.doc.update(Edit::AcceptError);
@@ -296,7 +296,7 @@ fn editing_a_fillet_from_the_timeline_cancel_and_undo() {
 fn an_edge_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let last = later_disc(&mut plates);
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     let index = plates.doc.feed.pick_index();
     let snaps = index.picking().snaps();
     let rim = (0..snaps.len() as u32)
@@ -335,7 +335,7 @@ fn fillet_takes_the_edges_selected_and_f_backs_out() {
             double: false,
         });
     }
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     assert_eq!(edges(&plates).len(), 2);
     assert!(drafted(&plates).is_some());
     key_in(&mut plates.doc, character("f"));
@@ -343,7 +343,7 @@ fn fillet_takes_the_edges_selected_and_f_backs_out() {
 
     let mut plates = super::plates();
     let [_, right, _] = plates.bodies;
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     click_edge(&mut plates, plate, FRONT);
     let index = plates.doc.feed.pick_index();
     let snaps = index.picking().snaps();
@@ -367,7 +367,7 @@ fn fillet_takes_the_edges_selected_and_f_backs_out() {
 #[test]
 fn a_tangent_chain_lights_whole() {
     let (mut plates, body) = slot();
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     let line = edge_pick(&plates, body, ([0.0, -3.0, 5.0], [10.0, -3.0, 5.0]));
     let Picked::Edge(edge) = line.target else {
         unreachable!()
@@ -414,7 +414,7 @@ fn an_edge_selected_before_takes_in_its_chain() {
         add: true,
         double: false,
     });
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     assert!(plates.doc.mode.motion().unwrap().blend.chains);
     assert_eq!(edges(&plates).len(), 4);
 }
@@ -427,7 +427,7 @@ fn an_edge_selected_before_takes_in_its_chain() {
 fn the_overlap_list_names_an_edge_of_a_picked_chain_as_the_chain() {
     use varde_view::OverlapNote;
     let (mut plates, body) = slot();
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     let line = edge_pick(&plates, body, ([0.0, -3.0, 5.0], [10.0, -3.0, 5.0]));
     let Picked::Edge(edge) = line.target else {
         unreachable!()
@@ -487,7 +487,7 @@ fn the_overlap_list_ticks_and_picks_the_fillet_s_edges() {
         add: true,
         double: false,
     });
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     assert_eq!(edges(&plates).len(), 1);
     let list = varde_view::Overlaps {
         held: glam::DVec2::ZERO,
@@ -544,7 +544,7 @@ fn disc_rim(plates: &Plates, body: varde_document::BodyId, z: f64) -> varde_view
 fn editing_a_fillet_whose_body_a_later_join_merged() {
     let mut plates = super::plates();
     let [_, right, _] = plates.bodies;
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     let top = disc_rim(&plates, right, 15.0);
     plates.doc.look(Look::ClickModel {
         pick: Some(top),
@@ -618,7 +618,7 @@ fn the_overlap_list_follows_each_preview() {
         edge_pick(&plates, plate, RIGHT),
         edge_pick(&plates, plate, BACK),
     );
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     let list = varde_view::Overlaps {
         held: glam::DVec2::ZERO,
         at: glam::DVec2::ZERO,
@@ -705,7 +705,7 @@ fn the_overlap_list_follows_each_preview() {
 #[test]
 fn a_click_on_a_chain_takes_out_every_edge_picked_on_it() {
     let (mut plates, body) = slot();
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     plates.motion(MotionLook::Chain);
     let line = super::chamfer::edge_pick(&plates, body, ([0.0, -3.0, 5.0], [10.0, -3.0, 5.0]));
     let Picked::Edge(edge) = line.target else {
@@ -771,7 +771,7 @@ pub(super) fn made() -> (Plates, varde_document::FeatureId) {
 fn ctrl_shows_the_edges_before_the_fillet() {
     varde_regen::testing::fillet_by_arcs();
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     click_edge(&mut plates, plate, FRONT);
     plates.answer();
     assert!(
@@ -821,7 +821,7 @@ fn ctrl_shows_the_edges_before_the_fillet() {
 fn ctrl_shows_an_edited_fillet_s_body_before_it() {
     varde_regen::testing::fillet_by_arcs();
     let (mut plates, plate) = plate();
-    plates.doc.look(Look::StartFillet);
+    plates.doc.look(Look::StartMotion(MotionKind::Fillet));
     click_edge(&mut plates, plate, FRONT);
     plates.answer();
     key_in(&mut plates.doc, enter());

@@ -161,7 +161,7 @@ fn first_curve(plates: &Plates, feature: FeatureId) -> Id {
 fn set_up(swept: &mut Swept) {
     let (profile, path) = (swept.profile, swept.path);
     let plates = &mut swept.plates;
-    plates.doc.look(Look::StartSweep);
+    plates.doc.look(Look::StartMotion(MotionKind::Sweep));
     plates.motion(MotionLook::SweepRegion {
         sketch: profile,
         region: 0,
@@ -196,7 +196,7 @@ fn the_rail_s_sweep_picks_a_profile_and_a_path_and_add_anyway_keeps_it() {
     let (profile, path) = (swept.profile, swept.path);
     let plates = &mut swept.plates;
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartSweep);
+    plates.doc.look(Look::StartMotion(MotionKind::Sweep));
     let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Sweep);
     assert!(session.bodies.is_empty(), "a sweep picks no bodies");
@@ -443,7 +443,7 @@ fn a_helix_is_set_up_about_an_origin_axis() {
     let mut swept = swept();
     let profile = swept.profile;
     let plates = &mut swept.plates;
-    plates.doc.look(Look::StartSweep);
+    plates.doc.look(Look::StartMotion(MotionKind::Sweep));
     plates.motion(MotionLook::KeepOrientation);
     plates.input(MotionField::Twist, "90");
     plates.motion(MotionLook::SweepPath(SweepPath::Helix));
@@ -701,7 +701,7 @@ fn a_path_s_parts_and_curves_are_held_to_their_limits_while_picked() {
         bodies: [plate; 3],
     };
     let plates = &mut swept.plates;
-    plates.doc.look(Look::StartSweep);
+    plates.doc.look(Look::StartMotion(MotionKind::Sweep));
     plates.motion(MotionLook::SweepRegion {
         sketch: profile,
         region: 0,
@@ -807,7 +807,7 @@ fn an_edited_sweep_with_several_edge_parts_opens_as_stored() {
     };
     plates.answer();
     // Another edge of the plate, picked in a session given up.
-    plates.doc.look(Look::StartSweep);
+    plates.doc.look(Look::StartMotion(MotionKind::Sweep));
     plates.motion(MotionLook::Picking(MotionPick::Path));
     click_edge(plates, plate, ([-30.0, -20.0, 0.0], [-30.0, -20.0, 10.0]));
     let second = edges(plates);
@@ -862,7 +862,7 @@ fn a_helix_s_axis_gone_stays_gone_through_path_and_helix() {
     let profile = swept.profile;
     let plates = &mut swept.plates;
     let disc = super::later_disc(plates);
-    plates.doc.look(Look::StartSweep);
+    plates.doc.look(Look::StartMotion(MotionKind::Sweep));
     plates.motion(MotionLook::SweepRegion {
         sketch: profile,
         region: 0,

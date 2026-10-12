@@ -220,7 +220,7 @@ fn m_starts_a_move_typing_offsets_moves_the_preview_and_enter_commits_one_undo_s
 fn a_move_turns_about_a_round_face_picked_whose_axis_regeneration_finds() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.click(right);
     assert_eq!(plates.doc.mode.motion().unwrap().bodies, [right]);
     // The Axis field picks the axis: the toolbar offers the origin axes.
@@ -287,7 +287,7 @@ fn a_mirror_across_a_picked_face_keeps_the_original_and_a_curved_face_is_refused
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
     let before = plates.doc.editor.document().clone();
-    plates.doc.look(Look::StartMirror);
+    plates.doc.look(Look::StartMotion(MotionKind::Mirror));
     let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.kind, MotionKind::Mirror);
     assert_eq!(session.picking, MotionPick::Bodies);
@@ -297,7 +297,7 @@ fn a_mirror_across_a_picked_face_keeps_the_original_and_a_curved_face_is_refused
     assert!(matches!(
         press_in(&plates.doc, character("m")),
         Some(crate::Message::Ui(varde_view::Message::Look(
-            Look::StartMove
+            Look::StartMotion(MotionKind::Move)
         )))
     ));
     plates.click(right);
@@ -374,7 +374,7 @@ fn a_mirror_across_a_picked_face_keeps_the_original_and_a_curved_face_is_refused
 fn editing_a_move_from_the_timeline_changes_it_as_one_undo_step() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.doc.look(Look::ClickBody {
         body: right,
         add: false,
@@ -440,7 +440,7 @@ fn editing_a_move_from_the_timeline_changes_it_as_one_undo_step() {
 fn refusals_show_in_the_panel_and_ok_waits() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.click(right);
     // A field's text out of range is refused under it.
     plates.input(MotionField::Offset(Axis3::X), "2000000");
@@ -478,15 +478,15 @@ fn moves_and_mirrors_need_a_body_and_an_editable_document_outside_sketches() {
     let (mut doc, _requests) = holding(Document::default());
     // No body: M does nothing.
     assert!(press_in(&doc, character("m")).is_none());
-    doc.look(Look::StartMove);
-    // Look::StartMove still opens it (the binding is what's disabled).
+    doc.look(Look::StartMotion(MotionKind::Move));
+    // Look::StartMotion(MotionKind::Move) still opens it (the binding is what's disabled).
     assert!(doc.mode.motion().is_some());
-    doc.look(Look::StartMove);
+    doc.look(Look::StartMotion(MotionKind::Move));
     assert!(doc.mode.motion().is_none(), "again backs out of it");
 
     let mut plates = plates();
     plates.doc.read_only = Some("read-only".to_owned());
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     assert!(plates.doc.mode.motion().is_none());
 }
 
@@ -494,7 +494,7 @@ fn moves_and_mirrors_need_a_body_and_an_editable_document_outside_sketches() {
 fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.click(right);
     plates.input(MotionField::Offset(Axis3::Y), "10");
     plates.doc.update(Edit::CommitMotion);
@@ -772,7 +772,7 @@ fn offsets(doc: &Doc) -> DVec3 {
 #[test]
 fn the_handles_stay_where_a_ring_turned_them_and_turning_back_undoes_it() {
     let (mut plates, [right, low]) = lopsided();
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.click(right);
     plates.click(low);
     plates.answer();
@@ -835,7 +835,7 @@ fn the_handles_stay_where_a_ring_turned_them_and_turning_back_undoes_it() {
 #[test]
 fn a_ring_after_a_turn_about_an_edge_typed_back_to_nothing() {
     let (mut plates, [right, low]) = lopsided();
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.click(right);
     plates.click(low);
     plates.answer();
@@ -928,7 +928,7 @@ fn a_picked_body_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let [_, right, _] = plates.bodies;
     let later = later_disc(&mut plates);
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.click(right);
     plates.click(later);
     plates.input(MotionField::Offset(Axis3::X), "5");
@@ -977,7 +977,7 @@ fn an_axis_or_plane_an_undo_takes_away_is_said_to_be_gone() {
     let mut plates = plates();
     let [plate, right, _] = plates.bodies;
     let later = later_disc(&mut plates);
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.click(right);
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     plates.answer();
@@ -1074,7 +1074,7 @@ fn a_move_follows_a_body_a_redone_combine_merges() {
     plates.doc.update(Edit::Undo);
     plates.answer();
 
-    plates.doc.look(Look::StartMove);
+    plates.doc.look(Look::StartMotion(MotionKind::Move));
     plates.click(plate);
     plates.click(right);
     plates.input(MotionField::Offset(Axis3::Z), "20");
@@ -1124,14 +1124,18 @@ fn fresh_lengths_fit_the_camera_and_it_stays() {
     use MotionField::*;
     let mut plates = plates();
     let starts = [
-        (Look::StartPattern, Spread, 0.25),
-        (Look::StartFillet, Radius, 0.02),
-        (Look::StartShell, Thickness, 0.02),
-        (Look::StartChamfer, ChamferDistance, 0.01),
-        (Look::StartChamfer, ChamferSecond, 0.02),
-        (Look::StartOffsetFace, Distance, 0.01),
-        (Look::StartSweep, Pitch, 0.1),
-        (Look::StartMove, Offset(Axis3::Z), 0.0),
+        (Look::StartMotion(MotionKind::LinearPattern), Spread, 0.25),
+        (Look::StartMotion(MotionKind::Fillet), Radius, 0.02),
+        (Look::StartMotion(MotionKind::Shell), Thickness, 0.02),
+        (
+            Look::StartMotion(MotionKind::Chamfer),
+            ChamferDistance,
+            0.01,
+        ),
+        (Look::StartMotion(MotionKind::Chamfer), ChamferSecond, 0.02),
+        (Look::StartMotion(MotionKind::OffsetFace), Distance, 0.01),
+        (Look::StartMotion(MotionKind::Sweep), Pitch, 0.1),
+        (Look::StartMotion(MotionKind::Move), Offset(Axis3::Z), 0.0),
     ];
     for height in [100.0, 1e5, 0.5] {
         plates.doc.camera.set_view_height(height);

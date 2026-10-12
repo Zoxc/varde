@@ -128,7 +128,7 @@ the `align` icon (ui-mock-icons). The panel is built in the style of the
 mock's nearest one, Move's: the same card, fields picked into, rows with
 a cross, an icon toggle and typed fields.
 
-- **Starting**: `Look::StartAlign` from the rail's Transform set
+- **Starting**: `Look::StartMotion(MotionKind::Align)` from the rail's Transform set
   ("Align", after Circular pattern; no key, as the mock has none:
   `shortcut::motion_binding`, `Shortcut::NONE`, the rail's list letter
   `A`), again backing out; not on the toolbar (nearly full at 1280 px,

@@ -345,41 +345,12 @@ impl Varde {
                 });
             }
             Message::Ui(Ui::Look(message)) => {
-                let message = match message {
-                    // A clicked tab ends the peek, or the peek would show
-                    // the other one; the next change of modifiers starts it
-                    // again.
-                    Look::SelectPanel(_) => {
-                        self.peeking = false;
-                        message
-                    }
-                    // A row or a label knows nothing of the keys held.
-                    Look::ClickRow(id) => Look::ClickGeometry {
-                        hit: Some(id),
-                        add: self.command,
-                    },
-                    Look::ChooseOverlap { index, .. } => Look::ChooseOverlap {
-                        index,
-                        add: self.command,
-                    },
-                    Look::PressLabel { id, .. } => Look::PressLabel {
-                        id,
-                        add: self.command,
-                    },
-                    Look::ClickBody { body, .. } => Look::ClickBody {
-                        body,
-                        add: self.command,
-                    },
-                    Look::ClickObject { row, .. } => Look::ClickObject {
-                        row,
-                        add: self.command,
-                    },
-                    Look::ClickFeature { feature, .. } => Look::ClickFeature {
-                        feature,
-                        roll: self.command,
-                    },
-                    message => message,
-                };
+                // A clicked tab ends the peek, or the peek would show the
+                // other one; the next change of modifiers starts it again.
+                if matches!(message, Look::SelectPanel(_)) {
+                    self.peeking = false;
+                }
+                let message = message.with_command(self.command);
                 // The delete prompt cancelled may free what waited for it.
                 return self.step(|doc, cx| {
                     doc.look(message);

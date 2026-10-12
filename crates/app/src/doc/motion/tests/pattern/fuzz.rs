@@ -226,8 +226,12 @@ fn run(seed: u64, steps: usize) {
         let what = format!("seed {seed} step {step}");
         // What the session edits and its kind, before the step.
         match rng.below(25) {
-            0 => plates.doc.look(Look::StartPattern),
-            1 => plates.doc.look(Look::StartCircularPattern),
+            0 => plates
+                .doc
+                .look(Look::StartMotion(MotionKind::LinearPattern)),
+            1 => plates
+                .doc
+                .look(Look::StartMotion(MotionKind::CircularPattern)),
             2 | 3 => {
                 // The plates, or any body there now, copy bodies among
                 // them.
