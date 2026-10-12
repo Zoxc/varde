@@ -24,7 +24,6 @@ use varde_view::{
 
 use super::align::{Mark, Taken, point_at, point_of};
 use super::{Doc, MotionSession, merged_in, unnamed};
-use crate::doc::regions::TypedText;
 
 /// A scale's point and edge as picked, and where they were picked.
 #[derive(Debug, Clone, PartialEq)]
@@ -495,15 +494,5 @@ impl Doc {
                 .map(|scale| scale_info(document, &scale, units)),
             snaps,
         }
-    }
-}
-
-/// The length field as a new scale opens it: empty, asking for nothing
-/// yet (not refused).
-pub(super) fn empty_length() -> TypedText {
-    TypedText {
-        text: String::new(),
-        value: None,
-        error: None,
     }
 }

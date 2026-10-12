@@ -464,7 +464,8 @@ impl MotionSession {
                 read("1", &factor),
                 read("1", &factor),
                 read("1", &factor),
-                scale::empty_length(),
+                // A scale's length: empty, asking for nothing yet.
+                TypedText::default(),
                 chamfer_distance,
                 chamfer_second,
                 chamfer_angle,

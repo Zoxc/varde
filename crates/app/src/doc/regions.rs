@@ -572,8 +572,8 @@ impl ReadIn {
 }
 
 /// A typed value's field: the text as typed, the value it last gave, and
-/// why the text is refused, if it is.
-#[derive(Debug, Clone, PartialEq)]
+/// why the text is refused, if it is. Empty by default.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct TypedText {
     pub(crate) text: String,
     pub(crate) value: Option<Value>,
@@ -583,13 +583,19 @@ pub(crate) struct TypedText {
 impl TypedText {
     /// The field with `text` read for `ask`.
     pub(crate) fn read(text: String, ask: &Ask) -> Self {
-        let mut field = Self {
-            text: String::new(),
-            value: None,
-            error: None,
-        };
+        let mut field = Self::default();
         field.input(text, ask);
         field
+    }
+
+    /// The field a new feature opens with `text` in, a default: shown as
+    /// [`TypedText::of`] shows the value it reads to, or as typed where
+    /// `ask` refuses it.
+    pub(crate) fn opened(text: &str, ask: &Ask) -> Self {
+        Value::new(text, ask).map_or_else(
+            |_| Self::read(text.to_owned(), ask),
+            |value| Self::of(&value, ask),
+        )
     }
 
     /// The field holding `value`, a stored value asked for by `ask`. It

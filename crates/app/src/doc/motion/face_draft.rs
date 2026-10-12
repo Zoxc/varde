@@ -6,7 +6,6 @@
 
 use glam::DVec3;
 use varde_document::{Design, FaceDraft, FeatureKind, OriginPlane, PlaneRef};
-use varde_expr::Value;
 use varde_view::{DraftView, MotionField, MotionKind};
 
 use super::refs::Refs;
@@ -18,11 +17,7 @@ pub(super) const NEUTRAL: PlaneRef = PlaneRef::Origin(OriginPlane::XY);
 
 /// The angle field as a new one opens it: 3 (degrees).
 pub(super) fn angle_field(design: &Design) -> TypedText {
-    let ask = FaceDraft::angle_ask(design);
-    Value::new("3", &ask).map_or_else(
-        |_| TypedText::read("3".to_owned(), &ask),
-        |value| TypedText::of(&value, &ask),
-    )
+    TypedText::opened("3", &FaceDraft::angle_ask(design))
 }
 
 impl MotionSession {

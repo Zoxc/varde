@@ -18,7 +18,7 @@ use varde_document::{
     BodyId, CurveChain, Design, Document, FeatureId, Helix, MAX_PATH_CURVES, MAX_PATH_PARTS,
     MAX_SWEEP_REGIONS, Orientation, PathPart, PathRef, Sweep, SweepError,
 };
-use varde_expr::{AngleUnit, Unit, Value};
+use varde_expr::{AngleUnit, Unit};
 use varde_render::Camera;
 use varde_sketch::Id;
 use varde_view::{
@@ -96,12 +96,6 @@ const PITCH_SHARE: f64 = 0.1;
 /// of [`PITCH_SHARE`] of the view's height made nice ([`fitting_length`])
 /// and 5 turns, and no twist.
 pub(super) fn sweep_fields(design: &Design, camera: &Camera) -> [TypedText; 3] {
-    let read = |text: &str, ask: &varde_expr::Ask| {
-        Value::new(text, ask).map_or_else(
-            |_| TypedText::read(text.to_owned(), ask),
-            |value| TypedText::of(&value, ask),
-        )
-    };
     let twist = Sweep::twist_ask(design);
     [
         length_field(
@@ -109,7 +103,7 @@ pub(super) fn sweep_fields(design: &Design, camera: &Camera) -> [TypedText; 3] {
             &Sweep::pitch_ask(design),
             design,
         ),
-        read("5", &Sweep::turns_ask(design)),
+        TypedText::opened("5", &Sweep::turns_ask(design)),
         TypedText::read(
             varde_expr::format(0.0, Some(Unit::Angle(AngleUnit::Deg))),
             &twist,
