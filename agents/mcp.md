@@ -1929,7 +1929,7 @@ by `parse_call`: applied, refused with why by the UI's checks and the
 editor's (a parameter taken, not a word, or leaving the extrude's
 distance in error), and its values' bounds), and feeds
 calls through `Varde::update` as `Message::Mcp(Event::Call)`, with
-`SessionId::for_tests` and `Reply::for_tests` (hidden from docs) to make
+`SessionId::for_tests` and `Reply::for_tests` (behind varde-mcp's `testing` feature) to make
 the event and read the reply off a channel; `mcp/tests/motion.rs` the
 motion tools (each one's defaults and values given, keys by kind, a
 face's or corner's key off it or stale after the plate is made

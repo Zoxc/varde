@@ -69,7 +69,7 @@ impl SessionId {
 
     /// An id of `text`, for the app's tests, which feed it calls of
     /// their own.
-    #[doc(hidden)]
+    #[cfg(feature = "testing")]
     pub fn for_tests(text: &str) -> Self {
         Self(text.to_owned())
     }

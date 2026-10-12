@@ -360,7 +360,7 @@ fn a_call_is_answered_through_update() {
         session: SessionId::for_tests("a session"),
         id: Id::Number(1),
         call: Call::DesignSummary(Page::SUMMARY),
-        reply: Reply::for_tests(sender),
+        reply: Reply::for_tests(sender, iced::time::Instant::now()),
     };
     let _ = varde.update(Message::Mcp(start(&varde.mcp), event));
     let reply = receiver.try_recv().unwrap();
@@ -1007,7 +1007,7 @@ fn a_stopped_servers_late_events_are_dropped() {
         session: SessionId::for_tests("the replaced server's"),
         id: Id::Number(1),
         call: Call::DesignSummary(Page::SUMMARY),
-        reply: Reply::for_tests(sender),
+        reply: Reply::for_tests(sender, iced::time::Instant::now()),
     };
     mcp.event(replaced, call, None);
     assert!(receiver.try_recv().unwrap().is_error);
@@ -1212,7 +1212,7 @@ fn calling(varde: &mut Varde, session: &str, id: i64, call: Call) -> mpsc::Recei
         session: SessionId::for_tests(session),
         id: Id::Number(id),
         call,
-        reply: Reply::for_tests(sender),
+        reply: Reply::for_tests(sender, iced::time::Instant::now()),
     };
     feed(varde, event);
     receiver
@@ -1765,7 +1765,7 @@ fn the_bound_runs_from_the_calls_arrival_at_the_server() {
         session: SessionId::for_tests("a session"),
         id: Id::Number(1),
         call: Call::BodyTopology(topology("Body 1")),
-        reply: Reply::for_tests_at(sender, came),
+        reply: Reply::for_tests(sender, came),
     };
     feed(&mut varde, event);
     let _ = varde.update(Message::Tick(now));
@@ -2715,7 +2715,7 @@ fn an_edit_reaching_its_turn_past_the_bound_is_not_applied() {
             session: SessionId::for_tests("a session"),
             id: Id::Number(1),
             call: rename_feature("Extrude 1", "Base"),
-            reply: Reply::for_tests_at(sender, came),
+            reply: Reply::for_tests(sender, came),
         },
     );
     std::thread::sleep(margin);
@@ -2747,7 +2747,7 @@ fn an_edit_taken_up_past_the_bound_is_not_applied() {
             session: SessionId::for_tests("a session"),
             id: Id::Number(1),
             call: rename_feature("Extrude 1", "Base"),
-            reply: Reply::for_tests_at(sender, came),
+            reply: Reply::for_tests(sender, came),
         },
     );
     assert_eq!(feature_name(&varde, 1), "Extrude 1");
@@ -4516,7 +4516,7 @@ fn calling_at(
         session: SessionId::for_tests(session),
         id: Id::Number(id),
         call,
-        reply: Reply::for_tests_at(sender, came),
+        reply: Reply::for_tests(sender, came),
     };
     feed(varde, event);
     receiver

@@ -41,6 +41,10 @@ serde_json.workspace = true
 base64.workspace = true
 postcard.workspace = true
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Sessions and replies made up, for the calls src/mcp/tests.rs feeds the app.
+varde-mcp = { workspace = true, features = ["testing"] }
+
 # Asks before the page goes with unsaved changes, see `src/platform/web/page.rs`,
 # and copies measures to the clipboard.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

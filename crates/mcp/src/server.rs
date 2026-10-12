@@ -114,17 +114,10 @@ pub struct Reply {
 }
 
 impl Reply {
-    /// A reply into `sender`, for the app's tests, which feed it calls
-    /// of their own: come now.
-    #[doc(hidden)]
-    pub fn for_tests(sender: SyncSender<ToolReply>) -> Self {
-        Self::for_tests_at(sender, Instant::now())
-    }
-
     /// A reply into `sender` for a call come at `came`, for the app's
-    /// tests.
-    #[doc(hidden)]
-    pub fn for_tests_at(sender: SyncSender<ToolReply>, came: Instant) -> Self {
+    /// tests, which feed it calls of their own.
+    #[cfg(feature = "testing")]
+    pub fn for_tests(sender: SyncSender<ToolReply>, came: Instant) -> Self {
         Self { sender, came }
     }
 
