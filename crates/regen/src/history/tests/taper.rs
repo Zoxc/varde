@@ -17,7 +17,7 @@ use super::*;
 
 /// Tapers on this test's thread by the frustum stand-in.
 fn with_frustums() {
-    super::super::taper::taper_by_frustum();
+    crate::testing::taper_by_frustum();
 }
 
 fn evaluated(document: &Document) -> Evaluation {

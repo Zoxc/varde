@@ -25,7 +25,7 @@ use super::*;
 
 /// Drafts faces on this test's thread by the box stand-in.
 fn with_boxes() {
-    super::super::face_draft::draft_by_boxes();
+    crate::testing::draft_by_boxes();
 }
 
 /// An angle of `text` for a draft in `document`.
@@ -605,7 +605,7 @@ fn recording(
 /// stored.
 #[test]
 fn a_face_named_twice_is_drafted_once() {
-    super::super::face_draft::DRAFTER.set(Some(recording));
+    crate::testing::set(|o| o.draft = Some(recording));
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
     let mut twice = front(&solid, body);
@@ -680,7 +680,7 @@ fn refusals_are_worded_and_drawn() {
         &mut editor,
         draft(&mm, vec![front(&solid, body)], XY, "3", false),
     );
-    super::super::face_draft::DRAFTER.set(Some(refusing));
+    crate::testing::set(|o| o.draft = Some(refusing));
     for (error, words, drawn) in [
         (
             DraftError::FacingPull { region: 0 },

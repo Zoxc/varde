@@ -93,7 +93,7 @@ pub struct FaceDraft {
   `NotImplemented`, so every draft that finds its faces and neutral
   plane fails today with "drafting faces of Body 1 isn't supported
   yet", the body left as it was, and the rest of the history goes on.
-  The regen tests swap it (`face_draft::DRAFTER`, a thread local; other
+  The regen tests swap it (`testing::Overrides::draft`, per thread, the stand-in in `history/face_draft/stand_in.rs`; other
   crates' tests through the `testing` feature,
   `varde_regen::testing::draft_by_boxes`) for `by_boxes`: a box along
   the world's axes of eight corners, the pull along a world axis; each

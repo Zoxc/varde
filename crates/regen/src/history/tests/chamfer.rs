@@ -28,7 +28,7 @@ use super::*;
 
 /// Chamfers on this test's thread by the prism stand-in.
 fn with_wedges() {
-    super::super::chamfer::chamfer_by_wedges();
+    crate::testing::chamfer_by_wedges();
 }
 
 /// A length of `text` for a chamfer in `document`.
@@ -425,7 +425,7 @@ fn a_face_s_edges_are_chamfered_but_those_left_out() {
     assert_near(face_min(all, TOP, 1), face_min(&one, TOP, 1));
     assert_near(face_min(all, TOP, 1), 1.0);
     // The front top edge named too: left out.
-    super::super::chamfer::CHAMFERER.set(Some(recording));
+    crate::testing::set(|o| o.chamfer = Some(recording));
     let left_out = Chamfer {
         edges: vec![front_top(&solid, body)],
         ..top
@@ -523,7 +523,7 @@ pub(super) fn slot(sketch: &mut Sketch) {
 /// the top all round.
 #[test]
 fn tangent_chains_take_in_the_rim() {
-    super::super::chamfer::CHAMFERER.set(Some(recording));
+    crate::testing::set(|o| o.chamfer = Some(recording));
     let mm = Document::default();
     let mut editor = Editor::new(Document::default());
     let extent = Extent::OneSide(length(editor.document(), "5"));
@@ -589,7 +589,7 @@ fn tangent_chains_take_in_the_rim() {
 /// The kernel refusing an edge is worded with the edge, which is drawn.
 #[test]
 fn a_refused_edge_is_named_and_drawn() {
-    super::super::chamfer::CHAMFERER.set(Some(too_big));
+    crate::testing::set(|o| o.chamfer = Some(too_big));
     let (mut editor, body, solid) = cube();
     let kind = chamfer(editor.document(), vec![front_top(&solid, body)], "1");
     let id = add(&mut editor, kind);
@@ -815,7 +815,7 @@ fn turned_and_straight() -> (Editor, BodyId, Arc<Solid>) {
 #[test]
 #[ignore = "the kernel can't join bodies meeting flush on tangent faces"]
 fn a_grown_edge_sharing_no_face_takes_the_picked_edge_s_side() {
-    super::super::chamfer::CHAMFERER.set(Some(recording));
+    crate::testing::set(|o| o.chamfer = Some(recording));
     let mm = Document::default();
     let (mut editor, body, solid) = turned_and_straight();
     let topology = solid.topology();
@@ -889,7 +889,7 @@ mod fuzz;
 /// picked edge went through its whole rim: 2.6 s.
 #[test]
 fn the_most_edges_are_worked_out_quickly() {
-    super::super::chamfer::CHAMFERER.set(Some(recording));
+    crate::testing::set(|o| o.chamfer = Some(recording));
     let mut editor = Editor::new(Document::default());
     let gon = |sketch: &mut Sketch| {
         let n = 2000;

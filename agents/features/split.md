@@ -158,7 +158,7 @@ pub enum SplitTool {
   its body is left whole and its new body has no solid (a feature naming
   it fails: "Body 3 has no solid: the feature making it failed"); the
   rest of the history goes on. The regen tests swap the kernel's split
-  for two booleans (`a ∩ t`, `a − t`; `split::SPLITTER`, a thread local
+  for two booleans (`a ∩ t`, `a − t`; `testing::Overrides::split`, per thread, the stand-in in `history/split/stand_in.rs`
   for tests, other crates' through the `testing` feature) to test what's done with the pieces; the planned
   analytic tests of the kernel's split are written out and
   `#[ignore = "kernel split not built"]`.

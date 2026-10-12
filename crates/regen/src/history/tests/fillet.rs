@@ -33,7 +33,7 @@ use super::*;
 
 /// Fillets on this test's thread by the stand-in.
 fn with_arcs() {
-    super::super::fillet::fillet_by_arcs();
+    crate::testing::fillet_by_arcs();
 }
 
 /// A length of `text` for a fillet in `document`.
@@ -487,7 +487,7 @@ fn recording(
 /// reference's keys); off, only itself. The radius goes as typed.
 #[test]
 fn tangent_chains_take_in_the_rim() {
-    super::super::fillet::FILLETER.set(Some(recording));
+    crate::testing::set(|o| o.fillet = Some(recording));
     let mm = Document::default();
     let mut editor = Editor::new(Document::default());
     let extent = Extent::OneSide(length(editor.document(), "5"));
@@ -563,7 +563,7 @@ fn runs_into(
 /// the stand-in's own too big (a radius past the faces) too.
 #[test]
 fn a_refused_edge_is_named_and_drawn() {
-    super::super::fillet::FILLETER.set(Some(too_big));
+    crate::testing::set(|o| o.fillet = Some(too_big));
     let (mut editor, body, solid) = cube();
     let kind = fillet(editor.document(), vec![front_top(&solid, body)], "1");
     let id = add(&mut editor, kind);
@@ -575,7 +575,7 @@ fn a_refused_edge_is_named_and_drawn() {
     );
     assert!(failed.geometry.is_some());
     assert_near(solid_of(&evaluation, body).volume(), 1000.0);
-    super::super::fillet::FILLETER.set(Some(runs_into));
+    crate::testing::set(|o| o.fillet = Some(runs_into));
     let document = editor.document().clone();
     set(
         &mut editor,

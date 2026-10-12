@@ -62,7 +62,7 @@ pub struct Fillet {
   fails with `NotImplemented`. So every fillet that finds its edges
   fails today with "filleting Body 1 isn't supported yet", its body
   left whole; the rest of the history goes on. The regen tests swap it
-  (`fillet::FILLETER`, a thread local; other crates' tests through the
+  (`testing::Overrides::fillet`, per thread, the stand-in in `history/fillet/stand_in.rs`; other crates' tests through the
   `testing` feature, `varde_regen::testing::fillet_by_arcs`) for
   `by_arcs`: each chain a straight, open, convex edge between two flat
   faces, rounded off by one boolean taking away a prism past its ends

@@ -72,7 +72,7 @@ pub struct OffsetFace {
   `NotImplemented`, so every offset that finds its faces fails today
   with "offsetting faces of Body 1 isn't supported yet", the body left
   as it was, and the rest of the history goes on. The regen tests swap
-  it (`offset_face::OFFSETTER`, a thread local; other crates' tests
+  it (`testing::Overrides::offset`, per thread, the stand-in in `history/offset_face/stand_in.rs`; other crates' tests
   through the `testing` feature, `varde_regen::testing::offset_by_boxes`)
   for `by_boxes`: a box along the world's axes whose picked faces move
   by a scale along each axis and a move (`Motion::scale` then a

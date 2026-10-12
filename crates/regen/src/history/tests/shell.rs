@@ -24,7 +24,7 @@ use super::*;
 
 /// Shells on this test's thread by the box stand-in.
 fn with_boxes() {
-    super::super::shell::shell_by_boxes();
+    crate::testing::shell_by_boxes();
 }
 
 /// A thickness of `text` for a shell in `document`.
@@ -260,7 +260,7 @@ fn recording(
 /// stored.
 #[test]
 fn a_face_named_twice_is_opened_once() {
-    super::super::shell::SHELLER.set(Some(recording));
+    crate::testing::set(|o| o.shell = Some(recording));
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
     let mut twice = top(&solid, body);
@@ -351,7 +351,7 @@ fn refusals_are_worded_and_drawn() {
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
     let id = add(&mut editor, shell(&mm, body, vec![top(&solid, body)], "1"));
-    super::super::shell::SHELLER.set(Some(round_too_small));
+    crate::testing::set(|o| o.shell = Some(round_too_small));
     let evaluation = evaluated(editor.document());
     let failed = failure(&evaluation, id).expect("the shell fails");
     assert_eq!(
@@ -359,7 +359,7 @@ fn refusals_are_worded_and_drawn() {
         "the shell is thicker than the smallest round of Body 1: try a thinner wall"
     );
     assert!(failed.geometry.is_some());
-    super::super::shell::SHELLER.set(Some(corner));
+    crate::testing::set(|o| o.shell = Some(corner));
     let evaluation = evaluated(editor.document());
     let failed = failure(&evaluation, id).expect("the shell fails");
     assert_eq!(

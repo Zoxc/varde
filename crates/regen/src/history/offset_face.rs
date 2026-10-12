@@ -33,10 +33,13 @@ use crate::cache::Cache;
 use crate::error_geometry::KernelFailure;
 use crate::message;
 
+#[cfg(any(test, feature = "testing"))]
+pub(crate) mod stand_in;
+
 /// The kernel's offset face, which tests may replace with a stand-in to
 /// check what regeneration does with the result before the kernel's is
 /// built.
-type Offsetter = fn(
+pub(crate) type Offsetter = fn(
     &Solid,
     &Topology,
     &[u32],
@@ -47,89 +50,9 @@ type Offsetter = fn(
     &Budget,
 ) -> Result<Solid, OffsetError>;
 
-#[cfg(any(test, feature = "testing"))]
-thread_local! {
-    /// The offset a test asks for in place of the kernel's, on its own
-    /// thread.
-    pub(crate) static OFFSETTER: std::cell::Cell<Option<Offsetter>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// The offset to run: the kernel's, or the one a test set.
-fn offsetter() -> Offsetter {
-    #[cfg(any(test, feature = "testing"))]
-    if let Some(offsetter) = OFFSETTER.get() {
-        return offsetter;
-    }
-    varde_kernel::offset_faces
-}
-
-/// Offsets faces on this thread by [`by_boxes`] from now on.
-#[cfg(any(test, feature = "testing"))]
-pub(crate) fn offset_by_boxes() {
-    OFFSETTER.set(Some(by_boxes));
-}
-
-/// A stand-in for the kernel's offset face, for tests: the solid must be
-/// a box along the world's axes ([`in_place::box_sides`]), and each face
-/// picked moves along its normal by `distance`, the four around it
-/// stretched to meet it: one scale along each axis and a move, so every
-/// face keeps its name (as the kernel's keeps them). A face moved onto
-/// or past the face opposite it (the walls between shrinking to
-/// nothing) is [`OffsetError::PastNeighbour`], a box past
-/// [`MAX_COORD`](varde_kernel::MAX_COORD) [`OffsetError::OutOfRange`];
-/// anything else is [`KernelError::TooComplex`].
-///
-/// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
-#[cfg(any(test, feature = "testing"))]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn by_boxes(
-    solid: &Solid,
-    topology: &Topology,
-    faces: &[u32],
-    distance: f64,
-    _tangent: bool,
-    _feature: u64,
-    tol: &Tolerance,
-    budget: &Budget,
-) -> Result<Solid, OffsetError> {
-    use varde_kernel::KernelError;
-    use varde_kernel::Motion;
-    let too_complex = || OffsetError::Failed(KernelError::TooComplex.into());
-    let (min, max, sides) = in_place::box_sides(solid, topology).ok_or_else(too_complex)?;
-    let size = max - min;
-    let (mut lo, mut hi) = (min, max);
-    for &region in faces {
-        let (axis, end) = *sides.get(region as usize).ok_or_else(too_complex)?;
-        if end == 0 {
-            lo[axis] = min[axis] - distance;
-        } else {
-            hi[axis] = max[axis] + distance;
-        }
-    }
-    // The walls between a face and the one opposite it shrink to
-    // nothing (the resolution is the least they may keep).
-    let least = tol.resolution();
-    for axis in 0..3 {
-        if hi[axis] - lo[axis] <= least {
-            let moved = (faces.iter())
-                .copied()
-                .find(|&region| sides[region as usize].0 == axis)
-                .expect("only a moved face shrinks an axis");
-            return Err(OffsetError::PastNeighbour { region: moved });
-        }
-    }
-    let reach = f64::from(varde_kernel::MAX_COORD);
-    if lo.abs().max_element() > reach || hi.abs().max_element() > reach {
-        return Err(OffsetError::OutOfRange);
-    }
-    let factors = (hi - lo) / size;
-    let motion = Motion::scale(min, factors)
-        .zip(Motion::translation(lo - min))
-        .map(|(scale, shift)| scale.then(&shift))
-        .ok_or_else(too_complex)?;
-    debug_assert!((motion.point(max) - hi).abs().max_element() <= 1e-9 * (1.0 + size.length()));
-    Ok(solid.transformed(&motion, None, tol, budget)?)
+kernel_op! {
+    /// The offset to run: the kernel's, or the one a test set.
+    fn offsetter() -> Offsetter = varde_kernel::offset_faces, offset;
 }
 
 /// Changes the body of `evaluation` as the offset face `offset`, the

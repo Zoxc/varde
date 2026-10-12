@@ -88,9 +88,12 @@ use crate::profile::{ChainError, path_chain};
 /// which its sweep guards with.
 const TANGENT_SINE: f64 = path_sweep::JOINT_SINE;
 
+#[cfg(any(test, feature = "testing"))]
+pub(crate) mod stand_in;
+
 /// The kernel's sweep, which tests may replace with a stand-in to check
 /// what regeneration does with the result before the kernel's is built.
-type Sweeper = fn(
+pub(crate) type Sweeper = fn(
     &Profile,
     &Frame,
     &Path,
@@ -101,96 +104,9 @@ type Sweeper = fn(
     &Budget,
 ) -> Result<Solid, SweepError>;
 
-#[cfg(any(test, feature = "testing"))]
-thread_local! {
-    /// The sweep a test asks for in place of the kernel's, on its own
-    /// thread.
-    pub(crate) static SWEEPER: std::cell::Cell<Option<Sweeper>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// The sweep to run: the kernel's, or the one a test set.
-fn sweeper() -> Sweeper {
-    #[cfg(any(test, feature = "testing"))]
-    if let Some(sweeper) = SWEEPER.get() {
-        return sweeper;
-    }
-    path_sweep::sweep
-}
-
-/// Sweeps on this thread by [`by_extrude`] from now on.
-#[cfg(any(test, feature = "testing"))]
-pub(crate) fn sweep_by_extrude() {
-    SWEEPER.set(Some(by_extrude));
-}
-
-/// A stand-in for the kernel's sweep, for tests: a path of straight
-/// pieces all along one line, starting on the profile's plane and
-/// square to it, untwisted, is the profile extruded along it, as far as
-/// the pieces reach. Anything else is [`KernelError::TooComplex`].
-///
-/// [`KernelError::TooComplex`]: varde_kernel::KernelError::TooComplex
-#[cfg(any(test, feature = "testing"))]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn by_extrude(
-    profile: &Profile,
-    frame: &Frame,
-    path: &Path,
-    _orientation: path_sweep::Orientation,
-    twist: f64,
-    feature: u64,
-    tol: &Tolerance,
-    budget: &Budget,
-) -> Result<Solid, SweepError> {
-    use varde_kernel::KernelError;
-    let too_complex = || SweepError::Failed(KernelError::TooComplex.into());
-    let Path::Chain {
-        pieces,
-        closed: false,
-    } = path
-    else {
-        return Err(too_complex());
-    };
-    if twist != 0.0 {
-        return Err(too_complex());
-    }
-    let mut ends = Vec::with_capacity(pieces.len());
-    for piece in pieces {
-        let Piece::Line { from, to } = *piece else {
-            return Err(too_complex());
-        };
-        ends.push((from, to));
-    }
-    let (Some(&(start, _)), Some(&(_, end))) = (ends.first(), ends.last()) else {
-        return Err(too_complex());
-    };
-    let along = (end - start).try_normalize().ok_or_else(too_complex)?;
-    let resolution = tol.resolution();
-    for (k, &(from, to)) in ends.iter().enumerate() {
-        let way = (to - from).try_normalize().ok_or_else(too_complex)?;
-        if way.cross(along).length() > 1e-9 || way.dot(along) <= 0.0 {
-            return Err(too_complex());
-        }
-        if k > 0 && from.distance(ends[k - 1].1) > resolution {
-            return Err(too_complex());
-        }
-    }
-    let normal = frame.normal();
-    if (start - frame.origin).dot(normal).abs() > resolution {
-        return Err(SweepError::OffStart);
-    }
-    if along.cross(normal).length() > TANGENT_SINE {
-        return Err(SweepError::NotSquare);
-    }
-    let length = (end - start).dot(normal);
-    let (from, to) = if length > 0.0 {
-        (0.0, length)
-    } else {
-        (length, 0.0)
-    };
-    Ok(varde_kernel::extrude(
-        profile, frame, from, to, feature, tol, budget,
-    )?)
+kernel_op! {
+    /// The sweep to run: the kernel's, or the one a test set.
+    fn sweeper() -> Sweeper = path_sweep::sweep, sweep;
 }
 
 /// One part of a path as built: its pieces end to end, and whether they

@@ -78,7 +78,7 @@ stand-ins):
   fails with `NotImplemented`. So every shell that finds its faces fails
   today with "shelling Body 1 isn't supported yet", its body left
   whole; the rest of the history goes on. The regen tests swap it
-  (`shell::SHELLER`, a thread local; other crates' tests through the
+  (`testing::Overrides::shell`, per thread, the stand-in in `history/shell/stand_in.rs`; other crates' tests through the
   `testing` feature, `varde_regen::testing::shell_by_boxes`) for
   `by_boxes`: a box along the world's axes (six planar faces square to
   them, its volume its box's) hollowed by one boolean with another box

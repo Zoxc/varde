@@ -29,7 +29,7 @@ use crate::SweepFound;
 
 /// Sweeps on this test's thread by the extruding stand-in.
 fn with_extrudes() {
-    super::super::sweep::sweep_by_extrude();
+    crate::testing::sweep_by_extrude();
 }
 
 fn evaluated(document: &Document) -> Evaluation {
@@ -277,10 +277,10 @@ fn recording(
 
 /// Records what the history hands the kernel's sweep.
 fn handed(document: &Document) -> (Evaluation, Vec<Path>) {
-    super::super::sweep::SWEEPER.set(Some(recording));
+    crate::testing::set(|o| o.sweep = Some(recording));
     HANDED.with_borrow_mut(Vec::clear);
     let evaluation = evaluated(document);
-    super::super::sweep::SWEEPER.set(None);
+    crate::testing::set(|o| o.sweep = None);
     (evaluation, HANDED.with_borrow_mut(std::mem::take))
 }
 

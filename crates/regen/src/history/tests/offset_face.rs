@@ -24,7 +24,7 @@ use super::*;
 
 /// Offsets faces on this test's thread by the box stand-in.
 fn with_boxes() {
-    super::super::offset_face::offset_by_boxes();
+    crate::testing::offset_by_boxes();
 }
 
 /// A distance of `text` for an offset in `document`.
@@ -382,7 +382,7 @@ fn recording(
 /// the tangent flag as stored.
 #[test]
 fn a_face_named_twice_is_moved_once() {
-    super::super::offset_face::OFFSETTER.set(Some(recording));
+    crate::testing::set(|o| o.offset = Some(recording));
     let (mut editor, body, solid) = cube();
     let mm = editor.document().clone();
     let mut twice = top(&solid, body);
@@ -447,7 +447,7 @@ fn refusals_are_worded_and_drawn() {
         &mut editor,
         offset(&mm, vec![top(&solid, body)], "1", false),
     );
-    super::super::offset_face::OFFSETTER.set(Some(refusing));
+    crate::testing::set(|o| o.offset = Some(refusing));
     for (error, words, drawn) in [
         (
             OffsetError::PastNeighbour { region: 0 },

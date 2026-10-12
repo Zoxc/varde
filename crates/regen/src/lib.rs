@@ -24,91 +24,15 @@ mod cache;
 mod edge_facts;
 mod error_geometry;
 mod history;
-/// What other crates' tests set up of regeneration.
-#[cfg(any(test, feature = "testing"))]
-pub mod testing {
-    /// Splits on this thread by two booleans from now on (the front, in
-    /// the tool, its intersection with the body, the back the body less
-    /// it) in place of the kernel's split, which isn't built yet: so
-    /// other crates' tests can see what's done with the pieces.
-    pub fn split_by_booleans() {
-        crate::history::split_by_booleans();
-    }
-
-    /// Chamfers on this thread by a stand-in in place of the kernel's
-    /// chamfer, which isn't built yet: each edge a straight convex one
-    /// between two flat faces, cut off by a triangular prism past its
-    /// ends (right for a block's edges); anything else is too complex.
-    pub fn chamfer_by_wedges() {
-        crate::history::chamfer_by_wedges();
-    }
-
-    /// Shells on this thread by a stand-in in place of the kernel's
-    /// shell, which isn't built yet: a box along the world's axes
-    /// hollowed by one boolean with another box; anything else is too
-    /// complex.
-    pub fn shell_by_boxes() {
-        crate::history::shell_by_boxes();
-    }
-
-    /// Fillets on this thread by a stand-in in place of the kernel's
-    /// fillet, which isn't built yet: each edge a straight convex one
-    /// between two flat faces, rounded off by cutting away a prism past
-    /// its ends whose section is the corner less the round (right for a
-    /// block's edges); anything else is too complex.
-    pub fn fillet_by_arcs() {
-        crate::history::fillet_by_arcs();
-    }
-
-    /// Offsets faces on this thread by a stand-in in place of the
-    /// kernel's offset face, which isn't built yet: a box along the
-    /// world's axes with its picked faces moved by a scale along each
-    /// axis and a move, so every face keeps its name; anything else is
-    /// too complex.
-    pub fn offset_by_boxes() {
-        crate::history::offset_by_boxes();
-    }
-
-    /// Drafts faces on this thread by a stand-in in place of the
-    /// kernel's draft, which isn't built yet: a box along the world's
-    /// axes, the pull along one, its sides along the pull turned about
-    /// their hinges on the neutral plane by moving their corners, so
-    /// every face keeps its name; anything else is too complex.
-    pub fn draft_by_boxes() {
-        crate::history::draft_by_boxes();
-    }
-
-    /// Sweeps on this thread by a stand-in in place of the kernel's
-    /// sweep, which isn't built yet: a path of straight pieces all along
-    /// one line is the profile extruded along it; anything else is too
-    /// complex.
-    pub fn sweep_by_extrude() {
-        crate::history::sweep_by_extrude();
-    }
-
-    /// Lofts on this thread by a stand-in in place of the kernel's loft,
-    /// which isn't built yet: two parallel sections of straight sides,
-    /// the second the first moved along its normal, make the first
-    /// extruded to the second; anything else is too complex.
-    pub fn loft_by_extrude() {
-        crate::history::loft_by_extrude();
-    }
-
-    /// Tapers extrudes on this thread by a stand-in in place of the
-    /// kernel's tapered extrude, which isn't built yet: a rectangle along
-    /// the sketch's axes on one side of its plane, its box's corners
-    /// moved in (out for a negative taper) into a frustum of a pyramid;
-    /// anything else is too complex.
-    pub fn taper_by_frustum() {
-        crate::history::taper_by_frustum();
-    }
-}
 mod inspect;
 mod message;
 mod newest;
 mod pick_tables;
 mod picking;
 mod profile;
+/// What other crates' tests set up of regeneration.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 #[cfg(not(target_arch = "wasm32"))]
 mod thread;
 // Only the web lane uses it; it's plain Rust, so it's tested natively too.

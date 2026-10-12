@@ -128,7 +128,7 @@ pub enum ChamferSize { Equal(Value), Two(Value, Value), Angle(Value, Value) }
   has its planned signature and fails with `NotImplemented`. So every
   chamfer that finds its edges fails today with "chamfering Body 1
   isn't supported yet", its body left whole; the rest of the history
-  goes on. The regen tests swap it (`chamfer::CHAMFERER`, a thread local;
+  goes on. The regen tests swap it (`testing::Overrides::chamfer`, per thread, the stand-in in `history/chamfer/stand_in.rs`;
   other crates' tests through the `testing` feature,
   `varde_regen::testing::chamfer_by_wedges`) for `by_wedges`: each chain
   a straight, open, convex edge between two flat faces cut off by a

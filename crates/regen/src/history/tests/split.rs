@@ -23,7 +23,7 @@ use crate::Draft;
 /// Splits on this test's thread by two booleans (the front `a ∩ t`, the
 /// back `a − t`).
 fn with_booleans() {
-    super::super::split::split_by_booleans();
+    crate::testing::split_by_booleans();
 }
 
 /// `body` split by `tool`, both sides kept, the front keeping the id.

@@ -24,7 +24,7 @@ use super::*;
 
 /// Lofts on this test's thread by the extrude stand-in.
 fn with_extrudes() {
-    super::super::loft::loft_by_extrude();
+    crate::testing::loft_by_extrude();
 }
 
 /// What [`recording`] was asked once: the sections, whether closed, the
@@ -58,7 +58,7 @@ fn recording(
 
 /// Lofts on this test's thread by [`recording`], answering `answer`.
 fn with_recording(answer: Option<LoftError>) {
-    super::super::loft::LOFTER.set(Some(recording));
+    crate::testing::set(|o| o.loft = Some(recording));
     ANSWER.set(answer);
     ASKED.with_borrow_mut(Vec::clear);
 }
