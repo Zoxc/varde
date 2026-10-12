@@ -1149,26 +1149,55 @@ struct Link {
     geom: Geom,
 }
 
-impl Link {
+/// A curve run one way by a chain, [`Link`] or [`Raw`]: forward is with
+/// its parameter, an arc counter-clockwise.
+trait Run {
+    fn geom(&self) -> &Geom;
+
+    fn forward(&self) -> bool;
+
     /// Its parameters where the chain comes in and goes out.
     fn params(&self) -> (f64, f64) {
-        if self.forward {
-            (0.0, self.geom.last())
+        let last = self.geom().last();
+        if self.forward() {
+            (0.0, last)
         } else {
-            (self.geom.last(), 0.0)
+            (last, 0.0)
         }
+    }
+
+    /// Where the chain comes in.
+    fn start(&self) -> DVec2 {
+        self.geom().at(self.params().0)
+    }
+
+    /// Where the chain goes out.
+    fn end(&self) -> DVec2 {
+        self.geom().at(self.params().1)
     }
 
     /// Which way it runs where the chain comes in.
     fn heading_in(&self) -> DVec2 {
-        self.geom.heading(self.params().0, self.forward).0
+        self.geom().heading(self.params().0, self.forward()).0
     }
 
     /// Which way it runs where the chain goes out.
     fn heading_out(&self) -> DVec2 {
-        self.geom.heading(self.params().1, self.forward).0
+        self.geom().heading(self.params().1, self.forward()).0
+    }
+}
+
+impl Run for Link {
+    fn geom(&self) -> &Geom {
+        &self.geom
     }
 
+    fn forward(&self) -> bool {
+        self.forward
+    }
+}
+
+impl Link {
     /// Its copy `shift` to the left of the way it runs (right, below
     /// zero): a line along itself, run the same way; an arc or a circle
     /// about its centre. `None` where an arc's or a circle's copy would
@@ -1342,8 +1371,8 @@ fn cross(raws: &mut [Raw], [i, j]: [usize; 2], past: [&[Link]; 2], distance: f64
         let nearest = links.iter().map(|link| self::distance(&link.geom, middle));
         nearest.fold(f64::INFINITY, f64::min) <= distance + tol
     };
-    if within(&raws[i], u, raws[i].end_param(), past[0])
-        && within(&raws[j], v, raws[j].start_param(), past[1])
+    if within(&raws[i], u, raws[i].params().1, past[0])
+        && within(&raws[j], v, raws[j].params().0, past[1])
     {
         raws[i].trim_end(u);
         raws[j].trim_start(v);
@@ -1413,24 +1442,17 @@ struct Raw {
     source: Source,
 }
 
+impl Run for Raw {
+    fn geom(&self) -> &Geom {
+        &self.geom
+    }
+
+    fn forward(&self) -> bool {
+        self.forward
+    }
+}
+
 impl Raw {
-    /// The parameter where the chain comes in, and goes out.
-    fn start_param(&self) -> f64 {
-        if self.forward { 0.0 } else { self.geom.last() }
-    }
-
-    fn end_param(&self) -> f64 {
-        if self.forward { self.geom.last() } else { 0.0 }
-    }
-
-    fn start(&self) -> DVec2 {
-        self.geom.at(self.start_param())
-    }
-
-    fn end(&self) -> DVec2 {
-        self.geom.at(self.end_param())
-    }
-
     /// Ends it at its parameter `u`, where the chain runs out of it.
     fn trim_end(&mut self, u: f64) {
         match (&mut self.geom, self.forward) {
