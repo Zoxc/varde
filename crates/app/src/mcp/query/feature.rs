@@ -32,7 +32,7 @@ use varde_mcp::tools::{
 };
 use varde_view::MotionField;
 
-use super::failure;
+use super::{ListAt, failure};
 use crate::doc::{CombineSession, Doc, ExtrudeSession, MotionSession, RevolveSession, sketch_of};
 use crate::mcp::key::{self, Key, Ref};
 
@@ -60,10 +60,6 @@ pub(crate) fn feature(doc: &Doc, name: &str, page: Page) -> ToolReply {
     ToolReply::data(paged(answer, page))
 }
 
-/// Where a list sits in a feature's `settings`: a key, and a key in the
-/// object there.
-type At = (String, Option<String>);
-
 /// `answer` with each list in its `settings` paged by `page` and
 /// shortened to fit ([`super::pages`]), a list given whole left a plain
 /// array: see the module's docs.
@@ -71,40 +67,23 @@ fn paged(answer: Value, page: Page) -> Value {
     let Some(settings) = answer["settings"].as_object() else {
         return answer;
     };
-    let mut at: Vec<At> = Vec::new();
-    let mut lists: Vec<Vec<Value>> = Vec::new();
-    for (key, value) in settings {
-        match value {
-            Value::Array(items) => {
-                at.push((key.clone(), None));
-                lists.push(items.clone());
-            }
-            Value::Object(inner) => {
-                for (sub, value) in inner {
-                    if let Value::Array(items) = value {
-                        at.push((key.clone(), Some(sub.clone())));
-                        lists.push(items.clone());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    let (at, lists): (Vec<ListAt>, Vec<Vec<Value>>) = super::lists_in(settings, Value::is_array)
+        .into_iter()
+        .map(|(at, list)| (at, list.as_array().cloned().unwrap_or_default()))
+        .unzip();
     if lists.is_empty() {
         return answer;
     }
     super::pages(&lists, page, super::BUDGET, |pages| {
         let mut said = answer.clone();
         let mut partial = Vec::new();
-        for ((key, sub), mut value) in at.iter().zip(pages) {
+        for (list, mut value) in at.iter().zip(pages) {
             if page.offset == 0 && value["left_out"] == 0 {
                 value = value["items"].take();
             } else {
-                partial.push(match sub {
-                    Some(sub) => format!("{key}.{sub}"),
-                    None => key.clone(),
-                });
+                partial.push(list.name());
             }
+            let ListAt { key, sub } = list;
             match sub {
                 Some(sub) => said["settings"][key][sub] = value,
                 None => said["settings"][key] = value,

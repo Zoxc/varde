@@ -10,7 +10,7 @@ mod render;
 mod sketch;
 mod topology;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use varde_document::{Body, Document, Feature, FeatureId, Generation};
 use varde_expr::{LengthUnit, Power, Unit};
 use varde_mcp::tools::{Page, ToolReply};
@@ -115,6 +115,54 @@ pub(super) fn is_page(value: &Value) -> bool {
             .iter()
             .all(|key| page.contains_key(*key))
     })
+}
+
+/// Where a list sits in a feature's `settings` (or a `set_feature`
+/// patch of them): a key, and a key in the object there, as a split's
+/// `tool.profiles`.
+#[derive(Debug, Clone)]
+pub(super) struct ListAt {
+    pub(super) key: String,
+    pub(super) sub: Option<String>,
+}
+
+impl ListAt {
+    /// How it's named to the client: `key` or `key.sub`.
+    pub(super) fn name(&self) -> String {
+        match &self.sub {
+            Some(sub) => format!("{}.{sub}", self.key),
+            None => self.key.clone(),
+        }
+    }
+}
+
+/// The values of `settings` that `is_list` takes, where `feature` and
+/// `set_feature` look for lists: at a key, or a key in the object there.
+pub(super) fn lists_in(
+    settings: &Map<String, Value>,
+    is_list: impl Fn(&Value) -> bool,
+) -> Vec<(ListAt, &Value)> {
+    let mut found = Vec::new();
+    for (key, value) in settings {
+        if is_list(value) {
+            found.push((
+                ListAt {
+                    key: key.clone(),
+                    sub: None,
+                },
+                value,
+            ));
+        } else if let Value::Object(inner) = value {
+            for (sub, value) in inner.iter().filter(|(_, value)| is_list(value)) {
+                let at = ListAt {
+                    key: key.clone(),
+                    sub: Some(sub.clone()),
+                };
+                found.push((at, value));
+            }
+        }
+    }
+    found
 }
 
 /// `answer` with each of `lists`' pages by `at` under its key, shortened

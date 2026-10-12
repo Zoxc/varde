@@ -211,13 +211,6 @@ fn none_picked(noun: &str) -> Refused {
 /// split's `tool.profiles`) that holds a page as `feature` gives one in
 /// place of a list too long to give whole, if one does.
 fn page_sent(patch: &Map<String, Value>) -> Option<String> {
-    use super::query::is_page;
-    patch.iter().find_map(|(key, value)| {
-        if is_page(value) {
-            return Some(key.clone());
-        }
-        let inner = value.as_object()?;
-        let (sub, _) = inner.iter().find(|(_, value)| is_page(value))?;
-        Some(format!("{key}.{sub}"))
-    })
+    let found = super::query::lists_in(patch, super::query::is_page);
+    found.first().map(|(at, _)| at.name())
 }
