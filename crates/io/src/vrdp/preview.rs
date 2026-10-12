@@ -161,9 +161,8 @@ pub(crate) fn end(file: &(impl ReadAt + ?Sized)) -> io::Result<FileEnd> {
     };
     let id = header_id(&header);
 
-    // The blocks after the record, newest first: where each starts and
-    // ends, its kind, and what its header holds.
-    let mut after: Vec<(u64, u64, Kind, Stored)> = Vec::new();
+    // The blocks after the record, newest first.
+    let mut after: Vec<After> = Vec::new();
     let mut end = len;
     let record = loop {
         // `FILE_HEADER_LEN` is small, so exact.
@@ -183,23 +182,35 @@ pub(crate) fn end(file: &(impl ReadAt + ?Sized)) -> io::Result<FileEnd> {
         if after.len() == MAX_PREVIEWS {
             return none;
         }
-        after.push((start, end, kind, stored));
+        after.push(After {
+            start,
+            end,
+            kind,
+            stored,
+        });
         end = start;
     };
 
     let mut previews = Vec::new();
     let mut prev = record.sum;
-    for (start, end, kind, stored) in after.into_iter().rev() {
+    for After {
+        start,
+        end,
+        kind,
+        stored,
+    } in after.into_iter().rev()
+    {
         if stored.prev != prev {
             break;
         }
         // Within the file and `MAX_BLOCK` and a block's overhead, so exact.
         let size = end - start;
         if kind == PREVIEW && size <= MAX_PREVIEW_BLOCK {
-            let Some(preview) = preview_at(file, start, size, id)? else {
-                break;
-            };
-            previews.extend(preview);
+            match preview_at(file, start, size, id)? {
+                PreviewBlock::Broken => break,
+                PreviewBlock::SteppedOver => {}
+                PreviewBlock::Preview(preview) => previews.push(preview),
+            }
         } else if !streamed_intact(file, start, size, id, stored.sum)? {
             break;
         }
@@ -211,26 +222,46 @@ pub(crate) fn end(file: &(impl ReadAt + ?Sized)) -> io::Result<FileEnd> {
     })
 }
 
+/// A block after the record, as [`end`] walks back to it.
+struct After {
+    /// Where it starts and ends.
+    start: u64,
+    end: u64,
+    kind: Kind,
+    /// What its header holds.
+    stored: Stored,
+}
+
+/// What a preview block read by [`preview_at`] comes to.
+enum PreviewBlock {
+    /// Not intact: the walk stops.
+    Broken,
+    /// Intact, but its media type isn't UTF-8 or it's out of bounds: the
+    /// walk goes on past it.
+    SteppedOver,
+    Preview(Preview),
+}
+
 /// The preview block of `size` bytes at `start` in `file`, a file with
-/// `id`, if it's intact: the preview it holds, if its media type is UTF-8
-/// and it's within bounds.
+/// `id`: whether it's intact, and the preview it holds if its media type
+/// is UTF-8 and it's within bounds.
 fn preview_at(
     file: &(impl ReadAt + ?Sized),
     start: u64,
     size: u64,
     id: u128,
-) -> io::Result<Option<Option<Preview>>> {
+) -> io::Result<PreviewBlock> {
     // At most `MAX_PREVIEW_BLOCK`, so exact.
     let mut block = zeroed(size as usize, "the preview is too large to read")?;
     file.read_at(&mut block, start)?;
     let Some(intact) = intact(&block, 0, id) else {
-        return Ok(None);
+        return Ok(PreviewBlock::Broken);
     };
     let (tag, data) = intact.parts(&block);
     let preview = std::str::from_utf8(tag)
         .ok()
         .and_then(|media_type| Preview::new(media_type, data.to_vec()));
-    Ok(Some(preview))
+    Ok(preview.map_or(PreviewBlock::SteppedOver, PreviewBlock::Preview))
 }
 
 /// Whether the block of `size` bytes at `start` in `file`, a file with
