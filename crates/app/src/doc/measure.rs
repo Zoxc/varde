@@ -138,9 +138,9 @@ fn inspect_pick(index: &PickIndex, pick: Pick) -> Option<InspectPick> {
     let picking = index.picking();
     let (entity, near) = match (pick.snap, pick.target) {
         (Some(Snapped::Corner(corner)), _) => {
-            picking.corners().get(corner as usize)?;
+            let keys = picking.corner_keys(corner)?;
             let point = index.snap_point(Snapped::Corner(corner))?;
-            (Entity::Corner(picking.corner_keys(corner)), point)
+            (Entity::Corner(keys), point)
         }
         (Some(Snapped::EdgePoint(edge)), _) => {
             (Entity::EdgePoint(index.chain_keys(edge)?), pick.at)

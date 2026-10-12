@@ -438,13 +438,13 @@ impl Picking {
     }
 
     /// The keys of three of the faces meeting at corner `corner`, sorted,
-    /// as a corner reference stores them.
-    pub fn corner_keys(&self, corner: u32) -> [FaceKey; 3] {
-        let mut keys = self.corners[corner as usize]
-            .faces
-            .map(|f| self.faces[f as usize].key);
+    /// as a corner reference stores them; `None` if there's no such
+    /// corner.
+    pub fn corner_keys(&self, corner: u32) -> Option<[FaceKey; 3]> {
+        let corner = self.corners.get(usize::try_from(corner).ok()?)?;
+        let mut keys = corner.faces.map(|f| self.faces[f as usize].key);
         keys.sort_unstable();
-        keys
+        Some(keys)
     }
 
     /// About how many bytes it holds, for the cache.

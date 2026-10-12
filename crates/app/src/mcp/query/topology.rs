@@ -481,7 +481,7 @@ impl Lister<'_> {
         if picking.face_body(self.model.mesh, pick.faces[0]) != Some(self.body) {
             return None;
         }
-        let faces = picking.corner_keys(u32::try_from(corner).ok()?);
+        let faces = picking.corner_keys(u32::try_from(corner).ok()?)?;
         let key = self.key(Ref::Corner {
             body: self.body,
             faces,

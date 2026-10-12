@@ -167,7 +167,7 @@ fn corner_pick(picking: &Tables, c: u32) -> InspectPick {
     let corner = picking.corners()[c as usize];
     InspectPick {
         body: picking.body(corner.faces[0]),
-        entity: Entity::Corner(picking.corner_keys(c)),
+        entity: Entity::Corner(picking.corner_keys(c).unwrap()),
         near: corner.point,
     }
 }
@@ -897,7 +897,7 @@ fn the_corners_table_holds_the_example_s_corners() {
             let on = (0..3).map(|i| n[i] * corner.point[i]).sum::<f64>();
             assert_near(on, d);
         }
-        let keys = picking.corner_keys(c as u32);
+        let keys = picking.corner_keys(c as u32).unwrap();
         assert!(keys.windows(2).all(|pair| pair[0] <= pair[1]));
     }
     for (snap, closed) in picking.snaps().iter().zip(picking.closed()) {

@@ -604,7 +604,7 @@ impl Naming {
             .get(corner as usize)
             .ok_or(Unnamed::Missing)?;
         let shown = index.face_body(found.faces[0]).ok_or(Unnamed::Missing)?;
-        let keys = picking.corner_keys(corner);
+        let keys = picking.corner_keys(corner).ok_or(Unnamed::Missing)?;
         if keys[0] == keys[1] || keys[1] == keys[2] {
             return Err(Unnamed::Missing);
         }

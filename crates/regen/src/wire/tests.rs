@@ -2513,7 +2513,7 @@ fn a_measure_round_trips() {
         revision: 6,
         first: pick(plane(10.0), [20.0, 10.0, 10.0]),
         second: Some(crate::InspectPick {
-            entity: crate::Entity::Corner(picking.corner_keys(0)),
+            entity: crate::Entity::Corner(picking.corner_keys(0).unwrap()),
             near: picking.corners()[0].point,
             ..pick(0, [0.0; 3])
         }),
@@ -2703,7 +2703,7 @@ fn picked_corners_are_three_faces_of_one_part() {
         panic!("a good corner was refused");
     };
     assert_eq!(picking.corners().len(), 1);
-    let keys = picking.corner_keys(0);
+    let keys = picking.corner_keys(0).unwrap();
     assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
 
     let corner = Error::Picking(PickingError::Corner).to_string();
@@ -2940,7 +2940,7 @@ fn measured_replies() -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
     };
     let corner = crate::InspectPick {
         body,
-        entity: crate::Entity::Corner(picking.corner_keys(0)),
+        entity: crate::Entity::Corner(picking.corner_keys(0).unwrap()),
         near: picking.corners()[0].point,
     };
     let whole = crate::InspectPick {

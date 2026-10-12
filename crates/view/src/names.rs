@@ -470,7 +470,9 @@ impl Names<'_> {
                     && (picked || c.faces.iter().any(|&f| facing(f, p)))
                     && shows(p, picked)
                 {
-                    let keys = picking.corner_keys(corner as u32);
+                    let Some(keys) = picking.corner_keys(corner as u32) else {
+                        continue;
+                    };
                     wanted.push(Wanted {
                         kind: Kind::Corner,
                         point: p,
