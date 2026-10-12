@@ -267,18 +267,24 @@ impl Zip {
             .filter(|&n| n < u16::MAX)
             .ok_or(Error::TooLarge)?;
 
+        // What the local header and the central record both hold, in
+        // the same order: they must agree.
+        let common = |out: &mut Vec<u8>| {
+            put16(out, 0); // flags
+            put16(out, DEFLATE);
+            put16(out, DOS_TIME);
+            put16(out, DOS_DATE);
+            put32(out, crc);
+            put32(out, packed_size);
+            put32(out, size);
+            put16(out, name_len);
+            put16(out, 0); // extra field
+        };
+
         let out = &mut self.out;
         put32(out, 0x0403_4b50);
         put16(out, VERSION);
-        put16(out, 0); // flags
-        put16(out, DEFLATE);
-        put16(out, DOS_TIME);
-        put16(out, DOS_DATE);
-        put32(out, crc);
-        put32(out, packed_size);
-        put32(out, size);
-        put16(out, name_len);
-        put16(out, 0); // extra field
+        common(out);
         out.extend_from_slice(name.as_bytes());
         out.extend_from_slice(&packed);
 
@@ -286,15 +292,7 @@ impl Zip {
         put32(central, 0x0201_4b50);
         put16(central, VERSION); // made by
         put16(central, VERSION); // needed
-        put16(central, 0); // flags
-        put16(central, DEFLATE);
-        put16(central, DOS_TIME);
-        put16(central, DOS_DATE);
-        put32(central, crc);
-        put32(central, packed_size);
-        put32(central, size);
-        put16(central, name_len);
-        put16(central, 0); // extra field
+        common(central);
         put16(central, 0); // comment
         put16(central, 0); // disk
         put16(central, 0); // internal attributes
