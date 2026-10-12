@@ -17,8 +17,8 @@ use crate::chrome::tip;
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, Footer, Framing, OperationKind, PanelHover, Parts, Side, Sides,
-    TypedField, bodies, field, footer_message, message_text, operation_panel, pick_field,
-    region_rows, tile, tiles, toggle, value_field,
+    TypedField, field, footer_message, message_text, operation_panel, operation_section,
+    pick_field, region_rows, tile, tiles, toggle, value_field,
 };
 use crate::theme;
 use crate::{Edit, Look, Message};
@@ -393,17 +393,10 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         Message::Edit(Edit::CommitExtrude),
         Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
     );
-    let operations = OperationKind::ALL.map(|kind| {
-        tile(
-            kind.icon(),
-            kind.label(),
-            state.operation == kind,
-            send(ExtrudeLook::Operation(kind)),
-        )
-    });
-    let targets = bodies(
+    let operation = operation_section(
         state.operation,
         &state.targets,
+        |kind| send(ExtrudeLook::Operation(kind)),
         |body| send(ExtrudeLook::Target(body)),
         state.hover,
     );
@@ -430,8 +423,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         column(fields).spacing(8),
         flip,
         taper,
-        field("Operation", tiles(operations)),
-        targets,
+        operation,
     ]
     .spacing(10);
     operation_panel(Parts {

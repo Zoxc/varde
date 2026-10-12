@@ -1227,6 +1227,26 @@ pub(crate) fn value_field<'a>(
         .into()
 }
 
+/// A boolean-producing feature's Operation tiles, a tile per kind, the
+/// one `operation` lit and each sending `choose` of its kind, then its
+/// [`bodies`] list, `toggle` and `hovered` as there.
+pub(crate) fn operation_section<'a>(
+    operation: OperationKind,
+    targets: &[BodyTarget<'a>],
+    choose: impl Fn(OperationKind) -> Option<Message>,
+    toggle: impl Fn(BodyId) -> Option<Message>,
+    hovered: Option<PanelHover>,
+) -> Element<'a, Message> {
+    let operations = OperationKind::ALL
+        .map(|kind| tile(kind.icon(), kind.label(), operation == kind, choose(kind)));
+    column![
+        field("Operation", tiles(operations)),
+        bodies(operation, targets, toggle, hovered),
+    ]
+    .spacing(10)
+    .into()
+}
+
 /// The Bodies list of a join, cut or intersect: a row per body of
 /// `targets` in a box, as a [`pick_field`]'s, a checkbox before the
 /// body's icon and name (muted while taken out), a click anywhere on it
@@ -1235,7 +1255,7 @@ pub(crate) fn value_field<'a>(
 /// for a join ticked for two or more, which body it merges them into.
 /// Hovering a row lights its body in the viewport, and it shows hovered
 /// while `hovered` is it. None for a new body, or with nothing to list.
-pub(crate) fn bodies<'a>(
+fn bodies<'a>(
     operation: OperationKind,
     targets: &[BodyTarget<'a>],
     toggle: impl Fn(BodyId) -> Option<Message>,

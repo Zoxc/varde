@@ -23,8 +23,8 @@ use super::{
 };
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, OperationKind, PanelHover, RowTone, bodies, field, region_name, tile,
-    tiles, toggle,
+    BodyTarget, Candidate, OperationKind, PanelHover, RowTone, field, operation_section,
+    region_name, tile, tiles, toggle,
 };
 use crate::{Look, Message};
 
@@ -220,27 +220,14 @@ pub(super) fn body<'a>(
             .into()
         }
     };
-    let operations = OperationKind::ALL.map(|kind| {
-        tile(
-            kind.icon(),
-            kind.label(),
-            sweep.operation == kind,
-            send(MotionLook::Operation(kind)),
-        )
-    });
-    let targets = bodies(
+    let operation = operation_section(
         sweep.operation,
         &sweep.targets,
+        |kind| send(MotionLook::Operation(kind)),
         |body| send(MotionLook::Target(body)),
         state.hover,
     );
-    column![
-        profile,
-        field("Along", tiles(paths)),
-        path,
-        field("Operation", tiles(operations)),
-        targets,
-    ]
-    .spacing(10)
-    .into()
+    column![profile, field("Along", tiles(paths)), path, operation]
+        .spacing(10)
+        .into()
 }

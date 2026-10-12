@@ -19,8 +19,8 @@ use super::sweep::SweepPart;
 use super::{MotionLook, MotionPick, MotionState, PickedRow, SketchLines, picks_field};
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, ListRow, OperationKind, PanelHover, RowTone, bodies, field, pick_field,
-    tile, tiles, toggle,
+    BodyTarget, Candidate, ListRow, OperationKind, PanelHover, RowTone, field, operation_section,
+    pick_field, tile, tiles, toggle,
 };
 use crate::{Look, Message};
 
@@ -181,17 +181,10 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             rows,
         )
     });
-    let operations = OperationKind::ALL.map(|kind| {
-        tile(
-            kind.icon(),
-            kind.label(),
-            loft.operation == kind,
-            send(MotionLook::Operation(kind)),
-        )
-    });
-    let targets = bodies(
+    let operation = operation_section(
         loft.operation,
         &loft.targets,
+        |kind| send(MotionLook::Operation(kind)),
         |body| send(MotionLook::Target(body)),
         state.hover,
     );
@@ -200,8 +193,7 @@ pub(super) fn body<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         field("Between sections", tiles(modes)),
         closed,
         rails,
-        field("Operation", tiles(operations)),
-        targets,
+        operation,
     ]
     .spacing(10)
     .into()

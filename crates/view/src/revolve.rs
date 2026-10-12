@@ -17,8 +17,8 @@ use crate::extrude::centroid;
 use crate::icons::Icon;
 use crate::operation_panel::{
     BodyTarget, Candidate, Footer, Framing, ListRow, OperationKind, PanelHover, Parts, Side, Sides,
-    TypedField, bodies, field, footer_message, message_text, operation_panel, pick_field,
-    region_rows, tile, tiles, toggle,
+    TypedField, field, footer_message, message_text, operation_panel, operation_section,
+    pick_field, region_rows, tile, tiles, toggle,
 };
 use crate::pick::{PickIndex, Snapped};
 use crate::theme;
@@ -544,17 +544,10 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
             None,
         )
     });
-    let operations = OperationKind::ALL.map(|kind| {
-        tile(
-            kind.icon(),
-            kind.label(),
-            state.operation == kind,
-            send(RevolveLook::Operation(kind)),
-        )
-    });
-    let targets = bodies(
+    let operation = operation_section(
         state.operation,
         &state.targets,
+        |kind| send(RevolveLook::Operation(kind)),
         |body| send(RevolveLook::Target(body)),
         state.hover,
     );
@@ -580,8 +573,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         field("Extent", tiles(extents)),
         column(fields).spacing(8),
         flip,
-        field("Operation", tiles(operations)),
-        targets,
+        operation,
     ]
     .spacing(10);
     operation_panel(Parts {

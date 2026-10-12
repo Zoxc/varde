@@ -615,7 +615,7 @@ toggles (`operation_panel::toggle`: a 28 px square with the option's
 icon beside the name, the accent's while on, the row and the square
 tinted on hover; a note, as Keep's "Otherwise the tools are used up",
 is its tooltip); the Bodies list is rows as the picked ones in a box
-(`operation_panel::bodies`, `theme::body_row`), a checkbox (`theme::tick`)
+(`operation_panel::bodies`, under the Operation tiles in `operation_section`, `theme::body_row`), a checkbox (`theme::tick`)
 before the body's icon and name (muted while taken out), a click
 anywhere on the row ticking it, and hovering it lights the body as a
 picked body's row does. The operation's own check refusing it shows in
