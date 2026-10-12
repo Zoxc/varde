@@ -116,6 +116,22 @@ impl PatternKind {
             PatternKind::Linear { count, .. } | PatternKind::Circular { count, .. } => count,
         }
     }
+
+    /// A linear pattern's spacing, or a circular one's angle, as typed.
+    pub fn spread(&self) -> &Value {
+        match self {
+            PatternKind::Linear { spacing, .. } => spacing,
+            PatternKind::Circular { angle, .. } => angle,
+        }
+    }
+
+    /// The same, to change.
+    pub fn spread_mut(&mut self) -> &mut Value {
+        match self {
+            PatternKind::Linear { spacing, .. } => spacing,
+            PatternKind::Circular { angle, .. } => angle,
+        }
+    }
 }
 
 impl Pattern {

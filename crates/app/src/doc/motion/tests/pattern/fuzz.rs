@@ -98,21 +98,13 @@ fn copy_bodies(plates: &Plates) -> Vec<BodyId> {
         .collect()
 }
 
-/// A linear pattern's spacing, or a circular one's angle.
-fn spread_of(kind: &PatternKind) -> &Value {
-    match kind {
-        PatternKind::Linear { spacing, .. } => spacing,
-        PatternKind::Circular { angle, .. } => angle,
-    }
-}
-
 /// The values a pattern holds: its bodies, axis, count and spread.
 fn values(pattern: &Pattern) -> (Vec<BodyId>, AxisRef, f64, f64) {
     (
         pattern.bodies.clone(),
         *pattern.kind.axis(),
         pattern.kind.count_value().value,
-        spread_of(&pattern.kind).value,
+        pattern.kind.spread().value,
     )
 }
 
@@ -166,7 +158,7 @@ fn check_ready(plates: &Plates, what: &str) {
         }
         (PatternKind::Circular { .. }, PatternMode::Full) => {
             assert!(pattern.full_turn(), "{what}");
-            assert!((spread_of(&pattern.kind).value - TAU).abs() < 1e-12);
+            assert!((pattern.kind.spread().value - TAU).abs() < 1e-12);
         }
         (PatternKind::Circular { angle, .. }, PatternMode::Total) => {
             assert_eq!(angle.value, spread.unwrap(), "{what}");

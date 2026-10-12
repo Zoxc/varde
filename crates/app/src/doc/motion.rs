@@ -666,7 +666,7 @@ impl MotionSession {
                     mode: session.mode,
                     flip: session.flip,
                     spread: session.field(MotionField::Spread).clone(),
-                    stored: spread_of(&pattern.kind).clone(),
+                    stored: pattern.kind.spread().clone(),
                 });
                 session
             }
@@ -990,7 +990,7 @@ impl MotionSession {
             && (opened.mode, opened.flip) == (self.mode, self.flip)
             && opened.spread == *self.field(MotionField::Spread)
         {
-            let spread = spread_of_mut(&mut kind);
+            let spread = kind.spread_mut();
             if spread.value == opened.stored.value {
                 *spread = opened.stored.clone();
             }
@@ -1405,22 +1405,6 @@ impl MotionSession {
                 turn,
             }),
         ))
-    }
-}
-
-/// A linear pattern's spacing, or a circular one's angle.
-fn spread_of(kind: &PatternKind) -> &Value {
-    match kind {
-        PatternKind::Linear { spacing, .. } => spacing,
-        PatternKind::Circular { angle, .. } => angle,
-    }
-}
-
-/// The same, to change.
-fn spread_of_mut(kind: &mut PatternKind) -> &mut Value {
-    match kind {
-        PatternKind::Linear { spacing, .. } => spacing,
-        PatternKind::Circular { angle, .. } => angle,
     }
 }
 

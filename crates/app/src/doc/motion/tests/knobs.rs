@@ -274,11 +274,7 @@ fn pattern_drafted(plates: &Plates) -> (Option<u32>, f64) {
     let FeatureKind::Pattern(pattern) = drafted(plates) else {
         panic!("a pattern");
     };
-    let spread = match &pattern.kind {
-        varde_document::PatternKind::Linear { spacing, .. } => spacing.value,
-        varde_document::PatternKind::Circular { angle, .. } => angle.value,
-    };
-    (pattern.count(), spread)
+    (pattern.count(), pattern.kind.spread().value)
 }
 
 /// A linear pattern of the right disc (radius 5 about (20, 0), z −5 to

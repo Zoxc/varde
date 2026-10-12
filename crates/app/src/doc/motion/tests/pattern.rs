@@ -33,10 +33,7 @@ fn last_pattern(plates: &Plates) -> Pattern {
 
 /// A linear pattern's spacing, or a circular one's angle.
 fn spread(pattern: &Pattern) -> f64 {
-    match &pattern.kind {
-        PatternKind::Linear { spacing, .. } => spacing.value,
-        PatternKind::Circular { angle, .. } => angle.value,
-    }
+    pattern.kind.spread().value
 }
 
 fn shows(plates: &Plates, wanted: &str) -> bool {
