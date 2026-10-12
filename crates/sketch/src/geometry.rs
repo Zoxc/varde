@@ -55,6 +55,13 @@ pub fn foot(point: DVec2, start: DVec2, end: DVec2) -> DVec2 {
     start + along * t
 }
 
+/// The signed distance of `point` from the endless line through `start`
+/// and `end`, positive on its left. Not a number for a line of no length.
+pub fn signed_distance(point: DVec2, start: DVec2, end: DVec2) -> f64 {
+    let along = end - start;
+    along.perp_dot(point - start) / along.length()
+}
+
 /// Where the endless lines `p + r t` and `q + s u` cross, as `(t, u)`.
 /// `None` where they're parallel, or so near it (within about 10⁻⁹
 /// radians) that where they cross is far off or nowhere.

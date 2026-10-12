@@ -152,8 +152,7 @@ impl Sketch {
         let offset = match self.offset_pair(pair)? {
             OffsetPair::Lines => {
                 let ((start, end), (from, to)) = (self.line(a)?, self.line(b)?);
-                let along = end - start;
-                along.perp_dot(from.midpoint(to) - start) / along.length()
+                crate::signed_distance(from.midpoint(to), start, end)
             }
             OffsetPair::Rounds => self.round(b)?.1 - self.round(a)?.1,
             OffsetPair::Join => self.round(b)?.1,

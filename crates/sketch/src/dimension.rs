@@ -11,7 +11,7 @@ use varde_expr::{Ask, Quantity, Value};
 
 use crate::angle;
 use crate::constraint::own_point;
-use crate::{Design, EditError, Id, Role, Side, Sketch, crossing, foot};
+use crate::{Design, EditError, Id, Role, Side, Sketch, crossing, foot, signed_distance};
 
 /// The least length a dimension may be, in millimetres: a micrometre. The
 /// solver holds equations to a ten-billionth of the sketch's size, which
@@ -209,13 +209,6 @@ enum End {
     Line(DVec2, DVec2),
 }
 
-/// The signed distance of `point` from the line through `start` and
-/// `end`, positive on its left. Not a number for a line of no length.
-fn from_line(point: DVec2, start: DVec2, end: DVec2) -> f64 {
-    let along = end - start;
-    along.perp_dot(point - start) / along.length()
-}
-
 impl Sketch {
     fn end(&self, id: Id) -> Option<End> {
         match self.point(id) {
@@ -231,7 +224,7 @@ impl Sketch {
     fn distance(&self, a: Id, b: Id) -> Option<(f64, DVec2, Side)> {
         let (a, b) = (self.end(a)?, self.end(b)?);
         let sided = |point: DVec2, start, end| {
-            let distance = from_line(point, start, end);
+            let distance = signed_distance(point, start, end);
             let anchor = point.midpoint(foot(point, start, end));
             (distance, anchor, Side::of(distance))
         };
@@ -253,7 +246,7 @@ impl Sketch {
         let sign = side.sign();
         Some(match self.end(other) {
             Some(End::Point(point)) => sign * (point.distance(center) - radius),
-            Some(End::Line(start, end)) => sign * from_line(center, start, end) - radius,
+            Some(End::Line(start, end)) => sign * signed_distance(center, start, end) - radius,
             None => {
                 let (to, to_radius) = self.round(other)?;
                 sign * (to.distance(center) - radius) - to_radius
@@ -267,7 +260,7 @@ impl Sketch {
         let (center, radius) = self.round(round)?;
         Some(match self.end(other) {
             Some(End::Point(point)) => Side::of(point.distance(center) - radius),
-            Some(End::Line(start, end)) => Side::of(from_line(center, start, end)),
+            Some(End::Line(start, end)) => Side::of(signed_distance(center, start, end)),
             None => {
                 let (to, to_radius) = self.round(other)?;
                 if to.distance(center) + to_radius < radius {

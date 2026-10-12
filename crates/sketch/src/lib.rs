@@ -52,7 +52,7 @@ pub use corner::{Corner, Setback};
 pub use dimension::{Dimension, DimensionEntry, MIN_LENGTH, Measure};
 pub use edit::{Add, EditError, NewCurve, SketchEdit};
 pub use flatten::{CIRCLE_SEGMENTS, cut_line, flatten_arc, flatten_circle};
-pub use geometry::{ArcPoints, arc_sweep, arc_through, crossing, foot};
+pub use geometry::{ArcPoints, arc_sweep, arc_through, crossing, foot, signed_distance};
 pub use joint::Joint;
 pub use link::{
     FitError, Link, LinkKind, LinkShape, MAX_LINK_CURVES, MAX_LINK_POINTS, MAX_LINKS, ProjectError,
