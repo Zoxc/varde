@@ -271,9 +271,7 @@ impl SettingsTab {
 pub enum SettingsPage {
     /// Shows the section.
     Tab(SettingsTab),
-    /// Chooses the units new designs start in.
-    SetLengthUnit(LengthUnit),
-    /// Sets one of the settings only the page sets.
+    /// Sets one of the settings.
     Set(Setting),
     /// The interface scale's slider is dragged to this, in percent: only
     /// its label shows it, so the page doesn't rescale under the pointer.
@@ -299,40 +297,131 @@ pub enum SettingsPage {
     DisconnectMcp,
 }
 
-/// A setting only the settings page sets, to a value. Values the page
-/// doesn't offer are ignored.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Setting {
-    /// In percent, see [`crate::interface_scale_offered`].
-    InterfaceScale(u16),
-    AngleUnit(AngleUnit),
-    /// `None` for each unit's own, else at most [`Shown::MAX_DECIMALS`].
-    Decimals(Option<u8>),
-    LeftDrag(DragAction),
-    MiddleDrag(DragAction),
-    RightDrag(DragAction),
-    Rotation(Rotation),
-    RotationPoint(RotationPoint),
-    PivotClick(PivotClick),
-    /// Whether turning the wheel down zooms in.
-    WheelDownZoomsIn(bool),
-    ZoomToPointer(bool),
-    SketchSnap(bool),
+/// Declares [`Setting`] and what it does from one line per setting: its
+/// variant and value, the field of [`ViewOptions`] it sets, the tab it's
+/// on, its name in Reset to defaults' popup and how its value is said.
+macro_rules! settings {
+    ($(
+        $(#[$doc:meta])*
+        $variant:ident($value:ty) = $($field:ident).+, $tab:ident, $name:literal, $said:expr;
+    )*) => {
+        /// A setting, to a value: each of [`ViewOptions`]'s, chosen on
+        /// its own. Values the page doesn't offer
+        /// ([`Setting::offered`]) are ignored.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum Setting {
+            $($(#[$doc])* $variant($value),)*
+        }
+
+        /// A [`Setting`]'s place in [`Setting::of`]'s.
+        #[derive(Clone, Copy)]
+        enum Slot {
+            $($variant,)*
+        }
+
+        impl Setting {
+            /// How many settings there are.
+            pub const COUNT: usize = [$(Slot::$variant),*].len();
+
+            /// Each setting of `options`, in the page's order.
+            pub fn of(options: &ViewOptions) -> [Setting; Self::COUNT] {
+                [$(Setting::$variant(options.$($field).+)),*]
+            }
+
+            /// This setting's place in [`Setting::of`]'s, below
+            /// [`Setting::COUNT`].
+            pub fn index(self) -> usize {
+                match self {
+                    $(Setting::$variant(_) => Slot::$variant as usize,)*
+                }
+            }
+
+            /// Sets this setting of `options`.
+            pub fn apply(self, options: &mut ViewOptions) {
+                match self {
+                    $(Setting::$variant(value) => options.$($field).+ = value,)*
+                }
+            }
+
+            /// The tab it's on.
+            fn tab(self) -> SettingsTab {
+                match self {
+                    $(Setting::$variant(_) => SettingsTab::$tab,)*
+                }
+            }
+
+            /// Its name, as Reset to defaults' popup says it.
+            fn name(self) -> &'static str {
+                match self {
+                    $(Setting::$variant(_) => $name,)*
+                }
+            }
+
+            /// Its value, as said.
+            fn said(self) -> Cow<'static, str> {
+                match self {
+                    $(Setting::$variant(value) => ($said)(value).into(),)*
+                }
+            }
+        }
+    };
+}
+
+settings! {
+    Theme(ThemeChoice) = theme, Appearance, "Theme", theme_said;
+    Projection(Projection) = projection, View, "Projection", projection_said;
+    Shading(Shading) = shading, View, "Shading", shading_said;
+    Edges(Edges) = edges, View, "Edges", edges_said;
     /// Set rather than toggled, for a row's reset: a toggle sent with the
     /// setting changed under it, as by the stored settings arriving or a
     /// second click before the page redraws, would flip it the wrong way.
-    HiddenEdges(bool),
-    Names(bool),
-    MouseHints(bool),
-    /// In minutes, one of [`AUTO_SAVE_MINUTES`], 0 for off.
-    AutoSave(u16),
-    /// One of [`RECENT_DESIGNS`].
-    RecentDesigns(u16),
+    HiddenEdges(bool) = hidden_edges, View, "Hidden edges", on_off;
+    Names(bool) = names, View, "Names", on_off;
+    MouseHints(bool) = mouse_hints, View, "Mouse hints", on_off;
+    /// In percent, see [`crate::interface_scale_offered`].
+    InterfaceScale(u16) = interface_scale, Appearance, "Interface scale", scale_said;
+    /// The units new designs start in.
+    LengthUnit(LengthUnit) = length_unit, Units, "Length unit", LengthUnit::symbol;
+    AngleUnit(AngleUnit) = angle_unit, Units, "Angle unit", angle_said;
+    /// `None` for each unit's own, else at most [`Shown::MAX_DECIMALS`].
+    Decimals(Option<u8>) = decimals, Units, "Decimal places", decimals_said;
+    LeftDrag(DragAction) = mouse.left, Mouse, "Left drag", drag_said;
+    MiddleDrag(DragAction) = mouse.middle, Mouse, "Middle drag", drag_said;
+    RightDrag(DragAction) = mouse.right, Mouse, "Right drag", drag_said;
+    Rotation(Rotation) = mouse.rotation, Mouse, "Rotation", rotation_said;
+    RotationPoint(RotationPoint) = mouse.rotation_point, Mouse, "Rotation point",
+        rotation_point_said;
+    PivotClick(PivotClick) = mouse.pivot_click, Mouse, "Set rotation point with",
+        pivot_click_said;
+    /// Whether turning the wheel down zooms in.
+    WheelDownZoomsIn(bool) = mouse.wheel_down_zooms_in, Mouse, "Zoom direction", zoom_said;
+    ZoomToPointer(bool) = mouse.zoom_to_pointer, Mouse, "Zoom to pointer", on_off;
+    SketchSnap(bool) = mouse.sketch_snap, Mouse, "Snapping", on_off;
+    /// In minutes, one of [`AUTO_SAVE_MINUTES`], 0 for off: natively only.
+    AutoSave(u16) = auto_save, Files, "Auto-save", auto_save_said;
+    /// One of [`RECENT_DESIGNS`]: natively only.
+    RecentDesigns(u16) = recent_designs, Files, "Recent designs", recent_said;
     /// Whether the MCP feature (its panel and toggle) is on: natively only.
-    Mcp(bool),
+    Mcp(bool) = mcp, Mcp, "MCP", on_off;
     /// From [`crate::MCP_PORT_MIN`] to [`crate::MCP_PORT_MAX`]: natively
     /// only.
-    McpPort(u16),
+    McpPort(u16) = mcp_port, Mcp, "MCP port", |port: u16| port.to_string();
+}
+
+impl Setting {
+    /// Whether the page offers this value: the others are ignored.
+    pub fn offered(self) -> bool {
+        match self {
+            Setting::InterfaceScale(percent) => crate::interface_scale_offered(percent),
+            Setting::Decimals(decimals) => {
+                decimals.is_none_or(|count| count <= Shown::MAX_DECIMALS)
+            }
+            Setting::AutoSave(minutes) => AUTO_SAVE_MINUTES.contains(&minutes),
+            Setting::RecentDesigns(count) => RECENT_DESIGNS.contains(&count),
+            Setting::McpPort(port) => (MCP_PORT_MIN..=MCP_PORT_MAX).contains(&port),
+            _ => true,
+        }
+    }
 }
 
 /// A setting Reset to defaults changes: its name, and what it is and
@@ -345,55 +434,19 @@ pub struct SettingChange {
 }
 
 /// The settings of `options` that aren't their defaults, in the page's
-/// order, each from what it is to the default.
+/// order, each from what it is to the default. Those on tabs not shown
+/// (the web's) aren't listed.
 pub fn changed_settings(options: ViewOptions) -> Vec<SettingChange> {
-    let defaults = ViewOptions::default();
-    let said = |options: ViewOptions| {
-        [
-            ("Theme", theme_said(options.theme)),
-            ("Projection", projection_said(options.projection)),
-            ("Shading", shading_said(options.shading)),
-            ("Edges", edges_said(options.edges)),
-            ("Hidden edges", on_off(options.hidden_edges)),
-            ("Names", on_off(options.names)),
-            ("Mouse hints", on_off(options.mouse_hints)),
-            ("Interface scale", scale_said(options.interface_scale)),
-            ("Length unit", options.length_unit.symbol()),
-            ("Angle unit", angle_said(options.angle_unit)),
-            ("Decimal places", decimals_said(options.decimals)),
-            ("Left drag", drag_said(options.mouse.left)),
-            ("Middle drag", drag_said(options.mouse.middle)),
-            ("Right drag", drag_said(options.mouse.right)),
-            ("Rotation", rotation_said(options.mouse.rotation)),
-            (
-                "Rotation point",
-                rotation_point_said(options.mouse.rotation_point),
-            ),
-            (
-                "Set rotation point with",
-                pivot_click_said(options.mouse.pivot_click),
-            ),
-            (
-                "Zoom direction",
-                zoom_said(options.mouse.wheel_down_zooms_in),
-            ),
-            ("Zoom to pointer", on_off(options.mouse.zoom_to_pointer)),
-            ("Snapping", on_off(options.mouse.sketch_snap)),
-            ("Auto-save", auto_save_said(options.auto_save)),
-            ("Recent designs", recent_said(options.recent_designs)),
-            ("MCP", on_off(options.mcp)),
-        ]
-        .map(|(name, said)| (name, Cow::Borrowed(said)))
+    let shown: Vec<SettingsTab> = SettingsTab::shown().collect();
+    Setting::of(&options)
         .into_iter()
-        .chain([("MCP port", Cow::Owned(options.mcp_port.to_string()))])
-    };
-    // The web has no Files or MCP tab: what they would set isn't listed.
-    let native = |name: &str| matches!(name, "Auto-save" | "Recent designs" | "MCP" | "MCP port");
-    said(options)
-        .zip(said(defaults))
-        .filter(|((_, from), (_, to))| from != to)
-        .filter(|((name, _), _)| !(cfg!(target_arch = "wasm32") && native(name)))
-        .map(|((name, from), (_, to))| SettingChange { name, from, to })
+        .zip(Setting::of(&ViewOptions::default()))
+        .filter(|(from, to)| from != to && shown.contains(&from.tab()))
+        .map(|(from, to)| SettingChange {
+            name: from.name(),
+            from: from.said(),
+            to: to.said(),
+        })
         .collect()
 }
 
@@ -714,18 +767,14 @@ fn section<'a>(
             "Appearance",
             None,
             vec![
-                setting(
+                choice(
                     "Theme",
                     "Light or dark, or as the system is set",
-                    segmented(ThemeChoice::ALL.map(|theme| {
-                        (
-                            Some(theme_icon(theme)),
-                            theme_said(theme),
-                            theme == options.theme,
-                            Message::SetTheme(theme),
-                        )
-                    })),
-                    reset(options.theme, d.theme, theme_said, Message::SetTheme),
+                    ThemeChoice::ALL,
+                    (options.theme, d.theme),
+                    Setting::Theme,
+                    theme_said,
+                    Some(theme_icon),
                 ),
                 setting(
                     "Interface scale",
@@ -744,69 +793,50 @@ fn section<'a>(
                     .to_owned(),
             ),
             vec![
-                setting(
+                choice(
                     "Projection",
                     "Perspective shrinks what is farther away",
-                    segmented([Projection::Orthographic, Projection::Perspective].map(
-                        |projection| {
-                            (
-                                Some(projection_icon(projection)),
-                                projection_said(projection),
-                                projection == options.projection,
-                                Message::SetProjection(projection),
-                            )
-                        },
-                    )),
-                    reset(
-                        options.projection,
-                        d.projection,
-                        projection_said,
-                        Message::SetProjection,
-                    ),
+                    [Projection::Orthographic, Projection::Perspective],
+                    (options.projection, d.projection),
+                    Setting::Projection,
+                    projection_said,
+                    Some(projection_icon),
                 ),
-                setting(
+                choice(
                     "Shading",
                     "How the faces are lit",
-                    segmented(SHADINGS.map(|shading| {
-                        (
-                            Some(crate::status::shading_icon(shading)),
-                            shading_said(shading),
-                            shading == options.shading,
-                            Message::SetShading(shading),
-                        )
-                    })),
-                    reset(options.shading, d.shading, shading_said, Message::SetShading),
+                    SHADINGS,
+                    (options.shading, d.shading),
+                    Setting::Shading,
+                    shading_said,
+                    Some(crate::status::shading_icon),
                 ),
-                setting(
+                choice(
                     "Edges",
                     "Which edges show besides the feature edges",
-                    segmented(EDGES.map(|edges| {
-                        (
-                            Some(crate::status::edges_icon(edges)),
-                            edges_said(edges),
-                            edges == options.edges,
-                            Message::SetEdges(edges),
-                        )
-                    })),
-                    reset(options.edges, d.edges, edges_said, Message::SetEdges),
+                    EDGES,
+                    (options.edges, d.edges),
+                    Setting::Edges,
+                    edges_said,
+                    Some(crate::status::edges_icon),
                 ),
-                setting(
+                on_off_row(
                     "Hidden edges",
                     "Edges behind the model, dashed",
-                    switch(options.hidden_edges, Message::ToggleHiddenEdges),
-                    reset(options.hidden_edges, d.hidden_edges, on_off, |on| set(Setting::HiddenEdges(on))),
+                    (options.hidden_edges, d.hidden_edges),
+                    Setting::HiddenEdges,
                 ),
-                setting(
+                on_off_row(
                     "Names",
                     "The names of bodies, sketches and planes over the view",
-                    switch(options.names, Message::ToggleNames),
-                    reset(options.names, d.names, on_off, |on| set(Setting::Names(on))),
+                    (options.names, d.names),
+                    Setting::Names,
                 ),
-                setting(
+                on_off_row(
                     "Mouse hints",
                     "What the mouse buttons do, in the status bar",
-                    switch(options.mouse_hints, Message::ToggleMouseHints),
-                    reset(options.mouse_hints, d.mouse_hints, on_off, |on| set(Setting::MouseHints(on))),
+                    (options.mouse_hints, d.mouse_hints),
+                    Setting::MouseHints,
                 ),
             ],
         ),
@@ -814,35 +844,23 @@ fn section<'a>(
             "Units",
             Some(units_note(options)),
             vec![
-                setting(
+                choice(
                     "Length",
                     "For new designs: sizes typed without a unit, and shown",
-                    segmented(LengthUnit::ALL.map(|unit| {
-                        (
-                            None,
-                            unit.symbol(),
-                            unit == options.length_unit,
-                            Message::Settings(SettingsPage::SetLengthUnit(unit)),
-                        )
-                    })),
-                    reset(options.length_unit, d.length_unit, LengthUnit::symbol, |unit| {
-                        Message::Settings(SettingsPage::SetLengthUnit(unit))
-                    }),
+                    LengthUnit::ALL,
+                    (options.length_unit, d.length_unit),
+                    Setting::LengthUnit,
+                    LengthUnit::symbol,
+                    None,
                 ),
-                setting(
+                choice(
                     "Angle",
                     "How angles are shown; typed without a unit, they're degrees",
-                    segmented([AngleUnit::Deg, AngleUnit::Rad].map(|unit| {
-                        (
-                            None,
-                            angle_said(unit),
-                            unit == options.angle_unit,
-                            set(Setting::AngleUnit(unit)),
-                        )
-                    })),
-                    reset(options.angle_unit, d.angle_unit, angle_said, |unit| {
-                        set(Setting::AngleUnit(unit))
-                    }),
+                    [AngleUnit::Deg, AngleUnit::Rad],
+                    (options.angle_unit, d.angle_unit),
+                    Setting::AngleUnit,
+                    angle_said,
+                    None,
                 ),
                 setting(
                     "Decimal places",
@@ -859,38 +877,23 @@ fn section<'a>(
             "Files",
             None,
             vec![
-                setting(
+                choice(
                     "Auto-save",
                     "Changes go to the recovery file this long after the first",
-                    segmented(AUTO_SAVE_MINUTES.map(|minutes| {
-                        (
-                            None,
-                            auto_save_said(minutes),
-                            minutes == options.auto_save,
-                            set(Setting::AutoSave(minutes)),
-                        )
-                    })),
-                    reset(options.auto_save, d.auto_save, auto_save_said, |minutes| {
-                        set(Setting::AutoSave(minutes))
-                    }),
+                    AUTO_SAVE_MINUTES,
+                    (options.auto_save, d.auto_save),
+                    Setting::AutoSave,
+                    auto_save_said,
+                    None,
                 ),
-                setting(
+                choice(
                     "Recent designs",
                     "How many the welcome screen keeps",
-                    segmented(RECENT_DESIGNS.map(|count| {
-                        (
-                            None,
-                            recent_said(count),
-                            count == options.recent_designs,
-                            set(Setting::RecentDesigns(count)),
-                        )
-                    })),
-                    reset(
-                        options.recent_designs,
-                        d.recent_designs,
-                        recent_said,
-                        |count| set(Setting::RecentDesigns(count)),
-                    ),
+                    RECENT_DESIGNS,
+                    (options.recent_designs, d.recent_designs),
+                    Setting::RecentDesigns,
+                    recent_said,
+                    None,
                 ),
             ],
         ),
@@ -949,11 +952,11 @@ fn mcp_rows<'a>(options: ViewOptions, mcp: &McpState<'a>) -> Vec<SettingRow<'a>>
         .width(70)
         .style(theme::field_input(port_bad));
     let mut rows = vec![
-        setting(
+        on_off_row(
             "MCP",
             "Shows the MCP panel, where the server is started",
-            switch(options.mcp, set(Setting::Mcp(!options.mcp))),
-            reset(options.mcp, d.mcp, on_off, |on| set(Setting::Mcp(on))),
+            (options.mcp, d.mcp),
+            Setting::Mcp,
         ),
         SettingRow {
             bad: port_bad,
@@ -1101,149 +1104,96 @@ fn units_note(options: ViewOptions) -> String {
 /// The Mouse section's rows: a drag per button, how the view turns and
 /// about what, the wheel's zoom and the sketch tools' snapping.
 fn mouse_rows<'a>(options: ViewOptions) -> Vec<SettingRow<'a>> {
-    let set = |setting| Message::Settings(SettingsPage::Set(setting));
     let mouse = options.mouse;
     let d = crate::MouseOptions::default();
-    let drag = |on: DragAction, setting: fn(DragAction) -> Setting| {
-        segmented(DragAction::ALL.map(|action| {
-            (
-                None,
-                drag_said(action),
-                action == on,
-                Message::Settings(SettingsPage::Set(setting(action))),
-            )
-        }))
-    };
     let mut rows = vec![
-        setting(
+        choice(
             "Left drag",
             "Outside a sketch; a click always selects",
-            drag(mouse.left, Setting::LeftDrag),
-            reset(mouse.left, d.left, drag_said, |action| {
-                set(Setting::LeftDrag(action))
-            }),
+            DragAction::ALL,
+            (mouse.left, d.left),
+            Setting::LeftDrag,
+            drag_said,
+            None,
         ),
-        setting(
+        choice(
             "Middle drag",
             "Turning, panning or zooming the view",
-            drag(mouse.middle, Setting::MiddleDrag),
-            reset(mouse.middle, d.middle, drag_said, |action| {
-                set(Setting::MiddleDrag(action))
-            }),
+            DragAction::ALL,
+            (mouse.middle, d.middle),
+            Setting::MiddleDrag,
+            drag_said,
+            None,
         ),
-        setting(
+        choice(
             "Right drag",
             "With Shift held, it orbits",
-            drag(mouse.right, Setting::RightDrag),
-            reset(mouse.right, d.right, drag_said, |action| {
-                set(Setting::RightDrag(action))
-            }),
+            DragAction::ALL,
+            (mouse.right, d.right),
+            Setting::RightDrag,
+            drag_said,
+            None,
         ),
-        setting(
+        // The segments' labels are short: the row's name says the rest.
+        choice(
             "Rotation",
             "How a drag turns the view",
-            segmented(
-                [
-                    Rotation::Turntable,
-                    Rotation::OverTheTop,
-                    Rotation::Trackball,
-                ]
-                .map(|rotation| {
-                    (
-                        None,
-                        match rotation {
-                            Rotation::Turntable => "Turntable",
-                            Rotation::OverTheTop => "Over the top",
-                            Rotation::Trackball => "Trackball",
-                        },
-                        rotation == mouse.rotation,
-                        set(Setting::Rotation(rotation)),
-                    )
-                }),
-            ),
-            reset(mouse.rotation, d.rotation, rotation_said, |rotation| {
-                set(Setting::Rotation(rotation))
-            }),
+            [
+                Rotation::Turntable,
+                Rotation::OverTheTop,
+                Rotation::Trackball,
+            ],
+            (mouse.rotation, d.rotation),
+            Setting::Rotation,
+            |rotation| match rotation {
+                Rotation::Turntable => "Turntable",
+                Rotation::OverTheTop => "Over the top",
+                Rotation::Trackball => "Trackball",
+            },
+            None,
         ),
-        setting(
+        choice(
             "Rotation point",
             "What the view orbits about",
-            segmented(RotationPoint::ALL.map(|point| {
-                (
-                    None,
-                    rotation_point_said(point),
-                    point == mouse.rotation_point,
-                    set(Setting::RotationPoint(point)),
-                )
-            })),
-            reset(
-                mouse.rotation_point,
-                d.rotation_point,
-                rotation_point_said,
-                |point| set(Setting::RotationPoint(point)),
-            ),
+            RotationPoint::ALL,
+            (mouse.rotation_point, d.rotation_point),
+            Setting::RotationPoint,
+            rotation_point_said,
+            None,
         ),
     ];
     if mouse.rotation_point == RotationPoint::Clicked {
-        rows.push(setting(
+        rows.push(choice(
             "Set rotation point with",
             "On the model or grid; elsewhere, the centre again",
-            segmented(PivotClick::ALL.map(|click| {
-                (
-                    None,
-                    pivot_click_said(click),
-                    click == mouse.pivot_click,
-                    set(Setting::PivotClick(click)),
-                )
-            })),
-            reset(
-                mouse.pivot_click,
-                d.pivot_click,
-                pivot_click_said,
-                |click| set(Setting::PivotClick(click)),
-            ),
+            PivotClick::ALL,
+            (mouse.pivot_click, d.pivot_click),
+            Setting::PivotClick,
+            pivot_click_said,
+            None,
         ));
     }
     rows.extend([
-        setting(
+        choice(
             "Zoom direction",
             "Which way the wheel zooms in",
-            segmented([false, true].map(|down| {
-                (
-                    None,
-                    zoom_said(down),
-                    down == mouse.wheel_down_zooms_in,
-                    set(Setting::WheelDownZoomsIn(down)),
-                )
-            })),
-            reset(
-                mouse.wheel_down_zooms_in,
-                d.wheel_down_zooms_in,
-                zoom_said,
-                |down| set(Setting::WheelDownZoomsIn(down)),
-            ),
+            [false, true],
+            (mouse.wheel_down_zooms_in, d.wheel_down_zooms_in),
+            Setting::WheelDownZoomsIn,
+            zoom_said,
+            None,
         ),
-        setting(
+        on_off_row(
             "Zoom to pointer",
             "Zoom about the point under the pointer, else the middle",
-            switch(
-                mouse.zoom_to_pointer,
-                set(Setting::ZoomToPointer(!mouse.zoom_to_pointer)),
-            ),
-            reset(mouse.zoom_to_pointer, d.zoom_to_pointer, on_off, |on| {
-                set(Setting::ZoomToPointer(on))
-            }),
+            (mouse.zoom_to_pointer, d.zoom_to_pointer),
+            Setting::ZoomToPointer,
         ),
-        setting(
+        on_off_row(
             "Snapping",
             "Sketch tools snap to points, curves and directions unless Shift is held; off, only while it is",
-            switch(
-                mouse.sketch_snap,
-                set(Setting::SketchSnap(!mouse.sketch_snap)),
-            ),
-            reset(mouse.sketch_snap, d.sketch_snap, on_off, |on| {
-                set(Setting::SketchSnap(on))
-            }),
+            (mouse.sketch_snap, d.sketch_snap),
+            Setting::SketchSnap,
         ),
     ]);
     rows
@@ -1331,6 +1281,53 @@ fn setting<'a>(
         reset,
         below: None,
     }
+}
+
+/// The row of setting `name`, saying what it `does`: a choice among
+/// `all`, each its `icon`, if it has them, and its `label`, the one chosen
+/// the first of `(value, default)`. Each is chosen, and reset, as `to`
+/// it, the default said as [`Setting::said`] says it.
+fn choice<'a, T: Copy + PartialEq, const N: usize>(
+    name: &'static str,
+    does: &'static str,
+    all: [T; N],
+    (value, default): (T, T),
+    to: fn(T) -> Setting,
+    label: fn(T) -> &'static str,
+    icon: Option<fn(T) -> Icon>,
+) -> SettingRow<'a> {
+    let set = |each| Message::Settings(SettingsPage::Set(to(each)));
+    let control = segmented(all.map(|each| {
+        (
+            icon.map(|icon| icon(each)),
+            label(each),
+            each == value,
+            set(each),
+        )
+    }));
+    setting(
+        name,
+        does,
+        control,
+        reset(value, default, |each| to(each).said(), set),
+    )
+}
+
+/// The row of setting `name`, saying what it `does`: a switch, on as the
+/// first of `(on, default)`, set, and reset, as `to` it.
+fn on_off_row<'a>(
+    name: &'static str,
+    does: &'static str,
+    (on, default): (bool, bool),
+    to: fn(bool) -> Setting,
+) -> SettingRow<'a> {
+    let set = |on| Message::Settings(SettingsPage::Set(to(on)));
+    setting(
+        name,
+        does,
+        switch(on, set(!on)),
+        reset(on, default, on_off, set),
+    )
 }
 
 /// With `value` not `default`: the default as `said`, and what sets it

@@ -36,9 +36,10 @@ use crate::io::Io;
 use crate::keys::{document_key, welcome_key};
 use crate::message::{ForDoc, Message};
 use crate::recent::Recent;
-use crate::settings::{Key, Settings};
+use crate::settings::Settings;
 use crate::toast::Toast;
 use crate::welcome::Welcome;
+use varde_view::Setting;
 
 pub(crate) struct Varde {
     screen: Screen,
@@ -623,9 +624,6 @@ impl Varde {
                     doc.proposals_settled(cx)
                 });
             }
-            Message::Ui(Ui::SetTheme(theme)) => {
-                self.choose(Key::Theme, |options| options.theme = theme);
-            }
             Message::SystemTheme(mode) => {
                 self.system = match mode {
                     iced::theme::Mode::Light => Some(Mode::Light),
@@ -634,25 +632,17 @@ impl Varde {
                 };
             }
             Message::Ui(Ui::Copy(text)) => return platform::copy(text),
-            Message::Ui(Ui::ToggleMouseHints) => self.choose(Key::MouseHints, |options| {
-                options.mouse_hints = !options.mouse_hints;
-            }),
-            Message::Ui(Ui::ToggleHiddenEdges) => self.choose(Key::HiddenEdges, |options| {
-                options.hidden_edges = !options.hidden_edges;
-            }),
-            Message::Ui(Ui::ToggleNames) => {
-                self.choose(Key::Names, |options| options.names = !options.names);
+            Message::Ui(Ui::ToggleMouseHints) => {
+                self.set(Setting::MouseHints(!self.options.mouse_hints));
             }
-            Message::Ui(Ui::SetEdges(edges)) => {
-                self.choose(Key::Edges, |options| options.edges = edges);
+            Message::Ui(Ui::ToggleHiddenEdges) => {
+                self.set(Setting::HiddenEdges(!self.options.hidden_edges));
             }
-            Message::Ui(Ui::SetShading(shading)) => {
-                self.choose(Key::Shading, |options| options.shading = shading);
-            }
+            Message::Ui(Ui::ToggleNames) => self.set(Setting::Names(!self.options.names)),
+            Message::Ui(Ui::SetEdges(edges)) => self.set(Setting::Edges(edges)),
+            Message::Ui(Ui::SetShading(shading)) => self.set(Setting::Shading(shading)),
             Message::Ui(Ui::SetProjection(projection)) => {
-                self.choose(Key::Projection, |options| {
-                    options.projection = projection;
-                });
+                self.set(Setting::Projection(projection));
             }
             Message::Ui(Ui::ToggleSettings) => {
                 let open = !self.page.open;
@@ -695,13 +685,16 @@ impl Varde {
         Task::none()
     }
 
-    /// Sets the setting `key` of the options with `change`, closing the
-    /// view options menu, and stores it.
-    fn choose(&mut self, key: Key, change: impl FnOnce(&mut ViewOptions)) {
-        change(&mut self.options);
+    /// Sets `setting`, if it's a value the page offers (others are
+    /// ignored), closing the view options menu, and stores it.
+    fn set(&mut self, setting: Setting) {
+        if !setting.offered() {
+            return;
+        }
+        setting.apply(&mut self.options);
         self.with_doc(|doc, _| doc.view_menu = false);
         self.options_changed();
-        if let Some(write) = self.settings.chose(key, self.options) {
+        if let Some(write) = self.settings.chose(setting, self.options) {
             self.files.io.send(write);
         }
     }
@@ -736,15 +729,12 @@ impl Varde {
             }
             SettingsPage::ReleaseScale => {
                 if let Some(percent) = self.page.scale_dragged.take() {
-                    self.set(varde_view::Setting::InterfaceScale(percent));
+                    self.set(Setting::InterfaceScale(percent));
                 }
-            }
-            SettingsPage::SetLengthUnit(unit) => {
-                self.choose(Key::LengthUnit, |options| options.length_unit = unit);
             }
             SettingsPage::Set(setting) => {
                 // A reset or a value chosen replaces what's typed.
-                if matches!(setting, varde_view::Setting::McpPort(_)) {
+                if matches!(setting, Setting::McpPort(_)) {
                     self.page.port_typed = None;
                 }
                 self.set(setting);
@@ -755,7 +745,7 @@ impl Varde {
                 if let Some(port) = varde_view::mcp_port_of(&typed)
                     && port != self.options.mcp_port
                 {
-                    self.set(varde_view::Setting::McpPort(port));
+                    self.set(Setting::McpPort(port));
                 }
                 self.page.port_typed =
                     (typed != self.options.mcp_port.to_string()).then_some(typed);
@@ -787,81 +777,6 @@ impl Varde {
                     }
                 }
             }
-        }
-    }
-
-    /// Sets `setting`, from the settings page, if it's a value the page
-    /// offers: others are ignored.
-    fn set(&mut self, setting: varde_view::Setting) {
-        use varde_view::{
-            AUTO_SAVE_MINUTES, MCP_PORT_MAX, MCP_PORT_MIN, RECENT_DESIGNS, Setting,
-            interface_scale_offered,
-        };
-        match setting {
-            Setting::InterfaceScale(percent) if interface_scale_offered(percent) => {
-                self.choose(Key::InterfaceScale, |options| {
-                    options.interface_scale = percent;
-                });
-            }
-            Setting::AngleUnit(unit) => {
-                self.choose(Key::AngleUnit, |options| options.angle_unit = unit);
-            }
-            Setting::Decimals(decimals)
-                if decimals.is_none_or(|count| count <= varde_expr::Shown::MAX_DECIMALS) =>
-            {
-                self.choose(Key::Decimals, |options| options.decimals = decimals);
-            }
-            Setting::LeftDrag(action) => {
-                self.choose(Key::LeftDrag, |options| options.mouse.left = action);
-            }
-            Setting::MiddleDrag(action) => {
-                self.choose(Key::MiddleDrag, |options| options.mouse.middle = action);
-            }
-            Setting::RightDrag(action) => {
-                self.choose(Key::RightDrag, |options| options.mouse.right = action);
-            }
-            Setting::Rotation(rotation) => {
-                self.choose(Key::Rotation, |options| options.mouse.rotation = rotation);
-            }
-            Setting::RotationPoint(point) => self.choose(Key::RotationPoint, |options| {
-                options.mouse.rotation_point = point;
-            }),
-            Setting::PivotClick(click) => {
-                self.choose(Key::PivotClick, |options| options.mouse.pivot_click = click);
-            }
-            Setting::WheelDownZoomsIn(down) => self.choose(Key::ZoomDirection, |options| {
-                options.mouse.wheel_down_zooms_in = down;
-            }),
-            Setting::ZoomToPointer(on) => {
-                self.choose(Key::ZoomToPointer, |options| {
-                    options.mouse.zoom_to_pointer = on
-                });
-            }
-            Setting::SketchSnap(on) => {
-                self.choose(Key::SketchSnap, |options| options.mouse.sketch_snap = on);
-            }
-            Setting::HiddenEdges(on) => {
-                self.choose(Key::HiddenEdges, |options| options.hidden_edges = on);
-            }
-            Setting::Names(on) => self.choose(Key::Names, |options| options.names = on),
-            Setting::MouseHints(on) => {
-                self.choose(Key::MouseHints, |options| options.mouse_hints = on);
-            }
-            Setting::AutoSave(minutes) if AUTO_SAVE_MINUTES.contains(&minutes) => {
-                self.choose(Key::AutoSave, |options| options.auto_save = minutes);
-            }
-            Setting::RecentDesigns(count) if RECENT_DESIGNS.contains(&count) => {
-                self.choose(Key::RecentDesigns, |options| options.recent_designs = count);
-            }
-            Setting::Mcp(on) => self.choose(Key::Mcp, |options| options.mcp = on),
-            Setting::McpPort(port) if (MCP_PORT_MIN..=MCP_PORT_MAX).contains(&port) => {
-                self.choose(Key::McpPort, |options| options.mcp_port = port);
-            }
-            Setting::InterfaceScale(_)
-            | Setting::Decimals(_)
-            | Setting::AutoSave(_)
-            | Setting::RecentDesigns(_)
-            | Setting::McpPort(_) => {}
         }
     }
 

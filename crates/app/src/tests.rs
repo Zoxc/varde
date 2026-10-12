@@ -1082,9 +1082,13 @@ fn the_theme_is_stored_and_auto_follows_the_system() {
         "the stored theme isn't written back"
     );
 
-    let _ = varde.update(Message::Ui(Ui::SetTheme(ThemeChoice::Dark)));
+    let _ = varde.update(Message::Ui(Ui::Settings(varde_view::SettingsPage::Set(
+        varde_view::Setting::Theme(ThemeChoice::Dark),
+    ))));
     assert_eq!(varde.mode(), Mode::Dark);
-    let _ = varde.update(Message::Ui(Ui::SetTheme(ThemeChoice::Auto)));
+    let _ = varde.update(Message::Ui(Ui::Settings(varde_view::SettingsPage::Set(
+        varde_view::Setting::Theme(ThemeChoice::Auto),
+    ))));
     assert_eq!(varde.options.theme, ThemeChoice::Auto);
     let _ = varde.update(Message::SystemTheme(iced::theme::Mode::None));
     assert_eq!(varde.mode(), Mode::Light);

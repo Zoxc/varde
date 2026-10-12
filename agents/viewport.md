@@ -197,13 +197,17 @@ Mouse hints, the view options menu's messages, so a change in either
 shows in both; the length unit new designs start in, the angle unit and
 decimal places values are shown in (a sample in the note); the mouse's
 settings (below); the auto-save wait and recent designs kept
-(`files.md`); and the MCP server's (below). The settings only the page sets come as
-`SettingsPage::Set(Setting)`, `Varde::set` ignoring values the page
-doesn't offer. Every one defaults to what the app did before it was a
+(`files.md`); and the MCP server's (below). Every setting is a `Setting` variant, declared once in
+`view/src/settings.rs` (its field of `ViewOptions`, its tab, its name in
+the popup and how its value is said); the page sends
+`SettingsPage::Set(Setting)` (its rows built by `choice` and
+`on_off_row`), the status bar's menu its own messages, and both reach
+`Varde::set`, which ignores values the page doesn't offer
+(`Setting::offered`). Every one defaults to what the app did before it was a
 setting. The foot says where they're kept. Reset to defaults is off with
 every setting the default; otherwise it asks first
 (`SettingsPage::AskReset`) in a popup listing each setting it changes
-(`changed_settings`; on the web not the Files or MCP tab's), Enter resetting
+(`changed_settings`, from `Setting::of`; only the shown tabs', so on the web not the Files or MCP tab's), Enter resetting
 (`reset_key`) and Escape cancelling. A row whose setting isn't its
 default (`SettingRow::reset`, from `settings::reset`) has a 3 px accent
 bar along its left (a strip of its own, iced having no one-sided

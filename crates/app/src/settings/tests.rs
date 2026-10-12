@@ -39,7 +39,7 @@ fn the_stored_settings_are_taken_and_not_written_back() {
     assert_eq!(stored_of(options), stored);
     options.theme = ThemeChoice::Auto;
     assert_eq!(
-        written(settings.chose(Key::Theme, options)),
+        written(settings.chose(Setting::Theme(options.theme), options)),
         Some(Stored {
             theme: Theme::Auto,
             ..stored
@@ -56,7 +56,10 @@ fn a_theme_chosen_early_wins_once_loaded() {
         theme: ThemeChoice::Light,
         ..ViewOptions::default()
     };
-    assert_eq!(theme(settings.chose(Key::Theme, options)), None);
+    assert_eq!(
+        theme(settings.chose(Setting::Theme(options.theme), options)),
+        None
+    );
     let stored = Stored {
         theme: Theme::Dark,
         mouse_hints: false,
@@ -106,23 +109,23 @@ fn each_setting_chosen_early_wins_once_loaded() {
         mcp: true,
         mcp_port: McpPort::new(9000).unwrap(),
     };
-    // Every setting differs from its default, so each key is seen.
+    // Every setting differs from its default, so each is seen.
     let defaults = options_of(Stored::default());
-    for key in Key::ALL {
+    for setting in Setting::of(&options_of(stored)) {
         let mut one = defaults;
-        key.copy(options_of(stored), &mut one);
-        assert_ne!(one, defaults, "{key:?}");
+        setting.apply(&mut one);
+        assert_ne!(one, defaults, "{setting:?}");
     }
-    for key in Key::ALL {
+    for setting in Setting::of(&ViewOptions::default()) {
         let mut settings = Settings::default();
         let mut options = ViewOptions::default();
-        assert_eq!(written(settings.chose(key, options)), None);
+        assert_eq!(written(settings.chose(setting, options)), None);
         let write = settings.loaded(stored, &mut options);
         // The one chosen kept its default, the rest as stored.
         let mut expected = options_of(stored);
-        key.copy(ViewOptions::default(), &mut expected);
-        assert_eq!(options, expected, "{key:?}");
-        assert_eq!(written(write), Some(stored_of(expected)), "{key:?}");
+        setting.apply(&mut expected);
+        assert_eq!(options, expected, "{setting:?}");
+        assert_eq!(written(write), Some(stored_of(expected)), "{setting:?}");
     }
 }
 

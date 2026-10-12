@@ -512,7 +512,9 @@ fn the_settings_page_takes_the_designs_place() {
     let dark = find(&laid.texts(), "Dark").bounds.center();
     assert!(matches!(
         click(&mut laid, dark)[..],
-        [Message::SetTheme(crate::ThemeChoice::Dark)]
+        [Message::Settings(crate::SettingsPage::Set(
+            crate::Setting::Theme(crate::ThemeChoice::Dark)
+        ))]
     ));
 
     let web = WelcomeState {

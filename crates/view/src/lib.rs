@@ -195,8 +195,6 @@ pub enum Message {
     File(File),
     Edit(Edit),
     Look(Look),
-    /// Chooses the theme, on the settings page.
-    SetTheme(ThemeChoice),
     /// Opens the settings page, or closes it: the gear, `Ctrl ,`, and
     /// the page's close button.
     ToggleSettings,

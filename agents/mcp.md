@@ -530,10 +530,9 @@ new port or token restarts the server, and none on the web or while
 The switch and port are settings (`varde_io::settings`: `mcp`, off, and
 `mcp_port`, a `McpPort` from 1024 to 65535, default 7311, anything else
 in the file read as the default), `ViewOptions::mcp` and `mcp_port`,
-and `settings::Key::Mcp` and `McpPort`, so chosen, stored and reset as
+and `Setting::Mcp` and `Setting::McpPort`, so chosen, stored and reset as
 the others are (Reset to defaults lists *MCP* and *MCP port*,
-natively only). `Setting::Mcp` and `Setting::McpPort` set them; a port
-outside the range is ignored.
+natively only); a port outside the range is ignored.
 
 The token is `mcp-token.toml` beside `settings.toml`, kept by the IO
 lane (`Stores::mcp_token`, `varde-io`'s `src/native/mcp_token.rs`,

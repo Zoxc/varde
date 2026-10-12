@@ -222,14 +222,16 @@ fn the_settings_are_stored() {
     }));
     let _ = sent(&requests);
     let steps = [
-        Ui::SetTheme(ThemeChoice::Dark),
+        Ui::Settings(varde_view::SettingsPage::Set(varde_view::Setting::Theme(
+            ThemeChoice::Dark,
+        ))),
         Ui::SetProjection(Projection::Perspective),
         Ui::SetShading(varde_render::Shading::Flat),
         Ui::SetEdges(varde_view::Edges::Wireframe),
         Ui::ToggleHiddenEdges,
         Ui::ToggleNames,
         Ui::ToggleMouseHints,
-        Ui::Settings(SettingsPage::SetLengthUnit(LengthUnit::Cm)),
+        Ui::Settings(SettingsPage::Set(Setting::LengthUnit(LengthUnit::Cm))),
     ];
     for step in steps {
         let _ = varde.update(Message::Ui(step));
@@ -274,9 +276,11 @@ fn reset_lists_what_it_changes_and_resets() {
     let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::AskReset)));
     assert!(!varde.page.resetting, "nothing to reset");
 
-    let _ = varde.update(Message::Ui(Ui::SetTheme(ThemeChoice::Light)));
-    let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::SetLengthUnit(
-        LengthUnit::Ft,
+    let _ = varde.update(Message::Ui(Ui::Settings(varde_view::SettingsPage::Set(
+        varde_view::Setting::Theme(ThemeChoice::Light),
+    ))));
+    let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::Set(
+        Setting::LengthUnit(LengthUnit::Ft),
     ))));
     let _ = sent(&requests);
     assert_eq!(
@@ -316,7 +320,9 @@ fn reset_lists_what_it_changes_and_resets() {
     assert_eq!(varde.options, ViewOptions::default());
     assert_eq!(written(&requests), [Stored::default()]);
     // A stray reset, not asked for, does nothing.
-    let _ = varde.update(Message::Ui(Ui::SetTheme(ThemeChoice::Dark)));
+    let _ = varde.update(Message::Ui(Ui::Settings(varde_view::SettingsPage::Set(
+        varde_view::Setting::Theme(ThemeChoice::Dark),
+    ))));
     let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::Reset)));
     assert_eq!(varde.options.theme, ThemeChoice::Dark);
 }
@@ -331,8 +337,8 @@ fn a_new_design_takes_the_settings() {
     let _ = varde.update(Message::Ui(Ui::File(varde_view::File::CloseDocument)));
     assert!(varde.screen.doc().is_none());
 
-    let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::SetLengthUnit(
-        LengthUnit::In,
+    let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::Set(
+        Setting::LengthUnit(LengthUnit::In),
     ))));
     let _ = varde.update(Message::Ui(Ui::SetProjection(Projection::Perspective)));
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
@@ -340,8 +346,8 @@ fn a_new_design_takes_the_settings() {
     assert_eq!(doc.editor.document().units(), LengthUnit::In);
     assert_eq!(doc.camera.projection(), Projection::Perspective);
     // Changing the setting leaves the design open in its units.
-    let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::SetLengthUnit(
-        LengthUnit::Cm,
+    let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::Set(
+        Setting::LengthUnit(LengthUnit::Cm),
     ))));
     assert_eq!(document(&varde).editor.document().units(), LengthUnit::In);
     // The projection is every document's.
@@ -817,7 +823,9 @@ fn a_rows_reset_resets_just_its_setting() {
     let _ = varde.update(Message::Io(varde_io::Response::SettingsLoaded {
         settings: Stored::default(),
     }));
-    let _ = varde.update(Message::Ui(Ui::SetTheme(ThemeChoice::Dark)));
+    let _ = varde.update(Message::Ui(Ui::Settings(varde_view::SettingsPage::Set(
+        varde_view::Setting::Theme(ThemeChoice::Dark),
+    ))));
     set(&mut varde, Setting::AngleUnit(AngleUnit::Rad));
     set(&mut varde, Setting::Decimals(Some(2)));
     set(&mut varde, Setting::InterfaceScale(150));
@@ -831,9 +839,12 @@ fn a_rows_reset_resets_just_its_setting() {
     // and the setting as it is after.
     type Case = (Ui, fn(&mut ViewOptions));
     let cases: [Case; 7] = [
-        (Ui::SetTheme(defaults.theme), |options| {
-            options.theme = ViewOptions::default().theme
-        }),
+        (
+            Ui::Settings(varde_view::SettingsPage::Set(varde_view::Setting::Theme(
+                defaults.theme,
+            ))),
+            |options| options.theme = ViewOptions::default().theme,
+        ),
         (
             Ui::Settings(SettingsPage::Set(Setting::AngleUnit(AngleUnit::Deg))),
             |options| options.angle_unit = AngleUnit::Deg,

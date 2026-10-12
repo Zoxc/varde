@@ -335,7 +335,7 @@ fn only_a_changed_settings_row_has_a_reset() {
             },
             "Theme",
             "System",
-            format!("{:?}", Message::SetTheme(defaults.theme)),
+            set(Setting::Theme(defaults.theme)),
         ),
         (
             ViewOptions {
@@ -353,7 +353,7 @@ fn only_a_changed_settings_row_has_a_reset() {
             },
             "Projection",
             projection_said(defaults.projection),
-            format!("{:?}", Message::SetProjection(defaults.projection)),
+            set(Setting::Projection(defaults.projection)),
         ),
         (
             ViewOptions {
@@ -362,7 +362,7 @@ fn only_a_changed_settings_row_has_a_reset() {
             },
             "Shading",
             "Regular",
-            format!("{:?}", Message::SetShading(Shading::Regular)),
+            set(Setting::Shading(Shading::Regular)),
         ),
         (
             ViewOptions {
@@ -371,7 +371,7 @@ fn only_a_changed_settings_row_has_a_reset() {
             },
             "Edges",
             "Features",
-            format!("{:?}", Message::SetEdges(Edges::Default)),
+            set(Setting::Edges(Edges::Default)),
         ),
         (
             ViewOptions {
@@ -409,7 +409,7 @@ fn only_a_changed_settings_row_has_a_reset() {
             "mm",
             format!(
                 "{:?}",
-                Message::Settings(SettingsPage::SetLengthUnit(LengthUnit::Mm))
+                Message::Settings(SettingsPage::Set(Setting::LengthUnit(LengthUnit::Mm)))
             ),
         ),
         (

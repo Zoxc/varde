@@ -42,7 +42,7 @@ wheel have no release). The app
 keeps them in `Varde::options`, a `ViewOptions`; `app/src/settings.rs`
 maps them to what's stored. Each is written as chosen, though not before
 the stored settings have arrived; one chosen before then wins over them,
-each setting on its own (`settings::Key`), and Reset to defaults chooses
+each setting on its own (by `Setting::index`), and Reset to defaults chooses
 them all. Each key is read on its own, so
 one gone bad gets its default and costs no other. Natively the settings
 also hold the MCP server's switch (`mcp`, off) and port (`mcp_port`,

@@ -20,105 +20,16 @@ use varde_io::settings::{
 };
 use varde_render::{Projection, Rotation, Shading};
 use varde_view::{
-    DragAction, Edges, MouseOptions, PivotClick, RotationPoint, ThemeChoice, ViewOptions,
+    DragAction, Edges, MouseOptions, PivotClick, RotationPoint, Setting, ThemeChoice, ViewOptions,
 };
-
-/// A setting, each chosen on its own: the one chosen before the stored
-/// settings arrive wins over what they say.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Key {
-    Theme,
-    MouseHints,
-    HiddenEdges,
-    Names,
-    Projection,
-    Shading,
-    Edges,
-    LengthUnit,
-    InterfaceScale,
-    AngleUnit,
-    Decimals,
-    LeftDrag,
-    MiddleDrag,
-    RightDrag,
-    Rotation,
-    RotationPoint,
-    PivotClick,
-    ZoomDirection,
-    ZoomToPointer,
-    SketchSnap,
-    AutoSave,
-    RecentDesigns,
-    Mcp,
-    McpPort,
-}
-
-impl Key {
-    pub(crate) const ALL: [Key; 24] = [
-        Key::Theme,
-        Key::MouseHints,
-        Key::HiddenEdges,
-        Key::Names,
-        Key::Projection,
-        Key::Shading,
-        Key::Edges,
-        Key::LengthUnit,
-        Key::InterfaceScale,
-        Key::AngleUnit,
-        Key::Decimals,
-        Key::LeftDrag,
-        Key::MiddleDrag,
-        Key::RightDrag,
-        Key::Rotation,
-        Key::RotationPoint,
-        Key::PivotClick,
-        Key::ZoomDirection,
-        Key::ZoomToPointer,
-        Key::SketchSnap,
-        Key::AutoSave,
-        Key::RecentDesigns,
-        Key::Mcp,
-        Key::McpPort,
-    ];
-
-    /// Takes this setting of `from` into `to`.
-    fn copy(self, from: ViewOptions, to: &mut ViewOptions) {
-        match self {
-            Key::Theme => to.theme = from.theme,
-            Key::MouseHints => to.mouse_hints = from.mouse_hints,
-            Key::HiddenEdges => to.hidden_edges = from.hidden_edges,
-            Key::Names => to.names = from.names,
-            Key::Projection => to.projection = from.projection,
-            Key::Shading => to.shading = from.shading,
-            Key::Edges => to.edges = from.edges,
-            Key::LengthUnit => to.length_unit = from.length_unit,
-            Key::InterfaceScale => to.interface_scale = from.interface_scale,
-            Key::AngleUnit => to.angle_unit = from.angle_unit,
-            Key::Decimals => to.decimals = from.decimals,
-            Key::LeftDrag => to.mouse.left = from.mouse.left,
-            Key::MiddleDrag => to.mouse.middle = from.mouse.middle,
-            Key::RightDrag => to.mouse.right = from.mouse.right,
-            Key::Rotation => to.mouse.rotation = from.mouse.rotation,
-            Key::RotationPoint => to.mouse.rotation_point = from.mouse.rotation_point,
-            Key::PivotClick => to.mouse.pivot_click = from.mouse.pivot_click,
-            Key::ZoomDirection => to.mouse.wheel_down_zooms_in = from.mouse.wheel_down_zooms_in,
-            Key::ZoomToPointer => to.mouse.zoom_to_pointer = from.mouse.zoom_to_pointer,
-            Key::SketchSnap => to.mouse.sketch_snap = from.mouse.sketch_snap,
-            Key::AutoSave => to.auto_save = from.auto_save,
-            Key::RecentDesigns => to.recent_designs = from.recent_designs,
-            Key::Mcp => to.mcp = from.mcp,
-            Key::McpPort => to.mcp_port = from.mcp_port,
-        }
-    }
-}
 
 #[derive(Debug, Default)]
 pub(crate) struct Settings {
     /// Whether the stored settings have arrived.
     loaded: bool,
-    /// The settings the user chose before they did, by [`Key`] in
-    /// [`Key::ALL`]'s order: theirs win.
-    chosen: [bool; Key::ALL.len()],
+    /// The settings the user chose before they did, by
+    /// [`Setting::index`]: theirs win.
+    chosen: [bool; Setting::COUNT],
 }
 
 impl Settings {
@@ -133,9 +44,9 @@ impl Settings {
     ) -> Option<IoRequest> {
         self.loaded = true;
         let stored = options_of(stored);
-        for (key, chosen) in Key::ALL.into_iter().zip(self.chosen) {
+        for (setting, chosen) in Setting::of(&stored).into_iter().zip(self.chosen) {
             if !chosen {
-                key.copy(stored, options);
+                setting.apply(options);
             }
         }
         (self.chosen.contains(&true))
@@ -150,14 +61,12 @@ impl Settings {
         *options = options_of(stored);
     }
 
-    /// Records that the user chose the setting `key` of `options`,
+    /// Records that the user chose `setting`, as `options` have it,
     /// returning the write storing it, once the stored settings have
     /// arrived: before, writing would drop what else they hold.
     #[must_use = "the write stores the settings"]
-    pub(crate) fn chose(&mut self, key: Key, options: ViewOptions) -> Option<IoRequest> {
-        if let Some(at) = Key::ALL.iter().position(|&each| each == key)
-            && let Some(chosen) = self.chosen.get_mut(at)
-        {
+    pub(crate) fn chose(&mut self, setting: Setting, options: ViewOptions) -> Option<IoRequest> {
+        if let Some(chosen) = self.chosen.get_mut(setting.index()) {
             *chosen = true;
         }
         self.write(options)
@@ -167,7 +76,7 @@ impl Settings {
     /// to defaults does, as [`Settings::chose`].
     #[must_use = "the write stores the settings"]
     pub(crate) fn chose_all(&mut self, options: ViewOptions) -> Option<IoRequest> {
-        self.chosen = [true; Key::ALL.len()];
+        self.chosen = [true; Setting::COUNT];
         self.write(options)
     }
 
