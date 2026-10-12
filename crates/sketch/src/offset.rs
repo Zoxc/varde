@@ -545,7 +545,13 @@ impl Sketch {
             }
         }
         let mut work = Work::default();
-        let kept = self.kept(chain, &raws, &corners, distance, side, tol, &mut work)?;
+        let band = Band {
+            chain,
+            distance,
+            side,
+            tol,
+        };
+        let kept = self.kept(&band, &raws, &corners, &mut work)?;
         if kept.is_empty() {
             return Err(EditError::NothingLeft);
         }
@@ -557,19 +563,21 @@ impl Sketch {
         })
     }
 
-    /// The parts of `raws` no nearer the pieces of `chain` than
-    /// `distance`, each as long as it can be, see the module's docs.
-    #[allow(clippy::too_many_arguments)]
+    /// The parts of `raws` beyond `band`, each as long as it can be, see
+    /// the module's docs.
     fn kept(
         &self,
-        chain: &Chain,
+        band: &Band,
         raws: &[Raw],
         corners: &[[DVec2; 4]],
-        distance: f64,
-        side: Side,
-        tol: f64,
         work: &mut Work,
     ) -> Result<Vec<Kept>, EditError> {
+        let Band {
+            chain,
+            distance,
+            tol,
+            ..
+        } = *band;
         // The band's edges round each piece.
         let mut edges = Vec::new();
         for link in &chain.links {
@@ -660,7 +668,7 @@ impl Sketch {
             let keeps = |(from, to): (f64, f64)| {
                 let middle = geom.at((from + to) / 2.0);
                 geom.length(from, to) > near
-                    && chain.beyond(middle, distance, side, tol)
+                    && band.beyond(middle)
                     && !corners.iter().any(|corner| within(corner, middle, tol))
             };
             work.spend(spans.len().saturating_mul(chain.links.len()))?;
@@ -746,9 +754,35 @@ impl Sketch {
         }
         let chain = self.chained(chain)?;
         let mut offset = self.raw_offset(&chain, distance.value, side)?;
-        let near = NEAR * offset.tol;
+        let ends = self.offset_points(&mut offset)?;
+        let copies = self.offset_copies(&chain, &offset, &ends)?;
+        // Kept parts' copies, as they're numbered among the copies made.
+        let mut numbered = Vec::with_capacity(copies.len());
+        let mut made = Vec::new();
+        for copy in copies {
+            numbered.push(copy.map(|_| made.len()));
+            made.extend(copy);
+        }
+        let mut copies = made;
+        let tangents = self.offset_tangents(&offset, &ends, &numbered, &copies);
+        // A part too short to be a curve leaves its ends unused.
+        let used: BTreeSet<Id> = copies
+            .iter()
+            .filter_map(|copy| self.curve(copy.id))
+            .flat_map(|entry| entry.curve.points())
+            .collect();
+        self.points
+            .retain(|point| !ends.points.contains(&point.id) || used.contains(&point.id));
+        let pairs: Vec<[usize; 2]> = tangents.iter().map(|(pair, _)| *pair).collect();
+        let untied = untie(&copies, &pairs).ok_or(EditError::NothingLeft)?;
+        let tangents = self.apply_untie(&mut copies, &untied, tangents)?;
+        self.add_offset_ties(&copies, copies[untied.lead], tangents, distance)
+    }
 
-        // The ends of the parts kept, those near one place one point.
+    /// The points the kept parts of `offset` end at, those near one place
+    /// one point.
+    fn offset_points(&mut self, offset: &mut Offset) -> Result<KeptEnds, EditError> {
+        let near = NEAR * offset.tol;
         let mut places: Vec<DVec2> = Vec::new();
         let mut point_at = |at: DVec2, work: &mut Work| -> Result<usize, EditError> {
             work.spend(places.len())?;
@@ -775,9 +809,24 @@ impl Sketch {
         for &at in &places {
             points.push(self.add_point(at)?);
         }
+        Ok(KeptEnds {
+            places,
+            ends,
+            points,
+        })
+    }
 
-        let mut copies: Vec<Option<Copy>> = Vec::with_capacity(offset.kept.len());
-        for (kept, ends) in offset.kept.iter().zip(&ends) {
+    /// The copy of each kept part of `offset`, of the piece or join of
+    /// `chain` it's from, or none where it's too short to be a curve.
+    fn offset_copies(
+        &mut self,
+        chain: &Chain,
+        offset: &Offset,
+        ends: &KeptEnds,
+    ) -> Result<Vec<Option<OffsetCopy>>, EditError> {
+        let points = &ends.points;
+        let mut copies: Vec<Option<OffsetCopy>> = Vec::with_capacity(offset.kept.len());
+        for (kept, ends) in offset.kept.iter().zip(&ends.ends) {
             let raw = &offset.raws[kept.raw];
             let (index, base, pair) = match raw.source {
                 Source::Piece(index) => {
@@ -823,7 +872,7 @@ impl Sketch {
                 _ => None,
             };
             let copy = match curve {
-                Some(curve) => Some(Copy {
+                Some(curve) => Some(OffsetCopy {
                     id: self.add_curve(curve, construction)?,
                     base,
                     pair,
@@ -834,26 +883,32 @@ impl Sketch {
             };
             copies.push(copy);
         }
+        Ok(copies)
+    }
 
-        // Where two copies meet tangent at a point they share, a tangent
-        // stands for one of their ties, never the last of their offsets: on
-        // both their offsets, the point would be where two tangent curves
-        // meet, which the solver can't tell along them.
+    /// The tangents between the copies made, `copies`, `numbered` among
+    /// them by the kept parts of `offset`, ending at `ends`, each with the
+    /// two it's between.
+    ///
+    /// Where two copies meet tangent at a point they share, a tangent
+    /// stands for one of their ties, never the last of their offsets: on
+    /// both their offsets, the point would be where two tangent curves
+    /// meet, which the solver can't tell along them.
+    fn offset_tangents(
+        &self,
+        offset: &Offset,
+        ends: &KeptEnds,
+        numbered: &[Option<usize>],
+        copies: &[OffsetCopy],
+    ) -> Vec<([usize; 2], Constraint)> {
+        let places = &ends.places;
         let mut meeting: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        for (index, ends) in ends.iter().enumerate() {
+        for (index, ends) in ends.ends.iter().enumerate() {
             if let Some((from, to)) = *ends {
                 meeting.entry(from).or_default().push(index);
                 meeting.entry(to).or_default().push(index);
             }
         }
-        // Kept parts' copies, as they're numbered among the copies made.
-        let mut numbered = Vec::with_capacity(copies.len());
-        let mut made = Vec::new();
-        for copy in copies {
-            numbered.push(copy.map(|_| made.len()));
-            made.extend(copy);
-        }
-        let mut copies = made;
         let mut tangents = Vec::new();
         for (&at, parts) in &meeting {
             let &[a, b] = parts.as_slice() else {
@@ -872,7 +927,7 @@ impl Sketch {
                 continue;
             };
             // Two parts of one circle say nothing to each other.
-            let about = |copy: &Copy| self.curve(copy.id)?.curve.center();
+            let about = |copy: &OffsetCopy| self.curve(copy.id)?.curve.center();
             if about(&copies[a]).is_some() && about(&copies[a]) == about(&copies[b]) {
                 continue;
             }
@@ -880,22 +935,24 @@ impl Sketch {
                 tangents.push(([a, b], tangent));
             }
         }
-        // A part too short to be a curve leaves its ends unused.
-        let used: BTreeSet<Id> = copies
-            .iter()
-            .filter_map(|copy| self.curve(copy.id))
-            .flat_map(|entry| entry.curve.points())
-            .collect();
-        self.points
-            .retain(|point| !points.contains(&point.id) || used.contains(&point.id));
-        let pairs: Vec<[usize; 2]> = tangents.iter().map(|(pair, _)| *pair).collect();
-        let untied = untie(&copies, &pairs).ok_or(EditError::NothingLeft)?;
+        tangents
+    }
+
+    /// Applies `untied` to `copies`: drops the ties its tangents (of
+    /// `tangents`) stand for and gives the freed arcs centres of their
+    /// own. The tangents kept.
+    fn apply_untie(
+        &mut self,
+        copies: &mut [OffsetCopy],
+        untied: &Untied,
+        tangents: Vec<([usize; 2], Constraint)>,
+    ) -> Result<Vec<Constraint>, EditError> {
         let lead = untied.lead;
         let mut dropped = vec![0usize; copies.len()];
         let tangents: Vec<Constraint> = tangents
             .into_iter()
-            .zip(untied.assigned)
-            .filter_map(|((_, tangent), copy)| {
+            .zip(&untied.assigned)
+            .filter_map(|((_, tangent), &copy)| {
                 dropped[copy?] += 1;
                 Some(tangent)
             })
@@ -923,16 +980,27 @@ impl Sketch {
                 _ => (copy.distance, copy.parallel) = (false, false),
             }
         }
-        let lead = copies[lead];
+        Ok(tangents)
+    }
+
+    /// Adds the ties of `copies`, `lead`'s offset the dimension of
+    /// `distance`, and `tangents`.
+    fn add_offset_ties(
+        &mut self,
+        copies: &[OffsetCopy],
+        lead: OffsetCopy,
+        tangents: Vec<Constraint>,
+        distance: &Value,
+    ) -> Result<(), EditError> {
         let lead_pair = [lead.base, lead.id];
         let measure = Measure::Offset(lead.base, lead.id);
         let side = self.side(&measure);
-        for copy in &copies {
+        for copy in copies {
             if copy.parallel {
                 self.add_constraint(Constraint::Parallel(copy.base, copy.id))?;
             }
         }
-        for copy in &copies {
+        for copy in copies {
             if copy.distance && copy.id != lead.id {
                 self.add_constraint(Constraint::EqualOffset {
                     a: lead_pair,
@@ -966,6 +1034,29 @@ fn ending(curves: impl IntoIterator<Item = (Id, Option<[Id; 2]>)>) -> BTreeMap<I
     ending
 }
 
+/// The band about a chain an offset of it by `distance` to `side` keeps
+/// out of, places within `tol` one.
+#[derive(Debug, Clone, Copy)]
+struct Band<'a> {
+    chain: &'a Chain,
+    distance: f64,
+    side: Side,
+    tol: f64,
+}
+
+impl Band<'_> {
+    /// Whether `point` is at least the distance from every piece of the
+    /// chain (less the tolerance), and on the side of it where it's
+    /// nearest (see [`Chain::nearest`]).
+    fn beyond(&self, point: DVec2) -> bool {
+        self.chain
+            .nearest(point, self.tol)
+            .is_some_and(|(found, on)| {
+                found >= self.distance - self.tol && on.is_none_or(|on| on == self.side)
+            })
+    }
+}
+
 /// A chain of curves joined end to end, as offsetting takes it, see
 /// [`Sketch::chained`].
 #[derive(Debug, Clone, PartialEq)]
@@ -983,14 +1074,6 @@ impl Chain {
         let [start, end] = sketch.curve(link.id)?.curve.ends()?;
         let point = if link.forward { end } else { start };
         Some((point, sketch.point(point)?.at))
-    }
-
-    /// Whether `point` is at least `distance` from every piece (less
-    /// `tol`), and on `side` of the chain where it's nearest (see
-    /// [`Chain::nearest`]).
-    fn beyond(&self, point: DVec2, distance: f64, side: Side, tol: f64) -> bool {
-        self.nearest(point, tol)
-            .is_some_and(|(found, on)| found >= distance - tol && on.is_none_or(|on| on == side))
     }
 
     /// How far `point` is from the nearest of its pieces, and which side of
@@ -1405,9 +1488,17 @@ struct Offset {
     work: Work,
 }
 
+/// Where the kept parts of an offset end: the places, each kept part's
+/// two of them (none for a whole circle), and the point made at each.
+struct KeptEnds {
+    places: Vec<DVec2>,
+    ends: Vec<Option<(usize, usize)>>,
+    points: Vec<Id>,
+}
+
 /// A copy made, what it's a copy of, and which of its ties it keeps.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Copy {
+struct OffsetCopy {
     id: Id,
     /// Its original: a line, arc or circle, or a round join's corner.
     base: Id,
@@ -1445,7 +1536,7 @@ struct Untied {
 /// copy tangent at both ends is made about a centre of its own there,
 /// which the two tangents hold, standing for two more ties. A tangent
 /// standing for none still is left out. `None` without copies.
-fn untie(copies: &[Copy], tangents: &[[usize; 2]]) -> Option<Untied> {
+fn untie(copies: &[OffsetCopy], tangents: &[[usize; 2]]) -> Option<Untied> {
     /// How many leads are tried at most, each a matching.
     const LEADS: usize = 8;
     let order = [OffsetPair::Lines, OffsetPair::Rounds, OffsetPair::Join];
