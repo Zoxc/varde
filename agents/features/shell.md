@@ -51,8 +51,8 @@ pub struct Shell {
 shares with chamfer, fillet and offset face, the body's own solid and topology,
 its faces found, the cache key's start, the result put in place and
 the refusals' drawing and kernel failures (`refused`, `kernel_failed`),
-are `history/in_place.rs`'s `InPlace`, with `box_sides` for the
-stand-ins):
+are `history/in_place.rs`'s `InPlace`; the stand-ins' `box_sides` is in
+`testing/stand_ins.rs`):
 
 - The body needs a solid of its own (`own_solids`: a body consumed by
   a join or combine fails it, "Body 2 is in Body 1 now: ..."). Its
@@ -81,7 +81,7 @@ stand-ins):
   fails with `NotImplemented`. So every shell that finds its faces fails
   today with "shelling Body 1 isn't supported yet", its body left
   whole; the rest of the history goes on. The regen tests swap it
-  (`testing::Overrides::shell`, per thread, the stand-in in `history/shell/stand_in.rs`; other crates' tests through the
+  (`testing::Overrides::shell`, per thread, the stand-in in `testing/stand_ins/shell.rs`; other crates' tests through the
   `testing` feature, `varde_regen::testing::shell_by_boxes`) for
   `by_boxes`: a box along the world's axes (six planar faces square to
   them, its volume its box's) hollowed by one boolean with another box

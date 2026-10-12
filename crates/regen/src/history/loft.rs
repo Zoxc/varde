@@ -63,9 +63,6 @@ use crate::error_geometry::KernelFailure;
 use crate::profile::{chain, loft_corner, profile_marked};
 use crate::why::{self, LoftRefusal};
 
-#[cfg(any(test, feature = "testing"))]
-pub(crate) mod stand_in;
-
 /// The kernel's loft, which tests may replace with a stand-in to check
 /// what regeneration does with the result before the kernel's is built.
 pub(crate) type Lofter = fn(

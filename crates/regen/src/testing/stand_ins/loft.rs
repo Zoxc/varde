@@ -1,7 +1,8 @@
 //! The stand-in for the kernel's loft that tests run in its place
-//! until the kernel's is built (see `crate::testing`).
+//! until the kernel's is built (see [`crate::testing`]).
 
-use super::*;
+use varde_kernel_compat::loft::{self as kernel_loft, LoftError, Rail};
+use varde_kernel_compat::{Budget, Solid, Tolerance};
 
 /// A stand-in for the kernel's loft, for tests: two open sections, no
 /// rails, each a loop of straight segments, the second the first moved

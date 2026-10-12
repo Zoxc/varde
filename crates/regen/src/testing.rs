@@ -1,13 +1,17 @@
 //! What tests set up of regeneration: stand-ins run in place of the
 //! kernel operations that aren't built yet, per thread, so tests (this
 //! crate's and, by the `testing` feature, other crates') can see what's
-//! done with their results. Each operation's stand-in lives beside it,
-//! in its `history` module's `stand_in`; `crate::history` asks for the
+//! done with their results. Each operation's stand-in is in
+//! `stand_ins`, its type beside the operation in `history`; `crate::history` asks for the
 //! operation through `overrides`.
 
 use std::cell::Cell;
 
-use crate::history::stand_ins::{self, *};
+use crate::history::{
+    Chamferer, Drafter, Filleter, Lofter, Offsetter, Sheller, Splitter, Sweeper, Taperer,
+};
+
+mod stand_ins;
 
 /// The kernel operations this thread runs in place of the kernel's;
 /// `None` runs the kernel's.
@@ -46,7 +50,7 @@ pub(crate) fn set(change: impl FnOnce(&mut Overrides)) {
 /// it) in place of the kernel's split, which isn't built yet: so
 /// other crates' tests can see what's done with the pieces.
 pub fn split_by_booleans() {
-    set(|o| o.split = Some(stand_ins::split));
+    set(|o| o.split = Some(stand_ins::split::by_booleans));
 }
 
 /// Chamfers on this thread by a stand-in in place of the kernel's
@@ -54,7 +58,7 @@ pub fn split_by_booleans() {
 /// between two flat faces, cut off by a triangular prism past its
 /// ends (right for a block's edges); anything else is too complex.
 pub fn chamfer_by_wedges() {
-    set(|o| o.chamfer = Some(stand_ins::chamfer));
+    set(|o| o.chamfer = Some(stand_ins::chamfer::by_wedges));
 }
 
 /// Shells on this thread by a stand-in in place of the kernel's
@@ -62,7 +66,7 @@ pub fn chamfer_by_wedges() {
 /// hollowed by one boolean with another box; anything else is too
 /// complex.
 pub fn shell_by_boxes() {
-    set(|o| o.shell = Some(stand_ins::shell));
+    set(|o| o.shell = Some(stand_ins::shell::by_boxes));
 }
 
 /// Fillets on this thread by a stand-in in place of the kernel's
@@ -71,7 +75,7 @@ pub fn shell_by_boxes() {
 /// its ends whose section is the corner less the round (right for a
 /// block's edges); anything else is too complex.
 pub fn fillet_by_arcs() {
-    set(|o| o.fillet = Some(stand_ins::fillet));
+    set(|o| o.fillet = Some(stand_ins::fillet::by_arcs));
 }
 
 /// Offsets faces on this thread by a stand-in in place of the
@@ -80,7 +84,7 @@ pub fn fillet_by_arcs() {
 /// axis and a move, so every face keeps its name; anything else is
 /// too complex.
 pub fn offset_by_boxes() {
-    set(|o| o.offset = Some(stand_ins::offset));
+    set(|o| o.offset = Some(stand_ins::offset_face::by_boxes));
 }
 
 /// Drafts faces on this thread by a stand-in in place of the
@@ -89,7 +93,7 @@ pub fn offset_by_boxes() {
 /// their hinges on the neutral plane by moving their corners, so
 /// every face keeps its name; anything else is too complex.
 pub fn draft_by_boxes() {
-    set(|o| o.draft = Some(stand_ins::draft));
+    set(|o| o.draft = Some(stand_ins::face_draft::by_boxes));
 }
 
 /// Sweeps on this thread by a stand-in in place of the kernel's
@@ -97,7 +101,7 @@ pub fn draft_by_boxes() {
 /// one line is the profile extruded along it; anything else is too
 /// complex.
 pub fn sweep_by_extrude() {
-    set(|o| o.sweep = Some(stand_ins::sweep));
+    set(|o| o.sweep = Some(stand_ins::sweep::by_extrude));
 }
 
 /// Lofts on this thread by a stand-in in place of the kernel's loft,
@@ -105,7 +109,7 @@ pub fn sweep_by_extrude() {
 /// the second the first moved along its normal, make the first
 /// extruded to the second; anything else is too complex.
 pub fn loft_by_extrude() {
-    set(|o| o.loft = Some(stand_ins::loft));
+    set(|o| o.loft = Some(stand_ins::loft::by_extrude));
 }
 
 /// Tapers extrudes on this thread by a stand-in in place of the
@@ -114,5 +118,5 @@ pub fn loft_by_extrude() {
 /// moved in (out for a negative taper) into a frustum of a pyramid;
 /// anything else is too complex.
 pub fn taper_by_frustum() {
-    set(|o| o.taper = Some(stand_ins::taper));
+    set(|o| o.taper = Some(stand_ins::taper::by_frustum));
 }

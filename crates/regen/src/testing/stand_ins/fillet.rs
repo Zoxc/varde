@@ -1,7 +1,7 @@
 //! The stand-in for the kernel's fillet that tests run in its place
-//! until the kernel's is built (see `crate::testing`).
+//! until the kernel's is built (see [`crate::testing`]).
 
-use super::*;
+use varde_kernel_compat::{BlendError, Budget, FilletChain, Solid, Tolerance, Topology};
 
 /// A stand-in for the kernel's fillet, for tests: each chain must be a
 /// straight, open, convex edge between two planar faces, and is rounded

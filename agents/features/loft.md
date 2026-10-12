@@ -107,7 +107,7 @@ before it in `Run::sketches`), in history order:
   isn't built: it fails with `NotImplemented`, so every loft that gets as
   far as the kernel fails today with "lofting isn't supported yet",
   making no body, and the rest of the history
-  goes on. The regen tests swap it (`testing::Overrides::loft`, per thread, the stand-in in `history/loft/stand_in.rs`;
+  goes on. The regen tests swap it (`testing::Overrides::loft`, per thread, the stand-in in `testing/stand_ins/loft.rs`;
   other crates' tests through the `testing` feature,
   `varde_regen::testing::loft_by_extrude`) for `by_extrude`: two open
   sections, no rails, each a loop of straight segments, the second the

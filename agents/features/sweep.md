@@ -161,7 +161,7 @@ body", the uncut note).
   supported yet", making no body (its new
   body has no solid; a feature naming it fails as for any), and the rest
   of the history goes on. The regen tests swap it (`testing::Overrides::sweep`, per
-  thread, the stand-in in `history/sweep/stand_in.rs`; other crates' tests through the `testing` feature,
+  thread, the stand-in in `testing/stand_ins/sweep.rs`; other crates' tests through the `testing` feature,
   `varde_regen::testing::sweep_by_extrude`) for `by_extrude`: a path of
   straight pieces along one line from the profile's plane, square to
   it, untwisted, extruded along it as far as it reaches (a box's volume

@@ -1,7 +1,8 @@
 //! The stand-in for the kernel's sweep that tests run in its place
-//! until the kernel's is built (see `crate::testing`).
+//! until the kernel's is built (see [`crate::testing`]).
 
-use super::*;
+use varde_kernel_compat::sweep::{self as path_sweep, Path, Piece, SweepError};
+use varde_kernel_compat::{Budget, Frame, Profile, Solid, Tolerance};
 
 /// A stand-in for the kernel's sweep, for tests: a path of straight
 /// pieces all along one line, starting on the profile's plane and
@@ -57,7 +58,7 @@ pub(crate) fn by_extrude(
     if (start - frame.origin).dot(normal).abs() > resolution {
         return Err(SweepError::OffStart);
     }
-    if along.cross(normal).length() > TANGENT_SINE {
+    if along.cross(normal).length() > path_sweep::JOINT_SINE {
         return Err(SweepError::NotSquare);
     }
     let length = (end - start).dot(normal);

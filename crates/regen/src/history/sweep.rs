@@ -88,9 +88,6 @@ use crate::why::{self, SweepRefusal};
 /// which its sweep guards with.
 const TANGENT_SINE: f64 = path_sweep::JOINT_SINE;
 
-#[cfg(any(test, feature = "testing"))]
-pub(crate) mod stand_in;
-
 /// The kernel's sweep, which tests may replace with a stand-in to check
 /// what regeneration does with the result before the kernel's is built.
 pub(crate) type Sweeper = fn(

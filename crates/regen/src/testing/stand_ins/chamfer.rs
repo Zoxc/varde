@@ -1,7 +1,9 @@
 //! The stand-in for the kernel's chamfer that tests run in its place
-//! until the kernel's is built (see `crate::testing`).
+//! until the kernel's is built (see [`crate::testing`]).
 
-use super::*;
+use varde_kernel_compat::{
+    BlendError, Budget, ChamferChain, ChamferCut, Solid, Tolerance, Topology,
+};
 
 /// A stand-in for the kernel's chamfer, for tests: each chain must be a
 /// straight, open, convex edge between two planar faces, and is cut off

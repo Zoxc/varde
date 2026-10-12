@@ -2,8 +2,7 @@
 //! shell, offset face, draft): the body's own solid and topology as the
 //! features before leave it, its faces found by their references, the
 //! cache key's start, the kernel's result put in the body's place, and
-//! their refusals and kernel failures put in words with what to draw; for
-//! tests, the box their stand-ins take.
+//! their refusals and kernel failures put in words with what to draw.
 
 use std::sync::Arc;
 
@@ -170,39 +169,4 @@ pub(super) fn draw_region(
     if let Some(region) = topology.regions().get(region as usize) {
         super::add_region(evidence, solid, region);
     }
-}
-
-/// A box's least and greatest corners, and each region's side of it
-/// ([`box_sides`]).
-#[cfg(any(test, feature = "testing"))]
-pub(super) type BoxSides = (glam::DVec3, glam::DVec3, Vec<(usize, usize)>);
-
-/// The box a stand-in for the kernel takes, for tests: `solid` must be
-/// a box along the world's axes (six planar faces square to them, its
-/// volume its box's). Its least and greatest corners, and each region's
-/// side of it: the axis, and 0 at the low end, 1 at the high. `None`
-/// for anything else.
-#[cfg(any(test, feature = "testing"))]
-pub(super) fn box_sides(solid: &Solid, topology: &Topology) -> Option<BoxSides> {
-    use varde_kernel_compat::mesh::Form;
-    let bounds = solid.bounds3()?;
-    let (min, max) = (bounds.min, bounds.max);
-    let size = max - min;
-    let volume = size.x * size.y * size.z;
-    if topology.regions().len() != 6 || (solid.volume() - volume).abs() > 1e-9 * volume {
-        return None;
-    }
-    let mut sides = Vec::with_capacity(6);
-    for region in topology.regions() {
-        let Form::Plane { n, .. } = *crate::picking::region_form(solid, region) else {
-            return None;
-        };
-        let n = n.normalize();
-        let axis = n.abs().max_position();
-        if (n.abs()[axis] - 1.0).abs() > 1e-12 {
-            return None;
-        }
-        sides.push((axis, usize::from(n[axis] > 0.0)));
-    }
-    Some((min, max, sides))
 }

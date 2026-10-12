@@ -42,9 +42,6 @@ use crate::picking::region_form;
 use crate::profile::chain;
 use crate::why::{self, Making};
 
-#[cfg(any(test, feature = "testing"))]
-pub(crate) mod stand_in;
-
 /// The kernel's split, which tests may replace with one built of two
 /// booleans to check what regeneration does with the pieces before the
 /// kernel's is built.

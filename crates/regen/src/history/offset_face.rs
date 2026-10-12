@@ -31,9 +31,6 @@ use super::{Evaluation, Failed};
 use crate::cache::Cache;
 use crate::why;
 
-#[cfg(any(test, feature = "testing"))]
-pub(crate) mod stand_in;
-
 /// The kernel's offset face, which tests may replace with a stand-in to
 /// check what regeneration does with the result before the kernel's is
 /// built.

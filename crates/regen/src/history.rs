@@ -166,19 +166,12 @@ pub(crate) use run::through_all;
 use run::{Run, Shape, boolean_key, cached_boolean};
 
 /// The kernel operations tests may run stand-ins in place of
-/// ([`crate::testing`]): each one's type and its stand-in.
+/// ([`crate::testing`]): each one's type.
 #[cfg(any(test, feature = "testing"))]
-pub(crate) mod stand_ins {
-    pub(crate) use super::chamfer::{Chamferer, stand_in::by_wedges as chamfer};
-    pub(crate) use super::face_draft::{Drafter, stand_in::by_boxes as draft};
-    pub(crate) use super::fillet::{Filleter, stand_in::by_arcs as fillet};
-    pub(crate) use super::loft::{Lofter, stand_in::by_extrude as loft};
-    pub(crate) use super::offset_face::{Offsetter, stand_in::by_boxes as offset};
-    pub(crate) use super::shell::{Sheller, stand_in::by_boxes as shell};
-    pub(crate) use super::split::{Splitter, stand_in::by_booleans as split};
-    pub(crate) use super::sweep::{Sweeper, stand_in::by_extrude as sweep};
-    pub(crate) use super::taper::{Taperer, stand_in::by_frustum as taper};
-}
+pub(crate) use self::{
+    chamfer::Chamferer, face_draft::Drafter, fillet::Filleter, loft::Lofter,
+    offset_face::Offsetter, shell::Sheller, split::Splitter, sweep::Sweeper, taper::Taperer,
+};
 
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.

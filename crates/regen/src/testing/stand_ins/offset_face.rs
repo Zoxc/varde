@@ -1,11 +1,12 @@
 //! The stand-in for the kernel's offset that tests run in its place
-//! until the kernel's is built (see `crate::testing`).
+//! until the kernel's is built (see [`crate::testing`]).
 
-use super::*;
-use crate::history::in_place;
+use varde_kernel_compat::{Budget, OffsetError, Solid, Tolerance, Topology};
+
+use super::box_sides;
 
 /// A stand-in for the kernel's offset face, for tests: the solid must be
-/// a box along the world's axes ([`in_place::box_sides`]), and each face
+/// a box along the world's axes ([`box_sides`]), and each face
 /// picked moves along its normal by `distance`, the four around it
 /// stretched to meet it: one scale along each axis and a move, so every
 /// face keeps its name (as the kernel's keeps them). A face moved onto
@@ -29,7 +30,7 @@ pub(crate) fn by_boxes(
     use varde_kernel_compat::KernelError;
     use varde_kernel_compat::Motion;
     let too_complex = || OffsetError::Failed(KernelError::TooComplex.into());
-    let (min, max, sides) = in_place::box_sides(solid, topology).ok_or_else(too_complex)?;
+    let (min, max, sides) = box_sides(solid, topology).ok_or_else(too_complex)?;
     let size = max - min;
     let (mut lo, mut hi) = (min, max);
     for &region in faces {

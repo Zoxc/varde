@@ -1,11 +1,12 @@
 //! The stand-in for the kernel's shell that tests run in its place
-//! until the kernel's is built (see `crate::testing`).
+//! until the kernel's is built (see [`crate::testing`]).
 
-use super::*;
-use crate::history::in_place;
+use varde_kernel_compat::{Budget, ShellError, Solid, Tolerance, Topology};
+
+use super::box_sides;
 
 /// A stand-in for the kernel's shell, for tests: the solid must be a
-/// box along the world's axes ([`in_place::box_sides`]), and is hollowed by one boolean with another box:
+/// box along the world's axes ([`box_sides`]), and is hollowed by one boolean with another box:
 /// inward, the body less its box shrunk by the thickness (pushed out
 /// past the open faces); outward, its box grown by the thickness (but
 /// at the open faces) less the body's box pushed out past the open
@@ -28,7 +29,7 @@ pub(crate) fn by_boxes(
     use glam::{DVec2, DVec3};
     use varde_kernel_compat::{Frame, KernelError, Loop, Op, Profile, Segment};
     let too_complex = || ShellError::Failed(KernelError::TooComplex.into());
-    let (min, max, sides) = in_place::box_sides(solid, topology).ok_or_else(too_complex)?;
+    let (min, max, sides) = box_sides(solid, topology).ok_or_else(too_complex)?;
     let mut opened = [[false; 2]; 3];
     for &region in open {
         let (axis, end) = *sides.get(region as usize).ok_or_else(too_complex)?;

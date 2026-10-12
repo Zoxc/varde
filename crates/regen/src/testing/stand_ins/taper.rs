@@ -1,7 +1,7 @@
 //! The stand-in for the kernel's taper that tests run in its place
-//! until the kernel's is built (see `crate::testing`).
+//! until the kernel's is built (see [`crate::testing`]).
 
-use super::*;
+use varde_kernel_compat::{Budget, Frame, KernelError, Profile, Solid, TaperError, Tolerance};
 
 /// A stand-in for the kernel's tapered extrude, for tests: a rectangle
 /// along the frame's axes (one loop of four lines), over a span on one

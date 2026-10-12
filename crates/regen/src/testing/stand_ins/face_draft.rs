@@ -1,11 +1,13 @@
 //! The stand-in for the kernel's draft that tests run in its place
-//! until the kernel's is built (see `crate::testing`).
+//! until the kernel's is built (see [`crate::testing`]).
 
-use super::*;
-use crate::history::in_place;
+use glam::DVec3;
+use varde_kernel_compat::{Budget, DraftError, Solid, Tolerance, Topology};
+
+use super::box_sides;
 
 /// A stand-in for the kernel's draft, for tests: the solid must be a box
-/// along the world's axes ([`in_place::box_sides`]) of eight corners,
+/// along the world's axes ([`box_sides`]) of eight corners,
 /// and the pull along a world axis. Each face picked must be one of the
 /// four sides along the pull (a top or bottom faces it:
 /// [`DraftError::FacingPull`]); it turns about its hinge line on the
@@ -36,7 +38,7 @@ pub(crate) fn by_boxes(
     use varde_kernel_compat::KernelError;
     use varde_kernel_compat::mesh::{Edge, Form, Mesh, Surface};
     let too_complex = || DraftError::Failed(KernelError::TooComplex.into());
-    let (min, max, sides) = in_place::box_sides(solid, topology).ok_or_else(too_complex)?;
+    let (min, max, sides) = box_sides(solid, topology).ok_or_else(too_complex)?;
     let mesh = solid.mesh();
     let up = pull.abs().max_position();
     if (pull.abs()[up] - 1.0).abs() > 1e-12 || mesh.verts().len() != 8 {

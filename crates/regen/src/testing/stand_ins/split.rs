@@ -1,7 +1,7 @@
 //! The stand-in for the kernel's split that tests run in its place
-//! until the kernel's is built (see `crate::testing`).
+//! until the kernel's is built (see [`crate::testing`]).
 
-use super::*;
+use varde_kernel_compat::{Budget, Failure, Solid, Tolerance};
 
 /// The kernel's split as two booleans, the front `body ∩ tool` and the
 /// back `body − tool`: what regeneration does with the pieces is tested
