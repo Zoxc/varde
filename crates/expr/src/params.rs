@@ -46,14 +46,11 @@ struct Entry {
 /// A design's parameters, resolved: each name, in the design's order,
 /// with its value or why it has none. What an [`Ask`](crate::Ask) looks
 /// names up in.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Params {
     entries: Vec<Entry>,
     /// Where the first of each name is.
     by_name: BTreeMap<String, usize>,
-    /// Whether an unknown name looks for a near one to suggest: off while
-    /// [`Params::evaluate`] runs, which suggests within a budget after.
-    suggest: bool,
 }
 
 /// The most candidate names [`Params::evaluate`] compares unknown names
@@ -67,19 +64,11 @@ impl Default for Params {
     }
 }
 
-/// The same parameters, results and all; the rest follows from them.
-impl PartialEq for Params {
-    fn eq(&self, other: &Self) -> bool {
-        self.entries == other.entries
-    }
-}
-
 impl Params {
     /// No parameters: any name is unknown.
     pub const EMPTY: &'static Params = &Params {
         entries: Vec::new(),
         by_name: BTreeMap::new(),
-        suggest: true,
     };
 
     /// Resolves `list`, each parameter's name and text, in a design in
@@ -152,15 +141,13 @@ impl Params {
                 })
                 .collect(),
             by_name,
-            suggest: false,
         };
         for at in order {
             if todo[at] {
-                params.entries[at].result = evaluate_param(list[at].1, units, &params);
+                params.entries[at].result = evaluate_param(list[at].1, units, &params, false);
             }
         }
         params.suggest_within_budget();
-        params.suggest = true;
         params
     }
 
@@ -242,8 +229,8 @@ impl Params {
     /// instead ([`exact`](crate::exact)).
     pub fn pin_units(&self, text: &str, units: LengthUnit) -> Result<String, Error> {
         let pinned = pin_param_units(text, units, self)?;
-        let before = evaluate_param(text, units, self)?;
-        match evaluate_param(&pinned, units, self)? {
+        let before = evaluate_param(text, units, self, true)?;
+        match evaluate_param(&pinned, units, self, true)? {
             after if after == before => Ok(pinned),
             after => Err(Error {
                 kind: ErrorKind::Disagrees {
@@ -255,13 +242,14 @@ impl Params {
         }
     }
 
-    /// The value of `name`, used at `span` in an expression.
-    pub(crate) fn quant(&self, name: &str, span: Span) -> Result<Quant, Error> {
+    /// The value of `name`, used at `span` in an expression; if it's
+    /// unknown, with a near one as a suggestion if `suggest`.
+    pub(crate) fn quant(&self, name: &str, span: Span, suggest: bool) -> Result<Quant, Error> {
         let Some(result) = self.get(name) else {
             return Err(Error {
                 kind: ErrorKind::UnknownName {
                     name: name.to_owned(),
-                    suggestion: if self.suggest {
+                    suggestion: if suggest {
                         // One name: all of them may be compared.
                         self.nearest(name, &mut self.entries.len())
                     } else {

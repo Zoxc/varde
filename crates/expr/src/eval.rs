@@ -20,14 +20,19 @@ pub fn evaluate(text: &str, ask: &Ask) -> Result<f64, Error> {
 /// Evaluates a parameter's `text` in a design in `units`, with the
 /// parameters it may use: a length, an angle or a number, whichever it
 /// comes to. Bare numbers alone are a number, so `50` is a number, not a
-/// length; `50 mm` is a length.
+/// length; `50 mm` is a length. An unknown name looks for a near one to
+/// suggest if `suggest`: not while [`Params::evaluate`] runs, which
+/// suggests within a budget after.
 pub(crate) fn evaluate_param(
     text: &str,
     units: LengthUnit,
     params: &Params,
+    suggest: bool,
 ) -> Result<Resolved, Error> {
     let expr = parse(text)?;
-    Evaluator::new(units, params).free(&expr)
+    let mut evaluator = Evaluator::new(units, params);
+    evaluator.suggest = suggest;
+    evaluator.free(&expr)
 }
 
 /// [`pin_units`] for a parameter's `text`, as [`Params::pin_units`]
@@ -156,6 +161,8 @@ struct Evaluator<'a> {
     /// The design's length unit, which bare numbers take.
     units: LengthUnit,
     params: &'a Params,
+    /// Whether an unknown name looks for a near one to suggest.
+    suggest: bool,
     pins: Vec<Pin>,
 }
 
@@ -164,6 +171,7 @@ impl<'a> Evaluator<'a> {
         Evaluator {
             units,
             params,
+            suggest: true,
             pins: Vec::new(),
         }
     }
@@ -280,7 +288,7 @@ impl<'a> Evaluator<'a> {
                 dim: Dim::NONE,
                 bare: true,
             }),
-            Node::Name(name) => self.params.quant(name, span),
+            Node::Name(name) => self.params.quant(name, span, self.suggest),
             Node::Group(inner) => self.eval(inner),
             &Node::Unit(ref inner, unit) => {
                 let quant = self.eval(inner)?;
