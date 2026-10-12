@@ -217,7 +217,7 @@ up `I` and the selected feature's `Enter` and `Delete` don't act; `S`,
 the mock's two overlapping boxes, in the Modify colours; the mock's
 tinted overlap is a fill the line-only set leaves out) and its operation
 as the note; selected, the status bar says "Body 1 with Body 2, Body 3 ·
-Union · tools kept" (`feature_info`).
+Union · tools kept" (`combine_info`).
 
 **Merges replayed in the app**: `MeshFeed::merged_before(document,
 until)` replays, in the document's order, the joins the model shown

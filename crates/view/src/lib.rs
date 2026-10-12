@@ -22,6 +22,7 @@ mod errors;
 mod escape;
 mod extrude;
 mod face_draft;
+mod feature_text;
 mod fillet;
 mod hit;
 mod icons;

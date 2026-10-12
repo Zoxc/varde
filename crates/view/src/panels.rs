@@ -7,9 +7,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Font, Length, Padding};
 use std::collections::BTreeSet;
-use varde_document::{
-    BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Named, Opacity, Tint,
-};
+use varde_document::{BodyId, Document, Feature, FeatureId, FeatureKind, Named, Opacity, Tint};
 use varde_expr::LengthUnit;
 use varde_render::{BodyTint, OriginShown};
 
@@ -19,6 +17,7 @@ use crate::chrome::{self, ChipSize, Edge, edged, icon_button, key_chip};
 use crate::context_menu::ContextMenu;
 use crate::document::{shown_color, shown_opacity};
 use crate::escape::OnEscape;
+use crate::feature_text::{feature_icon, feature_note};
 use crate::icons::{self, Icon};
 use crate::menu::{menu_item, menu_separator, ticked};
 use crate::mouse_only::MouseOnly;
@@ -343,29 +342,6 @@ fn rename_row<'a>(icon: Icon, text: &'a str, indent: f32) -> Element<'a, Message
     .into()
 }
 
-/// The icon of `feature`, in the Timeline and wherever it's listed.
-pub(crate) fn feature_icon(feature: &Feature) -> Icon {
-    match feature.kind {
-        FeatureKind::Sketch { .. } => Icon::Sketch,
-        FeatureKind::Extrude(_) => Icon::Extrude,
-        FeatureKind::Revolve(_) => Icon::Revolve,
-        FeatureKind::Combine(_) => Icon::Combine,
-        FeatureKind::Move(_) | FeatureKind::Mirror(_) | FeatureKind::Pattern(_) => {
-            crate::MotionKind::of(&feature.kind).map_or(Icon::Move, crate::MotionKind::icon)
-        }
-        FeatureKind::Align(_) => Icon::Align,
-        FeatureKind::Scale(_) => Icon::Scale,
-        FeatureKind::Split(_) => Icon::Split,
-        FeatureKind::Chamfer(_) => Icon::BChamfer,
-        FeatureKind::Shell(_) => Icon::Shell,
-        FeatureKind::Fillet(_) => Icon::BFillet,
-        FeatureKind::OffsetFace(_) => Icon::OffsetFace,
-        FeatureKind::FaceDraft(_) => Icon::Draft,
-        FeatureKind::Sweep(_) => Icon::Sweep,
-        FeatureKind::Loft(_) => Icon::Loft,
-    }
-}
-
 /// A feature of `document` in the Timeline, with its note: a sketch's
 /// plane ([`plane_note`](crate::plane_note)), an extrude's distances in
 /// `units`, how far a revolve turns in all. Marked failed if it's
@@ -388,23 +364,7 @@ fn feature_row<'a>(
 ) -> Element<'a, Message> {
     let note = match &feature.kind {
         FeatureKind::Sketch { .. } if unsolved => "Doesn't solve".into(),
-        FeatureKind::Sketch { plane, .. } => crate::plane_note(document, plane).into(),
-        FeatureKind::Extrude(extrude) => extrude_note(extrude, units).into(),
-        FeatureKind::Revolve(revolve) => turn_note(&revolve.extent).into(),
-        FeatureKind::Combine(combine) => combine.op.label().into(),
-        FeatureKind::Move(moved) => crate::motion::move_note(moved, units).into(),
-        FeatureKind::Mirror(mirror) => crate::motion::plane_short(document, &mirror.plane).into(),
-        FeatureKind::Pattern(pattern) => crate::motion::pattern_note(pattern).into(),
-        FeatureKind::Align(align) => crate::motion::align_note(document, align).into(),
-        FeatureKind::Scale(scale) => crate::motion::scale_note(scale, units).into(),
-        FeatureKind::Split(split) => crate::motion::split_note(document, split).into(),
-        FeatureKind::Chamfer(chamfer) => crate::chamfer::chamfer_note(chamfer, units).into(),
-        FeatureKind::Shell(shell) => crate::shell::shell_note(shell, units).into(),
-        FeatureKind::Fillet(fillet) => crate::fillet::fillet_note(fillet, units).into(),
-        FeatureKind::OffsetFace(offset) => crate::offset_face::offset_note(offset, units).into(),
-        FeatureKind::FaceDraft(draft) => crate::face_draft::draft_note(draft).into(),
-        FeatureKind::Sweep(sweep) => crate::sweep::sweep_note(document, sweep).into(),
-        FeatureKind::Loft(loft) => crate::loft::loft_note(loft).into(),
+        _ => feature_note(document, feature, units).into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -529,60 +489,6 @@ fn sized_row_menu<'a>(items: Vec<Element<'a, Message>>, width: f32) -> Element<'
         .padding(4)
         .style(theme::menu)
         .into()
-}
-
-/// How far an extrude goes, for its Timeline row, in `units`: "10 mm",
-/// "10 mm symmetric", "10 mm + 5 mm", "Through all".
-pub(crate) fn extent_note(extent: &Extent, units: LengthUnit) -> String {
-    let length = |value| length_note(value, units);
-    match extent {
-        Extent::OneSide(d) => length(d),
-        Extent::Symmetric(d) => format!("{} symmetric", length(d)),
-        Extent::TwoSides(a, b) => format!("{} + {}", length(a), length(b)),
-        Extent::ThroughAll => "Through all".to_owned(),
-    }
-}
-
-/// An extrude's Timeline note: its extent, and its taper if it has
-/// one, "10 mm · 2°".
-pub(crate) fn extrude_note(extrude: &varde_document::Extrude, units: LengthUnit) -> String {
-    let extent = extent_note(&extrude.extent, units);
-    match extrude.tapered() {
-        Some(taper) => format!("{extent} · {}", angle_note(taper.value)),
-        None => extent,
-    }
-}
-
-/// How far a revolve turns in all, for its Timeline row: "360°", "90°",
-/// "135°" for two sides of 90° and 45°.
-pub(crate) fn turn_note(turn: &varde_document::Turn) -> String {
-    use varde_document::Turn;
-    let total = match turn {
-        Turn::Full => std::f64::consts::TAU,
-        Turn::OneSide(a) | Turn::Symmetric(a) => a.value,
-        // Each side is checked to be at most a turn, so the sum is
-        // finite.
-        Turn::TwoSides(a, b) => a.value + b.value,
-    };
-    angle_note(total)
-}
-
-/// How far a revolve turns, for the status bar: "Full 360°", "One side
-/// 90°", "Symmetric 90°", "Two sides 90° + 45°".
-pub(crate) fn turn_info(turn: &varde_document::Turn) -> String {
-    use varde_document::Turn;
-    match turn {
-        Turn::Full => format!("Full {}", angle_note(std::f64::consts::TAU)),
-        Turn::OneSide(a) => format!("One side {}", angle_note(a.value)),
-        Turn::Symmetric(a) => format!("Symmetric {}", angle_note(a.value)),
-        Turn::TwoSides(a, b) => {
-            format!(
-                "Two sides {} + {}",
-                angle_note(a.value),
-                angle_note(b.value)
-            )
-        }
-    }
 }
 
 /// An angle of `radians`, as angles are shown: "90°".
@@ -2301,6 +2207,8 @@ pub(crate) fn value_field<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extrude::{extent_note, extrude_note};
+    use varde_document::Extent;
 
     #[test]
     fn a_size_the_constraints_set_is_noted_driven_and_one_a_dimension_gives_faint() {

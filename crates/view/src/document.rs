@@ -12,8 +12,8 @@ use iced::widget::{Space, column, container, row, space, stack, text, text_input
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
-    APP_NAME, AxisLine, Body, BodyId, Document, EditError, Editor, Extent, Feature, FeatureId,
-    FeatureKind, Opacity, Placement, Plane, Tint,
+    APP_NAME, Body, BodyId, Document, EditError, Editor, Feature, FeatureId, FeatureKind, Opacity,
+    Placement, Plane, Tint,
 };
 use varde_expr::LengthUnit;
 use varde_kernel_compat::{RenderLines, RenderMesh};
@@ -27,15 +27,16 @@ use crate::chrome::{
     self, Hint, chord_hint, dialog, dialog_button, double_hint, key_hint, mouse_hint, small_button,
     step_hint,
 };
+use crate::feature_text::{feature_icon, feature_info};
 use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::{DocumentKeys, Held, Shortcut};
 use crate::status::{self, Status};
 use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
-    ConstraintKind, Downloads, Edit, ExtrudeState, File, Location, Look, Message, OperationKind,
-    Panel, PlanePick, RevolvePick, RevolveState, RowMenu, SavePlace, Snap, Target, Tool, Unsaved,
-    panels, theme, toolbar, viewport,
+    ConstraintKind, Downloads, Edit, ExtrudeState, File, Location, Look, Message, Panel, PlanePick,
+    RevolvePick, RevolveState, RowMenu, SavePlace, Snap, Target, Tool, Unsaved, panels, theme,
+    toolbar, viewport,
 };
 
 /// The operation being set up, or the measure tool in use: one at a
@@ -1761,7 +1762,7 @@ fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
     let features = prompt
         .features
         .iter()
-        .map(|feature| item(panels::feature_icon(feature), feature.name.as_str()));
+        .map(|feature| item(feature_icon(feature), feature.name.as_str()));
     let bodies = prompt
         .bodies
         .iter()
@@ -2077,7 +2078,7 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
     }
     Some(
         row![
-            icons::icon(panels::feature_icon(feature), icons::INLINE),
+            icons::icon(feature_icon(feature), icons::INLINE),
             text(feature.name.as_str())
                 .size(12)
                 .wrapping(Wrapping::None)
@@ -2263,90 +2264,6 @@ fn surface_name(summary: &varde_regen::Summary) -> &'static str {
         Summary::Sphere { .. } => "Sphere",
         Summary::Torus { .. } => "Torus",
         Summary::ConicCylinder { .. } | Summary::Revolved { .. } | Summary::Other => "Curved",
-    }
-}
-
-/// The status bar's info on the selected `feature` of `document`, after
-/// its name: a sketch's curves and plane, "4 lines · 1 circle · 5 points
-/// · on XY", an extrude's extent in the document's units and operation,
-/// "Distance 10 mm · New body", or a revolve's turn, operation and axis,
-/// "One side 90° · Join · about Line 3" (the axis left out while its
-/// sketch doesn't have it; last, as the box clips what doesn't fit and
-/// a line's name says least).
-fn feature_info(feature: &Feature, document: &Document) -> String {
-    let units = document.units();
-    match &feature.kind {
-        FeatureKind::Sketch { plane, sketch, .. } => {
-            let on = crate::plane_pick::on_plane(document, plane);
-            format!("{} · {on}", sketch_summary(sketch))
-        }
-        FeatureKind::Extrude(extrude) => {
-            let note = panels::extent_note(&extrude.extent, units);
-            let extent = match &extrude.extent {
-                Extent::OneSide(d) => format!("Distance {}", panels::length_note(d, units)),
-                Extent::Symmetric(d) => format!("Symmetric {}", panels::length_note(d, units)),
-                Extent::TwoSides(..) => format!("Two sides {note}"),
-                Extent::ThroughAll => note,
-            };
-            let operation = OperationKind::of(&extrude.operation).label();
-            match extrude.tapered() {
-                Some(taper) => {
-                    let taper = panels::angle_note(taper.value);
-                    format!("{extent} · Taper {taper} · {operation}")
-                }
-                None => format!("{extent} · {operation}"),
-            }
-        }
-        FeatureKind::Revolve(revolve) => {
-            let operation = OperationKind::of(&revolve.operation).label();
-            let axis = match (
-                revolve.axis,
-                document.feature(revolve.sketch).map(|f| &f.kind),
-            ) {
-                (AxisLine::Edge(edge), _) => Some(crate::revolve::edge_axis_name(document, &edge)),
-                (axis, Some(FeatureKind::Sketch { sketch, .. })) => {
-                    crate::revolve::axis_id(axis).and_then(|id| sketch.name(id))
-                }
-                _ => None,
-            };
-            let turn = panels::turn_info(&revolve.extent);
-            match axis {
-                Some(axis) => format!("{turn} · {operation} · about {axis}"),
-                None => format!("{turn} · {operation}"),
-            }
-        }
-        FeatureKind::Combine(combine) => {
-            let name = |body| {
-                document
-                    .body(body)
-                    .map_or("a body", |body| body.name.as_str())
-            };
-            let tools: Vec<&str> = combine.tools.iter().map(|&tool| name(tool)).collect();
-            let kept = if combine.keep_tools {
-                " · tools kept"
-            } else {
-                ""
-            };
-            format!(
-                "{} with {} · {}{kept}",
-                name(combine.target),
-                tools.join(", "),
-                combine.op.label()
-            )
-        }
-        FeatureKind::Move(moved) => crate::motion::move_info(document, moved),
-        FeatureKind::Mirror(mirror) => crate::motion::mirror_info(document, mirror),
-        FeatureKind::Pattern(pattern) => crate::motion::pattern_info(document, pattern),
-        FeatureKind::Align(align) => crate::motion::align_info(document, align),
-        FeatureKind::Scale(scale) => crate::motion::scale_info(document, scale, units),
-        FeatureKind::Split(split) => crate::motion::split_info(document, split),
-        FeatureKind::Chamfer(chamfer) => crate::chamfer::chamfer_info(chamfer, units),
-        FeatureKind::Shell(shell) => crate::shell::shell_info(shell, units),
-        FeatureKind::Fillet(fillet) => crate::fillet::fillet_info(fillet, units),
-        FeatureKind::OffsetFace(offset) => crate::offset_face::offset_info(offset, units),
-        FeatureKind::FaceDraft(draft) => crate::face_draft::draft_info(document, draft),
-        FeatureKind::Sweep(sweep) => crate::sweep::sweep_info(document, sweep),
-        FeatureKind::Loft(loft) => crate::loft::loft_info(loft),
     }
 }
 
@@ -2796,7 +2713,7 @@ mod tests {
             ),
         ];
         for (extent, note, info) in cases {
-            assert_eq!(panels::turn_note(&extent), note);
+            assert_eq!(crate::revolve::turn_note(&extent), note);
             assert_eq!(feature_info(&revolve(extent, x), &document), info);
         }
         // The Y axis, and a line of the sketch, by their names.
@@ -2814,7 +2731,7 @@ mod tests {
             feature_info(&on_line, &document),
             format!("Full 360° · Cut · about {}", line.name())
         );
-        assert_eq!(panels::feature_icon(&y), Icon::Revolve);
+        assert_eq!(feature_icon(&y), Icon::Revolve);
     }
 
     #[test]

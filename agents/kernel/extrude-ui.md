@@ -203,7 +203,7 @@ typed.
 
 **The Timeline** (`view/src/panels.rs`) shows an extrude with the extrude
 icon and its distances as the note, in the design's units
-(`extent_note`: "10 mm", "10 mm symmetric", "10 mm + 5 mm", "Through
+(`extrude::extent_note`: "10 mm", "10 mm symmetric", "10 mm + 5 mm", "Through
 all"), a taper after it (`extrude_note`: "10 mm · 2°"; the status bar
 "Distance 10 mm · Taper 2° · New body"). A tapered extrude's preview
 fails until the kernel's taper is built ("a tapered extrude isn't
@@ -278,7 +278,8 @@ press off a menu closes it alone; any other message closes it too, and
 it goes with what its row lists. Outside a
 sketch or a session the floating status bar (`view/src/status.rs`, as
 the mock's; see `agents/viewport.md`) shows the feature selected in a
-box of its own, its icon, name and `feature_info` (`view/src/document.rs`:
+box of its own, its icon, name and `feature_info` (`view/src/feature_text.rs`, which
+hands off to `extrude::extrude_info` and the other kinds' own:
 "Distance 10 mm · New body", "Symmetric 4 mm · Cut", a sketch's
 "4 lines · 1 circle · 5 points · on XY"), and nothing of the model with
 none; then regenerating, failures and saving, cut short before the
