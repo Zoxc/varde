@@ -5945,7 +5945,7 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
             .center_y()
     };
     assert!((y("Features") - y("Edges")).abs() < 1.0);
-    assert!(!open.iter().any(|t| t.text == "Shaded"));
+    assert!(!open.iter().any(|t| t.text == "Regular"));
     hover(&mut varde, &mut renderer, "Perspective");
     assert!(
         !shown(&varde, &mut renderer)
@@ -5961,7 +5961,7 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
             .bounds
             .center_y()
     };
-    assert!((y("Shaded") - y("Shading")).abs() < 1.0);
+    assert!((y("Regular") - y("Shading")).abs() < 1.0);
     let _ = varde.update(Message::Ui(Ui::Look(Look::CloseViewMenu)));
 
     // `Esc` closes it, and a click off it.

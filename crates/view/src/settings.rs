@@ -20,6 +20,10 @@ use crate::mouse::{DragAction, PivotClick, RotationPoint};
 use crate::mouse_only::MouseOnly;
 use crate::shortcut::{KeyName, Shortcut};
 use crate::theme::{self, Emphasis, TabLook, Tone};
+use crate::view_choices::{
+    EDGES, PROJECTIONS, SHADINGS, edges_icon, edges_said, projection_icon, projection_said,
+    shading_icon, shading_said,
+};
 use crate::{
     AUTO_SAVE_MINUTES, Edges, INTERFACE_SCALE_MAX, INTERFACE_SCALE_MIN, INTERFACE_SCALE_STEP,
     MCP_PORT_DEFAULT, MCP_PORT_MAX, MCP_PORT_MIN, Message, RECENT_DESIGNS, ThemeChoice,
@@ -566,46 +570,6 @@ fn theme_icon(theme: ThemeChoice) -> Icon {
     }
 }
 
-fn projection_said(projection: Projection) -> &'static str {
-    match projection {
-        Projection::Orthographic => "Orthographic",
-        Projection::Perspective => "Perspective",
-    }
-}
-
-fn projection_icon(projection: Projection) -> Icon {
-    match projection {
-        Projection::Orthographic => Icon::Ortho,
-        Projection::Perspective => Icon::Persp,
-    }
-}
-
-const SHADINGS: [Shading; 4] = [
-    Shading::Regular,
-    Shading::Flat,
-    Shading::Metal,
-    Shading::FlatMetal,
-];
-
-fn shading_said(shading: Shading) -> &'static str {
-    match shading {
-        Shading::Regular => "Regular",
-        Shading::Flat => "Flat",
-        Shading::Metal => "Metal",
-        Shading::FlatMetal => "Flat metal",
-    }
-}
-
-const EDGES: [Edges; 3] = [Edges::Default, Edges::Wireframe, Edges::Tessellation];
-
-pub(crate) fn edges_said(edges: Edges) -> &'static str {
-    match edges {
-        Edges::Default => "Features",
-        Edges::Wireframe => "Patches",
-        Edges::Tessellation => "Triangles",
-    }
-}
-
 /// The settings gear, for the top right of a document's toolbar: on
 /// while the page is `open`, and closing it then.
 pub(crate) fn settings_button<'a>(open: bool) -> Element<'a, Message> {
@@ -796,7 +760,7 @@ fn section<'a>(
                 choice(
                     "Projection",
                     "Perspective shrinks what is farther away",
-                    [Projection::Orthographic, Projection::Perspective],
+                    PROJECTIONS,
                     (options.projection, d.projection),
                     Setting::Projection,
                     projection_said,
@@ -809,7 +773,7 @@ fn section<'a>(
                     (options.shading, d.shading),
                     Setting::Shading,
                     shading_said,
-                    Some(crate::status::shading_icon),
+                    Some(shading_icon),
                 ),
                 choice(
                     "Edges",
@@ -818,7 +782,7 @@ fn section<'a>(
                     (options.edges, d.edges),
                     Setting::Edges,
                     edges_said,
-                    Some(crate::status::edges_icon),
+                    Some(edges_icon),
                 ),
                 on_off_row(
                     "Hidden edges",

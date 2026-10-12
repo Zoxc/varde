@@ -66,6 +66,7 @@ mod thumbnail;
 mod toolbar;
 pub use toolbar::{motion_picks_origin_planes, tolerance_label};
 pub mod typed;
+mod view_choices;
 mod view_cube;
 mod viewport;
 mod welcome;

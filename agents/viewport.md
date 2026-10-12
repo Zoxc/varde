@@ -113,10 +113,10 @@ opens it to the menu's left as it's hovered or clicked
 (`Look::ViewSubmenu`, kept in `Doc::view_submenu` and shown as
 `Overlay::ViewMenu`'s), its first choice beside the item (the items are
 `MENU_ITEM_HEIGHT` tall); hovering another item closes it. Its choices
-have icons, the one chosen ticked at its right (`choice_item`). Shading:
-Shaded, Flat shaded, Metal or Flat metal (`Frame::shading`, see
-"Shading" below). Edges (`Edges`, named as the settings page names them,
-`settings::edges_said`): Features (`Edges::Default`), the feature edges
+have icons, the one chosen ticked at its right (`choice_item`). Its
+choices are listed, named and drawn as the settings page's, from
+`view_choices`. Shading: Regular, Flat, Metal or Flat metal
+(`Frame::shading`, see "Shading" below). Edges (`Edges`): Features (`Edges::Default`), the feature edges
 only; Patches (`Edges::Wireframe`), with the mesh's wires too, every patch's edges that aren't
 feature edges (`Frame::wireframe`); or Triangles (`Edges::Tessellation`), with every
 triangle's edges (`Frame::tessellation`). The app keeps those for every

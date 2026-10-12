@@ -16,6 +16,9 @@ use crate::theme::{self, Tone};
 use crate::toolbar::{
     MENU_ITEM_HEIGHT, choice_item, menu_item, menu_separator, submenu_item, ticked,
 };
+use crate::view_choices::{
+    EDGES, SHADINGS, edges_icon, edges_said, projection_said, shading_icon, shading_said,
+};
 use crate::{Edges, Look, Message, ViewOptions, ViewSubmenu};
 
 /// How tall the status bar is, its border included, in pixels.
@@ -165,10 +168,10 @@ pub fn view_menu<'a>(
         let item = submenu_item(icon, label, submenu == Some(which), open(Some(which)));
         mouse_area(item).on_enter(open(Some(which))).into()
     };
-    let projection_item = |label, choice| {
+    let projection_item = |choice| {
         closing(menu_item(
             ticked(projection == choice),
-            label,
+            projection_said(choice).into(),
             None,
             Some(Message::SetProjection(choice)),
         ))
@@ -185,8 +188,8 @@ pub fn view_menu<'a>(
             ),
             opening(ViewSubmenu::Edges, edges_icon(options.edges), "Edges"),
             menu_separator(),
-            projection_item("Orthographic".into(), Projection::Orthographic),
-            projection_item("Perspective".into(), Projection::Perspective),
+            projection_item(Projection::Orthographic),
+            projection_item(Projection::Perspective),
             menu_separator(),
             toggle(
                 options.mouse_hints,
@@ -236,48 +239,24 @@ pub fn view_menu<'a>(
 
 /// The shadings, in the Shading submenu, `chosen` ticked.
 fn shading_choices<'a>(chosen: Shading) -> Vec<Element<'a, Message>> {
-    [
-        (Shading::Regular, "Shaded"),
-        (Shading::Flat, "Flat shaded"),
-        (Shading::Metal, "Metal"),
-        (Shading::FlatMetal, "Flat metal"),
-    ]
-    .into_iter()
-    .map(|(shading, label)| {
-        let message = Message::SetShading(shading);
-        choice_item(shading_icon(shading), label, shading == chosen, message).into()
-    })
-    .collect()
-}
-
-/// The edges drawn, in the Edges submenu, `chosen` ticked.
-fn edges_choices<'a>(chosen: Edges) -> Vec<Element<'a, Message>> {
-    // Named as the settings page names them.
-    [Edges::Default, Edges::Wireframe, Edges::Tessellation]
-        .into_iter()
-        .map(|edges| {
-            let message = Message::SetEdges(edges);
-            let label = crate::settings::edges_said(edges);
-            choice_item(edges_icon(edges), label, edges == chosen, message).into()
+    (SHADINGS.into_iter())
+        .map(|shading| {
+            let message = Message::SetShading(shading);
+            let label = shading_said(shading);
+            choice_item(shading_icon(shading), label, shading == chosen, message).into()
         })
         .collect()
 }
 
-pub(crate) fn shading_icon(shading: Shading) -> Icon {
-    match shading {
-        Shading::Regular => Icon::ShadeRegular,
-        Shading::Flat => Icon::ShadeFlat,
-        Shading::Metal => Icon::ShadeMetal,
-        Shading::FlatMetal => Icon::ShadeFlatMetal,
-    }
-}
-
-pub(crate) fn edges_icon(edges: Edges) -> Icon {
-    match edges {
-        Edges::Default => Icon::EdgesDefault,
-        Edges::Wireframe => Icon::EdgesWireframe,
-        Edges::Tessellation => Icon::EdgesTessellation,
-    }
+/// The edges drawn, in the Edges submenu, `chosen` ticked.
+fn edges_choices<'a>(chosen: Edges) -> Vec<Element<'a, Message>> {
+    (EDGES.into_iter())
+        .map(|edges| {
+            let message = Message::SetEdges(edges);
+            let label = edges_said(edges);
+            choice_item(edges_icon(edges), label, edges == chosen, message).into()
+        })
+        .collect()
 }
 
 /// A part of one of the bar's boxes.
