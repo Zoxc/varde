@@ -1939,21 +1939,16 @@ fn render(args: &Arguments) -> Result<Render, CallError> {
     };
     const HIGHLIGHT: &str = "highlight is a list of {\"face\": key} and {\"edge\": key} (keys \
                              from body_topology)";
-    let highlight = match args.map.get("highlight") {
-        None | Some(Value::Null) => Vec::new(),
-        Some(Value::Array(items)) if items.len() > MAX_ITEMS => {
-            return Err(args.error(format_args!("highlight has more than {MAX_ITEMS} items")));
-        }
-        Some(Value::Array(items)) => (items.iter())
-            .map(|item| match item {
-                Value::Object(map) if map.len() == 1 => args
-                    .keyed(map, &[ItemKind::Face, ItemKind::Edge])?
-                    .ok_or_else(|| args.error(HIGHLIGHT)),
-                _ => Err(args.error(HIGHLIGHT)),
-            })
-            .collect::<Result<_, _>>()?,
-        Some(_) => return Err(args.error(HIGHLIGHT)),
-    };
+    let highlight = (args.list("highlight", 0, MAX_ITEMS, "faces and edges")?)
+        .unwrap_or_default()
+        .iter()
+        .map(|item| match item {
+            Value::Object(map) if map.len() == 1 => args
+                .keyed(map, &[ItemKind::Face, ItemKind::Edge])?
+                .ok_or_else(|| args.error(HIGHLIGHT)),
+            _ => Err(args.error(HIGHLIGHT)),
+        })
+        .collect::<Result<_, _>>()?;
     Ok(Render {
         bodies: args.names("bodies")?,
         from,
@@ -2000,6 +1995,11 @@ fn profile(item: &Value) -> Option<Profile> {
         ])),
         _ => None,
     }
+}
+
+/// An id: a whole number that fits a `u32`.
+fn id(value: &Value) -> Option<u32> {
+    value.as_u64().and_then(|n| u32::try_from(n).ok())
 }
 
 /// A coordinate or a length: typed text of at most [`TEXT_BYTES`], not
@@ -2068,15 +2068,22 @@ impl<'a> Arguments<'a> {
     /// A name: a string, not empty, at most [`NAME_BYTES`].
     fn name(&self, key: &str) -> Result<String, CallError> {
         match self.map.get(key) {
-            Some(Value::String(s)) if s.trim().is_empty() => {
+            None => Err(self.error(format_args!("{key} is required"))),
+            Some(value) => self.check_name(key, value),
+        }
+    }
+
+    /// [`Arguments::name`] of `value`, sent as `key`.
+    fn check_name(&self, key: &str, value: &Value) -> Result<String, CallError> {
+        match value {
+            Value::String(s) if s.trim().is_empty() => {
                 Err(self.error(format_args!("{key} is empty")))
             }
-            Some(Value::String(s)) if s.len() > NAME_BYTES => {
+            Value::String(s) if s.len() > NAME_BYTES => {
                 Err(self.error(format_args!("{key} is longer than {NAME_BYTES} bytes")))
             }
-            Some(Value::String(s)) => Ok(s.clone()),
-            None => Err(self.error(format_args!("{key} is required"))),
-            Some(_) => Err(self.error(format_args!("{key} is a string"))),
+            Value::String(s) => Ok(s.clone()),
+            _ => Err(self.error(format_args!("{key} is a string"))),
         }
     }
 
@@ -2221,25 +2228,41 @@ impl<'a> Arguments<'a> {
 
     /// A list of names, at most [`MAX_ITEMS`]; none if not sent.
     fn names(&self, key: &str) -> Result<Vec<String>, CallError> {
-        let items = match self.map.get(key) {
-            None | Some(Value::Null) => return Ok(Vec::new()),
-            Some(Value::Array(items)) if items.len() > MAX_ITEMS => {
-                return Err(self.error(format_args!("{key} has more than {MAX_ITEMS} names")));
-            }
-            Some(Value::Array(items)) => items,
-            Some(_) => return Err(self.error(format_args!("{key} is a list of names"))),
-        };
-        items
+        (self.list(key, 0, MAX_ITEMS, "names")?)
+            .unwrap_or_default()
             .iter()
-            .map(|item| {
-                let one = Map::from_iter([(key.to_owned(), item.clone())]);
-                Arguments {
-                    tool: self.tool,
-                    map: &one,
-                }
-                .name(key)
-            })
+            .map(|item| self.check_name(key, item))
             .collect()
+    }
+
+    /// `key`, a list of `least` to `most` `what`; none if not sent.
+    fn list(
+        &self,
+        key: &str,
+        least: usize,
+        most: usize,
+        what: &str,
+    ) -> Result<Option<&'a [Value]>, CallError> {
+        match self.map.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::Array(items)) if (least..=most).contains(&items.len()) => Ok(Some(items)),
+            Some(_) if least == 0 => {
+                Err(self.error(format_args!("{key} is a list of at most {most} {what}")))
+            }
+            Some(_) => Err(self.error(format_args!("{key} is a list of {least} to {most} {what}"))),
+        }
+    }
+
+    /// [`Arguments::list`], required.
+    fn required_list(
+        &self,
+        key: &str,
+        least: usize,
+        most: usize,
+        what: &str,
+    ) -> Result<&'a [Value], CallError> {
+        (self.list(key, least, most, what)?)
+            .ok_or_else(|| self.error(format_args!("{key} is required")))
     }
 
     /// `profiles`, required: `"all"`, or a list of region indices and
@@ -2249,16 +2272,9 @@ impl<'a> Arguments<'a> {
         const SAID: &str = "profiles is \"all\" or a list of region indices (as sketch lists \
                             them) and points [x, y] inside regions";
         let items = match self.map.get("profiles") {
-            None => return Err(self.error("profiles is required")),
             Some(Value::String(all)) if all == "all" => return Ok(Profiles::All),
-            Some(Value::Array(items)) if items.is_empty() => {
-                return Err(self.error("profiles is empty: give at least one, or \"all\""));
-            }
-            Some(Value::Array(items)) if items.len() > MAX_ITEMS => {
-                return Err(self.error(format_args!("profiles has more than {MAX_ITEMS} items")));
-            }
-            Some(Value::Array(items)) => items,
-            Some(_) => return Err(self.error(SAID)),
+            Some(Value::String(_)) => return Err(self.error(SAID)),
+            _ => self.required_list("profiles", 1, MAX_ITEMS, "regions, or \"all\"")?,
         };
         items
             .iter()
@@ -2279,8 +2295,7 @@ impl<'a> Arguments<'a> {
                 let axis = self.nested(map);
                 axis.only(&["line", "edge"])?;
                 match (map.get("line"), map.contains_key("edge")) {
-                    (Some(line), false) => (line.as_u64())
-                        .and_then(|id| u32::try_from(id).ok())
+                    (Some(line), false) => id(line)
                         .map(Axis::Line)
                         .ok_or_else(|| self.error("axis.line is a line's id, a whole number")),
                     (None, true) => axis.name("edge").map(Axis::Edge),
@@ -2304,27 +2319,18 @@ impl<'a> Arguments<'a> {
     /// A list of chains of sketch curves `key`, each `{"sketch": name,
     /// "curve": id}`, at most [`MAX_ITEMS`]; none if not sent.
     fn curves_in(&self, key: &str) -> Result<Vec<CurveIn>, CallError> {
-        let said = || {
-            self.error(format_args!(
-                "{key} is a list of at most {MAX_ITEMS} {{\"sketch\": name, \"curve\": id}}"
-            ))
-        };
-        let items = match self.map.get(key) {
-            None | Some(Value::Null) => return Ok(Vec::new()),
-            Some(Value::Array(items)) if items.len() <= MAX_ITEMS => items,
-            Some(_) => return Err(said()),
-        };
-        (items.iter())
+        const WHAT: &str = "{\"sketch\": name, \"curve\": id}";
+        let said = || self.error(format_args!("{key} is a list of {WHAT}"));
+        (self.list(key, 0, MAX_ITEMS, WHAT)?)
+            .unwrap_or_default()
+            .iter()
             .map(|item| {
                 let Value::Object(map) = item else {
                     return Err(said());
                 };
                 let one = self.nested(map);
                 one.only(&["sketch", "curve"])?;
-                let curve = (map.get("curve"))
-                    .and_then(Value::as_u64)
-                    .and_then(|id| u32::try_from(id).ok())
-                    .ok_or_else(said)?;
+                let curve = map.get("curve").and_then(id).ok_or_else(said)?;
                 Ok(CurveIn {
                     sketch: one.name("sketch")?,
                     curve,
@@ -2373,39 +2379,30 @@ impl<'a> Arguments<'a> {
     /// `{"sketch": name, "region": index or [x, y], "start"?: id}` or
     /// `{"sketch": name, "point": id}`.
     fn sections(&self) -> Result<Vec<Section>, CallError> {
-        const SAID: &str = "sections is a list of 1 to 256 sections, each {\"sketch\": name, \
-                            \"region\": index or [x, y], \"start\"?: point id} or \
-                            {\"sketch\": name, \"point\": id}";
-        let items = match self.map.get("sections") {
-            None | Some(Value::Null) => return Err(self.error("sections is required")),
-            Some(Value::Array(items)) if !items.is_empty() && items.len() <= MAX_ITEMS => items,
-            Some(_) => return Err(self.error(SAID)),
-        };
-        let id = |value: Option<&Value>| {
-            (value.and_then(Value::as_u64)).and_then(|id| u32::try_from(id).ok())
-        };
-        (items.iter())
+        const WHAT: &str = "sections, each {\"sketch\": name, \"region\": index or [x, y], \
+                            \"start\"?: point id} or {\"sketch\": name, \"point\": id}";
+        let said = || self.error(format_args!("sections is a list of {WHAT}"));
+        (self.required_list("sections", 1, MAX_ITEMS, WHAT)?)
+            .iter()
             .map(|item| {
                 let Value::Object(map) = item else {
-                    return Err(self.error(SAID));
+                    return Err(said());
                 };
                 let one = self.nested(map);
                 one.only(&["sketch", "region", "point", "start"])?;
                 let shape = match (map.get("region"), map.get("point")) {
-                    (Some(region), None) => {
-                        SectionShape::Region(profile(region).ok_or_else(|| self.error(SAID))?)
-                    }
+                    (Some(region), None) => SectionShape::Region(profile(region).ok_or_else(said)?),
                     (None, Some(point)) if !map.contains_key("start") => {
-                        SectionShape::Point(id(Some(point)).ok_or_else(|| self.error(SAID))?)
+                        SectionShape::Point(id(point).ok_or_else(said)?)
                     }
                     (None, Some(_)) => {
                         return Err(self.error("a section's start goes with a region"));
                     }
-                    _ => return Err(self.error(SAID)),
+                    _ => return Err(said()),
                 };
                 let start = match map.get("start") {
                     None | Some(Value::Null) => None,
-                    start => Some(id(start).ok_or_else(|| self.error(SAID))?),
+                    Some(start) => Some(id(start).ok_or_else(said)?),
                 };
                 Ok(Section {
                     sketch: one.name("sketch")?,
@@ -2466,17 +2463,12 @@ impl<'a> Arguments<'a> {
             }
             (false, true) => {
                 tool.only(&["sketch", "curves"])?;
-                const CURVES: &str = "tool.curves is a list of 1 to 256 curve ids, whole numbers";
-                let curves = match map.get("curves") {
-                    Some(Value::Array(items)) if !items.is_empty() && items.len() <= MAX_ITEMS => {
-                        items
-                    }
-                    _ => return Err(self.error(CURVES)),
-                };
-                let curves = (curves.iter())
-                    .map(|id| (id.as_u64()).and_then(|id| u32::try_from(id).ok()))
+                const WHAT: &str = "curve ids, whole numbers";
+                let curves = (tool.required_list("curves", 1, MAX_ITEMS, WHAT)?)
+                    .iter()
+                    .map(id)
                     .collect::<Option<Vec<u32>>>()
-                    .ok_or_else(|| self.error(CURVES))?;
+                    .ok_or_else(|| tool.error(format_args!("curves is a list of {WHAT}")))?;
                 Ok(SplitWith::Line {
                     sketch: tool.name("sketch")?,
                     curves,
@@ -2602,10 +2594,9 @@ impl<'a> Arguments<'a> {
         let Some(from) = self.object("from")? else {
             return Err(self.error(SAID));
         };
-        let id = |key: &str| {
+        let id_of = |key: &str| {
             (from.map.get(key))
-                .and_then(Value::as_u64)
-                .and_then(|id| u32::try_from(id).ok())
+                .and_then(id)
                 .ok_or_else(|| self.error(SAID))
         };
         if from.map.contains_key("sketch") {
@@ -2617,11 +2608,11 @@ impl<'a> Arguments<'a> {
             ) {
                 (true, false) => Ok(LinkFrom::Curve(CurveIn {
                     sketch,
-                    curve: id("curve")?,
+                    curve: id_of("curve")?,
                 })),
                 (false, true) => Ok(LinkFrom::Point {
                     sketch,
-                    point: id("point")?,
+                    point: id_of("point")?,
                 }),
                 _ => Err(self.error(SAID)),
             };

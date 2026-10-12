@@ -11,7 +11,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::{Arguments, CallError, MAX_ITEMS, TEXT_BYTES, coordinate, edit_once, sketch};
+use super::{Arguments, CallError, MAX_ITEMS, TEXT_BYTES, coordinate, edit_once, id, sketch};
 
 /// The most operations one `edit_sketch` takes: a sketch of a few
 /// shapes, their constraints and dimensions in one call, each
@@ -386,18 +386,10 @@ impl Arguments<'_> {
                 diameter: self.sized("diameter")?,
             },
             "spline" => {
-                let said = || {
-                    self.error(format_args!(
-                        "points is a list of 2 to {SPLINE_POINTS} points: [x, y], an id or a label"
-                    ))
-                };
-                let points = match self.map.get("points") {
-                    Some(Value::Array(points)) if (2..=SPLINE_POINTS).contains(&points.len()) => {
-                        points
-                    }
-                    _ => return Err(said()),
-                };
-                let points = (points.iter())
+                const WHAT: &str = "points: [x, y], an id or a label";
+                let said = || self.error(format_args!("points is a list of {WHAT}"));
+                let points = (self.required_list("points", 2, SPLINE_POINTS, WHAT)?)
+                    .iter()
                     .map(|point| at_of(point).ok_or_else(said))
                     .collect::<Result<_, _>>()?;
                 Op::Spline {
@@ -430,8 +422,7 @@ impl Arguments<'_> {
                     _ => return Err(self.error("give corner or diameter, one of them")),
                 };
                 let sides = (self.map.get("sides"))
-                    .and_then(Value::as_u64)
-                    .and_then(|sides| u32::try_from(sides).ok())
+                    .and_then(id)
                     .filter(|sides| (MIN_SIDES..=MAX_SIDES).contains(sides))
                     .ok_or_else(|| {
                         self.error(format_args!(
@@ -543,16 +534,10 @@ impl Arguments<'_> {
 
     /// A list of items `key`, ids or labels, `least` to `most`.
     fn items(&self, key: &str, least: usize, most: usize) -> Result<Vec<ItemRef>, CallError> {
-        let said = || {
-            self.error(format_args!(
-                "{key} is a list of {least} to {most} items, each an id or a label"
-            ))
-        };
-        let items = match self.map.get(key) {
-            Some(Value::Array(items)) if (least..=most).contains(&items.len()) => items,
-            _ => return Err(said()),
-        };
-        (items.iter())
+        const WHAT: &str = "items, each an id or a label";
+        let said = || self.error(format_args!("{key} is a list of {WHAT}"));
+        (self.required_list(key, least, most, WHAT)?)
+            .iter()
             .map(|item| item_ref(item).ok_or_else(said))
             .collect()
     }
@@ -572,10 +557,7 @@ fn pair(value: &Value) -> Option<[String; 2]> {
 /// at most twice [`LABEL_BYTES`] and not empty.
 fn item_ref(value: &Value) -> Option<ItemRef> {
     match value {
-        Value::Number(_) => value
-            .as_u64()
-            .and_then(|id| u32::try_from(id).ok())
-            .map(ItemRef::Id),
+        Value::Number(_) => id(value).map(ItemRef::Id),
         Value::String(label) if !label.trim().is_empty() && label.len() <= 2 * LABEL_BYTES => {
             Some(ItemRef::Label(label.clone()))
         }
