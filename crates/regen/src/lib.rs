@@ -417,12 +417,13 @@ impl SweepFound {
     /// Whether the workers' wire takes it: its points within
     /// [`MAX_REFERENCE`] of zero, finite, its directions unit.
     pub fn fits(&self) -> bool {
-        let within = |v: &[f64; 3]| v.iter().all(|x| x.is_finite() && x.abs() <= MAX_REFERENCE);
         let unit = |v: &[f64; 3]| (glam::DVec3::from(*v).length() - 1.0).abs() < 1e-6;
         match self {
-            SweepFound::End { at, tangent, zero } => within(at) && unit(tangent) && unit(zero),
+            SweepFound::End { at, tangent, zero } => {
+                within_reference(at) && unit(tangent) && unit(zero)
+            }
             SweepFound::Helix { middle, foot, axis } => {
-                within(middle) && within(foot) && unit(axis)
+                within_reference(middle) && within_reference(foot) && unit(axis)
             }
         }
     }
@@ -458,9 +459,7 @@ impl ScaleFound {
 
     /// Whether the wire takes `centre` as a scale's point.
     pub(crate) fn centre_fits(centre: [f64; 3]) -> bool {
-        centre
-            .iter()
-            .all(|x| x.is_finite() && x.abs() <= MAX_REFERENCE)
+        within_reference(&centre)
     }
 
     /// Whether the wire takes `length` as a scale's edge's length.
@@ -502,9 +501,8 @@ impl AlignFound {
     /// Whether the workers' wire takes it: its point and directions
     /// within [`MAX_REFERENCE`] of zero, finite, no direction zero.
     pub fn fits(&self) -> bool {
-        let within = |v: &[f64; 3]| v.iter().all(|x| x.is_finite() && x.abs() <= MAX_REFERENCE);
-        let direction = |v: &[f64; 3]| within(v) && v.iter().any(|&x| x != 0.0);
-        within(&self.point) && self.primary.iter().chain(&self.secondary).all(direction)
+        let direction = |v: &[f64; 3]| within_reference(v) && nonzero(v);
+        within_reference(&self.point) && self.primary.iter().chain(&self.secondary).all(direction)
     }
 }
 
@@ -529,8 +527,18 @@ pub const MAX_REFERENCE: f64 = 4.0 * varde_document::MAX_COORD as f64;
 /// those (one far out, a big arc's centre, isn't drawn), so a reply it
 /// sends is never refused on the wire for its reference.
 pub(crate) fn reference_fits([point, along]: &[[f64; 3]; 2]) -> bool {
-    let within = |x: &f64| x.is_finite() && x.abs() <= MAX_REFERENCE;
-    point.iter().chain(along).all(within) && along.iter().any(|&x| x != 0.0)
+    within_reference(point) && within_reference(along) && nonzero(along)
+}
+
+/// Whether every coordinate of `v` is finite and within
+/// [`MAX_REFERENCE`] of zero, as the wire takes a reference's.
+fn within_reference(v: &[f64; 3]) -> bool {
+    v.iter().all(|x| x.is_finite() && x.abs() <= MAX_REFERENCE)
+}
+
+/// Whether `v`, a direction, isn't zero.
+fn nonzero(v: &[f64; 3]) -> bool {
+    v.iter().any(|&x| x != 0.0)
 }
 
 /// How far a [`Request::Regenerate`] has got, sent ahead of its answer
