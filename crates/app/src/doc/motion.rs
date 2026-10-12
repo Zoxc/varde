@@ -179,6 +179,14 @@ struct Pivot {
     at: DVec3,
 }
 
+impl Pivot {
+    /// Whether it's still the centre of `bodies` in the model of
+    /// `generation`: worked out for them, on it.
+    fn current(&self, bodies: &[BodyId], generation: Generation) -> bool {
+        self.bodies == bodies && self.generation == generation
+    }
+}
+
 /// What a move's, mirror's or pattern's highlight is built of.
 #[derive(Debug, Clone, PartialEq)]
 struct Built {
@@ -2352,12 +2360,11 @@ impl Doc {
         let Some(session) = self.mode.motion() else {
             return;
         };
-        let current =
-            |pivot: &Pivot| pivot.bodies == session.bodies && pivot.generation == generation;
         if session.kind != MotionKind::Move
             || session.picking != MotionPick::Bodies
             || session.bodies.is_empty()
-            || session.pivot.as_ref().is_some_and(current)
+            || (session.pivot.as_ref())
+                .is_some_and(|pivot| pivot.current(&session.bodies, generation))
             || !self.feed.answers_request()
             || self.feed.predates_replacement()
         {
@@ -2695,7 +2702,7 @@ impl Doc {
         };
         let generation = self.editor.generation();
         let centre = (session.pivot.as_ref())
-            .filter(|pivot| pivot.bodies == session.bodies && pivot.generation == generation)
+            .filter(|pivot| pivot.current(&session.bodies, generation))
             .and_then(|pivot| {
                 let line = match session.axis {
                     Some(AxisRef::Origin(_)) | None => None,
