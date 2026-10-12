@@ -69,7 +69,7 @@ fn loft_regions<'s, 'a>(loft: &'s LoftView<'a>, hover: Option<PanelHover>) -> Re
     Regions {
         candidates: &loft.candidates,
         source: None,
-        picked: LoftView::none_picked(),
+        picked: &crate::NO_REGIONS,
         panel: hover.and_then(PanelHover::region),
     }
 }

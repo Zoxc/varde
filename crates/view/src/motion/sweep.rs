@@ -67,9 +67,6 @@ pub struct SweepPart {
     pub meta: Option<String>,
 }
 
-/// No regions picked.
-static NONE_PICKED: BTreeSet<usize> = BTreeSet::new();
-
 /// What the panel and the viewport show of a sweep being set up, beside
 /// what every move's session has.
 #[derive(Debug, Clone)]
@@ -102,13 +99,6 @@ pub struct SweepView<'a> {
     /// What the status bar says of it once it's whole: "Along Sketch 2 ·
     /// Follow path · New body".
     pub info: Option<String>,
-}
-
-impl SweepView<'_> {
-    /// No regions picked, for a view without them.
-    pub fn none_picked() -> &'static BTreeSet<usize> {
-        &NONE_PICKED
-    }
 }
 
 /// The panel's body for a sweep: Profile, the path's tiles and its

@@ -111,9 +111,6 @@ pub struct SplitPiece {
     pub keeps: bool,
 }
 
-/// No regions picked.
-static NONE_PICKED: BTreeSet<usize> = BTreeSet::new();
-
 /// What the panel and the viewport show of a split being set up, beside
 /// what every move's session has.
 #[derive(Debug, Clone)]
@@ -153,11 +150,6 @@ pub struct SplitView<'a> {
 }
 
 impl SplitView<'_> {
-    /// No regions picked, for a view without them.
-    pub fn none_picked() -> &'static BTreeSet<usize> {
-        &NONE_PICKED
-    }
-
     /// The piece keeping the body's id: the one kept, or with both
     /// kept, the original.
     pub fn kept(&self) -> Side {

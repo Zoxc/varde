@@ -115,7 +115,8 @@ pub use mouse::{DragAction, MouseOptions, PivotClick, Rotation, RotationPoint};
 pub use naming::{Naming, Shown, Unnamed};
 pub use offset_face::offset_info;
 pub use operation_panel::{
-    BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, Side, Sides, TypedField,
+    BodyTarget, Candidate, Framing, NO_REGIONS, OperationKind, PANEL_BODY, PanelHover, Side, Sides,
+    TypedField,
 };
 pub use overlaps::{OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps};
 pub use panels::TIMELINE_LIST;

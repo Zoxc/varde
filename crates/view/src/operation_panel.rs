@@ -105,6 +105,9 @@ pub(crate) const CONTROL_TEXT: f32 = 12.5;
 /// How wide the measure tool's labels are, left of their values.
 pub(crate) const FIELD_INDENT: f32 = 68.0;
 
+/// No regions picked, for a view without them.
+pub static NO_REGIONS: BTreeSet<usize> = BTreeSet::new();
+
 /// A sketch whose regions can be picked, and where they are.
 #[derive(Debug, Clone, Copy)]
 pub struct Candidate<'a> {

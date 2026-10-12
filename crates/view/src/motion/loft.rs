@@ -94,16 +94,6 @@ pub struct LoftView<'a> {
     pub info: Option<String>,
 }
 
-/// No regions picked: a loft's sections are drawn apart.
-static NONE_PICKED: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
-
-impl LoftView<'_> {
-    /// No regions picked, for the candidates' shading.
-    pub fn none_picked() -> &'static std::collections::BTreeSet<usize> {
-        &NONE_PICKED
-    }
-}
-
 /// The two modes in the panel's order, with their tiles' icons and
 /// labels.
 const MODES: [(LoftMode, Icon, &str); 2] = [

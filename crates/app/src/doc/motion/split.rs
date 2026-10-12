@@ -644,7 +644,7 @@ impl Doc {
             picked: if regions {
                 &setup.regions.picked
             } else {
-                SplitView::none_picked()
+                &varde_view::NO_REGIONS
             },
             missing: if regions { setup.regions.missing } else { 0 },
             lines,
