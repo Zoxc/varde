@@ -21,6 +21,9 @@ pub use draw::{
 /// The longest name taken (a feature's, a body's), in bytes: as long as
 /// the longest a design may hold (`varde_document::MAX_NAME_LEN`), so
 /// every feature and body can be named.
+///
+/// This and the other limits mirrored from other crates are held to
+/// their sources by the app (`varde_app`'s `mcp::mirrored`).
 pub const NAME_BYTES: usize = 1024;
 
 /// `design_summary`'s default `limit`, per listing: a page of each of
@@ -263,6 +266,10 @@ pub const MIN_OPACITY: f64 = 0.1;
 /// The most saturated colour taken: `varde_document::Tint::MAX_SATURATION`,
 /// 30 %, so a body's colour stays duller than the highlights.
 pub const MAX_SATURATION: f64 = 0.3;
+
+/// The most a pattern makes, the original among them:
+/// `varde_document::MAX_PATTERN_COUNT`.
+pub const MAX_PATTERN_COUNT: u32 = 1024;
 
 /// A body's colour: a hue and a saturation, the lightness the theme's.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -3046,8 +3053,8 @@ pub fn list() -> Value {
         {
             "name": "set_opacity",
             "title": "Set a body's opacity",
-            "description": "Sets how opaque a body is drawn, from 0.1 to 1 (opaque), in whole \
-                percent. To hide a body use set_visible. One undo step.",
+            "description": format!("Sets how opaque a body is drawn, from {MIN_OPACITY} to 1 \
+                (opaque), in whole percent. To hide a body use set_visible. One undo step."),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -3551,7 +3558,7 @@ fn pattern_tool() -> Value {
                 "count": {
                     "type": ["string", "integer"],
                     "maxLength": TEXT_BYTES,
-                    "description": "How many, the original among them, 2 to 1024: a whole number or an expression; default 3 (linear) or 4 (circular)"
+                    "description": format!("How many, the original among them, 2 to {MAX_PATTERN_COUNT}: a whole number or an expression; default 3 (linear) or 4 (circular)")
                 },
                 "mode": { "enum": words(PATTERN_MODES), "description": "What spread is: spacing, one step (linear's default); total, first to last; full, a circular one's copies round a full turn with no spread (circular's default)" },
                 "spread": typed("The spacing or total: a positive length for linear (default 10 mm), an angle for circular (default 90 deg)"),

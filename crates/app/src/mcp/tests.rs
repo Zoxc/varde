@@ -5116,3 +5116,16 @@ fn the_relay_path_is_one_that_runs_later() {
         Some("/home/a/Varde.AppImage")
     );
 }
+
+#[test]
+fn the_mirrored_fractions_match_their_sources() {
+    use varde_mcp::tools::{MAX_SATURATION, MIN_OPACITY};
+    assert_eq!(
+        MIN_OPACITY,
+        f64::from(varde_document::Opacity::MIN.percent()) / 100.0
+    );
+    assert_eq!(
+        MAX_SATURATION,
+        f64::from(varde_document::Tint::MAX_SATURATION) / 100.0
+    );
+}

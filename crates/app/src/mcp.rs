@@ -770,6 +770,32 @@ impl Mcp {
     }
 }
 
+// The limits `varde_mcp` mirrors by value, as it depends on no other
+// `varde-*` crate, held to their sources here, which sees both. The
+// fractions are whole percents on this side, checked in the tests.
+mod mirrored {
+    use varde_mcp::tools as mcp;
+
+    const _: () = assert!(mcp::NAME_BYTES == varde_document::MAX_NAME_LEN);
+    const _: () = assert!(mcp::MAX_UNDO_STEPS == varde_document::MAX_UNDO);
+    const _: () = assert!(mcp::TEXT_BYTES == varde_expr::MAX_LEN);
+    const _: () = assert!(mcp::MAX_PATTERN_COUNT == varde_document::MAX_PATTERN_COUNT);
+    const _: () = assert!(
+        mcp::MAX_ITEMS == varde_document::MAX_EXTRUDE_REGIONS
+            && mcp::MAX_ITEMS == varde_document::MAX_REVOLVE_REGIONS
+            && mcp::MAX_ITEMS == varde_document::MAX_FEATURE_BODIES
+            && mcp::MAX_ITEMS == varde_document::MAX_SHELL_FACES
+            && mcp::MAX_ITEMS == varde_document::MAX_OFFSET_FACES
+            && mcp::MAX_ITEMS == varde_document::MAX_DRAFT_FACES
+            && mcp::MAX_ITEMS == varde_document::MAX_SPLIT_CURVES
+    );
+    const _: () = assert!(mcp::SPLINE_POINTS == varde_sketch::MAX_SPLINE_POINTS);
+    const _: () = assert!(
+        mcp::MIN_SIDES == varde_view::typed::MIN_SIDES
+            && mcp::MAX_SIDES == varde_view::typed::MAX_SIDES
+    );
+}
+
 #[cfg(test)]
 mod tests;
 

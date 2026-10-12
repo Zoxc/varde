@@ -766,7 +766,7 @@ impl From<Generation> for u64 {
 
 /// How many edits can be undone. Older ones are forgotten, so history holds
 /// at most this many copies of the document.
-const MAX_UNDO: usize = 200;
+pub const MAX_UNDO: usize = 200;
 
 /// Owns a [`Document`] and its edit history.
 ///

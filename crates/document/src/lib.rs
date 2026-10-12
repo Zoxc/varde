@@ -44,7 +44,7 @@ pub use chamfer::{Chamfer, ChamferError, ChamferSize};
 pub use codec::DecodeError;
 pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
 pub use edge::{EdgeError, EdgeRef};
-pub use editor::{Command, Editor, EditorState, Generation, RestoreError, Revision};
+pub use editor::{Command, Editor, EditorState, Generation, MAX_UNDO, RestoreError, Revision};
 pub use extrude::{
     Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, OperationError, Targets,
 };
