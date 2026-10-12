@@ -12,7 +12,7 @@
 //! to the document the editor refuses.
 
 use varde_document::{Command, Keep, MAX_EXTRUDE_REGIONS, Side};
-use varde_mcp::tools::{self, Reference, SplitWith};
+use varde_mcp::tools::{self, FeatureTool, Reference, SplitWith};
 use varde_view::{MotionField, MotionKind, MotionPick, ShellDirection, SplitMode};
 
 use super::args::{
@@ -33,7 +33,7 @@ use crate::doc::{Doc, MotionSession, RegionPick};
 pub(super) fn split(doc: &Doc, args: &tools::Split) -> Result<(Vec<Command>, Made), Refused> {
     let names = std::slice::from_ref(&args.body);
     made(doc, "split", MotionKind::Split, names, |session| {
-        set_split(doc, session, args, Given::All)
+        set_split(doc, session, args, Given::All(FeatureTool::Split))
     })
 }
 
@@ -130,7 +130,8 @@ pub(super) fn set_split(
 /// model's only body as the panel starts with it.
 pub(super) fn shell(doc: &Doc, args: &tools::Shell) -> Result<(Vec<Command>, Made), Refused> {
     const TOOL: &str = "shell";
-    let set = |session: &mut MotionSession| set_shell(doc, session, args, Given::All);
+    let set =
+        |session: &mut MotionSession| set_shell(doc, session, args, Given::All(FeatureTool::Shell));
     match &args.body {
         // The panel takes a body only while it has no faces: theirs is
         // its.
@@ -216,7 +217,7 @@ pub(super) fn offset_face(
         "offset_face",
         MotionKind::OffsetFace,
         Vec::new(),
-        |session| set_offset_face(doc, session, args, Given::All),
+        |session| set_offset_face(doc, session, args, Given::All(FeatureTool::OffsetFace)),
     )
 }
 
@@ -248,7 +249,7 @@ pub(super) fn set_offset_face(
 /// a click on one); its angle, Flip and Tangent faces.
 pub(super) fn draft(doc: &Doc, args: &tools::Draft) -> Result<(Vec<Command>, Made), Refused> {
     made_of(doc, "draft", MotionKind::Draft, Vec::new(), |session| {
-        set_draft(doc, session, args, Given::All)
+        set_draft(doc, session, args, Given::All(FeatureTool::Draft))
     })
 }
 

@@ -16,7 +16,7 @@ use varde_document::{
 };
 use varde_expr::{Ask, Value as ExprValue};
 use varde_mcp::tools::{
-    Item, ItemKind, Naming, Operation, Profile, Profiles, WorldAxis, WorldPlane,
+    FeatureTool, Item, ItemKind, Naming, Operation, Profile, Profiles, WorldAxis, WorldPlane,
 };
 use varde_view::{MotionField, MotionKind, OperationKind, Pick, PickIndex};
 
@@ -31,17 +31,21 @@ use crate::doc::{
 /// those a `set_feature` patch gives, on a session opened on the
 /// feature, the rest kept as it has them.
 #[derive(Clone, Copy)]
+/// Each names the feature tool whose arguments they are: a key that
+/// isn't one of its [`fields`](FeatureTool::fields) is a slip that would
+/// leave the argument unpatchable, so debug builds panic on it.
 pub(super) enum Given<'a> {
-    All,
-    Only(&'a BTreeSet<String>),
+    All(FeatureTool),
+    Only(FeatureTool, &'a BTreeSet<String>),
 }
 
 impl Given<'_> {
     /// Whether the argument `key` is taken.
     pub(super) fn has(self, key: &str) -> bool {
+        self.check(key);
         match self {
-            Given::All => true,
-            Given::Only(keys) => keys.contains(key),
+            Given::All(_) => true,
+            Given::Only(_, keys) => keys.contains(key),
         }
     }
 
@@ -63,10 +67,21 @@ impl Given<'_> {
     /// Whether the argument `key` is sent: for a new feature, if it's
     /// `present` (given, or a flag on); for a patch, if it gives it.
     pub(super) fn sent(self, key: &str, present: bool) -> bool {
+        self.check(key);
         match self {
-            Given::All => present,
-            Given::Only(keys) => keys.contains(key),
+            Given::All(_) => present,
+            Given::Only(_, keys) => keys.contains(key),
         }
+    }
+
+    /// Checks, in debug builds, that `key` is one of the tool's
+    /// arguments.
+    fn check(self, key: &str) {
+        let (Given::All(tool) | Given::Only(tool, _)) = self;
+        debug_assert!(
+            tool.fields().contains(&key),
+            "{key:?} isn't an argument of {tool:?}"
+        );
     }
 }
 

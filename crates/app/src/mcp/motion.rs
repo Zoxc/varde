@@ -18,7 +18,7 @@
 //! panel has no field for it.
 
 use varde_document::{Axis3, Command};
-use varde_mcp::tools::{self, Item, ItemKind, Reference, Worded, WorldAxis};
+use varde_mcp::tools::{self, FeatureTool, Item, ItemKind, Reference, Worded, WorldAxis};
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, MotionField, MotionKind, MotionPick, PatternMode, ScaleMode,
 };
@@ -41,7 +41,7 @@ pub(super) fn move_body(
         "move_body",
         MotionKind::Move,
         &args.bodies,
-        |session| set_move(doc, session, args, Given::All),
+        |session| set_move(doc, session, args, Given::All(FeatureTool::MoveBody)),
     )
 }
 
@@ -77,7 +77,7 @@ pub(super) fn set_move(
 /// The commands `mirror` makes on `doc`'s design, and what it's to make.
 pub(super) fn mirror(doc: &Doc, args: &tools::Mirror) -> Result<(Vec<Command>, Made), Refused> {
     made(doc, "mirror", MotionKind::Mirror, &args.bodies, |session| {
-        set_mirror(doc, session, args, Given::All)
+        set_mirror(doc, session, args, Given::All(FeatureTool::Mirror))
     })
 }
 
@@ -113,7 +113,7 @@ pub(super) fn pattern(doc: &Doc, args: &tools::Pattern) -> Result<(Vec<Command>,
         "pattern",
         pattern_kind(args.kind),
         &args.bodies,
-        |session| set_pattern(doc, session, args, Given::All),
+        |session| set_pattern(doc, session, args, Given::All(FeatureTool::Pattern)),
     )
 }
 
@@ -190,7 +190,7 @@ pub(super) fn set_pattern(
 pub(super) fn align(doc: &Doc, args: &tools::Align) -> Result<(Vec<Command>, Made), Refused> {
     let names: Vec<String> = args.body.iter().cloned().collect();
     made(doc, "align", MotionKind::Align, &names, |session| {
-        set_align(doc, session, args, Given::All)
+        set_align(doc, session, args, Given::All(FeatureTool::Align))
     })
 }
 
@@ -299,7 +299,7 @@ pub(super) fn set_align(
 /// an edge the panel offers it for.
 pub(super) fn scale(doc: &Doc, args: &tools::Scale) -> Result<(Vec<Command>, Made), Refused> {
     made(doc, "scale", MotionKind::Scale, &args.bodies, |session| {
-        set_scale(doc, session, args, Given::All)
+        set_scale(doc, session, args, Given::All(FeatureTool::Scale))
     })
 }
 

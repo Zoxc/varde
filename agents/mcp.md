@@ -1071,7 +1071,9 @@ answers `NOTHING_TO_CHANGE` at once. Per tool:
   with it (`set::GOES_WITH`: a new `sketch`'s `profiles` and `axis`, a
   new align `body`'s `from`). The fields left are read by the tool's parser (`tools::parse_patch`,
   its error under `set_feature:`) and taken, those
-  given only (`args::Given::Only`), into the session opened on the
+  given only (`args::Given::Only`, which, like `Given::All`, names its
+  `FeatureTool` so debug builds panic on a key that isn't one of its
+  `fields`), into the session opened on the
   feature as the panel's EditFeature opens it, but with the client's
   defaults for the values the feature has none for
   (`ExtrudeSession::editing_for_client`, `MotionSession::editing_for_client`:

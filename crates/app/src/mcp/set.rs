@@ -128,7 +128,7 @@ pub(super) fn set_feature(
         };
         failed(TOOL, why)
     })?;
-    let given = Given::Only(&given);
+    let given = Given::Only(tool, &given);
     let kind: FeatureKind = match (&call, &feature.kind) {
         (Call::Extrude(args), FeatureKind::Extrude(extrude)) => {
             let mut session = ExtrudeSession::editing_for_client(document, id, extrude);

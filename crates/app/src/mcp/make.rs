@@ -14,7 +14,7 @@
 //! ([`Profiles::region_at`](varde_sketch::Profiles::region_at)).
 
 use varde_document::{AxisLine, Command, FeatureId};
-use varde_mcp::tools::{self, Axis, ExtrudeExtent, RevolveExtent};
+use varde_mcp::tools::{self, Axis, ExtrudeExtent, FeatureTool, RevolveExtent};
 use varde_view::{Angle, Distance, ExtentKind, OperationKind, TurnKind};
 
 use super::args::{
@@ -35,7 +35,7 @@ pub(super) fn extrude(doc: &Doc, args: &tools::Extrude) -> Result<(Vec<Command>,
     const TOOL: &str = "extrude";
     let sketch = sketch_before(document, TOOL, &args.sketch, None)?;
     let mut session = ExtrudeSession::for_client(document, sketch);
-    set_extrude(doc, &mut session, args, Given::All)?;
+    set_extrude(doc, &mut session, args, Given::All(FeatureTool::Extrude))?;
     let extrude =
         (session.extrude()).ok_or_else(|| failed(TOOL, "no region was picked".to_owned()))?;
     Ok(added(document, extrude.into()))
@@ -136,7 +136,7 @@ pub(super) fn revolve(doc: &Doc, args: &tools::Revolve) -> Result<(Vec<Command>,
     const TOOL: &str = "revolve";
     let sketch = sketch_before(document, TOOL, &args.sketch, None)?;
     let mut session = RevolveSession::new(document, Some(sketch));
-    set_revolve(doc, &mut session, args, Given::All)?;
+    set_revolve(doc, &mut session, args, Given::All(FeatureTool::Revolve))?;
     let revolve = (session.revolve(document))
         .ok_or_else(|| failed(TOOL, "no region was picked".to_owned()))?;
     Ok(added(document, revolve.into()))
@@ -225,7 +225,7 @@ pub(super) fn set_revolve(
 pub(super) fn combine(doc: &Doc, args: &tools::Combine) -> Result<(Vec<Command>, Made), Refused> {
     let document = doc.editor.document();
     let mut session = CombineSession::new(None, Vec::new());
-    set_combine(doc, &mut session, args, Given::All)?;
+    set_combine(doc, &mut session, args, Given::All(FeatureTool::Combine))?;
     let combine = session
         .combine()
         .ok_or_else(|| failed("combine", "no tools were given".to_owned()))?;

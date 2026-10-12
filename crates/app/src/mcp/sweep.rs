@@ -15,7 +15,7 @@
 //! the editor refuses.
 
 use varde_document::{Command, Document, FeatureId, LoftMode, MAX_SWEEP_REGIONS, Section};
-use varde_mcp::tools::{self, Profiles, Reference, SectionShape, SweepAlong};
+use varde_mcp::tools::{self, FeatureTool, Profiles, Reference, SectionShape, SweepAlong};
 use varde_view::{MotionField, MotionKind, OperationKind, SweepPath};
 
 use super::args::{
@@ -37,7 +37,7 @@ use crate::doc::{Doc, MotionSession, RegionPick};
 /// operation and bodies left out as an extrude's.
 pub(super) fn sweep(doc: &Doc, args: &tools::Sweep) -> Result<(Vec<Command>, Made), Refused> {
     made_of(doc, "sweep", MotionKind::Sweep, Vec::new(), |session| {
-        set_sweep(doc, session, args, Given::All)
+        set_sweep(doc, session, args, Given::All(FeatureTool::Sweep))
     })
 }
 
@@ -173,7 +173,7 @@ pub(super) fn set_sweep(
 /// out as an extrude's.
 pub(super) fn loft(doc: &Doc, args: &tools::Loft) -> Result<(Vec<Command>, Made), Refused> {
     made_of(doc, "loft", MotionKind::Loft, Vec::new(), |session| {
-        set_loft(doc, session, args, Given::All)
+        set_loft(doc, session, args, Given::All(FeatureTool::Loft))
     })
 }
 

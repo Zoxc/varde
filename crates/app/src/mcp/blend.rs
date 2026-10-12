@@ -10,7 +10,7 @@
 //! each applies and fails in regeneration, as for the user.
 
 use varde_document::Command;
-use varde_mcp::tools::{self, Worded};
+use varde_mcp::tools::{self, FeatureTool, Worded};
 use varde_view::{ChamferType, MotionField, MotionKind};
 
 use super::args::{Given, Wrong, edges, faces, goes_with, made_of, typed_given};
@@ -24,7 +24,7 @@ use crate::doc::{Doc, MotionSession};
 /// chain.
 pub(super) fn chamfer(doc: &Doc, args: &tools::Chamfer) -> Result<(Vec<Command>, Made), Refused> {
     made_of(doc, "chamfer", MotionKind::Chamfer, Vec::new(), |session| {
-        set_chamfer(doc, session, args, Given::All)
+        set_chamfer(doc, session, args, Given::All(FeatureTool::Chamfer))
     })
 }
 
@@ -86,7 +86,7 @@ pub(super) fn set_chamfer(
 /// make: its edges and faces, its radius, Tangent chain.
 pub(super) fn fillet(doc: &Doc, args: &tools::Fillet) -> Result<(Vec<Command>, Made), Refused> {
     made_of(doc, "fillet", MotionKind::Fillet, Vec::new(), |session| {
-        set_fillet(doc, session, args, Given::All)
+        set_fillet(doc, session, args, Given::All(FeatureTool::Fillet))
     })
 }
 
