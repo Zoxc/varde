@@ -7,7 +7,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::motion::{BodiesError, check_bodies};
+use crate::BodiesError;
+use crate::bodies::check_bodies;
 use crate::{AlignError, BodyId, Design, EdgeError, EdgeRef, Extent, FeatureId, PointRef};
 
 /// The largest factor a scale takes, and the inverse of the smallest:

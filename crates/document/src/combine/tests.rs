@@ -1,8 +1,8 @@
 use super::*;
 use crate::testing::{extrude_again, plate, with_body};
 use crate::{
-    CheckError, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit,
-    Operation, Removable, Removal, Targets,
+    BodiesError, CheckError, Command, Document, EditError, Editor, FeatureId, FeatureKind,
+    LengthUnit, Operation, Removable, Removal, Targets,
 };
 
 /// The example's body and two more plates, each its own body: the editor,
@@ -114,17 +114,17 @@ fn tools_are_bounded_sorted_and_not_the_target() {
     refused(
         &mut editor,
         combine(a, &[], BodyOp::Union),
-        CombineError::Tools(0),
+        CombineError::Tools(BodiesError::Count(0)),
     );
     refused(
         &mut editor,
         combine(a, &[c, b], BodyOp::Union),
-        CombineError::ToolOrder,
+        CombineError::Tools(BodiesError::Order),
     );
     refused(
         &mut editor,
         combine(a, &[b, b], BodyOp::Union),
-        CombineError::ToolOrder,
+        CombineError::Tools(BodiesError::Order),
     );
     refused(
         &mut editor,
@@ -138,7 +138,7 @@ fn tools_are_bounded_sorted_and_not_the_target() {
     refused(
         &mut editor,
         combine(a, &many, BodyOp::Union),
-        CombineError::Tools(MAX_FEATURE_BODIES + 1),
+        CombineError::Tools(BodiesError::Count(MAX_FEATURE_BODIES + 1)),
     );
     assert_eq!(
         combine(a, &many[..MAX_FEATURE_BODIES], BodyOp::Union).check_own(),
@@ -363,11 +363,11 @@ fn a_combine_is_the_fourth_kind() {
 #[test]
 fn combine_errors_say_what_is_wrong() {
     assert_eq!(
-        CombineError::Tools(0).to_string(),
+        CombineError::Tools(BodiesError::Count(0)).to_string(),
         "combines 0 tool bodies, not 1 to 256"
     );
     assert_eq!(
-        CombineError::ToolOrder.to_string(),
+        CombineError::Tools(BodiesError::Order).to_string(),
         "its tool bodies are out of order or repeated"
     );
     assert_eq!(

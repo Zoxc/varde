@@ -6,6 +6,7 @@
 
 mod align;
 mod blend;
+mod bodies;
 mod chamfer;
 mod check;
 pub mod codec;
@@ -43,10 +44,11 @@ pub use align::{Align, AlignError, AlignRefs, DirRef, PointRef};
 pub use blend::{
     BlendEdgesError, MAX_BLEND_EDGES, blend_body, blend_excludes, check_blend_edges_own,
 };
+pub use bodies::{BodiesError, MAX_FEATURE_BODIES};
 pub use chamfer::{Chamfer, ChamferError, ChamferSize};
 pub use check::CheckError;
 pub use codec::DecodeError;
-pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
+pub use combine::{BodyOp, Combine, CombineError};
 pub use command::{Command, EditError, ValueOf};
 pub use edge::{EdgeError, EdgeRef};
 pub use editor::{Editor, EditorState, Generation, MAX_UNDO, RestoreError, Revision};
@@ -59,7 +61,7 @@ pub use fillet::{Fillet, FilletError};
 pub use loft::{
     Loft, LoftError, LoftMode, MAX_LOFT_RAILS, MAX_LOFT_SECTIONS, MAX_RAIL_CURVES, Section,
 };
-pub use motion::{Axis3, AxisRef, BodiesError, Mirror, MotionError, Move, PlaneRef, RefError};
+pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef, RefError};
 pub use offset_face::{MAX_OFFSET_FACES, OffsetFace, OffsetFaceError};
 pub use opacity::Opacity;
 pub use outside::{LinkError, LinkSource, OutsideRef, sketch_face};

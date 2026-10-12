@@ -44,7 +44,7 @@ pub enum PlaneRef { Origin(OriginPlane), Face(FaceRef) }
   `Move::check_own(design)` / `Mirror::check_own()` (cheap, for a
   panel): 1 to 256 bodies, sorted without repeats
   (`check_bodies`: `Bodies(BodiesError::Count(n) | Order)`, shared with
-  pattern and scale), each offset a length `Move::offset_ask` takes (within
+  combine, pattern and scale), each offset a length `Move::offset_ask` takes (within
   `MAX_COORD` of zero; zero and negative allowed: `Offset`), the angle
   one `Move::angle_ask` takes (within a turn either way: `Angle`), an
   axis edge's own check and a face's point finite and within

@@ -5,7 +5,8 @@ use varde_kernel_compat::mesh::{FaceKey, PartKey};
 use super::*;
 use crate::testing::{extrude_again, with_body};
 use crate::{
-    CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit, Removable, Removal,
+    BodiesError, CheckError, Command, Document, EditError, Editor, FeatureKind, LengthUnit,
+    MAX_FEATURE_BODIES, Removable, Removal,
 };
 
 /// The example's body and another plate: the editor, the bodies and

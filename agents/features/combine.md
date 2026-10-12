@@ -20,8 +20,8 @@ pub struct Combine {
   mock's).
 - **Checks** (`Document::check`, `CheckError::Combine(id,
   CombineError)`): `Combine::check_own` (cheap, for a panel on every
-  view) wants 1 to 256 tools (`Tools(n)`), sorted without repeats
-  (`ToolOrder`) and the target not among them (`TargetIsTool`); then
+  view) wants 1 to 256 tools, sorted without repeats (`check_bodies`
+  in `bodies.rs`: `Tools(BodiesError::Count(n) | Order)`) and the target not among them (`TargetIsTool`); then
   every body named must be made by a feature before the combine, or
   not there with an id below `next_id`, as a sketch's face
   (`Body(id)`): removing a body or its maker removes the combine with

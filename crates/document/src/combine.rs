@@ -5,12 +5,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::BodyId;
-
-/// The most bodies one feature may name (a combine's tools; later a
-/// move's, a mirror's or a pattern's bodies). Each costs a boolean, so
-/// this bounds the work, and what a file can ask for.
-pub const MAX_FEATURE_BODIES: usize = 256;
+use crate::bodies::check_bodies;
+use crate::{BodiesError, BodyId, MAX_FEATURE_BODIES};
 
 /// A combine: the target's solid, as the features before it leave it,
 /// united with, less, or intersected with each tool's, one boolean a
@@ -66,13 +62,7 @@ impl Combine {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view, as [`Extrude::check_own`](crate::Extrude::check_own).
     pub fn check_own(&self) -> Result<(), CombineError> {
-        let count = self.tools.len();
-        if !(1..=MAX_FEATURE_BODIES).contains(&count) {
-            return Err(CombineError::Tools(count));
-        }
-        if !self.tools.windows(2).all(|pair| pair[0] < pair[1]) {
-            return Err(CombineError::ToolOrder);
-        }
+        check_bodies(&self.tools).map_err(CombineError::Tools)?;
         if self.tools.binary_search(&self.target).is_ok() {
             return Err(CombineError::TargetIsTool(self.target));
         }
@@ -84,10 +74,9 @@ impl Combine {
 /// [`CheckError::Combine`](crate::CheckError::Combine).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CombineError {
-    /// It has this many tools: none, or over [`MAX_FEATURE_BODIES`].
-    Tools(usize),
-    /// Its tools aren't sorted, or one is repeated.
-    ToolOrder,
+    /// Its tools are none, over [`MAX_FEATURE_BODIES`], unsorted or
+    /// repeated.
+    Tools(BodiesError),
     /// Its target, this body, is among its tools too.
     TargetIsTool(BodyId),
     /// It names this body, which isn't there or which no feature before
@@ -98,11 +87,13 @@ pub enum CombineError {
 impl fmt::Display for CombineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CombineError::Tools(count) => write!(
+            CombineError::Tools(BodiesError::Count(count)) => write!(
                 f,
                 "combines {count} tool bodies, not 1 to {MAX_FEATURE_BODIES}"
             ),
-            CombineError::ToolOrder => f.write_str("its tool bodies are out of order or repeated"),
+            CombineError::Tools(BodiesError::Order) => {
+                f.write_str("its tool bodies are out of order or repeated")
+            }
             CombineError::TargetIsTool(body) => {
                 write!(f, "its target, body {}, is one of its tools too", body.0)
             }
@@ -115,7 +106,14 @@ impl fmt::Display for CombineError {
     }
 }
 
-impl std::error::Error for CombineError {}
+impl std::error::Error for CombineError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            CombineError::Tools(why) => Some(why),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests;

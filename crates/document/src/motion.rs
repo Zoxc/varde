@@ -9,9 +9,9 @@ use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
+use crate::bodies::check_bodies;
 use crate::{
-    BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, MAX_COORD, MAX_FEATURE_BODIES,
-    OriginPlane,
+    BodiesError, BodyId, Design, EdgeError, EdgeRef, FaceRef, FeatureId, MAX_COORD, OriginPlane,
 };
 
 /// A move: the bodies it moves, each turned about `turn`'s axis by its
@@ -20,7 +20,7 @@ use crate::{
 /// went.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Move {
-    /// `1..=`[`MAX_FEATURE_BODIES`] bodies features before it make,
+    /// `1..=`[`MAX_FEATURE_BODIES`](crate::MAX_FEATURE_BODIES) bodies features before it make,
     /// sorted without repeats.
     pub bodies: Vec<BodyId>,
     /// Along world X, Y and Z: lengths within [`MAX_COORD`] of zero
@@ -40,7 +40,7 @@ pub struct Move {
 /// move's do.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Mirror {
-    /// As a move's: `1..=`[`MAX_FEATURE_BODIES`] bodies features before
+    /// As a move's: `1..=`[`MAX_FEATURE_BODIES`](crate::MAX_FEATURE_BODIES) bodies features before
     /// it make, sorted without repeats.
     pub bodies: Vec<BodyId>,
     pub plane: PlaneRef,
@@ -165,41 +165,6 @@ impl Referred<'_> {
         }
     }
 }
-
-/// Checks a feature's body list: `1..=`[`MAX_FEATURE_BODIES`], sorted
-/// without repeats.
-pub(crate) fn check_bodies(bodies: &[BodyId]) -> Result<(), BodiesError> {
-    let count = bodies.len();
-    if !(1..=MAX_FEATURE_BODIES).contains(&count) {
-        return Err(BodiesError::Count(count));
-    }
-    if !bodies.windows(2).all(|pair| pair[0] < pair[1]) {
-        return Err(BodiesError::Order);
-    }
-    Ok(())
-}
-
-/// What's wrong with a feature's body list, see `check_bodies`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BodiesError {
-    /// It names this many bodies: none, or over [`MAX_FEATURE_BODIES`].
-    Count(usize),
-    /// Its bodies aren't sorted, or one is repeated.
-    Order,
-}
-
-impl fmt::Display for BodiesError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BodiesError::Count(count) => {
-                write!(f, "names {count} bodies, not 1 to {MAX_FEATURE_BODIES}")
-            }
-            BodiesError::Order => f.write_str("its bodies are out of order or repeated"),
-        }
-    }
-}
-
-impl std::error::Error for BodiesError {}
 
 /// What's wrong with an axis's or plane's edge or face on its own, see
 /// `Referred::check_own`.

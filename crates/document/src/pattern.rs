@@ -8,7 +8,8 @@ use std::f64::consts::TAU;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::motion::{Referred, check_bodies};
+use crate::bodies::check_bodies;
+use crate::motion::Referred;
 use crate::revolve::TURN_ROUNDING;
 use crate::{AxisRef, BodyId, Design, MAX_COORD, MotionError};
 
