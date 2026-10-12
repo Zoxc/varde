@@ -90,11 +90,7 @@ pub(crate) fn profile_marked(
     loops: &[Vec<Piece>],
     fit: f64,
 ) -> Result<(Profile, Vec<Vec<usize>>), ProfileError> {
-    let mut out = Segments {
-        count: 0,
-        fit,
-        segments: Vec::new(),
-    };
+    let mut out = Segments::new(fit);
     let mut profile = Profile::default();
     let mut starts = Vec::with_capacity(loops.len());
     for pieces in loops {
@@ -182,6 +178,15 @@ struct Segments {
 }
 
 impl Segments {
+    /// None yet, fitting splines within `fit`.
+    fn new(fit: f64) -> Self {
+        Segments {
+            count: 0,
+            fit,
+            segments: Vec::new(),
+        }
+    }
+
     fn push(&mut self, conic: Conic2, curve: u64) -> Result<(), ProfileError> {
         self.count += 1;
         if self.count > MAX_PROFILE_SEGMENTS {
@@ -212,12 +217,34 @@ fn piece_segments(
         Curve::Line { .. } => out.push(Conic2::line(a, b)?, curve),
         &Curve::Circle { center, radius } => {
             let center = at(center).ok_or(ProfileError::Missing)?;
-            arc(center, radius, a, b, sweep, ccw, curve, out)
+            arc(
+                ArcSpec {
+                    center,
+                    radius,
+                    sweep,
+                    ccw,
+                },
+                a,
+                b,
+                curve,
+                out,
+            )
         }
         &Curve::Arc { center, start, .. } => {
             let center = at(center).ok_or(ProfileError::Missing)?;
             let radius = at(start).ok_or(ProfileError::Missing)?.distance(center);
-            arc(center, radius, a, b, sweep, ccw, curve, out)
+            arc(
+                ArcSpec {
+                    center,
+                    radius,
+                    sweep,
+                    ccw,
+                },
+                a,
+                b,
+                curve,
+                out,
+            )
         }
         Curve::Spline(spline) => {
             let shape = sketch.spline_shape(spline).ok_or(ProfileError::Missing)?;
@@ -414,11 +441,7 @@ fn walk_chain(
             step.1 = !step.1;
         }
     }
-    let mut out = Segments {
-        count: 0,
-        fit,
-        segments: Vec::new(),
-    };
+    let mut out = Segments::new(fit);
     let mut joint: Option<DVec2> = None;
     for &(index, backwards) in &walk {
         let [first, last] = ends[index];
@@ -446,7 +469,13 @@ fn walk_chain(
                 if sweep <= 0.0 {
                     sweep += 2.0 * PI;
                 }
-                arc(center, radius, a, b, sweep, !backwards, curve, &mut out)?;
+                let spec = ArcSpec {
+                    center,
+                    radius,
+                    sweep,
+                    ccw: !backwards,
+                };
+                arc(spec, a, b, curve, &mut out)?;
             }
             Curve::Spline(spline) => {
                 let shape = sketch.spline_shape(spline).ok_or(ChainError::Missing)?;
@@ -469,26 +498,19 @@ fn walk_chain(
 /// spline), as [`path_chain`] makes them.
 fn closed_curve(sketch: &Sketch, id: Id, fit: f64) -> Result<Vec<Segment>, ChainError> {
     let entry = sketch.curve(id).ok_or(ChainError::Missing)?;
-    let mut out = Segments {
-        count: 0,
-        fit,
-        segments: Vec::new(),
-    };
+    let mut out = Segments::new(fit);
     let curve = u64::from(id.get());
     match &entry.curve {
         &Curve::Circle { center, radius } => {
             let center = (sketch.point(center).map(|point| point.at)).ok_or(ChainError::Missing)?;
             let start = center + DVec2::new(radius, 0.0);
-            arc(
+            let spec = ArcSpec {
                 center,
                 radius,
-                start,
-                start,
-                2.0 * PI,
-                true,
-                curve,
-                &mut out,
-            )?;
+                sweep: 2.0 * PI,
+                ccw: true,
+            };
+            arc(spec, start, start, curve, &mut out)?;
         }
         Curve::Spline(spline) => {
             let shape = sketch.spline_shape(spline).ok_or(ChainError::Missing)?;
@@ -501,89 +523,79 @@ fn closed_curve(sketch: &Sketch, id: Id, fit: f64) -> Result<Vec<Segment>, Chain
     Ok(out.segments)
 }
 
-/// Adds the arc of the circle about `center` of `radius` from `a` to `b`,
-/// turning by `sweep` radians, counter-clockwise if `ccw`: halved until
-/// each part is at most 90°, each part exact
-/// ([`Conic2::arc_between`]).
-#[allow(clippy::too_many_arguments)]
-fn arc(
+/// An arc of the circle about `center` of `radius`, turning by `sweep`
+/// radians, counter-clockwise if `ccw`: what stays the same as it's
+/// halved.
+#[derive(Debug, Clone, Copy)]
+struct ArcSpec {
     center: DVec2,
     radius: f64,
-    a: DVec2,
-    b: DVec2,
     sweep: f64,
     ccw: bool,
+}
+
+impl ArcSpec {
+    /// Either half of it.
+    fn half(self) -> Self {
+        ArcSpec {
+            sweep: self.sweep / 2.0,
+            ..self
+        }
+    }
+
+    /// The point halfway round it from `a` to `b`. Square roots only: it
+    /// lies off the chord's middle, square to it on the side the arc
+    /// turns away from (the right going counter-clockwise), or for an arc
+    /// of nearly a whole turn, opposite the ends' middle, better
+    /// conditioned there.
+    fn middle(self, a: DVec2, b: DVec2) -> DVec2 {
+        let (u, v) = (a - self.center, b - self.center);
+        let direction = if self.sweep > 1.5 * PI {
+            -(u + v)
+        } else {
+            let chord = v - u;
+            if self.ccw {
+                DVec2::new(chord.y, -chord.x)
+            } else {
+                DVec2::new(-chord.y, chord.x)
+            }
+        };
+        self.center + direction * (self.radius / direction.length())
+    }
+}
+
+/// Adds the arc `spec` from `a` to `b`: halved until each part is at most
+/// 90°, each part exact ([`Conic2::arc_between`]).
+fn arc(
+    spec: ArcSpec,
+    a: DVec2,
+    b: DVec2,
     curve: u64,
     out: &mut Segments,
 ) -> Result<(), ProfileError> {
     // A little over 90° from rounding stays one part; a whole turn is four.
     let mut halvings = 0;
-    while halvings < 2 && sweep / f64::from(1 << halvings) > FRAC_PI_2 * (1.0 + 1e-9) {
+    while halvings < 2 && spec.sweep / f64::from(1 << halvings) > FRAC_PI_2 * (1.0 + 1e-9) {
         halvings += 1;
     }
-    arc_parts(center, radius, a, b, sweep, ccw, halvings, curve, out)
+    arc_parts(spec, a, b, halvings, curve, out)
 }
 
 /// [`arc`], halved `halvings` times.
-#[allow(clippy::too_many_arguments)]
 fn arc_parts(
-    center: DVec2,
-    radius: f64,
+    spec: ArcSpec,
     a: DVec2,
     b: DVec2,
-    sweep: f64,
-    ccw: bool,
     halvings: u32,
     curve: u64,
     out: &mut Segments,
 ) -> Result<(), ProfileError> {
     if halvings == 0 {
-        return out.push(Conic2::arc_between(center, radius, a, b)?, curve);
+        return out.push(Conic2::arc_between(spec.center, spec.radius, a, b)?, curve);
     }
-    let middle = arc_middle(center, radius, a, b, sweep, ccw);
-    let half = sweep / 2.0;
-    arc_parts(
-        center,
-        radius,
-        a,
-        middle,
-        half,
-        ccw,
-        halvings - 1,
-        curve,
-        out,
-    )?;
-    arc_parts(
-        center,
-        radius,
-        middle,
-        b,
-        half,
-        ccw,
-        halvings - 1,
-        curve,
-        out,
-    )
-}
-
-/// The point halfway round the arc about `center` of `radius` from `a` to
-/// `b`, turning by `sweep`, counter-clockwise if `ccw`. Square roots only:
-/// it lies off the chord's middle, square to it on the side the arc turns
-/// away from (the right going counter-clockwise), or for an arc of nearly
-/// a whole turn, opposite the ends' middle, better conditioned there.
-fn arc_middle(center: DVec2, radius: f64, a: DVec2, b: DVec2, sweep: f64, ccw: bool) -> DVec2 {
-    let (u, v) = (a - center, b - center);
-    let direction = if sweep > 1.5 * PI {
-        -(u + v)
-    } else {
-        let chord = v - u;
-        if ccw {
-            DVec2::new(chord.y, -chord.x)
-        } else {
-            DVec2::new(-chord.y, chord.x)
-        }
-    };
-    center + direction * (radius / direction.length())
+    let middle = spec.middle(a, b);
+    arc_parts(spec.half(), a, middle, halvings - 1, curve, out)?;
+    arc_parts(spec.half(), middle, b, halvings - 1, curve, out)
 }
 
 #[cfg(test)]
