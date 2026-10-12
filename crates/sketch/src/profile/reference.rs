@@ -101,9 +101,9 @@ impl Region {
     }
 
     /// A point well inside the region, as it's drawn: along each of
-    /// [`SCANLINES`] horizontal lines across its box, the middle of the
+    /// `SCANLINES` (16) horizontal lines across its box, the middle of the
     /// widest span inside it by the even-odd rule on its outline that
-    /// [`Region::contains`] agrees is inside, and of those the one
+    /// `Region::contains` agrees is inside, and of those the one
     /// furthest from the outline. A span's middle can lie on the outline,
     /// where a line runs along an edge or through a corner, and a point
     /// there is as much in the region beside it once the sketch moves a
