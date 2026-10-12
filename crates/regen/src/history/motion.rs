@@ -182,13 +182,7 @@ pub(super) fn within(solid: &Solid, motion: &Motion) -> bool {
         return true;
     };
     let max = f64::from(MAX_COORD);
-    (0..8).all(|corner| {
-        let pick = |bit: u32, min: f64, max: f64| if corner & bit == 0 { min } else { max };
-        let point = DVec3::new(
-            pick(1, bounds.min.x, bounds.max.x),
-            pick(2, bounds.min.y, bounds.max.y),
-            pick(4, bounds.min.z, bounds.max.z),
-        );
+    super::corners(&bounds).into_iter().all(|point| {
         let image = motion.point(point);
         image.is_finite() && image.abs().max_element() <= max
     })

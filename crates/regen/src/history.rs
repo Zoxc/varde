@@ -786,7 +786,6 @@ impl<'a> Shape<'a> {
     }
 }
 
-/// An extrude, revolve or sweep being evaluated.
 /// An extrude, revolve, sweep or loft being evaluated.
 struct Run<'a> {
     document: &'a Document,
@@ -1736,13 +1735,13 @@ fn touches_key(body: Key, tool: Key) -> Key {
     Keyer::new("touches").key(body).key(tool).finish()
 }
 
-/// The key of `doing` the tool filed under `tool` to the body's solid
-/// filed under `body`: the body's new solid's.
 /// The share of a body's volume below which a cut may have taken
 /// nothing from it, for [`Run::cuts_nothing`] to make sure of: the
 /// volumes are integrated, accurate to rounding but not exact.
 const UNCUT_SHARE: f64 = 1e-6;
 
+/// The key of `doing` the tool filed under `tool` to the body's solid
+/// filed under `body`: the body's new solid's.
 fn boolean_key(doing: Doing, body: Key, tool: Key) -> Key {
     Keyer::new("boolean")
         .bytes(doing.name().as_bytes())
@@ -1788,6 +1787,18 @@ fn merge_keys(bodies: Vec<&BodySolid>, tool: Key) -> Vec<Key> {
     keys
 }
 
+/// The eight corners of `bounds`.
+pub(crate) fn corners(bounds: &varde_kernel_compat::patch::Bounds3) -> [DVec3; 8] {
+    std::array::from_fn(|corner| {
+        let pick = |bit: usize, min: f64, max: f64| if corner & bit == 0 { min } else { max };
+        DVec3::new(
+            pick(1, bounds.min.x, bounds.max.x),
+            pick(2, bounds.min.y, bounds.max.y),
+            pick(4, bounds.min.z, bounds.max.z),
+        )
+    })
+}
+
 /// The span along `frame`'s normal that goes through all of `bodies`:
 /// from below the lowest of their boxes' corners to past the highest, by
 /// a margin ([`THROUGH_ALL_MARGIN`] of the extent and
@@ -1800,13 +1811,7 @@ pub(crate) fn through_all<'a>(
     let normal = frame.normal();
     let mut span: Option<(f64, f64)> = None;
     for bounds in bodies.into_iter().filter_map(Solid::bounds3) {
-        for corner in 0..8 {
-            let pick = |bit: u32, min: f64, max: f64| if corner & bit == 0 { min } else { max };
-            let point = glam::DVec3::new(
-                pick(1, bounds.min.x, bounds.max.x),
-                pick(2, bounds.min.y, bounds.max.y),
-                pick(4, bounds.min.z, bounds.max.z),
-            );
+        for point in corners(&bounds) {
             let height = (point - frame.origin).dot(normal);
             span = Some(span.map_or((height, height), |(lo, hi)| {
                 (lo.min(height), hi.max(height))
