@@ -223,11 +223,16 @@ impl Document {
     /// of its kind's names in the document ("Extrude N", "Revolve N"),
     /// like [`Document::add_sketch`].
     pub fn add_feature(&self, kind: FeatureKind) -> Command {
-        let noun = kind.noun();
         Command::AddFeature {
-            name: format!("{noun} {}", self.next_number(noun)),
+            name: self.feature_name(&kind),
             kind: Box::new(kind),
         }
+    }
+
+    /// The name [`Document::add_feature`] gives a feature of `kind`.
+    pub fn feature_name(&self, kind: &FeatureKind) -> String {
+        let noun = kind.noun();
+        format!("{noun} {}", self.next_number(noun))
     }
 
     /// A copy with body `id` as `change` leaves it, or `None` if there's

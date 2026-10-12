@@ -199,10 +199,10 @@ pub(super) fn committed_merges(
 /// makes: the feature, named as the panel's OK names it ([`named`]
 /// gives it the client's names).
 pub(super) fn added(document: &Document, kind: FeatureKind) -> (Vec<Command>, Made) {
-    let command = document.add_feature(kind);
-    let name = match &command {
-        Command::AddFeature { name, .. } => name.clone(),
-        _ => String::new(),
+    let name = document.feature_name(&kind);
+    let command = Command::AddFeature {
+        name: name.clone(),
+        kind: Box::new(kind),
     };
     let made = Made::Added {
         name,
