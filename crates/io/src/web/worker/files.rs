@@ -614,8 +614,8 @@ impl Files {
             None => match self.copy_in(&picked.name, &bytes, read).await {
                 Ok(opened) => return Ok(self.opened_in_browser(Some(open_id), opened).await),
                 Err(not_copied) => {
-                    let (error, read) = *not_copied;
-                    (read, Some(error))
+                    let folder::NotCopied { why, read } = *not_copied;
+                    (read, Some(why))
                 }
             },
         };
@@ -652,13 +652,10 @@ impl Files {
         file: &str,
         bytes: &[u8],
         read: vrdp::WithFound,
-    ) -> Result<folder::Opened<Handle>, folder::NotCopied> {
+    ) -> Result<folder::Opened<Handle>, Box<folder::NotCopied>> {
         let dir = match self.dirs.browser().await {
             Ok(dir) => dir,
-            Err(e) => {
-                let error = format!("couldn't copy it into browser storage: {e}");
-                return Err(Box::new((error, read)));
-            }
+            Err(e) => return Err(folder::NotCopied::io(e, read)),
         };
         let opened = folder::copy_in(&dir, file, bytes, read).await?;
         self.forget_downloads(opened.design.name()).await;

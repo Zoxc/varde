@@ -554,14 +554,11 @@ pub(crate) async fn copy_in<D: Dir>(
     file: &str,
     bytes: &[u8],
     read: WithFound,
-) -> Result<Opened<D::File>, NotCopied> {
+) -> Result<Opened<D::File>, Box<NotCopied>> {
     let names = match dir.names().await {
         Ok(names) => names,
         Err(e) => {
-            return Err(Box::new((
-                copy_error(WriteError::Other(FileError::Io(e).into())),
-                read,
-            )));
+            return Err(NotCopied::io(e, read));
         }
     };
     let mut tried: Vec<String> = Vec::new();
@@ -572,7 +569,7 @@ pub(crate) async fn copy_in<D: Dir>(
         };
         let Some(name) = copy_name(file, taken) else {
             let error = format!("there are too many designs called {file} already");
-            return Err(Box::new((error, read)));
+            return Err(NotCopied::new(error, read));
         };
         let sidecar = match dir.take(&sidecar_name(&name), Make::New).await {
             Ok(sidecar) => Held::new(sidecar),
@@ -588,10 +585,7 @@ pub(crate) async fn copy_in<D: Dir>(
                 continue;
             }
             Err(e) => {
-                return Err(Box::new((
-                    copy_error(WriteError::Other(FileError::Io(e).into())),
-                    read,
-                )));
+                return Err(NotCopied::io(e, read));
             }
         };
         let written = write(dir, &name, false, |copy| {
@@ -606,28 +600,46 @@ pub(crate) async fn copy_in<D: Dir>(
             }
             Err(error) => {
                 let _ = end(dir, &name, sidecar, Ending::Release).await;
-                return Err(Box::new((copy_error(error), read)));
+                return Err(NotCopied::write(error, read));
             }
         }
     }
-    Err(Box::new((
+    Err(NotCopied::new(
         format!("couldn't find a free name for {file}"),
         read,
-    )))
+    ))
 }
 
 /// Why a file wasn't copied into browser storage, see [`copy_in`], and
-/// the file as read, handed back.
-pub(crate) type NotCopied = Box<(String, WithFound)>;
+/// the file as read, handed back. Boxed where it's returned, as the file
+/// is large.
+pub(crate) struct NotCopied {
+    pub(crate) why: String,
+    // Only the web worker hands it back.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) read: WithFound,
+}
 
-/// What copying a file into browser storage failing with `error` says.
-fn copy_error(error: WriteError) -> String {
-    match error {
-        WriteError::Full => FULL.to_owned(),
-        error => format!(
-            "couldn't copy it into browser storage: {}",
-            SaveError::from(error)
-        ),
+impl NotCopied {
+    fn new(why: String, read: WithFound) -> Box<Self> {
+        Box::new(Self { why, read })
+    }
+
+    /// Copying failed on `error` from browser storage.
+    pub(crate) fn io(error: io::Error, read: WithFound) -> Box<Self> {
+        Self::write(write_error(FileError::Io(error)), read)
+    }
+
+    /// Writing the copy failed with `error`.
+    fn write(error: WriteError, read: WithFound) -> Box<Self> {
+        let why = match error {
+            WriteError::Full => FULL.to_owned(),
+            error => format!(
+                "couldn't copy it into browser storage: {}",
+                SaveError::from(error)
+            ),
+        };
+        Self::new(why, read)
     }
 }
 

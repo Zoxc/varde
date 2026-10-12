@@ -646,7 +646,7 @@ fn files_are_copied_in_under_a_name_of_their_own() {
         let read = vrdp::from_bytes_with_found(&file).unwrap();
         match block_on(copy_in(&dir, name, &file, read)) {
             Ok(opened) => opened,
-            Err(not_copied) => panic!("{}", not_copied.0),
+            Err(not_copied) => panic!("{}", not_copied.why),
         }
     };
     let first = copy("bracket.vrdp");
