@@ -181,9 +181,15 @@ impl<R: Ref> Refs<R> {
         }
     }
 
+    /// Where `picked` is among them, if it's picked: by [`Ref::order`],
+    /// whatever spot it was picked at.
+    fn position(&self, picked: &R) -> Option<usize> {
+        self.refs.iter().position(|r| r.order(picked).is_eq())
+    }
+
     /// Takes `picked` out, if it's picked.
     pub(super) fn drop_ref(&mut self, picked: &R) {
-        if let Some(at) = self.refs.iter().position(|r| r == picked) {
+        if let Some(at) = self.position(picked) {
             self.remove(at);
         }
     }
@@ -504,13 +510,12 @@ impl Doc {
         let Some(session) = self.operation.motion() else {
             return false;
         };
+        fn holds<R: Ref>(session: &MotionSession, held: &R) -> bool {
+            R::refs(session).position(held).is_some()
+        }
         match held {
-            HeldRef::Edge(edge) => {
-                (EdgeRef::refs(session).refs.iter()).any(|r| r.order(edge).is_eq())
-            }
-            HeldRef::Face(face) => {
-                (FaceRef::refs(session).refs.iter()).any(|r| r.order(face).is_eq())
-            }
+            HeldRef::Edge(edge) => holds(session, edge),
+            HeldRef::Face(face) => holds(session, face),
         }
     }
 
@@ -525,18 +530,8 @@ impl Doc {
             return;
         };
         match held {
-            HeldRef::Edge(edge) => {
-                let found = (EdgeRef::refs(session).refs.iter()).find(|r| r.order(edge).is_eq());
-                if let Some(found) = found.copied() {
-                    EdgeRef::refs_mut(session).drop_ref(&found);
-                }
-            }
-            HeldRef::Face(face) => {
-                let found = (FaceRef::refs(session).refs.iter()).find(|r| r.order(face).is_eq());
-                if let Some(found) = found.copied() {
-                    FaceRef::refs_mut(session).drop_ref(&found);
-                }
-            }
+            HeldRef::Edge(edge) => EdgeRef::refs_mut(session).drop_ref(edge),
+            HeldRef::Face(face) => FaceRef::refs_mut(session).drop_ref(face),
         }
         session.refs_body();
     }
