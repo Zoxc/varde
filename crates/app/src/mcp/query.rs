@@ -56,9 +56,7 @@ pub(crate) fn design_summary(doc: &Doc, page: Page) -> ToolReply {
     let bodies: Vec<Value> = (document.bodies().iter())
         .map(|body| json!({ "name": body.name, "visible": body.visible }))
         .collect();
-    let rollback = (document.rollback())
-        .and_then(|id| document.feature(id))
-        .map(|feature| feature.name.clone());
+    let rollback = rollback_name(document);
     let model = committed
         .as_ref()
         .map(|model| model_state(doc, (model.generation, model.until)));
@@ -198,14 +196,14 @@ pub(super) fn pages(
 /// The feature of `doc`'s design named `name`, or the answer saying
 /// there's none.
 pub(super) fn named<'a>(doc: &'a Doc, name: &str) -> Result<&'a Feature, ToolReply> {
-    (doc.editor.document().features().iter())
-        .find(|feature| feature.name == name)
-        .ok_or_else(|| {
-            ToolReply::error(format!(
-                "no feature is named \"{}\"",
-                varde_mcp::shown(name)
-            ))
-        })
+    super::edit::feature_by_name(doc.editor.document(), name).map_err(ToolReply::error)
+}
+
+/// The name of the feature `document` is rolled back to, if it is.
+pub(super) fn rollback_name(document: &Document) -> Option<String> {
+    (document.rollback())
+        .and_then(|id| document.feature(id))
+        .map(|feature| feature.name.clone())
 }
 
 /// How lengths, areas and points are shown in the design's `units`, as

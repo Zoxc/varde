@@ -74,12 +74,7 @@ struct Found<'a> {
 
 fn locate<'a>(doc: &'a Doc, args: &Topology) -> Result<Found<'a>, ToolReply> {
     let document = doc.editor.document();
-    let Some(body) = (document.bodies().iter()).find(|body| body.name == args.body) else {
-        return Err(ToolReply::error(format!(
-            "no body is named \"{}\"",
-            args.body
-        )));
-    };
+    let body = super::super::edit::body_by_name(document, &args.body).map_err(ToolReply::error)?;
     let Some(model) = doc.feed.committed() else {
         return Err(ToolReply::error(super::NOT_BUILT));
     };

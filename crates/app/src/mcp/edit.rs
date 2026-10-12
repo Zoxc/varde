@@ -23,8 +23,8 @@
 
 use serde_json::{Value, json};
 use varde_document::{
-    BodyId, Command, Document, FeatureId, Generation, Named, Opacity, Removable, Revision, Tint,
-    Tolerance,
+    Body, BodyId, Command, Document, Feature, FeatureId, Generation, Named, Opacity, Removable,
+    Revision, Tint, Tolerance,
 };
 use varde_expr::{Ask, LengthUnit, Value as ExprValue};
 use varde_mcp::tools::{Call, Rename, Target, ToolReply, Units};
@@ -217,9 +217,7 @@ impl Made {
                 referenced,
             } => super::draw::drawn_made(doc, *feature, labels, *freedom, referenced),
             Made::Design => {
-                let rollback = (document.rollback())
-                    .and_then(|id| document.feature(id))
-                    .map(|feature| feature.name.clone());
+                let rollback = super::query::rollback_name(document);
                 json!({
                     "units": document.units().symbol(),
                     "tolerance": varde_view::tolerance_label(document.tolerance().fit()),
@@ -511,17 +509,32 @@ fn tolerance(text: &str, units: LengthUnit) -> Result<Tolerance, String> {
 
 /// The feature named `name`, by its Timeline name.
 pub(super) fn feature_named(document: &Document, name: &str) -> Result<FeatureId, Refused> {
-    (document.features().iter())
-        .find(|feature| feature.name == *name)
+    feature_by_name(document, name)
         .map(|feature| feature.id)
-        .ok_or_else(|| not_named("feature", name))
+        .map_err(Refused::failed)
 }
 
 /// The body named `name`, by its Objects name.
 pub(super) fn body_named(document: &Document, name: &str) -> Result<BodyId, Refused> {
+    body_by_name(document, name)
+        .map(|body| body.id)
+        .map_err(Refused::failed)
+}
+
+/// The feature named `name`, by its Timeline name, or why not.
+pub(super) fn feature_by_name<'a>(
+    document: &'a Document,
+    name: &str,
+) -> Result<&'a Feature, String> {
+    (document.features().iter())
+        .find(|feature| feature.name == *name)
+        .ok_or_else(|| not_named("feature", name))
+}
+
+/// The body named `name`, by its Objects name, or why not.
+pub(super) fn body_by_name<'a>(document: &'a Document, name: &str) -> Result<&'a Body, String> {
     (document.bodies().iter())
         .find(|body| body.name == *name)
-        .map(|body| body.id)
         .ok_or_else(|| not_named("body", name))
 }
 
@@ -529,12 +542,12 @@ pub(super) fn body_named(document: &Document, name: &str) -> Result<BodyId, Refu
 fn param_named(document: &Document, name: &str) -> Result<usize, Refused> {
     (document.params().iter())
         .position(|param| param.name == name.trim())
-        .ok_or_else(|| not_named("parameter", name))
+        .ok_or_else(|| Refused::failed(not_named("parameter", name)))
 }
 
-/// The answer to a name found nowhere.
-fn not_named(what: &str, name: &str) -> Refused {
-    Refused::failed(format!("no {what} is named \"{}\"", varde_mcp::shown(name)))
+/// Why a name was found nowhere.
+fn not_named(what: &str, name: &str) -> String {
+    format!("no {what} is named \"{}\"", varde_mcp::shown(name))
 }
 
 /// `names` for a sentence, at most [`LISTED`] of them, then how many

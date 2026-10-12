@@ -494,11 +494,7 @@ impl Said {
             self.lines.push(format!("set the tolerance to {is}"));
             self.design.insert("tolerance".to_owned(), old_new(was, is));
         }
-        let rollback = |document: &Document| {
-            (document.rollback())
-                .and_then(|id| document.feature(id))
-                .map(|feature| feature.name.clone())
-        };
+        let rollback = super::query::rollback_name;
         let (was, is) = (rollback(old), rollback(new));
         if was != is {
             self.lines.push(match &is {
