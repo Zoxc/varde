@@ -163,37 +163,25 @@ impl ConstraintKind {
             },
             ConstraintKind::Horizontal | ConstraintKind::Vertical => {
                 let horizontal = self == ConstraintKind::Horizontal;
+                let one: fn(Id) -> _ = if horizontal {
+                    Constraint::Horizontal
+                } else {
+                    Constraint::Vertical
+                };
+                let two: fn(Id, Id) -> _ = if horizontal {
+                    Constraint::HorizontalPoints
+                } else {
+                    Constraint::VerticalPoints
+                };
                 let handles = picked.with_handles();
                 match (&points[..], &lines[..], &rounds[..]) {
-                    _ if let Some(lines) = &handles => Some(
-                        lines
-                            .iter()
-                            .map(|&line| {
-                                if horizontal {
-                                    Constraint::Horizontal(line)
-                                } else {
-                                    Constraint::Vertical(line)
-                                }
-                            })
-                            .collect(),
-                    ),
-                    (&[a, b], [], []) => Some(vec![if horizontal {
-                        Constraint::HorizontalPoints(a, b)
-                    } else {
-                        Constraint::VerticalPoints(a, b)
-                    }]),
-                    ([], lines, []) if !lines.is_empty() => Some(
-                        lines
-                            .iter()
-                            .map(|&line| {
-                                if horizontal {
-                                    Constraint::Horizontal(line)
-                                } else {
-                                    Constraint::Vertical(line)
-                                }
-                            })
-                            .collect(),
-                    ),
+                    _ if let Some(lines) = &handles => {
+                        Some(lines.iter().copied().map(one).collect())
+                    }
+                    (&[a, b], [], []) => Some(vec![two(a, b)]),
+                    ([], lines, []) if !lines.is_empty() => {
+                        Some(lines.iter().copied().map(one).collect())
+                    }
                     _ => None,
                 }
             }
