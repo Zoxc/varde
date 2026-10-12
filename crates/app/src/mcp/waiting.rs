@@ -1178,7 +1178,7 @@ impl Doc {
                 Err(reply) => self.mcp.answer(from, call, reply),
             },
             _ => {
-                let reply = super::answer_now(self, &call);
+                let reply = answer_now(self, &call);
                 self.mcp.answer(from, call, reply);
             }
         }
@@ -1567,5 +1567,15 @@ impl Doc {
             ),
         };
         self.mcp.answer(from, call, reply);
+    }
+}
+
+/// The answer to `call` from `doc`, the open design, for the queries
+/// answered at once; the others wait ([`Doc::mcp_query`]).
+pub(super) fn answer_now(doc: &Doc, call: &Call) -> ToolReply {
+    match call {
+        Call::DesignSummary(page) => query::design_summary(doc, *page),
+        Call::Feature { name, page } => query::feature(doc, name, *page),
+        _ => ToolReply::error("internal error: not a query answered at once"),
     }
 }

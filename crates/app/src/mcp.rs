@@ -736,33 +736,6 @@ impl Mcp {
     }
 }
 
-/// The answer to `call` from `doc`, the open design, for the calls
-/// answered at once; `body_topology`, `sketch`, `measure` and `render` wait
-/// (`waiting.rs`), so they're only checked here.
-pub(crate) fn answer_now(doc: &Doc, call: &Call) -> ToolReply {
-    match call {
-        Call::DesignSummary(page) => query::design_summary(doc, *page),
-        Call::Feature { name, page } => query::feature(doc, name, *page),
-        Call::BodyTopology(topology) => match query::body_topology(doc, topology) {
-            Ok(_) => ToolReply::error("internal error: body_topology waits"),
-            Err(reply) => reply,
-        },
-        Call::Sketch(args) => match query::sketch(doc, args) {
-            Ok(_) => ToolReply::error("internal error: sketch waits"),
-            Err(reply) => reply,
-        },
-        Call::Measure(args) => match query::measure(doc, args) {
-            Ok(_) => ToolReply::error("internal error: measure waits"),
-            Err(reply) => reply,
-        },
-        Call::Render(args) => match query::render(doc, args) {
-            Ok(_) => ToolReply::error("internal error: render waits"),
-            Err(reply) => reply,
-        },
-        _ => ToolReply::error("internal error: an edit is applied, not answered"),
-    }
-}
-
 #[cfg(test)]
 mod tests;
 

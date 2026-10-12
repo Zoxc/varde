@@ -593,9 +593,10 @@ call answered with an error), so a late `Ready`, `BindFailed` or
 session. `Started` and `Ended` track the session; an end
 or a cancel answers the waiting calls of that session or id with an
 error. Every query waits for the model to catch up with the design
-(`Wait::Model`) and is then answered by `mcp::answer_now`;
-`body_topology`, `measure`, `sketch` and `render` then wait on more
-(below). With no design open
+(`Wait::Model`) and is then taken up by `Doc::mcp_query`
+(`mcp/waiting.rs`): `design_summary` and `feature` are answered at
+once, by `answer_now`; `body_topology`, `measure`, `sketch` and
+`render` are checked and then wait on more (below). With no design open
 every call answers "no design is open".
 
 ### Waiting calls

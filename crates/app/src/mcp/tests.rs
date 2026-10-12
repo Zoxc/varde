@@ -59,8 +59,16 @@ fn answer(doc: Option<&Doc>, call: &Call) -> ToolReply {
     let Some(doc) = doc else {
         return ToolReply::error(query::NO_DESIGN);
     };
-    let Call::BodyTopology(args) = call else {
-        return answer_now(doc, call);
+    // Those that wait, but for `body_topology`, are only checked.
+    let waits = |checked: Option<ToolReply>| {
+        checked.unwrap_or_else(|| ToolReply::error("internal error: the call waits"))
+    };
+    let args = match call {
+        Call::BodyTopology(args) => args,
+        Call::Sketch(args) => return waits(query::sketch(doc, args).err()),
+        Call::Measure(args) => return waits(query::measure(doc, args).err()),
+        Call::Render(args) => return waits(query::render(doc, args).err()),
+        _ => return waiting::answer_now(doc, call),
     };
     let asked = match query::body_topology(doc, args) {
         Ok(asked) => asked,
