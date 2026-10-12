@@ -17,8 +17,8 @@ fn scope() -> DedicatedWorkerGlobalScope {
     js_sys::global().unchecked_into()
 }
 
-/// Runs the worker's side of a lane, called `name` in errors, e.g. "the
-/// file worker": hands each message the page posts to `on_message`, for as
+/// Runs the worker's side of the lane in `role`, called by its name in
+/// errors: hands each message the page posts to `on_message`, for as
 /// long as the worker lives, and tells the page it listens. Called once, by
 /// `serve_worker`. Anything the page posts that isn't a [`Message`],
 /// or that `on_message` refuses, throws, worded "… got something else" or
@@ -29,7 +29,7 @@ fn scope() -> DedicatedWorkerGlobalScope {
 /// with its location, and its message posted as a string, worded as the
 /// native lanes word it (see [`crate::panic`]).
 pub fn serve(
-    name: &'static str,
+    role: &'static crate::page::Role,
     mut on_message: impl FnMut(Message) -> Result<(), Refused> + 'static,
 ) {
     std::panic::set_hook(Box::new(|info| {
@@ -41,7 +41,7 @@ pub fn serve(
     let on_message = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
         let handled = Message::from_js(&event.data()).ok_or(Refused::Else);
         if let Err(refused) = handled.and_then(&mut on_message) {
-            wasm_bindgen::throw_str(&refused.word(name, "got"));
+            wasm_bindgen::throw_str(&refused.word(role.name, "got"));
         }
     });
     scope().set_onmessage(Some(on_message.as_ref().unchecked_ref()));

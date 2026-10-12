@@ -41,7 +41,8 @@ sketch ─▶ expr
 sides, so the code they share is downloaded and compiled once. It exports
 `start`, which wasm-bindgen runs as every instance starts and which runs the
 app on the page only, and `serve_worker(role)`, which runs the lane the role
-names (`WORKER_ROLE` of `varde-regen`, `varde-solve` and `varde-io`).
+names (the `id` of the `WORKER` role, a `varde_lane::page::Role`, of `varde-regen`,
+`varde-solve` and `varde-io`, which also gives its name in errors and its `serve`).
 A worker is an instance of its own of that module, sharing none of the page's
 memory: `varde_lane::page::Host::start` starts `crates/web/worker_loader.js`,
 copied next to the page, as a module worker and posts it the page's compiled

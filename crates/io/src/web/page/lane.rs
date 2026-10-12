@@ -23,16 +23,14 @@ use crate::{Chosen, Picked, Request, Response, SaveTo};
 /// requests through the [`Lane`], read responses from [`Responses`];
 /// dropping the latter terminates the worker.
 pub fn spawn() -> (Lane, Responses) {
-    page::spawn(crate::WORKER_ROLE, "the file worker", |host, sender| {
-        Shared {
-            host,
-            state: RefCell::new(State {
-                phase: Phase::Starting(Vec::new()),
-                next: 0,
-                posted: VecDeque::new(),
-            }),
-            sender,
-        }
+    page::spawn(&crate::WORKER, |host, sender| Shared {
+        host,
+        state: RefCell::new(State {
+            phase: Phase::Starting(Vec::new()),
+            next: 0,
+            posted: VecDeque::new(),
+        }),
+        sender,
     })
 }
 

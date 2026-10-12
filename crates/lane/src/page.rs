@@ -68,21 +68,31 @@ pub trait Page<R> {
     fn fail(&self, error: String);
 }
 
-/// Starts a lane on the page, with a worker in the role `role`, e.g. "io",
-/// which the web app's `serve_worker` runs (see `crates/web/src/lib.rs`),
-/// and called `name` in errors, e.g. "the file worker": `build` makes its [`Page`] from the
+/// A worker lane's identity: the role the web app's `serve_worker` starts
+/// it in, what it's called in errors and the worker's side it runs. Each
+/// lane crate exports one as `WORKER`, which `serve_worker` (see
+/// `crates/web/src/lib.rs`) finds by its `id`.
+pub struct Role {
+    /// The role the loader starts the worker in, e.g. "io".
+    pub id: &'static str,
+    /// What the worker is called in errors, e.g. "the file worker".
+    pub name: &'static str,
+    /// Runs the worker's side, in the worker, never on the page.
+    pub serve: fn(),
+}
+
+/// Starts a lane on the page, with a worker in `role`: `build` makes its [`Page`] from the
 /// worker's [`Host`], not started yet, and the sender the page answers
 /// through. The worker then starts, or the page hears why not through
 /// [`Page::fail`]. Send requests through the [`Lane`], read responses from
 /// [`Responses`]; dropping the latter terminates the worker.
 pub fn spawn<R: 'static, S, P: Page<R> + 'static>(
-    role: &'static str,
-    name: &'static str,
+    role: &'static Role,
     build: impl FnOnce(Host, UnboundedSender<S>) -> P,
 ) -> (Lane<R>, Responses<R, S>) {
     let (lane, requests) = unbounded();
     let (sender, receiver) = unbounded();
-    let page = Rc::new_cyclic(|this: &Weak<P>| build(Host::new(this, role, name), sender));
+    let page = Rc::new_cyclic(|this: &Weak<P>| build(Host::new(this, role), sender));
     if let Err(error) = page.host().start() {
         // Already logged and stopped by `start`.
         page.fail(error);
@@ -192,15 +202,11 @@ pub struct Host {
 }
 
 impl Host {
-    /// A host for a worker in the role `role`, called `name` in
-    /// errors, that isn't started yet. Its messages go to the page `this`
+    /// A host for a worker in `role` that isn't started yet. Its messages go to the page `this`
     /// refers to, see [`deliver`], and if it stops, why goes to
     /// [`Page::fail`]. For a page made with `Rc::new_cyclic`.
-    fn new<R, P: Page<R> + 'static>(
-        this: &Weak<P>,
-        role: &'static str,
-        name: &'static str,
-    ) -> Self {
+    fn new<R, P: Page<R> + 'static>(this: &Weak<P>, role: &'static Role) -> Self {
+        let Role { id: role, name, .. } = *role;
         let weak = this.clone();
         let on_message = Closure::new(move |event: MessageEvent| {
             if let Some(page) = weak.upgrade() {

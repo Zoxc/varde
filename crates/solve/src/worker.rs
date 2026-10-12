@@ -2,7 +2,7 @@
 //!
 //! The same API as the native lane, so the app doesn't tell them apart. The
 //! worker is a second instance of the page's wasm, started in the role
-//! [`WORKER_ROLE`](crate::WORKER_ROLE), and shares no memory with the page: requests and replies are posted as
+//! [`WORKER`](crate::WORKER), and shares no memory with the page: requests and replies are posted as
 //! bytes, see [`wire`]. The page's side never waits; how its requests
 //! reach the worker is [`varde_lane::page`]'s.
 //!
@@ -43,7 +43,7 @@ pub fn spawn() -> (Lane, Responses) {
     let solve = Solve {
         session: Cell::new(None),
     };
-    mailbox::spawn(crate::WORKER_ROLE, "the solver worker", solve)
+    mailbox::spawn(&crate::WORKER, solve)
 }
 
 /// How the lane's requests and replies cross, see [`wire`].
@@ -100,7 +100,7 @@ impl Wire for Solve {
 /// `main`, in the worker.
 pub fn serve() {
     let mut solver = Solver::default();
-    worker::serve("the solver worker", move |message| {
+    worker::serve(&crate::WORKER, move |message| {
         let ([part], []) = (&message.parts[..], &message.objects[..]) else {
             return Err(Refused::Else);
         };

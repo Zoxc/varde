@@ -3,7 +3,7 @@
 //!
 //! The same API as the native lane, so the app doesn't tell them apart. The
 //! worker is a second instance of the page's wasm, started in the role
-//! [`WORKER_ROLE`](crate::WORKER_ROLE), as the regeneration and solver
+//! [`WORKER`](crate::WORKER), as the regeneration and solver
 //! workers are. It shares no memory with the page: messages cross as
 //! bytes, see [`wire`].
 //!

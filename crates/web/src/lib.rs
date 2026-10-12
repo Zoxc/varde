@@ -26,12 +26,16 @@ pub fn start() -> Result<(), JsError> {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn serve_worker(role: &str) -> Result<(), JsError> {
-    match role {
-        varde_regen::WORKER_ROLE => varde_regen::serve_worker(),
-        varde_solve::WORKER_ROLE => varde_solve::serve_worker(),
-        varde_io::WORKER_ROLE => varde_io::serve_worker(),
-        _ => return Err(JsError::new(&format!("no worker has the role {role:?}"))),
-    }
+    let workers = [
+        &varde_regen::WORKER,
+        &varde_solve::WORKER,
+        &varde_io::WORKER,
+    ];
+    let worker = workers
+        .into_iter()
+        .find(|worker| worker.id == role)
+        .ok_or_else(|| JsError::new(&format!("no worker has the role {role:?}")))?;
+    (worker.serve)();
     Ok(())
 }
 

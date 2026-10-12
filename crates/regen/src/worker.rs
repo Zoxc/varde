@@ -2,7 +2,7 @@
 //!
 //! The same API as the native lane, so the app doesn't tell them apart. The
 //! worker is a second instance of the page's wasm, started in the role
-//! [`WORKER_ROLE`](crate::WORKER_ROLE), and shares no memory with the
+//! [`WORKER`](crate::WORKER), and shares no memory with the
 //! page: requests are posted as bytes and meshes come back as transferred
 //! buffers, see [`wire`]. The page's side never waits; how its requests
 //! reach the worker is [`varde_lane::page`]'s.
@@ -34,7 +34,7 @@ use crate::{Regenerator, Request, Response};
 /// read responses from [`Responses`]; dropping the latter terminates the
 /// worker.
 pub fn spawn() -> (Lane, Responses) {
-    mailbox::spawn(crate::WORKER_ROLE, "the regeneration worker", Regenerate)
+    mailbox::spawn(&crate::WORKER, Regenerate)
 }
 
 /// How the lane's requests and replies cross, see [`wire`].
@@ -83,7 +83,7 @@ fn post(response: &Response) {
 /// worker's `main`, in the worker.
 pub fn serve() {
     let mut regenerator = Regenerator::default();
-    worker::serve("the regeneration worker", move |message| {
+    worker::serve(&crate::WORKER, move |message| {
         let ([part], []) = (&message.parts[..], &message.objects[..]) else {
             return Err(Refused::Else);
         };

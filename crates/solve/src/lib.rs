@@ -49,17 +49,16 @@ pub mod lane {
     pub type Responses = varde_lane::Responses<Request, Response>;
 }
 
-/// The solver Web Worker's side, run by the web app's `serve_worker` in
-/// the role [`WORKER_ROLE`] (see `crates/web/src/lib.rs`), never by the
-/// page.
+/// The solver Web Worker: the role the web app's `serve_worker` starts it
+/// in (see `crates/web/src/lib.rs`), its name in errors and its side,
+/// never run by the page.
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
-pub use crate::worker::serve as serve_worker;
-
-/// The role the web app starts the solver Web Worker in.
-#[cfg(target_arch = "wasm32")]
-#[doc(hidden)]
-pub const WORKER_ROLE: &str = "solve";
+pub const WORKER: varde_lane::page::Role = varde_lane::page::Role {
+    id: "solve",
+    name: "the solver worker",
+    serve: crate::worker::serve,
+};
 
 use std::sync::Arc;
 use std::time::Duration;

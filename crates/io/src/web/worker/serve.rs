@@ -33,7 +33,7 @@ impl Queued for Numbered {
 /// at a time. Called by the worker's `main`, in the worker.
 pub fn serve() {
     let (queued, woken) = unbounded();
-    worker::serve("the file worker", move |Message { parts, objects }| {
+    worker::serve(&crate::WORKER, move |Message { parts, objects }| {
         // The bytes, and the object posted with them, if any.
         let ([buffer], [] | [_]) = (&parts[..], &objects[..]) else {
             return Err(Refused::Else);
