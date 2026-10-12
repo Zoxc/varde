@@ -23,8 +23,8 @@ use varde_expr::LengthUnit;
 use varde_kernel::RenderLines;
 use varde_render::{Camera, GridPlane, LineStyle, PointStyle, SketchLayer, Space, Srgba};
 use varde_sketch::{
-    Curve, DimensionEntry, Id, Kind, Measure, NearMiss, Profiles, Region, Selectable, Side, Sketch,
-    SplineKind, cut_line, foot,
+    Curve, CurveEntry, DimensionEntry, Id, Kind, Measure, NearMiss, Profiles, Region, Selectable,
+    Side, Sketch, SplineKind, cut_line, foot,
 };
 
 use crate::document::tied_items;
@@ -168,6 +168,43 @@ pub(crate) struct States {
     failing: BTreeSet<Id>,
     /// Items of edits waiting on the solver, faded.
     pending: BTreeSet<Id>,
+}
+
+impl States {
+    /// Whether `id` is drawn red: in a conflict or named by a failing
+    /// feature.
+    fn red(&self, id: Id) -> bool {
+        self.conflicts.contains(&id) || self.failing.contains(&id)
+    }
+
+    /// The colour of the curve or point `id` by its state alone: red,
+    /// else fixed, else free.
+    fn color(&self, id: Id, colors: SketchColors) -> Color {
+        if self.red(id) {
+            colors.conflict
+        } else if self.fixed.contains(&id) {
+            colors.fixed
+        } else {
+            colors.curve
+        }
+    }
+
+    /// `color`, faded if `id` waits on the solver.
+    fn faded(&self, id: Id, color: Color) -> Color {
+        if self.pending.contains(&id) {
+            fade(color)
+        } else {
+            color
+        }
+    }
+}
+
+/// `color` faded, as what waits on the solver is.
+fn fade(color: Color) -> Color {
+    Color {
+        a: color.a * PENDING_ALPHA,
+        ..color
+    }
 }
 
 /// What the viewport keeps of the sketch between events and frames.
@@ -1040,42 +1077,10 @@ impl<'a> Sketching<'a> {
             fill_region(&mut layer, region, colors.region);
         }
         let sketch = self.sketch;
-        let states = &self.states;
-        let faded = |id: Id, color: Color| {
-            if states.pending.contains(&id) {
-                Color {
-                    a: color.a * PENDING_ALPHA,
-                    ..color
-                }
-            } else {
-                color
-            }
-        };
-        let red = |id: Id| states.conflicts.contains(&id) || states.failing.contains(&id);
-        let state_color = |id: Id| {
-            if red(id) {
-                colors.conflict
-            } else if states.fixed.contains(&id) {
-                colors.fixed
-            } else {
-                colors.curve
-            }
-        };
-        // The origin and axes: selected, in a conflict, or else their own
-        // colour.
-        let builtin_color = |id: Id| {
-            if self.selected(id) {
-                colors.selected
-            } else if states.conflicts.contains(&id) {
-                colors.conflict
-            } else {
-                colors.axis
-            }
-        };
         // The axes under the rest, and the origin under the points.
         for id in [Id::X_AXIS, Id::Y_AXIS] {
             for half in axis(id).into_iter().flatten() {
-                let style = line(builtin_color(id), AXIS_WIDTH, false);
+                let style = line(self.builtin_color(id, colors), AXIS_WIDTH, false);
                 layer.axis_polyline(Space::Sketch, &half, style);
             }
         }
@@ -1093,13 +1098,8 @@ impl<'a> Sketching<'a> {
                 let Some(polyline) = sketch.flatten(&entry.curve) else {
                     continue;
                 };
-                let (color, width) = match (selected, entry.construction && !red(entry.id)) {
-                    (true, _) => (colors.selected, SELECTED_WIDTH),
-                    _ if linked.contains(&entry.id) && !red(entry.id) => (colors.link, CURVE_WIDTH),
-                    (false, true) => (colors.construction, CURVE_WIDTH),
-                    (false, false) => (state_color(entry.id), CURVE_WIDTH),
-                };
-                let color = faded(entry.id, color);
+                let linked = linked.contains(&entry.id);
+                let (color, width) = self.curve_style(entry, selected, linked, colors);
                 let (kept, cut) = match (cut_back.get(&entry.id), &polyline[..]) {
                     (Some(&kept), &[start, end]) => {
                         let (kept, cut) = cut_line(start, end, kept);
@@ -1129,7 +1129,11 @@ impl<'a> Sketching<'a> {
                 color,
             });
         }
-        let mut style = dot(POINT_RADIUS, colors.point_fill, builtin_color(Id::ORIGIN));
+        let mut style = dot(
+            POINT_RADIUS,
+            colors.point_fill,
+            self.builtin_color(Id::ORIGIN, colors),
+        );
         style.fixed = true;
         layer.point(DVec2::ZERO, style);
         self.spline_aids(&mut layer, colors);
@@ -1148,28 +1152,86 @@ impl<'a> Sketching<'a> {
                 .iter()
                 .filter(|point| self.selected(point.id) == selected);
             for point in points {
-                let fill = if selected {
-                    colors.selected
-                } else {
-                    colors.point_fill
-                };
-                let rim = if linked.contains(&point.id) && !red(point.id) {
-                    colors.link
-                } else {
-                    if red(point.id) || states.fixed.contains(&point.id) {
-                        state_color(point.id)
-                    } else if tips.contains(&point.id) {
-                        colors.spline_handle
-                    } else {
-                        colors.point
-                    }
-                };
-                let mut style = dot(POINT_RADIUS, faded(point.id, fill), faded(point.id, rim));
-                style.fixed = !selected && states.fixed.contains(&point.id);
+                let linked = linked.contains(&point.id);
+                let tip = tips.contains(&point.id);
+                let style = self.point_style(point.id, selected, linked, tip, colors);
                 layer.point(point.at, style);
             }
         }
         (layer, arrows)
+    }
+
+    /// The colour of the origin or an axis `id`: selected, in a conflict,
+    /// or else their own colour.
+    fn builtin_color(&self, id: Id, colors: SketchColors) -> Color {
+        if self.selected(id) {
+            colors.selected
+        } else if self.states.conflicts.contains(&id) {
+            colors.conflict
+        } else {
+            colors.axis
+        }
+    }
+
+    /// The colour and width of the curve `entry`, `selected` or not and
+    /// made by a link (`linked`) or not. The order of its states: selected
+    /// over red (in a conflict or failing; unlike a glyph, whose conflict
+    /// shows over its selection), red over linked, linked over
+    /// construction, construction over fixed; and that faded while it
+    /// waits on the solver.
+    fn curve_style(
+        &self,
+        entry: &CurveEntry,
+        selected: bool,
+        linked: bool,
+        colors: SketchColors,
+    ) -> (Color, f32) {
+        let id = entry.id;
+        let red = self.states.red(id);
+        let (color, width) = if selected {
+            (colors.selected, SELECTED_WIDTH)
+        } else if linked && !red {
+            (colors.link, CURVE_WIDTH)
+        } else if entry.construction && !red {
+            (colors.construction, CURVE_WIDTH)
+        } else {
+            (self.states.color(id, colors), CURVE_WIDTH)
+        };
+        (self.states.faded(id, color), width)
+    }
+
+    /// How the point `id` is drawn, `selected` or not, made by a link
+    /// (`linked`) or not and a handle's tip or end or a control point
+    /// (`tip`) or not: filled in the selection's colour if selected; its
+    /// rim linked unless red, else red or fixed, else a tip's, else
+    /// plain; filled as fixed when fixed and not selected; and faded while
+    /// it waits on the solver.
+    fn point_style(
+        &self,
+        id: Id,
+        selected: bool,
+        linked: bool,
+        tip: bool,
+        colors: SketchColors,
+    ) -> PointStyle {
+        let states = &self.states;
+        let fill = if selected {
+            colors.selected
+        } else {
+            colors.point_fill
+        };
+        let rim = if linked && !states.red(id) {
+            colors.link
+        } else if states.red(id) || states.fixed.contains(&id) {
+            states.color(id, colors)
+        } else if tip {
+            colors.spline_handle
+        } else {
+            colors.point
+        };
+        let mut style = dot(POINT_RADIUS, states.faded(id, fill), states.faded(id, rim));
+        style.fixed = !selected && states.fixed.contains(&id);
+        style
     }
 
     /// What shows how splines are shaped: each handle as a line from its
@@ -1856,10 +1918,7 @@ impl GlyphLook {
             GlyphLook::Free => free,
             GlyphLook::Selected => colors.selected,
             GlyphLook::Conflict => colors.conflict,
-            GlyphLook::Pending => Color {
-                a: free.a * PENDING_ALPHA,
-                ..free
-            },
+            GlyphLook::Pending => fade(free),
         }
     }
 }
