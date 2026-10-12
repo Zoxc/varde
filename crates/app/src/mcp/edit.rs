@@ -62,7 +62,7 @@ fn noted(made: &mut Value, notes: &[String]) {
 pub(super) fn taken_note(taken: &str, got: &str) -> String {
     format!(
         "The name \"{}\" was taken: it got \"{got}\"",
-        varde_mcp::cut(taken, 64)
+        varde_mcp::shown(taken)
     )
 }
 
@@ -534,10 +534,7 @@ fn param_named(document: &Document, name: &str) -> Result<usize, Refused> {
 
 /// The answer to a name found nowhere.
 fn not_named(what: &str, name: &str) -> Refused {
-    Refused::failed(format!(
-        "no {what} is named \"{}\"",
-        varde_mcp::cut(name, 64)
-    ))
+    Refused::failed(format!("no {what} is named \"{}\"", varde_mcp::shown(name)))
 }
 
 /// `names` for a sentence, at most [`LISTED`] of them, then how many

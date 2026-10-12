@@ -597,7 +597,7 @@ impl Planner<'_> {
             "y_axis" => return Ok(Id::Y_AXIS),
             _ => {}
         }
-        let shown = varde_mcp::cut(text, 64);
+        let shown = varde_mcp::shown(text);
         let (label, part) = match text.split_once('.') {
             Some((label, part)) => (label, Some(part)),
             None => (text, None),
@@ -607,7 +607,7 @@ impl Planner<'_> {
                 index,
                 format_args!(
                     "no earlier operation is labelled {:?}, and it's no id",
-                    varde_mcp::cut(label, 64)
+                    varde_mcp::shown(label)
                 ),
             ));
         };

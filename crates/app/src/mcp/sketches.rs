@@ -99,7 +99,7 @@ pub(super) fn set_sketch_plane(
 pub(super) fn sketch_named(document: &Document, name: &str) -> Result<FeatureId, Refused> {
     let id = feature_named(document, name)?;
     if sketch_of(document, id).is_none() {
-        let why = format!("\"{}\" isn't a sketch", varde_mcp::cut(name, 64));
+        let why = format!("\"{}\" isn't a sketch", varde_mcp::shown(name));
         return Err(Refused::failed(why));
     }
     Ok(id)

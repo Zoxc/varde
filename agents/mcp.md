@@ -140,7 +140,7 @@ arguments that don't fit the tool are a tool result with `isError`
 model reads why and tries again. Unknown argument keys are refused, so a
 misspelt filter isn't ignored. Names are non-blank strings of at most
 `NAME_BYTES` (1024, the document's own longest); names echoed back are
-cut to 64 bytes. `offset` and `limit` are whole numbers through
+cut to `SHOWN` (64) bytes by `varde_mcp::shown`. `offset` and `limit` are whole numbers through
 `usize::try_from`; `limit` is at least 1 and cut down to `MAX_LIMIT`
 (500). A `Direction` is `"+z"`, `"-x"`, `"z"` (unsigned: either way) or
 three finite numbers not all zero, normalized after dividing by the

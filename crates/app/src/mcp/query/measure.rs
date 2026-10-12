@@ -57,7 +57,7 @@ fn resolve(doc: &Doc, item: &Measured) -> Result<InspectPick, String> {
             let document = doc.editor.document();
             let body = (document.bodies().iter())
                 .find(|body| body.name == *name)
-                .ok_or_else(|| format!("no body is named \"{}\"", varde_mcp::cut(name, 64)))?;
+                .ok_or_else(|| format!("no body is named \"{}\"", varde_mcp::shown(name)))?;
             return Ok(InspectPick {
                 body: body.id,
                 entity: Entity::Body,

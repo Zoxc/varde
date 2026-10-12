@@ -392,7 +392,7 @@ pub(super) fn picked_bodies(
             return Err(failed(tool, made_after(name, feature, edited)));
         }
         if bodies.contains(&id) {
-            let name = varde_mcp::cut(name, 64);
+            let name = varde_mcp::shown(name);
             let why = format!("\"{name}\" is named twice (or a body it was merged into is)");
             return Err(failed(tool, why));
         }
@@ -565,7 +565,7 @@ pub(super) fn failed(tool: &str, why: impl std::fmt::Display) -> Refused {
 /// `feature` goes.
 /// `feature` the one `edited`, if it is one.
 fn made_after(name: &str, feature: &str, edited: Option<FeatureId>) -> String {
-    let name = varde_mcp::cut(name, 64);
+    let name = varde_mcp::shown(name);
     match edited {
         None => format!("\"{name}\" is made after where the {feature} goes (the rollback marker)"),
         Some(_) => {
@@ -584,7 +584,7 @@ pub(super) fn sketch_named(
 ) -> Result<FeatureId, Refused> {
     let id = feature_named(document, name)?;
     if sketch_of(document, id).is_none() {
-        let why = format!("\"{}\" isn't a sketch", varde_mcp::cut(name, 64));
+        let why = format!("\"{}\" isn't a sketch", varde_mcp::shown(name));
         return Err(Refused::failed(why));
     }
     let at = match edited {

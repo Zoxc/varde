@@ -54,7 +54,7 @@ pub(crate) fn render(doc: &Doc, args: &Args) -> Result<Shot, ToolReply> {
     } else {
         let mut bodies = Vec::new();
         for name in &args.bodies {
-            let shown = varde_mcp::cut(name, 64);
+            let shown = varde_mcp::shown(name);
             let body = (document.bodies().iter())
                 .find(|body| body.name == *name)
                 .ok_or_else(|| ToolReply::error(format!("no body is named \"{shown}\"")))?;

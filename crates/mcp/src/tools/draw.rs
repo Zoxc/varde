@@ -332,7 +332,7 @@ impl Arguments<'_> {
             {
                 return Err(op.error(format_args!(
                     "the label {:?} is given already: labels are unique in the call",
-                    super::shown(label)
+                    crate::shown(label)
                 )));
             }
             operations.push(read);
@@ -349,7 +349,7 @@ impl Arguments<'_> {
         let Some(spec) = OPS.iter().find(|spec| spec.word == word) else {
             return Err(self.error(format_args!(
                 "no op named {:?}: {}",
-                super::shown(word),
+                crate::shown(word),
                 op_words()
             )));
         };

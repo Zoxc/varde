@@ -77,7 +77,7 @@ pub(super) fn set_feature(
         let why = format!(
             "{} {noun} has no field \"{}\": its fields are {}",
             crate::words::article(&noun),
-            varde_mcp::cut(key, 64),
+            varde_mcp::shown(key),
             fields.join(", ")
         );
         return Err(failed(TOOL, why));
@@ -95,7 +95,7 @@ pub(super) fn set_feature(
         let why = format!(
             "{} is a page of its list as feature gave it (items, total, left_out), not the \
              list: leave it out to keep the list, or send the whole list it's to be",
-            varde_mcp::cut(&key, 64)
+            varde_mcp::shown(&key)
         );
         return Err(failed(TOOL, why));
     }

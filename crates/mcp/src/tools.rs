@@ -9,6 +9,7 @@
 //! directions finite, not zero and normalized, offsets and limits
 //! converted with `usize::try_from` and limits capped.
 
+use crate::shown;
 use serde_json::{Map, Value, json};
 
 mod draw;
@@ -1973,11 +1974,6 @@ fn page(args: &Arguments, default: usize) -> Result<Page, CallError> {
         return Err(args.error("limit must be at least 1"));
     }
     Ok(Page { offset, limit })
-}
-
-/// A name the client sent, bounded to put in a reply.
-fn shown(name: &str) -> &str {
-    crate::cut(name, 64)
 }
 
 /// One region as `profiles` lists it: an index, or a point `[x, y]`,

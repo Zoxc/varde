@@ -23,6 +23,14 @@ fn random<const N: usize>() -> Result<[u8; N], getrandom::Error> {
     Ok(bytes)
 }
 
+/// The most of a client's own text, in bytes, that a reply quotes back.
+pub const SHOWN: usize = 64;
+
+/// A name the client sent, cut to [`SHOWN`] to put in a reply.
+pub fn shown(name: &str) -> &str {
+    cut(name, SHOWN)
+}
+
 /// `text` cut to at most `bytes`, on a character boundary.
 pub fn cut(text: &str, bytes: usize) -> &str {
     let mut end = text.len().min(bytes);

@@ -35,7 +35,7 @@ pub const IDLE: Duration = Duration::from_secs(30 * 60);
 pub const USED_IDS: usize = 4096;
 
 /// The longest client name kept from `clientInfo`, in bytes.
-pub const CLIENT_NAME: usize = 64;
+pub const CLIENT_NAME: usize = crate::SHOWN;
 
 /// What the client is told in `initialize`, at most 2 KB (Claude Code
 /// cuts there), the key points first.

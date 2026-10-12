@@ -53,7 +53,7 @@ pub(crate) fn sketch(doc: &Doc, args: &SketchQuery) -> Result<Read, ToolReply> {
         let noun = feature.kind.noun().to_lowercase();
         return Err(ToolReply::error(format!(
             "\"{}\" is {} {noun}, not a sketch",
-            varde_mcp::cut(&args.name, 64),
+            varde_mcp::shown(&args.name),
             crate::words::article(&noun)
         )));
     };

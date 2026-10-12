@@ -188,7 +188,7 @@ pub(super) fn named<'a>(doc: &'a Doc, name: &str) -> Result<&'a Feature, ToolRep
         .ok_or_else(|| {
             ToolReply::error(format!(
                 "no feature is named \"{}\"",
-                varde_mcp::cut(name, 64)
+                varde_mcp::shown(name)
             ))
         })
 }
