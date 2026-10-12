@@ -436,12 +436,6 @@ impl Tail {
     pub(crate) fn sum(&self) -> u128 {
         self.sum
     }
-
-    /// Where its record is in the file.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn span(&self) -> std::ops::Range<u64> {
-        self.last..self.end
-    }
 }
 
 impl Known {
@@ -855,11 +849,6 @@ impl<S: Storage, P: Payload> HeldFile<S, P> {
         self.file.sync()?;
         self.held = Held::Empty;
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn into_storage(self) -> S {
-        self.file
     }
 }
 

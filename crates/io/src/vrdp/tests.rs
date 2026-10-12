@@ -6,6 +6,19 @@ use varde_document::{Body, Command, Editor, Opacity, OriginPlane, Plane, Tint};
 use super::check::{Append, Found, block_at};
 use super::*;
 
+impl Tail {
+    /// Where its record is in the file.
+    pub(crate) fn span(&self) -> std::ops::Range<u64> {
+        self.last..self.end
+    }
+}
+
+impl<S: Storage, P: Payload> HeldFile<S, P> {
+    pub(crate) fn into_storage(self) -> S {
+        self.file
+    }
+}
+
 struct TempDir(PathBuf);
 
 impl TempDir {
