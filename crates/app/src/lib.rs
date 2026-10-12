@@ -124,14 +124,6 @@ enum Next {
     /// Ask the browser whether document `id` may be saved to the file the
     /// user `picked`, answered with [`ForDoc::Writable`].
     AskWritable { id: DocId, picked: Picked },
-    /// Download `bytes`, a design's file named `name` in browser storage,
-    /// with the page's downloader, and say why the download couldn't be
-    /// recorded, if `not_recorded`.
-    Download {
-        name: String,
-        bytes: Vec<u8>,
-        not_recorded: Option<String>,
-    },
     /// Show the document, made or opened on the welcome screen.
     Show(Box<Doc>),
     /// The screen is left: the document's file is closed, and the screen
@@ -562,29 +554,6 @@ impl Varde {
             Next::PickSaveAs { id, name } => pick_save_as(id, &name),
             Next::PickExport { id, name } => pick_export(id, &name),
             Next::AskWritable { id, picked } => ask_writable(id, picked),
-            Next::Download {
-                name,
-                bytes,
-                not_recorded,
-            } => {
-                let result = match &self.files.downloader {
-                    Some(download) => download(&name, &bytes),
-                    None => Err("there's nowhere to download to".to_owned()),
-                };
-                let error = match (result, not_recorded) {
-                    (Err(error), _) => Some(error),
-                    (Ok(()), Some(why)) => Some(format!(
-                        "Downloaded {name}, but couldn't record the download: {why}"
-                    )),
-                    (Ok(()), None) => None,
-                };
-                // Listed again, with the download recorded.
-                self.files.list_browser();
-                if let Some(error) = error {
-                    return self.welcome(|welcome, _| welcome.failed(&error));
-                }
-                Task::none()
-            }
             Next::Show(mut doc) => {
                 // In the projection of the settings, turned as they say.
                 doc.take_options(&self.options);
@@ -667,16 +636,13 @@ impl Varde {
                 result,
                 not_recorded,
             } => {
-                return match result {
-                    Ok(bytes) => self.follow(Next::Download {
-                        name,
-                        bytes,
-                        not_recorded,
-                    }),
-                    Err(error) => self.welcome(|welcome, _| {
-                        welcome.failed(&format!("Couldn't download {name}: {error}"))
-                    }),
+                let error = match result {
+                    Ok(bytes) => self.files.download(&name, &bytes, not_recorded),
+                    Err(error) => Some(format!("Couldn't download {name}: {error}")),
                 };
+                if let Some(error) = error {
+                    return self.welcome(|welcome, _| welcome.failed(&error));
+                }
             }
             IoResponse::Renamed { file, name, result } => {
                 // Another name taken, or another freed.

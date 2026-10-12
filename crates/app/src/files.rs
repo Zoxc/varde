@@ -215,6 +215,30 @@ impl Files {
         }
     }
 
+    /// Downloads `bytes`, a design's file named `name` in browser
+    /// storage, with the page's downloader, and lists the storage again
+    /// with the download recorded. What to tell the user, if the download
+    /// failed or couldn't be recorded (`not_recorded` says why).
+    pub(crate) fn download(
+        &mut self,
+        name: &str,
+        bytes: &[u8],
+        not_recorded: Option<String>,
+    ) -> Option<String> {
+        let result = match &self.downloader {
+            Some(download) => download(name, bytes),
+            None => Err("there's nowhere to download to".to_owned()),
+        };
+        self.list_browser();
+        match (result, not_recorded) {
+            (Err(error), _) => Some(error),
+            (Ok(()), Some(why)) => Some(format!(
+                "Downloaded {name}, but couldn't record the download: {why}"
+            )),
+            (Ok(()), None) => None,
+        }
+    }
+
     /// Whether to ask the browser to keep its storage for good now: once a
     /// session, as the user saves to it, unless it does already.
     pub(crate) fn take_ask_persist(&mut self) -> bool {
