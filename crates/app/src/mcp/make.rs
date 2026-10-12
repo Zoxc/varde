@@ -28,6 +28,9 @@ use crate::doc::{CombineSession, Doc, ExtrudeSession, RevolveSession, sketch_of}
 /// ignores it (stored as it was).
 const FLIP_EXTENT: &str = "flip goes with extent one_side or two_sides";
 
+/// Why an extrude through all can't take another operation.
+const THROUGH_ALL_CUT: &str = "through_all goes with operation cut only";
+
 /// The commands `extrude` makes on `doc`'s design, and what it's to
 /// make: see the module's docs.
 pub(super) fn extrude(doc: &Doc, args: &tools::Extrude) -> Result<(Vec<Command>, Made), Refused> {
@@ -36,8 +39,7 @@ pub(super) fn extrude(doc: &Doc, args: &tools::Extrude) -> Result<(Vec<Command>,
     let sketch = sketch_before(document, TOOL, &args.sketch, None)?;
     let mut session = ExtrudeSession::for_client(document, sketch);
     set_extrude(doc, &mut session, args, Given::All(FeatureTool::Extrude))?;
-    let extrude =
-        (session.extrude()).ok_or_else(|| failed(TOOL, "no region was picked".to_owned()))?;
+    let extrude = (session.extrude()).ok_or_else(|| failed(TOOL, "no region was picked"))?;
     Ok(added(document, extrude.into()))
 }
 
@@ -54,7 +56,6 @@ pub(super) fn set_extrude(
     let document = doc.editor.document();
     let edited = session.feature;
     let tool = tool_for("extrude", edited);
-    let wrong = |why: String| failed(tool, why);
     regions(
         doc,
         &mut session.regions,
@@ -70,7 +71,7 @@ pub(super) fn set_extrude(
         // the client is told rather.
         let through_all = session.extent == ExtentKind::ThroughAll && !given.has("extent");
         if edited.is_some() && through_all && operation != OperationKind::Cut {
-            return Err(wrong("through_all goes with operation cut only".to_owned()));
+            return Err(failed(tool, THROUGH_ALL_CUT));
         }
         session.set_operation(operation);
     }
@@ -82,22 +83,20 @@ pub(super) fn set_extrude(
             ExtrudeExtent::ThroughAll => ExtentKind::ThroughAll,
         };
         if !session.set_extent(extent) {
-            return Err(wrong("through_all goes with operation cut only".to_owned()));
+            return Err(failed(tool, THROUGH_ALL_CUT));
         }
     }
     if edited.is_some() {
         let shows = session.extent.distances();
         if given.has("distance") && !shows.contains(&Distance::First) {
             let why = "distance goes with extent one_side, symmetric or two_sides";
-            return Err(wrong(why.to_owned()));
+            return Err(failed(tool, why));
         }
         if given.has("second_distance") && !shows.contains(&Distance::Second) {
-            return Err(wrong(
-                "second_distance goes with extent two_sides".to_owned(),
-            ));
+            return Err(failed(tool, "second_distance goes with extent two_sides"));
         }
         if given.has("flip") && !session.extent.flips() {
-            return Err(wrong(FLIP_EXTENT.to_owned()));
+            return Err(failed(tool, FLIP_EXTENT));
         }
     }
     // Two sides' second is the first's unless given, as a new panel's
@@ -112,12 +111,13 @@ pub(super) fn set_extrude(
     ] {
         if let Some(text) = text.filter(|_| given.has(said) || edited.is_none()) {
             session.input(distance, text.trim().to_owned(), document);
-            read(session.sides.fields[distance.index()].error.as_ref(), said).map_err(wrong)?;
+            read(session.sides.fields[distance.index()].error.as_ref(), said)
+                .map_err(|why| failed(tool, why))?;
         }
     }
     if let Some(text) = args.taper.as_ref().filter(|_| given.has("taper")) {
         session.input_taper(text.trim().to_owned(), document);
-        read(session.taper.error.as_ref(), "taper").map_err(wrong)?;
+        read(session.taper.error.as_ref(), "taper").map_err(|why| failed(tool, why))?;
     }
     given.set("flip", &mut session.sides.flip, args.flip);
     if given.has("exclude") {
@@ -137,8 +137,8 @@ pub(super) fn revolve(doc: &Doc, args: &tools::Revolve) -> Result<(Vec<Command>,
     let sketch = sketch_before(document, TOOL, &args.sketch, None)?;
     let mut session = RevolveSession::new(document, Some(sketch));
     set_revolve(doc, &mut session, args, Given::All(FeatureTool::Revolve))?;
-    let revolve = (session.revolve(document))
-        .ok_or_else(|| failed(TOOL, "no region was picked".to_owned()))?;
+    let revolve =
+        (session.revolve(document)).ok_or_else(|| failed(TOOL, "no region was picked"))?;
     Ok(added(document, revolve.into()))
 }
 
@@ -154,7 +154,6 @@ pub(super) fn set_revolve(
     let document = doc.editor.document();
     let edited = session.feature;
     let tool = tool_for("revolve", edited);
-    let wrong = |why: String| failed(tool, why);
     let before = session.regions.source;
     regions(
         doc,
@@ -167,13 +166,14 @@ pub(super) fn set_revolve(
     )?;
     let sketch = session.regions.source;
     if sketch != before && !given.has("axis") {
-        return Err(wrong(
-            "sketch goes with axis: one of the new sketch's".to_owned(),
+        return Err(failed(
+            tool,
+            "sketch goes with axis: one of the new sketch's",
         ));
     }
     if given.has("axis") {
-        let sketch = sketch.ok_or_else(|| wrong(gone_sketch("revolve")))?;
-        axis(doc, session, sketch, &args.axis).map_err(wrong)?;
+        let sketch = sketch.ok_or_else(|| failed(tool, gone_sketch("revolve")))?;
+        axis(doc, session, sketch, &args.axis).map_err(|why| failed(tool, why))?;
     }
     if given.has("extent") {
         session.extent = match args.extent {
@@ -187,13 +187,13 @@ pub(super) fn set_revolve(
         let shows = session.extent.angles();
         if given.has("angle") && !shows.contains(&Angle::First) {
             let why = "angle goes with extent one_side, symmetric or two_sides";
-            return Err(wrong(why.to_owned()));
+            return Err(failed(tool, why));
         }
         if given.has("second_angle") && !shows.contains(&Angle::Second) {
-            return Err(wrong("second_angle goes with extent two_sides".to_owned()));
+            return Err(failed(tool, "second_angle goes with extent two_sides"));
         }
         if given.has("flip") && !session.extent.flips() {
-            return Err(wrong(FLIP_EXTENT.to_owned()));
+            return Err(failed(tool, FLIP_EXTENT));
         }
     }
     for (angle, text, said) in [
@@ -202,7 +202,8 @@ pub(super) fn set_revolve(
     ] {
         if let Some(text) = text.as_ref().filter(|_| given.has(said)) {
             session.input(angle, text.trim().to_owned(), document);
-            read(session.sides.fields[angle.index()].error.as_ref(), said).map_err(wrong)?;
+            read(session.sides.fields[angle.index()].error.as_ref(), said)
+                .map_err(|why| failed(tool, why))?;
         }
     }
     given.set("flip", &mut session.sides.flip, args.flip);
@@ -228,7 +229,7 @@ pub(super) fn combine(doc: &Doc, args: &tools::Combine) -> Result<(Vec<Command>,
     set_combine(doc, &mut session, args, Given::All(FeatureTool::Combine))?;
     let combine = session
         .combine()
-        .ok_or_else(|| failed("combine", "no tools were given".to_owned()))?;
+        .ok_or_else(|| failed("combine", "no tools were given"))?;
     Ok(added(document, combine.into()))
 }
 
@@ -248,7 +249,7 @@ pub(super) fn set_combine(
         true => pick(std::slice::from_ref(&args.target))?.first().copied(),
         false => session.target,
     };
-    let target = target.ok_or_else(|| failed(tool, "no target was given".to_owned()))?;
+    let target = target.ok_or_else(|| failed(tool, "no target was given"))?;
     let tools = match given.has("tools") {
         true => pick(&args.tools)?,
         false => session.tools.clone(),
@@ -256,8 +257,7 @@ pub(super) fn set_combine(
     // The panel's session takes the target out of the tools and each
     // once; the client is told rather than have them dropped.
     if tools.contains(&target) {
-        let why = "the target can't be one of the tools".to_owned();
-        return Err(failed(tool, why));
+        return Err(failed(tool, "the target can't be one of the tools"));
     }
     let mut set = CombineSession::new(Some(target), tools);
     set.feature = edited;

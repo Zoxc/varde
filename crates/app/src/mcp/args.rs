@@ -111,13 +111,12 @@ pub(super) fn regions(
     given: Given,
 ) -> Result<(), Refused> {
     let document = doc.editor.document();
-    let wrong = |why: String| failed(tool, why);
     if edited.is_some() && given.has("sketch") {
         let sketch = sketch_before(document, tool, sketch, edited)?;
         if regions.source != Some(sketch) {
             if !given.has("profiles") {
                 let why = "sketch goes with profiles: the regions of the new sketch";
-                return Err(wrong(why.to_owned()));
+                return Err(failed(tool, why));
             }
             *regions = RegionPick::new(Some(sketch), regions.most());
         }
@@ -125,11 +124,11 @@ pub(super) fn regions(
     if given.has("profiles") {
         let sketch = regions
             .source
-            .ok_or_else(|| wrong(gone_sketch("feature")))?;
+            .ok_or_else(|| failed(tool, gone_sketch("feature")))?;
         while regions.missing > 0 {
             regions.drop_missing(0);
         }
-        pick(regions, document, sketch, profiles).map_err(wrong)?;
+        pick(regions, document, sketch, profiles).map_err(|why| failed(tool, why))?;
     }
     Ok(())
 }
