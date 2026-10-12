@@ -304,14 +304,7 @@ impl Document {
             }
             match &from.source {
                 OutsideRef::Sketch { sketch: other, .. } => {
-                    let before = match self.feature_index(*other) {
-                        Some(at) => {
-                            at < index
-                                && matches!(self.features[at].kind, FeatureKind::Sketch { .. })
-                        }
-                        None => other.0 < self.next_id,
-                    };
-                    if !before {
+                    if !self.sketch_ref_before(index, *other) {
                         return Err(LinkError::Later(id));
                     }
                 }
