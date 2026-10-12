@@ -166,7 +166,9 @@ mod bounded {
     /// [`Sketch::check`] holds it to, refused past it as it's decoded.
     /// What's within an item (a spline's points and knots, a link's ids,
     /// a dimension's expression) is no more than a few times its bytes.
-    /// Its fields are the sketch's, in order.
+    /// Its fields are the sketch's, in order: postcard encodes by
+    /// position. `relinked` builds the [`Sketch`] from them by a struct
+    /// literal, so a field added to it fails to build here.
     #[derive(Deserialize)]
     struct BoundedSketch {
         #[serde(deserialize_with = "points")]
@@ -185,16 +187,13 @@ mod bounded {
     impl BoundedSketch {
         /// One and its items, see [`MAX_RELINKED_ITEMS`].
         fn weight(&self) -> usize {
-            [
-                1,
+            super::sketch_weight([
                 self.points.len(),
                 self.curves.len(),
                 self.constraints.len(),
                 self.dimensions.len(),
                 self.links.len(),
-            ]
-            .into_iter()
-            .fold(0, usize::saturating_add)
+            ])
         }
     }
 
@@ -474,19 +473,26 @@ const NO_BOX: PartBox = [
     f32::NEG_INFINITY,
 ];
 
-/// What `relinked` weighs against [`MAX_RELINKED_ITEMS`]: each sketch
-/// one and its items.
+/// What a relinked sketch weighs against [`MAX_RELINKED_ITEMS`], from
+/// the lengths of its points, curves, constraints, dimensions and links:
+/// one and its items. Encoding and decoding both weigh by it, so the
+/// worker never sends what the page refuses.
+fn sketch_weight(lens: [usize; 5]) -> usize {
+    lens.into_iter().fold(1, usize::saturating_add)
+}
+
+/// What `relinked` weighs against [`MAX_RELINKED_ITEMS`], see
+/// [`sketch_weight`].
 fn relinked_weight(relinked: &[(FeatureId, Arc<Sketch>)]) -> usize {
     (relinked.iter())
-        .flat_map(|(_, sketch)| {
-            [
-                1,
+        .map(|(_, sketch)| {
+            sketch_weight([
                 sketch.points.len(),
                 sketch.curves.len(),
                 sketch.constraints.len(),
                 sketch.dimensions.len(),
                 sketch.links.len(),
-            ]
+            ])
         })
         .fold(0, usize::saturating_add)
 }
