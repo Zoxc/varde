@@ -164,6 +164,17 @@ struct Entry {
     found: bool,
 }
 
+impl Entry {
+    /// Whether this is `item`, whose target is `target`: by the target if
+    /// there's one, else by the item.
+    fn is(&self, item: Selected, target: Option<Picked>) -> bool {
+        match target {
+            Some(_) => self.target == target,
+            None => self.item == item,
+        }
+    }
+}
+
 impl Selection {
     /// Nothing selected, clicks selecting as `mode` says.
     pub fn new(mode: SelectionMode) -> Self {
@@ -355,11 +366,7 @@ impl Selection {
     /// Adds `item`, whose target is `target`, unless something of that
     /// target, or that body or sketch item, is selected.
     fn push(&mut self, item: Selected, target: Option<Picked>) {
-        let taken = self.found().any(|other| match target {
-            Some(_) => other.target == target,
-            None => other.item == item,
-        });
-        if !taken {
+        if !self.found().any(|other| other.is(item, target)) {
             self.items.push(Entry {
                 item,
                 target,
@@ -406,31 +413,38 @@ impl Selection {
         if unit.is_empty() {
             return changed;
         }
+        self.apply(unit, add) || changed
+    }
+
+    /// Selects `unit` alone, or with `add` adds it or takes it out
+    /// ([`Selection::toggle`]). Whether anything changed.
+    fn apply(&mut self, unit: Vec<(Selected, Option<Picked>)>, add: bool) -> bool {
         if add {
-            return self.toggle(unit) || changed;
+            return self.toggle(unit);
         }
         let before = std::mem::take(&mut self.items);
         for (item, target) in unit {
             self.push(item, target);
         }
-        self.items != before || changed
+        self.items != before
+    }
+
+    /// Takes a click on `item`, of no target, from outside the model's
+    /// picks, if `allowed`: as [`Selection::apply`] takes it, what wasn't
+    /// found forgotten first. Whether anything changed.
+    fn click_one(&mut self, allowed: bool, item: Selected, add: bool) -> bool {
+        if !allowed {
+            return false;
+        }
+        self.forget_missing();
+        self.apply(vec![(item, None)], add)
     }
 
     /// Takes a click on `body`'s row in Objects: selects it alone, or with
     /// `add` adds it or takes it out. Only where bodies are selected.
     /// Whether anything changed.
     pub fn click_body(&mut self, body: BodyId, add: bool) -> bool {
-        if !self.mode.takes_bodies() {
-            return false;
-        }
-        self.forget_missing();
-        let unit = vec![(Selected::Body(body), None)];
-        if add {
-            return self.toggle(unit);
-        }
-        let before = std::mem::take(&mut self.items);
-        self.push(Selected::Body(body), None);
-        self.items != before
+        self.click_one(self.mode.takes_bodies(), Selected::Body(body), add)
     }
 
     /// Takes a click on a sketch's curve or point `item` in the model:
@@ -438,18 +452,9 @@ impl Selection {
     /// they're selected ([`SelectionMode::takes_sketch_items`]). Whether
     /// anything changed.
     pub fn click_sketch(&mut self, item: SketchItem, add: bool) -> bool {
-        if !self.mode.takes_sketch_items() {
-            return false;
-        }
-        self.forget_missing();
         let SketchItem { sketch, item } = item;
         let item = Selected::SketchItem { sketch, item };
-        if add {
-            return self.toggle(vec![(item, None)]);
-        }
-        let before = std::mem::take(&mut self.items);
-        self.push(item, None);
-        self.items != before
+        self.click_one(self.mode.takes_sketch_items(), item, add)
     }
 
     /// Finds what's selected in `index`'s model if it was last found in
@@ -523,11 +528,8 @@ impl Selection {
     /// Takes `unit` out if all of it is selected, else adds what of it
     /// isn't. Whether anything changed.
     fn toggle(&mut self, unit: Vec<(Selected, Option<Picked>)>) -> bool {
-        // Whether `entry` is `item`, whose target is `target`.
-        let is = |entry: &Entry, &(item, target): &(Selected, Option<Picked>)| match target {
-            Some(_) => entry.target == target,
-            None => entry.item == item,
-        };
+        let is =
+            |entry: &Entry, &(item, target): &(Selected, Option<Picked>)| entry.is(item, target);
         if unit.is_empty() {
             return false;
         }
