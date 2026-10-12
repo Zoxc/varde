@@ -689,7 +689,7 @@ fn a_shell_takes_at_most_256_faces() {
     let design = plates.doc.editor.document().design();
     assert_eq!(
         over.check_own(&design).unwrap_err().to_string(),
-        "opens 257 faces, more than 256"
+        "the faces it opens: there are 257, more than 256"
     );
 }
 

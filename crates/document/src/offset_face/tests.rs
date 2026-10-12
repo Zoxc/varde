@@ -4,8 +4,8 @@ use varde_kernel::mesh::{FaceKey, PartKey};
 use super::*;
 use crate::testing::{extrude_again, with_body};
 use crate::{
-    CheckError, Command, Document, EditError, Editor, FaceSetError, FeatureKind, LengthUnit,
-    Removable,
+    CheckError, Command, Document, EditError, Editor, FaceListError, FaceSetError, FeatureId,
+    FeatureKind, LengthUnit, PlaneError, Removable,
 };
 
 /// The example's body and another plate: the editor, the bodies and
@@ -227,7 +227,10 @@ fn its_own_parts_are_checked() {
         change(&mut offset);
         offset.check_own(&design)
     };
-    assert_eq!(check(&|o| o.faces.clear()), Err(OffsetFaceError::NoFaces));
+    assert_eq!(
+        check(&|o| o.faces.clear()),
+        Err(OffsetFaceError::Faces(FaceListError::NoFaces))
+    );
     let many = |o: &mut OffsetFace| {
         o.faces = (0..=MAX_OFFSET_FACES)
             .map(|i| {
@@ -242,7 +245,10 @@ fn its_own_parts_are_checked() {
     };
     assert_eq!(
         check(&many),
-        Err(OffsetFaceError::Faces(MAX_OFFSET_FACES + 1))
+        Err(OffsetFaceError::Faces(FaceListError::Count {
+            count: MAX_OFFSET_FACES + 1,
+            most: MAX_OFFSET_FACES
+        }))
     );
     assert_eq!(
         check(&|o| {
@@ -253,11 +259,11 @@ fn its_own_parts_are_checked() {
     );
     assert_eq!(
         check(&|o| o.faces.reverse()),
-        Err(OffsetFaceError::FaceOrder)
+        Err(OffsetFaceError::Faces(FaceListError::Order))
     );
     assert_eq!(
         check(&|o| o.faces[1] = o.faces[0]),
-        Err(OffsetFaceError::FaceOrder)
+        Err(OffsetFaceError::Faces(FaceListError::Order))
     );
     // One key picked at two points: two faces (a face cut in two).
     assert_eq!(
@@ -274,14 +280,16 @@ fn its_own_parts_are_checked() {
     ] {
         assert!(matches!(
             check(&|o| o.faces[0].near = far),
-            Err(OffsetFaceError::Face(PlaneError::Near(_)))
+            Err(OffsetFaceError::Faces(FaceListError::Face(
+                PlaneError::Near(_)
+            )))
         ));
     }
     // The second face on another body: the list's order is by body
     // first, so it's still in order.
     assert_eq!(
         check(&|o| o.faces[1].body = BodyId(body.0 + 1)),
-        Err(OffsetFaceError::Bodies)
+        Err(OffsetFaceError::Faces(FaceListError::Bodies))
     );
     // The distance: a length as an extrude's, above zero (the side is
     // `inward`'s).
@@ -318,7 +326,7 @@ fn its_own_parts_are_checked() {
             faces: Vec::new(),
             ..good
         },
-        OffsetFaceError::NoFaces,
+        OffsetFaceError::Faces(FaceListError::NoFaces),
     );
 }
 
@@ -332,12 +340,12 @@ fn bodies_and_makers_are_checked() {
     refused(
         &mut editor,
         top_and_wall(&document, BodyId(999), first),
-        OffsetFaceError::Body(BodyId(999)),
+        OffsetFaceError::Set(FaceSetError::Body(BodyId(999))),
     );
     refused(
         &mut editor,
         top_and_wall(&document, a, later),
-        OffsetFaceError::RefMaker(later),
+        OffsetFaceError::Set(FaceSetError::RefMaker(later)),
     );
     let id = add(&mut editor, top_and_wall(&document, b, second)).unwrap();
     // On the other body's faces named by the first body's maker.
@@ -352,8 +360,8 @@ fn bodies_and_makers_are_checked() {
         Err(FaceSetError::Body(b))
     );
     assert_eq!(
-        OffsetFaceError::from(FaceSetError::RefMaker(later)),
-        OffsetFaceError::RefMaker(later)
+        OffsetFaceError::Set(FaceSetError::RefMaker(later)),
+        OffsetFaceError::Set(FaceSetError::RefMaker(later))
     );
 }
 
@@ -436,17 +444,19 @@ fn wrong_offset_faces_are_refused_when_read() {
     assert_eq!(read(&|_| {}).as_ref(), Ok(editor.document()));
     assert_eq!(
         read(&|o| o.faces[1].body = b),
-        Err(format!("feature {n}: its faces aren't all on one body"))
+        Err(format!(
+            "feature {n}: the faces it moves: they aren't all on one body"
+        ))
     );
     assert_eq!(
         read(&|o| o.faces.reverse()),
         Err(format!(
-            "feature {n}: its faces are out of order or repeated"
+            "feature {n}: the faces it moves: they're out of order or repeated"
         ))
     );
     assert_eq!(
         read(&|o| o.faces.clear()),
-        Err(format!("feature {n}: it moves no face"))
+        Err(format!("feature {n}: the faces it moves: there are none"))
     );
     // Moved to the other body as a whole: one the document takes.
     assert!(
@@ -464,7 +474,7 @@ fn wrong_offset_faces_are_refused_when_read() {
             }
         }),
         Err(format!(
-            "feature {n}: moves faces of body 999, which isn't there or no earlier feature makes"
+            "feature {n}: its faces' body 999 isn't there or no earlier feature makes it"
         ))
     );
 }
@@ -484,16 +494,27 @@ fn an_offset_face_is_the_fourteenth_kind() {
 #[test]
 fn errors_say_what_is_wrong() {
     assert_eq!(
-        CheckError::OffsetFace(FeatureId(3), OffsetFaceError::Body(BodyId(2))).to_string(),
-        "feature 3: moves faces of body 2, which isn't there or no earlier feature makes"
+        CheckError::OffsetFace(
+            FeatureId(3),
+            OffsetFaceError::Set(FaceSetError::Body(BodyId(2)))
+        )
+        .to_string(),
+        "feature 3: its faces' body 2 isn't there or no earlier feature makes it"
     );
     assert_eq!(
-        OffsetFaceError::Faces(300).to_string(),
-        "moves 300 faces, more than 256"
+        OffsetFaceError::Faces(FaceListError::Count {
+            count: 300,
+            most: 256
+        })
+        .to_string(),
+        "the faces it moves: there are 300, more than 256"
     );
     assert_eq!(
-        OffsetFaceError::RefMaker(FeatureId(7)).to_string(),
-        "a face it moves was made by feature 7, which doesn't come before it"
+        OffsetFaceError::Set(FaceSetError::RefMaker(FeatureId(7))).to_string(),
+        "a face it names was made by feature 7, which doesn't come before it"
     );
-    assert_eq!(OffsetFaceError::NoFaces.to_string(), "it moves no face");
+    assert_eq!(
+        OffsetFaceError::Faces(FaceListError::NoFaces).to_string(),
+        "the faces it moves: there are none"
+    );
 }

@@ -4,8 +4,8 @@ use varde_kernel::mesh::{FaceKey, PartKey};
 use super::*;
 use crate::testing::{extrude_again, with_body};
 use crate::{
-    CheckError, Command, Document, EditError, Editor, FaceSetError, FeatureKind, LengthUnit,
-    OriginPlane, Removable,
+    CheckError, Command, Document, EditError, Editor, FaceListError, FaceSetError, FeatureId,
+    FeatureKind, LengthUnit, OriginPlane, Removable,
 };
 
 /// The example's body and another plate: the editor, the bodies and
@@ -189,7 +189,10 @@ fn its_own_parts_are_checked() {
         change(&mut draft);
         draft.check_own(&design)
     };
-    assert_eq!(check(&|d| d.faces.clear()), Err(FaceDraftError::NoFaces));
+    assert_eq!(
+        check(&|d| d.faces.clear()),
+        Err(FaceDraftError::Faces(FaceListError::NoFaces))
+    );
     let many = |d: &mut FaceDraft| {
         d.faces = (0..=MAX_DRAFT_FACES)
             .map(|i| {
@@ -204,7 +207,10 @@ fn its_own_parts_are_checked() {
     };
     assert_eq!(
         check(&many),
-        Err(FaceDraftError::Faces(MAX_DRAFT_FACES + 1))
+        Err(FaceDraftError::Faces(FaceListError::Count {
+            count: MAX_DRAFT_FACES + 1,
+            most: MAX_DRAFT_FACES
+        }))
     );
     assert_eq!(
         check(&|d| {
@@ -215,11 +221,11 @@ fn its_own_parts_are_checked() {
     );
     assert_eq!(
         check(&|d| d.faces.reverse()),
-        Err(FaceDraftError::FaceOrder)
+        Err(FaceDraftError::Faces(FaceListError::Order))
     );
     assert_eq!(
         check(&|d| d.faces[1] = d.faces[0]),
-        Err(FaceDraftError::FaceOrder)
+        Err(FaceDraftError::Faces(FaceListError::Order))
     );
     for far in [
         DVec3::new(f64::NAN, 0.0, 0.0),
@@ -228,7 +234,9 @@ fn its_own_parts_are_checked() {
     ] {
         assert!(matches!(
             check(&|d| d.faces[0].near = far),
-            Err(FaceDraftError::Face(PlaneError::Near(_)))
+            Err(FaceDraftError::Faces(FaceListError::Face(
+                PlaneError::Near(_)
+            )))
         ));
         assert!(matches!(
             check(&|d| {
@@ -242,7 +250,7 @@ fn its_own_parts_are_checked() {
     }
     assert_eq!(
         check(&|d| d.faces[1].body = BodyId(body.0 + 1)),
-        Err(FaceDraftError::Bodies)
+        Err(FaceDraftError::Faces(FaceListError::Bodies))
     );
     // The angle: above 0 and under 90°.
     let ask = FaceDraft::angle_ask(&design);
@@ -288,7 +296,7 @@ fn its_own_parts_are_checked() {
             faces: Vec::new(),
             ..good
         },
-        FaceDraftError::NoFaces,
+        FaceDraftError::Faces(FaceListError::NoFaces),
     );
 }
 
@@ -303,7 +311,7 @@ fn bodies_and_makers_are_checked() {
     refused(
         &mut editor,
         two_walls(&document, BodyId(999), first),
-        FaceDraftError::Body(BodyId(999)),
+        FaceDraftError::Set(FaceSetError::Body(BodyId(999))),
     );
     refused(
         &mut editor,
@@ -323,7 +331,11 @@ fn bodies_and_makers_are_checked() {
     );
     let mut wrong = two_walls(&document, a, later);
     wrong.neutral = PlaneRef::Origin(OriginPlane::XY);
-    refused(&mut editor, wrong, FaceDraftError::RefMaker(later));
+    refused(
+        &mut editor,
+        wrong,
+        FaceDraftError::Set(FaceSetError::RefMaker(later)),
+    );
     // b's walls from a's bottom: both bodies named.
     let across = FaceDraft {
         neutral: bottom(a, first),
@@ -346,8 +358,8 @@ fn bodies_and_makers_are_checked() {
         Ok(())
     );
     assert_eq!(
-        FaceDraftError::from(FaceSetError::RefMaker(later)),
-        FaceDraftError::RefMaker(later)
+        FaceDraftError::Set(FaceSetError::RefMaker(later)),
+        FaceDraftError::Set(FaceSetError::RefMaker(later))
     );
 }
 
@@ -438,11 +450,13 @@ fn wrong_drafts_are_refused_when_read() {
     assert_eq!(read(&|_| {}).as_ref(), Ok(editor.document()));
     assert_eq!(
         read(&|d| d.faces[1].body = b),
-        Err(format!("feature {n}: its faces aren't all on one body"))
+        Err(format!(
+            "feature {n}: the faces it drafts: they aren't all on one body"
+        ))
     );
     assert_eq!(
         read(&|d| d.faces.clear()),
-        Err(format!("feature {n}: it drafts no face"))
+        Err(format!("feature {n}: the faces it drafts: there are none"))
     );
     assert_eq!(
         read(&|d| d.angle.value = 2.0),
@@ -475,16 +489,27 @@ fn a_draft_is_the_fifteenth_kind() {
 #[test]
 fn errors_say_what_is_wrong() {
     assert_eq!(
-        CheckError::FaceDraft(FeatureId(3), FaceDraftError::Body(BodyId(2))).to_string(),
-        "feature 3: drafts faces of body 2, which isn't there or no earlier feature makes"
+        CheckError::FaceDraft(
+            FeatureId(3),
+            FaceDraftError::Set(FaceSetError::Body(BodyId(2)))
+        )
+        .to_string(),
+        "feature 3: its faces' body 2 isn't there or no earlier feature makes it"
     );
     assert_eq!(
-        FaceDraftError::Faces(300).to_string(),
-        "drafts 300 faces, more than 256"
+        FaceDraftError::Faces(FaceListError::Count {
+            count: 300,
+            most: 256
+        })
+        .to_string(),
+        "the faces it drafts: there are 300, more than 256"
     );
     assert_eq!(
         FaceDraftError::NeutralMaker(FeatureId(7)).to_string(),
         "its neutral plane's face was made by feature 7, which doesn't come before it"
     );
-    assert_eq!(FaceDraftError::NoFaces.to_string(), "it drafts no face");
+    assert_eq!(
+        FaceDraftError::Faces(FaceListError::NoFaces).to_string(),
+        "the faces it drafts: there are none"
+    );
 }

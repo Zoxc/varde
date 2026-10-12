@@ -6,7 +6,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::{BodyId, Design, Extent, FaceRef, FaceSetError, FeatureId, PlaneError};
+use crate::plane::check_face_list_own;
+use crate::{BodyId, Design, Extent, FaceListError, FaceRef, FaceSetError};
 
 /// The most faces a shell may open.
 pub const MAX_SHELL_FACES: usize = 256;
@@ -50,19 +51,8 @@ impl Shell {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
     pub fn check_own(&self, design: &Design) -> Result<(), ShellError> {
-        let count = self.open.len();
-        if count > MAX_SHELL_FACES {
-            return Err(ShellError::Faces(count));
-        }
-        for face in &self.open {
-            face.check_own().map_err(ShellError::Face)?;
-        }
-        if !(self.open.windows(2)).all(|pair| pair[0].order(&pair[1]).is_lt()) {
-            return Err(ShellError::FaceOrder);
-        }
-        if self.open.iter().any(|face| face.body != self.body) {
-            return Err(ShellError::Bodies);
-        }
+        check_face_list_own(&self.open, 0..=MAX_SHELL_FACES, Some(self.body))
+            .map_err(ShellError::Faces)?;
         (self.thickness)
             .check(&Shell::thickness_ask(design))
             .map_err(|_| ShellError::Thickness)
@@ -78,56 +68,23 @@ impl Shell {
 /// [`CheckError::Shell`](crate::CheckError::Shell).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ShellError {
-    /// It opens this many faces, over [`MAX_SHELL_FACES`].
-    Faces(usize),
-    /// Its faces aren't in [`FaceRef::order`], or one is repeated.
-    FaceOrder,
-    /// A face fails its own check ([`FaceRef::check_own`]).
-    Face(PlaneError),
-    /// A face is on another body than the shell's.
-    Bodies,
+    /// Its faces fail their own check ([`FaceListError`]).
+    Faces(FaceListError),
     /// Its thickness's expression doesn't give its value, or the value
     /// isn't a length [`Shell::thickness_ask`] takes.
     Thickness,
-    /// Its body, this one, isn't there or no feature before it makes it.
-    Body(BodyId),
-    /// A face's key names this feature, which is the shell itself or
-    /// comes after it, or isn't there and has an id a feature made later
-    /// could take.
-    RefMaker(FeatureId),
+    /// What its faces name ([`Document::check_face_set`](crate::Document::check_face_set)).
+    Set(FaceSetError),
 }
 
 impl fmt::Display for ShellError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ShellError::Faces(count) => {
-                write!(f, "opens {count} faces, more than {MAX_SHELL_FACES}")
-            }
-            ShellError::FaceOrder => f.write_str("its faces are out of order or repeated"),
-            ShellError::Face(why) => why.fmt(f),
-            ShellError::Bodies => f.write_str("a face it opens is on another body"),
+            ShellError::Faces(why) => write!(f, "the faces it opens: {why}"),
             ShellError::Thickness => f.write_str(
                 "its thickness's expression doesn't give its value, or it isn't a length it takes",
             ),
-            ShellError::Body(body) => write!(
-                f,
-                "shells body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            ShellError::RefMaker(feature) => write!(
-                f,
-                "a face it opens was made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-        }
-    }
-}
-
-impl From<FaceSetError> for ShellError {
-    fn from(why: FaceSetError) -> Self {
-        match why {
-            FaceSetError::Body(body) => ShellError::Body(body),
-            FaceSetError::RefMaker(feature) => ShellError::RefMaker(feature),
+            ShellError::Set(why) => why.fmt(f),
         }
     }
 }
@@ -135,7 +92,8 @@ impl From<FaceSetError> for ShellError {
 impl std::error::Error for ShellError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            ShellError::Face(why) => Some(why),
+            ShellError::Faces(why) => Some(why),
+            ShellError::Set(why) => Some(why),
             _ => None,
         }
     }

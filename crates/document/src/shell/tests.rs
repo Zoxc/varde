@@ -4,8 +4,8 @@ use varde_kernel::mesh::{FaceKey, PartKey};
 use super::*;
 use crate::testing::{extrude_again, with_body};
 use crate::{
-    CheckError, Command, Document, EditError, Editor, FaceSetError, FeatureKind, LengthUnit,
-    Removable,
+    CheckError, Command, Document, EditError, Editor, FaceListError, FaceSetError, FeatureId,
+    FeatureKind, LengthUnit, PlaneError, Removable,
 };
 
 /// The example's body and another plate: the editor, the bodies and
@@ -178,7 +178,13 @@ fn its_own_parts_are_checked() {
             })
             .collect();
     };
-    assert_eq!(check(&many), Err(ShellError::Faces(MAX_SHELL_FACES + 1)));
+    assert_eq!(
+        check(&many),
+        Err(ShellError::Faces(FaceListError::Count {
+            count: MAX_SHELL_FACES + 1,
+            most: MAX_SHELL_FACES
+        }))
+    );
     // As many as there may be.
     assert_eq!(
         check(&|s| {
@@ -187,10 +193,13 @@ fn its_own_parts_are_checked() {
         }),
         Ok(())
     );
-    assert_eq!(check(&|s| s.open.reverse()), Err(ShellError::FaceOrder));
+    assert_eq!(
+        check(&|s| s.open.reverse()),
+        Err(ShellError::Faces(FaceListError::Order))
+    );
     assert_eq!(
         check(&|s| s.open[1] = s.open[0]),
-        Err(ShellError::FaceOrder)
+        Err(ShellError::Faces(FaceListError::Order))
     );
     // One key picked at two points: two faces (a face cut in two).
     assert_eq!(
@@ -208,16 +217,16 @@ fn its_own_parts_are_checked() {
     ] {
         assert!(matches!(
             check(&|s| s.open[0].near = far),
-            Err(ShellError::Face(PlaneError::Near(_)))
+            Err(ShellError::Faces(FaceListError::Face(PlaneError::Near(_))))
         ));
     }
     assert_eq!(
         check(&|s| s.open[1].body = BodyId(s.body.0 + 1)),
-        Err(ShellError::Bodies)
+        Err(ShellError::Faces(FaceListError::Bodies))
     );
     assert_eq!(
         check(&|s| s.body = BodyId(s.body.0 + 1)),
-        Err(ShellError::Bodies)
+        Err(ShellError::Faces(FaceListError::Bodies))
     );
     // The thickness: a length as an extrude's.
     let ask = Shell::thickness_ask(&design);
@@ -266,12 +275,12 @@ fn bodies_and_makers_are_checked() {
             open: Vec::new(),
             ..open_top(&document, BodyId(999), first)
         },
-        ShellError::Body(BodyId(999)),
+        ShellError::Set(FaceSetError::Body(BodyId(999))),
     );
     refused(
         &mut editor,
         open_top(&document, a, later),
-        ShellError::RefMaker(later),
+        ShellError::Set(FaceSetError::RefMaker(later)),
     );
     let id = add(&mut editor, open_top(&document, b, second)).unwrap();
     // On the other body's faces named by the first body's maker: the
@@ -380,12 +389,14 @@ fn wrong_shells_are_refused_when_read() {
     assert_eq!(read(&|_| {}).as_ref(), Ok(editor.document()));
     assert_eq!(
         read(&|s| s.open[1].body = b),
-        Err(format!("feature {n}: a face it opens is on another body"))
+        Err(format!(
+            "feature {n}: the faces it opens: they aren't all on one body"
+        ))
     );
     assert_eq!(
         read(&|s| s.open.reverse()),
         Err(format!(
-            "feature {n}: its faces are out of order or repeated"
+            "feature {n}: the faces it opens: they're out of order or repeated"
         ))
     );
     // Moved to the other body with no faces: a shell the document takes.
@@ -398,7 +409,9 @@ fn wrong_shells_are_refused_when_read() {
     );
     assert_eq!(
         read(&|s| s.body = BodyId(999)),
-        Err(format!("feature {n}: a face it opens is on another body"))
+        Err(format!(
+            "feature {n}: the faces it opens: they aren't all on one body"
+        ))
     );
     assert_eq!(
         read(&|s| {
@@ -406,7 +419,7 @@ fn wrong_shells_are_refused_when_read() {
             s.open.clear();
         }),
         Err(format!(
-            "feature {n}: shells body 999, which isn't there or no earlier feature makes"
+            "feature {n}: its faces' body 999 isn't there or no earlier feature makes it"
         ))
     );
 }
@@ -425,19 +438,28 @@ fn a_shell_is_the_twelfth_kind() {
 #[test]
 fn errors_say_what_is_wrong() {
     assert_eq!(
-        CheckError::Shell(FeatureId(3), ShellError::Body(BodyId(2))).to_string(),
-        "feature 3: shells body 2, which isn't there or no earlier feature makes"
+        CheckError::Shell(FeatureId(3), ShellError::Set(FaceSetError::Body(BodyId(2)))).to_string(),
+        "feature 3: its faces' body 2 isn't there or no earlier feature makes it"
     );
     assert_eq!(
-        ShellError::Faces(300).to_string(),
-        "opens 300 faces, more than 256"
+        ShellError::Faces(FaceListError::Count {
+            count: 300,
+            most: 256
+        })
+        .to_string(),
+        "the faces it opens: there are 300, more than 256"
     );
     assert_eq!(
-        ShellError::RefMaker(FeatureId(7)).to_string(),
-        "a face it opens was made by feature 7, which doesn't come before it"
+        ShellError::Set(FaceSetError::RefMaker(FeatureId(7))).to_string(),
+        "a face it names was made by feature 7, which doesn't come before it"
     );
     assert_eq!(
-        ShellError::Face(PlaneError::Near(DVec3::new(f64::NAN, 0.0, 0.0))).to_string(),
-        "its face's point [NaN, 0, 0] is out of bounds"
+        ShellError::Faces(FaceListError::Face(PlaneError::Near(DVec3::new(
+            f64::NAN,
+            0.0,
+            0.0
+        ))))
+        .to_string(),
+        "the faces it opens: one its face's point [NaN, 0, 0] is out of bounds"
     );
 }

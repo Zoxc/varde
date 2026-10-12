@@ -9,7 +9,10 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::{BodyId, Design, FaceRef, FaceSetError, FeatureId, PlaneError, PlaneRef};
+use crate::plane::check_face_list_own;
+use crate::{
+    BodyId, Design, FaceListError, FaceRef, FaceSetError, FeatureId, PlaneError, PlaneRef,
+};
 
 /// The most faces a draft may turn.
 pub const MAX_DRAFT_FACES: usize = 256;
@@ -84,22 +87,8 @@ impl FaceDraft {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
     pub fn check_own(&self, design: &Design) -> Result<(), FaceDraftError> {
-        let count = self.faces.len();
-        if count == 0 {
-            return Err(FaceDraftError::NoFaces);
-        }
-        if count > MAX_DRAFT_FACES {
-            return Err(FaceDraftError::Faces(count));
-        }
-        for face in &self.faces {
-            face.check_own().map_err(FaceDraftError::Face)?;
-        }
-        if !(self.faces.windows(2)).all(|pair| pair[0].order(&pair[1]).is_lt()) {
-            return Err(FaceDraftError::FaceOrder);
-        }
-        if (self.faces.windows(2)).any(|pair| pair[0].body != pair[1].body) {
-            return Err(FaceDraftError::Bodies);
-        }
+        check_face_list_own(&self.faces, 1..=MAX_DRAFT_FACES, None)
+            .map_err(FaceDraftError::Faces)?;
         if let Some(face) = self.neutral_face() {
             face.check_own().map_err(FaceDraftError::Neutral)?;
         }
@@ -118,28 +107,15 @@ impl FaceDraft {
 /// [`CheckError::FaceDraft`](crate::CheckError::FaceDraft).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FaceDraftError {
-    /// It turns no face.
-    NoFaces,
-    /// It turns this many faces, over [`MAX_DRAFT_FACES`].
-    Faces(usize),
-    /// Its faces aren't in [`FaceRef::order`], or one is repeated.
-    FaceOrder,
-    /// A face fails its own check ([`FaceRef::check_own`]).
-    Face(PlaneError),
-    /// Its faces aren't all on one body.
-    Bodies,
+    /// Its faces fail their own check ([`FaceListError`]).
+    Faces(FaceListError),
     /// Its neutral plane's face fails its own check.
     Neutral(PlaneError),
     /// Its angle's expression doesn't give its value, or the value isn't
     /// an angle [`FaceDraft::angle_ask`] takes.
     Angle,
-    /// Its faces' body, this one, isn't there or no feature before it
-    /// makes it.
-    Body(BodyId),
-    /// A face's key names this feature, which is the draft itself or
-    /// comes after it, or isn't there and has an id a feature made later
-    /// could take.
-    RefMaker(FeatureId),
+    /// What its faces name ([`Document::check_face_set`](crate::Document::check_face_set)).
+    Set(FaceSetError),
     /// Its neutral face's body, this one, isn't there or no feature
     /// before it makes it.
     NeutralBody(BodyId),
@@ -152,27 +128,12 @@ pub enum FaceDraftError {
 impl fmt::Display for FaceDraftError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FaceDraftError::NoFaces => f.write_str("it drafts no face"),
-            FaceDraftError::Faces(count) => {
-                write!(f, "drafts {count} faces, more than {MAX_DRAFT_FACES}")
-            }
-            FaceDraftError::FaceOrder => f.write_str("its faces are out of order or repeated"),
-            FaceDraftError::Face(why) => why.fmt(f),
-            FaceDraftError::Bodies => f.write_str("its faces aren't all on one body"),
+            FaceDraftError::Faces(why) => write!(f, "the faces it drafts: {why}"),
             FaceDraftError::Neutral(why) => write!(f, "its neutral plane's face: {why}"),
             FaceDraftError::Angle => f.write_str(
                 "its angle's expression doesn't give its value, or it isn't an angle it takes",
             ),
-            FaceDraftError::Body(body) => write!(
-                f,
-                "drafts faces of body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            FaceDraftError::RefMaker(feature) => write!(
-                f,
-                "a face it drafts was made by feature {}, which doesn't come before it",
-                feature.0
-            ),
+            FaceDraftError::Set(why) => why.fmt(f),
             FaceDraftError::NeutralBody(body) => write!(
                 f,
                 "its neutral plane is a face of body {}, which isn't there or no earlier feature makes",
@@ -187,19 +148,12 @@ impl fmt::Display for FaceDraftError {
     }
 }
 
-impl From<FaceSetError> for FaceDraftError {
-    fn from(why: FaceSetError) -> Self {
-        match why {
-            FaceSetError::Body(body) => FaceDraftError::Body(body),
-            FaceSetError::RefMaker(feature) => FaceDraftError::RefMaker(feature),
-        }
-    }
-}
-
 impl std::error::Error for FaceDraftError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            FaceDraftError::Face(why) | FaceDraftError::Neutral(why) => Some(why),
+            FaceDraftError::Faces(why) => Some(why),
+            FaceDraftError::Set(why) => Some(why),
+            FaceDraftError::Neutral(why) => Some(why),
             _ => None,
         }
     }

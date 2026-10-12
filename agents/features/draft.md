@@ -28,11 +28,10 @@ pub struct FaceDraft {
   degrees). The body keeps its id and every face its name. It has no
   body of its own: `body()` is the first face's.
 - **Checks** (`CheckError::FaceDraft(id, FaceDraftError)`):
-  `FaceDraft::check_own(design)` (cheap): at least one face (`NoFaces`),
-  at most 256 (`Faces`), each face's own check (`Face`), in order without
-  repeats (`FaceOrder`), all on one body (`Bodies`), the neutral face's
+  `FaceDraft::check_own(design)` (cheap): the faces as an offset face's
+  (`Faces(FaceListError)`), the neutral face's
   own check (`Neutral`), the angle by its ask (`Angle`).
-  `Document::check_face_set` as an offset face's (`Body`, `RefMaker`),
+  `Document::check_face_set` as an offset face's (`Set`),
   and `Document::check_neutral_plane(index, neutral)` (public, for the
   panel): a face's own check as `check_own`'s, its body there and made
   by a feature before the draft

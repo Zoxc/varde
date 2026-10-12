@@ -60,7 +60,7 @@ pub use opacity::Opacity;
 pub use outside::{LinkError, LinkSource, OutsideRef, sketch_face};
 pub use param::{Param, ParamError, ParamUses};
 pub use pattern::{Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternKind};
-pub use plane::{FaceRef, FaceSetError, OriginPlane, Placement, Plane, PlaneError};
+pub use plane::{FaceListError, FaceRef, FaceSetError, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
 pub use rename::{Named, NewName, Rename};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
@@ -623,7 +623,7 @@ impl Document {
                         .check_own(&design)
                         .map_err(|why| CheckError::Shell(id, why))?;
                     self.check_face_set(index, shell.body, &shell.open)
-                        .map_err(|why| CheckError::Shell(id, why.into()))?;
+                        .map_err(|why| CheckError::Shell(id, ShellError::Set(why)))?;
                 }
                 FeatureKind::OffsetFace(offset) => {
                     offset
@@ -631,7 +631,7 @@ impl Document {
                         .map_err(|why| CheckError::OffsetFace(id, why))?;
                     let body = offset.body().expect("checked: it has faces");
                     self.check_face_set(index, body, &offset.faces)
-                        .map_err(|why| CheckError::OffsetFace(id, why.into()))?;
+                        .map_err(|why| CheckError::OffsetFace(id, OffsetFaceError::Set(why)))?;
                 }
                 FeatureKind::Fillet(fillet) => {
                     fillet
@@ -646,7 +646,7 @@ impl Document {
                         .map_err(|why| CheckError::FaceDraft(id, why))?;
                     let body = draft.body().expect("checked: it has faces");
                     self.check_face_set(index, body, &draft.faces)
-                        .map_err(|why| CheckError::FaceDraft(id, why.into()))?;
+                        .map_err(|why| CheckError::FaceDraft(id, FaceDraftError::Set(why)))?;
                     self.check_neutral_plane(index, &draft.neutral)
                         .map_err(|why| CheckError::FaceDraft(id, why))?;
                 }

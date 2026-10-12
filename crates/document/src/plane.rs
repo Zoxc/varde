@@ -3,6 +3,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::ops::RangeInclusive;
 
 use glam::{DVec2, DVec3};
 use serde::{Deserialize, Serialize};
@@ -143,6 +144,77 @@ impl fmt::Display for FaceSetError {
 }
 
 impl std::error::Error for FaceSetError {}
+
+/// What's wrong with a list of faces a feature names on its own
+/// (`check_face_list_own`): a shell's open faces, an offset face's or
+/// a draft's faces. Each feature's own error takes it in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FaceListError {
+    /// It names no face, and needs one.
+    NoFaces,
+    /// It names `count` faces, over `most`.
+    Count { count: usize, most: usize },
+    /// Its faces aren't in [`FaceRef::order`], or one is repeated.
+    Order,
+    /// A face fails its own check ([`FaceRef::check_own`]).
+    Face(PlaneError),
+    /// Its faces aren't all on its body (the feature's, else one body).
+    Bodies,
+}
+
+impl fmt::Display for FaceListError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FaceListError::NoFaces => f.write_str("there are none"),
+            FaceListError::Count { count, most } => {
+                write!(f, "there are {count}, more than {most}")
+            }
+            FaceListError::Order => f.write_str("they're out of order or repeated"),
+            FaceListError::Face(why) => write!(f, "one {why}"),
+            FaceListError::Bodies => f.write_str("they aren't all on one body"),
+        }
+    }
+}
+
+impl std::error::Error for FaceListError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            FaceListError::Face(why) => Some(why),
+            _ => None,
+        }
+    }
+}
+
+/// Checks the faces a feature names on their own: a count in `count`,
+/// each face's own parts, [`FaceRef::order`] without repeats, and all on
+/// `body` (`None`: all on the first face's). What they name is
+/// [`Document::check_face_set`](crate::Document::check_face_set)'s.
+pub(crate) fn check_face_list_own(
+    faces: &[FaceRef],
+    count: RangeInclusive<usize>,
+    body: Option<BodyId>,
+) -> Result<(), FaceListError> {
+    if faces.is_empty() && !count.contains(&0) {
+        return Err(FaceListError::NoFaces);
+    }
+    if !count.contains(&faces.len()) {
+        let (count, most) = (faces.len(), *count.end());
+        return Err(FaceListError::Count { count, most });
+    }
+    for face in faces {
+        face.check_own().map_err(FaceListError::Face)?;
+    }
+    if !(faces.windows(2)).all(|pair| pair[0].order(&pair[1]).is_lt()) {
+        return Err(FaceListError::Order);
+    }
+    let Some(body) = body.or_else(|| faces.first().map(|face| face.body)) else {
+        return Ok(());
+    };
+    if faces.iter().any(|face| face.body != body) {
+        return Err(FaceListError::Bodies);
+    }
+    Ok(())
+}
 
 impl fmt::Display for PlaneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

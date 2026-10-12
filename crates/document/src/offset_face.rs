@@ -7,7 +7,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 
-use crate::{BodyId, Design, Extent, FaceRef, FaceSetError, FeatureId, PlaneError};
+use crate::plane::check_face_list_own;
+use crate::{BodyId, Design, Extent, FaceListError, FaceRef, FaceSetError};
 
 /// The most faces an offset face may move.
 pub const MAX_OFFSET_FACES: usize = 256;
@@ -69,22 +70,8 @@ impl OffsetFace {
     /// [`Document::check`](crate::Document::check)'s. Cheap, for a panel
     /// to run on every view.
     pub fn check_own(&self, design: &Design) -> Result<(), OffsetFaceError> {
-        let count = self.faces.len();
-        if count == 0 {
-            return Err(OffsetFaceError::NoFaces);
-        }
-        if count > MAX_OFFSET_FACES {
-            return Err(OffsetFaceError::Faces(count));
-        }
-        for face in &self.faces {
-            face.check_own().map_err(OffsetFaceError::Face)?;
-        }
-        if !(self.faces.windows(2)).all(|pair| pair[0].order(&pair[1]).is_lt()) {
-            return Err(OffsetFaceError::FaceOrder);
-        }
-        if (self.faces.windows(2)).any(|pair| pair[0].body != pair[1].body) {
-            return Err(OffsetFaceError::Bodies);
-        }
+        check_face_list_own(&self.faces, 1..=MAX_OFFSET_FACES, None)
+            .map_err(OffsetFaceError::Faces)?;
         (self.distance)
             .check(&OffsetFace::distance_ask(design))
             .map_err(|_| OffsetFaceError::Distance)
@@ -100,60 +87,23 @@ impl OffsetFace {
 /// [`CheckError::OffsetFace`](crate::CheckError::OffsetFace).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OffsetFaceError {
-    /// It moves no face.
-    NoFaces,
-    /// It moves this many faces, over [`MAX_OFFSET_FACES`].
-    Faces(usize),
-    /// Its faces aren't in [`FaceRef::order`], or one is repeated.
-    FaceOrder,
-    /// A face fails its own check ([`FaceRef::check_own`]).
-    Face(PlaneError),
-    /// Its faces aren't all on one body.
-    Bodies,
+    /// Its faces fail their own check ([`FaceListError`]).
+    Faces(FaceListError),
     /// Its distance's expression doesn't give its value, or the value
     /// isn't a length [`OffsetFace::distance_ask`] takes.
     Distance,
-    /// Its faces' body, this one, isn't there or no feature before it
-    /// makes it.
-    Body(BodyId),
-    /// A face's key names this feature, which is the offset face itself
-    /// or comes after it, or isn't there and has an id a feature made
-    /// later could take.
-    RefMaker(FeatureId),
+    /// What its faces name ([`Document::check_face_set`](crate::Document::check_face_set)).
+    Set(FaceSetError),
 }
 
 impl fmt::Display for OffsetFaceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OffsetFaceError::NoFaces => f.write_str("it moves no face"),
-            OffsetFaceError::Faces(count) => {
-                write!(f, "moves {count} faces, more than {MAX_OFFSET_FACES}")
-            }
-            OffsetFaceError::FaceOrder => f.write_str("its faces are out of order or repeated"),
-            OffsetFaceError::Face(why) => why.fmt(f),
-            OffsetFaceError::Bodies => f.write_str("its faces aren't all on one body"),
+            OffsetFaceError::Faces(why) => write!(f, "the faces it moves: {why}"),
             OffsetFaceError::Distance => f.write_str(
                 "its distance's expression doesn't give its value, or it isn't a length it takes",
             ),
-            OffsetFaceError::Body(body) => write!(
-                f,
-                "moves faces of body {}, which isn't there or no earlier feature makes",
-                body.0
-            ),
-            OffsetFaceError::RefMaker(feature) => write!(
-                f,
-                "a face it moves was made by feature {}, which doesn't come before it",
-                feature.0
-            ),
-        }
-    }
-}
-
-impl From<FaceSetError> for OffsetFaceError {
-    fn from(why: FaceSetError) -> Self {
-        match why {
-            FaceSetError::Body(body) => OffsetFaceError::Body(body),
-            FaceSetError::RefMaker(feature) => OffsetFaceError::RefMaker(feature),
+            OffsetFaceError::Set(why) => why.fmt(f),
         }
     }
 }
@@ -161,7 +111,8 @@ impl From<FaceSetError> for OffsetFaceError {
 impl std::error::Error for OffsetFaceError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            OffsetFaceError::Face(why) => Some(why),
+            OffsetFaceError::Faces(why) => Some(why),
+            OffsetFaceError::Set(why) => Some(why),
             _ => None,
         }
     }

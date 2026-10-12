@@ -26,13 +26,15 @@ pub struct Shell {
   the point's coordinates by `total_cmp`) without repeats; two picks of
   one key at different points are two faces (a face cut in two).
 - **Checks** (`CheckError::Shell(id, ShellError)`):
-  `Shell::check_own(design)` (cheap): at most 256 faces (`Faces`), each
-  face's own check (`Face(PlaneError::Near)`: its point finite and
-  within `MAX_COORD`), in order without repeats (`FaceOrder`), all on
-  the shell's body (`Bodies`), the thickness by its ask (`Thickness`).
+  `Shell::check_own(design)` (cheap): the faces by `check_face_list_own`
+  (`plane.rs`, shared with the offset face and the draft; its
+  `FaceListError` in `Faces`): at most 256 (`Count`), each face's own
+  check (`Face(PlaneError::Near)`: its point finite and within
+  `MAX_COORD`), in order without repeats (`Order`), all on the shell's
+  body (`Bodies`); then the thickness by its ask (`Thickness`).
   `Document::check_face_set(index, body, faces)` (public, for the
-  panel; an offset face's faces too, its `FaceSetError` taken into
-  each feature's error): the body there and made before (`Body`:
+  panel; an offset face's faces too, its `FaceSetError` in
+  each feature's error's `Set`): the body there and made before (`Body`:
   depended on, as a combine's bodies), and every face key's feature
   before it, or not there with an id below the next (`RefMaker`, as a
   sketch's face's).

@@ -23,12 +23,12 @@ pub struct OffsetFace {
   face's (`None` only for none, which the document refuses). The list
   is kept in `FaceRef::order` without repeats, as a shell's.
 - **Checks** (`CheckError::OffsetFace(id, OffsetFaceError)`):
-  `OffsetFace::check_own(design)` (cheap): at least one face
-  (`NoFaces`) and at most 256 (`Faces`), each face's own check
-  (`Face(PlaneError::Near)`), in order without repeats (`FaceOrder`),
-  all on one body (`Bodies`), the distance by its ask (`Distance`).
+  `OffsetFace::check_own(design)` (cheap): the faces by
+  `check_face_list_own`, as a shell's (`Faces(FaceListError)`), but at
+  least one (`NoFaces`) and all on one body; the distance by its ask
+  (`Distance`).
   `Document::check_face_set(index, body, faces)` as a shell's, with
-  the first face's body (`Body`, `RefMaker`).
+  the first face's body (`Set(FaceSetError)`).
 - **Dependencies**: `FeatureKind::bodies()` is its faces' body, so
   removing it or its maker removes the offset. The features that made
   its faces are not followed: removing one leaves the offset failing
