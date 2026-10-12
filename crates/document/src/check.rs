@@ -589,6 +589,20 @@ impl Document {
         Ok(())
     }
 
+    /// Whether the point `point`, as feature `index` (a scale) would
+    /// name it, is taken there: its body and its faces' makers before
+    /// it, as [`Document::check_scale_refs`] has them.
+    pub fn point_before(&self, index: usize, point: &PointRef) -> bool {
+        (point.body()).is_none_or(|body| self.refers_before(index, body, &point.makers()).is_ok())
+    }
+
+    /// Whether the edge `edge`, as feature `index` (a scale) would name
+    /// it, is taken there: its body and its faces' makers before it, as
+    /// [`Document::check_scale_refs`] has them.
+    pub fn edge_before(&self, index: usize, edge: &EdgeRef) -> bool {
+        self.refers_before(index, edge.body, &edge.makers()).is_ok()
+    }
+
     /// Checks what a split, feature `index`, names: its body, a tool
     /// body and a face tool's body there and made by features before it,
     /// as a combine's ([`Document::check_combine`]); a plane face's body

@@ -15,7 +15,7 @@ use std::borrow::Cow;
 
 use glam::DVec3;
 use varde_document::{AxisRef, BodyId, Document, EdgeRef, PointRef, Scale, ScaleFactor};
-use varde_expr::{Unit, Value};
+use varde_expr::Unit;
 use varde_regen::{EdgeForm, Entity, InspectPick, Measure};
 use varde_view::{
     MotionField, MotionKind, MotionPick, NamingPicks, Pick, PickIndex, Picked, ScaleMode,
@@ -126,31 +126,12 @@ impl ScaleSetup {
 
     /// Notes whether the point and the edge are gone from `document` at
     /// feature `index` ([`Tracked::gone`]).
-    fn prune(&mut self, document: &Document, index: usize, bodies: &[BodyId]) {
-        let design = document.design();
-        let Ok(one) = Value::new("1", &Scale::factor_ask(&design)) else {
-            return;
-        };
+    fn prune(&mut self, document: &Document, index: usize) {
         let held = |body: Option<BodyId>| body.is_none_or(|body| document.body(body).is_some());
-        let point = Scale {
-            bodies: bodies.to_vec(),
-            about: self.about,
-            factor: ScaleFactor::Uniform(one.clone()),
-        };
-        self.about_at.gone =
-            !held(self.about.body()) || document.check_scale_refs(index, &point).is_err();
-        self.edge_at.gone = self.edge.is_some_and(|edge| {
-            let named = Scale {
-                bodies: bodies.to_vec(),
-                about: PointRef::Origin,
-                factor: ScaleFactor::EdgeLength {
-                    edge,
-                    length: one.clone(),
-                    axis_only: false,
-                },
-            };
-            !held(Some(edge.body)) || document.check_scale_refs(index, &named).is_err()
-        });
+        self.about_at.gone = !held(self.about.body()) || !document.point_before(index, &self.about);
+        self.edge_at.gone = self
+            .edge
+            .is_some_and(|edge| !held(Some(edge.body)) || !document.edge_before(index, &edge));
     }
 }
 
@@ -235,8 +216,7 @@ impl MotionSession {
 
     /// Notes what `document` no longer takes at feature `index`.
     pub(super) fn prune_scale(&mut self, document: &Document, index: usize) {
-        let bodies = self.bodies.clone();
-        self.scale.prune(document, index, &bodies);
+        self.scale.prune(document, index);
     }
 
     /// Sets how it scales: an edge length with no edge picks one next.
