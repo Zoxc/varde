@@ -2808,7 +2808,8 @@ pub fn list() -> Value {
             { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
         ]
     });
-    let mut list = json!({ "tools": [
+    // The queries and the design's edits.
+    let design = json!([
         {
             "name": "design_summary",
             "title": "Design summary",
@@ -3202,6 +3203,8 @@ pub fn list() -> Value {
             },
             "annotations": edit,
         },
+    ]);
+    let features = json!([
         {
             "name": "extrude",
             "title": "Extrude",
@@ -3283,10 +3286,25 @@ pub fn list() -> Value {
             },
             "annotations": edit_once(),
         },
-    ]});
-    // The motion panel's kinds, a schema each: as one literal they'd
-    // pass the macro's recursion limit.
-    let motion = [
+    ]);
+    let as_list = |tools: Value| match tools {
+        Value::Array(tools) => tools,
+        _ => unreachable!("a literal list"),
+    };
+    // In order: the queries and the design's edits, the sketch tools, the
+    // patch the feature tools share, the feature tools, then the motion
+    // panel's kinds, a schema each (as one literal they'd pass the
+    // macro's recursion limit), and undo last.
+    let mut tools = as_list(design);
+    tools.extend([
+        add_sketch_tool(),
+        set_sketch_plane_tool(),
+        add_link_tool(),
+        draw::edit_sketch_tool(),
+        set_feature_tool(),
+    ]);
+    tools.extend(as_list(features));
+    tools.extend([
         move_body_tool(),
         mirror_tool(),
         pattern_tool(),
@@ -3300,26 +3318,8 @@ pub fn list() -> Value {
         fillet_tool(),
         sweep_tool(),
         loft_tool(),
-    ];
-    let tools = list["tools"].as_array_mut().expect("tools is a list");
-    // After the design's edits, before the feature tools it patches by.
-    let at = (tools.iter().position(|tool| tool["name"] == "extrude")).unwrap_or(tools.len());
-    tools.insert(at, set_feature_tool());
-    // The sketch tools, after the design's edits.
-    let at = (tools.iter().position(|tool| tool["name"] == "set_feature")).unwrap_or(tools.len());
-    for (offset, tool) in [
-        add_sketch_tool(),
-        set_sketch_plane_tool(),
-        add_link_tool(),
-        draw::edit_sketch_tool(),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        tools.insert(at + offset, tool);
-    }
-    tools.extend(motion);
-    tools.push(undo_tool());
+        undo_tool(),
+    ]);
     for tool in tools.iter_mut() {
         let word = tool["name"].as_str().unwrap_or_default();
         let bodies = match word {
@@ -3354,7 +3354,7 @@ pub fn list() -> Value {
             }
         }
     }
-    list
+    json!({ "tools": tools })
 }
 
 /// The names of new bodies the feature tool `tool` takes, `None` for
