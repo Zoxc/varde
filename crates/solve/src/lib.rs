@@ -4,7 +4,8 @@
 //! later tagged with what it answers ([`Tag`]): the revision a proposal
 //! was made on, a drag's session, the revision analysed. The work is
 //! [`varde_sketch`]'s pure solver: proposals ([`propose`](varde_sketch::propose)),
-//! drag steps ([`DragSession`]) and analyses. It runs in a [`lane`] per
+//! drag steps ([`DragSession`]) and analyses, the user's and a client's
+//! queries'. It runs in a [`lane`] per
 //! document: natively a thread, on the web a Web Worker, which shares no
 //! memory with the page, so requests and responses cross it as bytes (see
 //! `src/wire.rs`). Both lanes have the same API, so the app doesn't tell
@@ -115,9 +116,14 @@ pub enum Request {
         units: LengthUnit,
         params: Arc<Params>,
     },
-    /// Analyses `sketch`, the committed sketch as of `revision`, e.g. on
-    /// entering it. A newer analysis replaces one still waiting.
+    /// Analyses `sketch`, the committed sketch as of `revision`: the
+    /// user's, e.g. on entering it, with `query` `None`, or for a client's
+    /// query of that id (the MCP `sketch` tool), any sketch, open or not.
+    /// A newer analysis of the user's replaces one of theirs still
+    /// waiting; a client's queues in order like a proposal, never
+    /// replacing the user's waiting one nor replaced by it or another.
     Analyse {
+        query: Option<u64>,
         revision: Revision,
         sketch: Arc<Sketch>,
         units: LengthUnit,
@@ -133,8 +139,21 @@ pub enum Tag {
     Propose(Revision),
     /// A step of this drag session.
     Drag(u64),
-    /// An analysis of this revision.
+    /// The user's analysis of this revision.
     Analyse(Revision),
+    /// The analysis for a client's query of this id.
+    Query(u64),
+}
+
+impl Tag {
+    /// An analysis's: of `revision` for the user, or for the client's
+    /// `query`.
+    pub fn analysis(revision: Revision, query: Option<u64>) -> Tag {
+        match query {
+            Some(id) => Tag::Query(id),
+            None => Tag::Analyse(revision),
+        }
+    }
 }
 
 impl Request {
@@ -142,7 +161,9 @@ impl Request {
         match self {
             Request::Propose { base, .. } => Tag::Propose(*base),
             Request::Drag { session, .. } => Tag::Drag(*session),
-            Request::Analyse { revision, .. } => Tag::Analyse(*revision),
+            Request::Analyse {
+                revision, query, ..
+            } => Tag::analysis(*revision, *query),
         }
     }
 
@@ -185,8 +206,10 @@ pub enum Response {
     /// A drag step of `session` solved to `solution`. A step that doesn't
     /// converge isn't answered: what's shown stays at the last solution.
     Dragged { session: u64, solution: Arc<Sketch> },
-    /// The sketch of `revision` analysed.
+    /// The sketch of `revision` analysed, for the user or the client's
+    /// `query`, as asked.
     Analysed {
+        query: Option<u64>,
         revision: Revision,
         analysis: Arc<Analysis>,
     },
@@ -202,7 +225,9 @@ impl Response {
                 Tag::Propose(*base)
             }
             Response::Dragged { session, .. } => Tag::Drag(*session),
-            Response::Analysed { revision, .. } => Tag::Analyse(*revision),
+            Response::Analysed {
+                revision, query, ..
+            } => Tag::analysis(*revision, *query),
             Response::Failed { tag, .. } => *tag,
         }
     }
@@ -256,8 +281,11 @@ impl Solver {
                 radii,
             ),
             Request::Analyse {
-                revision, sketch, ..
-            } => Some(analyse(revision, &sketch)),
+                query,
+                revision,
+                sketch,
+                ..
+            } => Some(analyse(query, revision, &sketch)),
         }
     }
 
@@ -301,9 +329,11 @@ fn propose(base: Revision, sketch: &Sketch, edit: &SketchEdit, design: &Design) 
     }
 }
 
-/// The analysis of `sketch`, the committed sketch of `revision`.
-fn analyse(revision: Revision, sketch: &Sketch) -> Response {
+/// The analysis of `sketch`, the committed sketch of `revision`, for the
+/// user or the client's `query`.
+fn analyse(query: Option<u64>, revision: Revision, sketch: &Sketch) -> Response {
     Response::Analysed {
+        query,
         revision,
         analysis: Arc::new(varde_sketch::analyse(sketch)),
     }

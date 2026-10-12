@@ -37,15 +37,7 @@ impl Doc {
             }
             return;
         }
-        let near_last = drawing
-            .placed
-            .last()
-            .is_some_and(|last| last.distance(click.at) < click.pixel);
-        let again = matches!(click.target, Some(Target::Point(id))
-            if !id.is_builtin() && drawing.targets.contains(&Some(Target::Point(id))));
-        // On the first point with too few to close.
-        let first = active.on_first(click.at, click.pixel);
-        if near_last || again || first || drawing.placed.len() >= MAX_SPLINE_POINTS {
+        if refuses_point(&drawing, click.at, click.target, click.pixel) {
             return;
         }
         drawing.placed.push(click.at);
@@ -229,12 +221,30 @@ impl Doc {
     }
 }
 
+/// Whether the Spline tool, `drawing`, refuses a click at `at`, snapped
+/// to `target`, as its next point, a pixel being `pixel`: within a pixel
+/// of its last, on a point of the sketch's it has already, on its first
+/// (with too few to close; with enough, the click closes it), or past
+/// [`MAX_SPLINE_POINTS`].
+pub(super) fn refuses_point(
+    drawing: &Drawing,
+    at: glam::DVec2,
+    target: Option<Target>,
+    pixel: f64,
+) -> bool {
+    let near_last = (drawing.placed.last()).is_some_and(|last| last.distance(at) < pixel);
+    let again = matches!(target, Some(Target::Point(id))
+        if !id.is_builtin() && drawing.targets.contains(&Some(Target::Point(id))));
+    let first = drawing.active().on_first(at, pixel);
+    near_last || again || first || drawing.placed.len() >= MAX_SPLINE_POINTS
+}
+
 /// The spline of `kind` that `drawing` has placed, open or `closed`, as
 /// an addition to `sketch`: its points where they snapped (see
 /// [`place`]), one snapped to the spline itself a new point, coincident
 /// (`auto`) with the point placed there if it snapped to one, through fit points with a handle at each, by control
 /// points with knots from where they are.
-fn spline_add(
+pub(super) fn spline_add(
     sketch: &Sketch,
     drawing: &Drawing,
     kind: SplineKind,

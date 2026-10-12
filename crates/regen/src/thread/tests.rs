@@ -164,7 +164,7 @@ fn slowly(request: Request) -> Response {
 }
 
 #[test]
-fn an_export_is_answered_though_regenerations_follow_it() {
+fn an_export_edge_facts_and_a_measure_are_answered_though_regenerations_follow_them() {
     let (mut editor, feature) = with_sketch();
     let (mut lane, mut responses) = spawn_on(slowly);
     // One running, then an export and a burst of edits waiting behind it:
@@ -174,11 +174,38 @@ fn an_export_is_answered_though_regenerations_follow_it() {
         export: 1,
         document: editor.snapshot(),
     });
+    // And edge facts behind the export, also never replaced.
+    lane.send(Request::Query {
+        tag: 2,
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        until: None,
+        query: crate::Query::Topology(varde_document::BodyId::NEW),
+    });
+    // And a client's measure, beside the user's riding on the edits.
+    let pick = crate::InspectPick {
+        body: varde_document::BodyId::NEW,
+        entity: crate::Entity::Body,
+        near: [0.0; 3],
+    };
+    lane.send(Request::Query {
+        tag: 3,
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        until: None,
+        query: crate::Query::Measure(Box::new(crate::Inspect {
+            revision: 1,
+            first: pick,
+            second: None,
+        })),
+    });
     for _ in 0..5 {
         add_line(&mut editor, feature);
         lane.send(regenerate(&editor));
     }
     let mut exported = false;
+    let mut topology = false;
+    let mut measured = false;
     loop {
         match next(&mut responses) {
             Response::Exported { export, result } => {
@@ -188,6 +215,30 @@ fn an_export_is_answered_though_regenerations_follow_it() {
                 assert!(!exported, "answered twice");
                 exported = true;
             }
+            Response::Answered {
+                tag,
+                answer: crate::Answer::Topology { result, .. },
+                ..
+            } => {
+                assert_eq!(tag, 2);
+                assert!(exported, "edge facts answered ahead of the export");
+                // A sketch makes no body.
+                assert!(result.is_err());
+                assert!(!topology, "answered twice");
+                topology = true;
+            }
+            Response::Answered {
+                tag,
+                answer: crate::Answer::Measured(result),
+                ..
+            } => {
+                assert_eq!(tag, 3);
+                assert!(topology, "the measure answered ahead of the edge facts");
+                // A sketch makes no body.
+                assert!(result.unwrap().first.is_err());
+                assert!(!measured, "answered twice");
+                measured = true;
+            }
             Response::Regenerated { generation, .. } if generation == editor.generation() => {
                 break;
             }
@@ -196,7 +247,7 @@ fn an_export_is_answered_though_regenerations_follow_it() {
             Response::Progress(_) => unreachable!("skipped by next"),
         }
     }
-    assert!(exported);
+    assert!(exported && topology && measured);
 }
 
 #[test]

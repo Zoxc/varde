@@ -16,9 +16,11 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use varde_document::{OutsideRef, PointRef};
+use varde_document::{BodyId, Document, OutsideRef, PointRef};
 use varde_sketch::{Id, LinkKind, SketchEdit};
-use varde_view::{ModelHighlight, Pick, Picked, SketchItem, SketchLines, Tool, Unnamed};
+use varde_view::{
+    ModelHighlight, Naming, Pick, PickIndex, Picked, SketchItem, SketchLines, Tool, Unnamed,
+};
 
 use super::super::Doc;
 use super::super::OUT_OF_DATE;
@@ -170,33 +172,7 @@ impl Doc {
         }
         let (name, _) = self.sketch_place();
         let naming = self.naming_at(self.sketch.as_ref().map(|session| session.feature));
-        let index = self.feed.pick_index();
-        let refused = |why: Unnamed| -> Cow<'static, str> {
-            match why {
-                Unnamed::Missing => "That isn't in the model shown".into(),
-                Unnamed::Later => later(tool, name).into(),
-                Unnamed::Unclear => {
-                    format!("Which body that's on at {name} can't be told: pick another").into()
-                }
-            }
-        };
-        match (tool, pick.target) {
-            (_, Picked::Edge(edge)) => {
-                let edge = naming.edge_ref(index, edge, pick.at).map_err(refused)?;
-                Ok(OutsideRef::Edge(edge))
-            }
-            (_, Picked::Face(face)) => {
-                let face = (naming.checked_face_ref(index, face, pick.at)).map_err(refused)?;
-                Ok(OutsideRef::Face(face))
-            }
-            (Tool::Project, Picked::Vertex(vertex)) => {
-                let corner =
-                    (index.vertex_corner(vertex)).ok_or("That corner isn't in the model shown")?;
-                let corner = naming.corner_ref(index, corner).map_err(refused)?;
-                Ok(OutsideRef::Corner(corner))
-            }
-            _ => Err(INTERSECT_TAKES.into()),
-        }
+        outside_model_in(tool, self.feed.pick_index(), &naming, pick, name)
     }
 
     /// What `tool` makes of a click on another sketch's curve or point
@@ -206,24 +182,8 @@ impl Doc {
         tool: Tool,
         item: SketchItem,
     ) -> Result<OutsideRef, Cow<'static, str>> {
-        if tool != Tool::Project {
-            return Err(INTERSECT_TAKES.into());
-        }
-        let document = self.editor.document();
-        if !sketch_holds(document, item) {
-            return Err("That isn't in the sketch any more".into());
-        }
         let (name, before) = self.sketch_place();
-        if document
-            .feature_index(item.sketch)
-            .is_none_or(|at| at >= before)
-        {
-            return Err(later(tool, name).into());
-        }
-        Ok(OutsideRef::Sketch {
-            sketch: item.sketch,
-            item: item.item,
-        })
+        outside_sketch_item_at(self.editor.document(), tool, item, name, before)
     }
 
     /// What's drawn over the model while the tool picking outside is in
@@ -285,23 +245,97 @@ pub(super) fn sketch_item(picked: &OutsideRef) -> Option<SketchItem> {
     }
 }
 
+/// What `tool` makes of a pick on the model of `index` at `pick`, for
+/// the sketch `name`, whose place `naming` names as of: a click's on the
+/// model shown, or the MCP client's key found on the committed model.
+pub(crate) fn outside_model_in(
+    tool: Tool,
+    index: &PickIndex,
+    naming: &Naming,
+    pick: Pick,
+    name: &str,
+) -> Result<OutsideRef, Cow<'static, str>> {
+    let refused = |why: Unnamed| -> Cow<'static, str> {
+        match why {
+            Unnamed::Missing => "That isn't in the model shown".into(),
+            Unnamed::Later => later(tool, name).into(),
+            Unnamed::Unclear => {
+                format!("Which body that's on at {name} can't be told: pick another").into()
+            }
+        }
+    };
+    match (tool, pick.target) {
+        (_, Picked::Edge(edge)) => {
+            let edge = naming.edge_ref(index, edge, pick.at).map_err(refused)?;
+            Ok(OutsideRef::Edge(edge))
+        }
+        (_, Picked::Face(face)) => {
+            let face = (naming.checked_face_ref(index, face, pick.at)).map_err(refused)?;
+            Ok(OutsideRef::Face(face))
+        }
+        (Tool::Project, Picked::Vertex(vertex)) => {
+            let corner =
+                (index.vertex_corner(vertex)).ok_or("That corner isn't in the model shown")?;
+            let corner = naming.corner_ref(index, corner).map_err(refused)?;
+            Ok(OutsideRef::Corner(corner))
+        }
+        _ => Err(INTERSECT_TAKES.into()),
+    }
+}
+
+/// What `tool` makes of another sketch's curve or point `item` of
+/// `document`, for the sketch `name`, at `before` in its features.
+pub(crate) fn outside_sketch_item_at(
+    document: &Document,
+    tool: Tool,
+    item: SketchItem,
+    name: &str,
+    before: usize,
+) -> Result<OutsideRef, Cow<'static, str>> {
+    if tool != Tool::Project {
+        return Err(INTERSECT_TAKES.into());
+    }
+    if !sketch_holds(document, item) {
+        return Err("That isn't in the sketch any more".into());
+    }
+    if document
+        .feature_index(item.sketch)
+        .is_none_or(|at| at >= before)
+    {
+        return Err(later(tool, name).into());
+    }
+    Ok(OutsideRef::Sketch {
+        sketch: item.sketch,
+        item: item.item,
+    })
+}
+
 /// The model's face, edge or vertex `picked` names on `feed`'s model
 /// shown, on the body drawing its body there
 /// ([`MeshFeed::shown_body`]), if it's there.
 pub(super) fn outside_target(feed: &MeshFeed, picked: &OutsideRef) -> Option<Picked> {
-    let index = feed.pick_index();
+    outside_target_in(feed.pick_index(), |body| feed.shown_body(body), picked)
+}
+
+/// The model's face, edge or vertex `picked` names on `index`'s model,
+/// on the body `shown` says draws its body there, if it's there.
+pub(crate) fn outside_target_in(
+    index: &PickIndex,
+    shown: impl Fn(BodyId) -> BodyId,
+    picked: &OutsideRef,
+) -> Option<Picked> {
     match *picked {
         OutsideRef::Sketch { .. } => None,
         OutsideRef::Edge(edge) => {
-            let found = index.find_edge(feed.shown_body(edge.body), edge.faces, edge.near)?;
+            let found = index.find_edge(shown(edge.body), edge.faces, edge.near)?;
             Some(Picked::Edge(found))
         }
         OutsideRef::Face(face) => {
-            let found = index.find_face(feed.shown_body(face.body), &face.key, face.near)?;
+            let found = index.find_face(shown(face.body), &face.key, face.near)?;
             Some(Picked::Face(found))
         }
         OutsideRef::Corner(PointRef::Corner { body, faces, near }) => Some(Picked::Vertex(
-            index.find_vertex(feed.shown_body(body), faces, near)?,
+            index.find_vertex(shown(body), faces, near)?,
         )),
         OutsideRef::Corner(_) => None,
     }

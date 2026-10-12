@@ -249,3 +249,47 @@ fn a_relinked_sketch_refused_shows_its_links_broken_and_asks_no_more() {
     assert_eq!(doc.editor.revision(), revision);
     assert_eq!(doc.feed.broken(feature, link).map(str::to_owned), Some(why));
 }
+
+/// A relink adding ids to the sketch being edited, amended in while the
+/// user's edit waits on the solver, doesn't refuse it as taken by an MCP
+/// client (none is): it's proposed again on the sketch relinked.
+#[test]
+fn a_relink_while_the_users_edit_waits_keeps_it() {
+    let (mut doc, requests, feature, plate) = projecting_item(|plate| plate.curves[0].id);
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    doc.look(varde_view::Look::EditFeature(feature));
+    lane.answer(&mut doc);
+    settle(&mut doc, &requests);
+    lane.answer(&mut doc);
+
+    // The plate's line made an arc: relinked, the link gains its centre.
+    let mut bent = sketch_of(&doc, plate).clone();
+    let Curve::Line { start, end } = bent.curves[0].curve else {
+        panic!("not a line");
+    };
+    let middle = (bent.point(start).unwrap().at + bent.point(end).unwrap().at) / 2.0;
+    let center = bent.add_point(middle).unwrap();
+    bent.curves[0].curve = Curve::Arc { center, start, end };
+    doc.apply(Command::SetSketch {
+        feature: plate,
+        sketch: Box::new(bent),
+    });
+    doc.sync();
+
+    let before = sketch_of(&doc, feature).clone();
+    let mut add = varde_sketch::Add::new(&before);
+    add.point(DVec2::new(40.0, 40.0)).unwrap();
+    assert!(doc.propose(SketchEdit::Add(add)));
+    settle(&mut doc, &requests);
+    assert!(sketch_of(&doc, feature).next_id > before.next_id);
+    lane.answer(&mut doc);
+    settle(&mut doc, &requests);
+    lane.answer(&mut doc);
+    let session = doc.sketch.as_ref().unwrap();
+    assert!(session.refusal.is_none(), "{:?}", session.refusal);
+    let now = sketch_of(&doc, feature);
+    assert!(
+        (now.points.iter()).any(|point| point.at == DVec2::new(40.0, 40.0)),
+        "the point wasn't added"
+    );
+}

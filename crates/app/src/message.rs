@@ -37,8 +37,10 @@ pub(crate) enum Message {
     FileDropped(Option<Chosen>),
 
     // For the open document, if there is one.
-    /// A tick of the auto-save timer.
-    AutoSaveTick(Instant),
+    /// A tick of the one-second timer: for auto-save, a thumbnail
+    /// overdue and, natively, the MCP calls waiting too long
+    /// (`mcp/waiting.rs`).
+    Tick(Instant),
     /// A tick while a toast shows, which takes it down once its time is
     /// up.
     ToastTick(Instant),
@@ -73,6 +75,10 @@ pub(crate) enum Message {
     IoReady(IoLane),
     /// The IO lane answered a request.
     Io(IoResponse),
+    /// The MCP server's events, tagged with the server's start (see
+    /// `mcp.rs`'s `Serve`): native only.
+    #[cfg(not(target_arch = "wasm32"))]
+    Mcp(u64, varde_mcp::server::Event),
 }
 
 /// An answer for one document, tagged with its [`DocId`] in
@@ -101,4 +107,8 @@ pub(crate) enum ForDoc {
     /// The thumbnail tagged `.0` was rendered, or `None` if it couldn't
     /// be: see `doc/thumbnail.rs`.
     Thumbnail(u64, Option<varde_io::thumbnail::Thumbnail>),
+    /// The picture of the MCP `render` call tagged `.0` was drawn, or
+    /// `None` if it couldn't be: see `mcp/query/render.rs`.
+    #[cfg(not(target_arch = "wasm32"))]
+    McpRendered(u64, Option<varde_io::thumbnail::Image>),
 }

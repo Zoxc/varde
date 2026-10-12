@@ -36,6 +36,8 @@ fn toml_round_trip() {
         sketch_snap: false,
         auto_save: AutoSave::Minutes10,
         recent_designs: RecentDesigns::Ten,
+        mcp: true,
+        mcp_port: McpPort::new(8123).unwrap(),
     };
     assert_eq!(
         settings.serialize(),
@@ -45,7 +47,8 @@ fn toml_round_trip() {
          left_drag = \"nothing\"\nmiddle_drag = \"zoom\"\nright_drag = \"orbit\"\n\
          rotation = \"over_the_top\"\nrotation_point = \"pointer\"\n\
          set_rotation_point = \"shift_middle_click\"\nzoom_direction = \"wheel_down\"\n\
-         zoom_to_pointer = false\nsketch_snap = false\nauto_save = 600\nrecent_designs = 10\n"
+         zoom_to_pointer = false\nsketch_snap = false\nauto_save = 600\nrecent_designs = 10\n\
+         mcp = true\nmcp_port = 8123\n"
     );
     assert_eq!(Settings::parse(&settings.serialize()), settings);
     for length_unit in LengthUnit::ALL {
@@ -349,4 +352,42 @@ fn decimals_cross_postcard() {
         assert_eq!(postcard::from_bytes::<Decimals>(&bytes).unwrap(), decimals);
     }
     assert!(postcard::from_bytes::<Decimals>(&[7]).is_err());
+}
+
+/// The MCP switch and port read back as written; the port only from 1024
+/// to 65535, anything else, a privileged port, past `u16` or not a
+/// number, reading as the default, which is off on 7311.
+#[test]
+fn mcp_keys_round_trip_and_bound_the_port() {
+    let defaults = Settings::default();
+    assert!(!defaults.mcp);
+    assert_eq!(defaults.mcp_port.get(), 7311);
+    for (mcp, port) in [(true, 1024), (false, 7311), (true, 40000), (true, u16::MAX)] {
+        let settings = Settings {
+            mcp,
+            mcp_port: McpPort::new(port).unwrap(),
+            ..Settings::default()
+        };
+        assert_eq!(Settings::parse(&settings.serialize()), settings);
+        let bytes = postcard::to_allocvec(&settings).unwrap();
+        assert_eq!(postcard::from_bytes::<Settings>(&bytes).unwrap(), settings);
+    }
+    for bad in [
+        "0",
+        "80",
+        "1023",
+        "65536",
+        "-1",
+        "99999999999",
+        "7311.5",
+        "\"7311\"",
+    ] {
+        let toml = format!("mcp = true\nmcp_port = {bad}\n");
+        let read = Settings::parse(&toml);
+        assert!(read.mcp, "{toml}");
+        assert_eq!(read.mcp_port, McpPort::default(), "{toml}");
+    }
+    assert!(!Settings::parse("mcp = \"yes\"\n").mcp);
+    assert_eq!(McpPort::new(1023), None);
+    assert!(postcard::from_bytes::<McpPort>(&postcard::to_allocvec(&80u16).unwrap()).is_err());
 }

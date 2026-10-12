@@ -767,7 +767,11 @@ fn broken_answers_are_checked_into_errors() {
     let editor = Editor::new(Document::example());
     let picking = tables(&editor);
     let good = good(&picking);
-    assert_eq!(good.clone().checked(&picking.mesh, &picking.picking), good);
+    assert_eq!(
+        good.clone()
+            .checked(Some((&picking.mesh, &picking.picking))),
+        good
+    );
     let breaks: [fn(&mut Inspected); 17] = [
         |i| i.revision = i.revision.wrapping_add(0), // unchanged: stays good
         |i| i.first.as_mut().unwrap().at = Some(At::Face(1000)),
@@ -842,7 +846,9 @@ fn broken_answers_are_checked_into_errors() {
     for (k, change) in breaks.iter().enumerate() {
         let mut broken = good.clone();
         change(&mut broken);
-        let checked = broken.clone().checked(&picking.mesh, &picking.picking);
+        let checked = broken
+            .clone()
+            .checked(Some((&picking.mesh, &picking.picking)));
         if k == 0 {
             assert_eq!(checked, broken);
             continue;
@@ -857,7 +863,9 @@ fn broken_answers_are_checked_into_errors() {
         points: [[0.0; 3]; 2],
     });
     assert_eq!(
-        broken.checked(&picking.mesh, &picking.picking).first,
+        broken
+            .checked(Some((&picking.mesh, &picking.picking)))
+            .first,
         Err(BROKEN.to_owned())
     );
 }
@@ -1010,4 +1018,54 @@ fn picks_of_a_merged_body_are_measured_on_its_holder() {
     assert_near(volume, joined);
     // The face is on the body, so 0 between.
     assert_near(gap(&inspected).distance, 0.0);
+}
+
+/// A client's measure ([`Query::Measure`](crate::Query::Measure)) measures as the user's
+/// does, on the committed model without drawing it: the same numbers, no
+/// place in any tables, tagged as asked; a failure answers it tagged.
+#[test]
+fn a_client_s_measure_is_answered_alone_without_places() {
+    let editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let picking = tables(&editor);
+    let (top, bottom) = (top(&picking, body), bottom(&picking, body));
+    let inspect = two(
+        1,
+        face_pick(&picking, top, [20.0, 10.0, 10.0]),
+        face_pick(&picking, bottom, [-20.0, 0.0, 0.0]),
+    );
+    let mut regenerator = Regenerator::default();
+    let (_, drawn) = ask(&mut regenerator, &editor, inspect.clone());
+    let request = Request::Query {
+        tag: 6,
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        until: None,
+        query: crate::Query::Measure(Box::new(inspect)),
+    };
+    let failed = request.failure()("broke".to_owned());
+    let Response::Answered {
+        tag,
+        generation,
+        answer: crate::Answer::Measured(Ok(alone)),
+        ..
+    } = regenerator.handle(request)
+    else {
+        panic!("not measured");
+    };
+    assert_eq!((tag, generation), (6, editor.generation()));
+    assert_eq!(probed(&alone.first).at, None);
+    assert_eq!(measured(&alone.first), measured(&drawn.first));
+    assert_near(gap(&alone).distance, 10.0);
+    assert_eq!(alone.between, drawn.between);
+    assert_eq!(alone.clone().checked(None), *alone);
+    let Response::Answered {
+        tag: 6,
+        answer: crate::Answer::Measured(Err(why)),
+        ..
+    } = failed
+    else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(why, "broke");
 }

@@ -342,7 +342,9 @@ pub struct Frame<'a> {
     /// How opaque each of the mesh's parts is drawn, from 0 to 1, in the
     /// order of [`RenderMesh::parts`]: faces and edges, hidden ones too. A
     /// part with no entry, out of range or NaN is opaque, and so is one
-    /// within half an 8 bit step of 1. Ignored while [`Self::faded`].
+    /// within half an 8 bit step of 1; one of exactly 0 isn't drawn at all
+    /// (a preview of some parts, see [`crate::frame`]). Ignored
+    /// while [`Self::faded`].
     /// Changing it re-uploads nothing.
     pub opacity: &'a [f32],
     /// The colour each of the mesh's parts is drawn in, in the same order:
@@ -944,6 +946,10 @@ impl PartDraws {
         let mut draws = PartDraws::default();
         let tint = |i: usize| tints.get(i).copied().unwrap_or(0);
         for i in 0..parts.len() {
+            // Not drawn at all: left out of a preview.
+            if opacity.get(i) == Some(&0.0) {
+                continue;
+            }
             let step = alphas.step(opacity.get(i).copied());
             if step < alphas.opaque {
                 draws.transparent.push((i, step));

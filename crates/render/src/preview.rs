@@ -16,10 +16,21 @@ use crate::{
 /// Where a preview looks from and how large it is: see [`frame`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PreviewShot {
-    /// Orthographic, framing the model.
+    /// Framing the model, orthographic or in perspective as [`frame`] was
+    /// asked.
     pub camera: Camera,
     /// The image's width and height, in pixels.
     pub size: [u32; 2],
+}
+
+impl PreviewShot {
+    /// Closes in on the framing's middle by `factor`, the image's size and
+    /// the camera's place kept: the view is narrowed ([`Camera::narrow`]),
+    /// never moved, so in perspective the eye stays outside what was
+    /// framed. Below 1 it shows more around it.
+    pub fn zoom(&mut self, factor: f32) {
+        self.camera.narrow(factor);
+    }
 }
 
 /// A preview as read back: `rgba` holds `width` by `height` pixels, rows
@@ -60,28 +71,65 @@ impl std::fmt::Display for PreviewError {
 
 impl std::error::Error for PreviewError {}
 
-/// The shot of `mesh` and `sketches` from `from`'s direction, made
-/// orthographic, framing them as large as fits within `max` pixels less `margin` on each side, and
-/// cropped to it: the image is only as wide or tall as the model is, plus
-/// the margins, so it has no empty space but them. `None` for a mesh with
-/// no vertices and no sketch lines, or `max` with no room inside the
-/// margins.
+/// The shot of `mesh` and `sketches` from `from`'s direction, framing
+/// them as large as fits within `max` pixels less `margin` on each side,
+/// and cropped to it: the image is only as wide or tall as the model is,
+/// plus the margins, so it has no empty space but them. With `parts`,
+/// only those of `mesh` (by their place in [`RenderMesh::parts`]; any it
+/// hasn't are left out) count, by the positions their faces' triangles
+/// use, so the other parts may be left out of the picture (drawn at
+/// opacity 0, see [`Frame::opacity`]). Orthographic, or perspective if
+/// `from` is: then the sphere about the bounds is fitted to the field of
+/// view and the image cropped to what it shows of them. `None` with
+/// nothing to frame (no vertices and no sketch lines), or `max` with no
+/// room inside the margins.
 pub fn frame(
     mesh: &RenderMesh,
     sketches: &RenderLines,
+    parts: Option<&[usize]>,
     from: &Camera,
     max: [u32; 2],
     margin: u32,
 ) -> Option<PreviewShot> {
-    let room = max.map(|side| side.checked_sub(margin.checked_mul(2)?).filter(|&r| r > 0));
-    let [Some(room_x), Some(room_y)] = room else {
-        return None;
+    let positions = mesh.positions();
+    let used: Box<dyn Iterator<Item = &[f32; 3]>> = match parts {
+        None => Box::new(positions.iter()),
+        Some(parts) => {
+            let all: Vec<_> = mesh.parts().collect();
+            let indices = (parts.iter())
+                .filter_map(move |&part| all.get(part).map(|part| part.indices.clone()))
+                .flat_map(|range| mesh.indices().get(range).unwrap_or_default());
+            Box::new(indices.filter_map(|&index| positions.get(index as usize)))
+        }
     };
+    let points = used.chain(sketches.points()).map(|&p| Vec3::from(p));
+    match from.projection() {
+        Projection::Orthographic => frame_orthographic(points, from, max, margin),
+        Projection::Perspective => frame_perspective(points, from, max, margin),
+    }
+}
+
+/// The room inside `margin` on each side of `max`, if there's some.
+fn room(max: [u32; 2], margin: u32) -> Option<[u32; 2]> {
+    let room = max.map(|side| side.checked_sub(margin.checked_mul(2)?).filter(|&r| r > 0));
+    match room {
+        [Some(x), Some(y)] => Some([x, y]),
+        _ => None,
+    }
+}
+
+/// [`frame`] of `points`, orthographic.
+fn frame_orthographic(
+    points: impl Iterator<Item = Vec3>,
+    from: &Camera,
+    max: [u32; 2],
+    margin: u32,
+) -> Option<PreviewShot> {
+    let [room_x, room_y] = room(max, margin)?;
     let (right, up, backward) = (from.right(), from.up(), from.backward());
     let mut low = Vec3::INFINITY;
     let mut high = Vec3::NEG_INFINITY;
-    for &position in mesh.positions().iter().chain(sketches.points()) {
-        let p = Vec3::from(position);
+    for p in points {
         let seen = Vec3::new(p.dot(right), p.dot(up), p.dot(backward));
         low = low.min(seen);
         high = high.max(seen);
@@ -107,11 +155,94 @@ pub fn frame(
     Some(PreviewShot { camera, size })
 }
 
+/// [`frame`] of `points` in perspective: the sphere about their
+/// bounds fitted to the field of view inside the margins, the image as
+/// tall as `max` lets and cropped across to what the points take of it.
+fn frame_perspective(
+    points: impl Iterator<Item = Vec3>,
+    from: &Camera,
+    max: [u32; 2],
+    margin: u32,
+) -> Option<PreviewShot> {
+    let [room_x, room_y] = room(max, margin)?;
+    let points: Vec<Vec3> = points.collect();
+    let (mut low, mut high) = (Vec3::INFINITY, Vec3::NEG_INFINITY);
+    for &p in &points {
+        low = low.min(p);
+        high = high.max(p);
+    }
+    if !(low.is_finite() && high.is_finite()) {
+        return None;
+    }
+    let center = (low + high) * 0.5;
+    let radius = (points.iter())
+        .map(|p| p.distance(center))
+        .fold(0.0f32, f32::max)
+        .max(1e-6);
+    let mut camera = *from;
+    camera.set_projection(Projection::Perspective);
+    camera.set_target(center);
+    // The field of view's half tangent, up and down, at any distance.
+    let half = camera.view_height() / (2.0 * camera.distance());
+    // The tangents across and up of where the points show, from `camera`.
+    let (right, up, backward) = (camera.right(), camera.up(), camera.backward());
+    let spread = |camera: &Camera| {
+        let mut most = [0.0f32; 2];
+        for &p in &points {
+            let offset = p - camera.target();
+            let depth = camera.distance() - offset.dot(backward);
+            if depth > 0.0 {
+                most[0] = most[0].max((offset.dot(right) / depth).abs());
+                most[1] = most[1].max((offset.dot(up) / depth).abs());
+            }
+        }
+        most
+    };
+    // The sphere within the field of view inside the margins: the
+    // image's full height is the field of view, so the sphere takes all
+    // of it but them, and the image is as wide as the points then show.
+    let fit = |camera: &mut Camera, height: u32| {
+        let inside = half * (height - 2 * margin) as f32 / height as f32;
+        camera.set_view_height(2.0 * (radius / inside.atan().sin()) * half);
+        let [across, _] = spread(camera);
+        let per_tangent = height as f32 / (2.0 * half);
+        let width = (2.0 * across * per_tangent).ceil().max(1.0);
+        // Within `u32`, as `room_x` is: past it, too wide anyway.
+        (width.min(room_x as f32 + 1.0) as u32).saturating_add(2 * margin)
+    };
+    // The tallest image whose width fits: the width grows with the
+    // height, as the margins take less of it, so it's found by halving.
+    let (mut low, mut high) = (2 * margin + 1, room_y + 2 * margin);
+    while low < high {
+        let height = low + (high - low).div_ceil(2);
+        if fit(&mut camera, height) <= max[0] {
+            low = height;
+        } else {
+            high = height - 1;
+        }
+    }
+    let height = low;
+    let width = fit(&mut camera, height).min(max[0]);
+    Some(PreviewShot {
+        camera,
+        size: [width, height],
+    })
+}
+
+/// What a preview draws as selected, as the viewport draws a selection:
+/// faces by their ids in the mesh (see [`Frame::selected_faces`]) and
+/// the edges and vertices in `highlights`.
+#[derive(Debug, Clone, Copy)]
+pub struct PreviewSelection<'a> {
+    pub faces: &'a [u32],
+    pub highlights: &'a Arc<Highlights>,
+}
+
 /// Draws `mesh` and the finished `sketches` as `shot` frames them, its parts as opaque as `opacity` says
 /// (see [`Frame::opacity`]) and in the colours `tints` gives them (see
 /// [`Frame::tints`]), once in each of `colors`, with nothing behind
 /// it: no background, grid, sketch being edited or markers, nothing hovered or
-/// selected. Lines are as wide as `scale_factor` physical pixels to a
+/// selected but `selection`, if given. Lines are as wide as `scale_factor` physical pixels to a
 /// logical one make them.
 ///
 /// The images are read back once the GPU is done: `done` is called with
@@ -131,6 +262,7 @@ pub fn render_preview(
     opacity: &[f32],
     tints: &[Option<BodyTint>],
     shot: &PreviewShot,
+    selection: Option<PreviewSelection<'_>>,
     colors: &[Colors],
     scale_factor: f32,
     done: impl FnOnce(Option<Vec<PreviewImage>>) + Send + 'static,
@@ -162,6 +294,7 @@ pub fn render_preview(
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("varde preview"),
     });
+    let none = Arc::new(Highlights::default());
     for (i, &colors) in colors.iter().enumerate() {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("varde preview"),
@@ -195,10 +328,10 @@ pub fn render_preview(
             shading: Shading::Regular,
             hidden_edges: false,
             hovered_faces: &[],
-            selected_faces: &[],
+            selected_faces: selection.map_or(&[], |selection| selection.faces),
             second_faces: &[],
             hover_through: false,
-            highlights: &Arc::new(Highlights::default()),
+            highlights: selection.map_or(&none, |selection| selection.highlights),
             errors: &[],
             sketch: None,
             pivot: None,

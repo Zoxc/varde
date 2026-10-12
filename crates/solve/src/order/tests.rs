@@ -18,11 +18,26 @@ fn propose(base: u64) -> Request {
 
 fn analyse(revision: u64) -> Request {
     Request::Analyse {
+        query: None,
         revision: revision.into(),
         sketch: Arc::new(Sketch::default()),
         units: LengthUnit::Mm,
         params: Arc::default(),
     }
+}
+
+fn query(id: u64) -> Request {
+    Request::Analyse {
+        query: Some(id),
+        revision: 1.into(),
+        sketch: Arc::new(Sketch::default()),
+        units: LengthUnit::Mm,
+        params: Arc::default(),
+    }
+}
+
+fn queried(id: u64) -> Option<(Tag, usize)> {
+    Some((Tag::Query(id), 0))
 }
 
 /// A step of `session`, told apart from the session's others by how many
@@ -138,4 +153,29 @@ fn drags_are_not_stuck_behind_a_queue() {
     assert_eq!(tag(order.pop()), proposed(2));
     order.push(drag(1, 2));
     assert_eq!(drain(&mut order), [dragged(1, 2), proposed(3)]);
+}
+
+#[test]
+fn a_client_query_neither_replaces_nor_is_replaced_by_an_analysis() {
+    let mut order = Order::default();
+    assert_eq!(tag(order.push(analyse(1))), None);
+    assert_eq!(tag(order.push(query(1))), None);
+    assert_eq!(tag(order.push(query(2))), None);
+    // The user's newer analysis replaces theirs only.
+    assert_eq!(tag(order.push(analyse(2))), analysed(1));
+    assert_eq!(tag(order.push(query(3))), None);
+    assert_eq!(
+        drain(&mut order),
+        [queried(1), queried(2), analysed(2), queried(3)]
+    );
+}
+
+#[test]
+fn queries_take_turns_with_drag_steps() {
+    let mut order = Order::default();
+    order.push(query(1));
+    order.push(drag(1, 1));
+    assert_eq!(tag(order.pop()), dragged(1, 1));
+    order.push(drag(1, 2));
+    assert_eq!(drain(&mut order), [queried(1), dragged(1, 2)]);
 }

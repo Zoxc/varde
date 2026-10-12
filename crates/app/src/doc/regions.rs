@@ -164,6 +164,12 @@ impl RegionPick {
         pick
     }
 
+    /// The most regions that can be picked.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn most(&self) -> usize {
+        self.most
+    }
+
     /// The profiles found of `feature`, if it's a candidate.
     pub(crate) fn found(&self, feature: FeatureId) -> Option<&Found> {
         self.found.iter().find(|found| found.feature == feature)
@@ -459,13 +465,7 @@ impl BodyTargets {
                 self.reticked.push((body, revision));
             }
             Err(at) => {
-                let place =
-                    edited.map_or(Some(document.insert_at()), |id| document.feature_index(id));
-                let made_before = document.body(body).is_some_and(|made| {
-                    let maker = document.feature_index(made.created_by);
-                    maker.is_some_and(|maker| place.is_none_or(|place| maker < place))
-                });
-                if made_before {
+                if super::combine::pickable(document, body, edited) {
                     self.excluded.insert(at, body);
                 }
             }

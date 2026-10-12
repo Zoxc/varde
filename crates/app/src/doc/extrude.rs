@@ -60,13 +60,32 @@ fn default_distance(camera: &Camera, units: LengthUnit) -> f64 {
     super::camera::fitting_length(camera, units, DEFAULT_SHARE)
 }
 
+/// The distance a new extrude the MCP client adds starts with, in
+/// millimetres: the panel's follows the view, which the client doesn't
+/// see.
+#[cfg(not(target_arch = "wasm32"))]
+const CLIENT_DISTANCE: f64 = 10.0;
+
 impl ExtrudeSession {
     /// A session setting up a new extrude, in `document`'s units, its
     /// distance one that fits the view of `camera`, taking the regions of
     /// `source` if given, else of the one the first region picked is in.
     fn new(document: &Document, camera: &Camera, source: Option<FeatureId>) -> Self {
+        let distance = default_distance(camera, document.units());
+        Self::with_distance(document, distance, source)
+    }
+
+    /// A session setting up a new extrude of regions of `source` for the
+    /// MCP client, as the panel's but its distances [`CLIENT_DISTANCE`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn for_client(document: &Document, source: FeatureId) -> Self {
+        Self::with_distance(document, CLIENT_DISTANCE, Some(source))
+    }
+
+    /// [`ExtrudeSession::new`], its distances `distance` millimetres.
+    fn with_distance(document: &Document, distance: f64, source: Option<FeatureId>) -> Self {
         let units = document.units();
-        let text = varde_expr::format(default_distance(camera, units), Some(Unit::Length(units)));
+        let text = varde_expr::format(distance, Some(Unit::Length(units)));
         let distance = TypedText::read(text, &Extent::ask(&document.design()));
         let none = varde_expr::format(0.0, Some(Unit::Angle(AngleUnit::Deg)));
         let taper = TypedText::read(none, &Extrude::taper_ask(&document.design()));
@@ -89,13 +108,33 @@ impl ExtrudeSession {
     /// A session editing the extrude `feature` of `document`, with its
     /// values and the regions of its sketch its references find; a
     /// distance it has no value for, one that fits the view of `camera`.
-    fn editing(
+    pub(crate) fn editing(
         document: &Document,
         camera: &Camera,
         feature: FeatureId,
         extrude: &Extrude,
     ) -> Self {
-        let mut session = Self::new(document, camera, Some(extrude.sketch));
+        let session = Self::new(document, camera, Some(extrude.sketch));
+        session.opened(document, feature, extrude)
+    }
+
+    /// [`ExtrudeSession::editing`] for the MCP client: a distance the
+    /// feature has no value for (one through all) is [`CLIENT_DISTANCE`],
+    /// as a new one's, not one following the user's view.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn editing_for_client(
+        document: &Document,
+        feature: FeatureId,
+        extrude: &Extrude,
+    ) -> Self {
+        let session = Self::with_distance(document, CLIENT_DISTANCE, Some(extrude.sketch));
+        session.opened(document, feature, extrude)
+    }
+
+    /// This fresh session opened on the extrude `feature` of `document`,
+    /// with its values: see [`ExtrudeSession::editing`].
+    fn opened(self, document: &Document, feature: FeatureId, extrude: &Extrude) -> Self {
+        let mut session = self;
         session.feature = Some(feature);
         session.regions = RegionPick::editing(
             document,
@@ -161,7 +200,7 @@ impl ExtrudeSession {
     /// The extrude as set up, if it's whole: a source, regions picked, and
     /// the distances its extent takes and the taper, as they last read (a
     /// taper of nothing is none).
-    fn extrude(&self) -> Option<Extrude> {
+    pub(crate) fn extrude(&self) -> Option<Extrude> {
         let sketch = self.regions.source?;
         if self.regions.references().is_empty() {
             return None;
@@ -192,6 +231,38 @@ impl ExtrudeSession {
     /// while it isn't whole.
     fn refused(&self, design: &Design) -> Option<ExtrudeError> {
         self.extrude()?.check_own(design).err()
+    }
+
+    /// Takes `kind` as the extent, unless it's through all and the
+    /// operation isn't a cut, which alone goes through all: whether it
+    /// was taken.
+    pub(crate) fn set_extent(&mut self, kind: ExtentKind) -> bool {
+        let taken = kind != ExtentKind::ThroughAll || self.operation == OperationKind::Cut;
+        if taken {
+            self.extent = kind;
+        }
+        taken
+    }
+
+    /// Takes `kind` as the operation, through all becoming one side
+    /// unless it's a cut.
+    pub(crate) fn set_operation(&mut self, kind: OperationKind) {
+        self.operation = kind;
+        if kind != OperationKind::Cut && self.extent == ExtentKind::ThroughAll {
+            self.extent = ExtentKind::OneSide;
+        }
+    }
+
+    /// Reads `text` into the field of `distance`, in `document`'s design.
+    pub(crate) fn input(&mut self, distance: Distance, text: String, document: &Document) {
+        let ask = Extent::ask(&document.design());
+        self.fields[distance.index()].input(text, &ask);
+    }
+
+    /// Reads `text` into the taper's field, in `document`'s design.
+    pub(crate) fn input_taper(&mut self, text: String, document: &Document) {
+        self.taper
+            .input(text, &Extrude::taper_ask(&document.design()));
     }
 
     /// Whether it can be committed to a document of `design`: it's whole,
@@ -292,6 +363,7 @@ impl Doc {
         }
         self.extrude = Some(session);
         self.focus = Some(Focus::All);
+        self.opened_operation();
     }
 
     /// Edits the extrude feature `id`, if the document holds it, in a
@@ -313,6 +385,7 @@ impl Doc {
         self.selected_feature = Some(id);
         self.extrude = Some(ExtrudeSession::editing(document, &self.camera, id, extrude));
         self.focus = Some(Focus::All);
+        self.opened_operation();
     }
 
     /// Takes `message`, changing the extrude being set up.
@@ -330,27 +403,12 @@ impl Doc {
             }
             ExtrudeLook::DropMissing(index) => session.regions.drop_missing(index),
             ExtrudeLook::Extent(kind) => {
-                // Only a cut goes through all.
-                if kind != ExtentKind::ThroughAll || session.operation == OperationKind::Cut {
-                    session.extent = kind;
-                }
+                session.set_extent(kind);
             }
-            ExtrudeLook::Input { distance, text } => {
-                let ask = Extent::ask(&document.design());
-                session.fields[distance.index()].input(text, &ask);
-            }
+            ExtrudeLook::Input { distance, text } => session.input(distance, text, document),
             ExtrudeLook::Flip => session.flip = !session.flip,
-            ExtrudeLook::Taper(text) => {
-                session
-                    .taper
-                    .input(text, &Extrude::taper_ask(&document.design()));
-            }
-            ExtrudeLook::Operation(kind) => {
-                session.operation = kind;
-                if kind != OperationKind::Cut && session.extent == ExtentKind::ThroughAll {
-                    session.extent = ExtentKind::OneSide;
-                }
-            }
+            ExtrudeLook::Taper(text) => session.input_taper(text, document),
+            ExtrudeLook::Operation(kind) => session.set_operation(kind),
             ExtrudeLook::Target(body) => {
                 let revision = self.feed.revision();
                 (session.targets).toggle(body, session.feature, document, revision);
@@ -366,15 +424,18 @@ impl Doc {
     }
 
     /// Whether the extrude being set up can be committed: the document
-    /// can be changed, no sketch edits wait on the solver, and the session
-    /// is ready ([`ExtrudeSession::ready`]). Edits left with the solver
+    /// can be changed, none of the user's sketch edits wait on the solver
+    /// ([`Doc::users_proposing`]), and the session is ready
+    /// ([`ExtrudeSession::ready`]). Edits left with the solver
     /// are committed after it answers, and may change the regions picked,
     /// which are found again then: until they are, the preview isn't of
     /// what would be committed, and the extrude would come before them in
     /// the undo history.
     pub(crate) fn extrude_ready(&self) -> bool {
         self.extrude.as_ref().is_some_and(|session| {
-            self.editable() && !self.proposing() && session.ready(&self.editor.document().design())
+            self.editable()
+                && !self.users_proposing()
+                && session.ready(&self.editor.document().design())
         })
     }
 

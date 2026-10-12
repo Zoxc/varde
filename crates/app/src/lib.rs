@@ -5,6 +5,8 @@
 mod doc;
 mod io;
 mod keys;
+#[cfg(not(target_arch = "wasm32"))]
+mod mcp;
 mod message;
 mod platform;
 mod recent;
@@ -67,6 +69,9 @@ pub(crate) struct Varde {
     /// the viewport's pipelines neither holds up its first frame nor waits
     /// for the first design.
     warm_up: bool,
+    /// The MCP server's state, see `mcp.rs`.
+    #[cfg(not(target_arch = "wasm32"))]
+    mcp: mcp::Mcp,
 }
 
 /// The settings page's own state: the app's, not a document's, but
@@ -79,6 +84,10 @@ struct Page {
     resetting: bool,
     /// The interface scale the slider is dragged to, set once let go.
     scale_dragged: Option<u16>,
+    /// The MCP port as typed, while it isn't the port set.
+    port_typed: Option<String>,
+    /// Whether the MCP token shows.
+    token_shown: bool,
 }
 
 impl Page {
@@ -88,6 +97,9 @@ impl Page {
         self.resetting = false;
         // A drag not let go on the page sets nothing.
         self.scale_dragged = None;
+        // Nor a port typed out of range; the token is hidden again.
+        self.port_typed = None;
+        self.token_shown = false;
     }
 }
 
@@ -377,6 +389,10 @@ impl Varde {
         // The theme is the system's until the stored one arrives.
         files.io.send(IoRequest::LoadSettings);
         files.io.send(IoRequest::LoadPanic);
+        // The MCP server waits for its token, even while switched off, so
+        // switching it on starts it at once.
+        #[cfg(not(target_arch = "wasm32"))]
+        files.io.send(IoRequest::LoadMcpToken);
         Self {
             screen: Screen::Welcome(Welcome::default()),
             system: None,
@@ -390,6 +406,8 @@ impl Varde {
             quitting: None,
             toast: Toast::default(),
             warm_up: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            mcp: mcp::Mcp::default(),
         }
     }
 
@@ -417,6 +435,10 @@ impl Varde {
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
+        // The MCP calls done send their replies, and those of a server
+        // stopped are ended.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.mcp.sync(self.screen.doc_mut());
         // A new design starts in the units of the settings.
         self.files.new_units = self.options.length_unit;
         // A value field opened, or a value refused, has the field take the
@@ -425,9 +447,15 @@ impl Varde {
             Some(focus) => Task::batch([task, focus_field(focus)]),
             None => task,
         };
+        // The Timeline scrolled to the feature the MCP panel showed.
+        #[cfg(not(target_arch = "wasm32"))]
+        let task = match self.screen.doc_mut().and_then(|doc| doc.mcp.scroll.take()) {
+            Some(share) => Task::batch([task, snap_list(varde_view::TIMELINE_LIST, share)]),
+            None => task,
+        };
         // The rail's list scrolled to show the row the keys moved to.
         let task = match self.screen.doc_mut().and_then(|doc| doc.rail.take_scroll()) {
-            Some(share) => Task::batch([task, scroll_rail(share)]),
+            Some(share) => Task::batch([task, snap_list(varde_view::RAIL_LIST, share)]),
             None => task,
         };
         // The rename field takes the focus as it opens, its text selected.
@@ -459,6 +487,20 @@ impl Varde {
             false => task,
         };
         platform::show_title(&self.title());
+        // The pictures MCP calls asked for, drawn by the viewport's next
+        // frame.
+        #[cfg(not(target_arch = "wasm32"))]
+        let task = match self.screen.doc_mut() {
+            Some(doc) => {
+                let id = doc.id;
+                let renders = doc.mcp.take_renders().into_iter();
+                Task::batch(
+                    std::iter::once(task)
+                        .chain(renders.map(|(tag, answer)| mcp_render(id, tag, answer))),
+                )
+            }
+            None => task,
+        };
         // A thumbnail asked for, rendered by the viewport's next frame.
         match self.screen.doc_mut() {
             Some(doc) => match doc.take_thumbnail() {
@@ -498,7 +540,9 @@ impl Varde {
                 return self.welcome(|welcome, files| welcome.dropped(files, chosen));
             }
             Message::Ui(Ui::File(message)) => return self.file(message),
-            Message::AutoSaveTick(now) => {
+            Message::Tick(now) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.mcp.tick(now, self.screen.doc_mut());
                 let wait = auto_save_wait(&self.options);
                 return self.step(|doc, cx| {
                     doc.auto_save(cx, now, wait);
@@ -519,6 +563,11 @@ impl Varde {
                 });
             }
             Message::IoReady(lane) => self.files.io.ready(Box::new(lane)),
+            // A call is answered at once from the open design. Not while
+            // quitting (see `while_quitting`): its reply dropped answers
+            // that Varde is closing.
+            #[cfg(not(target_arch = "wasm32"))]
+            Message::Mcp(start, event) => self.mcp.event(start, event, self.screen.doc_mut()),
             Message::Io(response) => {
                 self.warm_up = true;
                 return self.io_response(response);
@@ -611,6 +660,7 @@ impl Varde {
                 self.with_doc(|doc, _| doc.view_menu = false);
             }
             Message::Ui(Ui::Settings(message)) => self.settings_page(message),
+            Message::Ui(Ui::McpPanel(message)) => self.mcp_panel(message),
             Message::PeekPanel(peeking) => {
                 // The tab shown changes: the Timeline's rows go, or come,
                 // without an exit or an enter.
@@ -665,6 +715,8 @@ impl Varde {
         if let Some(write) = self.files.recent.keep(usize::from(options.recent_designs)) {
             self.files.io.send(write);
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.mcp.configure(options.mcp, options.mcp_port);
     }
 
     /// Takes `message`, from the settings page itself.
@@ -689,15 +741,44 @@ impl Varde {
             SettingsPage::SetLengthUnit(unit) => {
                 self.choose(Key::LengthUnit, |options| options.length_unit = unit);
             }
-            SettingsPage::Set(setting) => self.set(setting),
+            SettingsPage::Set(setting) => {
+                // A reset or a value chosen replaces what's typed.
+                if matches!(setting, varde_view::Setting::McpPort(_)) {
+                    self.page.port_typed = None;
+                }
+                self.set(setting);
+            }
+            // Set once it's a port the field takes; kept as typed while
+            // it isn't the port set, as an error out of range.
+            SettingsPage::TypeMcpPort(typed) => {
+                if let Some(port) = varde_view::mcp_port_of(&typed)
+                    && port != self.options.mcp_port
+                {
+                    self.set(varde_view::Setting::McpPort(port));
+                }
+                self.page.port_typed =
+                    (typed != self.options.mcp_port.to_string()).then_some(typed);
+            }
+            SettingsPage::ShowMcpToken(shown) => self.page.token_shown = shown,
+            #[cfg(not(target_arch = "wasm32"))]
+            SettingsPage::DisconnectMcp => self.mcp.disconnect(),
+            #[cfg(target_arch = "wasm32")]
+            SettingsPage::DisconnectMcp => {}
             // With nothing to reset, the button is off.
             SettingsPage::AskReset => {
                 self.page.resetting = !varde_view::changed_settings(self.options).is_empty();
             }
             SettingsPage::CancelReset => self.page.resetting = false,
+            // Answered with the new token, which restarts the server
+            // and so ends the session.
+            #[cfg(not(target_arch = "wasm32"))]
+            SettingsPage::RegenerateMcpToken => self.files.io.send(IoRequest::RegenerateMcpToken),
+            #[cfg(target_arch = "wasm32")]
+            SettingsPage::RegenerateMcpToken => {}
             SettingsPage::Reset => {
                 // Only as asked: a stray Enter resets nothing.
                 if std::mem::take(&mut self.page.resetting) {
+                    self.page.port_typed = None;
                     self.options = ViewOptions::default();
                     self.options_changed();
                     if let Some(write) = self.settings.chose_all(self.options) {
@@ -711,7 +792,10 @@ impl Varde {
     /// Sets `setting`, from the settings page, if it's a value the page
     /// offers: others are ignored.
     fn set(&mut self, setting: varde_view::Setting) {
-        use varde_view::{AUTO_SAVE_MINUTES, RECENT_DESIGNS, Setting, interface_scale_offered};
+        use varde_view::{
+            AUTO_SAVE_MINUTES, MCP_PORT_MAX, MCP_PORT_MIN, RECENT_DESIGNS, Setting,
+            interface_scale_offered,
+        };
         match setting {
             Setting::InterfaceScale(percent) if interface_scale_offered(percent) => {
                 self.choose(Key::InterfaceScale, |options| {
@@ -768,10 +852,15 @@ impl Varde {
             Setting::RecentDesigns(count) if RECENT_DESIGNS.contains(&count) => {
                 self.choose(Key::RecentDesigns, |options| options.recent_designs = count);
             }
+            Setting::Mcp(on) => self.choose(Key::Mcp, |options| options.mcp = on),
+            Setting::McpPort(port) if (MCP_PORT_MIN..=MCP_PORT_MAX).contains(&port) => {
+                self.choose(Key::McpPort, |options| options.mcp_port = port);
+            }
             Setting::InterfaceScale(_)
             | Setting::Decimals(_)
             | Setting::AutoSave(_)
-            | Setting::RecentDesigns(_) => {}
+            | Setting::RecentDesigns(_)
+            | Setting::McpPort(_) => {}
         }
     }
 
@@ -893,8 +982,14 @@ impl Varde {
     /// each, so what's moved to shows; a cancelled or failed open or
     /// close never gets here and leaves it as it is.
     fn show(&mut self, screen: Screen) {
+        // The MCP calls waiting on the design before fail.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.mcp.closing(self.screen.doc_mut());
         self.screen = screen;
         self.page.close();
+        // The MCP panel's rows were of the design before.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.mcp.design_closed();
     }
 
     /// Closes `window`, which quits, once the IO lane has done everything
@@ -903,6 +998,10 @@ impl Varde {
     /// Until then only messages [`while_quitting`] lets through act.
     fn quit(&mut self, window: window::Id) -> Task<Message> {
         self.quitting = Some(window);
+        // The MCP calls waiting are answered now: neither their answers
+        // nor the ticks that bound them act from here on.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.mcp.quitting(self.screen.doc_mut());
         self.files.io.send(IoRequest::Flush);
         Task::none()
     }
@@ -994,6 +1093,33 @@ impl Varde {
                 report_failure("save the settings", result);
             }
             IoResponse::PanicLoaded { panic } => self.files.panic = panic,
+            #[cfg(not(target_arch = "wasm32"))]
+            IoResponse::PngEncoded { owner, tag, result } => {
+                if let Some(doc) = self.screen.doc_mut()
+                    && doc.id.number() == owner
+                {
+                    doc.mcp_encoded(tag, result);
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            IoResponse::McpToken {
+                regenerated,
+                result,
+            } => match result {
+                Ok(token) => {
+                    let (on, port) = (self.options.mcp, self.options.mcp_port);
+                    let doc = self.screen.doc_mut();
+                    self.mcp.token_loaded(token, regenerated, on, port, doc);
+                }
+                Err(error) => {
+                    let what = if regenerated {
+                        "make a new MCP token"
+                    } else {
+                        "read the MCP token"
+                    };
+                    report_failure(what, Err(error));
+                }
+            },
             IoResponse::PanicDiscarded { result } => {
                 report_failure("discard the internal error", result);
             }
@@ -1061,6 +1187,7 @@ impl Varde {
                 (Some(path), false) => varde_view::KeptIn::File(path),
                 (None, false) => varde_view::KeptIn::Nowhere,
             },
+            mcp: self.mcp_shown(),
         });
         let view = match &self.screen {
             Screen::Welcome(welcome) => {
@@ -1076,6 +1203,7 @@ impl Varde {
                 self.options,
                 self.files.offers(),
                 settings,
+                self.mcp_panel_shown(),
             ),
         };
         let view = match self.toast.message() {
@@ -1174,13 +1302,14 @@ impl Varde {
             // model on regeneration until they've waited long enough to
             // say so; and while a thumbnail is rendered, by the
             // viewport's next frame, and on the web read back on a later
-            // one.
+            // one, or a picture an MCP call asked for.
             only_if(
                 doc.is_some_and(|doc| {
                     doc.animating()
                         || doc.timing()
                         || doc.feed.timing(&doc.editor)
                         || doc.rendering_thumbnail()
+                        || doc.drawing_for_mcp()
                 }),
                 || window::frames().map(Message::AnimationFrame),
             ),
@@ -1189,10 +1318,12 @@ impl Varde {
             self.regen_lane(),
             self.solve_lane(),
             Self::io_lane(),
-            // Also giving up on a thumbnail that isn't drawn.
+            self.mcp_server(),
+            // Also giving up on a thumbnail that isn't drawn, and ending
+            // the MCP calls waiting too long.
             only_if(
-                self.auto_saving() || doc.is_some_and(Doc::rendering_thumbnail),
-                platform::auto_save_ticks,
+                self.auto_saving() || doc.is_some_and(Doc::ticking),
+                platform::second_ticks,
             ),
         ])
     }
@@ -1222,6 +1353,69 @@ impl Varde {
         }
 
         Subscription::run(start)
+    }
+
+    /// The MCP panel's toggle and its head's Start and Stop: natively
+    /// only. Start starts the server, or, running and the port not bound,
+    /// tries it again; neither touches the settings.
+    fn mcp_panel(&mut self, message: varde_view::McpPanel) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use varde_view::McpPanel;
+            let (on, port) = (self.options.mcp, self.options.mcp_port);
+            match message {
+                McpPanel::Toggle => self.mcp.open = on && !self.mcp.open,
+                McpPanel::Start => self.mcp.start(on, port),
+                McpPanel::Stop => self.mcp.stop(on, port),
+                McpPanel::ApplyYours => self.with_doc(|doc, _| doc.mcp_apply_yours()),
+                McpPanel::KeepEditing => self.with_doc(|doc, _| doc.mcp_keep_editing()),
+                McpPanel::OpenMenu(_)
+                | McpPanel::CloseMenu
+                | McpPanel::ShowInTimeline(_)
+                | McpPanel::RevertToHere(_)
+                | McpPanel::RevertBefore(_)
+                | McpPanel::ConfirmRevert
+                | McpPanel::CancelRevert => self.mcp.panel_message(message, self.screen.doc_mut()),
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = message;
+    }
+
+    /// What the document screen shows of the MCP server: natively only.
+    pub(crate) fn mcp_panel_shown(&self) -> Option<varde_view::McpShown<'_>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let shown = Some(self.mcp.panel(
+            self.options.mcp,
+            self.options.mcp_port,
+            when::now(),
+            self.screen.doc(),
+        ));
+        #[cfg(target_arch = "wasm32")]
+        let shown = None;
+        shown
+    }
+
+    /// What the settings' MCP tab shows: natively only.
+    pub(crate) fn mcp_shown(&self) -> varde_view::McpState<'_> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let shown = varde_view::McpState {
+            token_shown: self.page.token_shown,
+            port_typed: self.page.port_typed.as_deref(),
+            ..self.mcp.shown(when::now())
+        };
+        #[cfg(target_arch = "wasm32")]
+        let shown = varde_view::McpState::default();
+        shown
+    }
+
+    /// Runs the MCP server while it's on and the app isn't quitting: see
+    /// `mcp.rs`. Natively only.
+    fn mcp_server(&self) -> Subscription<Message> {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.mcp.subscription(self.quitting.is_none());
+        #[cfg(target_arch = "wasm32")]
+        Subscription::none()
     }
 
     /// Runs the open document's regeneration lane: yields [`ForDoc::RegenReady`]
@@ -1338,6 +1532,7 @@ fn while_quitting(message: &Message) -> bool {
                             | varde_view::SettingsPage::DragScale(_)
                             | varde_view::SettingsPage::AskReset
                             | varde_view::SettingsPage::CancelReset
+                            | varde_view::SettingsPage::ShowMcpToken(_)
                     )
                     | Ui::Copy(_)
             )
@@ -1363,6 +1558,23 @@ fn thumbnail(
             })
         });
         Message::Doc(id, ForDoc::Thumbnail(tag, thumbnail))
+    })
+}
+
+/// Waits for the picture of the MCP `render` call tagged `tag` of
+/// document `id` to come back on `answer`, see `mcp/query/render.rs`:
+/// `None` if it couldn't be drawn, its sender dropped uncalled.
+#[cfg(not(target_arch = "wasm32"))]
+fn mcp_render(
+    id: DocId,
+    tag: u64,
+    answer: iced::futures::channel::oneshot::Receiver<Option<varde_render::PreviewImage>>,
+) -> Task<Message> {
+    Task::perform(answer, move |image| {
+        let image = image.ok().flatten().and_then(|image| {
+            varde_io::thumbnail::Image::new(image.width, image.height, image.rgba)
+        });
+        Message::Doc(id, ForDoc::McpRendered(tag, image))
     })
 }
 
@@ -1437,6 +1649,8 @@ fn escape_key(
     Some(Message::Ui(match dialog {
         Some(Dialog::Unsaved) => Ui::File(File::Unsaved(Unsaved::Cancel)),
         Some(Dialog::Delete) => Ui::Look(Look::CancelDelete),
+        Some(Dialog::McpAsk) => Ui::McpPanel(varde_view::McpPanel::KeepEditing),
+        Some(Dialog::McpRevert) => Ui::McpPanel(varde_view::McpPanel::CancelRevert),
         Some(Dialog::Damaged) => Ui::Welcome(varde_view::Welcome::CancelDamaged),
         Some(Dialog::Panic) => Ui::Welcome(varde_view::Welcome::ClosePanic),
         Some(Dialog::Naming) => Ui::File(File::CancelName),
@@ -1609,15 +1823,16 @@ fn storage_state() -> Task<Message> {
     )
 }
 
-/// Scrolls the rail's open list to `share` of the way to its end.
-fn scroll_rail(share: f32) -> Task<Message> {
+/// Scrolls the scrolled list `id` (the rail's open list, the Timeline)
+/// to `share` of the way to its end.
+fn snap_list(id: iced::widget::Id, share: f32) -> Task<Message> {
     use iced::widget::operation::{self, RelativeOffset};
 
     let offset = RelativeOffset {
         x: None,
         y: Some(share),
     };
-    operation::snap_to(varde_view::RAIL_LIST, offset)
+    operation::snap_to(id, offset)
 }
 
 /// Asks the user for a design to open, answering with

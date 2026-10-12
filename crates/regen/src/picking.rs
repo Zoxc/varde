@@ -22,10 +22,11 @@ use std::mem::size_of_val;
 use std::sync::Arc;
 
 use crate::PickTables;
+use crate::inspect::point;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_document::BodyId;
-use varde_kernel::measure::edge_shape;
+use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::mesh::{FaceKey, Form};
 use varde_kernel::topology::Region;
 use varde_kernel::{Display, MeshError, RenderMesh, Solid, Topology};
@@ -210,21 +211,30 @@ pub struct PickCorner {
     pub point: [f64; 3],
 }
 
+/// Whether `p` is within [`Picking::MAX_VALUE`].
+fn within(p: DVec3) -> bool {
+    point(p.to_array())
+}
+
 /// The picking tables of a model's mesh: the body of each of its parts,
 /// and its faces' keys and summaries, which of its edges close on
 /// themselves, which tangent chain each is in and its snap point, by the
-/// mesh's face and edge ids, and its corners.
+/// mesh's face and edge ids, and its corners. What each edge is (its
+/// form, ends and convexity) isn't here: it's asked for apart, see
+/// [`EdgeFacts`](crate::EdgeFacts).
 ///
 /// It's always consistent with the mesh it came with: one body per part,
-/// one face per face of the mesh, one flag, one tangent chain and one snap
-/// point or none per edge, a closed edge between two different faces and
-/// starting and ending at one corner, each edge's tangent chain's first an
-/// edge of its part between two different faces, no later than it and its
-/// own first (a crease's itself), a crease without a snap point, snap
-/// points within [`Picking::MAX_VALUE`], each corner between three faces
-/// of one part in ascending order with its point within
-/// [`Picking::MAX_VALUE`], no more corners than vertices, every summary
-/// [`Summary::valid`], each face's aliases sorted and apart from its key.
+/// one face per face of the mesh, one flag, one tangent chain and one
+/// snap point or none per edge, a closed edge
+/// between two different faces and starting and ending at one corner,
+/// each edge's tangent chain's first an edge of its part between two
+/// different faces, no later than it and its own first (a crease's
+/// itself), a crease without a snap point, snap points
+/// within [`Picking::MAX_VALUE`], each
+/// corner between three faces of one part in ascending order with its
+/// point within [`Picking::MAX_VALUE`], no more corners than vertices,
+/// every summary [`Summary::valid`], each face's aliases sorted and apart
+/// from its key.
 /// The fields are private so that holds;
 /// one from the other side of the web worker comes in through
 /// [`Picking::from_parts`], which checks it.
@@ -236,6 +246,18 @@ pub struct Picking {
     tangents: Vec<u32>,
     snaps: Vec<Option<[f64; 3]>>,
     corners: Vec<PickCorner>,
+}
+
+/// The parts of [`Picking`], as [`Picking::from_parts`] takes them and
+/// [`Picking::to_parts`] gives them: see their accessors on [`Picking`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PickingParts {
+    pub bodies: Vec<BodyId>,
+    pub faces: Vec<PickFace>,
+    pub closed: Vec<bool>,
+    pub tangents: Vec<u32>,
+    pub snaps: Vec<Option<[f64; 3]>>,
+    pub corners: Vec<PickCorner>,
 }
 
 impl Picking {
@@ -253,15 +275,15 @@ impl Picking {
 
     /// The tables of `mesh` of these parts, if they make them; see
     /// [`Picking`] for what is checked.
-    pub fn from_parts(
-        bodies: Vec<BodyId>,
-        faces: Vec<PickFace>,
-        closed: Vec<bool>,
-        tangents: Vec<u32>,
-        snaps: Vec<Option<[f64; 3]>>,
-        corners: Vec<PickCorner>,
-        mesh: &RenderMesh,
-    ) -> Result<Picking, PickingError> {
+    pub fn from_parts(parts: PickingParts, mesh: &RenderMesh) -> Result<Picking, PickingError> {
+        let PickingParts {
+            bodies,
+            faces,
+            closed,
+            tangents,
+            snaps,
+            corners,
+        } = parts;
         if bodies.len() != mesh.part_ends().len()
             || faces.len() != mesh.face_count()
             || closed.len() != mesh.edge_count()
@@ -283,8 +305,8 @@ impl Picking {
             return Err(PickingError::Face);
         }
         let closes = |(&[a, b], &[start, end]): (&[u32; 2], &[u32; 2])| a != b && start == end;
-        let edges = mesh.edge_faces().iter().zip(mesh.edge_corners());
-        if !(closed.iter().zip(edges)).all(|(&closed, edge)| !closed || closes(edge)) {
+        let ends = mesh.edge_faces().iter().zip(mesh.edge_corners());
+        if !(closed.iter().zip(ends)).all(|(&closed, edge)| !closed || closes(edge)) {
             return Err(PickingError::Closed);
         }
         // Each part's first edge, by edge.
@@ -312,9 +334,8 @@ impl Picking {
                 return Err(PickingError::Tangent);
             }
         }
-        let within = |p: [f64; 3]| p.into_iter().all(|x| x.abs() <= Self::MAX_VALUE);
         let snap_ok = |(e, snap): (usize, &Option<[f64; 3]>)| {
-            snap.is_none_or(|p| chain(e as u32) && within(p))
+            snap.is_none_or(|p| chain(e as u32) && point(p))
         };
         if !snaps.iter().enumerate().all(snap_ok) {
             return Err(PickingError::Snap);
@@ -330,7 +351,7 @@ impl Picking {
                 && part(c).is_some()
                 && part(a) == part(b)
                 && part(b) == part(c)
-                && within(corner.point)
+                && point(corner.point)
         };
         if !corners.iter().all(corner_ok) {
             return Err(PickingError::Corner);
@@ -343,6 +364,18 @@ impl Picking {
             snaps,
             corners,
         })
+    }
+
+    /// Its parts, copied, as [`Picking::from_parts`] takes them.
+    pub fn to_parts(&self) -> PickingParts {
+        PickingParts {
+            bodies: self.bodies.clone(),
+            faces: self.faces.clone(),
+            closed: self.closed.clone(),
+            tangents: self.tangents.clone(),
+            snaps: self.snaps.clone(),
+            corners: self.corners.clone(),
+        }
     }
 
     /// The body of each of the mesh's parts, in order: the shown bodies,
@@ -584,10 +617,12 @@ impl Drawn {
         // creases after them are their own.
         let mut tangents = topology.tangent_chains(solid);
         tangents.extend(chains.len() as u32..mesh.edge_count() as u32);
-        let within = |p: DVec3| p.abs().max_element() <= Picking::MAX_VALUE;
+        let shapes: Vec<EdgeShape> = (chains.iter())
+            .map(|chain| edge_shape(solid, chain))
+            .collect();
         let snaps = (0..mesh.edge_count())
             .map(|e| {
-                let snap = edge_shape(solid, chains.get(e)?).point();
+                let snap = shapes.get(e)?.point();
                 snap.filter(|&p| within(p)).map(|p| p.to_array())
             })
             .collect();

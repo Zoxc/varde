@@ -20,7 +20,7 @@ use varde_view::{
 };
 
 use super::{Doc, MotionSession, OUT_OF_DATE, unnamed};
-use crate::doc::feed::Merges;
+use crate::doc::feed::{Merges, merged_in};
 
 /// One of the edges or faces a session picks several of, as it has it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -230,6 +230,16 @@ impl<R: Ref> Refs<R> {
     }
 }
 
+/// The mesh's ones of type `R` a click on `pick` of `index`'s model
+/// picks or takes out together in `session` ([`Ref::unit`]): none for a
+/// pick of another kind or model.
+fn refs_unit_in<R: Ref>(session: &MotionSession, index: &PickIndex, pick: Pick) -> Vec<u32> {
+    match R::target(pick.target) {
+        Some(target) if pick.model == index.model() => R::unit(session, index, target),
+        _ => Vec::new(),
+    }
+}
+
 /// What a session of `kind` is called in words: "chamfer", "shell".
 pub(super) fn noun(kind: MotionKind) -> String {
     kind.noun().to_lowercase()
@@ -248,7 +258,7 @@ pub(super) fn article(noun: &str) -> &'static str {
 impl MotionSession {
     /// Keeps its bodies those its references are on (a blend's, a face
     /// session's) as the session's own rules have it.
-    pub(super) fn refs_body(&mut self) {
+    pub(crate) fn refs_body(&mut self) {
         if self.kind.blends() {
             self.blend_body();
         } else if self.kind.picks_faces() {
@@ -284,20 +294,24 @@ impl Doc {
             && (self.feed.shows_draft_of_run() || (new && !self.feed.shows_draft()))
     }
 
-    /// `pick` of the model shown as a reference of type `R` for the
-    /// session: named as of the feature on the body holding it there,
+    /// `pick` of `index`'s model as a reference of type `R` for
+    /// `session`: named as of the feature on the body holding it there,
     /// which is made before it, and the body of those picked once one
     /// is. Refused, why, if not.
-    fn ref_of<R: Ref>(&self, pick: Pick) -> Result<R, Cow<'static, str>> {
-        let session = self.motion.as_ref().ok_or("Nothing is set up")?;
+    fn ref_in<R: Ref>(
+        &self,
+        session: &MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Result<R, Cow<'static, str>> {
         let kind = session.kind;
         let target = R::target(pick.target).ok_or_else(|| R::only(kind))?;
-        let naming = self.motion_naming().ok_or("Nothing is set up")?;
-        let index = self.feed.pick_index();
+        let marks = self.feed.marks_of(index);
+        let naming = self.naming_in(session.feature, marks);
         let mut named =
             R::named(&naming, index, target, pick.at).map_err(|why| unnamed(why, R::NOUN, kind))?;
         let document = self.editor.document();
-        let merged = self.feed.merged_before(document, session.feature);
+        let merged = merged_in(document, session.feature, marks);
         let held = merged.holder(named.body()).unwrap_or(named.body());
         // A blend's edges and faces are all on one body.
         let picked = if kind.blends() {
@@ -324,12 +338,52 @@ impl Doc {
         Ok(named)
     }
 
+    /// Takes `pick` of `index`'s model as a reference of type `R` of
+    /// `session`, as [`Doc::refs_click`] takes a click on one not picked
+    /// (once a click on it doesn't take one out): refused, why, as
+    /// [`Doc::ref_in`] refuses it or past the kind's limit. The MCP
+    /// client's keys are taken on the committed model so.
+    pub(super) fn take_ref_in<R: Ref>(
+        &self,
+        session: &mut MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Result<(), Cow<'static, str>> {
+        let found = self.ref_in::<R>(session, index, pick)?;
+        let Some(target) = R::target(pick.target) else {
+            return Ok(());
+        };
+        let kind = session.kind;
+        // A sweep's edges are one part of its path, which has its limits.
+        let refs = &R::refs(session).refs;
+        if kind == MotionKind::Sweep
+            && refs
+                .binary_search_by(|picked| picked.order(&found))
+                .is_err()
+        {
+            session.sweep_room(usize::from(refs.is_empty()), 1)?;
+        }
+        R::refs_mut(session).add(kind, found, pick.model, target)?;
+        session.refs_body();
+        Ok(())
+    }
+
     /// Whether a click on `pick` takes a reference of type `R` out: it's
     /// one picked, or one it grows into ([`Ref::grown`]).
     pub(super) fn ref_picked<R: Ref>(&self, pick: Pick) -> Option<usize> {
         let session = self.motion.as_ref()?;
+        self.ref_picked_in::<R>(session, self.feed.pick_index(), pick)
+    }
+
+    /// Whether a click on `pick` of `index`'s model takes a reference of
+    /// type `R` of `session` out: see [`Doc::ref_picked`].
+    pub(super) fn ref_picked_in<R: Ref>(
+        &self,
+        session: &MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Option<usize> {
         let target = R::target(pick.target)?;
-        let index = self.feed.pick_index();
         if pick.model != index.model() {
             return None;
         }
@@ -498,7 +552,11 @@ impl Doc {
     /// click would pick or take out.
     pub(super) fn refs_take<R: Ref>(&self, pick: Pick) -> bool {
         self.refs_model_current()
-            && (self.ref_picked::<R>(pick).is_some() || self.ref_of::<R>(pick).is_ok())
+            && self.motion.as_ref().is_some_and(|session| {
+                let index = self.feed.pick_index();
+                self.ref_picked_in::<R>(session, index, pick).is_some()
+                    || self.ref_in::<R>(session, index, pick).is_ok()
+            })
     }
 
     /// Takes a click on `pick` while references of type `R` are picked:
@@ -508,12 +566,9 @@ impl Doc {
         if !self.refs_model_current() {
             return Err(OUT_OF_DATE.into());
         }
-        let index = self.feed.pick_index();
-        let unit = match (&self.motion, R::target(pick.target)) {
-            (Some(session), Some(target)) if pick.model == index.model() => {
-                R::unit(session, index, target)
-            }
-            _ => Vec::new(),
+        let unit = match &self.motion {
+            Some(session) => refs_unit_in::<R>(session, self.feed.pick_index(), pick),
+            None => Vec::new(),
         };
         if unit.len() > 1 {
             return self.refs_click_unit::<R>(pick, &unit, false);
@@ -521,17 +576,32 @@ impl Doc {
         self.refs_click_one::<R>(pick)
     }
 
-    /// Takes a click on `pick` picking `unit` (`pick`'s target among
-    /// them) together: taken out if all of them are picked (unless
-    /// `only_add`), else those
-    /// that aren't picked, each refused alone but the one clicked.
+    /// Takes a click on `pick` picking `unit` together, as
+    /// [`Doc::refs_click_unit_in`] does in the session being set up.
     fn refs_click_unit<R: Ref>(
         &mut self,
         pick: Pick,
         unit: &[u32],
         only_add: bool,
     ) -> Result<(), Cow<'static, str>> {
-        let index = self.feed.pick_index();
+        (self.on_session(|doc, session| {
+            doc.refs_click_unit_in::<R>(session, doc.feed.pick_index(), pick, unit, only_add)
+        }))
+        .unwrap_or(Ok(()))
+    }
+
+    /// Takes a click on `pick` of `index`'s model picking `unit`
+    /// (`pick`'s target among them) together in `session`: taken out if
+    /// all of them are picked (unless `only_add`), else those that
+    /// aren't picked, each refused alone but the one clicked.
+    fn refs_click_unit_in<R: Ref>(
+        &self,
+        session: &mut MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+        unit: &[u32],
+        only_add: bool,
+    ) -> Result<(), Cow<'static, str>> {
         let picks: Vec<Pick> = (unit.iter())
             .filter_map(|&other| {
                 let target = R::picked(other);
@@ -549,26 +619,53 @@ impl Doc {
             })
             .collect();
         let picked: Vec<bool> = (picks.iter())
-            .map(|&one| self.ref_picked::<R>(one).is_some())
+            .map(|&one| self.ref_picked_in::<R>(session, index, one).is_some())
             .collect();
         if picked.iter().all(|&picked| picked) && !only_add {
             let targets: Vec<u32> = picks.iter().filter_map(|p| R::target(p.target)).collect();
-            if let Some(session) = &mut self.motion {
-                R::refs_mut(session).remove_all(pick.model, &targets);
-                session.refs_body();
-            }
+            R::refs_mut(session).remove_all(pick.model, &targets);
+            session.refs_body();
             return Ok(());
         }
         for (one, picked) in picks.into_iter().zip(picked) {
             if picked {
                 continue;
             }
-            let added = self.refs_click_one::<R>(one);
+            let added = self.take_ref_in::<R>(session, index, one);
             if one.target == pick.target {
                 added?;
             }
         }
         Ok(())
+    }
+
+    /// Takes `pick` of `index`'s model as an edge of `session` (a
+    /// blend's, a sweep's path's) as a click on one not picked takes it:
+    /// a blend's with its tangent chain, each edge of its own, while the
+    /// Tangent chain tick is on ([`Ref::unit`]). False, nothing taken,
+    /// for one a click would take out (picked, or a sweep's in the
+    /// tangent chain of one picked); refused, why, as a click is. The
+    /// MCP client's edge keys are taken on the committed model so.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn pick_edge(
+        &self,
+        session: &mut MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Result<bool, Cow<'static, str>> {
+        if self
+            .ref_picked_in::<EdgeRef>(session, index, pick)
+            .is_some()
+        {
+            return Ok(false);
+        }
+        let unit = refs_unit_in::<EdgeRef>(session, index, pick);
+        if unit.len() > 1 {
+            self.refs_click_unit_in::<EdgeRef>(session, index, pick, &unit, true)?;
+        } else {
+            self.take_ref_in::<EdgeRef>(session, index, pick)?;
+        }
+        Ok(true)
     }
 
     /// Takes a click on `pick` alone, as [`Doc::refs_click`] does.
@@ -586,26 +683,8 @@ impl Doc {
             }
             return Ok(());
         }
-        let found = self.ref_of::<R>(pick)?;
-        let Some(target) = R::target(pick.target) else {
-            return Ok(());
-        };
-        let Some(session) = &mut self.motion else {
-            return Ok(());
-        };
-        let kind = session.kind;
-        // A sweep's edges are one part of its path, which has its limits.
-        let refs = &R::refs(session).refs;
-        if kind == MotionKind::Sweep
-            && refs
-                .binary_search_by(|picked| picked.order(&found))
-                .is_err()
-        {
-            session.sweep_room(usize::from(refs.is_empty()), 1)?;
-        }
-        R::refs_mut(session).add(kind, found, pick.model, target)?;
-        session.refs_body();
-        Ok(())
+        (self.on_session(|doc, session| doc.take_ref_in::<R>(session, doc.feed.pick_index(), pick)))
+            .unwrap_or(Ok(()))
     }
 
     /// Picks those of type `R` selected in the model shown, those a click
@@ -641,10 +720,9 @@ impl Doc {
             // its tangent chain while the tick is on), but never takes out
             // what's picked: one refused (on another body, made later) is
             // left out.
-            let index = self.feed.pick_index();
-            let unit = match (&self.motion, R::target(pick.target)) {
-                (Some(session), Some(target)) => R::unit(session, index, target),
-                _ => Vec::new(),
+            let unit = match &self.motion {
+                Some(session) => refs_unit_in::<R>(session, self.feed.pick_index(), pick),
+                None => Vec::new(),
             };
             if unit.len() > 1 {
                 let _ = self.refs_click_unit::<R>(pick, &unit, true);

@@ -31,6 +31,7 @@ fn status(info: &str, mouse_hints: bool) -> Status<'_> {
             mouse_hint(MouseButton::Right, "Pan"),
         ],
         mouse_hints,
+        chip: None,
         view_menu: Some(false),
     }
 }

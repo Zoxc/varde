@@ -571,6 +571,20 @@ impl Camera {
         }
     }
 
+    /// Narrows the field of view by `factor`, the eye staying put: the
+    /// view at the target is `factor` times smaller in either projection,
+    /// see [`Self::view_height`], so what it shows is that much larger.
+    /// Below 1 it widens, to less than a half turn. A factor that isn't
+    /// positive and finite is ignored.
+    pub fn narrow(&mut self, factor: f32) {
+        if factor > 0.0 && factor.is_finite() {
+            let half = ((self.fov_y * 0.5).tan() / factor).atan();
+            if half > 0.0 {
+                self.fov_y = 2.0 * half;
+            }
+        }
+    }
+
     /// Zooms by `factor`, as [`Self::zoom`] does, towards the point at
     /// the target's depth that shows `x` right and `y` down of the view's
     /// middle, in fractions of the viewport height like [`Self::pan`]'s:

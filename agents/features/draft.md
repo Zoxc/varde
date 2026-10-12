@@ -179,7 +179,7 @@ Shell), so the panel is built in the style of the mock's shell panel.
   hint "Pick the neutral plane"), and again hands them back to the
   faces; while it picks, the toolbar offers the origin planes
   (`MotionLook::OriginPlane`, taken only then) and a flat face clicked
-  is taken (`Doc::reference_of`, named as of the feature; anything else
+  is taken (`Doc::reference_in`, named as of the feature; anything else
   "Only a flat face can be the neutral plane"), the clicks going back to
   the faces either way. One of the faces drafted is refused, "That face
   is one the draft tilts: pick a face it doesn't, or an origin plane":

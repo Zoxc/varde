@@ -48,17 +48,17 @@ use std::time::Duration;
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::{
-    auto_save_ticks, copy, drops, guard, leaving, show_title, toast_ticks, window_icon,
+    copy, drops, guard, leaving, second_ticks, show_title, toast_ticks, window_icon,
 };
 
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web::{
-    auto_save_ticks, copy, drops, guard, leaving, show_title, toast_ticks, window_icon,
+    copy, drops, guard, leaving, second_ticks, show_title, toast_ticks, window_icon,
 };
 
-/// How often [`auto_save_ticks`] ticks.
+/// How often [`second_ticks`] ticks.
 const TICK: Duration = Duration::from_secs(1);
 
 /// How often [`toast_ticks`] ticks while a toast shows: how late it may

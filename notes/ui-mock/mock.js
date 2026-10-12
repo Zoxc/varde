@@ -16,6 +16,10 @@
 //     pickObject(id) for clicks in the view and the objects list;
 //   failure(bodies, active): over the model, where the selected feature
 //     that failed went wrong.
+// mcp.js, loaded after this on every page, sets `window.mcp`: the settings
+// page's MCP tab, the status bar's chip, the toolbar's toggle and the
+// panel of the client's requests on the right, called here where they go
+// (notes/AgentSupport.md).
 // Pages link to each other with `go`, which keeps the theme.
 
 // ---------------------------------------------------------------- icons
@@ -767,6 +771,7 @@ function toolbar() {
     <button class="op icon" data-act="toast:Undo" title="Undo (Ctrl Z)">${icon('undo')}</button>
     <button class="op icon" data-act="toast:Redo" title="Redo (Ctrl Shift Z)">${icon('redo')}</button>
     <span class="sep"></span>
+    ${window.mcp?.button() || ''}
     <button class="op icon${st.settings ? ' on' : ''}" data-act="settings" data-tip="Settings" data-key="Ctrl ," data-tip-at="below">${icon('gear')}</button>
   </div>`;
 }
@@ -795,12 +800,13 @@ function docName() {
 // ---------------------------------------------------------------- status bar
 // Floating at the view's bottom right: the selection in a box of its own,
 // with the key clearing it, then the status bar: what's going on, the mouse
-// and key hints, and with a design open a menu of view options (the
-// projection, whether to show the mouse hints).
+// and key hints, the MCP client's chip while one is connected, and with a
+// design open a menu of view options (the projection, whether to show the
+// mouse hints).
 const SELECTION = new Set(['face', 'hole', 'plane', 'body', 'feature']);
 const statusbar = () => {
   const i = info(), h = hints(), sel = st.doc && SELECTION.has(context());
-  const parts = [!sel && i && `<div class="info">${i}</div>`, h && `<div class="hints">${h}</div>`, st.doc && projDropdown()];
+  const parts = [!sel && i && `<div class="info">${i}</div>`, h && `<div class="hints">${h}</div>`, window.mcp?.chip(), st.doc && projDropdown()];
   const box = sel ? `<div class="selbox"><div class="info">${i}</div><span class="sep"></span><span class="h"><kbd>Space</kbd><span>Clear</span></span></div>` : '';
   return `<div class="sbar">${box}<div class="statusbar">${parts.filter(Boolean).join('<span class="sep"></span>')}</div></div>`;
 };
@@ -1497,6 +1503,9 @@ function renderApp() {
   const app = $('#app');
   $('#win').classList.toggle('web', st.web);
   const help = st.help ? helpModal() : '';
+  // The MCP panel on the right, the viewport between it and the side panel.
+  const mcpPanel = st.doc && window.mcp?.panel() || '';
+  $('#win').classList.toggle('agent', !!mcpPanel);
   if (!st.doc) {
     app.innerHTML = titlebar() + page.welcome() + statusbar() + help;
     return;
@@ -1505,7 +1514,7 @@ function renderApp() {
   // and so does whatever is open (a sketch, an operation) for when it closes.
   if (st.settings) {
     app.innerHTML = titlebar() + toolbar() + `<div class="side">${side()}</div>
-      <div class="vp setp">${settingsPage()}</div>` + help;
+      <div class="vp setp">${settingsPage()}</div>${mcpPanel}` + help;
     return;
   }
   const hint = st.doc.kind === 'empty' && !st.doc.timeline.length && st.mode === 'model' && !st.pick && !st.sel
@@ -1523,7 +1532,7 @@ function renderApp() {
       ${st.op ? page.op.panel() : ''}
       ${paramCard()}
       ${hint}
-    </div>` + (st.alt || st.gbarPinned ? gbar() : '') + statusbar() + help;
+    </div>${mcpPanel}` + (st.alt || st.gbarPinned ? gbar() : '') + statusbar() + help;
   placeRail();
 }
 
@@ -1645,6 +1654,8 @@ function settingsPage() {
       row('Auto-save', 'How often changes not saved go to the recovery file', seg('autosave', [['0', 'Off'], ['1', '1 min'], ['5', '5 min'], ['10', '10 min']]), 'autosave'),
       row('Recent designs', 'How many the welcome screen keeps', seg('recentN', [['10', '10'], ['25', '25'], ['50', '50'], ['100', '100']]), 'recentN'),
     ]]]),
+    // The MCP tab, desktop only.
+    ...(window.mcp?.settingsTab({ row, sw }) || []),
   ];
   const open = sections.find(([id]) => id === st.setTab) || sections[0];
   return `<div class="settings">
@@ -1652,7 +1663,7 @@ function settingsPage() {
       <button class="op" data-act="set-reset"${settingsChanged().length ? '' : ' disabled title="All settings are the defaults"'}>Reset to defaults</button>
       <button class="op icon" data-act="settings" data-tip="Close" data-key="Esc" data-tip-at="below">${icon('close')}</button></div>
     <div class="stabs">${sections.map(([id, t]) => `<button class="${id === open[0] ? 'on' : ''}" data-act="stab:${id}">${t}</button>`).join('')}</div>
-    <div class="sbody"><div class="scol">${sec(...open)}
+    <div class="sbody"><div class="scol">${sec(...open)}${open[4] || ''}
       <p class="sfoot">Kept in ${st.web ? '<code>settings.toml</code>, in browser storage' : '<code>~/.config/varde-cad/settings.toml</code>'}.</p></div></div>
     ${st.resetAsk ? resetPopup() : ''}
   </div>`;
@@ -1674,7 +1685,9 @@ const SET_SAID = {
   autosave: ['Auto-save', { 0: 'Off', 1: 'Every minute', 5: 'Every 5 min', 10: 'Every 10 min' }], recentN: ['Recent designs', v => v],
 };
 const saidOf = (k, v) => { const f = SET_SAID[k][1]; return !f ? (v ? 'On' : 'Off') : typeof f === 'function' ? f(v) : f[v]; };
-const settingsChanged = () => Object.keys(SET_DEFAULTS).filter(k => st[k] !== SET_DEFAULTS[k] && !(st.web && ['autosave', 'recentN'].includes(k)));
+// Settings the web doesn't have, left out of Reset there.
+const DESKTOP_ONLY = ['autosave', 'recentN'];
+const settingsChanged = () => Object.keys(SET_DEFAULTS).filter(k => st[k] !== SET_DEFAULTS[k] && !(st.web && DESKTOP_ONLY.includes(k)));
 function resetPopup() {
   const changed = settingsChanged();
   return `<div class="modal-bg" data-act="set-reset"><div class="modal sreset" data-act="noop">
@@ -1690,7 +1703,7 @@ function setSetting(key, v) {
   const was = st[key];
   st[key] = typeof was === 'boolean' ? v === 'true' : typeof was === 'number' || (key === 'places' && v !== 'auto') ? +v : v;
   if (key === 'theme') applyTheme();
-  if (!['theme', 'persp', 'mouseHints', 'places', 'lenUnit', 'angUnit'].includes(key)) toast('Stored — not drawn in mock');
+  if (!['theme', 'persp', 'mouseHints', 'places', 'lenUnit', 'angUnit'].includes(key) && !key.startsWith('mcp')) toast('Stored — not drawn in mock');
 }
 
 function act(a) {
@@ -1753,7 +1766,7 @@ function act(a) {
       else if (st.doc.timeline.some(t => t.id === v)) st.sel = { kind: 'feature', id: v };
       else return;
       break;
-    default: if (!page.act?.(k, v)) return;
+    default: if (!window.mcp?.act(k, v) && !page.act?.(k, v)) return;
   }
   render();
 }
@@ -1829,7 +1842,7 @@ document.addEventListener('keydown', e => {
   }
   // In a text field keys are text, but Enter and Esc go to the toolbar's
   // operations with those keys: an operation panel's OK and Cancel.
-  if (e.target.matches?.('input')) {
+  if (e.target.matches?.('input, textarea')) {
     const o = (e.key === 'Enter' || e.key === 'Escape') && ops().find(o => o.key === (e.key === 'Escape' ? 'Esc' : 'Enter'));
     if (o) { e.preventDefault(); page.doOp(o.id); render(); }
     return;
@@ -1963,6 +1976,7 @@ function start(current) {
   if (flag('tools')) st.gbarPinned = true;
   if (flag('params')) st.paramsOpen = true;
   st.web = flag('web');
+  window.mcp?.start();
   st.where = flag('local') ? 'local' : flag('stored') ? 'stored' : flag('unsaved') || st.doc?.kind === 'empty' ? 'unsaved' : 'stored';
   if (st.doc && flag('edited')) st.doc.dirty = true;
   if (st.doc && flag('clean')) st.doc.dirty = false;

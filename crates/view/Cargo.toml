@@ -29,3 +29,5 @@ varde-io.workspace = true
 pollster.workspace = true
 # An independent reference for the bits of saved angles.
 libm.workspace = true
+# Reading back the MCP tab's Codex line.
+toml.workspace = true

@@ -39,7 +39,7 @@ use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
 use crate::projection::Projector;
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
-use crate::thumbnail::{THUMBNAIL_SCALE, ThumbnailRequest};
+use crate::thumbnail::PreviewRequest;
 use crate::{
     Edges, Edit, Look, Message, MotionLook, PlanePick, SketchItem, SketchLines, ViewOptions,
     controls,
@@ -197,7 +197,8 @@ pub(crate) fn viewport<'a>(
     params: Option<Element<'a, Message>>,
     rail: Element<'a, Message>,
     overlaps: Option<Element<'a, Message>>,
-    thumbnail: Option<&Arc<ThumbnailRequest>>,
+    thumbnail: Option<&Arc<PreviewRequest>>,
+    renders: &[Arc<PreviewRequest>],
     aspect: Option<f32>,
 ) -> Element<'a, Message> {
     // Constraint glyphs, nudged apart; dimensions' labels, where they're
@@ -249,7 +250,7 @@ pub(crate) fn viewport<'a>(
     program.scene.shading = options.shading;
     program.scene.opacity = opacity;
     program.scene.tints = tints;
-    program.scene.thumbnail = thumbnail.cloned();
+    program.scene.previews = thumbnail.into_iter().chain(renders).cloned().collect();
     program.scene.errors = errors.clone();
     program.scene.hover_through = hover_through;
     program.scene.origin = origin;
@@ -309,7 +310,7 @@ fn program<'a>(
             wireframe: false,
             tessellation: false,
             shading: Shading::Regular,
-            thumbnail: None,
+            previews: Arc::new([]),
             errors: NO_ERRORS.clone(),
             hover_through: false,
             origin: OriginShown::DEFAULT,
@@ -398,9 +399,10 @@ struct Scene {
     tessellation: bool,
     /// How the faces are lit.
     shading: Shading,
-    /// A thumbnail to render offscreen beside the frame, if one is asked
-    /// for: once, by the first frame prepared with it.
-    thumbnail: Option<Arc<ThumbnailRequest>>,
+    /// The pictures to render offscreen beside the frame, the thumbnail
+    /// asked for and the MCP server's renders: each once, by the first
+    /// frame prepared with it.
+    previews: Arc<[Arc<PreviewRequest>]>,
     /// The failures' geometry drawn over the model.
     errors: Arc<ShownErrors>,
     /// Whether the hover is drawn over what hides it too: see
@@ -662,12 +664,19 @@ impl shader::Program<Message> for Program<'_> {
                     failing: None,
                 }
             });
-        Primitive(Some(Drawn {
-            scene: self.scene.clone(),
-            sketch: sketch.or(operation).or(marks),
-            highlight: self.highlight.clone(),
-            slot: state.slot.clone(),
-        }))
+        let previews = Previews {
+            requests: self.scene.previews.clone(),
+            colors: self.scene.colors,
+        };
+        Primitive(
+            Some(Drawn {
+                scene: self.scene.clone(),
+                sketch: sketch.or(operation).or(marks),
+                highlight: self.highlight.clone(),
+                slot: state.slot.clone(),
+            }),
+            previews,
+        )
     }
 
     fn mouse_interaction(
@@ -1377,13 +1386,65 @@ impl<Message> shader::Program<Message> for WarmUp {
     type Primitive = Primitive;
 
     fn draw(&self, _state: &(), _cursor: mouse::Cursor, _bounds: Rectangle) -> Primitive {
-        Primitive(None)
+        Primitive(None, Previews::none())
     }
 }
 
-/// What a viewport widget draws, or nothing for [`warm_up`]'s.
+/// A widget a pixel square that draws nothing on screen, but draws the
+/// pictures asked for offscreen as the viewport would (see
+/// [`PreviewRequest`]): in the viewport's place while it doesn't show,
+/// beside the settings page, so a thumbnail or an MCP render asked for
+/// meanwhile isn't left waiting for a viewport frame that doesn't come.
+/// An MCP render is drawn in `palette`'s colours.
+pub(crate) fn offscreen<'a, Message: 'a>(
+    thumbnail: Option<&Arc<PreviewRequest>>,
+    renders: &[Arc<PreviewRequest>],
+    palette: &Palette,
+) -> Element<'a, Message> {
+    let previews = Previews {
+        requests: thumbnail.into_iter().chain(renders).cloned().collect(),
+        colors: palette.scene,
+    };
+    shader::Shader::new(Offscreen(previews))
+        .width(Length::Fixed(1.0))
+        .height(Length::Fixed(1.0))
+        .into()
+}
+
+/// [`offscreen`]'s program.
+struct Offscreen(Previews);
+
+impl<Message> shader::Program<Message> for Offscreen {
+    type State = ();
+    type Primitive = Primitive;
+
+    fn draw(&self, _state: &(), _cursor: mouse::Cursor, _bounds: Rectangle) -> Primitive {
+        Primitive(None, self.0.clone())
+    }
+}
+
+/// What a viewport widget draws, or nothing for [`warm_up`]'s and
+/// [`offscreen`]'s; and the pictures to draw offscreen beside it.
 #[derive(Debug, Clone)]
-struct Primitive(Option<Drawn>);
+struct Primitive(Option<Drawn>, Previews);
+
+/// The pictures to render offscreen, each once, by the first frame
+/// prepared with it, an MCP render in `colors`.
+#[derive(Debug, Clone)]
+struct Previews {
+    requests: Arc<[Arc<PreviewRequest>]>,
+    colors: Colors,
+}
+
+impl Previews {
+    /// No pictures.
+    fn none() -> Previews {
+        Previews {
+            requests: Arc::new([]),
+            colors: crate::theme::Mode::Light.palette().scene,
+        }
+    }
+}
 
 /// Tests read what a viewport widget draws, which is always something.
 #[cfg(test)]
@@ -1438,6 +1499,7 @@ impl shader::Primitive for Primitive {
         bounds: &Rectangle,
         viewport: &shader::Viewport,
     ) {
+        draw_previews(&pipeline.renderer, device, queue, &self.1);
         let Some(drawn) = &self.0 else {
             return;
         };
@@ -1516,26 +1578,6 @@ impl shader::Primitive for Primitive {
         if let Err(error) = prepared {
             log::error!("Couldn't draw the design: {error}");
         }
-        // Its own slots and targets, in each theme's colours; on failure,
-        // what waits for it is dropped, so it saves without.
-        if let Some(thumbnail) = &scene.thumbnail
-            && let Some(done) = thumbnail.take()
-            && let Err(error) = varde_render::render_preview(
-                &pipeline.renderer,
-                device,
-                queue,
-                &thumbnail.mesh,
-                &thumbnail.sketches,
-                &thumbnail.opacity,
-                &thumbnail.tints,
-                &thumbnail.shot,
-                &ThumbnailRequest::COLORS,
-                THUMBNAIL_SCALE as f32,
-                done,
-            )
-        {
-            log::error!("Couldn't draw the thumbnail: {error}");
-        }
     }
 
     fn render(
@@ -1559,6 +1601,48 @@ impl shader::Primitive for Primitive {
                 height: clip_bounds.height,
             },
         );
+    }
+}
+
+/// Draws `previews`' pictures not drawn yet offscreen, with their own
+/// slots and targets: a thumbnail in each theme's colours, an MCP render
+/// in `previews.colors`. On failure, what waits for one is dropped: the
+/// design saves without its thumbnail, the MCP call fails saying so.
+fn draw_previews(
+    renderer: &Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    previews: &Previews,
+) {
+    for preview in previews.requests.iter() {
+        let Some(done) = preview.take() else {
+            continue;
+        };
+        let current = [previews.colors];
+        let colors: &[Colors] = match preview.themed {
+            true => &PreviewRequest::THEMES,
+            false => &current,
+        };
+        let selection = varde_render::PreviewSelection {
+            faces: &preview.selected_faces,
+            highlights: &preview.highlights,
+        };
+        if let Err(error) = varde_render::render_preview(
+            renderer,
+            device,
+            queue,
+            &preview.mesh,
+            &preview.sketches,
+            &preview.opacity,
+            &preview.tints,
+            &preview.shot,
+            Some(selection),
+            colors,
+            preview.scale,
+            done,
+        ) {
+            log::error!("Couldn't draw a picture offscreen: {error}");
+        }
     }
 }
 

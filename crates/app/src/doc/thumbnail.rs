@@ -4,7 +4,7 @@
 //! which that model leaves out, from where Home looks,
 //! framed to fit and cropped, on nothing, in each theme's colours. Only the viewport has the GPU,
 //! so it's rendered there on the next frame (see
-//! [`varde_view::ThumbnailRequest`]) and comes back as a message, and a
+//! [`varde_view::PreviewRequest`]) and comes back as a message, and a
 //! save waits for it as it waits for the edits waiting on the solver (see
 //! [`Saves::waiting`]). One that fails, or takes longer than
 //! [`PATIENCE`], as when the window isn't drawn, is saved without: it
@@ -22,7 +22,7 @@ use varde_document::{FeatureId, FeatureKind, Generation};
 use varde_io::thumbnail::Thumbnail;
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::Camera;
-use varde_view::{ThumbnailImages, ThumbnailRequest};
+use varde_view::{PreviewRequest, ThumbnailImages};
 
 use super::Doc;
 use crate::{Files, Next};
@@ -48,7 +48,7 @@ pub(crate) struct Thumbnails {
 struct Rendering {
     tag: u64,
     of: Of,
-    request: Arc<ThumbnailRequest>,
+    request: Arc<PreviewRequest>,
     since: Instant,
 }
 
@@ -97,6 +97,7 @@ impl Doc {
             mesh,
             sketches,
             parts,
+            ..
         } = self.feed.committed()?;
         let document = self.editor.document();
         let opacity = parts
@@ -148,7 +149,7 @@ impl Doc {
         let tag = self.thumbnails.next;
         self.thumbnails.next += 1;
         let (send, answer) = oneshot::channel();
-        let request = ThumbnailRequest::new(
+        let request = PreviewRequest::thumbnail(
             of.mesh.clone(),
             of.sketches.clone(),
             of.opacity.clone(),
@@ -181,7 +182,7 @@ impl Doc {
     }
 
     /// The thumbnail for the viewport to render, while one is waited for.
-    pub(crate) fn thumbnail_request(&self) -> Option<&Arc<ThumbnailRequest>> {
+    pub(crate) fn thumbnail_request(&self) -> Option<&Arc<PreviewRequest>> {
         self.thumbnails
             .rendering
             .as_ref()

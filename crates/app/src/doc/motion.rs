@@ -51,9 +51,8 @@ use varde_regen::Summary;
 use varde_render::Camera;
 use varde_view::{
     AlignRole, AlignSide, AlignSlot, ChamferType, CombineBody, ModelHighlight, MotionField,
-    MotionKind, MotionLook, MotionPick, MotionState, Naming, OperationKind, PanelHover,
-    PatternMode, Pick, Picked, ShellDirection, SplitMode, SweepPath, Unnamed, axis_name,
-    pattern_copies, plane_name,
+    MotionKind, MotionLook, MotionPick, MotionState, OperationKind, PanelHover, PatternMode, Pick,
+    Picked, ShellDirection, SplitMode, SweepPath, Unnamed, axis_name, pattern_copies, plane_name,
 };
 
 use self::align::AlignSetup;
@@ -66,7 +65,7 @@ use self::split::SplitSetup;
 use self::sweep::SweepSetup;
 use super::camera::fitting_length;
 use super::combine::pickable;
-use super::feed::Merges;
+use super::feed::{Marks, Merges, merged_in};
 use super::regions::{ReadIn, TypedText};
 use super::{Doc, Focus, OUT_OF_DATE};
 
@@ -318,6 +317,38 @@ const BLEND_SHARE: f64 = 0.02;
 /// at, at most: its 3 copies then span half of it.
 const SPACING_SHARE: f64 = 0.25;
 
+/// The spacing a new linear pattern the MCP client adds starts with, in
+/// millimetres: the panel's follows the view, which the client doesn't
+/// see.
+#[cfg(not(target_arch = "wasm32"))]
+const CLIENT_SPACING: f64 = 10.0;
+
+/// The thickness a new shell the MCP client adds starts with, in
+/// millimetres: the panel's follows the view.
+#[cfg(not(target_arch = "wasm32"))]
+const CLIENT_THICKNESS: f64 = 2.0;
+
+/// The distance a new offset face the MCP client adds starts with, in
+/// millimetres: the panel's follows the view.
+#[cfg(not(target_arch = "wasm32"))]
+const CLIENT_OFFSET: f64 = 1.0;
+
+/// The distances a new chamfer the MCP client adds starts with, in
+/// millimetres, the first and the second (the mock's): the panel's
+/// follow the view.
+#[cfg(not(target_arch = "wasm32"))]
+const CLIENT_CHAMFER: [f64; 2] = [1.0, 2.0];
+
+/// The radius a new fillet the MCP client adds starts with, in
+/// millimetres (the mock's): the panel's follows the view.
+#[cfg(not(target_arch = "wasm32"))]
+const CLIENT_RADIUS: f64 = 2.0;
+
+/// The pitch a new sweep's helix the MCP client adds starts with, in
+/// millimetres: the panel's follows the view.
+#[cfg(not(target_arch = "wasm32"))]
+const CLIENT_PITCH: f64 = 10.0;
+
 /// A field for `ask` reading `length`, in millimetres, written in
 /// `design`'s units with their symbol.
 fn length_field(length: f64, ask: &Ask, design: &Design) -> TypedText {
@@ -472,23 +503,141 @@ impl MotionSession {
         }
     }
 
+    /// A session setting up a new `kind` of `document` for the MCP
+    /// client, of `bodies`, as the panel's ([`MotionSession::new`]) but
+    /// for lengths that would follow the view, which the client doesn't
+    /// see: a linear pattern's spacing is [`CLIENT_SPACING`], a shell's
+    /// thickness [`CLIENT_THICKNESS`], an offset face's distance
+    /// [`CLIENT_OFFSET`], a chamfer's distances [`CLIENT_CHAMFER`], a
+    /// fillet's radius [`CLIENT_RADIUS`], a sweep's helix's pitch
+    /// [`CLIENT_PITCH`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn for_client(kind: MotionKind, document: &Document, bodies: Vec<BodyId>) -> Self {
+        let mut session = Self::new(kind, document, &Camera::default(), bodies);
+        let design = document.design();
+        let lengths: &[(MotionField, f64)] = match kind {
+            MotionKind::LinearPattern => &[(MotionField::Spread, CLIENT_SPACING)],
+            MotionKind::Shell => &[(MotionField::Thickness, CLIENT_THICKNESS)],
+            MotionKind::OffsetFace => &[(MotionField::Distance, CLIENT_OFFSET)],
+            MotionKind::Chamfer => &[
+                (MotionField::ChamferDistance, CLIENT_CHAMFER[0]),
+                (MotionField::ChamferSecond, CLIENT_CHAMFER[1]),
+            ],
+            MotionKind::Fillet => &[(MotionField::Radius, CLIENT_RADIUS)],
+            MotionKind::Sweep => &[(MotionField::Pitch, CLIENT_PITCH)],
+            _ => &[],
+        };
+        for &(field, length) in lengths {
+            let ask = field_ask(kind, field, &design);
+            session.fields[field.index()] = length_field(length, &ask, &design);
+        }
+        session
+    }
+
+    /// Reads `text` into `field`, as typed into it in `document`.
+    pub(crate) fn input(&mut self, field: MotionField, text: String, document: &Document) {
+        let ask = field_ask(self.kind, field, &document.design());
+        self.fields[field.index()].input(text, &ask);
+    }
+
+    /// What `field` read last: its error, if it refused it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn field_error(&self, field: MotionField) -> Option<&varde_expr::Error> {
+        self.field(field).error.as_ref()
+    }
+
+    /// Takes the world axis `axis` as a move's or pattern's axis, the
+    /// clicks handed back to the bodies, or a sweep's helix's, the
+    /// clicks going to nothing (its helix shows as set up).
+    pub(crate) fn origin_axis(&mut self, axis: Axis3) {
+        self.axis = Some(AxisRef::Origin(axis));
+        self.picking = if self.kind == MotionKind::Sweep {
+            MotionPick::Nothing
+        } else {
+            MotionPick::Bodies
+        };
+    }
+
+    /// Takes the origin plane `plane` as a mirror's plane or a draft's
+    /// neutral plane, the clicks handed back to the bodies or the faces.
+    pub(crate) fn origin_plane(&mut self, plane: varde_document::OriginPlane) {
+        self.plane = Some(PlaneRef::Origin(plane));
+        self.picking = if self.kind.picks_faces() {
+            MotionPick::Faces
+        } else {
+            MotionPick::Bodies
+        };
+    }
+
+    /// Sets a pattern's mode, if its kind offers it: whether it does.
+    pub(crate) fn set_mode(&mut self, mode: PatternMode) -> bool {
+        let offered = PatternMode::of(self.kind).contains(&mode);
+        if offered {
+            self.mode = mode;
+        }
+        offered
+    }
+
+    /// Takes `reference` as the axis or plane, the clicks going on to
+    /// what's picked next: a draft's faces, nothing for a sweep (its
+    /// helix shows as set up), else the bodies.
+    pub(crate) fn take_reference(&mut self, reference: Reference) {
+        match reference {
+            Reference::Axis(axis) => self.axis = Some(axis),
+            Reference::Plane(plane) => self.plane = Some(plane),
+        }
+        self.picking = if self.kind.picks_faces() {
+            MotionPick::Faces
+        } else if self.kind == MotionKind::Sweep {
+            MotionPick::Nothing
+        } else {
+            MotionPick::Bodies
+        };
+    }
+
     /// A session editing the move, mirror or pattern `feature` of
     /// `document`, with its values; `None` if it's none of those. A
     /// pattern takes `shape`, how it was last set up, if that gives the
     /// values it stores; else a linear one's spacing is read as typed
     /// (Flip on for a negative one, its text turned), and a circular one
     /// as Full 360° for a whole turn, else as the Total it stores.
-    fn editing(
+    pub(crate) fn editing(
         document: &Document,
         camera: &Camera,
+        feature: FeatureId,
+        shape: Option<&PatternShape>,
+    ) -> Option<Self> {
+        let fresh = |kind, bodies| Self::new(kind, document, camera, bodies);
+        Self::opened(document, fresh, feature, shape)
+    }
+
+    /// [`MotionSession::editing`] for the MCP client: a value the
+    /// feature has none for (a helix's pitch on a path sweep, an equal
+    /// chamfer's second distance) is the client's default, as a new
+    /// one's ([`MotionSession::for_client`]), not one following the
+    /// user's view.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn editing_for_client(
+        document: &Document,
+        feature: FeatureId,
+        shape: Option<&PatternShape>,
+    ) -> Option<Self> {
+        let fresh = |kind, bodies| Self::for_client(kind, document, bodies);
+        Self::opened(document, fresh, feature, shape)
+    }
+
+    /// A session of `fresh` (a new one of a kind and bodies) opened on
+    /// the `feature` of `document`: see [`MotionSession::editing`].
+    fn opened(
+        document: &Document,
+        fresh: impl Fn(MotionKind, Vec<BodyId>) -> Self,
         feature: FeatureId,
         shape: Option<&PatternShape>,
     ) -> Option<Self> {
         let design = document.design();
         let mut session = match &document.feature(feature)?.kind {
             FeatureKind::Move(moved) => {
-                let mut session =
-                    Self::new(MotionKind::Move, document, camera, moved.bodies.clone());
+                let mut session = fresh(MotionKind::Move, moved.bodies.clone());
                 let offset = Move::offset_ask(&design);
                 for (field, value) in session.fields.iter_mut().zip(&moved.offset) {
                     *field = TypedText::of(value, &offset);
@@ -501,8 +650,7 @@ impl MotionSession {
                 session
             }
             FeatureKind::Mirror(mirror) => {
-                let mut session =
-                    Self::new(MotionKind::Mirror, document, camera, mirror.bodies.clone());
+                let mut session = fresh(MotionKind::Mirror, mirror.bodies.clone());
                 session.plane = Some(mirror.plane);
                 session.keep_original = mirror.keep_original;
                 session.picking = MotionPick::Bodies;
@@ -510,7 +658,7 @@ impl MotionSession {
             }
             kind @ FeatureKind::Pattern(pattern) => {
                 let kind = MotionKind::of(kind)?;
-                let mut session = Self::new(kind, document, camera, pattern.bodies.clone());
+                let mut session = fresh(kind, pattern.bodies.clone());
                 session.axis = Some(*pattern.kind.axis());
                 session.join = pattern.joins();
                 session.fields[MotionField::Count.index()] =
@@ -525,7 +673,7 @@ impl MotionSession {
                 session
             }
             FeatureKind::Align(align) => {
-                let mut session = Self::new(MotionKind::Align, document, camera, vec![align.body]);
+                let mut session = fresh(MotionKind::Align, vec![align.body]);
                 session.align = AlignSetup::of(align);
                 session.flip = align.flip;
                 let ask = Move::offset_ask(&design);
@@ -540,8 +688,7 @@ impl MotionSession {
                 session
             }
             FeatureKind::Scale(scale) => {
-                let mut session =
-                    Self::new(MotionKind::Scale, document, camera, scale.bodies.clone());
+                let mut session = fresh(MotionKind::Scale, scale.bodies.clone());
                 session.scale = ScaleSetup::of(scale);
                 let factor = Scale::factor_ask(&design);
                 let mut set = |field: MotionField, value: &Value, ask: &Ask| {
@@ -563,43 +710,43 @@ impl MotionSession {
                 session
             }
             FeatureKind::Split(split) => {
-                let mut session = Self::new(MotionKind::Split, document, camera, vec![split.body]);
+                let mut session = fresh(MotionKind::Split, vec![split.body]);
                 session.split = SplitSetup::of(document, split);
                 session.picking = MotionPick::Nothing;
                 session
             }
             FeatureKind::Chamfer(chamfer) => {
-                let mut session = Self::new(MotionKind::Chamfer, document, camera, Vec::new());
+                let mut session = fresh(MotionKind::Chamfer, Vec::new());
                 session.open_chamfer(chamfer);
                 session
             }
             FeatureKind::Shell(shell) => {
-                let mut session = Self::new(MotionKind::Shell, document, camera, vec![shell.body]);
+                let mut session = fresh(MotionKind::Shell, vec![shell.body]);
                 session.open_shell(shell);
                 session
             }
             FeatureKind::Fillet(fillet) => {
-                let mut session = Self::new(MotionKind::Fillet, document, camera, Vec::new());
+                let mut session = fresh(MotionKind::Fillet, Vec::new());
                 session.open_fillet(fillet);
                 session
             }
             FeatureKind::OffsetFace(offset) => {
-                let mut session = Self::new(MotionKind::OffsetFace, document, camera, Vec::new());
+                let mut session = fresh(MotionKind::OffsetFace, Vec::new());
                 session.open_offset_face(offset);
                 session
             }
             FeatureKind::FaceDraft(draft) => {
-                let mut session = Self::new(MotionKind::Draft, document, camera, Vec::new());
+                let mut session = fresh(MotionKind::Draft, Vec::new());
                 session.open_face_draft(draft);
                 session
             }
             FeatureKind::Sweep(sweep) => {
-                let mut session = Self::new(MotionKind::Sweep, document, camera, Vec::new());
+                let mut session = fresh(MotionKind::Sweep, Vec::new());
                 session.open_sweep(document, sweep);
                 session
             }
             FeatureKind::Loft(loft) => {
-                let mut session = Self::new(MotionKind::Loft, document, camera, Vec::new());
+                let mut session = fresh(MotionKind::Loft, Vec::new());
                 session.open_loft(document, loft);
                 session
             }
@@ -653,7 +800,7 @@ impl MotionSession {
     }
 
     /// The field `field`'s text as last read.
-    fn field(&self, field: MotionField) -> &TypedText {
+    pub(crate) fn field(&self, field: MotionField) -> &TypedText {
         &self.fields[field.index()]
     }
 
@@ -1059,10 +1206,30 @@ impl MotionSession {
         refused.map(|why| said(&why))
     }
 
-    /// Whether it can be committed to a document of `design`: whole,
-    /// with nothing still to do, no field refused, and passing its own
-    /// check. What's left to the document, the bodies and the reference,
-    /// the session keeps valid.
+    /// The feature as set up, if it's whole with nothing still to do,
+    /// nothing it names gone, a pattern's spread taken as a whole, and
+    /// passing its own check; else why not, in the panel's words. Fields
+    /// refused are their own to say ([`MotionSession::ready`]).
+    pub(crate) fn built(&self, design: &Design) -> Result<FeatureKind, String> {
+        if let Some(why) = self.spread_error() {
+            return Err(why);
+        }
+        if let Some(need) = self.need() {
+            return Err(need.to_owned());
+        }
+        if let Some(gone) = self.gone() {
+            return Err(gone.to_owned());
+        }
+        if let Some(why) = self.refused(design) {
+            return Err(why);
+        }
+        self.kind()
+            .ok_or_else(|| "it isn't set up whole".to_owned())
+    }
+
+    /// Whether it can be committed to a document of `design`: no field
+    /// refused, and [`MotionSession::built`]. What's left to the
+    /// document, the bodies and the reference, the session keeps valid.
     fn ready(&self, design: &Design) -> bool {
         let fine = |field: MotionField| self.field(field).error.is_none();
         let typed = match self.kind {
@@ -1080,14 +1247,9 @@ impl MotionSession {
             MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 fine(MotionField::Count)
                     && (self.mode == PatternMode::Full || fine(MotionField::Spread))
-                    && self.spread_error().is_none()
             }
         };
-        typed
-            && self.need().is_none()
-            && self.gone().is_none()
-            && self.kind().is_some()
-            && self.refused(design).is_none()
+        typed && self.built(design).is_ok()
     }
 
     /// Picks `body`, or takes it out if it's picked. None are added past
@@ -1110,7 +1272,7 @@ impl MotionSession {
     /// ([`MotionSession::gone`]), and neither previewed nor committed
     /// while it is, as the UI mock has it. The bodies of the feature
     /// edited, previewed while the axis or plane is picked, are let go of.
-    fn prune(&mut self, document: &Document) {
+    pub(crate) fn prune(&mut self, document: &Document) {
         let edited = self.feature;
         self.gone_bodies = (self.bodies.iter().copied())
             .filter(|&body| !pickable(document, body, edited))
@@ -1479,6 +1641,7 @@ impl Doc {
         if !picks_first(kind) {
             self.focus = Some(Focus::All);
         }
+        self.opened_operation();
     }
 
     /// Takes the curves `curves` of `sketch`, selected, for the session
@@ -1536,11 +1699,18 @@ impl Doc {
         self.pick.selection.picks().collect()
     }
 
-    /// The model's only body, if it has just one: of the bodies a new
-    /// feature can name, those not merged into another.
-    fn only_body(&self) -> Option<BodyId> {
+    /// The model shown's only body, if it has just one: of the bodies a
+    /// new feature can name, those not merged into another.
+    pub(crate) fn only_body(&self) -> Option<BodyId> {
+        self.only_body_in(self.shown())
+    }
+
+    /// The only body, if there's just one, of the model whose `marks`
+    /// these are (the committed one's, for the MCP client): see
+    /// [`Doc::only_body`].
+    pub(crate) fn only_body_in(&self, marks: Marks) -> Option<BodyId> {
         let document = self.editor.document();
-        let merged = self.feed.merged_before(document, None);
+        let merged = merged_in(document, None, marks);
         let mut bodies = (document.bodies().iter())
             .map(|body| body.id)
             .filter(|&body| merged.holder(body).is_none() && pickable(document, body, None));
@@ -1574,6 +1744,7 @@ impl Doc {
             self.focus = Some(Focus::All);
         }
         self.motion = Some(session);
+        self.opened_operation();
     }
 
     /// Takes `message`, changing the move, mirror or pattern being set up.
@@ -1799,10 +1970,7 @@ impl Doc {
             MotionLook::Drop(body) => {
                 session.bodies.retain(|&picked| picked != body);
             }
-            MotionLook::Input { field, text } => {
-                let ask = field_ask(session.kind, field, &document.design());
-                session.fields[field.index()].input(text, &ask);
-            }
+            MotionLook::Input { field, text } => session.input(field, text, document),
             MotionLook::DragKnob { knob, value, step } => self.drag_knob(knob, value, step),
             // Only as the handles offer it: a move's, while its bodies
             // are picked, turning by nothing yet or about that world
@@ -1830,24 +1998,18 @@ impl Doc {
             // A sweep's helix's axis, while it's picked.
             MotionLook::OriginAxis(axis) if session.kind == MotionKind::Sweep => {
                 if session.picking == MotionPick::Reference {
-                    session.axis = Some(AxisRef::Origin(axis));
-                    session.picking = MotionPick::Nothing;
+                    session.origin_axis(axis);
                 }
             }
-            MotionLook::OriginAxis(axis) if session.kind.takes_axis() => {
-                session.axis = Some(AxisRef::Origin(axis));
-                session.picking = MotionPick::Bodies;
-            }
+            MotionLook::OriginAxis(axis) if session.kind.takes_axis() => session.origin_axis(axis),
             MotionLook::OriginPlane(plane) if session.kind == MotionKind::Mirror => {
-                session.plane = Some(PlaneRef::Origin(plane));
-                session.picking = MotionPick::Bodies;
+                session.origin_plane(plane);
             }
             MotionLook::OriginPlane(plane)
                 if session.kind == MotionKind::Draft
                     && session.picking == MotionPick::Reference =>
             {
-                session.plane = Some(PlaneRef::Origin(plane));
-                session.picking = MotionPick::Faces;
+                session.origin_plane(plane);
             }
             MotionLook::OriginAxis(_) | MotionLook::OriginPlane(_) => {}
             MotionLook::Copy => session.keep_original = !session.keep_original,
@@ -1864,11 +2026,11 @@ impl Doc {
             {
                 session.flip = !session.flip;
             }
-            MotionLook::Mode(mode) if PatternMode::of(session.kind).contains(&mode) => {
-                session.mode = mode;
+            MotionLook::Mode(mode) => {
+                session.set_mode(mode);
             }
             MotionLook::Join if session.kind.pattern() => session.join = !session.join,
-            MotionLook::Flip | MotionLook::Mode(_) | MotionLook::Join => {}
+            MotionLook::Flip | MotionLook::Join => {}
         }
     }
 
@@ -1952,34 +2114,34 @@ impl Doc {
     }
 
     /// Takes `pick` as the axis or plane of the move or mirror being set
-    /// up ([`Doc::reference_of`]), handing the clicks back to bodies, or
+    /// up ([`Doc::reference_in`]), handing the clicks back to bodies, or
     /// says why it can't be.
     fn motion_reference(&mut self, pick: Pick) -> Result<(), Cow<'static, str>> {
         if !self.feed.answers_request() || self.feed.predates_replacement() {
             return Err(OUT_OF_DATE.into());
         }
-        let reference = self.reference_of(pick)?;
-        let Some(session) = &mut self.motion else {
-            return Ok(());
-        };
-        match reference {
-            Reference::Axis(axis) => session.axis = Some(axis),
-            Reference::Plane(plane) => session.plane = Some(plane),
-        }
-        // A draft goes back to picking its faces; a sweep has no bodies
-        // to pick: its helix shows as set up.
-        session.picking = if session.kind.picks_faces() {
-            MotionPick::Faces
-        } else if session.kind == MotionKind::Sweep {
-            MotionPick::Nothing
-        } else {
-            MotionPick::Bodies
-        };
-        Ok(())
+        let taken = self.on_session(|doc, session| {
+            let reference = doc.reference_in(session, doc.feed.pick_index(), pick)?;
+            session.take_reference(reference);
+            Ok(())
+        });
+        taken.unwrap_or(Err("Nothing is set up".into()))
     }
 
-    /// `pick` of the model shown as the axis or plane of the move or
-    /// mirror being set up, named as the feature stores it ([`Naming`],
+    /// Runs `f` on the session being set up, taken out of the document
+    /// meanwhile, so what's shared with the MCP client's sessions (which
+    /// no document holds) takes it apart from the document: none if
+    /// nothing is set up.
+    fn on_session<T>(&mut self, f: impl FnOnce(&Doc, &mut MotionSession) -> T) -> Option<T> {
+        let mut session = self.motion.take()?;
+        let done = f(self, &mut session);
+        self.motion = Some(session);
+        Some(done)
+    }
+
+    /// `pick` of `index`'s model as the axis or plane of `session` (the
+    /// model shown for a click; the committed one for the MCP client's
+    /// keys), named as the feature stores it ([`Naming`](varde_view::Naming),
     /// the history stopped at the feature): for a move a straight or
     /// round edge, or a round face (a cylinder's, cone's, torus's or
     /// other surface of revolution's); for a mirror a flat face. Refused,
@@ -1987,14 +2149,21 @@ impl Doc {
     /// on a body which can't be told there; for a draft, one of the faces
     /// it drafts, which its preview shows drafted while the plane named
     /// is the face as before the draft.
-    fn reference_of(&self, pick: Pick) -> Result<Reference, Cow<'static, str>> {
-        let (target, at) = (pick.target, pick.at);
-        let session = self.motion.as_ref().ok_or("Nothing is set up")?;
-        if session.kind == MotionKind::Draft && self.ref_picked::<FaceRef>(pick).is_some() {
+    pub(crate) fn reference_in(
+        &self,
+        session: &MotionSession,
+        index: &varde_view::PickIndex,
+        pick: Pick,
+    ) -> Result<Reference, Cow<'static, str>> {
+        if session.kind == MotionKind::Draft
+            && self
+                .ref_picked_in::<FaceRef>(session, index, pick)
+                .is_some()
+        {
             return Err(DRAFTED_NEUTRAL_PLANE.into());
         }
-        let index = self.feed.pick_index();
-        let naming = self.motion_naming().ok_or("Nothing is set up")?;
+        let (target, at) = (pick.target, pick.at);
+        let naming = self.naming_in(session.feature, self.feed.marks_of(index));
         let refused = |why: Unnamed, what: &str| unnamed(why, what, session.kind);
         let summary =
             |face: u32| (index.picking().faces().get(face as usize)).map(|face| face.summary);
@@ -2052,13 +2221,13 @@ impl Doc {
     }
 
     /// Whether the move or mirror being set up can be committed: the
-    /// document can be changed, no sketch edits wait on the solver, and
+    /// document can be changed, none of the user's sketch edits wait on the solver, and
     /// the session is ready ([`MotionSession::ready`]).
     pub(crate) fn motion_ready(&self) -> bool {
         let design = self.editor.document().design();
         self.motion.as_ref().is_some_and(|session| {
             self.editable()
-                && !self.proposing()
+                && !self.users_proposing()
                 && session.ready(&design)
                 && self.motion_held().is_none()
         })
@@ -2067,7 +2236,12 @@ impl Doc {
     /// Why the sweep or loft being set up names what the document
     /// refuses at its place, if it does, so the panel says so at once.
     pub(crate) fn motion_held(&self) -> Option<String> {
-        let session = self.motion.as_ref()?;
+        self.motion_held_in(self.motion.as_ref()?)
+    }
+
+    /// Why the sweep or loft `session` sets up names what the document
+    /// refuses at its place, if it does: see [`Doc::motion_held`].
+    pub(crate) fn motion_held_in(&self, session: &MotionSession) -> Option<String> {
         match session.kind {
             MotionKind::Sweep => (self.sweep_refused(session)).map(|why| said(&why.to_string())),
             MotionKind::Loft => (self.loft_refused(session)).map(|why| said(&why.to_string())),
@@ -2241,6 +2415,12 @@ impl Doc {
             .collect()
     }
 
+    /// The feature the move, mirror or pattern being set up would
+    /// commit, if it's whole.
+    pub(crate) fn motion_built(&self) -> Option<FeatureKind> {
+        self.motion.as_ref()?.kind()
+    }
+
     /// The move, mirror or pattern being set up as the regeneration lane
     /// previews it, see [`MotionSession::draft`]; none for a sweep or
     /// loft the document refuses at its place: the model is then shown
@@ -2264,13 +2444,6 @@ impl Doc {
         Some((feature, kind))
     }
 
-    /// The naming of picks as of the move, mirror, pattern, align, scale
-    /// or split being set up ([`Naming`]): the history stopped at its
-    /// feature, all of it for a new one.
-    fn motion_naming(&self) -> Option<Naming> {
-        Some(self.naming_at(self.motion.as_ref()?.feature))
-    }
-
     /// The edge or face hovered, if it's one a click takes as the axis or
     /// plane: lit as the cursor's over it.
     fn takes_reference(&self, pick: Pick) -> bool {
@@ -2288,13 +2461,16 @@ impl Doc {
         if session.picking == MotionPick::Faces {
             return self.refs_take::<FaceRef>(pick);
         }
+        let index = self.feed.pick_index();
         (self.feed.answers_request() && !self.feed.predates_replacement())
             && match session.picking {
-                MotionPick::Align(slot) => self.align_reference(slot, pick).is_ok(),
-                MotionPick::Point => self.scale_point_of(pick).is_ok(),
-                MotionPick::Edge => self.scale_edge_of(pick).is_ok(),
-                MotionPick::Tool => self.split_tool_of(pick).is_ok(),
-                _ => self.reference_of(pick).is_ok(),
+                MotionPick::Align(slot) => {
+                    self.align_reference_in(session, index, slot, pick).is_ok()
+                }
+                MotionPick::Point => self.scale_point_in(session, index, pick).is_ok(),
+                MotionPick::Edge => self.scale_edge_in(session, index, pick).is_ok(),
+                MotionPick::Tool => self.split_tool_in(session, index, pick).is_ok(),
+                _ => self.reference_in(session, index, pick).is_ok(),
             }
     }
 
@@ -2727,7 +2903,7 @@ fn plane_body(plane: &PlaneRef) -> Option<BodyId> {
 
 /// An edge or face taken as a move's axis or a mirror's plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Reference {
+pub(crate) enum Reference {
     Axis(AxisRef),
     Plane(PlaneRef),
 }

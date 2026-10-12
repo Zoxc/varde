@@ -4,7 +4,9 @@
 
 - `Command::AddFeature { name, kind: Box<FeatureKind> }`, made by
   `Document::add_feature(kind)`, which names it one past the highest
-  "Extrude N", "Revolve N" ... (`FeatureKind::noun`). It hides the
+  "Extrude N", "Revolve N" ... (`FeatureKind::noun`) among the feature
+  and body names both (`Document::next_number`, as "Sketch N" and
+  "Body N" are). It hides the
   sketches whose regions the feature takes (`FeatureKind::profile_sketches`:
   `FeatureKind::sketch`'s, or a loft's sections' sketches); one whose
   operation is `NewBody` also adds "Body N" with the next id, replacing

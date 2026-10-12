@@ -489,10 +489,11 @@ fn the_settings_page_takes_the_designs_place() {
         resetting: false,
         scale_dragged: None,
         kept_in: crate::KeptIn::File("~/.config/varde-cad/settings.toml"),
+        mcp: Default::default(),
     };
     let files = [PathBuf::from("/parts/bracket.vrdp")];
     let desktop = || WelcomeState {
-        settings: Some(settings),
+        settings: Some(settings.clone()),
         ..state(Some(vec![recent(&files[0])]), Vec::new())
     };
     let shown = Laid::new(welcome(desktop()), WINDOW).texts();

@@ -210,12 +210,14 @@ impl Inspected {
     /// It as it is if it holds (numbers finite, lengths, areas and
     /// volumes not negative, points within [`Picking::MAX_VALUE`],
     /// directions unit vectors, angles within their range, a distance
-    /// its points', each pick's place within its table of `mesh` and
-    /// `picking`, the answer's mesh and tables, an edge a chain, and of
-    /// the kind it measures), else every pick's outcome an error.
-    pub fn checked(self, mesh: &RenderMesh, picking: &Picking) -> Inspected {
+    /// its points', each pick's place within its table of the drawn
+    /// `scene`'s mesh and picking tables, the answer's, an edge a chain,
+    /// and of the kind it measures), else every pick's outcome an error.
+    /// Measured without a model drawn (`scene` `None`, a client's
+    /// [`Query::Measure`](crate::Query::Measure)), no pick has a place.
+    pub fn checked(self, scene: Option<(&RenderMesh, &Picking)>) -> Inspected {
         let probed = |probed: &Result<Probed, String>| match probed {
-            Ok(probed) => probed.valid(mesh, picking),
+            Ok(probed) => probed.valid(scene),
             Err(_) => true,
         };
         let between = |between: &Between| {
@@ -246,7 +248,8 @@ fn value(x: f64) -> bool {
     x.abs() <= Picking::MAX_VALUE
 }
 
-fn point(p: [f64; 3]) -> bool {
+/// Whether `p`'s coordinates are ones the answer may hold.
+pub(crate) fn point(p: [f64; 3]) -> bool {
     p.into_iter().all(value)
 }
 
@@ -259,14 +262,17 @@ fn unit(v: [f64; 3]) -> bool {
 }
 
 impl Probed {
-    fn valid(&self, mesh: &RenderMesh, picking: &Picking) -> bool {
-        let at = match self.at {
-            None => true,
-            Some(At::Face(f)) => (f as usize) < picking.faces().len(),
-            // An edge of the mesh between two faces: a chain, not a
-            // crease.
-            Some(At::Edge(e)) => (mesh.edge_faces().get(e as usize)).is_some_and(|[a, b]| a != b),
-            Some(At::Corner(c)) => (c as usize) < picking.corners().len(),
+    fn valid(&self, scene: Option<(&RenderMesh, &Picking)>) -> bool {
+        let at = match (self.at, scene) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(at), Some((mesh, picking))) => match at {
+                At::Corner(c) => (c as usize) < picking.corners().len(),
+                At::Face(f) => (f as usize) < picking.faces().len(),
+                // An edge of the mesh between two faces: a chain, not a
+                // crease.
+                At::Edge(e) => (mesh.edge_faces().get(e as usize)).is_some_and(|[a, b]| a != b),
+            },
         };
         // What's found there is what was measured: a face a face, a
         // chain an edge or its point, a corner a point, a body nowhere.
@@ -314,7 +320,10 @@ impl Measure {
 }
 
 impl EdgeForm {
-    fn valid(&self) -> bool {
+    /// Whether its numbers are finite and within [`Picking::MAX_VALUE`],
+    /// its sizes positive (a radius, an ellipse's `major ≥ minor`) and
+    /// its axis a unit vector (within [`Picking::UNIT`]).
+    pub(crate) fn valid(&self) -> bool {
         match *self {
             EdgeForm::Line { from, to } => point(from) && point(to),
             EdgeForm::Circle {
@@ -332,7 +341,8 @@ impl EdgeForm {
         }
     }
 
-    fn of(shape: &EdgeShape) -> EdgeForm {
+    /// The form of an edge of shape `shape`.
+    pub(crate) fn of(shape: &EdgeShape) -> EdgeForm {
         let a = DVec3::to_array;
         match *shape {
             EdgeShape::Line { from, to } => EdgeForm::Line {
@@ -413,19 +423,18 @@ impl Resolved<'_> {
 }
 
 /// Answers `inspect` on the model of `document` whose history gave
-/// `evaluation` and whose drawn tables are `picking`.
+/// `evaluation` and whose drawn mesh and tables are `scene`, if one was
+/// drawn: without one no pick has a place ([`Probed::at`]).
 pub(crate) fn inspect(
     inspect: &Inspect,
     document: &Document,
     evaluation: &Evaluation,
-    mesh: &RenderMesh,
-    picking: &Picking,
+    scene: Option<(&RenderMesh, &Picking)>,
     cache: &mut Cache,
 ) -> Inspected {
     let fit = document.tolerance().fit().to_bits();
-    let first = resolve(&inspect.first, evaluation, mesh, picking, cache);
-    let second =
-        (inspect.second.as_ref()).map(|pick| resolve(pick, evaluation, mesh, picking, cache));
+    let first = resolve(&inspect.first, evaluation, scene, cache);
+    let second = (inspect.second.as_ref()).map(|pick| resolve(pick, evaluation, scene, cache));
     let first_kept = kept(&first, document, fit, cache);
     let second_kept = second
         .as_ref()
@@ -475,7 +484,7 @@ pub(crate) fn inspect(
         second: second.map(|second| probed(second, second_kept.flatten())),
         between,
     }
-    .checked(mesh, picking)
+    .checked(scene)
 }
 
 /// What `resolved` measures, from `cache` or measured and kept there,
@@ -537,8 +546,7 @@ fn measure_one(resolved: &Resolved, document: &Document) -> Kept {
 fn resolve<'a>(
     pick: &InspectPick,
     evaluation: &'a Evaluation,
-    mesh: &RenderMesh,
-    picking: &Picking,
+    scene: Option<(&RenderMesh, &Picking)>,
     cache: &mut Cache,
 ) -> Result<Resolved<'a>, String> {
     // A body a join merged into another is measured as the body holding
@@ -557,24 +565,25 @@ fn resolve<'a>(
         return Err("the pick has no point".to_owned());
     }
     let found = |e: varde_kernel::topology::NotFound| e.to_string();
-    let places = Places::of(mesh, picking, holder, &topology, solid);
+    let places = scene.map(|(mesh, picking)| Places::of(mesh, picking, holder, &topology, solid));
+    let places = places.as_ref();
     let (pick, at) = match pick.entity {
         Entity::Body => (Pick::Body, None),
         Entity::Face(key) => {
             let r = topology.face(solid, &key, near).map_err(found)?;
-            (Pick::Face(r), places.face(r))
+            (Pick::Face(r), places.and_then(|p| p.face(r)))
         }
         Entity::Edge(keys) => {
             let c = topology.edge(solid, keys, near).map_err(found)?;
-            (Pick::Edge(c), places.chain(c))
+            (Pick::Edge(c), places.and_then(|p| p.chain(c)))
         }
         Entity::EdgePoint(keys) => {
             let c = topology.edge(solid, keys, near).map_err(found)?;
-            (Pick::EdgePoint(c), places.chain(c))
+            (Pick::EdgePoint(c), places.and_then(|p| p.chain(c)))
         }
         Entity::Corner(keys) => {
             let c = topology.corner(solid, keys, near).map_err(found)?;
-            (Pick::Corner(c), places.corner(c))
+            (Pick::Corner(c), places.and_then(|p| p.corner(c)))
         }
     };
     Ok(Resolved {

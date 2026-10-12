@@ -10,11 +10,11 @@ pub(crate) use page::{drops, guard, leaving};
 use super::TICK;
 use crate::Message;
 
-/// Ticks every second with the time, as [`Message::AutoSaveTick`]. The web
+/// Ticks every second with the time, as [`Message::Tick`]. The web
 /// has no threads, but iced's executor there has a timer, on the browser's
 /// `setTimeout`.
-pub(crate) fn auto_save_ticks() -> Subscription<Message> {
-    iced::time::every(TICK).map(|_| Message::AutoSaveTick(Instant::now()))
+pub(crate) fn second_ticks() -> Subscription<Message> {
+    iced::time::every(TICK).map(|_| Message::Tick(Instant::now()))
 }
 
 /// Ticks every [`TOAST_TICK`](super::TOAST_TICK) with the time, as

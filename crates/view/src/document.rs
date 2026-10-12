@@ -163,8 +163,11 @@ pub struct DocumentState<'a> {
     /// sketch whose plane is changed.
     pub picking_plane: Option<&'a PlanePick>,
     /// A thumbnail for the viewport to render on its next frame, if one
-    /// is asked for (see [`ThumbnailRequest`](crate::ThumbnailRequest)).
-    pub thumbnail: Option<&'a Arc<crate::ThumbnailRequest>>,
+    /// is asked for (see [`PreviewRequest`](crate::PreviewRequest)).
+    pub thumbnail: Option<&'a Arc<crate::PreviewRequest>>,
+    /// The MCP server's renders for the viewport to draw on its next
+    /// frame, beside the thumbnail.
+    pub renders: &'a [Arc<crate::PreviewRequest>],
     /// The viewport's width over its height, as it last told the app, if
     /// it has ([`Look::ViewAspect`]).
     pub aspect: Option<f32>,
@@ -238,6 +241,9 @@ pub struct DocumentState<'a> {
     /// status bar, the rail and anything else floating over the viewport
     /// go with it.
     pub settings: Option<crate::SettingsState<'a>>,
+    /// The MCP server, for the toolbar's toggle, the status bar's chip
+    /// and the panel on the right: natively only, `None` on the web.
+    pub mcp: Option<crate::McpShown<'a>>,
 }
 
 impl DocumentState<'_> {
@@ -851,6 +857,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         .or_else(|| state.measure.as_ref().map(crate::measure::panel));
     // The parameters' popup, left of the operation's panel if one shows.
     let params = (state.params).map(|params| crate::params::popup(params, panel.is_some()));
+    let ask = state.mcp.as_ref().and_then(crate::mcp::ask_popup);
     let content = column![
         toolbar::toolbar(&state),
         banners,
@@ -860,17 +867,28 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                 refused,
                 match state.settings {
                     // In the viewport's place, which keeps its camera
-                    // and whatever is open, shown again as it closes.
-                    Some(settings) => crate::settings::page(settings),
+                    // and whatever is open, shown again as it closes;
+                    // the pictures it would draw offscreen drawn beside.
+                    Some(settings) => stack![
+                        crate::settings::page(settings),
+                        crate::viewport::offscreen(
+                            state.thumbnail,
+                            state.renders,
+                            state.mode.palette()
+                        ),
+                    ]
+                    .into(),
                     None => viewport_stack(&state, editable, panel, params),
                 },
             ],
+            // The MCP panel, on the right: the viewport shrinks.
+            state.mcp.as_ref().and_then(crate::mcp::panel),
         ]
         .height(Length::Fill),
     ];
     // The prompt about unsaved changes shows over the delete prompt,
     // which shows over the menus.
-    match (state.overlay, &state.deleting) {
+    let screen = match (state.overlay, &state.deleting) {
         (Some(Overlay::UnsavedPrompt), _) => {
             Element::from(stack![content, unsaved_prompt(state.name)])
         }
@@ -898,6 +916,12 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
             Element::from(stack![content, menu])
         }
         (None, None) => content.into(),
+    };
+    // An MCP client's edit asking the user to finish theirs first shows
+    // over all of it.
+    match ask {
+        Some(popup) => Element::from(stack![screen, popup]),
+        None => screen,
     }
 }
 
@@ -941,6 +965,7 @@ fn viewport_stack<'a>(
                 state.editor.document(),
             )),
             state.thumbnail,
+            state.renders,
             Some(state.aspect.unwrap_or(0.0)),
         ),
         (state.options.names)
@@ -1044,6 +1069,7 @@ fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
         info: info(state),
         hints: hints(state),
         mouse_hints: state.options.mouse_hints,
+        chip: crate::mcp::status_chip(state.mcp.as_ref()),
         view_menu: Some(matches!(state.overlay, Some(Overlay::ViewMenu(_)))),
     }
 }

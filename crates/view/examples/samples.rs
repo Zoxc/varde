@@ -27,7 +27,7 @@ use varde_render::{Camera, Renderer, wgpu};
 use varde_sketch::{
     Constraint, Curve, Design, Dimension, Id, Measure, Region, RegionRef, Sketch, Spline, analyse,
 };
-use varde_view::{THUMBNAIL_SCALE, ThumbnailRequest, thumbnail_shot};
+use varde_view::{PreviewRequest, THUMBNAIL_SCALE, thumbnail_shot};
 
 /// A sketch being drawn, with the design its dimensions are read in
 /// (without parameters, which dimensions don't use yet).
@@ -671,7 +671,8 @@ impl Gpu {
             &opacity,
             &tints,
             &shot,
-            &ThumbnailRequest::COLORS,
+            None,
+            &PreviewRequest::THEMES,
             THUMBNAIL_SCALE as f32,
             move |images| {
                 let _ = send.send(images);

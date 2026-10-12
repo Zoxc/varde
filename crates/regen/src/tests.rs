@@ -2207,16 +2207,7 @@ fn assert_picks_match(mesh: &RenderMesh, picking: &Picking) {
     let at = |v: u32| Vec3::from(mesh.positions()[v as usize]).as_dvec3();
     let faces = picking.faces();
     // Checked as the page checks them.
-    Picking::from_parts(
-        picking.bodies().to_vec(),
-        faces.to_vec(),
-        picking.closed().to_vec(),
-        picking.tangents().to_vec(),
-        picking.snaps().to_vec(),
-        picking.corners().to_vec(),
-        mesh,
-    )
-    .unwrap();
+    Picking::from_parts(picking.to_parts(), mesh).unwrap();
     for (f, face) in mesh.faces().enumerate() {
         for tri in face.chunks(3) {
             for &v in tri {
@@ -2354,7 +2345,9 @@ fn picking_tables_are_deterministic_and_the_same_from_the_cache() {
     let tables = |response: Response| match response {
         Response::Regenerated { mesh, picking, .. } => (mesh, picking),
         Response::Failed { error, .. } => panic!("{error}"),
-        Response::Exported { .. } | Response::Progress(_) => panic!("not a regeneration"),
+        Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => {
+            panic!("not a regeneration")
+        }
     };
     let first = tables(handle(regenerate(&editor, None)));
     let second = tables(handle(regenerate(&editor, None)));

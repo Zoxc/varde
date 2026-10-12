@@ -16,7 +16,11 @@ fn changes_are_listed_from_what_they_are_to_the_defaults() {
         length_unit: LengthUnit::In,
         ..ViewOptions::default()
     };
-    let change = |name, from, to| SettingChange { name, from, to };
+    let change = |name, from: &'static str, to: &'static str| SettingChange {
+        name,
+        from: from.into(),
+        to: to.into(),
+    };
     assert_eq!(
         changed_settings(options),
         [
@@ -47,9 +51,15 @@ fn mouse_units_and_files_changes_are_listed() {
         },
         auto_save: 10,
         recent_designs: 25,
+        mcp: true,
+        mcp_port: 8123,
         ..ViewOptions::default()
     };
-    let change = |name, from, to| SettingChange { name, from, to };
+    let change = |name, from: &'static str, to: &'static str| SettingChange {
+        name,
+        from: from.into(),
+        to: to.into(),
+    };
     assert_eq!(
         changed_settings(options),
         [
@@ -69,6 +79,8 @@ fn mouse_units_and_files_changes_are_listed() {
             change("Snapping", "Off", "On"),
             change("Auto-save", "10 min", "1 min"),
             change("Recent designs", "25", "100"),
+            change("MCP", "On", "Off"),
+            change("MCP port", "8123", "7311"),
         ]
     );
 }
@@ -85,6 +97,7 @@ fn every_tab_shows_its_rows() {
             resetting: false,
             scale_dragged: None,
             kept_in: KeptIn::Browser,
+            mcp: Default::default(),
         };
         let mut laid = crate::testing::Laid::new(page(state), iced::Size::new(1100.0, 900.0));
         laid.texts()
@@ -202,6 +215,7 @@ fn the_scale_slider_sets_only_when_let_go() {
         resetting: false,
         scale_dragged,
         kept_in: KeptIn::Browser,
+        mcp: Default::default(),
     };
     let mut laid = crate::testing::Laid::new(page(state(None)), window);
     let shown = laid.texts();
@@ -288,14 +302,14 @@ fn the_scale_slider_sets_only_when_let_go() {
 
 /// Every row of every tab, by name: whether it's changed, as its reset
 /// says, the default said and what it sends.
-fn resets(options: ViewOptions) -> Vec<(&'static str, Option<(&'static str, String)>)> {
+fn resets(options: ViewOptions) -> Vec<(&'static str, Option<(String, String)>)> {
     SettingsTab::ALL
         .into_iter()
-        .flat_map(|tab| section(tab, options, None).2)
+        .flat_map(|tab| section(tab, options, None, &McpState::default()).2)
         .map(|row| {
             let reset = row
                 .reset
-                .map(|(said, message)| (said, format!("{message:?}")));
+                .map(|(said, message)| (said.into_owned(), format!("{message:?}")));
             (row.name, reset)
         })
         .collect()
@@ -542,6 +556,24 @@ fn only_a_changed_settings_row_has_a_reset() {
             "100",
             set(Setting::RecentDesigns(100)),
         ),
+        (
+            ViewOptions {
+                mcp: true,
+                ..defaults
+            },
+            "MCP",
+            "Off",
+            set(Setting::Mcp(false)),
+        ),
+        (
+            ViewOptions {
+                mcp_port: 8000,
+                ..defaults
+            },
+            "Port",
+            "7311",
+            set(Setting::McpPort(7311)),
+        ),
     ];
     let mut named = std::collections::HashSet::new();
     for (options, changed, said, message) in cases {
@@ -557,15 +589,15 @@ fn only_a_changed_settings_row_has_a_reset() {
         assert!(rows.iter().any(|(name, _)| *name == changed), "{changed}");
         for (name, reset) in rows {
             if name == changed {
-                assert_eq!(reset, Some((said, message.clone())), "{name}");
+                assert_eq!(reset, Some((said.to_owned(), message.clone())), "{name}");
             } else {
                 assert!(reset.is_none(), "{changed}: {name}");
             }
         }
     }
-    // Every row is covered.
+    // Every row is covered, but the token's, which isn't a setting.
     for (name, _) in resets(defaults) {
-        assert!(named.contains(name), "{name}");
+        assert!(named.contains(name) || name == "Token", "{name}");
     }
 }
 
@@ -588,6 +620,7 @@ fn a_changed_row_shows_its_reset() {
             resetting: false,
             scale_dragged: None,
             kept_in: KeptIn::Browser,
+            mcp: Default::default(),
         };
         crate::testing::Laid::new(page(state), window)
     };
@@ -638,4 +671,315 @@ fn a_changed_row_shows_its_reset() {
             )))]
         ),
     );
+}
+
+/// The MCP tab's texts with `options` and `mcp`.
+fn mcp_texts(options: ViewOptions, mcp: McpState<'_>) -> Vec<String> {
+    let state = SettingsState {
+        options,
+        tab: SettingsTab::Mcp,
+        resetting: false,
+        scale_dragged: None,
+        kept_in: KeptIn::Browser,
+        mcp,
+    };
+    let mut laid = crate::testing::Laid::new(page(state), iced::Size::new(1100.0, 900.0));
+    laid.texts().into_iter().map(|shown| shown.text).collect()
+}
+
+/// The lines adding the server to a client, as the plan has them.
+#[test]
+fn the_client_lines_carry_the_port_and_token() {
+    let [claude, codex, opencode] = mcp_client_lines(8123, "TOKEN");
+    assert_eq!(
+        claude,
+        r#"claude mcp add --transport http varde http://127.0.0.1:8123/mcp --header "Authorization: Bearer TOKEN""#
+    );
+    assert_eq!(
+        codex,
+        "[mcp_servers.varde]\nurl = \"http://127.0.0.1:8123/mcp\"\nhttp_headers = { Authorization = \"Bearer TOKEN\" }"
+    );
+    assert_eq!(
+        opencode,
+        r#""varde": { "type": "remote", "url": "http://127.0.0.1:8123/mcp", "oauth": false, "headers": { "Authorization": "Bearer TOKEN" } }"#
+    );
+}
+
+/// The stdio lines: the path quoted for the shell and escaped for TOML
+/// and JSON, no token.
+#[test]
+fn the_stdio_lines_quote_the_path() {
+    let [claude, codex, opencode] = mcp_stdio_lines_for("/usr/bin/varde", false).unwrap();
+    assert_eq!(claude, "claude mcp add varde -- /usr/bin/varde mcp");
+    assert_eq!(
+        codex,
+        "[mcp_servers.varde]\ncommand = \"/usr/bin/varde\"\nargs = [\"mcp\"]"
+    );
+    assert_eq!(
+        opencode,
+        r#""varde": { "type": "local", "command": ["/usr/bin/varde", "mcp"] }"#
+    );
+
+    let odd = r#"/home/a b/it's "x"\y/varde"#;
+    let [claude, codex, opencode] = mcp_stdio_lines_for(odd, false).unwrap();
+    assert_eq!(
+        claude,
+        r#"claude mcp add varde -- '/home/a b/it'\''s "x"\y/varde' mcp"#
+    );
+    let escaped = r#""/home/a b/it's \"x\"\\y/varde""#;
+    assert_eq!(
+        codex,
+        format!("[mcp_servers.varde]\ncommand = {escaped}\nargs = [\"mcp\"]")
+    );
+    let table: toml::Table = codex.parse().unwrap();
+    assert_eq!(table["mcp_servers"]["varde"]["command"].as_str(), Some(odd));
+    assert_eq!(
+        opencode,
+        format!(r#""varde": {{ "type": "local", "command": [{escaped}, "mcp"] }}"#)
+    );
+
+    let [claude, ..] = mcp_stdio_lines_for(r"C:\Program Files\Varde\varde.exe", true).unwrap();
+    assert_eq!(
+        claude,
+        r#"claude mcp add varde -- "C:\Program Files\Varde\varde.exe" mcp"#
+    );
+    let [claude, ..] = mcp_stdio_lines_for(r"C:\Varde\varde.exe", true).unwrap();
+    assert_eq!(claude, r"claude mcp add varde -- C:\Varde\varde.exe mcp");
+    // A control character escaped for TOML and JSON.
+    assert_eq!(json_string("/a\nb\u{7f}"), r#""/a\u000ab\u007f""#);
+}
+
+/// A path a shell would read differently from the program's path gets no
+/// lines: a newline anywhere (pasted, it runs half the command), and on
+/// Windows what cmd or PowerShell expands or ends at in double quotes.
+/// Unquoted, Windows words hold nothing PowerShell splits or splats at.
+#[test]
+fn the_stdio_lines_refuse_paths_a_shell_misreads() {
+    assert_eq!(mcp_stdio_lines_for("/a\nb/varde", false), None);
+    assert_eq!(mcp_stdio_lines_for("C:\\a\rb\\varde.exe", true), None);
+    for path in [
+        r"C:\%USERPROFILE%\varde.exe",
+        r"C:\$env:HOME\varde.exe",
+        r"C:\a`b\varde.exe",
+        r"C:\a!b!\varde.exe",
+        "C:\\a\u{201C} b\\varde.exe",
+        "C:\\a\u{201D}\\varde.exe",
+        "C:\\a\u{201E}\\varde.exe",
+    ] {
+        assert_eq!(mcp_stdio_lines_for(path, true), None, "{path}");
+    }
+    // POSIX single quotes hold `$`, backticks, `!` and `\` as they are.
+    let [claude, ..] = mcp_stdio_lines_for("/a$b`c`!d\\e/varde", false).unwrap();
+    assert_eq!(claude, r"claude mcp add varde -- '/a$b`c`!d\e/varde' mcp");
+    for (path, quoted) in [
+        (r"C:\a,b\varde.exe", r#""C:\a,b\varde.exe""#),
+        (r"C:\@a\varde.exe", r#""C:\@a\varde.exe""#),
+        (r"C:\a=b\varde.exe", r#""C:\a=b\varde.exe""#),
+        ("C:\\Vård\\varde.exe", "\"C:\\Vård\\varde.exe\""),
+    ] {
+        let [claude, ..] = mcp_stdio_lines_for(path, true).unwrap();
+        assert_eq!(claude, format!("claude mcp add varde -- {quoted} mcp"));
+    }
+}
+
+#[test]
+fn the_port_field_takes_digits_in_range() {
+    for (typed, port) in [
+        ("7311", Some(7311)),
+        (" 1024 ", Some(1024)),
+        ("65535", Some(65535)),
+        ("01024", Some(1024)),
+        ("1023", None),
+        ("65536", None),
+        ("99999999999", None),
+        ("+8000", None),
+        ("80a", None),
+        ("", None),
+    ] {
+        assert_eq!(mcp_port_of(typed), port, "{typed:?}");
+    }
+}
+
+/// Off, the tab has the switch, port and token, the token hidden, and
+/// the client lines with it hidden too; serving, the client and
+/// Disconnect; shown, the token in the lines.
+#[test]
+fn the_mcp_tab_shows_its_rows() {
+    let has = |texts: &[String], text: &str| texts.iter().any(|shown| shown == text);
+    let token = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ".to_owned();
+    let off = mcp_texts(
+        ViewOptions::default(),
+        McpState {
+            token: Some(token.clone()),
+            ..McpState::default()
+        },
+    );
+    // The port's field shows no text of its own here.
+    for text in [
+        "MCP",
+        "Shows the MCP panel, where the server is started",
+        "Port",
+        "Token",
+        "Regenerate",
+        "Add to a client",
+    ] {
+        assert!(has(&off, text), "{text} in {off:?}");
+    }
+    assert!(!has(&off, "Client") && !has(&off, "Server"), "{off:?}");
+    assert!(!off.iter().any(|shown| shown.contains(&token)), "{off:?}");
+    let [claude, ..] = mcp_client_lines(7311, TOKEN_HIDDEN);
+    assert!(has(&off, &claude), "{off:?}");
+
+    // With the program's path, the stdio lines come first, and without
+    // the token they're still there.
+    let [stdio, ..] = mcp_stdio_lines("/opt/varde").unwrap();
+    let both = mcp_texts(
+        ViewOptions::default(),
+        McpState {
+            token: Some(token.clone()),
+            exe: Some("/opt/varde"),
+            ..McpState::default()
+        },
+    );
+    let at = |text: &str| both.iter().position(|shown| shown == text);
+    assert!(at(&stdio).unwrap() < at(&claude).unwrap(), "{both:?}");
+    let tokenless = mcp_texts(
+        ViewOptions::default(),
+        McpState {
+            exe: Some("/opt/varde"),
+            ..McpState::default()
+        },
+    );
+    assert!(
+        has(&tokenless, "Add to a client") && has(&tokenless, &stdio),
+        "{tokenless:?}"
+    );
+    // A path the lines can't hold: no relay lines, and the tab says why.
+    let refused = mcp_texts(
+        ViewOptions::default(),
+        McpState {
+            token: Some(token.clone()),
+            exe: Some("/opt/a\nb/varde"),
+            ..McpState::default()
+        },
+    );
+    assert!(has(&refused, &claude), "{refused:?}");
+    assert!(
+        !refused
+            .iter()
+            .any(|shown| shown.contains("mcp add --scope user varde --"))
+            && refused
+                .iter()
+                .any(|shown| shown.contains("no lines running it as a relay")),
+        "{refused:?}"
+    );
+    assert!(!has(&tokenless, &claude), "{tokenless:?}");
+
+    let on = ViewOptions {
+        mcp: true,
+        ..ViewOptions::default()
+    };
+    let serving = mcp_texts(
+        on,
+        McpState {
+            status: McpStatus::Listening(7311),
+            client: Some(McpClient {
+                name: Some("claude-code"),
+                since: "5 min ago".to_owned(),
+            }),
+            token: Some(token.clone()),
+            token_shown: true,
+            port_typed: None,
+            exe: None,
+        },
+    );
+    for text in [
+        "Server",
+        "Listening at 127.0.0.1:7311, one client at a time",
+        "Client",
+        "claude-code",
+        "since 5 min ago",
+        "Disconnect",
+        token.as_str(),
+    ] {
+        assert!(has(&serving, text), "{text} in {serving:?}");
+    }
+    let [claude, ..] = mcp_client_lines(7311, &token);
+    assert!(has(&serving, &claude), "{serving:?}");
+
+    let waiting = mcp_texts(
+        on,
+        McpState {
+            status: McpStatus::Listening(7311),
+            ..McpState::default()
+        },
+    );
+    assert!(
+        has(&waiting, "None") && has(&waiting, "Not read yet"),
+        "{waiting:?}"
+    );
+    assert!(!has(&waiting, "Add to a client"), "{waiting:?}");
+
+    let stopped = mcp_texts(on, McpState::default());
+    assert!(
+        has(&stopped, "Stopped: Start it in the MCP panel"),
+        "{stopped:?}"
+    );
+}
+
+/// The port row says a port out of range, as typed, or one that
+/// couldn't be bound.
+#[test]
+fn the_port_row_says_its_error() {
+    let has = |texts: &[String], text: &str| texts.iter().any(|shown| shown == text);
+    let typed = mcp_texts(
+        ViewOptions::default(),
+        McpState {
+            port_typed: Some("80"),
+            ..McpState::default()
+        },
+    );
+    assert!(has(&typed, "A number from 1024 to 65535"), "{typed:?}");
+
+    let on = ViewOptions {
+        mcp: true,
+        ..ViewOptions::default()
+    };
+    let failed = mcp_texts(
+        on,
+        McpState {
+            status: McpStatus::BindFailed("Address already in use"),
+            ..McpState::default()
+        },
+    );
+    assert!(has(&failed, "Not started: see the port"), "{failed:?}");
+    assert!(
+        has(
+            &failed,
+            "Port 7311 can't be used: Address already in use. Choose another"
+        ),
+        "{failed:?}"
+    );
+    // Switched off, the failure is past.
+    let off = mcp_texts(
+        ViewOptions::default(),
+        McpState {
+            status: McpStatus::BindFailed("Address already in use"),
+            ..McpState::default()
+        },
+    );
+    assert!(has(&off, "Where it listens, on 127.0.0.1 only"), "{off:?}");
+}
+
+/// The MCP state's `Debug`, and so the settings page's, doesn't show the
+/// token, shown on the tab or not.
+#[test]
+fn mcp_debug_hides_the_token() {
+    let token = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG".to_owned();
+    let state = McpState {
+        token: Some(token.clone()),
+        token_shown: true,
+        ..McpState::default()
+    };
+    assert!(!format!("{state:?}").contains(&token));
 }

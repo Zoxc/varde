@@ -683,6 +683,93 @@ fn the_parts_bodies_follow_the_mesh_shown() {
     assert_eq!(feed.parts(), [editor.document().bodies()[0].id]);
 }
 
+/// `response`, a model's, with `failure` listed as failing.
+fn failing(mut response: Response, failure: FeatureId) -> Response {
+    let Response::Regenerated { failed, .. } = &mut response else {
+        panic!("{response:?}");
+    };
+    failed.push(varde_regen::FeatureFailure {
+        feature: failure,
+        message: "failed".to_owned(),
+        geometry: None,
+    });
+    response
+}
+
+/// The committed model keeps its failures, `until`, picking tables and
+/// generation through a draft's answers; across a replacement its
+/// failures aren't given out until a model of the new document shows.
+#[test]
+fn the_committed_model_keeps_what_it_found() {
+    let mut editor = Editor::new(Document::example());
+    let [sketch, extrude] = [0, 1].map(|at| editor.document().features()[at].id);
+    let body = editor.document().bodies()[0].id;
+    let (mut feed, regen) = connected();
+    assert!(feed.committed().is_none());
+
+    // A failing feature listed.
+    feed.request(&editor, None);
+    feed.apply(failing(handle(regen.take().pop().unwrap()), extrude));
+    let generation = editor.generation();
+    let picking = {
+        let committed = feed.committed().unwrap();
+        assert_eq!(committed.generation, generation);
+        assert_eq!(committed.until, None);
+        assert_eq!(committed.parts, [body]);
+        assert!(Arc::ptr_eq(committed.picking, &feed.picking));
+        let failed: Vec<_> = committed.failures.iter().map(|f| f.feature).collect();
+        assert_eq!(failed, [extrude]);
+        committed.picking.clone()
+    };
+
+    // A draft's answer, a second plate set up, changes the model shown
+    // but not the committed one.
+    let FeatureKind::Extrude(plate) = &editor.document().features()[1].kind else {
+        panic!("the second feature is an extrude");
+    };
+    let draft = drafted((None, plate.clone()));
+    feed.request_with(&editor, None, None, draft, None);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert!(feed.shows_draft());
+    assert!(!Arc::ptr_eq(&feed.picking, &picking));
+    assert!(feed.failed_features().is_empty());
+    let committed = feed.committed().unwrap();
+    assert_eq!(committed.generation, generation);
+    assert!(Arc::ptr_eq(committed.picking, &picking));
+    assert_eq!(committed.failures.len(), 1);
+
+    // Rolled back to before the extrude, without a draft: committed, with
+    // what it was built up to.
+    feed.request_with(&editor, None, Some(extrude), None, None);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    let committed = feed.committed().unwrap();
+    assert_eq!(committed.until, Some(extrude));
+    assert!(committed.failures.is_empty());
+    assert!(committed.parts.is_empty());
+
+    // Replaced: the failures of the model before aren't given out.
+    feed.request(&editor, None);
+    feed.apply(failing(handle(regen.take().pop().unwrap()), sketch));
+    assert_eq!(feed.committed().unwrap().failures.len(), 1);
+    // Another document, as restoring recovered changes gives.
+    let mut other = Editor::new(Document::example());
+    let faint = varde_document::Opacity::MIN;
+    other.apply(Command::SetOpacity(body, faint)).unwrap();
+    let document = other.document().clone();
+    editor.apply(Command::Replace(Box::new(document))).unwrap();
+    feed.replaced(editor.generation());
+    let committed = feed.committed().unwrap();
+    assert!(committed.failures.is_empty());
+    assert!(committed.parts.is_empty());
+    assert_eq!(committed.generation, generation);
+    feed.request(&editor, None);
+    feed.apply(failing(handle(regen.take().pop().unwrap()), sketch));
+    let committed = feed.committed().unwrap();
+    assert_eq!(committed.generation, editor.generation());
+    let failed: Vec<_> = committed.failures.iter().map(|f| f.feature).collect();
+    assert_eq!(failed, [sketch]);
+}
+
 /// A small deterministic generator (xorshift64*).
 struct Rng(u64);
 
@@ -1070,4 +1157,44 @@ fn the_viewports_shape_decides_what_is_in_view() {
     assert_eq!(feed.sight().unwrap().level(body), None);
     feed.view(&camera, Some(2.5));
     assert!(feed.sight().unwrap().level(body).is_some());
+}
+
+/// A model asked for without a draft is the committed one even when a
+/// draft is set up before it's answered: what makes an answer hidden is
+/// how it was asked for, not whether a draft is set up when it comes.
+#[test]
+fn the_committed_model_is_told_by_how_it_was_asked_for() {
+    let (mut editor, draft) = plate_draft();
+    let (mut feed, regen) = connected();
+    feed.request(&editor, None);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.committed().unwrap().generation, editor.generation());
+
+    // An edit asked for, then a draft set up before its answer comes.
+    add_line(&mut editor);
+    feed.request(&editor, None);
+    feed.request_with(&editor, None, None, drafted(draft.clone()), None);
+    let [plain, with_draft] = <[Request; 2]>::try_from(regen.take()).unwrap();
+    feed.apply(handle(plain));
+    assert_eq!(feed.committed().unwrap().generation, editor.generation());
+    feed.apply(handle(with_draft));
+    assert!(feed.shows_draft());
+    assert_eq!(feed.committed().unwrap().generation, editor.generation());
+
+    // Asked for with the draft hidden, then the draft dropped before the
+    // answer comes: still not the committed model.
+    add_line(&mut editor);
+    feed.hide_draft = true;
+    let before = editor.document().features()[0].id;
+    feed.request_with(&editor, None, Some(before), drafted(draft), None);
+    feed.hide_draft = false;
+    let hidden = regen.take().pop().unwrap();
+    feed.request_with(&editor, None, None, None, None);
+    let plain = regen.take().pop().unwrap();
+    feed.apply(handle(hidden));
+    let committed = feed.committed().unwrap();
+    assert_eq!(committed.until, None);
+    assert_ne!(committed.generation, editor.generation());
+    feed.apply(handle(plain));
+    assert_eq!(feed.committed().unwrap().generation, editor.generation());
 }

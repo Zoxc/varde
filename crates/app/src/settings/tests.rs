@@ -103,6 +103,8 @@ fn each_setting_chosen_early_wins_once_loaded() {
         sketch_snap: false,
         auto_save: AutoSave::Minutes10,
         recent_designs: RecentDesigns::Fifty,
+        mcp: true,
+        mcp_port: McpPort::new(9000).unwrap(),
     };
     // Every setting differs from its default, so each key is seen.
     let defaults = options_of(Stored::default());
@@ -178,6 +180,15 @@ fn defaults_and_every_value_round_trip() {
             });
         }
     }
+    for port in [McpPort::MIN, McpPort::DEFAULT, 40000, McpPort::MAX] {
+        for mcp in [false, true] {
+            all.push(Stored {
+                mcp,
+                mcp_port: McpPort::new(port).unwrap(),
+                ..Stored::default()
+            });
+        }
+    }
     for decimals in std::iter::once(Decimals::Auto).chain((0..=6).map(Decimals::Places)) {
         all.push(Stored {
             decimals,
@@ -193,6 +204,7 @@ fn defaults_and_every_value_round_trip() {
         decimals: Some(9),
         auto_save: 3,
         recent_designs: 1000,
+        mcp_port: 80,
         ..ViewOptions::default()
     };
     assert_eq!(stored_of(odd), Stored::default());

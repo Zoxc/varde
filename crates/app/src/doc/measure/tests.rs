@@ -95,7 +95,7 @@ fn value_after(texts: &[String], label: &str) -> String {
 fn last_inspect(requests: &RefCell<Vec<Request>>) -> Option<varde_regen::Inspect> {
     match requests.borrow().last()? {
         Request::Regenerate { inspect, .. } => inspect.as_deref().cloned(),
-        Request::Export { .. } => None,
+        Request::Export { .. } | Request::Query { .. } => None,
     }
 }
 

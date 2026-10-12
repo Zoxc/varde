@@ -479,6 +479,90 @@ fn same_constraint(a: &Constraint, b: &Constraint) -> bool {
     a == b || (ConstraintKind::of(a) == ConstraintKind::of(b) && items(a) == items(b))
 }
 
+/// A shape as a drawing tool's clicks place it, for the MCP client's
+/// `edit_sketch`, which draws through the tools' own code ([`clicked`]):
+/// the points placed before the last click, each with what it snapped
+/// to (a point of the sketch's, which the shape takes as its own, see
+/// [`place`]), and the last click, `at` on `target`. A spline's points
+/// are all `placed`, `at` unused.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone)]
+pub(crate) struct Clicks {
+    pub(crate) tool: Tool,
+    pub(crate) placed: Vec<(DVec2, Option<Target>)>,
+    pub(crate) at: DVec2,
+    pub(crate) target: Option<Target>,
+    /// The smallest a shape may be: smaller is refused, as a shape under
+    /// a pixel is.
+    pub(crate) pixel: f64,
+    pub(crate) construction: bool,
+    /// A polygon's sides.
+    pub(crate) sides: u32,
+    /// Whether a rectangle is drawn from its centre.
+    pub(crate) centered: bool,
+    /// Whether a spline is by control points, and closed.
+    pub(crate) control: bool,
+    pub(crate) closed: bool,
+}
+
+/// What `clicks` add to `sketch` in `design`, as the tool's clicks would
+/// (no values typed): `None` where the tool refuses the shape (smaller
+/// than `pixel`, an arc through points on one line, a spline with too
+/// few points or one the Spline tool's clicks would refuse, a line over
+/// one joining the same points).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn clicked(
+    sketch: &Sketch,
+    design: &Design,
+    clicks: &Clicks,
+) -> Result<Option<Add>, OutOfIds> {
+    let (placed, targets) = clicks.placed.iter().copied().unzip();
+    let drawing = Drawing {
+        placed,
+        targets,
+        construction: clicks.construction,
+        sides: clicks.sides,
+        centered: clicks.centered,
+        control: clicks.control,
+        ..Drawing::new(clicks.tool)
+    };
+    if clicks.tool == Tool::Spline {
+        let kind = drawing.active().spline_kind();
+        if drawing.placed.len() < kind.least(clicks.closed) {
+            return Ok(None);
+        }
+        // Each point after the first as the tool takes a click: one it
+        // would refuse (on the last, given twice, on the first) makes no
+        // spline.
+        let refused = (1..drawing.placed.len()).any(|count| {
+            let before = Drawing {
+                placed: drawing.placed[..count].to_vec(),
+                targets: drawing.targets[..count].to_vec(),
+                ..drawing.clone()
+            };
+            let (at, target) = clicks.placed[count];
+            super::spline::refuses_point(&before, at, target, clicks.pixel)
+        });
+        if refused {
+            return Ok(None);
+        }
+        return super::spline::spline_add(sketch, &drawing, kind, clicks.closed).map(Some);
+    }
+    let click = ToolClick {
+        at: clicks.at,
+        target: clicks.target,
+        inference: None,
+        hit: None,
+        pixel: clicks.pixel,
+        double: false,
+        reference: false,
+    };
+    Ok(match step(sketch, &drawing, click, design)? {
+        Step::Added(add, _) => Some(add),
+        Step::Refused | Step::Placed => None,
+    })
+}
+
 /// What a tool's click does to the shape being drawn.
 #[derive(Debug, Clone, PartialEq)]
 enum Step {

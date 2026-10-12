@@ -172,3 +172,14 @@ fn what_isnt_a_thumbnail_decodes_to_nothing() {
     );
     assert_eq!(decode_png(&wide), None);
 }
+
+#[test]
+fn a_preview_holds_the_png_encode_png_gives() {
+    let image = image(5, 3);
+    let bytes = encode_png(&image).unwrap();
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    // The thumbnail's preview is that PNG, unchanged by the factoring.
+    let preview = encode(&image, LIGHT).unwrap();
+    assert_eq!(preview.data(), &bytes[..]);
+    assert_eq!(decode_png(&preview), Some(image));
+}

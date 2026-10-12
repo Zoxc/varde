@@ -148,6 +148,13 @@ auto-saves every minute and has no recent files list).
   `varde_io::recent::MAX`). Lowered, the oldest are dropped and the list
   stored so.
 
+**MCP (desktop only;** a page can't listen). Serve over MCP (off,
+default) and the port (7311, default; 1024–65535), both with row resets
+and in Reset to defaults' list; the client connected with Disconnect;
+the token (`mcp-token.toml`, hidden, with Show, Copy and Regenerate);
+and the Claude Code, Codex and opencode lines to copy
+(`agents/mcp.md`).
+
 ## Suggested
 
 Not built; others to consider:

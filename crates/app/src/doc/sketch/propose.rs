@@ -33,6 +33,22 @@ use super::{Refusal, ValueEdit, Waiting};
 use crate::doc::feed::SLOW;
 use crate::doc::{Change, Doc};
 
+/// Why the MCP client's proposal isn't applied when its sketch went
+/// before its turn.
+const SKETCH_GONE: &str = "the sketch was removed before the edit's turn";
+
+/// Why the MCP client's sketch edit in steps isn't applied when the
+/// sketch changed under it before it was all solved: its later steps
+/// name the items the earlier ones made by the ids they were to get.
+const SKETCH_CHANGED: &str =
+    "the sketch changed while the edit was solved: read it again and send the edit anew";
+
+/// Why the user's sketch edit isn't made when an MCP client's edit of
+/// the sketch, queued before it and not shown when it was made, was
+/// committed first: the ids it names may be the client's items now.
+const TAKEN_BY_CLIENT: &str =
+    "the MCP client's edit of the sketch, queued before it, was made first: draw it again";
+
 /// How many analyses a session keeps, by revision, so undoing and redoing
 /// shows them at once.
 const ANALYSES: usize = 8;
@@ -62,6 +78,10 @@ pub(crate) struct Proposals {
     /// prompt): nothing waiting behind it moves until they answer, see
     /// [`Doc::send_proposal`].
     asking: bool,
+    /// How many MCP client edits were applied: what the user's proposal
+    /// notes as it's made ([`Proposal::made_on`]), to tell a client's
+    /// commit from a relink's amend once the sketch's `next_id` moved.
+    client_edits: u64,
 }
 
 /// What waits for the proposal in flight, see [`Proposals::queued`].
@@ -70,6 +90,29 @@ enum Pending {
     Proposal(Proposal),
     /// Made once the proposals before it are answered.
     Change(Change),
+    /// An MCP client's edit, made from its call (in `Doc::mcp`, under
+    /// `tag`) on the design as it is once the proposals before it are
+    /// answered, and applied through the client's apply path, if the call
+    /// still waits; an edit whose model isn't in yet keeps its place
+    /// first, holding what's behind it, until it is. (A query queued
+    /// goes on to wait apart.) It isn't shown until then,
+    /// so the user's Undo passes over it ([`Doc::drop_newest`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    Client {
+        tag: u64,
+    },
+}
+
+impl Pending {
+    /// Whether it's the user's own, not an MCP client's.
+    fn users(&self) -> bool {
+        match self {
+            Pending::Proposal(proposal) => proposal.client.is_none(),
+            Pending::Change(_) => true,
+            #[cfg(not(target_arch = "wasm32"))]
+            Pending::Client { .. } => false,
+        }
+    }
 }
 
 /// An edit of a sketch to propose.
@@ -95,6 +138,109 @@ struct Proposal {
     /// Whether the edit's dimensions were made references, refused as
     /// driving, which a toast tells once it's committed.
     forced: bool,
+    /// The MCP client's call it's for, by its tag in `Doc::mcp`, if it's
+    /// a client's (`add_link`, `edit_sketch`): shown waiting, as the
+    /// user works on the sketch with it ([`Proposals::waiting`]), but not
+    /// theirs, so passed over by the user's Undo, and committed or refused through the client's
+    /// apply path, answering the call ([`Doc::client_proposal_settled`]).
+    /// Always `None` on the web, which serves no MCP.
+    client: Option<u64>,
+    /// The steps of the MCP client's sketch edit (`edit_sketch`) after
+    /// this one, which go on from its solution, committed together once
+    /// the last is accepted: one undo step.
+    steps: Option<Box<Steps>>,
+    /// The `next_id` of the sketch the user's edit was made on, as they
+    /// worked on it (committed, with what waited applied), and
+    /// [`Proposals::client_edits`] then; `None` for an MCP client's. Its
+    /// ids name what that sketch had, the user's own edits waiting
+    /// before it by the ids they were to get: if the sketch committed
+    /// has gone past it by its turn and a client edit was applied since,
+    /// that edit, queued before it, which they didn't see, took those
+    /// ids. Gone past with none, it was a relink's amend (`relink.rs`,
+    /// new ids for a link's new shape), which names nothing the user's
+    /// edit does: it's proposed on the sketch relinked.
+    made_on: Option<(u32, u64)>,
+}
+
+/// A step of the MCP client's sketch edit (`edit_sketch`): the edit,
+/// and the operations of its call it was made from, the first and the
+/// last.
+#[derive(Debug, Clone)]
+pub(crate) struct Step {
+    pub(crate) edit: SketchEdit,
+    pub(crate) ops: (usize, usize),
+    /// For a step placing a dimension, whether its value is what it
+    /// measures (none was given): made on the sketch the operations
+    /// before it leave applied, not solved, its side, and such a value,
+    /// are taken again on the solution it's proposed on
+    /// ([`remeasured`]).
+    pub(crate) measured: Option<bool>,
+}
+
+/// Where the MCP client's sketch edit in steps is ([`Proposal::steps`]).
+#[derive(Debug, Clone)]
+struct Steps {
+    /// The operations the step proposed was made from.
+    ops: (usize, usize),
+    /// The step proposed's [`Step::measured`].
+    measured: Option<bool>,
+    /// The steps after it, in order.
+    rest: VecDeque<Step>,
+    /// The operations whose dimensions were placed as references,
+    /// refused as driving.
+    referenced: Vec<usize>,
+    /// The `next_id` of the sketch the steps were made on: on another,
+    /// they'd name other items than they mean.
+    next_id: u32,
+    /// The committed sketch the first step was proposed on, once it is:
+    /// the later steps go on from its solutions, and the last commits as
+    /// one `SetSketch` replacing it, so they go on only while it's what's
+    /// committed. Anything else in the design may change meanwhile.
+    on: Option<Arc<Sketch>>,
+    /// Whether the step proposed is past the first, going on from the
+    /// solution before it (the proposal's `from`).
+    later: bool,
+}
+
+impl Steps {
+    /// Whether the sketch changed under the steps, `committed` now, the
+    /// step proposed going on `from`: a later step goes on only from the
+    /// solution of the step before, while the sketch committed is still
+    /// the one the first was proposed on (a relinking that moved its
+    /// linked geometry counts, the solutions having the old); the first
+    /// only on the sketch the steps were made on.
+    fn changed(&self, committed: &Sketch, from: &Option<(Revision, Arc<Sketch>)>) -> bool {
+        match (from, &self.on, self.later) {
+            (Some(_), Some(on), true) => **on != *committed,
+            (_, _, true) => true,
+            (_, _, false) => committed.next_id != self.next_id,
+        }
+    }
+
+    /// Whether a later step goes on from its `from` with `committed` as
+    /// it is now, whatever the revision.
+    fn going_on(&self, committed: &Sketch) -> bool {
+        self.later && self.on.as_deref().is_some_and(|on| *on == *committed)
+    }
+
+    /// The operations of the step proposed, for a refusal of it.
+    fn said(&self) -> String {
+        match self.ops {
+            (first, last) if first == last => format!("operations[{first}]"),
+            (first, last) => format!("operations[{first}] to [{last}]"),
+        }
+    }
+}
+
+/// An MCP client's sketch edit accepted: the command committing it, the
+/// degrees of freedom the sketch has then, and the operations whose
+/// dimensions were placed as references (an `edit_sketch`'s).
+#[derive(Debug, Clone)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) struct Settled {
+    pub(crate) command: Command,
+    pub(crate) freedom: usize,
+    pub(crate) referenced: Vec<usize>,
 }
 
 impl Proposals {
@@ -116,19 +262,161 @@ impl Proposals {
         self.any() && !self.slow && !self.asking
     }
 
-    /// The proposals waiting, the one in flight first.
+    /// The proposals waiting, the one in flight first: the user's, and
+    /// an MCP client's at its turn (its edit made, with the lane or its
+    /// steps going on). The user's sketch is worked on with the client's
+    /// applied, though it isn't theirs to undo: an edit they make behind
+    /// it builds on it, as their next line builds on the one waiting,
+    /// rather than naming by the ids it was to get what the client's
+    /// commit takes first.
     fn waiting(&self) -> impl Iterator<Item = &Proposal> {
         let in_flight = self.in_flight.as_ref().map(|(_, proposal)| proposal);
         let queued = self.queued.iter().filter_map(|pending| match pending {
             Pending::Proposal(proposal) => Some(proposal),
-            Pending::Change(_) => None,
+            _ => None,
         });
         in_flight.into_iter().chain(queued)
+    }
+
+    /// Whether the proposal with the lane is the user's own.
+    fn users_in_flight(&self) -> bool {
+        (self.in_flight.as_ref()).is_some_and(|(_, proposal)| proposal.client.is_none())
     }
 
     /// Has `change` wait behind the proposals waiting.
     pub(crate) fn wait(&mut self, change: Change) {
         self.queued.push_back(Pending::Change(change));
+    }
+
+    /// Notes an MCP client edit applied ([`Proposals::client_edits`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn client_applied(&mut self) {
+        // One per edit: a u64 won't run out.
+        self.client_edits = self.client_edits.wrapping_add(1);
+    }
+
+    /// Whether something of the user's own waits: a proposal, a change,
+    /// or their answer to one. What Undo and Redo go to the queue for:
+    /// an MCP client's edit waiting isn't their action, so isn't theirs
+    /// to drop.
+    pub(crate) fn users_waiting(&self) -> bool {
+        self.users_in_flight() || self.asking || self.queued.iter().any(Pending::users)
+    }
+
+    /// Has an MCP client's edit, the call waiting under `tag`, wait
+    /// behind what waits: its commands are made in its turn.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn wait_client(&mut self, tag: u64) {
+        self.queued.push_back(Pending::Client { tag });
+    }
+
+    /// Has an MCP client's edit, the call waiting under `tag`, wait
+    /// first among what's queued, behind only the proposal with the lane:
+    /// one that was at its turn already, waiting for the model.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn wait_client_first(&mut self, tag: u64) {
+        self.queued.push_front(Pending::Client { tag });
+    }
+
+    /// The tag of the MCP client's call first in the queue, if it's at
+    /// its turn: nothing with the lane, nor the user asked.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn client_first(&self) -> Option<u64> {
+        match self.queued.front() {
+            Some(Pending::Client { tag }) if self.in_flight.is_none() && !self.asking => Some(*tag),
+            _ => None,
+        }
+    }
+
+    /// Takes the MCP client's edits waiting out of the queue but those
+    /// `kept` picks by their call's tag: those whose call ended, a
+    /// client's proposal with the lane too (its answer, still to come, is
+    /// ignored). Whether any went.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn retain_clients(&mut self, kept: impl Fn(u64) -> bool) -> bool {
+        let before = self.queued.len();
+        self.queued.retain(|pending| match pending {
+            Pending::Client { tag, .. } => kept(*tag),
+            Pending::Proposal(Proposal {
+                client: Some(tag), ..
+            }) => kept(*tag),
+            _ => true,
+        });
+        let mut went = self.queued.len() != before;
+        let ended = (self.in_flight.as_ref())
+            .and_then(|(_, proposal)| proposal.client)
+            .is_some_and(|tag| !kept(tag));
+        if ended {
+            self.in_flight = None;
+            self.dropped = self.dropped.saturating_add(1);
+            went = true;
+        }
+        self.settle();
+        went
+    }
+
+    /// Has the MCP client's proposal of `edit` of the sketch `feature`,
+    /// a new link's `source` with it, for the call under `tag`, wait
+    /// first among what's queued: it's at its turn. Made in the design's
+    /// `units`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn propose_client(
+        &mut self,
+        tag: u64,
+        feature: FeatureId,
+        edit: SketchEdit,
+        source: Option<OutsideRef>,
+        units: LengthUnit,
+    ) {
+        if !self.any() {
+            self.since = Some(Instant::now());
+            self.slow = false;
+        }
+        self.queued.push_front(Pending::Proposal(Proposal {
+            feature,
+            edit,
+            from: None,
+            units,
+            source,
+            probe: None,
+            forced: false,
+            client: Some(tag),
+            steps: None,
+            made_on: None,
+        }));
+    }
+
+    /// Has the MCP client's sketch edit in `steps`, of the sketch
+    /// `feature`, for the call under `tag`, wait first among what's
+    /// queued, as [`Proposals::propose_client`]: each step proposed on
+    /// the solution of the one before, all committed together once the
+    /// last is accepted. Made on a sketch whose `next_id` was `next_id`,
+    /// in the design's `units`. Nothing for no steps.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn propose_steps(
+        &mut self,
+        tag: u64,
+        feature: FeatureId,
+        steps: Vec<Step>,
+        units: LengthUnit,
+        next_id: u32,
+    ) {
+        let mut rest: VecDeque<Step> = steps.into();
+        let Some(first) = rest.pop_front() else {
+            return;
+        };
+        self.propose_client(tag, feature, first.edit, None, units);
+        if let Some(Pending::Proposal(proposal)) = self.queued.front_mut() {
+            proposal.steps = Some(Box::new(Steps {
+                ops: first.ops,
+                measured: first.measured,
+                rest,
+                referenced: Vec::new(),
+                next_id,
+                on: None,
+                later: false,
+            }));
+        }
     }
 
     /// Stops timing the wait once nothing is waiting, or while the user
@@ -215,6 +503,88 @@ pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sket
     }
 }
 
+/// The next step of the MCP client's sketch edit in steps `proposal`,
+/// accepted on `base` as `sketch`: proposed on that, if there's one.
+fn next_step(proposal: &Proposal, base: Revision, sketch: &Arc<Sketch>) -> Option<Proposal> {
+    let mut steps = proposal.steps.clone()?;
+    let step = steps.rest.pop_front()?;
+    steps.ops = step.ops;
+    steps.measured = step.measured;
+    steps.later = true;
+    Some(Proposal {
+        edit: step.edit,
+        from: Some((base, sketch.clone())),
+        forced: false,
+        steps: Some(steps),
+        ..proposal.clone()
+    })
+}
+
+/// `edit`, a step of the MCP client's edit placing dimensions, with
+/// their sides, and their values if they're `measured`, taken on
+/// `sketch`, which it's proposed on, in `design`: the step was made on
+/// the sketch the operations before it left applied, not solved, where
+/// a point moved hadn't taken the rest with it. One that can't be
+/// measured there is left as made.
+fn remeasured(edit: &mut SketchEdit, measured: bool, sketch: &Sketch, design: &Design) {
+    let SketchEdit::Add(add) = edit else {
+        return;
+    };
+    for dimension in &mut add.dimensions {
+        if let Ok((value, side)) = sketch.held(&dimension.measure, dimension.side, design) {
+            dimension.side = side;
+            if measured {
+                dimension.value = value;
+            }
+        }
+    }
+}
+
+/// `committed` at `revision` with `proposals` applied in order, the
+/// steps of a client's edit in steps after each, in `design` but each in
+/// its units, and the sources of the links they add. One that doesn't
+/// apply (it depends on one refused) is left out; one going on from a
+/// solution at `revision` (a drop's move, a later step) is applied to
+/// that.
+fn applied<'a>(
+    committed: &Sketch,
+    proposals: impl Iterator<Item = &'a Proposal>,
+    revision: Revision,
+    design: &Design,
+) -> (Sketch, Vec<(Id, OutsideRef)>) {
+    let mut sketch = committed.clone();
+    let mut sources = Vec::new();
+    for proposal in proposals {
+        let design = Design {
+            units: proposal.units,
+            ..*design
+        };
+        let on = match &proposal.from {
+            Some((at, from))
+                if *at == revision
+                    || (proposal.steps.as_ref()).is_some_and(|steps| steps.going_on(committed)) =>
+            {
+                from
+            }
+            _ => &sketch,
+        };
+        if let Ok(next) = proposal.edit.apply(on, &design) {
+            // An added link goes last, with the highest id.
+            if let (Some(source), Some(link)) = (proposal.source, next.links.last()) {
+                sources.push((link.id, source));
+            }
+            sketch = next;
+        }
+        let rest = proposal.steps.iter().flat_map(|steps| &steps.rest);
+        for step in rest {
+            if let Ok(next) = step.edit.apply(&sketch, &design) {
+                sketch = next;
+            }
+        }
+    }
+    (sketch, sources)
+}
+
 /// What the solver said of a proposal.
 enum Answer {
     Accepted(Arc<Sketch>, Arc<Analysis>),
@@ -226,6 +596,19 @@ impl Doc {
     /// Whether edits are waiting on the solver.
     pub(crate) fn proposing(&self) -> bool {
         self.proposals.any()
+    }
+
+    /// Whether something of the user's own waits on the solver
+    /// ([`Proposals::users_waiting`]): what the user's other changes
+    /// wait behind, and what holds the panels' OK. An MCP client's edit
+    /// waiting alone holds neither: it isn't applied yet, and is made
+    /// at its turn on the design as it is then, so the user's change
+    /// made now simply comes before it in the undo history, as it came
+    /// first; a client's sketch proposal with the lane is proposed again
+    /// on the revision the change made, or refused if its sketch went
+    /// or changed under its steps.
+    pub(crate) fn users_proposing(&self) -> bool {
+        self.proposals.users_waiting()
     }
 
     /// Proposes `edit` of the sketch being edited, if it can be changed:
@@ -273,6 +656,7 @@ impl Doc {
         let Some(sketch) = self.editable_sketch() else {
             return false;
         };
+        let made_on = sketch.next_id;
         if let Err(why) = edit.apply(sketch, &self.editor.document().design()) {
             self.refuse(why);
             return false;
@@ -297,6 +681,9 @@ impl Doc {
             source,
             probe,
             forced: false,
+            client: None,
+            steps: None,
+            made_on: Some((made_on, proposals.client_edits)),
         }));
         self.send_proposal();
         self.refresh_waiting();
@@ -328,21 +715,74 @@ impl Doc {
                     }
                     continue;
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                Pending::Client { tag } => {
+                    // An edit waiting for the model keeps its place, and
+                    // what's behind it waits.
+                    if self.client_queued_turn(tag) {
+                        self.proposals.queued.push_front(Pending::Client { tag });
+                        break;
+                    }
+                    continue;
+                }
                 Pending::Proposal(proposal) => proposal,
             };
+            let revision = self.editor.revision();
+            let sketch = match sketch_of(self.editor.document(), proposal.feature) {
+                None => Err(SKETCH_GONE),
+                Some(committed)
+                    if (proposal.steps.as_ref())
+                        .is_some_and(|steps| steps.changed(committed, &proposal.from)) =>
+                {
+                    Err(SKETCH_CHANGED)
+                }
+                Some(committed)
+                    if proposal.made_on.is_some_and(|(made, edits)| {
+                        committed.next_id > made && self.proposals.client_edits != edits
+                    }) =>
+                {
+                    Err(TAKEN_BY_CLIENT)
+                }
+                Some(committed) => Ok(match &proposal.from {
+                    Some((at, from))
+                        if *at == revision
+                            || (proposal.steps.as_ref())
+                                .is_some_and(|steps| steps.going_on(committed)) =>
+                    {
+                        from.clone()
+                    }
+                    _ => Arc::new(committed.clone()),
+                }),
+            };
+            let sketch = match sketch {
+                Ok(sketch) => sketch,
+                // The client's call says so; the user's sketch is gone
+                // from under them, which they see.
+                Err(why) => {
+                    if let Some(tag) = proposal.client {
+                        self.client_proposal_settled(tag, Err(why.to_owned()));
+                    } else if why == TAKEN_BY_CLIENT {
+                        self.refused(proposal.feature, Refusal::Failed(why.to_owned()));
+                    }
+                    continue;
+                }
+            };
+            let mut proposal = proposal;
+            if let Some(steps) = proposal.steps.as_mut().filter(|steps| !steps.later) {
+                steps.on = Some(sketch.clone());
+            }
+            if let Some(measured) = proposal.steps.as_ref().and_then(|steps| steps.measured) {
+                let design = Design {
+                    units: proposal.units,
+                    ..self.editor.document().design()
+                };
+                remeasured(&mut proposal.edit, measured, &sketch, &design);
+            }
             let Some(solver) = &mut self.solver else {
                 self.proposals
                     .queued
                     .push_front(Pending::Proposal(proposal));
                 break;
-            };
-            let revision = self.editor.revision();
-            let Some(committed) = sketch_of(self.editor.document(), proposal.feature) else {
-                continue;
-            };
-            let sketch = match &proposal.from {
-                Some((at, from)) if *at == revision => from.clone(),
-                _ => Arc::new(committed.clone()),
             };
             solver.send(Request::Propose {
                 base: revision,
@@ -358,17 +798,21 @@ impl Doc {
         self.proposals.settle();
     }
 
-    /// Takes back the newest of what waits, as undo does: the last change
-    /// or proposal queued, or else the proposal with the lane, which is
-    /// answered still, and ignored. Those before it don't depend on it.
-    /// The question a change from the queue asks counts as newest of
-    /// all, after what waits behind it: undoing it cancels it.
+    /// Takes back the newest of the user's own that waits, as undo does:
+    /// the last change or proposal of theirs queued, or else the question
+    /// a change from the queue asks (cancelling it), or else the proposal
+    /// with the lane, which is answered still, and ignored. Those before
+    /// it don't depend on it. An MCP client's edit waiting is passed
+    /// over: it's not the user's last action, and it's applied in its
+    /// turn.
     pub(crate) fn drop_newest(&mut self) {
         let proposals = &mut self.proposals;
-        if proposals.queued.pop_back().is_none() {
+        let newest = proposals.queued.iter().rposition(Pending::users);
+        if newest.and_then(|at| proposals.queued.remove(at)).is_none() {
             if mem::take(&mut proposals.asking) {
                 self.deleting = None;
-            } else if proposals.in_flight.take().is_some() {
+            } else if proposals.users_in_flight() {
+                proposals.in_flight = None;
                 proposals.dropped = proposals.dropped.saturating_add(1);
             }
         }
@@ -390,11 +834,14 @@ impl Doc {
         }
         self.proposals.settle();
         self.refresh_waiting();
+        // The client's edits dropped with them: their calls say so.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.mcp_end_queued("The edits waiting on the design were dropped");
     }
 
     /// Takes `response`, the solver's answer for the document: commits an
-    /// accepted proposal, shows why one was refused, shows a drag's step
-    /// and keeps an analysis.
+    /// accepted proposal, shows why one was refused, shows a drag's step,
+    /// keeps an analysis, and answers a client's `sketch` call with its.
     pub(crate) fn solved(&mut self, response: Response) {
         match response {
             Response::Accepted {
@@ -420,7 +867,11 @@ impl Doc {
                 tag: Tag::Drag(_),
                 error,
             } => log::error!("The solver failed on a drag: {error}"),
-            Response::Analysed { revision, analysis } => self.analysed(revision, Some(analysis)),
+            Response::Analysed {
+                query: None,
+                revision,
+                analysis,
+            } => self.analysed(revision, Some(analysis)),
             Response::Failed {
                 tag: Tag::Analyse(revision),
                 error,
@@ -428,8 +879,27 @@ impl Doc {
                 log::error!("The solver failed to analyse a sketch: {error}");
                 self.analysed(revision, None);
             }
+            // A client's analysis, for an MCP `sketch` call: natively only.
+            Response::Analysed {
+                query: Some(id),
+                analysis,
+                ..
+            } => self.client_analysed(id, Ok(&analysis)),
+            Response::Failed {
+                tag: Tag::Query(id),
+                error,
+            } => self.client_analysed(id, Err(error)),
         }
         self.sync();
+    }
+
+    /// Takes the solve lane's answer to the client's analysis `id`, or
+    /// why it failed: an MCP `sketch` call's, natively only.
+    fn client_analysed(&mut self, id: u64, analysis: Result<&Analysis, String>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.sketch_analysed(id, analysis);
+        #[cfg(target_arch = "wasm32")]
+        let _ = (id, analysis);
     }
 
     /// Takes the `answer` to the proposal on `base` with the lane, unless
@@ -477,13 +947,49 @@ impl Doc {
     fn proposal_settled(&mut self, base: Revision, proposal: Proposal, answer: Answer) {
         let feature = proposal.feature;
         if let Answer::Rejected(Rejected::Driving { .. }) = &answer
-            && let Some(reference) = self.as_reference(&proposal)
+            && let Some(mut reference) = self.as_reference(&proposal)
         {
             // A dimension placed that over-constrains the sketch is placed
-            // as a reference instead, as the refusal would suggest.
+            // as a reference instead, as the refusal would suggest; the
+            // MCP client's call says which operations.
+            if let Some(steps) = &mut reference.steps {
+                let (first, last) = steps.ops;
+                steps.referenced.extend(first..=last);
+            }
             self.proposals
                 .queued
                 .push_front(Pending::Proposal(reference));
+            self.send_proposal();
+            return;
+        }
+        // The next step of a client's edit in steps goes on from this
+        // one's solution.
+        if let Answer::Accepted(sketch, _) = &answer
+            && let Some(next) = next_step(&proposal, base, sketch)
+        {
+            self.proposals.queued.push_front(Pending::Proposal(next));
+            self.send_proposal();
+            return;
+        }
+        // The client's commits through its apply path, or answers its call
+        // why not: never the session's refusal, the banner or a toast.
+        if let Some(tag) = proposal.client {
+            let said = |why: String| match &proposal.steps {
+                Some(steps) => format!("{}: {why}", steps.said()),
+                None => why,
+            };
+            let settled = match answer {
+                Answer::Accepted(sketch, analysis) => Ok(Settled {
+                    referenced: (proposal.steps.as_ref())
+                        .map(|steps| steps.referenced.clone())
+                        .unwrap_or_default(),
+                    command: self.committing(&proposal, sketch),
+                    freedom: analysis.freedom,
+                }),
+                Answer::Rejected(why) => Err(said(why.to_string())),
+                Answer::Failed(error) => Err(said(format!("the solver failed on it: {error}"))),
+            };
+            self.client_proposal_settled(tag, settled);
             self.send_proposal();
             return;
         }
@@ -495,33 +1001,7 @@ impl Doc {
                             .into(),
                     );
                 }
-                let mut sketch = Arc::unwrap_or_clone(sketch);
-                // Read in other units than the design's now: its values
-                // keep what they came to, as setting the units does.
-                let design = self.editor.document().design();
-                if proposal.units != design.units {
-                    sketch.pin_units(&Design {
-                        units: proposal.units,
-                        ..design
-                    });
-                }
-                // A new link is committed with what it comes from: the
-                // link the committed sketch hasn't.
-                let committed = sketch_of(self.editor.document(), feature);
-                let link = (sketch.links.iter())
-                    .map(|link| link.id)
-                    .find(|&id| committed.is_some_and(|committed| committed.link(id).is_none()));
-                match (proposal.source, link) {
-                    (Some(source), Some(link)) => self.apply(Command::AddLink {
-                        feature,
-                        sketch: Box::new(sketch),
-                        source: LinkSource { link, source },
-                    }),
-                    _ => self.apply(Command::SetSketch {
-                        feature,
-                        sketch: Box::new(sketch),
-                    }),
-                }
+                self.apply(self.committing(&proposal, sketch));
                 // Not committed (read-only since, say), the analysis isn't
                 // of what's committed.
                 let revision = self.editor.revision();
@@ -536,14 +1016,82 @@ impl Doc {
             Answer::Failed(error) => Some(Refusal::Failed(error)),
         };
         if let Some(refusal) = refusal {
-            match self.sketch.as_mut().filter(|s| s.feature == feature) {
-                Some(session) => session.refusal = Some(refusal),
-                // Its sketch was left, so its status bar doesn't say: the
-                // banner does, or the edit would go without a word.
-                None => self.refused_edit = Some((feature, refusal)),
-            }
+            self.refused(feature, refusal);
         }
         self.send_proposal();
+    }
+
+    /// Says why the user's edit of the sketch `feature` wasn't made: in
+    /// the sketch's status bar, or the banner if it was left.
+    fn refused(&mut self, feature: FeatureId, refusal: Refusal) {
+        match self.sketch.as_mut().filter(|s| s.feature == feature) {
+            Some(session) => session.refusal = Some(refusal),
+            // Its sketch was left, so its status bar doesn't say: the
+            // banner does, or the edit would go without a word.
+            None => self.refused_edit = Some((feature, refusal)),
+        }
+    }
+
+    /// The command committing `proposal`, accepted as `sketch`: a new
+    /// link with what it comes from ([`Command::AddLink`]), else
+    /// [`Command::SetSketch`]. The user's and the MCP client's share it.
+    fn committing(&self, proposal: &Proposal, sketch: Arc<Sketch>) -> Command {
+        let feature = proposal.feature;
+        let mut sketch = Arc::unwrap_or_clone(sketch);
+        // Read in other units than the design's now: its values keep what
+        // they came to, as setting the units does.
+        let design = self.editor.document().design();
+        if proposal.units != design.units {
+            sketch.pin_units(&Design {
+                units: proposal.units,
+                ..design
+            });
+        }
+        // A new link is committed with what it comes from: the link the
+        // committed sketch hasn't.
+        let committed = sketch_of(self.editor.document(), feature);
+        let link = (sketch.links.iter())
+            .map(|link| link.id)
+            .find(|&id| committed.is_some_and(|committed| committed.link(id).is_none()));
+        match (proposal.source, link) {
+            (Some(source), Some(link)) => Command::AddLink {
+                feature,
+                sketch: Box::new(sketch),
+                source: LinkSource { link, source },
+            },
+            _ => Command::SetSketch {
+                feature,
+                sketch: Box::new(sketch),
+            },
+        }
+    }
+
+    /// Answers the MCP client's proposal for the call under `tag`:
+    /// `settled` the command committing it, or why it wasn't accepted.
+    /// Natively only (the web has no client, and no client proposals).
+    fn client_proposal_settled(&mut self, tag: u64, settled: Result<Settled, String>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.client_proposed(tag, settled);
+        #[cfg(target_arch = "wasm32")]
+        let _ = (tag, settled);
+    }
+
+    /// The sketch `feature` as committed, with every edit of it waiting
+    /// on the solver applied (the user's and the MCP client's, those
+    /// that apply), as an edit queued behind them will find it, near
+    /// enough: before solving.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn sketch_as_queued(&self, feature: FeatureId) -> Option<Sketch> {
+        let document = self.editor.document();
+        let committed = sketch_of(document, feature)?;
+        let proposals = (self.proposals.waiting()).filter(|p| p.feature == feature);
+        let (sketch, _) = applied(
+            committed,
+            proposals,
+            self.editor.revision(),
+            &document.design(),
+        );
+        Some(sketch)
     }
 
     /// `proposal` placing driving dimensions alone, with them placed as
@@ -616,6 +1164,7 @@ impl Doc {
             return;
         };
         solver.send(Request::Analyse {
+            query: None,
             revision,
             sketch: Arc::new(sketch.clone()),
             units: self.editor.document().units(),
@@ -671,6 +1220,9 @@ impl Doc {
         }
         proposals.dropped = 0;
         proposals.analysing = None;
+        // The client's analyses went with the old lane: their calls say so.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.mcp_end_analyses();
     }
 
     /// A new drag session's id.
@@ -699,26 +1251,7 @@ impl Doc {
                 .filter(|proposal| proposal.feature == feature)
                 .peekable();
             edits.peek()?;
-            let mut sketch = committed.clone();
-            let mut sources = Vec::new();
-            for proposal in edits {
-                // A drop's move goes on from the drag's last solution.
-                let on = match &proposal.from {
-                    Some((at, from)) if *at == revision => from,
-                    _ => &sketch,
-                };
-                let design = Design {
-                    units: proposal.units,
-                    ..design
-                };
-                if let Ok(next) = proposal.edit.apply(on, &design) {
-                    // An added link goes last, with the highest id.
-                    if let (Some(source), Some(link)) = (proposal.source, next.links.last()) {
-                        sources.push((link.id, source));
-                    }
-                    sketch = next;
-                }
-            }
+            let (sketch, sources) = applied(committed, edits, revision, &design);
             let ids = sketch.points.iter().map(|point| point.id);
             let ids = ids
                 .chain(sketch.curves.iter().map(|entry| entry.id))

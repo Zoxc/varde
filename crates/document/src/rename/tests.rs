@@ -85,3 +85,40 @@ fn numbers_are_stripped_only_when_they_are_numbers() {
     assert_eq!(strip_number("A ()"), "A ()");
     assert_eq!(strip_number("A(1)"), "A(1)");
 }
+
+/// A default name skips one a feature or body of the other sort has:
+/// a body named "Extrude 2" makes the next extrude "Extrude 3", a
+/// feature named "Body 2" the next new body "Body 3".
+#[test]
+fn a_default_name_skips_the_names_of_either_sort() {
+    let (mut editor, sketch, extrude, body) = named();
+    rename(&mut editor, body, "Extrude 2");
+    rename(&mut editor, sketch, "Body 2");
+    let Named::Feature(extrude) = extrude else {
+        unreachable!()
+    };
+    let kind = editor.document().feature(extrude).unwrap().kind.clone();
+    let add = editor.document().add_feature(kind);
+    let Command::AddFeature { name, .. } = &add else {
+        unreachable!()
+    };
+    assert_eq!(name, "Extrude 3");
+    let before = editor.document().bodies().len();
+    editor.apply(add).unwrap();
+    let bodies = editor.document().bodies();
+    assert_eq!(bodies.len(), before + 1);
+    assert_eq!(bodies.last().unwrap().name, "Body 3");
+}
+
+/// Line breaks and tabs in a name asked for become spaces, other
+/// controls and the bidi marks that would turn the text around them
+/// go.
+#[test]
+fn a_name_drops_controls_and_bidi_marks() {
+    let (editor, ..) = named();
+    let given = (editor.document())
+        .new_name("A\u{202E}rm\nleft\t\u{2066}x\u{7}")
+        .unwrap();
+    assert_eq!(given.name, "Arm left x");
+    assert!(editor.document().new_name("\u{202E}\u{200F}").is_none());
+}

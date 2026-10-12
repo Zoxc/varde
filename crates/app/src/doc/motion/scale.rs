@@ -22,7 +22,7 @@ use varde_view::{
 };
 
 use super::align::{Mark, Taken, point_at, point_of};
-use super::{Doc, MotionSession, OUT_OF_DATE, unnamed};
+use super::{Doc, MotionSession, OUT_OF_DATE, merged_in, unnamed};
 use crate::doc::regions::TypedText;
 
 /// A scale's point and edge as picked, and where they were picked.
@@ -223,7 +223,7 @@ impl MotionSession {
     }
 
     /// Sets how it scales: an edge length with no edge picks one next.
-    pub(super) fn scale_mode(&mut self, mode: ScaleMode) {
+    pub(crate) fn scale_mode(&mut self, mode: ScaleMode) {
         self.scale.mode = mode;
         if mode == ScaleMode::EdgeLength && self.scale.edge.is_none() {
             self.picking = MotionPick::Edge;
@@ -233,7 +233,7 @@ impl MotionSession {
     }
 
     /// Takes the origin as its point, while the point is picked.
-    pub(super) fn scale_origin(&mut self) {
+    pub(crate) fn scale_origin(&mut self) {
         if self.picking != MotionPick::Point {
             return;
         }
@@ -248,32 +248,41 @@ impl MotionSession {
 const NOT_AN_EDGE: &str = "Only an edge can be scaled to a length";
 
 impl Doc {
-    /// `pick` of the model shown as the point of the scale being set up,
+    /// `pick` of `index`'s model as the point of the scale `session`,
     /// named as the feature stores it, as an align's point is: a corner,
     /// a straight edge's middle or a round edge's centre, on any body
     /// made before the scale. Refused, why, if not.
-    pub(super) fn scale_point_of(&self, pick: Pick) -> Result<PointRef, Cow<'static, str>> {
-        let naming = self.motion_naming().ok_or("Nothing is set up")?;
+    pub(super) fn scale_point_in(
+        &self,
+        session: &MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Result<PointRef, Cow<'static, str>> {
+        let naming = self.naming_in(session.feature, self.feed.marks_of(index));
         let refused = |why: Unnamed, what: &str| unnamed(why, what, MotionKind::Scale);
-        point_of(self.feed.pick_index(), &naming, pick, &refused)
+        point_of(index, &naming, pick, &refused)
     }
 
-    /// `pick` of the model shown as the edge of the scale being set up:
+    /// `pick` of `index`'s model as the edge of the scale `session`:
     /// any edge, named as of the feature on the body holding it there,
     /// which must be one it scales (picked to scale if it scales none
     /// yet). Refused, why, if not.
-    pub(super) fn scale_edge_of(&self, pick: Pick) -> Result<EdgeRef, Cow<'static, str>> {
-        let session = self.motion.as_ref().ok_or("Nothing is set up")?;
+    pub(super) fn scale_edge_in(
+        &self,
+        session: &MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Result<EdgeRef, Cow<'static, str>> {
         let Picked::Edge(edge) = pick.target else {
             return Err(NOT_AN_EDGE.into());
         };
-        let naming = self.motion_naming().ok_or("Nothing is set up")?;
-        let index = self.feed.pick_index();
+        let marks = self.feed.marks_of(index);
+        let naming = self.naming_in(session.feature, marks);
         let named = naming
             .edge_ref(index, edge, pick.at)
             .map_err(|why| unnamed(why, "edge", MotionKind::Scale))?;
         let document = self.editor.document();
-        let merged = self.feed.merged_before(document, session.feature);
+        let merged = merged_in(document, session.feature, marks);
         let held = merged.holder(named.body).unwrap_or(named.body);
         if !session.bodies.is_empty() && session.bodies.binary_search(&held).is_err() {
             return Err("Pick an edge of a body it scales".into());
@@ -293,15 +302,24 @@ impl Doc {
         if !self.feed.answers_request() || self.feed.predates_replacement() {
             return Err(OUT_OF_DATE.into());
         }
-        let point = self.scale_point_of(pick)?;
-        let index = self.feed.pick_index();
+        (self.on_session(|doc, session| doc.pick_scale_point(session, doc.feed.pick_index(), pick)))
+            .unwrap_or(Ok(()))
+    }
+
+    /// Takes `pick` of `index`'s model as the point of `session`, as
+    /// [`Doc::scale_point`] takes a click: the MCP client's keys are
+    /// taken on the committed model so.
+    pub(crate) fn pick_scale_point(
+        &self,
+        session: &mut MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Result<(), Cow<'static, str>> {
+        let point = self.scale_point_in(session, index, pick)?;
         let mark = Mark {
             model: index.model(),
             target: None,
             at: point_at(index, pick),
-        };
-        let Some(session) = &mut self.motion else {
-            return Ok(());
         };
         session.scale.about = point;
         session.scale.marks[0] = Some(mark);
@@ -317,11 +335,20 @@ impl Doc {
         if !self.feed.answers_request() || self.feed.predates_replacement() {
             return Err(OUT_OF_DATE.into());
         }
-        let edge = self.scale_edge_of(pick)?;
-        let model = self.feed.pick_index().model();
-        let Some(session) = &mut self.motion else {
-            return Ok(());
-        };
+        (self.on_session(|doc, session| doc.pick_scale_edge(session, doc.feed.pick_index(), pick)))
+            .unwrap_or(Ok(()))
+    }
+
+    /// Takes `pick` of `index`'s model as the edge of `session`, as
+    /// [`Doc::scale_edge`] takes a click.
+    pub(crate) fn pick_scale_edge(
+        &self,
+        session: &mut MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Result<(), Cow<'static, str>> {
+        let edge = self.scale_edge_in(session, index, pick)?;
+        let model = index.model();
         if session.bodies.is_empty() {
             session.bodies = vec![edge.body];
         }

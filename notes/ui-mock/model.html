@@ -52,6 +52,35 @@
   to open the settings (the gear, or Ctrl+,),
   /persp for a perspective view, /projmenu to open the status bar's menu,
   /nomouse to hide the mouse hints.
+  The MCP server (mcp.js, notes/AgentSupport.md), desktop only: off by default,
+  turned on in the settings' MCP tab. While it's on, a toggle in the
+  toolbar opens the MCP panel on the right: the client's calls, newest
+  last, each edit applied with what regeneration made of it (a failing one
+  stays applied), Show in Timeline, Revert to here or to before it (one
+  undoable change, asking first when later changes would go); Start, Stop,
+  Disconnect, and ✕ only hides. While a client is connected, a chip in the
+  status bar opens the panel.
+  /mcp: serving, Claude Code connected, its session: the queries (the
+  design, a feature, a sketch, a body's faces, a measure, a picture),
+  then edits, each result naming what it made: a parameter, a sketch
+  drawn, an extrude, the user renaming Hole 2, a chamfer, a revolve, a
+  setting changed, a body hidden, a fillet applied that fails, a delete
+  refused, a body and a feature deleted.
+  /mcp-panel: with the panel open. /mcp-stopped: the panel open, the server
+  stopped. /mcp-revert: with /mcp, the confirm for Revert to before the
+  extrude. /mcp-reverted: that done, the client's next call told of it.
+  /mcp-busy: switched on, the port in use: said in the Port row and on Start.
+  /mcp-ctx: the panel with the extrude's context menu open (a right-click
+  on a call: Show in Timeline, Revert). A call's result is in its tooltip.
+  /mcp-ask: Claude Code wants to edit while the sketch being edited has
+  changes: apply yours and close it, or keep editing (its call refused).
+  /mcp-ask-cancelled: the same past its 30 s: the call returned, not
+  applied, and the popup says the edit was cancelled.
+  /mcp-ask-refused: Apply yours tried, the open panel's OK refused: the
+  popup says why and stays, the call still waiting.
+  /tab-mcp: the settings open on the MCP tab.
+  With no MCP flag the bracket opens as /mcp/mcp-panel, so there's
+  something to see; /nomcp starts as the app does, the server off.
 -->
 <link rel="stylesheet" href="mock.css">
 <style>
@@ -245,6 +274,7 @@ svg.i .dot { fill: currentColor; stroke: none; }
   <div class="tip" id="tip" hidden></div>
 </div>
 <script src="mock.js"></script>
+<script src="mcp.js"></script>
 <script>
 // ---------------------------------------------------------------- solid operations
 // Revolve, combine, move, mirror, the patterns, fillet, chamfer and shell. Each

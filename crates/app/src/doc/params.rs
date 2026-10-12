@@ -167,6 +167,25 @@ impl Doc {
         }
     }
 
+    /// The field typed in last, while its draft hasn't been committed.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "on the web, MCP edits are none")
+    )]
+    pub(crate) fn param_typing(&self) -> Option<(usize, ParamField)> {
+        self.params.typing
+    }
+
+    /// Why the document refused the draft of `index`'s `field`, while
+    /// it's kept so.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "on the web, MCP edits are none")
+    )]
+    pub(crate) fn param_refusal(&self, index: usize, field: ParamField) -> Option<&str> {
+        self.params.draft(index, field)?.error.as_deref()
+    }
+
     /// Commits the draft of the field typed in last, if there is one: as
     /// it's left.
     pub(crate) fn commit_param_typing(&mut self) {
@@ -187,23 +206,7 @@ impl Doc {
         let Some(draft) = self.params.draft(index, field) else {
             return;
         };
-        let Some(param) = self.editor.document().params().get(index) else {
-            return;
-        };
-        let text = draft.text.trim();
-        let command = match field {
-            ParamField::Name if text == param.name => None,
-            ParamField::Expression if text == param.text => None,
-            ParamField::Name => Some(Command::RenameParam {
-                index,
-                name: text.to_owned(),
-            }),
-            ParamField::Expression => Some(Command::SetParam {
-                index,
-                text: text.to_owned(),
-            }),
-        };
-        let Some(command) = command else {
+        let Some(command) = param_command(self.editor.document(), index, field, &draft.text) else {
             self.params.drop_draft(index, field);
             return;
         };
@@ -219,7 +222,7 @@ impl Doc {
             self.param_answered(&command, Err(why));
             return;
         }
-        if self.proposing() {
+        if self.users_proposing() {
             self.change(Change::Param(command));
             return;
         }
@@ -354,9 +357,34 @@ impl Doc {
     }
 }
 
+/// The command setting `field` of `document`'s parameter `index` to
+/// `text`, trimmed: `None` if it's that already or there's no such
+/// parameter. What the popup commits, and the MCP parameter tools.
+pub(crate) fn param_command(
+    document: &Document,
+    index: usize,
+    field: ParamField,
+    text: &str,
+) -> Option<Command> {
+    let param = document.params().get(index)?;
+    let text = text.trim();
+    match field {
+        ParamField::Name if text == param.name => None,
+        ParamField::Expression if text == param.text => None,
+        ParamField::Name => Some(Command::RenameParam {
+            index,
+            name: text.to_owned(),
+        }),
+        ParamField::Expression => Some(Command::SetParam {
+            index,
+            text: text.to_owned(),
+        }),
+    }
+}
+
 /// What uses the parameter `name` in `document`, by name: features, then
 /// other parameters.
-fn uses(document: &Document, name: &str) -> Vec<String> {
+pub(crate) fn uses(document: &Document, name: &str) -> Vec<String> {
     let features = (document.param_uses(name).into_iter())
         .filter_map(|id| document.feature(id))
         .map(|feature| feature.name.clone());
@@ -367,7 +395,7 @@ fn uses(document: &Document, name: &str) -> Vec<String> {
 }
 
 /// Why `document` refused a parameter's command, as the popup says it.
-fn refusal(document: &Document, error: &EditError) -> String {
+pub(crate) fn refusal(document: &Document, error: &EditError) -> String {
     match error {
         EditError::Value(ValueOf::Feature(id), why) => {
             let name = document

@@ -175,7 +175,7 @@ pub fn face_kind(summary: &Summary) -> &'static str {
 }
 
 /// What kind of edge `form` is.
-fn edge_kind(form: &EdgeForm) -> &'static str {
+pub fn edge_kind(form: &EdgeForm) -> &'static str {
     match form {
         EdgeForm::Line { .. } => "Straight edge",
         EdgeForm::Circle { .. } => "Circular edge",

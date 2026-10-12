@@ -30,7 +30,7 @@ use varde_view::{
     Naming, Pick, PickIndex, Picked, Snapped, Unnamed, align_info, direction_name, point_name,
 };
 
-use super::{Doc, Merges, MotionSession, OUT_OF_DATE, unnamed};
+use super::{Doc, Merges, MotionSession, OUT_OF_DATE, merged_in, unnamed};
 
 /// Why a pick can't be an align's point or direction, in the words the
 /// status bar shows.
@@ -258,7 +258,7 @@ impl AlignSetup {
 
     /// Takes `slot` out; a point, its rim's axis with it
     /// ([`Side::rim_axis`]).
-    pub(super) fn clear(&mut self, slot: AlignSlot) {
+    pub(crate) fn clear(&mut self, slot: AlignSlot) {
         if slot.role == AlignRole::Point && self.side(slot.side).rim_axis() {
             self.clear(AlignSlot::new(slot.side, AlignRole::Primary));
         }
@@ -379,7 +379,7 @@ impl AlignSetup {
     /// the target's still to pick, then a second direction where the
     /// other side has one; else nothing (another field clicked picks
     /// again).
-    pub(super) fn next(&self) -> MotionPick {
+    pub(crate) fn next(&self) -> MotionPick {
         use AlignRole::{Point, Primary, Secondary};
         use AlignSide::{Moved, Target};
         let order = [
@@ -581,6 +581,30 @@ impl MotionSession {
         self.align.merged_into(body, merges);
     }
 
+    /// Takes the origin, or the origin axis `axis`, as the target's
+    /// `slot`, the clicks going on to the next reference to pick: whether
+    /// it could be (only the target's, a point the origin and a
+    /// direction an axis).
+    pub(crate) fn align_origin(
+        &mut self,
+        slot: AlignSlot,
+        axis: Option<varde_document::Axis3>,
+    ) -> bool {
+        if slot.side != AlignSide::Target {
+            return false;
+        }
+        let taken = match (slot.role, axis) {
+            (AlignRole::Point, None) => Taken::Point(PointRef::Origin),
+            (AlignRole::Primary | AlignRole::Secondary, Some(axis)) => {
+                Taken::Direction(DirRef::Origin(axis))
+            }
+            _ => return false,
+        };
+        self.align.set(slot, taken, None);
+        self.picking = self.align.next();
+        true
+    }
+
     /// Notes what `document` no longer takes at feature `index`.
     pub(super) fn prune_align(&mut self, document: &Document, index: usize) {
         self.align.prune(document, index);
@@ -622,7 +646,7 @@ impl Doc {
     }
 
     /// Takes `pick` as `slot` of the align being set up
-    /// ([`Doc::align_reference`]): a round edge's centre also as its
+    /// ([`Doc::align_reference_in`]): a round edge's centre also as its
     /// side's direction while it has none; the body it's on as the one
     /// moved if none is yet. Clicks go on to the next reference to pick.
     pub(super) fn align_pick(
@@ -633,8 +657,21 @@ impl Doc {
         if !self.feed.answers_request() || self.feed.predates_replacement() {
             return Err(OUT_OF_DATE.into());
         }
-        let taken = self.align_reference(slot, pick)?;
-        let index = self.feed.pick_index();
+        (self.on_session(|doc, session| doc.pick_align(session, doc.feed.pick_index(), slot, pick)))
+            .unwrap_or(Ok(()))
+    }
+
+    /// Takes `pick` of `index`'s model as `slot` of `session`, as
+    /// [`Doc::align_pick`] takes a click: the MCP client's keys are taken
+    /// on the committed model so.
+    pub(crate) fn pick_align(
+        &self,
+        session: &mut MotionSession,
+        index: &PickIndex,
+        slot: AlignSlot,
+        pick: Pick,
+    ) -> Result<(), Cow<'static, str>> {
+        let taken = self.align_reference_in(session, index, slot, pick)?;
         let model = index.model();
         let mark = match slot.role {
             AlignRole::Point => Mark {
@@ -648,16 +685,13 @@ impl Doc {
                 at: None,
             },
         };
-        let feature = self.motion.as_ref().and_then(|session| session.feature);
-        let merges = (self.feed).merged_before(self.editor.document(), feature);
+        let marks = self.feed.marks_of(index);
+        let merges = merged_in(self.editor.document(), session.feature, marks);
         // A point's edge is the one clicked: a snap point is only ever
         // of the edge it's on ([`PickIndex::snaps`]).
         let rim = match (taken, pick.target) {
             (Taken::Point(PointRef::Centre(edge)), Picked::Edge(shown)) => Some((edge, shown)),
             _ => None,
-        };
-        let Some(session) = &mut self.motion else {
-            return Ok(());
         };
         if slot.side == AlignSide::Moved
             && session.bodies.is_empty()
@@ -689,24 +723,12 @@ impl Doc {
         let Some(session) = &mut self.motion else {
             return;
         };
-        let MotionPick::Align(slot) = session.picking else {
-            return;
-        };
-        if slot.side != AlignSide::Target {
-            return;
+        if let MotionPick::Align(slot) = session.picking {
+            session.align_origin(slot, axis);
         }
-        let taken = match (slot.role, axis) {
-            (AlignRole::Point, None) => Taken::Point(PointRef::Origin),
-            (AlignRole::Primary | AlignRole::Secondary, Some(axis)) => {
-                Taken::Direction(DirRef::Origin(axis))
-            }
-            _ => return,
-        };
-        session.align.set(slot, taken, None);
-        session.picking = session.align.next();
     }
 
-    /// `pick` of the model shown as `slot` of the align being set up,
+    /// `pick` of `index`'s model as `slot` of the align `session`,
     /// named as the feature stores it ([`Naming`], the history stopped at
     /// the feature): for a point, a corner, a straight edge's middle or a
     /// round edge's centre (its snap point, or the edge or vertex
@@ -716,15 +738,16 @@ impl Doc {
     /// named on it: a face made on a body a join or combine merged into
     /// it before the align is on it there. The target's must be on
     /// another body than the moved one there. Refused, why, if not.
-    pub(super) fn align_reference(
+    pub(super) fn align_reference_in(
         &self,
+        session: &MotionSession,
+        index: &PickIndex,
         slot: AlignSlot,
         pick: Pick,
     ) -> Result<Taken, Cow<'static, str>> {
-        let session = self.motion.as_ref().ok_or("Nothing is set up")?;
-        let index = self.feed.pick_index();
         let document = self.editor.document();
-        let naming = self.motion_naming().ok_or("Nothing is set up")?;
+        let marks = self.feed.marks_of(index);
+        let naming = self.naming_in(session.feature, marks);
         let refused = |why: Unnamed, what: &str| unnamed(why, what, session.kind);
         let taken = match slot.role {
             AlignRole::Point => Taken::Point(point_of(index, &naming, pick, &refused)?),
@@ -735,7 +758,7 @@ impl Doc {
         let Some(body) = taken.body() else {
             return Ok(taken);
         };
-        let merged = self.feed.merged_before(document, session.feature);
+        let merged = merged_in(document, session.feature, marks);
         let held = merged.holder(body).unwrap_or(body);
         let moved = session.bodies.first().copied();
         match slot.side {
@@ -827,7 +850,7 @@ fn marks_of(datums: &AlignDatums) -> [AlignMark; 2] {
     })
 }
 
-/// The point `pick` names, see [`Doc::align_reference`]: a snapped
+/// The point `pick` names, see [`Doc::align_reference_in`]: a snapped
 /// corner, or the corner of a vertex clicked; an edge's snap point or the
 /// edge clicked, its middle if straight, its centre if round, named at a
 /// point on the edge (not the centre, off it), so the two are the same
@@ -881,7 +904,7 @@ pub(super) fn point_at(index: &PickIndex, pick: Pick) -> Option<DVec3> {
     }
 }
 
-/// The direction `pick` names, see [`Doc::align_reference`].
+/// The direction `pick` names, see [`Doc::align_reference_in`].
 fn direction_of(
     index: &PickIndex,
     naming: &Naming,

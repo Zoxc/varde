@@ -123,6 +123,20 @@ impl MotionSession {
 }
 
 impl Doc {
+    /// Takes `pick` of `index`'s model as a face of the face session
+    /// `session`, as a click on one not picked is taken
+    /// ([`Doc::take_ref_in`]): the MCP client's face keys are taken on
+    /// the committed model so. One picked already is left as it is.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn pick_face(
+        &self,
+        session: &mut MotionSession,
+        index: &varde_view::PickIndex,
+        pick: varde_view::Pick,
+    ) -> Result<(), std::borrow::Cow<'static, str>> {
+        self.take_ref_in::<FaceRef>(session, index, pick)
+    }
+
     /// The faces of the face session to light in the model shown.
     pub(super) fn faces_lit(&self) -> Vec<Picked> {
         match &self.motion {

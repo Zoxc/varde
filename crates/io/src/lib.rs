@@ -148,6 +148,10 @@ pub struct Stores {
     /// The panic recorded, `panic.toml` (see [`panicked`]). Unused on the
     /// web, which keeps it on the page.
     pub panic: Option<PathBuf>,
+    /// The MCP server's bearer token, `mcp-token.toml` beside the settings
+    /// (see `src/native/mcp_token.rs`); without one, the lane keeps the
+    /// token in memory. Unused on the web, which has no MCP server.
+    pub mcp_token: Option<PathBuf>,
 }
 
 impl Stores {
@@ -164,9 +168,42 @@ impl Stores {
             settings: settings::store(),
             designs: store::designs(),
             panic: panicked::store(),
+            #[cfg(not(target_arch = "wasm32"))]
+            mcp_token: native::mcp_token::store(),
+            #[cfg(target_arch = "wasm32")]
+            mcp_token: None,
         }
     }
 }
+
+/// Read outside the IO lane, on the calling thread, for `varde mcp`'s
+/// relay: a process of its own, holding no design, so the lane's order
+/// doesn't matter to it. Natively only.
+#[cfg(not(target_arch = "wasm32"))]
+impl Stores {
+    /// The settings in [`Stores::settings`], defaulted where they can't
+    /// be read: what the lane answers [`Request::LoadSettings`] with, and
+    /// [`settings::read_now`] reads the user's.
+    pub fn read_settings_now(&self) -> Settings {
+        (self.settings.as_deref())
+            .map(native::settings::load)
+            .unwrap_or_default()
+    }
+
+    /// The MCP token in [`Stores::mcp_token`], if it passes the lane's
+    /// trust checks (see `src/native/mcp_token.rs`). Never makes or
+    /// rewrites the file: missing or untrusted is an error saying to
+    /// turn MCP on in Varde's settings, which never holds the token.
+    pub fn read_mcp_token(&self) -> Result<varde_mcp::guard::Token, String> {
+        (self.mcp_token.as_deref())
+            .and_then(native::mcp_token::load)
+            .ok_or_else(|| NO_MCP_TOKEN.to_owned())
+    }
+}
+
+/// What [`Stores::read_mcp_token`] says when there's no token to trust.
+#[cfg(not(target_arch = "wasm32"))]
+pub const NO_MCP_TOKEN: &str = "Varde's MCP token couldn't be read: turn MCP on in Varde's settings (its MCP tab), then try again";
 
 /// An open file, owned by the lane. Unique within the lane, which hands
 /// them out; public so tests can stand in for the lane.
@@ -332,6 +369,26 @@ pub enum Request {
     /// Deletes the panic recorded, if it's still `panic` rather than one
     /// recorded since. On the web the page answers it.
     DiscardPanic { panic: Panic },
+    /// Reads the MCP server's bearer token, answered with
+    /// [`Response::McpToken`]: made anew, and stored, when there's none or
+    /// it can't be trusted (see `src/native/mcp_token.rs`). Natively only.
+    #[cfg(not(target_arch = "wasm32"))]
+    LoadMcpToken,
+    /// Makes a new MCP token and stores it in place of the old one,
+    /// answered with [`Response::McpToken`]. Natively only.
+    #[cfg(not(target_arch = "wasm32"))]
+    RegenerateMcpToken,
+    /// Encodes `image` as a PNG (as a thumbnail's previews are, see
+    /// [`thumbnail::encode_png`]), for the MCP server's `render`,
+    /// answered with [`Response::PngEncoded`] with `owner` and `tag` as
+    /// sent, which the lane only echoes. Nothing is written. Natively
+    /// only.
+    #[cfg(not(target_arch = "wasm32"))]
+    EncodePng {
+        owner: u64,
+        tag: u64,
+        image: thumbnail::Image,
+    },
 }
 
 /// The answer to a [`Request`]. Errors are the messages to show.
@@ -468,6 +525,25 @@ pub enum Response {
     PanicDiscarded {
         result: Result<(), String>,
     },
+    /// Answers [`Request::LoadMcpToken`] and, `regenerated`,
+    /// [`Request::RegenerateMcpToken`] with the token. A loaded token that
+    /// couldn't be stored is still given, for this session; a regenerated
+    /// one that couldn't is an error, the old one staying. Natively only,
+    /// so never on the web worker's wire.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    McpToken {
+        regenerated: bool,
+        result: Result<varde_mcp::guard::Token, String>,
+    },
+    /// Answers [`Request::EncodePng`] with the PNG's bytes. Natively only.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    PngEncoded {
+        owner: u64,
+        tag: u64,
+        result: Result<Vec<u8>, String>,
+    },
 }
 
 impl Request {
@@ -571,6 +647,22 @@ impl Request {
             Request::WriteSettings { .. } => Response::SettingsWritten { result: Err(error) },
             Request::LoadPanic => Response::PanicLoaded { panic: None },
             Request::DiscardPanic { .. } => Response::PanicDiscarded { result: Err(error) },
+            #[cfg(not(target_arch = "wasm32"))]
+            Request::LoadMcpToken => Response::McpToken {
+                regenerated: false,
+                result: Err(error),
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            Request::RegenerateMcpToken => Response::McpToken {
+                regenerated: true,
+                result: Err(error),
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            Request::EncodePng { owner, tag, .. } => Response::PngEncoded {
+                owner,
+                tag,
+                result: Err(error),
+            },
         }
     }
 

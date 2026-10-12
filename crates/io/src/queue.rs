@@ -134,6 +134,8 @@ impl Request {
             | Request::LoadPanic
             | Request::DiscardPanic { .. }
             | Request::Flush => None,
+            #[cfg(not(target_arch = "wasm32"))]
+            Request::LoadMcpToken | Request::RegenerateMcpToken | Request::EncodePng { .. } => None,
         }
     }
 }

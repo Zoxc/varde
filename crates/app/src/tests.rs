@@ -740,7 +740,7 @@ fn the_solver_lane_goes_to_its_document() {
 }
 
 /// An app with its IO lane replaced by a list of the requests sent.
-fn with_files() -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
+pub(crate) fn with_files() -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
     let requests = Rc::default();
     let mut varde = Varde::new();
     varde
@@ -796,7 +796,8 @@ fn recent_files_are_loaded_first() {
             IoRequest::LoadRecent,
             IoRequest::ListRecovered,
             IoRequest::LoadSettings,
-            IoRequest::LoadPanic
+            IoRequest::LoadPanic,
+            IoRequest::LoadMcpToken
         ]
     ));
 }
@@ -930,6 +931,7 @@ fn an_open_given_up_on_is_abandoned_before_the_next() {
             "ListRecovered",
             "LoadSettings",
             "LoadPanic",
+            "LoadMcpToken",
             "open 0 /d/a.vrdp",
             "abandon 0",
             "open 1 /d/b.vrdp",
@@ -1009,6 +1011,7 @@ fn requests_before_the_lane_starts_wait_for_it() {
             IoRequest::ListRecovered,
             IoRequest::LoadSettings,
             IoRequest::LoadPanic,
+            IoRequest::LoadMcpToken,
             IoRequest::Open { .. }
         ]
     ));
@@ -2478,7 +2481,7 @@ fn old_auto_save_settings_read_as_a_minute() {
 
 /// A tick of the auto-save timer, `seconds` after `start`.
 fn tick(varde: &mut Varde, start: Instant, seconds: u32) {
-    let _ = varde.update(Message::AutoSaveTick(start + SECOND * seconds));
+    let _ = varde.update(Message::Tick(start + SECOND * seconds));
 }
 
 /// A tick of the auto-save timer, `thirds` thirds of
@@ -3649,6 +3652,7 @@ impl Session {
             settings: None,
             designs: Some(dir.join("designs")),
             panic: None,
+            mcp_token: None,
         });
         let mut varde = Varde::new();
         let _ = varde.update(Message::IoReady(lane));
@@ -3890,6 +3894,7 @@ fn with_picked_file(picked: Picked) -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
         IoRequest::ListRecovered,
         IoRequest::LoadSettings,
         IoRequest::LoadPanic,
+        IoRequest::LoadMcpToken,
         IoRequest::Open {
             id,
             from: Chosen::File(asked),
@@ -4273,6 +4278,10 @@ fn escape_cancels_a_prompt_or_closes_the_file_menu() {
     assert!(matches!(
         escape_key(((Some(Dialog::Delete), false, None), escape())),
         Some(Message::Ui(Ui::Look(Look::CancelDelete)))
+    ));
+    assert!(matches!(
+        escape_key(((Some(Dialog::McpAsk), false, None), escape())),
+        Some(Message::Ui(Ui::McpPanel(varde_view::McpPanel::KeepEditing)))
     ));
     assert!(matches!(
         escape_key(((None, false, None), escape())),
@@ -6021,7 +6030,7 @@ mod damaged;
 mod export;
 mod panicked;
 mod rename;
-mod settings;
+pub(crate) mod settings;
 mod storage;
 mod thumbnail;
 

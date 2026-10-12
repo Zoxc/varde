@@ -173,6 +173,7 @@ fn the_page_leaves_what_is_open_and_turns_off_the_viewports_keys() {
         resetting: false,
         scale_dragged: None,
         kept_in: varde_view::KeptIn::Browser,
+        mcp: Default::default(),
     };
     let view = document(&varde).view_with(
         false,
@@ -180,6 +181,7 @@ fn the_page_leaves_what_is_open_and_turns_off_the_viewports_keys() {
         varde.options,
         varde.files.offers(),
         Some(page),
+        None,
     );
     let mut ui = shown(view, size, &mut renderer);
     let on_screen = texts(&mut ui, &renderer);
@@ -282,13 +284,13 @@ fn reset_lists_what_it_changes_and_resets() {
         [
             SettingChange {
                 name: "Theme",
-                from: "Light",
-                to: "System",
+                from: "Light".into(),
+                to: "System".into(),
             },
             SettingChange {
                 name: "Length unit",
-                from: "ft",
-                to: "mm",
+                from: "ft".into(),
+                to: "mm".into(),
             },
         ]
     );
@@ -367,7 +369,7 @@ fn the_newer_settings_default_to_the_app_as_it_was() {
     assert!(varde_view::changed_settings(options).is_empty());
 }
 
-fn set(varde: &mut Varde, setting: Setting) {
+pub(crate) fn set(varde: &mut Varde, setting: Setting) {
     let _ = varde.update(Message::Ui(Ui::Settings(SettingsPage::Set(setting))));
 }
 

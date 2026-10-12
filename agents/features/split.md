@@ -307,7 +307,7 @@ body split, not a body made after the feature, which was refused. A
 body a later join or combine merged into the new piece still names its
 own faces: `body_of` takes a body held by the body shown or by the body
 it was split from. The status bar's refusals are the shared
-`unnamed(.., MotionKind::Split)`, the naming `Doc::motion_naming`.
+`unnamed(.., MotionKind::Split)`, the naming `Doc::naming_in`.
 
 The Timeline shows its icon (the icon mock's split body, `Icon::Split`,
 in the Modify set) and note: "by XY", "by Body 3", "by Extrude 1's end",

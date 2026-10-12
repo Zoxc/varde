@@ -44,7 +44,27 @@ maps them to what's stored. Each is written as chosen, though not before
 the stored settings have arrived; one chosen before then wins over them,
 each setting on its own (`settings::Key`), and Reset to defaults chooses
 them all. Each key is read on its own, so
-one gone bad gets its default and costs no other. Each open is tagged, and only the
+one gone bad gets its default and costs no other. Natively the settings
+also hold the MCP server's switch (`mcp`, off) and port (`mcp_port`,
+7311, a number from 1024 to 65535, anything else read as the default),
+and the lane keeps its bearer token in `mcp-token.toml` beside them
+(`Stores::mcp_token`, `src/native/mcp_token.rs`): read at start
+(`Request::LoadMcpToken`), made anew when missing or not to be trusted
+(not a plain file, not 0600 or not owned by the directory's owner on
+Unix), and replaced on `Request::RegenerateMcpToken`; written as the
+settings are but created at 0600. Without a store (tests) the lane keeps
+it in memory. `varde mcp`, the stdio relay (`agents/mcp.md`), reads
+the token and the settings outside the lane, on its own thread
+(`Stores::read_mcp_token` and `Stores::read_settings_now`, which the
+lane's `LoadSettings` and `settings::read_now` also use): it's a process of its own holding no
+design. The token read runs the same trust checks but never makes or
+rewrites the file; missing or untrusted is `NO_MCP_TOKEN`, saying to
+turn MCP on in Varde's settings. Also natively only, `Request::EncodePng { owner, tag, image }`
+encodes the MCP `render`'s picture as a PNG with the thumbnail's
+encoder (`thumbnail::encode_png`, which `thumbnail::encode` wraps in a
+`Preview`), answered with `Response::PngEncoded` echoing `owner` (the
+design's `DocId` number) and `tag` (the call's); nothing is written,
+and neither is on the web worker's wire. See `mcp.md`. Each open is tagged, and only the
 answer to the open the welcome screen is waiting for is shown. When the
 user starts a new design or opens another file instead, the app tells the
 lane it gave up on the open before sending anything else, so the file is
@@ -235,7 +255,7 @@ leaves out of its lines, is added back as committed if it's visible,
 each theme's colours (the light palette's scene colours, then the
 dark's, whatever the theme now), so a card shows the one of the theme
 it's in. Only the viewport has the GPU, so the app asks for it
-(`doc/thumbnail.rs`, a `varde_view::ThumbnailRequest` in the document
+(`doc/thumbnail.rs`, a `varde_view::PreviewRequest` in the document
 state), the viewport's next frame renders it offscreen and reads it back
 (see "Thumbnails" in `viewport.md`), and the pixels come back as a
 message, with which the save is sent. The save waits meanwhile like one
@@ -246,7 +266,7 @@ that isn't drawn), or fails, is saved without; the next save asks again.
 One rendered is kept while the model and its opacities are the same
 (the mesh by its `Arc`), so saving again goes at once; no model, or none
 with a body, is saved without at once. The IO lane encodes each image as
-a PNG (`thumbnail::encode`, `png`; the wire checks an `Image`'s size),
+a PNG (`thumbnail::encode` over `thumbnail::encode_png`, `png`; the wire checks an `Image`'s size),
 `image/png; theme=light` then `image/png; theme=dark`
 (`thumbnail::previews`), and writes them after the record, so a save
 without one drops the old one.

@@ -3357,6 +3357,7 @@ fn a_preview_is_the_model_alone_on_nothing() {
     let shot = varde_render::frame(
         &mesh,
         &RenderLines::default(),
+        None,
         &Camera::default(),
         [300, 200],
         margin,
@@ -3381,6 +3382,7 @@ fn a_preview_is_the_model_alone_on_nothing() {
             &[],
             &[],
             &shot,
+            None,
             &[COLORS, red],
             2.0,
             // The tests share the device: another's poll may call it.
@@ -3660,7 +3662,8 @@ fn a_preview_of_sketch_lines_alone_draws_them() {
         (Vec3::ZERO, Vec3::new(4.0, 0.0, 0.0)),
         (Vec3::new(4.0, 0.0, 0.0), Vec3::new(4.0, 3.0, 0.0)),
     ]));
-    let shot = varde_render::frame(&mesh, &sketches, &Camera::default(), [300, 200], 6).unwrap();
+    let shot =
+        varde_render::frame(&mesh, &sketches, None, &Camera::default(), [300, 200], 6).unwrap();
     let (send, read) = std::sync::mpsc::channel();
     varde_render::render_preview(
         &renderer(&device, wgpu::TextureFormat::Rgba8Unorm),
@@ -3671,6 +3674,7 @@ fn a_preview_of_sketch_lines_alone_draws_them() {
         &[],
         &[],
         &shot,
+        None,
         &[COLORS],
         2.0,
         move |images| {
@@ -3694,4 +3698,69 @@ fn a_preview_of_sketch_lines_alone_draws_them() {
     assert!(drawn > 100, "{drawn} pixels drawn");
     // The corners stay clear: no background or grid.
     assert_eq!(image.rgba[3], 0);
+}
+
+#[test]
+fn a_preview_of_some_parts_leaves_the_others_out_and_draws_the_selection() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let mut both = block(Vec3::ZERO, Vec3::ONE);
+    both.append(&block(Vec3::new(0.0, -6.0, 0.0), Vec3::new(1.0, 1.0, 8.0)))
+        .unwrap();
+    let mesh = Arc::new(both);
+    let shot = varde_render::frame(
+        &mesh,
+        &Default::default(),
+        Some(&[0]),
+        &Camera::default(),
+        [200, 200],
+        6,
+    )
+    .unwrap();
+    let draw = |selected: &[u32]| {
+        let (send, read) = std::sync::mpsc::channel();
+        let highlights = Arc::new(Highlights::default());
+        varde_render::render_preview(
+            &renderer(&device, wgpu::TextureFormat::Rgba8Unorm),
+            &device,
+            &queue,
+            &mesh,
+            &Arc::new(RenderLines::default()),
+            // The tall block, which crosses the picture, not drawn.
+            &[1.0, 0.0],
+            &[],
+            &shot,
+            Some(varde_render::PreviewSelection {
+                faces: selected,
+                highlights: &highlights,
+            }),
+            &[COLORS],
+            2.0,
+            move |images| {
+                let _ = send.send(images);
+            },
+        )
+        .unwrap();
+        let mut images = read
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
+        images.remove(0)
+    };
+    let plain = draw(&[]);
+    let pixels = bytemuck_pixels(&plain.rgba);
+    let (width, height) = (plain.width, plain.height);
+    // The cube fills the picture to its margins and nothing else shows:
+    // the corners clear, where the tall block would cross.
+    assert_eq!(pixels[0], [0; 4]);
+    assert_eq!(pixels[(width - 1) as usize], [0; 4]);
+    let middle = pixels[(height / 2 * width + width / 2) as usize];
+    assert_eq!(middle[3], 255, "{middle:?}");
+    // Every face of the cube selected: tinted otherwise than plain.
+    let faces: Vec<u32> = (0..mesh.parts().next().unwrap().faces.end as u32).collect();
+    let selected = draw(&faces);
+    let tinted = bytemuck_pixels(&selected.rgba)[(height / 2 * width + width / 2) as usize];
+    assert_ne!(tinted, middle);
 }

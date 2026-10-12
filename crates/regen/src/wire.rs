@@ -45,12 +45,12 @@
 //! [`MeshUpload::from_parts`] and its hierarchies by
 //! [`PickTables::from_parts`] and, with the head's tables, a
 //! [`Picking`] by [`Picking::from_parts`] (snap points and corners'
-//! points within bounds, each corner between three faces of one part),
-//! each part's body one the head lists; a measure's answer is checked
-//! against those tables ([`Inspected::checked`]: numbers finite, sizes not
-//! negative, points within bounds, places within the tables), one that
-//! fails answered as an error with the model as usual; the bodies' boxes
-//! in the head are finite with their corners in order, the merged bodies
+//! points within bounds, each corner between three faces of one part), each part's body one the head
+//! lists; a measure's answer is checked against those tables
+//! ([`Inspected::checked`]: numbers finite, sizes not negative, points
+//! within bounds, places within the tables), one that fails answered as
+//! an error with the model as usual; the bodies' boxes in the head are
+//! finite with their corners in order, the merged bodies
 //! name each consumed body once, never as a holder, and each placement of
 //! a sketch on a face is one a sketch can be drawn at
 //! ([`Placement::valid`]: finite, its axes unit and square within `1e-9`,
@@ -77,6 +77,19 @@
 //! decoded, so the page only ever writes a checked manifold. Bodies that
 //! fail to decode answer the export with the error.
 //!
+//! A client's query's answer ([`Response::Answered`]) rides in a lone
+//! [`Head::Answered`]. A body's edge facts ([`Answer::Topology`]) are at most [`RenderMesh::MAX_EDGE_POLYLINES`] of
+//! them, refused as they're decoded, each [`EdgeFacts::valid`] (its faces
+//! two keys in order, its numbers finite and within
+//! [`Picking::MAX_VALUE`], its directions unit, a straight edge's ends
+//! there); facts that fail answer the request with the error. Facts whose
+//! head would be over [`MAX_HEAD_BYTES`] are sent as that error.
+//!
+//! A client's measure ([`Answer::Measured`]) is checked as a
+//! regeneration's measure is but with no tables to place its picks in
+//! ([`Inspected::checked`] with no scene): a pick with a place fails, as
+//! does any number out of bounds, each pick then answered as an error.
+//!
 //! [`Document::to_postcard`]: varde_document::Document::to_postcard
 //! [`codec`]: varde_document::codec
 
@@ -95,16 +108,16 @@ use varde_kernel::{
 use varde_lane::bytes::Buffer;
 
 use crate::{
-    Bvh, Drafted, ErrorGeometry, ExportedBody, FeatureFailure, GeometryError, GeometryParts,
-    Inspected, PickCorner, PickFace, PickTables, PickTablesError, PickTablesParts, Picking,
-    PickingError, Progress, Request, Response,
+    Answer, Bvh, Drafted, EdgeFacts, ErrorGeometry, ExportedBody, FeatureFailure, GeometryError,
+    GeometryParts, Inspected, PickCorner, PickFace, PickTables, PickTablesError, PickTablesParts,
+    Picking, PickingError, PickingParts, Progress, Request, Response,
 };
 
 /// The most bytes a reply's head may have. A head is a generation, a few
 /// feature ids, the failed features' messages, the bodies each join, cut
 /// or intersect touches, a box per body and the picking tables (some 60
-/// bytes a face and up to 6 an edge), or an error message, so this is far
-/// more than any real one needs. A model whose head would be larger is
+/// bytes a face and up to some 30 an edge), or an error message, so this
+/// is far more than any real one needs. A model whose head would be larger is
 /// answered as failed ([`encode_reply`]). It's no larger because a few
 /// bytes of a head can stand for many more on the page (a feature id is
 /// 8 bytes there and as few as 1 here).
@@ -263,7 +276,8 @@ mod bounded {
     }
 
     /// At most [`RenderMesh::MAX_EDGE_POLYLINES`] edges' entries: their
-    /// closed flags, tangent chains or snap points.
+    /// closed flags, tangent chains or snap points, or a body's
+    /// [`EdgeFacts`].
     pub(super) fn edges<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
         d: D,
     ) -> Result<Vec<T>, D::Error> {
@@ -396,8 +410,36 @@ pub enum Head {
         export: u64,
         result: Result<(), String>,
     },
+    /// A [`Response::Answered`]: fixed in size but for what it answers
+    /// and its strings, which the head's bound holds.
+    Answered {
+        tag: u64,
+        generation: Generation,
+        until: Option<FeatureId>,
+        answer: HeadAnswer,
+    },
     /// A [`Response::Progress`]: only words and counts, so not checked.
     Progress(Progress),
+}
+
+/// What a [`Head::Answered`] answers: an [`Answer`] as it crosses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HeadAnswer {
+    /// An [`Answer::Topology`]: its facts, or why there are none if
+    /// `error` holds it. The facts are at most
+    /// [`RenderMesh::MAX_EDGE_POLYLINES`], refused as they're decoded,
+    /// and each checked ([`EdgeFacts::valid`], [`Error::EdgeFacts`]).
+    Topology {
+        body: BodyId,
+        #[serde(deserialize_with = "bounded::edges")]
+        edges: Vec<EdgeFacts>,
+        error: Option<String>,
+    },
+    /// An [`Answer::Measured`], checked ([`Inspected::checked`] with no
+    /// scene: numbers finite, sizes not negative, points within bounds,
+    /// no pick with a place in tables), one that fails answered as an
+    /// error per pick.
+    Measured(Result<Box<Inspected>, String>),
 }
 
 impl Head {
@@ -617,6 +659,44 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             };
             (head.encode(), bodies.into_iter().map(Cow::Owned).collect())
         }
+        Response::Answered {
+            tag,
+            generation,
+            until,
+            answer,
+        } => {
+            let head = |answer: HeadAnswer| {
+                Head::Answered {
+                    tag: *tag,
+                    generation: *generation,
+                    until: *until,
+                    answer,
+                }
+                .encode()
+            };
+            let encoded = head(match answer {
+                Answer::Topology { body, result } => HeadAnswer::Topology {
+                    body: *body,
+                    edges: result.as_ref().map_or_else(|_| Vec::new(), Vec::clone),
+                    error: result.as_ref().err().cloned(),
+                },
+                Answer::Measured(result) => HeadAnswer::Measured(result.clone()),
+            });
+            if encoded.len() > MAX_HEAD_BYTES {
+                let failed = match answer {
+                    Answer::Topology { body, .. } => HeadAnswer::Topology {
+                        body: *body,
+                        edges: Vec::new(),
+                        error: Some(crate::edge_facts::TOO_MANY_EDGES.to_owned()),
+                    },
+                    Answer::Measured(_) => {
+                        HeadAnswer::Measured(Err("the measure is too large to send".to_owned()))
+                    }
+                };
+                return (head(failed), Vec::new());
+            }
+            (encoded, Vec::new())
+        }
         Response::Progress(progress) => (Head::Progress(progress.clone()).encode(), Vec::new()),
     }
 }
@@ -669,16 +749,15 @@ pub fn decode_reply(
                         return Err(Error::Picking(PickingError::Body));
                     }
                     let (mesh, sketches, tables) = decode_model(parts)?;
-                    let picking = Picking::from_parts(
-                        part_bodies,
+                    let parts = PickingParts {
+                        bodies: part_bodies,
                         faces,
                         closed,
                         tangents,
                         snaps,
                         corners,
-                        &mesh,
-                    )
-                    .map_err(Error::Picking)?;
+                    };
+                    let picking = Picking::from_parts(parts, &mesh).map_err(Error::Picking)?;
                     let geometry = |parts: Option<GeometryParts>| {
                         (parts.map(|parts| ErrorGeometry::from_parts(parts, &mesh, &picking)))
                             .transpose()
@@ -723,7 +802,7 @@ pub fn decode_reply(
                         sight,
                         draft: draft.map(Box::new),
                         inspected: inspected
-                            .map(|inspected| Box::new(inspected.checked(&mesh, &picking))),
+                            .map(|inspected| Box::new(inspected.checked(Some((&mesh, &picking))))),
                         mesh: Arc::new(mesh),
                         picking: Arc::new(picking),
                         tables: Arc::new(tables),
@@ -771,6 +850,29 @@ pub fn decode_reply(
         Head::Exported { export, result } => Response::Exported {
             export,
             result: result.and_then(|()| decode_export(parts).map_err(|e| e.to_string())),
+        },
+        Head::Answered {
+            tag,
+            generation,
+            until,
+            answer,
+        } => Response::Answered {
+            tag,
+            generation,
+            until,
+            answer: match answer {
+                HeadAnswer::Topology { body, edges, error } => Answer::Topology {
+                    body,
+                    result: match error {
+                        Some(error) => Err(error),
+                        None if edges.iter().all(EdgeFacts::valid) => Ok(edges),
+                        None => Err(Error::EdgeFacts.to_string()),
+                    },
+                },
+                HeadAnswer::Measured(result) => {
+                    Answer::Measured(result.map(|inspected| Box::new(inspected.checked(None))))
+                }
+            },
         },
         Head::Progress(progress) => Response::Progress(progress),
     })
@@ -1162,6 +1264,8 @@ pub enum Error {
     /// or what a scale's draft found, aren't ones, see
     /// [`MAX_REFERENCE`](crate::MAX_REFERENCE).
     Reference,
+    /// A body's edge facts aren't [`EdgeFacts::valid`].
+    EdgeFacts,
     /// An export's bodies came in this many parts instead of one.
     ExportParts(usize),
     /// An export's bodies couldn't be decoded, or a mesh among them
@@ -1189,6 +1293,7 @@ impl fmt::Display for Error {
             Error::Picking(e) => e.fmt(f),
             Error::Geometry(e) => e.fmt(f),
             Error::Reference => f.write_str("a draft's axis or plane isn't one"),
+            Error::EdgeFacts => f.write_str("a body's edge facts aren't valid"),
             Error::ExportParts(n) => write!(f, "exported bodies in {n} parts instead of 1"),
             Error::Export(e) => write!(f, "couldn't decode the exported bodies: {e}"),
         }
@@ -1212,6 +1317,7 @@ impl std::error::Error for Error {
             | Error::Picking(_)
             | Error::Geometry(_)
             | Error::Reference
+            | Error::EdgeFacts
             | Error::ExportParts(_) => None,
         }
     }

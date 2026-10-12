@@ -1876,3 +1876,74 @@ fn hint_texts(hints: Vec<Hint<'_>>) -> Vec<String> {
     let mut shown = crate::testing::Laid::new(row, iced::Size::new(2000.0, 40.0));
     shown.texts().into_iter().map(|shown| shown.text).collect()
 }
+
+/// While the settings page shows in the viewport's place, no viewport
+/// frame comes: the pixel square beside it draws the pictures asked for
+/// meanwhile, a thumbnail in both themes and an MCP render in the theme
+/// it was given, each once. Before it, a thumbnail asked for then (an
+/// auto-save) was given up on, and an MCP render (asked while the MCP
+/// settings were open) waited out its 30 s and failed.
+#[test]
+fn the_pictures_asked_for_are_drawn_without_the_viewport() {
+    use std::sync::Mutex;
+
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let mut pipeline = pipeline(&device);
+    let mesh = cube();
+    let thumbnails = Arc::new(Mutex::new(Vec::new()));
+    let kept = thumbnails.clone();
+    let thumbnail = PreviewRequest::thumbnail(
+        mesh.clone(),
+        Arc::default(),
+        Arc::new([]),
+        Arc::new([]),
+        &Camera::default(),
+        move |images| kept.lock().unwrap().push(images),
+    )
+    .unwrap();
+    let shot = thumbnail.shot;
+    let renders = Arc::new(Mutex::new(Vec::new()));
+    let kept = renders.clone();
+    let render = PreviewRequest::render(
+        mesh,
+        Arc::new([]),
+        Arc::new([]),
+        shot,
+        Vec::new(),
+        Arc::default(),
+        move |image| kept.lock().unwrap().push(image),
+    );
+    let element: Element<'_, ()> = offscreen(
+        Some(&thumbnail),
+        std::slice::from_ref(&render),
+        crate::theme::Mode::Dark.palette(),
+    );
+    drop(element);
+    let previews = Previews {
+        requests: Arc::new([thumbnail.clone(), render.clone()]),
+        colors: crate::theme::Mode::Dark.palette().scene,
+    };
+    let program = Offscreen(previews);
+    let primitive = <Offscreen as shader::Program<()>>::draw(
+        &program,
+        &(),
+        mouse::Cursor::Unavailable,
+        Rectangle::new(Point::ORIGIN, iced::Size::new(1.0, 1.0)),
+    );
+    // Twice, as two frames: drawn by the first.
+    prepare(&device, &queue, &mut pipeline, &primitive);
+    prepare(&device, &queue, &mut pipeline, &primitive);
+    let thumbnails = thumbnails.lock().unwrap();
+    assert_eq!(thumbnails.len(), 1);
+    let images = thumbnails[0].as_ref().expect("the thumbnail is drawn");
+    assert_eq!([images.light.width, images.light.height], shot.size);
+    assert!(images.light.rgba.chunks(4).any(|pixel| pixel[3] == 255));
+    assert_ne!(images.light, images.dark);
+    let renders = renders.lock().unwrap();
+    assert_eq!(renders.len(), 1);
+    // In the dark theme it was given: as the thumbnail's dark image.
+    assert_eq!(renders[0].as_ref(), Some(&images.dark));
+}

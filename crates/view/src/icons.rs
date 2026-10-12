@@ -283,6 +283,18 @@ icons! {
     ChevLeft => r#"<path d="M14 7l-5 5 5 5"/>"#,
     // A folded row of a tree, which unfolds below.
     ChevRight => r#"<path d="M10 7l5 5-5 5"/>"#,
+    // The MCP server's, from `notes/ui-mock/mcp.js`: the panel's toggle, a
+    // speech bubble with a spark; Start's plug and Stop's square; and its
+    // tools', queries drawn as Inspect: the design summary's clipboard,
+    // a feature's settings, a body's faces, edges and corners, a
+    // sketch's points, curves and regions.
+    Agent => r#"<path d="M4 5.5h16v11H11l-4.5 3.5v-3.5H4z"/><path class="a" d="M12 7.6l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/>"#,
+    Plug => r#"<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>"#,
+    Stop => r##"<rect x="7" y="7" width="10" height="10" rx="1.5" fill="#000"/>"##,
+    QSummary => r#"<rect x="4.5" y="4" width="15" height="17" rx="1.5"/><path class="r" d="M9 4V2.8h6V4"/><path class="a" d="M8 10h8M8 13.5h8M8 17h5"/>"#,
+    QFeature => r#"<path d="M4 6.5h16M4 12h16M4 17.5h16"/><circle class="af" cx="9" cy="6.5" r="2"/><circle class="af" cx="15.5" cy="12" r="2"/><circle class="af" cx="7" cy="17.5" r="2"/>"#,
+    QTopology => r#"<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM4.2 7.5L12 12l7.8-4.5M12 12v9"/><circle class="af" cx="12" cy="12" r="1.6"/><circle class="af" cx="4.2" cy="7.5" r="1.6"/><circle class="af" cx="19.8" cy="16.5" r="1.6"/><path class="a" d="M12 3l7.8 4.5"/>"#,
+    QSketch => r#"<path d="M5 18.5L12 6l7 12.5z"/><circle class="af" cx="5" cy="18.5" r="1.6"/><circle class="af" cx="12" cy="6" r="1.6"/><circle class="af" cx="19" cy="18.5" r="1.6"/><path class="a" d="M5 21.5h14"/>"#,
     // Nothing: room for an icon, beside items that have one.
     Blank => "",
 }
@@ -394,7 +406,12 @@ impl Icon {
             | Icon::PlaneYz
             | Icon::SeAxis
             | Icon::SePlane => IconCategory::Construction,
-            Icon::Measure | Icon::CatInspect => IconCategory::Inspect,
+            Icon::Measure
+            | Icon::CatInspect
+            | Icon::QSummary
+            | Icon::QFeature
+            | Icon::QTopology
+            | Icon::QSketch => IconCategory::Inspect,
             Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,
             _ => return None,
         })

@@ -20,6 +20,7 @@ varde-solve = { path = "crates/solve" }
 varde-io = { path = "crates/io" }
 varde-view = { path = "crates/view" }
 varde-app = { path = "crates/app" }
+varde-mcp = { path = "crates/mcp" }
 varde-testing = { path = "crates/testing" }
 
 # `advanced` for the layer of widgets anchored over the viewport, a widget
@@ -79,6 +80,12 @@ miniz_oxide = "0.8"
 # Parses the 3MF packages' XML in crates/io's tests. The version usvg
 # already pulls in.
 roxmltree = "0.20"
+# The MCP server's request heads (crates/mcp/src/http.rs).
+httparse = "1"
+# The MCP server's JSON-RPC messages and tools' arguments (crates/mcp).
+serde_json = "1"
+# The MCP server's bearer token and images, such as `render`'s PNGs (crates/mcp).
+base64 = "0.22"
 toml = "1"
 directories = "6"
 # Channels for the regeneration and IO lanes; already built for iced.

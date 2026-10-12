@@ -676,15 +676,19 @@ impl PickIndex {
     /// drawn, which is all the view has.
     pub fn find_face(&self, body: BodyId, key: &FaceKey, near: DVec3) -> Option<u32> {
         let found = (self.body_faces(body)).filter(|&face| self.named(face, key));
-        self.nearest(found, near, |face| {
-            (self.face_triangles(face))
-                .filter_map(|triangle| self.corners(triangle))
-                .map(|corners| {
-                    let corners = corners.map(|i| position(&self.mesh, i).as_dvec3());
-                    triangle_distance(near, corners)
-                })
-                .fold(f64::INFINITY, f64::min)
-        })
+        self.nearest(found, near, |face| self.face_distance(face, near))
+    }
+
+    /// How far `point` is from face `face`'s triangles in the mesh:
+    /// infinite if it has none.
+    pub fn face_distance(&self, face: u32, point: DVec3) -> f64 {
+        (self.face_triangles(face))
+            .filter_map(|triangle| self.corners(triangle))
+            .map(|corners| {
+                let corners = corners.map(|i| position(&self.mesh, i).as_dvec3());
+                triangle_distance(point, corners)
+            })
+            .fold(f64::INFINITY, f64::min)
     }
 
     /// Where face `face` is nearest `near` as drawn, and its outward
@@ -744,12 +748,16 @@ impl PickIndex {
                         || (named(a, &faces[1]) && named(b, &faces[0]))
                 })
             });
-        self.nearest(found, near, |chain| {
-            (self.edge_segments(chain))
-                .filter_map(|start| segment(&self.mesh, start))
-                .map(|[a, b]| segment_distance_3d(near, a.as_dvec3(), b.as_dvec3()))
-                .fold(f64::INFINITY, f64::min)
-        })
+        self.nearest(found, near, |chain| self.edge_distance(chain, near))
+    }
+
+    /// How far `point` is from the edge chain `chain`'s polyline in the
+    /// mesh: infinite if it has none.
+    pub fn edge_distance(&self, chain: u32, point: DVec3) -> f64 {
+        (self.edge_segments(chain))
+            .filter_map(|start| segment(&self.mesh, start))
+            .map(|[a, b]| segment_distance_3d(point, a.as_dvec3(), b.as_dvec3()))
+            .fold(f64::INFINITY, f64::min)
     }
 
     /// The vertex of `body` where faces that `keys` name meet (each by key

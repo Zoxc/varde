@@ -17,8 +17,8 @@ use varde_document::{
 };
 use varde_expr::{AngleUnit, Unit};
 use varde_view::{
-    Angle, OperationKind, PanelHover, RevolveLook, RevolvePick, RevolveState, Selected, TurnKind,
-    Unnamed, axis_edge,
+    Angle, OperationKind, PanelHover, PickIndex, RevolveLook, RevolvePick, RevolveState, Selected,
+    TurnKind, Unnamed, axis_edge,
 };
 
 use super::extrude::is_sketch;
@@ -82,7 +82,7 @@ impl RevolveSession {
     /// A session setting up a new revolve in `document`, taking the
     /// regions of `source` if given, else of the one the first region (or
     /// the axis) is picked in.
-    fn new(document: &Document, source: Option<FeatureId>) -> Self {
+    pub(crate) fn new(document: &Document, source: Option<FeatureId>) -> Self {
         let ask = Turn::ask(&document.design());
         let field = |angle: f64| {
             TypedText::read(
@@ -113,7 +113,7 @@ impl RevolveSession {
     /// A session editing the revolve `feature` of `document`, with its
     /// values, the regions of its sketch its references find, and its
     /// axis if its sketch has it.
-    fn editing(document: &Document, feature: FeatureId, revolve: &Revolve) -> Self {
+    pub(crate) fn editing(document: &Document, feature: FeatureId, revolve: &Revolve) -> Self {
         let mut session = Self::new(document, Some(revolve.sketch));
         session.feature = Some(feature);
         session.regions = RegionPick::editing(
@@ -161,14 +161,36 @@ impl RevolveSession {
     /// Picks `axis` of the sketch `sketch`, if it's the source or a
     /// candidate and there's none yet, which it becomes, and `axis` is a
     /// line of it or one of its axes. Clicks pick regions again then.
-    fn pick_axis(&mut self, sketch: FeatureId, axis: AxisLine, document: &Document) {
+    /// Whether it was picked.
+    pub(crate) fn pick_axis(
+        &mut self,
+        sketch: FeatureId,
+        axis: AxisLine,
+        document: &Document,
+    ) -> bool {
         let holds = sketch_of(document, sketch).is_some_and(|drawn| axis_holds(drawn, axis));
         if !holds || !self.regions.choose(sketch) {
-            return;
+            return false;
         }
         self.axis = Some(axis);
         self.axis_missing = false;
         self.edge_ends = None;
+        self.picking = RevolvePick::Regions;
+        self.regions.refresh(document);
+        true
+    }
+
+    /// Picks the model edge `reference`, its ends `ends`, as the axis
+    /// ([`Doc::edge_axis`] checks it). Clicks pick regions again then.
+    pub(crate) fn pick_edge_axis(
+        &mut self,
+        reference: EdgeRef,
+        ends: [DVec3; 2],
+        document: &Document,
+    ) {
+        self.axis = Some(AxisLine::Edge(reference));
+        self.axis_missing = false;
+        self.edge_ends = Some(ends);
         self.picking = RevolvePick::Regions;
         self.regions.refresh(document);
     }
@@ -251,7 +273,7 @@ impl RevolveSession {
     /// The revolve as set up of `document`, if it's whole: a source,
     /// regions picked, an axis the source has, and the angles its extent
     /// takes, as they last read.
-    fn revolve(&self, document: &Document) -> Option<Revolve> {
+    pub(crate) fn revolve(&self, document: &Document) -> Option<Revolve> {
         let sketch = self.regions.source?;
         if self.regions.references().is_empty() {
             return None;
@@ -327,6 +349,12 @@ impl RevolveSession {
         }
     }
 
+    /// Reads `text` into the field of `angle`, in `document`'s design.
+    pub(crate) fn input(&mut self, angle: Angle, text: String, document: &Document) {
+        let ask = Turn::ask(&document.design());
+        self.fields[angle.index()].input(text, &ask);
+    }
+
     /// Whether it can be committed to `document`: it's whole, none of the
     /// angles its extent takes is refused, and it passes its own check
     /// ([`RevolveSession::refused`]). The axis is the source's
@@ -345,7 +373,7 @@ impl RevolveSession {
 }
 
 /// The sketch of the sketch feature `id` of `document`, if it's one.
-pub(super) fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_document::Sketch> {
+pub(crate) fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_document::Sketch> {
     match &document.feature(id)?.kind {
         FeatureKind::Sketch { sketch, .. } => Some(sketch),
         _ => None,
@@ -412,6 +440,7 @@ impl Doc {
         self.revolve = Some(session);
         self.focus = Some(Focus::All);
         self.axis_from_selection();
+        self.opened_operation();
     }
 
     /// Picks the edge selected when the revolve started as its axis, once
@@ -457,6 +486,7 @@ impl Doc {
         }
         self.revolve = Some(session);
         self.focus = Some(Focus::All);
+        self.opened_operation();
     }
 
     /// Moves the arrow of the revolve being set up, if its axis is a model
@@ -500,28 +530,19 @@ impl Doc {
         match self.axis_edge(session, model, edge, at) {
             Ok((reference, ends)) => {
                 let document = self.editor.document();
-                let Some(session) = &mut self.revolve else {
-                    return;
-                };
-                session.axis = Some(AxisLine::Edge(reference));
-                session.axis_missing = false;
-                session.edge_ends = Some(ends);
-                session.picking = RevolvePick::Regions;
-                session.regions.refresh(document);
+                if let Some(session) = &mut self.revolve {
+                    session.pick_edge_axis(reference, ends, document);
+                }
             }
             Err(why) => self.notice = Some(why.into_owned()),
         }
     }
 
     /// Edge `edge` of the model shown, of the index `model` names, clicked
-    /// at `at`, as the axis of the revolve `session` sets up: the
-    /// reference the revolve stores
-    /// ([`Naming::edge_ref`](varde_view::Naming::edge_ref), with the
-    /// history stopped at the revolve) and the edge's ends. Refused, why,
-    /// if the model shown isn't the one clicked or the cursor doesn't pick
-    /// it, there's no source to take the plane of yet, or the edge isn't
-    /// straight or in the source's plane ([`axis_edge`]), isn't made
-    /// before the revolve, or which body it's on there can't be told.
+    /// at `at`, as the axis of the revolve `session` sets up
+    /// ([`Doc::edge_axis`]). Refused, why, also if the model shown isn't
+    /// the one clicked or the cursor doesn't pick it, or there's no
+    /// source to take the plane of yet.
     fn axis_edge(
         &self,
         session: &RevolveSession,
@@ -533,14 +554,31 @@ impl Doc {
             return Err(OUT_OF_DATE.into());
         }
         let source = (session.regions.source).ok_or("Pick the profile first, then its axis")?;
+        self.edge_axis(self.feed.pick_index(), source, session.feature, edge, at)
+    }
+
+    /// Edge `edge` of `index`, at `at`, as the axis of a revolve of the
+    /// sketch `source` edited from `edited` (a new one if `None`): the
+    /// reference the revolve stores
+    /// ([`Naming::edge_ref`](varde_view::Naming::edge_ref), with the
+    /// history stopped at the revolve) and the edge's ends. Refused, why,
+    /// if the sketch isn't placed, the edge isn't straight or in its
+    /// plane ([`axis_edge`]), isn't made before the revolve, or which
+    /// body it's on there can't be told.
+    pub(crate) fn edge_axis(
+        &self,
+        index: &PickIndex,
+        source: FeatureId,
+        edited: Option<FeatureId>,
+        edge: u32,
+        at: DVec3,
+    ) -> Result<(EdgeRef, [DVec3; 2]), Cow<'static, str>> {
         let placement = self
             .placement(source)
             .ok_or("The profile's sketch isn't placed")?;
-        let index = self.feed.pick_index();
-        let document = self.editor.document();
-        let resolution = document.tolerance().resolution();
+        let resolution = self.editor.document().tolerance().resolution();
         let ends = axis_edge(index, edge, &placement, resolution)?;
-        let naming = self.naming_at(session.feature);
+        let naming = self.naming_at(edited);
         let reference = naming.edge_ref(index, edge, at).map_err(|why| match why {
             Unnamed::Missing => "That edge isn't in the model",
             Unnamed::Later => "Only an edge made before the revolve can be its axis",
@@ -571,14 +609,13 @@ impl Doc {
                 }
             }
             RevolveLook::DropMissing(index) => session.regions.drop_missing(index),
-            RevolveLook::PickAxis { sketch, axis } => session.pick_axis(sketch, axis, document),
+            RevolveLook::PickAxis { sketch, axis } => {
+                session.pick_axis(sketch, axis, document);
+            }
             RevolveLook::PickEdge { model, edge, at } => self.pick_axis_edge(model, edge, at),
             RevolveLook::Picking(picking) => session.picking = picking,
             RevolveLook::Extent(kind) => session.extent = kind,
-            RevolveLook::Input { angle, text } => {
-                let ask = Turn::ask(&document.design());
-                session.fields[angle.index()].input(text, &ask);
-            }
+            RevolveLook::Input { angle, text } => session.input(angle, text, document),
             RevolveLook::Flip => session.flip = !session.flip,
             RevolveLook::Operation(kind) => session.operation = kind,
             RevolveLook::Target(body) => {
@@ -597,12 +634,12 @@ impl Doc {
     }
 
     /// Whether the revolve being set up can be committed: the document
-    /// can be changed, no sketch edits wait on the solver, and the session
+    /// can be changed, none of the user's sketch edits wait on the solver, and the session
     /// is ready ([`RevolveSession::ready`]), as for an extrude
     /// ([`Doc::extrude_ready`]).
     pub(crate) fn revolve_ready(&self) -> bool {
         self.revolve.as_ref().is_some_and(|session| {
-            self.editable() && !self.proposing() && session.ready(self.editor.document())
+            self.editable() && !self.users_proposing() && session.ready(self.editor.document())
         })
     }
 

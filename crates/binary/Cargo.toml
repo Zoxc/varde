@@ -9,6 +9,15 @@ license.workspace = true
 varde-app.workspace = true
 # Its output goes to stderr, see `src/main.rs`.
 log.workspace = true
+# `varde mcp`, the stdio relay to the app's MCP server, `src/mcp.rs`: the
+# relay, and the port and token it reads from the user's files.
+varde-mcp.workspace = true
+varde-io.workspace = true
+
+[dev-dependencies]
+# Running the relay against a real server in `src/mcp/tests.rs`.
+futures = { workspace = true, features = ["executor"] }
+serde_json.workspace = true
 
 # Embeds the application icon; only does anything when targeting Windows.
 [build-dependencies]

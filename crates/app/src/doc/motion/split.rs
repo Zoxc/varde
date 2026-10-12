@@ -21,11 +21,11 @@ use varde_document::{
 use varde_regen::Summary;
 use varde_sketch::{Id, RegionRef};
 use varde_view::{
-    MotionKind, MotionPick, Pick, Picked, SketchLines, SplitMode, SplitPiece, SplitView, Unnamed,
-    plane_name, split_info,
+    MotionKind, MotionPick, Pick, PickIndex, Picked, SketchLines, SplitMode, SplitPiece, SplitView,
+    Unnamed, plane_name, split_info,
 };
 
-use super::{Doc, MotionSession, OUT_OF_DATE, unnamed};
+use super::{Doc, Marks, MotionSession, OUT_OF_DATE, merged_in, unnamed};
 use crate::doc::combine::pickable;
 use crate::doc::feed::Merges;
 use crate::doc::regions::RegionPick;
@@ -288,7 +288,7 @@ impl MotionSession {
 
     /// Sets what it splits with: picking that tool next unless it has
     /// one, finding the sketches' regions for regions.
-    pub(super) fn split_mode(&mut self, mode: SplitMode, document: &Document) {
+    pub(crate) fn split_mode(&mut self, mode: SplitMode, document: &Document) {
         self.split.mode = mode;
         if mode == SplitMode::Regions {
             self.split.regions.refresh(document);
@@ -307,11 +307,22 @@ impl MotionSession {
 
     /// Takes the origin plane `plane` as its tool while a plane or face is
     /// picked.
-    pub(super) fn split_origin(&mut self, plane: varde_document::OriginPlane) {
+    pub(crate) fn split_origin(&mut self, plane: varde_document::OriginPlane) {
         if self.picking != MotionPick::Tool || self.split.mode != SplitMode::Face {
             return;
         }
         self.split.surface = Some(SplitTool::Plane(PlaneRef::Origin(plane)));
+        self.split.gone = false;
+        self.picking = MotionPick::Nothing;
+    }
+
+    /// Takes `tool`, a plane, face or body, as its tool, handing the
+    /// clicks on to nothing (the preview shows).
+    pub(crate) fn take_split_tool(&mut self, tool: SplitTool) {
+        match tool {
+            SplitTool::Body(body) => self.split.body = Some(body),
+            tool => self.split.surface = Some(tool),
+        }
         self.split.gone = false;
         self.picking = MotionPick::Nothing;
     }
@@ -344,7 +355,7 @@ impl MotionSession {
 
     /// Picks the curve `curve` of `sketch` for its line, or takes it out,
     /// while its line is picked.
-    pub(super) fn split_curve(&mut self, sketch: FeatureId, curve: Id, document: &Document) {
+    pub(crate) fn split_curve(&mut self, sketch: FeatureId, curve: Id, document: &Document) {
         let has = matches!(
             document.feature(sketch).map(|feature| &feature.kind),
             Some(FeatureKind::Sketch { sketch, .. }) if sketch.curve(curve).is_some()
@@ -399,29 +410,38 @@ impl Doc {
     /// the body holding it before the feature where a join merged it,
     /// and the body a split at or after the feature cut it from.
     pub(super) fn named_body(&self, body: BodyId) -> BodyId {
-        let Some(session) = &self.motion else {
-            return body;
-        };
+        match &self.motion {
+            Some(session) => self.named_body_in(session, body, self.shown()),
+            None => body,
+        }
+    }
+
+    /// `body` as the body `session`'s feature names: see
+    /// [`Doc::named_body`], as the model whose `marks` these are found
+    /// its merges.
+    fn named_body_in(&self, session: &MotionSession, body: BodyId, marks: Marks) -> BodyId {
         let document = self.editor.document();
-        let merged = self.feed.merged_before(document, session.feature);
-        let body = (self.motion_naming()).map_or(body, |naming| naming.unsplit(body));
+        let merged = merged_in(document, session.feature, marks);
+        let body = self.naming_in(session.feature, marks).unsplit(body);
         merged.holder(body).unwrap_or(body)
     }
 
-    /// `pick` of the model shown as the tool of the split being set up,
+    /// `pick` of `index`'s model as the tool of the split `session`,
     /// of the kind its mode picks: a face, flat as its plane, curved as its
     /// surface, named as the feature stores it; or the body it's on, any
     /// the feature can name but the one split. Refused, why, if not.
-    pub(super) fn split_tool_of(&self, pick: Pick) -> Result<SplitTool, Cow<'static, str>> {
-        let session = self.motion.as_ref().ok_or("Nothing is set up")?;
-        let document = self.editor.document();
+    pub(super) fn split_tool_in(
+        &self,
+        session: &MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Result<SplitTool, Cow<'static, str>> {
         match session.split.mode {
             SplitMode::Face => {
                 let Picked::Face(face) = pick.target else {
                     return Err(NOT_A_FACE.into());
                 };
-                let naming = self.motion_naming().ok_or("Nothing is set up")?;
-                let index = self.feed.pick_index();
+                let naming = self.naming_in(session.feature, self.feed.marks_of(index));
                 let named = naming
                     .checked_face_ref(index, face, pick.at)
                     .map_err(|why| unnamed(why, "face", MotionKind::Split))?;
@@ -431,20 +451,31 @@ impl Doc {
                     _ => SplitTool::Face(named),
                 })
             }
-            SplitMode::Body => {
-                let body = self.named_body(pick.body);
-                if session.bodies.first() == Some(&body) {
-                    return Err(SAME_BODY.into());
-                }
-                if !pickable(document, body, session.feature) {
-                    return Err(unnamed(Unnamed::Later, "body", MotionKind::Split));
-                }
-                Ok(SplitTool::Body(body))
-            }
+            SplitMode::Body => self.split_tool_body(
+                session,
+                self.named_body_in(session, pick.body, self.feed.marks_of(index)),
+            ),
             SplitMode::Regions | SplitMode::Line => {
                 Err("Click the sketch's regions or curves, not the model".into())
             }
         }
+    }
+
+    /// `body`, named as the split `session`'s feature names it, as its
+    /// tool body: any the feature can name but the one split. Refused,
+    /// why, if not.
+    pub(crate) fn split_tool_body(
+        &self,
+        session: &MotionSession,
+        body: BodyId,
+    ) -> Result<SplitTool, Cow<'static, str>> {
+        if session.bodies.first() == Some(&body) {
+            return Err(SAME_BODY.into());
+        }
+        if !pickable(self.editor.document(), body, session.feature) {
+            return Err(unnamed(Unnamed::Later, "body", MotionKind::Split));
+        }
+        Ok(SplitTool::Body(body))
     }
 
     /// Whether `pick` is the tool of the split being set up, of the kind
@@ -471,16 +502,21 @@ impl Doc {
         if !self.feed.answers_request() || self.feed.predates_replacement() {
             return Err(OUT_OF_DATE.into());
         }
-        let tool = self.split_tool_of(pick)?;
-        let Some(session) = &mut self.motion else {
-            return Ok(());
-        };
-        match tool {
-            SplitTool::Body(body) => session.split.body = Some(body),
-            tool => session.split.surface = Some(tool),
-        }
-        session.split.gone = false;
-        session.picking = MotionPick::Nothing;
+        (self.on_session(|doc, session| doc.pick_split_tool(session, doc.feed.pick_index(), pick)))
+            .unwrap_or(Ok(()))
+    }
+
+    /// Takes `pick` of `index`'s model as the tool of the split
+    /// `session`, as [`Doc::split_tool`] takes a click: the MCP client's
+    /// face keys are taken on the committed model so.
+    pub(crate) fn pick_split_tool(
+        &self,
+        session: &mut MotionSession,
+        index: &PickIndex,
+        pick: Pick,
+    ) -> Result<(), Cow<'static, str>> {
+        let tool = self.split_tool_in(session, index, pick)?;
+        session.take_split_tool(tool);
         Ok(())
     }
 

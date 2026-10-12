@@ -22,6 +22,24 @@ fn undo_redo_roundtrip() {
 }
 
 #[test]
+fn is_done_while_current_or_undoable() {
+    let mut editor = Editor::new(with_body());
+    let id = editor.document().bodies[0].id;
+    let loaded = editor.revision();
+    editor.apply(Command::SetVisible(id, false)).unwrap();
+    let hidden = editor.revision();
+    assert!(editor.is_done(loaded) && editor.is_done(hidden));
+    editor.undo();
+    assert!(editor.is_done(loaded) && !editor.is_done(hidden));
+    editor.redo();
+    assert!(editor.is_done(hidden));
+    // Undone and branched past, it's gone.
+    editor.undo();
+    editor.apply(Command::RemoveBody(id)).unwrap();
+    assert!(!editor.is_done(hidden));
+}
+
+#[test]
 fn undo_and_redo_give_a_state_back_its_revision() {
     let mut editor = Editor::new(with_body());
     let id = editor.document().bodies[0].id;
@@ -1044,4 +1062,155 @@ fn the_rollback_is_an_edit_kept_on_a_feature() {
         Document::from_postcard(&document.to_postcard()),
         Ok(document)
     );
+}
+
+#[test]
+fn restore_is_one_undoable_step_keeping_the_lineage_on_the_history() {
+    let mut editor = Editor::new(with_body());
+    let before = editor.state();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let after = editor.state();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let lineage = editor.lineage();
+
+    editor.restore(&before).unwrap();
+    assert_eq!(editor.document().features(), with_body().features());
+    assert_eq!(editor.lineage(), lineage);
+    assert!(!editor.can_redo());
+    // Its own revision, not the state's.
+    assert_ne!(editor.revision(), before.revision());
+    editor.undo();
+    assert_eq!(editor.document().features().len(), 4);
+
+    // Restoring what's there changes nothing.
+    let now = editor.state();
+    let revision = editor.revision();
+    editor.restore(&now).unwrap();
+    assert_eq!(editor.revision(), revision);
+
+    editor.restore(&after).unwrap();
+    assert_eq!(editor.document().features().len(), 3);
+    assert_eq!(editor.lineage(), lineage);
+}
+
+#[test]
+fn restore_keeps_the_larger_id_counters() {
+    let (mut editor, id) = sketched();
+    let empty = editor.state();
+    editor
+        .apply(
+            editor
+                .document()
+                .set_sketch_whole(id, line_to(glam::DVec2::X)),
+        )
+        .unwrap();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let (next, sketch_next) = (editor.document().next_id, sketch_of(&editor, id).next_id);
+    assert!(sketch_next > sketch_of(&Editor::new(empty.document().as_ref().clone()), id).next_id);
+
+    editor.restore(&empty).unwrap();
+    assert_eq!(editor.document().features().len(), 1);
+    assert!(sketch_of(&editor, id).points.is_empty());
+    assert_eq!(editor.document().next_id, next);
+    assert_eq!(sketch_of(&editor, id).next_id, sketch_next);
+}
+
+#[test]
+fn restore_off_the_history_starts_a_new_lineage() {
+    let mut editor = Editor::new(with_body());
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let kept = editor.state();
+    editor.undo();
+    // A new edit drops the redo history the state was on.
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    assert!(!editor.on_history(kept.revision()));
+    let lineage = editor.lineage();
+    editor.restore(&kept).unwrap();
+    assert_ne!(editor.lineage(), lineage);
+    assert_eq!(editor.lineage(), editor.revision());
+    editor.undo();
+    assert_eq!(editor.lineage(), lineage);
+}
+
+#[test]
+fn restore_refuses_another_lineage() {
+    let mut editor = Editor::new(with_body());
+    let kept = editor.state();
+    editor.apply(Command::Replace(Box::default())).unwrap();
+    let revision = editor.revision();
+    assert_eq!(editor.restore(&kept), Err(RestoreError::OtherLineage));
+    assert_eq!(editor.revision(), revision);
+    // Back across the replacement, it's of the lineage again.
+    editor.undo();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    editor.restore(&kept).unwrap();
+    assert_eq!(editor.document().features(), with_body().features());
+}
+
+#[test]
+fn on_history_covers_the_redo_history() {
+    let mut editor = Editor::new(with_body());
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let added = editor.revision();
+    editor.undo();
+    assert!(!editor.is_done(added) && editor.is_undone(added) && editor.on_history(added));
+    assert_eq!(editor.state_of(added).unwrap().revision(), added);
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    assert!(!editor.on_history(added) && editor.state_of(added).is_none());
+}
+
+#[test]
+fn restore_keeps_the_counter_of_a_sketch_gone_since() {
+    // A sketch's points made, then the sketch removed: restored from
+    // before its points, a new point mustn't take the id one had on the
+    // history, where a state kept of that time still names it.
+    let (mut editor, id) = sketched();
+    let empty = editor.state();
+    editor
+        .apply(
+            editor
+                .document()
+                .set_sketch_whole(id, line_to(glam::DVec2::X)),
+        )
+        .unwrap();
+    let drawn = sketch_of(&editor, id).next_id;
+    editor.apply(Command::RemoveFeature(id)).unwrap();
+    editor.restore(&empty).unwrap();
+    assert!(sketch_of(&editor, id).points.is_empty());
+    assert_eq!(sketch_of(&editor, id).next_id, drawn);
+}
+
+#[test]
+fn a_state_undone_past_then_edited_past_is_gone() {
+    let mut editor = Editor::new(with_body());
+    let first = editor.revision();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let added = editor.revision();
+    assert!(!editor.is_gone(added) && !editor.is_gone(first));
+    editor.undo();
+    assert!(!editor.is_gone(added));
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    assert!(editor.is_gone(added) && !editor.is_gone(first));
+    assert!(editor.made_before(first, added));
+    // One the history let go of as too old isn't.
+    for _ in 0..=MAX_UNDO {
+        editor.apply(Command::SetUnits(LengthUnit::In)).unwrap();
+        editor.apply(Command::SetUnits(LengthUnit::Mm)).unwrap();
+    }
+    assert!(!editor.is_gone(first));
+}
+
+#[test]
+fn restoring_what_the_design_is_but_for_counters_changes_nothing() {
+    let mut editor = Editor::new(with_body());
+    let before = editor.state();
+    assert!(editor.restores_nothing(&before));
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let after = editor.state();
+    assert!(!editor.restores_nothing(&before));
+    editor.restore(&before).unwrap();
+    // The design is the state before's again, its counter larger.
+    assert!(editor.restores_nothing(&before));
+    assert!(!editor.restores_nothing(&after));
 }

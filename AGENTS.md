@@ -63,6 +63,9 @@ it describes changes:
   the boolean pipeline, limits); `agents/kernel/` holds the detail, a
   file per part (its `README.md` lists them).
 - `notes/Threading.md`: the threading plan (built steps and what's still open).
+- `agents/mcp.md`: the MCP server (`varde-mcp`: HTTP, the guard, JSON-RPC,
+  the session, the tools, the threads) and the app's side of it: the
+  subscription, the queries and their keys, paging and the reply cap.
 - `agents/crates.md`: the crate table and dependency graph, the web build's
   worker binaries, assets, and the roadmap by crate.
 

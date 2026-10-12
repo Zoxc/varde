@@ -180,9 +180,8 @@ impl Document {
     /// highest "Sketch N" in the document, so that the numbering holds
     /// across sessions and undo.
     pub fn add_sketch(&self, plane: Plane) -> Command {
-        let names = self.features.iter().map(|feature| feature.name.as_str());
         Command::AddSketch {
-            name: format!("Sketch {}", next_number(names, "Sketch")),
+            name: format!("Sketch {}", self.next_number("Sketch")),
             plane,
         }
     }
@@ -222,10 +221,9 @@ impl Document {
     /// of its kind's names in the document ("Extrude N", "Revolve N"),
     /// like [`Document::add_sketch`].
     pub fn add_feature(&self, kind: FeatureKind) -> Command {
-        let names = self.features.iter().map(|feature| feature.name.as_str());
         let noun = kind.noun();
         Command::AddFeature {
-            name: format!("{noun} {}", next_number(names, noun)),
+            name: format!("{noun} {}", self.next_number(noun)),
             kind: Box::new(kind),
         }
     }
@@ -349,8 +347,7 @@ impl Document {
     /// N" one past the bodies so named, see [`Document::add_sketch`]. New
     /// ids are the highest, so it goes last.
     fn add_body(&mut self, feature: FeatureId) -> Result<BodyId, EditError> {
-        let names = self.bodies.iter().map(|body| body.name.as_str());
-        let number = next_number(names, "Body");
+        let number = self.next_number("Body");
         self.add_numbered_body(feature, number)
     }
 
@@ -359,8 +356,7 @@ impl Document {
     /// [`Document::add_body`] names a new one. The id is one the
     /// document's check held for it: below the next id and no body's.
     fn restore_body(&mut self, feature: FeatureId, id: BodyId) {
-        let names = self.bodies.iter().map(|body| body.name.as_str());
-        let name = format!("Body {}", next_number(names, "Body"));
+        let name = format!("Body {}", self.next_number("Body"));
         let at = self.bodies.partition_point(|body| body.id < id);
         self.bodies.insert(
             at,
@@ -458,9 +454,20 @@ fn copy_bodies_of(old: &FeatureKind) -> Vec<BodyId> {
     }
 }
 
-/// One past the highest `N` of the `names` that are "`kind` N", or 1. A
-/// file could hold the highest number there is, which is then reused: a
-/// repeated name is harmless.
+impl Document {
+    /// One past the highest `N` of the feature and body names that are
+    /// "`kind` N", or 1: both sorts, as a name is either's, so a default
+    /// never takes one the other sort has ("Body 2" a feature's). A file
+    /// could hold the highest number there is, which is then reused: a
+    /// repeated name is harmless.
+    fn next_number(&self, kind: &str) -> u64 {
+        let features = self.features.iter().map(|feature| feature.name.as_str());
+        let bodies = self.bodies.iter().map(|body| body.name.as_str());
+        next_number(features.chain(bodies), kind)
+    }
+}
+
+/// One past the highest `N` of the `names` that are "`kind` N", or 1.
 fn next_number<'a>(names: impl Iterator<Item = &'a str>, kind: &str) -> u64 {
     names
         .filter_map(|name| {
@@ -513,8 +520,7 @@ impl Document {
         id: FeatureId,
         planned: Vec<Option<BodyId>>,
     ) -> Result<(), EditError> {
-        let names = self.bodies.iter().map(|body| body.name.as_str());
-        let mut number = next_number(names, "Body");
+        let mut number = self.next_number("Body");
         let mut made = Vec::with_capacity(planned.len());
         for body in planned {
             made.push(match body {
@@ -722,8 +728,9 @@ impl Document {
 }
 
 /// Names a state of an [`Editor`]'s document, see [`Editor::revision`].
-/// Only equality means anything: a newer state may have an older
-/// revision, so there's no ordering them. Serializable as its number, for
+/// Only equality means anything outside the editor: the state current
+/// later may have an older revision (undo), so there's no ordering them;
+/// which was made first, the editor says ([`Editor::made_before`]). Serializable as its number, for
 /// the IO lane's requests, which answer with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -796,6 +803,38 @@ struct State {
     document: Arc<Document>,
     revision: Revision,
     lineage: Revision,
+}
+
+/// A state of an [`Editor`]'s document kept apart from it
+/// ([`Editor::state`]), for [`Editor::restore`] to bring back: the
+/// document, shared with the editor's history while it holds it, with
+/// its revision and lineage.
+#[derive(Debug, Clone)]
+pub struct EditorState(State);
+
+impl EditorState {
+    pub fn document(&self) -> &Snapshot {
+        &self.0.document
+    }
+
+    pub fn revision(&self) -> Revision {
+        self.0.revision
+    }
+
+    pub fn lineage(&self) -> Revision {
+        self.0.lineage
+    }
+}
+
+/// Why [`Editor::restore`] refused a state.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RestoreError {
+    /// The state is of another lineage than the document now (from
+    /// before a [`Command::Replace`], or after one undone): its ids may
+    /// name other things.
+    OtherLineage,
+    /// The document restored would fail [`Document::check`].
+    Edit(EditError),
 }
 
 impl Editor {
@@ -881,6 +920,141 @@ impl Editor {
     /// refuses, leaving everything as it was.
     pub fn amend(&mut self, command: Command) -> Result<(), EditError> {
         self.change(command, false, &Budget::default())
+    }
+
+    /// Applies `command` as [`Editor::amend`] does, sketches it solves
+    /// again solved within `budget`, as [`Editor::apply_within`] does.
+    pub fn amend_within(&mut self, command: Command, budget: &Budget) -> Result<(), EditError> {
+        self.change(command, false, budget)
+    }
+
+    /// Whether the document `revision` names is current or on the undo
+    /// history: whether the edit that made it is still in effect, not
+    /// undone (on the redo history) or gone with a branch undone past it.
+    pub fn is_done(&self, revision: Revision) -> bool {
+        self.current.revision == revision
+            || self.undo.iter().any(|state| state.revision == revision)
+    }
+
+    /// Whether the document `revision` names is anywhere on the history:
+    /// current, on the undo history or on the redo history.
+    pub fn on_history(&self, revision: Revision) -> bool {
+        self.is_done(revision) || self.is_undone(revision)
+    }
+
+    /// Whether the document `revision` names is on the redo history:
+    /// the edit that made it undone.
+    pub fn is_undone(&self, revision: Revision) -> bool {
+        self.redo.iter().any(|state| state.revision == revision)
+    }
+
+    /// Whether the state `revision` names is gone from the history with a
+    /// branch: the user undid past it, then edited. Told apart from one
+    /// the history let go of as too old (`MAX_UNDO`, 200) by being made after
+    /// the oldest state it still has; one let go of isn't gone.
+    pub fn is_gone(&self, revision: Revision) -> bool {
+        let oldest = self.undo.front().unwrap_or(&self.current).revision;
+        !self.on_history(revision) && oldest.0 < revision.0
+    }
+
+    /// Whether the state `a` names was made before the one `b` names:
+    /// revisions are given out in order, so a state made from another
+    /// (by an edit, a restore, an amend) has a later one than it, though
+    /// undo can make an older one current again.
+    pub fn made_before(&self, a: Revision, b: Revision) -> bool {
+        a.0 < b.0
+    }
+
+    /// The current state, to [restore](Editor::restore) later.
+    pub fn state(&self) -> EditorState {
+        EditorState(self.current.clone())
+    }
+
+    /// The state `revision` names, if it's on the history
+    /// (current, undone or redone).
+    pub fn state_of(&self, revision: Revision) -> Option<EditorState> {
+        (std::iter::once(&self.current))
+            .chain(&self.undo)
+            .chain(&self.redo)
+            .find(|state| state.revision == revision)
+            .map(|state| EditorState(state.clone()))
+    }
+
+    /// Brings `state`'s document back, as one undoable change with a
+    /// revision of its own. Undo winds the id counters back, so the ids
+    /// a state kept from before an undo and a new edit may name other
+    /// things than now: the restored document keeps the largest of each
+    /// counter, its own and each sketch's, over it and every state of the
+    /// lineage on the history (a sketch removed since took its counter
+    /// out of the document now). The lineage
+    /// stays only while `state`'s revision is still on the history
+    /// (current, undone or redone); otherwise the change starts a new one, as
+    /// [`Command::Replace`] does. A state of another lineage than now is
+    /// refused; one whose document is the current one changes nothing.
+    pub fn restore(&mut self, state: &EditorState) -> Result<(), RestoreError> {
+        let Some(next) = self.restored(state)? else {
+            return Ok(());
+        };
+        next.check()
+            .map_err(|why| RestoreError::Edit(EditError::Invalid(why)))?;
+        let new_lineage = !self.on_history(state.0.revision);
+        self.commit(next, new_lineage, true);
+        Ok(())
+    }
+
+    /// Whether [restoring](Editor::restore) `state` would change nothing:
+    /// its document is the current one, but for the id counters restore
+    /// keeps the larger of. A state of another lineage changes nothing
+    /// too (it's refused).
+    pub fn restores_nothing(&self, state: &EditorState) -> bool {
+        matches!(self.restored(state), Ok(None) | Err(_))
+    }
+
+    /// The document [`Editor::restore`] would make current, unchecked:
+    /// `None` if it's the current one.
+    fn restored(&self, state: &EditorState) -> Result<Option<Document>, RestoreError> {
+        let state = &state.0;
+        if state.lineage != self.current.lineage {
+            return Err(RestoreError::OtherLineage);
+        }
+        if Arc::ptr_eq(&state.document, &self.current.document) {
+            return Ok(None);
+        }
+        let now = &self.current.document;
+        let mut next = Document::clone(&state.document);
+        // Every state of the lineage on the history, not only now: a
+        // sketch removed since took its counter with it, and the states
+        // from before the removal stay on the history to be restored.
+        let lineage = self.current.lineage;
+        let states = (std::iter::once(&self.current))
+            .chain(&self.undo)
+            .chain(&self.redo)
+            .filter(|state| state.lineage == lineage);
+        for state in states {
+            let there = &state.document;
+            next.next_id = next.next_id.max(there.next_id);
+            for feature in &mut next.features {
+                let FeatureKind::Sketch { sketch, .. } = &mut feature.kind else {
+                    continue;
+                };
+                if let Some(FeatureKind::Sketch { sketch: there, .. }) =
+                    there.feature(feature.id).map(|feature| &feature.kind)
+                {
+                    sketch.next_id = sketch.next_id.max(there.next_id);
+                }
+            }
+        }
+        Ok((next != **now).then_some(next))
+    }
+
+    /// The documents of the undo history, then the current one, oldest
+    /// first, each with its revision: the states the document went
+    /// through to now, each made from the one before by an edit (whose
+    /// after-revision is its revision).
+    pub fn history(&self) -> impl DoubleEndedIterator<Item = (Revision, &Snapshot)> {
+        (self.undo.iter())
+            .chain(std::iter::once(&self.current))
+            .map(|state| (state.revision, &state.document))
     }
 
     /// [`Editor::apply`], or, unless `own_step`, [`Editor::amend`], with
@@ -1175,14 +1349,21 @@ impl Editor {
             }
         };
         next.check().map_err(EditError::Invalid)?;
+        self.commit(next, replacing, own_step);
+        Ok(())
+    }
 
+    /// Makes `next`, which passed [`Document::check`], the current
+    /// document with a revision of its own: of a new lineage if
+    /// `new_lineage`, and its own undo step if `own_step` (amended, the
+    /// state replaced is dropped: undo goes back past it).
+    fn commit(&mut self, next: Document, new_lineage: bool, own_step: bool) {
         let revision = self.next_revision;
         // One per edit: a u64 won't run out.
         self.next_revision = Revision(revision.0 + 1);
-        let lineage = if replacing {
-            revision
-        } else {
-            self.current.lineage
+        let lineage = match new_lineage {
+            true => revision,
+            false => self.current.lineage,
         };
         let before = std::mem::replace(
             &mut self.current,
@@ -1192,13 +1373,11 @@ impl Editor {
                 lineage,
             },
         );
-        // Amended, the state replaced is dropped: undo goes back past it.
         if own_step {
             self.push_undo(before);
             self.redo.clear();
         }
         self.changed();
-        Ok(())
     }
 
     pub fn can_undo(&self) -> bool {

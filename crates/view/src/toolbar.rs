@@ -133,6 +133,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         history_button(Icon::Undo, "Undo", undo),
         history_button(Icon::Redo, "Redo", redo),
         container(vrule()).height(18).padding([0, 4]),
+        crate::mcp::toggle(state.mcp.as_ref()),
         crate::settings::settings_button(state.settings.is_some()),
         Space::new().width(8),
     ]
@@ -1161,7 +1162,7 @@ const TOLERANCES: [(f64, &str); 3] = [(1e-4, "0.1 µm"), (1e-3, "1 µm"), (1e-2,
 
 /// The name of the fit tolerance `fit`, in mm, in micrometres to three
 /// decimals without trailing zeros: "0.05 µm", "25 µm".
-fn tolerance_label(fit: f64) -> String {
+pub fn tolerance_label(fit: f64) -> String {
     let mut text = format!("{:.3}", fit * 1000.0);
     let kept = text.trim_end_matches('0').trim_end_matches('.').len();
     text.truncate(kept);

@@ -1588,15 +1588,31 @@ pub fn card_meta(theme: &Theme, hovered: bool) -> container::Style {
     }
 }
 
-/// The count beside a welcome page heading, like Recent's: muted text on
-/// a key chip's fill, rounded to a pill.
+/// The count beside a welcome page heading, like Recent's, or the MCP
+/// panel's tag: muted text on a key chip's fill, rounded to a pill.
 pub fn count_chip(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
-        border: border::rounded(9),
+        border: border::rounded(PILL),
         ..filled(p.chip, p.muted)
     }
 }
+
+/// A [`count_chip`] that's a button, like the status bar's MCP chip:
+/// highlighted, its text strong, on hover.
+pub fn chip_button(theme: &Theme, status: button::Status) -> button::Style {
+    let p = palette(theme);
+    let hovered = is_hovered(status);
+    button::Style {
+        background: Some(Background::Color(if hovered { p.hl } else { p.chip })),
+        text_color: if hovered { p.text } else { p.muted },
+        border: border::rounded(PILL),
+        ..button::Style::default()
+    }
+}
+
+/// The corner radius that rounds a chip up to 20 pixels high to a pill.
+const PILL: f32 = 10.0;
 
 /// The delete button at the foot of a design's card on the welcome page,
 /// over the card's own highlight: a wash of the danger colour on hover,
@@ -2085,6 +2101,13 @@ pub fn muted_text(theme: &Theme) -> text::Style {
 pub fn faint_text(theme: &Theme) -> text::Style {
     text::Style {
         color: Some(palette(theme).faint),
+    }
+}
+
+/// The success colour, for what went through: an MCP edit applied.
+pub fn ok_text(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).ok),
     }
 }
 

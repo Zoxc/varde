@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use varde_sketch::{Add, Constraint, Dimension, Measure, Side};
 
 use super::*;
-use crate::tests::{Drawn, analyse_at, drag, drawn, propose_on};
+use crate::tests::{Drawn, analyse_at, drag, drawn, propose_on, query_at};
 
 /// `request` posted and decoded, then answered by `solver` as the worker
 /// does, and the reply decoded as the page does.
@@ -47,6 +47,7 @@ fn parameters_past_their_limits_are_refused() {
     ];
     for list in lists {
         let posted: Posted<&Sketch, &SketchEdit, Vec<(&str, &str)>> = Posted::Analyse {
+            query: None,
             revision: Revision::from(1),
             sketch: &drawn.sketch,
             units: LengthUnit::Mm,
@@ -141,7 +142,10 @@ fn requests_round_trip() {
     }
 
     let Posted::Analyse {
-        revision, sketch, ..
+        query: None,
+        revision,
+        sketch,
+        ..
     } = decode_request(&encode_request(&analyse_at(9, &drawn.sketch), false)).unwrap()
     else {
         panic!("not an analysis");
@@ -180,6 +184,7 @@ fn responses_round_trip() {
             false,
         ),
         (analyse_at(4, &drawn.sketch), true),
+        (query_at(7, 5, &drawn.sketch), true),
     ] {
         // As natively, where a drag step always has its sketch.
         let expected = native.handle(request.clone());
@@ -228,6 +233,7 @@ fn a_reply_to_another_request_is_an_error() {
     let drawn = drawn();
     let asked = analyse_at(3, &drawn.sketch);
     let reply = Reply::Analysed {
+        query: None,
         revision: Revision::from(4),
         analysis: Analysis::default(),
     };
@@ -242,6 +248,7 @@ fn a_reply_to_another_request_is_an_error() {
     ));
     let asked = propose_on(3, &drawn.sketch, SketchEdit::Delete(Vec::new()));
     let reply = Reply::Analysed {
+        query: None,
         revision: Revision::from(3),
         analysis: Analysis::default(),
     };
@@ -277,6 +284,7 @@ fn an_analysis_must_name_items_of_its_sketch() {
     let asked = analyse_at(1, &drawn.sketch);
     let good = varde_sketch::analyse(&drawn.sketch);
     let analysed = |analysis: Analysis| Reply::<Sketch, Analysis>::Analysed {
+        query: None,
         revision: Revision::from(1),
         analysis,
     };
@@ -318,6 +326,7 @@ fn an_analysis_counts_points_parameters_on_splines_as_variables() {
         .unwrap();
     let asked = analyse_at(1, &Arc::new(sketch));
     let analysed = |freedom| Reply::<Sketch, Analysis>::Analysed {
+        query: None,
         revision: Revision::from(1),
         analysis: Analysis {
             freedom,
@@ -347,6 +356,7 @@ fn an_analysis_counts_the_parameters_of_offsets_from_splines_as_variables() {
         .unwrap();
     let asked = analyse_at(1, &Arc::new(sketch));
     let analysed = |freedom| Reply::<Sketch, Analysis>::Analysed {
+        query: None,
         revision: Revision::from(1),
         analysis: Analysis {
             freedom,
@@ -426,6 +436,7 @@ fn a_request_whose_sketch_fails_its_check_is_an_error() {
         propose_on(1, &sketch, SketchEdit::Delete(Vec::new())),
         drag(1, &sketch, drawn.end, DVec2::ZERO),
         analyse_at(1, &sketch),
+        query_at(1, 1, &sketch),
     ] {
         assert!(matches!(
             decode_request(&encode_request(&request, true)),
@@ -545,6 +556,7 @@ fn malformed_bytes_are_refused_never_a_panic() {
         propose_on(1, &drawn.sketch, edit),
         drag(2, &drawn.sketch, drawn.end, DVec2::new(12.0, 4.0)),
         analyse_at(3, &drawn.sketch),
+        query_at(5, 3, &drawn.sketch),
         propose_on(4, &dimensioned, SketchEdit::SetDimension { id, value }),
     ];
     let mut noise = Noise(7);
@@ -842,4 +854,74 @@ fn a_rejection_may_name_a_chamfer_whose_corner_implies_equations() {
     };
     assert!(!fails(&rejected([drawn.horizontal, cut].into()), &asked));
     assert!(fails(&rejected([drawn.horizontal, side].into()), &asked));
+}
+
+#[test]
+fn a_query_round_trips() {
+    let drawn = drawn();
+    let Posted::Analyse {
+        query: Some(id),
+        revision,
+        sketch,
+        ..
+    } = decode_request(&encode_request(&query_at(8, 6, &drawn.sketch), false)).unwrap()
+    else {
+        panic!("not a query");
+    };
+    assert_eq!(
+        (id, revision, &sketch),
+        (8, Revision::from(6), &*drawn.sketch)
+    );
+}
+
+#[test]
+fn a_query_s_reply_is_checked_against_it() {
+    let drawn = drawn();
+    let asked = query_at(8, 6, &drawn.sketch);
+    // Another query's answer, or an analysis's, is refused.
+    let reply = Reply::<Sketch, Analysis>::Analysed {
+        query: Some(9),
+        revision: 6.into(),
+        analysis: Analysis::default(),
+    };
+    assert_eq!(
+        decode_reply(&encoded(&reply), &asked).unwrap_err(),
+        Error::Answers(Tag::Query(9))
+    );
+    let reply = Reply::<Sketch, Analysis>::Analysed {
+        query: None,
+        revision: 6.into(),
+        analysis: Analysis::default(),
+    };
+    assert_eq!(
+        decode_reply(&encoded(&reply), &asked).unwrap_err(),
+        Error::Answers(Tag::Analyse(6.into()))
+    );
+    // A query's answer to the user's analysis is refused too.
+    let reply = Reply::<Sketch, Analysis>::Analysed {
+        query: Some(8),
+        revision: 6.into(),
+        analysis: Analysis::default(),
+    };
+    assert!(matches!(
+        decode_reply(&encoded(&reply), &analyse_at(6, &drawn.sketch)),
+        Err(Error::Answers(Tag::Query(8)))
+    ));
+    // Of another revision, or naming items not of the sketch: failed.
+    let reply = Reply::<Sketch, Analysis>::Analysed {
+        query: Some(8),
+        revision: 5.into(),
+        analysis: Analysis::default(),
+    };
+    assert!(fails(&reply, &asked));
+    let analysis = Analysis {
+        freedom: usize::MAX,
+        ..Analysis::default()
+    };
+    let reply = Reply::<Sketch, Analysis>::Analysed {
+        query: Some(8),
+        revision: 6.into(),
+        analysis,
+    };
+    assert!(fails(&reply, &asked));
 }

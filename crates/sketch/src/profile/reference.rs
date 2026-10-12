@@ -108,7 +108,7 @@ impl Region {
     /// where a line runs along an edge or through a corner, and a point
     /// there is as much in the region beside it once the sketch moves a
     /// hair: none if every one is on it.
-    fn inside(&self) -> Option<DVec2> {
+    pub fn inside(&self) -> Option<DVec2> {
         let (min, max) = self.bounds;
         let mut best: Option<(f64, DVec2)> = None;
         let mut crossings = Vec::new();

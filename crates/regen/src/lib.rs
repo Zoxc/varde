@@ -8,7 +8,8 @@
 //! set up applied as a [`Draft`]) and tessellating the visible ones,
 //! flattening the visible sketches' curves and solving every sketch, to
 //! tell those that don't solve, and, asked for an export, welding the
-//! visible bodies ([`export`]). What it works out is kept per feature
+//! visible bodies ([`export`]), or, asked by a client ([`Query`]), what
+//! each of a body's edges is ([`EdgeFacts`]) or a measure. What it works out is kept per feature
 //! ([`Cache`]), so an edit reruns only what it changes. It runs in a
 //! [`lane`] per document: natively a thread, on the web a Web
 //! Worker, which shares no memory with the page, so requests and responses
@@ -19,6 +20,7 @@
 //! [`Editor::generation`]: varde_document::Editor::generation
 
 mod cache;
+mod edge_facts;
 mod error_geometry;
 mod history;
 /// What other crates' tests set up of regeneration.
@@ -149,6 +151,7 @@ pub use crate::worker::serve as serve_worker;
 #[doc(hidden)]
 pub const WORKER_ROLE: &str = "regen";
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -163,6 +166,7 @@ use varde_kernel::{
 use varde_sketch::{Budget, Goal, Id};
 
 pub use cache::Cache;
+pub use edge_facts::{Convexity, EdgeFacts};
 pub use error_geometry::{ErrorGeometry, FeatureFailure, GeometryError, GeometryParts};
 pub use history::scale::{AXIS_SINE, along_axis};
 pub use history::{BodySolid, Evaluation, evaluate, note_merge};
@@ -170,7 +174,7 @@ pub use inspect::{
     At, Between, EdgeForm, Entity, Gap, Inspect, InspectPick, Inspected, Measure, Probed,
 };
 pub use pick_tables::{Bvh, BvhNode, PickTables, PickTablesError, PickTablesParts, vertex_runs};
-pub use picking::{PickCorner, PickFace, Picking, PickingError, Summary};
+pub use picking::{PickCorner, PickFace, Picking, PickingError, PickingParts, Summary};
 pub use profile::{ProfileError, chain_closes, loft_corner, loft_corners, profile};
 
 use cache::Keyer;
@@ -221,6 +225,77 @@ pub enum Request {
         #[serde(with = "varde_document::codec::snapshot")]
         document: Snapshot,
     },
+    /// A client's question ([`Query`]) about the committed `document` as
+    /// of `generation`, rolled back to before `until` as a
+    /// [`Request::Regenerate`] is: answered with [`Response::Answered`]
+    /// tagged `tag`, which the app chooses. The history is evaluated or
+    /// found in the cache, as for a regeneration of the same document,
+    /// but nothing is drawn. Queued in order beside exports, never
+    /// replaced or dropped, as they are (see `src/newest.rs`): a client
+    /// (the MCP queries) waits on each.
+    Query {
+        tag: u64,
+        generation: Generation,
+        #[serde(with = "varde_document::codec::snapshot")]
+        document: Snapshot,
+        until: Option<FeatureId>,
+        query: Query,
+    },
+}
+
+/// What a [`Request::Query`] asks of the model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Query {
+    /// What each edge of the body is ([`EdgeFacts`]), answered with
+    /// [`Answer::Topology`]. The answer's edges pair with the body's
+    /// part's first edges in the [`Picking`] of a model of the same
+    /// generation and `until`, see [`EdgeFacts`].
+    Topology(BodyId),
+    /// Measures the picks as the user's measure does, answered with
+    /// [`Answer::Measured`], with no place in any tables ([`Probed::at`]
+    /// `None`): the regeneration's own inspect is the user's, and
+    /// neither may replace the other.
+    Measure(Box<Inspect>),
+}
+
+impl Query {
+    /// The answer to this query should working it out fail, its error
+    /// to be filled in ([`Answer::fail`]).
+    fn failed(&self) -> Answer {
+        match self {
+            Query::Topology(body) => Answer::Topology {
+                body: *body,
+                result: Err(String::new()),
+            },
+            Query::Measure(_) => Answer::Measured(Err(String::new())),
+        }
+    }
+}
+
+/// What a [`Response::Answered`] answers, of the [`Query`] asked.
+#[derive(Debug, Clone)]
+pub enum Answer {
+    /// Of [`Query::Topology`] for `body`: the facts of each of the
+    /// body's edges, in its topology's order, or why there are none (the
+    /// body has no solid there), in words to follow a colon.
+    Topology {
+        body: BodyId,
+        result: Result<Vec<EdgeFacts>, String>,
+    },
+    /// Of [`Query::Measure`]: the picks measured (each found or why not,
+    /// as for the user's measure), or why nothing was (the work failed),
+    /// in words to follow a colon. Checked by [`Inspected::checked`] with no scene.
+    Measured(Result<Box<Inspected>, String>),
+}
+
+impl Answer {
+    /// Makes this answer say working it out failed with `why`.
+    fn fail(&mut self, why: String) {
+        match self {
+            Answer::Topology { result, .. } => *result = Err(why),
+            Answer::Measured(result) => *result = Err(why),
+        }
+    }
 }
 
 /// How finely a model is drawn for the view: its chords within
@@ -575,14 +650,15 @@ fn saturating_u32(n: usize) -> u32 {
 }
 
 impl Response {
-    /// The editor generation the response is of: `None` for an export's
-    /// or a [`Response::Progress`].
+    /// The editor generation the model answered is of: `None` for an
+    /// export's, a [`Response::Answered`] (whose generation is its own,
+    /// not a model's) or a [`Response::Progress`].
     pub fn generation(&self) -> Option<Generation> {
         match self {
             Response::Regenerated { generation, .. } | Response::Failed { generation, .. } => {
                 Some(*generation)
             }
-            Response::Exported { .. } | Response::Progress(_) => None,
+            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
         }
     }
 
@@ -590,7 +666,7 @@ impl Response {
     pub fn exclude(&self) -> Option<FeatureId> {
         match self {
             Response::Regenerated { exclude, .. } | Response::Failed { exclude, .. } => *exclude,
-            Response::Exported { .. } | Response::Progress(_) => None,
+            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
         }
     }
 
@@ -598,7 +674,7 @@ impl Response {
     pub fn until(&self) -> Option<FeatureId> {
         match self {
             Response::Regenerated { until, .. } | Response::Failed { until, .. } => *until,
-            Response::Exported { .. } | Response::Progress(_) => None,
+            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
         }
     }
 
@@ -607,7 +683,7 @@ impl Response {
         match self {
             Response::Regenerated { draft, .. } => draft.as_ref().map(|draft| draft.revision),
             Response::Failed { draft, .. } => *draft,
-            Response::Exported { .. } | Response::Progress(_) => None,
+            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
         }
     }
 
@@ -615,7 +691,7 @@ impl Response {
     pub fn sight(&self) -> Option<u32> {
         match self {
             Response::Regenerated { sight, .. } | Response::Failed { sight, .. } => *sight,
-            Response::Exported { .. } | Response::Progress(_) => None,
+            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
         }
     }
 
@@ -624,18 +700,18 @@ impl Response {
         match self {
             Response::Regenerated { inspected, .. } => inspected.as_ref().map(|i| i.revision),
             Response::Failed { inspect, .. } => *inspect,
-            Response::Exported { .. } | Response::Progress(_) => None,
+            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => None,
         }
     }
 }
 
 impl Request {
     /// The editor generation a [`Request::Regenerate`] is of: `None` for
-    /// an export.
+    /// an export or a [`Request::Query`], which are queued in order.
     pub fn generation(&self) -> Option<Generation> {
         match self {
             Request::Regenerate { generation, .. } => Some(*generation),
-            Request::Export { .. } => None,
+            Request::Export { .. } | Request::Query { .. } => None,
         }
     }
 
@@ -643,7 +719,7 @@ impl Request {
     pub fn exclude(&self) -> Option<FeatureId> {
         match self {
             Request::Regenerate { exclude, .. } => *exclude,
-            Request::Export { .. } => None,
+            Request::Export { .. } | Request::Query { .. } => None,
         }
     }
 
@@ -651,7 +727,7 @@ impl Request {
     pub fn until(&self) -> Option<FeatureId> {
         match self {
             Request::Regenerate { until, .. } => *until,
-            Request::Export { .. } => None,
+            Request::Export { .. } | Request::Query { .. } => None,
         }
     }
 
@@ -659,7 +735,7 @@ impl Request {
     pub fn draft(&self) -> Option<u64> {
         match self {
             Request::Regenerate { draft, .. } => draft.as_ref().map(|draft| draft.revision),
-            Request::Export { .. } => None,
+            Request::Export { .. } | Request::Query { .. } => None,
         }
     }
 
@@ -667,7 +743,7 @@ impl Request {
     pub fn inspect(&self) -> Option<u64> {
         match self {
             Request::Regenerate { inspect, .. } => inspect.as_ref().map(|i| i.revision),
-            Request::Export { .. } => None,
+            Request::Export { .. } | Request::Query { .. } => None,
         }
     }
 
@@ -675,7 +751,7 @@ impl Request {
     pub fn sight(&self) -> Option<u32> {
         match self {
             Request::Regenerate { sight, .. } => sight.as_ref().map(|sight| sight.revision),
-            Request::Export { .. } => None,
+            Request::Export { .. } | Request::Query { .. } => None,
         }
     }
 
@@ -683,7 +759,8 @@ impl Request {
     /// e.g. by a panic: every request has one. Keeps only what the
     /// answer needs, not the document.
     pub fn failure(&self) -> impl FnOnce(String) -> Response + Send + use<> {
-        let failed = match self {
+        // The answer with an empty error, filled in once there is one.
+        let mut failed = match self {
             Request::Regenerate {
                 generation,
                 exclude,
@@ -692,30 +769,49 @@ impl Request {
                 inspect,
                 sight,
                 ..
-            } => Err((
-                *generation,
-                (*exclude, *until),
-                draft.as_ref().map(|d| d.revision),
-                inspect.as_ref().map(|i| i.revision),
-                sight.as_ref().map(|s| s.revision),
-            )),
-            Request::Export { export, .. } => Ok(*export),
-        };
-        move |error| match failed {
-            Err((generation, (exclude, until), draft, inspect, sight)) => Response::Failed {
+            } => Response::Failed {
+                generation: *generation,
+                exclude: *exclude,
+                until: *until,
+                draft: draft.as_ref().map(|d| d.revision),
+                inspect: inspect.as_ref().map(|i| i.revision),
+                sight: sight.as_ref().map(|s| s.revision),
+                error: String::new(),
+            },
+            Request::Export { export, .. } => Response::Exported {
+                export: *export,
+                result: Err(String::new()),
+            },
+            Request::Query {
+                tag,
                 generation,
-                exclude,
                 until,
-                draft,
-                inspect,
-                sight,
-                error,
+                query,
+                ..
+            } => Response::Answered {
+                tag: *tag,
+                generation: *generation,
+                until: *until,
+                answer: query.failed(),
             },
-            Ok(export) => Response::Exported {
-                export,
-                result: Err(error),
-            },
+        };
+        move |why| {
+            match &mut failed {
+                Response::Failed { error, .. } => *error = why,
+                Response::Exported { result, .. } => *result = Err(why),
+                Response::Answered { answer, .. } => answer.fail(why),
+                Response::Regenerated { .. } | Response::Progress(_) => {}
+            }
+            failed
         }
+    }
+}
+
+/// `document` rolled back to before `until`, if it's given.
+fn rolled_back(document: &Document, until: Option<FeatureId>) -> Cow<'_, Document> {
+    match until {
+        Some(until) => Cow::Owned(document.before(until)),
+        None => Cow::Borrowed(document),
     }
 }
 
@@ -804,6 +900,14 @@ pub enum Response {
         export: u64,
         result: Result<Vec<ExportedBody>, String>,
     },
+    /// Answers [`Request::Query`] tagged `tag`, of `generation` and
+    /// `until` as asked.
+    Answered {
+        tag: u64,
+        generation: Generation,
+        until: Option<FeatureId>,
+        answer: Answer,
+    },
     /// How far the [`Request::Regenerate`] being worked on has got, sent
     /// while it's worked on, before its answer. Not an answer: every
     /// regeneration started is still answered.
@@ -849,17 +953,10 @@ impl Regenerator {
                 sight,
             } => {
                 self.cache.begin();
-                let rolled;
-                let document = match until {
-                    Some(until) => {
-                        rolled = document.before(until);
-                        &rolled
-                    }
-                    None => &*document,
-                };
+                let document = rolled_back(&document, until);
                 let asked = (draft.as_deref(), inspect.as_deref());
                 let revision = sight.as_ref().map(|sight| sight.revision);
-                match self.regenerate(document, exclude, asked, sight.as_deref(), report) {
+                match self.regenerate(&document, exclude, asked, sight.as_deref(), report) {
                     Ok(model) => Response::Regenerated {
                         generation,
                         exclude,
@@ -898,6 +995,42 @@ impl Regenerator {
                 let evaluation = evaluate(&document, &mut self.cache);
                 let result = crate::export(&document, &evaluation).map_err(|e| e.to_string());
                 Response::Exported { export, result }
+            }
+            // Not a request of its own to the cache either, as an export.
+            Request::Query {
+                tag,
+                generation,
+                document,
+                until,
+                query,
+            } => {
+                let document = rolled_back(&document, until);
+                let evaluation = evaluate(&document, &mut self.cache);
+                let answer = match query {
+                    Query::Topology(body) => Answer::Topology {
+                        body,
+                        result: match evaluation.bodies.iter().find(|made| made.body == body) {
+                            Some(made) => {
+                                let topology = inspect::topology(made, &mut self.cache);
+                                edge_facts::body_edges(&made.solid, &topology)
+                            }
+                            None => Err("the body has no solid there".to_owned()),
+                        },
+                    },
+                    Query::Measure(inspect) => Answer::Measured(Ok(Box::new(inspect::inspect(
+                        &inspect,
+                        &document,
+                        &evaluation,
+                        None,
+                        &mut self.cache,
+                    )))),
+                };
+                Response::Answered {
+                    tag,
+                    generation,
+                    until,
+                    answer,
+                }
             }
         }
     }
@@ -1042,8 +1175,7 @@ impl Regenerator {
                 inspect,
                 document,
                 &evaluation,
-                &scene.mesh,
-                &scene.picking,
+                Some((&scene.mesh, &scene.picking)),
                 &mut self.cache,
             )
         });

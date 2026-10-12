@@ -8,6 +8,7 @@
 mod config;
 mod export;
 pub(crate) mod files;
+pub(crate) mod mcp_token;
 pub(crate) mod panicked;
 pub(crate) mod pick;
 mod recent;

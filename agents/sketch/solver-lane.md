@@ -9,7 +9,12 @@ has the details.
 - **Requests and responses.** `Propose { base, sketch, edit }` answers
   `Accepted` or `Rejected`, tagged with `base`; `Drag { session, sketch,
   points, radii }` answers `Dragged { session, solution }` only when the
-  step converged; `Analyse { revision, sketch }` answers `Analysed`. Each
+  step converged; `Analyse { query, revision, sketch }` answers
+  `Analysed { query, revision, analysis }`: the user's with `query`
+  `None`, tagged `Tag::Analyse(revision)`, or a client's with
+  `Some(id)` (the MCP `sketch` tool's degrees of freedom, `id` the
+  waiting call's tag, any sketch, open or not), tagged `Tag::Query(id)`
+  (`Tag::analysis`). One path does both, on each side. Each
   carries the design's `units` and resolved `params` too (the document's
   `params_shared` when sent), which sketches are checked in
   (`Request::design`); a `DragSession` keeps a copy of them for its
@@ -22,8 +27,11 @@ has the details.
   it, starting from its sketch. Proposals get `PROPOSAL_TIME` per solve, drag
   steps `DRAG_TIME`, on the platform's clock (`clock.rs`). Tests answer
   requests with a `Solver` of their own.
-- **Order** (`order.rs`): proposals and analyses queue in order, a newer
-  analysis replacing one waiting; drag steps are latest wins in a slot of
+- **Order** (`order.rs`): proposals and analyses queue in order, a
+  newer analysis of the user's replacing one waiting; a client's queues as a
+  proposal does, apart from the user's analysis: it neither replaces the
+  one waiting nor is replaced by it (or by another query), as its call
+  waits for it. Drag steps are latest wins in a slot of
   their own, and a step of a session older than one sent is dropped. The
   queue and the slot take turns, so a proposal waits for one drag step at
   most, and a drag step for one proposal.
@@ -36,7 +44,8 @@ has the details.
   again (`Params::evaluate`) once their count, names' and texts' lengths
   are within `MAX_PARAMS`, `MAX_NAME_LEN` and `MAX_LEN`: sketches
   checked, ids named in an analysis or a rejection those of the sketch
-  sent or of the one the edit makes, a drag solution a place per point and
+  sent or of the one the edit makes, an analysis of the revision (and a
+  client's of the id) it was sent, a drag solution a place per point and
   a radius per circle. The worker checks what it's sent the same way.
 - **In the app** `Varde::solve_lane` starts the lane for the open
   document and hands it to `Doc::solver`; what's asked of it is under

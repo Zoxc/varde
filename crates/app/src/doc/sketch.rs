@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use glam::{DVec2, Vec3};
+use glam::{DVec2, DVec3, Vec3};
 use varde_document::{
     Command, FaceRef, Feature, FeatureId, FeatureKind, Generation, LinkSource, Placement, Plane,
     Revision, Sketch,
@@ -25,17 +25,23 @@ use varde_render::{Camera, Projection};
 use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, Selectable, SketchEdit, TooComplex};
 use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{
-    ActiveTool, CURVED_FACE, GeometryGroup, LinkRow, Naming, Panel, PlanePick, RowMenu, Shown,
-    SketchLines, SketchState, Snap, Target, Tool, ToolClick, ValueField, ValueTarget,
+    ActiveTool, CURVED_FACE, GeometryGroup, LinkRow, Naming, Panel, PickIndex, PlanePick, RowMenu,
+    Shown, SketchLines, SketchState, Snap, Target, Tool, ToolClick, ValueField, ValueTarget,
 };
 
 use super::camera::FRAME_MARGIN;
 use super::extrude::is_sketch;
 use super::{Change, Doc, HOME_TARGET, OUT_OF_DATE, home_camera};
 pub(crate) use dimension::Focus;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use edit::{Clicks, clicked};
 pub(crate) use outside::OutsideClick;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use outside::{outside_model_in, outside_sketch_item_at, outside_target_in};
 use propose::sketch_of;
 pub(crate) use propose::{Analyses, Proposals};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use propose::{Settled, Step};
 
 /// The sketch being edited, while one is: [`Doc::sketch`].
 #[derive(Debug)]
@@ -249,7 +255,7 @@ pub(crate) struct Drawing {
 }
 
 impl Drawing {
-    fn new(tool: Tool) -> Self {
+    pub(super) fn new(tool: Tool) -> Self {
         Self {
             tool,
             placed: Vec::new(),
@@ -290,7 +296,7 @@ impl Drawing {
     }
 
     /// Whether it has anything of a shape placed, or picked to measure.
-    fn started(&self) -> bool {
+    pub(crate) fn started(&self) -> bool {
         !(self.placed.is_empty() && self.picked.is_empty())
     }
 
@@ -591,29 +597,31 @@ impl Doc {
 
     /// What the model shown found that naming its faces needs.
     pub(crate) fn shown(&self) -> Shown<'_> {
-        Shown {
-            merged: self.feed.merged_bodies(),
-            touched: self.feed.touched_features(),
-            failed: self.feed.failed_features(),
-        }
+        self.feed.shown_marks()
     }
 
     /// The naming of picks as of `feature` ([`Naming::before`]): the
     /// history stopped there, or where a new feature (`None`) goes.
     pub(crate) fn naming_at(&self, feature: Option<FeatureId>) -> Naming {
+        self.naming_in(feature, self.shown())
+    }
+
+    /// The naming of picks as of `feature`, as the model whose `marks`
+    /// these are found its merges ([`Naming::before`]): of the committed
+    /// model's for the MCP client's keys ([`MeshFeed::marks_of`]).
+    ///
+    /// [`MeshFeed::marks_of`]: super::feed::MeshFeed::marks_of
+    pub(crate) fn naming_in(&self, feature: Option<FeatureId>, marks: Shown) -> Naming {
         let document = self.editor.document();
         let before =
             (feature.and_then(|id| document.feature_index(id))).unwrap_or(document.insert_at());
-        Naming::before(document, before, self.shown())
+        Naming::before(document, before, marks)
     }
 
     /// The face a sketch on `face` goes on and where, as the model shown
-    /// has the face (a merged body's on the body holding it): the face as
-    /// `pick` names it ([`PlanePick::face_ref`]), and
-    /// [`Placement::on_plane`] of its plane, the bits regenerating will
-    /// place it by. Refused, why, if the face isn't found there (the
-    /// cursor doesn't pick that model), isn't flat, can't take the sketch
-    /// `pick` is for, or is too far out to sketch on.
+    /// has the face (a merged body's on the body holding it): see
+    /// [`face_placement_in`]. Refused, why, if the face isn't found there
+    /// (the cursor doesn't pick that model), or as that refuses it.
     fn face_placement(
         &self,
         face: &FaceRef,
@@ -626,17 +634,7 @@ impl Doc {
         let found = index
             .find_face(self.feed.shown_body(face.body), &face.key, face.near)
             .ok_or("That face isn't in the model shown")?;
-        if let Some(why) = pick.refusal(index, found) {
-            return Err(why);
-        }
-        let placement = index.face_placement(found).ok_or(CURVED_FACE)?;
-        let face =
-            (pick.face_ref(index, found, face.near)).ok_or("That face isn't in the model shown")?;
-        if placement.valid() {
-            Ok((face, placement))
-        } else {
-            Err("That face is too far out to sketch on".into())
-        }
+        face_placement_in(index, found, face.near, pick)
     }
 
     /// Where the sketch feature `id` is, if it's a sketch and placed: an
@@ -800,7 +798,7 @@ impl Doc {
     /// Leaves the sketch without asking for the model again, for
     /// [`Doc::sync`] to, turning the camera back to the view before it in
     /// the projection it has now.
-    fn end_session(&mut self) {
+    pub(crate) fn end_session(&mut self) {
         if let Some(mut to) = self.before_sketch.take() {
             to.set_projection(self.camera.projection());
             self.animate_camera(to);
@@ -842,14 +840,8 @@ impl Doc {
             self.view_menu = false;
         } else if self.picking_plane.is_some() {
             self.stop_picking_plane();
-        } else if self.extrude.is_some() {
-            self.extrude = None;
-        } else if self.revolve.is_some() {
-            self.revolve = None;
-        } else if self.combine.is_some() {
-            self.combine = None;
-        } else if self.motion.is_some() {
-            self.motion = None;
+        } else if self.operating() {
+            self.close_operation();
         } else if self.measure.is_some() {
             self.measure = None;
         } else if let Some(session) = &mut self.sketch {
@@ -1498,3 +1490,28 @@ fn follow_selection(
 
 #[cfg(test)]
 mod tests;
+
+/// The face a sketch on face `found` of `index`'s model, picked at
+/// `near`, goes on and where: the face as `pick` names it
+/// ([`PlanePick::face_ref`]), and [`Placement::on_plane`] of its plane,
+/// the bits regenerating will place it by. Refused, why, if the face
+/// isn't flat, can't take the sketch `pick` is for, or is too far out to
+/// sketch on. A click's on the model shown, and the MCP client's on the
+/// committed model, its key found there.
+pub(crate) fn face_placement_in(
+    index: &PickIndex,
+    found: u32,
+    near: DVec3,
+    pick: &PlanePick,
+) -> Result<(FaceRef, Placement), Cow<'static, str>> {
+    if let Some(why) = pick.refusal(index, found) {
+        return Err(why);
+    }
+    let placement = index.face_placement(found).ok_or(CURVED_FACE)?;
+    let face = (pick.face_ref(index, found, near)).ok_or("That face isn't in the model shown")?;
+    if placement.valid() {
+        Ok((face, placement))
+    } else {
+        Err("That face is too far out to sketch on".into())
+    }
+}

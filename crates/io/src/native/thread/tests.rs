@@ -16,6 +16,7 @@ fn answers_in_order_and_closes_files_when_dropped() {
         settings: None,
         designs: None,
         panic: None,
+        mcp_token: None,
     });
 
     let entries = vec![RecentFile {

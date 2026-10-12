@@ -33,7 +33,8 @@
 //! must answer that request, or it's refused, as an undecodable one is. A
 //! solved sketch must pass [`Sketch::check`]; the ids an analysis or a
 //! rejection names must name items of the sketch sent, or of the one the
-//! edit makes from it, of the kind they're named for (a rejection's driving
+//! edit makes from it, of the kind they're named for, and an analysis must
+//! be of the revision sent (a rejection's driving
 //! dimensions among those it involves); a drag step's
 //! solution must have a place for each point and a radius for each circle.
 //! A reply failing those answers its request with [`Response::Failed`].
@@ -82,6 +83,7 @@ pub enum Posted<S, E, P> {
         units: LengthUnit,
     },
     Analyse {
+        query: Option<u64>,
         revision: Revision,
         sketch: S,
         units: LengthUnit,
@@ -100,7 +102,9 @@ impl<S, E, P> Posted<S, E, P> {
         match self {
             Posted::Propose { base, .. } => Tag::Propose(*base),
             Posted::Drag { session, .. } => Tag::Drag(*session),
-            Posted::Analyse { revision, .. } => Tag::Analyse(*revision),
+            Posted::Analyse {
+                revision, query, ..
+            } => Tag::analysis(*revision, *query),
         }
     }
 }
@@ -134,8 +138,11 @@ impl Decoded {
                 solver.drag(session, started, points, radii)
             }
             Posted::Analyse {
-                revision, sketch, ..
-            } => Some(crate::analyse(revision, &sketch)),
+                query,
+                revision,
+                sketch,
+                ..
+            } => Some(crate::analyse(query, revision, &sketch)),
         }
     }
 }
@@ -172,11 +179,13 @@ pub fn encode_request(request: &Request, with_sketch: bool) -> Vec<u8> {
             units: *units,
         },
         Request::Analyse {
+            query,
             revision,
             sketch,
             units,
             params,
         } => Posted::Analyse {
+            query: *query,
             revision: *revision,
             sketch,
             units: *units,
@@ -242,6 +251,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Decoded, Error> {
             }
         }
         Posted::Analyse {
+            query,
             revision,
             sketch,
             units,
@@ -250,6 +260,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Decoded, Error> {
             let params = resolve(&params, units)?;
             check_sketch(&sketch, &design(units, &params))?;
             Posted::Analyse {
+                query,
                 revision,
                 sketch,
                 units,
@@ -430,6 +441,7 @@ pub enum Reply<S, A> {
         session: u64,
     },
     Analysed {
+        query: Option<u64>,
         revision: Revision,
         analysis: A,
     },
@@ -445,7 +457,9 @@ impl<S, A> Reply<S, A> {
         match self {
             Reply::Accepted { base, .. } | Reply::Rejected { base, .. } => Tag::Propose(*base),
             Reply::Dragged { session, .. } | Reply::Unmoved { session } => Tag::Drag(*session),
-            Reply::Analysed { revision, .. } => Tag::Analyse(*revision),
+            Reply::Analysed {
+                revision, query, ..
+            } => Tag::analysis(*revision, *query),
             Reply::Failed { tag, .. } => *tag,
         }
     }
@@ -474,7 +488,12 @@ pub fn encode_reply(tag: Tag, response: Option<&Response>) -> Vec<u8> {
                 points: solution.points.iter().map(|point| point.at).collect(),
                 radii: solution.curves.iter().filter_map(radius).collect(),
             },
-            Response::Analysed { revision, analysis } => Reply::Analysed {
+            Response::Analysed {
+                query,
+                revision,
+                analysis,
+            } => Reply::Analysed {
+                query: *query,
                 revision: *revision,
                 analysis,
             },
@@ -484,7 +503,7 @@ pub fn encode_reply(tag: Tag, response: Option<&Response>) -> Vec<u8> {
             },
         },
         (Tag::Drag(session), None) => Reply::Unmoved { session },
-        (Tag::Propose(_) | Tag::Analyse(_), None) => {
+        (Tag::Propose(_) | Tag::Analyse(_) | Tag::Query(_), None) => {
             unreachable!("only a drag step goes unanswered")
         }
     };
@@ -554,9 +573,26 @@ fn check_reply(reply: Reply<Sketch, Analysis>, asked: &Request) -> Result<Option
             solution: Arc::new(solution(sketch, points, radii, &asked.design())?),
         },
         (Reply::Unmoved { .. }, _) => return Ok(None),
-        (Reply::Analysed { revision, analysis }, Request::Analyse { sketch, .. }) => {
+        (
+            Reply::Analysed {
+                query,
+                revision,
+                analysis,
+            },
+            Request::Analyse {
+                revision: asked_revision,
+                sketch,
+                ..
+            },
+        ) => {
+            // The tag names a query by its id alone: its revision must be
+            // the one sent too.
+            if revision != *asked_revision {
+                return Err(Error::Revision(revision));
+            }
             check_analysis(&analysis, sketch)?;
             Response::Analysed {
+                query,
                 revision,
                 analysis: Arc::new(analysis),
             }
@@ -698,6 +734,8 @@ pub enum Error {
     Reply(DecodeError),
     /// A reply answers the request this tag names, not the one asked.
     Answers(Tag),
+    /// An analysis is of this revision, not the one sent.
+    Revision(Revision),
     /// A sketch fails its check.
     Sketch(SketchError),
     /// More of something than a sketch may have.
@@ -715,6 +753,9 @@ impl fmt::Display for Error {
             Error::Request(e) => write!(f, "couldn't decode the request: {e}"),
             Error::Reply(e) => write!(f, "couldn't decode the reply: {e}"),
             Error::Answers(tag) => write!(f, "a reply to another request: {tag:?}"),
+            Error::Revision(revision) => {
+                write!(f, "an answer of another revision: {revision:?}")
+            }
             Error::Sketch(e) => e.fmt(f),
             Error::TooMany { count, limit } => {
                 write!(f, "{count} sketch items, over the limit of {limit}")
@@ -733,7 +774,11 @@ impl std::error::Error for Error {
         match self {
             Error::Request(e) | Error::Reply(e) => Some(e),
             Error::Sketch(e) => Some(e),
-            Error::Answers(_) | Error::TooMany { .. } | Error::Value(_) | Error::Items => None,
+            Error::Answers(_)
+            | Error::Revision(_)
+            | Error::TooMany { .. }
+            | Error::Value(_)
+            | Error::Items => None,
         }
     }
 }

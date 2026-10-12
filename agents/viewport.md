@@ -126,6 +126,47 @@ closes the menu. The projection is the app's too
 (`Doc::set_projection`, through `Doc::take_options` with the rotation
 settings), one opened or made as it shows.
 
+**The MCP server** (`view/src/mcp.rs`, natively only: the app gives
+`DocumentState::mcp` as `None` on the web; see `mcp.md`'s "The panel").
+While a client is connected, the status bar shows a chip, *MCP · Claude
+Code* (the client's name, or "A client"), before the view options
+menu's button, kept whole as the hints are; its tooltip says edits may
+come from it and a click opens the panel. While the MCP feature is on
+(the settings' *MCP* switch; the server itself is started from the
+panel), a toggle (`Icon::Agent`, on while open) sits in
+the toolbar between Redo's rule and the settings gear. The panel docks
+right of the viewport, which shrinks (`MCP_PANEL_WIDTH`, 460 px with
+its rule, beside the settings page too when that's open): a head as
+tall as the side panel's tab strip with the MCP chip (its dot green
+with a client), the client's name and Disconnect (or "No client",
+"Starting…", "Stopped"), Start or Stop, and ✕ (hides it only); under it
+the client's calls, oldest first, flat rows like the Timeline's
+(`ROW_HEIGHT`, the list row's hover): the tool's own icon (`QSummary`,
+`QFeature`, `QTopology`, `measure`'s the measure tool's `Measure`, in
+Inspect's colours), what it did in the user's words ("Read the design
+summary", "Looked at", "Listed the faces and edges of", "Measured"), its arguments muted and cut where they don't fit, how
+long ago it came and its state (waiting, answered as a tick, failed as a
+cross), the result's summary in its tooltip. Stopped (each launch starts so), the body says so
+and where Start would serve; a port that couldn't be bound is said
+under it, and Start then tries again. The feature off hides toggle and
+panel and stops the server. A client's edit coming while the
+user has something unfinished open (`mcp.md`'s "Edits") puts up a
+dialog over the whole screen (`mcp::ask_popup`): *Claude Code wants to
+change the design while you're editing Extrude 1.*, the edit in the
+user's words, why Apply yours was refused if it was, and Keep editing
+and Apply yours; once the call ended, *Claude Code's edit was
+cancelled* with only Close. Esc is Keep editing (or Close), and no
+shortcut works under it (`Dialog::McpAsk`). An applied edit's row has a context menu (right-click):
+Show in Timeline, Revert to here, Revert to before it; a row taken back
+is greyed with *Reverted* in place of its state, the user's own rows
+and reverts' rows (*You: reverted to before “...”*, what it changed
+in its tooltip, at most 10 then *and N more*, and not as rows of the
+user's own) too, and one whose
+reply reached no one says *Applied (client not told)*. A revert that
+undoes later changes puts up a dialog the same way (*Revert to before
+“...”?*, the differences listed, Cancel and Revert; Esc cancels,
+`Dialog::McpRevert`); see `mcp.md`'s "Revert".
+
 **The settings page.** The gear at the toolbar's right end (`settings::settings_button`, on
 while the page is open), the welcome screen's Settings at its foot, and
 `Ctrl ,` (`Shortcut::SETTINGS`, `settings_binding`) toggle the settings
@@ -149,20 +190,20 @@ natively, under the header on the web.
 
 The page (`view/src/settings.rs`, `settings::page`) is a head with
 Reset to defaults and the close button over a tab per section
-(Appearance, View, Units, Mouse and natively Files, `SettingsTab`,
+(Appearance, View, Units, Mouse and natively Files and MCP, `SettingsTab`,
 `SettingsTab::shown`), the open one a card of rows: the theme and the
 interface scale; the projection, shading, edges, Hidden edges, Names and
 Mouse hints, the view options menu's messages, so a change in either
 shows in both; the length unit new designs start in, the angle unit and
 decimal places values are shown in (a sample in the note); the mouse's
-settings (below); and the auto-save wait and recent designs kept
-(`files.md`). The settings only the page sets come as
+settings (below); the auto-save wait and recent designs kept
+(`files.md`); and the MCP server's (below). The settings only the page sets come as
 `SettingsPage::Set(Setting)`, `Varde::set` ignoring values the page
 doesn't offer. Every one defaults to what the app did before it was a
 setting. The foot says where they're kept. Reset to defaults is off with
 every setting the default; otherwise it asks first
 (`SettingsPage::AskReset`) in a popup listing each setting it changes
-(`changed_settings`; on the web not the Files tab's), Enter resetting
+(`changed_settings`; on the web not the Files or MCP tab's), Enter resetting
 (`reset_key`) and Escape cancelling. A row whose setting isn't its
 default (`SettingRow::reset`, from `settings::reset`) has a 3 px accent
 bar along its left (a strip of its own, iced having no one-sided
@@ -171,6 +212,47 @@ its tooltip, the default said as the popup says it; it sends what
 choosing the default on the page sends, so it's stored the same way,
 but a switch's sets it (`Setting::HiddenEdges` and the like) rather than
 toggling, which settings arriving under it would turn the wrong way.
+
+The MCP tab (`settings::mcp_rows`, natively only; the server is in
+`mcp.md`) shows `SettingsState::mcp`, an `McpState` the app makes
+(`Varde::mcp_shown`, from `Mcp::shown`; the default on the web): *MCP*
+(a switch, its line saying it shows the MCP panel, where the server is
+started); while it's on, *Server*, its line the status (stopped, Start
+it in the panel; Starting; where it listens; or "Not started: see the
+port"); the port, a text field
+(`SettingsPage::TypeMcpPort`) set as soon as it holds a port
+`mcp_port_of` takes (digits alone, 1024 to 65535), what's typed kept
+while it isn't the port set (`Page::port_typed`, dropped by a row reset,
+Reset to defaults or closing the page), its line the error, in the
+danger colour (`SettingRow::bad`): a port out of range, or, the feature on,
+the bind failure; while listening, the client (its name, "since" how
+long ago it connected, `when::ago_in_sentence`, as there's no time zone
+for a clock time, and Disconnect, `SettingsPage::DisconnectMcp`,
+`Mcp::disconnect`, `Handle::end_session`) or None; the token (dots
+unless shown, `SettingsPage::ShowMcpToken`, `Page::token_shown`, hidden
+again as the page closes; Show/Hide, Copy, Regenerate) or "Not read yet";
+and *Add to a client*: a row whose lines go under it
+(`SettingRow::below`), each with Copy (`Message::Copy`). First the
+stdio forms, from `mcp_stdio_lines` with the running program's path
+(`McpState::exe`, `std::env::current_exe` looked up once by the app,
+`relay_exe` in `app/src/mcp.rs`: an AppImage's `APPIMAGE` file rather
+than its mount; none, and no lines, if it isn't text, is gone (replaced
+while running, ` (deleted)`) or runs in a Flatpak), holding no token:
+`claude mcp add varde -- <path> mcp` (the path quoted for
+the shell: POSIX single quotes, on Windows double quotes, bare when
+nothing in it is special; no lines, and the note says so, for a path
+with a control character, or on Windows one holding what cmd or
+PowerShell expands or ends at inside double quotes: `%`, `$`, `` ` ``,
+`!`, `"`, `“`, `”`, `„`), Codex's `[mcp_servers.varde]` with `command` and `args =
+["mcp"]`, and opencode's `"type": "local"` entry with a `command` array
+(the path escaped as a string both TOML and JSON read). Then, once the
+token is known, the HTTP forms from `mcp_client_lines`: the `claude mcp
+add --transport http` command, Codex's table with `url`
+and `http_headers`, opencode's `"type": "remote"` entry. These show the
+token as the Token row does (dots while hidden) and copy it whole. The
+row shows while either set is there, its note saying which hold the
+token. Switch
+and port have row resets; the port's says 7311.
 
 The interface scale (a slider, 75 % to 200 % in steps of 5, its value
 beside it, `ViewOptions::interface_scale`) is set when the slider is let
@@ -1059,9 +1141,21 @@ intersection with them, cached as an intersect's, is empty. The panel
 notes them under its body list, as the UI mock's combine notes a
 subtract taking nothing, in the warning colour: "Body 2: nothing to
 cut"); a draft that fails, or that the document
-refuses, is answered with the committed model and the draft's error. The
-lane keeps a cache of what it worked out per feature (profiles, solids,
-meshes, whether each sketch solves), keyed by a hash of the feature, the
+refuses, is answered with the committed model and the draft's error.
+`MeshFeed::committed` gives the newest model shown without a draft (a
+draft hidden, `hide_draft`, doesn't count): its mesh, sketch lines,
+parts' bodies, picking tables, failed features, generation and `until`,
+kept while drafts' answers are shown; its parts and failures are none
+while it predates a `Replace` (`MeshFeed::replaced`). The MCP queries
+answer from it (see `mcp.md`). `MeshFeed::committed_marks` gives its
+merges, touched lists and failures (what naming and `merged_in` read),
+`None` before it or while it predates a `Replace`; `shown_marks` gives
+the model shown's, and `marks_of(index)` the committed model's for an
+index built of its picking tables (unless the model shown is it), else
+the shown's: the click paths taking a `PickIndex` name and merge with
+`Doc::naming_in`/`merged_in` over `marks_of`, so the MCP client's keys
+are named on the committed model and the user's clicks on the shown. The lane keeps a cache of what it worked
+out per feature (profiles, solids, meshes, whether each sketch solves), keyed by a hash of the feature, the
 tolerance and its inputs' keys, bounded by bytes (256 MiB natively, 64
 MiB on the web, least recently used out, never what the last request
 used), so an edit or a draft being dragged reruns only what it changes,
@@ -1102,7 +1196,9 @@ three or more meet, the lowest regions ascending, as face ids of one
 part, and the vertex's point exactly, in f64; `Picking::corner_keys`
 gives their keys sorted, as a corner reference stores them). The snap
 points and corners are the measure tool's points (and later align's and
-scale's). Everything else is the mesh's
+scale's). What each edge is (its form, ends and convexity) isn't in
+the tables: only MCP's `body_topology` needs it, so it's asked for apart,
+one body at a time (`Query::Topology`, under "Regeneration" below). Everything else is the mesh's
 to say: its faces are the kernel topology's regions and the first edges
 of each part its chains, the creases after them (see "Tessellation" and
 "Topology and names" in `agents/kernel/`), so a circle's quarter walls,
@@ -1115,7 +1211,7 @@ body's tables are made with its mesh (`Solid::topology`, kept in the
 cache for the measure tool too, then `Solid::tessellate_with`) and
 cached with it, counted in its bytes; the scene's are theirs joined as
 the mesh is, the tangent chains and corners' faces moved on (checked).
-The fields are private and `Picking::from_parts` checks parts from
+The fields are private and `Picking::from_parts` checks parts (`PickingParts`) from
 elsewhere against the mesh (a body per part, a face per face, a flag, a
 tangent chain and a snap point or none per edge, a closed edge between
 two faces and on one corner, a crease without a snap point, each corner
@@ -1941,6 +2037,55 @@ and the document takes it (`Doc::export_welded`). The feed keeps the
 bodies that have a solid in the model shown, for the File menu's Export
 3MF… to go only while one is shown and regenerating hasn't failed.
 
+**Client queries** (`Request::Query { tag, generation, document, until,
+query }`, the MCP queries') queue with the exports, in order, the same
+way: never replaced, ahead of the regeneration waiting, no cache request
+of their own. The lane evaluates the committed document as of
+`generation`, rolled back before `until` as a regeneration is, and
+answers `Response::Answered { tag, generation, until, answer }`, the
+`Answer` matching the `Query`; `Request::failure` fails the answer of
+the kind asked. `Response::generation` is `None` for it, so
+`MeshFeed::apply` ignores it. On the web a lone `Head::Answered` carries
+it (its `HeadAnswer` the answer as it crosses), checked on receipt as
+each kind says below; a head that would be over `MAX_HEAD_BYTES` is
+sent as the answer's error.
+
+**Edge facts** (`Query::Topology(body)`, `regen::edge_facts`): the lane evaluates the committed document as of
+`generation`, rolled back before `until` as a regeneration is (from the
+cache, so after the model of that generation it's the history found
+again), takes the body's solid and its topology (cached, as the measure
+tool's), and answers `Answer::Topology { body, result }`: one `EdgeFacts` per chain of the body's topology, in
+order, or why there are none (no solid there, or more than a mesh's
+`MAX_EDGE_POLYLINES`). An `EdgeFacts` holds the chain's two faces'
+region keys sorted (as `Picking::edge_keys` gives them), its form (the
+measure tool's `EdgeForm` from `measure::edge_shape`, as the snap
+point is: a line's ends, a circle's or ellipse's centre, axis turning
+the way the edge runs and sizes; `Other` past the bound), its first and
+last ends unless closed (or past the bound), and its `Convexity`,
+convex, concave or smooth, from the two triangles' patch normals,
+outward, at the middle of the chain's first halfedge where both have
+one: smooth within 1° as tangent chains take it, else by the sign of
+`(a × b)·t`, `t` the halfedge's chord on `a`'s triangle; none if no
+halfedge gives both normals. Since a part's first edges are its body's
+chains in topology order, the facts at index `i` pair with the body's
+part's edge `part.edges.start + i` in the `Picking` of a model of the
+same generation and `until` (the tessellation level doesn't change the
+chains), and the keys let the app check each pair against
+`Picking::edge_keys`. On the web the answer's facts are decoded within `MAX_EDGE_POLYLINES`
+and each checked (`EdgeFacts::valid`: faces two keys in order, numbers
+finite and within `Picking::MAX_VALUE`, sizes positive, axes unit, a
+line's ends there); facts that fail answer the request with the error.
+
+**Client measures** (`Query::Measure(inspect)`, the MCP `measure`
+tool's): the regeneration slot's `inspect` is the user's (selection,
+measure tool), and the two must neither replace the other. The lane
+answers `Answer::Measured(result)`, an
+`Inspected` measured as the user's (`inspect::inspect`, its cache
+entries shared) but with no scene drawn, so no pick has a place
+(`Probed::at` `None`), checked by `Inspected::checked` with no scene
+(a place refused); `Err` only for the work failing. On the web it's
+checked again on receipt, the same way.
+
 On the web the lane is a Web Worker with the same API. It shares no memory
 with the page, so a request is the generation, the postcard-encoded
 document (`varde_document::codec`) and the sketch to leave out, and
@@ -1984,14 +2129,15 @@ document terminates it.
 
 A save's thumbnail (see "Thumbnails" in `files.md`) is drawn by the
 viewport, which has the GPU: `DocumentState::thumbnail` hands the
-viewport a `ThumbnailRequest` (`view/src/thumbnail.rs`: the mesh, the
+viewport a `PreviewRequest` (`view/src/thumbnail.rs`, made by
+`PreviewRequest::thumbnail`: the mesh, the
 visible sketches' lines, its parts' opacities, and the `varde_render::PreviewShot` that
-`varde_render::frame` worked out: the home camera made orthographic,
+`varde_render::frame` worked out with no subset of parts: the home camera, orthographic,
 targeting the middle of the mesh's and lines' extent across the view, zoomed so it
 fills the room less the margin, and the image cropped to it). The first
 frame prepared with it takes its callback (once) and calls
 `varde_render::render_preview` beside the frame with
-`ThumbnailRequest::COLORS`, the light and the dark palette's scene
+`PreviewRequest::THEMES`, the light and the dark palette's scene
 colours: for each, a slot and a texture of its own, in the pipeline's
 format, cleared transparent, the model and the finished sketches drawn
 by `Renderer::record` without the backdrop (background, grid, origin and
@@ -2004,6 +2150,41 @@ as straight alpha sRGB RGBA (`Layout::straight`: drawn over transparent
 black they're premultiplied, so the alpha is divided out in the space the
 target blends in, linear for an sRGB format); only 8 bit RGBA and BGRA
 targets are read, another fails, and the save goes without.
+
+The MCP server's `render` draws its picture the same way: natively,
+`DocumentState::renders` hands the viewport the `PreviewRequest`s
+(`PreviewRequest::render`, no sketch lines) of the calls waiting
+(`Waiting::renders`, refreshed after every message). The viewport puts
+them and the thumbnail in one list (`Scene::previews`), and the
+primitive draws each through the same `render_preview` call, taken once
+by the first frame prepared with it: a thumbnail in both themes, a
+render in one colour set, the
+scene's current colours (the app's theme), with its highlight as a
+`PreviewSelection` (selected faces by the mesh's ids and the selected
+edges' `Highlights`, as `PickIndex::highlight` builds them), lines at
+`RENDER_SCALE` (two). A thumbnail's selection is empty. A render's shot comes from
+`varde_render::frame` given the asked parts: only the positions their
+face triangles use (`face_ends` and `indices`, through
+`RenderMesh::parts`) count, with no sketch lines; orthographic, or
+perspective if the camera is, where the sphere about those
+positions' bounds is fitted to the field of view inside the margins and
+the image cropped across to what they take: the tallest image whose
+width then fits, found by halving (the margins take a share of the
+height, so the camera's distance, and the width, follow the height). The parts not drawn get
+opacity exactly 0, which `PartDraws` leaves out altogether (their
+faces and edges aren't drawn at all, not drawn transparent; no other
+caller passes 0, bodies' opacity starting at 0.1). Frames are drawn
+while a render waits (`Doc::drawing_for_mcp`, beside
+`rendering_thumbnail`); none come while the window is minimized, which
+the call's 30 s bound covers. While the settings page shows in the
+viewport's place there's no viewport to draw them, so the page is
+stacked with `viewport::offscreen`, a pixel square shader widget (as
+`warm_up`) whose primitive draws nothing on screen but the same list
+(`Previews`: the thumbnail and the renders, the palette's scene colours)
+through `draw_previews`, as the viewport's primitive does. A camera
+can't be farther than `Camera::EXTENT` (1e6), so a model near the
+coordinate limit's size (some 800 km across in view) is cropped, in the
+viewport as in a preview.
 
 ## Screenshots of the screen
 

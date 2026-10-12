@@ -19,7 +19,8 @@
   open it, the arrow keys to move through them. On the web, a click on a
   design opens it; drag a file over the page.
   Append /web for the web build, /still to disable animations, /dark or
-  /light to force the theme, /settings to open the settings, /drag to show a file dragged over the web page.
+  /light to force the theme, /settings to open the settings (/tab-mcp its MCP tab, /mcp serving with
+  a client connected, /mcp-busy its port in use), /drag to show a file dragged over the web page.
 -->
 <link rel="stylesheet" href="mock.css">
 <style>
@@ -143,6 +144,7 @@
   <div class="tip" id="tip" hidden></div>
 </div>
 <script src="mock.js"></script>
+<script src="mcp.js"></script>
 <script>
 // Desktop: the recent designs.
 const RECENT = [

@@ -54,7 +54,7 @@ impl CombineSession {
     /// A session setting up a new combine of `target` with `tools`, if
     /// given: a union using the tools up. Clicks pick the tools once
     /// there's a target.
-    fn new(target: Option<BodyId>, mut tools: Vec<BodyId>) -> Self {
+    pub(crate) fn new(target: Option<BodyId>, mut tools: Vec<BodyId>) -> Self {
         tools.retain(|&tool| Some(tool) != target);
         tools.sort_unstable();
         tools.dedup();
@@ -77,7 +77,7 @@ impl CombineSession {
     }
 
     /// A session editing the combine `feature`, with its values.
-    fn editing(feature: FeatureId, combine: &Combine) -> Self {
+    pub(crate) fn editing(feature: FeatureId, combine: &Combine) -> Self {
         Self {
             feature: Some(feature),
             op: combine.op,
@@ -87,7 +87,7 @@ impl CombineSession {
     }
 
     /// The combine as set up, if it's whole: a target and a tool.
-    fn combine(&self) -> Option<Combine> {
+    pub(crate) fn combine(&self) -> Option<Combine> {
         let target = self.target?;
         (!self.tools.is_empty()).then(|| Combine {
             target,
@@ -134,7 +134,7 @@ impl CombineSession {
     /// Lets go of the bodies `document` no longer holds, or that aren't
     /// made before the combine edited any more (undone, say): a combine
     /// can't name them.
-    fn prune(&mut self, document: &Document) {
+    pub(crate) fn prune(&mut self, document: &Document) {
         let edited = self.feature;
         let keep = |body: BodyId| pickable(document, body, edited);
         if self.target.is_some_and(|target| !keep(target)) {
@@ -195,6 +195,7 @@ impl Doc {
         let target = bodies.first().copied();
         let tools = bodies.get(1..).unwrap_or_default().to_vec();
         self.combine = Some(CombineSession::new(target, tools));
+        self.opened_operation();
     }
 
     /// The bodies of what's selected in the model, in the order selected,
@@ -240,6 +241,7 @@ impl Doc {
         // there, to be picked again.
         session.prune(document);
         self.combine = Some(session);
+        self.opened_operation();
     }
 
     /// Takes `message`, changing the combine being set up.
@@ -312,14 +314,14 @@ impl Doc {
     }
 
     /// Whether the combine being set up can be committed: the document
-    /// can be changed, no sketch edits wait on the solver (they come
+    /// can be changed, none of the user's sketch edits wait on the solver (they come
     /// first in the undo history), and it's whole and passes its own
     /// check; the session keeps its bodies ones the document has, made
     /// before it.
     pub(crate) fn combine_ready(&self) -> bool {
         self.combine.as_ref().is_some_and(|session| {
             self.editable()
-                && !self.proposing()
+                && !self.users_proposing()
                 && session
                     .combine()
                     .is_some_and(|combine| combine.check_own().is_ok())

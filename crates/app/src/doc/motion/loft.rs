@@ -228,7 +228,7 @@ impl MotionSession {
 
     /// Adds the point `point` of `sketch` as its first or last section,
     /// or takes that section out. Refused, why, if it can't be.
-    pub(super) fn loft_point(
+    pub(crate) fn loft_point(
         &mut self,
         sketch: FeatureId,
         point: Id,
@@ -264,7 +264,7 @@ impl MotionSession {
     /// Moves the start of section `section` to its corner at `point`,
     /// if `point` is at one by regeneration's rule ([`loft_corner`]) in
     /// `document`.
-    pub(super) fn loft_start(&mut self, section: usize, point: Id, document: &Document) {
+    pub(crate) fn loft_start(&mut self, section: usize, point: Id, document: &Document) {
         let resolution = document.tolerance().resolution();
         let is_corner = (self.loft.sections.get(section)).is_some_and(|section| {
             let (Some((profiles, region)), Some(found)) = (
@@ -290,7 +290,7 @@ impl MotionSession {
     /// closed (its rails are left out, so one added wouldn't show), or a
     /// chain that closes up, as regeneration refuses it ("rail 1 is
     /// closed: ...").
-    pub(super) fn loft_rail(
+    pub(crate) fn loft_rail(
         &mut self,
         sketch: FeatureId,
         curve: Id,
@@ -328,7 +328,7 @@ impl MotionSession {
     }
 
     /// Moves section `at` up, before the one above it.
-    pub(super) fn section_up(&mut self, at: usize) {
+    pub(crate) fn section_up(&mut self, at: usize) {
         if (1..self.loft.sections.len()).contains(&at) {
             self.loft.sections.swap(at - 1, at);
         }
@@ -349,7 +349,7 @@ impl MotionSession {
     }
 
     /// Turns Closed on or off: on, the rails aren't picked.
-    pub(super) fn loft_closed(&mut self) {
+    pub(crate) fn loft_closed(&mut self) {
         self.loft.closed = !self.loft.closed;
         if self.loft.closed && self.picking == MotionPick::Path {
             self.picking = MotionPick::Nothing;
@@ -459,26 +459,38 @@ impl Doc {
         }
     }
 
-    /// Adds the region `region` of `sketch` as the loft's last section
-    /// (before a last point), starting at its corner nearest the
-    /// previous section's start (the first corner for the first), or
-    /// takes that section out. Refused, said in the status bar, if it
-    /// can't be: a sketch after the loft, a region with holes, past the
-    /// limit.
+    /// Adds the region `region` of `sketch` as the loft's last section,
+    /// as [`Doc::loft_region_in`] does in the session being set up, a
+    /// refusal said in the status bar.
     fn loft_region(&mut self, sketch: FeatureId, region: usize) {
+        let refused = self.on_session(|doc, session| doc.loft_region_in(session, sketch, region));
+        if let Some(Err(why)) = refused {
+            self.notice = Some(why.into_owned());
+        }
+    }
+
+    /// Adds the region `region` of `sketch` as the last section (before a
+    /// last point) of the loft `session` sets up, starting at its corner
+    /// nearest the previous section's start (the first corner for the
+    /// first), or takes that section out. Refused, why, if it can't be: a
+    /// sketch after the loft, a region with holes, past the limit. A
+    /// sketch whose regions aren't found, or a region past them, is left
+    /// as it is.
+    pub(crate) fn loft_region_in(
+        &self,
+        session: &mut MotionSession,
+        sketch: FeatureId,
+        region: usize,
+    ) -> Result<(), Cow<'static, str>> {
         let document = self.editor.document();
-        let Some(session) = &self.motion else {
-            return;
-        };
         if !session.takes_sketch(document, sketch) {
-            self.notice = Some("Only a sketch made before the loft can hold its sections".into());
-            return;
+            return Err("Only a sketch made before the loft can hold its sections".into());
         }
         let Some(found) = session.loft.regions.found(sketch) else {
-            return;
+            return Ok(());
         };
         if region >= found.profiles.regions.len() {
-            return;
+            return Ok(());
         }
         // The section of this region, if it's one already: out it goes.
         let same = (session.loft.sections.iter()).position(|section| {
@@ -488,23 +500,18 @@ impl Doc {
                     .is_some_and(|(_, index)| index == region)
         });
         if let Some(at) = same {
-            if let Some(session) = &mut self.motion {
-                session.drop_section(at);
-            }
-            return;
+            session.drop_section(at);
+            return Ok(());
         }
         let sections = &session.loft.sections;
         if sections.len() >= MAX_LOFT_SECTIONS {
-            self.notice = Some(format!("A loft takes at most {MAX_LOFT_SECTIONS} sections"));
-            return;
+            return Err(format!("A loft takes at most {MAX_LOFT_SECTIONS} sections").into());
         }
         let Some(reference) = found.profiles.reference(region) else {
-            self.notice = Some("That region is too thin to be a section".into());
-            return;
+            return Err("That region is too thin to be a section".into());
         };
         if !reference.holes.is_empty() {
-            self.notice = Some("A section is one loop: pick a region without holes".into());
-            return;
+            return Err("A section is one loop: pick a region without holes".into());
         }
         // The start: the corner nearest the previous section's start in
         // the world, or the first corner.
@@ -530,9 +537,8 @@ impl Doc {
             region: reference,
             start,
         };
-        if let Some(session) = &mut self.motion {
-            session.loft.sections.insert(insert_at, section);
-        }
+        session.loft.sections.insert(insert_at, section);
+        Ok(())
     }
 
     /// Where the start dot of the section `at` of the loft set up in

@@ -1,8 +1,9 @@
 //! The user's settings, as stored: the theme chosen and the interface
 //! scale, the view options (the status bar's menu's, on the settings page
 //! too), the units new designs start in and how values are shown, what
-//! the mouse does, and natively the auto-save pause and how many recent
-//! designs are kept.
+//! the mouse does, and natively the auto-save pause, how many recent
+//! designs are kept, and whether the MCP feature is on and the port its
+//! server uses.
 //!
 //! The IO lane stores them (see [`varde_io::settings`]) and hands them over
 //! once read at startup; until then they're the defaults, the system's
@@ -13,7 +14,7 @@ use varde_expr::AngleUnit;
 use varde_io::Request as IoRequest;
 use varde_io::settings::{
     AngleUnit as StoredAngleUnit, AutoSave, Decimals, Drag, Edges as StoredEdges, InterfaceScale,
-    Projection as StoredProjection, RecentDesigns, Rotation as StoredRotation,
+    McpPort, Projection as StoredProjection, RecentDesigns, Rotation as StoredRotation,
     RotationPoint as StoredRotationPoint, SetRotationPoint, Settings as Stored,
     Shading as StoredShading, Theme, ZoomDirection,
 };
@@ -48,10 +49,12 @@ pub(crate) enum Key {
     SketchSnap,
     AutoSave,
     RecentDesigns,
+    Mcp,
+    McpPort,
 }
 
 impl Key {
-    pub(crate) const ALL: [Key; 22] = [
+    pub(crate) const ALL: [Key; 24] = [
         Key::Theme,
         Key::MouseHints,
         Key::HiddenEdges,
@@ -74,6 +77,8 @@ impl Key {
         Key::SketchSnap,
         Key::AutoSave,
         Key::RecentDesigns,
+        Key::Mcp,
+        Key::McpPort,
     ];
 
     /// Takes this setting of `from` into `to`.
@@ -101,6 +106,8 @@ impl Key {
             Key::SketchSnap => to.mouse.sketch_snap = from.mouse.sketch_snap,
             Key::AutoSave => to.auto_save = from.auto_save,
             Key::RecentDesigns => to.recent_designs = from.recent_designs,
+            Key::Mcp => to.mcp = from.mcp,
+            Key::McpPort => to.mcp_port = from.mcp_port,
         }
     }
 }
@@ -232,6 +239,8 @@ pub(crate) fn options_of(stored: Stored) -> ViewOptions {
         },
         auto_save: stored.auto_save.minutes(),
         recent_designs: stored.recent_designs.count(),
+        mcp: stored.mcp,
+        mcp_port: stored.mcp_port.get(),
     }
 }
 
@@ -321,6 +330,8 @@ pub(crate) fn stored_of(options: ViewOptions) -> Stored {
             .find(|wait| wait.minutes() == options.auto_save)
             .unwrap_or_default(),
         recent_designs: RecentDesigns::try_from(options.recent_designs).unwrap_or_default(),
+        mcp: options.mcp,
+        mcp_port: McpPort::new(options.mcp_port).unwrap_or_default(),
     }
 }
 

@@ -1622,6 +1622,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "httparse"
+version = "1.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+
+[[package]]
 name = "iced"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1860,6 +1866,12 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "itoa"
+version = "1.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jni"
@@ -3458,6 +3470,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_json"
+version = "1.0.152"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1741ab7a6cc54a03a89b5d563ed60075c277d9e3cfa73ad0c1f23f23974703c6"
+dependencies = [
+ "itoa",
+ "memchr",
+ "serde",
+ "serde_core",
+ "zmij",
+]
+
+[[package]]
 name = "serde_repr"
 version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4141,8 +4166,12 @@ dependencies = [
 name = "varde"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "log",
+ "serde_json",
  "varde-app",
+ "varde-io",
+ "varde-mcp",
  "winresource",
 ]
 
@@ -4150,16 +4179,21 @@ dependencies = [
 name = "varde-app"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "glam 0.30.10",
  "iced",
  "iced_runtime",
  "log",
  "png",
+ "postcard",
  "resvg",
+ "serde",
+ "serde_json",
  "varde-document",
  "varde-expr",
  "varde-io",
  "varde-kernel",
+ "varde-mcp",
  "varde-regen",
  "varde-render",
  "varde-sketch",
@@ -4216,6 +4250,7 @@ dependencies = [
  "varde-expr",
  "varde-kernel",
  "varde-lane",
+ "varde-mcp",
  "varde-sketch",
  "varde-testing",
  "wasm-bindgen",
@@ -4246,6 +4281,18 @@ dependencies = [
  "log",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "varde-mcp"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "futures",
+ "getrandom 0.4.3",
+ "httparse",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4324,6 +4371,7 @@ dependencies = [
  "libm",
  "log",
  "pollster",
+ "toml",
  "varde-document",
  "varde-expr",
  "varde-io",
@@ -5313,6 +5361,12 @@ name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
+
+[[package]]
+name = "zmij"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zune-core"

@@ -33,7 +33,9 @@ fn export(export: u64) -> Request {
 fn exported(request: Option<Request>) -> Option<u64> {
     match request? {
         Request::Export { export, .. } => Some(export),
-        Request::Regenerate { .. } => panic!("not an export"),
+        Request::Regenerate { .. } | Request::Query { .. } => {
+            panic!("not an export")
+        }
     }
 }
 
@@ -125,4 +127,74 @@ fn a_newer_measure_replaces_the_one_waiting() {
     newest.push(export(1));
     assert_eq!(exported(newest.pop()), Some(1));
     assert_eq!(newest.pop().unwrap().inspect(), Some(4));
+}
+
+fn topology(tag: u64) -> Request {
+    Request::Query {
+        tag,
+        generation: 0.into(),
+        document: Arc::new(Document::default()),
+        until: None,
+        query: crate::Query::Topology(varde_document::BodyId::NEW),
+    }
+}
+
+/// Edge facts wait in order among exports, ahead of the regeneration
+/// waiting, and neither replaces nor is replaced.
+#[test]
+fn edge_facts_queue_in_order_with_exports() {
+    let mut newest = Newest::default();
+    assert!(newest.push(topology(1)).is_none());
+    assert!(newest.push(regenerate(3)).is_none());
+    assert!(newest.push(export(2)).is_none());
+    assert!(newest.push(topology(4)).is_none());
+    assert_eq!(generation(newest.push(regenerate(5))), Some(3));
+    let tag = |request: Option<Request>| match request {
+        Some(Request::Query { tag, .. }) => tag,
+        other => panic!("{other:?} isn't edge facts"),
+    };
+    assert_eq!(tag(newest.pop()), 1);
+    assert_eq!(exported(newest.pop()), Some(2));
+    assert_eq!(tag(newest.pop()), 4);
+    assert_eq!(generation(newest.pop()), Some(5));
+    assert!(newest.is_empty());
+}
+
+/// A client's measure of tag `tag`.
+fn client_measure(tag: u64) -> Request {
+    let Request::Regenerate { inspect, .. } = measuring(0, 1) else {
+        unreachable!()
+    };
+    Request::Query {
+        tag,
+        generation: 0.into(),
+        document: Arc::new(Document::default()),
+        until: None,
+        query: crate::Query::Measure(inspect.unwrap()),
+    }
+}
+
+/// A client's measure waits in order among exports and edge facts,
+/// ahead of the regeneration waiting: the user's measure riding on that
+/// regeneration doesn't replace it, nor it the user's.
+#[test]
+fn client_measures_queue_in_order_beside_the_user_s() {
+    let mut newest = Newest::default();
+    assert!(newest.push(measuring(3, 1)).is_none());
+    assert!(newest.push(client_measure(1)).is_none());
+    assert!(newest.push(export(2)).is_none());
+    assert!(newest.push(client_measure(3)).is_none());
+    assert!(newest.push(topology(4)).is_none());
+    // The user's newer picks replace only the user's.
+    assert_eq!(newest.push(measuring(3, 2)).unwrap().inspect(), Some(1));
+    let tag = |request: Option<Request>| match request {
+        Some(Request::Query { tag, .. }) => tag,
+        other => panic!("{other:?} isn't a measure"),
+    };
+    assert_eq!(tag(newest.pop()), 1);
+    assert_eq!(exported(newest.pop()), Some(2));
+    assert_eq!(tag(newest.pop()), 3);
+    assert_eq!(tag(newest.pop()), 4);
+    assert_eq!(newest.pop().unwrap().inspect(), Some(2));
+    assert!(newest.is_empty());
 }

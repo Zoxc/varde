@@ -20,6 +20,16 @@ pub struct Rename {
     pub taken: Option<String>,
 }
 
+/// The name a new feature or body gets, [`Document::new_name`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewName {
+    /// The name it gets.
+    pub name: String,
+    /// The name asked for, if another feature or body had it, so it gets
+    /// one with a number after it.
+    pub taken: Option<String>,
+}
+
 /// The room a number after a name takes at most: " (" , the digits of a
 /// `u64`, ")".
 const SUFFIX_ROOM: usize = 2 + 20 + 1;
@@ -46,13 +56,14 @@ impl Document {
         }
     }
 
-    /// Whether a feature or body other than `target` is named `name`.
-    fn name_taken(&self, target: Named, name: &str) -> bool {
+    /// Whether a feature or body other than `target` (any, with `None`)
+    /// is named `name`.
+    fn name_taken(&self, target: Option<Named>, name: &str) -> bool {
         let features = (self.features.iter())
-            .filter(|feature| target != Named::Feature(feature.id))
+            .filter(|feature| target != Some(Named::Feature(feature.id)))
             .map(|feature| feature.name.as_str());
         let bodies = (self.bodies.iter())
-            .filter(|body| target != Named::Body(body.id))
+            .filter(|body| target != Some(Named::Body(body.id)))
             .map(|body| body.name.as_str());
         features.chain(bodies).any(|other| other == name)
     }
@@ -66,18 +77,34 @@ impl Document {
     /// rename says so.
     pub fn rename(&self, target: Named, wanted: &str) -> Option<Rename> {
         let old = self.name_of(target)?;
+        let (name, taken) = self.free_name(Some(target), wanted)?;
+        (name != old).then_some(Rename {
+            command: Command::Rename { target, name },
+            taken,
+        })
+    }
+
+    /// The name a new feature or body asking for `wanted` gets, as
+    /// [`Document::rename`] gives one (controls dropped, trimmed, cut, numbered if another
+    /// has it), with the name asked for if it was taken; `None` if it's
+    /// empty once trimmed.
+    pub fn new_name(&self, wanted: &str) -> Option<NewName> {
+        let (name, taken) = self.free_name(None, wanted)?;
+        Some(NewName { name, taken })
+    }
+
+    /// The name `target` (a new one with `None`) asking for `wanted`
+    /// gets, and the name asked for if another had it.
+    fn free_name(&self, target: Option<Named>, wanted: &str) -> Option<(String, Option<String>)> {
+        let wanted = plain(wanted);
         let wanted = cut(wanted.trim(), MAX_NAME_LEN);
-        if wanted.is_empty() || wanted == old {
+        if wanted.is_empty() {
             return None;
         }
-        if !self.name_taken(target, wanted) {
-            return Some(Rename {
-                command: Command::Rename {
-                    target,
-                    name: wanted.to_owned(),
-                },
-                taken: None,
-            });
+        if target.and_then(|target| self.name_of(target)) == Some(wanted)
+            || !self.name_taken(target, wanted)
+        {
+            return Some((wanted.to_owned(), None));
         }
         let base = cut(strip_number(wanted), MAX_NAME_LEN - SUFFIX_ROOM).trim_end();
         // Among one more number than there are names, one is free.
@@ -85,11 +112,27 @@ impl Document {
         let name = (1..=names.saturating_add(1))
             .map(|n| format!("{base} ({n})"))
             .find(|name| !self.name_taken(target, name))?;
-        Some(Rename {
-            command: Command::Rename { target, name },
-            taken: Some(wanted.to_owned()),
-        })
+        Some((name, Some(wanted.to_owned())))
     }
+}
+
+/// `name` as a one-line name, which may have come off the network (an
+/// MCP client's): line breaks, tabs and other whitespace controls as
+/// spaces; other controls and the bidi marks, embeddings, overrides and
+/// isolates (which would turn the Timeline's text around them) dropped.
+fn plain(name: &str) -> String {
+    name.chars()
+        .filter_map(|c| match c {
+            c if c.is_control() && c.is_whitespace() => Some(' '),
+            '\u{061C}'
+            | '\u{200E}'
+            | '\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}' => None,
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
 }
 
 /// `name` without a " (N)" ending it, if one does.

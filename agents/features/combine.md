@@ -222,12 +222,19 @@ Union · tools kept" (`feature_info`).
 **Merges replayed in the app**: `MeshFeed::merged_before(document,
 until)` replays, in the document's order, the joins the model shown
 found merging and the combines using their tools up that it didn't find
-failing (`MeshFeed::consumes`), by regen's rule (`note_merge`, a
+failing (`feed::merged_in`), by regen's rule (`note_merge`, a
 combine as its target then its tools); a combine naming a body merged in
 before it merges nothing, as regen fails it, even before the model shown
-knows (a session's bodies and edges don't follow into it): the extrude's and revolve's
+knows (a session's bodies and edges don't follow into it). With no
+`until` it stops at the rollback marker (`Document::insert_at`), where
+a new feature goes: a combine past it isn't in the model, so a body it
+uses up is still its own there (the MCP client's `move_body` of one
+moved its target before). The extrude's and revolve's
 Bodies lists and the combine's picking use it, and the delete prompt's
-warning replays combines alike. `feed/tests.rs`'s
+warning replays combines alike. It's `merged_in(document, until, marks)`
+over the model shown's `MeshFeed::shown_marks` (merges, touched lists,
+failures); the MCP client's body names and keys go through it over the
+committed model's instead (see `mcp.md`). `feed/tests.rs`'s
 `merged_before_agrees_with_regen_on_random_histories` holds the two to
 the same answer on random histories of bodies, joins, combines (some
 naming used-up bodies, so failing) and edits of earlier combines, for

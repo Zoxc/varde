@@ -1,0 +1,24 @@
+[package]
+name = "varde-mcp"
+description = "The MCP server: HTTP on a local port, JSON-RPC, and the tools an agent edits a design with"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+httparse.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# The bearer token and its text, crates/mcp/src/guard.rs.
+getrandom.workspace = true
+base64.workspace = true
+# The server's events, as a stream the app subscribes to, crates/mcp/src/server.rs.
+futures.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The token from the browser's `crypto.getRandomValues`.
+getrandom = { workspace = true, features = ["wasm_js"] }
+
+[dev-dependencies]
+# Reading the server's stream in its tests.
+futures = { workspace = true, features = ["executor"] }

@@ -110,23 +110,31 @@ impl fmt::Debug for Image {
     }
 }
 
+/// `image` as PNG bytes, 8 bit RGBA: what a thumbnail's previews hold,
+/// and what [`Request::EncodePng`](crate::Request::EncodePng) gives the
+/// MCP server's `render`.
+pub fn encode_png(image: &Image) -> Result<Vec<u8>, png::EncodingError> {
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut bytes, image.width, image.height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&image.rgba)?;
+    writer.finish()?;
+    Ok(bytes)
+}
+
 /// `image` as a PNG preview of `media_type`, or `None` if it won't encode
 /// or is larger than a preview may be, which is logged: the design is
 /// saved without.
 pub(crate) fn encode(image: &Image, media_type: &str) -> Option<Preview> {
-    let mut bytes = Vec::new();
-    let encoded = (|| {
-        let mut encoder = png::Encoder::new(&mut bytes, image.width, image.height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header()?;
-        writer.write_image_data(&image.rgba)?;
-        writer.finish()
-    })();
-    if let Err(error) = encoded {
-        log::error!("Couldn't encode the thumbnail: {error}");
-        return None;
-    }
+    let bytes = match encode_png(image) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log::error!("Couldn't encode the thumbnail: {error}");
+            return None;
+        }
+    };
     let preview = Preview::new(media_type, bytes);
     if preview.is_none() {
         log::error!("The thumbnail is too large to save");

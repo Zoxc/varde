@@ -11,7 +11,7 @@ mod feed;
 mod measure;
 mod motion;
 mod overlaps;
-mod params;
+pub(crate) mod params;
 mod pick;
 mod rail;
 mod regions;
@@ -50,17 +50,25 @@ use camera::Pivot;
 #[cfg(test)]
 pub(crate) use camera::{PIVOT_FADE, PIVOT_SHOWN};
 pub(crate) use combine::CombineSession;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use combine::pickable;
 use delete::Deleting;
 use export::Export;
 #[cfg(test)]
 pub(crate) use export::Exporting;
 pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use feed::{Marks, Merges, Shown, merged_in};
 pub(crate) use measure::MeasureSession;
 pub(crate) use motion::MotionSession;
 use pick::ModelPick;
 use rail::Rail;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use regions::{BodyTargets, RegionPick};
 pub(crate) use revolve::RevolveSession;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use revolve::sketch_of;
 use save::Persist;
 pub(crate) use save::{AUTO_SAVE_WAIT, Downloader, Leave, Target};
 #[cfg(test)]
@@ -68,6 +76,11 @@ pub(crate) use save::{AutoSave, Picking};
 use sketch::GEOMETRY_SHARE;
 #[cfg(test)]
 pub(crate) use sketch::Refusal;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use sketch::{
+    Clicks, Settled, Step, clicked, face_placement_in, outside_model_in, outside_sketch_item_at,
+    outside_target_in,
+};
 pub(crate) use sketch::{Focus, Proposals, SketchSession};
 
 use crate::{Files, ForDoc, Next, Offers, when};
@@ -104,7 +117,11 @@ pub(crate) struct Doc {
     /// What the app is to show as a toast, for a few seconds, if
     /// anything: taken by the app after each message
     /// ([`Doc::take_toast`]).
-    toast: Option<String>,
+    pub(crate) toast: Option<String>,
+    /// The MCP calls waiting on this design (`mcp/waiting.rs`). Natively
+    /// only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) mcp: crate::mcp::waiting::Waiting,
     /// The rename field, if it's open on a feature, sketch or body.
     pub(crate) renaming: Option<rename::Renaming>,
     /// Whether the rename field is to take the focus, as it just opened.
@@ -192,6 +209,11 @@ pub(crate) struct Doc {
     /// The move, mirror or pattern being set up, if one is: never with a
     /// sketch or another operation.
     pub(crate) motion: Option<MotionSession>,
+    /// The feature the extrude, revolve, combine or motion session open
+    /// built as it opened ([`Doc::operation_built`]), none if it wasn't
+    /// whole: it has nothing unfinished while it builds the same. Kept,
+    /// not rebuilt, as a new extrude's distance depends on the camera.
+    opened_with: Option<FeatureKind>,
     /// Whether the command modifier (`Ctrl`, `Cmd` on macOS) is held:
     /// a fillet or chamfer picking its edges then shows the model as of
     /// the feature rather than its preview ([`Doc::blend_before`]), another
@@ -257,6 +279,13 @@ impl DocId {
     pub(crate) fn unique() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Its number, for the MCP keys, which carry it to tell a key from
+    /// another design.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn number(self) -> u64 {
+        self.0
     }
 }
 
@@ -412,6 +441,8 @@ impl Doc {
             edit_error: None,
             notice: None,
             toast: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            mcp: Default::default(),
             renaming: None,
             rename_focus: false,
             params: params::Params::default(),
@@ -445,6 +476,7 @@ impl Doc {
             revolve: None,
             combine: None,
             motion: None,
+            opened_with: None,
             command_held: false,
             pattern_shapes: HashMap::new(),
             measure: None,
@@ -590,6 +622,58 @@ impl Doc {
             || self.motion.is_some()
     }
 
+    /// Closes the operation being set up, if one is, leaving the
+    /// document as it was: its Cancel, or `Esc`.
+    pub(crate) fn close_operation(&mut self) {
+        self.extrude = None;
+        self.revolve = None;
+        self.combine = None;
+        self.motion = None;
+    }
+
+    /// Commits the operation being set up, if one is, as its OK would;
+    /// its preview failed only if `accept` (see `commit_extrude`).
+    /// Refused, it stays open, and why shows.
+    pub(crate) fn commit_operation(&mut self, accept: bool) {
+        if self.extrude.is_some() {
+            self.commit_extrude(accept);
+        } else if self.revolve.is_some() {
+            self.commit_revolve(accept);
+        } else if self.combine.is_some() {
+            self.commit_combine(accept);
+        } else if self.motion.is_some() {
+            self.commit_motion(accept);
+        }
+    }
+
+    /// Keeps what the operation just opened builds, to tell later whether
+    /// it has anything unfinished: called by each opener once its session
+    /// is set up, and only then, so that an opener refused leaves the
+    /// session open as it was, with its baseline.
+    pub(crate) fn opened_operation(&mut self) {
+        self.opened_with = self.operation_built();
+    }
+
+    /// The feature the operation being set up would commit, if one is
+    /// and it's whole.
+    pub(crate) fn operation_built(&self) -> Option<FeatureKind> {
+        (self.extrude_draft())
+            .or_else(|| self.revolve_draft())
+            .or_else(|| self.combine_draft())
+            .map(|(_, kind)| kind)
+            .or_else(|| self.motion_built())
+    }
+
+    /// Whether the operation being set up builds another feature than it
+    /// did as it opened: it has something unfinished.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "on the web, MCP edits are none")
+    )]
+    pub(crate) fn operation_changed(&self) -> bool {
+        self.operating() && self.operation_built() != self.opened_with
+    }
+
     /// Whether the camera is turning to a new view or the pivot's marker
     /// fading.
     pub(crate) fn animating(&self) -> bool {
@@ -625,14 +709,25 @@ impl Doc {
     /// on the solver lane, [`varde_solve::PROPOSAL_TIME`], as this runs on
     /// the UI thread: one that runs out refuses the command.
     pub(crate) fn apply(&mut self, command: Command) {
-        // iced's clock, which the web has too.
-        let end = iced::time::Instant::now().checked_add(varde_solve::PROPOSAL_TIME);
-        let expired = move || end.is_some_and(|end| iced::time::Instant::now() >= end);
-        let budget = varde_sketch::Budget {
-            expired: &expired,
-            ..varde_sketch::Budget::default()
-        };
-        self.edit(|editor| editor.apply_within(command, &budget));
+        self.edit(|editor| apply_as_one(editor, [command]));
+    }
+
+    /// Applies an MCP client's `commands` as [`Doc::apply`] does (the
+    /// same solve budget, shared by them all, and the same checks), as
+    /// one undo step, or none of them: why they were refused comes back
+    /// to the call, never to [`Doc::edit_error`], which is the user's own.
+    /// The caller checks the document can be changed ([`Doc::editable`]).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "on the web, MCP edits are none")
+    )]
+    pub(crate) fn apply_client(&mut self, commands: Vec<Command>) -> Result<(), EditError> {
+        // Made on a copy (the history is `Arc`s, so it's cheap), so a
+        // refused command after others leaves the design as it was.
+        let mut editor = self.editor.clone();
+        apply_as_one(&mut editor, commands)?;
+        self.editor = editor;
+        Ok(())
     }
 
     /// Takes `message`, asking something of the document itself. What
@@ -724,12 +819,7 @@ impl Doc {
             Edit::CommitRevolve => self.commit_revolve(false),
             Edit::CommitCombine => self.commit_combine(false),
             Edit::CommitMotion => self.commit_motion(false),
-            Edit::AcceptError => {
-                self.commit_extrude(true);
-                self.commit_revolve(true);
-                self.commit_combine(true);
-                self.commit_motion(true);
-            }
+            Edit::AcceptError => self.commit_operation(true),
             Edit::CommitOpacity => {
                 if let Some((id, opacity)) = self.opacity_preview.take() {
                     self.change(Change::SetOpacity(id, opacity));
@@ -762,23 +852,27 @@ impl Doc {
             // than anything committed: undo takes back the newest of it.
             Edit::RemoveLink(link) => self.remove_link(link),
             Edit::SetLinkProfiles(link, profiles) => self.set_link_profiles(link, profiles),
-            Edit::Undo if self.proposing() => self.drop_newest(),
+            // An MCP client's edit waiting isn't shown, so isn't the
+            // user's to drop: with none of theirs waiting, Undo undoes the
+            // history, and the client's edit applies in its turn.
+            Edit::Undo if self.proposals.users_waiting() => self.drop_newest(),
             Edit::Undo => self.edit_surely(Editor::undo),
             // What waits comes after what's undone, as a new edit does,
             // and edits waiting name items by the ids the sketch has
             // without it.
-            Edit::Redo if self.proposing() => {}
+            Edit::Redo if self.proposals.users_waiting() => {}
             Edit::Redo => self.edit_surely(Editor::redo),
         }
 
         self.sync();
     }
 
-    /// Makes `change`, or, while edits wait on the solver, has it wait
-    /// behind them, see [`Proposals`]: so what's committed, and so undo,
-    /// keeps the order the user made them in.
+    /// Makes `change`, or, while the user's edits wait on the solver, has
+    /// it wait behind them, see [`Proposals`]: so what's committed, and so
+    /// undo, keeps the order the user made them in. An MCP client's edit
+    /// waiting alone doesn't hold it ([`Doc::users_proposing`]).
     fn change(&mut self, change: Change) {
-        if self.proposing() {
+        if self.users_proposing() {
             self.proposals.wait(change);
         } else {
             self.make(change);
@@ -997,52 +1091,13 @@ impl Doc {
                 | Look::ToggleConstrain
                 | Look::PickPlane
                 | Look::ChangePlane(_)
-                | Look::StartExtrude
-                | Look::StartRevolve
-                | Look::StartCombine
-                | Look::StartMove
-                | Look::StartMirror
-                | Look::StartPattern
-                | Look::StartCircularPattern
-                | Look::StartAlign
-                | Look::StartScale
-                | Look::StartSplit
-                | Look::StartChamfer
-                | Look::StartFillet
-                | Look::StartShell
-                | Look::StartOffsetFace
-                | Look::StartDraft
-                | Look::StartSweep
-                | Look::StartLoft
                 | Look::StartMeasure
-                | Look::EditFeature(_)
-        ) {
+        ) || opens_operation(&message)
+        {
             self.rail.close();
         }
         // Another tool leaves the measure tool.
-        if matches!(
-            message,
-            Look::PickPlane
-                | Look::ChangePlane(_)
-                | Look::StartExtrude
-                | Look::StartRevolve
-                | Look::StartCombine
-                | Look::StartMove
-                | Look::StartMirror
-                | Look::StartPattern
-                | Look::StartCircularPattern
-                | Look::StartAlign
-                | Look::StartScale
-                | Look::StartSplit
-                | Look::StartChamfer
-                | Look::StartFillet
-                | Look::StartShell
-                | Look::StartOffsetFace
-                | Look::StartDraft
-                | Look::StartSweep
-                | Look::StartLoft
-                | Look::EditFeature(_)
-        ) {
+        if matches!(message, Look::PickPlane | Look::ChangePlane(_)) || opens_operation(&message) {
             self.measure = None;
         }
         match message {
@@ -1462,11 +1517,48 @@ impl Doc {
         self.sync();
     }
 
+    /// Whether a picture an MCP call asked for waits for the viewport's
+    /// next frame (natively: the web has no MCP server).
+    pub(crate) fn drawing_for_mcp(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.mcp_drawing();
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
+    /// Whether the one-second timer is to tick for this design, besides
+    /// auto-save: while a thumbnail renders, to give up on it, and while
+    /// an MCP call waits, to bound its wait.
+    pub(crate) fn ticking(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.mcp_waiting() {
+            return true;
+        }
+        self.rendering_thumbnail()
+    }
+
     /// Shows `response`, computed for the document. An export's answer
-    /// goes to [`Doc::export_welded`] instead.
+    /// goes to [`Doc::export_welded`] instead, and an MCP call's edge
+    /// facts or measure to the call waiting on them.
     pub(crate) fn computed(&mut self, response: varde_regen::Response) {
+        // An MCP call's edge facts or measure: nothing shown changes.
+        if let varde_regen::Response::Answered { .. } = response {
+            #[cfg(not(target_arch = "wasm32"))]
+            self.query_answered(response);
+            return;
+        }
         self.feed.apply(response);
+        #[cfg(not(target_arch = "wasm32"))]
+        let before = self.editor.revision();
         self.relink();
+        // An edit waiting on regeneration made the state the links' amend
+        // replaced: the amended one is its after now. Then those whose
+        // regeneration came are answered.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.mcp.amended(before, self.editor.revision());
+            self.edits_regenerated();
+        }
         self.fit_first_model();
         // Which bodies are merged, which faces show as whose, may change.
         self.prune_plane_pick(false);
@@ -1530,8 +1622,17 @@ impl Doc {
     }
 
     /// The prompt the user is being asked, if any, which `Esc` cancels:
-    /// about unsaved changes, over the one about deleting.
+    /// an MCP client's edit asking first (natively), over the one about
+    /// unsaved changes, over the one about deleting.
     pub(crate) fn dialog(&self) -> Option<Dialog> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.mcp.ask.is_some() {
+            return Some(Dialog::McpAsk);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.mcp.revert_ask.is_some() {
+            return Some(Dialog::McpRevert);
+        }
         if self.prompt().is_some() {
             Some(Dialog::Unsaved)
         } else if self.naming().is_some() {
@@ -1589,6 +1690,11 @@ impl Doc {
                 self.proposals_settled(cx)
             }
             ForDoc::Thumbnail(tag, image) => self.thumbnail_rendered(cx, tag, image),
+            #[cfg(not(target_arch = "wasm32"))]
+            ForDoc::McpRendered(tag, image) => {
+                self.mcp_rendered(&mut cx.io, tag, image);
+                Next::Stay
+            }
         }
     }
 
@@ -1645,7 +1751,7 @@ impl Doc {
         options: ViewOptions,
         offers: Offers,
     ) -> Element<'_, Ui> {
-        self.view_with(peek, mode, options, offers, None)
+        self.view_with(peek, mode, options, offers, None, None)
     }
 
     /// [`Doc::view`], with the `settings` page in the viewport's place
@@ -1657,9 +1763,11 @@ impl Doc {
         options: ViewOptions,
         offers: Offers,
         settings: Option<varde_view::SettingsState<'a>>,
+        mcp: Option<varde_view::McpShown<'a>>,
     ) -> Element<'a, Ui> {
         let state = varde_view::DocumentState {
             settings,
+            mcp,
             ..self.state(peek, mode, options, offers)
         };
         varde_view::document(state)
@@ -1739,6 +1847,10 @@ impl Doc {
             options,
             picking_plane: self.picking_plane.as_ref().map(|picking| &picking.pick),
             thumbnail: self.thumbnail_request(),
+            #[cfg(not(target_arch = "wasm32"))]
+            renders: self.mcp.renders(),
+            #[cfg(target_arch = "wasm32")]
+            renders: &[],
             aspect: self.aspect,
             selected_feature: self.selected_feature,
             rollback: self.rollback(),
@@ -1766,6 +1878,7 @@ impl Doc {
             proposing: self.proposing(),
             rail: self.rail.state(),
             settings: None,
+            mcp: None,
         }
     }
 
@@ -1815,6 +1928,32 @@ pub(crate) enum Change {
     Param(Command),
 }
 
+/// Whether `message` opens an operation's panel, new or on a feature
+/// (a sketch's [`Look::EditFeature`] enters the sketch instead).
+fn opens_operation(message: &Look) -> bool {
+    matches!(
+        message,
+        Look::StartExtrude
+            | Look::StartRevolve
+            | Look::StartCombine
+            | Look::StartMove
+            | Look::StartMirror
+            | Look::StartPattern
+            | Look::StartCircularPattern
+            | Look::StartAlign
+            | Look::StartScale
+            | Look::StartSplit
+            | Look::StartChamfer
+            | Look::StartFillet
+            | Look::StartShell
+            | Look::StartOffsetFace
+            | Look::StartDraft
+            | Look::StartSweep
+            | Look::StartLoft
+            | Look::EditFeature(_)
+    )
+}
+
 /// A prompt over a screen, see [`Doc::dialog`] and
 /// [`Welcome::dialog`](crate::welcome::Welcome::dialog).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1823,6 +1962,20 @@ pub(crate) enum Dialog {
     Unsaved,
     /// About deleting more than was asked for.
     Delete,
+    /// An MCP client's edit asking the user to finish theirs first
+    /// (`mcp/ask.rs`), natively.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "no MCP on the web")
+    )]
+    McpAsk,
+    /// Asking before a revert from the MCP panel that undoes later
+    /// changes (`mcp/revert.rs`), natively.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "no MCP on the web")
+    )]
+    McpRevert,
     /// About a damaged file, before its design is shown.
     Damaged,
     /// The whole of the panic recorded, on the welcome screen.
@@ -1839,6 +1992,41 @@ pub(crate) enum Dialog {
 pub(crate) fn design_name(path: &Path) -> String {
     path.file_stem()
         .map_or_else(|| UNTITLED.to_owned(), |s| s.to_string_lossy().into_owned())
+}
+
+/// Applies `commands` to `editor` as one undo step: the first that
+/// changes something is the step, the rest amended into it. Sketches
+/// they solve again share the time a proposal gets
+/// ([`within_proposal_time`]). Stops at the first refused, those before
+/// it applied.
+fn apply_as_one(
+    editor: &mut Editor,
+    commands: impl IntoIterator<Item = Command>,
+) -> Result<(), EditError> {
+    let start = editor.generation();
+    within_proposal_time(|budget| {
+        for command in commands {
+            match editor.generation() == start {
+                true => editor.apply_within(command, budget)?,
+                false => editor.amend_within(command, budget)?,
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Runs `act` with the time a proposal gets on the solver lane,
+/// [`varde_solve::PROPOSAL_TIME`], for the sketches an edit solves again
+/// on the UI thread.
+fn within_proposal_time<R>(act: impl FnOnce(&varde_sketch::Budget) -> R) -> R {
+    // iced's clock, which the web has too.
+    let end = iced::time::Instant::now().checked_add(varde_solve::PROPOSAL_TIME);
+    let expired = move || end.is_some_and(|end| iced::time::Instant::now() >= end);
+    let budget = varde_sketch::Budget {
+        expired: &expired,
+        ..varde_sketch::Budget::default()
+    };
+    act(&budget)
 }
 
 /// Why a document with `access` can't be edited, if it can't.

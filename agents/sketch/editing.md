@@ -180,16 +180,43 @@ bar says why (`EditError::Sketch`).
   changed by the time it's proposed: it's proposed in its own units
   (`Proposal::units`) and its values pinned to them when committed, as
   setting the units pins the values already there. So what's committed,
-  and so the undo history, keeps the order the user made it in. Undo
-  while anything waits takes back the newest waiting item
-  (`Doc::drop_newest`), the last one queued, else the question a delete
-  from the queue asks (cancelling it), else the proposal with the lane,
+  and so the undo history, keeps the order the user made it in. An MCP
+  client's edit made meanwhile queues the same way
+  (`Pending::Client`, made from its call on the design of its turn and
+  applied through the client's apply path if its call still waits; see `agents/mcp.md`, "Edits"),
+  and its `add_link` and `edit_sketch` are proposals of their own
+  (`Proposal::client`, its call's tag; an `edit_sketch` in steps, each
+  on the solution of the one before, committed together), checked and
+  proposed in its turn, then shown waiting as the user's are
+  (`Proposals::waiting`), so an edit the user makes in the sketch
+  behind it builds on it rather than naming by the ids they were to get
+  what its commit takes first. One the user made in the sketch while
+  the client's was still `Pending::Client`, unseen, is refused at its
+  turn when the committed sketch's `next_id` has gone past the one it
+  was made on and a client edit was applied since (`Proposal::made_on`,
+  `Proposals::client_edits`, `TAKEN_BY_CLIENT`, in the status bar or the
+  banner): the ids it names may be the client's items now. Gone past
+  with no client edit, it was a relink's amend (new ids for a link's new
+  shape), which takes nothing the edit names: it's proposed on the
+  sketch relinked. A client's sketch edit with the lane that times out
+  leaves the user's edits behind it to go on: an `Add` is placed on the
+  sketch without it, one naming the client's items is rejected, as one
+  built on the user's own proposal dropped is.
+  The client's are committed or refused through the client's apply path
+  (`Doc::committing` builds the commit, `AddLink` or `SetSketch`, for
+  the user's and the client's alike). Undo
+  while something of the user's own waits (`Proposals::users_waiting`)
+  takes back their newest waiting item
+  (`Doc::drop_newest`, passing over the client's entries, which aren't
+  theirs), the last one of theirs queued, else the question a delete
+  from the queue asks (cancelling it), else the proposal with the lane
+  if it's theirs,
   whose answer is ignored when it comes (`dropped` counts them: the lane
   answers proposals in order); those before it never depend on it. A
   solver lane started again in place of one that went gets the proposal
   and analysis the old one had, and no answers to dropped ones are
   awaited from it (`Doc::lane_replaced`). A document turned read-only
-  makes none of what waits. Redo does nothing while any wait: what
+  makes none of what waits. Redo does nothing while any of the user's wait: what
   waits comes after what's undone, as a new edit would, and an `Add` names
   the items before it by id; what undo dropped from the queue isn't
   redone. The other rule considered, committing other changes at once and
@@ -198,14 +225,22 @@ bar says why (`EditError::Sketch`).
   a proposal committed then clear the redo of a change undone after it;
   queueing has neither. The cost: a change waits as long as the solver
   does, with "Checking…" showing. An extrude's OK isn't queued: it
-  waits, see below.
+  waits, see below. Only the user's own hold a change or an OK
+  (`Doc::users_proposing`): an MCP client's edit waiting alone (queued,
+  holding the queue for its model, or its proposal with the lane) isn't
+  applied yet and is made at its turn on the design as it is then, so
+  the user's change made at once comes before it in the undo history,
+  as it came first; a client's proposal answered for an older revision
+  is proposed again, or refused if its sketch went or changed under its
+  steps.
 - **Saving and closing wait for them**: Save and Save As asked for while
   proposals wait are kept (`Saves::waiting`, which counts as saving) and
   sent once they're answered or dropped (`Doc::proposals_settled`), so
   what's on screen is saved; leaving waits for them first
   (`Step::Proposing`), then asks about unsaved changes as usual, unless
   the user already chose to discard. Auto-save doesn't wait: it saves
-  what's committed. An extrude's OK waits too (`Doc::extrude_ready`),
+  what's committed. An extrude's OK waits too (`Doc::extrude_ready`;
+  likewise a revolve's, a combine's, a move's), for the user's own,
   since its regions are of the sketch the edits change: an `Enter` in
   the window is dropped, and the panel says "Checking the sketch…" after
   `feed::SLOW`.
@@ -216,6 +251,9 @@ bar says why (`EditError::Sketch`).
   revision (`Analyses`). It colours the sketch, gives the status bar
   "Fully constrained", "N degrees of freedom left", "Doesn't solve" or
   "Over-constrained", and marks conflicts red in the lists and viewport.
+  An MCP client's `sketch` call asks an `Analyse` of its own (with a `query` id), any sketch,
+  tagged by the call and queued apart, so it never touches the
+  session's analyses (`agents/mcp.md`, "Waiting calls").
 - **The toolbar's pill** names the sketch, its button leaving it: a
   check once the sketch differs from what it was when entered
   (`SketchSession::entered`, `SketchState::modified`; undoing back to it
@@ -281,6 +319,14 @@ bar says why (`EditError::Sketch`).
     snapped to the first point once it can close, the closed spline the
     click there makes (`Outline::Spline::closed`), its snap's glyph
     Close's icon rather than Coincident's. It has no fields.
+  - The MCP client's `edit_sketch` draws with these tools' own code:
+    `doc::clicked` (`edit.rs`) makes a `Drawing` of `doc::Clicks` (the
+    points placed with their snaps, the last click, the sides, centred,
+    a spline's kind and closing) and runs `step`, or `spline_add`, no
+    values typed, its pixel `MIN_LENGTH` (see `agents/mcp.md`); a
+    spline's points each go through the click's refusals
+    (`spline::refuses_point`, which `spline_click` shares: within a pixel
+    of the last, a sketch point again, on the first).
   - Trim (`T`), Extend (`J`), Offset (`O`), Mirror (`Shift M`), Fillet
     (`F`) and Chamfer (`Shift B`), the shape tools
     (`doc/sketch/shape.rs`, `Doc::shape_click`), don't snap (`Tool::draws`
@@ -419,7 +465,11 @@ bar says why (`EditError::Sketch`).
   tool waits for a better click.
   Tools stay in use after a shape; `Esc` drops the shape being drawn, then
   the tool, then leaves the sketch. Tools only exist while the document
-  can be edited.
+  can be edited. An MCP client's edit leaves the sketch as `Esc` would
+  when nothing is unfinished in it, and asks first when a value field,
+  a label or a drag is open or the tool has started (`Drawing::started`;
+  `mcp.md`'s "Edits"); its proposals still waiting don't count, as they
+  outlive the sketch.
 - **Typed values** (`doc/sketch/typed.rs`, `varde_view::typed`): once a
   drawing tool's shape has a point, it has fields (`typed::fields`: a
   line's `Length` and `Angle`, a rectangle's `Width` and `Height`, a

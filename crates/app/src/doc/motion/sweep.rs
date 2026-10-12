@@ -323,7 +323,7 @@ impl MotionSession {
     /// Adds the chain of `sketch`'s curves that `curve` is in as a part
     /// of its path, or takes out the part it's in: of a sketch before the
     /// sweep other than its profile's. Refused, why, if not.
-    pub(super) fn sweep_curve(
+    pub(crate) fn sweep_curve(
         &mut self,
         sketch: FeatureId,
         curve: Id,
@@ -393,7 +393,7 @@ impl MotionSession {
     }
 
     /// Sets what its path is: picking that path next unless it has one.
-    pub(super) fn sweep_mode(&mut self, path: SweepPath) {
+    pub(crate) fn sweep_mode(&mut self, path: SweepPath) {
         self.sweep.path = path;
         if self.sweep.regions.picked.is_empty() {
             self.picking = MotionPick::Regions;

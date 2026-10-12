@@ -26,6 +26,7 @@ mod hit;
 mod icons;
 mod loft;
 pub use loft::loft_info;
+mod mcp;
 mod measure;
 mod motion;
 mod mouse;
@@ -63,7 +64,7 @@ mod testing;
 mod theme;
 mod thumbnail;
 mod toolbar;
-pub use toolbar::motion_picks_origin_planes;
+pub use toolbar::{motion_picks_origin_planes, tolerance_label};
 pub mod typed;
 mod view_cube;
 mod viewport;
@@ -90,9 +91,13 @@ pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_
 pub use face_draft::draft_info;
 pub use fillet::fillet_info;
 pub use icons::LOGO_SVG;
+pub use mcp::{
+    MCP_PANEL_WIDTH, McpAsk, McpCall, McpCallState, McpEdit, McpPanel, McpRevert, McpRevertAsk,
+    McpRow, McpShown, McpTool,
+};
 pub use measure::{
     MeasureLook, MeasureSlot, MeasureState, Outcome, Picked as MeasuredPick, Value as MeasureValue,
-    between_values, face_kind, values as measure_values,
+    between_values, edge_kind, face_kind, values as measure_values,
 };
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, BlendFace,
@@ -109,6 +114,7 @@ pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
 };
 pub use overlaps::{OverlapItem, OverlapItems, OverlapNote, OverlapTick, Overlaps};
+pub use panels::TIMELINE_LIST;
 pub use params::{ParamDraft, ParamEdit, ParamField, ParamsLook, ParamsState, param_name_id};
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
@@ -121,7 +127,8 @@ pub use revolve::{
 };
 pub use select::{Selected, Selection, SelectionMode, SketchItem};
 pub use settings::{
-    KeptIn, Setting, SettingChange, SettingsPage, SettingsState, SettingsTab, changed_settings,
+    KeptIn, McpClient, McpState, McpStatus, Setting, SettingChange, SettingsPage, SettingsState,
+    SettingsTab, changed_settings, mcp_client_lines, mcp_port_of, mcp_stdio_lines,
 };
 pub use shell::shell_info;
 pub use shortcut::{
@@ -133,7 +140,7 @@ pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use suggest::{MAX_SUGGESTIONS, ParamsIn, Suggestion, suggest, take as take_suggestion};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
 pub use thumbnail::{
-    THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailImages, ThumbnailRequest, thumbnail_shot,
+    PreviewRequest, RENDER_SCALE, THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailImages, thumbnail_shot,
 };
 pub use toast::toast;
 pub use viewport::ModelPicking;
@@ -217,6 +224,8 @@ pub enum Message {
     /// Puts the text on the clipboard: a measured value with its unit,
     /// from its copy button.
     Copy(String),
+    /// The MCP panel's toggle and its head's buttons: natively only.
+    McpPanel(McpPanel),
 }
 
 /// The user's settings: what the view options menu turns on and off and
@@ -261,7 +270,21 @@ pub struct ViewOptions {
     /// How many recent designs are kept, one of [`RECENT_DESIGNS`]:
     /// natively only.
     pub recent_designs: u16,
+    /// Whether the MCP feature is on (*MCP*: its panel and toggle, not
+    /// the server, which is started from the panel): natively only.
+    pub mcp: bool,
+    /// The port the MCP server listens on, from [`MCP_PORT_MIN`] to
+    /// [`MCP_PORT_MAX`]: natively only.
+    pub mcp_port: u16,
 }
+
+/// The lowest port the MCP server may listen on: those below are
+/// privileged on Unix.
+pub const MCP_PORT_MIN: u16 = 1024;
+/// The highest port the MCP server may listen on.
+pub const MCP_PORT_MAX: u16 = u16::MAX;
+/// The port the MCP server listens on unless another is chosen.
+pub const MCP_PORT_DEFAULT: u16 = 7311;
 
 /// The smallest interface scale the settings offer, in percent.
 pub const INTERFACE_SCALE_MIN: u16 = 75;
@@ -313,6 +336,8 @@ impl Default for ViewOptions {
             mouse: MouseOptions::default(),
             auto_save: 1,
             recent_designs: 100,
+            mcp: false,
+            mcp_port: MCP_PORT_DEFAULT,
         }
     }
 }

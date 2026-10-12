@@ -19,6 +19,7 @@ use varde_regen::{
     PickTables, Picking, Progress, Request, Response, Sight, Transport,
 };
 use varde_render::{Camera, Projection};
+pub(crate) use varde_view::Shown as Marks;
 use varde_view::{MeshStatus, PickIndex};
 
 /// The mesh and sketch lines shown for the document. They're built by the
@@ -110,6 +111,11 @@ pub(crate) struct MeshFeed {
     shown: Option<Asked>,
     /// What was asked for last.
     requested: Option<Asked>,
+    /// The requests sent with the draft set up hidden whose answers may
+    /// yet come, oldest first, at most [`MAX_ASKED`]: their answers carry
+    /// no draft, but aren't the committed model. Told by how they were
+    /// asked for, not by whether a draft is set up when they come.
+    hidden: VecDeque<Asked>,
     /// How finely each body is asked for, picked from the camera and the
     /// bodies' boxes ([`MeshFeed::view`]): `None` until the first model
     /// shows, which is drawn within a share of each solid's size.
@@ -246,22 +252,47 @@ fn body_chord(camera: &Camera, aspect: f64, aabb: Aabb) -> Option<f64> {
 }
 
 /// A model shown without a draft: its mesh, its picking tables for the
-/// bodies of its parts, and what it's of.
+/// bodies of its parts, the features that failed in it, and what it's
+/// of.
 struct Committed {
     mesh: Arc<RenderMesh>,
     sketches: Arc<RenderLines>,
     picking: Arc<Picking>,
+    failed_features: Vec<FeatureFailure>,
+    /// What the shown model's `touched_features` and `merged_bodies`
+    /// were: what naming and merging read of this model.
+    touched_features: Vec<(FeatureId, Vec<BodyId>)>,
+    merged_bodies: Vec<(BodyId, BodyId)>,
     generation: Generation,
+    until: Option<FeatureId>,
+    /// The document it's of, if it's still known: what
+    /// [`MeshFeed::request_query`] asks about.
+    document: Option<Snapshot>,
 }
 
 /// The model a committed document regenerated to, see
 /// [`MeshFeed::committed`].
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(dead_code, reason = "on the web, the MCP queries are none")
+)]
 pub(crate) struct Shown<'a> {
     pub(crate) mesh: &'a Arc<RenderMesh>,
     /// The visible sketches' curves, less any left out as edited.
     pub(crate) sketches: &'a Arc<RenderLines>,
-    /// The body each part of `mesh` shows.
+    /// The body each part of `mesh` shows: none while the model
+    /// predates a replacement, see [`MeshFeed::replaced`].
     pub(crate) parts: &'a [BodyId],
+    /// `mesh`'s picking tables, given out even while the model predates
+    /// a replacement: `parts` and `failures` say whether its ids hold.
+    pub(crate) picking: &'a Arc<Picking>,
+    /// The features that failed and why, in the document's order: none
+    /// while the model predates a replacement.
+    pub(crate) failures: &'a [FeatureFailure],
+    /// The generation of the document the model is of.
+    pub(crate) generation: Generation,
+    /// The feature the model is rolled back to before, if it is.
+    pub(crate) until: Option<FeatureId>,
 }
 
 /// How many of the documents asked about [`MeshFeed`] keeps for their
@@ -375,6 +406,7 @@ impl MeshFeed {
             }
         });
         self.draft = draft.clone();
+        let hidden = draft.is_some() && self.hide_draft;
         let draft = draft.filter(|_| !self.hide_draft);
         let asked = Asked {
             generation: editor.generation(),
@@ -390,6 +422,12 @@ impl MeshFeed {
                 || (requested.generation == asked.generation && requested != asked)
         }) {
             self.requested = Some(asked);
+            if hidden && self.hidden.back() != Some(&asked) {
+                if self.hidden.len() == MAX_ASKED {
+                    self.hidden.pop_front();
+                }
+                self.hidden.push_back(asked);
+            }
             let document = editor.snapshot();
             if (self.asked.back()).is_none_or(|&(newest, _)| newest < asked.generation) {
                 if self.asked.len() == MAX_ASKED {
@@ -478,6 +516,36 @@ impl MeshFeed {
         Some(export)
     }
 
+    /// Asks the lane `query` of the committed model
+    /// ([`Request::Query`]: a body's edge facts, a client's measure),
+    /// answered tagged `tag`: the generation and `until` asked about, the
+    /// committed model's. Queued in order, apart from the regeneration
+    /// and the user's measure riding on it, so neither replaces the
+    /// other. `None` before the lane has started or a committed model has
+    /// come, or once the document it's of has been let go of.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "on the web, the MCP queries are none")
+    )]
+    pub(crate) fn request_query(
+        &mut self,
+        tag: u64,
+        query: varde_regen::Query,
+    ) -> Option<(Generation, Option<FeatureId>)> {
+        let committed = self.committed.as_ref()?;
+        let document = committed.document.clone()?;
+        let regen = self.regen.as_mut()?;
+        let (generation, until) = (committed.generation, committed.until);
+        regen.send(Request::Query {
+            tag,
+            generation,
+            document,
+            until,
+            query,
+        });
+        Some((generation, until))
+    }
+
     /// Shows the model in `response`, or its error next to the last one,
     /// unless a response as new was applied already. Responses arriving out
     /// of order or superseded are dropped, and so are exports' answers,
@@ -557,13 +625,20 @@ impl MeshFeed {
                 }
                 // A model asked for with its draft hidden is neither the
                 // committed one nor the draft's answer, which stays.
-                let hidden = draft.is_none() && self.draft.is_some();
+                let hidden = self.hidden.contains(&asked);
+                // Older requests' answers won't be taken any more.
+                (self.hidden).retain(|hid| hid.generation >= asked.generation);
                 if draft.is_none() && !hidden {
                     self.committed = Some(Committed {
                         mesh: self.mesh.clone(),
                         sketches: self.sketches.clone(),
                         picking: self.picking.clone(),
+                        failed_features: self.failed_features.clone(),
+                        touched_features: self.touched_features.clone(),
+                        merged_bodies: self.merged_bodies.clone(),
                         generation: asked.generation,
+                        until: asked.until,
+                        document: self.shown_document.clone(),
                     });
                 }
                 if !hidden {
@@ -574,7 +649,7 @@ impl MeshFeed {
                 self.failed = None;
             }
             Response::Failed { error, .. } => self.failed = Some((asked, error)),
-            Response::Exported { .. } | Response::Progress(_) => {}
+            Response::Exported { .. } | Response::Answered { .. } | Response::Progress(_) => {}
         }
     }
 
@@ -616,9 +691,21 @@ impl MeshFeed {
             && !failed
     }
 
-    /// The newest generation a response was applied for.
-    fn answered(&self) -> Option<Generation> {
+    /// The newest generation a response was applied for, model or
+    /// failure: what an MCP edit waits to reach.
+    pub(crate) fn answered(&self) -> Option<Generation> {
         self.last_answered().map(|asked| asked.generation)
+    }
+
+    /// Why regeneration failed, if the response applied last was a
+    /// failure, with the generation it was of.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(dead_code, reason = "on the web, MCP edits are none")
+    )]
+    pub(crate) fn failure(&self) -> Option<(Generation, &str)> {
+        let (asked, error) = self.failed.as_ref()?;
+        Some((asked.generation, error.as_str()))
     }
 
     /// What the response applied last answered, model or failure.
@@ -922,25 +1009,30 @@ impl MeshFeed {
         self.shown.is_some_and(|shown| shown.draft.is_some())
     }
 
-    /// The mesh and sketch curves of the newest model shown without a draft, the last the
-    /// committed document regenerated to, with the body each of its parts
-    /// is of: none once the document was replaced whole until a model of
-    /// it shows, as for [`MeshFeed::parts`]. `None` before there's been
-    /// one.
+    /// The newest model shown without a draft, the last the committed
+    /// document regenerated to: its mesh and sketch curves, the body each
+    /// of its parts is of, its picking tables, failed features,
+    /// generation and `until`. No parts or failures once the document
+    /// was replaced whole until a model of it shows, as for
+    /// [`MeshFeed::parts`]. `None` before there's been one.
     pub(crate) fn committed(&self) -> Option<Shown<'_>> {
         let committed = self.committed.as_ref()?;
         let current = self
             .replaced
             .is_none_or(|replaced| committed.generation >= replaced);
-        let parts = if current {
-            committed.picking.bodies()
+        let (parts, failures) = if current {
+            (committed.picking.bodies(), &committed.failed_features[..])
         } else {
-            &[]
+            (&[][..], &[][..])
         };
         Some(Shown {
             mesh: &committed.mesh,
             sketches: &committed.sketches,
             parts,
+            picking: &committed.picking,
+            failures,
+            generation: committed.generation,
+            until: committed.until,
         })
     }
 
@@ -1102,7 +1194,8 @@ impl MeshFeed {
     }
 
     /// The bodies the joins and combines of `document` before `until`
-    /// (all of them without one) merged into others, in the document's
+    /// (before where a new feature goes, the rollback marker, without
+    /// one: those past it aren't in the model) merged into others, in the document's
     /// order, as the model shown found them: what
     /// [`MeshFeed::merged_bodies`] would be with the history stopped
     /// there. A join merges the bodies the model shown found it touch, if
@@ -1112,34 +1205,90 @@ impl MeshFeed {
     /// it failed, or names a body merged in before it (which fails it),
     /// as regen's own rule has it.
     pub(crate) fn merged_before(&self, document: &Document, until: Option<FeatureId>) -> Merges {
-        let mut merges = Merges::default();
-        for feature in document.features() {
-            if Some(feature.id) == until {
-                break;
-            }
-            match &feature.kind {
-                FeatureKind::Combine(combine) => {
-                    // One naming a body merged in before it fails, as
-                    // regen has it, even before the model shown knows it.
-                    let bodies: Vec<BodyId> = combine.bodies().collect();
-                    let held = bodies.iter().any(|&body| merges.holder(body).is_some());
-                    if self.consumes(document, feature.id) && !held {
-                        merges.join(&bodies);
-                    }
-                }
-                _ if self.merges(document, feature.id) => {
-                    let touched = (self.touched_features().iter())
-                        .find(|(touched, _)| *touched == feature.id);
-                    if let Some((_, touched)) = touched {
-                        merges.join(touched);
-                    }
-                }
-                _ => {}
-            }
-        }
-        merges
+        merged_in(document, until, self.shown_marks())
     }
 
+    /// What naming and merging read of the model shown: the bodies its
+    /// joins merged, those its joins, cuts and intersects touched, and
+    /// its failures (with a draft, the document with the draft
+    /// applied's). None if the document was replaced since.
+    pub(crate) fn shown_marks(&self) -> Marks<'_> {
+        Marks {
+            merged: self.merged_bodies(),
+            touched: self.touched_features(),
+            failed: self.failed_features(),
+        }
+    }
+
+    /// What naming and merging read of the committed model
+    /// ([`MeshFeed::committed`]), what the MCP client's names and keys
+    /// are resolved against: `None` before there's been one, or while it
+    /// predates a replacement of the document (it's being rebuilt).
+    pub(crate) fn committed_marks(&self) -> Option<Marks<'_>> {
+        let committed = self.committed.as_ref()?;
+        let current = self
+            .replaced
+            .is_none_or(|replaced| committed.generation >= replaced);
+        current.then(|| Marks {
+            merged: &committed.merged_bodies,
+            touched: &committed.touched_features,
+            failed: &committed.failed_features,
+        })
+    }
+
+    /// What naming and merging read of the model `index` is of: the
+    /// committed model's for its picking tables (as the MCP client's
+    /// keys are found on), else the model shown's.
+    pub(crate) fn marks_of(&self, index: &PickIndex) -> Marks<'_> {
+        let committed = (self.committed.as_ref())
+            .is_some_and(|committed| Arc::ptr_eq(index.picking(), &committed.picking));
+        if committed && !Arc::ptr_eq(index.picking(), &self.picking) {
+            self.committed_marks().unwrap_or_default()
+        } else {
+            self.shown_marks()
+        }
+    }
+}
+
+/// The bodies the joins and combines of `document` before `until` merged
+/// into others, as the model whose `marks` these are found them: see
+/// [`MeshFeed::merged_before`], which reads the model shown's.
+pub(crate) fn merged_in(document: &Document, until: Option<FeatureId>, marks: Marks) -> Merges {
+    let failed = |feature: FeatureId| (marks.failed.iter()).any(|failed| failed.feature == feature);
+    let mut merges = Merges::default();
+    let before = match until {
+        Some(_) => document.features().len(),
+        None => document.insert_at(),
+    };
+    for feature in &document.features()[..before] {
+        if Some(feature.id) == until {
+            break;
+        }
+        match &feature.kind {
+            FeatureKind::Combine(combine) => {
+                // One naming a body merged in before it fails, as
+                // regen has it, even before the model shown knows it.
+                let bodies: Vec<BodyId> = combine.bodies().collect();
+                let held = bodies.iter().any(|&body| merges.holder(body).is_some());
+                if !combine.keep_tools && !failed(feature.id) && !held {
+                    merges.join(&bodies);
+                }
+            }
+            _ if matches!(feature.kind.operation(), Some(Operation::Join(_)))
+                && !failed(feature.id) =>
+            {
+                let touched = (marks.touched.iter()).find(|(touched, _)| *touched == feature.id);
+                if let Some((_, touched)) = touched {
+                    merges.join(touched);
+                }
+            }
+            _ => {}
+        }
+    }
+    merges
+}
+
+impl MeshFeed {
     /// Whether `feature` of `document` is a join the model shown has
     /// working: one that merges the bodies it touches.
     pub(crate) fn merges(&self, document: &Document, feature: FeatureId) -> bool {

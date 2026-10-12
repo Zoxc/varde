@@ -28,6 +28,8 @@
 //! sketch_snap = true # whether sketch tools snap unless Shift is held
 //! auto_save = 60 # seconds from the first change not auto-saved: or 300, 600, 0 (off)
 //! recent_designs = 100 # how many the recent files list keeps: or 10, 25, 50
+//! mcp = false # whether the MCP feature (its panel) is on (natively only)
+//! mcp_port = 7311 # the port it listens on: 1024 to 65535
 //! ```
 //!
 //! Values out of these sets (another number of decimals, a scale of 112
@@ -85,6 +87,14 @@ pub struct Settings {
     pub sketch_snap: bool,
     pub auto_save: AutoSave,
     pub recent_designs: RecentDesigns,
+    /// Whether the MCP feature is on (*MCP*: its panel and toggle; the
+    /// server is started from the panel, never saved), off unless turned
+    /// on: natively only.
+    #[serde(default)]
+    pub mcp: bool,
+    /// The port the MCP server listens on.
+    #[serde(default)]
+    pub mcp_port: McpPort,
 }
 
 impl Default for Settings {
@@ -112,6 +122,8 @@ impl Default for Settings {
             sketch_snap: true,
             auto_save: AutoSave::default(),
             recent_designs: RecentDesigns::default(),
+            mcp: false,
+            mcp_port: McpPort::default(),
         }
     }
 }
@@ -451,6 +463,60 @@ impl From<RecentDesigns> for u16 {
     }
 }
 
+/// The port the MCP server listens on on `127.0.0.1`: from
+/// [`McpPort::MIN`] to [`McpPort::MAX`], [`McpPort::DEFAULT`] unless
+/// chosen. Stored as the number; one outside the range, as a port under
+/// 1024 (privileged on Unix) or past `u16`, reads as the default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u16", into = "u16")]
+pub struct McpPort(u16);
+
+impl McpPort {
+    pub const MIN: u16 = 1024;
+    pub const MAX: u16 = u16::MAX;
+    pub const DEFAULT: u16 = 7311;
+
+    /// `text` as a port, if it's digits alone (no sign or spaces) making
+    /// one in the range offered.
+    pub fn parse(text: &str) -> Option<McpPort> {
+        if text.is_empty() || text.len() > 5 || !text.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        text.parse::<u16>().ok().and_then(Self::new)
+    }
+
+    /// `port`, if it's in the range offered.
+    pub fn new(port: u16) -> Option<McpPort> {
+        (Self::MIN..=Self::MAX)
+            .contains(&port)
+            .then_some(McpPort(port))
+    }
+
+    pub fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl Default for McpPort {
+    fn default() -> Self {
+        McpPort(Self::DEFAULT)
+    }
+}
+
+impl TryFrom<u16> for McpPort {
+    type Error = &'static str;
+
+    fn try_from(port: u16) -> Result<Self, Self::Error> {
+        Self::new(port).ok_or("not a port from 1024 to 65535")
+    }
+}
+
+impl From<McpPort> for u16 {
+    fn from(port: McpPort) -> u16 {
+        port.get()
+    }
+}
+
 /// A length unit as its symbol: "mm". Any other text isn't one.
 mod length_unit {
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
@@ -549,6 +615,12 @@ impl Settings {
             recent_designs: key("recent_designs")
                 .and_then(|value| value.try_into().ok())
                 .unwrap_or(defaults.recent_designs),
+            mcp: key("mcp")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(defaults.mcp),
+            mcp_port: key("mcp_port")
+                .and_then(|value| value.try_into().ok())
+                .unwrap_or(defaults.mcp_port),
         }
     }
 
@@ -572,9 +644,11 @@ pub fn store() -> Option<PathBuf> {
 /// [`Request::LoadSettings`]: crate::Request::LoadSettings
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_now() -> Settings {
-    store()
-        .map(|store| crate::native::settings::load(&store))
-        .unwrap_or_default()
+    crate::Stores {
+        settings: store(),
+        ..crate::Stores::default()
+    }
+    .read_settings_now()
 }
 
 /// On the web, `settings.toml` at the root of the Origin Private File

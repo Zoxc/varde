@@ -132,6 +132,7 @@ fn recent_files_round_trip_through_the_store() {
         settings: None,
         designs: None,
         panic: None,
+        mcp_token: None,
     });
     let entries = vec![RecentFile {
         path: dir.design(),
@@ -660,6 +661,7 @@ fn with_store(dir: &TempDir) -> Files {
         settings: None,
         designs: Some(dir.0.join("designs")),
         panic: None,
+        mcp_token: None,
     })
 }
 
@@ -1453,3 +1455,97 @@ fn picked_files_are_refused_natively() {
 }
 
 mod damaged;
+
+/// The token answered at start, made the first time, kept after; and
+/// regenerated, another, kept from then on.
+fn mcp_token(files: &mut Files, request: Request) -> varde_mcp::guard::Token {
+    let regenerating = matches!(request, Request::RegenerateMcpToken);
+    match files.handle(request) {
+        Response::McpToken {
+            regenerated,
+            result: Ok(token),
+        } if regenerated == regenerating => token,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_mcp_token_without_a_store_is_kept_in_memory() {
+    let mut files = Files::new(Stores::default());
+    let made = mcp_token(&mut files, Request::LoadMcpToken);
+    assert_eq!(mcp_token(&mut files, Request::LoadMcpToken), made);
+    let regenerated = mcp_token(&mut files, Request::RegenerateMcpToken);
+    assert_ne!(regenerated, made);
+    assert_eq!(mcp_token(&mut files, Request::LoadMcpToken), regenerated);
+    // Another lane makes its own.
+    let mut other = Files::new(Stores::default());
+    assert_ne!(mcp_token(&mut other, Request::LoadMcpToken), regenerated);
+}
+
+#[test]
+fn the_mcp_token_is_made_kept_and_regenerated_in_its_store() {
+    let dir = TempDir::new("files-mcp-token");
+    let store = dir.0.join("mcp-token.toml");
+    let stores = || Stores {
+        mcp_token: Some(store.clone()),
+        ..Stores::default()
+    };
+    let made = mcp_token(&mut Files::new(stores()), Request::LoadMcpToken);
+    assert_eq!(super::mcp_token::load(&store), Some(made.clone()));
+    // The next session reads the same.
+    let mut files = Files::new(stores());
+    assert_eq!(mcp_token(&mut files, Request::LoadMcpToken), made);
+    let regenerated = mcp_token(&mut files, Request::RegenerateMcpToken);
+    assert_ne!(regenerated, made);
+    assert_eq!(
+        mcp_token(&mut Files::new(stores()), Request::LoadMcpToken),
+        regenerated
+    );
+    // One gone bad is made anew, and stored.
+    std::fs::write(&store, "token = \"nope\"\n").unwrap();
+    let anew = mcp_token(&mut Files::new(stores()), Request::LoadMcpToken);
+    assert_ne!(anew, regenerated);
+    assert_eq!(super::mcp_token::load(&store), Some(anew));
+}
+
+/// A store that can't be written still gives a token at start, but
+/// Regenerate fails, saying why.
+#[test]
+fn an_unwritable_mcp_token_store() {
+    let dir = TempDir::new("files-mcp-token-unwritable");
+    // Its directory is a file.
+    std::fs::write(dir.0.join("file"), "").unwrap();
+    let mut files = Files::new(Stores {
+        mcp_token: Some(dir.0.join("file").join("mcp-token.toml")),
+        ..Stores::default()
+    });
+    let _ = mcp_token(&mut files, Request::LoadMcpToken);
+    assert!(matches!(
+        files.handle(Request::RegenerateMcpToken),
+        Response::McpToken {
+            regenerated: true,
+            result: Err(_),
+        }
+    ));
+}
+
+/// A PNG encoded for `render` comes back tagged as asked, writing
+/// nothing.
+#[test]
+fn a_png_is_encoded_and_tagged() {
+    let mut files = Files::new(Stores::default());
+    let image = crate::thumbnail::Image::new(2, 2, vec![9; 16]).unwrap();
+    let request = Request::EncodePng {
+        owner: 3,
+        tag: 7,
+        image: image.clone(),
+    };
+    match files.handle(request) {
+        Response::PngEncoded {
+            owner: 3,
+            tag: 7,
+            result: Ok(bytes),
+        } => assert_eq!(bytes, crate::thumbnail::encode_png(&image).unwrap()),
+        other => panic!("{other:?}"),
+    }
+}

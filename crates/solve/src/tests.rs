@@ -65,6 +65,17 @@ pub(crate) fn drag(session: u64, sketch: &Arc<Sketch>, point: Id, to: DVec2) -> 
 
 pub(crate) fn analyse_at(revision: u64, sketch: &Arc<Sketch>) -> Request {
     Request::Analyse {
+        query: None,
+        revision: revision.into(),
+        sketch: Arc::clone(sketch),
+        units: LengthUnit::Mm,
+        params: Arc::default(),
+    }
+}
+
+pub(crate) fn query_at(id: u64, revision: u64, sketch: &Arc<Sketch>) -> Request {
+    Request::Analyse {
+        query: Some(id),
         revision: revision.into(),
         sketch: Arc::clone(sketch),
         units: LengthUnit::Mm,
@@ -137,7 +148,12 @@ fn an_edit_that_does_not_apply_is_rejected() {
 fn an_analysis_is_of_the_sketch_sent() {
     let drawn = drawn();
     let response = Solver::default().handle(analyse_at(7, &drawn.sketch));
-    let Some(Response::Analysed { revision, analysis }) = response else {
+    let Some(Response::Analysed {
+        query: None,
+        revision,
+        analysis,
+    }) = response
+    else {
         panic!("not analysed: {response:?}");
     };
     assert_eq!(revision, Revision::from(7));
@@ -283,4 +299,21 @@ fn failures_name_their_request() {
         analyse_at(2, &drawn.sketch).tag(),
         Tag::Analyse(Revision::from(2))
     );
+}
+
+#[test]
+fn a_query_is_analysed_and_tagged_with_its_id() {
+    let drawn = drawn();
+    let response = Solver::default().handle(query_at(11, 3, &drawn.sketch));
+    let Some(Response::Analysed {
+        query: Some(id),
+        revision,
+        analysis,
+    }) = &response
+    else {
+        panic!("not queried: {response:?}");
+    };
+    assert_eq!((*id, *revision), (11, Revision::from(3)));
+    assert_eq!(**analysis, varde_sketch::analyse(&drawn.sketch));
+    assert_eq!(response.unwrap().tag(), Tag::Query(11));
 }

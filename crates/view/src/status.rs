@@ -50,6 +50,9 @@ pub struct Status<'a> {
     /// there's no selection nor what's going on to show, for which they
     /// make room.
     pub mouse_hints: bool,
+    /// The MCP client's chip while one is connected, before the menu's
+    /// button.
+    pub chip: Option<Element<'a, Message>>,
     /// On the document screen, whether the view options menu is open: its
     /// button ends the bar.
     pub view_menu: Option<bool>,
@@ -70,6 +73,7 @@ pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
         info,
         hints,
         mouse_hints,
+        chip,
         view_menu,
     } = status;
 
@@ -95,7 +99,8 @@ pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
         .style(theme::flat_button(open, theme::Tone::Text));
         Part::new(button, KEPT, true)
     });
-    let menu_only = info.is_none() && hints.is_none();
+    let chip = chip.map(|chip| Part::new(chip, KEPT, true));
+    let menu_only = info.is_none() && hints.is_none() && chip.is_none();
     let info = info.map(|info| Part::new(clipped(info), STATUS, false));
     let bar = Boxed {
         left: if menu_only { BUTTON_PADDING } else { PADDING },
@@ -104,7 +109,7 @@ pub fn status_bar(status: Status<'_>) -> Element<'_, Message> {
         } else {
             PADDING
         },
-        parts: [info, hints, menu].into_iter().flatten().collect(),
+        parts: [info, hints, chip, menu].into_iter().flatten().collect(),
     };
     let selection = selection.map(|selection| Boxed {
         left: PADDING,

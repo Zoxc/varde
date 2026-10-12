@@ -27,10 +27,10 @@ pub(crate) fn drops() -> Subscription<Message> {
     Subscription::none()
 }
 
-/// Ticks every second with the time, as [`Message::AutoSaveTick`], see
+/// Ticks every second with the time, as [`Message::Tick`], see
 /// [`ticks`].
-pub(crate) fn auto_save_ticks() -> Subscription<Message> {
-    ticks("auto-save timer", TICK, Message::AutoSaveTick)
+pub(crate) fn second_ticks() -> Subscription<Message> {
+    ticks("second timer", TICK, Message::Tick)
 }
 
 /// Ticks every [`TOAST_TICK`] with the time, as [`Message::ToastTick`],

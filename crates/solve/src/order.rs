@@ -3,7 +3,10 @@
 //! Proposals are ordered: each is made on the committed sketch the one
 //! before it produced, so they queue and none is dropped. Analyses queue
 //! with them, a newer one replacing one still waiting, since only the
-//! newest revision's matters. Drag steps are latest wins, in a slot of
+//! newest revision's matters. A client's query (the MCP `sketch` tool's
+//! analysis) queues as a proposal does, apart from the user's analysis:
+//! it never replaces the one waiting nor is replaced by it, since its
+//! call waits for its answer. Drag steps are latest wins, in a slot of
 //! their own. The queue and the slot take turns: after a drag step the
 //! next queued request goes first, and after a queued request the drag
 //! step waiting, so a proposal waits for at most one drag step, however
@@ -23,7 +26,7 @@ use crate::Request;
 /// Requests not yet started.
 #[derive(Debug, Default)]
 pub struct Order {
-    /// Proposals and analyses, in the order sent.
+    /// Proposals, analyses and queries, in the order sent.
     queue: VecDeque<Request>,
     /// The newest drag step.
     drag: Option<Request>,
@@ -35,7 +38,7 @@ pub struct Order {
 }
 
 impl Pending<Request> for Order {
-    /// Queues a proposal or an analysis, or puts a drag step in its slot.
+    /// Queues a proposal, an analysis or a query, or puts a drag step in its slot.
     /// Returns what that replaces, or the request itself if it's refused,
     /// for the caller to drop when it likes: a waiting analysis is
     /// replaced by a newer one, a waiting drag step by any newer one, and
@@ -50,16 +53,16 @@ impl Pending<Request> for Order {
                 self.session = Some(session);
                 self.drag.replace(request)
             }
-            Request::Analyse { .. } => {
+            Request::Analyse { query: None, .. } => {
                 let replaced = self
                     .queue
                     .iter()
-                    .position(|queued| matches!(queued, Request::Analyse { .. }))
+                    .position(|queued| matches!(queued, Request::Analyse { query: None, .. }))
                     .and_then(|at| self.queue.remove(at));
                 self.queue.push_back(request);
                 replaced
             }
-            Request::Propose { .. } => {
+            Request::Propose { .. } | Request::Analyse { query: Some(_), .. } => {
                 self.queue.push_back(request);
                 None
             }

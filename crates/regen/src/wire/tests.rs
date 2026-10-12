@@ -7,7 +7,7 @@ use varde_sketch::{MAX_LINKS, MAX_POINTS};
 
 use super::*;
 use crate::tests::sketched;
-use crate::{Draft, handle};
+use crate::{Draft, Query, handle};
 
 fn regenerate(editor: &Editor) -> Request {
     Request::Regenerate {
@@ -1289,8 +1289,15 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
     let closed = vec![false; mesh.edge_count()];
     let tangents = (0..mesh.edge_count() as u32).collect();
     let snaps = vec![None; mesh.edge_count()];
-    let picking =
-        Picking::from_parts(parts, faces, closed, tangents, snaps, Vec::new(), &mesh).unwrap();
+    let parts = PickingParts {
+        bodies: parts,
+        faces,
+        closed,
+        tangents,
+        snaps,
+        corners: Vec::new(),
+    };
+    let picking = Picking::from_parts(parts, &mesh).unwrap();
     let tables = PickTables::new(&mesh, &picking);
     Response::Regenerated {
         sight: None,
@@ -1752,7 +1759,10 @@ fn huge_lengths_are_refused_without_allocating_them() {
 fn refused(head: &Head, parts: &[Vec<u8>]) -> String {
     match decode_reply(&head.encode()[..], &slices(parts)).unwrap() {
         Response::Failed { error, .. } => error,
-        Response::Regenerated { .. } | Response::Exported { .. } | Response::Progress(_) => {
+        Response::Regenerated { .. }
+        | Response::Exported { .. }
+        | Response::Answered { .. }
+        | Response::Progress(_) => {
             panic!("a hostile reply was taken")
         }
     }
@@ -2027,6 +2037,7 @@ fn cut_short_parts_the_tables_go_by_are_refused() {
                 Response::Failed { .. } => {}
                 Response::Regenerated { .. }
                 | Response::Exported { .. }
+                | Response::Answered { .. }
                 | Response::Progress(_) => {
                     panic!("part {part} cut by {cut} was taken")
                 }
@@ -2061,9 +2072,9 @@ fn bounded_sequences_are_refused_past_their_bounds() {
     assert_eq!(decode(&Vec::new(), 0, 0).unwrap(), Vec::<Vec<u8>>::new());
 }
 
-/// A head claiming more parts, faces, aliases, closed flags or tangent
-/// chains than a reply may have is refused as it's decoded, before any of
-/// them is built: each costs the page far more memory than its bytes in
+/// A head claiming more parts, faces, aliases, closed flags, tangent
+/// chains or snap points than a reply may have is refused as it's
+/// decoded, before any of them is built: each costs the page far more memory than its bytes in
 /// the head.
 #[test]
 fn too_many_parts_faces_aliases_or_flags_are_refused_as_the_head_is_decoded() {
@@ -2153,16 +2164,12 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
             ..MeshParts::default()
         })
         .unwrap();
-        let picking = Picking::from_parts(
-            vec![BodyId::NEW],
-            vec![face(); faces],
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            &mesh,
-        )
-        .unwrap();
+        let parts = PickingParts {
+            bodies: vec![BodyId::NEW],
+            faces: vec![face(); faces],
+            ..PickingParts::default()
+        };
+        let picking = Picking::from_parts(parts, &mesh).unwrap();
         let tables = PickTables::new(&mesh, &picking);
         Response::Regenerated {
             sight: None,
@@ -2197,7 +2204,10 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
     ));
     match round_trip(&response(MAX_FACES + 1)) {
         Response::Failed { generation, .. } => assert_eq!(generation, 4.into()),
-        Response::Regenerated { .. } | Response::Exported { .. } | Response::Progress(_) => {
+        Response::Regenerated { .. }
+        | Response::Exported { .. }
+        | Response::Answered { .. }
+        | Response::Progress(_) => {
             panic!("too many faces were sent")
         }
     }
@@ -2336,15 +2346,15 @@ fn tangent_chains_must_hang_together() {
             })
             .collect();
         let bodies = [a, b][..parts].to_vec();
-        Picking::from_parts(
+        let parts = PickingParts {
             bodies,
             faces,
-            vec![false; 2],
-            tangents.to_vec(),
-            vec![None; 2],
-            Vec::new(),
-            &mesh,
-        )
+            closed: vec![false; 2],
+            tangents: tangents.to_vec(),
+            snaps: vec![None; 2],
+            corners: Vec::new(),
+        };
+        Picking::from_parts(parts, &mesh)
     };
     assert!(tables([0, 1], 1, false).is_ok());
     assert!(tables([0, 0], 1, false).is_ok());
@@ -3014,10 +3024,10 @@ fn damaged_measures_never_panic_and_what_is_taken_holds() {
             }
             decode_any(&rng.mutate(&head), &parts);
             if let Ok(inspected) = postcard::from_bytes::<Inspected>(&rng.mutate(&bytes)) {
-                assert_sound_measure(&inspected.checked(&mesh, &picking), &mesh, &picking);
+                assert_sound_measure(&inspected.checked(Some((&mesh, &picking))), &mesh, &picking);
             }
             if let Ok(inspected) = postcard::from_bytes::<Inspected>(&rng.bytes(96)) {
-                assert_sound_measure(&inspected.checked(&mesh, &picking), &mesh, &picking);
+                assert_sound_measure(&inspected.checked(Some((&mesh, &picking))), &mesh, &picking);
             }
         }
     }
@@ -3881,4 +3891,317 @@ fn a_sight_round_trips() {
     };
     assert_eq!(back.as_deref(), Some(&sight));
     assert_eq!(round_trip(&handle(request)).sight(), Some(7));
+}
+
+/// The request for the example's first body's edge facts.
+fn topology_request() -> (Editor, Request) {
+    let editor = Editor::new(Document::example());
+    let request = Request::Query {
+        tag: 3,
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        until: None,
+        query: Query::Topology(editor.document().bodies()[0].id),
+    };
+    (editor, request)
+}
+
+/// The head of edge facts of generation 5 holding `edges`.
+fn edge_facts(edges: Vec<crate::EdgeFacts>) -> Vec<u8> {
+    Head::Answered {
+        tag: 3,
+        generation: 5.into(),
+        until: None,
+        answer: HeadAnswer::Topology {
+            body: BodyId::NEW,
+            edges,
+            error: None,
+        },
+    }
+    .encode()
+}
+
+/// An edge facts request crosses, and so does its answer, whole, with
+/// its tag, generation and body; an error crosses as one.
+#[test]
+fn edge_facts_round_trip() {
+    let (editor, request) = topology_request();
+    let Request::Query {
+        tag,
+        query: Query::Topology(body),
+        until,
+        ..
+    } = decode_request(&encode_request(&request)).unwrap()
+    else {
+        panic!("not edge facts");
+    };
+    assert_eq!((tag, until), (3, None));
+    assert_eq!(body, editor.document().bodies()[0].id);
+    let answer = handle(request);
+    let Response::Answered {
+        answer: Answer::Topology {
+            result: Ok(sent), ..
+        },
+        ..
+    } = &answer
+    else {
+        panic!("{answer:?}");
+    };
+    assert_eq!(sent.len(), 14);
+    let Response::Answered {
+        tag,
+        generation,
+        answer: Answer::Topology { body: back, result },
+        ..
+    } = round_trip(&answer)
+    else {
+        panic!("not edge facts");
+    };
+    assert_eq!((tag, generation, back), (3, editor.generation(), body));
+    assert_eq!(result.as_ref(), Ok(sent));
+    let failed = Response::Answered {
+        tag: 4,
+        generation: 1.into(),
+        until: None,
+        answer: Answer::Topology {
+            body,
+            result: Err("no solid".to_owned()),
+        },
+    };
+    let (head, parts) = encode_reply(&failed);
+    assert!(parts.is_empty());
+    let Response::Answered {
+        tag,
+        answer: Answer::Topology { result, .. },
+        ..
+    } = decode_reply(&head[..], NO_PARTS).unwrap()
+    else {
+        panic!("not edge facts");
+    };
+    assert_eq!((tag, result), (4, Err("no solid".to_owned())));
+}
+
+/// Facts that aren't valid answer the request with the error, tagged
+/// as asked; more than a mesh may have edges are refused as the head is
+/// decoded; a convexity's or form's tag past the last doesn't decode.
+#[test]
+fn hostile_edge_facts_are_refused() {
+    use crate::{Convexity, EdgeFacts, EdgeForm};
+    let (_, request) = topology_request();
+    let Response::Answered {
+        answer: Answer::Topology {
+            result: Ok(sent), ..
+        },
+        ..
+    } = handle(request)
+    else {
+        panic!("no edge facts");
+    };
+    let rim = *sent
+        .iter()
+        .find(|e| matches!(e.form, EdgeForm::Circle { .. }))
+        .unwrap();
+    let edge = |radius: f64, convexity| EdgeFacts {
+        form: EdgeForm::Circle {
+            centre: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            radius,
+        },
+        ends: None,
+        convexity: Some(convexity),
+        ..rim
+    };
+    let decoded = |head: Vec<u8>| match decode_reply(&head[..], NO_PARTS).unwrap() {
+        Response::Answered {
+            tag,
+            generation,
+            answer: Answer::Topology { result, .. },
+            ..
+        } => {
+            assert_eq!((tag, u64::from(generation)), (3, 5));
+            result
+        }
+        other => panic!("{other:?}"),
+    };
+    assert!(decoded(edge_facts(vec![edge(1.0, Convexity::Smooth)])).is_ok());
+    let refused = Err(Error::EdgeFacts.to_string());
+    for radius in [f64::NAN, f64::INFINITY, -1.0, Picking::MAX_VALUE * 2.0] {
+        let head = edge_facts(vec![rim, edge(radius, Convexity::Smooth)]);
+        assert_eq!(decoded(head), refused, "a radius of {radius}");
+    }
+    let tilted = EdgeFacts {
+        form: EdgeForm::Circle {
+            centre: [0.0; 3],
+            axis: [0.0, 0.6, 0.6],
+            radius: 1.0,
+        },
+        ..rim
+    };
+    assert_eq!(decoded(edge_facts(vec![tilted])), refused);
+    let line = EdgeFacts {
+        form: EdgeForm::Line {
+            from: [0.0; 3],
+            to: [1.0, 0.0, 0.0],
+        },
+        ends: None,
+        ..rim
+    };
+    assert_eq!(decoded(edge_facts(vec![line])), refused);
+    let far = EdgeFacts {
+        ends: Some([[f64::NAN; 3], [0.0; 3]]),
+        ..line
+    };
+    assert_eq!(decoded(edge_facts(vec![far])), refused);
+    let swapped = EdgeFacts {
+        faces: [rim.faces[1], rim.faces[0]],
+        ..rim
+    };
+    assert_eq!(decoded(edge_facts(vec![swapped])), refused);
+    // As many as the bound, then refused as they're decoded.
+    let mut head = Head::decode(&edge_facts(Vec::new())).unwrap();
+    let Head::Answered {
+        answer: HeadAnswer::Topology { edges, .. },
+        ..
+    } = &mut head
+    else {
+        unreachable!()
+    };
+    *edges = vec![rim; RenderMesh::MAX_EDGE_POLYLINES + 1];
+    let encoded = head.encode();
+    assert!(Head::decode(&encoded).is_err());
+    assert!(decode_reply(&encoded[..], NO_PARTS).is_err());
+    // A convexity's tag past the last: the head doesn't decode.
+    let (convex, smooth) = (
+        edge_facts(vec![edge(1.0, Convexity::Convex)]),
+        edge_facts(vec![edge(1.0, Convexity::Smooth)]),
+    );
+    let at: Vec<usize> = (0..convex.len())
+        .filter(|&i| convex[i] != smooth[i])
+        .collect();
+    assert_eq!((at.len(), smooth[at[0]]), (1, 2));
+    let mut bad = smooth.clone();
+    bad[at[0]] = 3;
+    assert!(Head::decode(&bad).is_err());
+    assert!(decode_reply(&bad[..], NO_PARTS).is_err());
+    // And an edge form's: before the circle's seven numbers, the ends'
+    // `None` and the convexity's `Some`.
+    let mut bad = smooth;
+    let form = at[0] - 1 - 1 - 8 * 7 - 1;
+    assert_eq!(bad[form], 1, "the circle's tag");
+    bad[form] = 9;
+    assert!(Head::decode(&bad).is_err());
+}
+
+/// A client's measure crosses, its answer whole with its tag and
+/// generation, an error as one; an answer with a place in tables, or
+/// numbers out of bounds, is answered as errors per pick; bytes past a
+/// measure's end don't decode.
+#[test]
+fn client_measure_round_trip_and_refusals() {
+    let editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let inspect = crate::Inspect {
+        revision: 1,
+        first: crate::InspectPick {
+            body,
+            entity: crate::Entity::Body,
+            near: [0.0; 3],
+        },
+        second: None,
+    };
+    let request = Request::Query {
+        tag: 9,
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        until: None,
+        query: Query::Measure(Box::new(inspect.clone())),
+    };
+    let Request::Query {
+        tag,
+        query: Query::Measure(back),
+        ..
+    } = decode_request(&encode_request(&request)).unwrap()
+    else {
+        panic!("not a measure");
+    };
+    assert_eq!((tag, *back), (9, inspect));
+    let answer = handle(request);
+    let Response::Answered {
+        answer: Answer::Measured(Ok(sent)),
+        ..
+    } = &answer
+    else {
+        panic!("{answer:?}");
+    };
+    let Response::Answered {
+        tag,
+        generation,
+        answer: Answer::Measured(result),
+        ..
+    } = round_trip(&answer)
+    else {
+        panic!("not a measure");
+    };
+    assert_eq!((tag, generation), (9, editor.generation()));
+    assert_eq!(result.as_ref(), Ok(sent));
+    let failed = Response::Answered {
+        tag: 2,
+        generation: 1.into(),
+        until: None,
+        answer: Answer::Measured(Err("broke".to_owned())),
+    };
+    let Response::Answered {
+        tag,
+        answer: Answer::Measured(result),
+        ..
+    } = round_trip(&failed)
+    else {
+        panic!("not a measure");
+    };
+    assert_eq!((tag, result), (2, Err("broke".to_owned())));
+
+    let hostile = |change: &dyn Fn(&mut crate::Inspected)| {
+        let mut inspected = (**sent).clone();
+        change(&mut inspected);
+        let head = Head::Answered {
+            tag: 1,
+            generation: 1.into(),
+            until: None,
+            answer: HeadAnswer::Measured(Ok(Box::new(inspected))),
+        }
+        .encode();
+        let Response::Answered {
+            answer: Answer::Measured(Ok(back)),
+            ..
+        } = decode_reply(&head[..], NO_PARTS).unwrap()
+        else {
+            panic!("not a measure");
+        };
+        back
+    };
+    let placed = hostile(&|inspected| {
+        if let Ok(probed) = &mut inspected.first {
+            probed.at = Some(crate::At::Face(0));
+        }
+    });
+    assert!(placed.first.is_err());
+    let infinite = hostile(&|inspected| {
+        if let Ok(crate::Probed {
+            measure: Ok(crate::Measure::Body { volume, .. }),
+            ..
+        }) = &mut inspected.first
+        {
+            *volume = f64::NAN;
+        }
+    });
+    assert!(infinite.first.is_err());
+    let mut trailing = Head::Answered {
+        tag: 1,
+        generation: 1.into(),
+        until: None,
+        answer: HeadAnswer::Measured(Err(String::new())),
+    }
+    .encode();
+    trailing.push(0);
+    assert!(decode_reply(&trailing[..], NO_PARTS).is_err());
 }

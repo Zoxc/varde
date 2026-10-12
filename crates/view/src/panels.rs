@@ -160,7 +160,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                     size.height
                 };
                 let overflows = rows + LIST_PADDING.y() > room;
-                let list = container(scroller(list()))
+                let list = container(scroller(list()).id(TIMELINE_LIST))
                     .height(Length::Shrink)
                     .max_height(room.max(0.0));
                 let ghost = ghost.then(|| crate::rollback::ghost(overflows));
@@ -184,6 +184,10 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         SIDE_PANEL_WIDTH,
     )
 }
+
+/// The Timeline's scrolled list: the MCP panel's Show in Timeline
+/// scrolls it to the feature.
+pub const TIMELINE_LIST: iced::widget::Id = iced::widget::Id::new("timeline-list");
 
 /// What a click on an empty part of the panel or the toolbar sends.
 pub(crate) const CLEAR_SELECTION: Message = Message::Look(Look::ClearSelection);
@@ -516,7 +520,7 @@ fn edit_label(feature: &Feature) -> &'static str {
 }
 
 /// A row's context menu holding `items`.
-fn row_menu<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+pub(crate) fn row_menu<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     sized_row_menu(items, ROW_MENU_WIDTH)
 }
 
