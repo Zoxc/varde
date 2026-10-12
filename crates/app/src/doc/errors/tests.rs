@@ -13,6 +13,7 @@ use varde_sketch::Curve;
 use varde_view::{Edit, Framing, Look, RevolveLook};
 
 use super::*;
+use crate::doc::camera::FRAME_MARGIN;
 use crate::doc::revolve::tests::lathe;
 use crate::tests::{answer, clicked, deferred, shown, texts};
 

@@ -5,6 +5,7 @@ use std::time::Duration;
 use glam::Vec3;
 use iced::time::Instant;
 use varde_document::Placement;
+use varde_kernel_compat::Aabb;
 use varde_render::{Camera, GridPlane};
 
 use varde_expr::LengthUnit;
@@ -131,11 +132,27 @@ impl Fade {
     }
 }
 
-/// The least height, in millimetres, Home frames a model to: a tiny one is
-/// shown with what's around it rather than filling the view.
-const MIN_HOME_HEIGHT: f32 = 1.0;
+/// The least height, in millimetres, the view is framed to: a tiny model,
+/// or a failure at one point, is shown with what's around it rather than
+/// filling the view.
+const MIN_FRAME_HEIGHT: f32 = 1.0;
+
+/// Sets `camera` to show `bounds` whole in the middle of the view, keeping
+/// its direction.
+pub(super) fn frame(camera: &mut Camera, bounds: Aabb) {
+    camera.set_target(bounds.center());
+    let diagonal = (bounds.max - bounds.min).length();
+    camera.set_view_height((diagonal * FRAME_MARGIN).max(MIN_FRAME_HEIGHT));
+}
 
 impl Doc {
+    /// The camera as it is once the turn under way, if any, ends.
+    pub(super) fn camera_goal(&self) -> Camera {
+        self.animation
+            .as_ref()
+            .map_or(self.camera, |animation| animation.to)
+    }
+
     /// The camera Home turns to outside a sketch: from where Home looks,
     /// framing the model shown, its bodies and its sketches, or on the
     /// origin if it shows nothing.
@@ -144,16 +161,14 @@ impl Doc {
         let bounds = [self.feed.mesh().bounds(), self.feed.sketches().bounds()]
             .into_iter()
             .flatten()
-            .reduce(|a, b| varde_kernel_compat::Aabb {
+            .reduce(|a, b| Aabb {
                 min: a.min.min(b.min),
                 max: a.max.max(b.max),
             });
         if let Some(bounds) = bounds {
             // The mesh and lines keep their positions finite and bounded,
             // and the camera clamps what it's given.
-            camera.set_target(bounds.center());
-            let diagonal = (bounds.max - bounds.min).length();
-            camera.set_view_height((diagonal * FRAME_MARGIN).max(MIN_HOME_HEIGHT));
+            frame(&mut camera, bounds);
         }
         camera
     }
@@ -202,10 +217,7 @@ impl Doc {
     /// `None`.
     pub(crate) fn set_pivot(&mut self, at: Option<Vec3>, now: Instant) {
         if let Some(at) = at {
-            let mut to = self
-                .animation
-                .as_ref()
-                .map_or(self.camera, |animation| animation.to);
+            let mut to = self.camera_goal();
             to.center_on(at);
             self.animate_camera_from(to, now);
         }

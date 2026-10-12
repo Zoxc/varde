@@ -15,12 +15,7 @@ use varde_regen::ErrorGeometry;
 use varde_view::{Framing, ShownError, ShownErrors};
 
 use super::Doc;
-use super::camera::FRAME_MARGIN;
-
-/// The least height, in millimetres, the view is framed to: a failure at
-/// one point, or a tiny one, is shown with what's around it rather than
-/// zoomed into nothing.
-const MIN_FRAME_HEIGHT: f32 = 1.0;
+use super::camera::frame;
 
 impl Doc {
     /// The failures' geometry the viewport draws, rebuilt only when what
@@ -186,7 +181,7 @@ impl Doc {
             return;
         };
         if self.before_show.is_none() {
-            let camera = (self.animation.as_ref()).map_or(self.camera, |animation| animation.to);
+            let camera = self.camera_goal();
             self.before_show = Some((camera, self.pivot));
         }
         self.frame(bounds);
@@ -204,10 +199,8 @@ impl Doc {
     /// Turns the camera to show `bounds` whole in the middle of the view,
     /// from where it looks.
     fn frame(&mut self, bounds: Aabb) {
-        let mut to = (self.animation.as_ref()).map_or(self.camera, |animation| animation.to);
-        to.set_target(bounds.center());
-        let diagonal = (bounds.max - bounds.min).length();
-        to.set_view_height((diagonal * FRAME_MARGIN).max(MIN_FRAME_HEIGHT));
+        let mut to = self.camera_goal();
+        frame(&mut to, bounds);
         self.pivot = None;
         self.animate_camera(to);
     }

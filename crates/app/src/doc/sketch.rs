@@ -865,7 +865,7 @@ impl Doc {
         // The view to come back to, the one being turned to if turning:
         // from one sketch to another, the one before the first.
         if self.mode.sketch().is_none() {
-            self.before_sketch = Some(self.animation.as_ref().map_or(self.camera, |a| a.to));
+            self.before_sketch = Some(self.camera_goal());
             self.panel_before_sketch = Some(self.panel);
         }
         self.mode = DocMode::Sketch(SketchSession::new(id, placement, sketch.clone()));
@@ -1382,7 +1382,7 @@ impl Doc {
     pub(crate) fn turn_to_sketch(&self) -> Option<Camera> {
         let (_, sketch) = self.edited_sketch()?;
         let placement = self.mode.sketch()?.placement;
-        let now = self.animation.as_ref().map_or(self.camera, |a| a.to);
+        let now = self.camera_goal();
         Some(facing(now.projection(), Some(&now), placement, sketch))
     }
 }

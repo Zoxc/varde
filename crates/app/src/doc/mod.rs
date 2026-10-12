@@ -769,8 +769,7 @@ impl Doc {
             .or_else(|| self.selection_inspect());
         // Drawn as finely as the camera shows it, where an animation
         // ends rather than at each of its steps.
-        let camera = self.animation.as_ref().map_or(&self.camera, |a| &a.to);
-        self.feed.view(camera, self.aspect);
+        self.feed.view(&self.camera_goal(), self.aspect);
         let until = (before.then(|| self.opened_feature()).flatten()).or_else(|| self.rollback().0);
         self.feed
             .request_with(&self.editor, exclude, until, draft, inspect);
