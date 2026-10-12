@@ -94,111 +94,69 @@ impl Params {
         units: LengthUnit,
     ) -> Params {
         let list: Vec<(&str, &str)> = list.into_iter().collect();
-        let mut params = Params {
-            entries: list
-                .iter()
-                .map(|&(name, text)| Entry {
-                    name: name.to_owned(),
-                    text: text.to_owned(),
-                    // Replaced below before anything reads it.
-                    result: Err(Error {
-                        kind: ErrorKind::Cycle,
-                        span: Span::new(0, 0),
-                    }),
-                })
-                .collect(),
-            by_name: BTreeMap::new(),
-            suggest: false,
-        };
+        let mut by_name = BTreeMap::new();
         for (index, &(name, _)) in list.iter().enumerate() {
-            params.by_name.entry(name.to_owned()).or_insert(index);
+            by_name.entry(name.to_owned()).or_insert(index);
         }
-        // Whether each has its result: errors about the name, or once
-        // evaluated or found in a cycle.
-        let mut done = vec![false; list.len()];
-        for (index, &(name, text)) in list.iter().enumerate() {
-            let all = Span::new(0, text.len());
-            let kind = if index >= MAX_PARAMS {
-                ErrorKind::TooManyParams
-            } else if let Err(error) = check_name(name) {
-                ErrorKind::BadName(error)
-            } else if params.index(name) != Some(index) {
-                ErrorKind::Duplicate(name.to_owned())
-            } else {
-                continue;
-            };
-            params.entries[index].result = Err(Error { kind, span: all });
-            done[index] = true;
-        }
-        // Each one's uses of the others, by index, with the name's span.
-        let uses: Vec<Vec<(usize, Span)>> = list
+        // Errors about the name, then for the rest each one's uses of the
+        // others, by index, with the name's span.
+        let mut results: Vec<Option<Result<Resolved, Error>>> = list
             .iter()
             .enumerate()
-            .map(|(index, &(_, text))| {
-                if done[index] {
+            .map(|(index, &(name, text))| {
+                name_error(index, name, &by_name).map(|kind| {
+                    Err(Error {
+                        kind,
+                        span: Span::new(0, text.len()),
+                    })
+                })
+            })
+            .collect();
+        let uses: Vec<Vec<(usize, Span)>> = list
+            .iter()
+            .zip(&results)
+            .map(|(&(_, text), result)| {
+                if result.is_some() {
                     return Vec::new();
                 }
                 name_spans(text)
                     .into_iter()
-                    .filter_map(|span| Some((params.index(&text[span.range()])?, span)))
+                    .filter_map(|span| Some((*by_name.get(&text[span.range()])?, span)))
                     .collect()
             })
             .collect();
-
-        // Depth first through the uses, without recursion so that a long
-        // chain can't overflow the stack: a parameter is evaluated once
-        // all it uses are, and one met again while still open closes a
-        // cycle.
-        #[derive(Clone, Copy, PartialEq)]
-        enum State {
-            New,
-            Open,
-            Closed,
+        let (order, cycles) = resolve_order(&uses);
+        for (member, span) in cycles {
+            results[member].get_or_insert(Err(Error {
+                kind: ErrorKind::Cycle,
+                span,
+            }));
         }
-        let mut state = vec![State::New; list.len()];
-        let mut stack: Vec<(usize, usize)> = Vec::new();
-        for root in 0..list.len() {
-            if state[root] != State::New {
-                continue;
-            }
-            state[root] = State::Open;
-            stack.push((root, 0));
-            while let Some(&mut (at, ref mut next)) = stack.last_mut() {
-                if let Some(&(used, _)) = uses[at].get(*next) {
-                    *next += 1;
-                    match state[used] {
-                        State::New => {
-                            state[used] = State::Open;
-                            stack.push((used, 0));
-                        }
-                        State::Open => {
-                            let from = stack
-                                .iter()
-                                .position(|&(open, _)| open == used)
-                                .expect("open ones are on the stack");
-                            for &(member, next) in &stack[from..] {
-                                if !done[member] {
-                                    // The use that leads on round the cycle.
-                                    let (_, span) = uses[member][next - 1];
-                                    params.entries[member].result = Err(Error {
-                                        kind: ErrorKind::Cycle,
-                                        span,
-                                    });
-                                    done[member] = true;
-                                }
-                            }
-                        }
-                        State::Closed => {}
-                    }
-                    continue;
-                }
-                stack.pop();
-                state[at] = State::Closed;
-                if !done[at] {
-                    let result = evaluate_param(list[at].1, units, &params);
-                    params.entries[at].result = result;
-                    done[at] = true;
-                }
+
+        // The rest are evaluated in `order`, which puts everything a
+        // parameter uses before it, so its uses have their results by then.
+        let todo: Vec<bool> = results.iter().map(Option::is_none).collect();
+        let mut params = Params {
+            entries: list
+                .iter()
+                .zip(results)
+                .map(|(&(name, text), result)| Entry {
+                    name: name.to_owned(),
+                    text: text.to_owned(),
+                    // A stand-in for those in `todo`, replaced below
+                    // before anything reads it.
+                    result: result.unwrap_or(Err(Error {
+                        kind: ErrorKind::Cycle,
+                        span: Span::new(0, 0),
+                    })),
+                })
+                .collect(),
+            by_name,
+            suggest: false,
+        };
+        for at in order {
+            if todo[at] {
+                params.entries[at].result = evaluate_param(list[at].1, units, &params);
             }
         }
         params.suggest_within_budget();
@@ -492,6 +450,76 @@ pub fn rename(text: &str, old: &str, new: &str) -> Result<String, Error> {
         });
     }
     Ok(renamed)
+}
+
+/// Why `name`, the parameter at `index`, can't be used, if it can't:
+/// past [`MAX_PARAMS`], not a name, or a name an earlier one has.
+fn name_error(index: usize, name: &str, by_name: &BTreeMap<String, usize>) -> Option<ErrorKind> {
+    if index >= MAX_PARAMS {
+        Some(ErrorKind::TooManyParams)
+    } else if let Err(error) = check_name(name) {
+        Some(ErrorKind::BadName(error))
+    } else if by_name.get(name) != Some(&index) {
+        Some(ErrorKind::Duplicate(name.to_owned()))
+    } else {
+        None
+    }
+}
+
+/// Goes depth first through `uses`, each parameter's uses of the others
+/// by index, without recursion so that a long chain can't overflow the
+/// stack. Gives every parameter once, each after all it uses (unless
+/// they're in a cycle with it), and the members of each cycle found, with
+/// the use that leads on round it: a member may come more than once, its
+/// first use being the one to report.
+fn resolve_order(uses: &[Vec<(usize, Span)>]) -> (Vec<usize>, Vec<(usize, Span)>) {
+    #[derive(Clone, Copy, PartialEq)]
+    enum State {
+        New,
+        Open,
+        Closed,
+    }
+    let mut state = vec![State::New; uses.len()];
+    let mut order = Vec::with_capacity(uses.len());
+    let mut cycles = Vec::new();
+    // Each open parameter with how many of its uses have been followed.
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    for root in 0..uses.len() {
+        if state[root] != State::New {
+            continue;
+        }
+        state[root] = State::Open;
+        stack.push((root, 0));
+        while let Some(&mut (at, ref mut next)) = stack.last_mut() {
+            let Some(&(used, _)) = uses[at].get(*next) else {
+                stack.pop();
+                state[at] = State::Closed;
+                order.push(at);
+                continue;
+            };
+            *next += 1;
+            match state[used] {
+                State::New => {
+                    state[used] = State::Open;
+                    stack.push((used, 0));
+                }
+                State::Open => {
+                    let from = stack
+                        .iter()
+                        .position(|&(open, _)| open == used)
+                        .expect("open ones are on the stack");
+                    // Each one's last use followed leads on round the cycle.
+                    cycles.extend(
+                        stack[from..]
+                            .iter()
+                            .map(|&(member, next)| (member, uses[member][next - 1].1)),
+                    );
+                }
+                State::Closed => {}
+            }
+        }
+    }
+    (order, cycles)
 }
 
 #[cfg(test)]
