@@ -5,7 +5,7 @@
 use std::sync::LazyLock;
 
 use iced::widget::canvas::{self, Action, Geometry};
-use iced::widget::{column, container, hover, mouse_area, row, rule, space, stack, svg, text};
+use iced::widget::{Row, column, container, hover, mouse_area, row, rule, space, stack, svg, text};
 use iced::{
     Alignment, Color, Element, Event, Length, Padding, Point, Rectangle, Renderer, Theme, mouse,
 };
@@ -36,42 +36,53 @@ const DIAMOND: f32 = 12.0;
 /// lines down the list (see `notes/upstream/wgpu.md`).
 pub(crate) fn marker<'a>(label: Option<&'a str>) -> Element<'a, Message> {
     let moved = label.is_some();
-    let color = move |theme: &Theme| {
+    let colors = move |theme: &Theme| {
         let palette = theme::palette(theme);
-        if moved {
+        let color = if moved {
             palette.icons.solid.line
         } else {
             palette.accent
-        }
+        };
+        [color, color, faded(color, 0.6)]
     };
-    let diamond = svg(DIAMOND_HANDLE.clone())
+    marker_row(DIAMOND_HANDLE.clone(), label, colors)
+        .padding(Padding::from([0, 8]).left(6))
+        .height(MARKER_HEIGHT)
+        .into()
+}
+
+/// A marker's diamond `diamond`, its label if any and its line, unpadded,
+/// coloured as `colors` gives them, in that order.
+fn marker_row<'a>(
+    diamond: svg::Handle,
+    label: Option<&'a str>,
+    colors: impl Fn(&Theme) -> [Color; 3] + Copy + 'a,
+) -> Row<'a, Message> {
+    let diamond = svg(diamond)
         .width(DIAMOND)
         .height(DIAMOND)
         .style(move |theme: &Theme, _| svg::Style {
-            color: Some(color(theme)),
+            color: Some(colors(theme)[0]),
         });
     let label = label.map(|label| {
         text(label)
             .size(10.5)
             .font(SEMIBOLD)
             .style(move |theme: &Theme| text::Style {
-                color: Some(color(theme)),
+                color: Some(colors(theme)[1]),
             })
     });
     let line = container(space::horizontal())
         .width(Length::Fill)
         .height(2)
         .style(move |theme: &Theme| container::Style {
-            background: Some(faded(color(theme), 0.6).into()),
+            background: Some(colors(theme)[2].into()),
             border: iced::border::rounded(1),
             ..container::Style::default()
         });
     row![diamond, label, line]
         .spacing(6)
-        .padding(Padding::from([0, 8]).left(6))
-        .height(MARKER_HEIGHT)
         .align_y(Alignment::Center)
-        .into()
 }
 
 /// The [`ghost`]'s height, under the list.
@@ -88,37 +99,17 @@ const GHOST_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6
 pub(crate) fn ghost<'a>(overflows: bool) -> Element<'a, Message> {
     static HANDLE: LazyLock<svg::Handle> = LazyLock::new(|| svg::Handle::from_memory(GHOST_SVG));
     let look = |solid: bool| -> Element<'a, Message> {
-        let diamond = if solid {
-            svg(DIAMOND_HANDLE.clone())
+        let handle: &svg::Handle = if solid { &DIAMOND_HANDLE } else { &HANDLE };
+        let shares = if solid {
+            [1.0, 1.0, 0.6]
         } else {
-            svg(HANDLE.clone())
+            [0.7, 0.8, 0.25]
         };
-        let diamond = diamond
-            .width(DIAMOND)
-            .height(DIAMOND)
-            .style(move |theme: &Theme, _| svg::Style {
-                color: Some(accent(theme, if solid { 1.0 } else { 0.7 })),
-            });
-        let label = text("Roll to end")
-            .size(10.5)
-            .font(SEMIBOLD)
-            .style(move |theme: &Theme| text::Style {
-                color: Some(accent(theme, if solid { 1.0 } else { 0.8 })),
-            });
-        let line = container(space::horizontal())
-            .width(Length::Fill)
-            .height(2)
-            .style(move |theme: &Theme| container::Style {
-                background: Some(accent(theme, if solid { 0.6 } else { 0.25 }).into()),
-                border: iced::border::rounded(1),
-                ..container::Style::default()
-            });
+        let colors = move |theme: &Theme| shares.map(|share| accent(theme, share));
         container(
-            row![diamond, label, line]
-                .spacing(6)
+            marker_row(handle.clone(), Some("Roll to end"), colors)
                 .padding(Padding::from([0, 16]).left(14))
-                .height(GHOST_HEIGHT)
-                .align_y(Alignment::Center),
+                .height(GHOST_HEIGHT),
         )
         .width(Length::Fill)
         .style(|theme: &Theme| container::Style {
