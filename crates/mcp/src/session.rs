@@ -255,8 +255,8 @@ impl Session {
                     }
                 }
                 Err(CallError::Params(message)) => error(Code::InvalidParams, &message),
-                Err(CallError::Arguments(message)) => {
-                    success(ToolReply::error(message).result(ToolReply::CAP))
+                Err(error @ CallError::Arguments { .. }) => {
+                    success(ToolReply::error(error.to_string()).result(ToolReply::CAP))
                 }
             },
             _ => error(Code::MethodNotFound, "Method not found"),

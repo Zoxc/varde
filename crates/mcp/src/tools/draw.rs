@@ -361,9 +361,10 @@ impl Arguments<'_> {
         for (index, item) in items.iter().enumerate() {
             let tool = format!("{}: operations[{index}]", self.tool);
             let Value::Object(map) = item else {
-                return Err(CallError::Arguments(format!(
-                    "{tool}: an operation is an object with its op"
-                )));
+                return Err(CallError::Arguments {
+                    at: tool,
+                    message: "an operation is an object with its op".to_owned(),
+                });
             };
             let op = Arguments { tool: &tool, map };
             let read = op.operation()?;

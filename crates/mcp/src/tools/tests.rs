@@ -6,7 +6,7 @@ fn call(name: &str, arguments: Value) -> Result<Call, CallError> {
 
 fn refused(name: &str, arguments: Value) -> String {
     match call(name, arguments) {
-        Err(CallError::Arguments(message)) => message,
+        Err(error @ CallError::Arguments { .. }) => error.to_string(),
         other => panic!("expected an argument error, got {other:?}"),
     }
 }
@@ -110,7 +110,7 @@ fn lists_the_tools_built() {
         } else if *name == "undo" {
             assert_eq!(empty, Ok(Call::Undo { steps: 1 }));
         } else {
-            assert!(matches!(empty, Err(CallError::Arguments(_))), "{name}");
+            assert!(matches!(empty, Err(CallError::Arguments { .. })), "{name}");
         }
     }
     assert!(tools[0]["outputSchema"].is_object());
@@ -1414,15 +1414,15 @@ fn set_feature_keeps_the_patch_for_the_app() {
     assert_eq!(Value::Object(set.patch.clone()), patch);
     assert!(matches!(
         call("set_feature", json!({ "name": "Extrude 1" })),
-        Err(CallError::Arguments(why)) if why.contains("give the fields to change")
+        Err(CallError::Arguments { message: why, .. }) if why.contains("give the fields to change")
     ));
     assert!(matches!(
         call("set_feature", json!({ "distance": "1" })),
-        Err(CallError::Arguments(why)) if why.contains("name is required")
+        Err(CallError::Arguments { message: why, .. }) if why.contains("name is required")
     ));
-    assert_eq!(fields("set_feature"), None);
+    assert_eq!(FeatureTool::named("set_feature"), None);
     assert_eq!(
-        fields("combine"),
+        FeatureTool::named("combine").map(FeatureTool::fields),
         Some(&["target", "tools", "operation", "keep_tools"][..])
     );
     let mut extrude = set.patch;
@@ -1441,9 +1441,10 @@ fn feature_tools_fields_match_their_schemas_and_patches_read() {
     let mut kinds = 0;
     for tool in list["tools"].as_array().unwrap() {
         let name = tool["name"].as_str().unwrap();
-        let Some(fields) = fields(name) else {
+        let Some(feature) = FeatureTool::named(name) else {
             continue;
         };
+        let fields = feature.fields();
         kinds += 1;
         let mut properties: Vec<&str> = (tool["inputSchema"]["properties"].as_object())
             .unwrap()
@@ -1452,7 +1453,7 @@ fn feature_tools_fields_match_their_schemas_and_patches_read() {
             .collect();
         let mut fields = fields.to_vec();
         // Beside its fields, the names of what it makes, never patched.
-        let bodies = making(name).unwrap().key();
+        let bodies = feature.new_bodies().key();
         let naming = |key: &str| key == "name" || Some(key) == bodies;
         assert!(properties.contains(&"name"), "{name}");
         assert_eq!(
@@ -1463,7 +1464,7 @@ fn feature_tools_fields_match_their_schemas_and_patches_read() {
         properties.sort_unstable();
         fields.sort_unstable();
         assert_eq!(fields, properties, "{name}");
-        let read = parse_patch(name, &Map::new());
+        let read = parse_patch(feature, &Map::new());
         assert!(read.is_ok(), "{name}: {read:?}");
         // A patch takes no names: they're rename's.
         for key in ["name"].into_iter().chain(bodies) {
@@ -1472,7 +1473,7 @@ fn feature_tools_fields_match_their_schemas_and_patches_read() {
                 _ => json!("A"),
             };
             let patch = Map::from_iter([(key.to_owned(), value)]);
-            let read = parse_patch(name, &patch);
+            let read = parse_patch(feature, &patch);
             assert!(read.is_err(), "{name} {key}: {read:?}");
         }
     }
@@ -1565,7 +1566,10 @@ fn reads_the_sketch_edits() {
         ),
     ] {
         assert!(
-            matches!(call(name, arguments.clone()), Err(CallError::Arguments(_))),
+            matches!(
+                call(name, arguments.clone()),
+                Err(CallError::Arguments { .. })
+            ),
             "{name} {arguments}"
         );
     }
@@ -1961,13 +1965,13 @@ fn reads_undo() {
     ] {
         let refused = call("undo", json!({ "steps": steps }));
         assert!(
-            matches!(refused, Err(CallError::Arguments(_))),
+            matches!(refused, Err(CallError::Arguments { .. })),
             "{refused:?}"
         );
     }
     let refused = call("undo", json!({ "count": 2 }));
     assert!(
-        matches!(refused, Err(CallError::Arguments(_))),
+        matches!(refused, Err(CallError::Arguments { .. })),
         "{refused:?}"
     );
     assert!(Call::Undo { steps: 1 }.edits());
@@ -2027,14 +2031,14 @@ fn feature_tools_are_listed_once_and_named_apart() {
     let listed: Vec<&str> = (listed["tools"].as_array().unwrap().iter())
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    for (at, feature) in FEATURE_TOOLS.iter().enumerate() {
-        assert!(listed.contains(&feature.name), "{}", feature.name);
+    for (at, feature) in FeatureTool::ALL.iter().enumerate() {
+        let name = feature.name();
+        assert!(listed.contains(&name), "{name}");
         assert!(
-            FEATURE_TOOLS[..at]
+            FeatureTool::ALL[..at]
                 .iter()
-                .all(|seen| seen.name != feature.name),
-            "{}",
-            feature.name
+                .all(|seen| seen.name() != name),
+            "{name}"
         );
     }
 }
@@ -2076,7 +2080,7 @@ fn every_listed_tool_reads_the_arguments_it_lists() {
             let refused = match parse_arguments(name, &arguments) {
                 Ok(_) => false,
                 Err(CallError::Params(error)) => panic!("{name}: {error}"),
-                Err(CallError::Arguments(error)) => error.contains("no argument named"),
+                Err(CallError::Arguments { message, .. }) => message.contains("no argument named"),
             };
             assert_eq!(refused, key == "no_such_key", "{name}: {key}");
         }

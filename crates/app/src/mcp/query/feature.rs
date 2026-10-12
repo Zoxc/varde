@@ -27,7 +27,9 @@ use varde_document::{
     Feature, FeatureId, FeatureKind, Operation, OriginPlane, PathPart, PatternKind, Plane,
     PlaneRef, PointRef, RegionRef, ScaleFactor, Section, SplitTool,
 };
-use varde_mcp::tools::{self, ItemKind, Page, ToolReply, Worded, WorldAxis, WorldPlane};
+use varde_mcp::tools::{
+    self, FeatureTool, ItemKind, Page, ToolReply, Worded, WorldAxis, WorldPlane,
+};
 use varde_view::MotionField;
 
 use super::failure;
@@ -49,7 +51,7 @@ pub(crate) fn feature(doc: &Doc, name: &str, page: Page) -> ToolReply {
         "settings": settings,
     });
     if let Some(tool) = tool_of(&feature.kind) {
-        answer["tool"] = json!(tool);
+        answer["tool"] = json!(tool.name());
     }
     let failures = doc.feed.committed().map(|model| model.failures);
     if let Some(failure) = failures.and_then(|failures| failure(failures, feature)) {
@@ -124,25 +126,25 @@ fn paged(answer: Value, page: Page) -> Value {
 
 /// The tool that makes a feature of `kind`, whose arguments are its
 /// shape: none for a sketch.
-pub(crate) fn tool_of(kind: &FeatureKind) -> Option<&'static str> {
+pub(crate) fn tool_of(kind: &FeatureKind) -> Option<FeatureTool> {
     Some(match kind {
         FeatureKind::Sketch { .. } => return None,
-        FeatureKind::Extrude(_) => "extrude",
-        FeatureKind::Revolve(_) => "revolve",
-        FeatureKind::Combine(_) => "combine",
-        FeatureKind::Move(_) => "move_body",
-        FeatureKind::Mirror(_) => "mirror",
-        FeatureKind::Pattern(_) => "pattern",
-        FeatureKind::Align(_) => "align",
-        FeatureKind::Scale(_) => "scale",
-        FeatureKind::Split(_) => "split",
-        FeatureKind::Chamfer(_) => "chamfer",
-        FeatureKind::Shell(_) => "shell",
-        FeatureKind::Fillet(_) => "fillet",
-        FeatureKind::OffsetFace(_) => "offset_face",
-        FeatureKind::FaceDraft(_) => "draft",
-        FeatureKind::Sweep(_) => "sweep",
-        FeatureKind::Loft(_) => "loft",
+        FeatureKind::Extrude(_) => FeatureTool::Extrude,
+        FeatureKind::Revolve(_) => FeatureTool::Revolve,
+        FeatureKind::Combine(_) => FeatureTool::Combine,
+        FeatureKind::Move(_) => FeatureTool::MoveBody,
+        FeatureKind::Mirror(_) => FeatureTool::Mirror,
+        FeatureKind::Pattern(_) => FeatureTool::Pattern,
+        FeatureKind::Align(_) => FeatureTool::Align,
+        FeatureKind::Scale(_) => FeatureTool::Scale,
+        FeatureKind::Split(_) => FeatureTool::Split,
+        FeatureKind::Chamfer(_) => FeatureTool::Chamfer,
+        FeatureKind::Shell(_) => FeatureTool::Shell,
+        FeatureKind::Fillet(_) => FeatureTool::Fillet,
+        FeatureKind::OffsetFace(_) => FeatureTool::OffsetFace,
+        FeatureKind::FaceDraft(_) => FeatureTool::Draft,
+        FeatureKind::Sweep(_) => FeatureTool::Sweep,
+        FeatureKind::Loft(_) => FeatureTool::Loft,
     })
 }
 

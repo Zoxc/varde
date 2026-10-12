@@ -1,5 +1,5 @@
 //! `set_feature {name, ...patch}`: a patch in the shape `feature` shows
-//! (its creating tool's arguments, [`varde_mcp::tools::fields`]) merged
+//! (its creating tool's arguments, [`FeatureTool::fields`](varde_mcp::tools::FeatureTool::fields)) merged
 //! into the feature, as its panel's OK on the edited feature commits it
 //! (`Command::SetFeature`).
 //!
@@ -68,7 +68,7 @@ pub(super) fn set_feature(
     if let Some(why) = tools::renaming(&args.patch) {
         return Err(failed(TOOL, why));
     }
-    let fields = tools::fields(tool).unwrap_or_default();
+    let fields = tool.fields();
     if let Some(key) = args
         .patch
         .keys()
@@ -122,14 +122,10 @@ pub(super) fn set_feature(
     }
     let given: BTreeSet<String> = changed.keys().cloned().collect();
     let call = tools::parse_patch(tool, &changed).map_err(|error| {
-        let why = match error {
-            CallError::Params(why) | CallError::Arguments(why) => why,
-        };
         // Worded as the tool's, under this one's name.
-        let why = why
-            .strip_prefix(&format!("{tool}: "))
-            .unwrap_or(&why)
-            .to_owned();
+        let why = match error {
+            CallError::Params(why) | CallError::Arguments { message: why, .. } => why,
+        };
         failed(TOOL, why)
     })?;
     let given = Given::Only(&given);

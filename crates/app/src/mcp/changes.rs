@@ -709,7 +709,7 @@ fn brief(feature: &Feature) -> Value {
         "id": feature.id.get(),
     });
     if let Some(tool) = query::tool_of(&feature.kind) {
-        said["tool"] = json!(tool);
+        said["tool"] = json!(tool.name());
     }
     said
 }

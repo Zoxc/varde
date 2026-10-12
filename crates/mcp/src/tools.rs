@@ -1070,7 +1070,7 @@ pub struct AddLink {
 /// `set_feature`'s arguments: the feature, by its Timeline name, and
 /// the patch, the rest of the arguments as sent (within the JSON-RPC
 /// limits), which the app reads as the feature's tool's arguments
-/// ([`fields`], [`parse_arguments`]).
+/// ([`FeatureTool::fields`], [`parse_arguments`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SetFeature {
     pub name: String,
@@ -1282,8 +1282,24 @@ pub struct Direction {
 pub enum CallError {
     /// No such tool, or params not shaped as `tools/call`'s: -32602.
     Params(String),
-    /// The tool's arguments don't fit it: a tool result with `isError`.
-    Arguments(String),
+    /// The tool's arguments don't fit it: a tool result with `isError`,
+    /// worded `"{at}: {message}"`.
+    Arguments {
+        /// Whose arguments: the tool's name, or the path to an item of
+        /// them, `"edit_sketch: operations[2]"`.
+        at: String,
+        /// What doesn't fit.
+        message: String,
+    },
+}
+
+impl std::fmt::Display for CallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CallError::Params(message) => f.write_str(message),
+            CallError::Arguments { at, message } => write!(f, "{at}: {message}"),
+        }
+    }
 }
 
 /// Reads `tools/call`'s params: `{name, arguments?}`.
@@ -1314,10 +1330,10 @@ pub fn parse_arguments(tool: &str, arguments: &Map<String, Value>) -> Result<Cal
     };
     // The names of new bodies a feature tool takes, and its arguments
     // checked here once for every feature tool.
-    let feature = feature_tool(name);
-    let new_bodies = feature.map_or(NewBodies::None, |tool| tool.new_bodies);
+    let feature = FeatureTool::named(name);
+    let new_bodies = feature.map_or(NewBodies::None, FeatureTool::new_bodies);
     if let Some(tool) = feature {
-        args.only_making(tool.fields, new_bodies)?;
+        args.only_making(tool.fields(), new_bodies)?;
     }
     let call = match name {
         "design_summary" => {
@@ -1769,110 +1785,94 @@ const LOFT_FIELDS: &[&str] = &[
     "exclude",
 ];
 
-/// A feature tool: its name, its arguments (the fields `feature` shows
-/// a feature of its kind by and `set_feature` patches) and the names of
-/// new bodies it takes.
-#[derive(Clone, Copy)]
-struct FeatureTool {
-    name: &'static str,
-    fields: &'static [&'static str],
-    new_bodies: NewBodies,
+/// A feature tool: one of the tools that add a feature, whose
+/// arguments are the fields `feature` shows a feature of its kind by
+/// and `set_feature` patches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeatureTool {
+    Extrude,
+    Revolve,
+    Combine,
+    MoveBody,
+    Mirror,
+    Pattern,
+    Align,
+    Scale,
+    Split,
+    Shell,
+    OffsetFace,
+    Draft,
+    Chamfer,
+    Fillet,
+    Sweep,
+    Loft,
 }
 
-/// The feature tools, the one place a tool is marked as one.
-const FEATURE_TOOLS: &[FeatureTool] = &[
-    FeatureTool {
-        name: "extrude",
-        fields: EXTRUDE_FIELDS,
-        new_bodies: NewBodies::One,
-    },
-    FeatureTool {
-        name: "revolve",
-        fields: REVOLVE_FIELDS,
-        new_bodies: NewBodies::One,
-    },
-    FeatureTool {
-        name: "combine",
-        fields: COMBINE_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "move_body",
-        fields: MOVE_BODY_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "mirror",
-        fields: MIRROR_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "pattern",
-        fields: PATTERN_FIELDS,
-        new_bodies: NewBodies::Many,
-    },
-    FeatureTool {
-        name: "align",
-        fields: ALIGN_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "scale",
-        fields: SCALE_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "split",
-        fields: SPLIT_FIELDS,
-        new_bodies: NewBodies::One,
-    },
-    FeatureTool {
-        name: "shell",
-        fields: SHELL_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "offset_face",
-        fields: OFFSET_FACE_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "draft",
-        fields: DRAFT_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "chamfer",
-        fields: CHAMFER_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "fillet",
-        fields: FILLET_FIELDS,
-        new_bodies: NewBodies::None,
-    },
-    FeatureTool {
-        name: "sweep",
-        fields: SWEEP_FIELDS,
-        new_bodies: NewBodies::One,
-    },
-    FeatureTool {
-        name: "loft",
-        fields: LOFT_FIELDS,
-        new_bodies: NewBodies::One,
-    },
-];
+impl FeatureTool {
+    /// Every feature tool, the one place a tool is marked as one.
+    pub const ALL: [FeatureTool; 16] = [
+        FeatureTool::Extrude,
+        FeatureTool::Revolve,
+        FeatureTool::Combine,
+        FeatureTool::MoveBody,
+        FeatureTool::Mirror,
+        FeatureTool::Pattern,
+        FeatureTool::Align,
+        FeatureTool::Scale,
+        FeatureTool::Split,
+        FeatureTool::Shell,
+        FeatureTool::OffsetFace,
+        FeatureTool::Draft,
+        FeatureTool::Chamfer,
+        FeatureTool::Fillet,
+        FeatureTool::Sweep,
+        FeatureTool::Loft,
+    ];
 
-/// The feature tool named `tool`, if it is one.
-fn feature_tool(tool: &str) -> Option<&'static FeatureTool> {
-    FEATURE_TOOLS.iter().find(|feature| feature.name == tool)
-}
+    /// The feature tool named `tool`, if it is one.
+    pub fn named(tool: &str) -> Option<FeatureTool> {
+        FeatureTool::ALL
+            .into_iter()
+            .find(|feature| feature.name() == tool)
+    }
 
-/// The arguments the feature tool `tool` takes, the fields `feature`
-/// shows a feature of its kind by and `set_feature` patches: `None` for
-/// any other tool.
-pub fn fields(tool: &str) -> Option<&'static [&'static str]> {
-    Some(feature_tool(tool)?.fields)
+    /// Its name, as listed.
+    pub fn name(self) -> &'static str {
+        self.spec().0
+    }
+
+    /// Its arguments, the fields `feature` shows a feature of its kind
+    /// by and `set_feature` patches.
+    pub fn fields(self) -> &'static [&'static str] {
+        self.spec().1
+    }
+
+    /// The names of new bodies it takes.
+    fn new_bodies(self) -> NewBodies {
+        self.spec().2
+    }
+
+    /// Its name, fields and names of new bodies.
+    fn spec(self) -> (&'static str, &'static [&'static str], NewBodies) {
+        match self {
+            FeatureTool::Extrude => ("extrude", EXTRUDE_FIELDS, NewBodies::One),
+            FeatureTool::Revolve => ("revolve", REVOLVE_FIELDS, NewBodies::One),
+            FeatureTool::Combine => ("combine", COMBINE_FIELDS, NewBodies::None),
+            FeatureTool::MoveBody => ("move_body", MOVE_BODY_FIELDS, NewBodies::None),
+            FeatureTool::Mirror => ("mirror", MIRROR_FIELDS, NewBodies::None),
+            FeatureTool::Pattern => ("pattern", PATTERN_FIELDS, NewBodies::Many),
+            FeatureTool::Align => ("align", ALIGN_FIELDS, NewBodies::None),
+            FeatureTool::Scale => ("scale", SCALE_FIELDS, NewBodies::None),
+            FeatureTool::Split => ("split", SPLIT_FIELDS, NewBodies::One),
+            FeatureTool::Shell => ("shell", SHELL_FIELDS, NewBodies::None),
+            FeatureTool::OffsetFace => ("offset_face", OFFSET_FACE_FIELDS, NewBodies::None),
+            FeatureTool::Draft => ("draft", DRAFT_FIELDS, NewBodies::None),
+            FeatureTool::Chamfer => ("chamfer", CHAMFER_FIELDS, NewBodies::None),
+            FeatureTool::Fillet => ("fillet", FILLET_FIELDS, NewBodies::None),
+            FeatureTool::Sweep => ("sweep", SWEEP_FIELDS, NewBodies::One),
+            FeatureTool::Loft => ("loft", LOFT_FIELDS, NewBodies::One),
+        }
+    }
 }
 
 /// Why `patch`, a `set_feature` patch, is refused if it names what a
@@ -1889,11 +1889,14 @@ pub fn renaming(patch: &Map<String, Value>) -> Option<String> {
 /// that tool's arguments all optional: those the tool requires and the
 /// patch doesn't give are filled in with placeholders for its parser,
 /// which the app never takes (it takes only the fields the patch gives).
-pub fn parse_patch(tool: &str, patch: &Map<String, Value>) -> Result<Call, CallError> {
+pub fn parse_patch(tool: FeatureTool, patch: &Map<String, Value>) -> Result<Call, CallError> {
     if let Some(why) = renaming(patch) {
-        return Err(CallError::Arguments(format!("set_feature: {why}")));
+        return Err(CallError::Arguments {
+            at: "set_feature".to_owned(),
+            message: why,
+        });
     }
-    let fields = fields(tool).unwrap_or_default();
+    let fields = tool.fields();
     let needs = |key: &str| fields.contains(&key) && !patch.contains_key(key);
     let mut filled = patch.clone();
     let required = [
@@ -1918,18 +1921,18 @@ pub fn parse_patch(tool: &str, patch: &Map<String, Value>) -> Result<Call, CallE
     // One of two: a face feature's faces, a blend's edges or faces, a
     // sweep's path or helix.
     match tool {
-        "offset_face" | "draft" if needs("faces") => {
+        FeatureTool::OffsetFace | FeatureTool::Draft if needs("faces") => {
             filled.insert("faces".to_owned(), json!(["-"]));
         }
-        "chamfer" | "fillet" if needs("edges") && needs("faces") => {
+        FeatureTool::Chamfer | FeatureTool::Fillet if needs("edges") && needs("faces") => {
             filled.insert("edges".to_owned(), json!(["-"]));
         }
-        "sweep" if needs("path") && needs("helix") => {
+        FeatureTool::Sweep if needs("path") && needs("helix") => {
             filled.insert("path".to_owned(), json!({ "edges": ["-"] }));
         }
         _ => {}
     }
-    parse_arguments(tool, &filled)
+    parse_arguments(tool.name(), &filled)
 }
 
 /// What a move's or pattern's axis, or an align's direction, may be by
@@ -2099,7 +2102,10 @@ struct Arguments<'a> {
 
 impl<'a> Arguments<'a> {
     fn error(&self, message: impl std::fmt::Display) -> CallError {
-        CallError::Arguments(format!("{}: {message}", self.tool))
+        CallError::Arguments {
+            at: self.tool.to_owned(),
+            message: message.to_string(),
+        }
     }
 
     /// Refuses keys not in `known`, so a misspelt filter isn't ignored.
@@ -3325,8 +3331,8 @@ fn build_list() -> Value {
         let word = tool["name"].as_str().unwrap_or_default();
         let bodies = match word {
             "add_sketch" => NewBodies::None,
-            _ => match making(word) {
-                Some(bodies) => bodies,
+            _ => match FeatureTool::named(word) {
+                Some(tool) => tool.new_bodies(),
                 None => continue,
             },
         };
@@ -3356,12 +3362,6 @@ fn build_list() -> Value {
         }
     }
     json!({ "tools": tools })
-}
-
-/// The names of new bodies the feature tool `tool` takes, `None` for
-/// any other tool.
-fn making(tool: &str) -> Option<NewBodies> {
-    Some(feature_tool(tool)?.new_bodies)
 }
 
 /// A sketch's plane's schema.

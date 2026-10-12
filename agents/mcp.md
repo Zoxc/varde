@@ -136,7 +136,8 @@ annotations for the queries and `readOnlyHint: false` for the edits:
 checked `Call`, and `ToolReply`. A call naming no tool of ours, or
 params not shaped as `tools/call`'s, is -32602 (`CallError::Params`);
 arguments that don't fit the tool are a tool result with `isError`
-(`CallError::Arguments`), as MCP has input validation errors, so the
+(`CallError::Arguments`, its `at`, the tool or the path to an item of
+its arguments, apart from its message), as MCP has input validation errors, so the
 model reads why and tries again. Unknown argument keys are refused, so a
 misspelt filter isn't ignored. Names are non-blank strings of at most
 `NAME_BYTES` (1024, the document's own longest); names echoed back are
@@ -202,10 +203,10 @@ largest component so squaring can't overflow or underflow.
   can make bodies take their names too (`NewBodies`):
   `body_name` for extrude, revolve, split, sweep and loft (one body),
   `body_names` for pattern (its separate copies, in the order the result
-  lists them, at most `MAX_ITEMS`). `FEATURE_TOOLS` is the one table of
-  feature tools, each with its `*_FIELDS` (the fields `feature` shows
-  and `set_feature` patches) and its `NewBodies`; `fields` and `making`
-  look it up, and `parse_arguments` checks a feature tool's arguments
+  lists them, at most `MAX_ITEMS`). `FeatureTool` is the one list of
+  feature tools, each with its name, its `*_FIELDS` (the fields `feature`
+  shows and `set_feature` patches) and its `NewBodies`; `FeatureTool::named`
+  finds one by name, and `parse_arguments` checks a feature tool's arguments
   against both (`only_making`) once, before its arm. The schemas get `name`, `body_name` and
   `body_names` added at the end of `list` (a test checks they're the
   properties beyond `fields`). `set_feature` refuses a patch with
@@ -235,10 +236,10 @@ largest component so squaring can't overflow or underflow.
 - `set_feature {name, ...patch}`: `Call::SetFeature(SetFeature { name,
   patch })`, the patch the other arguments as sent (at least one; bounded
   by `rpc::Limits` only), for the app to read as the feature's tool's
-  arguments: `fields(tool)` gives each feature tool's argument names
+  arguments: `FeatureTool::fields` gives each feature tool's argument names
   (the `*_FIELDS` lists its parser's `only_making` checks against), and
   `parse_arguments(tool, map)`, which `parse_call` now delegates to,
-  reads them as that tool's; `parse_patch(tool, map)` reads a patch,
+  reads them as that tool's; `parse_patch(tool, map)` reads a patch for a `FeatureTool`,
   the arguments the tool requires and it doesn't give filled with
   placeholders the app never takes (a test checks each feature tool's
   `fields` are its schema's properties and an empty patch reads). Listed after `set_rollback`
