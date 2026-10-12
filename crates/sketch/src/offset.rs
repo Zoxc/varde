@@ -1585,14 +1585,7 @@ fn untie(copies: &[OffsetCopy], tangents: &[[usize; 2]]) -> Option<Untied> {
     });
     let mut best: Option<(usize, Vec<Option<usize>>, usize)> = None;
     for lead in leads.take(LEADS) {
-        let capacity = |copy: usize| {
-            let ties = if copies[copy].pair == OffsetPair::Lines {
-                2
-            } else {
-                1
-            };
-            ties - usize::from(copy == lead)
-        };
+        let capacity = |copy: usize| ties(&copies[copy], false, copy == lead);
         let assigned = matching(copies.len(), tangents, capacity);
         let matched = assigned.iter().flatten().count();
         let full = matched == tangents.len();
@@ -1620,14 +1613,7 @@ fn untie(copies: &[OffsetCopy], tangents: &[[usize; 2]]) -> Option<Untied> {
             break;
         };
         freed[free] = true;
-        let capacity = |copy: usize| {
-            let ties = match copies[copy].pair {
-                OffsetPair::Lines => 2,
-                _ if freed[copy] => 3,
-                _ => 1,
-            };
-            ties - usize::from(copy == lead)
-        };
+        let capacity = |copy: usize| ties(&copies[copy], freed[copy], copy == lead);
         assigned = matching(copies.len(), tangents, capacity);
     }
     Some(Untied {
@@ -1635,6 +1621,19 @@ fn untie(copies: &[OffsetCopy], tangents: &[[usize; 2]]) -> Option<Untied> {
         assigned,
         freed,
     })
+}
+
+/// How many ties `copy` gives up for [`untie`]: a line's copy two, its
+/// offset and its parallel, an arc's made about a centre of its own
+/// (`freed`) three, any other one, its offset; the lead one fewer, its
+/// offset held by the dimension.
+fn ties(copy: &OffsetCopy, freed: bool, lead: bool) -> usize {
+    let ties = match copy.pair {
+        OffsetPair::Lines => 2,
+        _ if freed => 3,
+        _ => 1,
+    };
+    ties - usize::from(lead)
 }
 
 /// A matching of `tangents`, each between two of `count` copies, to the
