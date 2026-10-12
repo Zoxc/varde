@@ -98,8 +98,9 @@ pub use mcp::{
     McpRow, McpShown, McpTool,
 };
 pub use measure::{
-    MeasureLook, MeasureSlot, MeasureState, Outcome, Picked as MeasuredPick, Value as MeasureValue,
-    between_values, edge_kind, face_kind, values as measure_values,
+    MeasureLook, MeasureSlot, MeasureState, Outcome, PickKind as MeasuredPickKind,
+    Picked as MeasuredPick, Value as MeasureValue, between_values, edge_kind, face_kind,
+    values as measure_values,
 };
 pub use motion::{
     AlignMark, AlignRole, AlignSide, AlignSlot, AlignView, BlendEdge, BlendEdges, BlendFace,

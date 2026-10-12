@@ -234,7 +234,8 @@ fn the_panel_names_the_picks_and_shows_their_values() {
 
     // One pick: its own values, unfolded.
     state.picks[0] = Some(Picked {
-        name: "Face of Body 1".to_owned(),
+        kind: PickKind::Face,
+        body: "Body 1",
         outcome: Outcome::Measured(Ok(&face)),
     });
     let texts = panel_texts(&state);
@@ -257,7 +258,8 @@ fn the_panel_names_the_picks_and_shows_their_values() {
         angle: Some(PI),
     };
     state.picks[1] = Some(Picked {
-        name: "Face of Body 1".to_owned(),
+        kind: PickKind::Face,
+        body: "Body 1",
         outcome: Outcome::Measured(Ok(&face)),
     });
     state.between = Some(&between);
@@ -276,14 +278,16 @@ fn the_panel_names_the_picks_and_shows_their_values() {
 
     // One the model doesn't have, and one waiting.
     state.picks[1] = Some(Picked {
-        name: "Edge of Body 1".to_owned(),
+        kind: PickKind::Edge,
+        body: "Body 1",
         outcome: Outcome::Missing("edge not found"),
     });
     state.between = None;
     let texts = panel_texts(&state);
     assert!(texts.contains(&"Edge not found".to_owned()), "{texts:?}");
     state.picks[1] = Some(Picked {
-        name: "Edge of Body 1".to_owned(),
+        kind: PickKind::Edge,
+        body: "Body 1",
         outcome: Outcome::Waiting,
     });
     let texts = panel_texts(&state);

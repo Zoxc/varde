@@ -23,8 +23,8 @@ use std::sync::Arc;
 use varde_document::BodyId;
 use varde_regen::{At, Entity, InspectPick, Inspected, Measure, Probed};
 use varde_view::{
-    MeasureLook, MeasureSlot, MeasureState, MeasuredPick, ModelHighlight, Outcome, Pick, PickIndex,
-    Picked, Selected, Snapped,
+    MeasureLook, MeasureSlot, MeasureState, MeasuredPick, MeasuredPickKind as PickKind,
+    ModelHighlight, Outcome, Pick, PickIndex, Picked, Selected, Snapped,
 };
 
 use super::Doc;
@@ -358,18 +358,18 @@ impl Doc {
         (self.measure.as_ref()?.highlight).current(self.feed.model())
     }
 
-    /// The name the panel shows `pick` by: what it is and its body's
-    /// name, or the body's name for a body.
-    fn pick_name(&self, pick: &InspectPick) -> String {
+    /// What `pick` is and the name of the body it is or is of, as the
+    /// panel shows it.
+    fn pick_name(&self, pick: &InspectPick) -> (PickKind, &str) {
         let document = self.editor.document();
         let body = (document.body(pick.body)).map_or("a body that's gone", |body| &body.name);
         let kind = match pick.entity {
-            Entity::Body => return body.to_owned(),
-            Entity::Face(_) => "Face",
-            Entity::Edge(_) => "Edge",
-            Entity::EdgePoint(_) | Entity::Corner(_) => "Point",
+            Entity::Body => PickKind::Body,
+            Entity::Face(_) => PickKind::Face,
+            Entity::Edge(_) => PickKind::Edge,
+            Entity::EdgePoint(_) | Entity::Corner(_) => PickKind::Point,
         };
-        format!("{kind} of {body}")
+        (kind, body)
     }
 
     /// The measure tool, for the view, while it's in use.
@@ -385,8 +385,10 @@ impl Doc {
                     Outcome::Measured(probed.measure.as_ref().map_err(String::as_str))
                 }
             };
+            let (kind, body) = self.pick_name(pick);
             Some(MeasuredPick {
-                name: self.pick_name(pick),
+                kind,
+                body,
                 outcome,
             })
         });

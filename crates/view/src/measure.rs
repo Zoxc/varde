@@ -74,10 +74,20 @@ pub enum Outcome<'a> {
 /// A pick, as the panel shows it.
 #[derive(Debug, Clone)]
 pub struct Picked<'a> {
-    /// What it is ("Face", "Edge", "Point") and of which body, or the
-    /// body's name for a body.
-    pub name: String,
+    /// What it is.
+    pub kind: PickKind,
+    /// The name of the body it is or is of.
+    pub body: &'a str,
     pub outcome: Outcome<'a>,
+}
+
+/// What a pick is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickKind {
+    Body,
+    Face,
+    Edge,
+    Point,
 }
 
 /// The measure tool, and how it's shown.
@@ -295,15 +305,14 @@ pub fn between_values(between: &Between, units: LengthUnit) -> Vec<Value> {
 /// face's area and a round one's radius, an edge's length and a round
 /// one's radius, or a point's place. None for what wasn't found.
 pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<Value> {
-    let kept = |labels: &[&str], values: Vec<Value>| -> Vec<Value> {
-        (values.into_iter())
-            .filter(|value| labels.contains(&value.label))
-            .collect()
-    };
+    let length = |label, value| Value::length(label, value, units);
     if inspected.second.is_some() {
-        return inspected.between.as_ref().map_or_else(Vec::new, |between| {
-            kept(&["Distance", "Angle"], between_values(between, units))
-        });
+        let Some(between) = &inspected.between else {
+            return Vec::new();
+        };
+        let distance = (between.distance.as_ref().ok()).map(|gap| length("Distance", gap.distance));
+        let angle = between.angle.map(|angle| Value::angle("Angle", angle));
+        return distance.into_iter().chain(angle).collect();
     }
     let Ok(Probed {
         measure: Ok(measure),
@@ -312,16 +321,33 @@ pub fn brief(inspected: &Inspected, units: LengthUnit) -> Vec<Value> {
     else {
         return Vec::new();
     };
-    let labels: &[&str] = match measure {
-        Measure::Body { .. } => &["Volume"],
+    match *measure {
+        Measure::Body { volume, .. } => vec![Value::size("Volume", volume, units, Power::Volume)],
         Measure::Face {
-            rectangle: Some(_), ..
-        } => &["Width", "Height"],
-        Measure::Face { .. } => &["Area", "Radius"],
-        Measure::Edge { .. } => &["Length", "Radius"],
-        Measure::Point(_) => &["X", "Y", "Z"],
-    };
-    kept(labels, values(measure, units))
+            rectangle: Some(sides),
+            ..
+        } => {
+            let (width, height) = width_height(sides);
+            vec![length("Width", width), length("Height", height)]
+        }
+        Measure::Face { area, summary, .. } => {
+            let mut values = vec![Value::size("Area", area, units, Power::Area)];
+            if let Summary::Cylinder { radius, .. } | Summary::Sphere { radius, .. } = summary {
+                values.push(length("Radius", radius));
+            }
+            values
+        }
+        Measure::Edge {
+            length: l, shape, ..
+        } => {
+            let mut values = vec![length("Length", l)];
+            if let EdgeForm::Circle { radius, .. } = shape {
+                values.push(length("Radius", radius));
+            }
+            values
+        }
+        Measure::Point([x, y, z]) => vec![length("X", x), length("Y", y), length("Z", z)],
+    }
 }
 
 /// The width and height of a rectangle by two of its `sides` from one
@@ -341,19 +367,19 @@ pub fn width_height(sides: [[f64; 3]; 2]) -> (f64, f64) {
     if a_wide { (la, lb) } else { (lb, la) }
 }
 
-/// The name a pick shows with in the panel once measured: its kind from
-/// its form ("Planar face", "Circular edge") in place of the bare
-/// "Face" or "Edge", with the body it's of.
-fn shown_name<'a>(picked: &'a Picked<'_>) -> std::borrow::Cow<'a, str> {
-    let kind = match picked.outcome {
-        Outcome::Measured(Ok(Measure::Face { summary, .. })) => Some(face_kind(summary)),
-        Outcome::Measured(Ok(Measure::Edge { shape, .. })) => Some(edge_kind(shape)),
-        _ => None,
+/// The name a pick shows with in the panel: its kind, from its form once
+/// measured ("Planar face", "Circular edge"), with the body it's of, or
+/// the body's name for a body.
+fn shown_name(picked: &Picked<'_>) -> String {
+    let kind = match (picked.kind, picked.outcome) {
+        (PickKind::Body, _) => return picked.body.to_owned(),
+        (_, Outcome::Measured(Ok(Measure::Face { summary, .. }))) => face_kind(summary),
+        (_, Outcome::Measured(Ok(Measure::Edge { shape, .. }))) => edge_kind(shape),
+        (PickKind::Face, _) => "Face",
+        (PickKind::Edge, _) => "Edge",
+        (PickKind::Point, _) => "Point",
     };
-    match (kind, picked.name.split_once(" of ")) {
-        (Some(kind), Some((_, body))) => format!("{kind} of {body}").into(),
-        _ => picked.name.as_str().into(),
-    }
+    format!("{kind} of {}", picked.body)
 }
 
 /// The floating panel of the measure tool.
@@ -423,7 +449,7 @@ fn pick_row<'a>(state: &MeasureState<'a>, slot: MeasureSlot) -> Element<'a, Mess
         .style(theme::pick_tag(slot == MeasureSlot::B));
     let content: Element<'a, Message> = match &state.picks[slot.index()] {
         Some(picked) => {
-            let name = text(shown_name(picked).into_owned())
+            let name = text(shown_name(picked))
                 .size(12)
                 .wrapping(Wrapping::WordOrGlyph);
             let note = match picked.outcome {
