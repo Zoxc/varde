@@ -157,6 +157,18 @@ pub(crate) struct EdgeLength {
     pub(crate) line: Option<[DVec3; 2]>,
 }
 
+/// `$cache.$get(key, ..)`'s result, an [`Entry`] of kind `variant`
+/// made of `value` when it isn't filed: a key names one kind of result,
+/// so what's filed under it is always that kind.
+macro_rules! take {
+    ($cache:ident.$get:ident($key:expr), $variant:ident($value:expr)) => {
+        match $cache.$get($key, || Entry::$variant($value)) {
+            Entry::$variant(kept) => kept,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    };
+}
+
 /// A result kept.
 #[derive(Clone)]
 enum Entry {
@@ -520,10 +532,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<Profiles, TooComplex>,
     ) -> Arc<Result<Profiles, TooComplex>> {
-        match self.entry(key, || Entry::Profiles(Arc::new(make()))) {
-            Entry::Profiles(profiles) => profiles,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Profiles(Arc::new(make())))
     }
 
     pub(crate) fn placement(
@@ -531,10 +540,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<Placement, Failed>,
     ) -> Result<Placement, Failed> {
-        match self.entry(key, || Entry::Placement(make())) {
-            Entry::Placement(placement) => placement,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Placement(make()))
     }
 
     pub(crate) fn edge(
@@ -542,10 +548,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<[DVec3; 2], Failed>,
     ) -> Result<[DVec3; 2], Failed> {
-        match self.entry(key, || Entry::Edge(make())) {
-            Entry::Edge(ends) => ends,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Edge(make()))
     }
 
     pub(crate) fn reference(
@@ -553,10 +556,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<[DVec3; 2], Failed>,
     ) -> Result<[DVec3; 2], Failed> {
-        match self.entry(key, || Entry::Reference(make())) {
-            Entry::Reference(found) => found,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Reference(make()))
     }
 
     pub(crate) fn datum(
@@ -564,10 +564,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<Datum, Failed>,
     ) -> Result<Datum, Failed> {
-        match self.entry(key, || Entry::Datum(make())) {
-            Entry::Datum(found) => found,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Datum(make()))
     }
 
     pub(crate) fn length(
@@ -575,10 +572,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<EdgeLength, Failed>,
     ) -> Result<EdgeLength, Failed> {
-        match self.entry(key, || Entry::Length(make())) {
-            Entry::Length(found) => found,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Length(make()))
     }
 
     pub(crate) fn link(
@@ -586,10 +580,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<LinkShape, String>,
     ) -> Result<LinkShape, String> {
-        match self.entry(key, || Entry::Link(make())) {
-            Entry::Link(found) => found,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Link(make()))
     }
 
     pub(crate) fn relinked(
@@ -597,17 +588,11 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<Arc<Sketch>, String>,
     ) -> Result<Arc<Sketch>, String> {
-        match self.entry(key, || Entry::Relinked(make())) {
-            Entry::Relinked(relinked) => relinked,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Relinked(make()))
     }
 
     pub(crate) fn solves(&mut self, key: Key, make: impl FnOnce() -> bool) -> bool {
-        match self.entry(key, || Entry::Solves(make())) {
-            Entry::Solves(solves) => solves,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Solves(make()))
     }
 
     pub(crate) fn solid(
@@ -615,10 +600,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<Solid, Failed>,
     ) -> Result<Arc<Solid>, Failed> {
-        match self.entry(key, || Entry::Solid(make().map(Arc::new))) {
-            Entry::Solid(solid) => solid,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Solid(make().map(Arc::new)))
     }
 
     pub(crate) fn touches(
@@ -626,10 +608,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<bool, KernelFailure>,
     ) -> Result<bool, Arc<KernelFailure>> {
-        match self.entry(key, || Entry::Touches(make().map_err(Arc::new))) {
-            Entry::Touches(touches) => touches,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.entry(key), Touches(make().map_err(Arc::new)))
     }
 
     pub(crate) fn boolean(
@@ -637,12 +616,10 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<Solid, KernelFailure>,
     ) -> Result<Arc<Solid>, Arc<KernelFailure>> {
-        match self.entry(key, || {
-            Entry::Boolean(make().map(Arc::new).map_err(Arc::new))
-        }) {
-            Entry::Boolean(solid) => solid,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(
+            self.entry(key),
+            Boolean(make().map(Arc::new).map_err(Arc::new))
+        )
     }
 
     pub(crate) fn split(
@@ -650,16 +627,14 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<(Solid, Solid), KernelFailure>,
     ) -> Result<[Arc<Solid>; 2], Arc<KernelFailure>> {
-        match self.entry(key, || {
-            Entry::Split(
+        take!(
+            self.entry(key),
+            Split(
                 make()
                     .map(|(front, back)| [Arc::new(front), Arc::new(back)])
-                    .map_err(Arc::new),
+                    .map_err(Arc::new)
             )
-        }) {
-            Entry::Split(pieces) => pieces,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        )
     }
 
     /// A solid drawn, or `make`'s error, which isn't kept.
@@ -682,18 +657,12 @@ impl Cache {
 
     /// A solid's topology, filed under `key`.
     pub(crate) fn topology(&mut self, key: Key, make: impl FnOnce() -> Topology) -> Arc<Topology> {
-        match self.uncounted(key, || Entry::Topology(Arc::new(make()))) {
-            Entry::Topology(topology) => topology,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.uncounted(key), Topology(Arc::new(make())))
     }
 
     /// What a pick of the measure tool measures, filed under `key`.
     pub(crate) fn measure(&mut self, key: Key, make: impl FnOnce() -> Kept) -> Arc<Kept> {
-        match self.uncounted(key, || Entry::Measure(Arc::new(make()))) {
-            Entry::Measure(kept) => kept,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.uncounted(key), Measure(Arc::new(make())))
     }
 
     /// The minimum distance between two picks, filed under `key`.
@@ -702,10 +671,7 @@ impl Cache {
         key: Key,
         make: impl FnOnce() -> Result<Gap, String>,
     ) -> Result<Gap, String> {
-        match self.uncounted(key, || Entry::Distance(make())) {
-            Entry::Distance(gap) => gap,
-            _ => unreachable!("keys of different kinds differ"),
-        }
+        take!(self.uncounted(key), Distance(make()))
     }
 
     /// The model's mesh and picking tables filed under the scene key
