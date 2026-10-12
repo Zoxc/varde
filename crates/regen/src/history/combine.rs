@@ -41,11 +41,7 @@ pub(super) fn evaluate(
     evaluation: &mut Evaluation,
     cache: &mut Cache,
 ) -> Result<(), Failed> {
-    let name = |body: BodyId| {
-        document
-            .body(body)
-            .map_or("a body", |body| body.name.as_str())
-    };
+    let name = |body: BodyId| super::body_name(document, body);
     own_solids(document, combine.bodies(), evaluation)?;
     let target = (evaluation.solid(combine.target)).expect("every body named has a solid");
     // In the order they were made, as the bodies are.

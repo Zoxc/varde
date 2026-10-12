@@ -37,9 +37,7 @@ impl<'a> InPlace<'a> {
         cache: &mut Cache,
     ) -> Result<InPlace<'a>, Failed> {
         let made = own_solid(document, body, evaluation)?;
-        let name = document
-            .body(body)
-            .map_or("a body", |body| body.name.as_str());
+        let name = super::body_name(document, body);
         Ok(InPlace {
             body,
             name,

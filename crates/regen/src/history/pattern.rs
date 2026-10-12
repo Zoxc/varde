@@ -52,9 +52,7 @@ pub(super) fn evaluate_pattern(
     let mut separate = Vec::new();
     for made in (evaluation.bodies.iter()).filter(|m| pattern.bodies.binary_search(&m.body).is_ok())
     {
-        let name = document
-            .body(made.body)
-            .map_or("a body", |body| body.name.as_str());
+        let name = super::body_name(document, made.body);
         let patches = made.solid.mesh().tris().len();
         if !copies_fit(count, patches) {
             return Err(message::too_many_copies(name, count, patches).into());

@@ -81,11 +81,7 @@ pub(super) fn evaluate_split(
     if let SplitTool::Body(tool) = split.tool {
         own_solid(document, tool, evaluation)?;
     }
-    let name = |body: BodyId| {
-        document
-            .body(body)
-            .map_or("a body", |body| body.name.as_str())
-    };
+    let name = |body: BodyId| super::body_name(document, body);
     let body_name = name(split.body);
     // A body is never empty, so it has a box.
     let bounds = made

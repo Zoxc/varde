@@ -154,9 +154,7 @@ pub(super) fn place(
 ) -> Result<(), Failed> {
     let mut changed = Vec::with_capacity(bodies.len());
     for made in (evaluation.bodies.iter()).filter(|made| bodies.binary_search(&made.body).is_ok()) {
-        let name = document
-            .body(made.body)
-            .map_or("a body", |body| body.name.as_str());
+        let name = super::body_name(document, made.body);
         if !within(&made.solid, motion) {
             return Err(message::out_of_range(how.moving, name).into());
         }

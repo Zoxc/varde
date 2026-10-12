@@ -6,6 +6,9 @@
 
 use varde_kernel_compat::{BooleanError, KernelError, ProfileError};
 
+/// What a message calls a body that isn't in the document.
+pub(crate) const SOME_BODY: &str = "a body";
+
 /// Why a sketch on a face isn't placed: no face of its body as the
 /// features before it leave it has the face's name.
 pub(crate) const FACE_NOT_FOUND: &str = "its face wasn't found";

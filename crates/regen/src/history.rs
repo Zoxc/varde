@@ -368,11 +368,7 @@ pub(crate) fn own_solids(
     mut bodies: impl Iterator<Item = BodyId>,
     evaluation: &Evaluation,
 ) -> Result<(), Failed> {
-    let name = |body: BodyId| {
-        document
-            .body(body)
-            .map_or("a body", |body| body.name.as_str())
-    };
+    let name = |body: BodyId| body_name(document, body);
     let Some(body) = bodies.find(|&body| evaluation.solid(body).is_none()) else {
         return Ok(());
     };
@@ -1106,9 +1102,7 @@ impl Run<'_> {
 
     /// The name of `body`, as the Timeline's messages give it.
     fn body_name(&self, body: BodyId) -> &str {
-        self.document
-            .body(body)
-            .map_or("a body", |body| body.name.as_str())
+        body_name(self.document, body)
     }
 
     /// An extrude's tool solid and the key it's filed under: the
@@ -1430,6 +1424,14 @@ pub(crate) fn add_chain(
             .filter(|&&h| (h as usize) / 3 < tris)
             .map(|&h| mesh.curve(h)),
     );
+}
+
+/// The name of `body` in `document`, as the Timeline's messages give it
+/// ([`message::SOME_BODY`] for one that isn't there).
+pub(crate) fn body_name(document: &Document, body: BodyId) -> &str {
+    document
+        .body(body)
+        .map_or(message::SOME_BODY, |body| body.name.as_str())
 }
 
 /// A revolve's axis in its sketch's coordinates.
