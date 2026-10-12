@@ -25,7 +25,7 @@ mod fit;
 
 pub use fit::{FitError, SampledChain};
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use glam::{DAffine2, DVec2};
 use serde::{Deserialize, Serialize};
@@ -400,21 +400,15 @@ impl Sketch {
         let mut curves: Vec<Option<Id>> = vec![None; shape.curves.len()];
         let mut taken = vec![false; held.points.len()];
         // Where each kind's next curve held is looked for from.
-        let mut from: Vec<(crate::Kind, usize)> = Vec::new();
+        let mut from: HashMap<crate::Kind, usize> = HashMap::new();
         for (found, curve) in shape.curves.iter().enumerate() {
             let kind = curve.kind();
-            let start = match from.iter().find(|(k, _)| *k == kind) {
-                Some(&(_, at)) => at,
-                None => 0,
-            };
-            let Some(index) = (start..held.curves.len()).find(|&i| held.curves[i].kind() == kind)
-            else {
-                from.retain(|(k, _)| *k != kind);
-                from.push((kind, held.curves.len()));
+            let start = from.get(&kind).copied().unwrap_or(0);
+            let index = (start..held.curves.len()).find(|&i| held.curves[i].kind() == kind);
+            from.insert(kind, index.map_or(held.curves.len(), |index| index + 1));
+            let Some(index) = index else {
                 continue;
             };
-            from.retain(|(k, _)| *k != kind);
-            from.push((kind, index + 1));
             curves[found] = Some(link.curves[index]);
             for (old, new) in held.curves[index].points().zip(curve.points()) {
                 let (old, new) = (old.0 as usize, new.0 as usize);
