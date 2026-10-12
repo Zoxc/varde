@@ -2058,3 +2058,27 @@ fn a_choice_says_its_tables_word() {
     assert_eq!(ChamferType::DistanceAngle.word(), "distance_angle");
     assert_eq!(LinkKind::Intersect.word(), "intersect");
 }
+
+/// Every listed tool is read by its name, takes each argument its schema
+/// lists and refuses one it doesn't (unless it takes any, as
+/// `set_feature`'s patch does): the catalogue and the parser agree.
+#[test]
+fn every_listed_tool_reads_the_arguments_it_lists() {
+    for tool in list()["tools"].as_array().unwrap() {
+        let name = tool["name"].as_str().unwrap();
+        let schema = &tool["inputSchema"];
+        let properties = schema["properties"].as_object().unwrap();
+        let closed = schema["additionalProperties"] == json!(false);
+        let unknown = closed.then_some("no_such_key");
+        for key in properties.keys().map(String::as_str).chain(unknown) {
+            let mut arguments = Map::new();
+            arguments.insert(key.to_owned(), Value::Null);
+            let refused = match parse_arguments(name, &arguments) {
+                Ok(_) => false,
+                Err(CallError::Params(error)) => panic!("{name}: {error}"),
+                Err(CallError::Arguments(error)) => error.contains("no argument named"),
+            };
+            assert_eq!(refused, key == "no_such_key", "{name}: {key}");
+        }
+    }
+}
