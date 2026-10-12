@@ -160,6 +160,17 @@ struct Proposal {
     made_on: Option<(u32, u64)>,
 }
 
+impl Proposal {
+    /// The sketch it's proposed on in place of `committed`, the document
+    /// at `revision`, if any: [`Proposal::from`], while the document is
+    /// at its revision or the steps it's one of go on from it.
+    fn base(&self, committed: &Sketch, revision: Revision) -> Option<&Arc<Sketch>> {
+        let (at, from) = self.from.as_ref()?;
+        let going_on = || (self.steps.as_ref()).is_some_and(|steps| steps.going_on(committed));
+        (*at == revision || going_on()).then_some(from)
+    }
+}
+
 /// A step of the MCP client's sketch edit (`edit_sketch`): the edit,
 /// and the operations of its call it was made from, the first and the
 /// last.
@@ -533,15 +544,9 @@ fn applied<'a>(
             units: proposal.units,
             ..*design
         };
-        let on = match &proposal.from {
-            Some((at, from))
-                if *at == revision
-                    || (proposal.steps.as_ref()).is_some_and(|steps| steps.going_on(committed)) =>
-            {
-                from
-            }
-            _ => &sketch,
-        };
+        let on = proposal
+            .base(committed, revision)
+            .map_or(&sketch, |from| &**from);
         if let Ok(next) = proposal.edit.apply(on, &design) {
             // An added link goes last, with the highest id.
             if let (Some(source), Some(link)) = (proposal.source, next.links.last()) {
@@ -717,16 +722,8 @@ impl Doc {
                 {
                     Err(TAKEN_BY_CLIENT)
                 }
-                Some(committed) => Ok(match &proposal.from {
-                    Some((at, from))
-                        if *at == revision
-                            || (proposal.steps.as_ref())
-                                .is_some_and(|steps| steps.going_on(committed)) =>
-                    {
-                        from.clone()
-                    }
-                    _ => Arc::new(committed.clone()),
-                }),
+                Some(committed) => Ok((proposal.base(committed, revision).cloned())
+                    .unwrap_or_else(|| Arc::new(committed.clone()))),
             };
             let sketch = match sketch {
                 Ok(sketch) => sketch,
