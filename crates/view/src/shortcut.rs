@@ -89,11 +89,11 @@ impl Shortcut {
     /// Starts a new fillet: outside sketches, where `F` takes up the
     /// Fillet tool. The UI mock's key.
     pub const FILLET: Self = Self::plain('f');
-    /// No key: what a tool the UI mock gives none is bound to, never
-    /// pressed (the mirror's).
     /// Picking an origin plane while picking the plane for a sketch: `1`
     /// XY, `2` XZ, `3` YZ, as the toolbar orders them.
     pub const PLANES: [Self; 3] = [Self::plain('1'), Self::plain('2'), Self::plain('3')];
+    /// No key: what a tool the UI mock gives none is bound to, never
+    /// pressed (the mirror's).
     pub const NONE: Self = Self::named(Key::None);
     /// Opens the settings page, or closes it.
     pub const SETTINGS: Self = Self {
@@ -283,6 +283,12 @@ pub struct Binding {
 }
 
 impl Binding {
+    /// Whether it takes pressing `key` with `modifiers`: it's that key and
+    /// it's enabled or claims it.
+    fn takes(&self, key: &KeyPress, modifiers: Modifiers) -> bool {
+        (self.enabled || self.claims) && self.shortcut.matches(key, modifiers)
+    }
+
     pub(crate) fn new(shortcut: Shortcut, message: Message, enabled: bool) -> Self {
         Self {
             shortcut,
@@ -517,16 +523,16 @@ impl DocumentKeys {
         selected: Option<FeatureId>,
         sketch: Option<SketchState<'_>>,
     ) -> Self {
+        let tool = sketch.and_then(|sketch| sketch.tool);
+        // A drawing tool in use, which keeps what's selected from being
+        // closed, opened or taken out.
+        let drawing = tool.is_some_and(|tool| tool.tool.draws());
         Self {
             editable,
             sketching: sketch.is_some(),
             selected,
-            rename: None,
-            menu: None,
-            picking_plane: false,
-            settings: false,
             geometry_selected: sketch.is_some_and(|sketch| !sketch.selection.is_empty()),
-            drawing: sketch.is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool.draws())),
+            drawing,
             tool: sketch.is_some_and(|sketch| sketch.tool.is_some() || sketch.constraining),
             dimensions_selected: sketch.is_some_and(|sketch| {
                 let mut selected = sketch.selection.iter();
@@ -535,74 +541,41 @@ impl DocumentKeys {
                         .is_some_and(|id| sketch.sketch.dimension(id).is_some())
                 })
             }),
-            round_picked: sketch.is_some_and(|sketch| {
-                sketch.tool.is_some_and(|tool| {
-                    tool.tool == Tool::Dimension
-                        && crate::dimension::round(sketch.sketch, tool.picked)
-                })
+            round_picked: sketch.zip(tool).is_some_and(|(sketch, tool)| {
+                tool.tool == Tool::Dimension && crate::dimension::round(sketch.sketch, tool.picked)
             }),
-            fields: sketch
-                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| !tool.fields().is_empty())),
-            rectangle: sketch
-                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool == Tool::Rectangle)),
-            spline: sketch
-                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool == Tool::Spline)),
-            spline_ends: sketch
-                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.spline_ends())),
+            fields: tool.is_some_and(|tool| !tool.fields().is_empty()),
+            rectangle: tool.is_some_and(|tool| tool.tool == Tool::Rectangle),
+            spline: tool.is_some_and(|tool| tool.tool == Tool::Spline),
+            spline_ends: tool.is_some_and(|tool| tool.spline_ends()),
             splines_selected: sketch.is_some_and(|sketch| {
-                !sketch.tool.is_some_and(|tool| tool.tool.draws())
-                    && crate::spline::any_selected(sketch.sketch, sketch.selection)
+                !drawing && crate::spline::any_selected(sketch.sketch, sketch.selection)
             }),
-            tool_closes: sketch
-                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.can_close())),
-            closing: sketch.and_then(|sketch| {
-                if sketch.tool.is_some_and(|tool| tool.tool.draws()) {
-                    return None;
-                }
+            tool_closes: tool.is_some_and(|tool| tool.can_close()),
+            closing: (sketch.filter(|_| !drawing)).and_then(|sketch| {
                 crate::spline::closings(sketch.sketch, sketch.selection).map(|(close, _)| close)
             }),
             inserting: sketch.is_some_and(|sketch| sketch.inserting),
-            removing: sketch.and_then(|sketch| {
-                if sketch.tool.is_some_and(|tool| tool.tool.draws()) {
-                    return None;
-                }
+            removing: (sketch.filter(|_| !drawing)).and_then(|sketch| {
                 crate::spline::removals(sketch.sketch, sketch.selection).map(|found| found.is_ok())
             }),
             handles: sketch.is_some_and(|sketch| {
                 crate::spline::handles(sketch.sketch, sketch.selection).is_some()
             }),
-            mirror_picked: sketch.is_some_and(|sketch| {
-                sketch.tool.is_some_and(|tool| {
-                    tool.tool == Tool::Mirror && !tool.about && !tool.picked.is_empty()
-                })
+            mirror_picked: tool.is_some_and(|tool| {
+                tool.tool == Tool::Mirror && !tool.about && !tool.picked.is_empty()
             }),
             constraints: sketch.map_or_else(ConstraintSet::default, |sketch| {
                 ConstraintKind::fitting(sketch.sketch, sketch.selection)
                     .into_iter()
                     .collect()
             }),
-            face_selected: false,
-            objects_deletable: false,
-            extruding: false,
-            extrude_ready: false,
-            revolving: false,
-            revolve_ready: false,
-            combinable: false,
-            combining: false,
-            combine_ready: false,
-            bodies: false,
-            motion: None,
-            motion_ready: false,
-            measuring: false,
-            edited: false,
-            undo: false,
-            redo: false,
-            rail: None,
+            ..Self::default()
         }
     }
 
-    /// The same keys where a face and nothing else is selected in the
-    /// model if `face_selected`.
+    /// The same keys where `Delete` removes the sketches selected in
+    /// Objects if `objects_deletable`.
     pub fn with_objects_deletable(self, objects_deletable: bool) -> Self {
         Self {
             objects_deletable,
@@ -610,6 +583,8 @@ impl DocumentKeys {
         }
     }
 
+    /// The same keys where a face and nothing else is selected in the
+    /// model if `face_selected`.
     pub fn with_face_selected(self, face_selected: bool) -> Self {
         Self {
             face_selected,
@@ -622,8 +597,6 @@ impl DocumentKeys {
         Self { rail, ..self }
     }
 
-    /// The same keys where the document has changes not saved if
-    /// `edited`.
     /// The same keys with `F2` renaming `rename`, if anything.
     pub fn with_rename(self, rename: Option<varde_document::Named>) -> Self {
         Self { rename, ..self }
@@ -635,6 +608,8 @@ impl DocumentKeys {
         Self { menu, ..self }
     }
 
+    /// The same keys where the document has changes not saved if
+    /// `edited`.
     pub fn with_edited(self, edited: bool) -> Self {
         Self { edited, ..self }
     }
@@ -658,9 +633,7 @@ impl DocumentKeys {
             ..self
         }
     }
-}
 
-impl DocumentKeys {
     /// The same keys with `revolve` being set up, if one is.
     pub fn with_revolve(self, revolve: Option<&RevolveState<'_>>) -> Self {
         Self {
@@ -1180,9 +1153,7 @@ pub fn claimed(
     key: &KeyPress,
     modifiers: Modifiers,
 ) -> bool {
-    bindings.into_iter().any(|binding| {
-        (binding.enabled || binding.claims) && binding.shortcut.matches(key, modifiers)
-    })
+    (bindings.into_iter()).any(|binding| binding.takes(key, modifiers))
 }
 
 /// The message of the first enabled binding of `bindings` that pressing
@@ -1195,9 +1166,7 @@ pub fn pressed(
 ) -> Option<Message> {
     bindings
         .into_iter()
-        .find(|binding| {
-            (binding.enabled || binding.claims) && binding.shortcut.matches(key, modifiers)
-        })
+        .find(|binding| binding.takes(key, modifiers))
         .and_then(|binding| binding.enabled.then_some(binding.message))
 }
 
