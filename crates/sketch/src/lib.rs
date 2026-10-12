@@ -413,13 +413,8 @@ impl Sketch {
     /// across undo and sessions. A file could hold the highest number
     /// there is, which is then reused: a repeated name is harmless.
     fn next_number(&self, noun: &str) -> u32 {
-        // The noun compared once rather than for every point: a test
-        // building a sketch of thousands of points calls this for each.
-        let points: &[Point] = match noun == Kind::Point.name() {
-            true => &self.points,
-            false => &[],
-        };
-        let points = points.iter().map(|point| point.number);
+        let points = (noun == Kind::Point.name()).then_some(&self.points);
+        let points = points.into_iter().flatten().map(|point| point.number);
         let curves = self
             .curves
             .iter()
@@ -437,14 +432,14 @@ impl Sketch {
     /// does.
     pub fn add_point(&mut self, at: DVec2) -> Result<Id, OutOfIds> {
         let id = self.new_id()?;
-        self.push_point(id, at);
+        self.push_point(id, at, &mut Numbers::default());
         Ok(id)
     }
 
     /// Adds a point `id` at `at`, numbered as [`add_point`](Sketch::add_point)
-    /// does; the id is the caller's to choose and keep sorted.
-    pub(crate) fn push_point(&mut self, id: Id, at: DVec2) {
-        let number = self.next_number(Kind::Point.name());
+    /// does, by `numbers`; the id is the caller's to choose and keep sorted.
+    pub(crate) fn push_point(&mut self, id: Id, at: DVec2, numbers: &mut Numbers) {
+        let number = numbers.take(self, Kind::Point.name());
         self.points.push(Point { id, number, at });
     }
 
@@ -453,13 +448,19 @@ impl Sketch {
     /// to [`Sketch::check`].
     pub fn add_curve(&mut self, curve: Curve, construction: bool) -> Result<Id, OutOfIds> {
         let id = self.new_id()?;
-        self.push_curve(id, curve, construction);
+        self.push_curve(id, curve, construction, &mut Numbers::default());
         Ok(id)
     }
 
     /// Adds `curve` as `id`, like [`push_point`](Sketch::push_point).
-    pub(crate) fn push_curve(&mut self, id: Id, curve: Curve, construction: bool) {
-        let number = self.next_number(curve.kind().name());
+    pub(crate) fn push_curve(
+        &mut self,
+        id: Id,
+        curve: Curve,
+        construction: bool,
+        numbers: &mut Numbers,
+    ) {
+        let number = numbers.take(self, curve.kind().name());
         self.curves.push(CurveEntry {
             id,
             number,
@@ -597,7 +598,34 @@ impl Sketch {
     }
 }
 
+/// The next number for each noun of items added in a batch, each found
+/// by [`Sketch::next_number`] once, for its first item, and counted up
+/// from there: the numbers it would give each in turn, without looking
+/// through the sketch again for every item.
+#[derive(Debug, Default)]
+pub(crate) struct Numbers {
+    next: Vec<(&'static str, u32)>,
+}
+
+impl Numbers {
+    /// The number for a new item called `noun` in `sketch`.
+    fn take(&mut self, sketch: &Sketch, noun: &'static str) -> u32 {
+        let slot = match self.next.iter().position(|&(of, _)| of == noun) {
+            Some(slot) => slot,
+            None => {
+                self.next.push((noun, sketch.next_number(noun)));
+                self.next.len() - 1
+            }
+        };
+        let next = &mut self.next[slot].1;
+        let number = *next;
+        *next = number.saturating_add(1);
+        number
+    }
+}
+
 #[cfg(test)]
 mod testing;
+
 #[cfg(test)]
 mod tests;

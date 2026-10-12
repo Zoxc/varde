@@ -463,12 +463,13 @@ impl Add {
             }
         };
 
+        let mut numbers = crate::Numbers::default();
         for &(id, at) in &self.points {
-            sketch.push_point(resolve(id)?, at);
+            sketch.push_point(resolve(id)?, at, &mut numbers);
         }
         for new in &self.curves {
             let curve = new.curve.map_points(resolve)?;
-            sketch.push_curve(resolve(new.id)?, curve, new.construction);
+            sketch.push_curve(resolve(new.id)?, curve, new.construction, &mut numbers);
         }
         if let Some(&last) = placed.values().max() {
             sketch.next_id = last.0.checked_add(1).ok_or(OutOfIds)?;

@@ -22,17 +22,14 @@ pub(crate) fn handle(sketch: &mut Sketch, at: Id, tip: Id) -> crate::Handle {
     crate::Handle { at, tip, end }
 }
 
-/// New points at `places`, as [`point`] adds them one by one, but
-/// numbered from the highest found once: a sketch of thousands of points
-/// would otherwise look through them all for each.
+/// New points at `places`, as [`point`] adds them one by one, numbered
+/// as one batch.
 pub(crate) fn points(sketch: &mut Sketch, places: &[(f64, f64)]) -> Vec<Id> {
-    let mut number = sketch.next_number(crate::Kind::Point.name());
+    let mut numbers = crate::Numbers::default();
     (places.iter())
         .map(|&(x, y)| {
             let id = sketch.new_id().unwrap();
-            let at = DVec2::new(x, y);
-            sketch.points.push(crate::Point { id, number, at });
-            number = number.saturating_add(1);
+            sketch.push_point(id, DVec2::new(x, y), &mut numbers);
             id
         })
         .collect()
