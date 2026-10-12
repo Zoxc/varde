@@ -45,7 +45,6 @@ use varde_kernel::{BlendError, Evidence, Solid, Tolerance, Topology};
 use super::Failed;
 use super::in_place::InPlace;
 use crate::ErrorGeometry;
-use crate::error_geometry::KernelFailure;
 use crate::message::{self, Blend, BlendRefusal, BlendSource};
 
 /// The chains of `own`'s topology `edges` are found as, in their order:
@@ -63,13 +62,7 @@ pub(super) fn find_edges(own: &InPlace, edges: &[EdgeRef]) -> Result<Vec<u32>, F
 /// The regions of `own`'s topology `faces` are found as, in their order:
 /// one not found fails ("its face 2 of 3 wasn't found").
 pub(super) fn find_faces(own: &InPlace, faces: &[FaceRef]) -> Result<Vec<u32>, Failed> {
-    let count = faces.len();
-    (faces.iter().enumerate())
-        .map(|(i, face)| {
-            (own.topology.face(&own.solid, &face.key, face.near))
-                .map_err(|_| message::blend_face_not_found(i, count).into())
-        })
-        .collect()
+    own.find_regions(faces, message::blend_face_not_found)
 }
 
 /// One chain to blend as it's worked out: which, its faces' name and
@@ -268,8 +261,7 @@ pub(super) fn refused(
         }
         BlendError::Failed(failure) => {
             let words = message::blending(blend, own.name, failure.error);
-            let failure = KernelFailure::new(failure, tolerance);
-            Failed::kernel(words, &failure, [&[own.body], &[]])
+            own.kernel_failed(words, failure, tolerance)
         }
     }
 }

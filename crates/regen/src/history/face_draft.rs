@@ -33,14 +33,12 @@
 
 use glam::DVec3;
 use varde_document::{Document, FaceDraft, FeatureId};
-use varde_kernel::{Budget, DraftError, Evidence, Solid, Tolerance, Topology};
+use varde_kernel::{Budget, DraftError, Solid, Tolerance, Topology};
 
-use super::in_place::{self, InPlace};
+use super::in_place::{Drawn, InPlace};
 use super::motion::{NEUTRAL_PLANE, resolve_plane};
 use super::{Evaluation, Failed};
-use crate::ErrorGeometry;
 use crate::cache::Cache;
-use crate::error_geometry::KernelFailure;
 use crate::message::{self, DraftRefusal};
 
 #[cfg(any(test, feature = "testing"))]
@@ -101,10 +99,7 @@ pub(super) fn evaluate_face_draft(
     keyer
         .number(angle.to_bits())
         .number(u64::from(draft.tangent))
-        .number(faces.len() as u64);
-    for &region in &faces {
-        keyer.number(u64::from(region));
-    }
+        .regions(&faces);
     let key = keyer.finish();
     let draft_by = drafter();
     place.replace(
@@ -134,49 +129,26 @@ pub(super) fn evaluate_face_draft(
 /// in words, with what to draw: the face or corner a refusal is about,
 /// or the failure's evidence.
 fn refused(error: DraftError, place: &InPlace<'_>, tolerance: &Tolerance) -> Failed {
-    let (solid, topology) = (&*place.solid, &*place.topology);
-    let mut evidence = Evidence::default();
-    let mut region_drawn =
-        |region: u32| in_place::draw_region(&mut evidence, solid, topology, region);
-    let why = match error {
-        DraftError::FacingPull { region } => {
-            region_drawn(region);
-            DraftRefusal::FacingPull
-        }
-        DraftError::CannotDraft { region } => {
-            region_drawn(region);
-            DraftRefusal::CannotDraft
-        }
+    let (why, drawn) = match error {
+        DraftError::FacingPull { region } => (DraftRefusal::FacingPull, Drawn::Region(region)),
+        DraftError::CannotDraft { region } => (DraftRefusal::CannotDraft, Drawn::Region(region)),
         DraftError::PastNeighbour { region } => {
-            region_drawn(region);
-            DraftRefusal::PastNeighbour
+            (DraftRefusal::PastNeighbour, Drawn::Region(region))
         }
-        DraftError::IntoBody => DraftRefusal::IntoBody,
+        DraftError::IntoBody => (DraftRefusal::IntoBody, Drawn::Nothing),
         DraftError::RoundTooSmall { region } => {
-            region_drawn(region);
-            DraftRefusal::RoundTooSmall
+            (DraftRefusal::RoundTooSmall, Drawn::Region(region))
         }
-        DraftError::NoSurface { region } => {
-            region_drawn(region);
-            DraftRefusal::NoSurface
-        }
+        DraftError::NoSurface { region } => (DraftRefusal::NoSurface, Drawn::Region(region)),
         DraftError::TangentNeighbour { region } => {
-            region_drawn(region);
-            DraftRefusal::TangentNeighbour
+            (DraftRefusal::TangentNeighbour, Drawn::Region(region))
         }
-        DraftError::Corner { vertex } => {
-            evidence.add_points(solid.mesh().verts().get(vertex as usize).copied());
-            DraftRefusal::Corner
-        }
-        DraftError::OutOfRange => DraftRefusal::OutOfRange,
+        DraftError::Corner { vertex } => (DraftRefusal::Corner, Drawn::Corner(vertex)),
+        DraftError::OutOfRange => (DraftRefusal::OutOfRange, Drawn::Nothing),
         DraftError::Failed(failure) => {
             let words = message::drafting(place.name, failure.error);
-            let failure = KernelFailure::new(failure, tolerance);
-            return Failed::kernel(words, &failure, [&[place.body], &[]]);
+            return place.kernel_failed(words, failure, tolerance);
         }
     };
-    Failed {
-        message: message::draft_refused(why, place.name),
-        geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
-    }
+    place.refused(message::draft_refused(why, place.name), drawn, tolerance)
 }

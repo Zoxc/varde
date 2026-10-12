@@ -49,7 +49,8 @@ pub struct Shell {
 
 `crates/regen/src/history/shell.rs`, in history order (the steps it
 shares with chamfer, fillet and offset face, the body's own solid and topology,
-its faces found, the cache key's start and the result put in place,
+its faces found, the cache key's start, the result put in place and
+the refusals' drawing and kernel failures (`refused`, `kernel_failed`),
 are `history/in_place.rs`'s `InPlace`, with `box_sides` for the
 stand-ins):
 

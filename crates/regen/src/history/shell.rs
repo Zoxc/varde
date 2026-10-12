@@ -21,13 +21,11 @@
 //! the rest of the history goes on.
 
 use varde_document::{Document, FeatureId, Shell};
-use varde_kernel::{Budget, Evidence, ShellError, Solid, Tolerance, Topology};
+use varde_kernel::{Budget, ShellError, Solid, Tolerance, Topology};
 
-use super::in_place::{self, InPlace};
+use super::in_place::{Drawn, InPlace};
 use super::{Evaluation, Failed};
-use crate::ErrorGeometry;
 use crate::cache::Cache;
-use crate::error_geometry::KernelFailure;
 use crate::message;
 
 #[cfg(any(test, feature = "testing"))]
@@ -63,10 +61,7 @@ pub(super) fn evaluate_shell(
     keyer
         .number(thickness.to_bits())
         .number(u64::from(shell.outward))
-        .number(open.len() as u64);
-    for &region in &open {
-        keyer.number(u64::from(region));
-    }
+        .regions(&open);
     let key = keyer.finish();
     let shell_by = sheller();
     place.replace(
@@ -94,26 +89,16 @@ pub(super) fn evaluate_shell(
 /// with what to draw: the face or corner a refusal is about, or the
 /// failure's evidence.
 fn refused(error: ShellError, place: &InPlace<'_>, tolerance: &Tolerance) -> Failed {
-    let solid = &*place.solid;
-    let mut evidence = Evidence::default();
-    let why = match error {
+    let (why, drawn) = match error {
         ShellError::RoundTooSmall { region } => {
-            in_place::draw_region(&mut evidence, solid, &place.topology, region);
-            message::ShellRefusal::RoundTooSmall
+            (message::ShellRefusal::RoundTooSmall, Drawn::Region(region))
         }
-        ShellError::TooThick => message::ShellRefusal::TooThick,
-        ShellError::Corner { vertex } => {
-            evidence.add_points(solid.mesh().verts().get(vertex as usize).copied());
-            message::ShellRefusal::Corner
-        }
+        ShellError::TooThick => (message::ShellRefusal::TooThick, Drawn::Nothing),
+        ShellError::Corner { vertex } => (message::ShellRefusal::Corner, Drawn::Corner(vertex)),
         ShellError::Failed(failure) => {
             let words = message::shelling(place.name, failure.error);
-            let failure = KernelFailure::new(failure, tolerance);
-            return Failed::kernel(words, &failure, [&[place.body], &[]]);
+            return place.kernel_failed(words, failure, tolerance);
         }
     };
-    Failed {
-        message: message::shell_refused(why, place.name),
-        geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
-    }
+    place.refused(message::shell_refused(why, place.name), drawn, tolerance)
 }

@@ -2,6 +2,7 @@
 //! until the kernel's is built (see `crate::testing`).
 
 use super::*;
+use crate::history::in_place;
 
 /// A stand-in for the kernel's shell, for tests: the solid must be a
 /// box along the world's axes ([`in_place::box_sides`]), and is hollowed by one boolean with another box:

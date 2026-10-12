@@ -1,16 +1,19 @@
 //! What the features changing one body's solid in place share (chamfer,
 //! shell, offset face, draft): the body's own solid and topology as the
 //! features before leave it, its faces found by their references, the
-//! cache key's start, the kernel's result put in the body's place, and a
-//! region drawn for a refusal; for tests, the box their stand-ins take.
+//! cache key's start, the kernel's result put in the body's place, and
+//! their refusals and kernel failures put in words with what to draw; for
+//! tests, the box their stand-ins take.
 
 use std::sync::Arc;
 
 use varde_document::{BodyId, Document, FaceRef, FeatureId};
-use varde_kernel::{Budget, Evidence, Solid, Tolerance, Topology};
+use varde_kernel::{Budget, Evidence, Failure, Solid, Tolerance, Topology};
 
 use super::{Evaluation, Failed, own_solids};
+use crate::ErrorGeometry;
 use crate::cache::{Cache, Key, Keyer};
+use crate::error_geometry::KernelFailure;
 use crate::inspect;
 
 /// The body a feature changes in place, as the features before it leave
@@ -58,16 +61,55 @@ impl<'a> InPlace<'a> {
         faces: &[FaceRef],
         not_found: fn(usize, usize) -> String,
     ) -> Result<Vec<u32>, Failed> {
-        let count = faces.len();
-        let mut regions = Vec::with_capacity(count);
-        for (i, face) in faces.iter().enumerate() {
-            let region = (self.topology.face(&self.solid, &face.key, face.near))
-                .map_err(|_| not_found(i, count))?;
-            regions.push(region);
-        }
+        let mut regions = self.find_regions(faces, not_found)?;
         regions.sort_unstable();
         regions.dedup();
         Ok(regions)
+    }
+
+    /// [`InPlace::regions`] in the order of `faces`, as found.
+    pub(super) fn find_regions(
+        &self,
+        faces: &[FaceRef],
+        not_found: fn(usize, usize) -> String,
+    ) -> Result<Vec<u32>, Failed> {
+        let count = faces.len();
+        (faces.iter().enumerate())
+            .map(|(i, face)| {
+                (self.topology.face(&self.solid, &face.key, face.near))
+                    .map_err(|_| not_found(i, count).into())
+            })
+            .collect()
+    }
+
+    /// A refusal of the kernel's about the body: `message`, drawing
+    /// `drawn` at the display of `tolerance`.
+    pub(super) fn refused(&self, message: String, drawn: Drawn, tolerance: &Tolerance) -> Failed {
+        let mut evidence = Evidence::default();
+        match drawn {
+            Drawn::Nothing => {}
+            Drawn::Region(region) => {
+                draw_region(&mut evidence, &self.solid, &self.topology, region);
+            }
+            Drawn::Corner(vertex) => {
+                evidence.add_points(self.solid.mesh().verts().get(vertex as usize).copied());
+            }
+        }
+        Failed {
+            message,
+            geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
+        }
+    }
+
+    /// The kernel failing on the body, in `words`, with its evidence.
+    pub(super) fn kernel_failed(
+        &self,
+        words: String,
+        failure: Failure,
+        tolerance: &Tolerance,
+    ) -> Failed {
+        let failure = KernelFailure::new(failure, tolerance);
+        Failed::kernel(words, &failure, [&[self.body], &[]])
     }
 
     /// A cache key of the kind `kind` begun with what every such
@@ -109,6 +151,14 @@ impl<'a> InPlace<'a> {
         }
         Ok(())
     }
+}
+
+/// What a refusal about the body draws: nothing, a face (its region)
+/// or a corner (its vertex).
+pub(super) enum Drawn {
+    Nothing,
+    Region(u32),
+    Corner(u32),
 }
 
 /// Adds the region `region` of `topology` (of `solid`) to `evidence`,

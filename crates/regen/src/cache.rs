@@ -117,6 +117,15 @@ impl Keyer {
         self.bytes(&number.to_le_bytes())
     }
 
+    /// Regions of a body, their count first.
+    pub(crate) fn regions(&mut self, regions: &[u32]) -> &mut Keyer {
+        self.number(regions.len() as u64);
+        for &region in regions {
+            self.number(u64::from(region));
+        }
+        self
+    }
+
     /// A sketch's placement, by its numbers' bits.
     pub(crate) fn placement(&mut self, placement: &Placement) -> &mut Keyer {
         for v in [placement.origin, placement.x, placement.y, placement.normal] {

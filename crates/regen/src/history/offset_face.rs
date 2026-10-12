@@ -24,13 +24,11 @@
 //! to work out", and the rest of the history goes on.
 
 use varde_document::{Document, FeatureId, OffsetFace};
-use varde_kernel::{Budget, Evidence, OffsetError, Solid, Tolerance, Topology};
+use varde_kernel::{Budget, OffsetError, Solid, Tolerance, Topology};
 
-use super::in_place::{self, InPlace};
+use super::in_place::{Drawn, InPlace};
 use super::{Evaluation, Failed};
-use crate::ErrorGeometry;
 use crate::cache::Cache;
-use crate::error_geometry::KernelFailure;
 use crate::message;
 
 #[cfg(any(test, feature = "testing"))]
@@ -76,10 +74,7 @@ pub(super) fn evaluate_offset_face(
     keyer
         .number(distance.to_bits())
         .number(u64::from(offset.tangent))
-        .number(faces.len() as u64);
-    for &region in &faces {
-        keyer.number(u64::from(region));
-    }
+        .regions(&faces);
     let key = keyer.finish();
     let offset_by = offsetter();
     place.replace(
@@ -107,41 +102,27 @@ pub(super) fn evaluate_offset_face(
 /// in words, with what to draw: the face or corner a refusal is about,
 /// or the failure's evidence.
 fn refused(error: OffsetError, place: &InPlace<'_>, tolerance: &Tolerance) -> Failed {
-    let (solid, topology) = (&*place.solid, &*place.topology);
-    let mut evidence = Evidence::default();
-    let mut region_drawn =
-        |region: u32| in_place::draw_region(&mut evidence, solid, topology, region);
-    let why = match error {
+    let (why, drawn) = match error {
         OffsetError::PastNeighbour { region } => {
-            region_drawn(region);
-            message::OffsetRefusal::PastNeighbour
+            (message::OffsetRefusal::PastNeighbour, Drawn::Region(region))
         }
-        OffsetError::IntoBody => message::OffsetRefusal::IntoBody,
+        OffsetError::IntoBody => (message::OffsetRefusal::IntoBody, Drawn::Nothing),
         OffsetError::RoundTooSmall { region } => {
-            region_drawn(region);
-            message::OffsetRefusal::RoundTooSmall
+            (message::OffsetRefusal::RoundTooSmall, Drawn::Region(region))
         }
         OffsetError::NoSurface { region } => {
-            region_drawn(region);
-            message::OffsetRefusal::NoSurface
+            (message::OffsetRefusal::NoSurface, Drawn::Region(region))
         }
-        OffsetError::TangentNeighbour { region } => {
-            region_drawn(region);
-            message::OffsetRefusal::TangentNeighbour
-        }
-        OffsetError::Corner { vertex } => {
-            evidence.add_points(solid.mesh().verts().get(vertex as usize).copied());
-            message::OffsetRefusal::Corner
-        }
-        OffsetError::OutOfRange => message::OffsetRefusal::OutOfRange,
+        OffsetError::TangentNeighbour { region } => (
+            message::OffsetRefusal::TangentNeighbour,
+            Drawn::Region(region),
+        ),
+        OffsetError::Corner { vertex } => (message::OffsetRefusal::Corner, Drawn::Corner(vertex)),
+        OffsetError::OutOfRange => (message::OffsetRefusal::OutOfRange, Drawn::Nothing),
         OffsetError::Failed(failure) => {
             let words = message::offsetting(place.name, failure.error);
-            let failure = KernelFailure::new(failure, tolerance);
-            return Failed::kernel(words, &failure, [&[place.body], &[]]);
+            return place.kernel_failed(words, failure, tolerance);
         }
     };
-    Failed {
-        message: message::offset_refused(why, place.name),
-        geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
-    }
+    place.refused(message::offset_refused(why, place.name), drawn, tolerance)
 }
