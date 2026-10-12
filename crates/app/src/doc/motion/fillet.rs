@@ -57,9 +57,7 @@ impl Doc {
             info: (session.fillet())
                 .filter(|_| session.kind == MotionKind::Fillet)
                 .map(|fillet| {
-                    // The tick, which says what clicks pick, or the
-                    // feature's stored chains.
-                    let chains = fillet.chains || session.blend.chains;
+                    let chains = session.blend.shown_chains();
                     varde_view::fillet_info(&Fillet { chains, ..fillet }, units)
                 }),
         }

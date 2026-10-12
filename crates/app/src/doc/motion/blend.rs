@@ -48,6 +48,13 @@ impl Default for BlendSetup {
 }
 
 impl BlendSetup {
+    /// Whether the panel's info says the blend takes in tangent chains:
+    /// the tick, which says what clicks pick, or the feature's stored
+    /// chains.
+    pub(super) fn shown_chains(&self) -> bool {
+        self.stored || self.chains
+    }
+
     /// A stored sweep's path `edges` and its tangent chain tick
     /// `tangent`, which goes in `chains` (a sweep stores the tick),
     /// picked on no model shown.

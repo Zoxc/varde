@@ -114,9 +114,7 @@ impl Doc {
             info: (session.chamfer())
                 .filter(|_| session.kind == MotionKind::Chamfer)
                 .map(|chamfer| {
-                    // The tick, which says what clicks pick, or the
-                    // feature's stored chains.
-                    let chains = chamfer.chains || session.blend.chains;
+                    let chains = session.blend.shown_chains();
                     varde_view::chamfer_info(&Chamfer { chains, ..chamfer }, units)
                 }),
         }
