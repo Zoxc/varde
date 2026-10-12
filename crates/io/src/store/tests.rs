@@ -62,7 +62,9 @@ fn only_entries_are_listed_to_open() {
 
 /// Both lanes list an entry by what reading it found: intact, or damaged
 /// with an intact auto-save that opens, or with none that can be read,
-/// listed; empty, to delete; anything else skipped.
+/// listed; empty, to delete; anything else skipped. Natively, in a
+/// temporary directory.
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn entries_are_listed_by_what_reading_found() {
     use std::sync::Arc;

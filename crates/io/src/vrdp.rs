@@ -143,7 +143,7 @@ use crate::UnixSeconds;
 
 use chain::Chain;
 pub(crate) use check::check_unchanged;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub(crate) use preview::read_previews;
 pub(crate) use preview::{FileEnd, end};
 pub use preview::{MAX_MEDIA_TYPE, MAX_PREVIEW, MAX_PREVIEWS, Preview};
@@ -434,7 +434,7 @@ impl Tail {
     }
 
     /// Where its record is in the file.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn span(&self) -> std::ops::Range<u64> {
         self.last..self.end
     }
