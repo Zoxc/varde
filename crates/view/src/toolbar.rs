@@ -17,9 +17,9 @@ use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::rail::{Entry, Using};
 use crate::shortcut::{
-    Binding, Shortcut, close_binding, comb_binding, constrain_binding, constraint_binding,
-    file_bindings, handles_binding, history_bindings, insert_point_binding, plane_binding,
-    remove_point_binding, switch_binding, tool_binding,
+    Binding, Shortcut, close_binding, comb_binding, commit_binding, constrain_binding,
+    constraint_binding, file_bindings, handles_binding, history_bindings, insert_point_binding,
+    plane_binding, remove_point_binding, switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
@@ -159,32 +159,36 @@ struct Operation<'a> {
 
 /// The operation being set up, if one is.
 fn operation<'a>(state: &DocumentState<'a>) -> Option<Operation<'a>> {
-    Some(match state.operation.as_ref()? {
-        OperationState::Motion(motion) => Operation {
-            icon: motion.kind.icon(),
-            name: motion.title(),
-            ok: motion.ready.then_some(Message::Edit(Edit::CommitMotion)),
-            cancel: Message::Look(Look::Motion(MotionLook::Cancel)),
-        },
-        OperationState::Extrude(extrude) => Operation {
-            icon: Icon::Extrude,
-            name: extrude.editing.unwrap_or("New extrude"),
-            ok: extrude.ready.then_some(Message::Edit(Edit::CommitExtrude)),
-            cancel: Message::Look(Look::Extrude(crate::ExtrudeLook::Cancel)),
-        },
-        OperationState::Revolve(revolve) => Operation {
-            icon: Icon::Revolve,
-            name: revolve.editing.unwrap_or("New revolve"),
-            ok: revolve.ready.then_some(Message::Edit(Edit::CommitRevolve)),
-            cancel: Message::Look(Look::Revolve(crate::RevolveLook::Cancel)),
-        },
-        OperationState::Combine(combine) => Operation {
-            icon: Icon::Combine,
-            name: combine.editing.unwrap_or("New combine"),
-            ok: combine.ready.then_some(Message::Edit(Edit::CommitCombine)),
-            cancel: Message::Look(Look::Combine(crate::CombineLook::Cancel)),
-        },
+    // OK sends what `Enter` does, when it does.
+    let ok = commit_binding(state.keys()).and_then(|binding| binding.sends());
+    let (icon, name, cancel) = match state.operation.as_ref()? {
+        OperationState::Motion(motion) => (
+            motion.kind.icon(),
+            motion.title(),
+            Message::Look(Look::Motion(MotionLook::Cancel)),
+        ),
+        OperationState::Extrude(extrude) => (
+            Icon::Extrude,
+            extrude.editing.unwrap_or("New extrude"),
+            Message::Look(Look::Extrude(crate::ExtrudeLook::Cancel)),
+        ),
+        OperationState::Revolve(revolve) => (
+            Icon::Revolve,
+            revolve.editing.unwrap_or("New revolve"),
+            Message::Look(Look::Revolve(crate::RevolveLook::Cancel)),
+        ),
+        OperationState::Combine(combine) => (
+            Icon::Combine,
+            combine.editing.unwrap_or("New combine"),
+            Message::Look(Look::Combine(crate::CombineLook::Cancel)),
+        ),
         OperationState::Measure(_) => return None,
+    };
+    Some(Operation {
+        icon,
+        name,
+        ok,
+        cancel,
     })
 }
 

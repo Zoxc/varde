@@ -1007,6 +1007,27 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
+/// `Enter` commits the operation being set up, if there's one to
+/// commit, as its pill's OK does: an extrude, revolve, combine or motion.
+pub(crate) fn commit_binding(keys: DocumentKeys) -> Option<Binding> {
+    let (edit, ready) = if keys.extruding {
+        (Edit::CommitExtrude, keys.extrude_ready)
+    } else if keys.revolving {
+        (Edit::CommitRevolve, keys.revolve_ready)
+    } else if keys.combining {
+        (Edit::CommitCombine, keys.combine_ready)
+    } else if keys.motion.is_some() {
+        (Edit::CommitMotion, keys.motion_ready)
+    } else {
+        return None;
+    };
+    Some(Binding::new(
+        Shortcut::ENTER,
+        Message::Edit(edit),
+        keys.editable && ready,
+    ))
+}
+
 /// The document screen's shortcuts: the file's (Save, Save As), undo and
 /// redo, the settings page's (see [`settings_binding`]), starting a
 /// sketch, clearing the selection, outside a sketch editing and deleting
@@ -1110,34 +1131,6 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             measure_binding(keys),
         ]
     });
-    let commit = keys.extruding.then(|| {
-        Binding::new(
-            Shortcut::ENTER,
-            Message::Edit(Edit::CommitExtrude),
-            keys.editable && keys.extrude_ready,
-        )
-    });
-    let commit_revolve = keys.revolving.then(|| {
-        Binding::new(
-            Shortcut::ENTER,
-            Message::Edit(Edit::CommitRevolve),
-            keys.editable && keys.revolve_ready,
-        )
-    });
-    let commit_combine = keys.combining.then(|| {
-        Binding::new(
-            Shortcut::ENTER,
-            Message::Edit(Edit::CommitCombine),
-            keys.editable && keys.combine_ready,
-        )
-    });
-    let commit_motion = keys.motion.is_some().then(|| {
-        Binding::new(
-            Shortcut::ENTER,
-            Message::Edit(Edit::CommitMotion),
-            keys.editable && keys.motion_ready,
-        )
-    });
     let planes = keys
         .picking_plane
         .then(|| OriginPlane::ALL.map(|plane| plane_binding(plane, keys)));
@@ -1149,10 +1142,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
         .chain(history_bindings(keys))
         .chain([sketch_binding(keys), space_binding(keys)])
         .chain(extrude.into_iter().flatten())
-        .chain(commit)
-        .chain(commit_revolve)
-        .chain(commit_combine)
-        .chain(commit_motion)
+        .chain(commit_binding(keys))
         .chain(feature)
         .chain(sketch.into_iter().flatten())
         .chain(crate::rail::set_bindings(keys.sketching))
