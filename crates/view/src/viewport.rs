@@ -1486,7 +1486,7 @@ impl Program<'_> {
 }
 
 /// A widget a pixel square that draws nothing, but has iced build the
-/// viewport's [`Pipeline`], and so the [`Renderer`]'s, if no viewport has
+/// viewport's `Pipeline`, and so the [`Renderer`]'s, if no viewport has
 /// yet. On the web that compiles and links the shaders on the page's
 /// thread (WebGL2 has nothing else), a long pause, so a screen shown
 /// before any design, the welcome screen, carries it once it has shown,

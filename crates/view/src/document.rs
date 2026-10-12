@@ -307,7 +307,7 @@ impl<'a> DocumentState<'a> {
 
     /// What the viewport draws of the world's origin, axes and planes:
     /// what Objects has shown, and the planes while a tool offers them
-    /// ([`toolbar::picks_origin_planes`]), drawn over the model then.
+    /// (`toolbar::picks_origin_planes`), drawn over the model then.
     pub fn origin_drawn(&self) -> varde_render::OriginShown {
         let mut origin = self.origin;
         if toolbar::picks_origin_planes(self) {
