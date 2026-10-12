@@ -112,7 +112,7 @@ impl Doc {
     /// this session's offset.
     pub(super) fn follow_offset_anchor(&mut self) {
         let generation = self.editor.generation();
-        let Some(session) = self.operation.motion() else {
+        let Some(session) = self.mode.motion() else {
             return;
         };
         let Some(&first) = session.faces.refs.first() else {
@@ -145,7 +145,7 @@ impl Doc {
         if !at.is_finite() {
             return;
         }
-        if let Some(session) = self.operation.motion_mut() {
+        if let Some(session) = self.mode.motion_mut() {
             session.anchor = Some(Anchor {
                 face: first,
                 generation,

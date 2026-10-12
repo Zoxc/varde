@@ -17,7 +17,7 @@ pub(super) struct Refused;
 impl Doc {
     /// The drawing tool's field the value field is open on, if it is.
     pub(crate) fn drawing_field(&self) -> Option<Field> {
-        match self.sketch.as_ref()?.value.as_ref()?.target {
+        match self.mode.sketch()?.value.as_ref()?.target {
             ValueTarget::Field(field) => Some(field),
             _ => None,
         }
@@ -32,7 +32,7 @@ impl Doc {
         if self.editable_sketch().is_none() || self.take_field().is_err() {
             return;
         }
-        let Some(drawing) = self.sketch.as_ref().and_then(|s| s.tool.as_ref()) else {
+        let Some(drawing) = self.mode.sketch().and_then(|s| s.tool.as_ref()) else {
             return;
         };
         let fields = drawing.fields();
@@ -68,7 +68,7 @@ impl Doc {
             return Ok(());
         };
         let design = self.editor.document().design();
-        let Some(session) = &self.sketch else {
+        let Some(session) = self.mode.sketch() else {
             return Ok(());
         };
         let (Some(drawing), Some(open)) = (&session.tool, &session.value) else {
@@ -86,7 +86,7 @@ impl Doc {
                 return Err(Refused);
             }
         };
-        let Some(drawing) = self.sketch.as_mut().and_then(|s| s.tool.as_mut()) else {
+        let Some(drawing) = self.mode.sketch_mut().and_then(|s| s.tool.as_mut()) else {
             return Ok(());
         };
         match (field, value) {
@@ -120,7 +120,7 @@ impl Doc {
         if self.end_spline_here() {
             return;
         }
-        let aim = self.sketch.as_ref().and_then(|session| {
+        let aim = self.mode.sketch().and_then(|session| {
             let drawing = session.tool.as_ref()?;
             (!drawing.fields().is_empty()).then_some(session.aim?)
         });
@@ -135,7 +135,7 @@ impl Doc {
     /// Switches the Rectangle tool between drawing from a corner and from
     /// the centre, the point placed, if any, becoming the other.
     pub(crate) fn toggle_centered(&mut self) {
-        let drawing = self.sketch.as_mut().and_then(|s| s.tool.as_mut());
+        let drawing = self.mode.sketch_mut().and_then(|s| s.tool.as_mut());
         if let Some(drawing) = drawing.filter(|drawing| drawing.tool == varde_view::Tool::Rectangle)
         {
             drawing.centered = !drawing.centered;

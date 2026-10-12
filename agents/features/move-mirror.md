@@ -120,7 +120,7 @@ wire), `io/src/vrdp/tests.rs` (through a file).
 
 ## UI
 
-**The session** (`app/src/doc/motion.rs`, `Doc::operation` holding one
+**The session** (`app/src/doc/motion.rs`, `Doc::mode` holding one
 `MotionSession` for both and for patterns, aligns, scales, splits and
 chamfers, its `MotionKind` saying which; their own parts are under
 "Pattern", "Align", "Scale", "Split" and "Chamfer", "UI") is started by

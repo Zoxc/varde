@@ -294,10 +294,10 @@ fn a_drag_cancelled_or_cut_short_commits_nothing() {
     drag(&mut t);
     let feature = t.editor.document().features()[0].id;
     t.update(Edit::ToggleFeatureVisible(feature));
-    assert!(t.sketch.as_ref().unwrap().drag.is_none());
+    assert!(t.mode.sketch().unwrap().drag.is_none());
     drag(&mut t);
     t.look(Look::SelectTool(Tool::Line));
-    assert!(t.sketch.as_ref().unwrap().drag.is_none());
+    assert!(t.mode.sketch().unwrap().drag.is_none());
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn the_constrain_tool_offers_what_fits_the_selection() {
     let (mut t, [a, _, line, _, circle]) = with_shapes();
     let k = || keyboard::Key::Character("k".into());
     t.key(k());
-    assert!(t.sketch.as_ref().unwrap().constraining);
+    assert!(t.mode.sketch().unwrap().constraining);
     let fitting = |t: &Doc| t.keys().unwrap().constraints;
     assert!(!fitting(&t).contains(ConstraintKind::Fix));
 
@@ -333,7 +333,7 @@ fn the_constrain_tool_offers_what_fits_the_selection() {
 
     // Outside the tool, the keys apply what fits and keep the selection.
     t.key(k());
-    assert!(!t.sketch.as_ref().unwrap().constraining);
+    assert!(!t.mode.sketch().unwrap().constraining);
     select(&mut t, &[a]);
     t.update(Edit::Constrain(ConstraintKind::Fix));
     assert_eq!(selection(&t), [a]);
@@ -347,11 +347,11 @@ fn the_constrain_tool_offers_what_fits_the_selection() {
     // Escape, or a drawing tool, puts the Constrain tool down.
     t.key(k());
     t.look(Look::Escape);
-    assert!(!t.sketch.as_ref().unwrap().constraining);
-    assert!(t.sketch.is_some());
+    assert!(!t.mode.sketch().unwrap().constraining);
+    assert!(t.mode.sketch().is_some());
     t.key(k());
     t.look(Look::SelectTool(Tool::Line));
-    assert!(!t.sketch.as_ref().unwrap().constraining);
+    assert!(!t.mode.sketch().unwrap().constraining);
 }
 
 #[test]
@@ -655,7 +655,7 @@ fn undo_and_redo_storms_while_edits_wait_keep_the_order() {
 /// left: the sketch's id and the sketch as committed.
 fn refused_after_leaving() -> (Answered, FeatureId, varde_document::Sketch) {
     let (mut t, [_, _, line, ..]) = with_shapes();
-    let feature = t.sketch.as_ref().unwrap().feature;
+    let feature = t.mode.sketch().unwrap().feature;
     select(&mut t, &[line]);
     t.update(Edit::Constrain(ConstraintKind::Horizontal));
     let committed = sketch(&t).clone();
@@ -663,7 +663,7 @@ fn refused_after_leaving() -> (Answered, FeatureId, varde_document::Sketch) {
     t.doc.update(Edit::Constrain(ConstraintKind::Horizontal));
     assert!(t.proposing());
     t.doc.look(Look::FinishSketch);
-    assert!(t.sketch.is_none());
+    assert!(t.mode.sketch().is_none());
     assert!(t.refused_edit().is_none());
     (t, feature, committed)
 }

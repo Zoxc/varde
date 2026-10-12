@@ -85,17 +85,21 @@ fn check(plates: &Plates, step: usize, what: &str) {
     let doc = &plates.doc;
     let at = || format!("step {step}: {what}");
     // Sessions never overlap, nor run in a read-only document.
-    if doc.operation.combine().is_some() {
+    if doc.mode.combine().is_some() {
         assert!(
-            doc.operation.extrude().is_none() && doc.operation.revolve().is_none(),
+            doc.mode.extrude().is_none() && doc.mode.revolve().is_none(),
             "{}",
             at()
         );
-        assert!(doc.sketch.is_none() && doc.measure.is_none(), "{}", at());
-        assert!(doc.picking_plane.is_none(), "{}", at());
+        assert!(
+            doc.mode.sketch().is_none() && doc.mode.measure().is_none(),
+            "{}",
+            at()
+        );
+        assert!(doc.mode.picking_plane().is_none(), "{}", at());
         assert!(doc.editable(), "{}", at());
     }
-    if doc.picking_plane.is_some() {
+    if doc.mode.picking_plane().is_some() {
         assert!(!doc.operating(), "{}", at());
     }
     // The draft the lane was last asked for is the session's.
@@ -107,7 +111,7 @@ fn check(plates: &Plates, step: usize, what: &str) {
         assert_eq!(sent, wanted, "{}", at());
     }
     drop(requests);
-    let Some(session) = doc.operation.combine() else {
+    let Some(session) = doc.mode.combine() else {
         return;
     };
     let document = doc.editor.document();
@@ -248,11 +252,11 @@ fn run(seed: u64, steps: usize) {
             }
             17 => plates.combine(CombineLook::KeepTools),
             18 => {
-                escaped = plates.doc.operation.combine().is_some();
+                escaped = plates.doc.mode.combine().is_some();
                 plates.combine(CombineLook::Cancel);
             }
             19 => {
-                escaped = plates.doc.operating() || plates.doc.picking_plane.is_some();
+                escaped = plates.doc.operating() || plates.doc.mode.picking_plane().is_some();
                 escaped &= plates.doc.deleting.is_none() && plates.doc.rail.open.is_none();
                 plates.doc.look(Look::Escape);
             }
@@ -387,23 +391,23 @@ fn run(seed: u64, steps: usize) {
             41..=44 | 48..=55 => {
                 // Set up as the user would: started if it isn't, a target
                 // and a tool or two picked.
-                if plates.doc.sketch.is_some() {
+                if plates.doc.mode.sketch().is_some() {
                     plates.doc.look(Look::FinishSketch);
                 }
                 if plates.doc.read_only.take().is_some() {
                     plates.doc.sync();
                 }
                 // Out of whatever else is open.
-                while plates.doc.operation.combine().is_none()
+                while plates.doc.mode.combine().is_none()
                     && (plates.doc.operating()
-                        || plates.doc.picking_plane.is_some()
-                        || plates.doc.measure.is_some()
+                        || plates.doc.mode.picking_plane().is_some()
+                        || plates.doc.mode.measure().is_some()
                         || plates.doc.deleting.is_some()
                         || plates.doc.rail.open.is_some())
                 {
                     plates.doc.look(Look::Escape);
                 }
-                if plates.doc.operation.combine().is_none() {
+                if plates.doc.mode.combine().is_none() {
                     plates.doc.look(Look::StartCombine);
                 }
                 let held: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
@@ -439,16 +443,13 @@ fn run(seed: u64, steps: usize) {
         if escaped {
             assert_eq!(*after, document, "step {step}: esc changed the document");
             assert_eq!(plates.doc.editor.revision(), revision, "step {step}");
-            assert!(
-                plates.doc.operation.combine().is_none(),
-                "step {step}: {what}"
-            );
+            assert!(plates.doc.mode.combine().is_none(), "step {step}: {what}");
         }
         if committed && plates.doc.editor.revision() != revision {
             // One undo step, and redo puts it back.
             let made = after.clone();
             assert!(
-                plates.doc.operation.combine().is_none(),
+                plates.doc.mode.combine().is_none(),
                 "step {step}: committed"
             );
             plates.doc.update(Edit::Undo);

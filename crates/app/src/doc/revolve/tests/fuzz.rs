@@ -85,11 +85,15 @@ fn check(lathe: &Lathe, step: usize, what: &str) {
     let at = || format!("step {step}: {what}");
     // Sessions never overlap, nor run in a read-only document.
     assert!(
-        !(doc.operation.revolve().is_some() && doc.operation.extrude().is_some()),
+        !(doc.mode.revolve().is_some() && doc.mode.extrude().is_some()),
         "{}",
         at()
     );
-    assert!(!(doc.operating() && doc.sketch.is_some()), "{}", at());
+    assert!(
+        !(doc.operating() && doc.mode.sketch().is_some()),
+        "{}",
+        at()
+    );
     if !doc.editable() {
         assert!(!doc.operating(), "{}", at());
     }
@@ -118,12 +122,7 @@ fn check(lathe: &Lathe, step: usize, what: &str) {
         }
         // What the panel shows is what's previewed.
         if let Some((feature, FeatureKind::Revolve(draft))) = doc.revolve_draft() {
-            assert_eq!(
-                feature,
-                doc.operation.revolve().unwrap().feature,
-                "{}",
-                at()
-            );
+            assert_eq!(feature, doc.mode.revolve().unwrap().feature, "{}", at());
             assert_eq!(Some(draft.axis), state.axis, "{}", at());
             assert_eq!(draft.regions.len(), state.picked.len(), "{}", at());
             // A flip kept from another extent isn't stored where this
@@ -242,10 +241,10 @@ fn run(seed: u64, steps: usize) {
             1 | 2 => {
                 // An extrude set up: started if it isn't, a region
                 // picked.
-                if lathe.doc.operation.revolve().is_some() {
+                if lathe.doc.mode.revolve().is_some() {
                     lathe.doc.look(Look::Escape);
                 }
-                if lathe.doc.operation.extrude().is_none() {
+                if lathe.doc.mode.extrude().is_none() {
                     lathe.doc.look(Look::StartExtrude);
                 }
                 let region = rng.below(regions.max(1));
@@ -276,7 +275,7 @@ fn run(seed: u64, steps: usize) {
             20 => lathe.revolve(RevolveLook::Operation(*rng.pick(&OperationKind::ALL))),
             21 if !bodies.is_empty() => lathe.revolve(RevolveLook::Target(*rng.pick(&bodies))),
             22 => {
-                escaped = lathe.doc.operation.revolve().is_some();
+                escaped = lathe.doc.mode.revolve().is_some();
                 lathe.revolve(RevolveLook::Cancel);
             }
             23 => {
@@ -364,8 +363,8 @@ fn run(seed: u64, steps: usize) {
                     c => keyboard::Key::Character(c.into()),
                 };
                 escaped = pressed == "Escape" && lathe.doc.operating();
-                quiet = lathe.doc.operation.revolve().is_some() && pressed == "Delete";
-                swapped = lathe.doc.operation.revolve().is_some() && pressed == "x";
+                quiet = lathe.doc.mode.revolve().is_some() && pressed == "Delete";
+                swapped = lathe.doc.mode.revolve().is_some() && pressed == "x";
                 committed = pressed == "Enter";
                 // `Esc` is the app's, not a binding's.
                 if pressed == "Escape" {
@@ -454,16 +453,16 @@ fn run(seed: u64, steps: usize) {
             46..=55 => {
                 // Set up as the user would: started if it isn't, a
                 // region and an axis picked.
-                if lathe.doc.sketch.is_some() {
+                if lathe.doc.mode.sketch().is_some() {
                     lathe.doc.look(Look::FinishSketch);
                 }
-                if lathe.doc.operation.extrude().is_some() {
+                if lathe.doc.mode.extrude().is_some() {
                     lathe.doc.look(Look::Escape);
                 }
                 if lathe.doc.read_only.take().is_some() {
                     lathe.doc.sync();
                 }
-                if lathe.doc.operation.revolve().is_none() {
+                if lathe.doc.mode.revolve().is_none() {
                     lathe.doc.look(Look::StartRevolve);
                 }
                 let region = rng.below(regions.max(1));
@@ -499,13 +498,13 @@ fn run(seed: u64, steps: usize) {
         if quiet {
             assert_eq!(*after, document, "step {step}: a key acted");
             let revolving =
-                lathe.doc.operation.revolve().is_some() && lathe.doc.operation.extrude().is_none();
+                lathe.doc.mode.revolve().is_some() && lathe.doc.mode.extrude().is_none();
             assert!(revolving, "step {step}: {what}");
         }
         if swapped {
             assert_eq!(*after, document, "step {step}: X changed the document");
             let extruding =
-                lathe.doc.operation.extrude().is_some() && lathe.doc.operation.revolve().is_none();
+                lathe.doc.mode.extrude().is_some() && lathe.doc.mode.revolve().is_none();
             assert!(extruding, "step {step}: {what}");
         }
         if committed && lathe.doc.editor.revision() != revision {

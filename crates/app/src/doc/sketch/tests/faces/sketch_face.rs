@@ -47,7 +47,7 @@ fn a_sketch_on_a_face_has_its_sketch_face_named_and_construction() {
     // Its row, named so, in a group of its own.
     doc.update(Edit::Redo);
     doc.look(Look::EditFeature(id));
-    let rows = &doc.sketch.as_ref().unwrap().links;
+    let rows = &doc.mode.sketch().unwrap().links;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].source, "Sketch face");
     assert!(rows[0].sketch_face);

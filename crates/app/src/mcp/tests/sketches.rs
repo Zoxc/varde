@@ -31,7 +31,7 @@ fn plane_of(varde: &Varde, name: &str) -> Plane {
 /// Whether the user is in no sketch, nor picking a plane.
 fn nothing_open(varde: &Varde) -> bool {
     let doc = varde.screen.doc().unwrap();
-    doc.sketch.is_none() && doc.picking_plane.is_none()
+    doc.mode.sketch().is_none() && doc.mode.picking_plane().is_none()
 }
 
 /// `tool` with `arguments` failed, saying `why`, the design unchanged.
@@ -523,7 +523,7 @@ fn the_users_edit_behind_a_link_timed_out() {
         &mut varde,
         varde_view::Message::Look(varde_view::Look::SelectTool(varde_view::Tool::Point)),
     );
-    assert!(varde.screen.doc().unwrap().sketch.is_some());
+    assert!(varde.screen.doc().unwrap().mode.sketch().is_some());
     place_point(&mut varde, 1.0, 2.0);
     let later = iced::time::Instant::now() + waiting::BOUND;
     let _ = varde.update(Message::Tick(later));
@@ -534,7 +534,7 @@ fn the_users_edit_behind_a_link_timed_out() {
         reply.text
     );
     solve(&mut varde, &mut lane);
-    let session = varde.screen.doc().unwrap().sketch.as_ref().unwrap();
+    let session = varde.screen.doc().unwrap().mode.sketch().unwrap();
     assert_eq!(session.refusal, None);
     assert_eq!(points(&varde), before + 1);
 }

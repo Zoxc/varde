@@ -80,7 +80,7 @@ impl Doc {
     /// nothing of its body ([`MotionSession::unmoved`]).
     pub(crate) fn blend_before(&self) -> bool {
         self.command_held
-            && self.operation.motion().is_some_and(|session| {
+            && self.mode.motion().is_some_and(|session| {
                 session.kind.blends() && session.picking == MotionPick::Edges
             })
     }
@@ -139,7 +139,7 @@ impl Doc {
     /// picked: its edge, with its tangent chain while they take them in.
     pub(super) fn blend_hover(&self, pick: Pick) -> Vec<Picked> {
         let chains = self
-            .operation
+            .mode
             .motion()
             .is_some_and(|session| session.blend.chains);
         match pick.target {
@@ -155,7 +155,7 @@ impl Doc {
     /// tangent chain where it's stored taking them in, and the edges it leaves out
     /// (around a face it names) alone, in the exclusions' purple.
     pub(super) fn blend_lit_parts(&self) -> [Vec<Picked>; 2] {
-        let Some(session) = self.operation.motion().filter(|s| s.kind.blends()) else {
+        let Some(session) = self.mode.motion().filter(|s| s.kind.blends()) else {
             return [Vec::new(), Vec::new()];
         };
         let index = self.feed.pick_index();

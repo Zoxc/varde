@@ -263,7 +263,7 @@ fn no_knobs_read_only_or_editing() {
     plates.answer();
     let (id, _) = plates.last_feature();
     plates.doc.look(Look::EditFeature(id));
-    assert!(plates.doc.operation.motion().is_some());
+    assert!(plates.doc.mode.motion().is_some());
     assert!(knobs(&plates).is_empty());
 }
 

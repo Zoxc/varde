@@ -656,7 +656,7 @@ impl Doc {
             self.refuse(why);
             return false;
         }
-        let Some(session) = &mut self.sketch else {
+        let Some(session) = self.mode.sketch_mut() else {
             return false;
         };
         session.refusal = None;
@@ -837,7 +837,10 @@ impl Doc {
                 self.proposal_answered(base, Answer::Failed(error));
             }
             Response::Dragged { session, solution } => {
-                let drag = self.sketch.as_mut().and_then(|sketch| sketch.drag.as_mut());
+                let drag = self
+                    .mode
+                    .sketch_mut()
+                    .and_then(|sketch| sketch.drag.as_mut());
                 if let Some(drag) = drag.filter(|drag| drag.session == session) {
                     drag.solution = Some(solution);
                 }
@@ -903,7 +906,7 @@ impl Doc {
         if let Some(field) = proposal.probe {
             match answer {
                 Answer::Accepted(..) => {
-                    if self.sketch.as_ref().is_some_and(|s| s.feature == feature) {
+                    if self.mode.sketch().is_some_and(|s| s.feature == feature) {
                         self.open_value(*field);
                     }
                     self.send_proposal();
@@ -985,7 +988,7 @@ impl Doc {
                 // of what's committed.
                 let revision = self.editor.revision();
                 if revision != base
-                    && let Some(session) = self.sketch.as_mut().filter(|s| s.feature == feature)
+                    && let Some(session) = self.mode.sketch_mut().filter(|s| s.feature == feature)
                 {
                     session.analyses.insert(revision, analysis);
                 }
@@ -1003,7 +1006,7 @@ impl Doc {
     /// Says why the user's edit of the sketch `feature` wasn't made: in
     /// the sketch's status bar, or the banner if it was left.
     fn refused(&mut self, feature: FeatureId, refusal: Refusal) {
-        match self.sketch.as_mut().filter(|s| s.feature == feature) {
+        match self.mode.sketch_mut().filter(|s| s.feature == feature) {
             Some(session) => session.refusal = Some(refusal),
             // Its sketch was left, so its status bar doesn't say: the
             // banner does, or the edit would go without a word.
@@ -1133,7 +1136,7 @@ impl Doc {
             return;
         }
         let revision = self.editor.revision();
-        let (Some(solver), Some(session)) = (&mut self.solver, &self.sketch) else {
+        let (Some(solver), Some(session)) = (&mut self.solver, self.mode.sketch()) else {
             return;
         };
         if !session.analyses.wanted(revision) {
@@ -1158,7 +1161,7 @@ impl Doc {
         let Some((asked, feature)) = self.proposals.analysing.take() else {
             return;
         };
-        let Some(session) = self.sketch.as_mut() else {
+        let Some(session) = self.mode.sketch_mut() else {
             return;
         };
         if (asked, feature) != (revision, session.feature) {
@@ -1217,7 +1220,7 @@ impl Doc {
     /// out; a drop's move is applied to the drag's last solution, which
     /// it's proposed on.
     pub(crate) fn refresh_waiting(&mut self) {
-        let Some(session) = &self.sketch else {
+        let Some(session) = self.mode.sketch() else {
             return;
         };
         let feature = session.feature;
@@ -1245,7 +1248,7 @@ impl Doc {
                 sources,
             })
         });
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.waiting = waiting;
         }
     }

@@ -25,12 +25,12 @@ pub(super) fn shows(plates: &Plates, wanted: &str) -> bool {
 
 /// What the session being set up picks.
 pub(super) fn picking(plates: &Plates) -> MotionPick {
-    plates.doc.operation.motion().expect("a session").picking
+    plates.doc.mode.motion().expect("a session").picking
 }
 
 /// The faces of the session being set up.
 pub(super) fn picked_faces(plates: &Plates) -> Vec<FaceRef> {
-    (plates.doc.operation.motion().expect("a session").faces.refs).clone()
+    (plates.doc.mode.motion().expect("a session").faces.refs).clone()
 }
 
 /// The doc holding `document`, its bodies in order.

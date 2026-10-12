@@ -196,7 +196,7 @@ fn random_curve(plates: &Plates, rng: &mut Rng) -> Option<(FeatureId, Id)> {
 /// some tolerances and not others; now and then a point added on a
 /// corner instead, or a square's corner moved.
 fn redraw(plates: &mut Plates, rng: &mut Rng) {
-    let section_sketches: Vec<FeatureId> = (plates.doc.operation.motion())
+    let section_sketches: Vec<FeatureId> = (plates.doc.mode.motion())
         .map(|session| (session.loft.sections.iter().map(Section::sketch)).collect())
         .unwrap_or_default();
     let sketch = if !section_sketches.is_empty() && rng.below(4) != 0 {
@@ -328,7 +328,7 @@ fn found_by_regen(document: &Document, section: &Section) -> Option<()> {
 
 /// Holds the session, if it's a loft's, to what the module's docs say.
 fn check_session(plates: &Plates, what: &str) {
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     if let (Some(ticks), Some(listed)) = (plates.doc.overlap_ticks(), &plates.doc.overlaps)
@@ -442,7 +442,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
         return;
     };
     plates.doc.look(Look::EditFeature(id));
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     assert_eq!(session.feature, Some(id), "{what}");
@@ -458,7 +458,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
     let revision = plates.doc.editor.revision();
     let document = plates.doc.editor.document().clone();
     plates.doc.update(Edit::CommitMotion);
-    if plates.doc.operation.motion().is_none() {
+    if plates.doc.mode.motion().is_none() {
         assert_eq!(plates.doc.editor.revision(), revision, "{what}");
         assert_eq!(*plates.doc.editor.document(), document, "{what}");
     }
@@ -523,14 +523,14 @@ fn check_volumes(plates: &Plates, what: &str) {
 /// OK on the session: one ready whose preview didn't fail commits, the
 /// document holding what it drafted.
 fn commit(plates: &mut Plates, what: &str) {
-    let before = plates.doc.operation.motion().and_then(|session| {
+    let before = plates.doc.mode.motion().and_then(|session| {
         let ready = plates.doc.motion_ready() && plates.doc.feed.draft_error().is_none();
         (ready && session.kind == MotionKind::Loft).then(|| (session.feature, session.loft()))
     });
     plates.doc.update(Edit::CommitMotion);
     if let Some((edited, Some(loft))) = before {
         assert!(
-            plates.doc.operation.motion().is_none(),
+            plates.doc.mode.motion().is_none(),
             "{what}: not committed: {:?}",
             plates.doc.edit_error
         );
@@ -552,7 +552,7 @@ fn run(seed: u64, steps: usize) {
     let base = plates.doc.editor.document().features().len();
     for step in 0..steps {
         let what = format!("seed {seed} step {step}");
-        let open = plates.doc.operation.motion().is_some();
+        let open = plates.doc.mode.motion().is_some();
         let roll = match rng.below(4) {
             0 if !open => 0,
             _ => rng.below(56),
@@ -584,7 +584,7 @@ fn run(seed: u64, steps: usize) {
                 }
             }
             11..=13 => {
-                let sections = (plates.doc.operation.motion())
+                let sections = (plates.doc.mode.motion())
                     .map(|session| session.loft.sections.clone())
                     .unwrap_or_default();
                 let section = rng.below(sections.len() + 1);
@@ -755,7 +755,7 @@ fn run(seed: u64, steps: usize) {
                     for _ in 0..MAX_LOFT_RAILS {
                         plates.motion(MotionLook::DropRail(0));
                     }
-                    if (plates.doc.operation.motion()).is_some_and(|session| session.loft.closed) {
+                    if (plates.doc.mode.motion()).is_some_and(|session| session.loft.closed) {
                         plates.motion(MotionLook::Closed);
                     }
                 }
@@ -805,7 +805,7 @@ fn run(seed: u64, steps: usize) {
             .check()
             .unwrap_or_else(|error| panic!("{what}: {error}"));
     }
-    plates.doc.operation = None;
+    plates.doc.mode.take_operation();
     plates.doc.sync();
     plates.answer();
     check_volumes(&plates, &format!("seed {seed} at the end"));

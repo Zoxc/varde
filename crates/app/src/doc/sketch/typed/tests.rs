@@ -41,7 +41,7 @@ fn enter_in(doc: &mut Answered, text: &str) {
 
 /// The degrees of freedom the solver found the sketch committed has.
 fn freedom(doc: &Doc) -> usize {
-    let session = doc.sketch.as_ref().unwrap();
+    let session = doc.mode.sketch().unwrap();
     session.analysis(doc.editor.revision()).unwrap().freedom
 }
 
@@ -82,10 +82,7 @@ fn a_line_is_placed_at_the_length_and_angle_typed_with_their_dimensions() {
     // Tab opens the first field, empty to type in, with the focus.
     doc.look(Look::NextField);
     assert_eq!(open(&doc), Some(Field::Length));
-    assert_eq!(
-        doc.sketch.as_ref().unwrap().value.as_ref().unwrap().text,
-        ""
-    );
+    assert_eq!(doc.mode.sketch().unwrap().value.as_ref().unwrap().text, "");
     assert_eq!(doc.take_focus(), Some(Focus::All));
     // Typed and tabbed out of, the value holds.
     tab_in(&mut doc, "40 / 2");
@@ -140,7 +137,7 @@ fn a_value_refused_keeps_its_field_saying_why() {
     tab_in(&mut doc, "2 + 3 deg");
     // Still there, the part it's about selected.
     assert_eq!(open(&doc), Some(Field::Diameter));
-    let field = doc.sketch.as_ref().unwrap().value.clone().unwrap();
+    let field = doc.mode.sketch().unwrap().value.clone().unwrap();
     assert!(matches!(field.error.unwrap().kind, ErrorKind::Wrong { .. }));
     assert_eq!(doc.take_focus(), Some(Focus::Range(0, 9)));
     assert!(drawing(&doc).unwrap().typed.is_empty());
@@ -201,10 +198,7 @@ fn escape_closes_the_field_then_drops_the_values_with_the_shape() {
     // Round again, the field shows what was typed in it.
     tab_in(&mut doc, "");
     assert_eq!(open(&doc), Some(Field::Length));
-    assert_eq!(
-        doc.sketch.as_ref().unwrap().value.as_ref().unwrap().text,
-        "5"
-    );
+    assert_eq!(doc.mode.sketch().unwrap().value.as_ref().unwrap().text, "5");
     doc.look(Look::CancelValue);
     assert_eq!(open(&doc), None);
     assert_eq!(drawing(&doc).unwrap().typed.len(), 1);
@@ -335,7 +329,7 @@ fn a_rectangle_from_its_centre_has_the_centre_on_a_construction_diagonal() {
     assert!(made.contains(&Constraint::Coincident(center, Id::ORIGIN)));
     // Its size is free, and nothing is redundant.
     assert_eq!(freedom(&doc), 2);
-    let session = doc.sketch.as_ref().unwrap();
+    let session = doc.mode.sketch().unwrap();
     assert!(
         session
             .analysis(doc.editor.revision())
@@ -428,7 +422,7 @@ fn a_polygon_s_sides_are_typed_within_their_bounds_and_kept() {
         ("4.5", "must be a whole number"),
     ] {
         tab_in(&mut doc, text);
-        let field = doc.sketch.as_ref().unwrap().value.clone().unwrap();
+        let field = doc.mode.sketch().unwrap().value.clone().unwrap();
         assert_eq!(field.error.unwrap().to_string(), refused, "{text}");
         assert_eq!(drawing(&doc).unwrap().sides, 6);
     }
@@ -470,7 +464,7 @@ fn an_arc_s_radius_typed_holds_it_and_one_short_of_its_ends_is_refused() {
     doc.look(Look::NextField);
     assert_eq!(open(&doc), Some(Field::Radius));
     tab_in(&mut doc, "2");
-    let field = doc.sketch.as_ref().unwrap().value.clone().unwrap();
+    let field = doc.mode.sketch().unwrap().value.clone().unwrap();
     assert!(matches!(
         field.error.unwrap().kind,
         ErrorKind::TooSmall { .. }
@@ -530,7 +524,7 @@ fn a_field_goes_with_the_shape_having_it() {
     aim(&mut doc, 1.0, 1.0);
     doc.look(Look::NextField);
     assert!(matches!(
-        doc.sketch.as_ref().unwrap().value.as_ref().unwrap().target,
+        doc.mode.sketch().unwrap().value.as_ref().unwrap().target,
         ValueTarget::Field(Field::Length)
     ));
     // Another tool closes it.

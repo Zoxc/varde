@@ -30,7 +30,7 @@ fn settle(doc: &mut Answered, requests: &RefCell<Vec<Request>>) {
 }
 
 fn edited(doc: &Doc) -> &Sketch {
-    let feature = doc.sketch.as_ref().unwrap().feature;
+    let feature = doc.mode.sketch().unwrap().feature;
     match &doc.editor.document().feature(feature).unwrap().kind {
         FeatureKind::Sketch { sketch, .. } => sketch,
         _ => panic!("not a sketch"),
@@ -99,7 +99,7 @@ fn linked() -> (Answered, std::rc::Rc<RefCell<Vec<Request>>>) {
 #[test]
 fn links_are_listed_by_source_and_select_and_light_from_their_rows() {
     let (mut doc, _requests) = linked();
-    let rows = doc.sketch.as_ref().unwrap().links.clone();
+    let rows = doc.mode.sketch().unwrap().links.clone();
     assert_eq!(rows.len(), 2);
     assert_eq!(
         (rows[0].kind, rows[0].source.as_str()),
@@ -116,7 +116,7 @@ fn links_are_listed_by_source_and_select_and_light_from_their_rows() {
     // Its row selects what it made.
     doc.look(Look::ClickLink(rows[1].link));
     let made = edited(&doc).link(rows[1].link).unwrap().clone();
-    let selection = &doc.sketch.as_ref().unwrap().selection;
+    let selection = &doc.mode.sketch().unwrap().selection;
     assert_eq!(selection.len(), made.points.len() + made.curves.len());
     assert!(
         made.curves
@@ -141,7 +141,7 @@ fn links_are_listed_by_source_and_select_and_light_from_their_rows() {
     doc.update(Edit::RemoveLink(rows[0].link));
     assert!(edited(&doc).link(rows[0].link).is_none());
     assert!(edited(&doc).curve(link.curves[0]).is_none());
-    assert_eq!(doc.sketch.as_ref().unwrap().links.len(), 1);
+    assert_eq!(doc.mode.sketch().unwrap().links.len(), 1);
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn a_broken_link_s_row_says_why() {
     doc.sync();
     settle(&mut doc, &requests);
     assert_eq!(edited(&doc), &held);
-    let rows = &doc.sketch.as_ref().unwrap().links;
+    let rows = &doc.mode.sketch().unwrap().links;
     assert_eq!(rows.len(), 2);
     for row in rows {
         assert_eq!(row.broken.as_deref(), Some("Its body is gone"), "{row:?}");
@@ -209,7 +209,7 @@ fn delete_on_any_of_a_link_s_items_deletes_the_link_with_the_rest_selected() {
     // all of the projected edge's: the point, and both links, go.
     let mut own = before.clone();
     let point = own.add_point(DVec2::new(3.0, 3.0)).unwrap();
-    let feature = doc.sketch.as_ref().unwrap().feature;
+    let feature = doc.mode.sketch().unwrap().feature;
     doc.apply(Command::SetSketch {
         feature,
         sketch: Box::new(own),

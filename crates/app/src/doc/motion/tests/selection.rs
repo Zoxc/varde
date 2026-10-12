@@ -261,7 +261,7 @@ fn a_blend_takes_the_faces_selected() {
         let pick = top_face(&plates, plate);
         select(&mut plates, SelectionMode::Faces, &[pick]);
         plates.doc.look(start);
-        let session = plates.doc.operation.motion().unwrap();
+        let session = plates.doc.mode.motion().unwrap();
         assert!(edges(&plates).is_empty());
         assert_eq!(session.faces.refs.len(), 1);
         assert_eq!(session.faces.refs[0].body, plate);
@@ -277,10 +277,7 @@ fn a_sweep_takes_the_edges_selected_as_its_path() {
     let picks = [FRONT, RIGHT].map(|ends| edge_pick(&plates, plate, ends));
     select(&mut plates, SelectionMode::Edges { tangent: false }, &picks);
     plates.doc.look(Look::StartSweep);
-    assert_eq!(
-        plates.doc.operation.motion().unwrap().kind,
-        MotionKind::Sweep
-    );
+    assert_eq!(plates.doc.mode.motion().unwrap().kind, MotionKind::Sweep);
     assert_eq!(edges(&plates).len(), 2);
 }
 
@@ -292,7 +289,7 @@ fn a_mirror_takes_the_face_selected_as_its_plane() {
     let pick = top_face(&plates, plate);
     select(&mut plates, SelectionMode::Faces, &[pick]);
     plates.doc.look(Look::StartMirror);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.bodies, [plate]);
     let Some(varde_document::PlaneRef::Face(face)) = session.plane else {
         panic!("a face plane: {:?}", session.plane);
@@ -318,7 +315,7 @@ fn a_mirror_takes_the_face_selected_as_its_plane() {
     };
     select(&mut plates, SelectionMode::Faces, &[pick]);
     plates.doc.look(Look::StartMirror);
-    assert_eq!(plates.doc.operation.motion().unwrap().plane, None);
+    assert_eq!(plates.doc.mode.motion().unwrap().plane, None);
     assert_eq!(
         plates.doc.notice.as_deref(),
         Some("Only a flat face can be the mirror plane")
@@ -339,7 +336,7 @@ fn a_move_or_pattern_takes_the_edge_selected_as_its_axis() {
             &[front],
         );
         plates.doc.look(start.clone());
-        let session = plates.doc.operation.motion().unwrap();
+        let session = plates.doc.mode.motion().unwrap();
         assert_eq!(session.bodies, [plate]);
         assert!(
             matches!(session.axis, Some(AxisRef::Edge(_))),
@@ -351,7 +348,7 @@ fn a_move_or_pattern_takes_the_edge_selected_as_its_axis() {
     let wall = wall(&plates, plate);
     select(&mut plates, SelectionMode::Faces, &[wall]);
     plates.doc.look(Look::StartCircularPattern);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.bodies, [plate]);
     assert_eq!(
         session.axis,
@@ -367,7 +364,7 @@ fn a_circular_pattern_takes_the_round_edge_selected_as_its_axis() {
     let rim = rim(&plates, plate);
     select(&mut plates, SelectionMode::Edges { tangent: false }, &[rim]);
     plates.doc.look(Look::StartCircularPattern);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(
         matches!(session.axis, Some(AxisRef::Edge(_))),
         "{:?}",
@@ -384,7 +381,7 @@ fn a_draft_takes_the_first_face_selected_as_its_neutral_plane() {
     let front = front_face(&plates, plate);
     select(&mut plates, SelectionMode::Faces, &[top, front]);
     plates.doc.look(Look::StartDraft);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(
         matches!(session.plane, Some(PlaneRef::Face(_))),
         "{:?}",
@@ -399,7 +396,7 @@ fn a_draft_takes_the_first_face_selected_as_its_neutral_plane() {
     plates.doc.look(Look::StartDraft);
     assert_eq!(picked_faces(&plates).len(), 1);
     assert_eq!(
-        plates.doc.operation.motion().unwrap().plane,
+        plates.doc.mode.motion().unwrap().plane,
         Some(PlaneRef::Origin(varde_document::OriginPlane::XY))
     );
 }
@@ -417,7 +414,7 @@ fn a_split_takes_the_face_selected_as_its_tool() {
     let top = top_face(&plates, plate);
     select(&mut plates, SelectionMode::Faces, &[top]);
     plates.doc.look(Look::StartSplit);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(session.bodies.is_empty());
     assert_eq!(session.picking, MotionPick::Bodies);
     assert!(session.split.tool().is_some());
@@ -432,7 +429,7 @@ fn an_align_or_scale_takes_the_vertex_selected_as_its_point() {
         let corner = corner(&plates, plate);
         select(&mut plates, SelectionMode::Any, &[corner]);
         plates.doc.look(start.clone());
-        let session = plates.doc.operation.motion().unwrap();
+        let session = plates.doc.mode.motion().unwrap();
         assert_eq!(session.bodies, [plate]);
         let picked = match start {
             Look::StartAlign => session.align.marks[0][0].is_some(),
@@ -460,7 +457,7 @@ fn a_revolve_takes_the_edge_selected_as_its_axis_once_its_profile_is_picked() {
         .apply(varde_document::Command::SetFeatureVisible(sketch, true))
         .unwrap();
     plates.doc.look(Look::StartRevolve);
-    assert_eq!(plates.doc.operation.revolve().unwrap().axis, None);
+    assert_eq!(plates.doc.mode.revolve().unwrap().axis, None);
     let Some(FeatureKind::Sketch { sketch: drawn, .. }) = plates
         .doc
         .editor
@@ -476,7 +473,7 @@ fn a_revolve_takes_the_edge_selected_as_its_axis_once_its_profile_is_picked() {
     plates
         .doc
         .look(Look::Revolve(RevolveLook::PickRegion { sketch, region }));
-    let axis = plates.doc.operation.revolve().unwrap().axis;
+    let axis = plates.doc.mode.revolve().unwrap().axis;
     assert!(
         matches!(axis, Some(AxisLine::Edge(_))),
         "{axis:?} {:?}",
@@ -493,7 +490,7 @@ fn measure_takes_what_is_selected() {
     let front = edge_pick(&plates, plate, FRONT);
     select(&mut plates, SelectionMode::Any, &[top, front]);
     plates.doc.look(Look::StartMeasure);
-    let measure = plates.doc.measure.as_ref().unwrap();
+    let measure = plates.doc.mode.measure().unwrap();
     assert!(measure.inspect().is_some_and(|(_, b)| b.is_some()));
 }
 
@@ -508,7 +505,7 @@ fn a_blend_takes_edges_and_faces_selected_together() {
     select(&mut plates, SelectionMode::Any, &[rim, top]);
     plates.doc.look(Look::StartFillet);
     assert_eq!(edges(&plates).len(), 1);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.faces.refs.len(), 1);
     let listed = plates.doc.blend_edges(session);
     assert_eq!(listed.faces.len(), 1);
@@ -609,7 +606,7 @@ fn an_extrude_takes_the_regions_the_curves_selected_bound() {
     let mut drawn = drawn();
     select_curves(&mut drawn.plates, drawn.sketch, &drawn.rectangle);
     drawn.plates.doc.look(Look::StartExtrude);
-    let regions = &drawn.plates.doc.operation.extrude().unwrap().regions;
+    let regions = &drawn.plates.doc.mode.extrude().unwrap().regions;
     assert_eq!(regions.source, Some(drawn.sketch));
     assert_eq!(regions.picked.len(), 1);
 }
@@ -624,13 +621,13 @@ fn a_revolve_takes_the_curves_selected_as_its_regions_and_axis() {
     curves.push(drawn.line);
     select_curves(&mut drawn.plates, drawn.sketch, &curves);
     drawn.plates.doc.look(Look::StartRevolve);
-    let session = drawn.plates.doc.operation.revolve().unwrap();
+    let session = drawn.plates.doc.mode.revolve().unwrap();
     assert_eq!(session.regions.picked.len(), 1);
     assert_eq!(session.axis, Some(AxisLine::Curve(drawn.line)));
     drawn.plates.doc.look(Look::Revolve(RevolveLook::Cancel));
     select_curves(&mut drawn.plates, drawn.sketch, &[drawn.line]);
     drawn.plates.doc.look(Look::StartRevolve);
-    let session = drawn.plates.doc.operation.revolve().unwrap();
+    let session = drawn.plates.doc.mode.revolve().unwrap();
     assert_eq!(session.regions.source, Some(drawn.sketch));
     assert!(session.regions.picked.is_empty());
     assert_eq!(session.axis, Some(AxisLine::Curve(drawn.line)));
@@ -644,13 +641,13 @@ fn a_sweep_takes_the_curves_selected_as_its_profile_or_path() {
     let mut drawn = drawn();
     select_curves(&mut drawn.plates, drawn.sketch, &drawn.rectangle);
     drawn.plates.doc.look(Look::StartSweep);
-    let session = drawn.plates.doc.operation.motion().unwrap();
+    let session = drawn.plates.doc.mode.motion().unwrap();
     assert_eq!(session.sweep.regions.picked.len(), 1);
     assert!(session.sweep.chains.is_empty());
     drawn.plates.motion(MotionLook::Cancel);
     select_curves(&mut drawn.plates, drawn.sketch, &drawn.chain);
     drawn.plates.doc.look(Look::StartSweep);
-    let session = drawn.plates.doc.operation.motion().unwrap();
+    let session = drawn.plates.doc.mode.motion().unwrap();
     assert!(session.sweep.regions.picked.is_empty());
     assert_eq!(session.sweep.chains.len(), 1, "one chain through both");
 }
@@ -662,7 +659,7 @@ fn a_split_takes_the_curves_selected_as_its_line() {
     let mut drawn = drawn();
     select_curves(&mut drawn.plates, drawn.sketch, &drawn.chain);
     drawn.plates.doc.look(Look::StartSplit);
-    let session = drawn.plates.doc.operation.motion().unwrap();
+    let session = drawn.plates.doc.mode.motion().unwrap();
     assert_eq!(session.split.mode, varde_view::SplitMode::Line);
     let (sketch, curves) = session.split.chain.clone().unwrap();
     assert_eq!(sketch, drawn.sketch);
@@ -678,5 +675,5 @@ fn edit_sketch_opens_the_sketch_whose_items_are_selected() {
     select_curves(&mut drawn.plates, drawn.sketch, &[drawn.line]);
     assert!(bar(&drawn.plates).iter().any(|t| t == "Edit sketch"));
     drawn.plates.doc.look(Look::EditFeature(drawn.sketch));
-    assert!(drawn.plates.doc.sketch.is_some());
+    assert!(drawn.plates.doc.mode.sketch().is_some());
 }

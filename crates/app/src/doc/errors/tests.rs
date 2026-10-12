@@ -251,7 +251,7 @@ fn editing_a_failed_feature_shows_its_failure_and_then_its_draft_s() {
     let (mut doc, requests, revolve, _) = failing_revolve();
     let geometry = failure(&doc, revolve);
     doc.look(Look::EditFeature(revolve));
-    assert!(doc.operation.revolve().is_some());
+    assert!(doc.mode.revolve().is_some());
     // Selected as it's edited, or not: its panel is open.
     doc.selected_feature = None;
     doc.look(Look::HoverFeature(None));
@@ -373,7 +373,7 @@ fn editing_the_sketch_of_a_failing_extrude_rolls_its_failure_back() {
     } = touching_extrude();
     let geometry = failure(&doc, extrude);
     assert!(!geometry.sketch_curves().is_empty());
-    assert!(doc.sketch.is_none());
+    assert!(doc.mode.sketch().is_none());
 
     doc.look(Look::EditFeature(sketch));
     answer(&mut doc, &requests);
@@ -470,9 +470,9 @@ fn a_hovered_row_gone_without_an_exit_is_let_go_of() {
     doc.look(Look::HoverFeature(Some(revolve)));
     assert!(!doc.shown_errors().is_empty());
     doc.look(Look::EditFeature(sketch));
-    assert!(doc.sketch.is_some());
+    assert!(doc.mode.sketch().is_some());
     doc.look(Look::FinishSketch);
-    assert!(doc.sketch.is_none());
+    assert!(doc.mode.sketch().is_none());
     assert_eq!(doc.hovered_feature, None);
     assert!(doc.shown_errors().is_empty());
 
@@ -515,7 +515,7 @@ fn an_edited_failure_goes_once_its_draft_works() {
     assert!(lathe.doc.failure_geometry(revolve).is_some());
 
     lathe.doc.look(Look::EditFeature(revolve));
-    assert!(lathe.doc.operation.revolve().is_some());
+    assert!(lathe.doc.mode.revolve().is_some());
     assert!(!lathe.doc.shown_errors().is_empty());
     // An axis that works, answered: the preview is whole, and no red is
     // over it.

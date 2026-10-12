@@ -116,7 +116,7 @@ fn extrudes(doc: &Doc) -> Vec<&varde_document::Extrude> {
 fn x_starts_a_session_where_a_click_picks_a_region_previewed() {
     let (mut doc, sketch, requests) = plate();
     key_in(&mut doc, key("x"));
-    let session = doc.operation.extrude().expect("X starts a session");
+    let session = doc.mode.extrude().expect("X starts a session");
     // Nothing selected: the first region picked sets the sketch.
     assert_eq!(session.regions.source, None);
     let state = doc.extrude_state().unwrap();
@@ -126,7 +126,7 @@ fn x_starts_a_session_where_a_click_picks_a_region_previewed() {
 
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(session.regions.source, Some(sketch));
     assert_eq!(session.regions.picked, BTreeSet::from([region]));
     assert!(doc.extrude_state().unwrap().ready);
@@ -145,7 +145,7 @@ fn x_starts_a_session_where_a_click_picks_a_region_previewed() {
 
     // Clicked again, it's taken out, and the preview goes.
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
-    assert!(doc.operation.extrude().unwrap().regions.picked.is_empty());
+    assert!(doc.mode.extrude().unwrap().regions.picked.is_empty());
     assert!(last_draft(&requests).is_none());
     answer(&mut doc, &requests);
     assert_eq!(doc.feed.shown_draft(), None);
@@ -157,13 +157,10 @@ fn a_selected_sketch_is_the_source() {
     let (mut doc, sketch, _) = plate();
     doc.look(Look::SelectFeature(sketch));
     doc.look(Look::StartExtrude);
-    assert_eq!(
-        doc.operation.extrude().unwrap().regions.source,
-        Some(sketch)
-    );
+    assert_eq!(doc.mode.extrude().unwrap().regions.source, Some(sketch));
     // The toolbar's button again backs out.
     doc.look(Look::StartExtrude);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
 }
 
 #[test]
@@ -209,7 +206,7 @@ fn enter_commits_the_extrude_as_one_undo_step() {
     answer(&mut doc, &requests);
 
     key_in(&mut doc, enter());
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     let [extrude] = extrudes(&doc)[..] else {
         panic!("one extrude");
     };
@@ -238,7 +235,7 @@ fn escape_leaves_no_trace() {
     assert!(doc.feed.mesh().triangle_count() > 0);
 
     doc.look(Look::Escape);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert_eq!(*doc.editor.document(), before);
     assert_eq!(doc.editor.revision(), revision);
     assert!(last_draft(&requests).is_none());
@@ -269,7 +266,7 @@ fn an_extrude_with_its_region_missing_can_be_added_anyway() {
         .unwrap();
 
     doc.look(Look::EditFeature(feature));
-    let session = doc.operation.extrude().expect("editing it");
+    let session = doc.mode.extrude().expect("editing it");
     assert!(session.regions.picked.is_empty());
     assert_eq!(session.regions.missing, 1);
     extrude(
@@ -289,7 +286,7 @@ fn an_extrude_with_its_region_missing_can_be_added_anyway() {
     assert!(!texts.iter().any(|text| text == "Add anyway"));
 
     doc.update(Edit::AcceptError);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     let [kept] = extrudes(&doc)[..] else {
         panic!("one extrude");
     };
@@ -305,7 +302,7 @@ fn an_extrude_with_its_region_missing_can_be_added_anyway() {
     );
     assert!(!texts.iter().any(|text| text.contains("wasn't found")));
     extrude(&mut doc, ExtrudeLook::DropMissing(0));
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(session.regions.missing, 0);
     assert!(session.regions.references().is_empty());
     assert!(
@@ -322,7 +319,7 @@ fn a_double_clicked_extrude_reopens_with_its_values_and_is_set_again() {
     let (sketch, feature) = (features[0].id, features[1].id);
 
     doc.look(Look::EditFeature(feature));
-    let session = doc.operation.extrude().expect("editing it");
+    let session = doc.mode.extrude().expect("editing it");
     assert_eq!(session.feature, Some(feature));
     assert_eq!(session.regions.source, Some(sketch));
     assert_eq!(session.regions.picked.len(), 1);
@@ -344,7 +341,7 @@ fn a_double_clicked_extrude_reopens_with_its_values_and_is_set_again() {
     );
     assert_eq!(last_draft(&requests).unwrap().feature, Some(feature));
     doc.update(Edit::CommitExtrude);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     let [extrude] = extrudes(&doc)[..] else {
         panic!("one extrude");
     };
@@ -400,11 +397,11 @@ fn enter_on_a_selected_extrude_edits_it() {
     let feature = doc.editor.document().features()[1].id;
     doc.look(Look::SelectFeature(feature));
     key_in(&mut doc, enter());
-    assert_eq!(doc.operation.extrude().unwrap().feature, Some(feature));
+    assert_eq!(doc.mode.extrude().unwrap().feature, Some(feature));
     // Enter again is OK, which changes nothing here.
     let revision = doc.editor.revision();
     key_in(&mut doc, enter());
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert_eq!(doc.editor.revision(), revision);
 }
 
@@ -427,7 +424,7 @@ fn a_flip_left_from_one_side_is_not_stored_where_it_does_nothing() {
     // The panel keeps it for One side again.
     assert!(doc.extrude_state().unwrap().flip);
     doc.update(Edit::CommitExtrude);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert_eq!(doc.editor.revision(), revision);
     assert!(!extrudes(&doc)[0].flip);
 
@@ -473,13 +470,10 @@ fn the_handle_drags_the_distance_and_flips_one_side() {
         to,
     };
     extrude(&mut doc, drag(4.0));
-    assert_eq!(
-        doc.operation.extrude().unwrap().sides.fields[0].text,
-        "10 mm"
-    );
+    assert_eq!(doc.mode.extrude().unwrap().sides.fields[0].text, "10 mm");
     extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::First));
     extrude(&mut doc, drag(-4.0));
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert!(session.sides.flip);
     assert_eq!(session.sides.fields[0].value.as_ref().unwrap().value, 4.0);
     assert_eq!(
@@ -488,12 +482,9 @@ fn the_handle_drags_the_distance_and_flips_one_side() {
     );
     // On the plane, it stays.
     extrude(&mut doc, drag(0.0));
-    assert_eq!(
-        doc.operation.extrude().unwrap().sides.fields[0].text,
-        "4 mm"
-    );
+    assert_eq!(doc.mode.extrude().unwrap().sides.fields[0].text, "4 mm");
     extrude(&mut doc, ExtrudeLook::DropHandle);
-    assert_eq!(doc.operation.extrude().unwrap().grabbed, None);
+    assert_eq!(doc.mode.extrude().unwrap().grabbed, None);
 }
 
 #[test]
@@ -516,7 +507,7 @@ fn two_sides_over_the_limit_block_ok() {
     let _ = doc.view_in(Mode::default());
     assert!(press_in(&doc, enter()).is_none());
     doc.update(Edit::CommitExtrude);
-    assert!(doc.operation.extrude().is_some());
+    assert!(doc.mode.extrude().is_some());
     assert_eq!(doc.edit_error, None);
     assert!(extrudes(&doc).is_empty());
     answer(&mut doc, &requests);
@@ -536,7 +527,7 @@ fn two_sides_over_the_limit_block_ok() {
     assert!(state.ready);
     doc.update(Edit::CommitExtrude);
     assert_eq!(doc.edit_error, None);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert_eq!(extrudes(&doc)[0].span(), Some((-400000.0, 600000.0)));
 }
 
@@ -560,11 +551,7 @@ fn a_two_sides_knob_stops_at_the_limit() {
         distance: Distance::Second,
         to,
     };
-    let second = |doc: &Doc| {
-        doc.operation.extrude().unwrap().sides.fields[1]
-            .value
-            .clone()
-    };
+    let second = |doc: &Doc| doc.mode.extrude().unwrap().sides.fields[1].value.clone();
     let before = second(&doc);
     extrude(&mut doc, drag(-500000.0));
     assert_eq!(second(&doc), before);
@@ -594,11 +581,7 @@ fn plate_session(kind: ExtentKind, first: &str) -> (Doc, Requests) {
 
 #[test]
 fn one_side_and_symmetric_knobs_stop_only_where_the_field_would() {
-    let first = |doc: &Doc| {
-        doc.operation.extrude().unwrap().sides.fields[0]
-            .value
-            .clone()
-    };
+    let first = |doc: &Doc| doc.mode.extrude().unwrap().sides.fields[0].value.clone();
     let drag = |to| ExtrudeLook::DragHandle {
         distance: Distance::First,
         to,
@@ -608,7 +591,7 @@ fn one_side_and_symmetric_knobs_stop_only_where_the_field_would() {
     extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::First));
     extrude(&mut doc, drag(-1_000_000.0));
     assert_eq!(first(&doc).unwrap().value, 1_000_000.0);
-    assert!(doc.operation.extrude().unwrap().sides.flip);
+    assert!(doc.mode.extrude().unwrap().sides.flip);
     assert!(doc.extrude_state().unwrap().ready);
     extrude(&mut doc, drag(1_000_001.0));
     assert_eq!(first(&doc).unwrap().value, 1_000_000.0);
@@ -635,7 +618,7 @@ fn an_extrude_over_the_limit_can_be_cancelled() {
     );
     assert!(doc.extrude_state().unwrap().refused.is_some());
     extrude(&mut doc, ExtrudeLook::Cancel);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
 
     let (mut doc, _) = plate_session(ExtentKind::TwoSides, "600000");
     extrude(
@@ -646,7 +629,7 @@ fn an_extrude_over_the_limit_can_be_cancelled() {
         },
     );
     doc.look(Look::Escape);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(extrudes(&doc).is_empty());
 }
 
@@ -712,13 +695,10 @@ fn a_cut_lists_the_bodies_it_touches_and_goes_through_all() {
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
     // Only a cut goes through all.
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
-    assert_eq!(doc.operation.extrude().unwrap().extent, ExtentKind::OneSide);
+    assert_eq!(doc.mode.extrude().unwrap().extent, ExtentKind::OneSide);
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
-    assert_eq!(
-        doc.operation.extrude().unwrap().extent,
-        ExtentKind::ThroughAll
-    );
+    assert_eq!(doc.mode.extrude().unwrap().extent, ExtentKind::ThroughAll);
     answer(&mut doc, &requests);
     assert_eq!(doc.feed.draft_error(), None);
     let listed = |doc: &Doc| {
@@ -739,16 +719,16 @@ fn a_cut_lists_the_bodies_it_touches_and_goes_through_all() {
         Some("it doesn't touch any body not taken out of it")
     );
     extrude(&mut doc, ExtrudeLook::Target(body));
-    assert_eq!(doc.operation.extrude().unwrap().targets.excluded, []);
+    assert_eq!(doc.mode.extrude().unwrap().targets.excluded, []);
 
     // Joining can't go through all: it goes back to one side.
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Join));
-    assert_eq!(doc.operation.extrude().unwrap().extent, ExtentKind::OneSide);
+    assert_eq!(doc.mode.extrude().unwrap().extent, ExtentKind::OneSide);
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
     doc.update(Edit::CommitExtrude);
     assert_eq!(doc.edit_error, None);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     let cut = extrudes(&doc)[1].clone();
     assert_eq!(cut.extent, varde_document::Extent::ThroughAll);
     assert_eq!(cut.operation, Operation::Cut(Default::default()));
@@ -784,9 +764,9 @@ fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
     let revision = doc.editor.revision();
     doc.update(Edit::CommitExtrude);
     assert_eq!(doc.editor.revision(), revision);
-    assert!(doc.operation.extrude().is_some());
+    assert!(doc.mode.extrude().is_some());
     doc.update(Edit::AcceptError);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     answer(&mut doc, &requests);
     let feature = doc.editor.document().features().last().unwrap().id;
     let failed = doc.feed.failed_features();
@@ -979,9 +959,9 @@ fn undoing_the_sketch_away_ends_the_session() {
     let (mut doc, sketch, _) = plate();
     doc.look(Look::SelectFeature(sketch));
     doc.look(Look::StartExtrude);
-    assert!(doc.operation.extrude().is_some());
+    assert!(doc.mode.extrude().is_some());
     doc.update(Edit::RemoveFeature(sketch));
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
 }
 
 #[test]
@@ -999,14 +979,14 @@ fn a_sketch_changed_under_the_session_keeps_its_regions_picked() {
         sketch: Box::new(drawn),
     });
     doc.sync();
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(
         session.regions.picked,
         BTreeSet::from([plate_region(&doc, sketch)])
     );
     // And undone, too.
     doc.update(Edit::Undo);
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(
         session.regions.picked,
         BTreeSet::from([plate_region(&doc, sketch)])
@@ -1029,7 +1009,7 @@ fn undoing_the_extrude_edited_away_ends_the_session_and_its_draft() {
     // The example came in as one step.
     doc.update(Edit::Undo);
     assert!(doc.editor.document().features().is_empty());
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(last_draft(&requests).is_none());
 }
 
@@ -1038,15 +1018,15 @@ fn a_read_only_document_has_no_session() {
     let (mut doc, requests) = example();
     let feature = doc.editor.document().features()[1].id;
     doc.look(Look::EditFeature(feature));
-    assert!(doc.operation.extrude().is_some());
+    assert!(doc.mode.extrude().is_some());
     // Say its file turned out read-only.
     doc.read_only = Some("test".to_owned());
     doc.sync();
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(last_draft(&requests).is_none());
     doc.look(Look::EditFeature(feature));
     doc.look(Look::StartExtrude);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(press_in(&doc, key("x")).is_none());
 }
 
@@ -1156,7 +1136,7 @@ fn a_bare_distance_keeps_its_length_when_the_units_change() {
     // Typed in millimetres, it stays 20 mm in inches, which the draft
     // and the document take.
     doc.update(Edit::SetUnits(varde_expr::LengthUnit::In));
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(session.sides.fields[0].value.as_ref().unwrap().value, 20.0);
     assert_eq!(session.sides.fields[0].error, None);
     assert!(doc.extrude_state().unwrap().ready);
@@ -1192,7 +1172,7 @@ fn plate_with_the_hole_deleted_waiting() -> (Doc, FeatureId, Requests, crate::te
     doc.update(Edit::DeleteSelection);
     assert!(doc.proposing());
     doc.look(Look::FinishSketch);
-    assert!(doc.sketch.is_none());
+    assert!(doc.mode.sketch().is_none());
     assert!(doc.proposing());
     ten_mm_view(&mut doc);
     key_in(&mut doc, key("x"));
@@ -1210,7 +1190,7 @@ fn ok_waits_for_the_sketch_edits_left_with_the_solver() {
     // Neither the screen's Enter nor the field's commits.
     assert!(press_in(&doc, enter()).is_none());
     doc.update(Edit::CommitExtrude);
-    assert!(doc.operation.extrude().is_some());
+    assert!(doc.mode.extrude().is_some());
     assert!(extrudes(&doc).is_empty());
     assert_eq!(doc.edit_error, None);
 
@@ -1224,7 +1204,7 @@ fn ok_waits_for_the_sketch_edits_left_with_the_solver() {
     };
     assert!(whole.holes.is_empty());
     assert_eq!(
-        doc.operation.extrude().unwrap().regions.picked,
+        doc.mode.extrude().unwrap().regions.picked,
         BTreeSet::from([0])
     );
     assert!(doc.extrude_state().unwrap().ready);
@@ -1232,7 +1212,7 @@ fn ok_waits_for_the_sketch_edits_left_with_the_solver() {
     assert_eq!(profiles.resolve(&draft.extrude.regions), [Some(0)]);
 
     key_in(&mut doc, enter());
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     let [extrude] = extrudes(&doc)[..] else {
         panic!("one extrude");
     };
@@ -1268,7 +1248,7 @@ fn undo_while_the_sketch_edits_wait_frees_ok() {
     doc.update(Edit::Undo);
     assert!(!doc.proposing());
     assert_eq!(doc.editor.revision(), before);
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(
         session.regions.picked,
         BTreeSet::from([plate_region(&doc, sketch)])
@@ -1296,7 +1276,7 @@ fn the_sketch_deleted_while_its_edits_wait_frees_ok() {
     lane.answer(&mut doc);
     assert!(doc.editor.document().feature(sketch).is_none());
     // Its session goes with it.
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(!doc.proposing());
     assert!(!doc.proposals.slow());
     // Back again, with the edit, a session on it is ready at once.
@@ -1324,7 +1304,7 @@ fn read_only_while_the_sketch_edits_wait_ends_the_session() {
     let before = drawn(&doc, sketch).clone();
     doc.read_only = Some("test".to_owned());
     doc.sync();
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     doc.update(Edit::CommitExtrude);
     // The answer can't be committed, and nothing waits any more.
     lane.answer(&mut doc);
@@ -1388,7 +1368,7 @@ fn recovery_restored_while_the_sketch_edits_wait_frees_ok() {
     assert!(!doc.proposing());
     // The recovered plate has its hole: the session found its region
     // again, and OK is free.
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(
         session.regions.picked,
         BTreeSet::from([plate_region(&doc, sketch)])
@@ -1459,7 +1439,7 @@ fn an_edit_the_solver_rejects_while_waiting_frees_ok_and_keeps_the_pick() {
     assert!(!doc.proposing());
     assert_eq!(*drawn(&doc, sketch), committed);
     assert_eq!(
-        doc.operation.extrude().unwrap().regions.picked,
+        doc.mode.extrude().unwrap().regions.picked,
         BTreeSet::from([region])
     );
     assert!(doc.extrude_state().unwrap().ready);
@@ -1523,11 +1503,7 @@ fn a_two_sides_knob_over_the_limit_only_goes_back_towards_it() {
         distance: Distance::Second,
         to,
     };
-    let second = |doc: &Doc| {
-        doc.operation.extrude().unwrap().sides.fields[1]
-            .value
-            .clone()
-    };
+    let second = |doc: &Doc| doc.mode.extrude().unwrap().sides.fields[1].value.clone();
     // Further over, it stays.
     extrude(&mut doc, drag(-700000.0));
     assert_eq!(second(&doc).unwrap().value, 600000.0);
@@ -1572,7 +1548,7 @@ fn restoring_a_document_whose_extrude_has_the_edited_id_ends_the_session() {
     doc.drop_proposals();
     doc.apply(Command::Replace(Box::new(recovered.clone())));
     doc.sync();
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(last_draft(&requests).is_none());
     // OK has nothing to write over the recovered extrude.
     doc.update(Edit::CommitExtrude);
@@ -1614,15 +1590,15 @@ fn undoing_a_replacement_ends_a_new_extrude_session() {
     // may name another thing now.
     doc.update(Edit::Undo);
     assert!(is_sketch(doc.editor.document(), sketch));
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(last_draft(&requests).is_none());
 
     // And forward across it again.
     doc.look(Look::SelectFeature(sketch));
     doc.look(Look::StartExtrude);
-    assert!(doc.operation.extrude().is_some());
+    assert!(doc.mode.extrude().is_some());
     doc.update(Edit::Redo);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
 }
 
 /// The bodies the extrude panel lists.
@@ -1648,7 +1624,7 @@ fn a_new_session_doesn_t_list_the_last_one_s_bodies() {
 
     // Cancelled, and started again before the answer without the draft.
     extrude(&mut doc, ExtrudeLook::Cancel);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     doc.look(Look::SelectFeature(sketch));
     start_a_cut(&mut doc, sketch);
     assert!(last_draft(&requests).is_some());
@@ -1677,7 +1653,7 @@ fn switching_to_another_extrude_doesn_t_list_its_bodies() {
     // The other one, straight from the Timeline: nothing until its
     // answer.
     doc.look(Look::EditFeature(first));
-    assert_eq!(doc.operation.extrude().unwrap().feature, Some(first));
+    assert_eq!(doc.mode.extrude().unwrap().feature, Some(first));
     assert_eq!(listed(&doc), []);
     answer(&mut doc, &requests);
     assert_eq!(listed(&doc), [body]);
@@ -1729,7 +1705,7 @@ fn a_body_ticked_again_stays_listed_until_the_answer() {
     // Ticked again: still listed while its touch test is on its way,
     // and after it, which finds it touched.
     extrude(&mut doc, ExtrudeLook::Target(body));
-    assert!(doc.operation.extrude().unwrap().targets.excluded.is_empty());
+    assert!(doc.mode.extrude().unwrap().targets.excluded.is_empty());
     assert_eq!(listed(&doc), [body]);
     assert!(doc.extrude_state().unwrap().targets[0].included);
     answer(&mut doc, &requests);
@@ -1763,7 +1739,7 @@ fn a_body_ticked_again_that_isn_t_touched_goes_with_the_answer() {
         sketch: Box::new(drawn),
     });
     doc.sync();
-    assert_eq!(doc.operation.extrude().unwrap().regions.picked.len(), 1);
+    assert_eq!(doc.mode.extrude().unwrap().regions.picked.len(), 1);
     extrude(&mut doc, ExtrudeLook::Target(body));
     assert_eq!(listed(&doc), [body]);
     answer(&mut doc, &requests);
@@ -1789,9 +1765,7 @@ fn plate_replaced() -> (Doc, FeatureId, Requests, Document, Document) {
 
 /// The first distance of the session's extrude edited, typed.
 fn first(doc: &Doc) -> String {
-    doc.operation.extrude().unwrap().sides.fields[0]
-        .text
-        .clone()
+    doc.mode.extrude().unwrap().sides.fields[0].text.clone()
 }
 
 #[test]
@@ -1803,14 +1777,14 @@ fn every_step_across_a_replacement_ends_the_session_opened_before_it() {
     assert_eq!(first(&doc), "30 mm");
     doc.update(Edit::Undo);
     assert_eq!(*doc.editor.document(), before);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(last_draft(&requests).is_none());
     // Redone, then undone again: each ends the session opened in between.
     doc.look(Look::EditFeature(a));
     assert_eq!(first(&doc), "10 mm");
     doc.update(Edit::Redo);
     assert_eq!(*doc.editor.document(), recovered);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     doc.look(Look::EditFeature(a));
     assert_eq!(first(&doc), "30 mm");
     extrude(
@@ -1821,7 +1795,7 @@ fn every_step_across_a_replacement_ends_the_session_opened_before_it() {
         },
     );
     doc.update(Edit::Undo);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(last_draft(&requests).is_none());
     // OK then has nothing to write.
     doc.update(Edit::CommitExtrude);
@@ -1882,7 +1856,7 @@ fn restoring_drops_the_session_and_the_changes_waiting() {
     // The extrude being edited, and new units and a delete waiting
     // behind the edit.
     doc.look(Look::EditFeature(a));
-    assert!(doc.operation.extrude().is_some());
+    assert!(doc.mode.extrude().is_some());
     doc.update(Edit::SetUnits(varde_expr::LengthUnit::In));
     doc.update(Edit::RemoveFeature(sketch));
     assert!(doc.delete_prompt().is_none());
@@ -1890,7 +1864,7 @@ fn restoring_drops_the_session_and_the_changes_waiting() {
 
     let _ = doc.restore_recovered(&mut crate::files::Files::new(None));
     assert_eq!(*doc.editor.document(), recovered);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(last_draft(&requests).is_none());
     assert!(doc.delete_prompt().is_none());
     assert!(doc.deleting.is_none());
@@ -1917,7 +1891,7 @@ fn undo_and_redo_mid_session_keep_the_bodies_listed() {
     answer(&mut doc, &requests);
     for edit in [Edit::Undo, Edit::Redo, Edit::Undo] {
         doc.update(edit);
-        assert!(doc.operation.extrude().is_some());
+        assert!(doc.mode.extrude().is_some());
         // The same draft, asked for of the document undone or redone.
         let draft = last_draft(&requests).unwrap();
         assert!(revision.is_none() || Some(draft.revision) >= revision);
@@ -1948,10 +1922,10 @@ fn a_body_ticked_again_and_undone_away_is_forgotten() {
     extrude(&mut doc, ExtrudeLook::Target(peg));
     answer(&mut doc, &requests);
     extrude(&mut doc, ExtrudeLook::Target(peg));
-    assert_eq!(doc.operation.extrude().unwrap().targets.reticked.len(), 1);
+    assert_eq!(doc.mode.extrude().unwrap().targets.reticked.len(), 1);
     doc.update(Edit::Undo);
     assert!(doc.editor.document().body(peg).is_none());
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(session.targets.excluded, []);
     assert_eq!(session.targets.reticked, []);
 }
@@ -1984,7 +1958,7 @@ fn a_body_taken_out_and_undone_away_leaves_the_draft_whole() {
     assert_eq!(listed(&doc), [body, peg]);
     extrude(&mut doc, ExtrudeLook::Target(peg));
     answer(&mut doc, &requests);
-    assert_eq!(doc.operation.extrude().unwrap().targets.excluded, [peg]);
+    assert_eq!(doc.mode.extrude().unwrap().targets.excluded, [peg]);
     assert_eq!(listed(&doc), [body, peg]);
     assert_eq!(doc.feed.draft_error(), None);
 
@@ -1992,8 +1966,8 @@ fn a_body_taken_out_and_undone_away_leaves_the_draft_whole() {
     // which the document takes.
     doc.update(Edit::Undo);
     assert!(doc.editor.document().body(peg).is_none());
-    assert!(doc.operation.extrude().is_some());
-    assert_eq!(doc.operation.extrude().unwrap().targets.excluded, []);
+    assert!(doc.mode.extrude().is_some());
+    assert_eq!(doc.mode.extrude().unwrap().targets.excluded, []);
     let draft = last_draft(&requests).unwrap();
     assert_eq!(draft.extrude.operation, Operation::Cut(Default::default()));
     assert_eq!(listed(&doc), [body]);
@@ -2004,17 +1978,17 @@ fn a_body_taken_out_and_undone_away_leaves_the_draft_whole() {
     // edit could have given its id to another body. The list shows it.
     doc.update(Edit::Redo);
     assert!(doc.editor.document().body(peg).is_some());
-    assert_eq!(doc.operation.extrude().unwrap().targets.excluded, []);
+    assert_eq!(doc.mode.extrude().unwrap().targets.excluded, []);
     answer(&mut doc, &requests);
     assert_eq!(listed(&doc), [body, peg]);
     assert!(doc.extrude_state().unwrap().targets[1].included);
     // The cut would empty the peg: OK waits, and Accept error takes it.
     assert!(doc.feed.draft_error().is_some());
     doc.update(Edit::CommitExtrude);
-    assert!(doc.operation.extrude().is_some());
+    assert!(doc.mode.extrude().is_some());
     doc.update(Edit::AcceptError);
     assert_eq!(doc.edit_error, None);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
 }
 
 #[test]
@@ -2039,7 +2013,7 @@ fn timeline_a_b_a_lists_only_the_extrude_edited() {
     doc.look(Look::EditFeature(b));
     assert_eq!(listed(&doc), []);
     doc.look(Look::EditFeature(a));
-    assert_eq!(doc.operation.extrude().unwrap().feature, Some(a));
+    assert_eq!(doc.mode.extrude().unwrap().feature, Some(a));
     assert_eq!(listed(&doc), []);
     // B's answer is dropped; A's lists the body.
     let b_request = requests.borrow_mut().remove(0);
@@ -2460,7 +2434,7 @@ fn a_sketch_too_complex_is_skipped_quickly_and_once() {
     doc.look(Look::StartExtrude);
     let took = started.elapsed().as_secs_f64();
     assert!(took < ui_bound(), "{took}");
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(session.regions.source, None);
     let found: Vec<FeatureId> = session
         .regions
@@ -2488,10 +2462,10 @@ fn a_sketch_too_complex_is_skipped_quickly_and_once() {
             region,
         },
     );
-    let flip = doc.operation.extrude().unwrap().sides.flip;
+    let flip = doc.mode.extrude().unwrap().sides.flip;
     doc.apply(Command::SetFeatureVisible(plate, true));
     doc.sync();
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(session.sides.flip, flip);
     assert_eq!(session.regions.source, None);
     assert_eq!(session.regions.skipped.len(), 1);
@@ -2503,7 +2477,7 @@ fn a_sketch_too_complex_is_skipped_quickly_and_once() {
     doc.look(Look::StartExtrude);
     let took = started.elapsed().as_secs_f64();
     assert!(took < ui_bound(), "{took}");
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert_eq!(session.regions.source, Some(hostile));
     assert!(session.regions.found.is_empty());
     assert_eq!(session.regions.skipped.len(), 1);
@@ -2542,7 +2516,7 @@ fn visible_sketches_share() {
     doc.look(Look::StartExtrude);
     let took = started.elapsed().as_secs_f64();
     assert!(took < ui_bound(), "{took}");
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     let found: Vec<FeatureId> = session
         .regions
         .found
@@ -2566,7 +2540,7 @@ fn visible_sketches_share() {
     // Those found are kept, so the work's there for the rest as the
     // document changes, a share each time.
     let mut rounds = 0;
-    while doc.operation.extrude().unwrap().regions.found.len() < sketches.len() + 1 {
+    while doc.mode.extrude().unwrap().regions.found.len() < sketches.len() + 1 {
         rounds += 1;
         assert!(rounds <= sketches.len(), "{rounds}");
         let visible = rounds % 2 == 0;
@@ -2576,7 +2550,7 @@ fn visible_sketches_share() {
         let took = started.elapsed().as_secs_f64();
         assert!(took < ui_bound(), "{took}");
     }
-    let session = doc.operation.extrude().unwrap();
+    let session = doc.mode.extrude().unwrap();
     assert!(session.regions.skipped.is_empty());
 }
 
@@ -3168,7 +3142,7 @@ fn editing_an_extrude_from_a_scrolled_panel_shows_its_field() {
     // The panel stays, now for the last New body extrude.
     let id = doc.editor.document().features().last().unwrap().id;
     doc.look(Look::EditFeature(id));
-    assert_eq!(doc.operation.extrude().unwrap().feature, Some(id));
+    assert_eq!(doc.mode.extrude().unwrap().feature, Some(id));
     let focus = doc.take_focus().expect("the field takes the focus");
     let mut ui = UserInterface::build(doc.view_in(Mode::Light), size, cache, &mut renderer);
     run_task(&mut ui, &renderer, crate::focus_field(focus));
@@ -3442,7 +3416,7 @@ fn a_new_extrude_starts_at_a_round_quarter_of_the_view() {
 fn a_new_extrude_fits_the_camera_and_an_edited_one_keeps_its_distance() {
     let (mut doc, sketch, _requests) = plate();
     let distance = |doc: &Doc| {
-        let session = doc.operation.extrude().expect("a session");
+        let session = doc.mode.extrude().expect("a session");
         session.sides.fields[0]
             .value
             .as_ref()
@@ -3457,7 +3431,7 @@ fn a_new_extrude_fits_the_camera_and_an_edited_one_keeps_its_distance() {
         assert_eq!(distance(&doc), wanted, "seen {height} mm tall");
         assert_eq!(doc.camera, camera, "the camera stays");
         doc.look(Look::StartExtrude);
-        assert!(doc.operation.extrude().is_none());
+        assert!(doc.mode.extrude().is_none());
     }
 
     let (mut doc, _) = example();
@@ -3531,7 +3505,7 @@ fn a_distance_naming_a_parameter_follows_it_while_the_session_is_open() {
             text: "height / 2".into(),
         },
     );
-    let field = |doc: &Doc| doc.operation.extrude().unwrap().sides.fields[0].clone();
+    let field = |doc: &Doc| doc.mode.extrude().unwrap().sides.fields[0].clone();
     assert_eq!(field(&doc).value.unwrap().value, 15.0);
     // The parameter changes: the field reads it again, and OK takes it.
     doc.apply(Command::SetParam {

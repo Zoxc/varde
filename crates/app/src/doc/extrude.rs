@@ -4,7 +4,7 @@
 //! and committing it as one undo step or cancelling it, which leaves no
 //! trace.
 
-use crate::doc::{OperationSession, OperationSlot};
+use crate::doc::{DocMode, OperationSession, OperationSlot};
 use varde_document::{
     Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind, MAX_EXTRUDE_REGIONS,
 };
@@ -17,7 +17,7 @@ use super::regions::{
 };
 use super::{Doc, Focus};
 
-/// The extrude being set up, while one is: [`Doc::operation`].
+/// The extrude being set up, while one is: [`Doc::mode`].
 #[derive(Debug)]
 pub(crate) struct ExtrudeSession {
     /// The extrude edited, or `None` for a new one.
@@ -274,11 +274,11 @@ impl Doc {
     /// or combine being set up is dropped. The first
     /// distance's field takes the focus.
     pub(crate) fn start_extrude(&mut self) {
-        if self.operation.take_extrude().is_some() || !self.editable() || self.sketch.is_some() {
+        if self.mode.take_extrude().is_some() || !self.editable() || self.mode.sketch().is_some() {
             return;
         }
-        self.picking_plane = None;
-        self.operation = None;
+        // Leaving whatever else was open.
+        self.mode = DocMode::Idle;
         let document = self.editor.document();
         // Or the first selected in Objects.
         let selected = (self.selected_feature.filter(|&id| is_sketch(document, id)))
@@ -291,7 +291,7 @@ impl Doc {
         if let Some((sketch, curves)) = curves {
             session.regions.take_curves(sketch, &curves, document);
         }
-        self.operation = Some(OperationSession::Extrude(session));
+        self.mode = DocMode::Operation(OperationSession::Extrude(session));
         self.focus = Some(Focus::All);
         self.opened_operation();
     }
@@ -305,12 +305,11 @@ impl Doc {
         let Some(FeatureKind::Extrude(extrude)) = document.feature(id).map(|f| &f.kind) else {
             return;
         };
-        if self.sketch.is_some() || !self.editable() {
+        if self.mode.sketch().is_some() || !self.editable() {
             return;
         }
-        self.picking_plane = None;
         self.selected_feature = Some(id);
-        self.operation = Some(OperationSession::Extrude(ExtrudeSession::editing(
+        self.mode = DocMode::Operation(OperationSession::Extrude(ExtrudeSession::editing(
             document,
             &self.camera,
             id,
@@ -324,11 +323,13 @@ impl Doc {
     pub(crate) fn extrude_look(&mut self, message: ExtrudeLook) {
         let editable = self.editable();
         let document = self.editor.document();
-        let Some(session) = self.operation.extrude_mut() else {
+        let Some(session) = self.mode.extrude_mut() else {
             return;
         };
         match message {
-            ExtrudeLook::Cancel => self.operation = None,
+            ExtrudeLook::Cancel => {
+                self.mode.take_operation();
+            }
             _ if !editable => {}
             ExtrudeLook::PickRegion { sketch, region } => {
                 session.regions.toggle(sketch, region, false, document);
@@ -364,7 +365,7 @@ impl Doc {
     /// what would be committed, and the extrude would come before them in
     /// the undo history.
     pub(crate) fn extrude_ready(&self) -> bool {
-        self.operation.extrude().is_some_and(|session| {
+        self.mode.extrude().is_some_and(|session| {
             self.editable()
                 && !self.users_proposing()
                 && session.ready(&self.editor.document().design())
@@ -381,14 +382,14 @@ impl Doc {
         if !self.commit_by(self.extrude_ready(), accept) {
             return;
         }
-        let Some(session) = self.operation.extrude() else {
+        let Some(session) = self.mode.extrude() else {
             return;
         };
         let Some(extrude) = session.extrude() else {
             return;
         };
         if self.commit_feature(session.feature, extrude.into()) {
-            self.operation = None;
+            self.mode.take_operation();
         }
     }
 
@@ -405,13 +406,13 @@ impl Doc {
     pub(crate) fn prune_extrude(&mut self, replaced: bool) {
         let editable = self.editable();
         let document = self.editor.document();
-        let Some(session) = self.operation.extrude_mut() else {
+        let Some(session) = self.mode.extrude_mut() else {
             return;
         };
         let is_kind = |kind: &FeatureKind| matches!(kind, FeatureKind::Extrude(_));
         let (feature, regions) = (session.feature, &mut session.regions);
         if !regions_session_stays(document, feature, regions, editable, replaced, is_kind) {
-            self.operation = None;
+            self.mode.take_operation();
             return;
         }
         session.follow_design(document);
@@ -421,13 +422,13 @@ impl Doc {
     /// The extrude being set up as the regeneration lane previews it, and
     /// the extrude it edits, if it's whole.
     pub(crate) fn extrude_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
-        let session = self.operation.extrude()?;
+        let session = self.mode.extrude()?;
         Some((session.feature, session.extrude()?.into()))
     }
 
     /// The extrude being set up, for the view.
     pub(crate) fn extrude_state(&self) -> Option<ExtrudeState<'_>> {
-        let session = self.operation.extrude()?;
+        let session = self.mode.extrude()?;
         let document = self.editor.document();
         let candidates = session.regions.candidates(|id| self.placement(id));
         let editing = session

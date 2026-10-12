@@ -85,7 +85,7 @@ fn on_face(index: &PickIndex, face: u32) -> DVec3 {
 fn random_pick(plates: &Plates, rng: &mut Rng) -> Option<Pick> {
     let index = plates.doc.feed.pick_index();
     let picking = index.picking();
-    let session = plates.doc.operation.motion();
+    let session = plates.doc.mode.motion();
     let edge = session.is_some_and(|session| session.picking == MotionPick::Edge);
     let bodies = session
         .map(|session| session.bodies.clone())
@@ -160,7 +160,7 @@ fn random_pick(plates: &Plates, rng: &mut Rng) -> Option<Pick> {
 
 /// Holds the session, if it's a scale's, to what the module's docs say.
 fn check_session(plates: &Plates, what: &str) {
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     if session.kind != MotionKind::Scale {
@@ -206,7 +206,7 @@ fn check_session(plates: &Plates, what: &str) {
 /// Holds the edge lit to the one picked: by its keys, on the body
 /// drawing its body.
 fn check_lit(plates: &Plates, what: &str) {
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     let lit = plates.doc.scale_lit();
@@ -251,7 +251,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
         return;
     };
     plates.doc.look(Look::EditFeature(id));
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     assert_eq!(session.feature, Some(id), "{what}");
@@ -259,7 +259,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
     let revision = plates.doc.editor.revision();
     let document = plates.doc.editor.document().clone();
     plates.doc.update(Edit::CommitMotion);
-    if plates.doc.operation.motion().is_none() {
+    if plates.doc.mode.motion().is_none() {
         assert_eq!(plates.doc.editor.revision(), revision, "{what}: wrote");
         assert_eq!(*plates.doc.editor.document(), document, "{what}");
     }
@@ -297,7 +297,7 @@ fn run(seed: u64, steps: usize) {
     let mut plates = super::super::plates();
     for step in 0..steps {
         let what = format!("seed {seed} step {step}");
-        let open = plates.doc.operation.motion().is_some();
+        let open = plates.doc.mode.motion().is_some();
         let roll = match rng.below(4) {
             0 if !open => 0,
             _ => rng.below(44),
@@ -355,7 +355,7 @@ fn run(seed: u64, steps: usize) {
             20 if rng.below(2) == 0 => plates.doc.update(Edit::Undo),
             21 if rng.below(2) == 0 => plates.doc.update(Edit::Redo),
             22 | 40 => {
-                let before = plates.doc.operation.motion().and_then(|session| {
+                let before = plates.doc.mode.motion().and_then(|session| {
                     let ready =
                         plates.doc.motion_ready() && plates.doc.feed.draft_error().is_none();
                     (ready && session.kind == MotionKind::Scale)
@@ -364,7 +364,7 @@ fn run(seed: u64, steps: usize) {
                 plates.doc.update(Edit::CommitMotion);
                 if let Some((edited, Some(scale))) = before {
                     assert!(
-                        plates.doc.operation.motion().is_none(),
+                        plates.doc.mode.motion().is_none(),
                         "{what}: not committed: {:?}",
                         plates.doc.edit_error
                     );

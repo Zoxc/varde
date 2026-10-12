@@ -113,7 +113,7 @@ impl Rail {
 impl Doc {
     /// Takes `message`, about the rail.
     pub(crate) fn rail_look(&mut self, message: RailLook) {
-        let sketching = self.sketch.is_some();
+        let sketching = self.mode.sketch().is_some();
         let sets = varde_view::rail_sets(sketching);
         let rows = |set| varde_view::rail_rows(sketching, set);
         self.rail.update(message, sets, rows);

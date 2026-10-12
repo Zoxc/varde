@@ -53,7 +53,7 @@ fn offset_face_picks_faces_and_add_anyway_keeps_the_unbuilt_offset() {
     };
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartOffsetFace);
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::OffsetFace);
     assert!(session.bodies.is_empty(), "its body is its faces'");
     assert_eq!(session.picking, MotionPick::Faces);
@@ -90,7 +90,7 @@ fn offset_face_picks_faces_and_add_anyway_keeps_the_unbuilt_offset() {
     let up = face_pick(&plates, plate, DVec3::Z, 10.0, DVec3::new(0.0, 15.0, 10.0));
     click(&mut plates, up);
     assert_eq!(faces(&plates).len(), 1);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     assert_eq!(plates.doc.faces_lit(), [up.target]);
     assert!(shows(&plates, "Face 1") && shows(&plates, "Planar face"));
     assert!(shows(&plates, "1 face · 1 mm outward"));
@@ -112,7 +112,7 @@ fn offset_face_picks_faces_and_add_anyway_keeps_the_unbuilt_offset() {
     key_in(&mut plates.doc, enter());
     assert_eq!(plates.doc.editor.document().features().len(), features);
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert!(matches!(kind, FeatureKind::OffsetFace(_)));
     assert_eq!(
@@ -197,9 +197,9 @@ fn the_offset_is_previewed_the_handle_follows_and_ok_adds_one_undo_step() {
     plates.answer();
     assert!(plates.doc.motion_ready());
 
-    let offset = (plates.doc.operation.motion()).and_then(|session| session.offset_face());
+    let offset = (plates.doc.mode.motion()).and_then(|session| session.offset_face());
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert_eq!(Some(kind), offset.map(FeatureKind::OffsetFace));
     assert_eq!(plates.doc.selected_feature, Some(id));
@@ -232,7 +232,7 @@ fn editing_an_offset_face_from_the_timeline() {
     let committed = plates.doc.editor.document().clone();
 
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("editing");
+    let session = plates.doc.mode.motion().expect("editing");
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.faces.refs.len(), 1);
     assert!(shows(&plates, "Offset face 1"));
@@ -266,13 +266,13 @@ fn an_offset_face_s_faces_are_all_on_one_body() {
     let mut plates = boxes(true);
     let [first, second, _] = plates.bodies;
     plates.doc.look(Look::StartOffsetFace);
-    assert!(plates.doc.operation.motion().unwrap().bodies.is_empty());
+    assert!(plates.doc.mode.motion().unwrap().bodies.is_empty());
     // A body's row picks nothing: its body is its faces'.
     plates.doc.look(Look::ClickBody {
         body: second,
         add: false,
     });
-    assert!(plates.doc.operation.motion().unwrap().bodies.is_empty());
+    assert!(plates.doc.mode.motion().unwrap().bodies.is_empty());
     let pick = top(&plates, first, 10.0);
     click(&mut plates, pick);
     let theirs = face_pick(
@@ -300,7 +300,7 @@ fn an_offset_face_s_faces_are_all_on_one_body() {
     // Taking the face out leaves nothing to commit.
     let face = faces(&plates)[0];
     plates.motion(MotionLook::DropFace(face));
-    assert!(plates.doc.operation.motion().unwrap().bodies.is_empty());
+    assert!(plates.doc.mode.motion().unwrap().bodies.is_empty());
     assert!(!plates.doc.motion_ready());
     assert!(shows(&plates, "pick the faces to move"));
 }

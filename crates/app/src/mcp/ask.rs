@@ -80,7 +80,7 @@ impl Doc {
                 None => "editing the parameters".to_owned(),
             });
         }
-        if let Some(session) = &self.sketch {
+        if let Some(session) = self.mode.sketch() {
             let open = session.value.is_some()
                 || session.label.is_some()
                 || session.drag.is_some()
@@ -100,14 +100,14 @@ impl Doc {
     /// The operation being set up, by the name of the feature it edits or
     /// as a new one ("a new extrude"), if one is.
     fn operation_name(&self) -> Option<String> {
-        let (feature, noun) = if let Some(session) = self.operation.extrude() {
+        let (feature, noun) = if let Some(session) = self.mode.extrude() {
             (session.feature, "extrude")
-        } else if let Some(session) = self.operation.revolve() {
+        } else if let Some(session) = self.mode.revolve() {
             (session.feature, "revolve")
-        } else if let Some(session) = self.operation.combine() {
+        } else if let Some(session) = self.mode.combine() {
             (session.feature, "combine")
         } else {
-            let session = self.operation.motion()?;
+            let session = self.mode.motion()?;
             (session.feature, session.kind.noun())
         };
         let document = self.editor.document();
@@ -122,11 +122,11 @@ impl Doc {
     /// `sync` to), picking a plane, the Timeline marker's drag and the
     /// measure tool. For a client's edit, with nothing unfinished.
     fn close_for_client(&mut self) {
-        self.picking_plane = None;
+        self.mode.take_picking_plane();
         self.rolling = None;
-        self.measure = None;
+        self.mode.take_measure();
         self.close_operation();
-        if self.sketch.is_some() {
+        if self.mode.sketch().is_some() {
             self.end_session();
         }
     }

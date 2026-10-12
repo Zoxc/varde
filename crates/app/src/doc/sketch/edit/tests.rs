@@ -106,7 +106,7 @@ fn a_line_joins_points_it_snaps_to_and_infers_from_the_last() {
     click_on(&mut doc, 0.0, 5.0, Some(a));
     assert_eq!(lines(sketch(&doc))[2], (c, a));
     assert_eq!(sketch(&doc).points.len(), 3);
-    let tool = doc.sketch.as_ref().unwrap().tool.clone().unwrap();
+    let tool = doc.mode.sketch().unwrap().tool.clone().unwrap();
     assert_eq!(tool.chain.map(|chain| chain.last), Some(a));
     assert_eq!(tool.targets, [Some(Target::Point(a))]);
 }
@@ -288,7 +288,7 @@ fn the_origin_and_axes_are_selected_but_never_deleted() {
         hit: Some(Selectable::Item(Id::X_AXIS)),
         add: true,
     });
-    let selection = &doc.sketch.as_ref().unwrap().selection;
+    let selection = &doc.mode.sketch().unwrap().selection;
     assert_eq!(selection.len(), 2);
     let revision = doc.editor.revision();
     doc.update(Edit::DeleteSelection);

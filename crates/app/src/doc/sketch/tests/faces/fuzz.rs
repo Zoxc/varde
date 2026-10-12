@@ -182,11 +182,7 @@ fn current(doc: &Doc) -> bool {
 /// The command putting the sketch picking is for, or a new one, on
 /// `plane`.
 fn command_for(doc: &Doc, plane: Plane) -> Command {
-    match doc
-        .picking_plane
-        .as_ref()
-        .and_then(|p| p.pick.sketch.clone())
-    {
+    match doc.mode.picking_plane().and_then(|p| p.pick.sketch.clone()) {
         Some((feature, _)) => Command::SetSketchPlane { feature, plane },
         None => doc.editor.document().add_sketch(plane),
     }
@@ -195,11 +191,11 @@ fn command_for(doc: &Doc, plane: Plane) -> Command {
 fn check(doc: &mut Doc, requests: &Requests, last_sent: &Option<Request>, at: &str) {
     // Picking only in a document that can be edited, outside a sketch
     // and an operation.
-    if doc.picking_plane.is_some() {
+    if doc.mode.picking_plane().is_some() {
         assert!(doc.editable(), "{at}: picking in a read-only document");
-        assert!(doc.sketch.is_none() && !doc.operating(), "{at}");
+        assert!(doc.mode.sketch().is_none() && !doc.operating(), "{at}");
     }
-    assert!(!(doc.operating() && doc.sketch.is_some()), "{at}");
+    assert!(!(doc.operating() && doc.mode.sketch().is_some()), "{at}");
 
     // Offered exactly where the document takes the sketch.
     if let Some(picking) = doc.model_picking()
@@ -234,7 +230,7 @@ fn check(doc: &mut Doc, requests: &Requests, last_sent: &Option<Request>, at: &s
                 "{at}: sketch {id:?} placed elsewhere"
             );
         }
-        if let Some(session) = &doc.sketch
+        if let Some(session) = doc.mode.sketch()
             && let Some(placement) = expected(&document, &placements, session.feature)
         {
             assert_eq!(session.placement, placement, "{at}: edited elsewhere");
@@ -243,7 +239,7 @@ fn check(doc: &mut Doc, requests: &Requests, last_sent: &Option<Request>, at: &s
 
     // In a sketch, the camera faces it, from either side of its plane
     // (whichever the view was on, see `facing_turn`).
-    if let Some(session) = &doc.sketch {
+    if let Some(session) = doc.mode.sketch() {
         let normal = session.placement.normal.as_vec3();
         settle_camera(doc);
         let backward = doc.camera.backward();
@@ -285,8 +281,8 @@ fn run(seed: u64, steps: usize) {
             Vec::new()
         };
         let mut picking_for = doc
-            .picking_plane
-            .as_ref()
+            .mode
+            .picking_plane()
             .map(|p| p.pick.sketch.as_ref().map(|(id, _)| *id));
         let mut current_model = current(&doc);
         let mut escaped = false;
@@ -306,8 +302,8 @@ fn run(seed: u64, steps: usize) {
                 // another plane for one; then a click on a face of the
                 // model shown, as the viewport sends it: only one that
                 // takes the sketch picks. Mostly one that does.
-                if doc.picking_plane.is_none() {
-                    if doc.sketch.is_some() && rng.below(3) > 0 {
+                if doc.mode.picking_plane().is_none() {
+                    if doc.mode.sketch().is_some() && rng.below(3) > 0 {
                         doc.look(Look::FinishSketch);
                     }
                     if doc.operating() {
@@ -324,7 +320,7 @@ fn run(seed: u64, steps: usize) {
                         Some(id) if rng.below(2) == 0 => doc.look(Look::ChangePlane(id)),
                         _ => key_in(&mut doc, letter("s")),
                     }
-                    picking_for = (doc.picking_plane.as_ref())
+                    picking_for = (doc.mode.picking_plane())
                         .map(|p| p.pick.sketch.as_ref().map(|(id, _)| *id));
                     current_model = current(&doc);
                 }
@@ -397,7 +393,7 @@ fn run(seed: u64, steps: usize) {
             18 | 19 => {
                 // Change plane: from the Timeline, or the Sketch tab's
                 // button while editing.
-                let id = match &doc.sketch {
+                let id = match doc.mode.sketch() {
                     Some(session) if rng.below(2) == 0 => Some(session.feature),
                     _ => sketch,
                 };
@@ -408,7 +404,7 @@ fn run(seed: u64, steps: usize) {
             20 | 21 => {
                 // Something drawn in a sketch, the edited one if there
                 // is one: a square or a circle, on its face or off it.
-                let id = doc.sketch.as_ref().map(|s| s.feature).or(sketch);
+                let id = doc.mode.sketch().map(|s| s.feature).or(sketch);
                 if let Some(id) = id.filter(|id| first.feature(*id).is_none()) {
                     let (cx, cy) =
                         *rng.pick(&[(0.0, 0.0), (20.0, 10.0), (3.0, -2.0), (-50.0, 40.0)]);
@@ -442,13 +438,13 @@ fn run(seed: u64, steps: usize) {
             }
             22 | 23 => {
                 // An extrude set up from a sketch and committed, or not.
-                if doc.sketch.is_some() {
+                if doc.mode.sketch().is_some() {
                     doc.look(Look::FinishSketch);
                 }
-                if doc.operation.revolve().is_some() {
+                if doc.mode.revolve().is_some() {
                     doc.look(Look::Escape);
                 }
-                if doc.operation.extrude().is_none() {
+                if doc.mode.extrude().is_none() {
                     doc.look(Look::StartExtrude);
                 }
                 if let Some(id) = sketch {
@@ -465,13 +461,13 @@ fn run(seed: u64, steps: usize) {
             }
             24 => {
                 // A revolve about the sketch's y axis.
-                if doc.sketch.is_some() {
+                if doc.mode.sketch().is_some() {
                     doc.look(Look::FinishSketch);
                 }
-                if doc.operation.extrude().is_some() {
+                if doc.mode.extrude().is_some() {
                     doc.look(Look::Escape);
                 }
-                if doc.operation.revolve().is_none() {
+                if doc.mode.revolve().is_none() {
                     doc.look(Look::StartRevolve);
                 }
                 if let Some(id) = sketch {

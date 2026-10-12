@@ -625,9 +625,9 @@ impl Doc {
     /// body, and on the target's on it, is taken out, and clicks go on to
     /// the next reference to pick.
     pub(super) fn align_body(&mut self, body: BodyId) {
-        let feature = self.operation.motion().and_then(|session| session.feature);
+        let feature = self.mode.motion().and_then(|session| session.feature);
         let merges = (self.feed).merged_before(self.editor.document(), feature);
-        let Some(session) = self.operation.motion_mut() else {
+        let Some(session) = self.mode.motion_mut() else {
             return;
         };
         if session.bodies == [body] {
@@ -643,7 +643,7 @@ impl Doc {
     /// model shown, where they aren't yet ([`AlignSetup::follow`]), each
     /// on the body drawing its body there.
     pub(super) fn follow_align(&mut self) {
-        let Some(session) = self.operation.motion_mut() else {
+        let Some(session) = self.mode.motion_mut() else {
             return;
         };
         if session.kind != MotionKind::Align {
@@ -725,7 +725,7 @@ impl Doc {
     /// Takes the origin, or the origin axis `axis`, as the target's point
     /// or direction being picked.
     pub(super) fn align_origin(&mut self, axis: Option<varde_document::Axis3>) {
-        let Some(session) = self.operation.motion_mut() else {
+        let Some(session) = self.mode.motion_mut() else {
             return;
         };
         if let MotionPick::Align(slot) = session.picking {
@@ -834,7 +834,7 @@ impl Doc {
     /// The faces and edges picked for the align's directions to light in
     /// the model shown, the moved side's and the target's.
     pub(super) fn align_lit(&self) -> [Vec<Picked>; 2] {
-        match self.operation.motion() {
+        match self.mode.motion() {
             Some(session) if session.kind == MotionKind::Align => {
                 session.align.lit(self.feed.model())
             }

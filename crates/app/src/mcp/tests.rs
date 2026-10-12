@@ -2131,7 +2131,7 @@ fn undo_skips_the_clients_queued_edit() {
 
     // With only the one in flight, Undo drops it and the rename applies.
     // (The rename closed the sketch, clean: back into it.)
-    assert!(varde.screen.doc().unwrap().sketch.is_none());
+    assert!(varde.screen.doc().unwrap().mode.sketch().is_none());
     enter_last_sketch(&mut varde);
     place_point(&mut varde, 8.0, 1.0);
     let reply = calling(&mut varde, "a session", 2, rename_feature("Base", "Plate"));
@@ -2841,11 +2841,11 @@ fn committed_distance(varde: &Varde) -> String {
 /// Whether any session, plane pick, marker drag or measure is open.
 fn anything_open(varde: &Varde) -> bool {
     let doc = varde.screen.doc().unwrap();
-    doc.sketch.is_some()
+    doc.mode.sketch().is_some()
         || doc.operating()
-        || doc.picking_plane.is_some()
+        || doc.mode.picking_plane().is_some()
         || doc.rolling.is_some()
-        || doc.measure.is_some()
+        || doc.mode.measure().is_some()
 }
 
 /// A client edit closes each session, new or on a feature, with nothing
@@ -2920,7 +2920,7 @@ fn an_unfinished_panel_asks_and_apply_yours_commits_it_first() {
     );
     assert!(first.try_recv().is_err() && second.try_recv().is_err());
     assert_eq!(feature_name(&varde, 0), "Sketch 1");
-    assert!(varde.screen.doc().unwrap().operation.extrude().is_some());
+    assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
     assert_eq!(ask(&varde).unwrap().editing, "editing Extrude 1");
     let shown = on_screen(&varde);
     assert!(
@@ -2935,7 +2935,7 @@ fn an_unfinished_panel_asks_and_apply_yours_commits_it_first() {
 
     panel(&mut varde, varde_view::McpPanel::ApplyYours);
     assert!(ask(&varde).is_none());
-    assert!(varde.screen.doc().unwrap().operation.extrude().is_none());
+    assert!(varde.screen.doc().unwrap().mode.extrude().is_none());
     assert_eq!(committed_distance(&varde), "7 mm");
     // Applied once the model of the user's extrude is in, the second,
     // behind it, after.
@@ -2984,7 +2984,7 @@ fn apply_yours_refused_says_why_and_keep_editing_refuses_the_call() {
         refused.starts_with("Your Extrude 1 wasn't applied"),
         "{refused}"
     );
-    assert!(varde.screen.doc().unwrap().operation.extrude().is_some());
+    assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
     assert!(reply.try_recv().is_err());
     assert!(on_screen(&varde).contains(&refused));
 
@@ -2998,7 +2998,7 @@ fn apply_yours_refused_says_why_and_keep_editing_refuses_the_call() {
     );
     assert_eq!(varde.mcp.log[0].state, McpCallState::NotApplied);
     assert!(ask(&varde).is_none());
-    assert!(varde.screen.doc().unwrap().operation.extrude().is_some());
+    assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
     assert_eq!(feature_name(&varde, 0), "Sketch 1");
 }
 
@@ -3022,7 +3022,7 @@ fn a_started_tool_asks_and_apply_yours_leaves_the_sketch() {
     let name = feature_name(&varde, 2);
     assert_eq!(ask(&varde).unwrap().editing, format!("editing {name}"));
     panel(&mut varde, varde_view::McpPanel::ApplyYours);
-    assert!(varde.screen.doc().unwrap().sketch.is_none());
+    assert!(varde.screen.doc().unwrap().mode.sketch().is_none());
     assert_eq!(feature_name(&varde, 1), "Base");
     regenerate(&mut varde, &requests);
     assert_eq!(
@@ -3097,7 +3097,7 @@ fn a_popup_past_30_s_says_the_edit_was_cancelled() {
     assert!(ask(&varde).unwrap().cancelled);
     panel(&mut varde, varde_view::McpPanel::KeepEditing);
     assert!(ask(&varde).is_none());
-    assert!(varde.screen.doc().unwrap().operation.extrude().is_some());
+    assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
     // The design closing closes the popup with it.
     let _reply = calling(
         &mut varde,
@@ -3189,7 +3189,7 @@ fn queries_never_ask() {
     );
     assert!(!reply.is_error);
     assert!(ask(&varde).is_none());
-    assert!(varde.screen.doc().unwrap().operation.extrude().is_some());
+    assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
 }
 
 /// An opener refused while a panel is open (a combine can't start over
@@ -3202,7 +3202,7 @@ fn an_opener_refused_keeps_the_panels_baseline() {
     edit_extrude(&mut varde);
     extrude_distance(&mut varde, "7 mm");
     look(&mut varde, varde_view::Look::StartCombine);
-    assert!(varde.screen.doc().unwrap().operation.extrude().is_some());
+    assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
     let reply = calling(
         &mut varde,
         "a session",
@@ -3211,7 +3211,7 @@ fn an_opener_refused_keeps_the_panels_baseline() {
     );
     assert!(reply.try_recv().is_err());
     assert_eq!(ask(&varde).unwrap().editing, "editing Extrude 1");
-    assert!(varde.screen.doc().unwrap().operation.extrude().is_some());
+    assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
     assert_eq!(feature_name(&varde, 0), "Sketch 1");
 }
 
@@ -3240,7 +3240,7 @@ fn a_panel_opened_while_the_edit_queued_asks_at_its_turn() {
     regenerate(&mut varde, &requests);
     assert_eq!(ask(&varde).unwrap().editing, "editing Extrude 1");
     assert_eq!(feature_name(&varde, 0), "Sketch 1");
-    assert!(varde.screen.doc().unwrap().operation.extrude().is_some());
+    assert!(varde.screen.doc().unwrap().mode.extrude().is_some());
     panel(&mut varde, varde_view::McpPanel::ApplyYours);
     assert_eq!(committed_distance(&varde), "7 mm");
     regenerate(&mut varde, &requests);

@@ -112,7 +112,7 @@ is, so it sees the bodies as the features before it leave them:
 
 ## UI
 
-**The session** (`app/src/doc/combine.rs`, `Doc::operation` holding a
+**The session** (`app/src/doc/combine.rs`, `Doc::mode` holding a
 `CombineSession`) is started by `Look::StartCombine` (`B`, the toolbar's
 Combine button after Revolve, the rail's Modify set; again, or `Esc`,
 cancels it) or by editing a combine (`Look::EditFeature`: a

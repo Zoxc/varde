@@ -285,7 +285,7 @@ fn a_relink_while_the_users_edit_waits_keeps_it() {
     lane.answer(&mut doc);
     settle(&mut doc, &requests);
     lane.answer(&mut doc);
-    let session = doc.sketch.as_ref().unwrap();
+    let session = doc.mode.sketch().unwrap();
     assert!(session.refusal.is_none(), "{:?}", session.refusal);
     let now = sketch_of(&doc, feature);
     assert!(

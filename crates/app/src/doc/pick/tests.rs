@@ -160,10 +160,10 @@ fn a_face_listed_while_picking_a_plane_is_picked_for_the_sketch() {
         add: true,
     });
     assert!(doc.overlaps.is_none());
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     let session = doc
-        .sketch
-        .as_ref()
+        .mode
+        .sketch()
         .expect("a sketch on the bottom is entered");
     let document = doc.editor.document();
     let plane = match &document.feature(session.feature).unwrap().kind {
@@ -200,7 +200,7 @@ fn an_origin_plane_listed_while_picking_a_plane_is_hovered_and_picked() {
         add: false,
     });
     assert!(doc.overlaps.is_none());
-    let session = doc.sketch.as_ref().expect("a sketch on XY is entered");
+    let session = doc.mode.sketch().expect("a sketch on XY is entered");
     let document = doc.editor.document();
     let plane = match &document.feature(session.feature).unwrap().kind {
         varde_document::FeatureKind::Sketch { plane, .. } => plane,
@@ -267,7 +267,7 @@ fn the_cursor_doesnt_pick_in_a_sketch() {
     doc.look(Look::Hover(Some(pick)));
     let sketch = doc.editor.document().features()[0].id;
     doc.look(Look::EditFeature(sketch));
-    assert!(doc.sketch.is_some());
+    assert!(doc.mode.sketch().is_some());
     assert!(doc.model_picking().is_none());
     assert_eq!(doc.highlight(), None);
     doc.look(Look::Hover(Some(pick)));
@@ -610,7 +610,7 @@ fn a_draft_still_shown_after_the_extrude_doesnt_drop_the_selection() {
     };
     assert!(!walls(&doc), "the draft has the wall");
     doc.look(Look::Escape);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     assert!(doc.feed.shows_draft());
     assert!(!doc.picks());
     assert_eq!(doc.highlight(), None);

@@ -99,7 +99,7 @@ fn setup(tool: Tool) -> Setup {
 /// What the links of the sketch being edited come from, in order: what
 /// the tools have picked outside it.
 fn outside(doc: &Doc) -> Vec<OutsideRef> {
-    let Some(feature) = doc.sketch.as_ref().map(|session| session.feature) else {
+    let Some(feature) = doc.mode.sketch().map(|session| session.feature) else {
         return Vec::new();
     };
     match &doc.editor.document().feature(feature).unwrap().kind {
@@ -120,7 +120,7 @@ fn project_picks_earlier_sketches_edges_and_faces_and_refuses_the_rest() {
         after,
         ..
     } = setup(Tool::Project);
-    let edited = doc.sketch.as_ref().unwrap().feature;
+    let edited = doc.mode.sketch().unwrap().feature;
     assert!(doc.picks());
     let picking = doc.model_picking().unwrap();
     assert_eq!(picking.picks, Picks::All);
@@ -193,7 +193,7 @@ fn project_picks_earlier_sketches_edges_and_faces_and_refuses_the_rest() {
     });
     assert_eq!(outside(&doc), [wanted]);
     // The sketch's selection and the model's are left as they were.
-    assert!(doc.sketch.as_ref().unwrap().selection.is_empty());
+    assert!(doc.mode.sketch().unwrap().selection.is_empty());
     assert!(doc.pick.selection.is_empty());
     // Each pick is a link committed as it's made: `Esc` lets go of the
     // tool, keeping them, and the model isn't picked any more.
@@ -335,7 +335,7 @@ pub(super) fn settle(doc: &mut Answered, requests: &RefCell<Vec<Request>>) {
 
 /// The sketch being edited, as committed.
 fn edited(doc: &Doc) -> &Sketch {
-    let feature = doc.sketch.as_ref().unwrap().feature;
+    let feature = doc.mode.sketch().unwrap().feature;
     match &doc.editor.document().feature(feature).unwrap().kind {
         FeatureKind::Sketch { sketch, .. } => sketch,
         _ => panic!("not a sketch"),
@@ -527,7 +527,7 @@ fn a_second_click_while_the_first_is_with_the_solver_takes_it_back() {
 
 /// The links of the sketch being edited, as committed.
 fn edited_links(doc: &Doc) -> Vec<varde_sketch::Link> {
-    let feature = doc.sketch.as_ref().unwrap().feature;
+    let feature = doc.mode.sketch().unwrap().feature;
     match &doc.editor.document().feature(feature).unwrap().kind {
         FeatureKind::Sketch { sketch, .. } => sketch.links.clone(),
         _ => Vec::new(),

@@ -161,7 +161,7 @@ impl Doc {
     /// dragged to zero or past it reads zero, which its field refuses, so
     /// the model shows without it. An offset face's sign is its side.
     pub(super) fn drag_knob(&mut self, index: usize, value: f64, step: f64) {
-        let Some(session) = self.operation.motion() else {
+        let Some(session) = self.mode.motion() else {
             return;
         };
         let bounds = self.motion_bounds(session);
@@ -203,7 +203,7 @@ impl Doc {
         if kind == MotionKind::OffsetFace && text == varde_expr::format(0.0, units) {
             return;
         }
-        let Some(session) = self.operation.motion_mut() else {
+        let Some(session) = self.mode.motion_mut() else {
             return;
         };
         let mut field = session.fields[knob.field.index()].clone();
@@ -230,7 +230,7 @@ impl Doc {
     /// the feature itself).
     pub(super) fn follow_knob_anchor(&mut self) {
         let generation = self.editor.generation();
-        let Some(session) = self.operation.motion() else {
+        let Some(session) = self.mode.motion() else {
             return;
         };
         let faces = matches!(session.kind, MotionKind::Shell | MotionKind::Draft);
@@ -297,7 +297,7 @@ impl Doc {
                 normals,
             }
         };
-        if let Some(session) = self.operation.motion_mut() {
+        if let Some(session) = self.mode.motion_mut() {
             session.knob_anchor = Some(anchor);
         }
     }

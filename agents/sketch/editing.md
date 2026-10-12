@@ -4,7 +4,7 @@ Entering a sketch shows the Sketch tab, and leaving it shows the tab
 shown before (`Doc::panel_before_sketch`), unless Objects was picked in
 the sketch, which stays.
 
-The sketch being edited is `Doc::sketch`, a `SketchSession`
+The sketch being edited is `Doc::mode`'s `Sketch`, a `SketchSession`
 (`crates/app/src/doc/sketch.rs`): the feature, the tool in use (`Drawing`)
 or the Constrain tool, the selection (a `BTreeSet<Selectable>` shared by
 the viewport and the lists, see below), the item hovered in a list or by its glyph, a
@@ -36,7 +36,7 @@ the Save As answer syncs for that.
 
 **A new sketch** (`S`, the toolbar's or the rail's Sketch, enabled
 outside a sketch in a document that can be changed, an operation being
-set up dropped for it) first asks for its plane (`Look::PickPlane`, `Doc::picking_plane` holding a
+set up dropped for it) first asks for its plane (`Look::PickPlane`, `Doc::mode`'s `PickingPlane` holding a
 `PlanePick`): the toolbar offers XY, XZ and YZ (`Edit::PlanePicked`, keys `1`, `2`, `3`,
 `shortcut::plane_binding`),
 and the viewport picks flat

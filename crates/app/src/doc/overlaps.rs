@@ -122,7 +122,7 @@ impl Doc {
         let model = self.feed.model();
         let items = items(&list.items);
         let fits = match &items {
-            None => self.sketch.is_some(),
+            None => self.mode.sketch().is_some(),
             Some(items) => self.picks() && items.iter().all(|item| of_model(item, model)),
         };
         if !fits || list.items.is_empty() {
@@ -319,7 +319,7 @@ impl Doc {
         }
         // Picking a plane, a face or origin plane chosen is picked for the
         // sketch, which closes the list.
-        if let Some(picking) = &self.picking_plane {
+        if let Some(picking) = self.mode.picking_plane() {
             let picked = (listed.rows.get(row)).and_then(|row| match row.item {
                 OverlapItem::Model(Pick {
                     target: Picked::Face(face),
@@ -402,10 +402,10 @@ impl Doc {
             });
             return Some(ticks.collect());
         }
-        let own = self.operation.combine().is_some()
-            || self.operation.motion().is_some()
-            || self.measure.is_some()
-            || self.picking_plane.is_some();
+        let own = self.mode.combine().is_some()
+            || self.mode.motion().is_some()
+            || self.mode.measure().is_some()
+            || self.mode.picking_plane().is_some();
         if !own {
             let OverlapItems::Model(items) = &listed.list.items else {
                 return None;
@@ -435,11 +435,11 @@ impl Doc {
                 };
             }
             // As `look_at` hands a click on.
-            let ticked = if self.operation.combine().is_some() {
+            let ticked = if self.mode.combine().is_some() {
                 self.combine_has(pick)
-            } else if self.operation.motion().is_some() {
+            } else if self.mode.motion().is_some() {
                 return self.motion_tick(pick);
-            } else if self.measure.is_some() {
+            } else if self.mode.measure().is_some() {
                 self.measure_has(pick)
             } else {
                 // Picking a plane, a click on a face takes it: none is.
@@ -464,7 +464,7 @@ impl Doc {
     /// sketch's) picks it alone, never adding it to others: picking a
     /// plane, and an origin plane anywhere ([`OverlapTick::only`]).
     fn picks_only(&self, item: Option<OverlapItem>) -> bool {
-        self.picking_plane.is_some() || matches!(item, Some(OverlapItem::Origin(_)))
+        self.mode.picking_plane().is_some() || matches!(item, Some(OverlapItem::Origin(_)))
     }
 
     /// Which rows [`Doc::overlap_ticks`] ticks.
@@ -493,11 +493,11 @@ impl Doc {
     /// Lets go of what a row of the list hovered: the viewport says what
     /// it's over again as the cursor moves.
     fn unhover_overlap(&mut self) {
-        if self.sketch.is_some() {
+        if self.mode.sketch().is_some() {
             self.hover_item(None);
         }
         // With Project or Intersect in a sketch, the model's hover too.
-        if self.sketch.is_none() || self.picks_outside() {
+        if self.mode.sketch().is_none() || self.picks_outside() {
             self.hover(None);
         }
         self.plane_hover = None;

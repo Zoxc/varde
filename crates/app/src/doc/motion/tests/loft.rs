@@ -145,7 +145,7 @@ fn drafted(plates: &Plates) -> Option<Loft> {
 
 /// The loft being set up.
 fn set_up(plates: &Plates) -> &crate::doc::motion::loft::LoftSetup {
-    &plates.doc.operation.motion().expect("a session").loft
+    &plates.doc.mode.motion().expect("a session").loft
 }
 
 /// Picks the only region of `sketch` as a section.
@@ -202,7 +202,7 @@ fn the_rail_s_loft_picks_sections_in_order_and_add_anyway_keeps_it() {
     let plates = &mut lofted.plates;
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartLoft);
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Loft);
     assert!(session.bodies.is_empty(), "a loft picks no bodies");
     assert_eq!(picking(plates), MotionPick::Regions);
@@ -264,7 +264,7 @@ fn the_rail_s_loft_picks_sections_in_order_and_add_anyway_keeps_it() {
     assert_eq!(plates.doc.editor.document().features().len(), features);
 
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert!(matches!(kind, FeatureKind::Loft(_)));
     let document = plates.doc.editor.document();
@@ -553,7 +553,7 @@ fn two_squares_preview_and_ok_adds_one_undo_step() {
     assert_eq!(plates.doc.feed.draft_error(), None);
     assert!(boxed(plates, plate, [15.0, -5.0, 0.0], [25.0, 5.0, 10.0]));
     key_in(&mut plates.doc, super::enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (_, kind) = plates.last_feature();
     assert!(matches!(kind, FeatureKind::Loft(_)));
     plates.answer();
@@ -588,7 +588,7 @@ fn editing_a_loft_from_the_timeline_cancel_and_undo() {
     let before = plates.doc.editor.document().clone();
 
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(
         (session.kind, session.feature),
         (MotionKind::Loft, Some(id))
@@ -608,13 +608,13 @@ fn editing_a_loft_from_the_timeline_cancel_and_undo() {
     assert!(view.sections.iter().all(|section| !section.gone));
     assert_eq!(view.sections[1].shape.dot(), Some(DVec2::new(25.0, 5.0)));
     plates.motion(MotionLook::Cancel);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), before);
 
     plates.doc.look(Look::EditFeature(id));
     plates.answer();
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), before, "nothing changed");
 
     plates.doc.look(Look::EditFeature(id));
@@ -967,7 +967,7 @@ fn a_loft_of_deferred_sketches_through_undo_and_redo() {
     plates.answer();
     plates.doc.update(Edit::CommitMotion);
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), before, "nothing changed");
 }
 

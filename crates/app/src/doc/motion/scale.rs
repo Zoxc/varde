@@ -361,7 +361,7 @@ impl Doc {
     /// model shown, where they aren't marked yet, each on the body
     /// drawing its body there.
     pub(super) fn follow_scale(&mut self) {
-        let Some(session) = self.operation.motion_mut() else {
+        let Some(session) = self.mode.motion_mut() else {
             return;
         };
         if session.kind != MotionKind::Scale {
@@ -373,7 +373,7 @@ impl Doc {
 
     /// The edge of the scale being set up to light in the model shown.
     pub(super) fn scale_lit(&self) -> Vec<Picked> {
-        match self.operation.motion() {
+        match self.mode.motion() {
             Some(session) if session.kind == MotionKind::Scale => {
                 session.scale.lit(self.feed.model())
             }
@@ -387,7 +387,7 @@ impl Doc {
     /// panel, and whether it's straight along a world axis offers "Along
     /// its axis only".
     pub(crate) fn scale_inspect(&self) -> Option<(InspectPick, Option<InspectPick>)> {
-        let session = self.operation.motion()?;
+        let session = self.mode.motion()?;
         if session.kind != MotionKind::Scale || session.scale.mode != ScaleMode::EdgeLength {
             return None;
         }

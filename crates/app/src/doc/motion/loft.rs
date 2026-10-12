@@ -394,7 +394,7 @@ impl Doc {
     /// be changed ([`loft_message`]).
     pub(super) fn loft_look(&mut self, message: MotionLook) {
         let document = self.editor.document();
-        let Some(session) = self.operation.motion_mut() else {
+        let Some(session) = self.mode.motion_mut() else {
             return;
         };
         let refused = match message {
@@ -451,7 +451,7 @@ impl Doc {
     /// Notes what's gone of the loft being set up after a change to it.
     fn prune_loft_now(&mut self) {
         let document = self.editor.document();
-        if let Some(session) = self.operation.motion_mut() {
+        if let Some(session) = self.mode.motion_mut() {
             let index = session.index_in(document);
             session.prune_loft(document, index);
         }

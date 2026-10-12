@@ -131,9 +131,7 @@ pub(super) fn letter(c: &str) -> keyboard::Key {
 
 /// The tool in use.
 pub(super) fn drawing(doc: &Doc) -> Option<&Drawing> {
-    doc.sketch
-        .as_ref()
-        .and_then(|session| session.tool.as_ref())
+    doc.mode.sketch().and_then(|session| session.tool.as_ref())
 }
 
 /// The ends of each line, by where they are.
@@ -264,11 +262,11 @@ fn escape_and_a_double_click_end_an_open_chain() {
     doc.look(Look::Escape);
     assert!(drawing(&doc).is_none());
     assert_eq!(
-        doc.sketch.as_ref().map(|session| session.feature),
+        doc.mode.sketch().map(|session| session.feature),
         Some(feature)
     );
     doc.look(Look::Escape);
-    assert!(doc.sketch.is_none());
+    assert!(doc.mode.sketch().is_none());
 }
 
 #[test]
@@ -421,7 +419,7 @@ fn tools_are_taken_up_and_put_down() {
     // Outside a sketch, or read-only, there are none.
     doc.look(Look::FinishSketch);
     doc.look(Look::SelectTool(Tool::Line));
-    assert!(doc.sketch.is_none());
+    assert!(doc.mode.sketch().is_none());
     let mut editor = Editor::new(Document::default());
     editor
         .apply(
@@ -491,8 +489,8 @@ pub(super) fn with_shapes() -> (Answered, [Id; 5]) {
 }
 
 pub(super) fn selection(doc: &Doc) -> Vec<Selectable> {
-    doc.sketch
-        .as_ref()
+    doc.mode
+        .sketch()
         .unwrap()
         .selection
         .iter()
@@ -561,7 +559,7 @@ fn a_row_of_the_overlaps_listed_is_hovered_and_chosen() {
         at: DVec2::ZERO,
         items: varde_view::OverlapItems::Sketch(ids),
     };
-    let hovered = |doc: &Doc| doc.sketch.as_ref().unwrap().hovered;
+    let hovered = |doc: &Doc| doc.mode.sketch().unwrap().hovered;
     doc.look(Look::ClickGeometry {
         hit: Some(Selectable::Item(line)),
         add: false,
@@ -602,7 +600,7 @@ fn a_row_of_the_overlaps_listed_is_hovered_and_chosen() {
         Selectable::Item(line),
     ])));
     doc.look(Look::Escape);
-    assert!(doc.overlaps.is_none() && doc.sketch.is_some());
+    assert!(doc.overlaps.is_none() && doc.mode.sketch().is_some());
     assert_eq!(selection(&doc), [a]);
     // With `Ctrl` held, chosen adds, the list kept open and its row
     // hovered; again it takes it out; its tick does the same.
@@ -647,7 +645,7 @@ fn space_clears_the_selection_in_a_sketch_and_the_timeline_s_outside() {
     });
     doc.key(space());
     assert!(selection(&doc).is_empty());
-    let feature = doc.sketch.as_ref().unwrap().feature;
+    let feature = doc.mode.sketch().unwrap().feature;
     doc.look(Look::FinishSketch);
     assert_eq!(doc.selected_feature, Some(feature));
     doc.key(space());
@@ -667,13 +665,13 @@ fn space_puts_down_the_tool_in_a_sketch() {
     });
     doc.look(Look::SelectTool(Tool::Line));
     doc.key(space());
-    let session = doc.sketch.as_ref().unwrap();
+    let session = doc.mode.sketch().unwrap();
     assert!(session.tool.is_none());
     // The selection stays, and the next press clears it.
     assert_eq!(selection(&doc), [line]);
     doc.look(Look::ToggleConstrain);
     doc.key(space());
-    assert!(!doc.sketch.as_ref().unwrap().constraining);
+    assert!(!doc.mode.sketch().unwrap().constraining);
     doc.key(space());
     assert!(selection(&doc).is_empty());
 }
@@ -847,7 +845,7 @@ fn the_geometry_list_folds_and_unfolds() {
         add: false,
     });
     doc.update(Edit::DeleteSelection);
-    assert!(!doc.sketch.as_ref().unwrap().expanded.contains(&circle));
+    assert!(!doc.mode.sketch().unwrap().expanded.contains(&circle));
 }
 
 #[test]
@@ -1171,7 +1169,10 @@ fn escape_or_an_undo_puts_a_drag_back() {
     };
     drag(&mut doc);
     doc.look(Look::Escape);
-    assert!(doc.sketch.is_some(), "Escape only puts the drag back");
+    assert!(
+        doc.mode.sketch().is_some(),
+        "Escape only puts the drag back"
+    );
     assert_eq!(*shown(&doc), before);
     doc.update(Edit::DropGeometry);
     assert_eq!(*sketch(&doc), before);
@@ -1221,7 +1222,7 @@ fn nothing_is_dragged_with_a_tool_or_read_only() {
         to: at(10.0, 4.0),
         target: None,
     });
-    assert!(doc.sketch.as_ref().unwrap().drag.is_none());
+    assert!(doc.mode.sketch().unwrap().drag.is_none());
     doc.look(Look::SelectTool(Tool::Point));
     doc.read_only = Some("read-only".to_owned());
     doc.look(Look::DragGeometry {
@@ -1230,7 +1231,7 @@ fn nothing_is_dragged_with_a_tool_or_read_only() {
         to: at(10.0, 4.0),
         target: None,
     });
-    assert!(doc.sketch.as_ref().unwrap().drag.is_none());
+    assert!(doc.mode.sketch().unwrap().drag.is_none());
     // Selecting still works.
     doc.look(Look::ClickGeometry {
         hit: Some(Selectable::Item(b)),
@@ -1312,7 +1313,7 @@ fn cancelling_a_drag_that_moved_nothing_stays_in_the_sketch() {
     let before = sketch(&doc).clone();
     // Nothing dragged yet, as when the cursor never met the plane.
     doc.look(Look::CancelDrag);
-    assert!(doc.sketch.is_some());
+    assert!(doc.mode.sketch().is_some());
     doc.look(Look::DragGeometry {
         id: Selectable::Item(b),
         from: at(10.0, 0.0),
@@ -1320,7 +1321,7 @@ fn cancelling_a_drag_that_moved_nothing_stays_in_the_sketch() {
         target: None,
     });
     doc.look(Look::CancelDrag);
-    assert!(doc.sketch.is_some());
+    assert!(doc.mode.sketch().is_some());
     assert_eq!(*shown(&doc), before);
     doc.update(Edit::DropGeometry);
     assert_eq!(*sketch(&doc), before);
@@ -1329,7 +1330,7 @@ fn cancelling_a_drag_that_moved_nothing_stays_in_the_sketch() {
 #[test]
 fn replacing_the_document_lets_go_of_ids_in_the_sketch() {
     let (mut doc, [a, b, ..]) = with_shapes();
-    let feature = doc.sketch.as_ref().unwrap().feature;
+    let feature = doc.mode.sketch().unwrap().feature;
     // The same ids, which in a document from elsewhere may name anything.
     let mut moved = sketch(&doc).clone();
     for point in &mut moved.points {
@@ -1549,7 +1550,7 @@ fn a_sketch_on_a_face_is_edited_once_placed() {
         }
     ));
     doc.look(Look::EditFeature(feature));
-    assert!(doc.sketch.is_none());
+    assert!(doc.mode.sketch().is_none());
     assert!(doc.sketch_state().is_none());
     assert_eq!(
         doc.notice.as_deref(),
@@ -1568,7 +1569,7 @@ fn a_sketch_on_a_face_is_edited_once_placed() {
         plane: varde_document::Plane::Origin(OriginPlane::XZ),
     });
     doc.look(Look::EditFeature(feature));
-    assert!(doc.sketch.is_some());
+    assert!(doc.mode.sketch().is_some());
     assert_eq!(
         doc.sketch_state().unwrap().placement,
         OriginPlane::XZ.placement()
@@ -1732,7 +1733,7 @@ fn an_empty_sketch_keeps_the_view_close() {
 #[test]
 fn moving_up_the_list_hovers_the_row_entered() {
     let (mut doc, [a, b, ..]) = with_shapes();
-    let hovered = |doc: &Doc| doc.sketch.as_ref().unwrap().hovered;
+    let hovered = |doc: &Doc| doc.mode.sketch().unwrap().hovered;
     doc.look(Look::HoverItem(Some(Selectable::Item(b))));
     // Moving up a row, the one entered tells it before the one left.
     doc.look(Look::HoverItem(Some(Selectable::Item(a))));

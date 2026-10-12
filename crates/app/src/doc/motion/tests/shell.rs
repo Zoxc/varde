@@ -62,7 +62,7 @@ fn shell_picks_and_toggles_faces_and_add_anyway_keeps_the_unbuilt_shell() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartShell);
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Shell);
     assert_eq!(session.bodies, [plate], "the only body");
     assert_eq!(picking(&plates), MotionPick::Faces);
@@ -160,7 +160,7 @@ fn shell_picks_and_toggles_faces_and_add_anyway_keeps_the_unbuilt_shell() {
     assert_eq!(plates.doc.editor.document().features().len(), features);
 
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     let FeatureKind::Shell(stored) = &kind else {
         panic!("a shell");
@@ -261,9 +261,9 @@ fn the_hollow_is_previewed_and_ok_adds_one_undo_step() {
     plates.answer();
     assert!(plates.doc.motion_ready());
 
-    let shell = (plates.doc.operation.motion()).and_then(|session| session.shell());
+    let shell = (plates.doc.mode.motion()).and_then(|session| session.shell());
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert_eq!(Some(kind), shell.map(FeatureKind::Shell));
     assert_eq!(plates.doc.selected_feature, Some(id));
@@ -286,7 +286,7 @@ fn a_shell_s_faces_are_all_on_one_body() {
     let mut plates = boxes(true);
     let [first, second, _] = plates.bodies;
     plates.doc.look(Look::StartShell);
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert!(session.bodies.is_empty(), "two bodies: none to begin with");
     assert!(shows(
         &plates,
@@ -299,12 +299,12 @@ fn a_shell_s_faces_are_all_on_one_body() {
         body: second,
         add: false,
     });
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [second]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [second]);
     assert_eq!(drafted(&plates).unwrap().body, second);
     // A face of the other body moves it there.
     let pick = top(&plates, first);
     click(&mut plates, pick);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [first]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [first]);
     assert_eq!(faces(&plates).len(), 1);
     let theirs = face_pick(
         &plates,
@@ -324,7 +324,7 @@ fn a_shell_s_faces_are_all_on_one_body() {
         body: second,
         add: false,
     });
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [first]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [first]);
     assert_eq!(
         plates.doc.notice.as_deref(),
         Some("A shell's faces are all on one body: take them out to pick another")
@@ -332,11 +332,11 @@ fn a_shell_s_faces_are_all_on_one_body() {
     // Its face out, the body stays: a closed shell of it.
     let face = faces(&plates)[0];
     plates.motion(MotionLook::DropFace(face));
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [first]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [first]);
     assert!(drafted(&plates).unwrap().open.is_empty());
     assert!(plates.doc.takes_reference(theirs));
     click(&mut plates, theirs);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [second]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [second]);
 
     plates.motion(MotionLook::Picking(MotionPick::Faces));
     assert_eq!(picking(&plates), MotionPick::Nothing);
@@ -375,7 +375,7 @@ fn editing_a_shell_from_the_timeline_cancel_and_undo() {
     };
     assert_eq!(stored.open.len(), 1);
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Shell);
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.faces.refs, stored.open);
@@ -390,7 +390,7 @@ fn editing_a_shell_from_the_timeline_cancel_and_undo() {
     );
     plates.input(MotionField::Thickness, "1");
     plates.motion(MotionLook::Cancel);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), before);
 
     plates.doc.look(Look::EditFeature(id));
@@ -399,7 +399,7 @@ fn editing_a_shell_from_the_timeline_cancel_and_undo() {
     // OK waits on the stand-in's failure; Add anyway sets it.
     plates.answer();
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let FeatureKind::Shell(set) = &plates.doc.editor.document().feature(id).unwrap().kind else {
         panic!("a shell");
     };
@@ -475,10 +475,10 @@ fn shell_takes_the_face_selected_and_backs_out() {
     });
     plates.doc.look(Look::StartShell);
     assert_eq!(faces(&plates).len(), 1);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [second]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [second]);
     assert!(drafted(&plates).is_some());
     plates.doc.look(Look::StartShell);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
 }
 
 /// Faces selected on two bodies: the shell takes those on the first
@@ -506,7 +506,7 @@ fn faces_selected_on_two_bodies_give_the_first_one_s_body() {
     let picked = faces(&plates);
     assert_eq!(picked.len(), 2);
     assert!(picked.iter().all(|face| face.body == second));
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [second]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [second]);
     assert_eq!(plates.doc.faces_lit().len(), 2);
 }
 
@@ -535,9 +535,9 @@ fn faces_follow_their_body_a_redone_combine_merges() {
         body: second,
         add: false,
     });
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [second]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [second]);
     plates.doc.update(Edit::Redo);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [first]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [first]);
     assert_eq!(drafted(&plates).expect("a closed shell").body, first);
     plates.answer();
     plates.doc.update(Edit::Undo);
@@ -553,7 +553,7 @@ fn faces_follow_their_body_a_redone_combine_merges() {
     click(&mut plates, theirs);
     assert!(faces(&plates).iter().all(|face| face.body == second));
     plates.doc.update(Edit::Redo);
-    let session = plates.doc.operation.motion().expect("still set up");
+    let session = plates.doc.mode.motion().expect("still set up");
     assert_eq!(session.bodies, [first], "the box followed on to the other");
     assert!(faces(&plates).iter().all(|face| face.body == first));
     assert!(plates.doc.motion_ready());

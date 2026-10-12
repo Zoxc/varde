@@ -141,7 +141,7 @@ fn a_rectangle_by_label_takes_a_dimension() {
     // Four points, four held by H/V, one length.
     assert_eq!(data["degrees_of_freedom"], json!(3));
     assert!(data.get("references").is_none(), "{data}");
-    assert!(varde.screen.doc().unwrap().sketch.is_none());
+    assert!(varde.screen.doc().unwrap().mode.sketch().is_none());
     assert_eq!(
         varde.mcp.log.back().unwrap().args,
         "Sketch 2: rectangle, dimension"
@@ -409,7 +409,7 @@ fn the_users_open_sketch_is_closed_or_asked() {
     let (mut varde, requests, mut lane) = on_xy();
     let sketch = feature_id(&varde, 2);
     look(&mut varde, varde_view::Look::EditFeature(sketch));
-    assert!(varde.screen.doc().unwrap().sketch.is_some());
+    assert!(varde.screen.doc().unwrap().mode.sketch().is_some());
     let (reply, state) = draw(
         &mut varde,
         &requests,
@@ -417,7 +417,7 @@ fn the_users_open_sketch_is_closed_or_asked() {
         json!([{ "op": "point", "at": [1, 2] }]),
     );
     assert_eq!(state, McpCallState::Applied, "{}", reply.text);
-    assert!(varde.screen.doc().unwrap().sketch.is_none());
+    assert!(varde.screen.doc().unwrap().mode.sketch().is_none());
     assert_eq!(drawn(&varde).points.len(), 1);
 
     // A line half drawn: the popup asks, the call waiting.
@@ -568,7 +568,7 @@ fn the_users_line_from_their_waiting_point_behind_the_clients_queued_edit_is_ref
     );
     let reply = calling(&mut varde, "a session", 50, call);
     look(&mut varde, varde_view::Look::EditFeature(sketch));
-    assert!(varde.screen.doc().unwrap().sketch.is_some());
+    assert!(varde.screen.doc().unwrap().mode.sketch().is_some());
     look(
         &mut varde,
         varde_view::Look::SelectTool(varde_view::Tool::Point),
@@ -577,7 +577,7 @@ fn the_users_line_from_their_waiting_point_behind_the_clients_queued_edit_is_ref
     place_point(&mut varde, 0.0, 0.0);
     let theirs = {
         let doc = varde.screen.doc().unwrap();
-        let waiting = doc.sketch.as_ref().unwrap().waiting.as_ref().unwrap();
+        let waiting = doc.mode.sketch().unwrap().waiting.as_ref().unwrap();
         (waiting.sketch.points.iter())
             .find(|point| point.at == glam::DVec2::ZERO)
             .unwrap()
@@ -620,7 +620,7 @@ fn the_users_line_from_their_waiting_point_behind_the_clients_queued_edit_is_ref
     assert_eq!(sketch.points.len(), 3, "{sketch:#?}");
     assert!(sketch.curves.is_empty(), "{sketch:#?}");
     let doc = varde.screen.doc().unwrap();
-    let refused = (doc.sketch.as_ref())
+    let refused = (doc.mode.sketch())
         .and_then(|session| session.refusal.as_ref())
         .or(doc.refused_edit.as_ref().map(|(_, refusal)| refusal));
     assert!(

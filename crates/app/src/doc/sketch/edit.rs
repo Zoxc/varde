@@ -35,18 +35,18 @@ impl Doc {
         &self,
     ) -> Option<(&Sketch, &std::collections::BTreeSet<Selectable>)> {
         let sketch = self.editable_sketch()?;
-        Some((sketch, &self.sketch.as_ref()?.selection))
+        Some((sketch, &self.mode.sketch()?.selection))
     }
 
     /// A copy of the tool in use, to change and put back with
     /// [`Doc::set_drawing`].
     pub(super) fn drawing(&self) -> Option<Drawing> {
-        self.sketch.as_ref()?.tool.clone()
+        self.mode.sketch()?.tool.clone()
     }
 
     /// Shows why an edit of the sketch being edited can't be made.
     pub(super) fn refuse(&mut self, why: varde_sketch::EditError) {
-        if let Some(session) = &self.sketch {
+        if let Some(session) = self.mode.sketch() {
             self.edit_error = Some(EditError::Sketch(session.feature, why));
         }
     }
@@ -64,7 +64,7 @@ impl Doc {
     pub(crate) fn tool_click(&mut self, click: ToolClick) {
         // The viewport says where the next click snaps once the cursor
         // moves.
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.snap = None;
         }
         if self.drawing_field().is_some() {
@@ -106,7 +106,7 @@ impl Doc {
         let design = self.editor.document().design();
         let step = step(sketch, &drawing, click, &design);
         // The fields of the shape the click leaves show by it.
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.aim = Some(click);
         }
         match step {
@@ -167,7 +167,7 @@ impl Doc {
 
     /// Puts `drawing` in place of the tool in use.
     pub(super) fn set_drawing(&mut self, drawing: Drawing) {
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.tool = Some(drawing);
         }
     }
@@ -194,8 +194,8 @@ impl Doc {
             return;
         };
         if self
-            .sketch
-            .as_ref()
+            .mode
+            .sketch()
             .is_some_and(|session| session.tool.is_some())
         {
             return;
@@ -211,8 +211,8 @@ impl Doc {
         }
         let (generation, revision) = (self.editor.generation(), self.editor.revision());
         let going = self
-            .sketch
-            .as_ref()
+            .mode
+            .sketch()
             .and_then(|session| session.drag.as_ref())
             .filter(|drag| drag.generation == generation)
             .map(|drag| (drag.session, drag.start.clone(), drag.solution.clone()));
@@ -233,7 +233,7 @@ impl Doc {
                 params: self.editor.document().params_shared(),
             });
         }
-        if let Some(sketch) = &mut self.sketch {
+        if let Some(sketch) = self.mode.sketch_mut() {
             sketch.refusal = None;
             sketch.drag = Some(Drag {
                 generation,
@@ -254,7 +254,11 @@ impl Doc {
     /// put through the point it snapped to ([`rim_snapped`]): on that
     /// solution, still one step, or after the move where there's none.
     pub(crate) fn drop_geometry(&mut self) {
-        let Some(drag) = self.sketch.as_mut().and_then(|session| session.drag.take()) else {
+        let Some(drag) = self
+            .mode
+            .sketch_mut()
+            .and_then(|session| session.drag.take())
+        else {
             return;
         };
         let tie = match drag.edit {
@@ -288,7 +292,7 @@ impl Doc {
     /// [`Sketch::delete`], with every link any of whose geometry is
     /// selected, whole.
     pub(crate) fn delete_selection(&mut self) {
-        let Some(session) = &self.sketch else {
+        let Some(session) = self.mode.sketch() else {
             return;
         };
         let selected: Vec<_> = session.selection.iter().copied().collect();
@@ -298,7 +302,7 @@ impl Doc {
     /// Deletes the point or curve `id` from its row's context menu: the whole selection if it's among it,
     /// as `Delete` would, else it alone.
     pub(crate) fn delete_item(&mut self, id: Selectable) {
-        let Some(session) = &self.sketch else {
+        let Some(session) = self.mode.sketch() else {
             return;
         };
         if session.selection.contains(&id) {
@@ -367,7 +371,7 @@ impl Doc {
         let Some(sketch) = self.editable_sketch() else {
             return;
         };
-        let Some(session) = &self.sketch else {
+        let Some(session) = self.mode.sketch() else {
             return;
         };
         if let Some(drawing) = session.tool.as_ref().filter(|drawing| drawing.tool.draws()) {
@@ -461,7 +465,7 @@ impl Doc {
         };
         let edit = SketchEdit::constrain(sketch, constraints);
         if self.propose(edit)
-            && let Some(session) = &mut self.sketch
+            && let Some(session) = self.mode.sketch_mut()
             && session.constraining
         {
             session.selection.clear();

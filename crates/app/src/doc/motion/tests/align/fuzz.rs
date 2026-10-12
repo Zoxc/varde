@@ -80,7 +80,7 @@ fn on_face(index: &PickIndex, face: u32) -> DVec3 {
 fn random_pick(plates: &Plates, rng: &mut Rng) -> Option<Pick> {
     let index = plates.doc.feed.pick_index();
     let picking = index.picking();
-    let session = plates.doc.operation.motion();
+    let session = plates.doc.mode.motion();
     let moved = session.and_then(|session| session.bodies.first().copied());
     let side = match session.map(|session| session.picking) {
         Some(MotionPick::Align(slot)) => Some(slot.side),
@@ -159,7 +159,7 @@ fn random_slot(rng: &mut Rng) -> AlignSlot {
 
 /// Holds the session, if it's an align's, to what the module's docs say.
 fn check_session(plates: &Plates, what: &str) {
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     if session.kind != MotionKind::Align {
@@ -239,7 +239,7 @@ fn check_session(plates: &Plates, what: &str) {
 /// a face by its key, an edge by its keys, each on the body drawing the
 /// reference's body.
 fn check_lit(plates: &Plates, what: &str) {
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     let index = plates.doc.feed.pick_index();
@@ -305,7 +305,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
         return;
     };
     plates.doc.look(Look::EditFeature(id));
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         // Not editable now (the panel can't open).
         return;
     };
@@ -314,7 +314,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
     let revision = plates.doc.editor.revision();
     let document = plates.doc.editor.document().clone();
     plates.doc.update(Edit::CommitMotion);
-    if plates.doc.operation.motion().is_none() {
+    if plates.doc.mode.motion().is_none() {
         assert_eq!(plates.doc.editor.revision(), revision, "{what}: wrote");
         assert_eq!(*plates.doc.editor.document(), document, "{what}");
     }
@@ -353,7 +353,7 @@ fn run(seed: u64, steps: usize) {
     for step in 0..steps {
         let what = format!("seed {seed} step {step}");
         // Sessions are started often, and left rarely, so they get far.
-        let open = plates.doc.operation.motion().is_some();
+        let open = plates.doc.mode.motion().is_some();
         let roll = match rng.below(4) {
             0 if !open => 0,
             _ => rng.below(42),
@@ -400,7 +400,7 @@ fn run(seed: u64, steps: usize) {
             20 if rng.below(2) == 0 => plates.doc.update(Edit::Undo),
             21 if rng.below(2) == 0 => plates.doc.update(Edit::Redo),
             22 => {
-                let before = plates.doc.operation.motion().and_then(|session| {
+                let before = plates.doc.mode.motion().and_then(|session| {
                     let ready =
                         plates.doc.motion_ready() && plates.doc.feed.draft_error().is_none();
                     (ready && session.kind == MotionKind::Align)
@@ -409,7 +409,7 @@ fn run(seed: u64, steps: usize) {
                 plates.doc.update(Edit::CommitMotion);
                 if let Some((edited, Some(align))) = before {
                     assert!(
-                        plates.doc.operation.motion().is_none(),
+                        plates.doc.mode.motion().is_none(),
                         "{what}: not committed: {:?}",
                         plates.doc.edit_error
                     );

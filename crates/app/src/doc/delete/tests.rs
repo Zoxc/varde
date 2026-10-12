@@ -334,7 +334,7 @@ fn a_cut(boss: bool) -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
             },
         );
         doc.update(Edit::CommitExtrude);
-        assert!(doc.operation.extrude().is_none());
+        assert!(doc.mode.extrude().is_none());
         crate::tests::answer(&mut doc, &requests);
         assert_eq!(doc.editor.document().bodies().len(), 2);
     }
@@ -344,7 +344,7 @@ fn a_cut(boss: bool) -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
     doc.update(Edit::CommitExtrude);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     doc.sync();
     let cut = doc.editor.document().features().last().unwrap().id;
     (doc, requests, cut)

@@ -28,7 +28,7 @@ pub(super) fn shows(plates: &Plates, wanted: &str) -> bool {
 }
 
 pub(super) fn picking(plates: &Plates) -> MotionPick {
-    plates.doc.operation.motion().expect("a session").picking
+    plates.doc.mode.motion().expect("a session").picking
 }
 
 /// The chamfer the last request previews, if it previews one.
@@ -43,7 +43,7 @@ fn drafted(plates: &Plates) -> Option<Chamfer> {
 pub(super) fn edges(plates: &Plates) -> Vec<varde_document::EdgeRef> {
     plates
         .doc
-        .operation
+        .mode
         .motion()
         .expect("a session")
         .blend
@@ -129,7 +129,7 @@ fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_chamfer() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
     key_in(&mut plates.doc, character("c"));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Chamfer);
     assert!(session.bodies.is_empty(), "its body is its edges'");
     assert_eq!(picking(&plates), MotionPick::Edges);
@@ -162,11 +162,11 @@ fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_chamfer() {
     // click on it again takes it out.
     plates.click_at(plate, Picked::Face(top), DVec3::new(0.0, 15.0, 10.0));
     assert_eq!(plates.doc.notice, None);
-    assert_eq!(plates.doc.operation.motion().unwrap().faces.refs.len(), 1);
+    assert_eq!(plates.doc.mode.motion().unwrap().faces.refs.len(), 1);
     assert!(shows(&plates, "Face 1"));
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     plates.click_at(plate, Picked::Face(top), DVec3::new(0.0, 15.0, 10.0));
-    assert!(plates.doc.operation.motion().unwrap().faces.refs.is_empty());
+    assert!(plates.doc.mode.motion().unwrap().faces.refs.is_empty());
     assert!(!shows(&plates, "Face 1"));
 
     // The front edge hovered lights; clicked, it's picked, lit as
@@ -177,7 +177,7 @@ fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_chamfer() {
     assert!(!highlight.is_empty());
     click_edge(&mut plates, plate, FRONT);
     assert_eq!(edges(&plates).len(), 1);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     assert_eq!(plates.doc.blend_lit(), [front.target]);
     assert!(shows(&plates, "Edge 1"));
     assert!(shows(&plates, "60 mm"));
@@ -232,7 +232,7 @@ fn c_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_chamfer() {
     assert_eq!(plates.doc.editor.document().features().len(), features);
 
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     let FeatureKind::Chamfer(stored) = &kind else {
         panic!("a chamfer");
@@ -344,7 +344,7 @@ fn the_types_flip_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     assert!(shows(&plates, "1 edge · Equal · 1 mm"));
 
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (_, kind) = plates.last_feature();
     assert_eq!(kind, FeatureKind::Chamfer(chamfer));
     plates.answer();
@@ -360,7 +360,7 @@ fn the_types_flip_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     let edge = edges(&plates)[0];
     plates.motion(MotionLook::DropEdge(edge));
     assert!(edges(&plates).is_empty());
-    assert!(plates.doc.operation.motion().unwrap().bodies.is_empty());
+    assert!(plates.doc.mode.motion().unwrap().bodies.is_empty());
     assert!(shows(&plates, "pick the edges to chamfer"));
 }
 
@@ -409,7 +409,7 @@ fn a_chamfer_s_edges_are_all_on_one_body() {
         body: right,
         add: false,
     });
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     // With the plate's edge out, the disc's rim is taken, Ø10 beside it.
     let edge = edges(&plates)[0];
     plates.motion(MotionLook::DropEdge(edge));
@@ -419,7 +419,7 @@ fn a_chamfer_s_edges_are_all_on_one_body() {
         add: false,
         double: false,
     });
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [right]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [right]);
     assert!(shows(&plates, "Ø10 mm"));
     // The Edges field clicked stops picking, and again starts.
     plates.motion(MotionLook::Picking(MotionPick::Edges));
@@ -461,7 +461,7 @@ fn editing_a_chamfer_from_the_timeline_cancel_and_undo() {
         panic!("a chamfer");
     };
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Chamfer);
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.blend.edges.refs, stored.edges);
@@ -476,7 +476,7 @@ fn editing_a_chamfer_from_the_timeline_cancel_and_undo() {
     );
     plates.input(MotionField::ChamferDistance, "2");
     plates.motion(MotionLook::Cancel);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), before);
 
     plates.doc.look(Look::EditFeature(id));
@@ -484,7 +484,7 @@ fn editing_a_chamfer_from_the_timeline_cancel_and_undo() {
     // OK waits on the stand-in's failure; Add anyway sets it.
     plates.answer();
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let FeatureKind::Chamfer(set) = &plates.doc.editor.document().feature(id).unwrap().kind else {
         panic!("a chamfer");
     };
@@ -559,7 +559,7 @@ fn chamfer_takes_the_edges_selected_and_c_backs_out() {
     assert_eq!(edges(&plates).len(), 2);
     assert!(drafted(&plates).is_some());
     key_in(&mut plates.doc, character("c"));
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
 }
 
 /// A slot 10 long and 6 wide (lines joined by half circles they run on

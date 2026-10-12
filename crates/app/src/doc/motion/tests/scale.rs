@@ -41,7 +41,7 @@ fn plate() -> (Plates, BodyId) {
 }
 
 fn picking(plates: &Plates) -> MotionPick {
-    plates.doc.operation.motion().expect("a session").picking
+    plates.doc.mode.motion().expect("a session").picking
 }
 
 /// The scale the last request previews, if it previews one.
@@ -135,7 +135,7 @@ fn a_plate_scaled_by_two_about_the_origin_and_ok() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartScale);
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Scale);
     // The only body is the one scaled, about the origin to begin with.
     assert_eq!(session.bodies, [plate]);
@@ -179,7 +179,7 @@ fn a_plate_scaled_by_two_about_the_origin_and_ok() {
     assert!(state.warning.is_none());
 
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert_eq!(kind, FeatureKind::Scale(scale));
     assert_eq!(plates.doc.selected_feature, Some(id));
@@ -215,7 +215,7 @@ fn a_plate_scaled_about_a_corner_picked() {
     let (found, face) = corner(&plates, plate, at);
     click_snapped(&mut plates, plate, face, at, Snapped::Corner(found));
     assert_eq!(picking(&plates), MotionPick::Bodies);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(matches!(session.scale.about, PointRef::Corner { body, .. } if body == plate));
     assert!(shows(&plates, "Corner of Body 1"));
     plates.input(MotionField::Factor, "2");
@@ -244,7 +244,7 @@ fn a_plate_scaled_about_a_corner_picked() {
         Some("Only a corner, a straight edge's middle or a round edge's centre can be the point")
     );
     plates.motion(MotionLook::OriginPoint);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.scale.about, PointRef::Origin);
     assert_eq!(picking(&plates), MotionPick::Bodies);
 }
@@ -300,7 +300,7 @@ fn a_plate_scaled_so_an_edge_has_a_length() {
     let front = front_edge(&plates, plate);
     plates.click_at(plate, Picked::Edge(front), DVec3::new(10.0, -20.0, 0.0));
     assert_eq!(picking(&plates), MotionPick::Bodies);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(matches!(session.scale.edge, Some(EdgeRef { body, .. }) if body == plate));
     assert!(shows(&plates, "Edge of Body 1"));
     assert!(shows(&plates, "enter the length the edge is to have"));
@@ -460,7 +460,7 @@ fn a_scale_edited_from_the_timeline_and_cancelled() {
     let committed = plates.doc.editor.document().clone();
 
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Scale);
     assert_eq!(session.feature, Some(id));
     assert!(shows(&plates, "Scale 1"));
@@ -484,7 +484,7 @@ fn a_scale_edited_from_the_timeline_and_cancelled() {
 
     // Esc: nothing changes.
     plates.doc.look(Look::Escape);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), committed);
 
     // Edited again: × 3, OK, one undo step back to × 2.
@@ -498,7 +498,7 @@ fn a_scale_edited_from_the_timeline_and_cancelled() {
         [90.0, 60.0, 30.0]
     ));
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert!(matches!(
         &plates.doc.editor.document().feature(id).unwrap().kind,
         FeatureKind::Scale(Scale { factor: ScaleFactor::Uniform(f), .. }) if f.value == 3.0
@@ -516,18 +516,18 @@ fn a_point_an_undo_takes_away_is_gone() {
     let later = super::later_disc(&mut plates);
     plates.click(plate);
     plates.doc.look(Look::StartScale);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     // The point at the later disc's top rim's centre.
     plates.motion(MotionLook::Picking(MotionPick::Point));
     let top = rim(&plates, later, DVec3::new(0.0, 30.0, 5.0));
     plates.click_at(later, Picked::Edge(top), DVec3::new(5.0, 30.0, 5.0));
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(matches!(session.scale.about, PointRef::Centre(edge) if edge.body == later));
     plates.input(MotionField::Factor, "2");
     assert!(plates.doc.motion_ready());
     // The later disc's extrude undone: its body is gone.
     plates.doc.update(Edit::Undo);
-    let session = plates.doc.operation.motion().expect("still set up");
+    let session = plates.doc.mode.motion().expect("still set up");
     assert!(matches!(session.scale.about, PointRef::Centre(_)), "kept");
     assert!(!plates.doc.motion_ready());
     assert!(shows(&plates, "The point is gone: pick another"));
@@ -568,7 +568,7 @@ fn an_edge_follows_its_body_a_redone_combine_merges() {
     // The disc's top rim, 2π·5 round; its body is the one scaled.
     let top = rim(&plates, right, DVec3::new(20.0, 0.0, 15.0));
     plates.click_at(right, Picked::Edge(top), DVec3::new(25.0, 0.0, 15.0));
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.bodies, [right]);
     assert!(matches!(session.scale.edge, Some(EdgeRef { body, .. }) if body == right));
     plates.input(MotionField::Length, "20");
@@ -577,7 +577,7 @@ fn an_edge_follows_its_body_a_redone_combine_merges() {
 
     plates.doc.update(Edit::Redo);
     plates.answer();
-    let session = plates.doc.operation.motion().expect("still set up");
+    let session = plates.doc.mode.motion().expect("still set up");
     assert_eq!(session.bodies, [plate], "the disc followed on to the plate");
     assert!(
         matches!(session.scale.edge, Some(EdgeRef { body, .. }) if body == plate),

@@ -22,7 +22,7 @@ impl Doc {
     /// lights what the link whose row is hovered comes from on the model
     /// shown. Its hover goes with a link that's gone.
     pub(crate) fn refresh_links(&mut self) {
-        let Some(feature) = self.sketch.as_ref().map(|session| session.feature) else {
+        let Some(feature) = self.mode.sketch().map(|session| session.feature) else {
             return;
         };
         let document = self.editor.document();
@@ -45,7 +45,7 @@ impl Doc {
                 .collect(),
             None => Vec::new(),
         };
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session
                 .link_hover
                 .take_if(|hovered| !rows.iter().any(|row| row.link == *hovered));
@@ -63,14 +63,14 @@ impl Doc {
         else {
             return;
         };
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.selection = made.items().map(Selectable::Item).collect();
         }
     }
 
     /// Notes the link whose row is hovered, lighting what it comes from.
     pub(crate) fn hover_link(&mut self, link: Option<Id>) {
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.link_hover = link.filter(|&id| session.links.iter().any(|row| row.link == id));
         }
         self.pick.link_highlight = self.link_highlight();
@@ -79,8 +79,8 @@ impl Doc {
     /// Lets go of the link `link` hovered, if it still is.
     pub(crate) fn leave_link(&mut self, link: Id) {
         if self
-            .sketch
-            .as_ref()
+            .mode
+            .sketch()
             .is_some_and(|session| session.link_hover == Some(link))
         {
             self.hover_link(None);
@@ -100,7 +100,7 @@ impl Doc {
     /// The sketch face of the sketch being edited, as committed: the
     /// Project link of the face it's on, if it's on one.
     pub(crate) fn sketch_face(&self) -> Option<Id> {
-        let session = self.sketch.as_ref()?;
+        let session = self.mode.sketch()?;
         match &self.editor.document().feature(session.feature)?.kind {
             FeatureKind::Sketch {
                 plane,
@@ -119,7 +119,7 @@ impl Doc {
     /// What the link whose row is hovered comes from, lit on the model
     /// shown, if it's a face, an edge or a corner found there.
     fn link_highlight(&self) -> Arc<ModelHighlight> {
-        let Some(session) = &self.sketch else {
+        let Some(session) = self.mode.sketch() else {
             return Arc::default();
         };
         let Some(hovered) = session.link_hover else {
@@ -140,7 +140,7 @@ impl Doc {
     /// The model highlight of what the link whose row is hovered comes
     /// from, if there's one to draw.
     pub(crate) fn hovered_link_highlight(&self) -> Option<&Arc<ModelHighlight>> {
-        self.sketch.as_ref()?.link_hover?;
+        self.mode.sketch()?.link_hover?;
         Some(&self.pick.link_highlight).filter(|highlight| !highlight.is_empty())
     }
 }

@@ -62,7 +62,7 @@ fn line_to_dimension() -> (Answered, [Id; 3]) {
 
 /// The value field, if it's open.
 fn field(doc: &Doc) -> Option<&ValueEdit> {
-    doc.sketch.as_ref()?.value.as_ref()
+    doc.mode.sketch()?.value.as_ref()
 }
 
 /// Types `text` in the value field over what's there, and takes it.
@@ -228,7 +228,7 @@ fn escape_closes_the_field_then_drops_the_picks_then_the_tool() {
     assert!(drawing(&doc).unwrap().picked.is_empty());
     doc.look(Look::Escape);
     assert!(drawing(&doc).is_none());
-    assert!(doc.sketch.is_some());
+    assert!(doc.mode.sketch().is_some());
 
     // Acting elsewhere closes it too.
     doc.look(Look::EditDimension {
@@ -257,7 +257,7 @@ fn a_click_with_the_reference_modifier_places_a_reference_at_once() {
     assert_eq!(dimension.value.value, 10.0);
     // It adds no equation: the line is as free as it was.
     let freedom = |doc: &Doc| {
-        let session = doc.sketch.as_ref().unwrap();
+        let session = doc.mode.sketch().unwrap();
         session.analysis(doc.editor.revision()).unwrap().freedom
     };
     assert_eq!(freedom(&doc), 4);
@@ -305,9 +305,9 @@ fn a_driving_dimension_over_constraining_is_placed_as_a_reference() {
     place(&mut doc, 5.0, 3.0);
     // Refused as driving, it's placed as a reference at once, saying so,
     // with no value to type.
-    assert!(doc.sketch.as_ref().unwrap().value.is_none());
+    assert!(doc.mode.sketch().unwrap().value.is_none());
     assert!(!sketch(&doc).dimensions[0].dimension.driving);
-    assert!(doc.sketch.as_ref().unwrap().refusal.is_none());
+    assert!(doc.mode.sketch().unwrap().refusal.is_none());
     assert!(doc.take_toast().is_some());
 
     // Made driving, it's refused, and stays a reference.
@@ -318,7 +318,7 @@ fn a_driving_dimension_over_constraining_is_placed_as_a_reference() {
     });
     doc.update(Edit::ToggleReference);
     assert!(!sketch(&doc).dimensions[0].dimension.driving);
-    let refusal = doc.sketch.as_ref().unwrap().refusal.as_ref();
+    let refusal = doc.mode.sketch().unwrap().refusal.as_ref();
     assert!(matches!(
         refusal,
         Some(Refusal::Rejected(Rejected::Driving { dimensions, .. })) if dimensions.contains(&id)

@@ -340,7 +340,7 @@ fn add_point_adds_one_each_click_until_put_down() {
     let (mut doc, _, _) = sketching();
     let id = draw_wave(&mut doc);
     doc.look(Look::ToggleInsertPoint);
-    assert!(doc.sketch.as_ref().unwrap().inserting);
+    assert!(doc.mode.sketch().unwrap().inserting);
     // The viewport sends a click on a spline as a point added.
     for x in [2.5, 7.5] {
         let near = sketch(&doc).nearest_on(id, at(x, 3.0)).unwrap();
@@ -350,15 +350,15 @@ fn add_point_adds_one_each_click_until_put_down() {
         });
     }
     assert_eq!(sketch(&doc).spline(id).unwrap().points.len(), 7);
-    assert!(doc.sketch.as_ref().unwrap().inserting);
+    assert!(doc.mode.sketch().unwrap().inserting);
     // Escape puts it down, and leaves the sketch only after.
     doc.look(Look::Escape);
-    assert!(!doc.sketch.as_ref().unwrap().inserting);
-    assert!(doc.sketch.is_some());
+    assert!(!doc.mode.sketch().unwrap().inserting);
+    assert!(doc.mode.sketch().is_some());
     // A tool taken up puts it down too.
     doc.look(Look::ToggleInsertPoint);
     doc.look(Look::SelectTool(Tool::Line));
-    assert!(!doc.sketch.as_ref().unwrap().inserting);
+    assert!(!doc.mode.sketch().unwrap().inserting);
 }
 
 #[test]
@@ -476,7 +476,7 @@ fn a_handle_is_selected_dragged_constrained_and_deleted_as_a_line() {
     // Picked as a line, apart from its tip.
     select(&mut doc, line);
     assert_eq!(
-        doc.sketch.as_ref().unwrap().selection,
+        doc.mode.sketch().unwrap().selection,
         [line].into_iter().collect()
     );
     // Dragged, it turns about its fit point, its length kept.
@@ -542,7 +542,7 @@ fn a_handle_s_end_is_selected_dragged_and_deleted() {
     let mirrored = sketch(&doc).point(handle.end).unwrap().at;
     select(&mut doc, end);
     assert_eq!(
-        doc.sketch.as_ref().unwrap().selection,
+        doc.mode.sketch().unwrap().selection,
         [end].into_iter().collect()
     );
     // Dragged, the end follows the cursor and the tip mirrors it.

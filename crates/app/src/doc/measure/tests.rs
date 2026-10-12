@@ -104,13 +104,13 @@ fn last_inspect(requests: &RefCell<Vec<Request>>) -> Option<varde_regen::Inspect
 fn i_starts_and_leaves_the_measure_tool_and_so_does_the_rail() {
     let (mut doc, _requests) = example();
     key_in(&mut doc, keyboard::Key::Character("i".into()));
-    assert!(doc.measure.is_some());
+    assert!(doc.mode.measure().is_some());
     key_in(&mut doc, keyboard::Key::Character("i".into()));
-    assert!(doc.measure.is_none());
+    assert!(doc.mode.measure().is_none());
     // The rail's Inspect set: its list, then Enter on Measure.
     doc.look(Look::Rail(RailLook::Open(3)));
     key_in(&mut doc, keyboard::Key::Named(keyboard::key::Named::Enter));
-    assert!(doc.measure.is_some());
+    assert!(doc.mode.measure().is_some());
     assert_eq!(doc.rail.open, None);
     let texts = screen_texts(&doc);
     assert!(texts.contains(&"Measure".to_owned()), "{texts:?}");
@@ -120,25 +120,25 @@ fn i_starts_and_leaves_the_measure_tool_and_so_does_the_rail() {
     );
     // Close leaves it.
     doc.look(Look::Measure(MeasureLook::Close));
-    assert!(doc.measure.is_none());
+    assert!(doc.mode.measure().is_none());
 
     // Not in a sketch, nor while an operation is set up; starting one
     // leaves it. A read-only document is measured too.
     doc.look(Look::StartMeasure);
     doc.look(Look::StartExtrude);
-    assert!(doc.measure.is_none());
-    assert!(doc.operation.extrude().is_some());
+    assert!(doc.mode.measure().is_none());
+    assert!(doc.mode.extrude().is_some());
     doc.look(Look::StartMeasure);
-    assert!(doc.measure.is_none());
+    assert!(doc.mode.measure().is_none());
     doc.look(Look::Escape);
     let sketch = doc.editor.document().features()[0].id;
     doc.look(Look::EditFeature(sketch));
     doc.look(Look::StartMeasure);
-    assert!(doc.measure.is_none());
+    assert!(doc.mode.measure().is_none());
     doc.look(Look::FinishSketch);
     doc.read_only = Some("in use".to_owned());
     key_in(&mut doc, keyboard::Key::Character("i".into()));
-    assert!(doc.measure.is_some());
+    assert!(doc.mode.measure().is_some());
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn a_double_click_picks_the_body_its_volume_and_centre() {
         add: false,
         double: true,
     });
-    let session = doc.measure.as_ref().unwrap();
+    let session = doc.mode.measure().unwrap();
     assert_eq!(session.picks[0].unwrap().entity, Entity::Body);
     assert_eq!(session.picks[1], None);
     answer(&mut doc, &requests);
@@ -280,7 +280,7 @@ fn a_double_click_picks_the_body_its_volume_and_centre() {
         body: top.body,
         add: true,
     });
-    let session = doc.measure.as_ref().unwrap();
+    let session = doc.mode.measure().unwrap();
     assert_eq!(session.picks[1].unwrap().entity, Entity::Body);
 }
 
@@ -289,8 +289,7 @@ fn clicks_pick_a_then_b_then_a_again_and_shift_replaces_b() {
     let (mut doc, requests) = example();
     doc.look(Look::StartMeasure);
     let (top, bottom, rim) = (top(&doc), bottom(&doc), rim(&doc));
-    let entity =
-        |doc: &Doc, slot: usize| doc.measure.as_ref().unwrap().picks[slot].map(|p| p.entity);
+    let entity = |doc: &Doc, slot: usize| doc.mode.measure().unwrap().picks[slot].map(|p| p.entity);
     click(&mut doc, move |_| top, false);
     assert!(matches!(entity(&doc, 0), Some(Entity::Face(_))));
     assert_eq!(entity(&doc, 1), None);
@@ -417,7 +416,7 @@ fn picks_are_found_again_after_an_edit_and_one_gone_is_noted_and_kept() {
     answer(&mut doc, &requests);
     let texts = screen_texts(&doc);
     assert!(texts.contains(&"Face not found".to_owned()), "{texts:?}");
-    assert!(doc.measure.as_ref().unwrap().picks[1].is_some(), "kept");
+    assert!(doc.mode.measure().unwrap().picks[1].is_some(), "kept");
     doc.update(Edit::Redo);
     answer(&mut doc, &requests);
     let texts = screen_texts(&doc);
@@ -445,7 +444,7 @@ fn esc_leaves_no_trace() {
     answer(&mut doc, &requests);
     assert!(doc.highlight().is_some());
     doc.look(Look::Escape);
-    assert!(doc.measure.is_none());
+    assert!(doc.mode.measure().is_none());
     assert_eq!(doc.pick.selection, selection);
     assert_eq!(doc.highlight().cloned(), highlight);
     assert_eq!(doc.editor.generation(), generation);
@@ -531,7 +530,7 @@ fn a_vertex_snaps_to_its_corner() {
         snap: None,
     };
     click(&mut doc, move |_| pick, false);
-    assert_eq!(doc.measure.as_ref().unwrap().picks[0], None);
+    assert_eq!(doc.mode.measure().unwrap().picks[0], None);
     let snapped = Pick {
         snap: Some(snapped),
         ..pick
@@ -661,7 +660,7 @@ fn space_keeps_the_hidden_selection_while_measuring() {
     key_in(&mut doc, keyboard::Key::Character("i".into()));
     click(&mut doc, bottom, false);
     key_in(&mut doc, space());
-    let session = doc.measure.as_ref().expect("still measuring");
+    let session = doc.mode.measure().expect("still measuring");
     assert!(session.picks[0].is_some());
     doc.look(Look::Measure(MeasureLook::Close));
     assert!(doc.selected_face().is_some());

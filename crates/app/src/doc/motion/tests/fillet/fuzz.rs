@@ -64,7 +64,7 @@ fn fillets(plates: &Plates) -> Vec<FeatureId> {
 
 /// Holds the session, if it's a fillet's, to what the module's docs say.
 fn check_session(plates: &Plates, what: &str) {
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     // The overlap list's ticks are the session's own while it picks;
@@ -143,7 +143,7 @@ fn check_session(plates: &Plates, what: &str) {
 /// Holds the edges lit on a model of the document as it is to the body
 /// drawing the edges' body.
 fn check_lit(plates: &Plates, what: &str) {
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     let lit = plates.doc.blend_lit();
@@ -172,7 +172,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
         return;
     };
     plates.doc.look(Look::EditFeature(id));
-    let Some(session) = plates.doc.operation.motion() else {
+    let Some(session) = plates.doc.mode.motion() else {
         return;
     };
     assert_eq!(session.feature, Some(id), "{what}");
@@ -180,7 +180,7 @@ fn edit_and_ok(plates: &mut Plates, id: FeatureId, what: &str) {
     let revision = plates.doc.editor.revision();
     let document = plates.doc.editor.document().clone();
     plates.doc.update(Edit::CommitMotion);
-    if plates.doc.operation.motion().is_none() {
+    if plates.doc.mode.motion().is_none() {
         assert_eq!(plates.doc.editor.revision(), revision, "{what}: wrote");
         assert_eq!(*plates.doc.editor.document(), document, "{what}");
     }
@@ -202,7 +202,7 @@ fn merge(plates: &mut Plates, rng: &mut Rng) {
         }
         let mut target = *rng.pick(&all);
         let mut tool = *rng.pick(&all);
-        let session = plates.doc.operation.motion();
+        let session = plates.doc.mode.motion();
         if let Some(body) = session.and_then(|session| session.blend.edges.body())
             && rng.below(2) == 0
         {
@@ -286,7 +286,7 @@ fn run(seed: u64, steps: usize) {
     let base = plates.doc.editor.document().features().len();
     for step in 0..steps {
         let what = format!("seed {seed} step {step}");
-        let open = plates.doc.operation.motion().is_some();
+        let open = plates.doc.mode.motion().is_some();
         let roll = match rng.below(4) {
             0 if !open => 0,
             _ => rng.below(50),
@@ -325,7 +325,7 @@ fn run(seed: u64, steps: usize) {
                 }
             }
             11 => {
-                let edges = (plates.doc.operation.motion())
+                let edges = (plates.doc.mode.motion())
                     .map(|session| session.blend.edges.refs.clone())
                     .unwrap_or_default();
                 if !edges.is_empty() {
@@ -357,7 +357,7 @@ fn run(seed: u64, steps: usize) {
             }
             21 if rng.below(2) == 0 => plates.doc.update(Edit::Redo),
             22..=24 => {
-                let before = plates.doc.operation.motion().and_then(|session| {
+                let before = plates.doc.mode.motion().and_then(|session| {
                     let ready =
                         plates.doc.motion_ready() && plates.doc.feed.draft_error().is_none();
                     (ready && session.kind == MotionKind::Fillet)
@@ -366,7 +366,7 @@ fn run(seed: u64, steps: usize) {
                 plates.doc.update(Edit::CommitMotion);
                 if let Some((edited, Some(fillet))) = before {
                     assert!(
-                        plates.doc.operation.motion().is_none(),
+                        plates.doc.mode.motion().is_none(),
                         "{what}: not committed: {:?}",
                         plates.doc.edit_error
                     );
@@ -402,9 +402,9 @@ fn run(seed: u64, steps: usize) {
             31 => {
                 // An edit taking every edge out, then its body merged.
                 let ids = fillets(&plates);
-                if !ids.is_empty() && plates.doc.operation.motion().is_none() {
+                if !ids.is_empty() && plates.doc.mode.motion().is_none() {
                     plates.doc.look(Look::EditFeature(*rng.pick(&ids)));
-                    let edges = (plates.doc.operation.motion())
+                    let edges = (plates.doc.mode.motion())
                         .map(|session| session.blend.edges.refs.clone())
                         .unwrap_or_default();
                     for edge in edges {
@@ -479,7 +479,7 @@ fn run(seed: u64, steps: usize) {
             .check()
             .unwrap_or_else(|error| panic!("{what}: {error}"));
     }
-    plates.doc.operation = None;
+    plates.doc.mode.take_operation();
     plates.doc.sync();
     plates.answer();
     check_volumes(&plates, &format!("seed {seed} at the end"));

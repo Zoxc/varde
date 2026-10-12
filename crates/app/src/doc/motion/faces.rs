@@ -135,7 +135,7 @@ impl Doc {
 
     /// The faces of the face session to light in the model shown.
     pub(super) fn faces_lit(&self) -> Vec<Picked> {
-        match self.operation.motion() {
+        match self.mode.motion() {
             Some(session) if session.kind.picks_faces() => self.refs_lit::<FaceRef>(),
             _ => Vec::new(),
         }

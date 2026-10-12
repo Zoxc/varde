@@ -148,9 +148,10 @@ pub(crate) struct Doc {
     pub(crate) view_submenu: Option<varde_view::ViewSubmenu>,
     /// The removal the user is asked about, if one is: see [`Doc::remove`].
     pub(crate) deleting: Option<Deleting>,
-    /// The plane being picked, if one is: for a new sketch, or for the
-    /// sketch whose plane is changed.
-    pub(crate) picking_plane: Option<sketch::PickingPlane>,
+    /// What owns the document's view: a plane being picked, a sketch
+    /// edited, an operation set up, the measure tool, or none of them.
+    /// One at a time, so entering one leaves another.
+    pub(crate) mode: DocMode,
     /// The editor's [`lineage`](varde_document::Editor::lineage) as of
     /// the last [`Doc::sync`]: the ids held across edits (the feature
     /// selected, the sessions') name things in it, see [`Doc::prune`] and
@@ -196,11 +197,6 @@ pub(crate) struct Doc {
     /// Saturation slider is dragged: only while that menu is open
     /// ([`Doc::preview_color`]).
     pub(crate) color_preview: Option<(BodyId, Tint)>,
-    /// The sketch being edited, if one is.
-    pub(crate) sketch: Option<SketchSession>,
-    /// The extrude, revolve, combine, move, mirror or pattern being set
-    /// up, if one is: never with a sketch.
-    pub(crate) operation: Option<OperationSession>,
     /// The feature the extrude, revolve, combine or motion session open
     /// built as it opened ([`Doc::operation_built`]), none if it wasn't
     /// whole: it has nothing unfinished while it builds the same. Kept,
@@ -216,9 +212,6 @@ pub(crate) struct Doc {
     /// taken again on editing it while it still gives them, see
     /// [`motion::PatternShape`].
     pub(crate) pattern_shapes: HashMap<FeatureId, motion::PatternShape>,
-    /// The measure tool, while it's in use: never with a sketch or an
-    /// operation being set up.
-    pub(crate) measure: Option<MeasureSession>,
     /// The share of the Sketch tab's height the Geometry list takes, kept
     /// from one sketch to the next.
     pub(crate) sketch_split: f32,
@@ -293,6 +286,87 @@ impl OperationSession {
     }
 }
 
+/// What owns a document's view, see [`Doc::mode`].
+#[derive(Default)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per open document, where each mode's state was held before"
+)]
+pub(crate) enum DocMode {
+    /// None of the others: the model, its selection.
+    #[default]
+    Idle,
+    /// The plane being picked: for a new sketch, or for the sketch whose
+    /// plane is changed.
+    PickingPlane(sketch::PickingPlane),
+    /// The sketch being edited.
+    Sketch(SketchSession),
+    /// The extrude, revolve, combine or motion kind being set up.
+    Operation(OperationSession),
+    /// The measure tool.
+    Measure(MeasureSession),
+}
+
+/// `$get` and `$get_mut` read the mode's `$variant` if it's the one in,
+/// `$take` leaves it, handing it back, and leaves any other as it is.
+macro_rules! mode_accessors {
+    ($($variant:ident: $state:ty => $get:ident, $get_mut:ident, $take:ident;)*) => {
+        $(
+            pub(crate) fn $get(&self) -> Option<&$state> {
+                match self {
+                    Self::$variant(state) => Some(state),
+                    _ => None,
+                }
+            }
+
+            pub(crate) fn $get_mut(&mut self) -> Option<&mut $state> {
+                match self {
+                    Self::$variant(state) => Some(state),
+                    _ => None,
+                }
+            }
+
+            pub(crate) fn $take(&mut self) -> Option<$state> {
+                match std::mem::take(self) {
+                    Self::$variant(state) => Some(state),
+                    other => {
+                        *self = other;
+                        None
+                    }
+                }
+            }
+        )*
+    };
+}
+
+impl DocMode {
+    mode_accessors! {
+        PickingPlane: sketch::PickingPlane => picking_plane, picking_plane_mut, take_picking_plane;
+        Sketch: SketchSession => sketch, sketch_mut, take_sketch;
+        Measure: MeasureSession => measure, measure_mut, take_measure;
+    }
+
+    /// The operation being set up, if it's the mode.
+    pub(crate) fn operation(&self) -> Option<&OperationSession> {
+        match self {
+            Self::Operation(session) => Some(session),
+            _ => None,
+        }
+    }
+
+    /// Closes the operation being set up, if it's the mode, handing it
+    /// back.
+    pub(crate) fn take_operation(&mut self) -> Option<OperationSession> {
+        match std::mem::take(self) {
+            Self::Operation(session) => Some(session),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+}
+
 /// Each kind's session in the operation slot, if it's the one being set
 /// up: `$kind` and `$kind_mut` read it, `take_$kind` closes it, handing
 /// it back. On the field rather than [`Doc`], so it borrows the slot
@@ -317,21 +391,21 @@ macro_rules! slot_accessors {
         $(
             fn $get(&self) -> Option<&$session> {
                 match self {
-                    Some(OperationSession::$variant(session)) => Some(session),
+                    DocMode::Operation(OperationSession::$variant(session)) => Some(session),
                     _ => None,
                 }
             }
 
             fn $get_mut(&mut self) -> Option<&mut $session> {
                 match self {
-                    Some(OperationSession::$variant(session)) => Some(session),
+                    DocMode::Operation(OperationSession::$variant(session)) => Some(session),
                     _ => None,
                 }
             }
 
             fn $take(&mut self) -> Option<$session> {
-                match self.take() {
-                    Some(OperationSession::$variant(session)) => Some(session),
+                match std::mem::take(self) {
+                    DocMode::Operation(OperationSession::$variant(session)) => Some(session),
                     other => {
                         *self = other;
                         None
@@ -342,7 +416,7 @@ macro_rules! slot_accessors {
     };
 }
 
-impl OperationSlot for Option<OperationSession> {
+impl OperationSlot for DocMode {
     slot_accessors! {
         Extrude: ExtrudeSession => extrude, extrude_mut, take_extrude;
         Revolve: RevolveSession => revolve, revolve_mut, take_revolve;
@@ -539,7 +613,7 @@ impl Doc {
             view_menu: false,
             view_submenu: None,
             deleting: None,
-            picking_plane: None,
+            mode: DocMode::Idle,
             lineage,
             selected_feature: None,
             hovered_feature: None,
@@ -555,12 +629,9 @@ impl Doc {
             opacity_preview: None,
             body_look_hovered: false,
             color_preview: None,
-            sketch: None,
-            operation: None,
             opened_with: None,
             command_held: false,
             pattern_shapes: HashMap::new(),
-            measure: None,
             sketch_split: GEOMETRY_SHARE,
             focus: None,
             animation: None,
@@ -629,11 +700,11 @@ impl Doc {
     /// measured on it. Neither is measured with a draft, so no request
     /// carries both: a draft dragged never measures again at each step.
     fn request_model(&mut self) {
-        let exclude = self.sketch.as_ref().map(|session| session.feature);
+        let exclude = self.mode.sketch().map(|session| session.feature);
         // Held, the command modifier shows the model before the
         // operation, what its preview covers there to see.
         let before = self.operation_before();
-        let draft = match self.operation {
+        let draft = match self.mode.operation() {
             Some(OperationSession::Extrude(_)) => self.extrude_draft(),
             Some(OperationSession::Revolve(_)) => self.revolve_draft(),
             Some(OperationSession::Combine(_)) => self.combine_draft(),
@@ -643,7 +714,7 @@ impl Doc {
         // The draft's still known, its error and OK waiting on it kept,
         // but not applied.
         self.feed.hide_draft = before;
-        let inspect = (self.measure.as_ref())
+        let inspect = (self.mode.measure())
             .and_then(MeasureSession::inspect)
             .or_else(|| self.scale_inspect())
             .or_else(|| self.selection_inspect());
@@ -659,8 +730,8 @@ impl Doc {
     /// The feature being edited, if one is: the sketch entered, or the
     /// operation set up from a feature rather than a new one.
     pub(crate) fn opened_feature(&self) -> Option<FeatureId> {
-        (self.sketch.as_ref().map(|session| session.feature))
-            .or_else(|| self.operation.as_ref()?.feature())
+        (self.mode.sketch().map(|session| session.feature))
+            .or_else(|| self.mode.operation()?.feature())
     }
 
     /// The feature the model is rolled back to before, if it is, and
@@ -697,20 +768,20 @@ impl Doc {
     /// Whether an operation is being set up: an extrude, a revolve, a
     /// combine, a move or a mirror.
     pub(crate) fn operating(&self) -> bool {
-        self.operation.is_some()
+        self.mode.operation().is_some()
     }
 
     /// Closes the operation being set up, if one is, leaving the
     /// document as it was: its Cancel, or `Esc`.
     pub(crate) fn close_operation(&mut self) {
-        self.operation = None;
+        self.mode.take_operation();
     }
 
     /// Commits the operation being set up, if one is, as its OK would;
     /// its preview failed only if `accept` (see `commit_extrude`).
     /// Refused, it stays open, and why shows.
     pub(crate) fn commit_operation(&mut self, accept: bool) {
-        match self.operation {
+        match self.mode.operation() {
             Some(OperationSession::Extrude(_)) => self.commit_extrude(accept),
             Some(OperationSession::Revolve(_)) => self.commit_revolve(accept),
             Some(OperationSession::Combine(_)) => self.commit_combine(accept),
@@ -730,7 +801,7 @@ impl Doc {
     /// The feature the operation being set up would commit, if one is
     /// and it's whole.
     pub(crate) fn operation_built(&self) -> Option<FeatureKind> {
-        let draft = match self.operation.as_ref()? {
+        let draft = match self.mode.operation()? {
             OperationSession::Extrude(_) => self.extrude_draft(),
             OperationSession::Revolve(_) => self.revolve_draft(),
             OperationSession::Combine(_) => self.combine_draft(),
@@ -741,7 +812,7 @@ impl Doc {
 
     /// The operation being set up, or else the measure tool, for the view.
     fn operation_state(&self) -> Option<OperationState<'_>> {
-        match self.operation {
+        match self.mode.operation() {
             Some(OperationSession::Extrude(_)) => self.extrude_state().map(OperationState::Extrude),
             Some(OperationSession::Revolve(_)) => self.revolve_state().map(OperationState::Revolve),
             Some(OperationSession::Combine(_)) => self.combine_state().map(OperationState::Combine),
@@ -1121,7 +1192,7 @@ impl Doc {
         }
         // Another tool leaves the measure tool.
         if matches!(message, Look::PickPlane | Look::ChangePlane(_)) || opens_operation(&message) {
-            self.measure = None;
+            self.mode.take_measure();
         }
         match message {
             Look::CloseFileMenu => self.file_menu = false,
@@ -1137,7 +1208,7 @@ impl Doc {
             // entering or leaving a sketch may come after.
             // The Timeline's rows go with it, sending no exit.
             Look::SelectPanel(panel) => {
-                self.panel = panel.for_sketching(self.sketch.is_some());
+                self.panel = panel.for_sketching(self.mode.sketch().is_some());
                 self.hovered_feature = None;
             }
             Look::PickPlane => self.pick_plane(),
@@ -1192,12 +1263,12 @@ impl Doc {
             // Only outside sketches and operations, as the marker shows
             // where they put it then.
             Look::DragRollback(until) => {
-                if self.editable() && !self.operating() && self.sketch.is_none() {
+                if self.editable() && !self.operating() && self.mode.sketch().is_none() {
                     self.rolling = Some(until);
                 }
             }
             Look::ClickFeature { feature, roll } => {
-                if roll && self.editable() && !self.rollback().1 && self.sketch.is_none() {
+                if roll && self.editable() && !self.rollback().1 && self.mode.sketch().is_none() {
                     let document = self.editor.document();
                     if let Some(at) = document.feature_index(feature) {
                         let after = document.features().get(at + 1).map(|f| f.id);
@@ -1222,7 +1293,7 @@ impl Doc {
                     RowMenu::Body(_) | RowMenu::Sketch(_) => Panel::Objects,
                     RowMenu::Link(_) | RowMenu::Item(_) => Panel::Sketch,
                 }
-                .for_sketching(self.sketch.is_some());
+                .for_sketching(self.mode.sketch().is_some());
                 self.open_menu(menu);
             }
             Look::CloseMenu => {}
@@ -1286,32 +1357,32 @@ impl Doc {
             Look::ClickModel { pick, .. } if self.picks_outside() => {
                 self.outside_click(sketch::OutsideClick::Model(pick));
             }
-            Look::ClickModel { pick, .. } if self.operation.combine().is_some() => {
+            Look::ClickModel { pick, .. } if self.mode.combine().is_some() => {
                 self.combine_click(pick)
             }
-            Look::ClickModel { pick, .. } if self.operation.motion().is_some() => {
+            Look::ClickModel { pick, .. } if self.mode.motion().is_some() => {
                 self.motion_click(pick)
             }
-            Look::ClickModel { pick, add, double } if self.measure.is_some() => {
+            Look::ClickModel { pick, add, double } if self.mode.measure().is_some() => {
                 self.measure_click(pick, add, double);
             }
             Look::ClickModel { pick, add, double } => self.click_model(pick, add, double),
-            Look::ClickBody { body, .. } if self.operation.combine().is_some() => {
+            Look::ClickBody { body, .. } if self.mode.combine().is_some() => {
                 self.combine_body(body)
             }
-            Look::ClickBody { body, .. } if self.operation.motion().is_some() => {
-                self.motion_body(body)
+            Look::ClickBody { body, .. } if self.mode.motion().is_some() => self.motion_body(body),
+            Look::ClickBody { body, add } if self.mode.measure().is_some() => {
+                self.measure_body(body, add)
             }
-            Look::ClickBody { body, add } if self.measure.is_some() => self.measure_body(body, add),
             Look::ClickBody { body, add } => self.click_body(body, add),
             Look::ClickObject { row, add } => self.click_object(row, add),
             Look::Snap(snap) => {
-                if let Some(session) = &mut self.sketch {
+                if let Some(session) = self.mode.sketch_mut() {
                     session.snap = snap;
                 }
             }
             Look::Aim(click) => {
-                if let Some(session) = &mut self.sketch {
+                if let Some(session) = self.mode.sketch_mut() {
                     session.snap = Some(click.snap()).filter(Snap::snapped);
                     session.aim = Some(click);
                 }
@@ -1349,7 +1420,7 @@ impl Doc {
             // While measuring, the selection is hidden, and kept for
             // after: Space doesn't clear what can't be seen.
             Look::ClearSelection => {
-                if self.measure.is_none() {
+                if self.mode.measure().is_none() {
                     self.clear_selection();
                 }
             }
@@ -1361,7 +1432,7 @@ impl Doc {
                 target,
             } => self.drag_geometry(id, from, to, target),
             Look::CancelDrag => {
-                if let Some(session) = &mut self.sketch {
+                if let Some(session) = self.mode.sketch_mut() {
                     session.drag = None;
                 }
             }
@@ -1381,12 +1452,12 @@ impl Doc {
                 }
             }
             Look::ScrollGeometry(offset) => {
-                if let Some(session) = &mut self.sketch {
+                if let Some(session) = self.mode.sketch_mut() {
                     session.scroll = offset;
                 }
             }
             Look::ScrollConstraints(offset) => {
-                if let Some(session) = &mut self.sketch {
+                if let Some(session) = self.mode.sketch_mut() {
                     session.constraint_scroll = offset;
                 }
             }
@@ -1444,8 +1515,8 @@ impl Doc {
             // A link's row shows in a sketch alone.
             RowMenu::Link(id) => {
                 let links = self
-                    .sketch
-                    .as_ref()
+                    .mode
+                    .sketch()
                     .map_or(&[][..], |session| &session.links[..]);
                 links.iter().any(|row| row.link == id)
             }
@@ -1453,7 +1524,7 @@ impl Doc {
             RowMenu::Item(id) => self.holds(id),
         };
         let in_sketch = matches!(menu, RowMenu::Link(_) | RowMenu::Item(_));
-        if self.sketch.is_some() != in_sketch || !exists {
+        if self.mode.sketch().is_some() != in_sketch || !exists {
             return;
         }
         match menu {
@@ -1465,10 +1536,9 @@ impl Doc {
             // already part of the selection, which is kept.
             RowMenu::Body(id) => {
                 let shown = self.feed.shown_body(id);
-                let picking =
-                    self.operation.combine().is_some() || self.operation.motion().is_some();
+                let picking = self.mode.combine().is_some() || self.mode.motion().is_some();
                 if !picking
-                    && self.measure.is_none()
+                    && self.mode.measure().is_none()
                     && self.pick.selection.mode().takes_bodies()
                     && !self.pick.selection.bodies().any(|body| body == shown)
                 {
@@ -1491,7 +1561,7 @@ impl Doc {
     /// Objects, else the first body selected or holding what's selected
     /// in the model; in a sketch, the first point or curve selected.
     pub(crate) fn menu_target(&self) -> Option<RowMenu> {
-        if let Some(session) = &self.sketch {
+        if let Some(session) = self.mode.sketch() {
             return (session.selection.iter())
                 .copied()
                 .find(|&id| self.holds(id))
@@ -1619,7 +1689,7 @@ impl Doc {
 
     /// Stops showing why the solver refused the last edit.
     fn end_refusal(&mut self) {
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.refusal = None;
         }
     }
@@ -1640,8 +1710,8 @@ impl Doc {
                     !self.editor.document().bodies().is_empty(),
                     self.motion_state().as_ref(),
                 )
-                .with_measure(self.measure.is_some())
-                .with_picking_plane(self.picking_plane.is_some())
+                .with_measure(self.mode.measure().is_some())
+                .with_picking_plane(self.mode.picking_plane().is_some())
                 .with_rail(self.rail.state())
                 .with_rename(self.rename_target())
                 .with_menu(self.menu_target())
@@ -1876,7 +1946,7 @@ impl Doc {
             peek,
             mode,
             options,
-            picking_plane: self.picking_plane.as_ref().map(|picking| &picking.pick),
+            picking_plane: self.mode.picking_plane().map(|picking| &picking.pick),
             thumbnail: self.thumbnail_request(),
             #[cfg(not(target_arch = "wasm32"))]
             renders: self.mcp.renders(),

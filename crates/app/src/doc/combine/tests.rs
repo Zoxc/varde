@@ -127,7 +127,7 @@ fn b_starts_it_the_viewport_and_objects_pick_and_enter_commits_one_undo_step() {
     let [plate, right, left] = plates.bodies;
     let before = plates.doc.editor.document().clone();
     key_in(&mut plates.doc, character("b"));
-    let session = plates.doc.operation.combine().expect("a session");
+    let session = plates.doc.mode.combine().expect("a session");
     assert_eq!(session.target, None);
     assert_eq!(session.picking, CombinePick::Target);
     assert!(plates.last_draft().is_none());
@@ -139,17 +139,17 @@ fn b_starts_it_the_viewport_and_objects_pick_and_enter_commits_one_undo_step() {
     // A click in the viewport picks the target, the clicks go on to the
     // tools, and Objects' rows pick them.
     plates.click(plate);
-    let session = plates.doc.operation.combine().unwrap();
+    let session = plates.doc.mode.combine().unwrap();
     assert_eq!(session.target, Some(plate));
     assert_eq!(session.picking, CombinePick::Tools);
     assert!(!plates.doc.combine_ready());
     // The target isn't a tool.
     plates.click(plate);
-    assert!(plates.doc.operation.combine().unwrap().tools.is_empty());
+    assert!(plates.doc.mode.combine().unwrap().tools.is_empty());
     for body in [left, right] {
         plates.doc.look(Look::ClickBody { body, add: false });
     }
-    let session = plates.doc.operation.combine().unwrap();
+    let session = plates.doc.mode.combine().unwrap();
     assert_eq!(session.tools, [right, left], "kept sorted");
     assert!(plates.doc.combine_ready());
     // Clicked again, a tool is taken out.
@@ -157,7 +157,7 @@ fn b_starts_it_the_viewport_and_objects_pick_and_enter_commits_one_undo_step() {
         body: left,
         add: false,
     });
-    assert_eq!(plates.doc.operation.combine().unwrap().tools, [right]);
+    assert_eq!(plates.doc.mode.combine().unwrap().tools, [right]);
 
     // The preview is the combine as a draft, using its tool up.
     let (feature, draft) = plates.last_draft().expect("a draft");
@@ -186,7 +186,7 @@ fn b_starts_it_the_viewport_and_objects_pick_and_enter_commits_one_undo_step() {
 
     let revision = plates.doc.editor.revision();
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.combine().is_none());
+    assert!(plates.doc.mode.combine().is_none());
     let combines = plates.combines();
     assert_eq!(combines.len(), 1);
     assert_eq!(combines[0].1, draft);
@@ -224,7 +224,7 @@ fn esc_and_cancel_leave_no_trace() {
         assert!(plates.last_draft().is_some());
         plates.answer();
         plates.doc.look(leave);
-        assert!(plates.doc.operation.combine().is_none());
+        assert!(plates.doc.mode.combine().is_none());
         // The model is asked for again without the draft.
         assert!(plates.last_draft().is_none());
         plates.answer();
@@ -242,7 +242,7 @@ fn the_selection_gives_it_its_bodies() {
         plates.doc.look(Look::ClickBody { body, add: true });
     }
     plates.doc.look(Look::StartCombine);
-    let session = plates.doc.operation.combine().unwrap();
+    let session = plates.doc.mode.combine().unwrap();
     assert_eq!(session.target, Some(left));
     assert_eq!(session.tools, [plate, right]);
     assert_eq!(session.picking, CombinePick::Tools);
@@ -280,10 +280,10 @@ fn chips_take_bodies_out_and_the_fields_choose_what_clicks_pick() {
             plates.doc.look(look);
         }
     }
-    assert_eq!(plates.doc.operation.combine().unwrap().tools, [right]);
+    assert_eq!(plates.doc.mode.combine().unwrap().tools, [right]);
     // Dropping the target hands the clicks to it.
     plates.combine(CombineLook::Drop(plate));
-    let session = plates.doc.operation.combine().unwrap();
+    let session = plates.doc.mode.combine().unwrap();
     assert_eq!(
         (session.target, session.picking),
         (None, CombinePick::Target)
@@ -291,13 +291,13 @@ fn chips_take_bodies_out_and_the_fields_choose_what_clicks_pick() {
     assert!(plates.last_draft().is_none());
     // A tool picked as the target stops being a tool.
     plates.click(right);
-    let session = plates.doc.operation.combine().unwrap();
+    let session = plates.doc.mode.combine().unwrap();
     assert_eq!(session.target, Some(right));
     assert!(session.tools.is_empty());
     // The Target field picks the target again.
     plates.combine(CombineLook::Picking(CombinePick::Target));
     plates.click(left);
-    let session = plates.doc.operation.combine().unwrap();
+    let session = plates.doc.mode.combine().unwrap();
     assert_eq!(session.target, Some(left));
     assert_eq!(session.picking, CombinePick::Tools);
 }
@@ -314,7 +314,7 @@ fn editing_reopens_it_with_its_values() {
     let revision = plates.doc.editor.revision();
 
     plates.doc.look(Look::EditFeature(combine));
-    let session = plates.doc.operation.combine().expect("a session");
+    let session = plates.doc.mode.combine().expect("a session");
     assert_eq!(session.feature, Some(combine));
     assert_eq!(session.target, Some(plate));
     assert_eq!(session.tools, [right]);
@@ -326,7 +326,7 @@ fn editing_reopens_it_with_its_values() {
     assert!(named >= 3, "{shown:?}");
     // OK with nothing changed writes nothing.
     plates.doc.update(Edit::CommitCombine);
-    assert!(plates.doc.operation.combine().is_none());
+    assert!(plates.doc.mode.combine().is_none());
     assert_eq!(plates.doc.editor.revision(), revision);
 
     plates.doc.look(Look::EditFeature(combine));
@@ -381,7 +381,7 @@ fn a_body_merged_before_picks_the_one_holding_it() {
         body: right,
         add: false,
     });
-    let session = plates.doc.operation.combine().unwrap();
+    let session = plates.doc.mode.combine().unwrap();
     assert_eq!(session.target, Some(left));
     assert_eq!(session.tools, [plate]);
     // Edited, the first combine sees Body 2 as itself.
@@ -392,7 +392,7 @@ fn a_body_merged_before_picks_the_one_holding_it() {
         body: right,
         add: false,
     });
-    assert_eq!(plates.doc.operation.combine().unwrap().tools, [right]);
+    assert_eq!(plates.doc.mode.combine().unwrap().tools, [right]);
 }
 
 #[test]
@@ -477,7 +477,7 @@ fn a_read_only_document_has_no_session_and_one_body_has_nothing_to_combine() {
     plates.doc.read_only = Some("read-only".to_owned());
     plates.doc.sync();
     plates.doc.look(Look::StartCombine);
-    assert!(plates.doc.operation.combine().is_none());
+    assert!(plates.doc.mode.combine().is_none());
     assert!(press_in(&plates.doc, character("b")).is_none());
 
     let (mut doc, _requests) = crate::tests::example();
@@ -498,45 +498,39 @@ fn other_tools_end_it_and_it_ends_them() {
     let [plate, _, _] = plates.bodies;
     plates.doc.look(Look::StartMeasure);
     plates.doc.look(Look::StartCombine);
-    assert!(plates.doc.measure.is_none());
-    assert!(plates.doc.operation.combine().is_some());
+    assert!(plates.doc.mode.measure().is_none());
+    assert!(plates.doc.mode.combine().is_some());
     // Not with the measure tool; an extrude or a revolve takes its place,
     // and a new sketch.
     plates.doc.look(Look::StartMeasure);
-    assert!(plates.doc.measure.is_none() && plates.doc.operation.combine().is_some());
+    assert!(plates.doc.mode.measure().is_none() && plates.doc.mode.combine().is_some());
     plates.doc.look(Look::StartExtrude);
-    assert!(plates.doc.operation.combine().is_none() && plates.doc.operation.extrude().is_some());
+    assert!(plates.doc.mode.combine().is_none() && plates.doc.mode.extrude().is_some());
     plates.doc.look(Look::StartCombine);
-    assert!(
-        plates.doc.operation.combine().is_none(),
-        "not over an extrude"
-    );
+    assert!(plates.doc.mode.combine().is_none(), "not over an extrude");
     plates.doc.look(Look::Escape);
     plates.doc.look(Look::StartCombine);
     plates.doc.look(Look::StartRevolve);
-    assert!(plates.doc.operation.combine().is_none() && plates.doc.operation.revolve().is_some());
+    assert!(plates.doc.mode.combine().is_none() && plates.doc.mode.revolve().is_some());
     plates.doc.look(Look::Escape);
     plates.doc.look(Look::StartCombine);
     plates.doc.look(Look::PickPlane);
-    assert!(plates.doc.operation.combine().is_none() && plates.doc.picking_plane.is_some());
+    assert!(plates.doc.mode.combine().is_none() && plates.doc.mode.picking_plane().is_some());
     plates.doc.look(Look::Escape);
     plates.doc.look(Look::StartCombine);
     // Editing an extrude drops it, and it drops an extrude.
     let extrude = plates.doc.editor.document().features()[1].id;
     plates.doc.look(Look::EditFeature(extrude));
-    assert!(plates.doc.operation.combine().is_none() && plates.doc.operation.extrude().is_some());
+    assert!(plates.doc.mode.combine().is_none() && plates.doc.mode.extrude().is_some());
     plates.doc.look(Look::StartCombine);
-    assert!(
-        plates.doc.operation.combine().is_none(),
-        "not over an extrude"
-    );
+    assert!(plates.doc.mode.combine().is_none(), "not over an extrude");
     plates.doc.look(Look::Escape);
     plates.doc.look(Look::StartCombine);
     plates.click(plate);
     // Entering a sketch ends it.
     let sketch = plates.doc.editor.document().features()[0].id;
     plates.doc.look(Look::EditFeature(sketch));
-    assert!(plates.doc.operation.combine().is_none());
+    assert!(plates.doc.mode.combine().is_none());
 }
 
 #[test]
@@ -553,7 +547,7 @@ fn a_body_going_drops_it_from_the_session() {
         .apply(varde_document::Command::RemoveFeature(maker));
     plates.doc.sync();
     assert!(plates.doc.editor.document().body(left).is_none());
-    let session = plates.doc.operation.combine().expect("still set up");
+    let session = plates.doc.mode.combine().expect("still set up");
     assert_eq!(session.target, Some(plate));
     assert!(session.tools.is_empty());
     assert!(!plates.doc.combine_ready());
@@ -639,7 +633,7 @@ fn a_click_in_the_viewport_picks_the_body_under_the_cursor() {
             plates.doc.look(look);
         }
     }
-    assert_eq!(plates.doc.operation.combine().unwrap().target, Some(plate));
+    assert_eq!(plates.doc.mode.combine().unwrap().target, Some(plate));
     // The body under the cursor shows hovered.
     assert!(plates.doc.pick.hover().is_some());
     assert!(!plates.doc.highlight().unwrap().selected_faces.is_empty());
@@ -659,7 +653,7 @@ fn the_cursor_picks_faces_whatever_the_selection_s_mode() {
     plates.doc.look(Look::StartCombine);
     assert_eq!(picks(&plates.doc), Some(Picks::Faces));
     plates.click(plate);
-    assert_eq!(plates.doc.operation.combine().unwrap().target, Some(plate));
+    assert_eq!(plates.doc.mode.combine().unwrap().target, Some(plate));
     plates.doc.look(Look::Escape);
     assert_eq!(picks(&plates.doc), Some(Picks::Edges));
 }
@@ -683,10 +677,10 @@ fn picks_follow_a_merge_the_model_shows_late() {
         for body in [right, tool] {
             plates.doc.look(Look::ClickBody { body, add: false });
         }
-        assert_eq!(plates.doc.operation.combine().unwrap().target, Some(right));
+        assert_eq!(plates.doc.mode.combine().unwrap().target, Some(right));
         plates.answer();
         assert_eq!(plates.doc.feed.merged_bodies(), [(right, plate)]);
-        let session = plates.doc.operation.combine().unwrap();
+        let session = plates.doc.mode.combine().unwrap();
         assert_eq!(session.target, Some(plate));
         if tool_is_holder {
             // Now the target: taken out of the tools.

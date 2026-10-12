@@ -106,7 +106,7 @@ impl Doc {
             .map(|&body| document.body(body).map_or(1.0, |body| body.opacity.alpha()));
         let tints =
             (parts.iter()).map(|&body| (document.body(body)?.color).map(varde_view::body_tint));
-        let edited = self.sketch.as_ref().and_then(|session| {
+        let edited = self.mode.sketch().and_then(|session| {
             let feature = document.feature(session.feature)?;
             let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
                 return None;

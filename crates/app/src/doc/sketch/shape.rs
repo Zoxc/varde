@@ -191,7 +191,7 @@ impl Doc {
     /// Ends the Mirror tool's picking, once it has picked something: its
     /// next click is on the line to mirror about.
     pub(crate) fn mirror_about(&mut self) {
-        let drawing = self.sketch.as_mut().and_then(|s| s.tool.as_mut());
+        let drawing = self.mode.sketch_mut().and_then(|s| s.tool.as_mut());
         if let Some(drawing) = drawing.filter(|drawing| drawing.tool == Tool::Mirror)
             && !drawing.picked.is_empty()
         {

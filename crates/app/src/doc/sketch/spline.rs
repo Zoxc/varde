@@ -89,7 +89,7 @@ impl Doc {
     /// Switches the Spline tool between drawing through fit points and by
     /// control points, keeping the points placed.
     pub(crate) fn toggle_spline_kind(&mut self) {
-        let drawing = self.sketch.as_mut().and_then(|s| s.tool.as_mut());
+        let drawing = self.mode.sketch_mut().and_then(|s| s.tool.as_mut());
         if let Some(drawing) = drawing.filter(|drawing| drawing.tool == Tool::Spline) {
             drawing.control = !drawing.control;
         }
@@ -186,7 +186,7 @@ impl Doc {
     /// tool in use, or stops, in a sketch that can be changed.
     pub(crate) fn toggle_insert_point(&mut self) {
         let editable = self.editable_sketch().is_some();
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             let inserting = !session.inserting && editable;
             session.put_down();
             session.inserting = inserting;
@@ -195,7 +195,7 @@ impl Doc {
 
     /// Shows the curvature comb of the splines selected, or hides it.
     pub(crate) fn toggle_comb(&mut self) {
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.comb = !session.comb;
         }
     }

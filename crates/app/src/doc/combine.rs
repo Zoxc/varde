@@ -15,7 +15,7 @@
 //! is in Body 2 now").
 
 use super::pick::CachedHighlight;
-use crate::doc::{OperationSession, OperationSlot};
+use crate::doc::{DocMode, OperationSession, OperationSlot};
 use std::sync::Arc;
 
 use varde_document::{BodyId, BodyOp, Combine, Document, FeatureId, FeatureKind};
@@ -26,7 +26,7 @@ use varde_view::{
 use super::Doc;
 use super::feed::Merges;
 
-/// The combine being set up, while one is: [`Doc::operation`].
+/// The combine being set up, while one is: [`Doc::mode`].
 #[derive(Debug)]
 pub(crate) struct CombineSession {
     /// The combine edited, or `None` for a new one.
@@ -178,20 +178,19 @@ impl Doc {
     /// being set up. What's selected in the model gives it its bodies: the
     /// first selected's body is the target, the others' the tools.
     pub(crate) fn start_combine(&mut self) {
-        if self.operation.take_combine().is_some()
+        if self.mode.take_combine().is_some()
             || !self.editable()
-            || self.sketch.is_some()
-            || self.operation.extrude().is_some()
-            || self.operation.revolve().is_some()
-            || self.operation.motion().is_some()
+            || self.mode.sketch().is_some()
+            || self.mode.extrude().is_some()
+            || self.mode.revolve().is_some()
+            || self.mode.motion().is_some()
         {
             return;
         }
-        self.picking_plane = None;
         let bodies = self.selected_bodies();
         let target = bodies.first().copied();
         let tools = bodies.get(1..).unwrap_or_default().to_vec();
-        self.operation = Some(OperationSession::Combine(CombineSession::new(
+        self.mode = DocMode::Operation(OperationSession::Combine(CombineSession::new(
             target, tools,
         )));
         self.opened_operation();
@@ -227,27 +226,28 @@ impl Doc {
         let Some(FeatureKind::Combine(combine)) = document.feature(id).map(|f| &f.kind) else {
             return;
         };
-        if self.sketch.is_some() || !self.editable() {
+        if self.mode.sketch().is_some() || !self.editable() {
             return;
         }
-        self.picking_plane = None;
         self.selected_feature = Some(id);
         let mut session = CombineSession::editing(id, combine);
         // One kept when its maker was deleted names a body that isn't
         // there, to be picked again.
         session.prune(document);
-        self.operation = Some(OperationSession::Combine(session));
+        self.mode = DocMode::Operation(OperationSession::Combine(session));
         self.opened_operation();
     }
 
     /// Takes `message`, changing the combine being set up.
     pub(crate) fn combine_look(&mut self, message: CombineLook) {
         let editable = self.editable();
-        let Some(session) = self.operation.combine_mut() else {
+        let Some(session) = self.mode.combine_mut() else {
             return;
         };
         match message {
-            CombineLook::Cancel => self.operation = None,
+            CombineLook::Cancel => {
+                self.mode.take_operation();
+            }
             _ if !editable => {}
             CombineLook::Picking(picking) => session.picking = picking,
             CombineLook::Drop(body) => session.drop(body),
@@ -273,7 +273,7 @@ impl Doc {
     /// its target, or a tool while tools are picked (a click on a tool
     /// while the target is picked makes it the target).
     pub(crate) fn combine_has(&self, pick: Pick) -> bool {
-        let Some(session) = self.operation.combine() else {
+        let Some(session) = self.mode.combine() else {
             return false;
         };
         let merged = self
@@ -294,7 +294,7 @@ impl Doc {
             return;
         }
         let document = self.editor.document();
-        let Some(session) = self.operation.combine_mut() else {
+        let Some(session) = self.mode.combine_mut() else {
             return;
         };
         let merged = self.feed.merged_before(document, session.feature);
@@ -315,7 +315,7 @@ impl Doc {
     /// check; the session keeps its bodies ones the document has, made
     /// before it.
     pub(crate) fn combine_ready(&self) -> bool {
-        self.operation.combine().is_some_and(|session| {
+        self.mode.combine().is_some_and(|session| {
             self.editable()
                 && !self.users_proposing()
                 && session
@@ -333,14 +333,14 @@ impl Doc {
         if !self.commit_by(self.combine_ready(), accept) {
             return;
         }
-        let Some(session) = self.operation.combine() else {
+        let Some(session) = self.mode.combine() else {
             return;
         };
         let Some(combine) = session.combine() else {
             return;
         };
         if self.commit_feature(session.feature, combine.into()) {
-            self.operation = None;
+            self.mode.take_operation();
         }
     }
 
@@ -351,7 +351,7 @@ impl Doc {
     pub(crate) fn prune_combine(&mut self, replaced: bool) {
         let editable = self.editable();
         let document = self.editor.document();
-        let Some(session) = self.operation.combine_mut() else {
+        let Some(session) = self.mode.combine_mut() else {
             return;
         };
         let edited = session.feature.is_none_or(|feature| {
@@ -361,7 +361,7 @@ impl Doc {
             )
         });
         if !(editable && !replaced && edited) {
-            self.operation = None;
+            self.mode.take_operation();
             return;
         }
         session.prune(document);
@@ -374,17 +374,17 @@ impl Doc {
     /// ([`CombineSession::follow`]), after an edit and with each answer:
     /// whether they moved, and the preview is to be asked for again.
     pub(crate) fn follow_merges(&mut self) -> bool {
-        let Some(session) = self.operation.combine() else {
+        let Some(session) = self.mode.combine() else {
             return false;
         };
         let merges = (self.feed).merged_before(self.editor.document(), session.feature);
-        (self.operation.combine_mut()).is_some_and(|session| session.follow(&merges))
+        (self.mode.combine_mut()).is_some_and(|session| session.follow(&merges))
     }
 
     /// The combine being set up as the regeneration lane previews it, and
     /// the combine it edits, if it's whole.
     pub(crate) fn combine_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
-        let session = self.operation.combine()?;
+        let session = self.mode.combine()?;
         Some((session.feature, session.combine()?.into()))
     }
 
@@ -403,7 +403,7 @@ impl Doc {
             Some(body) => Some((body, true)),
             None => self.pick.hover().map(|pick| (pick.body, false)),
         };
-        let Some(session) = self.operation.combine_mut() else {
+        let Some(session) = self.mode.combine_mut() else {
             return;
         };
         let model = self.feed.model();
@@ -439,12 +439,12 @@ impl Doc {
     /// The combine's highlight, if one is set up and it's built for the
     /// model shown.
     pub(crate) fn combine_highlight(&self) -> Option<&Arc<ModelHighlight>> {
-        (self.operation.combine()?.highlight).current(self.feed.model())
+        (self.mode.combine()?.highlight).current(self.feed.model())
     }
 
     /// The combine being set up, for the view.
     pub(crate) fn combine_state(&self) -> Option<CombineState<'_>> {
-        let session = self.operation.combine()?;
+        let session = self.mode.combine()?;
         let document = self.editor.document();
         let named = |body: BodyId| {
             Some(CombineBody {

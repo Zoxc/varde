@@ -36,7 +36,7 @@ fn drafted(plates: &Plates) -> Option<Fillet> {
 fn edges(plates: &Plates) -> Vec<varde_document::EdgeRef> {
     (plates
         .doc
-        .operation
+        .mode
         .motion()
         .expect("a session")
         .blend
@@ -66,7 +66,7 @@ fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
     key_in(&mut plates.doc, character("f"));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Fillet);
     assert!(session.bodies.is_empty(), "its body is its edges'");
     assert_eq!(picking(&plates), MotionPick::Edges);
@@ -96,17 +96,17 @@ fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
     // click on it again takes it out.
     plates.click_at(plate, Picked::Face(top), DVec3::new(0.0, 15.0, 10.0));
     assert_eq!(plates.doc.notice, None);
-    assert_eq!(plates.doc.operation.motion().unwrap().faces.refs.len(), 1);
+    assert_eq!(plates.doc.mode.motion().unwrap().faces.refs.len(), 1);
     assert!(shows(&plates, "Face 1"));
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     plates.click_at(plate, Picked::Face(top), DVec3::new(0.0, 15.0, 10.0));
-    assert!(plates.doc.operation.motion().unwrap().faces.refs.is_empty());
+    assert!(plates.doc.mode.motion().unwrap().faces.refs.is_empty());
     assert!(!shows(&plates, "Face 1"));
 
     let front = edge_pick(&plates, plate, FRONT);
     click_edge(&mut plates, plate, FRONT);
     assert_eq!(edges(&plates).len(), 1);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     assert_eq!(plates.doc.blend_lit(), [front.target]);
     assert!(shows(&plates, "Edge 1") && shows(&plates, "60 mm"));
     assert!(plates.doc.motion_ready());
@@ -150,7 +150,7 @@ fn f_picks_and_toggles_edges_and_add_anyway_keeps_the_unbuilt_fillet() {
     assert_eq!(plates.doc.editor.document().features().len(), features);
 
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert!(matches!(&kind, FeatureKind::Fillet(stored) if stored.edges.len() == 2));
     assert_eq!(
@@ -209,7 +209,7 @@ fn the_radius_and_chain_are_previewed_and_ok_adds_one_undo_step() {
     assert!(rounded(&plates, plate, 1.0));
 
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (_, kind) = plates.last_feature();
     assert_eq!(kind, FeatureKind::Fillet(fillet));
     plates.answer();
@@ -249,7 +249,7 @@ fn editing_a_fillet_from_the_timeline_cancel_and_undo() {
         panic!("a fillet");
     };
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Fillet);
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.blend.edges.refs, stored.edges);
@@ -262,14 +262,14 @@ fn editing_a_fillet_from_the_timeline_cancel_and_undo() {
     );
     plates.input(MotionField::Radius, "4");
     plates.motion(MotionLook::Cancel);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), before);
 
     plates.doc.look(Look::EditFeature(id));
     plates.input(MotionField::Radius, "4");
     plates.answer();
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let FeatureKind::Fillet(set) = &plates.doc.editor.document().feature(id).unwrap().kind else {
         panic!("a fillet");
     };
@@ -339,7 +339,7 @@ fn fillet_takes_the_edges_selected_and_f_backs_out() {
     assert_eq!(edges(&plates).len(), 2);
     assert!(drafted(&plates).is_some());
     key_in(&mut plates.doc, character("f"));
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
 
     let mut plates = super::plates();
     let [_, right, _] = plates.bodies;
@@ -415,7 +415,7 @@ fn an_edge_selected_before_takes_in_its_chain() {
         double: false,
     });
     plates.doc.look(Look::StartFillet);
-    assert!(plates.doc.operation.motion().unwrap().blend.chains);
+    assert!(plates.doc.mode.motion().unwrap().blend.chains);
     assert_eq!(edges(&plates).len(), 4);
 }
 
@@ -554,7 +554,7 @@ fn editing_a_fillet_whose_body_a_later_join_merged() {
     assert_eq!(edges(&plates).len(), 1);
     plates.answer();
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, _) = plates.last_feature();
     let extent = crate::tests::two_sides(plates.doc.editor.document(), "12", "1");
     crate::tests::add_disc(
@@ -591,7 +591,7 @@ fn editing_a_fillet_whose_body_a_later_join_merged() {
     plates.doc.update(Edit::AcceptError);
     plates.doc.update(Edit::CommitMotion);
     assert!(
-        plates.doc.operation.motion().is_none(),
+        plates.doc.mode.motion().is_none(),
         "{:?}",
         plates.doc.edit_error
     );
@@ -825,7 +825,7 @@ fn ctrl_shows_an_edited_fillet_s_body_before_it() {
     click_edge(&mut plates, plate, FRONT);
     plates.answer();
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, _) = plates.last_feature();
     plates.answer();
     plates.doc.look(Look::EditFeature(id));

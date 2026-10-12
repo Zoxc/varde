@@ -158,7 +158,7 @@ impl Doc {
     /// Opens `field`, in place of any open, to take the focus with its
     /// text selected.
     pub(super) fn open_value(&mut self, field: ValueEdit) {
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.label = None;
             session.value = Some(field);
             self.focus = Some(Focus::All);
@@ -168,7 +168,7 @@ impl Doc {
     /// Keeps `text` as typed in the value field, if it's open, and stops
     /// showing why the last was refused.
     pub(crate) fn value_input(&mut self, text: String) {
-        if let Some(field) = self.sketch.as_mut().and_then(|s| s.value.as_mut()) {
+        if let Some(field) = self.mode.sketch_mut().and_then(|s| s.value.as_mut()) {
             field.text = text;
             field.error = None;
         }
@@ -176,7 +176,7 @@ impl Doc {
 
     /// Closes the value field, if it's open, changing nothing.
     pub(crate) fn close_value(&mut self) {
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.value = None;
         }
     }
@@ -198,7 +198,7 @@ impl Doc {
         let Some(sketch) = self.editable_sketch() else {
             return;
         };
-        let Some(field) = self.sketch.as_ref().and_then(|s| s.value.as_ref()) else {
+        let Some(field) = self.mode.sketch().and_then(|s| s.value.as_ref()) else {
             return;
         };
         let design = self.editor.document().design();
@@ -247,7 +247,7 @@ impl Doc {
     /// Keeps the value field open saying why its text was refused,
     /// `error`, with the part it's about selected.
     pub(super) fn refuse_value(&mut self, error: varde_expr::Error) {
-        let Some(field) = self.sketch.as_mut().and_then(|s| s.value.as_mut()) else {
+        let Some(field) = self.mode.sketch_mut().and_then(|s| s.value.as_mut()) else {
             return;
         };
         let text = &field.text;
@@ -264,7 +264,7 @@ impl Doc {
         let editable = self
             .editable_sketch()
             .is_some_and(|s| s.dimension(id).is_some());
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.label = editable.then_some(LabelDrag {
                 id,
                 by: DVec2::ZERO,
@@ -276,7 +276,7 @@ impl Doc {
     /// to `to`: shown there until it's dropped.
     pub(crate) fn drag_label(&mut self, id: Id, from: DVec2, to: DVec2) {
         let by = to - from;
-        let label = self.sketch.as_mut().and_then(|s| s.label.as_mut());
+        let label = self.mode.sketch_mut().and_then(|s| s.label.as_mut());
         if let Some(label) = label.filter(|label| label.id == id)
             && by.is_finite()
         {
@@ -287,7 +287,7 @@ impl Doc {
     /// Lets go of the label grabbed, proposing it where it was dragged to,
     /// if it was.
     pub(crate) fn drop_label(&mut self) {
-        let Some(LabelDrag { id, by }) = self.sketch.as_mut().and_then(|s| s.label.take()) else {
+        let Some(LabelDrag { id, by }) = self.mode.sketch_mut().and_then(|s| s.label.take()) else {
             return;
         };
         let Some(entry) = self
@@ -330,7 +330,7 @@ impl Doc {
     /// Switches the Dimension tool between the radius and the diameter of
     /// the circle or arc picked.
     pub(crate) fn switch_round(&mut self) {
-        let drawing = self.sketch.as_mut().and_then(|s| s.tool.as_mut());
+        let drawing = self.mode.sketch_mut().and_then(|s| s.tool.as_mut());
         if let Some(drawing) = drawing.filter(|drawing| !drawing.picked.is_empty()) {
             drawing.switched = !drawing.switched;
         }

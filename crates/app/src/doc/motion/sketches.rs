@@ -55,7 +55,7 @@ impl Doc {
     ) {
         let revision = self.feed.revision();
         let document = self.editor.document();
-        let Some(session) = self.operation.motion_mut() else {
+        let Some(session) = self.mode.motion_mut() else {
             return;
         };
         let feature = session.feature;

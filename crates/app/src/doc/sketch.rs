@@ -31,7 +31,7 @@ use varde_view::{
 
 use super::camera::FRAME_MARGIN;
 use super::extrude::is_sketch;
-use super::{Change, Doc, HOME_TARGET, OUT_OF_DATE, home_camera, sketch_of};
+use super::{Change, Doc, DocMode, HOME_TARGET, OUT_OF_DATE, home_camera, sketch_of};
 pub(crate) use dimension::Focus;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use edit::{Clicks, clicked};
@@ -42,7 +42,7 @@ pub(crate) use propose::{Analyses, Proposals};
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use propose::{Settled, Step};
 
-/// The sketch being edited, while one is: [`Doc::sketch`].
+/// The sketch being edited, while one is: [`Doc::mode`].
 #[derive(Debug)]
 pub(crate) struct SketchSession {
     /// The sketch feature edited.
@@ -390,11 +390,10 @@ impl Doc {
     /// picking a plane. Only outside a sketch, in a document that can be
     /// edited; an operation being set up is dropped.
     pub(crate) fn pick_plane(&mut self) {
-        if self.picking_plane.is_some() {
+        if self.mode.picking_plane().is_some() {
             self.stop_picking_plane();
-        } else if self.editable() && self.sketch.is_none() {
-            self.operation = None;
-            self.picking_plane = Some(PickingPlane {
+        } else if self.editable() && self.mode.sketch().is_none() {
+            self.mode = DocMode::PickingPlane(PickingPlane {
                 pick: self.new_sketch_pick(),
                 enter: false,
             });
@@ -415,17 +414,17 @@ impl Doc {
     pub(crate) fn change_plane(&mut self, id: FeatureId) {
         if !self.editable()
             || self.operating()
-            || (self.sketch.as_ref()).is_some_and(|session| session.feature != id)
+            || (self.mode.sketch()).is_some_and(|session| session.feature != id)
         {
             return;
         }
         let Some(pick) = self.change_pick(id, None) else {
             return;
         };
-        let enter = self.sketch.is_some();
+        let enter = self.mode.sketch().is_some();
         self.finish_sketch();
         self.selected_feature = Some(id);
-        self.picking_plane = Some(PickingPlane { pick, enter });
+        self.mode = DocMode::PickingPlane(PickingPlane { pick, enter });
     }
 
     /// Keeps the plane being picked in step with the document and the
@@ -434,7 +433,7 @@ impl Doc {
     /// the sketch, or across a replacement, where its id may name
     /// another.
     pub(crate) fn prune_plane_pick(&mut self, replaced: bool) {
-        let Some(picking) = &self.picking_plane else {
+        let Some(picking) = self.mode.picking_plane() else {
             return;
         };
         // Saved where it can't be written, the document can't take it:
@@ -453,16 +452,18 @@ impl Doc {
                 self.change_pick(*id, failed)
             }
         };
-        match (pick, &mut self.picking_plane) {
+        match (pick, self.mode.picking_plane_mut()) {
             (Some(pick), Some(picking)) => picking.pick = pick,
-            _ => self.picking_plane = None,
+            _ => {
+                self.mode.take_picking_plane();
+            }
         }
     }
 
     /// Backs out of picking a plane, leaving the document as it was: the
     /// sketch left for it is edited again, if it's placed.
     fn stop_picking_plane(&mut self) {
-        let Some(picking) = self.picking_plane.take() else {
+        let Some(picking) = self.mode.take_picking_plane() else {
             return;
         };
         if let (true, Some((id, _))) = (picking.enter, picking.pick.sketch)
@@ -480,7 +481,7 @@ impl Doc {
     /// without picking (the toolbar's buttons); a face only while picking:
     /// a click sent before picking ended may come after.
     pub(crate) fn plane_picked(&mut self, plane: Plane) {
-        let Some(picking) = self.picking_plane.take() else {
+        let Some(picking) = self.mode.take_picking_plane() else {
             if let Plane::Origin(_) = plane {
                 self.change(Change::NewSketch(plane));
             }
@@ -492,7 +493,7 @@ impl Doc {
                 Ok((face, placement)) => (Plane::Face(face), Some(placement)),
                 Err(why) => {
                     self.notice = Some(why.into_owned());
-                    self.picking_plane = Some(picking);
+                    self.mode = DocMode::PickingPlane(picking);
                     return;
                 }
             },
@@ -541,7 +542,7 @@ impl Doc {
     /// placement is worked out from it at once, as regenerating will
     /// (see [`Doc::placement`]), so the session starts facing it.
     pub(crate) fn new_sketch(&mut self, plane: Plane) {
-        self.picking_plane = None;
+        self.mode.take_picking_plane();
         let (plane, placed) = match plane {
             Plane::Origin(_) => (plane, None),
             Plane::Face(face) => match self.face_placement(&face, &self.new_sketch_pick()) {
@@ -575,7 +576,7 @@ impl Doc {
     /// picks the model, outside picking a plane: what `S` puts a new
     /// sketch on.
     pub(crate) fn selected_face(&self) -> Option<FaceRef> {
-        (self.picks() && self.sketch.is_none() && self.picking_plane.is_none())
+        (self.picks() && self.mode.sketch().is_none() && self.mode.picking_plane().is_none())
             .then(|| self.pick.selection.single_face())
             .flatten()
     }
@@ -698,13 +699,13 @@ impl Doc {
     pub(crate) fn follow_placement(&mut self) {
         let shown = self.feed.generation();
         (self.placed).take_if(|placed| shown.is_some_and(|shown| shown >= placed.generation));
-        let Some(feature) = self.sketch.as_ref().map(|session| session.feature) else {
+        let Some(feature) = self.mode.sketch().map(|session| session.feature) else {
             return;
         };
         let Some(placement) = self.placement(feature) else {
             return;
         };
-        let Some(session) = &mut self.sketch else {
+        let Some(session) = self.mode.sketch_mut() else {
             return;
         };
         // A face moved along its normal, or its normal rounded anew,
@@ -740,17 +741,19 @@ impl Doc {
             {
                 let pick = self.change_pick(id, Some(why.clone()));
                 self.finish_sketch();
-                self.operation = None;
+                self.mode.take_operation();
                 self.selected_feature = Some(id);
-                self.picking_plane = pick.map(|pick| PickingPlane { pick, enter: true });
+                if let Some(pick) = pick {
+                    self.mode = DocMode::PickingPlane(PickingPlane { pick, enter: true });
+                }
                 return;
             }
             let why = failed.as_deref().unwrap_or("it isn't placed yet");
             self.notice = Some(format!("Can't edit {}: {why}", feature.name));
             return;
         };
-        self.picking_plane = None;
-        self.operation = None;
+        self.mode.take_picking_plane();
+        self.mode.take_operation();
         self.selected_feature = Some(id);
         // The Timeline's rows go, with no exit: none is hovered once the
         // sketch is left, until the cursor moves onto one.
@@ -766,11 +769,11 @@ impl Doc {
         }
         // The view to come back to, the one being turned to if turning:
         // from one sketch to another, the one before the first.
-        if self.sketch.is_none() {
+        if self.mode.sketch().is_none() {
             self.before_sketch = Some(self.animation.as_ref().map_or(self.camera, |a| a.to));
             self.panel_before_sketch = Some(self.panel);
         }
-        self.sketch = Some(SketchSession::new(id, placement, sketch.clone()));
+        self.mode = DocMode::Sketch(SketchSession::new(id, placement, sketch.clone()));
         self.fade.start(1.0, &placement, iced::time::Instant::now());
         self.panel = Panel::Sketch;
         // The rail's sets are the sketch's now.
@@ -784,7 +787,7 @@ impl Doc {
     /// Leaves the sketch being edited, if one is. Everything done in it is
     /// in the document already.
     pub(crate) fn finish_sketch(&mut self) {
-        if self.sketch.is_some() {
+        if self.mode.sketch().is_some() {
             self.end_session();
             self.sync();
         }
@@ -798,7 +801,7 @@ impl Doc {
             to.set_projection(self.camera.projection());
             self.animate_camera(to);
         }
-        if let Some(session) = self.sketch.take() {
+        if let Some(session) = self.mode.take_sketch() {
             (self.fade).start(0.0, &session.placement, iced::time::Instant::now());
         }
         // The tab shown before, unless Objects was picked in the sketch.
@@ -833,13 +836,13 @@ impl Doc {
             self.file_menu = false;
         } else if self.view_menu {
             self.view_menu = false;
-        } else if self.picking_plane.is_some() {
+        } else if self.mode.picking_plane().is_some() {
             self.stop_picking_plane();
         } else if self.operating() {
             self.close_operation();
-        } else if self.measure.is_some() {
-            self.measure = None;
-        } else if let Some(session) = &mut self.sketch {
+        } else if self.mode.measure().is_some() {
+            self.mode.take_measure();
+        } else if let Some(session) = self.mode.sketch_mut() {
             if session.value.take().is_some()
                 || session.label.take().is_some()
                 || session.drag.take().is_some()
@@ -864,7 +867,7 @@ impl Doc {
     /// selection or takes it out.
     pub(crate) fn click_geometry(&mut self, hit: Option<Selectable>, add: bool) {
         let hit = hit.filter(|&id| self.holds(id));
-        let Some(session) = &mut self.sketch else {
+        let Some(session) = self.mode.sketch_mut() else {
             return;
         };
         match (hit, add) {
@@ -883,7 +886,7 @@ impl Doc {
     /// holds: alone, or with `add` as well as what's selected.
     pub(crate) fn select_box(&mut self, ids: Vec<Selectable>, add: bool) {
         let held: Vec<_> = ids.into_iter().filter(|&id| self.holds(id)).collect();
-        let Some(session) = &mut self.sketch else {
+        let Some(session) = self.mode.sketch_mut() else {
             return;
         };
         if !add {
@@ -900,7 +903,7 @@ impl Doc {
 
     /// Lets go of the item `id` hovered, if it still is.
     pub(crate) fn leave_item(&mut self, id: Selectable) {
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.hovered.take_if(|&mut hovered| hovered == id);
         }
     }
@@ -909,7 +912,7 @@ impl Doc {
     /// holds it.
     pub(crate) fn hover_item(&mut self, id: Option<Selectable>) {
         let id = id.filter(|&id| self.holds(id));
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.hovered = id;
         }
     }
@@ -918,7 +921,7 @@ impl Doc {
     /// down the drawing tool, or puts it down.
     pub(crate) fn toggle_constrain(&mut self) {
         let editable = self.editable();
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             let constraining = !session.constraining && editable;
             session.put_down();
             session.constraining = constraining;
@@ -928,14 +931,14 @@ impl Doc {
     /// Puts down the tool in use, the Constrain tool too, and the drag
     /// with it.
     pub(crate) fn put_down_tool(&mut self) {
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.put_down();
         }
     }
 
     /// Folds a group of the Geometry list, or unfolds it.
     pub(crate) fn toggle_group(&mut self, group: GeometryGroup) {
-        if let Some(session) = &mut self.sketch
+        if let Some(session) = self.mode.sketch_mut()
             && !session.folded.remove(&group)
         {
             session.folded.insert(group);
@@ -946,7 +949,7 @@ impl Doc {
     /// under it, or folds it.
     pub(crate) fn toggle_expanded(&mut self, id: Id) {
         let held = self.holds(id.into());
-        if let Some(session) = &mut self.sketch
+        if let Some(session) = self.mode.sketch_mut()
             && !session.expanded.remove(&id)
             && held
         {
@@ -956,7 +959,7 @@ impl Doc {
 
     /// Shows the constraints' glyphs, or hides them.
     pub(crate) fn toggle_glyphs(&mut self) {
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.glyphs = !session.glyphs;
         }
     }
@@ -964,7 +967,7 @@ impl Doc {
     /// Clears the selection: the sketch's in a sketch, else the
     /// Timeline's and the model's.
     pub(crate) fn clear_selection(&mut self) {
-        match &mut self.sketch {
+        match self.mode.sketch_mut() {
             Some(session) => session.selection.clear(),
             None => {
                 self.selected_feature = None;
@@ -985,7 +988,11 @@ impl Doc {
         let picked = self.working_sketch().map(|sketch| {
             use varde_view::dimension::{joins, pickable};
 
-            let selection = self.sketch.iter().flat_map(|session| &session.selection);
+            let selection = self
+                .mode
+                .sketch()
+                .into_iter()
+                .flat_map(|session| &session.selection);
             let selected: Vec<Selectable> = selection.copied().collect();
             let item_ids: Vec<Id> = selected.iter().filter_map(|target| target.item()).collect();
             let items = |picked: Vec<Id>| picked.into_iter().map(Selectable::Item).collect();
@@ -998,7 +1005,7 @@ impl Doc {
                 _ => Vec::new(),
             }
         });
-        let Some(session) = &mut self.sketch else {
+        let Some(session) = self.mode.sketch_mut() else {
             return;
         };
         session.drag = None;
@@ -1034,7 +1041,7 @@ impl Doc {
         let editable = self.editable();
         let document = self.editor.document();
         if replaced {
-            let edited = self.sketch.as_ref().map(|session| session.feature);
+            let edited = self.mode.sketch().map(|session| session.feature);
             let edited = edited.filter(|&id| is_sketch(document, id));
             self.selected_feature = self.selected_feature.filter(|&id| Some(id) == edited);
         }
@@ -1065,7 +1072,7 @@ impl Doc {
         {
             self.refused_edit = None;
         }
-        let Some(session) = &mut self.sketch else {
+        let Some(session) = self.mode.sketch_mut() else {
             return;
         };
         if !editable {
@@ -1181,7 +1188,7 @@ impl Doc {
     /// the solver applied.
     pub(crate) fn sketch_state(&self) -> Option<SketchState<'_>> {
         static NONE: BTreeSet<Id> = BTreeSet::new();
-        let session = self.sketch.as_ref()?;
+        let session = self.mode.sketch()?;
         let feature = self.editor.document().feature(session.feature)?;
         let FeatureKind::Sketch { plane, sketch, .. } = &feature.kind else {
             return None;
@@ -1252,7 +1259,7 @@ impl Doc {
     /// while it's dragged, else with the edits waiting on the solver
     /// applied, else as committed.
     pub(super) fn shown_sketch(&self) -> Option<&Sketch> {
-        let session = self.sketch.as_ref()?;
+        let session = self.mode.sketch()?;
         let dragged = session
             .drag
             .as_ref()
@@ -1271,8 +1278,8 @@ impl Doc {
             return;
         };
         let found = self
-            .sketch
-            .as_ref()
+            .mode
+            .sketch()
             .and_then(|session| session.profiles.as_ref());
         if found.is_some_and(|found| found.sketch == *shown) {
             return;
@@ -1281,7 +1288,7 @@ impl Doc {
             sketch: shown.clone(),
             profiles: shown.profiles().map(Arc::new),
         };
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.profiles = Some(found);
         }
     }
@@ -1289,7 +1296,7 @@ impl Doc {
     /// Keeps what the Constraints list lists in step with the selection,
     /// see [`follow_selection`].
     pub(crate) fn list_selection(&mut self) {
-        let Some(session) = &mut self.sketch else {
+        let Some(session) = self.mode.sketch_mut() else {
             return;
         };
         let committed = sketch_of(self.editor.document(), session.feature);
@@ -1302,8 +1309,8 @@ impl Doc {
     /// Whether the Dimension tool is in use, where the peek key places
     /// references instead of peeking.
     pub(crate) fn dimensioning(&self) -> bool {
-        self.sketch
-            .as_ref()
+        self.mode
+            .sketch()
             .and_then(|session| session.tool.as_ref())
             .is_some_and(|drawing| drawing.tool == Tool::Dimension)
     }
@@ -1311,7 +1318,7 @@ impl Doc {
     /// The sketch being edited as it's worked on: with the edits waiting
     /// on the solver applied, if there are any, else as committed.
     pub(crate) fn working_sketch(&self) -> Option<&Sketch> {
-        let session = self.sketch.as_ref()?;
+        let session = self.mode.sketch()?;
         match &session.waiting {
             Some(waiting) => Some(&waiting.sketch),
             None => self.edited_sketch().map(|(_, sketch)| sketch),
@@ -1321,7 +1328,7 @@ impl Doc {
     /// The sketch being edited as the document holds it, if one is, and
     /// the plane it's on.
     pub(crate) fn edited_sketch(&self) -> Option<(Plane, &Sketch)> {
-        let session = self.sketch.as_ref()?;
+        let session = self.mode.sketch()?;
         let feature = self.editor.document().feature(session.feature)?;
         let FeatureKind::Sketch { plane, sketch, .. } = &feature.kind else {
             return None;
@@ -1332,7 +1339,7 @@ impl Doc {
     /// The sketch being edited as the document holds it, if one is, and
     /// what its links come from, one for each in their order.
     pub(crate) fn edited_links(&self) -> Option<(&Sketch, &[LinkSource])> {
-        let session = self.sketch.as_ref()?;
+        let session = self.mode.sketch()?;
         let feature = self.editor.document().feature(session.feature)?;
         let FeatureKind::Sketch {
             sketch, sources, ..
@@ -1348,7 +1355,7 @@ impl Doc {
     /// a sketch.
     pub(crate) fn sketch_camera(&self) -> Option<Camera> {
         let (_, sketch) = self.edited_sketch()?;
-        let placement = self.sketch.as_ref()?.placement;
+        let placement = self.mode.sketch()?.placement;
         Some(facing(self.camera.projection(), None, placement, sketch))
     }
 
@@ -1358,7 +1365,7 @@ impl Doc {
     /// the view now (or where it's turning to), so the view changes least.
     pub(crate) fn turn_to_sketch(&self) -> Option<Camera> {
         let (_, sketch) = self.edited_sketch()?;
-        let placement = self.sketch.as_ref()?.placement;
+        let placement = self.mode.sketch()?.placement;
         let now = self.animation.as_ref().map_or(self.camera, |a| a.to);
         Some(facing(now.projection(), Some(&now), placement, sketch))
     }

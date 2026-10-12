@@ -593,7 +593,7 @@ fn shots_08_missing_region() {
         doc.sync();
         answer(&mut doc, &requests);
         doc.look(Look::EditFeature(feature));
-        assert!(doc.operation.extrude().unwrap().regions.missing > 0);
+        assert!(doc.mode.extrude().unwrap().regions.missing > 0);
         answer(&mut doc, &requests);
         camera.take(&doc, "08-missing-region", Shot::new());
         camera.take(&doc, "08-missing-region-dark", Shot::new().dark());
@@ -615,7 +615,7 @@ fn extruded(
     set(doc);
     doc.update(Edit::CommitExtrude);
     assert_eq!(doc.edit_error, None);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     answer(doc, requests);
 }
 
@@ -686,7 +686,7 @@ fn shots_10_delete_prompts() {
     shooting(|camera| {
         let (mut doc, requests) = a_cut_of_many(11);
         doc.look(Look::Escape);
-        assert!(doc.operation.extrude().is_none());
+        assert!(doc.mode.extrude().is_none());
         answer(&mut doc, &requests);
         let plate = doc.editor.document().features()[0].id;
         doc.update(Edit::RemoveFeature(plate));
@@ -1209,7 +1209,7 @@ fn shots_20_revolve() {
         );
         lathe.doc.update(Edit::CommitRevolve);
         lathe.answer();
-        assert!(lathe.doc.operation.revolve().is_none());
+        assert!(lathe.doc.mode.revolve().is_none());
         lathe
             .doc
             .look(Look::SelectPanel(varde_view::Panel::Timeline));
@@ -1295,7 +1295,7 @@ fn shots_21_round_solids() {
         answer(&mut doc, &requests);
         doc.update(Edit::CommitRevolve);
         answer(&mut doc, &requests);
-        assert!(doc.operation.revolve().is_none());
+        assert!(doc.mode.revolve().is_none());
         aim(&mut doc, -0.3, -0.25, 9.0);
         camera.take(&doc, "21-round-solids", Shot::new());
         camera.take(&doc, "21-round-solids-scale2", Shot::new().scale(2.0));
@@ -1529,7 +1529,7 @@ fn shots_24_sketch_on_face() {
         };
         let face = doc.feed.pick_index().face_ref(face, pick.at).unwrap();
         doc.update(Edit::FacePicked(face));
-        let id = doc.sketch.as_ref().expect("in the sketch").feature;
+        let id = doc.mode.sketch().expect("in the sketch").feature;
         let mut drawn = varde_sketch::Sketch::default();
         let center = drawn.add_point(glam::DVec2::new(20.0, 10.0)).unwrap();
         drawn

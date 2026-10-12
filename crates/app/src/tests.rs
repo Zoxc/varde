@@ -1326,7 +1326,7 @@ fn save_waits_for_the_edits_on_the_solver() {
 fn a_save_waiting_for_an_edit_and_a_delete_behind_it_saves_both() {
     let (mut varde, requests) = with_open_file();
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
-    let feature = document(&varde).sketch.as_ref().unwrap().feature;
+    let feature = document(&varde).mode.sketch().unwrap().feature;
     let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
         varde_view::Tool::Point,
     ))));
@@ -1734,7 +1734,7 @@ fn a_save_as_leaving_the_design_read_only_puts_the_sketch_tool_down() {
     let doc = document(&varde);
     assert!(doc.read_only.is_some());
     // Still in the sketch, to look at, but without the tool.
-    let session = doc.sketch.as_ref().unwrap();
+    let session = doc.mode.sketch().unwrap();
     assert!(session.tool.is_none());
     assert!(!doc.keys().unwrap().drawing);
 }
@@ -2785,7 +2785,7 @@ fn restoring_recovered_changes_drops_the_edits_waiting() {
     let recovered = editor.document().clone();
     let (mut varde, requests) = with_recovered(recovered.clone());
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
-    assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, feature);
+    assert_eq!(document(&varde).mode.sketch().unwrap().feature, feature);
     let mut lane = SolveLane::new();
     varde
         .screen
@@ -2840,10 +2840,10 @@ fn restoring_recovered_changes_ends_the_extrude_session() {
     let sketch = document(&varde).editor.document().features()[0].id;
     let _ = varde.update(Message::Ui(Ui::Look(Look::SelectFeature(sketch))));
     let _ = varde.update(Message::Ui(Ui::Look(Look::StartExtrude)));
-    assert!(document(&varde).operation.extrude().is_some());
+    assert!(document(&varde).mode.extrude().is_some());
     let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
     assert_eq!(*document(&varde).editor.document(), Document::example());
-    assert!(document(&varde).operation.extrude().is_none());
+    assert!(document(&varde).mode.extrude().is_none());
 }
 
 /// [`with_a_line`] with a second sketch, holding a point, and that
@@ -2922,12 +2922,12 @@ fn restoring_recovered_changes_keeps_the_sketch_edited_selected() {
     let (recovered, theirs) = with_a_line_and_a_sketch();
     let (mut varde, _) = with_recovered(recovered.clone());
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
-    assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, theirs);
+    assert_eq!(document(&varde).mode.sketch().unwrap().feature, theirs);
     assert_eq!(document(&varde).selected_feature, Some(theirs));
 
     let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
     assert_eq!(*document(&varde).editor.document(), recovered);
-    assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, theirs);
+    assert_eq!(document(&varde).mode.sketch().unwrap().feature, theirs);
     assert_eq!(document(&varde).selected_feature, Some(theirs));
 }
 
@@ -2943,11 +2943,11 @@ fn restoring_recovered_changes_lets_go_of_the_sketch_edited_if_not_a_sketch() {
     ));
     let (mut varde, _) = with_recovered(recovered.clone());
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
-    assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, extrude);
+    assert_eq!(document(&varde).mode.sketch().unwrap().feature, extrude);
 
     let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
     assert_eq!(*document(&varde).editor.document(), recovered);
-    assert!(document(&varde).sketch.is_none());
+    assert!(document(&varde).mode.sketch().is_none());
     assert_eq!(document(&varde).selected_feature, None);
 }
 
@@ -3063,14 +3063,14 @@ fn restoring_recovered_changes_lets_go_of_the_refusal_and_hover() {
         panic!("a sketch");
     };
     let point = sketch.points[0].id;
-    let session = varde.screen.doc_mut().unwrap().sketch.as_mut().unwrap();
+    let session = varde.screen.doc_mut().unwrap().mode.sketch_mut().unwrap();
     assert_eq!(session.feature, theirs);
     session.hovered = Some(Selectable::Item(point));
     session.refusal = Some(Refusal::Failed("worker".to_owned()));
 
     let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
     assert_eq!(*document(&varde).editor.document(), recovered);
-    let session = document(&varde).sketch.as_ref().unwrap();
+    let session = document(&varde).mode.sketch().unwrap();
     assert_eq!(session.hovered, None);
     assert!(session.refusal.is_none());
 }
@@ -4342,7 +4342,7 @@ fn sketches(doc: &Doc) -> Vec<(&str, bool)> {
 
 /// The sketch being edited in `doc`, if one is.
 fn edited(doc: &Doc) -> Option<FeatureId> {
-    doc.sketch.as_ref().map(|session| session.feature)
+    doc.mode.sketch().map(|session| session.feature)
 }
 
 /// Lets the camera's animation run to its end.
@@ -4356,18 +4356,18 @@ fn a_new_sketch_is_made_on_the_plane_picked_and_entered() {
     let mut doc = untitled();
     doc.look(Look::SelectPanel(Panel::Timeline));
     doc.look(Look::PickPlane);
-    assert!(doc.picking_plane.is_some());
+    assert!(doc.mode.picking_plane().is_some());
     // Again backs out, and so does Escape.
     doc.look(Look::PickPlane);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     doc.look(Look::PickPlane);
     doc.look(Look::Escape);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert_eq!(edited(&doc), None);
 
     doc.look(Look::PickPlane);
     doc.update(Edit::PlanePicked(OriginPlane::XZ));
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert_eq!(sketches(&doc), [("Sketch 1", true)]);
     let feature = doc.editor.document().features()[0].id;
     assert_eq!(edited(&doc), Some(feature));
@@ -4408,7 +4408,7 @@ fn origin_objects_and_sketches_are_selected_in_objects() {
 
     // The Sketch tool makes a sketch on it at once.
     doc.look(Look::PickPlane);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     let first = doc.editor.document().features()[0].id;
     assert_eq!(edited(&doc), Some(first));
     doc.look(Look::FinishSketch);
@@ -4462,7 +4462,7 @@ fn a_sketch_is_not_made_in_a_read_only_document() {
         ),
     );
     doc.look(Look::PickPlane);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     doc.update(Edit::PlanePicked(OriginPlane::XY));
     assert_eq!(sketches(&doc).len(), 1);
     assert_eq!(edited(&doc), None);
@@ -4817,10 +4817,10 @@ fn origin_objects_are_shown_and_hidden() {
 
     // Picking a sketch's plane draws every plane, and no more after.
     doc.look(Look::PickPlane);
-    assert!(doc.picking_plane.is_some());
+    assert!(doc.mode.picking_plane().is_some());
     assert_eq!(origin_drawn(&doc).planes, [true; 3]);
     doc.look(Look::Escape);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert_eq!(origin_drawn(&doc).planes, [false, true, false]);
 
     doc.look(Look::ToggleOrigin(OriginObject::Plane(OriginPlane::XZ)));
@@ -5411,12 +5411,12 @@ fn s_starts_a_sketch_outside_sketches() {
     let (mut doc, feature, _) = with_sketch();
     let s = || keyboard::Key::Character("s".into());
     key_in(&mut doc, s());
-    assert!(doc.picking_plane.is_some());
+    assert!(doc.mode.picking_plane().is_some());
     doc.look(Look::EditFeature(feature));
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert!(press_in(&doc, s()).is_none());
     doc.look(Look::PickPlane);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
 }
 
 #[test]
@@ -5483,7 +5483,7 @@ fn geometry_selected_is_what_the_sketch_holds() {
     );
     assert!(doc.camera.view_height() >= 40.0);
 
-    let selection = |doc: &Doc| doc.sketch.as_ref().unwrap().selection.clone();
+    let selection = |doc: &Doc| doc.mode.sketch().unwrap().selection.clone();
     doc.look(Look::ClickGeometry {
         hit: Some(Selectable::Item(line)),
         add: false,
@@ -5516,7 +5516,7 @@ fn a_sketch_is_made_and_left_through_the_app() {
     let mut varde = Varde::new();
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
     let _ = varde.update(Message::Ui(Ui::Look(Look::PickPlane)));
-    assert!(document(&varde).picking_plane.is_some());
+    assert!(document(&varde).mode.picking_plane().is_some());
     let _ = varde.view();
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     assert!(edited(document(&varde)).is_some());

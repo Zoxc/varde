@@ -24,7 +24,7 @@ fn unticked_a_pattern_makes_a_body_per_copy_and_warns_of_overlaps() {
     key_in(&mut plates.doc, character("p"));
     // Ticked to begin with: the copies join the original.
     assert!(shows(&plates, "Join to original"));
-    assert!(plates.doc.operation.motion().unwrap().join);
+    assert!(plates.doc.mode.motion().unwrap().join);
     plates.input(MotionField::Count, "3");
     plates.input(MotionField::Spread, "12");
     assert!(drafted(&plates).unwrap().joins());
@@ -55,7 +55,7 @@ fn unticked_a_pattern_makes_a_body_per_copy_and_warns_of_overlaps() {
     assert!(!shows(&plates, OVERLAP));
     plates.motion(MotionLook::Join);
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, _) = plates.last_feature();
     let stored = last_pattern(&plates);
     let made = copy_bodies(&stored);
@@ -95,12 +95,12 @@ fn editing_the_tick_and_a_copy_body_a_later_feature_uses() {
     let unjoined = plates.doc.editor.document().clone();
 
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert!(!session.join);
     plates.motion(MotionLook::Join);
     assert!(drafted(&plates).unwrap().joins());
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert!(last_pattern(&plates).joins());
     for body in &made {
         assert!(plates.doc.editor.document().body(*body).is_none());
@@ -124,7 +124,7 @@ fn editing_the_tick_and_a_copy_body_a_later_feature_uses() {
     plates.input(MotionField::Count, "2");
     assert!(plates.doc.motion_ready());
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let document = plates.doc.editor.document();
     assert!(document.body(made[1]).is_none());
     let last = document.features().last().unwrap();
@@ -181,7 +181,7 @@ fn too_many_copy_bodies_are_refused_in_the_panel() {
     plates.click(right);
     plates.doc.look(Look::StartPattern);
     plates.click(left);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies.len(), 2);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies.len(), 2);
     plates.input(MotionField::Count, "1024");
     plates.input(MotionField::Spread, "0.1");
     assert!(plates.doc.motion_ready());
@@ -278,7 +278,7 @@ fn the_overlap_warning_along_an_edge() {
             .expect("a straight edge of the plate");
         plates.click_at(plate, Picked::Edge(edge), (ends[0] + ends[1]) / 2.0);
         assert!(matches!(
-            plates.doc.operation.motion().unwrap().axis,
+            plates.doc.mode.motion().unwrap().axis,
             Some(AxisRef::Edge(_))
         ));
         for _ in 0..2 {
@@ -371,7 +371,7 @@ fn a_pattern_s_axis_picked_again_keeps_its_copy_bodies() {
         })
         .expect("an edge of the plate along Y");
     plates.click_at(plate, Picked::Edge(edge), (ends[0] + ends[1]) / 2.0);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(
         matches!(session.axis, Some(AxisRef::Edge(_))),
         "{:?}",
@@ -382,7 +382,7 @@ fn a_pattern_s_axis_picked_again_keeps_its_copy_bodies() {
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let stored = last_pattern_of(&plates, id);
     assert_eq!(copy_bodies(&stored), made);
     plates.answer();

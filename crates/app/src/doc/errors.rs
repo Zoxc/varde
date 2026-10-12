@@ -55,16 +55,15 @@ impl Doc {
             .operating()
             .then(|| self.feed.draft_geometry())
             .flatten();
-        let edited = self
-            .operation
-            .as_ref()
-            .and_then(|session| session.feature());
+        let edited = self.mode.operation().and_then(|session| session.feature());
         // Once a draft of it is shown, the edited feature's failure in the
         // model shown is a draft's: the newest one's, as the draft's
         // above, or one before it, whose panel error is gone too.
         let redrafted = edited.filter(|_| self.feed.draft_shown());
         let edited = edited.filter(|_| draft.is_none());
-        let hovered = self.hovered_feature.filter(|_| self.sketch.is_none());
+        let hovered = self
+            .hovered_feature
+            .filter(|_| self.mode.sketch().is_none());
         let sketched = (self.feed.failed_features().iter())
             .map(|failed| failed.feature)
             .filter(|&feature| self.uses_edited_sketch(feature));
@@ -110,7 +109,7 @@ impl Doc {
     /// Whether `feature` takes its regions from the sketch being edited
     /// (a loft's from any of its sections' sketches).
     fn uses_edited_sketch(&self, feature: FeatureId) -> bool {
-        let Some(edited) = self.sketch.as_ref().map(|session| session.feature) else {
+        let Some(edited) = self.mode.sketch().map(|session| session.feature) else {
             return false;
         };
         (self.editor.document().feature(feature))
@@ -158,7 +157,7 @@ impl Doc {
             self.errors = Arc::new(ShownErrors::new(wanted));
         }
         let failing = self.failing_curves();
-        if let Some(session) = &mut self.sketch {
+        if let Some(session) = self.mode.sketch_mut() {
             session.failing = failing;
         }
     }

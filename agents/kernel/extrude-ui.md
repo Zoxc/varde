@@ -1,6 +1,6 @@
 # The extrude UI (`crates/view`, `crates/app`)
 
-**The session** (`app/src/doc/extrude.rs`, `Doc::operation` holding an
+**The session** (`app/src/doc/extrude.rs`, `Doc::mode` holding an
 `ExtrudeSession`) is started by the Extrude tool (`X`, `Look::StartExtrude`,
 outside sketches, where `X` turns geometry into construction; with no
 sketch yet too, the panel waiting for one; a revolve or combine set up

@@ -123,7 +123,7 @@ fn plane(doc: &Doc, id: FeatureId) -> Plane {
 
 /// The sketch being edited.
 fn edited(doc: &Doc) -> Option<FeatureId> {
-    doc.sketch.as_ref().map(|session| session.feature)
+    doc.mode.sketch().map(|session| session.feature)
 }
 
 fn settle_camera(doc: &mut Doc) {
@@ -168,7 +168,7 @@ fn s_then_a_click_on_the_plates_top_starts_a_sketch_there() {
     let body = doc.editor.document().bodies()[0].id;
     let revision = doc.editor.revision();
     key_in(&mut doc, letter("s"));
-    assert!(doc.picking_plane.is_some());
+    assert!(doc.mode.picking_plane().is_some());
     let bar = status_bar(&doc);
     assert!(bar.iter().any(|t| t.contains("flat face")), "{bar:?}");
 
@@ -191,7 +191,7 @@ fn s_then_a_click_on_the_plates_top_starts_a_sketch_there() {
     assert_eq!(face.body, body);
     assert_eq!(face.near.z, 10.0);
     take(&mut doc, sent);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     let id = edited(&doc).expect("the sketch is entered");
     assert!(matches!(plane(&doc, id), Plane::Face(f) if f.body == body));
 
@@ -227,7 +227,7 @@ fn esc_while_picking_leaves_no_trace() {
     let revision = doc.editor.revision();
     doc.look(Look::PickPlane);
     doc.look(Look::Escape);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert_eq!(doc.editor.revision(), revision);
     assert_eq!(doc.notice, None);
     // A click once picking ended selects, as before.
@@ -271,7 +271,7 @@ fn a_curved_face_isnt_highlighted_or_sketched_on() {
     assert_eq!(doc.editor.revision(), revision);
     assert_eq!(edited(&doc), None);
     assert_eq!(doc.notice.as_deref(), Some(varde_view::CURVED_FACE));
-    assert!(doc.picking_plane.is_some(), "picking goes on");
+    assert!(doc.mode.picking_plane().is_some(), "picking goes on");
     doc.look(Look::Escape);
 
     // Selected, `S` says so too.
@@ -382,7 +382,7 @@ fn an_extrude_from_the_top_previews_joined_and_follows_the_plate() {
         &mut doc,
         iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
     );
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
     answer(&mut doc, &requests);
     assert!(doc.feed.failed_features().is_empty());
     assert_eq!(top_of_mesh(&doc), 20.0);
@@ -546,7 +546,7 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     doc.look(Look::StartExtrude);
     assert!(doc.extrude_state().unwrap().candidates.is_empty());
     doc.look(Look::StartExtrude);
-    assert!(doc.operation.extrude().is_none());
+    assert!(doc.mode.extrude().is_none());
 
     // Listed in the Timeline, failing, its note naming the face as it
     // can: its maker and body are gone.
@@ -566,7 +566,7 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     let revision = doc.editor.revision();
     doc.look(Look::EditFeature(id));
     assert_eq!(edited(&doc), None);
-    assert!(doc.picking_plane.is_some());
+    assert!(doc.mode.picking_plane().is_some());
     let bar = status_bar(&doc);
     assert!(
         bar.iter()
@@ -575,7 +575,7 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     );
     // `Esc` leaves it as it is.
     doc.look(Look::Escape);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert_eq!(edited(&doc), None);
     assert_eq!(doc.editor.revision(), revision);
 
@@ -607,14 +607,14 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     answer(&mut doc, &requests);
     doc.look(Look::EditFeature(id));
     assert!(
-        doc.picking_plane
-            .as_ref()
+        doc.mode
+            .picking_plane()
             .is_some_and(|p| p.pick.failed.is_some())
     );
     doc.update(Edit::Undo);
     assert!(doc.editor.document().feature(extrude).is_some());
     answer(&mut doc, &requests);
-    let picking = doc.picking_plane.as_ref().expect("still picking");
+    let picking = doc.mode.picking_plane().expect("still picking");
     assert_eq!(picking.pick.failed, None);
     let bar = status_bar(&doc);
     assert!(
@@ -638,10 +638,10 @@ fn entering_a_sketch_whose_face_is_gone_ends_a_combine() {
     answer(&mut doc, &requests);
     assert_eq!(doc.placement(id), None);
     doc.look(Look::StartCombine);
-    assert!(doc.operation.combine().is_some());
+    assert!(doc.mode.combine().is_some());
     doc.look(Look::EditFeature(id));
-    assert!(doc.picking_plane.is_some());
-    assert!(doc.operation.combine().is_none());
+    assert!(doc.mode.picking_plane().is_some());
+    assert!(doc.mode.combine().is_none());
 }
 
 /// The sketch feature `id`'s drawing.
@@ -687,7 +687,7 @@ fn a_face_of_a_feature_removed_since_the_model_shown_takes_no_sketch() {
     doc.sync();
     let revision = doc.editor.revision();
     key_in(&mut doc, letter("s"));
-    assert!(doc.picking_plane.is_some());
+    assert!(doc.mode.picking_plane().is_some());
     let sent = click_screen(&doc, OVER_TOP);
     assert!(
         !(sent.iter()).any(|m| matches!(m, Ui::Edit(Edit::FacePicked(_)))),
@@ -696,5 +696,5 @@ fn a_face_of_a_feature_removed_since_the_model_shown_takes_no_sketch() {
     doc.update(Edit::FacePicked(top));
     assert_eq!(doc.editor.revision(), revision);
     assert_eq!(doc.notice.as_deref(), Some("That face isn't in the model"));
-    assert!(doc.picking_plane.is_some(), "picking goes on");
+    assert!(doc.mode.picking_plane().is_some(), "picking goes on");
 }

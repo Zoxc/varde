@@ -410,7 +410,7 @@ fn undo_with_a_sketch_open_asks_first() {
         Some(crate::mcp::revert::EDIT_IN_FLIGHT)
     );
     panel(&mut varde, McpPanel::ApplyYours);
-    assert!(varde.screen.doc().unwrap().sketch.is_none());
+    assert!(varde.screen.doc().unwrap().mode.sketch().is_none());
     assert_eq!(feature_name(&varde, 1), "Extrude 1");
     regenerate(&mut varde, &requests);
     let data = edit_data(reply.try_recv().unwrap());

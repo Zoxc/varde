@@ -47,7 +47,7 @@ fn draft_picks_faces_and_add_anyway_keeps_the_unbuilt_draft() {
     let plate = plates.bodies[0];
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartDraft);
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Draft);
     assert!(session.bodies.is_empty(), "its body is its faces'");
     assert_eq!(session.picking, MotionPick::Faces);
@@ -95,7 +95,7 @@ fn draft_picks_faces_and_add_anyway_keeps_the_unbuilt_draft() {
     };
     plates.click_at(plate, Picked::Face(side), DVec3::new(0.0, -d, 5.0));
     assert_eq!(faces(&plates).len(), 1);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     assert_eq!(plates.doc.faces_lit(), [Picked::Face(side)]);
     assert!(shows(&plates, "Face 1") && shows(&plates, "Planar face"));
     assert!(shows(&plates, "1 face · 3° from XY"));
@@ -114,7 +114,7 @@ fn draft_picks_faces_and_add_anyway_keeps_the_unbuilt_draft() {
     key_in(&mut plates.doc, enter());
     assert_eq!(plates.doc.editor.document().features().len(), features);
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert!(matches!(kind, FeatureKind::FaceDraft(_)));
     assert_eq!(
@@ -218,7 +218,7 @@ fn the_draft_is_previewed_its_neutral_plane_picked_and_ok_adds_one_undo_step() {
     assert!(error.contains("faces the pull direction"), "{error}");
     // An origin plane only while the plane picks.
     plates.motion(MotionLook::OriginPlane(OriginPlane::XY));
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.plane, Some(PlaneRef::Origin(OriginPlane::XZ)));
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     plates.motion(MotionLook::OriginPlane(OriginPlane::XY));
@@ -238,9 +238,9 @@ fn the_draft_is_previewed_its_neutral_plane_picked_and_ok_adds_one_undo_step() {
     plates.answer();
     assert!(plates.doc.motion_ready());
 
-    let draft = (plates.doc.operation.motion()).and_then(|session| session.face_draft());
+    let draft = (plates.doc.mode.motion()).and_then(|session| session.face_draft());
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert_eq!(Some(kind), draft.map(FeatureKind::FaceDraft));
     assert_eq!(plates.doc.selected_feature, Some(id));
@@ -271,7 +271,7 @@ fn editing_a_draft_from_the_timeline() {
     let committed = plates.doc.editor.document().clone();
 
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("editing");
+    let session = plates.doc.mode.motion().expect("editing");
     assert_eq!(session.kind, MotionKind::Draft);
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.faces.refs.len(), 1);
@@ -332,7 +332,7 @@ fn a_neutral_face_an_undo_takes_away_is_gone() {
     assert!(shows(&plates, "1 face · 3° from Extrude 2's end"));
 
     plates.doc.update(Edit::Undo);
-    assert!(plates.doc.operation.motion().is_some(), "the session stays");
+    assert!(plates.doc.mode.motion().is_some(), "the session stays");
     assert!(shows(&plates, "The neutral plane is gone: pick another"));
     assert!(!plates.doc.motion_ready());
     assert!(drafted(&plates).is_none());
@@ -373,7 +373,7 @@ fn the_overlap_list_ticks_the_faces_not_the_neutral_plane() {
     plates.doc.look(Look::OpenOverlaps(list(picks)));
     assert_eq!(plates.doc.overlap_ticked(), Some(vec![false]));
     plates.doc.look(Look::ToggleOverlap(0));
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(matches!(session.plane, Some(PlaneRef::Face(_))));
     assert_eq!(picking(&plates), MotionPick::Faces);
     assert_eq!(faces(&plates).len(), 1);
@@ -421,7 +421,7 @@ fn a_neutral_face_merged_before_the_draft_is_found_on_its_holder() {
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     assert!(plates.doc.motion_ready());
-    let draft = (plates.doc.operation.motion())
+    let draft = (plates.doc.mode.motion())
         .and_then(|session| session.face_draft())
         .expect("a draft");
     assert_eq!(
@@ -434,7 +434,7 @@ fn a_neutral_face_merged_before_the_draft_is_found_on_its_holder() {
     let [low, _] = plates.bounds(body);
     assert!(near(low, DVec3::new(0.0, -10.0 * tan(3.0), 0.0)), "{low}");
     plates.doc.update(Edit::CommitMotion);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert_eq!(
         plates.last_feature().1,
         FeatureKind::FaceDraft(draft),
@@ -480,7 +480,7 @@ fn a_face_drafted_in_the_preview_is_refused_as_the_neutral_plane() {
     click(&mut plates, pick);
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
-    let plane = plates.doc.operation.motion().unwrap().plane;
+    let plane = plates.doc.mode.motion().unwrap().plane;
     plates.motion(MotionLook::Picking(MotionPick::Reference));
     let lit = plates.doc.refs_lit::<varde_document::FaceRef>();
     let [Picked::Face(drafted)] = lit[..] else {
@@ -492,7 +492,7 @@ fn a_face_drafted_in_the_preview_is_refused_as_the_neutral_plane() {
         Some("That face is one the draft tilts: pick a face it doesn't, or an origin plane")
     );
     assert_eq!(picking(&plates), MotionPick::Reference);
-    assert_eq!(plates.doc.operation.motion().unwrap().plane, plane);
+    assert_eq!(plates.doc.mode.motion().unwrap().plane, plane);
 }
 
 /// The units changed while a draft is set up: the 3° it opens with, and
@@ -508,7 +508,7 @@ fn units_changed_mid_session_keep_the_angle() {
     let pick = front(&plates, body);
     click(&mut plates, pick);
     let angle = |plates: &Plates| {
-        let session = plates.doc.operation.motion()?;
+        let session = plates.doc.mode.motion()?;
         session.face_draft().map(|draft| draft.angle.value)
     };
     plates

@@ -219,7 +219,7 @@ fn answered(measured: &Measured) -> Measure {
 /// the picks, of the model shown.
 fn check_measured(doc: &Doc, inspected: &Inspected) -> usize {
     let mut compared = 0;
-    let session = doc.measure.as_ref().unwrap();
+    let session = doc.mode.measure().unwrap();
     let editor = &doc.editor;
     let document = editor.document();
     let units = document.units();
@@ -359,7 +359,7 @@ fn shows_its_values(doc: &Doc, rng: &mut Rng) {
             .map(|text| text.text)
             .collect()
     });
-    let Some(session) = &doc.measure else {
+    let Some(session) = doc.mode.measure() else {
         return;
     };
     if !large || session.picks[1].is_some() {
@@ -414,7 +414,7 @@ fn run(seed: u64, steps: usize) -> usize {
     for step in 0..steps {
         let generation = doc.editor.generation();
         let selection = doc.pick.selection.clone();
-        let measuring = doc.measure.is_some();
+        let measuring = doc.mode.measure().is_some();
         let queued = requests.borrow().len();
         let mut escaped = false;
         let mut edits = false;
@@ -424,13 +424,13 @@ fn run(seed: u64, steps: usize) -> usize {
                 doc.look(Look::StartMeasure);
             }
             1 => {
-                let measuring = doc.measure.is_some();
+                let measuring = doc.mode.measure().is_some();
                 let selection = doc.pick.selection.clone();
                 doc.look(Look::Escape);
                 if measuring {
                     // Esc leaves no trace: the tool gone, the selection
                     // as it was, the model asked for without a measure.
-                    assert!(doc.measure.is_none(), "seed {seed} step {step}");
+                    assert!(doc.mode.measure().is_none(), "seed {seed} step {step}");
                     assert_eq!(doc.pick.selection, selection, "seed {seed} step {step}");
                     escaped = true;
                 }
@@ -514,13 +514,13 @@ fn run(seed: u64, steps: usize) -> usize {
         }
         if std::env::var_os("VARDE_FUZZ_LOG").is_some() {
             let items = doc.pick.selection.items().count();
-            let measuring = doc.measure.is_some();
+            let measuring = doc.mode.measure().is_some();
             let waiting: Vec<_> = (requests.borrow().iter())
                 .map(|r| r.asked().map(|asked| (asked.generation, asked.inspect)))
                 .collect();
             let picks = doc
-                .measure
-                .as_ref()
+                .mode
+                .measure()
                 .map(|m| m.picks.map(|p| p.map(|p| p.entity)));
             eprintln!(
                 "{seed}/{step}: action {action}, measuring {measuring}, selected {items}, \
@@ -530,7 +530,7 @@ fn run(seed: u64, steps: usize) -> usize {
             );
         }
         // Picks while measuring leave the selection as it was.
-        if measuring && doc.measure.is_some() && !edits {
+        if measuring && doc.mode.measure().is_some() && !edits {
             assert_eq!(doc.pick.selection, selection, "seed {seed} step {step}");
         }
         if !edits {
@@ -559,7 +559,7 @@ fn run(seed: u64, steps: usize) -> usize {
         // asked.
         if let Some(inspected) = doc.feed.inspected() {
             assert!(
-                doc.measure.is_some() || doc.selection_inspect().is_some(),
+                doc.mode.measure().is_some() || doc.selection_inspect().is_some(),
                 "seed {seed} step {step}"
             );
             assert_eq!(Some(inspected.revision), newest_revision(&sent));
@@ -567,7 +567,7 @@ fn run(seed: u64, steps: usize) -> usize {
         if let Some(highlight) = doc.highlight() {
             assert_of_the_model(&doc, highlight);
         }
-        if doc.measure.is_some()
+        if doc.mode.measure().is_some()
             && let Some(inspected) = doc.feed.inspected()
             && doc.feed.generation() == Some(doc.editor.generation())
         {
@@ -580,7 +580,7 @@ fn run(seed: u64, steps: usize) -> usize {
     for request in requests.take() {
         doc.computed(regen.handle(request));
     }
-    if doc.measure.is_some()
+    if doc.mode.measure().is_some()
         && let Some(inspected) = doc.feed.inspected()
     {
         let inspected = inspected.clone();

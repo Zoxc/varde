@@ -105,7 +105,7 @@ fn click_snapped(plates: &mut Plates, body: BodyId, target: Picked, at: DVec3, s
 }
 
 fn picking(plates: &Plates) -> MotionPick {
-    plates.doc.operation.motion().expect("a session").picking
+    plates.doc.mode.motion().expect("a session").picking
 }
 
 fn slot(side: AlignSide, role: AlignRole) -> MotionPick {
@@ -129,7 +129,7 @@ fn a_pin_aligned_by_its_rim_into_the_hole_and_ok() {
     let (mut plates, plate, pin) = pin_and_plate();
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartAlign);
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Align);
     // Two bodies and none selected: the body is picked first.
     assert_eq!(picking(&plates), MotionPick::Bodies);
@@ -149,7 +149,7 @@ fn a_pin_aligned_by_its_rim_into_the_hole_and_ok() {
         assert!(shows(&plates, text), "{text}");
     }
     plates.click(pin);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [pin]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [pin]);
     assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
     // Points are picked at the measure tool's snap points.
     let shown = plates.doc.model_picking().expect("picking");
@@ -177,7 +177,7 @@ fn a_pin_aligned_by_its_rim_into_the_hole_and_ok() {
     );
     assert_eq!(picking(&plates), MotionPick::Nothing);
     assert!(shows(&plates, "Centre of an edge of Body 1"));
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     let [moved, target] = &session.align.sides;
     assert!(matches!(moved.point, Some(PointRef::Centre(edge)) if edge.body == pin));
     assert!(matches!(moved.primary, Some(DirRef::Axis(AxisRef::Edge(edge))) if edge.body == pin));
@@ -204,7 +204,7 @@ fn a_pin_aligned_by_its_rim_into_the_hole_and_ok() {
 
     // OK: one undo step, selected and named.
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     assert_eq!(kind, FeatureKind::from(align));
     assert_eq!(plates.doc.selected_feature, Some(id));
@@ -228,7 +228,7 @@ fn face_to_face() -> (Plates, [BodyId; 2], varde_document::FeatureId) {
     // The body selected is the one aligned.
     plates.click(below);
     plates.doc.look(Look::StartAlign);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [below]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [below]);
     assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
     let at = DVec3::new(30.0, 20.0, -3.0);
     let (moved_corner, face) = corner(&plates, below, at);
@@ -266,7 +266,7 @@ fn face_to_face() -> (Plates, [BodyId; 2], varde_document::FeatureId) {
     assert_eq!(marks[1].point, Some(DVec3::new(30.0, 20.0, 10.0)));
     assert_eq!(marks[1].directions[0], Some(DVec3::Z));
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, _) = plates.last_feature();
     plates.answer();
     (plates, [top, below], id)
@@ -292,7 +292,7 @@ fn a_refused_pick_is_shown() {
     let (mut plates, plate, pin) = pin_and_plate();
     plates.doc.look(Look::StartAlign);
     plates.click(pin);
-    let before = plates.doc.operation.motion().unwrap().align.clone();
+    let before = plates.doc.mode.motion().unwrap().align.clone();
     // A face is no point.
     let side = plates.face(pin, |summary| matches!(summary, Summary::Cylinder { .. }));
     plates.click_at(pin, Picked::Face(side), DVec3::new(108.0, 0.0, 5.0));
@@ -311,7 +311,7 @@ fn a_refused_pick_is_shown() {
         plates.doc.notice.as_deref(),
         Some("Pick it on Body 2, the body aligned")
     );
-    assert_eq!(plates.doc.operation.motion().unwrap().align, before);
+    assert_eq!(plates.doc.mode.motion().unwrap().align, before);
     assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
     // The target on the body aligned.
     let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
@@ -326,7 +326,7 @@ fn a_refused_pick_is_shown() {
     // The origin from the toolbar is a target point.
     assert!(shows(&plates, "Origin"));
     plates.motion(MotionLook::OriginPoint);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.align.sides[1].point, Some(PointRef::Origin));
     assert_eq!(
         picking(&plates),
@@ -363,7 +363,7 @@ fn an_align_edited_from_the_timeline_and_undone() {
         .look(Look::SelectPanel(varde_view::Panel::Timeline));
     assert!(shows(&plates, "to Body 1"), "the Timeline's note");
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Align);
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.picking, MotionPick::Nothing);
@@ -394,7 +394,7 @@ fn an_align_edited_from_the_timeline_and_undone() {
     assert_eq!(align.offset.as_ref().map(|value| value.value), Some(2.0));
     plates.answer();
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     plates.answer();
     let [low, high] = plates.bounds(below);
     assert!(near(low, DVec3::new(-30.0, -20.0, 12.0)), "{low}");
@@ -424,7 +424,7 @@ fn a_reference_an_undo_takes_away_is_said_to_be_gone() {
     plates.doc.update(Edit::Undo);
     assert!(plates.last_draft().is_none(), "nothing previewed");
     plates.answer();
-    assert!(plates.doc.operation.motion().is_some());
+    assert!(plates.doc.mode.motion().is_some());
     assert!(!plates.doc.motion_ready());
     assert!(shows(
         &plates,
@@ -485,7 +485,7 @@ fn a_rim_picked_again_takes_its_axis_along() {
     let foot = rim(&plates, pin, DVec3::new(100.0, 0.0, 0.0));
     plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
     let rim_of = |plates: &Plates, side: usize| {
-        let side = plates.doc.operation.motion().unwrap().align.sides[side];
+        let side = plates.doc.mode.motion().unwrap().align.sides[side];
         match (side.point, side.primary) {
             (Some(PointRef::Centre(point)), Some(DirRef::Axis(AxisRef::Edge(axis)))) => {
                 assert_eq!(point, axis, "the point's rim gives the direction");
@@ -532,7 +532,7 @@ fn a_rim_picked_again_takes_its_axis_along() {
         AlignSide::Moved,
         AlignRole::Point,
     )));
-    let moved = plates.doc.operation.motion().unwrap().align.sides[0];
+    let moved = plates.doc.mode.motion().unwrap().align.sides[0];
     assert_eq!((moved.point, moved.primary), (None, None));
     assert_eq!(picking(&plates), slot(AlignSide::Moved, AlignRole::Point));
 }
@@ -596,11 +596,11 @@ fn a_target_merged_into_the_body_picked_to_move_is_taken_out() {
     plates.click_at(left, Picked::Edge(moved_rim), other + DVec3::X * 5.0);
     let target_rim = rim(&plates, plate, top);
     plates.click_at(plate, Picked::Edge(target_rim), top + DVec3::X * 5.0);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(session.align.sides[1].point.is_some());
     plates.motion(MotionLook::Picking(MotionPick::Bodies));
     plates.click(plate);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert_eq!(session.bodies, [plate]);
     assert_eq!(
         session.align.sides,
@@ -636,7 +636,7 @@ fn a_target_a_later_combine_merges_into_the_moved_body_is_gone() {
     plates.doc.apply(add);
     plates.doc.sync();
     plates.answer();
-    assert!(plates.doc.operation.motion().is_some());
+    assert!(plates.doc.mode.motion().is_some());
     assert!(!plates.doc.motion_ready());
     assert!(shows(
         &plates,
@@ -676,7 +676,7 @@ fn the_moved_sides_picks_follow_the_moved_body_merged_into_the_targets() {
     plates.doc.apply(add);
     plates.doc.sync();
     plates.answer();
-    let session = plates.doc.operation.motion().expect("the session stays");
+    let session = plates.doc.mode.motion().expect("the session stays");
     assert_eq!(session.bodies, [right]);
     let moved = session.align.sides[0];
     assert!(
@@ -700,7 +700,7 @@ fn the_moved_sides_picks_follow_the_moved_body_merged_into_the_targets() {
         AlignRole::Point,
     )));
     plates.motion(MotionLook::OriginPoint);
-    let session = plates.doc.operation.motion().unwrap();
+    let session = plates.doc.mode.motion().unwrap();
     assert!(session.align.sides[1].point == Some(PointRef::Origin));
 }
 
@@ -745,12 +745,12 @@ fn a_direction_picked_by_hand_on_the_points_rim_goes_with_it() {
     plates.click_at(pin, Picked::Edge(foot), DVec3::new(108.0, 0.0, 0.0));
     let primary = AlignSlot::new(AlignSide::Moved, AlignRole::Primary);
     plates.motion(MotionLook::Clear(primary));
-    let moved = plates.doc.operation.motion().unwrap().align.sides[0];
+    let moved = plates.doc.mode.motion().unwrap().align.sides[0];
     assert!(moved.point.is_some() && moved.primary.is_none());
     plates.motion(MotionLook::Picking(MotionPick::Align(primary)));
     // Clicked across the rim from where the point was named.
     plates.click_at(pin, Picked::Edge(foot), DVec3::new(92.0, 0.0, 0.0));
-    let moved = plates.doc.operation.motion().unwrap().align.sides[0];
+    let moved = plates.doc.mode.motion().unwrap().align.sides[0];
     let (Some(PointRef::Centre(point)), Some(DirRef::Axis(AxisRef::Edge(axis)))) =
         (moved.point, moved.primary)
     else {
@@ -765,7 +765,7 @@ fn a_direction_picked_by_hand_on_the_points_rim_goes_with_it() {
     )));
     let top = rim(&plates, pin, DVec3::new(100.0, 0.0, 25.0));
     plates.click_at(pin, Picked::Edge(top), DVec3::new(108.0, 0.0, 25.0));
-    let moved = plates.doc.operation.motion().unwrap().align.sides[0];
+    let moved = plates.doc.mode.motion().unwrap().align.sides[0];
     let (Some(PointRef::Centre(point)), Some(DirRef::Axis(AxisRef::Edge(axis)))) =
         (moved.point, moved.primary)
     else {
@@ -781,7 +781,7 @@ fn a_direction_picked_by_hand_on_the_points_rim_goes_with_it() {
         AlignSide::Moved,
         AlignRole::Point,
     )));
-    let moved = plates.doc.operation.motion().unwrap().align.sides[0];
+    let moved = plates.doc.mode.motion().unwrap().align.sides[0];
     assert!(moved.point.is_none());
     assert!(
         matches!(moved.primary, Some(DirRef::Axis(AxisRef::Edge(edge))) if edge.near.z.abs() < 1e-3)
@@ -834,7 +834,7 @@ fn an_align_of_points_alone() {
     plates.answer();
     assert_eq!(plates.doc.feed.draft_error(), None);
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (_, kind) = plates.last_feature();
     assert_eq!(kind, FeatureKind::from(align));
     plates.answer();
@@ -981,7 +981,7 @@ fn two_arcs_with_the_same_keys() {
         DVec3::new(0.0, 0.0, 10.0),
         Snapped::EdgePoint(far),
     );
-    let target = plates.doc.operation.motion().unwrap().align.sides[1];
+    let target = plates.doc.mode.motion().unwrap().align.sides[1];
     let Some(PointRef::Centre(named)) = target.point else {
         panic!("{target:?}");
     };

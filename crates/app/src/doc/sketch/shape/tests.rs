@@ -82,7 +82,7 @@ fn extend_reaches_the_next_curve_or_says_why_not() {
     // The wall's lower end, nearer its start, has nothing ahead.
     click_hit(&mut doc, 20.0, -4.0, wall);
     assert_eq!(*sketch(&doc), before);
-    let feature = doc.sketch.as_ref().unwrap().feature;
+    let feature = doc.mode.sketch().unwrap().feature;
     assert_eq!(
         doc.edit_error,
         Some(DocumentError::Sketch(feature, EditError::NothingAhead))
@@ -316,7 +316,7 @@ fn offset_starts_from_the_selection_and_says_why_it_can_t() {
     // Inside by half its height, nothing's left.
     click(&mut doc, 5.0, 3.0);
     assert_eq!(*sketch(&doc), before);
-    let feature = doc.sketch.as_ref().unwrap().feature;
+    let feature = doc.mode.sketch().unwrap().feature;
     assert_eq!(
         doc.edit_error,
         Some(DocumentError::Sketch(feature, EditError::NothingLeft))
@@ -436,7 +436,7 @@ fn fillet_takes_a_radius_typed_and_says_when_it_does_not_fit() {
     doc.look(Look::ValueInput("7".to_owned()));
     doc.update(Edit::SubmitValue);
     assert_eq!(*sketch(&doc), before);
-    let feature = doc.sketch.as_ref().unwrap().feature;
+    let feature = doc.mode.sketch().unwrap().feature;
     assert_eq!(
         doc.edit_error,
         Some(DocumentError::Sketch(feature, EditError::NoRoom))

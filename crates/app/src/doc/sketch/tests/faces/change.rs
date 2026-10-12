@@ -55,7 +55,7 @@ fn changing_the_plane_from_the_timeline_moves_the_drawing() {
     assert!(drawn_points(&doc).iter().all(|p| p[2] == 10.0));
 
     change_from_the_timeline(&mut doc, id);
-    let picking = doc.picking_plane.as_ref().expect("picking a plane");
+    let picking = doc.mode.picking_plane().expect("picking a plane");
     assert!(!picking.enter);
     let bar = status_bar(&doc);
     assert!(
@@ -68,7 +68,7 @@ fn changing_the_plane_from_the_timeline_moves_the_drawing() {
     // Onto the plate's bottom: facing down, its x along X and y along −Y.
     let bottom = face_on(&doc, -DVec3::Z, 0.0);
     doc.update(Edit::FacePicked(bottom));
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert_eq!(edited(&doc), None, "the Timeline's change doesn't enter it");
     assert_eq!(plane(&doc, id), Plane::Face(bottom));
     assert_eq!(sketch_of(&doc, id), drawn, "the drawing is kept");
@@ -119,7 +119,7 @@ fn esc_while_changing_the_plane_leaves_no_trace() {
     let before = plane(&doc, id);
     change_from_the_timeline(&mut doc, id);
     doc.look(Look::Escape);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert_eq!(doc.editor.revision(), revision);
     assert_eq!(plane(&doc, id), before);
     assert_eq!(edited(&doc), None);
@@ -133,7 +133,7 @@ fn esc_while_changing_the_plane_leaves_no_trace() {
     while doc.editor.document().feature(id).is_some() {
         doc.update(Edit::Undo);
     }
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn only_faces_made_before_the_sketch_take_it() {
     doc.update(Edit::FacePicked(face));
     assert_eq!(doc.editor.revision(), revision);
     assert_eq!(doc.notice.as_deref(), Some(why));
-    assert!(doc.picking_plane.is_some());
+    assert!(doc.mode.picking_plane().is_some());
 
     // An origin plane takes it, and the plate follows: drawn on XZ, the
     // plate stands up from the XZ plane, 10 mm towards −Y.
@@ -219,10 +219,10 @@ fn changing_the_plane_from_the_sketch_tab_comes_back_to_the_sketch() {
     let sent = click_screen(&doc, text_at(&doc, "Change plane"));
     take(&mut doc, sent);
     assert_eq!(edited(&doc), None, "left while the plane is picked");
-    assert!(doc.picking_plane.as_ref().is_some_and(|p| p.enter));
+    assert!(doc.mode.picking_plane().is_some_and(|p| p.enter));
     assert!(doc.picks(), "the model is picked");
     doc.look(Look::Escape);
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert_eq!(edited(&doc), Some(id));
     assert_eq!(doc.editor.revision(), revision);
 
@@ -250,12 +250,12 @@ fn change_plane_waits_for_a_document_that_can_be_edited() {
     let (mut doc, id, _requests) = circle_on_the_top();
     doc.read_only = Some("read only".to_owned());
     doc.look(Look::ChangePlane(id));
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     // Nor for a feature that isn't a sketch.
     doc.read_only = None;
     let extrude = doc.editor.document().features()[1].id;
     doc.look(Look::ChangePlane(extrude));
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
 }
 
 #[test]
@@ -267,26 +267,26 @@ fn picking_a_plane_and_measuring_leave_each_other() {
     let picking = doc.model_picking().unwrap();
     assert!(picking.snaps && picking.planes.is_none());
     doc.look(Look::StartMeasure);
-    assert!(doc.measure.is_none());
+    assert!(doc.mode.measure().is_none());
 
     // Picking a plane, from S or Change plane, leaves the measure tool:
     // only faces, no snapping.
     for look in [Look::PickPlane, Look::ChangePlane(id)] {
         doc.look(Look::StartMeasure);
-        assert!(doc.measure.is_some());
+        assert!(doc.mode.measure().is_some());
         doc.look(look);
-        assert!(doc.measure.is_none() && doc.picking_plane.is_some());
+        assert!(doc.mode.measure().is_none() && doc.mode.picking_plane().is_some());
         let picking = doc.model_picking().unwrap();
         assert!(picking.planes.is_some() && !picking.snaps);
         assert_eq!(picking.picks, varde_view::Picks::Faces);
 
         // And the measure tool leaves picking the plane.
         doc.look(Look::StartMeasure);
-        assert!(doc.measure.is_some() && doc.picking_plane.is_none());
+        assert!(doc.mode.measure().is_some() && doc.mode.picking_plane().is_none());
         let picking = doc.model_picking().unwrap();
         assert!(picking.snaps && picking.planes.is_none());
         doc.look(Look::StartMeasure);
-        assert!(doc.measure.is_none() && doc.picking_plane.is_none());
+        assert!(doc.mode.measure().is_none() && doc.mode.picking_plane().is_none());
     }
 }
 
@@ -364,7 +364,7 @@ fn a_face_of_a_body_merged_after_the_sketch_is_named_by_its_own_body() {
     let bottom = face_on(&doc, -DVec3::Z, 3.0);
     assert_eq!(bottom.body, top, "shown on the holder");
     doc.update(Edit::FacePicked(bottom));
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     let Plane::Face(face) = plane(&doc, id) else {
         panic!("on a face");
     };
@@ -491,7 +491,7 @@ fn a_face_cut_through_two_bodies_merged_after_the_sketch_is_refused() {
     );
     assert!(!walls.is_empty());
     let index = doc.feed.pick_index();
-    let picking = doc.picking_plane.as_ref().unwrap();
+    let picking = doc.mode.picking_plane().unwrap();
     for &(wall, near) in &walls {
         assert!(!picking.pick.takes(index, wall));
         assert_eq!(picking.pick.face_ref(index, wall, near), None);
@@ -508,7 +508,7 @@ fn a_face_cut_through_two_bodies_merged_after_the_sketch_is_refused() {
     doc.look(Look::Escape);
     doc.look(Look::PickPlane);
     let index = doc.feed.pick_index();
-    let picking = doc.picking_plane.as_ref().unwrap();
+    let picking = doc.mode.picking_plane().unwrap();
     assert!(picking.pick.takes(index, wall));
 }
 
@@ -519,19 +519,19 @@ fn picking_a_plane_ends_when_the_document_turns_read_only() {
     let (mut doc, id, _requests) = circle_on_the_top();
     doc.look(Look::EditFeature(id));
     doc.look(Look::ChangePlane(id));
-    assert!(doc.picking_plane.is_some());
+    assert!(doc.mode.picking_plane().is_some());
     doc.read_only = Some("read only".to_owned());
     doc.sync();
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     assert_eq!(edited(&doc), Some(id));
     // And for a new sketch.
     doc.read_only = None;
     doc.look(Look::FinishSketch);
     doc.look(Look::PickPlane);
-    assert!(doc.picking_plane.is_some());
+    assert!(doc.mode.picking_plane().is_some());
     doc.read_only = Some("read only".to_owned());
     doc.sync();
-    assert!(doc.picking_plane.is_none());
+    assert!(doc.mode.picking_plane().is_none());
     let bar = status_bar(&doc);
     assert!(!bar.iter().any(|t| t.contains("Pick a plane")), "{bar:?}");
 }

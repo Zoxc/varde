@@ -30,7 +30,7 @@ fn shows(plates: &Plates, wanted: &str) -> bool {
 }
 
 fn picking(plates: &Plates) -> MotionPick {
-    plates.doc.operation.motion().expect("a session").picking
+    plates.doc.mode.motion().expect("a session").picking
 }
 
 /// The split the last request previews, if it previews one.
@@ -43,12 +43,7 @@ fn drafted(plates: &Plates) -> Option<Split> {
 
 /// The tool of the split being set up.
 fn tool(plates: &Plates) -> Option<SplitTool> {
-    plates
-        .doc
-        .operation
-        .motion()?
-        .split()
-        .map(|split| split.tool)
+    plates.doc.mode.motion()?.split().map(|split| split.tool)
 }
 
 /// Whether the box of `body` in the model shown is `low` to `high`.
@@ -139,7 +134,7 @@ fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
     let (mut plates, plate) = plate();
     let before = plates.doc.editor.document().clone();
     plates.doc.look(Look::StartSplit);
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Split);
     assert_eq!(session.bodies, [plate]);
     assert_eq!(session.split.mode, SplitMode::Face);
@@ -191,7 +186,7 @@ fn the_rail_s_split_body_by_xy_fails_unbuilt_and_add_anyway_keeps_it() {
     assert_eq!(plates.doc.editor.document().features().len(), features);
 
     plates.doc.update(Edit::AcceptError);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (id, kind) = plates.last_feature();
     let FeatureKind::Split(stored) = &kind else {
         panic!("a split");
@@ -264,7 +259,7 @@ fn a_body_splits_another_its_pieces_tinted_and_labelled() {
     assert_eq!(picking(&plates), MotionPick::Bodies);
     assert!(shows(&plates, "pick the body to split"));
     plates.click(plate);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
     assert_eq!(picking(&plates), MotionPick::Tool);
     plates.motion(MotionLook::SplitWith(SplitMode::Body));
     assert_eq!(picking(&plates), MotionPick::Tool);
@@ -331,7 +326,7 @@ fn a_body_splits_another_its_pieces_tinted_and_labelled() {
     assert!(shows(&plates, "Body 1 by Body 2 · front only"));
     let bodies = plates.doc.editor.document().bodies().len();
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let (_, kind) = plates.last_feature();
     assert_eq!(kind, FeatureKind::Split(split));
     assert_eq!(plates.doc.editor.document().bodies().len(), bodies);
@@ -451,7 +446,7 @@ fn editing_a_split_from_the_timeline_cancel_and_undo() {
     assert!(boxed(&plates, new, [-30.0, -20.0, 0.0], [30.0, 20.0, 10.0]));
 
     plates.doc.look(Look::EditFeature(id));
-    let session = plates.doc.operation.motion().expect("a session");
+    let session = plates.doc.mode.motion().expect("a session");
     assert_eq!(session.kind, MotionKind::Split);
     assert_eq!(session.feature, Some(id));
     assert_eq!(session.split.mode, SplitMode::Body);
@@ -460,7 +455,7 @@ fn editing_a_split_from_the_timeline_cancel_and_undo() {
     assert!(shows(&plates, "Split 1"));
     plates.motion(MotionLook::Original(Side::Back));
     plates.motion(MotionLook::Cancel);
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     assert_eq!(*plates.doc.editor.document(), before);
 
     plates.doc.look(Look::EditFeature(id));
@@ -480,7 +475,7 @@ fn editing_a_split_from_the_timeline_cancel_and_undo() {
     assert_eq!(pieces.len(), 2);
     assert_eq!(pieces[1].name, "Body 4", "the new body as named");
     key_in(&mut plates.doc, enter());
-    assert!(plates.doc.operation.motion().is_none());
+    assert!(plates.doc.mode.motion().is_none());
     let FeatureKind::Split(set) = &plates.doc.editor.document().feature(id).unwrap().kind else {
         panic!("a split");
     };
@@ -522,7 +517,7 @@ fn a_new_body_kept_again_in_a_later_edit_keeps_its_id() {
         plates.answer();
         key_in(&mut plates.doc, enter());
         assert!(
-            plates.doc.operation.motion().is_none(),
+            plates.doc.mode.motion().is_none(),
             "{:?}",
             plates.doc.edit_error
         );
@@ -611,7 +606,7 @@ fn a_tool_an_undo_takes_away_is_said_to_be_gone() {
     // The last disc's extrude undone: the tool body is gone.
     plates.doc.update(Edit::Undo);
     assert!(plates.doc.editor.document().body(last).is_none());
-    let session = plates.doc.operation.motion().expect("still set up");
+    let session = plates.doc.mode.motion().expect("still set up");
     assert_eq!(session.split.body, Some(last));
     assert!(!plates.doc.motion_ready());
     assert!(shows(&plates, "The tool body is gone: pick another"));
@@ -643,7 +638,7 @@ fn faces_of_an_edited_split_s_new_body_are_named_on_the_body_split() {
     // A click on the new body picks the body it was split from.
     plates.motion(MotionLook::Picking(MotionPick::Bodies));
     plates.click(new);
-    assert_eq!(plates.doc.operation.motion().unwrap().bodies, [plate]);
+    assert_eq!(plates.doc.mode.motion().unwrap().bodies, [plate]);
 }
 
 /// Editing a split whose new body a later combine joined a disc into: a
@@ -708,7 +703,7 @@ fn a_tool_body_merged_into_the_body_split_is_let_go_of() {
         plates.doc.apply(add);
         plates.doc.sync();
         plates.answer();
-        let session = plates.doc.operation.motion().expect("still set up");
+        let session = plates.doc.mode.motion().expect("still set up");
         assert_eq!(session.bodies, [target]);
         assert_eq!(tool(&plates), None, "{into_tool}");
         assert_eq!(picking(&plates), MotionPick::Tool);
@@ -729,7 +724,7 @@ fn two_tools_sketches() -> (Plates, [(FeatureId, Id); 2]) {
 
 /// Whether the split being set up says its tool is gone.
 fn gone(plates: &Plates) -> bool {
-    (plates.doc.operation.motion()).is_some_and(|session| session.split_gone().is_some())
+    (plates.doc.mode.motion()).is_some_and(|session| session.split_gone().is_some())
 }
 
 /// A line whose sketch is removed is said to be gone, and the other

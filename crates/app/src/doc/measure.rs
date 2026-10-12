@@ -27,9 +27,9 @@ use varde_view::{
     ModelHighlight, Outcome, Pick, PickIndex, Picked, Selected, Snapped,
 };
 
-use super::Doc;
+use super::{Doc, DocMode};
 
-/// The measure tool, while it's in use: [`Doc::measure`].
+/// The measure tool, while it's in use: [`Doc::mode`].
 #[derive(Debug, Default)]
 pub(crate) struct MeasureSession {
     /// A and B. B only with A.
@@ -162,10 +162,10 @@ impl Doc {
     /// Starts the measure tool outside sketches and the operations being
     /// set up, a read-only document included, or leaves it.
     pub(crate) fn start_measure(&mut self) {
-        if self.measure.take().is_some() || self.sketch.is_some() || self.operating() {
+        if self.mode.take_measure().is_some() || self.mode.sketch().is_some() || self.operating() {
             return;
         }
-        self.picking_plane = None;
+        self.mode.take_picking_plane();
         let mut session = MeasureSession::new();
         // What's selected, one or two, is A and B to start with.
         let picks: Option<Vec<InspectPick>> =
@@ -175,16 +175,18 @@ impl Doc {
                 session.put(picked, true);
             }
         }
-        self.measure = Some(session);
+        self.mode = DocMode::Measure(session);
     }
 
     /// Takes `message`, changing the measure tool.
     pub(crate) fn measure_look(&mut self, message: MeasureLook) {
-        let Some(session) = &mut self.measure else {
+        let Some(session) = self.mode.measure_mut() else {
             return;
         };
         match message {
-            MeasureLook::Close => self.measure = None,
+            MeasureLook::Close => {
+                self.mode.take_measure();
+            }
             MeasureLook::Fold(slot) => {
                 let folded = &mut session.folded[slot.index()];
                 *folded = !*folded;
@@ -199,7 +201,7 @@ impl Doc {
             return;
         }
         let index = self.feed.pick_index();
-        if let Some(session) = &mut self.measure {
+        if let Some(session) = self.mode.measure_mut() {
             session.click(index, pick, add, double);
         }
     }
@@ -210,7 +212,7 @@ impl Doc {
         if self.editor.document().body(body).is_none() {
             return;
         }
-        if let Some(session) = &mut self.measure {
+        if let Some(session) = self.mode.measure_mut() {
             session.put(self::body(body), add);
         }
     }
@@ -219,8 +221,8 @@ impl Doc {
     /// up, or the document was replaced whole (`replaced`): the bodies its
     /// picks name may be others now.
     pub(crate) fn prune_measure(&mut self, replaced: bool) {
-        if replaced || self.sketch.is_some() || self.operating() {
-            self.measure = None;
+        if replaced || self.mode.sketch().is_some() || self.operating() {
+            self.mode.take_measure();
         }
     }
 
@@ -234,10 +236,10 @@ impl Doc {
     /// asked last, which their picks wait for.
     pub(crate) fn selection_inspect(&self) -> Option<(InspectPick, Option<InspectPick>)> {
         if !self.picks()
-            || self.sketch.is_some()
-            || self.measure.is_some()
+            || self.mode.sketch().is_some()
+            || self.mode.measure().is_some()
             || self.operating()
-            || self.picking_plane.is_some()
+            || self.mode.picking_plane().is_some()
             || self.selected_feature.is_some()
         {
             return None;
@@ -275,7 +277,7 @@ impl Doc {
     /// (see [`Doc::measure_state`]).
     fn measure_targets(&self) -> [Vec<Picked>; 2] {
         let mut targets = [Vec::new(), Vec::new()];
-        let Some(session) = &self.measure else {
+        let Some(session) = self.mode.measure() else {
             return targets;
         };
         let index = self.feed.pick_index();
@@ -304,7 +306,7 @@ impl Doc {
     /// the model's overlaps: lit as picked (a body picked whole by its
     /// faces), or the corner picked.
     pub(crate) fn measure_has(&self, pick: Pick) -> bool {
-        let Some(session) = &self.measure else {
+        let Some(session) = self.mode.measure() else {
             return false;
         };
         if (self.measure_targets().iter()).any(|targets| targets.contains(&pick.target)) {
@@ -328,14 +330,14 @@ impl Doc {
     /// hovered or what's highlighted of the picks changed since it was
     /// built.
     pub(crate) fn refresh_measure_highlight(&mut self) {
-        if self.measure.is_none() || !self.picks() {
+        if self.mode.measure().is_none() || !self.picks() {
             return;
         }
         let targets = self.measure_targets();
         let hovered = self.pick.hover().map(|pick| pick.target);
         let model = self.feed.model();
         let key = (hovered, targets);
-        let Some(session) = &mut self.measure else {
+        let Some(session) = self.mode.measure_mut() else {
             return;
         };
         if session.highlight.is_built(model, &key) {
@@ -355,7 +357,7 @@ impl Doc {
     /// The measure tool's highlight, if it's in use and built for the
     /// model shown.
     pub(crate) fn measure_highlight(&self) -> Option<&Arc<ModelHighlight>> {
-        (self.measure.as_ref()?.highlight).current(self.feed.model())
+        (self.mode.measure()?.highlight).current(self.feed.model())
     }
 
     /// What `pick` is and the name of the body it is or is of, as the
@@ -374,7 +376,7 @@ impl Doc {
 
     /// The measure tool, for the view, while it's in use.
     pub(crate) fn measure_state(&self) -> Option<MeasureState<'_>> {
-        let session = self.measure.as_ref()?;
+        let session = self.mode.measure()?;
         let probed = self.probed();
         let picks = std::array::from_fn(|slot| {
             let pick = session.picks[slot].as_ref()?;

@@ -1282,7 +1282,7 @@ would measure again (the solid is new each step). It doesn't arise: the
 measure tool and the operations being set up never run together (one
 starting ends the other), so no request carries both a draft and picks.
 
-**The measure tool** (`app/src/doc/measure.rs`, `Doc::measure`, a
+**The measure tool** (`app/src/doc/measure.rs`, `Doc::mode`'s `Measure`, a
 `MeasureSession`; `view/src/measure.rs`; `view/src/viewport/measure.rs`)
 writes nothing to the document, has no undo and leaves the selection as
 it was (hidden meanwhile, so `Space` doesn't clear it). `I` (`Shortcut::MEASURE`, outside sketches, where `I` is

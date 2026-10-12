@@ -168,7 +168,7 @@ fn the_clients_analysis_and_the_users_are_both_answered() {
     let data = edit_data(reply.try_recv().unwrap());
     assert_eq!(data["degrees_of_freedom"], json!(11));
     let doc = varde.screen.doc().unwrap();
-    let session = doc.sketch.as_ref().unwrap();
+    let session = doc.mode.sketch().unwrap();
     assert_eq!(
         session.analysis(doc.editor.revision()).map(|a| a.freedom),
         Some(11)
